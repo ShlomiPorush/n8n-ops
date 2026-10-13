@@ -1,0 +1,9 @@
+packages:
+  - apps/*
+  - packages/*
+minimumReleaseAgeExclude:
+  - '@hono/node-server@2.1.5'
+
+# Packages allowed to run install scripts. esbuild verifies its platform binary.
+allowBuilds:
+  esbuild: true

@@ -17,7 +17,7 @@ One place to operate all of our n8n instances:
 
 The first deployment target is 16 self-hosted n8n instances on one Docker host, each with its own PostgreSQL database and the public API enabled. Exactly one instance runs in queue mode. Today their failures produce tens of error emails per day, which are deleted because of volume. The current n8n release is 2.44.0 (2026-10-13).
 
-To be confirmed by discovery (section 10): n8n version of each instance, pruning settings (`EXECUTIONS_DATA_MAX_AGE`), Redis location, which health and metrics endpoints are reachable from outside the host, how error emails are produced today.
+The product is generic and must not depend on the details of this environment. Versions, pruning settings and which endpoints are reachable are configuration, read at registration time or set by the operator. `scripts/discover.sh` helps an operator collect them during installation.
 
 ## 3. Verified facts about n8n (checked against n8n 2.44.0 source, not against a live instance)
 
@@ -33,10 +33,10 @@ To be confirmed by discovery (section 10): n8n version of each instance, pruning
 
 - **Language:** TypeScript.
 - **Database:** PostgreSQL. Failed executions are stored in full and must be searchable (JSONB).
-- **Deployment:** Docker Compose. `app` can run on any host that can reach the instances; it does not have to run next to n8n. Running it elsewhere means it can still alert when the n8n host itself is down.
+- **Deployment:** Docker Compose. `server` can run on any host that can reach the instances; it does not have to run next to n8n. Running it elsewhere means it can still alert when the n8n host itself is down.
 - **Components:**
-  - `app`: UI, REST API, MCP server, pollers, alerting, scheduler. No Docker socket.
-  - `worker` (optional, at most one per Docker host): the only component with the Docker socket. It opens an outbound HTTPS connection to `app`, pulls jobs and reports results. It has no inbound ports. Each instance is assigned to at most one worker.
+  - `server`: UI, REST API, MCP server, pollers, alerting, scheduler. No Docker socket.
+  - `worker` (optional, at most one per Docker host): the only component with the Docker socket. It opens an outbound HTTPS connection to `server`, pulls jobs and reports results. It has no inbound ports. Each instance is assigned to at most one worker.
 - **Worker pairing:** "Add worker" in the UI creates a one-time pairing token (expires in 15 minutes). The worker exchanges it for a permanent identity; the token is then invalid. Every worker is listed with status and last seen, and can be revoked.
 - **Two operating modes:**
   - **API only (no worker):** monitoring, problems, MCP, workflow map, workflow backups, and moves where credentials are recreated empty. The UI states clearly that credential secrets are not backed up.
@@ -74,15 +74,15 @@ v1 includes all of A to G except the items listed under "Not in v1". Build order
 - **B1** Poll `GET /api/v1/executions?status=error&includeData=true` on every instance. Chosen over Error Workflows because those must be set on each workflow and any workflow without one would be missed. Polling needs no change to the instances.
 - **B2** Extract: failing node, error message, stack, the failing node's input, workflow name and version, trigger type.
 - **B3** Group failures into **problems** by fingerprint: instance + workflow + node + **exact** error text. Each problem tracks count, first seen, last seen. The UI allows merging problems manually.
-- **B4** Store each failed execution in full before n8n prunes it, encrypted at rest and searchable. Retention configurable (default 30 days, to be confirmed). Poll interval must be shorter than each instance's `EXECUTIONS_DATA_MAX_AGE`.
+- **B4** Store each failed execution in full before n8n prunes it, encrypted at rest and searchable. Retention is configurable globally and per instance (default 30 days). Poll interval must be shorter than each instance's `EXECUTIONS_DATA_MAX_AGE`.
 - **B5 (basic)** Problem states: open, resolved, muted. Resolved automatically after N days without failures (default 7), manually in the UI, or with the Telegram button. A failure after resolved is a regression.
 - **B6** First sync of each instance is silent: existing failures are imported without alerts and appear in the UI and the first report.
 - **B7** Notifications, see section 7.
 
 ### C. Health and queue
 
-- **C1** Health of every main and every queue worker (`/healthz`, `/healthz/readiness`).
-- **C2** Queue metrics from the queue instance `/metrics`: jobs waiting, active, completed, failed; which workers are alive.
+- **C1** Health of every main and every queue worker (`/healthz`, `/healthz/readiness`). Endpoints are polled directly when `server` can reach them; when they are only reachable on the n8n host, the n8n-ops `worker` on that host collects them and reports to `server`. Both paths are supported; the choice is per instance.
+- **C2** Queue metrics from the queue instance `/metrics`: jobs waiting, active, completed, failed; which workers are alive. Same direct-or-worker collection as C1.
 - **C3** Alerts: instance not responding, worker down, queue backlog above threshold for longer than N minutes.
 - **C4** Version of each instance compared with the latest n8n release, including which instances are below 2.14.0.
 
@@ -172,10 +172,7 @@ These change and restart production containers. They are Shlomi's call and are d
 
 ## 10. Open items
 
-1. **Discovery** (on hold at Shlomi's request): Shlomi runs `scripts/discover.sh` on the Docker host and shares the report, or grants SSH for a read-only run.
-2. **Reaching worker health and `/metrics` when `app` runs elsewhere:** queue worker `/healthz` and the main `/metrics` are usually not exposed outside the host. Proposed: the n8n-ops worker on the host collects them and reports to `app`. Confirm after discovery.
-3. **Default retention for stored failed executions:** 30 days proposed.
-4. **Scope table per feature (A5):** to be built from the n8n source during implementation.
+1. **Scope table per feature (A5):** to be built from the n8n source during implementation.
 
 ## 11. Acceptance for v1
 

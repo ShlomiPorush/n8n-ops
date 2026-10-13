@@ -1,0 +1,14 @@
+**/node_modules
+**/dist
+**/.vite
+**/coverage
+**/test-results
+**/playwright-report
+.git
+.github
+.pnpm-store
+docs
+scripts
+.env
+.env.*
+docker-compose*.yml

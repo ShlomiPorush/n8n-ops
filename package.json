@@ -1,0 +1,22 @@
+{
+  "name": "n8n-ops",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Operations console for self-hosted n8n instances",
+  "license": "MIT",
+  "type": "module",
+  "packageManager": "pnpm@12.11.2",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "pnpm -r --filter=./apps/* run build",
+    "typecheck": "pnpm -r run typecheck",
+    "test": "pnpm -r run test",
+    "lint": "biome ci ."
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.15",
+    "typescript": "6.0.3"
+  }
+}

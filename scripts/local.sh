@@ -8,7 +8,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
 PROJECT="$DEV_PROJECT"
 export N8N_OPS_DATA_DIR="${N8N_OPS_DATA_DIR:-$DEV_DEFAULT_DATA_DIR}"
-SERVICES=(server postgres worker)
+SERVICES=(server postgres worker socket-proxy)
 
 usage() {
   cat <<EOF

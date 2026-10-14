@@ -128,7 +128,7 @@ run_integration() {
     stack logs --tail 50
     die "the verification stack did not become healthy"
   }
-  check_non_root "$PROJECT" server postgres worker
+  check_non_root "$PROJECT" server postgres worker socket-proxy
 
   info "Integration: health endpoint"
   TOOLCHAIN_EXTRA_ARGS=(--network "${PROJECT}_default")
@@ -136,6 +136,16 @@ run_integration() {
   in_toolchain 'body="$(node -e "fetch(\"http://server:8080/healthz/ready\").then(async r => { console.log(r.status, await r.text()); process.exit(r.ok ? 0 : 1) })")" && echo "    $body" && grep -q "\"database\":\"ok\"" <<<"$body"' ||
     die "server is not ready"
   TOOLCHAIN_EXTRA_ARGS=()
+
+  info "Integration: the socket proxy allows only what the worker needs"
+  # From inside the worker: ping passes; listing containers and exec in another container are refused.
+  local probe='const p = (m, path) => fetch("http://socket-proxy:2375" + path, { method: m, headers: { "content-type": "application/json" }, body: m === "POST" ? "{}" : undefined }).then((r) => r.status);
+(async () => {
+  const got = [await p("GET", "/v1.43/_ping"), await p("GET", "/v1.43/containers/json"), await p("POST", "/v1.43/containers/'"${PROJECT}"'-postgres-1/exec")];
+  console.log("    ping, list, exec in postgres:", got.join(", "));
+  process.exit(got[0] === 200 && got[1] === 403 && got[2] === 403 ? 0 : 1);
+})()'
+  stack exec -T worker node -e "$probe" || die "the socket proxy does not enforce its allowlist"
 
   info "End-to-end tests"
   docker run --rm --network "${PROJECT}_default" --user "$(id -u):$(id -g)" -e HOME=/tmp -e CI="${CI:-}" \

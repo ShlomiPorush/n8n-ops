@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { demux } from "./docker.ts"
+import { demux, parseDockerEndpoint } from "./docker.ts"
 
 const frame = (stream: number, text: string) => {
   const body = Buffer.from(text)
@@ -23,5 +23,16 @@ describe("demux", () => {
     header[0] = 1
     header.writeUInt32BE(4, 4)
     expect([...demux(Buffer.concat([header, bytes])).stdout]).toEqual([0, 1, 2, 255])
+  })
+})
+
+describe("parseDockerEndpoint", () => {
+  it("uses a socket proxy over TCP", () => {
+    expect(parseDockerEndpoint("tcp://socket-proxy:2375")).toEqual({ host: "socket-proxy", port: 2375 })
+  })
+
+  it("uses a Unix socket path, with or without the unix:// scheme", () => {
+    expect(parseDockerEndpoint("/var/run/docker.sock")).toEqual({ socketPath: "/var/run/docker.sock" })
+    expect(parseDockerEndpoint("unix:///var/run/docker.sock")).toEqual({ socketPath: "/var/run/docker.sock" })
   })
 })

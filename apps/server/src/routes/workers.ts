@@ -5,6 +5,7 @@ import type { Ctx } from "../context.ts"
 import { instances, workers } from "../db/schema.ts"
 import { requireUser } from "../http/middleware.ts"
 import { actorName, type Env } from "../http/types.ts"
+import { CONTAINER_PATTERN, workerInstall } from "../lib/worker-install.ts"
 import { createPairingToken, PAIRING_TTL_MS } from "../services/workers.ts"
 import { WORKER_ONLINE_MS } from "./overview.ts"
 
@@ -36,6 +37,12 @@ export function workerRoutes(ctx: Ctx) {
           .min(1)
           .max(60)
           .regex(/^[a-zA-Z0-9_.-]+$/),
+        socketProxy: z.boolean().default(true),
+        containers: z.array(z.string().max(100).regex(CONTAINER_PATTERN)).max(50).default([]),
+      })
+      .refine((b) => !b.socketProxy || b.containers.length > 0, {
+        message: "List the n8n containers the worker may run commands in",
+        path: ["containers"],
       })
       .safeParse(await c.req.json().catch(() => ({})))
     if (!body.success) return c.json({ error: "invalid", issues: body.error.issues }, 400)
@@ -51,16 +58,7 @@ export function workerRoutes(ctx: Ctx) {
     return c.json({
       token,
       expiresInMinutes: PAIRING_TTL_MS / 60_000,
-      command: [
-        "mkdir -p /srv/n8n-ops-worker && chown 1000:1000 /srv/n8n-ops-worker",
-        "docker run -d --name n8n-ops-worker --restart unless-stopped \\",
-        "  --group-add $(stat -c %g /var/run/docker.sock) \\",
-        "  -v /var/run/docker.sock:/var/run/docker.sock \\",
-        "  -v /srv/n8n-ops-worker:/data \\",
-        `  -e N8N_OPS_SERVER_URL=${server} \\`,
-        `  -e PAIRING_TOKEN=${token} \\`,
-        "  ghcr.io/shlomiporush/n8n-ops-worker:latest",
-      ].join("\n"),
+      ...workerInstall({ serverUrl: server, token, ...body.data }),
     })
   })
 

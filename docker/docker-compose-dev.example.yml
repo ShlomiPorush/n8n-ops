@@ -29,14 +29,39 @@ services:
   worker:
     image: n8n-ops-worker:${N8N_OPS_IMAGE_TAG:-dev}
     env_file: docker/dev.env
+    # Docker through the socket proxy only, as the Add worker dialog recommends.
+    environment:
+      DOCKER_HOST: tcp://socket-proxy:2375
     depends_on:
       server:
         condition: service_healthy
-    group_add:
-      - "${DOCKER_SOCKET_GID:?DOCKER_SOCKET_GID is set by the scripts}"
+      socket-proxy:
+        condition: service_healthy
+    networks: [default, docker-proxy]
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
       - ${N8N_OPS_DATA_DIR:?N8N_OPS_DATA_DIR is set by the scripts}/worker:/data
+
+  # Same rules the server generates: ping, and exec only in this stack's n8n container.
+  socket-proxy:
+    image: wollomatic/socket-proxy:1.13.1
+    user: "65534:${DOCKER_SOCKET_GID:?DOCKER_SOCKET_GID is set by the scripts}"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges]
+    command:
+      - -listenip=0.0.0.0
+      - -allowfrom=worker
+      - -allowhealthcheck
+      - '-allowGET=(/v1\.[0-9]+)?/(_ping|exec/[0-9a-f]+/json)'
+      - '-allowPOST=(/v1\.[0-9]+)?/(containers/([^/]*-n8n-1)/exec|exec/[0-9a-f]+/start)'
+    healthcheck:
+      test: ["CMD", "./healthcheck"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [docker-proxy]
 
   # Disposable n8n for development and the end-to-end tests. No persistent data.
   n8n:
@@ -52,3 +77,7 @@ services:
   s3:
     image: adobe/s3mock:4.11.0
     env_file: docker/s3-dev.env
+
+networks:
+  docker-proxy:
+    internal: true

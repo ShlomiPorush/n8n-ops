@@ -15,7 +15,7 @@ const dataDir = process.env.WORKER_DATA_DIR ?? "/data"
 const identityFile = `${dataDir}/identity.json`
 const pairingFile = `${dataDir}/pairing-token`
 const heartbeatFile = process.env.HEARTBEAT_FILE ?? DEFAULT_HEARTBEAT_FILE
-const docker = new Docker(process.env.DOCKER_SOCKET ?? "/var/run/docker.sock")
+const docker = new Docker(process.env.DOCKER_HOST || process.env.DOCKER_SOCKET || "/var/run/docker.sock")
 const log = (msg: string, extra: Record<string, unknown> = {}) => console.log(JSON.stringify({ msg, ...extra }))
 
 const url = (path: string) => new URL(path, serverUrl).toString()
@@ -89,7 +89,7 @@ async function handle(identity: string, job: Job): Promise<JobResult> {
 
 async function main() {
   log("n8n-ops worker starting", { version, server: serverUrl })
-  if (!(await docker.ping())) log("the Docker socket is not reachable; backups and exports will fail")
+  if (!(await docker.ping())) log("Docker is not reachable (socket or socket proxy); backups and exports will fail")
   let identity = await loadIdentity()
   for (;;) {
     try {

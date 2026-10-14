@@ -38,7 +38,9 @@ For a queue-mode instance, set `N8N_METRICS=true` and `N8N_METRICS_INCLUDE_QUEUE
 
 Without a worker, backups contain workflows and credential names but not credential secrets. With one, backups include decrypted credentials (encrypted with your key before they leave the host), moves copy credentials, and health can be checked from inside the host.
 
-Workers → Add worker gives a one-time token and the commands to run on the host (the worker runs as UID 1000, so its data directory is created and handed to that user first). To keep the token off the command line, write it to `/srv/n8n-ops-worker/pairing-token` instead of passing `PAIRING_TOKEN`. The worker only makes outbound HTTPS requests and opens no ports. Then assign it to the instance and set the n8n container name.
+Workers → Add worker gives a one-time token, the commands to run on the host and a `docker-compose.yml`. The worker runs as UID 1000 and only makes outbound HTTPS requests; it opens no ports. Then assign it to the instance and set the n8n container name.
+
+**Docker socket proxy (recommended, on by default).** The worker needs Docker only to run n8n's CLI inside the n8n containers. With the proxy, the worker gets no Docker socket: [wollomatic/socket-proxy](https://github.com/wollomatic/socket-proxy) holds the socket, reachable only by the worker on an internal network, and allows ping and `exec` in the containers you list, nothing else. List container names, or use `*` to cover containers added later (for example `n8n*`); with a plain list, add a new container to `-allowPOST` in the compose file and run `docker compose up -d`. Without the proxy, the worker mounts the socket and has full control of Docker on the host.
 
 ## Agents
 

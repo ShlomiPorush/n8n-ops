@@ -1,12 +1,27 @@
 import { request } from "node:http"
 
-/** Minimal Docker Engine API client over the Unix socket: run a command in a container and collect its output. */
+/**
+ * Minimal Docker Engine API client: run a command in a container and collect its output. It talks to the
+ * Unix socket, or to a socket proxy over TCP (DOCKER_HOST=tcp://host:port).
+ */
 export type ExecResult = { exitCode: number; stdout: Buffer; stderr: string }
 
 const API = "/v1.43"
 
+/** Where the Docker API is: a Unix socket path, or a TCP host and port. */
+export type DockerEndpoint = { socketPath: string } | { host: string; port: number }
+
+/** Reads a DOCKER_HOST value (tcp://host:port or unix:///path) or a bare socket path. */
+export function parseDockerEndpoint(value: string): DockerEndpoint {
+  if (value.startsWith("tcp://") || value.startsWith("http://")) {
+    const url = new URL(value.replace(/^tcp:/, "http:"))
+    return { host: url.hostname, port: Number(url.port || 2375) }
+  }
+  return { socketPath: value.replace(/^unix:\/\//, "") }
+}
+
 function call(
-  socketPath: string,
+  endpoint: DockerEndpoint,
   method: string,
   path: string,
   body?: unknown,
@@ -15,7 +30,7 @@ function call(
     const payload = body === undefined ? undefined : Buffer.from(JSON.stringify(body))
     const req = request(
       {
-        socketPath,
+        ...endpoint,
         method,
         path: `${API}${path}`,
         headers: payload ? { "content-type": "application/json", "content-length": payload.length } : {},
@@ -51,10 +66,14 @@ export function demux(raw: Buffer): { stdout: Buffer; stderr: Buffer } {
 }
 
 export class Docker {
-  constructor(private readonly socketPath = "/var/run/docker.sock") {}
+  private readonly endpoint: DockerEndpoint
+
+  constructor(endpoint = "/var/run/docker.sock") {
+    this.endpoint = parseDockerEndpoint(endpoint)
+  }
 
   async exec(container: string, cmd: string[]): Promise<ExecResult> {
-    const created = await call(this.socketPath, "POST", `/containers/${encodeURIComponent(container)}/exec`, {
+    const created = await call(this.endpoint, "POST", `/containers/${encodeURIComponent(container)}/exec`, {
       AttachStdout: true,
       AttachStderr: true,
       Tty: false,
@@ -64,17 +83,17 @@ export class Docker {
     if (created.status >= 300)
       throw new Error(`docker exec create failed (${created.status}): ${created.data.toString().slice(0, 300)}`)
     const { Id } = JSON.parse(created.data.toString()) as { Id: string }
-    const started = await call(this.socketPath, "POST", `/exec/${Id}/start`, { Detach: false, Tty: false })
+    const started = await call(this.endpoint, "POST", `/exec/${Id}/start`, { Detach: false, Tty: false })
     if (started.status >= 300) throw new Error(`docker exec start failed (${started.status})`)
     const { stdout, stderr } = demux(started.data)
-    const inspect = await call(this.socketPath, "GET", `/exec/${Id}/json`)
+    const inspect = await call(this.endpoint, "GET", `/exec/${Id}/json`)
     const { ExitCode } = JSON.parse(inspect.data.toString()) as { ExitCode: number }
     return { exitCode: ExitCode ?? -1, stdout, stderr: stderr.toString() }
   }
 
   async ping(): Promise<boolean> {
     try {
-      return (await call(this.socketPath, "GET", "/_ping")).status === 200
+      return (await call(this.endpoint, "GET", "/_ping")).status === 200
     } catch {
       return false
     }

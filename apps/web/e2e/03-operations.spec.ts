@@ -36,7 +36,13 @@ test("a worker pairs with a one-time token", async () => {
   await page.goto("/workers")
   await page.getByRole("button", { name: "Add worker" }).first().click()
   await page.getByLabel("Name").fill("e2e-host")
+  // The socket proxy is on by default and needs the n8n containers to allow.
+  await expect(page.getByLabel("Limit Docker access with a socket proxy")).toBeChecked()
+  await expect(page.getByRole("button", { name: "Create pairing token" })).toBeDisabled()
+  await page.getByLabel("n8n containers").fill("n8n-main, flow*")
   await page.getByRole("button", { name: "Create pairing token" }).click()
+  await expect(page.getByText("wollomatic/socket-proxy:")).toBeVisible()
+  await expect(page.getByText("containers/(n8n-main|flow[^/]*)/exec")).toBeVisible()
   const token = ((await page.getByTestId("pairing-token").textContent()) ?? "").trim()
   expect(token).toMatch(/^nops_pair_/)
   writeFileSync("/worker-data/pairing-token", token)

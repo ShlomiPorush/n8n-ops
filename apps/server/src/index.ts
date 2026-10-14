@@ -23,7 +23,7 @@ const ctx: Ctx = {
   db: database.db,
   auth: createAuth(database.db, key, config.publicUrl),
   secrets: createSecrets(key),
-  settings: createSettings(database.db),
+  settings: createSettings(database.db, { publicUrl: config.publicUrl }),
   audit: createAudit(database.db),
   version: config.version,
   appKeyPath: config.appKeyPath,

@@ -27,6 +27,8 @@ services:
       retries: 5
     restart: unless-stopped
 
+  # A worker without the socket proxy (full Docker access). Workers → Add worker in the UI generates a
+  # compose file with the recommended socket proxy instead.
   worker:
     profiles: [worker]
     image: ghcr.io/shlomiporush/n8n-ops-worker:${N8N_OPS_VERSION:-latest}

@@ -126,12 +126,21 @@ export type SettingsStore = {
   forInstance(overrides: Record<string, unknown>): Promise<InstanceSettings>
 }
 
-export function createSettings(db: Db): SettingsStore {
+/**
+ * `env.publicUrl` (N8N_OPS_PUBLIC_URL) stands in for the public URL while Settings > General leaves it empty,
+ * so links in alerts, the Telegram webhook and worker install commands use the address users open.
+ */
+export function createSettings(db: Db, env: { publicUrl?: string } = {}): SettingsStore {
   async function get<K extends SectionName>(key: K): Promise<Section<K>> {
     const [row] = await db.select().from(settingsTable).where(eq(settingsTable.key, key))
     const merged = { ...defaults[key], ...((row?.value as object) ?? {}) }
     const parsed = sections[key].safeParse(merged)
-    return (parsed.success ? parsed.data : defaults[key]) as Section<K>
+    const value = (parsed.success ? parsed.data : defaults[key]) as Section<K>
+    if (key === "general" && env.publicUrl) {
+      const general = value as Section<"general">
+      if (!general.publicUrl) return { ...general, publicUrl: env.publicUrl } as Section<K>
+    }
+    return value
   }
   return {
     get,

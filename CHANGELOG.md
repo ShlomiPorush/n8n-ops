@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Added
 
+- Worker behind a Docker socket proxy (on by default when adding a worker): only `wollomatic/socket-proxy` sees the socket and allows exec only in the listed n8n containers. Add worker now gives a ready docker-compose.yml.
+- Theme choice (light, dark or system) in the account menu.
 - Read-only MCP server at `/mcp` and REST API at `/api/v1` for agents, with scoped tokens and MCP reads in the audit log.
 - Live updates in the UI through server-sent events; problem and list pages take the full screen on phones.
 - Logins in the audit log; workflow counts on the instance page; a finish-setup reminder on the Overview.
@@ -21,3 +23,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - Overview, Problems and Instances pages; a disposable n8n 2.44 in the development and test stack.
 - Application shell (sidebar layout), settings with per-instance defaults, encryption keys, API and MCP tokens, audit log.
 - Project foundation: pnpm workspace with `server`, `web`, `worker` and `shared`, container images, development stack, workflow scripts, CI and Dependabot.
+
+### Fixed
+
+- Links in alerts, the Telegram webhook and worker install commands use `N8N_OPS_PUBLIC_URL` when Settings leaves the public URL empty; behind a TLS proxy they were built with http.

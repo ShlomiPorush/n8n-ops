@@ -1,8 +1,8 @@
 import { hkdfSync } from "node:crypto"
 import { betterAuth } from "better-auth"
 import { drizzleAdapter } from "better-auth/adapters/drizzle"
+import { createAuthMiddleware } from "better-auth/api"
 import { twoFactor, username } from "better-auth/plugins"
-import { eq } from "drizzle-orm"
 import type { Db } from "../db/client.ts"
 import { account, session, twoFactor as twoFactorTable, user, verification } from "../db/schema.ts"
 import { createAudit } from "../lib/audit.ts"
@@ -39,25 +39,26 @@ export function createAuth(db: Db, appKey: Buffer, publicUrl?: string) {
     // Secure cookies need HTTPS. They are on when the public URL is HTTPS; a plain HTTP install
     // (local development, a private network) would otherwise never keep a session.
     advanced: { useSecureCookies: publicUrl?.startsWith("https://") ?? false },
-    // A session exists only after the password and, when enabled, the TOTP code were accepted.
-    databaseHooks: {
-      session: {
-        create: {
-          after: async (created) => {
-            const [u] = await db
-              .select({ username: user.username, name: user.name })
-              .from(user)
-              .where(eq(user.id, created.userId))
-            await audit({
-              actor: u?.username ?? u?.name ?? created.userId,
-              action: "Login",
-              target: created.ipAddress ?? "",
-              via: "web",
-              details: { userAgent: created.userAgent ?? null },
-            })
-          },
-        },
-      },
+    // Audit a login once, when it completes. With two-factor on, the password step creates a session that the
+    // two-factor plugin deletes again while the code is pending; the real session comes from verify-totp.
+    hooks: {
+      after: createAuthMiddleware(async (ctx) => {
+        const created = ctx.context.newSession
+        if (!created) return
+        const u = created.user as { username?: string | null; name?: string; twoFactorEnabled?: boolean | null }
+        // verify-totp with a session already open is enrolment (setup), not a sign-in.
+        const completed = ctx.path.startsWith("/sign-in")
+          ? !u.twoFactorEnabled
+          : ctx.path.startsWith("/two-factor/verify") && !ctx.context.session
+        if (!completed) return
+        await audit({
+          actor: u.username ?? u.name ?? created.user.id,
+          action: "Login",
+          target: created.session.ipAddress ?? "",
+          via: "web",
+          details: { userAgent: created.session.userAgent ?? null },
+        })
+      }),
     },
     plugins: [username(), twoFactor({ issuer: "n8n-ops" })],
   })

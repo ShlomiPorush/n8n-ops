@@ -153,7 +153,7 @@ export function SettingsPage() {
   return (
     <Page title="Settings">
       <Tabs value={section} onValueChange={(v) => navigate(`/settings/${v}`)}>
-        <TabsList className="h-auto flex-wrap">
+        <TabsList className="max-w-full flex-wrap justify-start group-data-horizontal/tabs:h-auto">
           {tabs.map(([k, l]) => (
             <TabsTrigger key={k} value={k}>
               {l}

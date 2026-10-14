@@ -1,9 +1,10 @@
-import { CheckCircle2, Download, Pencil, Plus, RefreshCw, Trash2, X } from "lucide-react"
+import { CheckCircle2, Download, Info, Pencil, Plus, RefreshCw, Trash2, X } from "lucide-react"
 import { useEffect, useState } from "react"
 import { useNavigate, useParams } from "react-router"
 import { toast } from "sonner"
 import { ListWithPanel } from "@/components/list-panel"
 import { Dot, type HealthState, TimeAgo, Tone } from "@/components/status"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
@@ -319,6 +320,37 @@ function InstanceDetail({ id }: { id: string }) {
           )}
           {hd?.metricsError && (
             <p className="text-sm text-amber-700 dark:text-amber-400">Queue metrics: {hd.metricsError}</p>
+          )}
+          {i.queueMode && (!i.metricsUrl || i.workerHealthUrls.length === 0) && (
+            <Alert>
+              <Info />
+              <AlertTitle>
+                {!i.metricsUrl && i.workerHealthUrls.length === 0
+                  ? "Queue mode is on, but n8n-ops has nothing to read about the queue or its workers"
+                  : !i.metricsUrl
+                    ? "The queue backlog is not checked"
+                    : "The queue workers are not checked"}
+              </AlertTitle>
+              <AlertDescription>
+                <ul className="list-disc space-y-1 pl-4">
+                  {!i.metricsUrl && (
+                    <li>
+                      Queue backlog: add the metrics URL, and set <code>N8N_METRICS=true</code> and{" "}
+                      <code>N8N_METRICS_INCLUDE_QUEUE_METRICS=true</code> on the main process.
+                    </li>
+                  )}
+                  {i.workerHealthUrls.length === 0 && (
+                    <li>
+                      Workers: add their health URLs, and set <code>QUEUE_HEALTH_CHECK_ACTIVE=true</code> on them.
+                      Workers are usually reachable only on their host, so this often needs an n8n-ops worker there.
+                    </li>
+                  )}
+                </ul>
+                <Button variant="outline" size="sm" className="mt-3" onClick={() => setEditing(true)}>
+                  <Pencil /> Edit instance
+                </Button>
+              </AlertDescription>
+            </Alert>
           )}
         </CardContent>
       </Card>

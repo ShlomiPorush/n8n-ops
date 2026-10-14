@@ -88,3 +88,24 @@ test("a resolved problem that fails again is a regression", async () => {
   await page.goto("/")
   await expect(page.getByRole("cell", { name: /Regression.*Sync orders to ERP/ })).toBeVisible()
 })
+
+test("a queue-mode instance without metrics or worker URLs says what is missing", async () => {
+  const alert = page.getByRole("alert").filter({ hasText: "Queue mode is on" })
+  const toggleQueueMode = async () => {
+    await page.getByRole("button", { name: "Edit", exact: true }).click()
+    await page.getByLabel("Queue mode").click()
+    await page.getByRole("button", { name: "Save" }).click()
+    await expect(page.getByRole("dialog")).toBeHidden()
+  }
+  await page.goto("/instances")
+  await page.getByRole("row", { name: /e2e-n8n/ }).click()
+  await expect(alert).toHaveCount(0)
+
+  await toggleQueueMode()
+  await expect(alert).toBeVisible()
+  await expect(alert).toContainText("N8N_METRICS_INCLUDE_QUEUE_METRICS=true")
+  await expect(alert).toContainText("QUEUE_HEALTH_CHECK_ACTIVE=true")
+
+  await toggleQueueMode()
+  await expect(alert).toHaveCount(0)
+})

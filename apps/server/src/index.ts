@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events"
 import { serve } from "@hono/node-server"
 import { createApp } from "./app.ts"
 import { createAuth } from "./auth/auth.ts"
@@ -28,6 +29,7 @@ const ctx: Ctx = {
   appKeyPath: config.appKeyPath,
   checkDatabase: database.ping,
   log,
+  events: new EventEmitter().setMaxListeners(100),
 }
 
 const { mounts, start } = features(ctx)

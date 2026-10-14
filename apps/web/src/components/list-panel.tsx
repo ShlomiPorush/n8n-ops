@@ -1,10 +1,12 @@
-import { X } from "lucide-react"
+import { ArrowLeft, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable"
+import { useIsMobile } from "@/hooks/use-mobile"
 
 /**
  * Variant D list page: a full-width table; when an item is selected, a resizable detail panel opens
- * beside it (the table stays visible) and closes back to the full table.
+ * beside it (the table stays visible) and closes back to the full table. On a phone the panel takes
+ * the whole screen with a back button instead.
  */
 export function ListWithPanel({
   list,
@@ -17,7 +19,18 @@ export function ListWithPanel({
   panelTitle: string
   onClose: () => void
 }) {
-  if (!panel) return <div className="flex-1 space-y-6 p-6">{list}</div>
+  const mobile = useIsMobile()
+  if (!panel) return <div className="flex-1 space-y-6 p-4 md:p-6">{list}</div>
+  if (mobile) {
+    return (
+      <div className="flex-1 space-y-4 p-4">
+        <Button variant="ghost" size="sm" className="-ml-2" onClick={onClose}>
+          <ArrowLeft /> Back
+        </Button>
+        {panel}
+      </div>
+    )
+  }
   return (
     <div className="h-[calc(100svh-3.5rem)] min-h-0 md:h-[calc(100svh-4.5rem)]">
       <ResizablePanelGroup orientation="horizontal">

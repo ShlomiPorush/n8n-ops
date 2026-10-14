@@ -1,13 +1,13 @@
 # n8n-ops Project Foundation
 
-Status: Foundation implemented (2026-10-14). Product features have not started.
+Status: Foundation and all v1 features implemented (2026-10-14). Not yet released or deployed.
 
 This document separates what exists in the repository from what is still planned. A planned item does not exist until its status and verification evidence say otherwise. Product behavior is specified in [requirements.md](requirements.md).
 
 ## Current truth
 
 - Public repository `ShlomiPorush/n8n-ops`, default branch `main`, MIT license. GitHub settings match the owner's other public repositories: secret scanning with push protection, Dependabot security updates and vulnerability alerts on, Actions default token read-only, no rulesets or branch protection, default labels.
-- pnpm workspace with `apps/server`, `apps/web`, `apps/worker` and `packages/shared`. They contain only the foundation: health endpoints, a migration runner with no tables, a placeholder UI page and a worker heartbeat. No product feature from `requirements.md` is implemented.
+- pnpm workspace with `apps/server`, `apps/web`, `apps/worker` and `packages/shared`. Every v1 feature in `requirements.md` is implemented: sign-in with TOTP and setup, instances and scopes, problems and alerts, health, reports, the worker, backups and restore, the workflow map and moves, MCP and REST, settings with overrides, the audit log and live updates.
 - Container images for `server` and `worker`, a production Compose file, a development Compose template, the four workflow scripts, path-filtered CI and Dependabot exist.
 - `scripts/discover.sh` is a read-only operator tool. It has not been run against a production host; the product does not depend on its output.
 - Tooling runs in containers. The development machine needs WSL with Docker only; Node.js, pnpm, shellcheck and shfmt come from the toolchain image.
@@ -20,7 +20,7 @@ Verified locally on 2026-10-14 in WSL (Docker 29.8.2): `scripts/verify.sh` full 
 - **Problem:** a team running many self-hosted n8n instances gets tens of failure emails per day and ignores them; backups are unreliable; moving workflows between instances is manual.
 - **Product:** one self-hosted web application that monitors n8n instances through their public API, groups failures into problems, sends a small number of Telegram alerts and email reports, exposes failures to AI agents over MCP and REST, backs up workflows and credentials encrypted to S3-compatible storage, and helps consolidate instances.
 - **Users:** one operator (single local account). Agents use read-only tokens.
-- **Stage:** foundation done; product features next.
+- **Stage:** v1 implemented and verified in the test stack; first release and production deployment pending.
 - **Deployment shape:** Docker Compose. `server` and its PostgreSQL run on any host that can reach the n8n instances. An optional `worker` runs on each n8n Docker host.
 - **Non-goals for v1:** full-instance backup (`pg_dump`), automatic container discovery, write actions over REST or MCP, multiple users or roles, localization.
 
@@ -57,11 +57,11 @@ Verified locally on 2026-10-14 in WSL (Docker 29.8.2): `scripts/verify.sh` full 
 
 | Component | Responsibility | Path | Status |
 |---|---|---|---|
-| `server` | Health endpoints (`/healthz/live`, `/healthz/ready`), Drizzle migrations on start, serves the built UI with single-page fallback, JSON 404 for `/api/*`. Later: API, MCP, Better Auth, pollers, alerts, scheduler. | `apps/server` | Foundation implemented |
-| `web` | Placeholder page showing server readiness and version; follows the system light or dark theme | `apps/web` | Foundation implemented |
-| `worker` | Heartbeat to `server` every 15 s; health check passes only after a contact in the last 60 s. Later: pairing, jobs, Docker exports, age encryption, S3 upload, local health collection. | `apps/worker` | Foundation implemented |
-| `shared` | Zod schemas and types shared by server and UI (health response) | `packages/shared` | Foundation implemented |
-| Database schema | Drizzle schema with no tables yet; empty migration journal | `apps/server/src/db`, `apps/server/drizzle` | Foundation implemented |
+| `server` | Better Auth, API for the UI, REST (`/api/v1`) and MCP (`/mcp`) for agents, pollers, alerts, reports, backups, scheduler, server-sent events; serves the built UI. | `apps/server` | Implemented |
+| `web` | Variant D UI: sidebar shell, Overview, Problems, Instances, Workflows, Backups, Workers, Settings, Audit log, login and setup | `apps/web` | Implemented |
+| `worker` | Pairing, job polling, n8n CLI exports through the Docker socket, age encryption, upload to a presigned URL, host-side health probes | `apps/worker` | Implemented |
+| `shared` | Schemas, API key capability table, tar format; `@n8n-ops/shared/archive` (Node only) for sealed archives | `packages/shared` | Implemented |
+| Database schema | Drizzle schema for all features; migration `0000_initial` | `apps/server/src/db`, `apps/server/drizzle` | Implemented |
 | Images | Multi-stage builds; runtime runs as `node` (UID 1000) with a health check | `docker/server.Dockerfile`, `docker/worker.Dockerfile` | Implemented |
 | Toolchain image | Node, pnpm, git, shellcheck, shfmt for scripts and CI | `docker/toolchain.Dockerfile` | Implemented |
 | Discovery script | Read-only inventory of an n8n Docker host | `scripts/discover.sh` | Exists, not run on a production host |
@@ -118,8 +118,7 @@ Development data lives in `${XDG_DATA_HOME:-~/.local/share}/n8n-ops-dev` on the 
 
 Deferred from the foundation, with reason:
 
-- Integration tests against a disposable n8n container: there is no code that talks to n8n yet. Add them with the first poller.
-- Better Auth and the real UI shell: product features.
+- None. Integration and end-to-end tests run against a disposable n8n 2.44 and S3Mock in the test stack.
 
 ## Workflow contracts
 
@@ -138,10 +137,9 @@ All scripts: Bash inside WSL (or any Linux with Docker), `#!/usr/bin/env bash`, 
 
 | Question | Why it matters | Needed | Owner |
 |---|---|---|---|
-| Scope table per feature | Feature gating by API key scopes | Build from n8n source with the first feature that needs scopes | Implementation |
 | Where `server` is hosted and which reverse proxy fronts it | Production deployment only | Decide before the first deployment | Shlomi |
-| Dependabot support for pnpm 12 lockfiles | Weekly npm updates | Watch the first Dependabot run; fall back to manual updates if it cannot parse the lockfile | Implementation |
+| Encrypted versus searchable stored executions (B4) | Stored executions are plain JSONB for search; at-rest protection relies on the database host | Owner decision | Shlomi |
 
 ## Next step
 
-Product features from `requirements.md`, starting with authentication and the UI shell (variant D layout), then instance registration and failure polling. Each feature lands on a topic branch with a pull request and green CI.
+First release with `scripts/release.sh --target ghcr --bump minor` (owner's decision), then deployment and the production prerequisites in `requirements.md` section 9. Accepting v1 (section 11) needs the real instances, Telegram and storage.

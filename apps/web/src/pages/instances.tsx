@@ -72,6 +72,7 @@ export type InstanceRow = {
 
 type InstanceDetailData = InstanceRow & {
   worker: { id: string; name: string; lastSeenAt: string | null } | null
+  workflowCounts: { total: number; active: number; runs30d: number }
   effectiveSettings: Record<string, number | string>
   latestVersion: string | null
 }
@@ -263,8 +264,10 @@ function InstanceDetail({ id }: { id: string }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
         <Stat label="Open problems" value={i.openProblems} />
+        <Stat label="Active / total workflows" value={`${i.workflowCounts.active}/${i.workflowCounts.total}`} />
+        <Stat label="Executions, 30 days" value={i.workflowCounts.runs30d.toLocaleString()} />
         <Stat label="Failures checked" value={<TimeAgo value={i.lastPollAt} />} />
         <Stat label="Health checked" value={<TimeAgo value={i.healthCheckedAt} />} />
         <Stat label="Collection" value={i.collection === "worker" ? "Through worker" : "Direct"} />

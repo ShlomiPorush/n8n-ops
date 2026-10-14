@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, gt, inArray, lte } from "drizzle-orm"
-import type { Ctx } from "../context.ts"
+import { type Ctx, changed } from "../context.ts"
 import { type AlertKind, alertGroups, alertOutbox, alertState, instances, problems } from "../db/schema.ts"
 import { clip, escapeHtml, type InlineButton, Telegram, TelegramError } from "./telegram.ts"
 
@@ -262,6 +262,7 @@ export async function handleTelegramCallback(ctx: Ctx, update: CallbackUpdate): 
       ? { status: "resolved" as const, resolvedAt: new Date(), mutedUntil: null }
       : { status: "muted" as const, mutedUntil: new Date(Date.now() + 24 * 3600_000) }
   if (group.problemIds.length) await ctx.db.update(problems).set(patch).where(inArray(problems.id, group.problemIds))
+  changed(ctx, "problems", "overview")
   await ctx.audit({
     actor: `telegram:${who}`,
     action: action === "r" ? "Problem resolved" : "Problem muted for 24 hours",

@@ -43,6 +43,7 @@ import {
 } from "@/components/ui/sidebar"
 import { ApiError, useApi } from "@/lib/api"
 import { authClient } from "@/lib/auth-client"
+import { useLiveUpdates } from "@/lib/live"
 import { cn } from "@/lib/utils"
 
 type NavItem = { to: string; label: string; icon: typeof Bug; badge?: "problems" }
@@ -196,6 +197,7 @@ function UserMenu() {
 
 /** Signed-in layout: shadcn inset sidebar, breadcrumb header, user menu. */
 export function AppShell() {
+  useLiveUpdates()
   const location = useLocation()
   const base = `/${location.pathname.split("/")[1] ?? ""}`
   return (
@@ -235,7 +237,7 @@ export function Page({
   children: React.ReactNode
 }) {
   return (
-    <div className="flex-1 space-y-6 p-6">
+    <div className="flex-1 space-y-6 p-4 md:p-6">
       {(title || actions) && (
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>

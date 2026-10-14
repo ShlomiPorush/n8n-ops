@@ -2,8 +2,10 @@ import type { Hono } from "hono"
 import type { Ctx } from "./context.ts"
 import { instances } from "./db/schema.ts"
 import type { Env } from "./http/types.ts"
+import { mcpRoutes, restRoutes } from "./routes/agent.ts"
 import { alertTestRoutes, telegramWebhookRoutes } from "./routes/alerts.ts"
 import { backupRoutes } from "./routes/backups.ts"
+import { eventRoutes } from "./routes/events.ts"
 import { instanceRoutes } from "./routes/instances.ts"
 import { problemRoutes } from "./routes/problems.ts"
 import { workerApiRoutes } from "./routes/worker-api.ts"
@@ -27,6 +29,9 @@ export function features(ctx: Ctx, extra: { mounts?: Mount[]; jobs?: Job[] } = {
     { path: "/api/worker", router: workerApiRoutes(ctx) as unknown as Hono<Env> },
     { path: "/api/backups", router: backupRoutes(ctx) },
     { path: "/api/workflows", router: workflowRoutes(ctx) },
+    { path: "/api/events", router: eventRoutes(ctx) },
+    { path: "/api/v1", router: restRoutes(ctx) },
+    { path: "/mcp", router: mcpRoutes(ctx) },
     ...(extra.mounts ?? []),
   ]
   const jobs: Job[] = [

@@ -13,6 +13,7 @@
     "@aws-sdk/s3-request-presigner": "3.1151.0",
     "@hono/node-server": "2.1.5",
     "@hono/zod-validator": "0.9.1",
+    "@modelcontextprotocol/sdk": "1.32.1",
     "@n8n-ops/shared": "workspace:*",
     "age-encryption": "0.3.1",
     "better-auth": "1.7.7",

@@ -1,4 +1,4 @@
-import { useNavigate } from "react-router"
+import { Link, useNavigate } from "react-router"
 import { Page } from "@/app/shell"
 import { Dot, type HealthState, TimeAgo, Tone } from "@/components/status"
 import { Badge } from "@/components/ui/badge"
@@ -39,6 +39,7 @@ type Overview = {
 export function OverviewPage() {
   const navigate = useNavigate()
   const overview = useApi<Overview>("/overview", { refetchInterval: 15_000 })
+  const checklist = useApi<{ telegram: boolean; storage: boolean; instance: boolean }>("/setup/checklist")
   const instances = useApi<{ latestVersion: string | null; instances: InstanceRow[] }>("/instances", {
     refetchInterval: 15_000,
   })
@@ -80,6 +81,36 @@ export function OverviewPage() {
         <StatCard label="Open problems" value={o?.stats.openProblems ?? 0} />
         <StatCard label="Last backup" value={<TimeAgo value={o?.stats.lastBackupAt} />} />
       </div>
+
+      {checklist.data && (!checklist.data.telegram || !checklist.data.storage || !checklist.data.instance) && (
+        <Card className="border-amber-500/50">
+          <CardHeader>
+            <CardTitle>Finish setting up</CardTitle>
+            <CardDescription>
+              {[
+                !checklist.data.instance && (
+                  <Link key="i" to="/instances" className="underline">
+                    Add an n8n instance
+                  </Link>
+                ),
+                !checklist.data.telegram && (
+                  <Link key="t" to="/settings/telegram" className="underline">
+                    connect Telegram for alerts
+                  </Link>
+                ),
+                !checklist.data.storage && (
+                  <Link key="s" to="/settings/storage" className="underline">
+                    set backup storage
+                  </Link>
+                ),
+              ]
+                .filter(Boolean)
+                .flatMap((el, i) => (i === 0 ? [el] : [", ", el]))}
+              .
+            </CardDescription>
+          </CardHeader>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>

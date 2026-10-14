@@ -1,3 +1,4 @@
+import type { EventEmitter } from "node:events"
 import type { Auth } from "./auth/auth.ts"
 import type { Db } from "./db/client.ts"
 import type { Audit } from "./lib/audit.ts"
@@ -15,6 +16,14 @@ export type Ctx = {
   appKeyPath: string
   checkDatabase: () => Promise<boolean>
   log: Logger
+  /** "change" events carry the list of UI areas whose data changed, for live updates. */
+  events: EventEmitter
+}
+
+export type Topic = "problems" | "instances" | "backups" | "workflows" | "workers" | "overview"
+
+export function changed(ctx: Pick<Ctx, "events">, ...topics: Topic[]) {
+  ctx.events?.emit("change", topics)
 }
 
 export type Logger = {

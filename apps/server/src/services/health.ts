@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm"
-import type { Ctx } from "../context.ts"
+import { type Ctx, changed } from "../context.ts"
 import { type Health, instances } from "../db/schema.ts"
 import { parseQueueMetrics, probe, type QueueMetrics } from "../n8n/client.ts"
 import { setCondition } from "./alerts.ts"
@@ -66,6 +66,7 @@ export async function applyHealth(ctx: Ctx, instance: Instance, report: HealthRe
     .set({ health, healthDetail: { ...report, backlogActive }, healthCheckedAt: new Date() })
     .where(eq(instances.id, instance.id))
 
+  if (health !== instance.health) changed(ctx, "instances", "overview")
   const name = instance.name
   await setCondition(ctx, `down:${instance.id}`, !report.main.ok, {
     kind: "health",

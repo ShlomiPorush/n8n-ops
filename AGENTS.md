@@ -4,7 +4,7 @@
 
 n8n-ops is a self-hosted operations console for many n8n instances: failure monitoring and problem grouping, Telegram alerts and email reports, MCP and REST access for agents, encrypted backups to S3-compatible storage, and instance consolidation.
 
-**Stage: foundation done, no product features yet.**
+**Stage: v1 implemented; not released or deployed yet.**
 
 - Product requirements: `docs/requirements.md`
 - Foundation and repository contract (what exists, decisions, scripts, CI): `docs/project-foundation.md`
@@ -22,10 +22,10 @@ Items marked planned in those documents do not exist yet. Check the repository b
 
 ## Layout
 
-- `apps/server`: Hono on Node.js, Drizzle with PostgreSQL (migrations in `apps/server/drizzle`, run on start). Serves the built UI. Never mounts the Docker socket.
-- `apps/web`: React, Vite, Tailwind CSS, shadcn/ui (Vega style). Add components with the shadcn CLI from `apps/web`.
+- `apps/server`: Hono on Node.js, Drizzle with PostgreSQL (migrations in `apps/server/drizzle`, generated with `drizzle-kit generate`, run on start). `src/routes` are HTTP routers, `src/services` hold the logic (problems, alerts, health, backups, workers, workflows, moves, agent queries), `src/features.ts` mounts routers and scheduled jobs. Serves the built UI. Never mounts the Docker socket.
+- `apps/web`: React, Vite, Tailwind CSS, shadcn/ui (Vega style), React Router, TanStack Query. Add components with the shadcn CLI from `apps/web`. End-to-end specs in `apps/web/e2e` run in file order against the test stack and share state through `test-results/e2e-state.json`.
 - `apps/worker`: outbound-only agent for an n8n Docker host. The only component with the Docker socket. Never gets database credentials.
-- `packages/shared`: zod schemas and types shared by server and UI. Imported as TypeScript source; no build step.
+- `packages/shared`: schemas, the API key capability table and the tar format, shared by server, worker and UI. `@n8n-ops/shared/archive` (age + gzip) is Node only; never import it from the UI. Imported as TypeScript source; no build step.
 - `config/tsconfig.base.json`: shared compiler settings. `biome.json` stays at the root (see traps).
 - `docker/`: Dockerfiles with per-Dockerfile ignore files, the toolchain image, the development Compose template and `dev.env`.
 

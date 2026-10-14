@@ -6,6 +6,9 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Added
 
+- Read-only MCP server at `/mcp` and REST API at `/api/v1` for agents, with scoped tokens and MCP reads in the audit log.
+- Live updates in the UI through server-sent events; problem and list pages take the full screen on phones.
+- Logins in the audit log; workflow counts on the instance page; a finish-setup reminder on the Overview.
 - Worker for n8n Docker hosts: pairs with a one-time token, outbound only, runs n8n's CLI through the Docker socket; health collection on the host for endpoints the server cannot reach.
 - Backups: workflows and decrypted credentials through the worker (workflows and credential names through the API without one), age-encrypted before upload, verified in S3-compatible storage, scheduled per instance with daily/weekly/monthly retention, stale and failure alerts, nightly backup of the n8n-ops database.
 - Restore of one workflow with its credentials from an archive with the private key; export of decrypted credentials as an age-encrypted file.

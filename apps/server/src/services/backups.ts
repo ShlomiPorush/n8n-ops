@@ -3,7 +3,7 @@ import { promisify } from "node:util"
 import { entryText, textEntry } from "@n8n-ops/shared"
 import { type Manifest, openArchive, sealArchive, sealBytes } from "@n8n-ops/shared/archive"
 import { and, desc, eq, gt, isNotNull, isNull } from "drizzle-orm"
-import type { Ctx } from "../context.ts"
+import { type Ctx, changed } from "../context.ts"
 import { alertState, backupRuns, instances, workers } from "../db/schema.ts"
 import type { N8nWorkflow } from "../n8n/client.ts"
 import { enqueueAlert, setCondition } from "./alerts.ts"
@@ -144,6 +144,7 @@ export async function finishRun(
     .where(eq(backupRuns.id, runId))
     .returning()
   if (!run) return
+  changed(ctx, "backups", "overview", "instances")
   const [instance] = run.instanceId ? await ctx.db.select().from(instances).where(eq(instances.id, run.instanceId)) : []
   const name = instance?.name ?? "n8n-ops"
   if (!outcome.ok) {

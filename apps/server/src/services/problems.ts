@@ -1,5 +1,5 @@
 import { and, eq, isNull, lt, sql } from "drizzle-orm"
-import type { Ctx } from "../context.ts"
+import { type Ctx, changed } from "../context.ts"
 import { failures, instances, problems } from "../db/schema.ts"
 import { sha256 } from "../lib/crypto.ts"
 import type { N8nExecution } from "../n8n/client.ts"
@@ -140,6 +140,7 @@ export async function pollInstance(ctx: Ctx, instance: Instance) {
       .update(instances)
       .set({ executionCursor: newest, firstSyncDone: true, lastPollAt: new Date(), lastPollError: null })
       .where(eq(instances.id, instance.id))
+    if (read > 0) changed(ctx, "problems", "overview", "instances")
     return { read, silent }
   } catch (error) {
     await ctx.db

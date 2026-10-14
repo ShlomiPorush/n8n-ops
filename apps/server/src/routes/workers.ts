@@ -52,6 +52,7 @@ export function workerRoutes(ctx: Ctx) {
       token,
       expiresInMinutes: PAIRING_TTL_MS / 60_000,
       command: [
+        "mkdir -p /srv/n8n-ops-worker && chown 1000:1000 /srv/n8n-ops-worker",
         "docker run -d --name n8n-ops-worker --restart unless-stopped \\",
         "  --group-add $(stat -c %g /var/run/docker.sock) \\",
         "  -v /var/run/docker.sock:/var/run/docker.sock \\",

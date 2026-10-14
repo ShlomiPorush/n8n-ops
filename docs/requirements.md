@@ -1,6 +1,6 @@
 # n8n-ops: Requirements (v1)
 
-Status: approved v1 product requirements (2026-10-14). Nothing described here is implemented yet; see [project-foundation.md](project-foundation.md) for what exists and the order of work.
+Status: approved v1 product requirements (2026-10-14), implemented and verified in the test stack; not yet released. See [project-foundation.md](project-foundation.md) for what exists.
 
 Environment-specific details (instance names, hosts, local paths) are kept in `docs/private/`, which is not tracked.
 

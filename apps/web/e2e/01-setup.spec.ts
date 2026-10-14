@@ -62,6 +62,7 @@ test("signing in again requires the two-factor code", async ({ page }) => {
   await page.goto("/audit")
   await expect(page.getByRole("cell", { name: "Account created" })).toBeVisible()
   await expect(page.getByRole("cell", { name: "Backup key generated" })).toBeVisible()
+  await expect(page.getByRole("cell", { name: "Login", exact: true }).first()).toBeVisible()
 })
 
 test("the API refuses requests without a session", async ({ request }) => {

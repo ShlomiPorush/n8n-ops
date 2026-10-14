@@ -3,7 +3,7 @@ import { and, asc, count, desc, eq, isNull } from "drizzle-orm"
 import { Hono } from "hono"
 import { z } from "zod"
 import type { Ctx } from "../context.ts"
-import { backupRuns, instances, problems, workers } from "../db/schema.ts"
+import { backupRuns, instances, problems, workers, workflows } from "../db/schema.ts"
 import { requireUser } from "../http/middleware.ts"
 import { actorName, type Env } from "../http/types.ts"
 import { instanceOverridesSchema } from "../lib/settings.ts"
@@ -138,9 +138,18 @@ export function instanceRoutes(ctx: Ctx) {
     const worker = row.workerId
       ? (await ctx.db.select().from(workers).where(eq(workers.id, row.workerId)))[0]
       : undefined
+    const wfs = await ctx.db
+      .select({ active: workflows.active, runs: workflows.runs30d })
+      .from(workflows)
+      .where(eq(workflows.instanceId, row.id))
     return c.json({
       ...instanceView(row, { openProblems: open?.n ?? 0, hasWorker: Boolean(worker && !worker.revokedAt) }),
       worker: worker ? { id: worker.id, name: worker.name, lastSeenAt: worker.lastSeenAt } : null,
+      workflowCounts: {
+        total: wfs.length,
+        active: wfs.filter((w) => w.active).length,
+        runs30d: wfs.reduce((n, w) => n + w.runs, 0),
+      },
       effectiveSettings: await ctx.settings.forInstance(row.overrides),
       latestVersion: await latestN8nVersion(),
     })

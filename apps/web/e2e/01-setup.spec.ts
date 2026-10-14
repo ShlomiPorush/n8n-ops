@@ -1,11 +1,10 @@
 import { expect, test } from "@playwright/test"
+import { password, saveSecret, username } from "./helpers.ts"
 import { freshTotp } from "./totp.ts"
 
 // Runs against a fresh stack (empty database), in order: first run, sign out, sign in again.
 test.describe.configure({ mode: "serial" })
 
-const username = "operator"
-const password = "correct horse battery staple"
 let secret = ""
 
 test("the server reports ready", async ({ request }) => {
@@ -26,6 +25,7 @@ test("a fresh install leads through account, two-factor and backup key", async (
   await expect(page.getByText("Set up two-factor authentication")).toBeVisible()
   secret = (await page.getByTestId("totp-secret").textContent()) ?? ""
   expect(secret).toMatch(/^[A-Z2-7]+=*$/)
+  saveSecret(secret)
   await page.getByLabel("Two-factor code").fill(await freshTotp(secret))
 
   await expect(page.getByText("Your backup key")).toBeVisible()

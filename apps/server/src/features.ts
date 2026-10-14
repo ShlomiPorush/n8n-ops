@@ -1,18 +1,22 @@
 import type { Hono } from "hono"
 import type { Ctx } from "./context.ts"
 import type { Env } from "./http/types.ts"
+import { alertTestRoutes, telegramWebhookRoutes } from "./routes/alerts.ts"
+import { instanceRoutes } from "./routes/instances.ts"
+import { problemRoutes } from "./routes/problems.ts"
+import { type Job, startScheduler } from "./services/scheduler.ts"
 
-/** Feature routers and background jobs. Each feature registers here. */
-export function features(_ctx: Ctx): { mounts: { path: string; router: Hono<Env> }[]; start: () => () => void } {
-  const mounts: { path: string; router: Hono<Env> }[] = []
-  const starters: (() => () => void)[] = []
+/** Feature routers and background jobs. */
+export function features(ctx: Ctx, extra: { mounts?: { path: string; router: Hono<Env> }[]; jobs?: Job[] } = {}) {
+  const mounts: { path: string; router: Hono<Env> }[] = [
+    { path: "/api/instances", router: instanceRoutes(ctx) },
+    { path: "/api/problems", router: problemRoutes(ctx) },
+    { path: "/api/alerts", router: alertTestRoutes(ctx) },
+    { path: "/api/telegram", router: telegramWebhookRoutes(ctx) },
+    ...(extra.mounts ?? []),
+  ]
   return {
     mounts,
-    start() {
-      const stops = starters.map((s) => s())
-      return () => {
-        for (const stop of stops) stop()
-      }
-    },
+    start: () => startScheduler(ctx, extra.jobs ?? []),
   }
 }

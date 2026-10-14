@@ -37,3 +37,13 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${N8N_OPS_DATA_DIR:?N8N_OPS_DATA_DIR is set by the scripts}/worker:/data
+
+  # Disposable n8n for development and the end-to-end tests. No persistent data.
+  n8n:
+    image: n8nio/n8n:2.44.0
+    env_file: docker/n8n-dev.env
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:5678/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
+      interval: 5s
+      timeout: 5s
+      retries: 30

@@ -6,8 +6,10 @@ export class ApiError extends Error {
     readonly status: number,
     readonly code: string,
     readonly issues?: { path: (string | number)[]; message: string }[],
+    /** Human explanation sent by the server, when it has one. */
+    readonly detail?: string,
   ) {
-    super(issues?.length ? issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") : code)
+    super(detail ?? (issues?.length ? issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") : code))
   }
 }
 
@@ -23,8 +25,8 @@ export async function api<T>(path: string, init: RequestInit & { json?: unknown 
   const text = await res.text()
   const body = text ? safeJson(text) : null
   if (!res.ok) {
-    const b = body as { error?: string; issues?: ApiError["issues"] } | null
-    throw new ApiError(res.status, b?.error ?? `http_${res.status}`, b?.issues)
+    const b = body as { error?: string; issues?: ApiError["issues"]; message?: string } | null
+    throw new ApiError(res.status, b?.error ?? `http_${res.status}`, b?.issues, b?.message)
   }
   return body as T
 }
@@ -57,7 +59,7 @@ export function useApi<T>(path: string | null, options: { refetchInterval?: numb
 
 /** A mutation that shows a toast on error and invalidates the given query paths on success. */
 export function useApiMutation<TBody, TResult = unknown>(
-  method: "POST" | "PUT" | "DELETE",
+  method: "POST" | "PUT" | "PATCH" | "DELETE",
   path: string | ((body: TBody) => string),
   { invalidate = [], success }: { invalidate?: string[]; success?: string } = {},
 ) {
@@ -84,7 +86,7 @@ export function describeError(error: unknown): string {
       not_found: "Not found.",
       internal_error: "Something went wrong on the server. Check the server logs.",
     }
-    return known[error.code] ?? error.message
+    return error.detail ?? known[error.code] ?? error.message
   }
   return error instanceof Error ? error.message : String(error)
 }

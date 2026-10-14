@@ -1,18 +1,26 @@
-import { drizzle } from "drizzle-orm/postgres-js"
+import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js"
 import { migrate } from "drizzle-orm/postgres-js/migrator"
 import postgres from "postgres"
+import * as schema from "./schema.ts"
 
-export type Database = ReturnType<typeof createDatabase>
+export type Db = PostgresJsDatabase<typeof schema>
 
-export function createDatabase(url: string) {
+export type Database = {
+  db: Db
+  migrate(migrationsFolder: string): Promise<void>
+  ping(): Promise<boolean>
+  close(): Promise<void>
+}
+
+export function createDatabase(url: string): Database {
   const sql = postgres(url, { max: 10, onnotice: () => {} })
-  const db = drizzle(sql)
+  const db = drizzle(sql, { schema })
   return {
     db,
-    async migrate(migrationsFolder: string) {
+    async migrate(migrationsFolder) {
       await migrate(db, { migrationsFolder })
     },
-    async ping(): Promise<boolean> {
+    async ping() {
       try {
         await sql`select 1`
         return true

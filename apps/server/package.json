@@ -4,16 +4,20 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "esbuild src/index.ts src/healthcheck.ts --bundle --platform=node --target=node24 --format=esm --outdir=dist --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\"",
+    "build": "esbuild src/index.ts src/healthcheck.ts src/cli.ts --bundle --platform=node --target=node24 --format=esm --outdir=dist --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\"",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run"
   },
   "dependencies": {
     "@hono/node-server": "2.1.5",
+    "@hono/zod-validator": "0.9.1",
     "@n8n-ops/shared": "workspace:*",
+    "age-encryption": "0.3.1",
+    "better-auth": "1.7.7",
     "drizzle-orm": "0.45.4",
     "hono": "4.13.13",
-    "postgres": "3.4.9"
+    "postgres": "3.4.9",
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@types/node": "24.19.2",

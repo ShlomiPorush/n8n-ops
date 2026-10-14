@@ -1,22 +1,49 @@
 import type { Hono } from "hono"
 import type { Ctx } from "./context.ts"
+import { instances } from "./db/schema.ts"
 import type { Env } from "./http/types.ts"
 import { alertTestRoutes, telegramWebhookRoutes } from "./routes/alerts.ts"
+import { backupRoutes } from "./routes/backups.ts"
 import { instanceRoutes } from "./routes/instances.ts"
 import { problemRoutes } from "./routes/problems.ts"
+import { workerApiRoutes } from "./routes/worker-api.ts"
+import { workerRoutes } from "./routes/workers.ts"
+import { credentialExportRoutes, workflowRoutes } from "./routes/workflows.ts"
+import { enqueueProbes, scheduleBackups } from "./services/backups.ts"
 import { type Job, startScheduler } from "./services/scheduler.ts"
+import { syncWorkflows } from "./services/workflows.ts"
+
+type Mount = { path: string; router: Hono<Env> }
 
 /** Feature routers and background jobs. */
-export function features(ctx: Ctx, extra: { mounts?: { path: string; router: Hono<Env> }[]; jobs?: Job[] } = {}) {
-  const mounts: { path: string; router: Hono<Env> }[] = [
+export function features(ctx: Ctx, extra: { mounts?: Mount[]; jobs?: Job[] } = {}) {
+  const mounts: Mount[] = [
     { path: "/api/instances", router: instanceRoutes(ctx) },
+    { path: "/api/instances", router: credentialExportRoutes(ctx) },
     { path: "/api/problems", router: problemRoutes(ctx) },
     { path: "/api/alerts", router: alertTestRoutes(ctx) },
     { path: "/api/telegram", router: telegramWebhookRoutes(ctx) },
+    { path: "/api/workers", router: workerRoutes(ctx) },
+    { path: "/api/worker", router: workerApiRoutes(ctx) as unknown as Hono<Env> },
+    { path: "/api/backups", router: backupRoutes(ctx) },
+    { path: "/api/workflows", router: workflowRoutes(ctx) },
     ...(extra.mounts ?? []),
   ]
-  return {
-    mounts,
-    start: () => startScheduler(ctx, extra.jobs ?? []),
-  }
+  const jobs: Job[] = [
+    { name: "backups", everyMs: 5 * 60_000, run: scheduleBackups },
+    { name: "probes", everyMs: 10_000, run: enqueueProbes },
+    {
+      name: "workflow-map",
+      everyMs: 30 * 60_000,
+      run: async (c) => {
+        for (const instance of await c.db.select().from(instances)) {
+          await syncWorkflows(c, instance).catch((e: Error) =>
+            c.log.warn("workflow sync failed", { instance: instance.name, error: e.message }),
+          )
+        }
+      },
+    },
+    ...(extra.jobs ?? []),
+  ]
+  return { mounts, start: () => startScheduler(ctx, jobs) }
 }

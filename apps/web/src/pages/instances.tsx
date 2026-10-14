@@ -1,6 +1,7 @@
-import { CheckCircle2, Pencil, Plus, RefreshCw, Trash2, X } from "lucide-react"
+import { CheckCircle2, Download, Pencil, Plus, RefreshCw, Trash2, X } from "lucide-react"
 import { useEffect, useState } from "react"
 import { useNavigate, useParams } from "react-router"
+import { toast } from "sonner"
 import { ListWithPanel } from "@/components/list-panel"
 import { Dot, type HealthState, TimeAgo, Tone } from "@/components/status"
 import { Badge } from "@/components/ui/badge"
@@ -251,6 +252,11 @@ function InstanceDetail({ id }: { id: string }) {
           <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
             <Pencil /> Edit
           </Button>
+          {i.worker && i.containerName && (
+            <Button variant="outline" size="sm" onClick={() => void exportCredentials(i.id, i.name)}>
+              <Download /> Export credentials
+            </Button>
+          )}
           <Button variant="outline" size="sm" className="text-destructive" onClick={() => setDeleting(true)}>
             <Trash2 /> Remove
           </Button>
@@ -411,6 +417,25 @@ function InstanceDetail({ id }: { id: string }) {
       </Dialog>
     </div>
   )
+}
+
+/** Decrypted credentials, encrypted to the backup key, for moving them to another system. */
+async function exportCredentials(id: string, name: string) {
+  const loading = toast.loading("Asking the worker to export the credentials…")
+  try {
+    const res = await fetch(`/api/instances/${id}/export-credentials`, { method: "POST", credentials: "same-origin" })
+    if (!res.ok)
+      throw new Error(((await res.json().catch(() => ({}))) as { message?: string }).message ?? `HTTP ${res.status}`)
+    const url = URL.createObjectURL(await res.blob())
+    const a = document.createElement("a")
+    a.href = url
+    a.download = `${name}-credentials.json.age`
+    a.click()
+    URL.revokeObjectURL(url)
+    toast.success("Downloaded. Decrypt with: age -d -i backup-key.txt", { id: loading })
+  } catch (error) {
+    toast.error((error as Error).message, { id: loading })
+  }
 }
 
 function Stat({ label, value }: { label: string; value: React.ReactNode }) {

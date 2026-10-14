@@ -9,6 +9,8 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "3.1151.0",
+    "@aws-sdk/s3-request-presigner": "3.1151.0",
     "@hono/node-server": "2.1.5",
     "@hono/zod-validator": "0.9.1",
     "@n8n-ops/shared": "workspace:*",

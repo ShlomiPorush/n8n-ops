@@ -120,6 +120,8 @@ run_integration() {
   N8N_OPS_DATA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/n8n-ops-verify.XXXXXX")"
   export N8N_OPS_DATA_DIR
   prepare_data_dirs "$N8N_OPS_DATA_DIR"
+  # The end-to-end tests drop the worker's pairing token into its data directory.
+  docker run --rm --user 0 -v "$N8N_OPS_DATA_DIR/worker:/target" "$TOOLCHAIN_IMAGE" chmod 0777 /target
   trap cleanup_stack EXIT
   stack up -d --remove-orphans --wait --wait-timeout 180 || {
     stack ps
@@ -137,8 +139,12 @@ run_integration() {
 
   info "End-to-end tests"
   docker run --rm --network "${PROJECT}_default" --user "$(id -u):$(id -g)" -e HOME=/tmp -e CI="${CI:-}" \
-    -e E2E_BASE_URL=http://server:8080 -v "$REPO_ROOT:/repo" -w /repo/apps/web \
-    "$PLAYWRIGHT_IMAGE" node node_modules/@playwright/test/cli.js test || die "end-to-end tests failed"
+    -e E2E_BASE_URL=http://server:8080 -e E2E_N8N_CONTAINER="${PROJECT}-n8n-1" \
+    -v "$N8N_OPS_DATA_DIR/worker:/worker-data" -v "$REPO_ROOT:/repo" -w /repo/apps/web \
+    "$PLAYWRIGHT_IMAGE" node node_modules/@playwright/test/cli.js test || {
+    stack logs --tail 60 server worker
+    die "end-to-end tests failed"
+  }
 }
 
 main() {

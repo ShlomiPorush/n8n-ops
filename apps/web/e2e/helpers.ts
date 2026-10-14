@@ -6,15 +6,26 @@ export const username = "operator"
 export const password = "correct horse battery staple"
 const stateFile = "test-results/e2e-state.json"
 
-/** Shares the TOTP secret between spec files (they run in order, in one worker). */
-export function saveSecret(secret: string) {
-  mkdirSync("test-results", { recursive: true })
-  writeFileSync(stateFile, JSON.stringify({ secret }))
+type State = { secret?: string; privateKey?: string; apiKey?: string }
+
+function loadState(): State {
+  try {
+    return JSON.parse(readFileSync(stateFile, "utf8")) as State
+  } catch {
+    return {}
+  }
 }
 
-export function loadSecret(): string {
-  return (JSON.parse(readFileSync(stateFile, "utf8")) as { secret: string }).secret
+/** Shares the TOTP secret and the backup private key between spec files (they run in order, in one worker). */
+export function saveState(patch: State) {
+  mkdirSync("test-results", { recursive: true })
+  writeFileSync(stateFile, JSON.stringify({ ...loadState(), ...patch }))
 }
+
+export const saveSecret = (secret: string) => saveState({ secret })
+export const loadSecret = () => loadState().secret ?? ""
+export const loadPrivateKey = () => loadState().privateKey ?? ""
+export const currentApiKey = () => loadState().apiKey ?? ""
 
 export async function signIn(page: Page) {
   await page.goto("/login")
@@ -65,7 +76,14 @@ export async function n8nSetup(): Promise<string> {
     body: JSON.stringify({ label: "n8n-ops", scopes: scopes.data, expiresAt: null }),
   })
   expect(key.ok, await key.clone().text()).toBe(true)
-  return ((await key.json()) as { data: { rawApiKey: string } }).data.rawApiKey
+  const apiKey = ((await key.json()) as { data: { rawApiKey: string } }).data.rawApiKey
+  saveState({ apiKey })
+  return apiKey
+}
+
+/** Calls the test n8n with the saved API key. */
+export function n8nApi(path: string, init: RequestInit = {}) {
+  return n8n(path, { ...init, apiKey: currentApiKey() })
 }
 
 /** Creates and activates a workflow whose Code node always throws. Returns its webhook path. */

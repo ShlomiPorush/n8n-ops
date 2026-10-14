@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test"
-import { password, saveSecret, username } from "./helpers.ts"
+import { password, saveSecret, saveState, username } from "./helpers.ts"
 import { freshTotp } from "./totp.ts"
 
 // Runs against a fresh stack (empty database), in order: first run, sign out, sign in again.
@@ -31,6 +31,7 @@ test("a fresh install leads through account, two-factor and backup key", async (
   await expect(page.getByText("Your backup key")).toBeVisible()
   await page.getByRole("button", { name: "Generate key pair" }).click()
   await expect(page.getByTestId("private-key")).toContainText("AGE-SECRET-KEY-1")
+  saveState({ privateKey: ((await page.getByTestId("private-key").textContent()) ?? "").trim() })
   await page.getByLabel(/I saved the private key/).check()
   await page.getByRole("button", { name: "Continue" }).click()
 

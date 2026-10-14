@@ -3,6 +3,8 @@ packages:
   - packages/*
 minimumReleaseAgeExclude:
   - '@hono/node-server@2.1.5'
+  - '@aws-sdk/client-s3@3.1151.0'
+  - '@aws-sdk/s3-request-presigner@3.1151.0'
 
 # Packages allowed to run install scripts. esbuild verifies its platform binary.
 allowBuilds:

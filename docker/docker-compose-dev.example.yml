@@ -47,3 +47,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 30
+
+  # S3-compatible storage for development and the end-to-end tests (S3Mock, in memory).
+  s3:
+    image: adobe/s3mock:4.11.0
+    env_file: docker/s3-dev.env

@@ -17,6 +17,18 @@ COPY apps/web apps/web
 RUN pnpm --filter @n8n-ops/web run build && pnpm --filter @n8n-ops/server run build
 
 FROM node:24.21.0-bookworm-slim
+# pg_dump for the nightly backup of the n8n-ops database (must match the PostgreSQL 18 server).
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates curl \
+  && install -d /usr/share/postgresql-common/pgdg \
+  && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+  && echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" \
+    > /etc/apt/sources.list.d/pgdg.list \
+  && apt-get update \
+  && apt-get install -y --no-install-recommends postgresql-client-18 \
+  && apt-get purge -y curl \
+  && apt-get autoremove -y \
+  && rm -rf /var/lib/apt/lists/*
 ARG VERSION=dev
 ENV NODE_ENV=production \
     N8N_OPS_VERSION=${VERSION} \

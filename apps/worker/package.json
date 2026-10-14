@@ -12,5 +12,9 @@
     "@types/node": "24.19.2",
     "esbuild": "0.28.2",
     "vitest": "5.0.4"
+  },
+  "dependencies": {
+    "@n8n-ops/shared": "workspace:*",
+    "age-encryption": "0.3.1"
   }
 }

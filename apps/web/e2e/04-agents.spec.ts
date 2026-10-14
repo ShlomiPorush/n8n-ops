@@ -109,3 +109,20 @@ test("on a phone the problem detail takes the whole screen", async () => {
   await expect(page.getByRole("button", { name: "Close panel" })).toHaveCount(0)
   await expect(page.getByText("failed here")).toBeVisible()
 })
+
+test("the theme follows the system until light or dark is chosen", async () => {
+  await page.setViewportSize({ width: 1280, height: 800 })
+  await page.emulateMedia({ colorScheme: "dark" })
+  await page.goto("/")
+  await expect(page.locator("html")).toHaveClass(/\bdark\b/)
+
+  await page.getByRole("button", { name: "Account menu" }).click()
+  await page.getByRole("menuitemradio", { name: "Light" }).click()
+  await expect(page.locator("html")).not.toHaveClass(/\bdark\b/)
+  await page.reload()
+  await expect(page.locator("html")).not.toHaveClass(/\bdark\b/)
+
+  await page.getByRole("button", { name: "Account menu" }).click()
+  await page.getByRole("menuitemradio", { name: "System" }).click()
+  await expect(page.locator("html")).toHaveClass(/\bdark\b/)
+})

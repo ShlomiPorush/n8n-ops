@@ -1,4 +1,5 @@
 import { QueryClientProvider } from "@tanstack/react-query"
+import { ThemeProvider } from "next-themes"
 import { StrictMode } from "react"
 import { createRoot } from "react-dom/client"
 import { createBrowserRouter, Navigate, RouterProvider } from "react-router"
@@ -8,7 +9,6 @@ import { AppShell, RequireAuth } from "@/app/shell"
 import { Toaster } from "@/components/ui/sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { queryClient } from "@/lib/api"
-import { useSystemTheme } from "@/lib/theme"
 import { LoginPage } from "@/pages/auth/login"
 import { SetupPage } from "@/pages/auth/setup"
 
@@ -23,14 +23,22 @@ const router = createBrowserRouter([
 ])
 
 function Root() {
-  useSystemTheme()
   return (
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <RouterProvider router={router} />
-        <Toaster />
-      </TooltipProvider>
-    </QueryClientProvider>
+    // Light, dark or the operating system (default); the choice is kept in this browser.
+    <ThemeProvider
+      attribute="class"
+      defaultTheme="system"
+      enableSystem
+      disableTransitionOnChange
+      storageKey="n8n-ops-theme"
+    >
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <RouterProvider router={router} />
+          <Toaster />
+        </TooltipProvider>
+      </QueryClientProvider>
+    </ThemeProvider>
   )
 }
 

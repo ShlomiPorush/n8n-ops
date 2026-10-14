@@ -5,12 +5,16 @@ import {
   DatabaseBackup,
   LayoutDashboard,
   LogOut,
+  Monitor,
+  Moon,
   ScrollText,
   Server,
   Settings,
   ShieldCheck,
+  Sun,
   Workflow,
 } from "lucide-react"
+import { useTheme } from "next-themes"
 import { Navigate, NavLink, Outlet, useLocation, useNavigate } from "react-router"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Breadcrumb, BreadcrumbItem, BreadcrumbList, BreadcrumbPage } from "@/components/ui/breadcrumb"
@@ -20,6 +24,8 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
@@ -163,6 +169,7 @@ function UserMenu() {
   const navigate = useNavigate()
   const client = useQueryClient()
   const session = authClient.useSession()
+  const { theme, setTheme } = useTheme()
   const name = (session.data?.user as { username?: string } | undefined)?.username ?? session.data?.user.name ?? ""
   return (
     <DropdownMenu>
@@ -181,6 +188,19 @@ function UserMenu() {
             Two-factor on
           </div>
         </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Theme</DropdownMenuLabel>
+        <DropdownMenuRadioGroup value={theme ?? "system"} onValueChange={setTheme}>
+          <DropdownMenuRadioItem value="light">
+            <Sun /> Light
+          </DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="dark">
+            <Moon /> Dark
+          </DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="system">
+            <Monitor /> System
+          </DropdownMenuRadioItem>
+        </DropdownMenuRadioGroup>
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={() => navigate("/settings/account")}>
           <Settings /> Account settings

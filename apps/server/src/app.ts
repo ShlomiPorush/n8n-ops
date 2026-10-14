@@ -44,6 +44,16 @@ export function createApp(ctx: Ctx, { webDir, mounts = [] }: AppOptions = {}) {
   })
 
   if (webDir) {
+    // Built files under assets/ have a content hash in their name and never change; everything else
+    // (index.html above all) is revalidated, so a new version shows on the next load.
+    app.use("/*", async (c, next) => {
+      await next()
+      if (!c.res.ok) return
+      c.res.headers.set(
+        "Cache-Control",
+        c.req.path.startsWith("/assets/") ? "public, max-age=31536000, immutable" : "no-cache",
+      )
+    })
     app.use("/*", serveStatic({ root: webDir }))
     // Single-page app: unknown paths get index.html so client-side routes work on reload.
     app.get("/*", serveStatic({ path: `${webDir}/index.html` }))

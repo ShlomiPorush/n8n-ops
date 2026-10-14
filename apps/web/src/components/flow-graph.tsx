@@ -1,14 +1,27 @@
+import { useEffect, useRef } from "react"
 import { cn } from "@/lib/utils"
 
 export type GraphNode = { name: string; type: string; state: "ok" | "failed" | "skipped"; column: number }
 
 /** The workflow drawn left to right by depth, with the failed node highlighted (requirement Q35: drawn by us). */
 export function FlowGraph({ nodes }: { nodes: GraphNode[] }) {
+  const scroller = useRef<HTMLDivElement>(null)
+  const failed = useRef<HTMLDivElement>(null)
+  // On a narrow screen the failed node can be past the right edge; bring it into view.
+  useEffect(() => {
+    const box = scroller.current
+    const node = failed.current
+    if (!box || !node || !nodes.length) return
+    box.scrollLeft = node.offsetLeft - box.clientWidth / 2 + node.offsetWidth / 2
+  }, [nodes])
   if (!nodes.length)
     return <p className="text-sm text-muted-foreground">The workflow structure is not available for this failure.</p>
   const columns = Math.max(...nodes.map((n) => n.column)) + 1
   return (
-    <div className="overflow-x-auto rounded-lg border bg-[radial-gradient(circle,var(--border)_1px,transparent_1px)] bg-[length:16px_16px] p-5">
+    <div
+      ref={scroller}
+      className="relative overflow-x-auto rounded-lg border bg-[radial-gradient(circle,var(--border)_1px,transparent_1px)] bg-[length:16px_16px] p-5"
+    >
       <div className="flex min-w-max items-center gap-0">
         {Array.from({ length: columns }, (_, col) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: the index is the column number itself
@@ -17,7 +30,11 @@ export function FlowGraph({ nodes }: { nodes: GraphNode[] }) {
               {nodes
                 .filter((n) => n.column === col)
                 .map((n) => (
-                  <div key={n.name} className={cn("w-32 text-center", n.state === "skipped" && "opacity-40")}>
+                  <div
+                    key={n.name}
+                    ref={n.state === "failed" ? failed : undefined}
+                    className={cn("w-32 text-center", n.state === "skipped" && "opacity-40")}
+                  >
                     <div
                       className={cn(
                         "mx-auto mb-1.5 grid min-h-14 w-28 place-items-center rounded-lg border-2 bg-card px-1 text-[11px] font-semibold break-all",

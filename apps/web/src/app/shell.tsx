@@ -75,16 +75,20 @@ export function RequireAuth() {
 
 function AppSidebar() {
   const summary = useApi<Summary>("/overview/summary", { refetchInterval: 30_000 })
+  const { pathname } = useLocation()
+  // The button must be the link itself (asChild): the badge is positioned as a sibling of the button.
   const renderItem = (item: NavItem) => (
     <SidebarMenuItem key={item.to}>
-      <NavLink to={item.to} end={item.to === "/"}>
-        {({ isActive }) => (
-          <SidebarMenuButton isActive={isActive} tooltip={item.label}>
-            <item.icon />
-            <span>{item.label}</span>
-          </SidebarMenuButton>
-        )}
-      </NavLink>
+      <SidebarMenuButton
+        asChild
+        isActive={item.to === "/" ? pathname === "/" : pathname.startsWith(item.to)}
+        tooltip={item.label}
+      >
+        <NavLink to={item.to} end={item.to === "/"}>
+          <item.icon />
+          <span>{item.label}</span>
+        </NavLink>
+      </SidebarMenuButton>
       {item.badge === "problems" && (summary.data?.openProblems ?? 0) > 0 && (
         <SidebarMenuBadge>{summary.data?.openProblems}</SidebarMenuBadge>
       )}

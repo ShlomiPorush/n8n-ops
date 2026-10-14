@@ -83,43 +83,51 @@ export function WorkflowsPage() {
       }
     >
       {ins && (
-        <div className="grid gap-4 md:grid-cols-3">
-          <Card>
-            <CardHeader>
-              <CardDescription>Duplicate workflows</CardDescription>
-              <CardTitle className="text-2xl">{ins.duplicateGroups.length}</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-1 text-sm">
-              {ins.duplicateGroups.slice(0, 5).map((g) => (
-                <div key={g.map((w) => w.workflowId).join()}>
-                  {g[0]?.name}{" "}
-                  <span className="text-muted-foreground">· {g.map((w) => w.instanceName).join(" = ")}</span>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader>
-              <CardDescription>Instances almost unused</CardDescription>
-              <CardTitle className="text-2xl">{ins.unusedInstances.length}</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-1 text-sm">
-              {ins.unusedInstances.map((u) => (
-                <Link key={u.id} to={`/instances/${u.id}`} className="block underline-offset-4 hover:underline">
-                  {u.name} · {u.runs30d === 0 ? "0 runs in 30 days" : "no active workflow"}
-                </Link>
-              ))}
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader>
-              <CardDescription>Inactive workflows</CardDescription>
-              <CardTitle className="text-2xl">{ins.inactive}</CardTitle>
-            </CardHeader>
-            <CardContent className="text-sm text-muted-foreground">
-              Candidates to archive before consolidating. Map read <TimeAgo value={ins.lastSyncedAt} />.
-            </CardContent>
-          </Card>
+        <div className="@container">
+          <div className="grid gap-4 @3xl:grid-cols-3">
+            <Card>
+              <CardHeader>
+                <CardDescription>Duplicate workflows</CardDescription>
+                <CardTitle className="text-2xl">{ins.duplicateGroups.length}</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-1 text-sm">
+                {ins.duplicateGroups.slice(0, 5).map((g) => (
+                  <div key={g.map((w) => w.workflowId).join()}>
+                    {g.map((w, i) => (
+                      <span key={w.workflowId}>
+                        {i > 0 && <span className="text-muted-foreground"> = </span>}
+                        {w.name} <span className="text-muted-foreground">({w.instanceName})</span>
+                      </span>
+                    ))}
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader>
+                <CardDescription>Instances almost unused</CardDescription>
+                <CardTitle className="text-2xl">{ins.unusedInstances.length}</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-1 text-sm">
+                {ins.unusedInstances.map((u) => (
+                  <Link key={u.id} to={`/instances/${u.id}`} className="block underline-offset-4 hover:underline">
+                    {u.name} · {u.runs30d === 0 ? "0 runs in 30 days" : "no active workflow"}
+                  </Link>
+                ))}
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader>
+                <CardDescription>Inactive workflows</CardDescription>
+                <CardTitle className="text-2xl">{ins.inactive}</CardTitle>
+              </CardHeader>
+              <CardContent className="text-sm text-muted-foreground">
+                <p>
+                  Candidates to archive before consolidating. Map read <TimeAgo value={ins.lastSyncedAt} />.
+                </p>
+              </CardContent>
+            </Card>
+          </div>
         </div>
       )}
 

@@ -165,7 +165,7 @@ export function InstancesPage() {
                         behind(i.version, data.data?.latestVersion ?? null) && "text-amber-600 dark:text-amber-400",
                       )}
                     >
-                      {i.version ?? "?"}
+                      {i.version ?? "unknown"}
                     </span>
                   </TableCell>
                   <TableCell>

@@ -117,14 +117,16 @@ export function BackupsPage() {
         </Card>
       )}
       {s && (
-        <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
-          <Stat label="Backed up within threshold" value={`${okCount}/${s.instances.length}`} />
-          <Stat label="Daily backup time" value={s.retention.backupTime} />
-          <Stat
-            label="Retention (days / weeks / months)"
-            value={`${s.retention.retentionDaily} / ${s.retention.retentionWeekly} / ${s.retention.retentionMonthly}`}
-          />
-          <Stat label="Destination" value={<span className="text-sm break-all">{s.destination ?? "not set"}</span>} />
+        <div className="@container">
+          <div className="grid grid-cols-2 gap-4 @3xl:grid-cols-4">
+            <Stat label="Backed up on time" value={`${okCount}/${s.instances.length}`} />
+            <Stat label="Daily backup time" value={s.retention.backupTime} />
+            <Stat
+              label="Keep days / weeks / months"
+              value={`${s.retention.retentionDaily} / ${s.retention.retentionWeekly} / ${s.retention.retentionMonthly}`}
+            />
+            <Stat label="Destination" value={<span className="text-sm break-all">{s.destination ?? "not set"}</span>} />
+          </div>
         </div>
       )}
       {data.isLoading ? (

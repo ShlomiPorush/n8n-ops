@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest"
-import { N8nClient, N8nError, parseQueueMetrics } from "./client.ts"
+import { N8nClient, N8nError, parseQueueMetrics, parseVersionMetric } from "./client.ts"
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status })
 
@@ -34,6 +34,20 @@ describe("N8nClient", () => {
       .mockResolvedValueOnce(json({ data: [{ id: "2" }], nextCursor: null }))
     const all = await new N8nClient("http://n", "k", fetch).listWorkflows()
     expect(all.map((w) => w.id)).toEqual(["1", "2"])
+  })
+})
+
+describe("parseVersionMetric", () => {
+  it("reads the version without the leading v", () => {
+    const text = [
+      "# TYPE n8n_version_info gauge",
+      'n8n_version_info{version="v2.44.0",major="2",minor="44",patch="0"} 1',
+    ].join("\n")
+    expect(parseVersionMetric(text)).toBe("2.44.0")
+  })
+
+  it("returns null without the metric", () => {
+    expect(parseVersionMetric("process_cpu_seconds_total 1")).toBeNull()
   })
 })
 

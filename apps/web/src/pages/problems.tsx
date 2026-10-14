@@ -230,7 +230,8 @@ export function ProblemDetail({ id }: { id: string }) {
         <div className="flex items-baseline gap-3 pt-1">
           <span className="text-4xl font-bold tabular-nums">{p.count}</span>
           <span className="text-sm text-muted-foreground">
-            failures · first <TimeAgo value={p.firstSeen} /> · last <TimeAgo value={p.lastSeen} />
+            {p.count === 1 ? "failure" : "failures"} · first <TimeAgo value={p.firstSeen} /> · last{" "}
+            <TimeAgo value={p.lastSeen} />
             {p.status === "muted" && p.mutedUntil && <> · muted until {new Date(p.mutedUntil).toLocaleString()}</>}
           </span>
         </div>
@@ -297,7 +298,7 @@ export function ProblemDetail({ id }: { id: string }) {
                 </TableBody>
               </Table>
             )}
-            <div className="mt-2 flex gap-2">
+            <div className="mt-2 flex flex-wrap gap-x-4">
               <Button variant="link" className="px-0" onClick={() => setRaw({ input: p.nodeInput, error: p.error })}>
                 Show input and stack as JSON
               </Button>

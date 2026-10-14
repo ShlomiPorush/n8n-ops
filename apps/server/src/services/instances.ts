@@ -19,7 +19,7 @@ export function effectiveScopes(instance: Pick<Instance, "scopes" | "scopesSourc
 /** Reads the n8n version and the API key's scopes, and stores them. */
 export async function refreshInstanceMeta(ctx: Ctx, instance: Instance) {
   const client = clientFor(ctx, instance)
-  const [version, scopes] = await Promise.all([client.version(), client.discoverScopes()])
+  const [version, scopes] = await Promise.all([client.version(instance.metricsUrl), client.discoverScopes()])
   const before = new Set(effectiveScopes(instance))
   const patch = {
     version: version ?? instance.version,

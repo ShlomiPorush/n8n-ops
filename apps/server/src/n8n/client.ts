@@ -159,13 +159,25 @@ export class N8nClient {
     return this.api<N8nCredential>("POST", "/credentials", { body: credential })
   }
 
-  /** The n8n version, from the public frontend settings endpoint. */
-  async version(): Promise<string | null> {
+  /**
+   * The n8n version: from the public frontend settings on older n8n, otherwise from the metrics endpoint
+   * (n8n 2.x no longer publishes it without sign-in). Null when neither is available.
+   */
+  async version(metricsUrl?: string | null): Promise<string | null> {
     try {
       const res = await this.fetchImpl(this.url("/rest/settings"), { signal: AbortSignal.timeout(this.timeoutMs) })
-      if (!res.ok) return null
-      const body = (await res.json()) as { data?: { versionCli?: string } }
-      return body.data?.versionCli ?? null
+      if (res.ok) {
+        const body = (await res.json()) as { data?: { versionCli?: string } }
+        if (body.data?.versionCli) return body.data.versionCli
+      }
+    } catch {
+      // Fall through to metrics.
+    }
+    try {
+      const res = await this.fetchImpl(metricsUrl || this.url("/metrics"), {
+        signal: AbortSignal.timeout(this.timeoutMs),
+      })
+      return res.ok ? parseVersionMetric(await res.text()) : null
     } catch {
       return null
     }
@@ -184,6 +196,12 @@ export async function probe(url: string, fetchImpl: FetchLike = fetch, timeoutMs
 }
 
 export type QueueMetrics = { waiting: number; active: number; completed: number; failed: number }
+
+/** The version from n8n's version_info metric (any prefix), without the leading "v". */
+export function parseVersionMetric(text: string): string | null {
+  const match = text.match(/^[a-zA-Z0-9_]*version_info\{[^}]*\bversion="v?([^"]+)"/m)
+  return match?.[1] ?? null
+}
 
 /** Reads queue gauges from n8n's Prometheus /metrics output. */
 export function parseQueueMetrics(text: string): QueueMetrics | null {

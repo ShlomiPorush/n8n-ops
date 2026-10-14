@@ -144,7 +144,10 @@ export function OverviewPage() {
                           </div>
                         </TableCell>
                         <TableCell>
-                          {a.instanceName} <span className="text-muted-foreground">· {a.count} failures</span>
+                          {a.instanceName}{" "}
+                          <span className="text-muted-foreground">
+                            · {a.count} {a.count === 1 ? "failure" : "failures"}
+                          </span>
                         </TableCell>
                       </>
                     ) : (
@@ -181,9 +184,9 @@ export function OverviewPage() {
         </div>
       </Card>
 
-      <div className="flex items-end justify-between">
+      <div className="flex flex-wrap items-end justify-between gap-2">
         <h2 className="text-xl font-semibold">Instances</h2>
-        <div className="flex gap-4 text-sm text-muted-foreground">
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground">
           <span className="flex items-center gap-1.5">
             <Dot health="down" />
             Down
@@ -264,9 +267,7 @@ function Tile({ i, onOpen }: { i: InstanceRow; onOpen: () => void }) {
           {note}
         </CardDescription>
         <CardTitle className="text-2xl font-semibold">{i.name}</CardTitle>
-        <CardAction>
-          <Badge variant="outline">v{i.version ?? "?"}</Badge>
-        </CardAction>
+        <CardAction>{i.version && <Badge variant="outline">v{i.version}</Badge>}</CardAction>
       </CardHeader>
       <CardFooter className="gap-4 text-sm text-muted-foreground">
         <span>

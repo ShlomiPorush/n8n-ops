@@ -106,3 +106,13 @@ dev_compose() {
     DOCKER_SOCKET_GID="$(docker_socket_gid)" \
     docker compose -p "$DEV_PROJECT" --project-directory "$REPO_ROOT" -f "$DEV_COMPOSE_FILE" "$@"
 }
+
+# Creates the stack's data directories. The server and worker run as UID 1000, which is not always
+# the host user (CI runners use 1001), so their directories are handed to UID 1000 from a container.
+prepare_data_dirs() {
+  local dir="$1"
+  mkdir -p "$dir/server" "$dir/postgres" "$dir/worker"
+  build_toolchain
+  docker run --rm --user 0 -v "$dir:/target" "$TOOLCHAIN_IMAGE" chown 1000:1000 /target/server /target/worker ||
+    die "could not prepare $dir"
+}

@@ -31,7 +31,7 @@ compose() {
 }
 
 prepare_data_dir() {
-  mkdir -p "$N8N_OPS_DATA_DIR/server" "$N8N_OPS_DATA_DIR/postgres" "$N8N_OPS_DATA_DIR/worker"
+  prepare_data_dirs "$N8N_OPS_DATA_DIR"
 }
 
 build() {

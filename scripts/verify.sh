@@ -119,7 +119,7 @@ run_integration() {
   build_images verify "verify-$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
   N8N_OPS_DATA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/n8n-ops-verify.XXXXXX")"
   export N8N_OPS_DATA_DIR
-  mkdir -p "$N8N_OPS_DATA_DIR/server" "$N8N_OPS_DATA_DIR/postgres" "$N8N_OPS_DATA_DIR/worker"
+  prepare_data_dirs "$N8N_OPS_DATA_DIR"
   trap cleanup_stack EXIT
   stack up -d --remove-orphans --wait --wait-timeout 180 || {
     stack ps

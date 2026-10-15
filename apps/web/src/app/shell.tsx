@@ -187,7 +187,11 @@ function SideNav() {
                           "absolute end-2 top-[7px] size-2 rounded-full text-[0px] lg:static lg:ms-auto lg:size-auto lg:rounded-tag lg:px-[7px] lg:py-px lg:text-meta lg:font-bold lg:tabular-nums",
                           count.tone === "fail" ? "bg-fail" : "bg-warn",
                           // On the filled active item the number takes the item's colour instead of a tint.
-                          active ? "lg:bg-transparent lg:text-current" : count.tone === "fail" ? "lg:tint-fail" : "lg:tint-warn",
+                          active
+                            ? "lg:bg-transparent lg:text-current"
+                            : count.tone === "fail"
+                              ? "lg:tint-fail"
+                              : "lg:tint-warn",
                         )}
                       >
                         {n(count.value)}

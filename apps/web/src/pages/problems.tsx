@@ -1,5 +1,6 @@
 import {
   BellOff,
+  Braces,
   Bug,
   CheckCircle2,
   CircleCheck,
@@ -15,6 +16,7 @@ import {
 } from "lucide-react"
 import { useState } from "react"
 import { Link, useNavigate, useParams, useSearchParams } from "react-router"
+import { DialogIcon } from "@/components/dialog-icon"
 import { EmptyState } from "@/components/empty-state"
 import { FlowGraph, type GraphNode } from "@/components/flow-graph"
 import { ListWithPanel } from "@/components/list-panel"
@@ -418,9 +420,10 @@ export function ProblemDetail({ id }: { id: string }) {
       <Dialog open={raw !== null} onOpenChange={(o) => !o && setRaw(null)}>
         <DialogContent className="sm:max-w-4xl">
           <DialogHeader>
+            <DialogIcon icon={Braces} />
             <DialogTitle>Raw data</DialogTitle>
           </DialogHeader>
-          <pre className="max-h-[70vh] overflow-auto rounded-md bg-muted p-3 font-mono text-xs">
+          <pre className="max-h-[65vh] overflow-auto rounded-lg bg-muted p-4 font-mono text-xs leading-relaxed break-all whitespace-pre-wrap">
             {JSON.stringify(raw, null, 2)}
           </pre>
         </DialogContent>
@@ -451,6 +454,7 @@ function MergeDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
+          <DialogIcon icon={GitMerge} />
           <DialogTitle>Merge into another problem</DialogTitle>
           <DialogDescription>
             Its failures move to the chosen problem, and future failures with this error count there too.

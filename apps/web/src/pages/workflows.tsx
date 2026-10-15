@@ -1,6 +1,7 @@
 import {
   AlertTriangle,
   ArrowRight,
+  ArrowRightLeft,
   CheckCircle2,
   Clock,
   Copy,
@@ -21,6 +22,7 @@ import {
 import { useState } from "react"
 import { Link } from "react-router"
 import { Page } from "@/app/shell"
+import { DialogIcon } from "@/components/dialog-icon"
 import { NumberTicker } from "@/components/spectrum/number-ticker"
 import { Code, TimeAgo } from "@/components/status"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -285,6 +287,7 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
     <Dialog open={workflow !== null} onOpenChange={(o) => !o && reset()}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
+          <DialogIcon icon={ArrowRightLeft} />
           <DialogTitle>Move {workflow?.name}</DialogTitle>
           <DialogDescription>
             Copies the workflow and its credentials to another instance, verifies it, then switches off the original.

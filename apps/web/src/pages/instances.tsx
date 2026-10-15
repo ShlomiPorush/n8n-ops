@@ -19,6 +19,7 @@ import {
   Server,
   SlidersHorizontal,
   Trash2,
+  TriangleAlert,
   Workflow as WorkflowIcon,
   X,
 } from "lucide-react"
@@ -26,6 +27,7 @@ import { useEffect, useState } from "react"
 import { useNavigate, useParams } from "react-router"
 import { toast } from "sonner"
 import { AgentAccessCard } from "@/components/agent-access-card"
+import { DialogIcon } from "@/components/dialog-icon"
 import { EmptyState } from "@/components/empty-state"
 import { ListWithPanel } from "@/components/list-panel"
 import { PageHeader } from "@/components/page-header"
@@ -37,6 +39,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -519,6 +522,7 @@ function InstanceDetail({ id }: { id: string }) {
       <Dialog open={deleting} onOpenChange={setDeleting}>
         <DialogContent>
           <DialogHeader>
+            <DialogIcon icon={TriangleAlert} tone="red" />
             <DialogTitle>Remove {i.name}?</DialogTitle>
             <DialogDescription>
               n8n-ops stops monitoring it and deletes its problems, stored failures and backup history from n8n-ops.
@@ -526,6 +530,9 @@ function InstanceDetail({ id }: { id: string }) {
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
+            <DialogClose asChild>
+              <Button variant="outline">Cancel</Button>
+            </DialogClose>
             <Button
               variant="destructive"
               onClick={() =>
@@ -722,25 +729,29 @@ export function InstanceDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
+      <DialogContent className="sm:max-w-xl">
         <DialogHeader>
+          <DialogIcon icon={Server} />
           <DialogTitle>{instance ? `Edit ${instance.name}` : "Add an instance"}</DialogTitle>
           <DialogDescription>The connection is tested before anything is saved.</DialogDescription>
         </DialogHeader>
         <FieldGroup>
-          <Field>
-            <FieldLabel htmlFor="i-name">Name</FieldLabel>
-            <Input id="i-name" value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="n8n-1" />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="i-url">Base URL</FieldLabel>
-            <Input
-              id="i-url"
-              value={form.baseUrl}
-              onChange={(e) => set("baseUrl", e.target.value)}
-              placeholder="https://n8n.example.com"
-            />
-          </Field>
+          <FormSection title="Connection" first />
+          <div className="grid gap-4 sm:grid-cols-[2fr_3fr]">
+            <Field>
+              <FieldLabel htmlFor="i-name">Name</FieldLabel>
+              <Input id="i-name" value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="n8n-1" />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="i-url">Base URL</FieldLabel>
+              <Input
+                id="i-url"
+                value={form.baseUrl}
+                onChange={(e) => set("baseUrl", e.target.value)}
+                placeholder="https://n8n.example.com"
+              />
+            </Field>
+          </div>
           <Field>
             <FieldLabel htmlFor="i-key">API key</FieldLabel>
             <Input
@@ -755,6 +766,7 @@ export function InstanceDialog({
               need workflow:create, workflow:activate and credential:create.
             </FieldDescription>
           </Field>
+          <FormSection title="Queue" />
           <Field orientation="horizontal">
             <Switch id="i-queue" checked={form.queueMode} onCheckedChange={(v) => set("queueMode", v)} />
             <FieldContent>
@@ -789,6 +801,7 @@ export function InstanceDialog({
               </Field>
             </>
           )}
+          <FormSection title="Health and the Docker host" />
           <Field>
             <FieldLabel>Check health and metrics</FieldLabel>
             <Select value={form.collection} onValueChange={(v) => set("collection", v)}>
@@ -843,5 +856,14 @@ export function InstanceDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  )
+}
+
+/** A titled break between groups of fields in a long form. */
+function FormSection({ title, first }: { title: string; first?: boolean }) {
+  return (
+    <div className={cn("text-xs font-medium tracking-wide text-muted-foreground uppercase", !first && "border-t pt-5")}>
+      {title}
+    </div>
   )
 }

@@ -8,6 +8,7 @@ import {
   Server,
   Tag,
   Trash2,
+  TriangleAlert,
   Wifi,
   WifiOff,
 } from "lucide-react"
@@ -15,6 +16,7 @@ import { useState } from "react"
 import { Link } from "react-router"
 import { toast } from "sonner"
 import { Page } from "@/app/shell"
+import { DialogIcon } from "@/components/dialog-icon"
 import { EmptyState } from "@/components/empty-state"
 import { Dot, TimeAgo, Tone } from "@/components/status"
 import { Badge } from "@/components/ui/badge"
@@ -23,6 +25,7 @@ import { Card } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -122,6 +125,7 @@ export function WorkersPage() {
       <Dialog open={revoking !== null} onOpenChange={(o) => !o && setRevoking(null)}>
         <DialogContent>
           <DialogHeader>
+            <DialogIcon icon={TriangleAlert} tone="red" />
             <DialogTitle>Revoke {revoking?.name}?</DialogTitle>
             <DialogDescription>
               It stops being accepted immediately and is removed from its instances. Remove the container on the host
@@ -129,6 +133,9 @@ export function WorkersPage() {
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
+            <DialogClose asChild>
+              <Button variant="outline">Cancel</Button>
+            </DialogClose>
             <Button
               variant="destructive"
               onClick={() => revoking && revoke.mutate(revoking.id, { onSuccess: () => setRevoking(null) })}
@@ -187,6 +194,7 @@ function AddWorkerDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
     >
       <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
+          <DialogIcon icon={Cpu} />
           <DialogTitle>Add a worker</DialogTitle>
           <DialogDescription>
             {result

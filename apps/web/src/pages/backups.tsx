@@ -1,5 +1,6 @@
 import {
   Archive,
+  ArchiveRestore,
   CheckCircle2,
   Clock,
   Database,
@@ -14,6 +15,7 @@ import {
 } from "lucide-react"
 import { useState } from "react"
 import { Link, useNavigate, useParams } from "react-router"
+import { DialogIcon } from "@/components/dialog-icon"
 import { ListWithPanel } from "@/components/list-panel"
 import { PageHeader } from "@/components/page-header"
 import { StatCard } from "@/components/stat-card"
@@ -363,6 +365,7 @@ function RestoreDialog({ run, instanceId, onClose }: { run: Run | null; instance
     <Dialog open={run !== null} onOpenChange={(o) => !o && reset()}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
+          <DialogIcon icon={ArchiveRestore} />
           <DialogTitle>Restore from {run ? new Date(run.startedAt).toLocaleString() : ""}</DialogTitle>
           <DialogDescription>
             Restores one workflow with its credentials as an inactive copy. Your private key is used in memory and never

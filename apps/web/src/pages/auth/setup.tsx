@@ -3,7 +3,6 @@ import { Check, Download } from "lucide-react"
 import QRCode from "qrcode"
 import { useEffect, useState } from "react"
 import { Navigate, useNavigate } from "react-router"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -12,6 +11,7 @@ import { Input } from "@/components/ui/input"
 import { ApiError, api, describeError, useApi } from "@/lib/api"
 import { authClient, authErrorText } from "@/lib/auth-client"
 import { download } from "@/lib/download"
+import { cn } from "@/lib/utils"
 import { AuthFrame, TotpInput } from "./shared"
 
 type Checklist = { twoFactor: boolean; backupKey: boolean; telegram: boolean; storage: boolean; instance: boolean }
@@ -48,16 +48,7 @@ export function SetupPage() {
 
   return (
     <AuthFrame wide>
-      <ol className="flex flex-wrap justify-center gap-1.5">
-        {steps.map((s, i) => (
-          <li key={s}>
-            <Badge variant={i === index ? "default" : i < index ? "secondary" : "outline"}>
-              {i < index && <Check />}
-              {s}
-            </Badge>
-          </li>
-        ))}
-      </ol>
+      <Stepper steps={steps} index={index} />
       {step === "Account" && (
         <AccountStep
           onDone={async (pw) => {
@@ -106,7 +97,7 @@ function AccountStep({ onDone }: { onDone: (password: string) => Promise<void> }
     }
   }
   return (
-    <Card>
+    <Card className="shadow-lg">
       <CardHeader>
         <CardTitle>Create your account</CardTitle>
         <CardDescription>
@@ -192,7 +183,7 @@ function TwoFactorStep({ password: known, onDone }: { password: string; onDone: 
 
   const secret = uri ? (new URL(uri).searchParams.get("secret") ?? "") : ""
   return (
-    <Card>
+    <Card className="shadow-lg">
       <CardHeader>
         <CardTitle>Set up two-factor authentication</CardTitle>
         <CardDescription>
@@ -226,14 +217,21 @@ function TwoFactorStep({ password: known, onDone }: { password: string; onDone: 
           </form>
         ) : (
           <>
-            {qr && <img src={qr} alt="Two-factor QR code" className="size-48 rounded-md border bg-white p-2" />}
-            <p className="text-center text-sm text-muted-foreground">
-              Can't scan it? Enter this key:{" "}
-              <code className="font-mono break-all" data-testid="totp-secret">
+            {qr && (
+              <div className="rounded-2xl border bg-white p-3 shadow-sm">
+                <img src={qr} alt="Two-factor QR code" className="size-44" />
+              </div>
+            )}
+            <div className="w-full space-y-1.5 text-center">
+              <p className="text-xs text-muted-foreground">Can't scan it? Enter this key:</p>
+              <code
+                className="block rounded-lg bg-muted px-3 py-2 font-mono text-xs tracking-wider break-all"
+                data-testid="totp-secret"
+              >
                 {secret}
               </code>
-            </p>
-            <p className="text-sm">Then enter the code it shows:</p>
+            </div>
+            <p className="text-sm font-medium">Then enter the code it shows</p>
             <TotpInput onComplete={(code) => void verify(code)} disabled={busy} />
           </>
         )}
@@ -266,7 +264,7 @@ function BackupKeyStep({ onDone }: { onDone: () => Promise<void> }) {
   }
 
   return (
-    <Card>
+    <Card className="shadow-lg">
       <CardHeader>
         <CardTitle>Your backup key</CardTitle>
         <CardDescription>
@@ -279,7 +277,10 @@ function BackupKeyStep({ onDone }: { onDone: () => Promise<void> }) {
           <Button onClick={() => void generate()}>Generate key pair</Button>
         ) : (
           <>
-            <pre className="overflow-x-auto rounded-md bg-muted p-3 font-mono text-xs" data-testid="private-key">
+            <pre
+              className="rounded-lg bg-muted p-3 font-mono text-xs break-all whitespace-pre-wrap"
+              data-testid="private-key"
+            >
               {privateKey}
             </pre>
             <Button variant="outline" onClick={() => download("n8n-ops-backup-key.txt", `${privateKey}\n`)}>
@@ -329,7 +330,7 @@ function OptionalStep({
     }
   }
   return (
-    <Card>
+    <Card className="shadow-lg">
       <CardHeader>
         <CardTitle>{title}</CardTitle>
         <CardDescription>{description}</CardDescription>
@@ -397,5 +398,40 @@ function StorageStep({ onDone, onSkip }: { onDone: () => Promise<void>; onSkip: 
       onDone={onDone}
       onSkip={onSkip}
     />
+  )
+}
+
+/** Where the first-run setup stands: done steps checked, the current one ringed, the rest muted. */
+function Stepper({ steps, index }: { steps: readonly string[]; index: number }) {
+  return (
+    <ol className="flex items-start justify-center">
+      {steps.map((label, i) => (
+        <li key={label} className="flex items-start">
+          <div className="flex w-16 flex-col items-center gap-1.5 sm:w-20">
+            <span
+              className={cn(
+                "grid size-7 place-items-center rounded-full border text-xs font-semibold transition-colors",
+                i < index && "border-primary bg-primary text-primary-foreground",
+                i === index && "border-primary text-foreground ring-4 ring-primary/15",
+                i > index && "bg-background text-muted-foreground",
+              )}
+            >
+              {i < index ? <Check className="size-3.5" /> : i + 1}
+            </span>
+            <span
+              className={cn(
+                "text-center text-[11px] leading-tight",
+                i === index ? "font-medium text-foreground" : "text-muted-foreground",
+              )}
+            >
+              {label}
+            </span>
+          </div>
+          {i < steps.length - 1 && (
+            <span className={cn("mt-3.5 h-px w-4 sm:w-6", i < index ? "bg-primary" : "bg-border")} />
+          )}
+        </li>
+      ))}
+    </ol>
   )
 }

@@ -20,6 +20,7 @@ import { useEffect, useState } from "react"
 import { Link, useNavigate, useParams } from "react-router"
 import { toast } from "sonner"
 import { Page } from "@/app/shell"
+import { DialogIcon } from "@/components/dialog-icon"
 import { EmptyState } from "@/components/empty-state"
 import { TextStates } from "@/components/spectrum/text-states"
 import { Badge } from "@/components/ui/badge"
@@ -513,6 +514,7 @@ function KeysCard() {
       >
         <DialogContent>
           <DialogHeader>
+            <DialogIcon icon={KeyRound} tone="amber" />
             <DialogTitle>New backup key pair</DialogTitle>
             <DialogDescription>
               New backups use the new key. Archives made before keep needing the old private key, so keep it too.
@@ -520,7 +522,9 @@ function KeysCard() {
           </DialogHeader>
           {privateKey ? (
             <div className="space-y-3">
-              <pre className="overflow-x-auto rounded-md bg-muted p-3 font-mono text-xs">{privateKey}</pre>
+              <pre className="rounded-lg bg-muted p-3 font-mono text-xs break-all whitespace-pre-wrap">
+                {privateKey}
+              </pre>
               <Button variant="outline" onClick={() => download("n8n-ops-backup-key.txt", `${privateKey}\n`)}>
                 <Download /> Download key file
               </Button>
@@ -715,6 +719,7 @@ function TokensCard() {
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
           <DialogHeader>
+            <DialogIcon icon={KeySquare} />
             <DialogTitle>New token</DialogTitle>
             <DialogDescription>The token is shown once. Store it where the agent or script reads it.</DialogDescription>
           </DialogHeader>

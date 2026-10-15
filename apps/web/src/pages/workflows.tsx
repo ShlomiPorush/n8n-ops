@@ -87,7 +87,7 @@ export function WorkflowsPage() {
           <div className="grid gap-x-12 gap-y-8 @3xl:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
             <Figures className="self-start">
               <Figure value={ins.duplicateGroups.length} tone={ins.duplicateGroups.length ? "warn" : undefined}>
-                {ins.duplicateGroups.length === 1 ? "workflow exists twice" : "workflows exist more than once"}
+                {ins.duplicateGroups.length === 1 ? "workflow with copies" : "workflows with copies"}
               </Figure>
               <Figure value={ins.unusedInstances.length}>
                 {ins.unusedInstances.length === 1 ? "instance is almost unused" : "instances almost unused"}

@@ -141,16 +141,26 @@ export function OverviewPage() {
           </h1>
           <p className="max-w-[52ch]">{said.detail}</p>
         </div>
-        <Figures className="gap-y-4 self-end lg:col-span-5">
-          <Figure value={`${o.stats.healthy}/${o.stats.instances}`} tone={o.stats.down ? "down" : undefined}>
-            instances healthy
-            {o.stats.down || o.stats.warn ? `, ${o.stats.down} down and ${o.stats.warn} that need a look` : ""}
-          </Figure>
-          <Figure value={o.stats.openProblems}>{o.stats.openProblems === 1 ? "open problem" : "open problems"}</Figure>
-          <Figure value={o.stats.lastBackupAt ? timeAgo(o.stats.lastBackupAt).replace(/ ago$/, "") : "never"}>
-            {o.stats.lastBackupAt ? "since the last backup" : "backed up so far"}
-          </Figure>
-        </Figures>
+        {o.stats.instances > 0 && (
+          <Figures className="gap-y-4 self-end lg:col-span-5">
+            <Figure value={`${o.stats.healthy}/${o.stats.instances}`} tone={o.stats.down ? "down" : undefined}>
+              instances healthy
+              {[
+                o.stats.down ? `${o.stats.down} down` : "",
+                o.stats.warn ? `${o.stats.warn} ${o.stats.warn === 1 ? "needs" : "need"} a look` : "",
+              ]
+                .filter(Boolean)
+                .map((part) => `, ${part}`)
+                .join("")}
+            </Figure>
+            <Figure value={o.stats.openProblems}>
+              {o.stats.openProblems === 1 ? "open problem" : "open problems"}
+            </Figure>
+            <Figure value={o.stats.lastBackupAt ? timeAgo(o.stats.lastBackupAt).replace(/ ago$/, "") : "none"}>
+              {o.stats.lastBackupAt ? "since the last backup" : "backups so far"}
+            </Figure>
+          </Figures>
+        )}
       </section>
 
       {missing.length > 0 && (

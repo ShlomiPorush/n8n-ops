@@ -1,11 +1,25 @@
-import { Copy, Cpu, Plus, Trash2, Wifi, WifiOff } from "lucide-react"
+import {
+  CalendarCheck,
+  Clock,
+  Copy,
+  Cpu,
+  type LucideIcon,
+  Plus,
+  Server,
+  Tag,
+  Trash2,
+  Wifi,
+  WifiOff,
+} from "lucide-react"
 import { useState } from "react"
+import { Link } from "react-router"
 import { toast } from "sonner"
 import { Page } from "@/app/shell"
 import { EmptyState } from "@/components/empty-state"
 import { Dot, TimeAgo, Tone } from "@/components/status"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
   Dialog,
@@ -51,43 +65,49 @@ export function WorkersPage() {
       {workers.isLoading ? (
         <Skeleton className="h-32" />
       ) : workers.data?.length ? (
-        <div className="space-y-4">
+        <div className="grid gap-4 lg:grid-cols-2">
           {workers.data.map((w) => (
-            <Card key={w.id}>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Dot health={w.online ? "ok" : "down"} />
-                  {w.name}
-                  <Tone tone={w.online ? "green" : "red"} icon={w.online ? Wifi : WifiOff}>
-                    {w.online ? "online" : "offline"}
-                  </Tone>
-                </CardTitle>
-                <CardDescription>
-                  Serves{" "}
-                  {w.instances.length
-                    ? w.instances.map((i) => i.name).join(", ")
-                    : "no instances yet (assign it on the instance)"}
-                </CardDescription>
-                <CardAction>
-                  <Button variant="outline" size="sm" className="text-destructive" onClick={() => setRevoking(w)}>
-                    <Trash2 /> Revoke
-                  </Button>
-                </CardAction>
-              </CardHeader>
-              <CardContent className="grid grid-cols-2 gap-4 text-sm md:grid-cols-3">
-                <div>
-                  <div className="text-muted-foreground">Last seen</div>
-                  <TimeAgo value={w.lastSeenAt} />
+            <Card key={w.id} className="gap-0 py-0">
+              <div className="flex items-start gap-4 p-5">
+                <div className="relative grid size-11 shrink-0 place-items-center rounded-xl border bg-muted/50 text-muted-foreground">
+                  <Cpu className="size-5" />
+                  <Dot health={w.online ? "ok" : "down"} className="absolute -top-0.5 -right-0.5" />
                 </div>
-                <div>
-                  <div className="text-muted-foreground">Version</div>
-                  {w.version ?? "unknown"}
+                <div className="min-w-0 flex-1 space-y-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="truncate text-lg font-semibold tracking-tight">{w.name}</span>
+                    <Tone tone={w.online ? "green" : "red"} icon={w.online ? Wifi : WifiOff}>
+                      {w.online ? "online" : "offline"}
+                    </Tone>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5 text-sm text-muted-foreground">
+                    Serves
+                    {w.instances.length ? (
+                      w.instances.map((i) => (
+                        <Link key={i.id} to={`/instances/${i.id}`}>
+                          <Badge variant="outline" className="hover:bg-muted">
+                            <Server /> {i.name}
+                          </Badge>
+                        </Link>
+                      ))
+                    ) : (
+                      <span>no instances yet (assign it on the instance)</span>
+                    )}
+                  </div>
                 </div>
-                <div>
-                  <div className="text-muted-foreground">Paired</div>
-                  {new Date(w.createdAt).toLocaleDateString()}
-                </div>
-              </CardContent>
+                <Button variant="ghost" size="sm" className="text-destructive" onClick={() => setRevoking(w)}>
+                  <Trash2 /> Revoke
+                </Button>
+              </div>
+              <div className="grid grid-cols-3 divide-x border-t text-sm">
+                <WorkerFact icon={Clock} label="Last seen" value={<TimeAgo value={w.lastSeenAt} />} />
+                <WorkerFact
+                  icon={Tag}
+                  label="Version"
+                  value={<span className="font-mono text-xs">{w.version ?? "unknown"}</span>}
+                />
+                <WorkerFact icon={CalendarCheck} label="Paired" value={new Date(w.createdAt).toLocaleDateString()} />
+              </div>
             </Card>
           ))}
         </div>
@@ -239,5 +259,17 @@ function AddWorkerDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
         )}
       </DialogContent>
     </Dialog>
+  )
+}
+
+function WorkerFact({ icon: Icon, label, value }: { icon: LucideIcon; label: string; value: React.ReactNode }) {
+  return (
+    <div className="space-y-0.5 px-5 py-3">
+      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <Icon className="size-3.5" />
+        {label}
+      </div>
+      <div className="font-medium">{value}</div>
+    </div>
   )
 }

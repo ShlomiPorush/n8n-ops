@@ -6,14 +6,18 @@ import {
   CircleX,
   Cpu,
   Download,
+  Eye,
   HeartPulse,
   History,
   Info,
+  KeySquare,
   Network,
   Pencil,
+  PenLine,
   Plus,
   RefreshCw,
   Server,
+  SlidersHorizontal,
   Trash2,
   Workflow as WorkflowIcon,
   X,
@@ -24,6 +28,7 @@ import { toast } from "sonner"
 import { AgentAccessCard } from "@/components/agent-access-card"
 import { EmptyState } from "@/components/empty-state"
 import { ListWithPanel } from "@/components/list-panel"
+import { PageHeader } from "@/components/page-header"
 import { StatCard } from "@/components/stat-card"
 import { Dot, type HealthState, TimeAgo, Tone } from "@/components/status"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -134,17 +139,16 @@ export function InstancesPage() {
 
   const list = (
     <>
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Instances</h1>
-          <p className="text-muted-foreground">
-            {rows.length} registered{data.data?.latestVersion ? ` · latest n8n ${data.data.latestVersion}` : ""}
-          </p>
-        </div>
-        <Button onClick={() => setAdding(true)}>
-          <Plus /> Add instance
-        </Button>
-      </div>
+      <PageHeader
+        title="Instances"
+        icon={Server}
+        description={`${rows.length} registered${data.data?.latestVersion ? ` · latest n8n ${data.data.latestVersion}` : ""}`}
+        actions={
+          <Button onClick={() => setAdding(true)}>
+            <Plus /> Add instance
+          </Button>
+        }
+      />
       {data.isLoading ? (
         <Skeleton className="h-40" />
       ) : rows.length === 0 ? (
@@ -154,16 +158,16 @@ export function InstancesPage() {
           description="Add an n8n instance with its URL and an API key. Read-only is enough for monitoring."
         />
       ) : (
-        <div className="rounded-lg border">
+        <div className="@container overflow-hidden rounded-xl border">
           <Table>
             <TableHeader>
               <TableRow>
                 <TableHead className="pl-4">Instance</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead>Version</TableHead>
-                <TableHead>API key</TableHead>
+                <TableHead className="hidden @lg:table-cell">Version</TableHead>
+                <TableHead className="hidden @xl:table-cell">API key</TableHead>
                 <TableHead className="text-right">Open</TableHead>
-                <TableHead className="pr-4">Last backup</TableHead>
+                <TableHead className="hidden pr-4 @2xl:table-cell">Last backup</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -180,25 +184,58 @@ export function InstancesPage() {
                       {i.name}
                     </span>
                   </TableCell>
-                  <TableCell className={cn(i.health === "ok" && "text-muted-foreground")}>{healthLabel(i)}</TableCell>
                   <TableCell>
+                    <Tone
+                      tone={
+                        i.health === "down"
+                          ? "red"
+                          : i.health === "warn"
+                            ? "amber"
+                            : i.health === "ok"
+                              ? "green"
+                              : "neutral"
+                      }
+                      icon={i.health === "down" ? CircleX : i.health === "unknown" ? CircleDashed : undefined}
+                    >
+                      {healthLabel(i)}
+                    </Tone>
+                  </TableCell>
+                  <TableCell className="hidden @lg:table-cell">
                     <span
                       className={cn(
+                        "font-mono text-xs",
+                        !i.version && "text-muted-foreground",
                         behind(i.version, data.data?.latestVersion ?? null) && "text-amber-600 dark:text-amber-400",
                       )}
+                      title={
+                        behind(i.version, data.data?.latestVersion ?? null)
+                          ? `n8n ${data.data?.latestVersion} is out`
+                          : undefined
+                      }
                     >
                       {i.version ?? "unknown"}
                     </span>
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="hidden @xl:table-cell">
                     {i.capabilities.find((c) => c.key === "move")?.available ? (
-                      <Badge>read + write</Badge>
+                      <Badge variant="outline" className="gap-1">
+                        <PenLine /> read + write
+                      </Badge>
                     ) : (
-                      <Badge variant="secondary">read only</Badge>
+                      <Badge variant="outline" className="gap-1 text-muted-foreground">
+                        <Eye /> read only
+                      </Badge>
                     )}
                   </TableCell>
-                  <TableCell className="text-right tabular-nums">{i.openProblems}</TableCell>
-                  <TableCell className="pr-4 text-muted-foreground">
+                  <TableCell
+                    className={cn(
+                      "text-right font-medium tabular-nums",
+                      i.openProblems > 0 ? "text-rose-600 dark:text-rose-400" : "text-muted-foreground",
+                    )}
+                  >
+                    {i.openProblems}
+                  </TableCell>
+                  <TableCell className="hidden pr-4 text-muted-foreground @2xl:table-cell">
                     {i.lastBackup ? (
                       <span className={cn(i.lastBackup.status === "failed" && "text-destructive")}>
                         <TimeAgo value={i.lastBackup.at} />
@@ -325,7 +362,9 @@ function InstanceDetail({ id }: { id: string }) {
 
       <Card>
         <CardHeader>
-          <CardTitle>Health</CardTitle>
+          <CardTitle className="flex items-center gap-2">
+            <HeartPulse className="size-4 text-muted-foreground" /> Health
+          </CardTitle>
           <CardDescription>
             {i.collection === "worker"
               ? `Collected on the host by ${i.worker?.name ?? "the assigned worker"}.`
@@ -398,7 +437,9 @@ function InstanceDetail({ id }: { id: string }) {
 
       <Card>
         <CardHeader>
-          <CardTitle>Open problems</CardTitle>
+          <CardTitle className="flex items-center gap-2">
+            <Bug className="size-4 text-muted-foreground" /> Open problems
+          </CardTitle>
         </CardHeader>
         <CardContent>
           <ProblemsTable
@@ -411,7 +452,9 @@ function InstanceDetail({ id }: { id: string }) {
 
       <Card>
         <CardHeader>
-          <CardTitle>API key and what it allows</CardTitle>
+          <CardTitle className="flex items-center gap-2">
+            <KeySquare className="size-4 text-muted-foreground" /> API key and what it allows
+          </CardTitle>
           <CardDescription>
             {i.scopesSource === "discovered"
               ? `Read from GET /api/v1/discover · checked ${i.scopesCheckedAt ? new Date(i.scopesCheckedAt).toLocaleString() : "never"}`
@@ -572,7 +615,9 @@ function OverridesCard({ instance }: { instance: InstanceDetailData }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Overrides</CardTitle>
+        <CardTitle className="flex items-center gap-2">
+          <SlidersHorizontal className="size-4 text-muted-foreground" /> Overrides
+        </CardTitle>
         <CardDescription>Empty fields use the global default shown as the placeholder.</CardDescription>
       </CardHeader>
       <CardContent>

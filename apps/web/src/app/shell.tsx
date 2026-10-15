@@ -18,6 +18,7 @@ import {
 import { useTheme } from "next-themes"
 import { Navigate, NavLink, Outlet, useLocation, useNavigate } from "react-router"
 import { BrandMark } from "@/components/brand"
+import { PageHeader } from "@/components/page-header"
 import { Dot } from "@/components/status"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Breadcrumb, BreadcrumbItem, BreadcrumbList, BreadcrumbPage } from "@/components/ui/breadcrumb"
@@ -68,6 +69,11 @@ const system: NavItem[] = [
   { to: "/settings", label: "Settings", icon: Settings },
   { to: "/audit", label: "Audit log", icon: ScrollText },
 ]
+/** The icon of the navigation item with this label, for page headers. */
+export function pageIcon(label: string) {
+  return [...operate, ...system].find((i) => i.label === label)?.icon
+}
+
 const titles: Record<string, string> = Object.fromEntries([...operate, ...system].map((i) => [i.to, i.label]))
 
 type Summary = { openProblems: number; pendingAccess: number; workers: { online: number; total: number } }
@@ -272,15 +278,7 @@ export function Page({
 }) {
   return (
     <div className="flex-1 space-y-6 p-4 md:p-6">
-      {(title || actions) && (
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            {title && <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>}
-            {description && <p className="text-muted-foreground">{description}</p>}
-          </div>
-          {actions}
-        </div>
-      )}
+      {title && <PageHeader title={title} description={description} icon={pageIcon(title)} actions={actions} />}
       {children}
     </div>
   )

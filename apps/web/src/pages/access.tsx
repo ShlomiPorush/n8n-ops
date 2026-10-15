@@ -1,8 +1,21 @@
-import { Ban, Check, CircleX, Clock5, Hourglass, KeyRound, LogOut, type LucideIcon, ShieldCheck, X } from "lucide-react"
+import {
+  ArrowRightLeft,
+  Ban,
+  Check,
+  CircleX,
+  Clock5,
+  Hourglass,
+  KeyRound,
+  LogOut,
+  type LucideIcon,
+  ShieldCheck,
+  X,
+} from "lucide-react"
 import { useState } from "react"
 import { useNavigate, useParams } from "react-router"
 import { EmptyState } from "@/components/empty-state"
 import { ListWithPanel } from "@/components/list-panel"
+import { PageHeader } from "@/components/page-header"
 import { TimeAgo, Tone } from "@/components/status"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -94,13 +107,11 @@ export function AccessPage() {
 
   const list = (
     <>
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Agent access</h1>
-        <p className="text-muted-foreground">
-          Agents ask for temporary access to an n8n instance for a task. Nothing is granted until you approve, and
-          access ends on its own.
-        </p>
-      </div>
+      <PageHeader
+        title="Agent access"
+        icon={KeyRound}
+        description="Agents ask for temporary access to an n8n instance for a task. Nothing is granted until you approve, and access ends on its own."
+      />
       <ToggleGroup type="single" variant="outline" value={view} onValueChange={(v) => v && setView(v as "open")}>
         <ToggleGroupItem value="open">Waiting and active</ToggleGroupItem>
         <ToggleGroupItem value="all">All</ToggleGroupItem>
@@ -225,7 +236,9 @@ function AccessDetailPanel({ id }: { id: string }) {
 
       <Card>
         <CardHeader>
-          <CardTitle>What the agent may do</CardTitle>
+          <CardTitle className="flex items-center gap-2">
+            <ShieldCheck className="size-4 text-muted-foreground" /> What the agent may do
+          </CardTitle>
           <CardDescription>
             Checked by n8n-ops on every call before it reaches {r.instance}.{" "}
             {r.workflowIds.length ? "Only on the workflows listed." : "On the whole instance."}
@@ -254,7 +267,9 @@ function AccessDetailPanel({ id }: { id: string }) {
 
       <Card>
         <CardHeader>
-          <CardTitle>Calls</CardTitle>
+          <CardTitle className="flex items-center gap-2">
+            <ArrowRightLeft className="size-4 text-muted-foreground" /> Calls
+          </CardTitle>
           <CardDescription>Every call the agent made with this access, newest first.</CardDescription>
         </CardHeader>
         <CardContent>

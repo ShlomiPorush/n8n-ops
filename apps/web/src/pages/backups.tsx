@@ -1,9 +1,24 @@
-import { Archive, CheckCircle2, Clock, HardDrive, KeyRound, Play, RotateCcw, ShieldCheck, XCircle } from "lucide-react"
+import {
+  Archive,
+  CheckCircle2,
+  Clock,
+  Database,
+  DatabaseBackup,
+  HardDrive,
+  KeyRound,
+  Play,
+  RotateCcw,
+  ShieldCheck,
+  Workflow as WorkflowIcon,
+  XCircle,
+} from "lucide-react"
 import { useState } from "react"
 import { Link, useNavigate, useParams } from "react-router"
 import { ListWithPanel } from "@/components/list-panel"
+import { PageHeader } from "@/components/page-header"
 import { StatCard } from "@/components/stat-card"
-import { Dot, TimeAgo, Tone } from "@/components/status"
+import { Dot, TimeAgo, Tone, timeAgo } from "@/components/status"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import {
@@ -93,12 +108,11 @@ export function BackupsPage() {
 
   const list = (
     <>
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Backups</h1>
-        <p className="text-muted-foreground">
-          Encrypted with your backup public key before upload. Click an instance for its history and restore.
-        </p>
-      </div>
+      <PageHeader
+        title="Backups"
+        icon={DatabaseBackup}
+        description="Encrypted with your backup public key before upload. Click an instance for its history and restore."
+      />
       {s && !s.configured && (
         <Card className="border-amber-500/50">
           <CardHeader>
@@ -147,7 +161,7 @@ export function BackupsPage() {
       {data.isLoading ? (
         <Skeleton className="h-40" />
       ) : (
-        <div className="rounded-lg border">
+        <div className="overflow-hidden rounded-xl border">
           <Table>
             <TableHeader>
               <TableRow>
@@ -172,17 +186,38 @@ export function BackupsPage() {
                       {r.name}
                     </span>
                   </TableCell>
-                  <TableCell className={cn(stale(r) && "font-medium text-amber-600 dark:text-amber-400")}>
-                    <TimeAgo value={r.lastOk?.startedAt} />
+                  <TableCell>
+                    {r.lastRun?.status === "failed" ? (
+                      <Tone tone="red">Failed</Tone>
+                    ) : stale(r) ? (
+                      <Tone tone="amber" icon={Clock}>
+                        {r.lastOk ? timeAgo(r.lastOk.startedAt) : "never"}
+                      </Tone>
+                    ) : (
+                      <span className="text-sm">
+                        <TimeAgo value={r.lastOk?.startedAt} />
+                      </span>
+                    )}
                   </TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {r.id === "self"
-                      ? "database dump"
-                      : r.withSecrets
-                        ? "workflows + credential secrets"
-                        : "workflows, credentials without secrets"}
+                  <TableCell>
+                    <div className="flex flex-wrap gap-1">
+                      {r.id === "self" ? (
+                        <Badge variant="outline">
+                          <Database /> database dump
+                        </Badge>
+                      ) : (
+                        <>
+                          <Badge variant="outline">
+                            <WorkflowIcon /> workflows
+                          </Badge>
+                          <Badge variant="outline" className={cn(!r.withSecrets && "text-muted-foreground")}>
+                            <KeyRound /> {r.withSecrets ? "credential secrets" : "credentials, no secrets"}
+                          </Badge>
+                        </>
+                      )}
+                    </div>
                   </TableCell>
-                  <TableCell className="text-muted-foreground">{r.backupTime}</TableCell>
+                  <TableCell className="font-mono text-xs text-muted-foreground">{r.backupTime}</TableCell>
                   <TableCell className="pr-4 text-right">
                     <Button
                       size="sm"

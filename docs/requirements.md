@@ -45,13 +45,14 @@ The product is generic and must not depend on the details of this environment. V
 ## 5. UI
 
 - **English only, LTR only.** No Hebrew, no RTL, no localization layer, no language setting.
-- **Component library:** shadcn/ui with the classic **Vega** style, Tailwind CSS, lucide icons. Default neutral color scheme. Light and dark themes.
+- **Component library:** shadcn/ui with the classic **Vega** style, Tailwind CSS, lucide icons. Light and dark themes.
+- **Design language:** a quiet instrument. Paper grey ground, near-black ink and one brass accent on the main action; Jost, self-hosted; four type sizes (14, 16, 20 and 28 px) plus one large statement on the Overview. Surfaces are told apart by a tone step, not by lines or shadows; only menus and dialogs float. Status colours (healthy, needs a look, down) are data, never decoration. Tables and form fields keep their lines; monospace only for real code, keys and JSON.
 - **Layout (prototype variant D):**
   - shadcn Sidebar (inset, collapsible to icons) with breadcrumb header and user menu.
-  - Home (Overview): stat cards, a "needs attention" table, and a tile per instance colored by health.
+  - Home (Overview): one sentence that says what needs the operator, in their own instance and workflow names; the key figures beside it; "needs attention" rows grouped by kind; and a tile per instance filled by health.
   - Problems, Instances, Backups: a full-width table for an overview at a glance. Clicking a row opens a resizable detail panel beside the table (not an overlay); the table stays visible with the row highlighted, and the panel closes back to the full table.
   - Workflows: table with insights; moving a workflow opens a dialog wizard.
-  - Settings: tabs. Workers and Audit log: own pages.
+  - Settings: grouped sections beside the form (a menu on phones). Workers and Audit log: own pages.
 - **Problem page:** workflow, node, error text, counter, first and last seen; actions Mark resolved, Mute 24 h, Open in n8n (deep link to the execution). A drawn workflow graph with the failed node highlighted, the failed node's input as a key/value table (raw JSON on demand), recent occurrences, and other workflows with the same error.
 - **Live updates:** pages update by themselves (server-sent events).
 - **Mobile:** home and problem page are designed mobile first (Telegram links open there). Other pages work on mobile but are designed for desktop.

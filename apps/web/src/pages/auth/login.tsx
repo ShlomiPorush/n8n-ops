@@ -46,7 +46,9 @@ export function LoginPage() {
         <Card>
           <CardHeader>
             <CardTitle>Sign in to n8n-ops</CardTitle>
-            <CardDescription>Sign in with your username and password, then the code from your authenticator.</CardDescription>
+            <CardDescription>
+              Sign in with your username and password, then the code from your authenticator.
+            </CardDescription>
           </CardHeader>
           <CardContent>
             <form

@@ -92,7 +92,7 @@ export function WorkflowsPage() {
               <Figure value={ins.unusedInstances.length}>
                 {ins.unusedInstances.length === 1 ? "instance is almost unused" : "instances almost unused"}
               </Figure>
-              <Figure value={ins.inactive}>inactive workflows, candidates to archive before consolidating</Figure>
+              <Figure value={ins.inactive}>inactive workflows to archive first</Figure>
             </Figures>
             <div className="space-y-5">
               {ins.duplicateGroups.length > 0 && (
@@ -104,7 +104,9 @@ export function WorkflowsPage() {
                         {g.map((w, i) => (
                           <span key={w.workflowId}>
                             {i > 0 && <span className="text-muted-foreground"> = </span>}
-                            {w.name} <span className="text-muted-foreground">({w.instanceName})</span>
+                            <span className="md:whitespace-nowrap">
+                              {w.name} <span className="text-muted-foreground">({w.instanceName})</span>
+                            </span>
                           </span>
                         ))}
                       </li>

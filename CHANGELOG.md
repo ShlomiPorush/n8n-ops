@@ -27,6 +27,10 @@ All notable changes to this project are documented here. The format follows [Kee
 - Application shell (sidebar layout), settings with per-instance defaults, encryption keys, API and MCP tokens, audit log.
 - Project foundation: pnpm workspace with `server`, `web`, `worker` and `shared`, container images, development stack, workflow scripts, CI and Dependabot.
 
+### Changed
+
+- New look for the whole console: paper grey and near-black with one brass accent, the Jost typeface, and tone steps instead of lines, borders and shadows. The Overview opens with one sentence that says what needs you, the key figures beside it, and attention items grouped by kind; figures replace the rows of stat cards; Settings sections are grouped beside the form; sign-in and first-run setup sit on one left-aligned column. Lists keep their key columns when a detail panel is open.
+
 ### Fixed
 
 - Links in alerts, the Telegram webhook and worker install commands use `N8N_OPS_PUBLIC_URL` when Settings leaves the public URL empty; behind a TLS proxy they were built with http.

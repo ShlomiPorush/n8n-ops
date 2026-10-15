@@ -1,8 +1,27 @@
-import { BellOff, CheckCircle2, ExternalLink, GitMerge, RotateCcw, Search } from "lucide-react"
+import {
+  BellOff,
+  Braces,
+  Bug,
+  CheckCircle2,
+  CircleCheck,
+  Copy,
+  ExternalLink,
+  FileInput,
+  GitMerge,
+  History,
+  OctagonAlert,
+  RotateCcw,
+  Route,
+  Search,
+} from "lucide-react"
 import { useState } from "react"
 import { Link, useNavigate, useParams, useSearchParams } from "react-router"
+import { DialogIcon } from "@/components/dialog-icon"
+import { EmptyState } from "@/components/empty-state"
 import { FlowGraph, type GraphNode } from "@/components/flow-graph"
 import { ListWithPanel } from "@/components/list-panel"
+import { PageHeader } from "@/components/page-header"
+import { NumberTicker } from "@/components/spectrum/number-ticker"
 import { Code, ProblemBadge, TimeAgo } from "@/components/status"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -65,15 +84,23 @@ export function ProblemsTable({
   onOpen: (id: string) => void
   showInstance?: boolean
 }) {
+  if (rows.length === 0)
+    return (
+      <EmptyState
+        icon={CircleCheck}
+        title="No problems here"
+        description="When a workflow fails, its problem shows up here, grouped by workflow, node and error."
+      />
+    )
   return (
-    <div className="rounded-lg border">
+    <div className="@container overflow-hidden rounded-xl border">
       <Table>
         <TableHeader>
           <TableRow>
             <TableHead className="pl-4">Status</TableHead>
             <TableHead>Workflow</TableHead>
-            <TableHead>Error</TableHead>
-            {showInstance && <TableHead>Instance</TableHead>}
+            <TableHead className="hidden @xl:table-cell">Error</TableHead>
+            {showInstance && <TableHead className="hidden @2xl:table-cell">Instance</TableHead>}
             <TableHead className="text-right">Failures</TableHead>
             <TableHead className="pr-4">Last seen</TableHead>
           </TableRow>
@@ -93,23 +120,16 @@ export function ProblemsTable({
                 <div className="font-medium">{p.workflowName}</div>
                 <div className="text-xs text-muted-foreground">{p.nodeName}</div>
               </TableCell>
-              <TableCell className="max-w-80 truncate font-mono text-xs" title={p.errorMessage}>
+              <TableCell className="hidden max-w-80 truncate font-mono text-xs @xl:table-cell" title={p.errorMessage}>
                 {p.errorMessage}
               </TableCell>
-              {showInstance && <TableCell>{p.instanceName}</TableCell>}
+              {showInstance && <TableCell className="hidden @2xl:table-cell">{p.instanceName}</TableCell>}
               <TableCell className="text-right font-medium tabular-nums">{p.count}</TableCell>
               <TableCell className="pr-4 whitespace-nowrap text-muted-foreground">
                 <TimeAgo value={p.lastSeen} />
               </TableCell>
             </TableRow>
           ))}
-          {rows.length === 0 && (
-            <TableRow>
-              <TableCell colSpan={6} className="pl-4 text-muted-foreground">
-                Nothing here.
-              </TableCell>
-            </TableRow>
-          )}
         </TableBody>
       </Table>
     </div>
@@ -135,12 +155,7 @@ export function ProblemsPage() {
 
   const list = (
     <>
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Problems</h1>
-          <p className="text-muted-foreground">One row per workflow, node and error. Each alerts once.</p>
-        </div>
-      </div>
+      <PageHeader title="Problems" icon={Bug} description="One row per workflow, node and error. Each alerts once." />
       <div className="flex flex-wrap items-center gap-2">
         <ToggleGroup type="single" variant="outline" value={status} onValueChange={(v) => v && setParam("status", v)}>
           <ToggleGroupItem value="open">Open</ToggleGroupItem>
@@ -225,15 +240,36 @@ export function ProblemDetail({ id }: { id: string }) {
           <Badge variant="outline">{p.nodeName}</Badge>
         </div>
         <h2 className="text-2xl font-semibold tracking-tight">{p.workflowName}</h2>
-        <Code>{p.errorMessage}</Code>
-        {p.error?.description && <p className="text-sm text-muted-foreground">{p.error.description}</p>}
-        <div className="flex items-baseline gap-3 pt-1">
-          <span className="text-4xl font-bold tabular-nums">{p.count}</span>
-          <span className="text-sm text-muted-foreground">
-            {p.count === 1 ? "failure" : "failures"} · first <TimeAgo value={p.firstSeen} /> · last{" "}
-            <TimeAgo value={p.lastSeen} />
-            {p.status === "muted" && p.mutedUntil && <> · muted until {new Date(p.mutedUntil).toLocaleString()}</>}
-          </span>
+        <div className="flex gap-3 rounded-lg border border-rose-500/25 bg-rose-50/60 p-3 dark:bg-rose-400/5">
+          <OctagonAlert className="mt-0.5 size-4 shrink-0 text-rose-600 dark:text-rose-400" />
+          <div className="min-w-0 space-y-1">
+            <Code className="bg-transparent p-0 text-rose-800 dark:text-rose-200">{p.errorMessage}</Code>
+            {p.error?.description && <p className="text-sm text-muted-foreground">{p.error.description}</p>}
+          </div>
+        </div>
+        <div className="grid grid-cols-3 divide-x rounded-lg border">
+          <div className="px-4 py-3">
+            <div className="text-xs text-muted-foreground">{p.count === 1 ? "Failure" : "Failures"}</div>
+            <div className="text-2xl font-semibold tabular-nums">
+              <NumberTicker value={p.count} />
+            </div>
+          </div>
+          <div className="px-4 py-3">
+            <div className="text-xs text-muted-foreground">First seen</div>
+            <div className="text-sm font-medium" title={new Date(p.firstSeen).toLocaleString()}>
+              <TimeAgo value={p.firstSeen} />
+            </div>
+          </div>
+          <div className="px-4 py-3">
+            <div className="text-xs text-muted-foreground">{p.status === "muted" ? "Muted until" : "Last seen"}</div>
+            <div className="text-sm font-medium">
+              {p.status === "muted" && p.mutedUntil ? (
+                new Date(p.mutedUntil).toLocaleString()
+              ) : (
+                <TimeAgo value={p.lastSeen} />
+              )}
+            </div>
+          </div>
         </div>
         <div className="flex flex-wrap gap-2">
           {p.status === "resolved" ? (
@@ -265,7 +301,9 @@ export function ProblemDetail({ id }: { id: string }) {
 
       <Card>
         <CardHeader>
-          <CardTitle>Where it broke</CardTitle>
+          <CardTitle className="flex items-center gap-2">
+            <Route className="size-4 text-muted-foreground" /> Where it broke
+          </CardTitle>
           <CardDescription>Drawn from the workflow and the run data of the latest failure.</CardDescription>
         </CardHeader>
         <CardContent>
@@ -276,7 +314,9 @@ export function ProblemDetail({ id }: { id: string }) {
       <div className="grid gap-6 2xl:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle>Input of the failed node</CardTitle>
+            <CardTitle className="flex items-center gap-2">
+              <FileInput className="size-4 text-muted-foreground" /> Input of the failed node
+            </CardTitle>
             <CardDescription>
               {p.nodeInput.length
                 ? `${p.nodeInput.length} item${p.nodeInput.length === 1 ? "" : "s"}; the first is shown.`
@@ -317,7 +357,9 @@ export function ProblemDetail({ id }: { id: string }) {
         <div className="space-y-6">
           <Card>
             <CardHeader>
-              <CardTitle>Recent occurrences</CardTitle>
+              <CardTitle className="flex items-center gap-2">
+                <History className="size-4 text-muted-foreground" /> Recent occurrences
+              </CardTitle>
             </CardHeader>
             <CardContent>
               <Table>
@@ -349,7 +391,9 @@ export function ProblemDetail({ id }: { id: string }) {
           {p.sameError.length > 0 && (
             <Card>
               <CardHeader>
-                <CardTitle>Same error in {p.sameError.length} other workflows</CardTitle>
+                <CardTitle className="flex items-center gap-2">
+                  <Copy className="size-4 text-muted-foreground" /> Same error in {p.sameError.length} other workflows
+                </CardTitle>
                 <CardDescription>Grouped into one Telegram message.</CardDescription>
               </CardHeader>
               <CardContent>
@@ -376,9 +420,10 @@ export function ProblemDetail({ id }: { id: string }) {
       <Dialog open={raw !== null} onOpenChange={(o) => !o && setRaw(null)}>
         <DialogContent className="sm:max-w-4xl">
           <DialogHeader>
+            <DialogIcon icon={Braces} />
             <DialogTitle>Raw data</DialogTitle>
           </DialogHeader>
-          <pre className="max-h-[70vh] overflow-auto rounded-md bg-muted p-3 font-mono text-xs">
+          <pre className="max-h-[65vh] overflow-auto rounded-lg bg-muted p-4 font-mono text-xs leading-relaxed break-all whitespace-pre-wrap">
             {JSON.stringify(raw, null, 2)}
           </pre>
         </DialogContent>
@@ -409,6 +454,7 @@ function MergeDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
+          <DialogIcon icon={GitMerge} />
           <DialogTitle>Merge into another problem</DialogTitle>
           <DialogDescription>
             Its failures move to the chosen problem, and future failures with this error count there too.

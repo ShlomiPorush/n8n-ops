@@ -1,3 +1,4 @@
+import { Bot } from "lucide-react"
 import { useEffect, useState } from "react"
 import { Link } from "react-router"
 import { Button } from "@/components/ui/button"
@@ -47,7 +48,9 @@ export function AgentAccessCard({ id, name, scopesSource, keyScopes, agentAccess
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Agent access</CardTitle>
+        <CardTitle className="flex items-center gap-2">
+          <Bot className="size-4 text-muted-foreground" /> Agent access
+        </CardTitle>
         <CardDescription>
           Agents with a token that may request access can ask for temporary access to {name}, within what you allow
           here. You approve every request in <Link to="/access">Agent access</Link>, and it ends on its own.

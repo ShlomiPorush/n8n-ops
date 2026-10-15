@@ -1,8 +1,28 @@
-import { Copy, Download, KeyRound, Plus, ShieldCheck, Trash2 } from "lucide-react"
+import {
+  Bell,
+  Bot,
+  Copy,
+  Download,
+  Globe,
+  HardDrive,
+  KeyRound,
+  KeySquare,
+  type LucideIcon,
+  Mail,
+  Plus,
+  Send,
+  ShieldCheck,
+  SlidersHorizontal,
+  Trash2,
+  UserRound,
+} from "lucide-react"
 import { useEffect, useState } from "react"
-import { useNavigate, useParams } from "react-router"
+import { Link, useNavigate, useParams } from "react-router"
 import { toast } from "sonner"
 import { Page } from "@/app/shell"
+import { DialogIcon } from "@/components/dialog-icon"
+import { EmptyState } from "@/components/empty-state"
+import { TextStates } from "@/components/spectrum/text-states"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
@@ -20,10 +40,10 @@ import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { api, describeError, useApi, useApiMutation } from "@/lib/api"
 import { authClient, authErrorText } from "@/lib/auth-client"
 import { download } from "@/lib/download"
+import { cn } from "@/lib/utils"
 
 type FieldDef = {
   name: string
@@ -171,18 +191,40 @@ const forms: Record<string, { title: string; description: string; fields: FieldD
   },
 }
 
-const tabs = [
-  ["general", "General"],
-  ["alerts", "Alerts"],
-  ["telegram", "Telegram"],
-  ["email", "Email reports"],
-  ["storage", "Backup storage"],
-  ["keys", "Encryption keys"],
-  ["defaults", "Instance defaults"],
-  ["account", "Account"],
-  ["access", "Agent access"],
-  ["tokens", "API & MCP tokens"],
-] as const
+/** Settings sections, grouped the way people look for them. */
+const groups: { title: string; items: { key: string; label: string; icon: LucideIcon }[] }[] = [
+  {
+    title: "Installation",
+    items: [
+      { key: "general", label: "General", icon: Globe },
+      { key: "defaults", label: "Instance defaults", icon: SlidersHorizontal },
+    ],
+  },
+  {
+    title: "Notifications",
+    items: [
+      { key: "alerts", label: "Alerts", icon: Bell },
+      { key: "telegram", label: "Telegram", icon: Send },
+      { key: "email", label: "Email reports", icon: Mail },
+    ],
+  },
+  {
+    title: "Backups",
+    items: [
+      { key: "storage", label: "Backup storage", icon: HardDrive },
+      { key: "keys", label: "Encryption keys", icon: KeyRound },
+    ],
+  },
+  {
+    title: "Access",
+    items: [
+      { key: "account", label: "Account", icon: UserRound },
+      { key: "access", label: "Agent access", icon: Bot },
+      { key: "tokens", label: "API & MCP tokens", icon: KeySquare },
+    ],
+  },
+]
+const sectionsList = groups.flatMap((g) => g.items)
 
 const weekdays = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
 
@@ -191,20 +233,49 @@ export function SettingsPage() {
   const navigate = useNavigate()
   return (
     <Page title="Settings">
-      <Tabs value={section} onValueChange={(v) => navigate(`/settings/${v}`)}>
-        <TabsList className="max-w-full flex-wrap justify-start group-data-horizontal/tabs:h-auto">
-          {tabs.map(([k, l]) => (
-            <TabsTrigger key={k} value={k}>
-              {l}
-            </TabsTrigger>
+      <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:gap-10">
+        {/* Phones: one dropdown. Wider screens: grouped navigation beside the form. */}
+        <div className="lg:hidden">
+          <Select value={section} onValueChange={(v) => navigate(`/settings/${v}`)}>
+            <SelectTrigger className="w-full sm:w-72" aria-label="Settings section">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {sectionsList.map((item) => (
+                <SelectItem key={item.key} value={item.key}>
+                  {item.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <nav aria-label="Settings sections" className="hidden w-56 shrink-0 space-y-5 lg:sticky lg:top-6 lg:block">
+          {groups.map((g) => (
+            <div key={g.title} className="space-y-1">
+              <div className="px-3 text-xs font-medium tracking-wide text-muted-foreground uppercase">{g.title}</div>
+              {g.items.map((item) => (
+                <Link
+                  key={item.key}
+                  to={`/settings/${item.key}`}
+                  aria-current={section === item.key ? "page" : undefined}
+                  className={cn(
+                    "flex items-center gap-2.5 rounded-md px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
+                    section === item.key && "bg-muted font-medium text-foreground",
+                  )}
+                >
+                  <item.icon className="size-4" />
+                  {item.label}
+                </Link>
+              ))}
+            </div>
           ))}
-        </TabsList>
-      </Tabs>
-      <div className="max-w-3xl">
-        {section in forms && <SettingsForm key={section} section={section} />}
-        {section === "keys" && <KeysCard />}
-        {section === "account" && <AccountCard />}
-        {section === "tokens" && <TokensCard />}
+        </nav>
+        <div className="min-w-0 max-w-3xl flex-1">
+          {section in forms && <SettingsForm key={section} section={section} />}
+          {section === "keys" && <KeysCard />}
+          {section === "account" && <AccountCard />}
+          {section === "tokens" && <TokensCard />}
+        </div>
       </div>
     </Page>
   )
@@ -214,6 +285,7 @@ export function SettingsForm({ section }: { section: string }) {
   const def = forms[section]
   const query = useApi<Record<string, unknown>>(`/settings/${section}`)
   const [values, setValues] = useState<Record<string, unknown>>({})
+  const [justSaved, setJustSaved] = useState(false)
   const save = useApiMutation<Record<string, unknown>>("PUT", `/settings/${section}`, {
     invalidate: [`/settings/${section}`, "/setup/checklist"],
     success: "Settings saved",
@@ -235,7 +307,12 @@ export function SettingsForm({ section }: { section: string }) {
         body[f.name] = (Array.isArray(v) ? v : String(v ?? "").split(",")).map((s: string) => s.trim()).filter(Boolean)
       else body[f.name] = v
     }
-    save.mutate(body)
+    save.mutate(body, {
+      onSuccess: () => {
+        setJustSaved(true)
+        window.setTimeout(() => setJustSaved(false), 2000)
+      },
+    })
   }
 
   return (
@@ -304,7 +381,7 @@ export function SettingsForm({ section }: { section: string }) {
       </CardContent>
       <CardFooter className="gap-2 border-t">
         <Button onClick={submit} disabled={save.isPending || query.isLoading}>
-          Save
+          <TextStates text={save.isPending ? "Saving…" : justSaved ? "Saved" : "Save"} />
         </Button>
         {section === "telegram" && <TestTelegramButton />}
         {section === "email" && <TestEmailButton />}
@@ -437,6 +514,7 @@ function KeysCard() {
       >
         <DialogContent>
           <DialogHeader>
+            <DialogIcon icon={KeyRound} tone="amber" />
             <DialogTitle>New backup key pair</DialogTitle>
             <DialogDescription>
               New backups use the new key. Archives made before keep needing the old private key, so keep it too.
@@ -444,7 +522,9 @@ function KeysCard() {
           </DialogHeader>
           {privateKey ? (
             <div className="space-y-3">
-              <pre className="overflow-x-auto rounded-md bg-muted p-3 font-mono text-xs">{privateKey}</pre>
+              <pre className="rounded-lg bg-muted p-3 font-mono text-xs break-all whitespace-pre-wrap">
+                {privateKey}
+              </pre>
               <Button variant="outline" onClick={() => download("n8n-ops-backup-key.txt", `${privateKey}\n`)}>
                 <Download /> Download key file
               </Button>
@@ -570,50 +650,60 @@ function TokensCard() {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Kind</TableHead>
-              <TableHead>Created</TableHead>
-              <TableHead>Last used</TableHead>
-              <TableHead />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {(tokens.data ?? []).map((t) => (
-              <TableRow key={t.id}>
-                <TableCell className="font-medium">
-                  {t.name} <span className="font-mono text-xs text-muted-foreground">{t.prefix}…</span>
-                </TableCell>
-                <TableCell>
-                  <Badge variant="secondary">{t.kind === "mcp" ? "MCP · read" : "REST · read"}</Badge>
-                  {t.canRequestAccess && (
-                    <Badge variant="outline" className="ml-1">
-                      may request access
-                    </Badge>
-                  )}
-                </TableCell>
-                <TableCell className="text-muted-foreground">{new Date(t.createdAt).toLocaleDateString()}</TableCell>
-                <TableCell className="text-muted-foreground">
-                  {t.lastUsedAt ? new Date(t.lastUsedAt).toLocaleString() : "Never"}
-                </TableCell>
-                <TableCell className="text-right">
-                  <Button size="sm" variant="ghost" className="text-destructive" onClick={() => revoke.mutate(t.id)}>
-                    <Trash2 /> Revoke
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
-            {tokens.data?.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={5} className="text-muted-foreground">
-                  No tokens yet.
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
+        {tokens.data?.length === 0 ? (
+          <EmptyState
+            icon={KeySquare}
+            title="No tokens yet"
+            description="Create one for each agent or script, so each can be revoked on its own."
+          />
+        ) : (
+          <div className="overflow-hidden rounded-xl border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Kind</TableHead>
+                  <TableHead>Created</TableHead>
+                  <TableHead>Last used</TableHead>
+                  <TableHead />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {(tokens.data ?? []).map((t) => (
+                  <TableRow key={t.id}>
+                    <TableCell className="font-medium">
+                      {t.name} <span className="font-mono text-xs text-muted-foreground">{t.prefix}…</span>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="secondary">{t.kind === "mcp" ? "MCP · read" : "REST · read"}</Badge>
+                      {t.canRequestAccess && (
+                        <Badge variant="outline" className="ml-1">
+                          may request access
+                        </Badge>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {new Date(t.createdAt).toLocaleDateString()}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {t.lastUsedAt ? new Date(t.lastUsedAt).toLocaleString() : "Never"}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-destructive"
+                        onClick={() => revoke.mutate(t.id)}
+                      >
+                        <Trash2 /> Revoke
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
       </CardContent>
       <CardFooter className="border-t">
         <Button
@@ -629,6 +719,7 @@ function TokensCard() {
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
           <DialogHeader>
+            <DialogIcon icon={KeySquare} />
             <DialogTitle>New token</DialogTitle>
             <DialogDescription>The token is shown once. Store it where the agent or script reads it.</DialogDescription>
           </DialogHeader>

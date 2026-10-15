@@ -44,9 +44,9 @@ export function LoginPage() {
     <AuthFrame>
       {step === "password" ? (
         <Card>
-          <CardHeader className="text-center">
-            <CardTitle className="text-xl">Welcome back</CardTitle>
-            <CardDescription>Sign in to n8n-ops</CardDescription>
+          <CardHeader>
+            <CardTitle>Sign in to n8n-ops</CardTitle>
+            <CardDescription>Sign in with your username and password, then the code from your authenticator.</CardDescription>
           </CardHeader>
           <CardContent>
             <form
@@ -69,7 +69,7 @@ export function LoginPage() {
                   <Button type="submit" disabled={busy}>
                     Continue
                   </Button>
-                  <FieldDescription className="text-center">
+                  <FieldDescription>
                     Locked out? Run <code className="font-mono">reset-password</code> inside the server container.
                   </FieldDescription>
                 </Field>
@@ -79,11 +79,11 @@ export function LoginPage() {
         </Card>
       ) : (
         <Card>
-          <CardHeader className="text-center">
-            <CardTitle className="text-xl">Two-factor code</CardTitle>
+          <CardHeader>
+            <CardTitle>Two-factor code</CardTitle>
             <CardDescription>Enter the 6-digit code from your authenticator app.</CardDescription>
           </CardHeader>
-          <CardContent className="flex flex-col items-center gap-4">
+          <CardContent className="flex flex-col items-start gap-4">
             <TotpInput onComplete={(code) => void verify(code)} disabled={busy} />
             {error && <FieldError>{error}</FieldError>}
             <Button variant="link" onClick={() => setStep("password")}>

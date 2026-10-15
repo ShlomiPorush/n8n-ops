@@ -3,10 +3,8 @@ import { useState } from "react"
 import { Link, useNavigate, useParams, useSearchParams } from "react-router"
 import { FlowGraph, type GraphNode } from "@/components/flow-graph"
 import { ListWithPanel } from "@/components/list-panel"
-import { Code, ProblemBadge, TimeAgo } from "@/components/status"
-import { Badge } from "@/components/ui/badge"
+import { ProblemBadge, TimeAgo } from "@/components/status"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   Dialog,
   DialogContent,
@@ -65,17 +63,19 @@ export function ProblemsTable({
   onOpen: (id: string) => void
   showInstance?: boolean
 }) {
+  // With a detail panel open beside the list, keep the columns that identify a row.
+  const compact = Boolean(selected)
   return (
-    <div className="rounded-lg border">
+    <div>
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead className="pl-4">Status</TableHead>
+            <TableHead>Status</TableHead>
             <TableHead>Workflow</TableHead>
-            <TableHead>Error</TableHead>
-            {showInstance && <TableHead>Instance</TableHead>}
+            {!compact && <TableHead>Error</TableHead>}
+            {showInstance && !compact && <TableHead>Instance</TableHead>}
             <TableHead className="text-right">Failures</TableHead>
-            <TableHead className="pr-4">Last seen</TableHead>
+            <TableHead>Last seen</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -86,26 +86,28 @@ export function ProblemsTable({
               className="cursor-pointer"
               onClick={() => onOpen(p.id)}
             >
-              <TableCell className="pl-4">
+              <TableCell>
                 <ProblemBadge status={p.status} regression={p.regression} firstSeen={p.firstSeen} />
               </TableCell>
               <TableCell>
                 <div className="font-medium">{p.workflowName}</div>
                 <div className="text-xs text-muted-foreground">{p.nodeName}</div>
               </TableCell>
-              <TableCell className="max-w-80 truncate font-mono text-xs" title={p.errorMessage}>
-                {p.errorMessage}
-              </TableCell>
-              {showInstance && <TableCell>{p.instanceName}</TableCell>}
+              {!compact && (
+                <TableCell className="max-w-80 truncate text-muted-foreground" title={p.errorMessage}>
+                  {p.errorMessage}
+                </TableCell>
+              )}
+              {showInstance && !compact && <TableCell>{p.instanceName}</TableCell>}
               <TableCell className="text-right font-medium tabular-nums">{p.count}</TableCell>
-              <TableCell className="pr-4 whitespace-nowrap text-muted-foreground">
+              <TableCell className="whitespace-nowrap text-muted-foreground">
                 <TimeAgo value={p.lastSeen} />
               </TableCell>
             </TableRow>
           ))}
           {rows.length === 0 && (
             <TableRow>
-              <TableCell colSpan={6} className="pl-4 text-muted-foreground">
+              <TableCell colSpan={6} className="text-muted-foreground">
                 Nothing here.
               </TableCell>
             </TableRow>
@@ -136,9 +138,9 @@ export function ProblemsPage() {
   const list = (
     <>
       <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Problems</h1>
-          <p className="text-muted-foreground">One row per workflow, node and error. Each alerts once.</p>
+        <div className="space-y-1">
+          <h1 className="text-2xl font-medium">Problems</h1>
+          <p className="max-w-[62ch] text-muted-foreground">One row per workflow, node and error. Each alerts once.</p>
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-2">
@@ -215,21 +217,25 @@ export function ProblemDetail({ id }: { id: string }) {
   const latest = p.occurrences[0]
 
   return (
-    <div className="space-y-6">
-      <div className="space-y-3">
-        <div className="flex flex-wrap gap-2">
+    <div className="space-y-10">
+      <div className="space-y-4">
+        <h2 className="text-xl font-medium break-words xl:text-2xl">{p.workflowName}</h2>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-muted-foreground">
           <ProblemBadge status={p.status} regression={p.regression} firstSeen={p.firstSeen} />
-          <Badge variant="outline">
-            <Link to={`/instances/${p.instanceId}`}>{p.instanceName}</Link>
-          </Badge>
-          <Badge variant="outline">{p.nodeName}</Badge>
+          <span>
+            <Link to={`/instances/${p.instanceId}`} className="text-foreground underline">
+              {p.instanceName}
+            </Link>{" "}
+            · {p.nodeName}
+          </span>
         </div>
-        <h2 className="text-2xl font-semibold tracking-tight">{p.workflowName}</h2>
-        <Code>{p.errorMessage}</Code>
-        {p.error?.description && <p className="text-sm text-muted-foreground">{p.error.description}</p>}
-        <div className="flex items-baseline gap-3 pt-1">
-          <span className="text-4xl font-bold tabular-nums">{p.count}</span>
-          <span className="text-sm text-muted-foreground">
+        <div className="space-y-1 rounded-md bg-down-soft p-4">
+          <p className="font-medium break-words">{p.errorMessage}</p>
+          {p.error?.description && <p className="text-muted-foreground">{p.error.description}</p>}
+        </div>
+        <div className="flex items-baseline gap-3">
+          <span className="text-2xl font-medium tabular-nums">{p.count}</span>
+          <span className="text-muted-foreground">
             {p.count === 1 ? "failure" : "failures"} · first <TimeAgo value={p.firstSeen} /> · last{" "}
             <TimeAgo value={p.lastSeen} />
             {p.status === "muted" && p.mutedUntil && <> · muted until {new Date(p.mutedUntil).toLocaleString()}</>}
@@ -263,112 +269,102 @@ export function ProblemDetail({ id }: { id: string }) {
         </div>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Where it broke</CardTitle>
-          <CardDescription>Drawn from the workflow and the run data of the latest failure.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <FlowGraph nodes={p.graph} />
-        </CardContent>
-      </Card>
+      <section className="space-y-4">
+        <div className="space-y-1">
+          <h3 className="text-xl font-medium">Where it broke</h3>
+          <p className="text-muted-foreground">Drawn from the workflow and the run data of the latest failure.</p>
+        </div>
+        <FlowGraph nodes={p.graph} />
+      </section>
 
-      <div className="grid gap-6 2xl:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>Input of the failed node</CardTitle>
-            <CardDescription>
+      <div className="grid gap-10 2xl:grid-cols-2">
+        <section className="space-y-3">
+          <div className="space-y-1">
+            <h3 className="text-xl font-medium">Input of the failed node</h3>
+            <p className="text-muted-foreground">
               {p.nodeInput.length
                 ? `${p.nodeInput.length} item${p.nodeInput.length === 1 ? "" : "s"}; the first is shown.`
                 : "No input was recorded."}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {first !== undefined && (
-              <Table>
-                <TableBody>
-                  {flatten(first).map(([k, v]) => (
-                    <TableRow key={k}>
-                      <TableCell className="align-top text-muted-foreground">{k}</TableCell>
-                      <TableCell className="max-w-96 truncate text-right font-mono" title={v}>
-                        {v}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-            <div className="mt-2 flex flex-wrap gap-x-4">
-              <Button variant="link" className="px-0" onClick={() => setRaw({ input: p.nodeInput, error: p.error })}>
-                Show input and stack as JSON
-              </Button>
-              {p.latestFailureId && (
-                <Button
-                  variant="link"
-                  className="px-0"
-                  onClick={async () => setRaw(await api(`/problems/${id}/failures/${p.latestFailureId}`))}
-                >
-                  Show full execution
-                </Button>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-        <div className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Recent occurrences</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Execution</TableHead>
-                    <TableHead>Mode</TableHead>
-                    <TableHead className="text-right">When</TableHead>
+            </p>
+          </div>
+          {first !== undefined && (
+            <Table>
+              <TableBody>
+                {flatten(first).map(([k, v]) => (
+                  <TableRow key={k}>
+                    <TableCell className="align-top text-muted-foreground">{k}</TableCell>
+                    <TableCell className="max-w-96 truncate text-right" title={v}>
+                      {v}
+                    </TableCell>
                   </TableRow>
-                </TableHeader>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+          <div className="flex flex-wrap gap-x-5">
+            <Button variant="link" className="px-0" onClick={() => setRaw({ input: p.nodeInput, error: p.error })}>
+              Show input and stack as JSON
+            </Button>
+            {p.latestFailureId && (
+              <Button
+                variant="link"
+                className="px-0"
+                onClick={async () => setRaw(await api(`/problems/${id}/failures/${p.latestFailureId}`))}
+              >
+                Show full execution
+              </Button>
+            )}
+          </div>
+        </section>
+        <div className="space-y-10">
+          <section className="space-y-3">
+            <h3 className="text-xl font-medium">Recent occurrences</h3>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Execution</TableHead>
+                  <TableHead>Mode</TableHead>
+                  <TableHead className="text-right">When</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {p.occurrences.map((o) => (
+                  <TableRow key={o.id}>
+                    <TableCell>
+                      <a href={o.url} target="_blank" rel="noreferrer" className="underline">
+                        #{o.executionId}
+                      </a>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{o.mode ?? ""}</TableCell>
+                    <TableCell className="text-right text-muted-foreground">
+                      <TimeAgo value={o.stoppedAt ?? o.createdAt} />
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </section>
+          {p.sameError.length > 0 && (
+            <section className="space-y-3">
+              <div className="space-y-1">
+                <h3 className="text-xl font-medium">Same error in {p.sameError.length} other workflows</h3>
+                <p className="text-muted-foreground">Grouped into one Telegram message.</p>
+              </div>
+              <Table>
                 <TableBody>
-                  {p.occurrences.map((o) => (
-                    <TableRow key={o.id}>
-                      <TableCell className="font-mono">
-                        <a href={o.url} target="_blank" rel="noreferrer" className="underline-offset-4 hover:underline">
-                          #{o.executionId}
-                        </a>
+                  {p.sameError.map((s) => (
+                    <TableRow key={s.id}>
+                      <TableCell>
+                        <Link to={`/problems/${s.id}`} className="underline">
+                          {s.workflowName}
+                        </Link>
                       </TableCell>
-                      <TableCell className="text-muted-foreground">{o.mode ?? ""}</TableCell>
-                      <TableCell className="text-right text-muted-foreground">
-                        <TimeAgo value={o.stoppedAt ?? o.createdAt} />
-                      </TableCell>
+                      <TableCell className="text-right text-muted-foreground">{s.instanceName}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
               </Table>
-            </CardContent>
-          </Card>
-          {p.sameError.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Same error in {p.sameError.length} other workflows</CardTitle>
-                <CardDescription>Grouped into one Telegram message.</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <Table>
-                  <TableBody>
-                    {p.sameError.map((s) => (
-                      <TableRow key={s.id}>
-                        <TableCell>
-                          <Link to={`/problems/${s.id}`} className="underline-offset-4 hover:underline">
-                            {s.workflowName}
-                          </Link>
-                        </TableCell>
-                        <TableCell className="text-right text-muted-foreground">{s.instanceName}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </CardContent>
-            </Card>
+            </section>
           )}
         </div>
       </div>
@@ -378,7 +374,7 @@ export function ProblemDetail({ id }: { id: string }) {
           <DialogHeader>
             <DialogTitle>Raw data</DialogTitle>
           </DialogHeader>
-          <pre className="max-h-[70vh] overflow-auto rounded-md bg-muted p-3 font-mono text-xs">
+          <pre className="max-h-[70vh] overflow-auto rounded-md bg-background p-3 font-mono text-xs">
             {JSON.stringify(raw, null, 2)}
           </pre>
         </DialogContent>

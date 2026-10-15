@@ -30,7 +30,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { Separator } from "@/components/ui/separator"
 import {
   Sidebar,
   SidebarContent,
@@ -98,12 +97,10 @@ function AppSidebar() {
         </NavLink>
       </SidebarMenuButton>
       {item.badge === "problems" && (summary.data?.openProblems ?? 0) > 0 && (
-        <SidebarMenuBadge>{summary.data?.openProblems}</SidebarMenuBadge>
+        <SidebarMenuBadge className="text-down">{summary.data?.openProblems}</SidebarMenuBadge>
       )}
       {item.badge === "access" && (summary.data?.pendingAccess ?? 0) > 0 && (
-        <SidebarMenuBadge className="text-amber-700 dark:text-amber-400">
-          {summary.data?.pendingAccess}
-        </SidebarMenuBadge>
+        <SidebarMenuBadge className="text-warn">{summary.data?.pendingAccess}</SidebarMenuBadge>
       )}
     </SidebarMenuItem>
   )
@@ -115,11 +112,11 @@ function AppSidebar() {
           <SidebarMenuItem>
             <NavLink to="/">
               <SidebarMenuButton size="lg">
-                <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary font-bold text-sidebar-primary-foreground">
+                <div className="flex aspect-square size-8 items-center justify-center rounded-md bg-primary text-base font-semibold text-primary-foreground">
                   n
                 </div>
-                <div className="grid flex-1 text-left text-sm leading-tight">
-                  <span className="truncate font-semibold">n8n-ops</span>
+                <div className="grid flex-1 text-left leading-tight">
+                  <span className="truncate text-base font-semibold">n8n-ops</span>
                   <span className="truncate text-xs text-muted-foreground">Operations console</span>
                 </div>
               </SidebarMenuButton>
@@ -151,8 +148,8 @@ function AppSidebar() {
                     "mx-1.5 inline-block size-2 shrink-0 rounded-full",
                     workers?.total
                       ? workers.online === workers.total
-                        ? "bg-emerald-500"
-                        : "bg-amber-500"
+                        ? "bg-ok"
+                        : "bg-warn"
                       : "bg-muted-foreground/40",
                   )}
                 />
@@ -235,9 +232,8 @@ export function AppShell() {
     <SidebarProvider>
       <AppSidebar />
       <SidebarInset className="min-w-0">
-        <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
+        <header className="flex h-14 shrink-0 items-center gap-2 px-4 md:px-6">
           <SidebarTrigger className="-ml-1" />
-          <Separator orientation="vertical" className="mr-2 data-[orientation=vertical]:h-4" />
           <Breadcrumb>
             <BreadcrumbList>
               <BreadcrumbItem>
@@ -268,12 +264,12 @@ export function Page({
   children: React.ReactNode
 }) {
   return (
-    <div className="flex-1 space-y-6 p-4 md:p-6">
+    <div className="flex-1 space-y-8 px-4 pt-2 pb-10 md:px-6">
       {(title || actions) && (
         <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            {title && <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>}
-            {description && <p className="text-muted-foreground">{description}</p>}
+          <div className="space-y-1">
+            {title && <h1 className="text-2xl font-medium">{title}</h1>}
+            {description && <p className="max-w-[62ch] text-muted-foreground">{description}</p>}
           </div>
           {actions}
         </div>

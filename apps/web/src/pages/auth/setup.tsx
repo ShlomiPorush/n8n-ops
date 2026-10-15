@@ -48,7 +48,7 @@ export function SetupPage() {
 
   return (
     <AuthFrame wide>
-      <ol className="flex flex-wrap justify-center gap-1.5">
+      <ol className="flex flex-wrap gap-1.5">
         {steps.map((s, i) => (
           <li key={s}>
             <Badge variant={i === index ? "default" : i < index ? "secondary" : "outline"}>
@@ -146,7 +146,7 @@ function AccountStep({ onDone }: { onDone: (password: string) => Promise<void> }
           </FieldGroup>
         </form>
       </CardContent>
-      <CardFooter className="justify-end border-t">
+      <CardFooter className="justify-end">
         <Button type="submit" form="account" disabled={busy}>
           Create account
         </Button>
@@ -279,7 +279,7 @@ function BackupKeyStep({ onDone }: { onDone: () => Promise<void> }) {
           <Button onClick={() => void generate()}>Generate key pair</Button>
         ) : (
           <>
-            <pre className="overflow-x-auto rounded-md bg-muted p-3 font-mono text-xs" data-testid="private-key">
+            <pre className="overflow-x-auto rounded-md bg-background p-3 font-mono text-xs" data-testid="private-key">
               {privateKey}
             </pre>
             <Button variant="outline" onClick={() => download("n8n-ops-backup-key.txt", `${privateKey}\n`)}>
@@ -295,7 +295,7 @@ function BackupKeyStep({ onDone }: { onDone: () => Promise<void> }) {
         )}
         {error && <FieldError>{error}</FieldError>}
       </CardContent>
-      <CardFooter className="justify-end border-t">
+      <CardFooter className="justify-end">
         <Button disabled={!privateKey || !saved} onClick={() => void confirm()}>
           Continue
         </Button>
@@ -353,7 +353,7 @@ function OptionalStep({
           </FieldGroup>
         </form>
       </CardContent>
-      <CardFooter className="justify-between border-t">
+      <CardFooter className="justify-between">
         <Button variant="ghost" onClick={onSkip}>
           Skip for now
         </Button>

@@ -1,6 +1,6 @@
 import { Copy, Download, KeyRound, Plus, ShieldCheck, Trash2 } from "lucide-react"
 import { useEffect, useState } from "react"
-import { useNavigate, useParams } from "react-router"
+import { NavLink, useNavigate, useParams } from "react-router"
 import { toast } from "sonner"
 import { Page } from "@/app/shell"
 import { Badge } from "@/components/ui/badge"
@@ -20,10 +20,10 @@ import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { api, describeError, useApi, useApiMutation } from "@/lib/api"
 import { authClient, authErrorText } from "@/lib/auth-client"
 import { download } from "@/lib/download"
+import { cn } from "@/lib/utils"
 
 type FieldDef = {
   name: string
@@ -171,18 +171,38 @@ const forms: Record<string, { title: string; description: string; fields: FieldD
   },
 }
 
-const tabs = [
-  ["general", "General"],
-  ["alerts", "Alerts"],
-  ["telegram", "Telegram"],
-  ["email", "Email reports"],
-  ["storage", "Backup storage"],
-  ["keys", "Encryption keys"],
-  ["defaults", "Instance defaults"],
-  ["account", "Account"],
-  ["access", "Agent access"],
-  ["tokens", "API & MCP tokens"],
-] as const
+const sections: { group: string; items: [string, string][] }[] = [
+  {
+    group: "Installation",
+    items: [
+      ["general", "General"],
+      ["account", "Account"],
+    ],
+  },
+  {
+    group: "Notifications",
+    items: [
+      ["alerts", "Alerts"],
+      ["telegram", "Telegram"],
+      ["email", "Email reports"],
+    ],
+  },
+  {
+    group: "Backups",
+    items: [
+      ["storage", "Backup storage"],
+      ["keys", "Encryption keys"],
+      ["defaults", "Instance defaults"],
+    ],
+  },
+  {
+    group: "Access",
+    items: [
+      ["access", "Agent access"],
+      ["tokens", "API & MCP tokens"],
+    ],
+  },
+]
 
 const weekdays = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
 
@@ -191,20 +211,50 @@ export function SettingsPage() {
   const navigate = useNavigate()
   return (
     <Page title="Settings">
-      <Tabs value={section} onValueChange={(v) => navigate(`/settings/${v}`)}>
-        <TabsList className="max-w-full flex-wrap justify-start group-data-horizontal/tabs:h-auto">
-          {tabs.map(([k, l]) => (
-            <TabsTrigger key={k} value={k}>
-              {l}
-            </TabsTrigger>
+      <div className="grid gap-8 lg:grid-cols-[13rem_minmax(0,48rem)] lg:gap-12">
+        {/* Grouped sections beside the form; a menu on narrow screens. */}
+        <Select value={section} onValueChange={(v) => navigate(`/settings/${v}`)}>
+          <SelectTrigger className="w-full lg:hidden" aria-label="Settings section">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {sections.flatMap((g) =>
+              g.items.map(([k, l]) => (
+                <SelectItem key={k} value={k}>
+                  {l}
+                </SelectItem>
+              )),
+            )}
+          </SelectContent>
+        </Select>
+        <nav aria-label="Settings sections" className="hidden space-y-6 lg:block">
+          {sections.map((g) => (
+            <div key={g.group} className="space-y-1">
+              <h2 className="px-3 text-xs text-muted-foreground">{g.group}</h2>
+              <ul>
+                {g.items.map(([k, l]) => (
+                  <li key={k}>
+                    <NavLink
+                      to={`/settings/${k}`}
+                      className={cn(
+                        "block rounded-md px-3 py-1.5 transition-colors hover:bg-accent",
+                        section === k && "bg-foreground/[0.07] font-medium",
+                      )}
+                    >
+                      {l}
+                    </NavLink>
+                  </li>
+                ))}
+              </ul>
+            </div>
           ))}
-        </TabsList>
-      </Tabs>
-      <div className="max-w-3xl">
-        {section in forms && <SettingsForm key={section} section={section} />}
-        {section === "keys" && <KeysCard />}
-        {section === "account" && <AccountCard />}
-        {section === "tokens" && <TokensCard />}
+        </nav>
+        <div className="min-w-0">
+          {section in forms && <SettingsForm key={section} section={section} />}
+          {section === "keys" && <KeysCard />}
+          {section === "account" && <AccountCard />}
+          {section === "tokens" && <TokensCard />}
+        </div>
       </div>
     </Page>
   )
@@ -302,7 +352,7 @@ export function SettingsForm({ section }: { section: string }) {
           ))}
         </FieldGroup>
       </CardContent>
-      <CardFooter className="gap-2 border-t">
+      <CardFooter className="gap-2">
         <Button onClick={submit} disabled={save.isPending || query.isLoading}>
           Save
         </Button>
@@ -392,7 +442,7 @@ function KeysCard() {
             </FieldContent>
             <span className="min-w-64 text-sm">
               {keys.data?.privateKeySavedAt ? (
-                <span className="flex items-center gap-2 text-emerald-700 dark:text-emerald-400">
+                <span className="flex items-center gap-2 text-ok">
                   <ShieldCheck className="size-4" />
                   You confirmed it is saved ({new Date(keys.data.privateKeySavedAt).toLocaleDateString()})
                 </span>
@@ -444,7 +494,7 @@ function KeysCard() {
           </DialogHeader>
           {privateKey ? (
             <div className="space-y-3">
-              <pre className="overflow-x-auto rounded-md bg-muted p-3 font-mono text-xs">{privateKey}</pre>
+              <pre className="overflow-x-auto rounded-md bg-background p-3 font-mono text-xs">{privateKey}</pre>
               <Button variant="outline" onClick={() => download("n8n-ops-backup-key.txt", `${privateKey}\n`)}>
                 <Download /> Download key file
               </Button>
@@ -491,7 +541,7 @@ function AccountCard() {
               <FieldLabel>Two-factor (TOTP)</FieldLabel>
               <FieldDescription>Required for this installation.</FieldDescription>
             </FieldContent>
-            <span className="flex min-w-64 items-center gap-2 text-sm text-emerald-700 dark:text-emerald-400">
+            <span className="flex min-w-64 items-center gap-2 text-sm text-ok">
               <ShieldCheck className="size-4" /> On
             </span>
           </Field>
@@ -584,7 +634,7 @@ function TokensCard() {
             {(tokens.data ?? []).map((t) => (
               <TableRow key={t.id}>
                 <TableCell className="font-medium">
-                  {t.name} <span className="font-mono text-xs text-muted-foreground">{t.prefix}…</span>
+                  {t.name} <span className="text-muted-foreground">{t.prefix}…</span>
                 </TableCell>
                 <TableCell>
                   <Badge variant="secondary">{t.kind === "mcp" ? "MCP · read" : "REST · read"}</Badge>
@@ -615,7 +665,7 @@ function TokensCard() {
           </TableBody>
         </Table>
       </CardContent>
-      <CardFooter className="border-t">
+      <CardFooter>
         <Button
           onClick={() => {
             setCreated("")
@@ -634,7 +684,7 @@ function TokensCard() {
           </DialogHeader>
           {created ? (
             <div className="space-y-3">
-              <pre className="overflow-x-auto rounded-md bg-muted p-3 font-mono text-xs" data-testid="new-token">
+              <pre className="overflow-x-auto rounded-md bg-background p-3 font-mono text-xs" data-testid="new-token">
                 {created}
               </pre>
               <Button

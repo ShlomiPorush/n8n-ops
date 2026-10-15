@@ -20,7 +20,7 @@ export function FlowGraph({ nodes }: { nodes: GraphNode[] }) {
   return (
     <div
       ref={scroller}
-      className="relative overflow-x-auto rounded-lg border bg-[radial-gradient(circle,var(--border)_1px,transparent_1px)] bg-[length:16px_16px] p-5"
+      className="relative overflow-x-auto rounded-md bg-card p-6 in-data-[slot=detail-panel]:bg-background"
     >
       <div className="flex min-w-max items-center gap-0">
         {Array.from({ length: columns }, (_, col) => (
@@ -33,26 +33,24 @@ export function FlowGraph({ nodes }: { nodes: GraphNode[] }) {
                   <div
                     key={n.name}
                     ref={n.state === "failed" ? failed : undefined}
-                    className={cn("w-32 text-center", n.state === "skipped" && "opacity-40")}
+                    className={cn("w-36 text-center", n.state === "skipped" && "text-muted-foreground")}
                   >
                     <div
                       className={cn(
-                        "mx-auto mb-1.5 grid min-h-14 w-28 place-items-center rounded-lg border-2 bg-card px-1 text-[11px] font-semibold break-all",
-                        n.state === "ok" && "border-emerald-500/60",
-                        n.state === "failed" &&
-                          "border-destructive bg-destructive/10 text-destructive ring-4 ring-destructive/15",
+                        "mx-auto mb-2 grid min-h-14 w-32 place-items-center rounded-md px-2 text-xs font-medium break-all",
+                        n.state === "ok" && "bg-ok-soft text-ok",
+                        n.state === "skipped" && "bg-accent",
+                        n.state === "failed" && "bg-down text-down-foreground",
                       )}
                     >
                       {n.type}
                     </div>
                     <div className="text-xs leading-tight break-words">{n.name}</div>
-                    {n.state === "failed" && (
-                      <div className="text-[11px] font-medium text-destructive">failed here</div>
-                    )}
+                    {n.state === "failed" && <div className="text-xs font-medium text-down">failed here</div>}
                   </div>
                 ))}
             </div>
-            {col < columns - 1 && <div className="mx-1 h-px w-6 bg-muted-foreground/50" />}
+            {col < columns - 1 && <div className="mx-1 h-0.5 w-6 rounded-full bg-muted-foreground/60" />}
           </div>
         ))}
       </div>

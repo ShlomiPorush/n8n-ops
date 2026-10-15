@@ -75,9 +75,9 @@ export function AccessPage() {
 
   const list = (
     <>
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Agent access</h1>
-        <p className="text-muted-foreground">
+      <div className="space-y-1">
+        <h1 className="text-2xl font-medium">Agent access</h1>
+        <p className="max-w-[62ch] text-muted-foreground">
           Agents ask for temporary access to an n8n instance for a task. Nothing is granted until you approve, and
           access ends on its own.
         </p>
@@ -158,12 +158,13 @@ function AccessDetailPanel({ id }: { id: string }) {
   return (
     <div className="space-y-6">
       <div className="space-y-3">
-        <div className="flex flex-wrap items-center gap-2">
+        <h2 className="text-xl font-medium break-words xl:text-2xl">{r.reason}</h2>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-muted-foreground">
           <Tone tone={tone[r.status]}>{label[r.status]}</Tone>
-          <Badge variant="outline">{r.instance}</Badge>
-          <Badge variant="outline">token: {r.token}</Badge>
+          <span>
+            {r.instance} · token {r.token}
+          </span>
         </div>
-        <h2 className="text-2xl font-semibold tracking-tight">{r.reason}</h2>
         <p className="text-sm text-muted-foreground">
           {r.status === "pending" && (
             <>
@@ -216,19 +217,15 @@ function AccessDetailPanel({ id }: { id: string }) {
         <CardContent className="space-y-3">
           <div className="flex flex-wrap gap-1.5">
             {r.scopes.map((s) => (
-              <Badge key={s} variant="secondary" className="font-mono">
+              <Badge key={s} variant="secondary">
                 {s}
               </Badge>
             ))}
           </div>
-          {r.workflowIds.length > 0 && (
-            <p className="text-sm">
-              Workflows: <span className="font-mono">{r.workflowIds.join(", ")}</span>
-            </p>
-          )}
+          {r.workflowIds.length > 0 && <p className="text-sm">Workflows: {r.workflowIds.join(", ")}</p>}
           {r.keyPrefix && (
             <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
-              <KeyRound className="size-4" /> Key <span className="font-mono">{r.keyPrefix}…</span>
+              <KeyRound className="size-4" /> Key {r.keyPrefix}…
             </p>
           )}
         </CardContent>
@@ -254,9 +251,9 @@ function AccessDetailPanel({ id }: { id: string }) {
                   <TableCell className="whitespace-nowrap text-muted-foreground">
                     <TimeAgo value={call.at} />
                   </TableCell>
-                  <TableCell className="font-mono text-xs break-all whitespace-normal">
+                  <TableCell className="break-all whitespace-normal">
                     {call.method} {call.path}
-                    {call.refused && <div className="font-sans break-normal text-destructive">{call.refused}</div>}
+                    {call.refused && <div className="break-normal text-destructive">{call.refused}</div>}
                   </TableCell>
                   <TableCell className="text-right">
                     <Tone tone={call.refused ? "red" : call.status < 400 ? "green" : "amber"}>

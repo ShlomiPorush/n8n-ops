@@ -11,11 +11,11 @@ import {
 import { useState } from "react"
 import { Link } from "react-router"
 import { Page } from "@/app/shell"
+import { Figure, Figures } from "@/components/figures"
 import { Code, TimeAgo } from "@/components/status"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   Dialog,
   DialogContent,
@@ -84,49 +84,55 @@ export function WorkflowsPage() {
     >
       {ins && (
         <div className="@container">
-          <div className="grid gap-4 @3xl:grid-cols-3">
-            <Card>
-              <CardHeader>
-                <CardDescription>Duplicate workflows</CardDescription>
-                <CardTitle className="text-2xl">{ins.duplicateGroups.length}</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-1 text-sm">
-                {ins.duplicateGroups.slice(0, 5).map((g) => (
-                  <div key={g.map((w) => w.workflowId).join()}>
-                    {g.map((w, i) => (
-                      <span key={w.workflowId}>
-                        {i > 0 && <span className="text-muted-foreground"> = </span>}
-                        {w.name} <span className="text-muted-foreground">({w.instanceName})</span>
-                      </span>
+          <div className="grid gap-x-12 gap-y-8 @3xl:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
+            <Figures className="self-start">
+              <Figure value={ins.duplicateGroups.length} tone={ins.duplicateGroups.length ? "warn" : undefined}>
+                {ins.duplicateGroups.length === 1 ? "workflow exists twice" : "workflows exist more than once"}
+              </Figure>
+              <Figure value={ins.unusedInstances.length}>
+                {ins.unusedInstances.length === 1 ? "instance is almost unused" : "instances almost unused"}
+              </Figure>
+              <Figure value={ins.inactive}>inactive workflows, candidates to archive before consolidating</Figure>
+            </Figures>
+            <div className="space-y-5">
+              {ins.duplicateGroups.length > 0 && (
+                <div className="space-y-2">
+                  <h2 className="text-xl font-medium">Duplicates</h2>
+                  <ul className="space-y-1">
+                    {ins.duplicateGroups.slice(0, 5).map((g) => (
+                      <li key={g.map((w) => w.workflowId).join()}>
+                        {g.map((w, i) => (
+                          <span key={w.workflowId}>
+                            {i > 0 && <span className="text-muted-foreground"> = </span>}
+                            {w.name} <span className="text-muted-foreground">({w.instanceName})</span>
+                          </span>
+                        ))}
+                      </li>
                     ))}
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader>
-                <CardDescription>Instances almost unused</CardDescription>
-                <CardTitle className="text-2xl">{ins.unusedInstances.length}</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-1 text-sm">
-                {ins.unusedInstances.map((u) => (
-                  <Link key={u.id} to={`/instances/${u.id}`} className="block underline-offset-4 hover:underline">
-                    {u.name} · {u.runs30d === 0 ? "0 runs in 30 days" : "no active workflow"}
-                  </Link>
-                ))}
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader>
-                <CardDescription>Inactive workflows</CardDescription>
-                <CardTitle className="text-2xl">{ins.inactive}</CardTitle>
-              </CardHeader>
-              <CardContent className="text-sm text-muted-foreground">
-                <p>
-                  Candidates to archive before consolidating. Map read <TimeAgo value={ins.lastSyncedAt} />.
-                </p>
-              </CardContent>
-            </Card>
+                  </ul>
+                </div>
+              )}
+              {ins.unusedInstances.length > 0 && (
+                <div className="space-y-2">
+                  <h2 className="text-xl font-medium">Almost unused</h2>
+                  <ul className="space-y-1">
+                    {ins.unusedInstances.map((u) => (
+                      <li key={u.id}>
+                        <Link to={`/instances/${u.id}`} className="underline">
+                          {u.name}
+                        </Link>{" "}
+                        <span className="text-muted-foreground">
+                          · {u.runs30d === 0 ? "0 runs in 30 days" : "no active workflow"}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <p className="text-muted-foreground">
+                Map read <TimeAgo value={ins.lastSyncedAt} />.
+              </p>
+            </div>
           </div>
         </div>
       )}
@@ -154,13 +160,13 @@ export function WorkflowsPage() {
             ))}
           </SelectContent>
         </Select>
-        <span className="text-sm text-muted-foreground">{data.data?.workflows.length ?? 0} workflows</span>
+        <span className="text-muted-foreground">{data.data?.workflows.length ?? 0} workflows</span>
       </div>
 
       {data.isLoading ? (
         <Skeleton className="h-40" />
       ) : (
-        <div className="rounded-lg border">
+        <div>
           <Table>
             <TableHeader>
               <TableRow>
@@ -185,7 +191,7 @@ export function WorkflowsPage() {
                       {w.duplicates.length > 0 && (
                         <Badge
                           variant="outline"
-                          className="border-amber-500/40 text-amber-700 dark:text-amber-400"
+                          className="bg-warn-soft text-warn"
                           title={w.duplicates.map((d) => d.instanceName).join(", ")}
                         >
                           duplicate
@@ -196,9 +202,7 @@ export function WorkflowsPage() {
                   <TableCell>{w.instanceName}</TableCell>
                   <TableCell>
                     <div>{w.triggerType}</div>
-                    {w.triggerDetail && (
-                      <div className="font-mono text-xs text-muted-foreground">{w.triggerDetail}</div>
-                    )}
+                    {w.triggerDetail && <div className="text-xs text-muted-foreground">{w.triggerDetail}</div>}
                   </TableCell>
                   <TableCell className="whitespace-nowrap text-muted-foreground">
                     <TimeAgo value={w.lastRunAt} />
@@ -282,9 +286,9 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
             {steps.map((s) => (
               <li key={s.step} className="flex items-start gap-2">
                 {s.ok ? (
-                  <CheckCircle2 className="mt-0.5 size-4 text-emerald-600" />
+                  <CheckCircle2 className="mt-0.5 size-4 text-ok" />
                 ) : (
-                  <XCircle className="mt-0.5 size-4 text-amber-600" />
+                  <XCircle className="mt-0.5 size-4 text-warn" />
                 )}
                 <span>
                   {s.step}
@@ -338,7 +342,7 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
               </AlertDescription>
             </Alert>
             {preview.webhooks.map((h) => (
-              <Alert key={h.node} className="border-amber-500/50 text-amber-800 dark:text-amber-300">
+              <Alert key={h.node} className="bg-warn-soft">
                 <AlertTriangle />
                 <AlertTitle>Webhook URL changes ({h.node})</AlertTitle>
                 <AlertDescription>
@@ -349,7 +353,7 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
               </Alert>
             ))}
             {preview.callsWorkflows.length > 0 && (
-              <Alert className="border-amber-500/50 text-amber-800 dark:text-amber-300">
+              <Alert className="bg-warn-soft">
                 <AlertTriangle />
                 <AlertTitle>Calls other workflows by ID</AlertTitle>
                 <AlertDescription>

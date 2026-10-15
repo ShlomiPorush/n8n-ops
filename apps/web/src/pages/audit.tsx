@@ -17,7 +17,7 @@ export function AuditPage() {
   const rows = query.data?.pages.flat() ?? []
   return (
     <Page title="Audit log" description="Logins, settings, keys, tokens, restores, moves and exports.">
-      <div className="rounded-lg border">
+      <div>
         <Table>
           <TableHeader>
             <TableRow>

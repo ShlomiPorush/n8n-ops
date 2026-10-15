@@ -1,6 +1,7 @@
 import { CheckCircle2, Play, RotateCcw, XCircle } from "lucide-react"
 import { useState } from "react"
 import { Link, useNavigate, useParams } from "react-router"
+import { Figure, Figures } from "@/components/figures"
 import { ListWithPanel } from "@/components/list-panel"
 import { Dot, TimeAgo, Tone } from "@/components/status"
 import { Button } from "@/components/ui/button"
@@ -92,14 +93,14 @@ export function BackupsPage() {
 
   const list = (
     <>
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Backups</h1>
-        <p className="text-muted-foreground">
+      <div className="space-y-1">
+        <h1 className="text-2xl font-medium">Backups</h1>
+        <p className="max-w-[62ch] text-muted-foreground">
           Encrypted with your backup public key before upload. Click an instance for its history and restore.
         </p>
       </div>
       {s && !s.configured && (
-        <Card className="border-amber-500/50">
+        <Card className="bg-warn-soft">
           <CardHeader>
             <CardTitle>Backups are not set up</CardTitle>
             <CardDescription>
@@ -117,22 +118,27 @@ export function BackupsPage() {
         </Card>
       )}
       {s && (
-        <div className="@container">
-          <div className="grid grid-cols-2 gap-4 @3xl:grid-cols-4">
-            <Stat label="Backed up on time" value={`${okCount}/${s.instances.length}`} />
-            <Stat label="Daily backup time" value={s.retention.backupTime} />
-            <Stat
-              label="Keep days / weeks / months"
-              value={`${s.retention.retentionDaily} / ${s.retention.retentionWeekly} / ${s.retention.retentionMonthly}`}
-            />
-            <Stat label="Destination" value={<span className="text-sm break-all">{s.destination ?? "not set"}</span>} />
-          </div>
+        <div className="space-y-3">
+          <Figures wide>
+            <Figure value={`${okCount}/${s.instances.length}`} tone={okCount < s.instances.length ? "warn" : undefined}>
+              instances backed up on time
+            </Figure>
+            <Figure value={s.retention.backupTime}>daily backup time</Figure>
+            <Figure
+              value={`${s.retention.retentionDaily}/${s.retention.retentionWeekly}/${s.retention.retentionMonthly}`}
+            >
+              daily, weekly and monthly archives kept
+            </Figure>
+          </Figures>
+          <p className="break-all text-muted-foreground">
+            {s.destination ? <>Uploaded to {s.destination}</> : "No destination set yet."}
+          </p>
         </div>
       )}
       {data.isLoading ? (
         <Skeleton className="h-40" />
       ) : (
-        <div className="rounded-lg border">
+        <div>
           <Table>
             <TableHeader>
               <TableRow>
@@ -157,7 +163,7 @@ export function BackupsPage() {
                       {r.name}
                     </span>
                   </TableCell>
-                  <TableCell className={cn(stale(r) && "font-medium text-amber-600 dark:text-amber-400")}>
+                  <TableCell className={cn(stale(r) && "font-medium text-warn")}>
                     <TimeAgo value={r.lastOk?.startedAt} />
                   </TableCell>
                   <TableCell className="text-muted-foreground">
@@ -201,23 +207,12 @@ export function BackupsPage() {
   )
 }
 
-function Stat({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <Card className="gap-1 py-4">
-      <CardHeader className="px-4">
-        <CardDescription>{label}</CardDescription>
-        <CardTitle className="text-xl font-semibold tabular-nums">{value}</CardTitle>
-      </CardHeader>
-    </Card>
-  )
-}
-
 function BackupHistory({ id, name }: { id: string; name: string }) {
   const runs = useApi<Run[]>(`/backups/${id}/runs`, { refetchInterval: 5_000 })
   const [restoring, setRestoring] = useState<Run | null>(null)
   return (
     <div className="space-y-4">
-      <h2 className="text-2xl font-semibold">{name}</h2>
+      <h2 className="text-2xl font-medium">{name}</h2>
       <Table>
         <TableHeader>
           <TableRow>
@@ -241,7 +236,9 @@ function BackupHistory({ id, name }: { id: string; name: string }) {
                 ) : (
                   <div className="space-y-1">
                     <Tone tone="red">Failed</Tone>
-                    <div className="max-w-80 font-mono text-xs break-words text-muted-foreground">{r.error}</div>
+                    <div className="max-w-80 text-xs break-words whitespace-normal text-muted-foreground">
+                      {r.error}
+                    </div>
                   </div>
                 )}
               </TableCell>
@@ -327,9 +324,9 @@ function RestoreDialog({ run, instanceId, onClose }: { run: Run | null; instance
             {result.steps.map((s) => (
               <li key={s.step} className="flex items-start gap-2">
                 {s.ok ? (
-                  <CheckCircle2 className="mt-0.5 size-4 text-emerald-600" />
+                  <CheckCircle2 className="mt-0.5 size-4 text-ok" />
                 ) : (
-                  <XCircle className="mt-0.5 size-4 text-amber-600" />
+                  <XCircle className="mt-0.5 size-4 text-warn" />
                 )}
                 <span>
                   {s.step}

@@ -70,7 +70,7 @@ export function AgentAccessCard({ id, name, scopesSource, keyScopes, agentAccess
             {enabled && (
               <div className="space-y-3">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-sm font-medium">Scopes that may be granted</span>
+                  <span className="font-medium">Scopes that may be granted</span>
                   <Button size="sm" variant="outline" onClick={() => setScopes(new Set(keyScopes.filter(readOnly)))}>
                     Read only
                   </Button>
@@ -81,10 +81,10 @@ export function AgentAccessCard({ id, name, scopesSource, keyScopes, agentAccess
                     None
                   </Button>
                 </div>
-                <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
+                <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2 2xl:grid-cols-3">
                   {[...groups].map(([resource, list]) => (
-                    <div key={resource} className="space-y-1.5 rounded-md border p-3">
-                      <div className="text-xs font-medium text-muted-foreground">{resource}</div>
+                    <div key={resource} className="space-y-1.5">
+                      <div className="text-muted-foreground">{resource}</div>
                       {list.map((s) => (
                         <div key={s} className="flex items-center gap-2">
                           <Checkbox
@@ -93,9 +93,7 @@ export function AgentAccessCard({ id, name, scopesSource, keyScopes, agentAccess
                             checked={scopes.has(s)}
                             onCheckedChange={(v) => toggle(s, v === true)}
                           />
-                          <label htmlFor={`scope-${id}-${s}`} className="font-mono text-xs">
-                            {s.slice(resource.length + 1)}
-                          </label>
+                          <label htmlFor={`scope-${id}-${s}`}>{s.slice(resource.length + 1)}</label>
                         </div>
                       ))}
                     </div>
@@ -111,7 +109,7 @@ export function AgentAccessCard({ id, name, scopesSource, keyScopes, agentAccess
         )}
       </CardContent>
       {!unsupported && (
-        <CardFooter className="border-t">
+        <CardFooter>
           <Button
             disabled={save.isPending}
             onClick={() => save.mutate({ agentAccess: { enabled, scopes: [...scopes] } })}

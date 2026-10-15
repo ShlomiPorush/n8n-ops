@@ -1,25 +1,28 @@
 import { REGEXP_ONLY_DIGITS } from "input-otp"
 import { useState } from "react"
 import { InputOTP, InputOTPGroup, InputOTPSeparator, InputOTPSlot } from "@/components/ui/input-otp"
+import { cn } from "@/lib/utils"
 
 export function Logo() {
   return (
-    <div className="flex items-center gap-2 self-center font-medium">
-      <div className="flex size-7 items-center justify-center rounded-md bg-primary text-sm font-bold text-primary-foreground">
-        n
-      </div>
+    <div className="flex items-center gap-2.5 text-base font-semibold">
+      <div className="flex size-8 items-center justify-center rounded-md bg-primary text-primary-foreground">n</div>
       n8n-ops
     </div>
   )
 }
 
+/**
+ * Signed-out pages: everything hangs on one line about a quarter in from the left, on a mostly empty page.
+ * Cards inside the frame drop their surface so the column reads as one piece.
+ */
 export function AuthFrame({ children, wide }: { children: React.ReactNode; wide?: boolean }) {
   return (
-    <div className="flex min-h-svh flex-col items-center justify-center gap-6 bg-muted p-6 md:p-10">
-      <div className={wide ? "flex w-full max-w-lg flex-col gap-6" : "flex w-full max-w-sm flex-col gap-6"}>
-        <Logo />
+    <div data-slot="auth-frame" className="min-h-svh bg-background px-6 pt-8 pb-16 md:pt-14 md:pr-10 md:pl-[27vw]">
+      <Logo />
+      <main className={cn("mt-[12vh] flex w-full flex-col gap-8 md:mt-[16vh]", wide ? "max-w-lg" : "max-w-[380px]")}>
         {children}
-      </div>
+      </main>
     </div>
   )
 }

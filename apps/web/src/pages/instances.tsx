@@ -3,10 +3,10 @@ import { useEffect, useState } from "react"
 import { useNavigate, useParams } from "react-router"
 import { toast } from "sonner"
 import { AgentAccessCard } from "@/components/agent-access-card"
+import { Figure, Figures } from "@/components/figures"
 import { ListWithPanel } from "@/components/list-panel"
 import { Dot, type HealthState, TimeAgo, Tone } from "@/components/status"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import {
@@ -114,9 +114,9 @@ export function InstancesPage() {
   const list = (
     <>
       <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Instances</h1>
-          <p className="text-muted-foreground">
+        <div className="space-y-1">
+          <h1 className="text-2xl font-medium">Instances</h1>
+          <p className="max-w-[62ch] text-muted-foreground">
             {rows.length} registered{data.data?.latestVersion ? ` · latest n8n ${data.data.latestVersion}` : ""}
           </p>
         </div>
@@ -136,16 +136,16 @@ export function InstancesPage() {
           </CardHeader>
         </Card>
       ) : (
-        <div className="rounded-lg border">
+        <div>
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="pl-4">Instance</TableHead>
+                <TableHead>Instance</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead>Version</TableHead>
-                <TableHead>API key</TableHead>
+                {!id && <TableHead>Version</TableHead>}
+                {!id && <TableHead>API key</TableHead>}
                 <TableHead className="text-right">Open</TableHead>
-                <TableHead className="pr-4">Last backup</TableHead>
+                <TableHead>Last backup</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -156,31 +156,31 @@ export function InstancesPage() {
                   className="cursor-pointer"
                   onClick={() => navigate(`/instances/${i.id}`)}
                 >
-                  <TableCell className="pl-4 font-medium">
+                  <TableCell className="font-medium">
                     <span className="flex items-center gap-2">
                       <Dot health={i.health} />
                       {i.name}
                     </span>
                   </TableCell>
                   <TableCell className={cn(i.health === "ok" && "text-muted-foreground")}>{healthLabel(i)}</TableCell>
-                  <TableCell>
-                    <span
-                      className={cn(
-                        behind(i.version, data.data?.latestVersion ?? null) && "text-amber-600 dark:text-amber-400",
+                  {!id && (
+                    <TableCell>
+                      <span className={cn(behind(i.version, data.data?.latestVersion ?? null) && "text-warn")}>
+                        {i.version ?? "unknown"}
+                      </span>
+                    </TableCell>
+                  )}
+                  {!id && (
+                    <TableCell>
+                      {i.capabilities.find((c) => c.key === "move")?.available ? (
+                        <span>read + write</span>
+                      ) : (
+                        <span className="text-muted-foreground">read only</span>
                       )}
-                    >
-                      {i.version ?? "unknown"}
-                    </span>
-                  </TableCell>
-                  <TableCell>
-                    {i.capabilities.find((c) => c.key === "move")?.available ? (
-                      <Badge>read + write</Badge>
-                    ) : (
-                      <Badge variant="secondary">read only</Badge>
-                    )}
-                  </TableCell>
+                    </TableCell>
+                  )}
                   <TableCell className="text-right tabular-nums">{i.openProblems}</TableCell>
-                  <TableCell className="pr-4 text-muted-foreground">
+                  <TableCell className="text-muted-foreground">
                     {i.lastBackup ? (
                       <span className={cn(i.lastBackup.status === "failed" && "text-destructive")}>
                         <TimeAgo value={i.lastBackup.at} />
@@ -232,22 +232,19 @@ function InstanceDetail({ id }: { id: string }) {
     <div className="space-y-6">
       <div className="space-y-2">
         <div className="flex flex-wrap items-center gap-3">
-          <Dot health={i.health} className="size-2.5" />
-          <h2 className="text-3xl font-semibold tracking-tight">{i.name}</h2>
+          <h2 className="text-2xl font-medium">{i.name}</h2>
           <Tone
             tone={i.health === "down" ? "red" : i.health === "warn" ? "amber" : i.health === "ok" ? "green" : "neutral"}
           >
             {healthLabel(i)}
           </Tone>
         </div>
-        <p className="text-sm text-muted-foreground">
-          <a href={i.baseUrl} target="_blank" rel="noreferrer" className="underline-offset-4 hover:underline">
+        <p className="text-muted-foreground">
+          <a href={i.baseUrl} target="_blank" rel="noreferrer" className="text-foreground underline">
             {i.baseUrl}
           </a>{" "}
           · n8n {i.version ?? "unknown"}{" "}
-          {behind(i.version, i.latestVersion) && (
-            <span className="text-amber-600 dark:text-amber-400">(latest {i.latestVersion})</span>
-          )}
+          {behind(i.version, i.latestVersion) && <span className="text-warn">(latest {i.latestVersion})</span>}
           {i.queueMode && " · queue mode"}
         </p>
         <div className="flex flex-wrap gap-2 pt-2">
@@ -268,21 +265,24 @@ function InstanceDetail({ id }: { id: string }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
-        <Stat label="Open problems" value={i.openProblems} />
-        <Stat label="Active / total workflows" value={`${i.workflowCounts.active}/${i.workflowCounts.total}`} />
-        <Stat label="Executions, 30 days" value={i.workflowCounts.runs30d.toLocaleString()} />
-        <Stat label="Failures checked" value={<TimeAgo value={i.lastPollAt} />} />
-        <Stat label="Health checked" value={<TimeAgo value={i.healthCheckedAt} />} />
-        <Stat label="Collection" value={i.collection === "worker" ? "Through worker" : "Direct"} />
+      <div className="space-y-3">
+        <Figures wide>
+          <Figure value={i.openProblems} tone={i.openProblems ? "down" : undefined}>
+            {i.openProblems === 1 ? "open problem" : "open problems"}
+          </Figure>
+          <Figure value={`${i.workflowCounts.active}/${i.workflowCounts.total}`}>workflows active</Figure>
+          <Figure value={i.workflowCounts.runs30d.toLocaleString()}>executions in 30 days</Figure>
+        </Figures>
+        <p className="text-muted-foreground">
+          Failures checked <TimeAgo value={i.lastPollAt} />, health checked <TimeAgo value={i.healthCheckedAt} />,
+          collected {i.collection === "worker" ? "through a worker" : "directly"}.
+        </p>
       </div>
       {i.lastPollError && (
-        <Card className="border-destructive/50">
-          <CardHeader>
-            <CardTitle>Reading failures failed</CardTitle>
-            <CardDescription className="font-mono">{i.lastPollError}</CardDescription>
-          </CardHeader>
-        </Card>
+        <div className="space-y-1 rounded-md bg-down-soft p-4">
+          <p className="font-medium">Reading failures failed</p>
+          <p className="break-words">{i.lastPollError}</p>
+        </div>
       )}
 
       <Card>
@@ -315,15 +315,13 @@ function InstanceDetail({ id }: { id: string }) {
                 ] as const
               ).map(([k, v, bad]) => (
                 <div key={k}>
-                  <div className={cn("text-2xl font-semibold tabular-nums", bad && "text-destructive")}>{v}</div>
+                  <div className={cn("text-2xl font-medium tabular-nums", bad && "text-destructive")}>{v}</div>
                   <div className="text-xs text-muted-foreground">{k}</div>
                 </div>
               ))}
             </div>
           )}
-          {hd?.metricsError && (
-            <p className="text-sm text-amber-700 dark:text-amber-400">Queue metrics: {hd.metricsError}</p>
-          )}
+          {hd?.metricsError && <p className="text-sm text-warn">Queue metrics: {hd.metricsError}</p>}
           {i.queueMode && (!i.metricsUrl || i.workerHealthUrls.length === 0) && (
             <Alert>
               <Info />
@@ -401,13 +399,13 @@ function InstanceDetail({ id }: { id: string }) {
                 <TableRow key={c.key}>
                   <TableCell className="w-8">
                     {c.available ? (
-                      <CheckCircle2 className="size-4 text-emerald-600" />
+                      <CheckCircle2 className="size-4 text-ok" />
                     ) : (
                       <X className="size-4 text-muted-foreground" />
                     )}
                   </TableCell>
                   <TableCell className={cn(!c.available && "text-muted-foreground")}>{c.label}</TableCell>
-                  <TableCell className="text-right font-mono text-xs text-muted-foreground">
+                  <TableCell className="text-right text-xs whitespace-normal text-muted-foreground">
                     {c.available
                       ? c.scopes.join(", ") || "worker"
                       : [
@@ -484,17 +482,6 @@ async function exportCredentials(id: string, name: string) {
   }
 }
 
-function Stat({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <Card className="gap-1 py-4">
-      <CardHeader className="px-4">
-        <CardDescription>{label}</CardDescription>
-        <CardTitle className="text-xl font-semibold tabular-nums">{value}</CardTitle>
-      </CardHeader>
-    </Card>
-  )
-}
-
 function HealthRow({ label, ok, detail }: { label: string; ok?: boolean; detail?: string }) {
   return (
     <TableRow>
@@ -564,7 +551,7 @@ function OverridesCard({ instance }: { instance: InstanceDetailData }) {
           ))}
         </div>
       </CardContent>
-      <CardFooter className="border-t">
+      <CardFooter>
         <Button onClick={submit} disabled={save.isPending}>
           Save overrides
         </Button>
@@ -708,7 +695,7 @@ export function InstanceDialog({
                 <FieldLabel htmlFor="i-workers">Worker health URLs</FieldLabel>
                 <textarea
                   id="i-workers"
-                  className="min-h-20 rounded-md border bg-transparent px-3 py-2 font-mono text-sm"
+                  className="min-h-20 rounded-md border border-input bg-transparent px-3 py-2"
                   value={form.workerHealthUrls}
                   onChange={(e) => set("workerHealthUrls", e.target.value)}
                   placeholder={"http://n8n-worker-1:5678/healthz\nhttp://n8n-worker-2:5678/healthz"}

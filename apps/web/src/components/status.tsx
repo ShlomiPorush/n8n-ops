@@ -10,10 +10,10 @@ export function Dot({ health, className }: { health: HealthState; className?: st
       aria-label={health}
       className={cn(
         "inline-block size-2 shrink-0 rounded-full",
-        health === "ok" && "bg-emerald-500",
-        health === "warn" && "bg-amber-500",
-        health === "down" && "bg-red-500",
-        health === "unknown" && "bg-muted-foreground/40",
+        health === "ok" && "bg-ok",
+        health === "warn" && "bg-warn",
+        health === "down" && "bg-down",
+        health === "unknown" && "bg-muted-foreground/50",
         className,
       )}
     />
@@ -27,15 +27,15 @@ export function Tone({
   tone: "red" | "amber" | "green" | "neutral" | "primary"
   children: React.ReactNode
 }) {
-  if (tone === "red") return <Badge variant="destructive">{children}</Badge>
+  // Filled, never outlined: the tone of the field carries the meaning, the text stays readable.
   if (tone === "primary") return <Badge>{children}</Badge>
-  if (tone === "neutral") return <Badge variant="secondary">{children}</Badge>
   return (
     <Badge
       variant="outline"
       className={cn(
-        tone === "amber" && "border-amber-500/40 text-amber-700 dark:text-amber-400",
-        tone === "green" && "border-emerald-500/40 text-emerald-700 dark:text-emerald-400",
+        tone === "red" && "bg-down-soft text-down",
+        tone === "amber" && "bg-warn-soft text-warn",
+        tone === "green" && "bg-ok-soft text-ok",
       )}
     >
       {children}
@@ -61,7 +61,12 @@ export function ProblemBadge({
 
 export function Code({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
-    <code className={cn("relative rounded bg-muted px-[0.3rem] py-[0.2rem] font-mono text-sm break-all", className)}>
+    <code
+      className={cn(
+        "relative rounded bg-foreground/[0.07] px-[0.3rem] py-[0.2rem] font-mono text-sm break-all",
+        className,
+      )}
+    >
       {children}
     </code>
   )

@@ -137,7 +137,9 @@ function CopyBlock({ label, text }: { label: string; text: string }) {
           <Copy /> Copy
         </Button>
       </div>
-      <pre className="max-h-72 overflow-auto rounded-md bg-muted p-4 font-mono text-xs leading-relaxed">{text}</pre>
+      <pre className="max-h-72 overflow-auto rounded-md bg-background p-4 font-mono text-xs leading-relaxed">
+        {text}
+      </pre>
     </div>
   )
 }

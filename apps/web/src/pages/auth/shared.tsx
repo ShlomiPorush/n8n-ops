@@ -1,21 +1,23 @@
 import { REGEXP_ONLY_DIGITS } from "input-otp"
 import { useState } from "react"
+import { BrandMark } from "@/components/brand"
 import { InputOTP, InputOTPGroup, InputOTPSeparator, InputOTPSlot } from "@/components/ui/input-otp"
 
 export function Logo() {
   return (
-    <div className="flex items-center gap-2 self-center font-medium">
-      <div className="flex size-7 items-center justify-center rounded-md bg-primary text-sm font-bold text-primary-foreground">
-        n
+    <div className="flex flex-col items-center gap-2 self-center">
+      <BrandMark className="size-10 text-base" />
+      <div className="text-center">
+        <div className="font-semibold tracking-tight">n8n-ops</div>
+        <div className="text-xs text-muted-foreground">Operations console for n8n</div>
       </div>
-      n8n-ops
     </div>
   )
 }
 
 export function AuthFrame({ children, wide }: { children: React.ReactNode; wide?: boolean }) {
   return (
-    <div className="flex min-h-svh flex-col items-center justify-center gap-6 bg-muted p-6 md:p-10">
+    <div className="flex min-h-svh flex-col items-center justify-center gap-6 bg-muted bg-[radial-gradient(var(--border)_1px,transparent_1px)] bg-size-[22px_22px] p-6 md:p-10">
       <div className={wide ? "flex w-full max-w-lg flex-col gap-6" : "flex w-full max-w-sm flex-col gap-6"}>
         <Logo />
         {children}

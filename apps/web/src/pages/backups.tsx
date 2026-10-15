@@ -1,7 +1,8 @@
-import { CheckCircle2, Play, RotateCcw, XCircle } from "lucide-react"
+import { Archive, CheckCircle2, Clock, HardDrive, KeyRound, Play, RotateCcw, ShieldCheck, XCircle } from "lucide-react"
 import { useState } from "react"
 import { Link, useNavigate, useParams } from "react-router"
 import { ListWithPanel } from "@/components/list-panel"
+import { StatCard } from "@/components/stat-card"
 import { Dot, TimeAgo, Tone } from "@/components/status"
 import { Button } from "@/components/ui/button"
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -119,13 +120,27 @@ export function BackupsPage() {
       {s && (
         <div className="@container">
           <div className="grid grid-cols-2 gap-4 @3xl:grid-cols-4">
-            <Stat label="Backed up on time" value={`${okCount}/${s.instances.length}`} />
-            <Stat label="Daily backup time" value={s.retention.backupTime} />
-            <Stat
+            <StatCard
+              size="sm"
+              label="Backed up on time"
+              value={okCount}
+              total={s.instances.length}
+              icon={ShieldCheck}
+              tone={okCount < s.instances.length ? "amber" : "default"}
+            />
+            <StatCard size="sm" label="Daily backup time" value={s.retention.backupTime} icon={Clock} />
+            <StatCard
+              size="sm"
               label="Keep days / weeks / months"
               value={`${s.retention.retentionDaily} / ${s.retention.retentionWeekly} / ${s.retention.retentionMonthly}`}
+              icon={Archive}
             />
-            <Stat label="Destination" value={<span className="text-sm break-all">{s.destination ?? "not set"}</span>} />
+            <StatCard
+              size="sm"
+              label="Destination"
+              value={<span className="font-mono text-sm break-all">{s.destination ?? "not set"}</span>}
+              icon={HardDrive}
+            />
           </div>
         </div>
       )}
@@ -201,17 +216,6 @@ export function BackupsPage() {
   )
 }
 
-function Stat({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <Card className="gap-1 py-4">
-      <CardHeader className="px-4">
-        <CardDescription>{label}</CardDescription>
-        <CardTitle className="text-xl font-semibold tabular-nums">{value}</CardTitle>
-      </CardHeader>
-    </Card>
-  )
-}
-
 function BackupHistory({ id, name }: { id: string; name: string }) {
   const runs = useApi<Run[]>(`/backups/${id}/runs`, { refetchInterval: 5_000 })
   const [restoring, setRestoring] = useState<Run | null>(null)
@@ -235,9 +239,17 @@ function BackupHistory({ id, name }: { id: string; name: string }) {
               <TableCell className="whitespace-nowrap">{new Date(r.startedAt).toLocaleString()}</TableCell>
               <TableCell>
                 {r.status === "ok" ? (
-                  <Tone tone="green">{r.deletedAt ? "Expired" : r.includesSecrets ? "OK · with secrets" : "OK"}</Tone>
+                  r.deletedAt ? (
+                    <Tone tone="neutral">Expired</Tone>
+                  ) : (
+                    <Tone tone="green" icon={r.includesSecrets ? KeyRound : undefined}>
+                      {r.includesSecrets ? "OK · with secrets" : "OK"}
+                    </Tone>
+                  )
                 ) : r.status === "running" ? (
-                  <Tone tone="neutral">Running</Tone>
+                  <Tone tone="blue" spin>
+                    Running
+                  </Tone>
                 ) : (
                   <div className="space-y-1">
                     <Tone tone="red">Failed</Tone>

@@ -43,7 +43,7 @@ export function LoginPage() {
   return (
     <AuthFrame>
       {step === "password" ? (
-        <Card>
+        <Card className="shadow-lg">
           <CardHeader className="text-center">
             <CardTitle className="text-xl">Welcome back</CardTitle>
             <CardDescription>Sign in to n8n-ops</CardDescription>
@@ -78,7 +78,7 @@ export function LoginPage() {
           </CardContent>
         </Card>
       ) : (
-        <Card>
+        <Card className="shadow-lg">
           <CardHeader className="text-center">
             <CardTitle className="text-xl">Two-factor code</CardTitle>
             <CardDescription>Enter the 6-digit code from your authenticator app.</CardDescription>

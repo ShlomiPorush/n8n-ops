@@ -17,6 +17,8 @@ import {
 } from "lucide-react"
 import { useTheme } from "next-themes"
 import { Navigate, NavLink, Outlet, useLocation, useNavigate } from "react-router"
+import { BrandMark } from "@/components/brand"
+import { Dot } from "@/components/status"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Breadcrumb, BreadcrumbItem, BreadcrumbList, BreadcrumbPage } from "@/components/ui/breadcrumb"
 import { Button } from "@/components/ui/button"
@@ -51,7 +53,6 @@ import {
 import { ApiError, useApi } from "@/lib/api"
 import { authClient } from "@/lib/auth-client"
 import { useLiveUpdates } from "@/lib/live"
-import { cn } from "@/lib/utils"
 
 type NavItem = { to: string; label: string; icon: typeof Bug; badge?: "problems" | "access" }
 const operate: NavItem[] = [
@@ -98,10 +99,12 @@ function AppSidebar() {
         </NavLink>
       </SidebarMenuButton>
       {item.badge === "problems" && (summary.data?.openProblems ?? 0) > 0 && (
-        <SidebarMenuBadge>{summary.data?.openProblems}</SidebarMenuBadge>
+        <SidebarMenuBadge className="rounded-full bg-rose-500/10 px-1.5 text-rose-700 peer-hover/menu-button:text-rose-700 peer-data-active/menu-button:text-rose-700 dark:text-rose-300 dark:peer-hover/menu-button:text-rose-300 dark:peer-data-active/menu-button:text-rose-300">
+          {summary.data?.openProblems}
+        </SidebarMenuBadge>
       )}
       {item.badge === "access" && (summary.data?.pendingAccess ?? 0) > 0 && (
-        <SidebarMenuBadge className="text-amber-700 dark:text-amber-400">
+        <SidebarMenuBadge className="rounded-full bg-amber-500/15 px-1.5 text-amber-700 peer-hover/menu-button:text-amber-700 peer-data-active/menu-button:text-amber-700 dark:text-amber-300 dark:peer-hover/menu-button:text-amber-300 dark:peer-data-active/menu-button:text-amber-300">
           {summary.data?.pendingAccess}
         </SidebarMenuBadge>
       )}
@@ -115,9 +118,7 @@ function AppSidebar() {
           <SidebarMenuItem>
             <NavLink to="/">
               <SidebarMenuButton size="lg">
-                <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary font-bold text-sidebar-primary-foreground">
-                  n
-                </div>
+                <BrandMark />
                 <div className="grid flex-1 text-left text-sm leading-tight">
                   <span className="truncate font-semibold">n8n-ops</span>
                   <span className="truncate text-xs text-muted-foreground">Operations console</span>
@@ -146,15 +147,17 @@ function AppSidebar() {
           <SidebarMenuItem>
             <NavLink to="/workers">
               <SidebarMenuButton size="lg" tooltip="Workers">
-                <span
-                  className={cn(
-                    "mx-1.5 inline-block size-2 shrink-0 rounded-full",
+                <Dot
+                  className="mx-2"
+                  health={
                     workers?.total
                       ? workers.online === workers.total
-                        ? "bg-emerald-500"
-                        : "bg-amber-500"
-                      : "bg-muted-foreground/40",
-                  )}
+                        ? "ok"
+                        : workers.online
+                          ? "warn"
+                          : "down"
+                      : "unknown"
+                  }
                 />
                 <div className="grid text-left text-xs leading-tight">
                   <span className="font-medium">Workers</span>

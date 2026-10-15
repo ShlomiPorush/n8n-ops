@@ -1,6 +1,7 @@
-import { Ban, Check, KeyRound, X } from "lucide-react"
+import { Ban, Check, CircleX, Clock5, Hourglass, KeyRound, LogOut, type LucideIcon, ShieldCheck, X } from "lucide-react"
 import { useState } from "react"
 import { useNavigate, useParams } from "react-router"
+import { EmptyState } from "@/components/empty-state"
 import { ListWithPanel } from "@/components/list-panel"
 import { TimeAgo, Tone } from "@/components/status"
 import { Badge } from "@/components/ui/badge"
@@ -50,6 +51,24 @@ const tone: Record<AccessStatus, "primary" | "green" | "neutral" | "red" | "ambe
   revoked: "red",
 }
 
+const icon: Record<AccessStatus, LucideIcon> = {
+  pending: Hourglass,
+  approved: ShieldCheck,
+  denied: CircleX,
+  expired: Clock5,
+  released: LogOut,
+  revoked: Ban,
+}
+
+/** The status pill of a request. */
+function StatusPill({ status }: { status: AccessStatus }) {
+  return (
+    <Tone tone={tone[status]} icon={icon[status]}>
+      {label[status]}
+    </Tone>
+  )
+}
+
 const label: Record<AccessStatus, string> = {
   pending: "Waiting for you",
   approved: "Active",
@@ -88,8 +107,14 @@ export function AccessPage() {
       </ToggleGroup>
       {rows.isLoading ? (
         <Skeleton className="h-40" />
+      ) : shown.length === 0 ? (
+        <EmptyState
+          icon={KeyRound}
+          title={view === "open" ? "Nothing is waiting or active" : "No requests yet"}
+          description="When an agent asks for access to an n8n instance, the request waits here for you."
+        />
       ) : (
-        <Card className="py-0">
+        <Card className="overflow-hidden py-0">
           <Table>
             <TableHeader>
               <TableRow>
@@ -109,7 +134,7 @@ export function AccessPage() {
                   onClick={() => navigate(`/access/${r.id}`)}
                 >
                   <TableCell>
-                    <Tone tone={tone[r.status]}>{label[r.status]}</Tone>
+                    <StatusPill status={r.status} />
                   </TableCell>
                   <TableCell className="font-medium">{r.instance}</TableCell>
                   <TableCell className="text-muted-foreground">{r.token}</TableCell>
@@ -122,13 +147,6 @@ export function AccessPage() {
                   </TableCell>
                 </TableRow>
               ))}
-              {shown.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={6} className="text-muted-foreground">
-                    {view === "open" ? "Nothing is waiting or active." : "No requests yet."}
-                  </TableCell>
-                </TableRow>
-              )}
             </TableBody>
           </Table>
         </Card>
@@ -159,7 +177,7 @@ function AccessDetailPanel({ id }: { id: string }) {
     <div className="space-y-6">
       <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-2">
-          <Tone tone={tone[r.status]}>{label[r.status]}</Tone>
+          <StatusPill status={r.status} />
           <Badge variant="outline">{r.instance}</Badge>
           <Badge variant="outline">token: {r.token}</Badge>
         </div>
@@ -259,7 +277,10 @@ function AccessDetailPanel({ id }: { id: string }) {
                     {call.refused && <div className="font-sans break-normal text-destructive">{call.refused}</div>}
                   </TableCell>
                   <TableCell className="text-right">
-                    <Tone tone={call.refused ? "red" : call.status < 400 ? "green" : "amber"}>
+                    <Tone
+                      tone={call.refused ? "red" : call.status < 400 ? "green" : "amber"}
+                      icon={call.refused ? Ban : undefined}
+                    >
                       {call.refused ? "refused" : call.status}
                     </Tone>
                   </TableCell>

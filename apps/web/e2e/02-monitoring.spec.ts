@@ -86,7 +86,7 @@ test("a resolved problem that fails again is a regression", async () => {
   await expect(page.getByRole("row", { name: /Sync orders to ERP/ }).getByText("Regression")).toBeVisible()
 
   await page.goto("/")
-  await expect(page.getByRole("cell", { name: /Regression.*Sync orders to ERP/ })).toBeVisible()
+  await expect(page.getByRole("button", { name: /Regression.*Sync orders to ERP/ })).toBeVisible()
 })
 
 test("a queue-mode instance without metrics or worker URLs says what is missing", async () => {

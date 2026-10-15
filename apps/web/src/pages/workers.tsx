@@ -1,7 +1,8 @@
-import { Copy, Plus, Trash2 } from "lucide-react"
+import { Copy, Cpu, Plus, Trash2, Wifi, WifiOff } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
 import { Page } from "@/app/shell"
+import { EmptyState } from "@/components/empty-state"
 import { Dot, TimeAgo, Tone } from "@/components/status"
 import { Button } from "@/components/ui/button"
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -57,7 +58,9 @@ export function WorkersPage() {
                 <CardTitle className="flex items-center gap-2">
                   <Dot health={w.online ? "ok" : "down"} />
                   {w.name}
-                  <Tone tone={w.online ? "green" : "red"}>{w.online ? "online" : "offline"}</Tone>
+                  <Tone tone={w.online ? "green" : "red"} icon={w.online ? Wifi : WifiOff}>
+                    {w.online ? "online" : "offline"}
+                  </Tone>
                 </CardTitle>
                 <CardDescription>
                   Serves{" "}
@@ -89,14 +92,11 @@ export function WorkersPage() {
           ))}
         </div>
       ) : (
-        <Card>
-          <CardHeader>
-            <CardTitle>No workers yet</CardTitle>
-            <CardDescription>
-              Without a worker, n8n-ops backs up workflows through the API, but not credential secrets.
-            </CardDescription>
-          </CardHeader>
-        </Card>
+        <EmptyState
+          icon={Cpu}
+          title="No workers yet"
+          description="Without a worker, n8n-ops backs up workflows through the API, but not credential secrets."
+        />
       )}
       <AddWorkerDialog open={open} onOpenChange={setOpen} />
       <Dialog open={revoking !== null} onOpenChange={(o) => !o && setRevoking(null)}>

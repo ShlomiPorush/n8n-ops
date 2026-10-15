@@ -1,6 +1,7 @@
-import { BellOff, CheckCircle2, ExternalLink, GitMerge, RotateCcw, Search } from "lucide-react"
+import { BellOff, CheckCircle2, CircleCheck, ExternalLink, GitMerge, RotateCcw, Search } from "lucide-react"
 import { useState } from "react"
 import { Link, useNavigate, useParams, useSearchParams } from "react-router"
+import { EmptyState } from "@/components/empty-state"
 import { FlowGraph, type GraphNode } from "@/components/flow-graph"
 import { ListWithPanel } from "@/components/list-panel"
 import { Code, ProblemBadge, TimeAgo } from "@/components/status"
@@ -65,8 +66,16 @@ export function ProblemsTable({
   onOpen: (id: string) => void
   showInstance?: boolean
 }) {
+  if (rows.length === 0)
+    return (
+      <EmptyState
+        icon={CircleCheck}
+        title="No problems here"
+        description="When a workflow fails, its problem shows up here, grouped by workflow, node and error."
+      />
+    )
   return (
-    <div className="rounded-lg border">
+    <div className="overflow-hidden rounded-xl border">
       <Table>
         <TableHeader>
           <TableRow>
@@ -103,13 +112,6 @@ export function ProblemsTable({
               </TableCell>
             </TableRow>
           ))}
-          {rows.length === 0 && (
-            <TableRow>
-              <TableCell colSpan={6} className="pl-4 text-muted-foreground">
-                Nothing here.
-              </TableCell>
-            </TableRow>
-          )}
         </TableBody>
       </Table>
     </div>

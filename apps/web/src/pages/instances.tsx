@@ -1,9 +1,30 @@
-import { CheckCircle2, Download, Info, Pencil, Plus, RefreshCw, Trash2, X } from "lucide-react"
+import {
+  Activity,
+  Bug,
+  CheckCircle2,
+  CircleDashed,
+  CircleX,
+  Cpu,
+  Download,
+  HeartPulse,
+  History,
+  Info,
+  Network,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Server,
+  Trash2,
+  Workflow as WorkflowIcon,
+  X,
+} from "lucide-react"
 import { useEffect, useState } from "react"
 import { useNavigate, useParams } from "react-router"
 import { toast } from "sonner"
 import { AgentAccessCard } from "@/components/agent-access-card"
+import { EmptyState } from "@/components/empty-state"
 import { ListWithPanel } from "@/components/list-panel"
+import { StatCard } from "@/components/stat-card"
 import { Dot, type HealthState, TimeAgo, Tone } from "@/components/status"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -127,14 +148,11 @@ export function InstancesPage() {
       {data.isLoading ? (
         <Skeleton className="h-40" />
       ) : rows.length === 0 ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>No instances yet</CardTitle>
-            <CardDescription>
-              Add an n8n instance with its URL and an API key. Read-only is enough for monitoring.
-            </CardDescription>
-          </CardHeader>
-        </Card>
+        <EmptyState
+          icon={Server}
+          title="No instances yet"
+          description="Add an n8n instance with its URL and an API key. Read-only is enough for monitoring."
+        />
       ) : (
         <div className="rounded-lg border">
           <Table>
@@ -236,6 +254,7 @@ function InstanceDetail({ id }: { id: string }) {
           <h2 className="text-3xl font-semibold tracking-tight">{i.name}</h2>
           <Tone
             tone={i.health === "down" ? "red" : i.health === "warn" ? "amber" : i.health === "ok" ? "green" : "neutral"}
+            icon={i.health === "down" ? CircleX : i.health === "unknown" ? CircleDashed : undefined}
           >
             {healthLabel(i)}
           </Tone>
@@ -268,13 +287,32 @@ function InstanceDetail({ id }: { id: string }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
-        <Stat label="Open problems" value={i.openProblems} />
-        <Stat label="Active / total workflows" value={`${i.workflowCounts.active}/${i.workflowCounts.total}`} />
-        <Stat label="Executions, 30 days" value={i.workflowCounts.runs30d.toLocaleString()} />
-        <Stat label="Failures checked" value={<TimeAgo value={i.lastPollAt} />} />
-        <Stat label="Health checked" value={<TimeAgo value={i.healthCheckedAt} />} />
-        <Stat label="Collection" value={i.collection === "worker" ? "Through worker" : "Direct"} />
+      <div className="@container">
+        <div className="grid grid-cols-2 gap-4 @3xl:grid-cols-3">
+          <StatCard
+            size="sm"
+            label="Open problems"
+            value={i.openProblems}
+            icon={Bug}
+            tone={i.openProblems ? "red" : "default"}
+          />
+          <StatCard
+            size="sm"
+            label="Active / total workflows"
+            value={i.workflowCounts.active}
+            total={i.workflowCounts.total}
+            icon={WorkflowIcon}
+          />
+          <StatCard size="sm" label="Executions, 30 days" value={i.workflowCounts.runs30d} icon={Activity} />
+          <StatCard size="sm" label="Failures checked" value={<TimeAgo value={i.lastPollAt} />} icon={History} />
+          <StatCard size="sm" label="Health checked" value={<TimeAgo value={i.healthCheckedAt} />} icon={HeartPulse} />
+          <StatCard
+            size="sm"
+            label="Collection"
+            value={i.collection === "worker" ? "Through worker" : "Direct"}
+            icon={i.collection === "worker" ? Cpu : Network}
+          />
+        </div>
       </div>
       {i.lastPollError && (
         <Card className="border-destructive/50">
@@ -482,17 +520,6 @@ async function exportCredentials(id: string, name: string) {
   } catch (error) {
     toast.error((error as Error).message, { id: loading })
   }
-}
-
-function Stat({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <Card className="gap-1 py-4">
-      <CardHeader className="px-4">
-        <CardDescription>{label}</CardDescription>
-        <CardTitle className="text-xl font-semibold tabular-nums">{value}</CardTitle>
-      </CardHeader>
-    </Card>
-  )
 }
 
 function HealthRow({ label, ok, detail }: { label: string; ok?: boolean; detail?: string }) {

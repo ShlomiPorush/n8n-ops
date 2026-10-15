@@ -6,6 +6,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Added
 
+- A refined UI: status pills with icons, figures that roll in, empty states that say what to do, a Recent activity feed on the Overview, grouped settings navigation, an audit log that reads at a glance, and cleaner tables in light and dark.
 - Temporary access for agents to n8n instances: a token allowed to ask requests an instance, scopes, optional workflows and minutes; a person approves on the new Agent access page; the agent uses the n8n API through the n8n-ops proxy, which checks every call against n8n's declared scopes and records it, and access ends on time, on release or on revoke.
 - Access requests reach approvers in Telegram (Approve and Deny buttons, limited to listed approvers) and by email (a link to the request); the Telegram message shows the outcome once decided, expired or ended.
 - Workflow search for agents by workflow ID, webhook path and tag, with whether access to the instance can be requested.

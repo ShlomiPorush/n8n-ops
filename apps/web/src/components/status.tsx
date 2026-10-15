@@ -1,73 +1,125 @@
 import { Badge } from "@/components/ui/badge"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { formatFull, formatWhen, useTimeZone } from "@/lib/time"
 import { cn } from "@/lib/utils"
 
-export type HealthState = "ok" | "warn" | "down" | "unknown"
+/**
+ * The one place that turns a status into words and a tone. The text is the status; the colour only
+ * reinforces it: ok is green, warn amber, fail red, info blue, muted grey. Nothing else gets colour.
+ */
+export type ToneName = "ok" | "warn" | "fail" | "info" | "muted"
 
-export function Dot({ health, className }: { health: HealthState; className?: string }) {
+export const statusTable = {
+  health: {
+    ok: { label: "Healthy", tone: "ok" },
+    warn: { label: "Needs a look", tone: "warn" },
+    down: { label: "Down", tone: "fail" },
+    unknown: { label: "Not checked yet", tone: "muted" },
+  },
+  problem: {
+    new: { label: "New", tone: "fail" },
+    regression: { label: "Regression", tone: "fail" },
+    open: { label: "Open", tone: "warn" },
+    muted: { label: "Muted", tone: "muted" },
+    resolved: { label: "Resolved", tone: "ok" },
+  },
+  access: {
+    pending: { label: "Waiting for you", tone: "warn" },
+    approved: { label: "Active", tone: "ok" },
+    denied: { label: "Denied", tone: "fail" },
+    expired: { label: "Expired", tone: "muted" },
+    released: { label: "Released", tone: "muted" },
+    revoked: { label: "Revoked", tone: "fail" },
+  },
+  worker: {
+    online: { label: "online", tone: "ok" },
+    offline: { label: "offline", tone: "fail" },
+  },
+  backup: {
+    ok: { label: "OK", tone: "ok" },
+    running: { label: "Running", tone: "info" },
+    failed: { label: "Failed", tone: "fail" },
+    stale: { label: "Stale", tone: "warn" },
+    expired: { label: "Expired", tone: "muted" },
+  },
+} as const satisfies Record<string, Record<string, { label: string; tone: ToneName }>>
+
+export type StatusKind = keyof typeof statusTable
+
+export function statusOf<K extends StatusKind>(kind: K, status: keyof (typeof statusTable)[K]) {
+  return statusTable[kind][status] as { label: string; tone: ToneName }
+}
+
+/** A status tag from the central table. children replaces the label when the words must say more. */
+export function StatusTag<K extends StatusKind>({
+  kind,
+  status,
+  children,
+  className,
+}: {
+  kind: K
+  status: keyof (typeof statusTable)[K]
+  children?: React.ReactNode
+  className?: string
+}) {
+  const s = statusOf(kind, status)
   return (
-    <span
-      role="img"
-      aria-label={health}
-      className={cn(
-        "inline-block size-2 shrink-0 rounded-full",
-        health === "ok" && "bg-emerald-500",
-        health === "warn" && "bg-amber-500",
-        health === "down" && "bg-red-500",
-        health === "unknown" && "bg-muted-foreground/40",
-        className,
-      )}
-    />
+    <Badge variant={s.tone} className={className}>
+      {children ?? s.label}
+    </Badge>
   )
 }
 
-export function Tone({
-  tone,
-  children,
-}: {
-  tone: "red" | "amber" | "green" | "neutral" | "primary"
-  children: React.ReactNode
-}) {
-  if (tone === "red") return <Badge variant="destructive">{children}</Badge>
-  if (tone === "primary") return <Badge>{children}</Badge>
-  if (tone === "neutral") return <Badge variant="secondary">{children}</Badge>
+/** A tag in a tone, for statuses that are not in the table (an HTTP result, a one-off fact). */
+export function Tone({ tone, children, className }: { tone: ToneName; children: React.ReactNode; className?: string }) {
   return (
-    <Badge
-      variant="outline"
-      className={cn(
-        tone === "amber" && "border-amber-500/40 text-amber-700 dark:text-amber-400",
-        tone === "green" && "border-emerald-500/40 text-emerald-700 dark:text-emerald-400",
-      )}
-    >
+    <Badge variant={tone} className={className}>
       {children}
     </Badge>
   )
 }
 
-export function ProblemBadge({
-  status,
-  regression,
-  firstSeen,
-}: {
-  status: string
-  regression: boolean
-  firstSeen?: string
-}) {
-  if (status === "resolved") return <Tone tone="green">Resolved</Tone>
-  if (status === "muted") return <Tone tone="neutral">Muted</Tone>
-  if (regression) return <Tone tone="red">Regression</Tone>
-  if (firstSeen && Date.now() - new Date(firstSeen).getTime() < 86_400_000) return <Tone tone="red">New</Tone>
-  return <Tone tone="amber">Open</Tone>
+export type HealthState = "ok" | "warn" | "down" | "unknown"
+
+const dotTone: Record<ToneName, string> = {
+  ok: "bg-ok",
+  warn: "bg-warn",
+  fail: "bg-fail",
+  info: "bg-info",
+  muted: "bg-muted-foreground/50",
 }
 
-export function Code({ children, className }: { children: React.ReactNode; className?: string }) {
+/** A small status dot for tight spaces; it carries the status as its accessible name and tooltip. */
+export function Dot({ health, label, className }: { health: HealthState; label?: string; className?: string }) {
+  const s = statusOf("health", health)
   return (
-    <code className={cn("relative rounded bg-muted px-[0.3rem] py-[0.2rem] font-mono text-sm break-all", className)}>
-      {children}
-    </code>
+    <span
+      role="img"
+      aria-label={label ?? s.label}
+      title={label ?? s.label}
+      className={cn("inline-block size-2 shrink-0 rounded-full", dotTone[s.tone], className)}
+    />
   )
 }
 
-/** "4 min ago", "3 days ago", or a date for older values. */
+/** Which problem status to show: regressions and problems first seen in the last 24 hours stand out. */
+export function problemStatus(p: { status: string; regression: boolean; firstSeen?: string }) {
+  if (p.status === "resolved") return "resolved" as const
+  if (p.status === "muted") return "muted" as const
+  if (p.regression) return "regression" as const
+  if (p.firstSeen && Date.now() - new Date(p.firstSeen).getTime() < 86_400_000) return "new" as const
+  return "open" as const
+}
+
+export function ProblemBadge(p: { status: string; regression: boolean; firstSeen?: string }) {
+  return <StatusTag kind="problem" status={problemStatus(p)} />
+}
+
+export function Code({ children, className }: { children: React.ReactNode; className?: string }) {
+  return <code className={cn("rounded-tag bg-ink/6 px-1.5 py-0.5 font-mono break-all", className)}>{children}</code>
+}
+
+/** "4 min ago", "3 days ago", or a date for older values. For ages and deadlines, not for list times. */
 export function timeAgo(value: string | Date | null | undefined): string {
   if (!value) return "never"
   const ms = Date.now() - new Date(value).getTime()
@@ -77,7 +129,8 @@ export function timeAgo(value: string | Date | null | undefined): string {
     if (m < 60) return `in ${m} min`
     const h = Math.round(m / 60)
     if (h < 24) return `in ${h} h`
-    return new Date(value).toLocaleString()
+    const d = Math.round(h / 24)
+    return `in ${d} day${d === 1 ? "" : "s"}`
   }
   if (ms < 0) return "just now"
   const s = Math.floor(ms / 1000)
@@ -88,9 +141,42 @@ export function timeAgo(value: string | Date | null | undefined): string {
   if (h < 24) return `${h} h ago`
   const d = Math.floor(h / 24)
   if (d < 30) return `${d} day${d === 1 ? "" : "s"} ago`
-  return new Date(value).toLocaleDateString()
+  const mo = Math.floor(d / 30)
+  if (mo < 12) return `${mo} month${mo === 1 ? "" : "s"} ago`
+  const y = Math.floor(d / 365)
+  return `${y} year${y === 1 ? "" : "s"} ago`
 }
 
+/** An age ("18 h ago"), with the exact time in the app's time zone on hover. */
 export function TimeAgo({ value }: { value: string | Date | null | undefined }) {
-  return <time title={value ? new Date(value).toLocaleString() : undefined}>{timeAgo(value)}</time>
+  const tz = useTimeZone()
+  if (!value) return <span>never</span>
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <time dateTime={new Date(value).toISOString()} className="tabular-nums">
+          {timeAgo(value)}
+        </time>
+      </TooltipTrigger>
+      <TooltipContent>{formatFull(value, tz)}</TooltipContent>
+    </Tooltip>
+  )
+}
+
+/** A time in a list: the time only for today, the date for earlier days; the full time and age on hover. */
+export function When({ value }: { value: string | Date | null | undefined }) {
+  const tz = useTimeZone()
+  if (!value) return <span className="text-muted-foreground">never</span>
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <time dateTime={new Date(value).toISOString()} className="tabular-nums">
+          {formatWhen(value, tz)}
+        </time>
+      </TooltipTrigger>
+      <TooltipContent>
+        {formatFull(value, tz)} · {timeAgo(value)}
+      </TooltipContent>
+    </Tooltip>
+  )
 }

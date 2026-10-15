@@ -45,13 +45,13 @@ The product is generic and must not depend on the details of this environment. V
 ## 5. UI
 
 - **English only, LTR only.** No Hebrew, no RTL, no localization layer, no language setting.
-- **Component library:** shadcn/ui with the classic **Vega** style, Tailwind CSS, lucide icons. Default neutral color scheme. Light and dark themes.
-- **Layout (prototype variant D):**
-  - shadcn Sidebar (inset, collapsible to icons) with breadcrumb header and user menu.
-  - Home (Overview): stat cards, a "needs attention" table, and a tile per instance colored by health.
-  - Problems, Instances, Backups: a full-width table for an overview at a glance. Clicking a row opens a resizable detail panel beside the table (not an overlay); the table stays visible with the row highlighted, and the panel closes back to the full table.
+- **Component library:** shadcn/ui primitives (Radix), Tailwind CSS, lucide icons, restyled to the v3 design language: the accent is the ink (no brand colour), colour means status only (green ok, amber warning, red failure, blue info and focus), flat tinted panels, dense 14px body, Onest and IBM Plex Mono served locally. Light and dark themes. Tokens live in `apps/web/src/index.css`.
+- **Layout:**
+  - The browser never scrolls; each page scrolls inside the frame. A 240px sidebar above 1100px, a 72px icon rail down to 761px, and on phones a top bar with a bottom tab bar and a More sheet.
+  - Home (Overview): key figures, a "needs attention" list with a status bar per item, and every instance with its health, open problems and last backup.
+  - Problems, Instances, Backups, Agent access: a full-width table for an overview at a glance. From 1280px, clicking a row opens a resizable detail panel beside the table (not an overlay); the table stays visible with the row highlighted, and the panel closes back to the full table. Narrower, the item opens as a full-screen dialog.
   - Workflows: table with insights; moving a workflow opens a dialog wizard.
-  - Settings: tabs. Workers and Audit log: own pages.
+  - Settings: grouped sections beside the form (tabs that scroll sideways on narrow screens), one save bar shown only with unsaved changes. Workers and Audit log: own pages.
 - **Problem page:** workflow, node, error text, counter, first and last seen; actions Mark resolved, Mute 24 h, Open in n8n (deep link to the execution). A drawn workflow graph with the failed node highlighted, the failed node's input as a key/value table (raw JSON on demand), recent occurrences, and other workflows with the same error.
 - **Live updates:** pages update by themselves (server-sent events).
 - **Mobile:** home and problem page are designed mobile first (Telegram links open there). Other pages work on mobile but are designed for desktop.

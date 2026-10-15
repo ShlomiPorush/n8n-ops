@@ -15,14 +15,15 @@ export function FlowGraph({ nodes }: { nodes: GraphNode[] }) {
     box.scrollLeft = node.offsetLeft - box.clientWidth / 2 + node.offsetWidth / 2
   }, [nodes])
   if (!nodes.length)
-    return <p className="text-sm text-muted-foreground">The workflow structure is not available for this failure.</p>
+    return (
+      <p className="px-pad-x pb-pad-x text-muted-foreground">
+        The workflow structure is not available for this failure.
+      </p>
+    )
   const columns = Math.max(...nodes.map((n) => n.column)) + 1
   return (
-    <div
-      ref={scroller}
-      className="relative overflow-x-auto rounded-lg border bg-[radial-gradient(circle,var(--border)_1px,transparent_1px)] bg-[length:16px_16px] p-5"
-    >
-      <div className="flex min-w-max items-center gap-0">
+    <div ref={scroller} className="relative overflow-x-auto px-pad-x pt-1 pb-pad-x">
+      <div className="flex min-w-max items-center">
         {Array.from({ length: columns }, (_, col) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: the index is the column number itself
           <div key={col} className="flex items-center">
@@ -37,18 +38,17 @@ export function FlowGraph({ nodes }: { nodes: GraphNode[] }) {
                   >
                     <div
                       className={cn(
-                        "mx-auto mb-1.5 grid min-h-14 w-28 place-items-center rounded-lg border-2 bg-card px-1 text-[11px] font-semibold break-all",
-                        n.state === "ok" && "border-emerald-500/60",
-                        n.state === "failed" &&
-                          "border-destructive bg-destructive/10 text-destructive ring-4 ring-destructive/15",
+                        "mx-auto mb-1.5 grid min-h-14 w-28 place-items-center rounded-sm border bg-bg px-1 text-meta font-semibold break-all text-muted-foreground",
+                        n.state === "ok" && "border-line",
+                        n.state === "failed" && "tint-fail border-2 border-fail",
                       )}
                     >
                       {n.type}
                     </div>
-                    <div className="text-xs leading-tight break-words">{n.name}</div>
-                    {n.state === "failed" && (
-                      <div className="text-[11px] font-medium text-destructive">failed here</div>
-                    )}
+                    <div dir="auto" className="text-meta leading-tight break-words">
+                      {n.name}
+                    </div>
+                    {n.state === "failed" && <div className="text-meta font-bold text-fail">failed here</div>}
                   </div>
                 ))}
             </div>

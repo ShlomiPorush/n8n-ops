@@ -1,11 +1,11 @@
-import { Copy, Download, KeyRound, Plus, ShieldCheck, Trash2 } from "lucide-react"
+import { Download, KeyRound, Plus, ShieldCheck, Trash2 } from "lucide-react"
 import { useEffect, useState } from "react"
-import { useNavigate, useParams } from "react-router"
+import { NavLink, useParams } from "react-router"
 import { toast } from "sonner"
-import { Page } from "@/app/shell"
+import { Copyable, Empty, LoadError, Loading, Page, Panel, PanelHead, SaveBar, UserText } from "@/components/kit"
+import { When } from "@/components/status"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
   Dialog,
@@ -20,10 +20,11 @@ import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { api, describeError, useApi, useApiMutation } from "@/lib/api"
 import { authClient, authErrorText } from "@/lib/auth-client"
 import { download } from "@/lib/download"
+import { formatDateTime, useTimeZone } from "@/lib/time"
+import { cn } from "@/lib/utils"
 
 type FieldDef = {
   name: string
@@ -44,7 +45,11 @@ const forms: Record<string, { title: string; description: string; fields: FieldD
         hint: "Used in links sent by Telegram and email, for example https://ops.example.com.",
         placeholder: "https://ops.example.com",
       },
-      { name: "timezone", label: "Time zone", hint: "For report and backup schedules, for example Asia/Jerusalem." },
+      {
+        name: "timezone",
+        label: "Time zone",
+        hint: "For report and backup schedules and every time shown here, for example Asia/Jerusalem. Empty: UTC.",
+      },
     ],
   },
   alerts: {
@@ -171,44 +176,130 @@ const forms: Record<string, { title: string; description: string; fields: FieldD
   },
 }
 
-const tabs = [
-  ["general", "General"],
-  ["alerts", "Alerts"],
-  ["telegram", "Telegram"],
-  ["email", "Email reports"],
-  ["storage", "Backup storage"],
-  ["keys", "Encryption keys"],
-  ["defaults", "Instance defaults"],
-  ["account", "Account"],
-  ["access", "Agent access"],
-  ["tokens", "API & MCP tokens"],
+/** The settings sections, grouped as they appear beside the form. */
+const groups = [
+  {
+    label: "Installation",
+    items: [
+      ["general", "General"],
+      ["defaults", "Instance defaults"],
+    ],
+  },
+  {
+    label: "Notifications",
+    items: [
+      ["alerts", "Alerts"],
+      ["telegram", "Telegram"],
+      ["email", "Email reports"],
+    ],
+  },
+  {
+    label: "Backups",
+    items: [
+      ["storage", "Backup storage"],
+      ["keys", "Encryption keys"],
+    ],
+  },
+  {
+    label: "Access",
+    items: [
+      ["access", "Agent access"],
+      ["tokens", "API & MCP tokens"],
+      ["account", "Account"],
+    ],
+  },
 ] as const
 
 const weekdays = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
 
 export function SettingsPage() {
   const { section = "general" } = useParams()
-  const navigate = useNavigate()
   return (
-    <Page title="Settings">
-      <Tabs value={section} onValueChange={(v) => navigate(`/settings/${v}`)}>
-        <TabsList className="max-w-full flex-wrap justify-start group-data-horizontal/tabs:h-auto">
-          {tabs.map(([k, l]) => (
-            <TabsTrigger key={k} value={k}>
-              {l}
-            </TabsTrigger>
+    <Page title="Settings" description="How n8n-ops reaches you, where backups go, and who may use its API.">
+      <div className="grid items-start gap-gap lg:grid-cols-[212px_minmax(0,1fr)]">
+        <nav
+          aria-label="Settings sections"
+          className="flex gap-5 overflow-x-auto border-b border-line [scrollbar-width:none] lg:sticky lg:top-0 lg:flex-col lg:gap-0.5 lg:overflow-visible lg:border-b-0"
+        >
+          {groups.map((g) => (
+            <div key={g.label} className="contents lg:flex lg:flex-col lg:gap-0.5">
+              <div className="hidden px-2.5 pt-2.5 pb-1 text-meta font-semibold text-muted-foreground lg:block">
+                {g.label}
+              </div>
+              {g.items.map(([k, l]) => (
+                <NavLink
+                  key={k}
+                  to={`/settings/${k}`}
+                  aria-current={section === k ? "page" : undefined}
+                  className={cn(
+                    "-mb-px shrink-0 border-b-2 border-transparent pt-1 pb-2 text-ctl font-semibold whitespace-nowrap text-muted-foreground hover:text-ink aria-[current=page]:border-primary aria-[current=page]:text-ink",
+                    "lg:mb-0 lg:rounded-sm lg:border-b-0 lg:px-2.5 lg:py-1.5 lg:text-body lg:font-medium lg:text-ink lg:hover:bg-accent lg:aria-[current=page]:bg-primary lg:aria-[current=page]:font-title lg:aria-[current=page]:text-primary-foreground",
+                  )}
+                >
+                  {l}
+                </NavLink>
+              ))}
+            </div>
           ))}
-        </TabsList>
-      </Tabs>
-      <div className="max-w-3xl">
-        {section in forms && <SettingsForm key={section} section={section} />}
-        {section === "keys" && <KeysCard />}
-        {section === "account" && <AccountCard />}
-        {section === "tokens" && <TokensCard />}
+        </nav>
+        <div className="grid min-w-0 max-w-3xl gap-gap">
+          {section in forms && <SettingsForm key={section} section={section} />}
+          {section === "keys" && <KeysCard />}
+          {section === "account" && <AccountCard />}
+          {section === "tokens" && <TokensCard />}
+        </div>
       </div>
     </Page>
   )
 }
+
+/** A settings row: the label and its explanation at the start, the control at the end. */
+function SettingRow({
+  htmlFor,
+  label,
+  hint,
+  children,
+  wide,
+}: {
+  htmlFor?: string
+  label: React.ReactNode
+  hint?: React.ReactNode
+  children: React.ReactNode
+  /** The control takes a full line under the label (long values). */
+  wide?: boolean
+}) {
+  return (
+    <div
+      className={cn(
+        "grid items-center gap-x-6 gap-y-2 border-t border-line px-pad-x py-3",
+        !wide && "md:grid-cols-[minmax(0,1fr)_260px]",
+      )}
+    >
+      <div className="min-w-0">
+        {htmlFor ? (
+          <label htmlFor={htmlFor} className="font-semibold">
+            {label}
+          </label>
+        ) : (
+          <span className="font-semibold">{label}</span>
+        )}
+        {hint && <p className="mt-0.5 text-small text-muted-foreground">{hint}</p>}
+      </div>
+      <div className="flex min-w-0 items-center gap-2 md:justify-end">{children}</div>
+    </div>
+  )
+}
+
+const toForm = (def: { fields: FieldDef[] }, data: Record<string, unknown>) =>
+  Object.fromEntries(
+    def.fields.map((f) => {
+      const v = data[f.name]
+      if (f.type === "password") return [f.name, ""]
+      if (f.type === "list") return [f.name, Array.isArray(v) ? v.join(", ") : String(v ?? "")]
+      if (f.type === "switch") return [f.name, Boolean(v)]
+      return [f.name, v ?? ""]
+    }),
+  ) as Record<string, unknown>
 
 export function SettingsForm({ section }: { section: string }) {
   const def = forms[section]
@@ -219,9 +310,12 @@ export function SettingsForm({ section }: { section: string }) {
     success: "Settings saved",
   })
   useEffect(() => {
-    if (query.data) setValues(query.data)
-  }, [query.data])
+    if (query.data && def) setValues(toForm(def, query.data))
+  }, [query.data, def])
   if (!def) return null
+  const initial = query.data ? toForm(def, query.data) : {}
+  const dirty =
+    Boolean(query.data) && def.fields.some((f) => String(values[f.name] ?? "") !== String(initial[f.name] ?? ""))
   const set = (name: string, value: unknown) => setValues((v) => ({ ...v, [name]: value }))
   function submit() {
     if (!def) return
@@ -232,92 +326,89 @@ export function SettingsForm({ section }: { section: string }) {
         if (typeof v === "string" && v) body[f.name] = v
       } else if (f.type === "number") body[f.name] = Number(v)
       else if (f.type === "list")
-        body[f.name] = (Array.isArray(v) ? v : String(v ?? "").split(",")).map((s: string) => s.trim()).filter(Boolean)
+        body[f.name] = String(v ?? "")
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean)
       else body[f.name] = v
     }
     save.mutate(body)
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{def.title}</CardTitle>
-        <CardDescription>{def.description}</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <FieldGroup>
-          {def.fields.map((f) => (
-            <Field key={f.name} orientation="responsive">
-              <FieldContent>
-                <FieldLabel htmlFor={f.name}>{f.label}</FieldLabel>
-                {f.hint && <FieldDescription>{f.hint}</FieldDescription>}
-              </FieldContent>
-              <div className="flex min-w-64 items-center gap-2">
-                {f.type === "switch" ? (
-                  <Switch id={f.name} checked={Boolean(values[f.name])} onCheckedChange={(v) => set(f.name, v)} />
-                ) : f.type === "weekday" ? (
-                  <Select value={String(values[f.name] ?? 0)} onValueChange={(v) => set(f.name, Number(v))}>
-                    <SelectTrigger id={f.name} className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {weekdays.map((d, i) => (
-                        <SelectItem key={d} value={String(i)}>
-                          {d}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                ) : (
-                  <Input
-                    id={f.name}
-                    type={
-                      f.type === "number"
-                        ? "number"
-                        : f.type === "password"
-                          ? "password"
-                          : f.type === "time"
-                            ? "time"
-                            : "text"
-                    }
-                    placeholder={
-                      f.type === "password"
-                        ? values[`${f.name}Set`]
-                          ? "Stored. Type to replace."
-                          : "Not set"
+    <>
+      <Panel>
+        <PanelHead title={def.title} description={def.description} />
+        {query.error ? (
+          <LoadError what={def.title} error={query.error} retry={() => query.refetch()} />
+        ) : query.isLoading ? (
+          <Loading />
+        ) : (
+          def.fields.map((f) => (
+            <SettingRow key={f.name} htmlFor={f.name} label={f.label} hint={f.hint}>
+              {f.type === "switch" ? (
+                <Switch id={f.name} checked={Boolean(values[f.name])} onCheckedChange={(v) => set(f.name, v)} />
+              ) : f.type === "weekday" ? (
+                <Select value={String(values[f.name] ?? 0)} onValueChange={(v) => set(f.name, Number(v))}>
+                  <SelectTrigger id={f.name} className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {weekdays.map((d, i) => (
+                      <SelectItem key={d} value={String(i)}>
+                        {d}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Input
+                  id={f.name}
+                  // Times are typed as 24-hour HH:MM; a native time field would follow the browser's 12-hour clock.
+                  type={f.type === "number" ? "number" : f.type === "password" ? "password" : "text"}
+                  inputMode={f.type === "time" ? "numeric" : undefined}
+                  pattern={f.type === "time" ? "([01][0-9]|2[0-3]):[0-5][0-9]" : undefined}
+                  className={f.type === "time" ? "tabular-nums" : undefined}
+                  placeholder={
+                    f.type === "password"
+                      ? query.data?.[`${f.name}Set`]
+                        ? "Stored. Type to replace."
+                        : "Not set"
+                      : f.type === "time"
+                        ? "HH:MM"
                         : f.placeholder
-                    }
-                    value={
-                      f.type === "password"
-                        ? String(values[f.name] ?? "")
-                        : f.type === "list" && Array.isArray(values[f.name])
-                          ? (values[f.name] as string[]).join(", ")
-                          : String(values[f.name] ?? "")
-                    }
-                    onChange={(e) => set(f.name, e.target.value)}
-                  />
-                )}
-              </div>
-            </Field>
-          ))}
-        </FieldGroup>
-      </CardContent>
-      <CardFooter className="gap-2 border-t">
-        <Button onClick={submit} disabled={save.isPending || query.isLoading}>
-          Save
-        </Button>
-        {section === "telegram" && <TestTelegramButton />}
-        {section === "email" && <TestEmailButton />}
-        {section === "storage" && <TestStorageButton />}
-      </CardFooter>
-    </Card>
+                  }
+                  value={String(values[f.name] ?? "")}
+                  onChange={(e) => set(f.name, e.target.value)}
+                />
+              )}
+            </SettingRow>
+          ))
+        )}
+        {(section === "telegram" || section === "email" || section === "storage") && (
+          <div className="flex flex-wrap items-center gap-2 border-t border-line px-pad-x py-3">
+            {section === "telegram" && <TestTelegramButton />}
+            {section === "email" && <TestEmailButton />}
+            {section === "storage" && <TestStorageButton />}
+            <span className="text-small text-muted-foreground">Uses the saved settings.</span>
+          </div>
+        )}
+      </Panel>
+      <SaveBar
+        dirty={dirty}
+        saving={save.isPending}
+        onSave={submit}
+        onDiscard={() => query.data && setValues(toForm(def, query.data))}
+        note={`${def.title}: unsaved changes`}
+      />
+    </>
   )
 }
 
 function TestTelegramButton() {
   const test = useApiMutation<void>("POST", "/alerts/test/telegram", { success: "Test message sent" })
   return (
-    <Button variant="outline" onClick={() => test.mutate()} disabled={test.isPending}>
+    <Button onClick={() => test.mutate()} disabled={test.isPending}>
       Send test message
     </Button>
   )
@@ -326,7 +417,7 @@ function TestTelegramButton() {
 function TestEmailButton() {
   const test = useApiMutation<void>("POST", "/alerts/test/email", { success: "Test email sent" })
   return (
-    <Button variant="outline" onClick={() => test.mutate()} disabled={test.isPending}>
+    <Button onClick={() => test.mutate()} disabled={test.isPending}>
       Send test email
     </Button>
   )
@@ -335,13 +426,14 @@ function TestEmailButton() {
 function TestStorageButton() {
   const test = useApiMutation<void>("POST", "/backups/test-storage", { success: "Upload and download verified" })
   return (
-    <Button variant="outline" onClick={() => test.mutate()} disabled={test.isPending}>
+    <Button onClick={() => test.mutate()} disabled={test.isPending}>
       Upload and verify a test file
     </Button>
   )
 }
 
 function KeysCard() {
+  const tz = useTimeZone()
   const keys = useApi<{ backupRecipient: string | null; privateKeySavedAt: string | null }>("/admin/keys")
   const [rotate, setRotate] = useState(false)
   const [privateKey, setPrivateKey] = useState("")
@@ -351,83 +443,70 @@ function KeysCard() {
       setPrivateKey(res.privateKey)
       await keys.refetch()
     } catch (e) {
-      toast.error(describeError(e))
+      toast.error(`Could not generate a key pair: ${describeError(e)}`)
     }
   }
   async function confirm() {
-    await api("/admin/keys/backup/confirm", { method: "POST" })
-    setPrivateKey("")
-    setRotate(false)
-    await keys.refetch()
-    toast.success("New backup key in use")
+    try {
+      await api("/admin/keys/backup/confirm", { method: "POST" })
+      setPrivateKey("")
+      setRotate(false)
+      await keys.refetch()
+      toast.success("New backup key in use")
+    } catch (e) {
+      toast.error(`Could not confirm the key: ${describeError(e)}`)
+    }
   }
   async function downloadAppKey() {
     try {
       download("n8n-ops-app.key", await api<string>("/admin/keys/app"))
     } catch (e) {
-      toast.error(describeError(e))
+      toast.error(`Could not download the key: ${describeError(e)}`)
     }
   }
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Encryption keys</CardTitle>
-        <CardDescription>Keys that protect backups and the secrets n8n-ops stores.</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <FieldGroup>
-          <Field orientation="responsive">
-            <FieldContent>
-              <FieldLabel>Backup public key</FieldLabel>
-              <FieldDescription>
-                Archives are encrypted with this. Only the public half is on the server.
-              </FieldDescription>
-            </FieldContent>
-            <code className="min-w-64 font-mono text-xs break-all">{keys.data?.backupRecipient ?? "Not set"}</code>
-          </Field>
-          <Field orientation="responsive">
-            <FieldContent>
-              <FieldLabel>Private key</FieldLabel>
-              <FieldDescription>Shown once when generated. You need it to restore.</FieldDescription>
-            </FieldContent>
-            <span className="min-w-64 text-sm">
-              {keys.data?.privateKeySavedAt ? (
-                <span className="flex items-center gap-2 text-emerald-700 dark:text-emerald-400">
-                  <ShieldCheck className="size-4" />
-                  You confirmed it is saved ({new Date(keys.data.privateKeySavedAt).toLocaleDateString()})
-                </span>
-              ) : (
-                "Not confirmed"
-              )}
-            </span>
-          </Field>
-          <Field orientation="responsive">
-            <FieldContent>
-              <FieldLabel>Rotate</FieldLabel>
-              <FieldDescription>Old archives still need the old private key.</FieldDescription>
-            </FieldContent>
-            <div className="min-w-64">
-              <Button variant="outline" onClick={() => setRotate(true)}>
-                <KeyRound /> Generate new key pair
-              </Button>
-            </div>
-          </Field>
-          <Field orientation="responsive">
-            <FieldContent>
-              <FieldLabel>App secrets key</FieldLabel>
-              <FieldDescription>
-                Encrypts the API keys, tokens and passwords stored by n8n-ops. Kept in the server's data directory. Keep
-                a copy: without it, stored secrets cannot be read after a restore.
-              </FieldDescription>
-            </FieldContent>
-            <div className="min-w-64">
-              <Button variant="outline" onClick={() => void downloadAppKey()}>
-                <Download /> Download a copy
-              </Button>
-            </div>
-          </Field>
-        </FieldGroup>
-      </CardContent>
+    <Panel>
+      <PanelHead title="Encryption keys" description="Keys that protect backups and the secrets n8n-ops stores." />
+      {keys.error ? (
+        <LoadError what="the keys" error={keys.error} retry={() => keys.refetch()} />
+      ) : (
+        <>
+          <SettingRow
+            label="Backup public key"
+            hint="Archives are encrypted with this. Only the public half is on the server."
+            wide
+          >
+            {keys.data?.backupRecipient ? (
+              <Copyable value={keys.data.backupRecipient} label="Copy public key" className="text-small" />
+            ) : (
+              <span className="text-muted-foreground">Not set</span>
+            )}
+          </SettingRow>
+          <SettingRow label="Private key" hint="Shown once when generated. You need it to restore.">
+            {keys.data?.privateKeySavedAt ? (
+              <span className="flex items-center gap-2 font-semibold text-ok">
+                <ShieldCheck className="size-4" />
+                Saved, {formatDateTime(keys.data.privateKeySavedAt, tz)}
+              </span>
+            ) : (
+              <span className="font-semibold text-warn">Not confirmed</span>
+            )}
+          </SettingRow>
+          <SettingRow label="Rotate" hint="Old archives still need the old private key.">
+            <Button onClick={() => setRotate(true)}>
+              <KeyRound /> Generate new key pair
+            </Button>
+          </SettingRow>
+          <SettingRow
+            label="App secrets key"
+            hint="Encrypts the API keys, tokens and passwords stored by n8n-ops. Kept in the server's data directory. Keep a copy: without it, stored secrets cannot be read after a restore."
+          >
+            <Button onClick={() => void downloadAppKey()}>
+              <Download /> Download a copy
+            </Button>
+          </SettingRow>
+        </>
+      )}
       <Dialog
         open={rotate}
         onOpenChange={(o) => {
@@ -443,23 +522,35 @@ function KeysCard() {
             </DialogDescription>
           </DialogHeader>
           {privateKey ? (
-            <div className="space-y-3">
-              <pre className="overflow-x-auto rounded-md bg-muted p-3 font-mono text-xs">{privateKey}</pre>
-              <Button variant="outline" onClick={() => download("n8n-ops-backup-key.txt", `${privateKey}\n`)}>
+            <div className="grid gap-3">
+              <pre className="overflow-x-auto rounded-sm bg-panel p-3 font-mono text-small whitespace-pre-wrap break-all">
+                {privateKey}
+              </pre>
+              <Button
+                className="justify-self-start"
+                onClick={() => download("n8n-ops-backup-key.txt", `${privateKey}\n`)}
+              >
                 <Download /> Download key file
               </Button>
             </div>
           ) : null}
           <DialogFooter>
             {privateKey ? (
-              <Button onClick={() => void confirm()}>I saved it</Button>
+              <Button variant="primary" onClick={() => void confirm()}>
+                I saved it
+              </Button>
             ) : (
-              <Button onClick={() => void generate()}>Generate</Button>
+              <>
+                <Button onClick={() => setRotate(false)}>Cancel</Button>
+                <Button variant="primary" onClick={() => void generate()}>
+                  Generate
+                </Button>
+              </>
             )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </Card>
+    </Panel>
   )
 }
 
@@ -474,62 +565,52 @@ function AccountCard() {
       revokeOtherSessions: true,
     })
     setBusy(false)
-    if (error) toast.error(authErrorText(error))
+    if (error) toast.error(`Password not changed: ${authErrorText(error)}`)
     else toast.success("Password changed. Other sessions were signed out.")
   }
   const username = (session.data?.user as { username?: string } | undefined)?.username
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Account</CardTitle>
-        <CardDescription>Signed in as {username}.</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <FieldGroup>
-          <Field orientation="responsive">
-            <FieldContent>
-              <FieldLabel>Two-factor (TOTP)</FieldLabel>
-              <FieldDescription>Required for this installation.</FieldDescription>
-            </FieldContent>
-            <span className="flex min-w-64 items-center gap-2 text-sm text-emerald-700 dark:text-emerald-400">
-              <ShieldCheck className="size-4" /> On
-            </span>
+    <Panel>
+      <PanelHead title="Account" description={`Signed in as ${username ?? ""}.`} />
+      <SettingRow label="Two-factor (TOTP)" hint="Required for this installation.">
+        <span className="flex items-center gap-2 font-semibold text-ok">
+          <ShieldCheck className="size-4" /> On
+        </span>
+      </SettingRow>
+      <form
+        className="grid gap-3 border-t border-line px-pad-x py-3"
+        onSubmit={(e) => {
+          e.preventDefault()
+          void changePassword(new FormData(e.currentTarget))
+          e.currentTarget.reset()
+        }}
+      >
+        <b className="font-semibold">Change password</b>
+        <FieldGroup className="max-w-sm gap-3">
+          <Field>
+            <FieldLabel htmlFor="current">Current password</FieldLabel>
+            <Input id="current" name="current" type="password" autoComplete="current-password" required />
           </Field>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault()
-              void changePassword(new FormData(e.currentTarget))
-              e.currentTarget.reset()
-            }}
-          >
-            <FieldGroup>
-              <Field orientation="responsive">
-                <FieldLabel htmlFor="current">Current password</FieldLabel>
-                <Input id="current" name="current" type="password" className="min-w-64" required />
-              </Field>
-              <Field orientation="responsive">
-                <FieldLabel htmlFor="next">New password</FieldLabel>
-                <Input id="next" name="next" type="password" minLength={12} className="min-w-64" required />
-              </Field>
-              <div>
-                <Button type="submit" variant="outline" disabled={busy}>
-                  Change password
-                </Button>
-              </div>
-            </FieldGroup>
-          </form>
-          <Field orientation="responsive">
-            <FieldContent>
-              <FieldLabel>Locked out?</FieldLabel>
-              <FieldDescription>Reset the password and two-factor from the server.</FieldDescription>
-            </FieldContent>
-            <code className="min-w-64 font-mono text-xs">
-              docker compose exec server node dist/cli.js reset-password
-            </code>
+          <Field>
+            <FieldLabel htmlFor="next">New password</FieldLabel>
+            <Input id="next" name="next" type="password" minLength={12} autoComplete="new-password" required />
+            <FieldDescription>At least 12 characters. Other sessions are signed out.</FieldDescription>
           </Field>
         </FieldGroup>
-      </CardContent>
-    </Card>
+        <div>
+          <Button type="submit" disabled={busy}>
+            Change password
+          </Button>
+        </div>
+      </form>
+      <SettingRow label="Locked out?" hint="Reset the password and two-factor from the server." wide>
+        <Copyable
+          value="docker compose exec server node dist/cli.js reset-password"
+          label="Copy command"
+          className="text-small"
+        />
+      </SettingRow>
+    </Panel>
   )
 }
 
@@ -549,6 +630,7 @@ function TokensCard() {
   const [kind, setKind] = useState<"mcp" | "rest">("mcp")
   const [canRequestAccess, setCanRequestAccess] = useState(false)
   const [created, setCreated] = useState("")
+  const [revoking, setRevoking] = useState<Token | null>(null)
   const create = useApiMutation<{ name: string; kind: string; canRequestAccess: boolean }, { token: string }>(
     "POST",
     "/admin/tokens",
@@ -560,72 +642,99 @@ function TokensCard() {
     invalidate: ["/admin/tokens"],
     success: "Token revoked",
   })
+  const list = tokens.data ?? []
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>API & MCP tokens</CardTitle>
-        <CardDescription>
-          Read-only tokens for agents (MCP at <code>/mcp</code>) and scripts (REST at <code>/api/v1</code>). A token may
-          also be allowed to request temporary access to n8n instances, which a person approves each time.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <Table>
+    <Panel>
+      <PanelHead
+        title="API & MCP tokens"
+        count={tokens.data ? list.length : undefined}
+        description={
+          <>
+            Read-only tokens for agents (MCP at <code>/mcp</code>) and scripts (REST at <code>/api/v1</code>). A token
+            may also be allowed to request temporary access to n8n instances, which a person approves each time.
+          </>
+        }
+        action={
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => {
+              setCreated("")
+              setCanRequestAccess(false)
+              setOpen(true)
+            }}
+          >
+            <Plus /> New token
+          </Button>
+        }
+      />
+      {tokens.error ? (
+        <LoadError what="tokens" error={tokens.error} retry={() => tokens.refetch()} />
+      ) : tokens.isLoading ? (
+        <Loading />
+      ) : list.length === 0 ? (
+        <Empty title="No tokens yet.">Create one for each agent or script, so you can revoke it on its own.</Empty>
+      ) : (
+        <Table bare>
           <TableHeader>
             <TableRow>
               <TableHead>Name</TableHead>
               <TableHead>Kind</TableHead>
-              <TableHead>Created</TableHead>
-              <TableHead>Last used</TableHead>
+              <TableHead className="text-end">Created</TableHead>
+              <TableHead className="text-end">Last used</TableHead>
               <TableHead />
             </TableRow>
           </TableHeader>
           <TableBody>
-            {(tokens.data ?? []).map((t) => (
+            {list.map((t) => (
               <TableRow key={t.id}>
-                <TableCell className="font-medium">
-                  {t.name} <span className="font-mono text-xs text-muted-foreground">{t.prefix}…</span>
+                <TableCell className="font-semibold">
+                  <UserText>{t.name}</UserText>{" "}
+                  <span className="font-mono text-meta font-normal text-muted-foreground">{t.prefix}…</span>
                 </TableCell>
                 <TableCell>
-                  <Badge variant="secondary">{t.kind === "mcp" ? "MCP · read" : "REST · read"}</Badge>
-                  {t.canRequestAccess && (
-                    <Badge variant="outline" className="ml-1">
-                      may request access
-                    </Badge>
-                  )}
+                  <span className="flex flex-wrap gap-1">
+                    <Badge variant="line">{t.kind === "mcp" ? "MCP · read" : "REST · read"}</Badge>
+                    {t.canRequestAccess && <Badge variant="line">may request access</Badge>}
+                  </span>
                 </TableCell>
-                <TableCell className="text-muted-foreground">{new Date(t.createdAt).toLocaleDateString()}</TableCell>
-                <TableCell className="text-muted-foreground">
-                  {t.lastUsedAt ? new Date(t.lastUsedAt).toLocaleString() : "Never"}
+                <TableCell className="text-end text-muted-foreground">
+                  <When value={t.createdAt} />
                 </TableCell>
-                <TableCell className="text-right">
-                  <Button size="sm" variant="ghost" className="text-destructive" onClick={() => revoke.mutate(t.id)}>
+                <TableCell className="text-end text-muted-foreground">
+                  {t.lastUsedAt ? <When value={t.lastUsedAt} /> : "Never"}
+                </TableCell>
+                <TableCell className="text-end">
+                  <Button size="sm" variant="danger" onClick={() => setRevoking(t)}>
                     <Trash2 /> Revoke
                   </Button>
                 </TableCell>
               </TableRow>
             ))}
-            {tokens.data?.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={5} className="text-muted-foreground">
-                  No tokens yet.
-                </TableCell>
-              </TableRow>
-            )}
           </TableBody>
         </Table>
-      </CardContent>
-      <CardFooter className="border-t">
-        <Button
-          onClick={() => {
-            setCreated("")
-            setCanRequestAccess(false)
-            setOpen(true)
-          }}
-        >
-          <Plus /> New token
-        </Button>
-      </CardFooter>
+      )}
+      <Dialog open={revoking !== null} onOpenChange={(o) => !o && setRevoking(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Revoke {revoking?.name}?</DialogTitle>
+            <DialogDescription>
+              The agent or script using this token loses access at once. This cannot be undone; create a new token to
+              give access again.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button onClick={() => setRevoking(null)}>Cancel</Button>
+            <Button
+              variant="danger"
+              disabled={revoke.isPending}
+              onClick={() => revoking && revoke.mutate(revoking.id, { onSuccess: () => setRevoking(null) })}
+            >
+              Revoke
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
           <DialogHeader>
@@ -633,16 +742,16 @@ function TokensCard() {
             <DialogDescription>The token is shown once. Store it where the agent or script reads it.</DialogDescription>
           </DialogHeader>
           {created ? (
-            <div className="space-y-3">
-              <pre className="overflow-x-auto rounded-md bg-muted p-3 font-mono text-xs" data-testid="new-token">
+            <div className="grid gap-3">
+              <pre
+                className="overflow-x-auto rounded-sm bg-panel p-3 font-mono text-small whitespace-pre-wrap break-all"
+                data-testid="new-token"
+              >
                 {created}
               </pre>
-              <Button
-                variant="outline"
-                onClick={() => void navigator.clipboard.writeText(created).then(() => toast.success("Copied"))}
-              >
-                <Copy /> Copy
-              </Button>
+              <Copyable value={created} label="Copy token">
+                Copy the token
+              </Copyable>
             </div>
           ) : (
             <form
@@ -689,15 +798,20 @@ function TokensCard() {
           )}
           <DialogFooter>
             {created ? (
-              <Button onClick={() => setOpen(false)}>Done</Button>
-            ) : (
-              <Button type="submit" form="token" disabled={create.isPending}>
-                Create
+              <Button variant="primary" onClick={() => setOpen(false)}>
+                Done
               </Button>
+            ) : (
+              <>
+                <Button onClick={() => setOpen(false)}>Cancel</Button>
+                <Button variant="primary" type="submit" form="token" disabled={create.isPending}>
+                  Create
+                </Button>
+              </>
             )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </Card>
+    </Panel>
   )
 }

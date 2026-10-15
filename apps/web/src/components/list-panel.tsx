@@ -1,12 +1,13 @@
 import { ArrowLeft, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable"
-import { useIsMobile } from "@/hooks/use-mobile"
+import { useMediaQuery } from "@/hooks/use-mobile"
 
 /**
- * Variant D list page: a full-width table; when an item is selected, a resizable detail panel opens
- * beside it (the table stays visible) and closes back to the full table. On a phone the panel takes
- * the whole screen with a back button instead.
+ * A list with a reading pane. From 1280px an opened item reads in a resizable pane beside the list (the
+ * list stays and marks the open row). Narrower, the list stands alone and an item opens as a full screen
+ * dialog over it. Either way the open item is in the URL.
  */
 export function ListWithPanel({
   list,
@@ -19,34 +20,43 @@ export function ListWithPanel({
   panelTitle: string
   onClose: () => void
 }) {
-  const mobile = useIsMobile()
-  if (!panel) return <div className="flex-1 space-y-6 p-4 md:p-6">{list}</div>
-  if (mobile) {
+  const wide = useMediaQuery("(min-width: 1280px)")
+  if (!panel) return <div className="grid min-w-0 content-start gap-gap">{list}</div>
+  if (!wide) {
     return (
-      <div className="flex-1 space-y-4 p-4">
-        <Button variant="ghost" size="sm" className="-ml-2" onClick={onClose}>
-          <ArrowLeft /> Back
-        </Button>
-        {panel}
-      </div>
+      <>
+        <div className="grid min-w-0 content-start gap-gap">{list}</div>
+        <Dialog open onOpenChange={(o) => !o && onClose()}>
+          <DialogContent className="md:max-w-[1100px]" aria-describedby={undefined} showCloseButton={false}>
+            <DialogHeader className="flex-row items-center gap-1 ps-2 pe-pad-x">
+              <Button size="icon-sm" onClick={onClose} aria-label="Back">
+                <ArrowLeft />
+              </Button>
+              <DialogTitle>{panelTitle}</DialogTitle>
+            </DialogHeader>
+            <div className="min-w-0">{panel}</div>
+          </DialogContent>
+        </Dialog>
+      </>
     )
   }
   return (
-    <div className="h-[calc(100svh-3.5rem)] min-h-0 md:h-[calc(100svh-4.5rem)]">
+    // Fills the scrolling main area; the list and the pane scroll on their own.
+    <div className="absolute inset-0">
       <ResizablePanelGroup orientation="horizontal">
         <ResizablePanel defaultSize="42%" minSize="25%">
-          <div className="h-full space-y-6 overflow-auto p-6">{list}</div>
+          <div className="grid h-full min-w-0 content-start gap-gap overflow-y-auto py-[22px] ps-7 pe-4">{list}</div>
         </ResizablePanel>
         <ResizableHandle withHandle />
         <ResizablePanel defaultSize="58%" minSize="30%">
           <div className="flex h-full flex-col">
-            <div className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
-              <span className="text-sm font-medium text-muted-foreground">{panelTitle}</span>
-              <Button variant="ghost" size="icon" className="ml-auto size-8" onClick={onClose} aria-label="Close panel">
+            <div className="flex h-12 shrink-0 items-center gap-2 border-b border-line ps-pad-x pe-2">
+              <span className="text-small font-semibold text-muted-foreground">{panelTitle}</span>
+              <Button size="icon-sm" className="ms-auto" onClick={onClose} aria-label="Close panel">
                 <X />
               </Button>
             </div>
-            <div className="flex-1 overflow-auto p-6">{panel}</div>
+            <div className="min-h-0 flex-1 overflow-y-auto px-6 pt-5 pb-15">{panel}</div>
           </div>
         </ResizablePanel>
       </ResizablePanelGroup>

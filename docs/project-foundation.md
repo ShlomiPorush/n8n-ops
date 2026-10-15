@@ -36,7 +36,7 @@ Verified locally on 2026-10-14 in WSL (Docker 29.8.2): `scripts/verify.sh` full 
 | Server framework | Approved | Hono with `@hono/node-server` | Small, typed. |
 | Database | Approved | PostgreSQL 18 with Drizzle ORM and Drizzle migrations (postgres.js driver) | JSONB search of stored executions; Better Auth supports Drizzle. |
 | Authentication | Approved | Better Auth: one user, password plus mandatory TOTP | Arrives with the first feature. |
-| UI | Approved | React 19, Vite 8, Tailwind CSS 4, shadcn/ui (Vega style), lucide icons; served by `server` | Chosen from a prototype; English and LTR only; light and dark themes. |
+| UI | Approved | React 19, Vite 8, Tailwind CSS 4, shadcn/ui primitives restyled to the v3 design language (tokens in `apps/web/src/index.css`), lucide icons, Onest and IBM Plex Mono served locally; served by `server` | English and LTR only; light and dark themes. |
 | TypeScript | Approved | 6.0 | 7.0 is out, but the ecosystem templates still target 6.0. |
 | Format and lint | Approved | Biome 2 | One tool for TS, JSON and CSS. |
 | Tests | Approved | Vitest for unit tests, Playwright for end to end | Integration runs against the real container stack. |

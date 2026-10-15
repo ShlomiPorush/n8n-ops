@@ -1,14 +1,26 @@
-import { CheckCircle2, Download, Info, Pencil, Plus, RefreshCw, Trash2, X } from "lucide-react"
+import { Download, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react"
 import { useEffect, useState } from "react"
-import { useNavigate, useParams } from "react-router"
+import { Link, useNavigate, useParams } from "react-router"
 import { toast } from "sonner"
 import { AgentAccessCard } from "@/components/agent-access-card"
+import {
+  Copyable,
+  Empty,
+  Kpi,
+  Kpis,
+  LoadError,
+  Loading,
+  PageHead,
+  Panel,
+  PanelHead,
+  SaveBar,
+  UserText,
+} from "@/components/kit"
 import { ListWithPanel } from "@/components/list-panel"
-import { Dot, type HealthState, TimeAgo, Tone } from "@/components/status"
+import { Dot, type HealthState, StatusTag, TimeAgo, Tone, When } from "@/components/status"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   Dialog,
   DialogContent,
@@ -17,14 +29,24 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Field, FieldContent, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
+import {
+  Field,
+  FieldContent,
+  FieldDescription,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+  FieldLegend,
+  FieldSet,
+} from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Textarea } from "@/components/ui/textarea"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { api, describeError, queryClient, useApi, useApiMutation } from "@/lib/api"
+import { formatFull, n, useTimeZone } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { type ProblemRow, ProblemsTable } from "./problems"
 
@@ -94,7 +116,8 @@ const healthLabel = (i: Pick<InstanceRow, "health" | "healthDetail">) =>
         ? "Healthy"
         : "Not checked yet"
 
-const behind = (version: string | null, latest: string | null) => {
+/** Whether a version is older than the latest n8n release. */
+export const behind = (version: string | null, latest: string | null) => {
   if (!version || !latest) return false
   const a = version.split(".").map(Number)
   const b = latest.split(".").map(Number)
@@ -110,90 +133,105 @@ export function InstancesPage() {
   })
   const [adding, setAdding] = useState(false)
   const rows = data.data?.instances ?? []
+  const latest = data.data?.latestVersion ?? null
+  const down = rows.filter((r) => r.health === "down").length
+  const warn = rows.filter((r) => r.health === "warn").length
 
   const list = (
     <>
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Instances</h1>
-          <p className="text-muted-foreground">
-            {rows.length} registered{data.data?.latestVersion ? ` · latest n8n ${data.data.latestVersion}` : ""}
-          </p>
-        </div>
-        <Button onClick={() => setAdding(true)}>
-          <Plus /> Add instance
-        </Button>
-      </div>
-      {data.isLoading ? (
-        <Skeleton className="h-40" />
+      <PageHead
+        title="Instances"
+        description={
+          data.data
+            ? `${n(rows.length)} registered${down || warn ? ` · ${n(down)} down, ${n(warn)} need a look` : ""}${latest ? ` · latest n8n ${latest}` : ""}`
+            : "Every n8n instance n8n-ops watches, and what its API key allows."
+        }
+        actions={
+          <Button variant="primary" onClick={() => setAdding(true)}>
+            <Plus /> Add instance
+          </Button>
+        }
+      />
+      {data.error ? (
+        <Panel>
+          <LoadError what="instances" error={data.error} retry={() => data.refetch()} />
+        </Panel>
+      ) : data.isLoading ? (
+        <Panel>
+          <Loading>Loading instances…</Loading>
+        </Panel>
       ) : rows.length === 0 ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>No instances yet</CardTitle>
-            <CardDescription>
-              Add an n8n instance with its URL and an API key. Read-only is enough for monitoring.
-            </CardDescription>
-          </CardHeader>
-        </Card>
+        <Panel>
+          <Empty title="No instances yet.">
+            Add an n8n instance with its URL and an API key. Read-only is enough for monitoring.
+          </Empty>
+        </Panel>
       ) : (
-        <div className="rounded-lg border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="pl-4">Instance</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Version</TableHead>
-                <TableHead>API key</TableHead>
-                <TableHead className="text-right">Open</TableHead>
-                <TableHead className="pr-4">Last backup</TableHead>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Instance</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Version</TableHead>
+              <TableHead>API key</TableHead>
+              <TableHead className="text-end">Open</TableHead>
+              <TableHead className="text-end">Last backup</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.map((i) => (
+              <TableRow
+                key={i.id}
+                data-state={id === i.id ? "selected" : undefined}
+                aria-current={id === i.id ? "true" : undefined}
+                className="hover-row"
+                onClick={() => navigate(`/instances/${i.id}`)}
+              >
+                <TableCell className="max-w-56 font-semibold">
+                  <span className="flex items-center gap-2">
+                    <Dot health={i.health} />
+                    <UserText className="truncate">{i.name}</UserText>
+                  </span>
+                </TableCell>
+                <TableCell>
+                  {i.health === "ok" ? (
+                    <span className="text-muted-foreground">{healthLabel(i)}</span>
+                  ) : (
+                    <StatusTag kind="health" status={i.health}>
+                      {healthLabel(i)}
+                    </StatusTag>
+                  )}
+                </TableCell>
+                <TableCell>
+                  {behind(i.version, latest) ? (
+                    <Badge variant="warn" title={`Latest is ${latest}`}>
+                      {i.version}
+                    </Badge>
+                  ) : (
+                    <span className="font-mono text-small">{i.version ?? "unknown"}</span>
+                  )}
+                </TableCell>
+                <TableCell>
+                  <Badge variant="line">
+                    {i.capabilities.find((c) => c.key === "move")?.available ? "read + write" : "read only"}
+                  </Badge>
+                </TableCell>
+                <TableCell className={cn("text-end tabular-nums", i.openProblems > 0 && "font-semibold text-fail")}>
+                  {n(i.openProblems)}
+                </TableCell>
+                <TableCell className="text-end text-muted-foreground">
+                  {i.lastBackup ? (
+                    <span className={cn(i.lastBackup.status === "failed" && "font-semibold text-fail")}>
+                      <When value={i.lastBackup.at} />
+                    </span>
+                  ) : (
+                    "never"
+                  )}
+                </TableCell>
               </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rows.map((i) => (
-                <TableRow
-                  key={i.id}
-                  data-state={id === i.id ? "selected" : undefined}
-                  className="cursor-pointer"
-                  onClick={() => navigate(`/instances/${i.id}`)}
-                >
-                  <TableCell className="pl-4 font-medium">
-                    <span className="flex items-center gap-2">
-                      <Dot health={i.health} />
-                      {i.name}
-                    </span>
-                  </TableCell>
-                  <TableCell className={cn(i.health === "ok" && "text-muted-foreground")}>{healthLabel(i)}</TableCell>
-                  <TableCell>
-                    <span
-                      className={cn(
-                        behind(i.version, data.data?.latestVersion ?? null) && "text-amber-600 dark:text-amber-400",
-                      )}
-                    >
-                      {i.version ?? "unknown"}
-                    </span>
-                  </TableCell>
-                  <TableCell>
-                    {i.capabilities.find((c) => c.key === "move")?.available ? (
-                      <Badge>read + write</Badge>
-                    ) : (
-                      <Badge variant="secondary">read only</Badge>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">{i.openProblems}</TableCell>
-                  <TableCell className="pr-4 text-muted-foreground">
-                    {i.lastBackup ? (
-                      <span className={cn(i.lastBackup.status === "failed" && "text-destructive")}>
-                        <TimeAgo value={i.lastBackup.at} />
-                      </span>
-                    ) : (
-                      "never"
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
+            ))}
+          </TableBody>
+        </Table>
       )}
       <InstanceDialog open={adding} onOpenChange={setAdding} onSaved={(newId) => navigate(`/instances/${newId}`)} />
     </>
@@ -211,6 +249,7 @@ export function InstancesPage() {
 
 function InstanceDetail({ id }: { id: string }) {
   const navigate = useNavigate()
+  const tz = useTimeZone()
   const detail = useApi<InstanceDetailData>(`/instances/${id}`, { refetchInterval: 15_000 })
   const problems = useApi<ProblemRow[]>(`/problems?status=open&instance=${id}`)
   const [editing, setEditing] = useState(false)
@@ -223,110 +262,103 @@ function InstanceDetail({ id }: { id: string }) {
   })
   const declare = useApiMutation<{ declaredAccess: "read" | "write" }>("PATCH", `/instances/${id}`, { invalidate })
 
-  if (detail.isLoading) return <Skeleton className="h-96" />
+  if (detail.isLoading) return <Loading>Loading the instance…</Loading>
+  if (detail.error && !detail.data)
+    return <LoadError what="this instance" error={detail.error} retry={() => detail.refetch()} />
   const i = detail.data
-  if (!i) return <p className="text-muted-foreground">This instance no longer exists.</p>
+  if (!i) return <Empty title="This instance no longer exists.">It was removed from n8n-ops.</Empty>
   const hd = i.healthDetail
+  const health = i.health
 
   return (
-    <div className="space-y-6">
-      <div className="space-y-2">
-        <div className="flex flex-wrap items-center gap-3">
-          <Dot health={i.health} className="size-2.5" />
-          <h2 className="text-3xl font-semibold tracking-tight">{i.name}</h2>
-          <Tone
-            tone={i.health === "down" ? "red" : i.health === "warn" ? "amber" : i.health === "ok" ? "green" : "neutral"}
-          >
+    <div className="grid min-w-0 gap-gap">
+      <div className="grid gap-2">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <h2 className="text-title">
+            <UserText>{i.name}</UserText>
+          </h2>
+          <StatusTag kind="health" status={health}>
             {healthLabel(i)}
-          </Tone>
+          </StatusTag>
         </div>
-        <p className="text-sm text-muted-foreground">
-          <a href={i.baseUrl} target="_blank" rel="noreferrer" className="underline-offset-4 hover:underline">
-            {i.baseUrl}
-          </a>{" "}
-          · n8n {i.version ?? "unknown"}{" "}
-          {behind(i.version, i.latestVersion) && (
-            <span className="text-amber-600 dark:text-amber-400">(latest {i.latestVersion})</span>
-          )}
-          {i.queueMode && " · queue mode"}
+        <p className="flex flex-wrap items-center gap-x-1.5 text-muted-foreground">
+          <Copyable value={i.baseUrl} label="Copy base URL" />
+          <span>· n8n {i.version ?? "unknown"}</span>
+          {behind(i.version, i.latestVersion) && <Tone tone="warn">latest {i.latestVersion}</Tone>}
+          {i.queueMode && <span>· queue mode</span>}
         </p>
-        <div className="flex flex-wrap gap-2 pt-2">
-          <Button variant="outline" size="sm" onClick={() => refresh.mutate()} disabled={refresh.isPending}>
+        <div className="flex flex-wrap gap-2 pt-1.5">
+          <Button size="sm" onClick={() => refresh.mutate()} disabled={refresh.isPending}>
             <RefreshCw /> Check now
           </Button>
-          <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
+          <Button size="sm" onClick={() => setEditing(true)}>
             <Pencil /> Edit
           </Button>
           {i.worker && i.containerName && (
-            <Button variant="outline" size="sm" onClick={() => void exportCredentials(i.id, i.name)}>
+            <Button size="sm" onClick={() => void exportCredentials(i.id, i.name)}>
               <Download /> Export credentials
             </Button>
           )}
-          <Button variant="outline" size="sm" className="text-destructive" onClick={() => setDeleting(true)}>
+          <Button size="sm" variant="danger" onClick={() => setDeleting(true)}>
             <Trash2 /> Remove
           </Button>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
-        <Stat label="Open problems" value={i.openProblems} />
-        <Stat label="Active / total workflows" value={`${i.workflowCounts.active}/${i.workflowCounts.total}`} />
-        <Stat label="Executions, 30 days" value={i.workflowCounts.runs30d.toLocaleString()} />
-        <Stat label="Failures checked" value={<TimeAgo value={i.lastPollAt} />} />
-        <Stat label="Health checked" value={<TimeAgo value={i.healthCheckedAt} />} />
-        <Stat label="Collection" value={i.collection === "worker" ? "Through worker" : "Direct"} />
-      </div>
+      <Kpis>
+        <Kpi
+          label="Open problems"
+          value={n(i.openProblems)}
+          tone={i.openProblems ? "fail" : undefined}
+          to={`/problems?status=open&instance=${i.id}`}
+        />
+        <Kpi
+          label="Active / total workflows"
+          value={`${n(i.workflowCounts.active)}/${n(i.workflowCounts.total)}`}
+          to={`/workflows?instance=${i.id}`}
+        />
+        <Kpi label="Executions, 30 days" value={n(i.workflowCounts.runs30d)} />
+        <Kpi label="Failures checked" value={<TimeAgo value={i.lastPollAt} />} />
+        <Kpi label="Health checked" value={<TimeAgo value={i.healthCheckedAt} />} />
+        <Kpi label="Collection" value={i.collection === "worker" ? "Worker" : "Direct"} />
+      </Kpis>
       {i.lastPollError && (
-        <Card className="border-destructive/50">
-          <CardHeader>
-            <CardTitle>Reading failures failed</CardTitle>
-            <CardDescription className="font-mono">{i.lastPollError}</CardDescription>
-          </CardHeader>
-        </Card>
+        <Alert variant="fail">
+          <AlertTitle>Reading failures failed</AlertTitle>
+          <AlertDescription className="font-mono text-small break-words">{i.lastPollError}</AlertDescription>
+        </Alert>
       )}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Health</CardTitle>
-          <CardDescription>
-            {i.collection === "worker"
+      <Panel>
+        <PanelHead
+          title="Health"
+          description={
+            i.collection === "worker"
               ? `Collected on the host by ${i.worker?.name ?? "the assigned worker"}.`
-              : "Checked from the n8n-ops server."}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <Table>
-            <TableBody>
-              <HealthRow label="Main process (/healthz)" ok={hd?.main?.ok} detail={hd?.main?.error} />
-              <HealthRow label="Ready (/healthz/readiness)" ok={hd?.readiness?.ok} />
-              {(hd?.workers ?? []).map((w) => (
-                <HealthRow key={w.url} label={`Worker ${w.url}`} ok={w.ok} detail={w.error} />
-              ))}
-            </TableBody>
-          </Table>
-          {hd?.queue && (
-            <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-              {(
-                [
-                  ["Waiting", hd.queue.waiting, hd.backlogActive],
-                  ["Active", hd.queue.active],
-                  ["Completed", hd.queue.completed],
-                  ["Failed", hd.queue.failed],
-                ] as const
-              ).map(([k, v, bad]) => (
-                <div key={k}>
-                  <div className={cn("text-2xl font-semibold tabular-nums", bad && "text-destructive")}>{v}</div>
-                  <div className="text-xs text-muted-foreground">{k}</div>
-                </div>
-              ))}
-            </div>
-          )}
-          {hd?.metricsError && (
-            <p className="text-sm text-amber-700 dark:text-amber-400">Queue metrics: {hd.metricsError}</p>
-          )}
-          {i.queueMode && (!i.metricsUrl || i.workerHealthUrls.length === 0) && (
-            <Alert>
-              <Info />
+              : "Checked from the n8n-ops server."
+          }
+        />
+        <HealthRow label="Main process (/healthz)" ok={hd?.main?.ok} detail={hd?.main?.error} />
+        <HealthRow label="Ready (/healthz/readiness)" ok={hd?.readiness?.ok} />
+        {(hd?.workers ?? []).map((w) => (
+          <HealthRow key={w.url} label={`Worker ${w.url}`} ok={w.ok} detail={w.error} />
+        ))}
+        {hd?.queue && (
+          <div className="border-t border-line p-pad-x">
+            <Kpis>
+              <Kpi label="Waiting" value={n(hd.queue.waiting)} tone={hd.backlogActive ? "fail" : undefined} />
+              <Kpi label="Active" value={n(hd.queue.active)} />
+              <Kpi label="Completed" value={n(hd.queue.completed)} />
+              <Kpi label="Failed" value={n(hd.queue.failed)} />
+            </Kpis>
+          </div>
+        )}
+        {hd?.metricsError && (
+          <div className="border-t border-line px-pad-x py-pad-y text-warn">Queue metrics: {hd.metricsError}</div>
+        )}
+        {i.queueMode && (!i.metricsUrl || i.workerHealthUrls.length === 0) && (
+          <div className="border-t border-line p-pad-x">
+            <Alert variant="info">
               <AlertTitle>
                 {!i.metricsUrl && i.workerHealthUrls.length === 0
                   ? "Queue mode is on, but n8n-ops has nothing to read about the queue or its workers"
@@ -335,7 +367,7 @@ function InstanceDetail({ id }: { id: string }) {
                     : "The queue workers are not checked"}
               </AlertTitle>
               <AlertDescription>
-                <ul className="list-disc space-y-1 pl-4">
+                <ul className="list-disc space-y-1 ps-4">
                   {!i.metricsUrl && (
                     <li>
                       Queue backlog: add the metrics URL, and set <code>N8N_METRICS=true</code> and{" "}
@@ -349,80 +381,73 @@ function InstanceDetail({ id }: { id: string }) {
                     </li>
                   )}
                 </ul>
-                <Button variant="outline" size="sm" className="mt-3" onClick={() => setEditing(true)}>
+                <Button size="sm" className="mt-3" onClick={() => setEditing(true)}>
                   <Pencil /> Edit instance
                 </Button>
               </AlertDescription>
             </Alert>
-          )}
-        </CardContent>
-      </Card>
+          </div>
+        )}
+      </Panel>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Open problems</CardTitle>
-        </CardHeader>
-        <CardContent>
+      <Panel>
+        <PanelHead
+          title="Open problems"
+          count={problems.data ? n(problems.data.length) : undefined}
+          more={problems.data?.length ? { to: `/problems?status=open&instance=${i.id}`, label: "All" } : undefined}
+        />
+        {problems.isLoading ? (
+          <Loading />
+        ) : (
           <ProblemsTable
+            bare
             rows={problems.data ?? []}
             showInstance={false}
+            empty="No open problems on this instance."
             onOpen={(pid) => navigate(`/problems/${pid}`)}
           />
-        </CardContent>
-      </Card>
+        )}
+      </Panel>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>API key and what it allows</CardTitle>
-          <CardDescription>
-            {i.scopesSource === "discovered"
-              ? `Read from GET /api/v1/discover · checked ${i.scopesCheckedAt ? new Date(i.scopesCheckedAt).toLocaleString() : "never"}`
-              : `n8n ${i.version ?? ""} has no /discover endpoint (added in 2.14.0). Tell n8n-ops what the key can do.`}
-          </CardDescription>
-          {i.scopesSource === "declared" && (
-            <CardAction>
+      <Panel>
+        <PanelHead
+          title="API key and what it allows"
+          description={
+            i.scopesSource === "discovered"
+              ? `Read from GET /api/v1/discover · checked ${i.scopesCheckedAt ? formatFull(i.scopesCheckedAt, tz) : "never"}`
+              : `n8n ${i.version ?? ""} has no /discover endpoint (added in 2.14.0). Tell n8n-ops what the key can do.`
+          }
+          action={
+            i.scopesSource === "declared" && (
               <ToggleGroup
                 type="single"
-                variant="outline"
-                size="sm"
+                aria-label="What the API key can do"
                 value={i.declaredAccess ?? "read"}
                 onValueChange={(v) => v && declare.mutate({ declaredAccess: v as "read" | "write" })}
               >
                 <ToggleGroupItem value="read">Read only</ToggleGroupItem>
                 <ToggleGroupItem value="write">Read + write</ToggleGroupItem>
               </ToggleGroup>
-            </CardAction>
-          )}
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableBody>
-              {i.capabilities.map((c) => (
-                <TableRow key={c.key}>
-                  <TableCell className="w-8">
-                    {c.available ? (
-                      <CheckCircle2 className="size-4 text-emerald-600" />
-                    ) : (
-                      <X className="size-4 text-muted-foreground" />
-                    )}
-                  </TableCell>
-                  <TableCell className={cn(!c.available && "text-muted-foreground")}>{c.label}</TableCell>
-                  <TableCell className="text-right font-mono text-xs text-muted-foreground">
-                    {c.available
-                      ? c.scopes.join(", ") || "worker"
-                      : [
-                          c.missing.length ? `missing: ${c.missing.join(", ")}` : "",
-                          c.missingWorker ? "needs a worker" : "",
-                        ]
-                          .filter(Boolean)
-                          .join("; ")}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
+            )
+          }
+        />
+        {i.capabilities.map((c) => (
+          <div
+            key={c.key}
+            className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-0.5 border-t border-line px-pad-x py-pad-y"
+          >
+            <span className={cn(!c.available && "text-muted-foreground")}>{c.label}</span>
+            {c.available ? <Tone tone="ok">Allowed</Tone> : <Tone tone="muted">Not allowed</Tone>}
+            <span className="col-span-2 font-mono text-meta break-words text-muted-foreground">
+              {c.available
+                ? c.scopes.join(", ") || "worker"
+                : [c.missing.length ? `missing: ${c.missing.join(", ")}` : "", c.missingWorker ? "needs a worker" : ""]
+                    .filter(Boolean)
+                    .join("; ")}
+            </span>
+          </div>
+        ))}
+      </Panel>
 
       <AgentAccessCard
         id={i.id}
@@ -440,13 +465,16 @@ function InstanceDetail({ id }: { id: string }) {
           <DialogHeader>
             <DialogTitle>Remove {i.name}?</DialogTitle>
             <DialogDescription>
-              n8n-ops stops monitoring it and deletes its problems, stored failures and backup history from n8n-ops.
-              Nothing changes on the n8n instance, and archives in storage are kept.
+              n8n-ops stops monitoring it and deletes its {n(i.openProblems)} open{" "}
+              {i.openProblems === 1 ? "problem" : "problems"}, stored failures and backup history from n8n-ops. Nothing
+              changes on the n8n instance, and archives in storage are kept.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
+            <Button onClick={() => setDeleting(false)}>Cancel</Button>
             <Button
-              variant="destructive"
+              variant="danger"
+              disabled={remove.isPending}
               onClick={() =>
                 remove.mutate(undefined, {
                   onSuccess: () => {
@@ -480,34 +508,19 @@ async function exportCredentials(id: string, name: string) {
     URL.revokeObjectURL(url)
     toast.success("Downloaded. Decrypt with: age -d -i backup-key.txt", { id: loading })
   } catch (error) {
-    toast.error((error as Error).message, { id: loading })
+    toast.error(`Export failed: ${(error as Error).message}`, { id: loading })
   }
-}
-
-function Stat({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <Card className="gap-1 py-4">
-      <CardHeader className="px-4">
-        <CardDescription>{label}</CardDescription>
-        <CardTitle className="text-xl font-semibold tabular-nums">{value}</CardTitle>
-      </CardHeader>
-    </Card>
-  )
 }
 
 function HealthRow({ label, ok, detail }: { label: string; ok?: boolean; detail?: string }) {
   return (
-    <TableRow>
-      <TableCell>
-        <span className="flex items-center gap-2">
-          <Dot health={ok === undefined ? "unknown" : ok ? "ok" : "down"} />
-          {label}
-        </span>
-      </TableCell>
-      <TableCell className="text-right text-muted-foreground">
+    <div className="flex min-w-0 items-center gap-2.5 border-t border-line px-pad-x py-pad-y">
+      <Dot health={ok === undefined ? "unknown" : ok ? "ok" : "down"} />
+      <span className="min-w-0 break-words">{label}</span>
+      <span className={cn("ms-auto text-end", ok === false ? "font-semibold text-fail" : "text-muted-foreground")}>
         {ok === undefined ? "not checked" : ok ? "ok" : (detail ?? "failed")}
-      </TableCell>
-    </TableRow>
+      </span>
+    </div>
   )
 }
 
@@ -526,14 +539,16 @@ const overrideFields: [string, string][] = [
 ]
 
 function OverridesCard({ instance }: { instance: InstanceDetailData }) {
+  const stored = () => Object.fromEntries(Object.entries(instance.overrides).map(([k, v]) => [k, String(v)]))
   const [values, setValues] = useState<Record<string, string>>({})
-  useEffect(() => {
-    setValues(Object.fromEntries(Object.entries(instance.overrides).map(([k, v]) => [k, String(v)])))
-  }, [instance.overrides])
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reset when the stored overrides change
+  useEffect(() => setValues(stored()), [instance.overrides])
   const save = useApiMutation<{ overrides: Record<string, number | string> }>("PATCH", `/instances/${instance.id}`, {
     invalidate: [`/instances/${instance.id}`],
     success: "Overrides saved",
   })
+  const initial = stored()
+  const dirty = overrideFields.some(([k]) => (values[k] ?? "") !== (initial[k] ?? ""))
   function submit() {
     const overrides: Record<string, number | string> = {}
     for (const [k, v] of Object.entries(values)) {
@@ -543,33 +558,33 @@ function OverridesCard({ instance }: { instance: InstanceDetailData }) {
     save.mutate({ overrides })
   }
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Overrides</CardTitle>
-        <CardDescription>Empty fields use the global default shown as the placeholder.</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div className="grid gap-4 sm:grid-cols-2">
-          {overrideFields.map(([k, label]) => (
-            <Field key={k}>
-              <FieldLabel htmlFor={`o-${k}`}>{label}</FieldLabel>
-              <Input
-                id={`o-${k}`}
-                type={k === "backupTime" ? "text" : "number"}
-                placeholder={String(instance.effectiveSettings[k] ?? "")}
-                value={values[k] ?? ""}
-                onChange={(e) => setValues({ ...values, [k]: e.target.value })}
-              />
-            </Field>
-          ))}
-        </div>
-      </CardContent>
-      <CardFooter className="border-t">
-        <Button onClick={submit} disabled={save.isPending}>
-          Save overrides
-        </Button>
-      </CardFooter>
-    </Card>
+    <Panel className="overflow-visible">
+      <PanelHead title="Overrides" description="Empty fields use the global default shown as the placeholder." />
+      <div className="grid gap-3 border-t border-line p-pad-x md:grid-cols-2">
+        {overrideFields.map(([k, label]) => (
+          <Field key={k}>
+            <FieldLabel htmlFor={`o-${k}`}>{label}</FieldLabel>
+            <Input
+              id={`o-${k}`}
+              type={k === "backupTime" ? "text" : "number"}
+              placeholder={String(instance.effectiveSettings[k] ?? "")}
+              value={values[k] ?? ""}
+              onChange={(e) => setValues({ ...values, [k]: e.target.value })}
+            />
+          </Field>
+        ))}
+      </div>
+      <div className="px-pad-x">
+        <SaveBar
+          dirty={dirty}
+          saving={save.isPending}
+          onSave={submit}
+          onDiscard={() => setValues(initial)}
+          label="Save overrides"
+          note="Overrides changed"
+        />
+      </div>
+    </Panel>
   )
 }
 
@@ -650,119 +665,142 @@ export function InstanceDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
+      <DialogContent className="md:max-w-xl">
         <DialogHeader>
           <DialogTitle>{instance ? `Edit ${instance.name}` : "Add an instance"}</DialogTitle>
           <DialogDescription>The connection is tested before anything is saved.</DialogDescription>
         </DialogHeader>
         <FieldGroup>
-          <Field>
-            <FieldLabel htmlFor="i-name">Name</FieldLabel>
-            <Input id="i-name" value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="n8n-1" />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="i-url">Base URL</FieldLabel>
-            <Input
-              id="i-url"
-              value={form.baseUrl}
-              onChange={(e) => set("baseUrl", e.target.value)}
-              placeholder="https://n8n.example.com"
-            />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="i-key">API key</FieldLabel>
-            <Input
-              id="i-key"
-              type="password"
-              value={form.apiKey}
-              onChange={(e) => set("apiKey", e.target.value)}
-              placeholder={instance ? "Stored. Type to replace." : ""}
-            />
-            <FieldDescription>
-              In n8n: Settings → n8n API → Create an API key. "Read only" is enough to monitor; moving and restoring
-              need workflow:create, workflow:activate and credential:create.
-            </FieldDescription>
-          </Field>
-          <Field orientation="horizontal">
-            <Switch id="i-queue" checked={form.queueMode} onCheckedChange={(v) => set("queueMode", v)} />
-            <FieldContent>
-              <FieldLabel htmlFor="i-queue">Queue mode</FieldLabel>
-              <FieldDescription>Main process plus separate workers using Redis.</FieldDescription>
-            </FieldContent>
-          </Field>
-          {form.queueMode && (
-            <>
-              <Field>
-                <FieldLabel htmlFor="i-metrics">Metrics URL</FieldLabel>
-                <Input
-                  id="i-metrics"
-                  value={form.metricsUrl}
-                  onChange={(e) => set("metricsUrl", e.target.value)}
-                  placeholder="http://n8n-main:5678/metrics"
-                />
-                <FieldDescription>
-                  Needs N8N_METRICS=true and N8N_METRICS_INCLUDE_QUEUE_METRICS=true on the main process.
-                </FieldDescription>
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="i-workers">Worker health URLs</FieldLabel>
-                <textarea
-                  id="i-workers"
-                  className="min-h-20 rounded-md border bg-transparent px-3 py-2 font-mono text-sm"
-                  value={form.workerHealthUrls}
-                  onChange={(e) => set("workerHealthUrls", e.target.value)}
-                  placeholder={"http://n8n-worker-1:5678/healthz\nhttp://n8n-worker-2:5678/healthz"}
-                />
-                <FieldDescription>One per line. Needs QUEUE_HEALTH_CHECK_ACTIVE=true on the workers.</FieldDescription>
-              </Field>
-            </>
-          )}
-          <Field>
-            <FieldLabel>Check health and metrics</FieldLabel>
-            <Select value={form.collection} onValueChange={(v) => set("collection", v)}>
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="direct">Directly from the n8n-ops server</SelectItem>
-                <SelectItem value="worker">Through the worker on the n8n host</SelectItem>
-              </SelectContent>
-            </Select>
-            <FieldDescription>
-              Use the worker when /healthz and /metrics are not reachable from outside the host.
-            </FieldDescription>
-          </Field>
-          <Field>
-            <FieldLabel>Worker on this instance's Docker host</FieldLabel>
-            <Select value={form.workerId || "none"} onValueChange={(v) => set("workerId", v === "none" ? "" : v)}>
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">None</SelectItem>
-                {(workers.data ?? []).map((w) => (
-                  <SelectItem key={w.id} value={w.id}>
-                    {w.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <FieldDescription>Needed to back up credential secrets and to move credentials.</FieldDescription>
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="i-container">Container name</FieldLabel>
-            <Input
-              id="i-container"
-              value={form.containerName}
-              onChange={(e) => set("containerName", e.target.value)}
-              placeholder="n8n"
-            />
-            <FieldDescription>The n8n main container on the host, used by the worker for exports.</FieldDescription>
-          </Field>
+          <FieldSet>
+            <FieldLegend variant="label">Connection</FieldLegend>
+            <Field>
+              <FieldLabel htmlFor="i-name">Name</FieldLabel>
+              <Input id="i-name" value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="n8n-1" />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="i-url">Base URL</FieldLabel>
+              <Input
+                id="i-url"
+                value={form.baseUrl}
+                onChange={(e) => set("baseUrl", e.target.value)}
+                placeholder="https://n8n.example.com"
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="i-key">API key</FieldLabel>
+              <Input
+                id="i-key"
+                type="password"
+                value={form.apiKey}
+                onChange={(e) => set("apiKey", e.target.value)}
+                placeholder={instance ? "Stored. Type to replace." : ""}
+              />
+              <FieldDescription>
+                In n8n: Settings → n8n API → Create an API key. "Read only" is enough to monitor; moving and restoring
+                need workflow:create, workflow:activate and credential:create.
+              </FieldDescription>
+            </Field>
+          </FieldSet>
+          <FieldSet className="border-t border-line pt-4">
+            <FieldLegend variant="label">Queue</FieldLegend>
+            <Field orientation="horizontal">
+              <Switch id="i-queue" checked={form.queueMode} onCheckedChange={(v) => set("queueMode", v)} />
+              <FieldContent>
+                <FieldLabel htmlFor="i-queue">Queue mode</FieldLabel>
+                <FieldDescription>Main process plus separate workers using Redis.</FieldDescription>
+              </FieldContent>
+            </Field>
+            {form.queueMode && (
+              <>
+                <Field>
+                  <FieldLabel htmlFor="i-metrics">Metrics URL</FieldLabel>
+                  <Input
+                    id="i-metrics"
+                    value={form.metricsUrl}
+                    onChange={(e) => set("metricsUrl", e.target.value)}
+                    placeholder="http://n8n-main:5678/metrics"
+                  />
+                  <FieldDescription>
+                    Needs N8N_METRICS=true and N8N_METRICS_INCLUDE_QUEUE_METRICS=true on the main process.
+                  </FieldDescription>
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="i-workers">Worker health URLs</FieldLabel>
+                  <Textarea
+                    id="i-workers"
+                    className="font-mono text-small"
+                    value={form.workerHealthUrls}
+                    onChange={(e) => set("workerHealthUrls", e.target.value)}
+                    placeholder={"http://n8n-worker-1:5678/healthz\nhttp://n8n-worker-2:5678/healthz"}
+                  />
+                  <FieldDescription>
+                    One per line. Needs QUEUE_HEALTH_CHECK_ACTIVE=true on the workers.
+                  </FieldDescription>
+                </Field>
+              </>
+            )}
+          </FieldSet>
+          <FieldSet className="border-t border-line pt-4">
+            <FieldLegend variant="label">Health and host</FieldLegend>
+            <Field>
+              <FieldLabel>Check health and metrics</FieldLabel>
+              <Select value={form.collection} onValueChange={(v) => set("collection", v)}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="direct">Directly from the n8n-ops server</SelectItem>
+                  <SelectItem value="worker">Through the worker on the n8n host</SelectItem>
+                </SelectContent>
+              </Select>
+              <FieldDescription>
+                Use the worker when /healthz and /metrics are not reachable from outside the host.
+              </FieldDescription>
+            </Field>
+            <Field>
+              <FieldLabel>Worker on this instance's Docker host</FieldLabel>
+              {workers.data && workers.data.length === 0 ? (
+                <p className="rounded-sm border border-dashed border-muted-foreground/55 px-3 py-2 text-small text-muted-foreground">
+                  No worker is paired yet. Pair one in{" "}
+                  <Link to="/workers" className="font-semibold text-ink underline" onClick={() => onOpenChange(false)}>
+                    Workers
+                  </Link>{" "}
+                  to back up credential secrets and move credentials.
+                </p>
+              ) : (
+                <Select value={form.workerId || "none"} onValueChange={(v) => set("workerId", v === "none" ? "" : v)}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">None</SelectItem>
+                    {(workers.data ?? []).map((w) => (
+                      <SelectItem key={w.id} value={w.id}>
+                        {w.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+              <FieldDescription>Needed to back up credential secrets and to move credentials.</FieldDescription>
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="i-container">Container name</FieldLabel>
+              <Input
+                id="i-container"
+                value={form.containerName}
+                onChange={(e) => set("containerName", e.target.value)}
+                placeholder="n8n"
+              />
+              <FieldDescription>The n8n main container on the host, used by the worker for exports.</FieldDescription>
+            </Field>
+          </FieldSet>
           {error && <FieldError>{error}</FieldError>}
         </FieldGroup>
         <DialogFooter>
+          <Button onClick={() => onOpenChange(false)}>Cancel</Button>
           <Button
+            variant="primary"
             onClick={() => void submit()}
             disabled={busy || !form.name || !form.baseUrl || (!instance && !form.apiKey)}
           >

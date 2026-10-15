@@ -4,6 +4,19 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Changed
+
+- New look throughout, in the v3 design language: the ink is the accent and colour only means status, flat tinted panels instead of bordered cards, dense type with large page titles and key figures, Onest and IBM Plex Mono served by n8n-ops itself. The screen no longer scrolls as a whole; each page scrolls in place under a 240px sidebar, a 72px icon rail up to 1100px, or on phones a top bar with a bottom tab bar and a More sheet.
+- Every status (problems, instance health, backups, workers, agent access) takes its words and colour from one table; healthy items stay quiet, problems stand out with a red or amber edge.
+- Times follow the time zone set in Settings → General, on a 24-hour clock: the time for today, the date for earlier days, the exact time on hover.
+- Counts and key figures link to the list they count; search and filters on Problems, Workflows and Agent access are kept in the address.
+- Settings sections sit beside the form, with one save bar that appears only with unsaved changes; report and backup times are typed as HH:MM.
+- Instance IDs, URLs, execution IDs, keys and commands copy with a click.
+- Below 1280px an opened problem, instance, backup or access request fills the screen instead of a side panel.
+- Backups without storage or a backup key show what is missing and where to set it instead of Run now buttons.
+- Revoking an API or MCP token asks for confirmation first.
+- With reduced motion requested, the interface has no transitions.
+
 ### Added
 
 - Temporary access for agents to n8n instances: a token allowed to ask requests an instance, scopes, optional workflows and minutes; a person approves on the new Agent access page; the agent uses the n8n API through the n8n-ops proxy, which checks every call against n8n's declared scopes and records it, and access ends on time, on release or on revoke.

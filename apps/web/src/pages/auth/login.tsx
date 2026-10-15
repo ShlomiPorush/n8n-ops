@@ -1,7 +1,6 @@
 import { useState } from "react"
 import { Navigate, useNavigate } from "react-router"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { useApi } from "@/lib/api"
@@ -40,58 +39,47 @@ export function LoginPage() {
     navigate("/", { replace: true })
   }
 
+  if (step === "totp")
+    return (
+      <AuthFrame title="Two-factor code" description="Enter the 6-digit code from your authenticator app.">
+        <div className="grid justify-items-start gap-4">
+          <TotpInput onComplete={(code) => void verify(code)} disabled={busy} />
+          {error && <FieldError>{error}</FieldError>}
+          <Button variant="link" onClick={() => setStep("password")}>
+            Back
+          </Button>
+        </div>
+      </AuthFrame>
+    )
+
   return (
-    <AuthFrame>
-      {step === "password" ? (
-        <Card>
-          <CardHeader className="text-center">
-            <CardTitle className="text-xl">Welcome back</CardTitle>
-            <CardDescription>Sign in to n8n-ops</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form
-              onSubmit={(e) => {
-                e.preventDefault()
-                void signIn(new FormData(e.currentTarget))
-              }}
-            >
-              <FieldGroup>
-                <Field>
-                  <FieldLabel htmlFor="username">Username</FieldLabel>
-                  <Input id="username" name="username" autoComplete="username" required autoFocus />
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor="password">Password</FieldLabel>
-                  <Input id="password" name="password" type="password" autoComplete="current-password" required />
-                </Field>
-                {error && <FieldError>{error}</FieldError>}
-                <Field>
-                  <Button type="submit" disabled={busy}>
-                    Continue
-                  </Button>
-                  <FieldDescription className="text-center">
-                    Locked out? Run <code className="font-mono">reset-password</code> inside the server container.
-                  </FieldDescription>
-                </Field>
-              </FieldGroup>
-            </form>
-          </CardContent>
-        </Card>
-      ) : (
-        <Card>
-          <CardHeader className="text-center">
-            <CardTitle className="text-xl">Two-factor code</CardTitle>
-            <CardDescription>Enter the 6-digit code from your authenticator app.</CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col items-center gap-4">
-            <TotpInput onComplete={(code) => void verify(code)} disabled={busy} />
-            {error && <FieldError>{error}</FieldError>}
-            <Button variant="link" onClick={() => setStep("password")}>
-              Back
+    <AuthFrame title="Welcome back" description="Sign in to n8n-ops.">
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          void signIn(new FormData(e.currentTarget))
+        }}
+      >
+        <FieldGroup>
+          <Field>
+            <FieldLabel htmlFor="username">Username</FieldLabel>
+            <Input id="username" name="username" autoComplete="username" required autoFocus />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="password">Password</FieldLabel>
+            <Input id="password" name="password" type="password" autoComplete="current-password" required />
+          </Field>
+          {error && <FieldError>{error}</FieldError>}
+          <Field>
+            <Button type="submit" variant="primary" disabled={busy}>
+              {busy ? "Signing in…" : "Continue"}
             </Button>
-          </CardContent>
-        </Card>
-      )}
+            <FieldDescription>
+              Locked out? Run <code>reset-password</code> inside the server container.
+            </FieldDescription>
+          </Field>
+        </FieldGroup>
+      </form>
     </AuthFrame>
   )
 }

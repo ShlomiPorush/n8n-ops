@@ -2,7 +2,7 @@ import type { Ctx } from "../context.ts"
 
 export type Actor =
   | { kind: "user"; id: string; username: string; twoFactorEnabled: boolean }
-  | { kind: "token"; id: string; name: string; tokenKind: "mcp" | "rest" }
+  | { kind: "token"; id: string; name: string; tokenKind: "mcp" | "rest"; canRequestAccess: boolean }
 
 export type Env = { Variables: { actor: Actor; ctx: Ctx } }
 

@@ -20,7 +20,7 @@ export type Ctx = {
   events: EventEmitter
 }
 
-export type Topic = "problems" | "instances" | "backups" | "workflows" | "workers" | "overview"
+export type Topic = "problems" | "instances" | "backups" | "workflows" | "workers" | "overview" | "access"
 
 export function changed(ctx: Pick<Ctx, "events">, ...topics: Topic[]) {
   ctx.events?.emit("change", topics)

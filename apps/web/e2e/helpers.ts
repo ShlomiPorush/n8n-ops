@@ -27,7 +27,31 @@ export const loadSecret = () => loadState().secret ?? ""
 export const loadPrivateKey = () => loadState().privateKey ?? ""
 export const currentApiKey = () => loadState().apiKey ?? ""
 
+const sessionFile = "test-results/e2e-session.json"
+
+/**
+ * Signs in, reusing the session of an earlier spec file when it is still valid: sign-in is rate limited
+ * (5 per 5 minutes), and the spec files together sign in more often than that.
+ */
 export async function signIn(page: Page) {
+  try {
+    const cookies = JSON.parse(readFileSync(sessionFile, "utf8")) as Parameters<
+      ReturnType<Page["context"]>["addCookies"]
+    >[0]
+    await page.context().addCookies(cookies)
+    await page.goto("/")
+    await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible({ timeout: 5_000 })
+    await page.goto("/instances")
+    return
+  } catch {
+    await page.context().clearCookies()
+  }
+  await signInWithPassword(page)
+  mkdirSync("test-results", { recursive: true })
+  writeFileSync(sessionFile, JSON.stringify(await page.context().cookies()))
+}
+
+async function signInWithPassword(page: Page) {
   await page.goto("/login")
   await page.getByLabel("Username").fill(username)
   await page.getByLabel("Password").fill(password)

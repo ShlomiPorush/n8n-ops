@@ -12,7 +12,7 @@ const secretFields: Partial<Record<SectionName, string[]>> = {
   storage: ["secretAccessKey"],
 }
 
-const editable: SectionName[] = ["general", "defaults", "alerts", "telegram", "email", "storage"]
+const editable: SectionName[] = ["general", "defaults", "alerts", "telegram", "email", "storage", "access"]
 
 export function settingsRoutes(ctx: Ctx) {
   const app = new Hono<Env>()

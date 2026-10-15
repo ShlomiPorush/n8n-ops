@@ -72,6 +72,7 @@ export async function syncWorkflows(ctx: Ctx, instance: Instance) {
       nodeCount: w.nodes.length,
       credentialIds: credentialIds(w),
       calledWorkflowIds: calledWorkflowIds(w),
+      tags: (w.tags ?? []).map((t) => t.name),
       lastRunAt: s?.last ?? null,
       runs30d: s?.runs ?? 0,
       errors30d: s?.errors ?? 0,

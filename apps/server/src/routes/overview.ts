@@ -1,7 +1,7 @@
 import { and, count, desc, eq, gt, isNull } from "drizzle-orm"
 import { Hono } from "hono"
 import type { Ctx } from "../context.ts"
-import { alertState, backupRuns, instances, problems, workers } from "../db/schema.ts"
+import { accessRequests, alertState, apiTokens, backupRuns, instances, problems, workers } from "../db/schema.ts"
 import { requireUser } from "../http/middleware.ts"
 import type { Env } from "../http/types.ts"
 
@@ -21,9 +21,20 @@ export type AttentionItem =
   | { kind: "instance"; id: string; name: string; health: string; detail: string; at: Date | null }
   | { kind: "backup"; id: string; name: string; detail: string; at: Date | null }
   | { kind: "worker"; id: string; name: string; at: Date | null }
+  | { kind: "access"; id: string; name: string; detail: string; at: Date | null }
 
-/** What needs the operator now: recent new problems and regressions, unhealthy instances, stale backups, offline workers. */
+/**
+ * What needs the operator now: agents waiting for access, recent new problems and regressions, unhealthy
+ * instances, stale backups, offline workers.
+ */
 export async function attention(ctx: Ctx): Promise<AttentionItem[]> {
+  const waiting = await ctx.db
+    .select({ r: accessRequests, instanceName: instances.name, tokenName: apiTokens.name })
+    .from(accessRequests)
+    .innerJoin(instances, eq(accessRequests.instanceId, instances.id))
+    .innerJoin(apiTokens, eq(accessRequests.tokenId, apiTokens.id))
+    .where(and(eq(accessRequests.status, "pending"), gt(accessRequests.decideBy, new Date())))
+    .orderBy(desc(accessRequests.requestedAt))
   const dayAgo = new Date(Date.now() - 86_400_000)
   const recent = await ctx.db
     .select({ p: problems, instanceName: instances.name })
@@ -32,18 +43,29 @@ export async function attention(ctx: Ctx): Promise<AttentionItem[]> {
     .where(and(eq(problems.status, "open"), isNull(problems.mergedInto), gt(problems.lastSeen, dayAgo)))
     .orderBy(desc(problems.lastSeen))
     .limit(50)
-  const items: AttentionItem[] = recent
-    .filter(({ p }) => p.regression || p.firstSeen > dayAgo)
-    .map(({ p, instanceName }) => ({
-      kind: "problem",
-      id: p.id,
-      reason: p.regression ? "regression" : "new",
-      workflowName: p.workflowName,
-      instanceName,
-      errorMessage: p.errorMessage,
-      count: p.count,
-      at: p.lastSeen,
-    }))
+  const items: AttentionItem[] = waiting.map(({ r, instanceName, tokenName }) => ({
+    kind: "access",
+    id: r.id,
+    name: instanceName,
+    detail: `${tokenName} asks for access: ${r.reason}`,
+    at: r.requestedAt,
+  }))
+  items.push(
+    ...recent
+      .filter(({ p }) => p.regression || p.firstSeen > dayAgo)
+      .map(
+        ({ p, instanceName }): AttentionItem => ({
+          kind: "problem",
+          id: p.id,
+          reason: p.regression ? "regression" : "new",
+          workflowName: p.workflowName,
+          instanceName,
+          errorMessage: p.errorMessage,
+          count: p.count,
+          at: p.lastSeen,
+        }),
+      ),
+  )
   const all = await ctx.db.select().from(instances)
   for (const i of all.filter((x) => x.health === "down" || x.health === "warn")) {
     const d = i.healthDetail as {
@@ -88,7 +110,7 @@ export function overviewRoutes(ctx: Ctx) {
   // Small summary for the sidebar.
   app.get("/summary", async (c) => {
     const onlineSince = new Date(Date.now() - WORKER_ONLINE_MS)
-    const [[open], [total], [online]] = await Promise.all([
+    const [[open], [total], [online], [pendingAccess]] = await Promise.all([
       ctx.db
         .select({ n: count() })
         .from(problems)
@@ -98,8 +120,16 @@ export function overviewRoutes(ctx: Ctx) {
         .select({ n: count() })
         .from(workers)
         .where(and(isNull(workers.revokedAt), gt(workers.lastSeenAt, onlineSince))),
+      ctx.db
+        .select({ n: count() })
+        .from(accessRequests)
+        .where(and(eq(accessRequests.status, "pending"), gt(accessRequests.decideBy, new Date()))),
     ])
-    return c.json({ openProblems: open?.n ?? 0, workers: { online: online?.n ?? 0, total: total?.n ?? 0 } })
+    return c.json({
+      openProblems: open?.n ?? 0,
+      pendingAccess: pendingAccess?.n ?? 0,
+      workers: { online: online?.n ?? 0, total: total?.n ?? 0 },
+    })
   })
 
   app.get("/", async (c) => {

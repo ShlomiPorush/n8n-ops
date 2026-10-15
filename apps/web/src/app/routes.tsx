@@ -1,4 +1,5 @@
 import type { RouteObject } from "react-router"
+import { AccessPage } from "@/pages/access"
 import { AuditPage } from "@/pages/audit"
 import { BackupsPage } from "@/pages/backups"
 import { InstancesPage } from "@/pages/instances"
@@ -15,6 +16,7 @@ export const routes: RouteObject[] = [
   { path: "instances/:id?", element: <InstancesPage /> },
   { path: "workflows", element: <WorkflowsPage /> },
   { path: "backups/:id?", element: <BackupsPage /> },
+  { path: "access/:id?", element: <AccessPage /> },
   { path: "workers", element: <WorkersPage /> },
   { path: "settings/:section?", element: <SettingsPage /> },
   { path: "audit", element: <AuditPage /> },

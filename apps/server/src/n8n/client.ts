@@ -26,6 +26,7 @@ export type N8nWorkflow = {
   name: string
   active: boolean
   isArchived?: boolean
+  tags?: { id: string; name: string }[]
   nodes: N8nNode[]
   connections: Record<string, { main?: ({ node: string; type: string; index: number }[] | null)[] }>
   settings?: Record<string, unknown>

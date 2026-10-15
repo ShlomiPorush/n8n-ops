@@ -67,6 +67,20 @@ export const sections = {
     secretAccessKeyEnc: z.string().optional(),
     forcePathStyle: z.boolean(),
   }),
+  access: z.object({
+    /** Longest temporary access an agent may get to an n8n instance. */
+    maxMinutes: z
+      .number()
+      .int()
+      .min(5)
+      .max(7 * 24 * 60),
+    /** A request nobody approves or denies in this time expires. */
+    pendingMinutes: z
+      .number()
+      .int()
+      .min(1)
+      .max(24 * 60),
+  }),
   keys: z.object({
     /** age public key used to encrypt every backup archive. */
     backupRecipient: z.string().optional(),
@@ -116,6 +130,7 @@ export const defaults: { [K in SectionName]: Section<K> } = {
     smtpUser: "",
   },
   storage: { endpoint: "", region: "us-east-1", bucket: "", prefix: "n8n-ops", accessKeyId: "", forcePathStyle: true },
+  access: { maxMinutes: 240, pendingMinutes: 30 },
   keys: {},
 }
 

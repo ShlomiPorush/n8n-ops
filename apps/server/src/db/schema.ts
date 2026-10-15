@@ -120,6 +120,8 @@ export const apiTokens = pgTable("api_tokens", {
   kind: text("kind").$type<"mcp" | "rest">().notNull(),
   prefix: text("prefix").notNull(),
   tokenHash: text("token_hash").notNull().unique(),
+  /** May ask for temporary access to n8n instances (needs human approval each time). */
+  canRequestAccess: boolean("can_request_access").notNull().default(false),
   createdAt: created(),
   lastUsedAt: ts("last_used_at"),
   revokedAt: ts("revoked_at"),
@@ -185,9 +187,13 @@ export const instances = pgTable("instances", {
   /** Highest execution id already processed. */
   executionCursor: text("execution_cursor"),
   overrides: jsonb("overrides").$type<Record<string, unknown>>().notNull().default({}),
+  /** Whether agents may ask for temporary access, and the most they may ever be granted. */
+  agentAccess: jsonb("agent_access").$type<AgentAccessPolicy>().notNull().default({ enabled: false, scopes: [] }),
   createdAt: created(),
   updatedAt: updated(),
 })
+
+export type AgentAccessPolicy = { enabled: boolean; scopes: string[] }
 
 // ---------------------------------------------------------------------------
 // Problems and failures
@@ -317,6 +323,7 @@ export const workflows = pgTable(
     nodeCount: integer("node_count").notNull(),
     credentialIds: jsonb("credential_ids").$type<string[]>().notNull().default([]),
     calledWorkflowIds: jsonb("called_workflow_ids").$type<string[]>().notNull().default([]),
+    tags: jsonb("tags").$type<string[]>().notNull().default([]),
     lastRunAt: ts("last_run_at"),
     runs30d: integer("runs_30d").notNull().default(0),
     errors30d: integer("errors_30d").notNull().default(0),
@@ -383,4 +390,60 @@ export const backupRuns = pgTable(
     deletedAt: ts("deleted_at"),
   },
   (t) => [index("backup_runs_instance_idx").on(t.instanceId, t.startedAt)],
+)
+
+// ---------------------------------------------------------------------------
+// Temporary access for agents to n8n instances, through the n8n-ops proxy
+// ---------------------------------------------------------------------------
+
+export type AccessStatus = "pending" | "approved" | "denied" | "expired" | "released" | "revoked"
+
+export const accessRequests = pgTable(
+  "access_requests",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    tokenId: uuid("token_id")
+      .notNull()
+      .references(() => apiTokens.id, { onDelete: "cascade" }),
+    instanceId: uuid("instance_id")
+      .notNull()
+      .references(() => instances.id, { onDelete: "cascade" }),
+    reason: text("reason").notNull(),
+    scopes: jsonb("scopes").$type<string[]>().notNull(),
+    /** Empty: the whole instance within the scopes. Otherwise only these workflows. */
+    workflowIds: jsonb("workflow_ids").$type<string[]>().notNull().default([]),
+    minutes: integer("minutes").notNull(),
+    status: text("status").$type<AccessStatus>().notNull().default("pending"),
+    requestedAt: created(),
+    /** A pending request nobody answers expires at this time. */
+    decideBy: ts("decide_by").notNull(),
+    decidedAt: ts("decided_at"),
+    decidedBy: text("decided_by"),
+    decidedVia: text("decided_via"),
+    expiresAt: ts("expires_at"),
+    endedAt: ts("ended_at"),
+    keyPrefix: text("key_prefix"),
+    keyHash: text("key_hash").unique(),
+    /** The key, encrypted, until the agent collects it once; then cleared. */
+    keyEnc: text("key_enc"),
+    keyCollectedAt: ts("key_collected_at"),
+  },
+  (t) => [index("access_requests_status_idx").on(t.status)],
+)
+
+export const accessCalls = pgTable(
+  "access_calls",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    requestId: uuid("request_id")
+      .notNull()
+      .references(() => accessRequests.id, { onDelete: "cascade" }),
+    at: created(),
+    method: text("method").notNull(),
+    path: text("path").notNull(),
+    status: integer("status").notNull(),
+    /** Why n8n-ops refused the call, when it did. */
+    refused: text("refused"),
+  },
+  (t) => [index("access_calls_request_idx").on(t.requestId, t.at)],
 )

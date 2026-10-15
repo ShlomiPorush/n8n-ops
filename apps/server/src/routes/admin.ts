@@ -8,6 +8,7 @@ import { apiTokens, auditLog } from "../db/schema.ts"
 import { requireUser } from "../http/middleware.ts"
 import { actorName, type Env } from "../http/types.ts"
 import { newToken, sha256 } from "../lib/crypto.ts"
+import { revokeAccessOfToken } from "../services/access.ts"
 
 export function adminRoutes(ctx: Ctx) {
   const app = new Hono<Env>()
@@ -54,7 +55,11 @@ export function adminRoutes(ctx: Ctx) {
 
   app.post("/tokens", async (c) => {
     const parsed = z
-      .object({ name: z.string().min(1).max(60), kind: z.enum(["mcp", "rest"]) })
+      .object({
+        name: z.string().min(1).max(60),
+        kind: z.enum(["mcp", "rest"]),
+        canRequestAccess: z.boolean().default(false),
+      })
       .safeParse(await c.req.json().catch(() => ({})))
     if (!parsed.success) return c.json({ error: "invalid", issues: parsed.error.issues }, 400)
     const token = newToken(parsed.data.kind === "mcp" ? "nops_mcp" : "nops_api")
@@ -65,7 +70,7 @@ export function adminRoutes(ctx: Ctx) {
     await ctx.audit({
       actor: actorName(c.get("actor")),
       action: "API token created",
-      target: `${parsed.data.name} (${parsed.data.kind})`,
+      target: `${parsed.data.name} (${parsed.data.kind}${parsed.data.canRequestAccess ? ", may request instance access" : ""})`,
       via: "web",
     })
     return c.json({ id: row?.id, token })
@@ -76,9 +81,11 @@ export function adminRoutes(ctx: Ctx) {
       .update(apiTokens)
       .set({ revokedAt: new Date() })
       .where(and(eq(apiTokens.id, c.req.param("id")), isNull(apiTokens.revokedAt)))
-      .returning({ name: apiTokens.name })
+      .returning({ id: apiTokens.id, name: apiTokens.name })
     if (!row) return c.json({ error: "not_found" }, 404)
     await ctx.audit({ actor: actorName(c.get("actor")), action: "API token revoked", target: row.name, via: "web" })
+    // Access the token asked for or holds ends with it.
+    await revokeAccessOfToken(ctx, row.id, { by: actorName(c.get("actor")), via: "web" })
     return c.json({ ok: true })
   })
 

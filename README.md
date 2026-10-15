@@ -44,10 +44,21 @@ Workers → Add worker gives a one-time token, the commands to run on the host a
 
 ## Agents
 
-Settings → API & MCP tokens. Tokens are read-only.
+Settings → API & MCP tokens. Tokens are read-only, unless a token is also allowed to request access to n8n instances (below).
 
-- **MCP** (Streamable HTTP): `https://<your n8n-ops>/mcp` with the header `Authorization: Bearer <MCP token>`. Tools: `list_open_problems`, `get_problem`, `get_failed_execution`, `get_instance_health`, `get_queue_status`, `get_backup_status`, `search_workflows`.
+- **MCP** (Streamable HTTP): `https://<your n8n-ops>/mcp` with the header `Authorization: Bearer <MCP token>`. Tools: `list_open_problems`, `get_problem`, `get_failed_execution`, `get_instance_health`, `get_queue_status`, `get_backup_status`, `search_workflows` (by name, workflow ID, webhook path or tag; each result says whether access to its instance can be requested).
 - **REST**: `GET /api/v1/problems`, `/api/v1/problems/{id}`, `/api/v1/problems/{id}/execution`, `/api/v1/instances`, `/api/v1/queues`, `/api/v1/backups`, `/api/v1/workflows?q=` with `Authorization: Bearer <REST token>`.
+
+### Temporary access to n8n instances
+
+An agent that needs to change something in n8n asks n8n-ops instead of holding an n8n API key:
+
+1. On each instance, **Agent access** says whether agents may ask, and which scopes may ever be granted (never more than the instance's API key holds). Settings → Agent access sets the longest access and how long a request waits.
+2. The agent calls `request_instance_access` (MCP) or `POST /api/v1/access-requests` (REST) with the instance, a reason, the scopes, optionally the workflow IDs, and the minutes it needs.
+3. You approve or deny it on the **Agent access** page (also listed under Needs attention on the Overview).
+4. The agent collects the key once with `get_access_request` (`GET /api/v1/access-requests/{id}`) and calls the n8n public API at `https://<your n8n-ops>/n8n/<instance>/api/v1` with the key in `X-N8N-API-KEY`, so n8n API clients work by changing only the base URL.
+5. n8n-ops checks every call against the scopes n8n declares for each operation (n8n 2.14 or later) and, when workflow IDs were given, against those workflows; then it forwards the call with the instance's own key and records it on the request.
+6. Access ends when its time is up, when the agent calls `release_instance_access` (`POST /api/v1/access-requests/{id}/release`), or when you revoke it. Revoking the token revokes its access too.
 
 ## Locked out
 

@@ -3,6 +3,7 @@ import {
   Bug,
   Cpu,
   DatabaseBackup,
+  KeyRound,
   LayoutDashboard,
   LogOut,
   Monitor,
@@ -52,13 +53,14 @@ import { authClient } from "@/lib/auth-client"
 import { useLiveUpdates } from "@/lib/live"
 import { cn } from "@/lib/utils"
 
-type NavItem = { to: string; label: string; icon: typeof Bug; badge?: "problems" }
+type NavItem = { to: string; label: string; icon: typeof Bug; badge?: "problems" | "access" }
 const operate: NavItem[] = [
   { to: "/", label: "Overview", icon: LayoutDashboard },
   { to: "/problems", label: "Problems", icon: Bug, badge: "problems" },
   { to: "/instances", label: "Instances", icon: Server },
   { to: "/workflows", label: "Workflows", icon: Workflow },
   { to: "/backups", label: "Backups", icon: DatabaseBackup },
+  { to: "/access", label: "Agent access", icon: KeyRound, badge: "access" },
 ]
 const system: NavItem[] = [
   { to: "/workers", label: "Workers", icon: Cpu },
@@ -67,7 +69,7 @@ const system: NavItem[] = [
 ]
 const titles: Record<string, string> = Object.fromEntries([...operate, ...system].map((i) => [i.to, i.label]))
 
-type Summary = { openProblems: number; workers: { online: number; total: number } }
+type Summary = { openProblems: number; pendingAccess: number; workers: { online: number; total: number } }
 type Me = { twoFactor: boolean }
 
 /** Signed-in area: redirects to login or to two-factor setup when needed. */
@@ -97,6 +99,11 @@ function AppSidebar() {
       </SidebarMenuButton>
       {item.badge === "problems" && (summary.data?.openProblems ?? 0) > 0 && (
         <SidebarMenuBadge>{summary.data?.openProblems}</SidebarMenuBadge>
+      )}
+      {item.badge === "access" && (summary.data?.pendingAccess ?? 0) > 0 && (
+        <SidebarMenuBadge className="text-amber-700 dark:text-amber-400">
+          {summary.data?.pendingAccess}
+        </SidebarMenuBadge>
       )}
     </SidebarMenuItem>
   )

@@ -23,6 +23,7 @@ type AttentionItem =
   | { kind: "instance"; id: string; name: string; health: string; detail: string; at: string | null }
   | { kind: "backup"; id: string; name: string; detail: string; at: string | null }
   | { kind: "worker"; id: string; name: string; at: string | null }
+  | { kind: "access"; id: string; name: string; detail: string; at: string | null }
 
 type Overview = {
   attention: AttentionItem[]
@@ -62,7 +63,9 @@ export function OverviewPage() {
           ? `/instances/${item.id}`
           : item.kind === "backup"
             ? `/backups/${item.id}`
-            : "/workers",
+            : item.kind === "access"
+              ? `/access/${item.id}`
+              : "/workers",
     )
 
   return (
@@ -116,7 +119,8 @@ export function OverviewPage() {
         <CardHeader>
           <CardTitle>Needs attention</CardTitle>
           <CardDescription>
-            New problems and regressions from the last 24 hours, health issues, stale backups, offline workers.
+            Agents waiting for access, new problems and regressions from the last 24 hours, health issues, stale
+            backups, offline workers.
           </CardDescription>
         </CardHeader>
         <div className="px-6">
@@ -154,14 +158,16 @@ export function OverviewPage() {
                       <>
                         <TableCell>
                           <div className="flex items-center gap-2">
-                            <Tone tone={a.kind === "backup" ? "amber" : "red"}>
+                            <Tone tone={a.kind === "backup" || a.kind === "access" ? "amber" : "red"}>
                               {a.kind === "instance"
                                 ? a.health === "down"
                                   ? "Down"
                                   : "Needs a look"
                                 : a.kind === "backup"
                                   ? "Backup"
-                                  : "Worker offline"}
+                                  : a.kind === "access"
+                                    ? "Access request"
+                                    : "Worker offline"}
                             </Tone>
                             <span className="font-medium">
                               {"detail" in a ? a.detail : `${a.name} is not reporting`}

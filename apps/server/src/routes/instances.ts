@@ -38,6 +38,7 @@ const updateSchema = z
     apiKey: z.string().min(10).optional(),
     declaredAccess: z.enum(["read", "write"]).optional(),
     overrides: instanceOverridesSchema.optional(),
+    agentAccess: z.object({ enabled: z.boolean(), scopes: z.array(z.string().max(80)).max(300) }).optional(),
   })
   .partial()
 

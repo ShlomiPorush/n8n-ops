@@ -2,6 +2,7 @@ import { CheckCircle2, Download, Info, Pencil, Plus, RefreshCw, Trash2, X } from
 import { useEffect, useState } from "react"
 import { useNavigate, useParams } from "react-router"
 import { toast } from "sonner"
+import { AgentAccessCard } from "@/components/agent-access-card"
 import { ListWithPanel } from "@/components/list-panel"
 import { Dot, type HealthState, TimeAgo, Tone } from "@/components/status"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -67,6 +68,8 @@ export type InstanceRow = {
   firstSyncDone: boolean
   overrides: Record<string, number | string>
   capabilities: Capability[]
+  effectiveScopes: string[]
+  agentAccess: { enabled: boolean; scopes: string[] }
   openProblems: number
   lastBackup?: { status: string; at: string } | null
 }
@@ -420,6 +423,14 @@ function InstanceDetail({ id }: { id: string }) {
           </Table>
         </CardContent>
       </Card>
+
+      <AgentAccessCard
+        id={i.id}
+        name={i.name}
+        scopesSource={i.scopesSource}
+        keyScopes={i.effectiveScopes}
+        agentAccess={i.agentAccess}
+      />
 
       <OverridesCard instance={i} />
 

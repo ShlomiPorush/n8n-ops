@@ -30,7 +30,13 @@ export function requireToken(ctx: Ctx, kind: "mcp" | "rest") {
       .where(and(eq(apiTokens.tokenHash, sha256(token)), isNull(apiTokens.revokedAt)))
     if (!row || row.kind !== kind) return c.json({ error: "unauthorized" }, 401)
     await ctx.db.update(apiTokens).set({ lastUsedAt: new Date() }).where(eq(apiTokens.id, row.id))
-    c.set("actor", { kind: "token", id: row.id, name: row.name, tokenKind: row.kind })
+    c.set("actor", {
+      kind: "token",
+      id: row.id,
+      name: row.name,
+      tokenKind: row.kind,
+      canRequestAccess: row.canRequestAccess,
+    })
     await next()
   })
 }

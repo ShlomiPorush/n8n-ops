@@ -71,6 +71,14 @@ export function Code({ children, className }: { children: React.ReactNode; class
 export function timeAgo(value: string | Date | null | undefined): string {
   if (!value) return "never"
   const ms = Date.now() - new Date(value).getTime()
+  // A deadline ahead; a few seconds of clock difference still reads as now.
+  if (ms < -60_000) {
+    const m = Math.round(-ms / 60_000)
+    if (m < 60) return `in ${m} min`
+    const h = Math.round(m / 60)
+    if (h < 24) return `in ${h} h`
+    return new Date(value).toLocaleString()
+  }
   if (ms < 0) return "just now"
   const s = Math.floor(ms / 1000)
   if (s < 60) return "just now"

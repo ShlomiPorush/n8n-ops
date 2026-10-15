@@ -6,6 +6,7 @@ import { Page } from "@/app/shell"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   Dialog,
   DialogContent,
@@ -131,6 +132,25 @@ const forms: Record<string, { title: string; description: string; fields: FieldD
       { name: "backlogMinutes", label: "for longer than (minutes)", type: "number" },
     ],
   },
+  access: {
+    title: "Agent access",
+    description:
+      "Agents with a token that may request access ask for an instance, scopes and time; a person approves each request. Which instances and scopes are open is set on each instance.",
+    fields: [
+      {
+        name: "maxMinutes",
+        label: "Longest access (minutes)",
+        type: "number",
+        hint: "Requests for longer are refused.",
+      },
+      {
+        name: "pendingMinutes",
+        label: "A request waits for a decision (minutes)",
+        type: "number",
+        hint: "Then it expires.",
+      },
+    ],
+  },
 }
 
 const tabs = [
@@ -142,6 +162,7 @@ const tabs = [
   ["keys", "Encryption keys"],
   ["defaults", "Instance defaults"],
   ["account", "Account"],
+  ["access", "Agent access"],
   ["tokens", "API & MCP tokens"],
 ] as const
 
@@ -498,6 +519,7 @@ type Token = {
   id: string
   name: string
   kind: "mcp" | "rest"
+  canRequestAccess: boolean
   prefix: string
   createdAt: string
   lastUsedAt: string | null
@@ -507,10 +529,15 @@ function TokensCard() {
   const tokens = useApi<Token[]>("/admin/tokens")
   const [open, setOpen] = useState(false)
   const [kind, setKind] = useState<"mcp" | "rest">("mcp")
+  const [canRequestAccess, setCanRequestAccess] = useState(false)
   const [created, setCreated] = useState("")
-  const create = useApiMutation<{ name: string; kind: string }, { token: string }>("POST", "/admin/tokens", {
-    invalidate: ["/admin/tokens"],
-  })
+  const create = useApiMutation<{ name: string; kind: string; canRequestAccess: boolean }, { token: string }>(
+    "POST",
+    "/admin/tokens",
+    {
+      invalidate: ["/admin/tokens"],
+    },
+  )
   const revoke = useApiMutation<string>("DELETE", (id) => `/admin/tokens/${id}`, {
     invalidate: ["/admin/tokens"],
     success: "Token revoked",
@@ -520,7 +547,8 @@ function TokensCard() {
       <CardHeader>
         <CardTitle>API & MCP tokens</CardTitle>
         <CardDescription>
-          Read-only tokens for agents (MCP at <code>/mcp</code>) and scripts (REST at <code>/api/v1</code>).
+          Read-only tokens for agents (MCP at <code>/mcp</code>) and scripts (REST at <code>/api/v1</code>). A token may
+          also be allowed to request temporary access to n8n instances, which a person approves each time.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -542,6 +570,11 @@ function TokensCard() {
                 </TableCell>
                 <TableCell>
                   <Badge variant="secondary">{t.kind === "mcp" ? "MCP · read" : "REST · read"}</Badge>
+                  {t.canRequestAccess && (
+                    <Badge variant="outline" className="ml-1">
+                      may request access
+                    </Badge>
+                  )}
                 </TableCell>
                 <TableCell className="text-muted-foreground">{new Date(t.createdAt).toLocaleDateString()}</TableCell>
                 <TableCell className="text-muted-foreground">
@@ -568,6 +601,7 @@ function TokensCard() {
         <Button
           onClick={() => {
             setCreated("")
+            setCanRequestAccess(false)
             setOpen(true)
           }}
         >
@@ -598,7 +632,7 @@ function TokensCard() {
               onSubmit={(e) => {
                 e.preventDefault()
                 const name = String(new FormData(e.currentTarget).get("name"))
-                create.mutate({ name, kind }, { onSuccess: (r) => setCreated(r.token) })
+                create.mutate({ name, kind, canRequestAccess }, { onSuccess: (r) => setCreated(r.token) })
               }}
             >
               <FieldGroup>
@@ -617,6 +651,20 @@ function TokensCard() {
                       <SelectItem value="rest">REST (scripts)</SelectItem>
                     </SelectContent>
                   </Select>
+                </Field>
+                <Field orientation="horizontal">
+                  <Checkbox
+                    id="token-access"
+                    checked={canRequestAccess}
+                    onCheckedChange={(v) => setCanRequestAccess(v === true)}
+                  />
+                  <FieldContent>
+                    <FieldLabel htmlFor="token-access">May request access to n8n instances</FieldLabel>
+                    <FieldDescription>
+                      The agent can ask for temporary API access to an instance for a task. Nothing is granted until a
+                      person approves the request.
+                    </FieldDescription>
+                  </FieldContent>
                 </Field>
               </FieldGroup>
             </form>

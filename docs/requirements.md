@@ -103,7 +103,8 @@ Workflow-level only in v1. Full-instance backup (`pg_dump` plus `N8N_ENCRYPTION_
 
 - **E1** REST API with tokens.
 - **E2** MCP server: list open problems, problem details, full failed execution, instance health, queue status, backup status, search workflows across all instances.
-- **E3** Read only in v1.
+- **E3** Read only in v1, except E4.
+- **E4** Temporary access to n8n instances (added after v1 was implemented). A token allowed to ask requests an instance, a reason, scopes, optional workflow IDs and a duration. Settings decide which instances are open, which scopes may be granted on each (never beyond the instance's API key) and the longest duration. A person approves each request: in the UI in the first version, then also by Telegram button and email link. The agent never receives an n8n key: it calls the n8n public API through an n8n-ops proxy with a temporary key, and n8n-ops checks every call against the scopes n8n declares per operation and the approved workflows, forwards it with the instance's key and records it. Access ends on time, on release by the agent, or on revoke. Agents can find which instance holds a workflow by name, ID, webhook path or tag, but only need to when the instance is not already known.
 
 ### F. Consolidation
 

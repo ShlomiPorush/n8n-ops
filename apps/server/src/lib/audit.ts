@@ -1,11 +1,13 @@
 import type { Db } from "../db/client.ts"
 import { auditLog } from "../db/schema.ts"
 
+export type AuditVia = "web" | "telegram" | "email" | "mcp" | "rest" | "agent" | "system" | "worker" | "cli"
+
 export type AuditEntry = {
   actor: string
   action: string
   target?: string
-  via: "web" | "telegram" | "mcp" | "rest" | "system" | "worker" | "cli"
+  via: AuditVia
   details?: Record<string, unknown>
 }
 

@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Added
 
+- Temporary access for agents to n8n instances: a token allowed to ask requests an instance, scopes, optional workflows and minutes; a person approves on the new Agent access page; the agent uses the n8n API through the n8n-ops proxy, which checks every call against n8n's declared scopes and records it, and access ends on time, on release or on revoke.
+- Workflow search for agents by workflow ID, webhook path and tag, with whether access to the instance can be requested.
 - Worker behind a Docker socket proxy (on by default when adding a worker): only `wollomatic/socket-proxy` sees the socket and allows exec only in the listed n8n containers. Add worker now gives a ready docker-compose.yml.
 - Theme choice (light, dark or system) in the account menu.
 - Read-only MCP server at `/mcp` and REST API at `/api/v1` for agents, with scoped tokens and MCP reads in the audit log.

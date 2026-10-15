@@ -1,7 +1,8 @@
-import { and, asc, desc, eq, ilike, isNotNull, type SQL } from "drizzle-orm"
+import { and, asc, desc, eq, ilike, isNotNull, or, type SQL, sql } from "drizzle-orm"
 import type { Ctx } from "../context.ts"
 import { backupRuns, failures, instances, workflows } from "../db/schema.ts"
 import { listProblems, problemDetail } from "../routes/problems.ts"
+import { grantableScopes } from "./access.ts"
 import { effectiveScopes, executionUrl, latestN8nVersion } from "./instances.ts"
 
 /**
@@ -113,7 +114,19 @@ export async function agentBackups(ctx: Ctx) {
 
 export async function agentWorkflows(ctx: Ctx, opts: { q?: string; instance?: string; limit?: number }) {
   const where: SQL[] = []
-  if (opts.q) where.push(ilike(workflows.name, `%${opts.q.replace(/[%_]/g, "\\$&")}%`))
+  if (opts.q) {
+    // Agents often hold an ID, a webhook URL or a tag rather than the exact name.
+    const contains = (v: string) => `%${v.replace(/[%_\\]/g, "\\$&")}%`
+    const like = contains(opts.q)
+    const path = opts.q.replace(/^https?:\/\/[^/]+/, "").replace(/^\/webhook(-test)?\//, "")
+    const match = or(
+      ilike(workflows.name, like),
+      eq(workflows.workflowId, opts.q),
+      path.length >= 3 ? ilike(workflows.triggerDetail, contains(path)) : undefined,
+      sql`${workflows.tags}::text ilike ${like}`,
+    )
+    if (match) where.push(match)
+  }
   if (opts.instance) where.push(eq(instances.name, opts.instance))
   const rows = await ctx.db
     .select({ w: workflows, instanceName: instances.name })
@@ -122,11 +135,19 @@ export async function agentWorkflows(ctx: Ctx, opts: { q?: string; instance?: st
     .where(where.length ? and(...where) : undefined)
     .orderBy(asc(workflows.name))
     .limit(Math.min(opts.limit ?? 100, 500))
+  const policies = new Map(
+    (await ctx.db.select().from(instances)).map((i) => {
+      const scopes = grantableScopes(i)
+      return [i.name, { requestable: scopes.length > 0, grantableScopes: scopes }]
+    }),
+  )
   return rows.map(({ w, instanceName }) => ({
     instance: instanceName,
     workflowId: w.workflowId,
     name: w.name,
     active: w.active,
+    tags: w.tags,
+    access: policies.get(instanceName) ?? { requestable: false, grantableScopes: [] },
     trigger: w.triggerDetail ? `${w.triggerType} ${w.triggerDetail}` : w.triggerType,
     lastRunAt: w.lastRunAt,
     runs30d: w.runs30d,

@@ -27,7 +27,16 @@ export function ListWithPanel({
       <>
         <div className="grid min-w-0 content-start gap-gap">{list}</div>
         <Dialog open onOpenChange={(o) => !o && onClose()}>
-          <DialogContent className="md:max-w-[1100px]" aria-describedby={undefined} showCloseButton={false}>
+          <DialogContent
+            className="md:max-w-[1100px]"
+            aria-describedby={undefined}
+            showCloseButton={false}
+            // Focus the dialog, not its Back button, so no focus ring shows before the keyboard is used.
+            onOpenAutoFocus={(e) => {
+              e.preventDefault()
+              ;(e.currentTarget as HTMLElement).focus()
+            }}
+          >
             <DialogHeader className="flex-row items-center gap-1 ps-2 pe-pad-x">
               <Button size="icon-sm" onClick={onClose} aria-label="Back">
                 <ArrowLeft />

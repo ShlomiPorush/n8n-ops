@@ -210,7 +210,7 @@ export function Kpis({ className, children }: { className?: string; children: Re
   return (
     <div
       className={cn(
-        "grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] overflow-hidden rounded-lg border border-line bg-bg",
+        "grid grid-cols-[repeat(auto-fit,minmax(170px,1fr))] overflow-hidden rounded-lg border border-line bg-bg",
         className,
       )}
     >

@@ -260,6 +260,7 @@ function SettingRow({
   hint,
   children,
   wide,
+  inline,
 }: {
   htmlFor?: string
   label: React.ReactNode
@@ -267,12 +268,14 @@ function SettingRow({
   children: React.ReactNode
   /** The control takes a full line under the label (long values). */
   wide?: boolean
+  /** A switch: it stays at the end of the row, also on a phone. */
+  inline?: boolean
 }) {
   return (
     <div
       className={cn(
         "grid items-center gap-x-6 gap-y-2 border-t border-line px-pad-x py-3",
-        !wide && "md:grid-cols-[minmax(0,1fr)_260px]",
+        inline ? "grid-cols-[minmax(0,1fr)_auto]" : !wide && "md:grid-cols-[minmax(0,1fr)_260px]",
       )}
     >
       <div className="min-w-0">
@@ -345,7 +348,7 @@ export function SettingsForm({ section }: { section: string }) {
           <Loading />
         ) : (
           def.fields.map((f) => (
-            <SettingRow key={f.name} htmlFor={f.name} label={f.label} hint={f.hint}>
+            <SettingRow key={f.name} htmlFor={f.name} label={f.label} hint={f.hint} inline={f.type === "switch"}>
               {f.type === "switch" ? (
                 <Switch id={f.name} checked={Boolean(values[f.name])} onCheckedChange={(v) => set(f.name, v)} />
               ) : f.type === "weekday" ? (

@@ -701,8 +701,10 @@ export function InstanceDialog({
               </FieldDescription>
             </Field>
           </FieldSet>
-          <FieldSet className="border-t border-line pt-4">
-            <FieldLegend variant="label">Queue</FieldLegend>
+          <FieldSet>
+            <FieldLegend variant="label" className="w-full border-t border-line pt-4">
+              Queue
+            </FieldLegend>
             <Field orientation="horizontal">
               <Switch id="i-queue" checked={form.queueMode} onCheckedChange={(v) => set("queueMode", v)} />
               <FieldContent>
@@ -740,8 +742,10 @@ export function InstanceDialog({
               </>
             )}
           </FieldSet>
-          <FieldSet className="border-t border-line pt-4">
-            <FieldLegend variant="label">Health and host</FieldLegend>
+          <FieldSet>
+            <FieldLegend variant="label" className="w-full border-t border-line pt-4">
+              Health and host
+            </FieldLegend>
             <Field>
               <FieldLabel>Check health and metrics</FieldLabel>
               <Select value={form.collection} onValueChange={(v) => set("collection", v)}>

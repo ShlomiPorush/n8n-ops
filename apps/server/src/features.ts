@@ -14,6 +14,7 @@ import { workerApiRoutes } from "./routes/worker-api.ts"
 import { workerRoutes } from "./routes/workers.ts"
 import { credentialExportRoutes, workflowRoutes } from "./routes/workflows.ts"
 import { expireAccess } from "./services/access.ts"
+import { notifyAccess } from "./services/access-notify.ts"
 import { enqueueProbes, scheduleBackups } from "./services/backups.ts"
 import { type Job, startScheduler } from "./services/scheduler.ts"
 import { syncWorkflows } from "./services/workflows.ts"
@@ -43,6 +44,7 @@ export function features(ctx: Ctx, extra: { mounts?: Mount[]; jobs?: Job[] } = {
     { name: "backups", everyMs: 5 * 60_000, run: scheduleBackups },
     { name: "probes", everyMs: 10_000, run: enqueueProbes },
     { name: "access-expiry", everyMs: 15_000, run: expireAccess },
+    { name: "access-notify", everyMs: 5_000, run: notifyAccess },
     {
       name: "workflow-map",
       everyMs: 30 * 60_000,

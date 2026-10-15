@@ -80,6 +80,15 @@ export const sections = {
       .int()
       .min(1)
       .max(24 * 60),
+    /** Send each new request to the Telegram chat with Approve and Deny buttons. */
+    notifyTelegram: z.boolean(),
+    /** Email each new request to the report recipients, with a link to decide in n8n-ops. */
+    notifyEmail: z.boolean(),
+    /**
+     * Telegram user IDs or @usernames allowed to press Approve or Deny. Empty: only the user of a private chat
+     * (the chat ID is that user), never anyone in a group.
+     */
+    telegramApprovers: z.array(z.string()),
   }),
   keys: z.object({
     /** age public key used to encrypt every backup archive. */
@@ -130,7 +139,7 @@ export const defaults: { [K in SectionName]: Section<K> } = {
     smtpUser: "",
   },
   storage: { endpoint: "", region: "us-east-1", bucket: "", prefix: "n8n-ops", accessKeyId: "", forcePathStyle: true },
-  access: { maxMinutes: 240, pendingMinutes: 30 },
+  access: { maxMinutes: 240, pendingMinutes: 30, notifyTelegram: true, notifyEmail: true, telegramApprovers: [] },
   keys: {},
 }
 

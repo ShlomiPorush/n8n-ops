@@ -3,7 +3,8 @@ import type { Ctx } from "../context.ts"
 import { requireUser } from "../http/middleware.ts"
 import type { Env } from "../http/types.ts"
 import { safeEqual } from "../lib/crypto.ts"
-import { type CallbackUpdate, handleTelegramCallback, sendTestTelegram } from "../services/alerts.ts"
+import { handleAccessCallback } from "../services/access-notify.ts"
+import { type CallbackUpdate, handleTelegramCallback, sendTestTelegram, telegramClient } from "../services/alerts.ts"
 import { buildReport, sendEmail } from "../services/reports.ts"
 
 /** Telegram calls this for button presses. Verified with the secret token header (no session). */
@@ -15,7 +16,11 @@ export function telegramWebhookRoutes(ctx: Ctx) {
     if (!webhookSecret || !safeEqual(header, webhookSecret)) return c.json({ error: "unauthorized" }, 401)
     const update = (await c.req.json().catch(() => ({}))) as CallbackUpdate
     try {
-      await handleTelegramCallback(ctx, update)
+      // Buttons on access requests first, then those on problem alerts. Only presses in the configured chat count.
+      const tg = await telegramClient(ctx)
+      const cb = update.callback_query
+      const inChat = Boolean(tg && cb && String(cb.message?.chat?.id) === tg.chatId)
+      if (!(inChat && tg && cb && (await handleAccessCallback(ctx, tg, cb)))) await handleTelegramCallback(ctx, update)
     } catch (error) {
       ctx.log.error("telegram callback failed", { error: (error as Error).message })
     }

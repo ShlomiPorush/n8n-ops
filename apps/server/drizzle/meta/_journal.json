@@ -15,6 +15,13 @@
       "when": 1792074709479,
       "tag": "0001_agent_access",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792079820562,
+      "tag": "0002_access_notifications",
+      "breakpoints": true
     }
   ]
 }

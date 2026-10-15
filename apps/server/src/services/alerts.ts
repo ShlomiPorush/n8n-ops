@@ -84,7 +84,7 @@ export function renderProblemGroup(error: string, lines: GroupLine[], footer?: s
   ].join("\n")
 }
 
-async function telegramClient(ctx: Ctx) {
+export async function telegramClient(ctx: Ctx) {
   const tg = await ctx.settings.get("telegram")
   if (!tg.botTokenEnc || !tg.chatId) return null
   return { api: new Telegram(ctx.secrets.decrypt(tg.botTokenEnc)), chatId: tg.chatId, secret: tg.webhookSecret }

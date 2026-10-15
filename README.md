@@ -55,7 +55,7 @@ An agent that needs to change something in n8n asks n8n-ops instead of holding a
 
 1. On each instance, **Agent access** says whether agents may ask, and which scopes may ever be granted (never more than the instance's API key holds). Settings → Agent access sets the longest access and how long a request waits.
 2. The agent calls `request_instance_access` (MCP) or `POST /api/v1/access-requests` (REST) with the instance, a reason, the scopes, optionally the workflow IDs, and the minutes it needs.
-3. You approve or deny it on the **Agent access** page (also listed under Needs attention on the Overview).
+3. You approve or deny it: with the **Approve** and **Deny** buttons on the Telegram message, from the link in the email, or on the **Agent access** page (also under Needs attention on the Overview). In Telegram only the approvers listed in Settings → Agent access can decide; with none listed, only you in a private chat with the bot. The message then shows the outcome.
 4. The agent collects the key once with `get_access_request` (`GET /api/v1/access-requests/{id}`) and calls the n8n public API at `https://<your n8n-ops>/n8n/<instance>/api/v1` with the key in `X-N8N-API-KEY`, so n8n API clients work by changing only the base URL.
 5. n8n-ops checks every call against the scopes n8n declares for each operation (n8n 2.14 or later) and, when workflow IDs were given, against those workflows; then it forwards the call with the instance's own key and records it on the request.
 6. Access ends when its time is up, when the agent calls `release_instance_access` (`POST /api/v1/access-requests/{id}/release`), or when you revoke it. Revoking the token revokes its access too.
@@ -74,7 +74,7 @@ Requirements: WSL (or Linux) with Docker. Node.js and pnpm run in a container.
 
 ```bash
 cp docker/docker-compose-dev.example.yml docker-compose-dev.yml   # once per machine
-scripts/local.sh start     # server, PostgreSQL, worker, a disposable n8n and S3Mock on http://localhost:8080
+scripts/local.sh start     # server, PostgreSQL, worker, a disposable n8n, S3Mock and Mailpit on http://localhost:8080
 scripts/verify.sh          # everything CI checks, including end-to-end tests against real n8n
 ```
 

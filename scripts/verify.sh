@@ -119,6 +119,8 @@ run_integration() {
   build_images verify "verify-$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
   N8N_OPS_DATA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/n8n-ops-verify.XXXXXX")"
   export N8N_OPS_DATA_DIR
+  # Telegram calls go to the stand-in Bot API inside the end-to-end test runner, never to Telegram.
+  export TELEGRAM_API_URL="http://e2e-runner:8099"
   prepare_data_dirs "$N8N_OPS_DATA_DIR"
   # The end-to-end tests drop the worker's pairing token into its data directory.
   docker run --rm --user 0 -v "$N8N_OPS_DATA_DIR/worker:/target" "$TOOLCHAIN_IMAGE" chmod 0777 /target
@@ -148,7 +150,9 @@ run_integration() {
   stack exec -T worker node -e "$probe" || die "the socket proxy does not enforce its allowlist"
 
   info "End-to-end tests"
-  docker run --rm --network "${PROJECT}_default" --user "$(id -u):$(id -g)" -e HOME=/tmp -e CI="${CI:-}" \
+  # The alias lets the server reach the stand-in Telegram Bot API that the tests run (TELEGRAM_API_URL).
+  docker run --rm --network "${PROJECT}_default" --network-alias e2e-runner \
+    --user "$(id -u):$(id -g)" -e HOME=/tmp -e CI="${CI:-}" \
     -e E2E_BASE_URL=http://server:8080 -e E2E_N8N_CONTAINER="${PROJECT}-n8n-1" \
     -v "$N8N_OPS_DATA_DIR/worker:/worker-data" -v "$REPO_ROOT:/repo" -w /repo/apps/web \
     "$PLAYWRIGHT_IMAGE" node node_modules/@playwright/test/cli.js test || {

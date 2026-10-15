@@ -149,6 +149,24 @@ const forms: Record<string, { title: string; description: string; fields: FieldD
         type: "number",
         hint: "Then it expires.",
       },
+      {
+        name: "notifyTelegram",
+        label: "Send requests to Telegram",
+        hint: "With Approve and Deny buttons, to the chat set under Telegram.",
+        type: "switch",
+      },
+      {
+        name: "notifyEmail",
+        label: "Email requests",
+        hint: "To the recipients set under Email reports, with a link to decide here.",
+        type: "switch",
+      },
+      {
+        name: "telegramApprovers",
+        label: "Who may approve in Telegram",
+        hint: "Telegram user IDs or @usernames, comma-separated. Empty: only you, when the chat is a private chat with you; nobody in a group.",
+        type: "list",
+      },
     ],
   },
 }

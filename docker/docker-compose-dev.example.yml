@@ -7,6 +7,9 @@ services:
   server:
     image: n8n-ops-server:${N8N_OPS_IMAGE_TAG:-dev}
     env_file: docker/dev.env
+    environment:
+      # Empty except in scripts/verify.sh, which points it at the end-to-end tests' stand-in Bot API.
+      TELEGRAM_API_URL: ${TELEGRAM_API_URL:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -77,6 +80,10 @@ services:
   s3:
     image: adobe/s3mock:4.11.0
     env_file: docker/s3-dev.env
+
+  # SMTP for development and the end-to-end tests (Mailpit): catches every email, read through its API on :8025.
+  mail:
+    image: axllent/mailpit:v1.31.6
 
 networks:
   docker-proxy:

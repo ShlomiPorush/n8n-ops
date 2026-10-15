@@ -427,6 +427,13 @@ export const accessRequests = pgTable(
     /** The key, encrypted, until the agent collects it once; then cleared. */
     keyEnc: text("key_enc"),
     keyCollectedAt: ts("key_collected_at"),
+    /** Telegram message with the Approve and Deny buttons; edited once the request is decided or expires. */
+    telegramMessageId: integer("telegram_message_id"),
+    telegramClosedAt: ts("telegram_closed_at"),
+    emailSentAt: ts("email_sent_at"),
+    /** Last attempt to notify approvers, and its error, for retries. */
+    notifyAttemptAt: ts("notify_attempt_at"),
+    notifyError: text("notify_error"),
   },
   (t) => [index("access_requests_status_idx").on(t.status)],
 )

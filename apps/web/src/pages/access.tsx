@@ -32,6 +32,9 @@ export type AccessRow = {
   endedAt: string | null
   keyPrefix: string | null
   keyCollected: boolean
+  telegramMessageId: number | null
+  emailSentAt: string | null
+  notifyError: string | null
 }
 
 type AccessDetail = AccessRow & {
@@ -182,6 +185,7 @@ function AccessDetailPanel({ id }: { id: string }) {
             </>
           )}
         </p>
+        {r.status === "pending" && <Notified r={r} />}
         <div className="flex flex-wrap gap-2">
           {r.status === "pending" && (
             <>
@@ -273,5 +277,16 @@ function AccessDetailPanel({ id }: { id: string }) {
         </CardContent>
       </Card>
     </div>
+  )
+}
+
+/** Where approvers were told about a waiting request. */
+function Notified({ r }: { r: AccessRow }) {
+  const sent = [r.telegramMessageId !== null && "Telegram", r.emailSentAt && "email"].filter(Boolean)
+  return (
+    <p className="text-sm text-muted-foreground">
+      {sent.length ? `Sent to ${sent.join(" and ")}.` : "Not sent anywhere yet: connect Telegram or email in Settings."}
+      {r.notifyError && <span className="block text-destructive">Last attempt failed: {r.notifyError}</span>}
+    </p>
   )
 }

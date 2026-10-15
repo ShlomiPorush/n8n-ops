@@ -4,6 +4,7 @@ import type { Ctx } from "../context.ts"
 import { requireUser } from "../http/middleware.ts"
 import { actorName, type Env } from "../http/types.ts"
 import { type SectionName, sections } from "../lib/settings.ts"
+import { syncTelegramWebhook } from "../services/alerts.ts"
 
 /** Secret fields: stored encrypted as <name>Enc, written as plain <name>, read back only as <name>Set. */
 const secretFields: Partial<Record<SectionName, string[]>> = {
@@ -60,6 +61,9 @@ export function settingsRoutes(ctx: Ctx) {
         secretsChanged: Object.keys(body).filter((k) => secretNames.includes(k)),
       },
     })
+    // Point the bot at this installation now rather than at the next minute check.
+    if (section === "telegram" || section === "general")
+      await syncTelegramWebhook(ctx).catch((e: Error) => ctx.log.warn("Telegram webhook not set", { error: e.message }))
     return c.json({ ok: true })
   })
 

@@ -49,14 +49,16 @@ Before finishing a change, run `scripts/verify.sh` (or `--changed` for a quick p
 - `apps/web/src/lib/utils.ts` re-exports `cn` from the `cn` package. That is how the current shadcn preset works; do not "fix" the import.
 - Vitest in `apps/web` only includes `src/**/*.test.ts(x)`; Playwright specs in `apps/web/e2e` run through `scripts/verify.sh` against the container stack.
 - The repository uses the GitHub noreply address as the local `user.email`; GitHub rejects pushes that expose the private address.
+- Sign-in is rate limited (5 per 5 minutes). End-to-end spec files sign in through `signIn()`, which reuses the previous file's session; a new spec that signs in with a password on its own will hit the limit.
+- In the verification stack the server sends Telegram calls to a stand-in Bot API inside the Playwright runner (`TELEGRAM_API_URL=http://e2e-runner:8099`) and email to Mailpit (`mail:1025`, API on `mail:8025`). Never point `TELEGRAM_API_URL` anywhere in production.
 
 ## Docker
 
 - `docker-compose.yml` (tracked) is the production deployment and references published images on GHCR. The `worker` service is behind the `worker` profile.
 - `docker-compose-dev.yml` (root, ignored, never committed) is the development stack. Create it with `cp docker/docker-compose-dev.example.yml docker-compose-dev.yml` and use it only through `scripts/local.sh`. CI, verify and release use the tracked template instead.
 - Compose files never contain `build:`; the scripts build images explicitly. The guard in `scripts/verify.sh` enforces it.
-- Runtime variables come from an `env_file`: `.env` in production (contract in `.env.example`), `docker/dev.env` for development and verification. Compose interpolation is limited to image tags, the host port, data directories and the Docker socket group.
-- Every application container runs as a non-root user and has a real health check. `scripts/local.sh status` and `scripts/verify.sh` fail if a process runs as UID 0. The `worker` reaches the Docker socket through the socket's group (`group_add`), never as root.
+- Runtime variables come from an `env_file`: `.env` in production (contract in `.env.example`), `docker/dev.env` for development and verification. Compose interpolation is limited to image tags, the host port, data directories, the Docker socket group and, in the development template, `TELEGRAM_API_URL` (empty except under `scripts/verify.sh`).
+- Every application container runs as a non-root user and has a real health check. `scripts/local.sh status` and `scripts/verify.sh` fail if a process runs as UID 0. In the development and verification stacks the `worker` reaches Docker only through `socket-proxy` (wollomatic/socket-proxy, allowlist of ping and exec in the n8n container), the same layout the Add worker dialog generates; without the proxy a worker uses the socket's group (`group_add`), never root.
 - Persistent data uses bind-mounted host directories, not named volumes. `down` keeps them; only a confirmed `nuke` deletes the validated development data directory.
 - Logs go to stdout and stderr.
 

@@ -12,6 +12,12 @@ export class TelegramError extends Error {
 
 export type InlineButton = { text: string; callback_data?: string; url?: string }
 
+/**
+ * The Bot API address. Only the verification stack changes it (TELEGRAM_API_URL), to a stand-in that records
+ * calls, so the end-to-end tests can follow messages and button presses without a real bot.
+ */
+const API_BASE = (process.env.TELEGRAM_API_URL || "https://api.telegram.org").replace(/\/+$/, "")
+
 /** Telegram Bot API calls used by n8n-ops. Messages use HTML parse mode. */
 export class Telegram {
   constructor(
@@ -20,7 +26,7 @@ export class Telegram {
   ) {}
 
   private async call<T>(method: string, body: Record<string, unknown>): Promise<T> {
-    const res = await this.fetchImpl(`https://api.telegram.org/bot${this.token}/${method}`, {
+    const res = await this.fetchImpl(`${API_BASE}/bot${this.token}/${method}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),

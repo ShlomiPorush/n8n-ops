@@ -45,7 +45,8 @@ function Actor({ name }: { name: string }) {
 
 export function AuditPage() {
   const query = useInfiniteQuery({
-    queryKey: ["/admin/audit"],
+    // Its own key: the Overview reads the same endpoint as a plain list, and the two shapes must not share a cache entry.
+    queryKey: ["/admin/audit", "pages"],
     queryFn: ({ pageParam }) => api<Entry[]>(`/admin/audit${pageParam ? `?before=${pageParam}` : ""}`),
     initialPageParam: 0,
     getNextPageParam: (last) => (last.length === 100 ? last[last.length - 1]?.id : undefined),

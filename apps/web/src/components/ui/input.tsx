@@ -1,13 +1,14 @@
-import { cn } from "cn"
 import type * as React from "react"
+import { cn } from "@/lib/utils"
 
+// Fields sit on the page colour even inside a panel; focus turns the border to ink.
 function Input({ className, type, ...props }: React.ComponentProps<"input">) {
   return (
     <input
       type={type}
       data-slot="input"
       className={cn(
-        "h-9 w-full min-w-0 rounded-md border border-input bg-transparent px-2.5 py-1 text-base shadow-xs transition-[color,box-shadow] outline-none file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40",
+        "h-ctl w-full min-w-0 rounded-sm border border-input bg-bg px-3 text-body text-ink transition-colors duration-150 outline-none file:me-3 file:border-0 file:bg-transparent file:text-ctl file:font-semibold placeholder:text-muted-foreground focus:border-primary focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60 aria-invalid:border-fail",
         className,
       )}
       {...props}

@@ -1,11 +1,25 @@
-import { Copy, Download, KeyRound, Plus, ShieldCheck, Trash2 } from "lucide-react"
-import { useEffect, useState } from "react"
-import { useNavigate, useParams } from "react-router"
-import { toast } from "sonner"
-import { Page } from "@/app/shell"
+import { ChevronDown, Download, KeyRound, Plus, ShieldCheck, Trash2 } from "lucide-react"
+import { useEffect, useRef, useState } from "react"
+import { Navigate, NavLink, useLocation, useNavigate, useParams } from "react-router"
+import { useCrumb } from "@/app/chrome"
+import { settingsGroups, settingsSectionLabel } from "@/app/settings-sections"
+import { useConfirm } from "@/components/confirm"
+import {
+  Copyable,
+  countChanges,
+  Empty,
+  LoadError,
+  Loading,
+  Page,
+  Panel,
+  PanelHead,
+  SecretField,
+  UserText,
+  useSaveSource,
+} from "@/components/kit"
+import { When } from "@/components/status"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
   Dialog,
@@ -17,15 +31,18 @@ import {
 } from "@/components/ui/dialog"
 import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { PasswordInput } from "@/components/ui/password-input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { api, describeError, useApi, useApiMutation } from "@/lib/api"
 import { authClient, authErrorText } from "@/lib/auth-client"
 import { download } from "@/lib/download"
+import { formatDateTime, useTimeZone } from "@/lib/time"
+import { toast } from "@/lib/toast"
+import { cn } from "@/lib/utils"
 
-type FieldDef = {
+export type FieldDef = {
   name: string
   label: string
   hint?: string
@@ -33,7 +50,7 @@ type FieldDef = {
   placeholder?: string
 }
 
-const forms: Record<string, { title: string; description: string; fields: FieldDef[] }> = {
+export const forms: Record<string, { title: string; description: string; fields: FieldDef[] }> = {
   general: {
     title: "General",
     description: "How this installation is reached.",
@@ -44,7 +61,11 @@ const forms: Record<string, { title: string; description: string; fields: FieldD
         hint: "Used in links sent by Telegram and email, for example https://ops.example.com.",
         placeholder: "https://ops.example.com",
       },
-      { name: "timezone", label: "Time zone", hint: "For report and backup schedules, for example Asia/Jerusalem." },
+      {
+        name: "timezone",
+        label: "Time zone",
+        hint: "For report and backup schedules and every time shown here, for example Asia/Jerusalem. Empty: UTC.",
+      },
     ],
   },
   alerts: {
@@ -171,177 +192,356 @@ const forms: Record<string, { title: string; description: string; fields: FieldD
   },
 }
 
-const tabs = [
-  ["general", "General"],
-  ["alerts", "Alerts"],
-  ["telegram", "Telegram"],
-  ["email", "Email reports"],
-  ["storage", "Backup storage"],
-  ["keys", "Encryption keys"],
-  ["defaults", "Instance defaults"],
-  ["account", "Account"],
-  ["access", "Agent access"],
-  ["tokens", "API & MCP tokens"],
-] as const
-
 const weekdays = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
 
+/** What each section is for, under its title. Forms take theirs from their definition. */
+const sectionDescriptions: Record<string, string> = {
+  keys: "Keys that protect backups and the secrets n8n-ops stores.",
+  tokens: "Tokens for agents and scripts that read n8n-ops, and may ask for access to n8n instances.",
+  account: "Your password and two-factor sign-in.",
+}
+
+/** The section last open, so Settings reopens where it was left during this visit (NL-4). */
+let lastSection = "general"
+
 export function SettingsPage() {
-  const { section = "general" } = useParams()
+  const { section } = useParams()
   const navigate = useNavigate()
+  const label = section ? settingsSectionLabel(section) : undefined
+  useCrumb(label)
+  if (!section || !label) return <Navigate to={`/settings/${lastSection}`} replace />
+  lastSection = section
   return (
-    <Page title="Settings">
-      <Tabs value={section} onValueChange={(v) => navigate(`/settings/${v}`)}>
-        <TabsList className="max-w-full flex-wrap justify-start group-data-horizontal/tabs:h-auto">
-          {tabs.map(([k, l]) => (
-            <TabsTrigger key={k} value={k}>
-              {l}
-            </TabsTrigger>
+    <Page title="Settings" description="How n8n-ops reaches you, where backups go, and who may use its API.">
+      <div className="grid items-start gap-gap min-[1024px]:grid-cols-[212px_minmax(0,1fr)] min-[1024px]:gap-7">
+        {/* Below 1024px the section list is one sticky picker (FS-10). */}
+        <label className="sticky top-0 z-20 -mt-1 bg-bg py-2 min-[1024px]:hidden">
+          <span className="sr-only">Settings category</span>
+          <span className="relative block">
+            <select
+              value={section}
+              onChange={(e) => navigate(`/settings/${e.target.value}`)}
+              className="h-ctl w-full appearance-none rounded-sm border border-input bg-bg ps-3 pe-9 font-semibold text-ink outline-none focus:border-primary"
+            >
+              {settingsGroups.map((g) => (
+                <optgroup key={g.label} label={g.label}>
+                  {g.items.map(([k, l]) => (
+                    <option key={k} value={k}>
+                      {l}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+            <ChevronDown
+              aria-hidden
+              className="pointer-events-none absolute end-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+            />
+          </span>
+        </label>
+        <nav aria-label="Settings categories" className="sticky top-0 hidden flex-col gap-0.5 min-[1024px]:flex">
+          {settingsGroups.map((g) => (
+            <div key={g.label} className="flex flex-col gap-0.5">
+              <div className="px-2.5 pt-2.5 pb-1 text-meta font-bold tracking-[0.04em] text-muted-foreground uppercase">
+                {g.label}
+              </div>
+              {g.items.map(([k, l]) => (
+                <NavLink
+                  key={k}
+                  to={`/settings/${k}`}
+                  aria-current={section === k ? "true" : undefined}
+                  className="rounded-sm px-2.5 py-1.5 font-medium text-ink aria-[current=true]:bg-primary aria-[current=true]:font-title aria-[current=true]:text-primary-foreground [@media(hover:hover)]:hover:bg-accent [@media(hover:hover)]:aria-[current=true]:hover:bg-primary"
+                >
+                  {l}
+                </NavLink>
+              ))}
+            </div>
           ))}
-        </TabsList>
-      </Tabs>
-      <div className="max-w-3xl">
-        {section in forms && <SettingsForm key={section} section={section} />}
-        {section === "keys" && <KeysCard />}
-        {section === "account" && <AccountCard />}
-        {section === "tokens" && <TokensCard />}
+        </nav>
+        <div className="grid min-w-0 max-w-3xl gap-gap">
+          {/* Each section opens with a large title and one paragraph about what it is for (FS-8). */}
+          <div className="grid gap-1.5">
+            <h2 className="text-figure font-heavy tracking-tighter">{label}</h2>
+            <p className="max-w-[75ch] text-muted-foreground">
+              {forms[section]?.description ?? sectionDescriptions[section]}
+            </p>
+          </div>
+          {section in forms && <SettingsForm key={section} section={section} />}
+          {section === "keys" && <KeysCard />}
+          {section === "account" && <AccountCard />}
+          {section === "tokens" && <TokensCard />}
+        </div>
       </div>
     </Page>
   )
 }
 
+/** A settings row: the label and its explanation at the start, the control at the end. */
+function SettingRow({
+  htmlFor,
+  label,
+  hint,
+  children,
+  wide,
+  inline,
+}: {
+  htmlFor?: string
+  label: React.ReactNode
+  hint?: React.ReactNode
+  children: React.ReactNode
+  /** The control takes a full line under the label (long values). */
+  wide?: boolean
+  /** A switch: the whole row is its label, and it stays at the end of the row, also on a phone (FS-1). */
+  inline?: boolean
+}) {
+  const text = (
+    <div className="min-w-0">
+      {htmlFor && !inline ? (
+        <label htmlFor={htmlFor} className="font-semibold">
+          {label}
+        </label>
+      ) : (
+        <span className="block font-semibold">{label}</span>
+      )}
+      {hint && <span className="mt-0.5 block text-small text-muted-foreground">{hint}</span>}
+    </div>
+  )
+  if (inline)
+    return (
+      <label
+        htmlFor={htmlFor}
+        data-setting-row
+        className="grid cursor-pointer grid-cols-[minmax(0,1fr)_auto] items-center gap-x-6 border-t border-line px-pad-x py-3"
+      >
+        {text}
+        {children}
+      </label>
+    )
+  return (
+    <div
+      data-setting-row
+      className={cn(
+        "grid items-center gap-x-6 gap-y-2 border-t border-line px-pad-x py-3",
+        !wide && "md:grid-cols-[minmax(0,1fr)_260px]",
+      )}
+    >
+      {text}
+      <div className="flex min-w-0 items-center gap-2 md:justify-end">{children}</div>
+    </div>
+  )
+}
+
+/**
+ * A setting chosen in the search: once its section has drawn, its row comes into view, its field takes the
+ * focus and the row flashes for a moment (SR-6). The request is then cleared, so a reload does not repeat it.
+ */
+function useRevealField(ready: boolean) {
+  const location = useLocation()
+  const navigate = useNavigate()
+  const field = (location.state as { focusField?: string } | null)?.focusField
+  useEffect(() => {
+    if (!field || !ready) return
+    let tries = 0
+    const timer = setInterval(() => {
+      const el = document.getElementById(field)
+      tries += 1
+      if (!el && tries < 80) return
+      clearInterval(timer)
+      if (!el) return
+      const row = el.closest<HTMLElement>("[data-setting-row]") ?? el
+      row.scrollIntoView({ block: "center" })
+      el.focus({ preventScroll: true })
+      row.classList.remove("search-flash")
+      void row.offsetWidth
+      row.classList.add("search-flash")
+      navigate(".", { replace: true, state: null })
+    }, 100)
+    return () => clearInterval(timer)
+  }, [field, ready, navigate])
+}
+
+/** Form values as loaded. A secret is `undefined` until the user replaces or removes it, and then not sent. */
+const toForm = (def: { fields: FieldDef[] }, data: Record<string, unknown>) =>
+  Object.fromEntries(
+    def.fields.map((f) => {
+      const v = data[f.name]
+      if (f.type === "password") return [f.name, undefined]
+      if (f.type === "list") return [f.name, Array.isArray(v) ? v.join(", ") : String(v ?? "")]
+      if (f.type === "switch") return [f.name, Boolean(v)]
+      return [f.name, v ?? ""]
+    }),
+  ) as Record<string, unknown>
+
 export function SettingsForm({ section }: { section: string }) {
   const def = forms[section]
   const query = useApi<Record<string, unknown>>(`/settings/${section}`)
+  useRevealField(!query.isLoading)
   const [values, setValues] = useState<Record<string, unknown>>({})
   const save = useApiMutation<Record<string, unknown>>("PUT", `/settings/${section}`, {
     invalidate: [`/settings/${section}`, "/setup/checklist"],
-    success: "Settings saved",
   })
+  const initial = query.data && def ? toForm(def, query.data) : {}
+  const secrets = def?.fields.filter((f) => f.type === "password").map((f) => f.name) ?? []
+  const plain = def?.fields.filter((f) => f.type !== "password").map((f) => f.name) ?? []
+  const count = query.data
+    ? countChanges(values, initial, plain) + secrets.filter((k) => values[k] !== undefined && values[k] !== "").length
+    : 0
+  // A refresh never overwrites what the user is typing (SV-6); after a save the form takes the saved values.
+  const reload = useRef(true)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only new data replaces the form
   useEffect(() => {
-    if (query.data) setValues(query.data)
-  }, [query.data])
-  if (!def) return null
-  const set = (name: string, value: unknown) => setValues((v) => ({ ...v, [name]: value }))
-  function submit() {
-    if (!def) return
-    const body: Record<string, unknown> = {}
-    for (const f of def.fields) {
+    if (query.data && def && (reload.current || count === 0)) {
+      setValues(toForm(def, query.data))
+      reload.current = false
+    }
+  }, [query.data, def])
+
+  function body() {
+    const out: Record<string, unknown> = {}
+    for (const f of def?.fields ?? []) {
       const v = values[f.name]
       if (f.type === "password") {
-        if (typeof v === "string" && v) body[f.name] = v
-      } else if (f.type === "number") body[f.name] = Number(v)
+        // An unchanged secret is never sent again; null removes it.
+        if (v === null || (typeof v === "string" && v)) out[f.name] = v
+      } else if (f.type === "number") out[f.name] = Number(v)
       else if (f.type === "list")
-        body[f.name] = (Array.isArray(v) ? v : String(v ?? "").split(",")).map((s: string) => s.trim()).filter(Boolean)
-      else body[f.name] = v
+        out[f.name] = String(v ?? "")
+          .split(/[,;\s]+/)
+          .map((s) => s.trim())
+          .filter(Boolean)
+      else out[f.name] = v
     }
-    save.mutate(body)
+    return out
   }
+  useSaveSource(`settings-${section}`, {
+    label: `the ${def?.title ?? section} settings`,
+    saved: "Settings saved",
+    count,
+    save: async () => {
+      await save.mutateAsync(body())
+      // Only a successful save lets the next answer replace the form; a failed one keeps the edits (SV-3).
+      reload.current = true
+    },
+    discard: () => query.data && def && setValues(toForm(def, query.data)),
+  })
+  if (!def) return null
+  const set = (name: string, value: unknown) => setValues((v) => ({ ...v, [name]: value }))
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{def.title}</CardTitle>
-        <CardDescription>{def.description}</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <FieldGroup>
-          {def.fields.map((f) => (
-            <Field key={f.name} orientation="responsive">
-              <FieldContent>
-                <FieldLabel htmlFor={f.name}>{f.label}</FieldLabel>
-                {f.hint && <FieldDescription>{f.hint}</FieldDescription>}
-              </FieldContent>
-              <div className="flex min-w-64 items-center gap-2">
-                {f.type === "switch" ? (
-                  <Switch id={f.name} checked={Boolean(values[f.name])} onCheckedChange={(v) => set(f.name, v)} />
-                ) : f.type === "weekday" ? (
-                  <Select value={String(values[f.name] ?? 0)} onValueChange={(v) => set(f.name, Number(v))}>
-                    <SelectTrigger id={f.name} className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {weekdays.map((d, i) => (
-                        <SelectItem key={d} value={String(i)}>
-                          {d}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                ) : (
-                  <Input
-                    id={f.name}
-                    type={
-                      f.type === "number"
-                        ? "number"
-                        : f.type === "password"
-                          ? "password"
-                          : f.type === "time"
-                            ? "time"
-                            : "text"
-                    }
-                    placeholder={
-                      f.type === "password"
-                        ? values[`${f.name}Set`]
-                          ? "Stored. Type to replace."
-                          : "Not set"
-                        : f.placeholder
-                    }
-                    value={
-                      f.type === "password"
-                        ? String(values[f.name] ?? "")
-                        : f.type === "list" && Array.isArray(values[f.name])
-                          ? (values[f.name] as string[]).join(", ")
-                          : String(values[f.name] ?? "")
-                    }
-                    onChange={(e) => set(f.name, e.target.value)}
-                  />
-                )}
-              </div>
-            </Field>
-          ))}
-        </FieldGroup>
-      </CardContent>
-      <CardFooter className="gap-2 border-t">
-        <Button onClick={submit} disabled={save.isPending || query.isLoading}>
-          Save
-        </Button>
-        {section === "telegram" && <TestTelegramButton />}
-        {section === "email" && <TestEmailButton />}
-        {section === "storage" && <TestStorageButton />}
-      </CardFooter>
-    </Card>
+    <Panel>
+      {query.error ? (
+        <LoadError what={def.title} error={query.error} retry={() => query.refetch()} />
+      ) : query.isLoading ? (
+        <Loading>Loading the {def.title} settings…</Loading>
+      ) : (
+        def.fields.map((f) => (
+          <SettingRow key={f.name} htmlFor={f.name} label={f.label} hint={f.hint} inline={f.type === "switch"}>
+            {f.type === "switch" ? (
+              <Switch id={f.name} checked={Boolean(values[f.name])} onCheckedChange={(v) => set(f.name, v)} />
+            ) : f.type === "password" ? (
+              <SecretField
+                id={f.name}
+                stored={Boolean(query.data?.[`${f.name}Set`])}
+                value={values[f.name] as string | null | undefined}
+                onChange={(v) => set(f.name, v)}
+              />
+            ) : f.type === "weekday" ? (
+              <Select value={String(values[f.name] ?? 0)} onValueChange={(v) => set(f.name, Number(v))}>
+                <SelectTrigger id={f.name} className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {weekdays.map((d, i) => (
+                    <SelectItem key={d} value={String(i)}>
+                      {d}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <Input
+                id={f.name}
+                // Times are typed as 24-hour HH:MM; a native time field would follow the browser's 12-hour clock.
+                type={f.type === "number" ? "number" : "text"}
+                inputMode={f.type === "time" ? "numeric" : undefined}
+                pattern={f.type === "time" ? "([01][0-9]|2[0-3]):[0-5][0-9]" : undefined}
+                className={f.type === "time" ? "tabular-nums" : undefined}
+                placeholder={f.type === "time" ? "HH:MM" : f.placeholder}
+                value={String(values[f.name] ?? "")}
+                onChange={(e) => set(f.name, e.target.value)}
+              />
+            )}
+          </SettingRow>
+        ))
+      )}
+      {query.data && (section === "telegram" || section === "email" || section === "storage") && (
+        <TestRow section={section} data={query.data} unsaved={count > 0} />
+      )}
+    </Panel>
   )
 }
 
-function TestTelegramButton() {
-  const test = useApiMutation<void>("POST", "/alerts/test/telegram", { success: "Test message sent" })
-  return (
-    <Button variant="outline" onClick={() => test.mutate()} disabled={test.isPending}>
-      Send test message
-    </Button>
-  )
-}
+const tests = {
+  telegram: {
+    path: "/alerts/test/telegram",
+    label: "Send test message",
+    busy: "Sending…",
+    done: "Test message sent",
+    needs: (d: Record<string, unknown>) => (d.botTokenSet && d.chatId ? null : "the bot token and the chat ID"),
+  },
+  email: {
+    path: "/alerts/test/email",
+    label: "Send test email",
+    busy: "Sending…",
+    done: "Test email sent",
+    needs: (d: Record<string, unknown>) =>
+      d.smtpHost && Array.isArray(d.recipients) && d.recipients.length > 0 ? null : "the SMTP server and a recipient",
+  },
+  storage: {
+    path: "/backups/test-storage",
+    label: "Upload and verify a test file",
+    busy: "Uploading…",
+    done: "Upload and download verified",
+    needs: (d: Record<string, unknown>) =>
+      d.endpoint && d.bucket && d.secretAccessKeySet ? null : "the endpoint, the bucket and the secret access key",
+  },
+} as const
 
-function TestEmailButton() {
-  const test = useApiMutation<void>("POST", "/alerts/test/email", { success: "Test email sent" })
+/** The connection test of a section. It tests the saved settings; until they exist it says what to save first (FB-1). */
+function TestRow({
+  section,
+  data,
+  unsaved,
+}: {
+  section: keyof typeof tests
+  data: Record<string, unknown>
+  unsaved: boolean
+}) {
+  const t = tests[section]
+  const test = useApiMutation<void>("POST", t.path, { success: t.done })
+  const missing = t.needs(data)
   return (
-    <Button variant="outline" onClick={() => test.mutate()} disabled={test.isPending}>
-      Send test email
-    </Button>
-  )
-}
-
-function TestStorageButton() {
-  const test = useApiMutation<void>("POST", "/backups/test-storage", { success: "Upload and download verified" })
-  return (
-    <Button variant="outline" onClick={() => test.mutate()} disabled={test.isPending}>
-      Upload and verify a test file
-    </Button>
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-line px-pad-x py-3">
+      <Button
+        onClick={() => test.mutate()}
+        disabled={test.isPending || missing !== null}
+        title={missing ? `Save ${missing} first` : undefined}
+      >
+        {test.isPending ? t.busy : t.label}
+      </Button>
+      <span className="text-small text-muted-foreground">
+        {missing
+          ? `Save ${missing} first.`
+          : unsaved
+            ? "Tests the saved settings, not the unsaved changes."
+            : "Tests the saved settings."}
+      </span>
+    </div>
   )
 }
 
 function KeysCard() {
+  const tz = useTimeZone()
   const keys = useApi<{ backupRecipient: string | null; privateKeySavedAt: string | null }>("/admin/keys")
   const [rotate, setRotate] = useState(false)
   const [privateKey, setPrivateKey] = useState("")
@@ -351,83 +551,69 @@ function KeysCard() {
       setPrivateKey(res.privateKey)
       await keys.refetch()
     } catch (e) {
-      toast.error(describeError(e))
+      toast.error(`Could not generate a key pair: ${describeError(e)}`)
     }
   }
   async function confirm() {
-    await api("/admin/keys/backup/confirm", { method: "POST" })
-    setPrivateKey("")
-    setRotate(false)
-    await keys.refetch()
-    toast.success("New backup key in use")
+    try {
+      await api("/admin/keys/backup/confirm", { method: "POST" })
+      setPrivateKey("")
+      setRotate(false)
+      await keys.refetch()
+      toast.success("New backup key in use")
+    } catch (e) {
+      toast.error(`Could not confirm the key: ${describeError(e)}`)
+    }
   }
   async function downloadAppKey() {
     try {
       download("n8n-ops-app.key", await api<string>("/admin/keys/app"))
     } catch (e) {
-      toast.error(describeError(e))
+      toast.error(`Could not download the key: ${describeError(e)}`)
     }
   }
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Encryption keys</CardTitle>
-        <CardDescription>Keys that protect backups and the secrets n8n-ops stores.</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <FieldGroup>
-          <Field orientation="responsive">
-            <FieldContent>
-              <FieldLabel>Backup public key</FieldLabel>
-              <FieldDescription>
-                Archives are encrypted with this. Only the public half is on the server.
-              </FieldDescription>
-            </FieldContent>
-            <code className="min-w-64 font-mono text-xs break-all">{keys.data?.backupRecipient ?? "Not set"}</code>
-          </Field>
-          <Field orientation="responsive">
-            <FieldContent>
-              <FieldLabel>Private key</FieldLabel>
-              <FieldDescription>Shown once when generated. You need it to restore.</FieldDescription>
-            </FieldContent>
-            <span className="min-w-64 text-sm">
-              {keys.data?.privateKeySavedAt ? (
-                <span className="flex items-center gap-2 text-emerald-700 dark:text-emerald-400">
-                  <ShieldCheck className="size-4" />
-                  You confirmed it is saved ({new Date(keys.data.privateKeySavedAt).toLocaleDateString()})
-                </span>
-              ) : (
-                "Not confirmed"
-              )}
-            </span>
-          </Field>
-          <Field orientation="responsive">
-            <FieldContent>
-              <FieldLabel>Rotate</FieldLabel>
-              <FieldDescription>Old archives still need the old private key.</FieldDescription>
-            </FieldContent>
-            <div className="min-w-64">
-              <Button variant="outline" onClick={() => setRotate(true)}>
-                <KeyRound /> Generate new key pair
-              </Button>
-            </div>
-          </Field>
-          <Field orientation="responsive">
-            <FieldContent>
-              <FieldLabel>App secrets key</FieldLabel>
-              <FieldDescription>
-                Encrypts the API keys, tokens and passwords stored by n8n-ops. Kept in the server's data directory. Keep
-                a copy: without it, stored secrets cannot be read after a restore.
-              </FieldDescription>
-            </FieldContent>
-            <div className="min-w-64">
-              <Button variant="outline" onClick={() => void downloadAppKey()}>
-                <Download /> Download a copy
-              </Button>
-            </div>
-          </Field>
-        </FieldGroup>
-      </CardContent>
+    <Panel>
+      {keys.error ? (
+        <LoadError what="the keys" error={keys.error} retry={() => keys.refetch()} />
+      ) : (
+        <>
+          <SettingRow
+            label="Backup public key"
+            hint="Archives are encrypted with this. Only the public half is on the server."
+            wide
+          >
+            {keys.data?.backupRecipient ? (
+              <Copyable value={keys.data.backupRecipient} label="Copy public key" className="text-small" />
+            ) : (
+              <span className="text-muted-foreground">Not set</span>
+            )}
+          </SettingRow>
+          <SettingRow label="Private key" hint="Shown once when generated. You need it to restore.">
+            {keys.data?.privateKeySavedAt ? (
+              <span className="flex items-center gap-2 font-semibold text-ok">
+                <ShieldCheck className="size-4" />
+                Saved, {formatDateTime(keys.data.privateKeySavedAt, tz)}
+              </span>
+            ) : (
+              <span className="font-semibold text-warn">Not confirmed</span>
+            )}
+          </SettingRow>
+          <SettingRow label="Rotate" hint="Old archives still need the old private key.">
+            <Button onClick={() => setRotate(true)}>
+              <KeyRound /> Generate new key pair
+            </Button>
+          </SettingRow>
+          <SettingRow
+            label="App secrets key"
+            hint="Encrypts the API keys, tokens and passwords stored by n8n-ops. Kept in the server's data directory. Keep a copy: without it, stored secrets cannot be read after a restore."
+          >
+            <Button onClick={() => void downloadAppKey()}>
+              <Download /> Download a copy
+            </Button>
+          </SettingRow>
+        </>
+      )}
       <Dialog
         open={rotate}
         onOpenChange={(o) => {
@@ -435,7 +621,7 @@ function KeysCard() {
           if (!o) setPrivateKey("")
         }}
       >
-        <DialogContent>
+        <DialogContent keepOnBackdrop>
           <DialogHeader>
             <DialogTitle>New backup key pair</DialogTitle>
             <DialogDescription>
@@ -443,23 +629,35 @@ function KeysCard() {
             </DialogDescription>
           </DialogHeader>
           {privateKey ? (
-            <div className="space-y-3">
-              <pre className="overflow-x-auto rounded-md bg-muted p-3 font-mono text-xs">{privateKey}</pre>
-              <Button variant="outline" onClick={() => download("n8n-ops-backup-key.txt", `${privateKey}\n`)}>
+            <div className="grid gap-3">
+              <pre className="overflow-x-auto rounded-sm bg-panel p-3 font-mono text-small whitespace-pre-wrap break-all">
+                {privateKey}
+              </pre>
+              <Button
+                className="justify-self-start"
+                onClick={() => download("n8n-ops-backup-key.txt", `${privateKey}\n`)}
+              >
                 <Download /> Download key file
               </Button>
             </div>
           ) : null}
           <DialogFooter>
             {privateKey ? (
-              <Button onClick={() => void confirm()}>I saved it</Button>
+              <Button variant="primary" onClick={() => void confirm()}>
+                I saved it
+              </Button>
             ) : (
-              <Button onClick={() => void generate()}>Generate</Button>
+              <>
+                <Button onClick={() => setRotate(false)}>Cancel</Button>
+                <Button variant="primary" onClick={() => void generate()}>
+                  Generate
+                </Button>
+              </>
             )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </Card>
+    </Panel>
   )
 }
 
@@ -474,62 +672,52 @@ function AccountCard() {
       revokeOtherSessions: true,
     })
     setBusy(false)
-    if (error) toast.error(authErrorText(error))
+    if (error) toast.error(`Password not changed: ${authErrorText(error)}`)
     else toast.success("Password changed. Other sessions were signed out.")
   }
   const username = (session.data?.user as { username?: string } | undefined)?.username
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Account</CardTitle>
-        <CardDescription>Signed in as {username}.</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <FieldGroup>
-          <Field orientation="responsive">
-            <FieldContent>
-              <FieldLabel>Two-factor (TOTP)</FieldLabel>
-              <FieldDescription>Required for this installation.</FieldDescription>
-            </FieldContent>
-            <span className="flex min-w-64 items-center gap-2 text-sm text-emerald-700 dark:text-emerald-400">
-              <ShieldCheck className="size-4" /> On
-            </span>
+    <Panel>
+      <PanelHead title="Sign-in" description={`Signed in as ${username ?? ""}.`} />
+      <SettingRow label="Two-factor (TOTP)" hint="Required for this installation.">
+        <span className="flex items-center gap-2 font-semibold text-ok">
+          <ShieldCheck className="size-4" /> On
+        </span>
+      </SettingRow>
+      <form
+        className="grid gap-3 border-t border-line px-pad-x py-3"
+        onSubmit={(e) => {
+          e.preventDefault()
+          void changePassword(new FormData(e.currentTarget))
+          e.currentTarget.reset()
+        }}
+      >
+        <b className="font-semibold">Change password</b>
+        <FieldGroup className="max-w-sm gap-3">
+          <Field>
+            <FieldLabel htmlFor="current">Current password</FieldLabel>
+            <PasswordInput id="current" name="current" autoComplete="current-password" required />
           </Field>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault()
-              void changePassword(new FormData(e.currentTarget))
-              e.currentTarget.reset()
-            }}
-          >
-            <FieldGroup>
-              <Field orientation="responsive">
-                <FieldLabel htmlFor="current">Current password</FieldLabel>
-                <Input id="current" name="current" type="password" className="min-w-64" required />
-              </Field>
-              <Field orientation="responsive">
-                <FieldLabel htmlFor="next">New password</FieldLabel>
-                <Input id="next" name="next" type="password" minLength={12} className="min-w-64" required />
-              </Field>
-              <div>
-                <Button type="submit" variant="outline" disabled={busy}>
-                  Change password
-                </Button>
-              </div>
-            </FieldGroup>
-          </form>
-          <Field orientation="responsive">
-            <FieldContent>
-              <FieldLabel>Locked out?</FieldLabel>
-              <FieldDescription>Reset the password and two-factor from the server.</FieldDescription>
-            </FieldContent>
-            <code className="min-w-64 font-mono text-xs">
-              docker compose exec server node dist/cli.js reset-password
-            </code>
+          <Field>
+            <FieldLabel htmlFor="next">New password</FieldLabel>
+            <PasswordInput id="next" name="next" minLength={12} autoComplete="new-password" required />
+            <FieldDescription>At least 12 characters. Other sessions are signed out.</FieldDescription>
           </Field>
         </FieldGroup>
-      </CardContent>
-    </Card>
+        <div>
+          <Button type="submit" disabled={busy}>
+            Change password
+          </Button>
+        </div>
+      </form>
+      <SettingRow label="Locked out?" hint="Reset the password and two-factor from the server." wide>
+        <Copyable
+          value="docker compose exec server node dist/cli.js reset-password"
+          label="Copy command"
+          className="text-small"
+        />
+      </SettingRow>
+    </Panel>
   )
 }
 
@@ -549,6 +737,7 @@ function TokensCard() {
   const [kind, setKind] = useState<"mcp" | "rest">("mcp")
   const [canRequestAccess, setCanRequestAccess] = useState(false)
   const [created, setCreated] = useState("")
+  const confirm = useConfirm()
   const create = useApiMutation<{ name: string; kind: string; canRequestAccess: boolean }, { token: string }>(
     "POST",
     "/admin/tokens",
@@ -558,91 +747,106 @@ function TokensCard() {
   )
   const revoke = useApiMutation<string>("DELETE", (id) => `/admin/tokens/${id}`, {
     invalidate: ["/admin/tokens"],
-    success: "Token revoked",
   })
+  async function askRevoke(t: Token) {
+    const ok = await confirm({
+      title: `Revoke the token ${t.name}?`,
+      message:
+        "The agent or script using it loses access at once. This cannot be undone; create a new token to give access again.",
+      confirmLabel: "Revoke token",
+      danger: true,
+    })
+    if (ok) revoke.mutate(t.id, { onSuccess: () => toast.success(`Token ${t.name} revoked`) })
+  }
+  const list = tokens.data ?? []
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>API & MCP tokens</CardTitle>
-        <CardDescription>
-          Read-only tokens for agents (MCP at <code>/mcp</code>) and scripts (REST at <code>/api/v1</code>). A token may
-          also be allowed to request temporary access to n8n instances, which a person approves each time.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <Table>
+    <Panel>
+      <PanelHead
+        title="API & MCP tokens"
+        count={tokens.data ? list.length : undefined}
+        description={
+          <>
+            Read-only tokens for agents (MCP at <code>/mcp</code>) and scripts (REST at <code>/api/v1</code>). A token
+            may also be allowed to request temporary access to n8n instances, which a person approves each time.
+          </>
+        }
+        action={
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => {
+              setCreated("")
+              setCanRequestAccess(false)
+              setOpen(true)
+            }}
+          >
+            <Plus /> New token
+          </Button>
+        }
+      />
+      {tokens.error ? (
+        <LoadError what="tokens" error={tokens.error} retry={() => tokens.refetch()} />
+      ) : tokens.isLoading ? (
+        <Loading />
+      ) : list.length === 0 ? (
+        <Empty title="No tokens yet.">Create one for each agent or script, so you can revoke it on its own.</Empty>
+      ) : (
+        <Table bare>
           <TableHeader>
             <TableRow>
               <TableHead>Name</TableHead>
               <TableHead>Kind</TableHead>
-              <TableHead>Created</TableHead>
-              <TableHead>Last used</TableHead>
+              <TableHead className="text-end">Created</TableHead>
+              <TableHead className="text-end">Last used</TableHead>
               <TableHead />
             </TableRow>
           </TableHeader>
           <TableBody>
-            {(tokens.data ?? []).map((t) => (
+            {list.map((t) => (
               <TableRow key={t.id}>
-                <TableCell className="font-medium">
-                  {t.name} <span className="font-mono text-xs text-muted-foreground">{t.prefix}…</span>
+                <TableCell className="font-semibold">
+                  <UserText>{t.name}</UserText>{" "}
+                  <span className="font-mono text-meta font-normal text-muted-foreground">{t.prefix}…</span>
                 </TableCell>
                 <TableCell>
-                  <Badge variant="secondary">{t.kind === "mcp" ? "MCP · read" : "REST · read"}</Badge>
-                  {t.canRequestAccess && (
-                    <Badge variant="outline" className="ml-1">
-                      may request access
-                    </Badge>
-                  )}
+                  <span className="flex flex-wrap gap-1">
+                    <Badge variant="line">{t.kind === "mcp" ? "MCP · read" : "REST · read"}</Badge>
+                    {t.canRequestAccess && <Badge variant="line">may request access</Badge>}
+                  </span>
                 </TableCell>
-                <TableCell className="text-muted-foreground">{new Date(t.createdAt).toLocaleDateString()}</TableCell>
-                <TableCell className="text-muted-foreground">
-                  {t.lastUsedAt ? new Date(t.lastUsedAt).toLocaleString() : "Never"}
+                <TableCell className="text-end text-muted-foreground">
+                  <When value={t.createdAt} />
                 </TableCell>
-                <TableCell className="text-right">
-                  <Button size="sm" variant="ghost" className="text-destructive" onClick={() => revoke.mutate(t.id)}>
+                <TableCell className="text-end text-muted-foreground">
+                  {t.lastUsedAt ? <When value={t.lastUsedAt} /> : "Never"}
+                </TableCell>
+                <TableCell className="text-end">
+                  <Button size="sm" variant="danger" onClick={() => void askRevoke(t)}>
                     <Trash2 /> Revoke
                   </Button>
                 </TableCell>
               </TableRow>
             ))}
-            {tokens.data?.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={5} className="text-muted-foreground">
-                  No tokens yet.
-                </TableCell>
-              </TableRow>
-            )}
           </TableBody>
         </Table>
-      </CardContent>
-      <CardFooter className="border-t">
-        <Button
-          onClick={() => {
-            setCreated("")
-            setCanRequestAccess(false)
-            setOpen(true)
-          }}
-        >
-          <Plus /> New token
-        </Button>
-      </CardFooter>
+      )}
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent>
+        <DialogContent keepOnBackdrop>
           <DialogHeader>
             <DialogTitle>New token</DialogTitle>
             <DialogDescription>The token is shown once. Store it where the agent or script reads it.</DialogDescription>
           </DialogHeader>
           {created ? (
-            <div className="space-y-3">
-              <pre className="overflow-x-auto rounded-md bg-muted p-3 font-mono text-xs" data-testid="new-token">
+            <div className="grid gap-3">
+              <pre
+                className="overflow-x-auto rounded-sm bg-panel p-3 font-mono text-small whitespace-pre-wrap break-all"
+                data-testid="new-token"
+              >
                 {created}
               </pre>
-              <Button
-                variant="outline"
-                onClick={() => void navigator.clipboard.writeText(created).then(() => toast.success("Copied"))}
-              >
-                <Copy /> Copy
-              </Button>
+              <Copyable value={created} label="Copy token">
+                Copy the token
+              </Copyable>
             </div>
           ) : (
             <form
@@ -689,15 +893,20 @@ function TokensCard() {
           )}
           <DialogFooter>
             {created ? (
-              <Button onClick={() => setOpen(false)}>Done</Button>
-            ) : (
-              <Button type="submit" form="token" disabled={create.isPending}>
-                Create
+              <Button variant="primary" onClick={() => setOpen(false)}>
+                Done
               </Button>
+            ) : (
+              <>
+                <Button onClick={() => setOpen(false)}>Cancel</Button>
+                <Button variant="primary" type="submit" form="token" disabled={create.isPending}>
+                  Create
+                </Button>
+              </>
             )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </Card>
+    </Panel>
   )
 }

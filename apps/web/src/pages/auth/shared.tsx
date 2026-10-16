@@ -1,25 +1,51 @@
 import { REGEXP_ONLY_DIGITS } from "input-otp"
 import { useState } from "react"
 import { InputOTP, InputOTPGroup, InputOTPSeparator, InputOTPSlot } from "@/components/ui/input-otp"
+import { cn } from "@/lib/utils"
 
 export function Logo() {
   return (
-    <div className="flex items-center gap-2 self-center font-medium">
-      <div className="flex size-7 items-center justify-center rounded-md bg-primary text-sm font-bold text-primary-foreground">
+    <div className="flex items-center gap-2.5">
+      <span
+        aria-hidden
+        className="grid size-[30px] place-items-center rounded-sm bg-primary text-ctl font-heavy text-primary-foreground"
+      >
         n
-      </div>
-      n8n-ops
+      </span>
+      <span className="text-head font-bold tracking-tight">n8n-ops</span>
     </div>
   )
 }
 
-export function AuthFrame({ children, wide }: { children: React.ReactNode; wide?: boolean }) {
+/**
+ * Sign-in and first-run frame: the form sits on the page itself, without a card around it. As tall as the
+ * visible screen, and it scrolls when the form is taller.
+ */
+export function AuthFrame({
+  children,
+  title,
+  description,
+  wide,
+}: {
+  children: React.ReactNode
+  title?: string
+  description?: React.ReactNode
+  wide?: boolean
+}) {
   return (
-    <div className="flex min-h-svh flex-col items-center justify-center gap-6 bg-muted p-6 md:p-10">
-      <div className={wide ? "flex w-full max-w-lg flex-col gap-6" : "flex w-full max-w-sm flex-col gap-6"}>
-        <Logo />
-        {children}
-      </div>
+    <div className="h-dvh overflow-y-auto bg-bg">
+      <main className="flex min-h-full flex-col justify-center px-4 py-10">
+        <div className={cn("mx-auto grid w-full gap-gap", wide ? "max-w-lg" : "max-w-sm")}>
+          <Logo />
+          {title && (
+            <div className="mt-4 mb-1">
+              <h1 className="text-h1">{title}</h1>
+              {description && <p className="mt-1.5 text-muted-foreground">{description}</p>}
+            </div>
+          )}
+          {children}
+        </div>
+      </main>
     </div>
   )
 }

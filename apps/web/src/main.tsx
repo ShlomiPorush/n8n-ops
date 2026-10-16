@@ -6,7 +6,8 @@ import { createBrowserRouter, Navigate, RouterProvider } from "react-router"
 import "./index.css"
 import { routes } from "@/app/routes"
 import { AppShell, RequireAuth } from "@/app/shell"
-import { Toaster } from "@/components/ui/sonner"
+import { ConfirmProvider } from "@/components/confirm"
+import { Toaster } from "@/components/ui/toaster"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { queryClient } from "@/lib/api"
 import { LoginPage } from "@/pages/auth/login"
@@ -34,7 +35,9 @@ function Root() {
     >
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
-          <RouterProvider router={router} />
+          <ConfirmProvider>
+            <RouterProvider router={router} />
+          </ConfirmProvider>
           <Toaster />
         </TooltipProvider>
       </QueryClientProvider>

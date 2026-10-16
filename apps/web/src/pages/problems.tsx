@@ -1,12 +1,27 @@
-import { BellOff, CheckCircle2, ExternalLink, GitMerge, RotateCcw, Search } from "lucide-react"
+import { BellOff, CheckCircle2, ExternalLink, GitMerge, RotateCcw } from "lucide-react"
 import { useState } from "react"
 import { Link, useNavigate, useParams, useSearchParams } from "react-router"
+import { useCrumb } from "@/app/chrome"
+import { FilterBar, Picker, SearchBox } from "@/components/filter-bar"
 import { FlowGraph, type GraphNode } from "@/components/flow-graph"
+import {
+  Copyable,
+  Empty,
+  Kpi,
+  Kpis,
+  KV,
+  LoadError,
+  Loading,
+  PageHead,
+  Panel,
+  PanelHead,
+  Reloading,
+  UserText,
+} from "@/components/kit"
 import { ListWithPanel } from "@/components/list-panel"
-import { Code, ProblemBadge, TimeAgo } from "@/components/status"
+import { ProblemBadge, TimeAgo, When } from "@/components/status"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   Dialog,
   DialogContent,
@@ -15,12 +30,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Skeleton } from "@/components/ui/skeleton"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, useSort } from "@/components/ui/table"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { api, useApi, useApiMutation } from "@/lib/api"
+import { api, describeError, useApi, useApiMutation } from "@/lib/api"
+import { formatDateTime, n, plural, useTimeZone } from "@/lib/time"
 
 export type ProblemRow = {
   id: string
@@ -54,65 +68,97 @@ type ProblemDetailData = ProblemRow & {
   sameError: { id: string; workflowName: string; instanceName: string; status: string }[]
 }
 
+/** Marks the raw data window while its content loads. */
+const loadingRaw = { loading: true }
+
+const statusWords: Record<string, string> = { open: "open", muted: "muted", resolved: "resolved" }
+
 export function ProblemsTable({
   rows,
   selected,
   onOpen,
+  href,
   showInstance = true,
+  empty = "No problems here.",
+  bare,
 }: {
   rows: ProblemRow[]
   selected?: string
   onOpen: (id: string) => void
+  /** The address of a row, for the list that opens its first item by itself. */
+  href?: (id: string) => string
   showInstance?: boolean
+  empty?: string
+  /** Inside a panel that has its own header. */
+  bare?: boolean
 }) {
+  const sort = useSort(rows, {
+    id: showInstance ? "problems" : "instance-problems",
+    columns: {
+      status: {
+        label: "Status",
+        value: (p) => (p.regression ? 3 : p.status === "open" ? 2 : p.status === "muted" ? 1 : 0),
+      },
+      workflow: { label: "Workflow", value: (p) => p.workflowName },
+      error: { label: "Error", value: (p) => p.errorMessage },
+      ...(showInstance ? { instance: { label: "Instance", value: (p: ProblemRow) => p.instanceName } } : {}),
+      failures: { label: "Failures", value: (p) => p.count },
+      lastSeen: { label: "Last seen", value: (p) => new Date(p.lastSeen) },
+    },
+  })
+  if (rows.length === 0) {
+    const empt = <Empty title={empty}>A failure that n8n reports shows up here once, however often it repeats.</Empty>
+    return bare ? empt : <Panel>{empt}</Panel>
+  }
   return (
-    <div className="rounded-lg border">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead className="pl-4">Status</TableHead>
-            <TableHead>Workflow</TableHead>
-            <TableHead>Error</TableHead>
-            {showInstance && <TableHead>Instance</TableHead>}
-            <TableHead className="text-right">Failures</TableHead>
-            <TableHead className="pr-4">Last seen</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {rows.map((p) => (
-            <TableRow
-              key={p.id}
-              data-state={selected === p.id ? "selected" : undefined}
-              className="cursor-pointer"
-              onClick={() => onOpen(p.id)}
-            >
-              <TableCell className="pl-4">
-                <ProblemBadge status={p.status} regression={p.regression} firstSeen={p.firstSeen} />
-              </TableCell>
+    <Table bare={bare} sort={sort}>
+      <TableHeader>
+        <TableRow>
+          <TableHead sort={sort.head("status")}>Status</TableHead>
+          <TableHead sort={sort.head("workflow")}>Workflow</TableHead>
+          <TableHead sort={sort.head("error")}>Error</TableHead>
+          {showInstance && <TableHead sort={sort.head("instance")}>Instance</TableHead>}
+          <TableHead className="text-end" sort={sort.head("failures")}>
+            Failures
+          </TableHead>
+          <TableHead className="text-end" sort={sort.head("lastSeen")}>
+            Last seen
+          </TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {sort.rows.map((p) => (
+          <TableRow
+            key={p.id}
+            data-state={selected === p.id ? "selected" : undefined}
+            aria-current={selected === p.id ? "true" : undefined}
+            className="hover-row"
+            data-href={href?.(p.id)}
+            onClick={() => onOpen(p.id)}
+          >
+            <TableCell data-nolabel>
+              <ProblemBadge status={p.status} regression={p.regression} firstSeen={p.firstSeen} />
+            </TableCell>
+            <TableCell className="max-w-64" data-primary>
+              <UserText className="block truncate font-semibold">{p.workflowName}</UserText>
+              <UserText className="block truncate text-meta text-muted-foreground">{p.nodeName}</UserText>
+            </TableCell>
+            <TableCell className="max-w-80 truncate font-mono text-small" title={p.errorMessage} data-wide data-nolabel>
+              {p.errorMessage}
+            </TableCell>
+            {showInstance && (
               <TableCell>
-                <div className="font-medium">{p.workflowName}</div>
-                <div className="text-xs text-muted-foreground">{p.nodeName}</div>
+                <UserText>{p.instanceName}</UserText>
               </TableCell>
-              <TableCell className="max-w-80 truncate font-mono text-xs" title={p.errorMessage}>
-                {p.errorMessage}
-              </TableCell>
-              {showInstance && <TableCell>{p.instanceName}</TableCell>}
-              <TableCell className="text-right font-medium tabular-nums">{p.count}</TableCell>
-              <TableCell className="pr-4 whitespace-nowrap text-muted-foreground">
-                <TimeAgo value={p.lastSeen} />
-              </TableCell>
-            </TableRow>
-          ))}
-          {rows.length === 0 && (
-            <TableRow>
-              <TableCell colSpan={6} className="pl-4 text-muted-foreground">
-                Nothing here.
-              </TableCell>
-            </TableRow>
-          )}
-        </TableBody>
-      </Table>
-    </div>
+            )}
+            <TableCell className="text-end font-semibold tabular-nums">{n(p.count)}</TableCell>
+            <TableCell className="text-end text-muted-foreground">
+              <When value={p.lastSeen} />
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
   )
 }
 
@@ -122,58 +168,88 @@ export function ProblemsPage() {
   const [params, setParams] = useSearchParams()
   const status = params.get("status") ?? "open"
   const instance = params.get("instance") ?? "all"
-  const [q, setQ] = useState("")
+  const q = params.get("q") ?? ""
   const query = new URLSearchParams({ status, ...(instance !== "all" ? { instance } : {}), ...(q ? { q } : {}) })
-  const rows = useApi<ProblemRow[]>(`/problems?${query}`, { refetchInterval: 15_000 })
+  const rows = useApi<ProblemRow[]>(`/problems?${query}`, { refetchInterval: 15_000, keepRows: true })
   const instances = useApi<{ instances: { id: string; name: string }[] }>("/instances")
   const setParam = (k: string, v: string) => {
     const next = new URLSearchParams(params)
-    next.set(k, v)
+    if (v && !(k === "instance" && v === "all")) next.set(k, v)
+    else next.delete(k)
     setParams(next, { replace: true })
   }
   const open = (pid: string) => navigate(`/problems/${pid}?${params}`)
+  const count = rows.data?.length
+  const filtered = instance !== "all" || q !== ""
+  // "All" shows every status; the words then name no status.
+  const noun = [statusWords[status], "problems"].filter(Boolean).join(" ")
 
   const list = (
     <>
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Problems</h1>
-          <p className="text-muted-foreground">One row per workflow, node and error. Each alerts once.</p>
-        </div>
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <ToggleGroup type="single" variant="outline" value={status} onValueChange={(v) => v && setParam("status", v)}>
-          <ToggleGroupItem value="open">Open</ToggleGroupItem>
-          <ToggleGroupItem value="muted">Muted</ToggleGroupItem>
-          <ToggleGroupItem value="resolved">Resolved</ToggleGroupItem>
-        </ToggleGroup>
-        <Select value={instance} onValueChange={(v) => setParam("instance", v)}>
-          <SelectTrigger className="w-44">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All instances</SelectItem>
-            {(instances.data?.instances ?? []).map((i) => (
-              <SelectItem key={i.id} value={i.id}>
-                {i.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <div className="relative w-64">
-          <Search className="absolute top-2.5 left-2.5 size-4 text-muted-foreground" />
-          <Input
-            className="pl-8"
-            placeholder="Search workflow or error"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-          />
-        </div>
-      </div>
-      {rows.isLoading ? (
-        <Skeleton className="h-40" />
+      <PageHead
+        title="Problems"
+        description="One row per workflow, node and error; each alerts once."
+        updatedAt={rows.dataUpdatedAt || undefined}
+      />
+      <FilterBar
+        views={
+          <ToggleGroup
+            type="single"
+            value={status}
+            onValueChange={(v) => v && setParam("status", v)}
+            aria-label="Status"
+          >
+            <ToggleGroupItem value="open">Open</ToggleGroupItem>
+            <ToggleGroupItem value="muted">Muted</ToggleGroupItem>
+            <ToggleGroupItem value="resolved">Resolved</ToggleGroupItem>
+            <ToggleGroupItem value="all">All</ToggleGroupItem>
+          </ToggleGroup>
+        }
+        search={<SearchBox label="Search workflow or error" value={q} onChange={(v) => setParam("q", v)} />}
+        active={Number(instance !== "all")}
+        count={
+          count === undefined ? undefined : plural(count, [statusWords[status], "problem"].filter(Boolean).join(" "))
+        }
+        onClear={
+          filtered
+            ? () => {
+                const next = new URLSearchParams(params)
+                next.delete("instance")
+                next.delete("q")
+                setParams(next, { replace: true })
+              }
+            : undefined
+        }
+      >
+        <Picker
+          label="Instance"
+          value={instance}
+          defaultValue="all"
+          onChange={(v) => setParam("instance", v)}
+          options={[
+            { value: "all", label: "All" },
+            ...(instances.data?.instances ?? []).map((i) => ({ value: i.id, label: i.name })),
+          ]}
+        />
+      </FilterBar>
+      {rows.error ? (
+        <Panel>
+          <LoadError what="problems" error={rows.error} retry={() => rows.refetch()} />
+        </Panel>
+      ) : rows.isLoading ? (
+        <Panel>
+          <Loading>Loading problems…</Loading>
+        </Panel>
       ) : (
-        <ProblemsTable rows={rows.data ?? []} selected={id} onOpen={open} />
+        <Reloading busy={rows.isPlaceholderData}>
+          <ProblemsTable
+            rows={rows.data ?? []}
+            selected={id}
+            onOpen={open}
+            href={(pid) => `/problems/${pid}?${params}`}
+            empty={q ? `No ${noun} match "${q}".` : `No ${noun}.`}
+          />
+        </Reloading>
       )}
     </>
   )
@@ -198,6 +274,8 @@ function flatten(value: unknown): [string, string][] {
 
 export function ProblemDetail({ id }: { id: string }) {
   const detail = useApi<ProblemDetailData>(`/problems/${id}`, { refetchInterval: 15_000 })
+  useCrumb(detail.data?.workflowName)
+  const tz = useTimeZone()
   const [raw, setRaw] = useState<unknown>(null)
   const [merging, setMerging] = useState(false)
   const invalidate = [`/problems/${id}`, "/overview", "/overview/summary"]
@@ -208,50 +286,49 @@ export function ProblemDetail({ id }: { id: string }) {
   })
   const reopen = useApiMutation<void>("POST", `/problems/${id}/reopen`, { invalidate, success: "Reopened" })
 
-  if (detail.isLoading) return <Skeleton className="h-96" />
-  if (!detail.data) return <p className="text-muted-foreground">This problem no longer exists.</p>
+  if (detail.isLoading) return <Loading>Loading the problem…</Loading>
+  if (detail.error && !detail.data)
+    return <LoadError what="this problem" error={detail.error} retry={() => detail.refetch()} />
+  if (!detail.data)
+    return <Empty title="This problem no longer exists.">It may have been merged into another one.</Empty>
   const p = detail.data
   const first = p.nodeInput[0]
   const latest = p.occurrences[0]
 
   return (
-    <div className="space-y-6">
-      <div className="space-y-3">
-        <div className="flex flex-wrap gap-2">
+    <div className="grid min-w-0 gap-gap">
+      <div className="grid gap-2.5">
+        <div className="flex flex-wrap items-center gap-2">
           <ProblemBadge status={p.status} regression={p.regression} firstSeen={p.firstSeen} />
-          <Badge variant="outline">
-            <Link to={`/instances/${p.instanceId}`}>{p.instanceName}</Link>
+          <Badge variant="line">
+            <UserText>{p.nodeName}</UserText>
           </Badge>
-          <Badge variant="outline">{p.nodeName}</Badge>
+          <Link to={`/instances/${p.instanceId}`} className="text-small font-semibold underline">
+            <UserText>{p.instanceName}</UserText>
+          </Link>
         </div>
-        <h2 className="text-2xl font-semibold tracking-tight">{p.workflowName}</h2>
-        <Code>{p.errorMessage}</Code>
-        {p.error?.description && <p className="text-sm text-muted-foreground">{p.error.description}</p>}
-        <div className="flex items-baseline gap-3 pt-1">
-          <span className="text-4xl font-bold tabular-nums">{p.count}</span>
-          <span className="text-sm text-muted-foreground">
-            {p.count === 1 ? "failure" : "failures"} · first <TimeAgo value={p.firstSeen} /> · last{" "}
-            <TimeAgo value={p.lastSeen} />
-            {p.status === "muted" && p.mutedUntil && <> · muted until {new Date(p.mutedUntil).toLocaleString()}</>}
-          </span>
-        </div>
-        <div className="flex flex-wrap gap-2">
+        <h2 className="text-title">
+          <UserText>{p.workflowName}</UserText>
+        </h2>
+        <p className="rounded-sm bg-panel px-3 py-2 font-mono text-small break-words">{p.errorMessage}</p>
+        {p.error?.description && <p className="text-muted-foreground">{p.error.description}</p>}
+        <div className="flex flex-wrap gap-2 pt-1">
           {p.status === "resolved" ? (
-            <Button variant="outline" onClick={() => reopen.mutate()}>
+            <Button variant="primary" onClick={() => reopen.mutate()} disabled={reopen.isPending}>
               <RotateCcw /> Reopen
             </Button>
           ) : (
-            <Button onClick={() => resolve.mutate()}>
+            <Button variant="primary" onClick={() => resolve.mutate()} disabled={resolve.isPending}>
               <CheckCircle2 /> Mark resolved
             </Button>
           )}
           {p.status !== "muted" && (
-            <Button variant="outline" onClick={() => mute.mutate({ hours: 24 })}>
+            <Button onClick={() => mute.mutate({ hours: 24 })} disabled={mute.isPending}>
               <BellOff /> Mute 24 h
             </Button>
           )}
           {latest && (
-            <Button variant="outline" asChild>
+            <Button asChild>
               <a href={latest.url} target="_blank" rel="noreferrer">
                 <ExternalLink /> Open in n8n
               </a>
@@ -263,124 +340,140 @@ export function ProblemDetail({ id }: { id: string }) {
         </div>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Where it broke</CardTitle>
-          <CardDescription>Drawn from the workflow and the run data of the latest failure.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <FlowGraph nodes={p.graph} />
-        </CardContent>
-      </Card>
+      <Kpis>
+        <Kpi
+          label={p.count === 1 ? "Failure" : "Failures"}
+          value={n(p.count)}
+          tone={p.status === "open" ? "fail" : undefined}
+        />
+        <Kpi label="First seen" value={<TimeAgo value={p.firstSeen} />} />
+        <Kpi
+          label="Last seen"
+          value={<TimeAgo value={p.lastSeen} />}
+          hint={p.status === "muted" && p.mutedUntil ? `Muted until ${formatDateTime(p.mutedUntil, tz)}` : undefined}
+        />
+      </Kpis>
 
-      <div className="grid gap-6 2xl:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>Input of the failed node</CardTitle>
-            <CardDescription>
-              {p.nodeInput.length
-                ? `${p.nodeInput.length} item${p.nodeInput.length === 1 ? "" : "s"}; the first is shown.`
-                : "No input was recorded."}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {first !== undefined && (
-              <Table>
-                <TableBody>
-                  {flatten(first).map(([k, v]) => (
-                    <TableRow key={k}>
-                      <TableCell className="align-top text-muted-foreground">{k}</TableCell>
-                      <TableCell className="max-w-96 truncate text-right font-mono" title={v}>
-                        {v}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-            <div className="mt-2 flex flex-wrap gap-x-4">
-              <Button variant="link" className="px-0" onClick={() => setRaw({ input: p.nodeInput, error: p.error })}>
-                Show input and stack as JSON
+      <Panel>
+        <PanelHead
+          title="Where it broke"
+          description="Drawn from the workflow and the run data of the latest failure."
+        />
+        <FlowGraph nodes={p.graph} />
+      </Panel>
+
+      <div className="grid items-start gap-gap 2xl:grid-cols-2">
+        <Panel>
+          <PanelHead
+            title="Input of the failed node"
+            description={
+              p.nodeInput.length
+                ? `${n(p.nodeInput.length)} item${p.nodeInput.length === 1 ? "" : "s"}; the first is shown.`
+                : "No input was recorded."
+            }
+          />
+          {first !== undefined &&
+            flatten(first).map(([k, v]) => (
+              <KV key={k} label={k}>
+                <span className="block max-w-96 truncate font-mono text-small font-normal" title={v}>
+                  {v}
+                </span>
+              </KV>
+            ))}
+          <div className="flex flex-wrap gap-x-4 border-t border-line px-pad-x py-2.5">
+            <Button variant="link" onClick={() => setRaw({ input: p.nodeInput, error: p.error })}>
+              Show input and stack as JSON
+            </Button>
+            {p.latestFailureId && (
+              <Button
+                variant="link"
+                onClick={async () => {
+                  // The window opens at once and fills in when the execution arrives (DS-17).
+                  setRaw(loadingRaw)
+                  try {
+                    setRaw(await api(`/problems/${id}/failures/${p.latestFailureId}`))
+                  } catch (e) {
+                    setRaw({ error: `Could not load the execution: ${describeError(e)}` })
+                  }
+                }}
+              >
+                Show full execution
               </Button>
-              {p.latestFailureId && (
-                <Button
-                  variant="link"
-                  className="px-0"
-                  onClick={async () => setRaw(await api(`/problems/${id}/failures/${p.latestFailureId}`))}
-                >
-                  Show full execution
-                </Button>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-        <div className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Recent occurrences</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Execution</TableHead>
-                    <TableHead>Mode</TableHead>
-                    <TableHead className="text-right">When</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {p.occurrences.map((o) => (
-                    <TableRow key={o.id}>
-                      <TableCell className="font-mono">
-                        <a href={o.url} target="_blank" rel="noreferrer" className="underline-offset-4 hover:underline">
+            )}
+          </div>
+        </Panel>
+        <div className="grid gap-gap">
+          <Panel>
+            <PanelHead title="Recent occurrences" count={n(p.occurrences.length)} />
+            <Table bare className="min-w-0">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Execution</TableHead>
+                  <TableHead>Mode</TableHead>
+                  <TableHead className="text-end">When</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {p.occurrences.map((o) => (
+                  <TableRow key={o.id}>
+                    <TableCell>
+                      <span className="flex items-center gap-2">
+                        <Copyable value={o.executionId} label="Copy execution ID">
                           #{o.executionId}
+                        </Copyable>
+                        <a
+                          href={o.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          aria-label={`Open execution ${o.executionId} in n8n`}
+                          className="text-muted-foreground hover:text-ink"
+                        >
+                          <ExternalLink className="size-3.5" />
                         </a>
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">{o.mode ?? ""}</TableCell>
-                      <TableCell className="text-right text-muted-foreground">
-                        <TimeAgo value={o.stoppedAt ?? o.createdAt} />
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{o.mode ?? ""}</TableCell>
+                    <TableCell className="text-end text-muted-foreground">
+                      <When value={o.stoppedAt ?? o.createdAt} />
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </Panel>
           {p.sameError.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Same error in {p.sameError.length} other workflows</CardTitle>
-                <CardDescription>Grouped into one Telegram message.</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <Table>
-                  <TableBody>
-                    {p.sameError.map((s) => (
-                      <TableRow key={s.id}>
-                        <TableCell>
-                          <Link to={`/problems/${s.id}`} className="underline-offset-4 hover:underline">
-                            {s.workflowName}
-                          </Link>
-                        </TableCell>
-                        <TableCell className="text-right text-muted-foreground">{s.instanceName}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </CardContent>
-            </Card>
+            <Panel>
+              <PanelHead
+                title={`Same error in ${n(p.sameError.length)} other ${p.sameError.length === 1 ? "workflow" : "workflows"}`}
+                description="Grouped into one Telegram message."
+              />
+              {p.sameError.map((s) => (
+                <Link
+                  key={s.id}
+                  to={`/problems/${s.id}`}
+                  className="hover-row flex items-center gap-2.5 border-t border-line px-pad-x py-pad-y"
+                >
+                  <UserText className="min-w-0 truncate font-semibold">{s.workflowName}</UserText>
+                  <UserText className="ms-auto text-small text-muted-foreground">{s.instanceName}</UserText>
+                </Link>
+              ))}
+            </Panel>
           )}
         </div>
       </div>
 
       <Dialog open={raw !== null} onOpenChange={(o) => !o && setRaw(null)}>
-        <DialogContent className="sm:max-w-4xl">
+        <DialogContent className="md:max-w-4xl" aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle>Raw data</DialogTitle>
           </DialogHeader>
-          <pre className="max-h-[70vh] overflow-auto rounded-md bg-muted p-3 font-mono text-xs">
-            {JSON.stringify(raw, null, 2)}
-          </pre>
+          {raw === loadingRaw ? (
+            <Loading>Loading the execution…</Loading>
+          ) : (
+            <pre className="min-w-0 overflow-auto rounded-sm bg-panel p-3 font-mono text-meta whitespace-pre-wrap break-words">
+              {JSON.stringify(raw, null, 2)}
+            </pre>
+          )}
         </DialogContent>
       </Dialog>
       <MergeDialog problem={p} open={merging} onOpenChange={setMerging} />
@@ -411,23 +504,34 @@ function MergeDialog({
         <DialogHeader>
           <DialogTitle>Merge into another problem</DialogTitle>
           <DialogDescription>
-            Its failures move to the chosen problem, and future failures with this error count there too.
+            Its {n(problem.count)} {problem.count === 1 ? "failure moves" : "failures move"} to the chosen problem, and
+            future failures with this error count there too.
           </DialogDescription>
         </DialogHeader>
-        <Select value={into} onValueChange={setInto}>
-          <SelectTrigger className="w-full">
-            <SelectValue placeholder="Choose a problem on the same instance" />
-          </SelectTrigger>
-          <SelectContent>
-            {options.map((c) => (
-              <SelectItem key={c.id} value={c.id}>
-                {c.workflowName} · {c.errorMessage.slice(0, 60)}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        {candidates.isLoading ? (
+          <Loading />
+        ) : options.length === 0 ? (
+          <Empty title="No other open problem on this instance.">
+            Only problems on the same instance can be merged.
+          </Empty>
+        ) : (
+          <Select value={into} onValueChange={setInto}>
+            <SelectTrigger className="w-full" aria-label="Problem to merge into">
+              <SelectValue placeholder="Choose a problem on the same instance" />
+            </SelectTrigger>
+            <SelectContent>
+              {options.map((c) => (
+                <SelectItem key={c.id} value={c.id}>
+                  {c.workflowName} · {c.errorMessage.slice(0, 60)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
         <DialogFooter>
+          <Button onClick={() => onOpenChange(false)}>Cancel</Button>
           <Button
+            variant="primary"
             disabled={!into || merge.isPending}
             onClick={() =>
               merge.mutate(

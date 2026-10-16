@@ -53,7 +53,7 @@ test("sign-up is closed after setup", async ({ request }) => {
 test("signing in again requires the two-factor code", async ({ page }) => {
   await page.goto("/login")
   await page.getByLabel("Username").fill(username)
-  await page.getByLabel("Password").fill(password)
+  await page.getByLabel("Password", { exact: true }).fill(password)
   await page.getByRole("button", { name: "Continue" }).click()
   await expect(page.getByText("Two-factor code")).toBeVisible()
   await page.getByLabel("Two-factor code").fill(await freshTotp(secret))

@@ -1,5 +1,5 @@
-import { QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { toast } from "sonner"
+import { keepPreviousData, QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { toast } from "@/lib/toast"
 
 export class ApiError extends Error {
   constructor(
@@ -48,12 +48,17 @@ export const queryClient = new QueryClient({
   },
 })
 
-export function useApi<T>(path: string | null, options: { refetchInterval?: number } = {}) {
+/**
+ * Reads an API path. With `keepRows` a list whose filters change keeps showing its last rows until the new
+ * answer arrives (`isPlaceholderData` is true meanwhile), instead of dropping to a loading state (TB-5).
+ */
+export function useApi<T>(path: string | null, options: { refetchInterval?: number; keepRows?: boolean } = {}) {
   return useQuery<T>({
     queryKey: [path],
     queryFn: () => api<T>(path as string),
     enabled: path !== null,
     refetchInterval: options.refetchInterval,
+    placeholderData: options.keepRows ? keepPreviousData : undefined,
   })
 }
 

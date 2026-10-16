@@ -207,7 +207,9 @@ export function ProblemsPage() {
         }
         search={<SearchBox label="Search workflow or error" value={q} onChange={(v) => setParam("q", v)} />}
         active={Number(instance !== "all")}
-        count={count === undefined ? undefined : plural(count, [statusWords[status], "problem"].filter(Boolean).join(" "))}
+        count={
+          count === undefined ? undefined : plural(count, [statusWords[status], "problem"].filter(Boolean).join(" "))
+        }
         onClear={
           filtered
             ? () => {
@@ -245,9 +247,7 @@ export function ProblemsPage() {
             selected={id}
             onOpen={open}
             href={(pid) => `/problems/${pid}?${params}`}
-            empty={
-              q ? `No ${noun} match "${q}".` : `No ${noun}.`
-            }
+            empty={q ? `No ${noun} match "${q}".` : `No ${noun}.`}
           />
         </Reloading>
       )}

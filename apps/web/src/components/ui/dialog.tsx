@@ -43,12 +43,11 @@ function DialogOverlay({ className, ...props }: React.ComponentProps<typeof Dial
  * Touch only: with a mouse the sheet does not drag.
  */
 function useSheetGestures(
-  panelRef: React.RefObject<HTMLDivElement | null>,
+  panel: HTMLDivElement | null,
   closeRef: React.RefObject<HTMLButtonElement | null>,
   canPullClose: boolean,
 ) {
   React.useEffect(() => {
-    const panel = panelRef.current
     if (!panel) return
     const phone = () => window.matchMedia(PHONE_QUERY).matches
     const markFull = () => panel.toggleAttribute("data-full", panel.offsetHeight >= window.innerHeight - 1)
@@ -124,7 +123,7 @@ function useSheetGestures(
       panel.removeEventListener("touchend", onEnd)
       panel.removeEventListener("touchcancel", onEnd)
     }
-  }, [panelRef, closeRef, canPullClose])
+  }, [panel, closeRef, canPullClose])
 }
 
 /**
@@ -155,9 +154,10 @@ function DialogContent({
   pullToClose?: boolean
   history?: boolean
 }) {
-  const panelRef = React.useRef<HTMLDivElement>(null)
+  // The panel mounts after this component (the portal waits a render), so it is tracked as state.
+  const [panel, setPanel] = React.useState<HTMLDivElement | null>(null)
   const closeRef = React.useRef<HTMLButtonElement>(null)
-  useSheetGestures(panelRef, closeRef, pullToClose ?? showCloseButton)
+  useSheetGestures(panel, closeRef, pullToClose ?? showCloseButton)
   useOverlayHistory(history, () => closeRef.current?.click())
 
   // A click on the toast is not a click on the backdrop.
@@ -169,7 +169,7 @@ function DialogContent({
     <DialogPortal>
       <DialogOverlay />
       <DialogPrimitive.Content
-        ref={panelRef}
+        ref={setPanel}
         data-slot="dialog-content"
         className={cn(
           "fixed top-1/2 left-1/2 z-50 flex max-h-[90dvh] w-full max-w-md -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg bg-popover text-body text-popover-foreground shadow-modal duration-150 outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0",

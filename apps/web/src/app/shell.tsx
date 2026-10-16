@@ -24,6 +24,7 @@ import { Popover as PopoverPrimitive, Dialog as SheetPrimitive } from "radix-ui"
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { Link, Navigate, NavLink, Outlet, useLocation, useNavigate, useNavigationType } from "react-router"
 import { ChromeContext } from "@/app/chrome"
+import { GlobalSearch, PhoneSearch, type SearchPage } from "@/app/search"
 import { settingsGroups } from "@/app/settings-sections"
 import { SaveScope } from "@/components/save-bar"
 import { Button } from "@/components/ui/button"
@@ -66,6 +67,8 @@ const groups = [
 ]
 /** The phone tab bar: the four pages used most; every page is in the More sheet. */
 const tabs = operate.slice(0, 4)
+/** Every page, for the search. */
+const searchPages: SearchPage[] = groups.flatMap((g) => g.items.map((i) => ({ to: i.to, label: i.label, group: g.label })))
 
 type Summary = { openProblems: number; pendingAccess: number; workers: { online: number; total: number } }
 type Me = { twoFactor: boolean }
@@ -189,6 +192,8 @@ function TopBar({
   const { pathname } = useLocation()
   const page = pageOf(pathname)
   const atRoot = page && (pathname === page.item.to || pathname === `${page.item.to}/`)
+  // While the search is in use it widens and the page buttons step aside (SR-2).
+  const [searching, setSearching] = useState(false)
   return (
     <header className="hidden h-bar shrink-0 items-center border-b border-line bg-bg md:flex">
       <div className="flex h-full w-rail shrink-0 items-center justify-center gap-2.5 border-e border-line side:w-side side:justify-start side:ps-[18px] side:pe-2.5">
@@ -230,7 +235,16 @@ function TopBar({
           )}
         </ol>
       </nav>
-      <div ref={setActionsSlot} className="flex shrink-0 items-center gap-2 pe-[22px] empty:hidden lg:pe-7" />
+      <div
+        ref={setActionsSlot}
+        className={cn("flex shrink-0 items-center gap-2 pe-3 empty:hidden", searching && "hidden")}
+      />
+      <GlobalSearch
+        pages={searchPages}
+        variant="bar"
+        onOpenChange={setSearching}
+        className="me-[22px] lg:me-7"
+      />
     </header>
   )
 }
@@ -553,7 +567,8 @@ function PhoneTopBar() {
           {plural(open, "problem")}
         </Link>
       )}
-      <div className={cn("flex shrink-0", !(open > 0 && pathname !== "/problems") && "ms-auto")}>
+      <div className={cn("flex shrink-0 items-center", !(open > 0 && pathname !== "/problems") && "ms-auto")}>
+        <PhoneSearch pages={searchPages} />
         <UserMenu compact />
       </div>
     </header>

@@ -477,3 +477,17 @@ html[data-unsaved] :is(#main, [data-scroll-pane]) {
     padding-bottom: calc(var(--ui-tabbar) + 76px + env(safe-area-inset-bottom));
   }
 }
+
+/* A target reached from the search is ringed for a moment, so the eye finds it (SR-6). */
+@keyframes search-flash {
+  0%,
+  40% {
+    box-shadow: inset 0 0 0 3px color-mix(in srgb, var(--ui-focus) 45%, transparent);
+  }
+  100% {
+    box-shadow: inset 0 0 0 3px transparent;
+  }
+}
+.search-flash {
+  animation: search-flash 2s ease;
+}

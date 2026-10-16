@@ -1,6 +1,6 @@
 import { ChevronDown, Download, KeyRound, Plus, ShieldCheck, Trash2 } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
-import { Navigate, NavLink, useNavigate, useParams } from "react-router"
+import { Navigate, NavLink, useLocation, useNavigate, useParams } from "react-router"
 import { useCrumb } from "@/app/chrome"
 import { settingsGroups, settingsSectionLabel } from "@/app/settings-sections"
 import { useConfirm } from "@/components/confirm"
@@ -42,7 +42,7 @@ import { formatDateTime, useTimeZone } from "@/lib/time"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
 
-type FieldDef = {
+export type FieldDef = {
   name: string
   label: string
   hint?: string
@@ -50,7 +50,7 @@ type FieldDef = {
   placeholder?: string
 }
 
-const forms: Record<string, { title: string; description: string; fields: FieldDef[] }> = {
+export const forms: Record<string, { title: string; description: string; fields: FieldDef[] }> = {
   general: {
     title: "General",
     description: "How this installation is reached.",
@@ -310,6 +310,7 @@ function SettingRow({
     return (
       <label
         htmlFor={htmlFor}
+        data-setting-row
         className="grid cursor-pointer grid-cols-[minmax(0,1fr)_auto] items-center gap-x-6 border-t border-line px-pad-x py-3"
       >
         {text}
@@ -318,6 +319,7 @@ function SettingRow({
     )
   return (
     <div
+      data-setting-row
       className={cn(
         "grid items-center gap-x-6 gap-y-2 border-t border-line px-pad-x py-3",
         !wide && "md:grid-cols-[minmax(0,1fr)_260px]",
@@ -327,6 +329,35 @@ function SettingRow({
       <div className="flex min-w-0 items-center gap-2 md:justify-end">{children}</div>
     </div>
   )
+}
+
+/**
+ * A setting chosen in the search: once its section has drawn, its row comes into view, its field takes the
+ * focus and the row flashes for a moment (SR-6). The request is then cleared, so a reload does not repeat it.
+ */
+function useRevealField(ready: boolean) {
+  const location = useLocation()
+  const navigate = useNavigate()
+  const field = (location.state as { focusField?: string } | null)?.focusField
+  useEffect(() => {
+    if (!field || !ready) return
+    let tries = 0
+    const timer = setInterval(() => {
+      const el = document.getElementById(field)
+      tries += 1
+      if (!el && tries < 80) return
+      clearInterval(timer)
+      if (!el) return
+      const row = el.closest<HTMLElement>("[data-setting-row]") ?? el
+      row.scrollIntoView({ block: "center" })
+      el.focus({ preventScroll: true })
+      row.classList.remove("search-flash")
+      void row.offsetWidth
+      row.classList.add("search-flash")
+      navigate(".", { replace: true, state: null })
+    }, 100)
+    return () => clearInterval(timer)
+  }, [field, ready, navigate])
 }
 
 /** Form values as loaded. A secret is `undefined` until the user replaces or removes it, and then not sent. */
@@ -344,6 +375,7 @@ const toForm = (def: { fields: FieldDef[] }, data: Record<string, unknown>) =>
 export function SettingsForm({ section }: { section: string }) {
   const def = forms[section]
   const query = useApi<Record<string, unknown>>(`/settings/${section}`)
+  useRevealField(!query.isLoading)
   const [values, setValues] = useState<Record<string, unknown>>({})
   const save = useApiMutation<Record<string, unknown>>("PUT", `/settings/${section}`, {
     invalidate: [`/settings/${section}`, "/setup/checklist"],

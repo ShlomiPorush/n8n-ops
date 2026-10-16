@@ -34,6 +34,8 @@ export const settingsGroups = [
 
 export type SettingsSection = (typeof settingsGroups)[number]["items"][number][0]
 
-const sections: readonly (readonly [string, string])[] = settingsGroups.flatMap((g): readonly (readonly [string, string])[] => g.items)
+const sections: readonly (readonly [string, string])[] = settingsGroups.flatMap(
+  (g): readonly (readonly [string, string])[] => g.items,
+)
 
 export const settingsSectionLabel = (section: string): string | undefined => sections.find(([k]) => k === section)?.[1]

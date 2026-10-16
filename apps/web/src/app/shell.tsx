@@ -22,15 +22,7 @@ import {
 import { useTheme } from "next-themes"
 import { Popover as PopoverPrimitive, Dialog as SheetPrimitive } from "radix-ui"
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
-import {
-  Link,
-  Navigate,
-  NavLink,
-  Outlet,
-  useLocation,
-  useNavigate,
-  useNavigationType,
-} from "react-router"
+import { Link, Navigate, NavLink, Outlet, useLocation, useNavigate, useNavigationType } from "react-router"
 import { ChromeContext } from "@/app/chrome"
 import { settingsGroups } from "@/app/settings-sections"
 import { SaveScope } from "@/components/save-bar"

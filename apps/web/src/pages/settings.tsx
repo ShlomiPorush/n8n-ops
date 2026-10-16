@@ -239,10 +239,7 @@ export function SettingsPage() {
             />
           </span>
         </label>
-        <nav
-          aria-label="Settings categories"
-          className="sticky top-0 hidden flex-col gap-0.5 min-[1024px]:flex"
-        >
+        <nav aria-label="Settings categories" className="sticky top-0 hidden flex-col gap-0.5 min-[1024px]:flex">
           {settingsGroups.map((g) => (
             <div key={g.label} className="flex flex-col gap-0.5">
               <div className="px-2.5 pt-2.5 pb-1 text-meta font-bold tracking-[0.04em] text-muted-foreground uppercase">

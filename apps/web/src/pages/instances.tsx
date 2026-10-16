@@ -1,6 +1,7 @@
 import { Download, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react"
 import { useEffect, useState } from "react"
 import { Link, useNavigate, useParams } from "react-router"
+import { useCrumb } from "@/app/chrome"
 import { AgentAccessCard } from "@/components/agent-access-card"
 import { useConfirm } from "@/components/confirm"
 import {
@@ -156,6 +157,7 @@ export function InstancesPage() {
     <>
       <PageHead
         title="Instances"
+        updatedAt={data.dataUpdatedAt || undefined}
         description={
           data.data
             ? `${n(rows.length)} registered${down || warn ? ` · ${n(down)} down, ${n(warn)} need a look` : ""}${latest ? ` · latest n8n ${latest}` : ""}`
@@ -271,6 +273,7 @@ function InstanceDetail({ id }: { id: string }) {
   const navigate = useNavigate()
   const tz = useTimeZone()
   const detail = useApi<InstanceDetailData>(`/instances/${id}`, { refetchInterval: 15_000 })
+  useCrumb(detail.data?.name)
   const problems = useApi<ProblemRow[]>(`/problems?status=open&instance=${id}`)
   const [editing, setEditing] = useState(false)
   const confirm = useConfirm()

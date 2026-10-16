@@ -52,6 +52,7 @@ export function WorkersPage() {
   return (
     <Page
       title="Workers"
+      updatedAt={workers.dataUpdatedAt || undefined}
       description={
         workers.data && list.length
           ? `${n(online)} of ${n(list.length)} online. Agents on n8n Docker hosts: they back up credential secrets, move credentials and check endpoints only reachable on the host, over outbound HTTPS only.`

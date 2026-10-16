@@ -2,6 +2,7 @@ import { CheckCircle2, Play, RotateCcw, XCircle } from "lucide-react"
 import { useState } from "react"
 import { useNavigate, useParams } from "react-router"
 import { Copyable, Empty, Kpi, Kpis, LoadError, Loading, Locked, PageHead, Panel, UserText } from "@/components/kit"
+import { useCrumb } from "@/app/chrome"
 import { ListWithPanel } from "@/components/list-panel"
 import { Dot, StatusTag, When } from "@/components/status"
 import { Button } from "@/components/ui/button"
@@ -101,6 +102,7 @@ export function BackupsPage() {
     <>
       <PageHead
         title="Backups"
+        updatedAt={data.dataUpdatedAt || undefined}
         description={
           s?.configured
             ? `${n(okCount)} of ${n(s.instances.length)} instances backed up on time${late ? `, ${n(late)} late` : ""}. Encrypted with your backup public key before upload.`
@@ -236,6 +238,7 @@ export function BackupsPage() {
 }
 
 function BackupHistory({ id, name }: { id: string; name: string }) {
+  useCrumb(name || null)
   const runs = useApi<Run[]>(`/backups/${id}/runs`, { refetchInterval: 5_000 })
   const [restoring, setRestoring] = useState<Run | null>(null)
   const list = runs.data ?? []

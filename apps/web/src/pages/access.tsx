@@ -1,5 +1,6 @@
 import { Ban, Check, KeyRound, X } from "lucide-react"
 import { useNavigate, useParams, useSearchParams } from "react-router"
+import { useCrumb } from "@/app/chrome"
 import { useConfirm } from "@/components/confirm"
 import { Empty, LoadError, Loading, PageHead, Panel, PanelHead, UserText } from "@/components/kit"
 import { ListWithPanel } from "@/components/list-panel"
@@ -73,6 +74,7 @@ export function AccessPage() {
     <>
       <PageHead
         title="Agent access"
+        updatedAt={rows.dataUpdatedAt || undefined}
         description={
           rows.data
             ? `${n(waiting)} waiting for you · ${n(active)} active. Nothing is granted until you approve, and access ends on its own.`
@@ -167,6 +169,7 @@ export function AccessPage() {
 function AccessDetailPanel({ id }: { id: string }) {
   const tz = useTimeZone()
   const detail = useApi<AccessDetail>(`/access/${id}`)
+  useCrumb(detail.data?.reason)
   const invalidate = ["/access", `/access/${id}`, "/overview", "/overview/summary"]
   const approve = useApiMutation<void>("POST", `/access/${id}/approve`, { invalidate, success: "Access approved" })
   const deny = useApiMutation<void>("POST", `/access/${id}/deny`, { invalidate, success: "Request denied" })

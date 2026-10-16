@@ -6,6 +6,22 @@
 @import "@fontsource/ibm-plex-mono/600.css";
 
 @custom-variant dark (&:is(.dark *));
+/* The full 240px sidebar: above 1100px, unless the user folded it into the icon rail (NL-7). */
+@custom-variant side {
+  @media (min-width: 1101px) {
+    html:not([data-nav="rail"]) & {
+      @slot;
+    }
+  }
+}
+/* Above 1100px with the sidebar folded into the icon rail. */
+@custom-variant folded {
+  @media (min-width: 1101px) {
+    html[data-nav="rail"] & {
+      @slot;
+    }
+  }
+}
 
 /*
  * Design tokens. Every visual value lives here; components use the Tailwind names below and never raw
@@ -190,6 +206,7 @@
   --spacing-side: 240px;
   --spacing-rail: 72px;
   --spacing-topbar: 56px;
+  --spacing-bar: 60px;
   --spacing-tabbar: 64px;
 
   /* Shell breakpoints: phone up to 760px, icon rail up to 1100px, sidebar above; list and detail from 1280px. */

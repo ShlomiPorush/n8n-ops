@@ -83,6 +83,7 @@ export function OverviewPage() {
   return (
     <Page
       title="Overview"
+      updatedAt={overview.dataUpdatedAt || undefined}
       description={
         o
           ? `${plural(attention.length, "thing needs", "things need")} you · ${plural(o.stats.openProblems, "open problem")} across ${plural(o.stats.instances, "instance")}`

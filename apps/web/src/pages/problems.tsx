@@ -1,6 +1,7 @@
 import { BellOff, CheckCircle2, ExternalLink, GitMerge, RotateCcw } from "lucide-react"
 import { useState } from "react"
 import { Link, useNavigate, useParams, useSearchParams } from "react-router"
+import { useCrumb } from "@/app/chrome"
 import { FilterBar, Picker, SearchBox } from "@/components/filter-bar"
 import { FlowGraph, type GraphNode } from "@/components/flow-graph"
 import {
@@ -183,7 +184,11 @@ export function ProblemsPage() {
 
   const list = (
     <>
-      <PageHead title="Problems" description="One row per workflow, node and error; each alerts once." />
+      <PageHead
+        title="Problems"
+        description="One row per workflow, node and error; each alerts once."
+        updatedAt={rows.dataUpdatedAt || undefined}
+      />
       <FilterBar
         views={
           <ToggleGroup
@@ -266,6 +271,7 @@ function flatten(value: unknown): [string, string][] {
 
 export function ProblemDetail({ id }: { id: string }) {
   const detail = useApi<ProblemDetailData>(`/problems/${id}`, { refetchInterval: 15_000 })
+  useCrumb(detail.data?.workflowName)
   const tz = useTimeZone()
   const [raw, setRaw] = useState<unknown>(null)
   const [merging, setMerging] = useState(false)

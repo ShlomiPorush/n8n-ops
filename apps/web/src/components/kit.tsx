@@ -1,11 +1,14 @@
 import { Check, Copy, Loader2, Lock } from "lucide-react"
 import { useEffect, useState } from "react"
 import { Link } from "react-router"
+import { PageActions, useTopBar } from "@/app/chrome"
+import { timeAgo, useTick } from "@/components/status"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import { describeError } from "@/lib/api"
 import { COPIED_MS, DIM_AFTER_MS } from "@/lib/behavior"
+import { formatFull, useTimeZone } from "@/lib/time"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
 
@@ -19,47 +22,88 @@ export function Page({
   title,
   description,
   actions,
+  updatedAt,
   children,
   className,
 }: {
   title?: string
   description?: React.ReactNode
   actions?: React.ReactNode
+  updatedAt?: number
   children: React.ReactNode
   className?: string
 }) {
   return (
     <div className={cn("grid min-w-0 content-start gap-gap", className)}>
-      {title && <PageHead title={title} description={description} actions={actions} />}
+      {title && <PageHead title={title} description={description} actions={actions} updatedAt={updatedAt} />}
       {children}
     </div>
   )
 }
 
-/** The page title, a one line description under it, and the page actions at the bottom of the far side. */
+/**
+ * The page head. From 761px the title is in the top bar and the actions move up beside it (NL-6), so the page
+ * starts with its one line description. On a phone the title leads the page with the main action on its line
+ * (NL-14). With `updatedAt` a line says how fresh the data is and keeps ticking (LD-12).
+ */
 export function PageHead({
   title,
   description,
   actions,
+  updatedAt,
 }: {
   title: string
   description?: React.ReactNode
   actions?: React.ReactNode
+  updatedAt?: number
 }) {
+  const wide = useTopBar()
+  const fresh = updatedAt ? <Updated at={updatedAt} /> : null
+  if (wide)
+    return (
+      <>
+        {actions && <PageActions>{actions}</PageActions>}
+        {(description || fresh) && (
+          <p className="mb-1 text-muted-foreground">
+            {description}
+            {description && fresh && " · "}
+            {fresh}
+          </p>
+        )}
+      </>
+    )
   return (
-    <div className="mb-1 flex flex-wrap items-end gap-x-4 gap-y-3">
-      <div className="min-w-0 flex-1 basis-80">
-        <h1 className="text-h1">{title}</h1>
-        {description && <p className="mt-1.5 text-muted-foreground">{description}</p>}
+    <div className="mb-1 grid gap-1.5">
+      <div className="flex items-start gap-3">
+        <h1 className="min-w-0 flex-1 text-figure font-heavy tracking-tighter break-words">{title}</h1>
+        {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
       </div>
-      {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
+      {(description || fresh) && (
+        <p className="text-muted-foreground">
+          {description}
+          {description && fresh && " · "}
+          {fresh}
+        </p>
+      )}
     </div>
   )
 }
 
+/** "Updated 3 min ago", with the exact time on hover; it keeps ticking while the page is open. */
+function Updated({ at }: { at: number }) {
+  useTick()
+  const tz = useTimeZone()
+  return <span title={formatFull(new Date(at), tz)}>Updated {timeAgo(new Date(at))}</span>
+}
+
 /** The base unit: a tinted panel. Rows inside it are split by a 1px top line only. */
 export function Panel({ className, ...props }: React.ComponentProps<"section">) {
-  return <section className={cn("min-w-0 overflow-hidden rounded-lg bg-panel", className)} {...props} />
+  return (
+    <section
+      className={cn("min-w-0 overflow-hidden rounded-lg bg-panel [&>:first-child]:border-t-0", className)}
+      {...props}
+    />
+  )
 }
 
 /** A panel header: a short noun, a muted count beside it, and a "more" link or an action on the far side. */

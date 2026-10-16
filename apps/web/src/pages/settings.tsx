@@ -1,6 +1,8 @@
-import { Download, KeyRound, Plus, ShieldCheck, Trash2 } from "lucide-react"
+import { ChevronDown, Download, KeyRound, Plus, ShieldCheck, Trash2 } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
-import { NavLink, useParams } from "react-router"
+import { Navigate, NavLink, useNavigate, useParams } from "react-router"
+import { useCrumb } from "@/app/chrome"
+import { settingsGroups, settingsSectionLabel } from "@/app/settings-sections"
 import { useConfirm } from "@/components/confirm"
 import {
   Copyable,
@@ -190,65 +192,68 @@ const forms: Record<string, { title: string; description: string; fields: FieldD
   },
 }
 
-/** The settings sections, grouped as they appear beside the form. */
-const groups = [
-  {
-    label: "Installation",
-    items: [
-      ["general", "General"],
-      ["defaults", "Instance defaults"],
-    ],
-  },
-  {
-    label: "Notifications",
-    items: [
-      ["alerts", "Alerts"],
-      ["telegram", "Telegram"],
-      ["email", "Email reports"],
-    ],
-  },
-  {
-    label: "Backups",
-    items: [
-      ["storage", "Backup storage"],
-      ["keys", "Encryption keys"],
-    ],
-  },
-  {
-    label: "Access",
-    items: [
-      ["access", "Agent access"],
-      ["tokens", "API & MCP tokens"],
-      ["account", "Account"],
-    ],
-  },
-] as const
-
 const weekdays = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
 
+/** What each section is for, under its title. Forms take theirs from their definition. */
+const sectionDescriptions: Record<string, string> = {
+  keys: "Keys that protect backups and the secrets n8n-ops stores.",
+  tokens: "Tokens for agents and scripts that read n8n-ops, and may ask for access to n8n instances.",
+  account: "Your password and two-factor sign-in.",
+}
+
+/** The section last open, so Settings reopens where it was left during this visit (NL-4). */
+let lastSection = "general"
+
 export function SettingsPage() {
-  const { section = "general" } = useParams()
+  const { section } = useParams()
+  const navigate = useNavigate()
+  const label = section ? settingsSectionLabel(section) : undefined
+  useCrumb(label)
+  if (!section || !label) return <Navigate to={`/settings/${lastSection}`} replace />
+  lastSection = section
   return (
     <Page title="Settings" description="How n8n-ops reaches you, where backups go, and who may use its API.">
-      <div className="grid items-start gap-gap lg:grid-cols-[212px_minmax(0,1fr)]">
+      <div className="grid items-start gap-gap min-[1024px]:grid-cols-[212px_minmax(0,1fr)] min-[1024px]:gap-7">
+        {/* Below 1024px the section list is one sticky picker (FS-10). */}
+        <label className="sticky top-0 z-20 -mt-1 bg-bg py-2 min-[1024px]:hidden">
+          <span className="sr-only">Settings category</span>
+          <span className="relative block">
+            <select
+              value={section}
+              onChange={(e) => navigate(`/settings/${e.target.value}`)}
+              className="h-ctl w-full appearance-none rounded-sm border border-input bg-bg ps-3 pe-9 font-semibold text-ink outline-none focus:border-primary"
+            >
+              {settingsGroups.map((g) => (
+                <optgroup key={g.label} label={g.label}>
+                  {g.items.map(([k, l]) => (
+                    <option key={k} value={k}>
+                      {l}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+            <ChevronDown
+              aria-hidden
+              className="pointer-events-none absolute end-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+            />
+          </span>
+        </label>
         <nav
-          aria-label="Settings sections"
-          className="flex gap-5 overflow-x-auto border-b border-line [scrollbar-width:none] lg:sticky lg:top-0 lg:flex-col lg:gap-0.5 lg:overflow-visible lg:border-b-0"
+          aria-label="Settings categories"
+          className="sticky top-0 hidden flex-col gap-0.5 min-[1024px]:flex"
         >
-          {groups.map((g) => (
-            <div key={g.label} className="contents lg:flex lg:flex-col lg:gap-0.5">
-              <div className="hidden px-2.5 pt-2.5 pb-1 text-meta font-semibold text-muted-foreground lg:block">
+          {settingsGroups.map((g) => (
+            <div key={g.label} className="flex flex-col gap-0.5">
+              <div className="px-2.5 pt-2.5 pb-1 text-meta font-bold tracking-[0.04em] text-muted-foreground uppercase">
                 {g.label}
               </div>
               {g.items.map(([k, l]) => (
                 <NavLink
                   key={k}
                   to={`/settings/${k}`}
-                  aria-current={section === k ? "page" : undefined}
-                  className={cn(
-                    "-mb-px shrink-0 border-b-2 border-transparent pt-1 pb-2 text-ctl font-semibold whitespace-nowrap text-muted-foreground hover:text-ink aria-[current=page]:border-primary aria-[current=page]:text-ink",
-                    "lg:mb-0 lg:rounded-sm lg:border-b-0 lg:px-2.5 lg:py-1.5 lg:text-body lg:font-medium lg:text-ink lg:hover:bg-accent lg:aria-[current=page]:bg-primary lg:aria-[current=page]:font-title lg:aria-[current=page]:text-primary-foreground",
-                  )}
+                  aria-current={section === k ? "true" : undefined}
+                  className="rounded-sm px-2.5 py-1.5 font-medium text-ink aria-[current=true]:bg-primary aria-[current=true]:font-title aria-[current=true]:text-primary-foreground [@media(hover:hover)]:hover:bg-accent [@media(hover:hover)]:aria-[current=true]:hover:bg-primary"
                 >
                   {l}
                 </NavLink>
@@ -257,6 +262,13 @@ export function SettingsPage() {
           ))}
         </nav>
         <div className="grid min-w-0 max-w-3xl gap-gap">
+          {/* Each section opens with a large title and one paragraph about what it is for (FS-8). */}
+          <div className="grid gap-1.5">
+            <h2 className="text-figure font-heavy tracking-tighter">{label}</h2>
+            <p className="max-w-[75ch] text-muted-foreground">
+              {forms[section]?.description ?? sectionDescriptions[section]}
+            </p>
+          </div>
           {section in forms && <SettingsForm key={section} section={section} />}
           {section === "keys" && <KeysCard />}
           {section === "account" && <AccountCard />}
@@ -388,7 +400,6 @@ export function SettingsForm({ section }: { section: string }) {
 
   return (
     <Panel>
-      <PanelHead title={def.title} description={def.description} />
       {query.error ? (
         <LoadError what={def.title} error={query.error} retry={() => query.refetch()} />
       ) : query.isLoading ? (
@@ -534,7 +545,6 @@ function KeysCard() {
   }
   return (
     <Panel>
-      <PanelHead title="Encryption keys" description="Keys that protect backups and the secrets n8n-ops stores." />
       {keys.error ? (
         <LoadError what="the keys" error={keys.error} retry={() => keys.refetch()} />
       ) : (
@@ -639,7 +649,7 @@ function AccountCard() {
   const username = (session.data?.user as { username?: string } | undefined)?.username
   return (
     <Panel>
-      <PanelHead title="Account" description={`Signed in as ${username ?? ""}.`} />
+      <PanelHead title="Sign-in" description={`Signed in as ${username ?? ""}.`} />
       <SettingRow label="Two-factor (TOTP)" hint="Required for this installation.">
         <span className="flex items-center gap-2 font-semibold text-ok">
           <ShieldCheck className="size-4" /> On

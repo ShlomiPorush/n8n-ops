@@ -85,8 +85,10 @@ export function AuditPage() {
                     <UserText>{a.actor}</UserText>
                   )}
                 </TableCell>
-                <TableCell className="font-semibold">{a.action}</TableCell>
-                <TableCell className="max-w-md truncate" title={a.target}>
+                <TableCell className="font-semibold" data-primary>
+                  {a.action}
+                </TableCell>
+                <TableCell className="max-w-md truncate" title={a.target} data-wide data-nolabel>
                   <UserText>{a.target}</UserText>
                 </TableCell>
                 <TableCell className="text-muted-foreground">{a.via}</TableCell>

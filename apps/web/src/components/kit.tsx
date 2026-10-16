@@ -509,7 +509,7 @@ export function SecretField({
 }) {
   if (!stored || typeof value === "string")
     return (
-      <div className="flex min-w-0 items-center gap-2">
+      <div className="flex w-full min-w-0 items-center gap-2">
         <Input
           id={id}
           type="password"
@@ -528,7 +528,7 @@ export function SecretField({
       </div>
     )
   return (
-    <div className="flex min-h-ctl min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+    <div className="flex min-h-ctl w-full min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
       {value === null ? (
         <span id={id} className="font-semibold text-fail">
           Removed when you save

@@ -139,7 +139,7 @@ export function AccessPage() {
                 <TableCell className="text-muted-foreground">
                   <UserText>{r.token}</UserText>
                 </TableCell>
-                <TableCell className="max-w-80 truncate" title={r.reason}>
+                <TableCell className="max-w-80 truncate font-semibold" title={r.reason} data-primary>
                   <UserText>{r.reason}</UserText>
                 </TableCell>
                 <TableCell className="tabular-nums">{duration(r.minutes)}</TableCell>
@@ -303,7 +303,7 @@ function AccessDetailPanel({ id }: { id: string }) {
                   <TableCell className="text-muted-foreground">
                     <When value={call.at} />
                   </TableCell>
-                  <TableCell className="font-mono text-small break-all whitespace-normal">
+                  <TableCell className="font-mono text-small break-all whitespace-normal" data-primary>
                     {call.method} {call.path}
                     {call.refused && <div className="font-sans break-normal text-fail">{call.refused}</div>}
                   </TableCell>

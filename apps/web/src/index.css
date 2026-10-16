@@ -359,14 +359,13 @@
   [data-slot="table-sort"] {
     display: flex;
   }
-  [data-stack] {
+  [data-stack],
+  [data-stack] > tbody {
+    display: block;
     min-width: 0;
   }
   [data-stack] > thead {
     display: none;
-  }
-  [data-stack] > tbody {
-    display: block;
   }
   [data-stack] > tbody > tr {
     display: flex;
@@ -381,19 +380,27 @@
     max-width: 100%;
     padding: 0;
     text-align: start;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
-  [data-stack] > tbody > tr > td:first-child,
-  [data-stack] > tbody > tr > td[colspan],
+  /* The name of the item leads on its own line: the cell marked data-primary, else the first one. */
+  [data-stack] > tbody > tr > td[data-primary] {
+    order: -1;
+  }
+  [data-stack] > tbody > tr:not(:has(> [data-primary])) > td:first-child,
+  [data-stack] > tbody > tr > td:is([data-primary], [data-wide], [colspan]),
   [data-stack] > tbody > tr > td:last-child:has([data-slot="button"]) {
     flex-basis: 100%;
   }
-  [data-stack]
-    > tbody
-    > tr
-    > td:not(:first-child, [colspan]):not(:last-child:has([data-slot="button"]))[data-label]::before {
+  /* Every other value says what it is, since the column header is gone. */
+  [data-stack] > tbody > tr > td[data-label]:not([data-primary], [data-nolabel], [colspan])::before {
     content: attr(data-label) " ";
     color: var(--ui-muted);
     font-weight: 400;
+  }
+  [data-stack] > tbody > tr:not(:has(> [data-primary])) > td:first-child::before,
+  [data-stack] > tbody > tr > td:last-child:has([data-slot="button"])::before {
+    content: none;
   }
   [data-stack] > tbody > tr > td:empty {
     display: none;

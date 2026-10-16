@@ -70,7 +70,7 @@ test("an instance closed to agents refuses before anyone is asked", async ({ req
 
 test("the instance opens read-only access to agents", async ({ request }) => {
   await page.goto("/instances")
-  await page.getByText("e2e-n8n", { exact: true }).click()
+  await page.getByRole("row").filter({ has: page.getByText("e2e-n8n", { exact: true }) }).click()
   await page.getByLabel("Agents may request access").click()
   await page.getByRole("button", { name: "Read only", exact: true }).click()
   await page.getByRole("button", { name: "Save changes" }).click()

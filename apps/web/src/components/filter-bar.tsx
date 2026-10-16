@@ -230,7 +230,7 @@ export function FilterBar({
   return (
     <div className="grid gap-2">
       <div className="flex flex-wrap items-center gap-2">
-        {views}
+        {views && <div className="max-md:basis-full">{views}</div>}
         {search && <div className="w-64 max-md:min-w-0 max-md:flex-1 max-md:basis-0">{search}</div>}
         {children && (
           <>

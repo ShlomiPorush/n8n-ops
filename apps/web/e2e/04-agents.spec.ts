@@ -98,7 +98,7 @@ test("MCP reads are recorded in the audit log", async () => {
   await expect(page.getByRole("cell", { name: "MCP read" }).first()).toBeVisible()
 })
 
-test("on a phone the problem detail takes the whole screen", async () => {
+test("on a phone the problem detail opens as a sheet over the list", async () => {
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto("/problems")
   await page

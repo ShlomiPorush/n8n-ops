@@ -138,11 +138,11 @@ export function ProblemsTable({
             <TableCell>
               <ProblemBadge status={p.status} regression={p.regression} firstSeen={p.firstSeen} />
             </TableCell>
-            <TableCell className="max-w-64">
+            <TableCell className="max-w-64" data-primary>
               <UserText className="block truncate font-semibold">{p.workflowName}</UserText>
               <UserText className="block truncate text-meta text-muted-foreground">{p.nodeName}</UserText>
             </TableCell>
-            <TableCell className="max-w-80 truncate font-mono text-small" title={p.errorMessage}>
+            <TableCell className="max-w-80 truncate font-mono text-small" title={p.errorMessage} data-wide data-nolabel>
               {p.errorMessage}
             </TableCell>
             {showInstance && (

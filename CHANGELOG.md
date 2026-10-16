@@ -10,12 +10,17 @@ All notable changes to this project are documented here. The format follows [Kee
 - Every status (problems, instance health, backups, workers, agent access) takes its words and colour from one table; healthy items stay quiet, problems stand out with a red or amber edge.
 - Times follow the time zone set in Settings → General, on a 24-hour clock: the time for today, the date for earlier days, the exact time on hover.
 - Counts and key figures link to the list they count; search and filters on Problems, Workflows and Agent access are kept in the address.
-- Settings sections sit beside the form, with one save bar that appears only with unsaved changes; report and backup times are typed as HH:MM.
+- Settings sections sit beside the form; report and backup times are typed as HH:MM. One save bar counts the unsaved changes of the page ("3 unsaved changes"), saves them together, and leaving the page or the tab with unsaved changes asks first. A refresh never overwrites a field being edited.
+- A stored secret (bot token, SMTP password, storage key, instance API key) shows "Stored" with Replace and Remove instead of a masked field, and is never sent again unchanged. Changing an instance's base URL asks for its API key again, so the stored key is not sent to a new address.
 - Instance IDs, URLs, execution IDs, keys and commands copy with a click.
-- Below 1280px an opened problem, instance, backup or access request fills the screen instead of a side panel.
-- Backups without storage or a backup key show what is missing and where to set it instead of Run now buttons.
-- Revoking an API or MCP token asks for confirmation first.
-- With reduced motion requested, the interface has no transitions.
+- From 1000px an opened problem, instance, backup or access request reads in a pane beside the list, and the first item opens by itself. Narrower it opens over the list; on phones every dialog is a bottom sheet that opens at four fifths of the screen, grows as it scrolls, and closes when pulled down. The browser's Back button closes the dialog on top instead of leaving the page.
+- Lists sort by any column header, by click or keyboard, with a sort control on phones; where a list is narrow, rows become cards whose values carry their column names. A list that reloads keeps its rows on screen. List filters are named pickers ("Instance: All"), with a count line and Clear filters under them, and fold behind a Filters button on phones.
+- Backups without storage or a backup key show what is missing and where to set it instead of Run now buttons; test buttons in Settings say what to save before they can run.
+- Removing an instance and revoking a token, a worker or an agent's access ask for confirmation in one shared dialog that names what will happen.
+- Toasts show an icon by result, can be closed, and wait while the pointer is on them.
+- Sign-in returns to the page that was asked for, can show the typed password, and warns when Caps Lock is on.
+- The audit log loads older entries as you scroll.
+- With reduced motion requested, the interface has no transitions or animations.
 
 ### Added
 

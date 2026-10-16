@@ -377,8 +377,9 @@ export function SettingsForm({ section }: { section: string }) {
     saved: "Settings saved",
     count,
     save: async () => {
-      reload.current = true
       await save.mutateAsync(body())
+      // Only a successful save lets the next answer replace the form; a failed one keeps the edits (SV-3).
+      reload.current = true
     },
     discard: () => query.data && def && setValues(toForm(def, query.data)),
   })

@@ -50,7 +50,13 @@ const lower = (s: string) => s.toLocaleLowerCase()
 /** The settings index, read from the forms themselves, so a renamed field is found by its new name. */
 const settingsIndex: (Item & { key: string })[] = settingsGroups.flatMap((g) =>
   g.items.flatMap(([section, sectionLabel]) => [
-    { id: `section:${section}`, key: section, title: sectionLabel, subtitle: `Settings › ${g.label}`, to: `/settings/${section}` },
+    {
+      id: `section:${section}`,
+      key: section,
+      title: sectionLabel,
+      subtitle: `Settings › ${g.label}`,
+      to: `/settings/${section}`,
+    },
     ...(forms[section]?.fields ?? []).map((f) => ({
       id: `field:${section}:${f.name}`,
       key: f.name,
@@ -108,7 +114,10 @@ function useServerSearch(q: string, enabled: boolean) {
       setFound({})
       return
     }
-    setFound({ problems: { items: [], state: "loading", total: 0 }, workflows: { items: [], state: "loading", total: 0 } })
+    setFound({
+      problems: { items: [], state: "loading", total: 0 },
+      workflows: { items: [], state: "loading", total: 0 },
+    })
     const abort = new AbortController()
     const timer = setTimeout(() => {
       const query = encodeURIComponent(t)
@@ -130,7 +139,10 @@ function useServerSearch(q: string, enabled: boolean) {
             },
           })),
         )
-        .catch(() => !abort.signal.aborted && setFound((f) => ({ ...f, problems: { items: [], state: "failed", total: 0 } })))
+        .catch(
+          () =>
+            !abort.signal.aborted && setFound((f) => ({ ...f, problems: { items: [], state: "failed", total: 0 } })),
+        )
       api<{ workflows: WorkflowHit[] }>(`/workflows?q=${query}`, { signal: abort.signal })
         .then((data) =>
           setFound((f) => ({
@@ -148,7 +160,10 @@ function useServerSearch(q: string, enabled: boolean) {
             },
           })),
         )
-        .catch(() => !abort.signal.aborted && setFound((f) => ({ ...f, workflows: { items: [], state: "failed", total: 0 } })))
+        .catch(
+          () =>
+            !abort.signal.aborted && setFound((f) => ({ ...f, workflows: { items: [], state: "failed", total: 0 } })),
+        )
     }, DEBOUNCE_MS)
     // Each keystroke cancels the previous question, so an older answer never replaces a newer one.
     return () => {
@@ -196,12 +211,16 @@ export function GlobalSearch({
   const [kind, setKind] = React.useState<Kind | "all">("all")
   const [active, setActive] = React.useState(0)
   const input = React.useRef<HTMLInputElement>(null)
-  const box = React.useRef<HTMLDivElement>(null)
+  const box = React.useRef<HTMLElement>(null)
   const id = React.useId()
   const open = sheet || (focused && q.trim().length > 0)
   const wide = sheet || focused || q.length > 0
 
   React.useEffect(() => onOpenChange?.(wide), [wide, onOpenChange])
+  // The phone sheet opens ready to type.
+  React.useEffect(() => {
+    if (sheet) input.current?.focus()
+  }, [sheet])
 
   const local = React.useMemo(() => searchLocal(q, pages), [q, pages])
   const server = useServerSearch(q, open)
@@ -355,7 +374,10 @@ export function GlobalSearch({
           id={`${id}-results`}
           role="listbox"
           aria-label="Results"
-          className={cn("min-h-0 overflow-y-auto overscroll-contain p-2", sheet && "pb-[calc(16px+env(safe-area-inset-bottom))]")}
+          className={cn(
+            "min-h-0 overflow-y-auto overscroll-contain p-2",
+            sheet && "pb-[calc(16px+env(safe-area-inset-bottom))]",
+          )}
         >
           {q.trim().length > 0 && q.trim().length < SERVER_FROM && (
             <p className="px-3 py-2 text-small text-muted-foreground">
@@ -491,7 +513,6 @@ export function GlobalSearch({
         autoComplete="off"
         spellCheck={false}
         enterKeyHint="search"
-        autoFocus={sheet}
         placeholder="Search pages, settings, problems…"
         value={q}
         onChange={(e) => setQ(e.target.value)}
@@ -515,8 +536,7 @@ export function GlobalSearch({
 
   if (sheet)
     return (
-      <div
-        role="search"
+      <search
         className="fixed inset-0 z-90 flex flex-col bg-bg pt-[env(safe-area-inset-top)]"
         onKeyDown={(e) => e.key === "Escape" && onClose?.()}
       >
@@ -527,12 +547,11 @@ export function GlobalSearch({
           </button>
         </div>
         {panel}
-      </div>
+      </search>
     )
   return (
-    <div
+    <search
       ref={box}
-      role="search"
       className={cn(
         "@container relative min-w-[42px] transition-[flex-basis] duration-200 ease-out",
         wide ? "flex-[0_1_820px]" : "flex-[0_1_300px]",
@@ -541,7 +560,7 @@ export function GlobalSearch({
     >
       {field}
       {panel}
-    </div>
+    </search>
   )
 }
 
@@ -560,7 +579,8 @@ export function PhoneSearch({ pages }: { pages: SearchPage[] }) {
       >
         <Search aria-hidden className="size-5" />
       </button>
-      {open && createPortal(<GlobalSearch pages={pages} variant="sheet" onClose={() => setOpen(false)} />, document.body)}
+      {open &&
+        createPortal(<GlobalSearch pages={pages} variant="sheet" onClose={() => setOpen(false)} />, document.body)}
     </>
   )
 }

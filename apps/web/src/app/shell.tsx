@@ -68,7 +68,9 @@ const groups = [
 /** The phone tab bar: the four pages used most; every page is in the More sheet. */
 const tabs = operate.slice(0, 4)
 /** Every page, for the search. */
-const searchPages: SearchPage[] = groups.flatMap((g) => g.items.map((i) => ({ to: i.to, label: i.label, group: g.label })))
+const searchPages: SearchPage[] = groups.flatMap((g) =>
+  g.items.map((i) => ({ to: i.to, label: i.label, group: g.label })),
+)
 
 type Summary = { openProblems: number; pendingAccess: number; workers: { online: number; total: number } }
 type Me = { twoFactor: boolean }
@@ -239,12 +241,7 @@ function TopBar({
         ref={setActionsSlot}
         className={cn("flex shrink-0 items-center gap-2 pe-3 empty:hidden", searching && "hidden")}
       />
-      <GlobalSearch
-        pages={searchPages}
-        variant="bar"
-        onOpenChange={setSearching}
-        className="me-[22px] lg:me-7"
-      />
+      <GlobalSearch pages={searchPages} variant="bar" onOpenChange={setSearching} className="me-[22px] lg:me-7" />
     </header>
   )
 }

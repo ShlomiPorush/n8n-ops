@@ -54,7 +54,7 @@ export async function signIn(page: Page) {
 async function signInWithPassword(page: Page) {
   await page.goto("/login")
   await page.getByLabel("Username").fill(username)
-  await page.getByLabel("Password").fill(password)
+  await page.getByLabel("Password", { exact: true }).fill(password)
   await page.getByRole("button", { name: "Continue" }).click()
   await expect(page.getByText("Two-factor code")).toBeVisible()
   await page.getByLabel("Two-factor code").fill(await freshTotp(loadSecret()))

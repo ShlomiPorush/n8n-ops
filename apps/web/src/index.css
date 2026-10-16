@@ -30,6 +30,11 @@
   --ui-fail: #c42b1c;
   --ui-info: #1f5fbf;
 
+  /* Layout values that the plain CSS rules below need; the Tailwind names in @theme mirror them. */
+  --ui-pad-x: 16px;
+  --ui-pad-y: 9px;
+  --ui-tabbar: 64px;
+
   /* shadcn/ui names, mapped onto the tokens so every primitive follows them. */
   --background: var(--ui-bg);
   --foreground: var(--ui-ink);
@@ -238,17 +243,158 @@
   }
 }
 
-/* Motion explains a state change and nothing else; no transitions at all for those who ask for less motion. */
+/*
+ * Layers, from the top (OT-3). Use only these values:
+ * toast 100000 > confirm 99999 (a confirm opened from a dialog) > dialog and its backdrop 50 > popovers, menus
+ * and pickers 50 (Radix portals, opened last so they sit above) > save bar 45 > tab bar 40 > More sheet 36 and
+ * its veil 35 > phone top bar 30 > sticky heads inside a page 10 > chart tooltips 3.
+ */
+
+/*
+ * Motion explains a state change and nothing else (AX-8): .12s tooltips and flyouts, .15s switches, chevrons,
+ * grips and hover colours, .2s sheets and dialogs, .3s toast fade. Under reduced motion every transition and
+ * animation is off, the sheet included.
+ */
 /* biome-ignore-start lint/complexity/noImportantStyles: one global rule must beat every utility class */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
     transition: none !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
     scroll-behavior: auto !important;
   }
 }
 /* biome-ignore-end lint/complexity/noImportantStyles: one global rule must beat every utility class */
+
+/* Thin themed scrollbars (OT-4). */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--ui-muted) 45%, transparent) transparent;
+}
+
+/*
+ * Phone dialogs are bottom sheets (DS-1, DS-2, DS-4): rounded top corners, four fifths of the screen at the
+ * start, square corners and clear of the notch once grown to full height.
+ */
+@media (max-width: 760px) {
+  [data-slot="dialog-content"] {
+    inset: auto 0 0 0;
+    max-height: 80vh;
+    max-height: 80dvh;
+    border-radius: 16px 16px 0 0;
+    transition: border-radius 0.2s ease;
+  }
+  [data-slot="dialog-content"][data-full] {
+    border-radius: 0;
+    padding-top: env(safe-area-inset-top);
+  }
+}
+/* The grip: a short line in a large hit area that turns bolder and ink while held. */
+[data-slot="dialog-grip"] {
+  place-items: center;
+  flex-shrink: 0;
+  width: 120px;
+  height: 20px;
+  margin: 0 auto -4px;
+  touch-action: none;
+  cursor: grab;
+}
+[data-slot="dialog-grip"] > span {
+  width: 40px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--ui-line);
+  transition:
+    width 0.15s ease,
+    height 0.15s ease,
+    background-color 0.15s ease;
+}
+[data-held] [data-slot="dialog-grip"] {
+  cursor: grabbing;
+}
+[data-held] [data-slot="dialog-grip"] > span {
+  width: 56px;
+  height: 5px;
+  background: var(--ui-ink);
+}
+
+/* Sortable headers (TB-1): a small triangle, hidden until sorted, a faint preview on hover. */
+[data-sort-head]::after {
+  content: "";
+  margin-inline-start: 5px;
+  border-inline: 4px solid transparent;
+  border-top: 5px solid currentColor;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+[aria-sort="ascending"] > [data-sort-head]::after {
+  border-top: 0;
+  border-bottom: 5px solid currentColor;
+  opacity: 1;
+}
+[aria-sort="descending"] > [data-sort-head]::after {
+  opacity: 1;
+}
+@media (hover: hover) {
+  [aria-sort="none"] > [data-sort-head]:hover::after {
+    opacity: 0.35;
+  }
+}
+
+/*
+ * Tables stack into rows where they have less than 560px, on a phone or beside a reading pane (TB-14): the
+ * header row goes, the first cell takes the first line, every other value carries its column name, the
+ * actions take the last line and empty cells disappear. A sort control replaces the header row.
+ */
+[data-slot="table-wrap"] {
+  container-type: inline-size;
+}
+[data-slot="table-sort"] {
+  display: none;
+}
+@container (max-width: 559px) {
+  [data-slot="table-sort"] {
+    display: flex;
+  }
+  [data-stack] {
+    min-width: 0;
+  }
+  [data-stack] > thead {
+    display: none;
+  }
+  [data-stack] > tbody {
+    display: block;
+  }
+  [data-stack] > tbody > tr {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 12px;
+    padding: var(--ui-pad-y) var(--ui-pad-x);
+  }
+  [data-stack] > tbody > tr > td {
+    display: block;
+    min-width: 0;
+    max-width: 100%;
+    padding: 0;
+    text-align: start;
+  }
+  [data-stack] > tbody > tr > td:first-child,
+  [data-stack] > tbody > tr > td[colspan],
+  [data-stack] > tbody > tr > td:last-child:has([data-slot="button"]) {
+    flex-basis: 100%;
+  }
+  [data-stack] > tbody > tr > td:not(:first-child, [colspan]):not(:last-child:has([data-slot="button"]))[data-label]::before {
+    content: attr(data-label) " ";
+    color: var(--ui-muted);
+    font-weight: 400;
+  }
+  [data-stack] > tbody > tr > td:empty {
+    display: none;
+  }
+}
 
 /* Status tint for tags, banners and counters: the status colour at 14% over whatever is below. */
 @utility tint-ok {
@@ -286,4 +432,14 @@
 @utility panel {
   background-color: var(--ui-panel);
   border-radius: 12px;
+}
+
+/* While the save bar shows, every scrolling page keeps room under its last field (SV-1). */
+html[data-unsaved] :is(#main, [data-scroll-pane]) {
+  padding-bottom: 96px;
+}
+@media (max-width: 760px) {
+  html[data-unsaved] #main {
+    padding-bottom: calc(var(--ui-tabbar) + 76px + env(safe-area-inset-bottom));
+  }
 }

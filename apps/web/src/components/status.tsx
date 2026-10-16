@@ -1,5 +1,7 @@
+import { useEffect, useState } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { AGO_TICK_MS } from "@/lib/behavior"
 import { formatFull, formatWhen, useTimeZone } from "@/lib/time"
 import { cn } from "@/lib/utils"
 
@@ -119,7 +121,7 @@ export function Code({ children, className }: { children: React.ReactNode; class
   return <code className={cn("rounded-tag bg-ink/6 px-1.5 py-0.5 font-mono break-all", className)}>{children}</code>
 }
 
-/** "4 min ago", "3 days ago", or a date for older values. For ages and deadlines, not for list times. */
+/** "4 min ago", "30 h ago", "3 d ago" (FW-1), then months. For ages and deadlines, not for list times. */
 export function timeAgo(value: string | Date | null | undefined): string {
   if (!value) return "never"
   const ms = Date.now() - new Date(value).getTime()
@@ -138,18 +140,40 @@ export function timeAgo(value: string | Date | null | undefined): string {
   const m = Math.floor(s / 60)
   if (m < 60) return `${m} min ago`
   const h = Math.floor(m / 60)
-  if (h < 24) return `${h} h ago`
+  if (h < 48) return `${h} h ago`
   const d = Math.floor(h / 24)
-  if (d < 30) return `${d} day${d === 1 ? "" : "s"} ago`
+  if (d < 30) return `${d} d ago`
   const mo = Math.floor(d / 30)
   if (mo < 12) return `${mo} month${mo === 1 ? "" : "s"} ago`
   const y = Math.floor(d / 365)
   return `${y} year${y === 1 ? "" : "s"} ago`
 }
 
+/** Re-renders on one shared timer, so every "3 min ago" on screen keeps ticking while the page is open (LD-12). */
+const tickers = new Set<() => void>()
+let tickTimer: ReturnType<typeof setInterval> | undefined
+export function useTick() {
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    const tick = () => setTick((t) => t + 1)
+    tickers.add(tick)
+    tickTimer ??= setInterval(() => {
+      for (const t of tickers) t()
+    }, AGO_TICK_MS)
+    return () => {
+      tickers.delete(tick)
+      if (tickers.size === 0) {
+        clearInterval(tickTimer)
+        tickTimer = undefined
+      }
+    }
+  }, [])
+}
+
 /** An age ("18 h ago"), with the exact time in the app's time zone on hover. */
 export function TimeAgo({ value }: { value: string | Date | null | undefined }) {
   const tz = useTimeZone()
+  useTick()
   if (!value) return <span>never</span>
   return (
     <Tooltip>

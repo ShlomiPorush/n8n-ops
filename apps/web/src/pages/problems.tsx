@@ -1,6 +1,7 @@
-import { BellOff, CheckCircle2, ExternalLink, GitMerge, RotateCcw, Search } from "lucide-react"
+import { BellOff, CheckCircle2, ExternalLink, GitMerge, RotateCcw } from "lucide-react"
 import { useState } from "react"
 import { Link, useNavigate, useParams, useSearchParams } from "react-router"
+import { FilterBar, Picker, SearchBox } from "@/components/filter-bar"
 import { FlowGraph, type GraphNode } from "@/components/flow-graph"
 import {
   Copyable,
@@ -13,6 +14,7 @@ import {
   PageHead,
   Panel,
   PanelHead,
+  Reloading,
   UserText,
 } from "@/components/kit"
 import { ListWithPanel } from "@/components/list-panel"
@@ -27,12 +29,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, useSort } from "@/components/ui/table"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { api, useApi, useApiMutation } from "@/lib/api"
-import { formatDateTime, n, useTimeZone } from "@/lib/time"
+import { api, describeError, useApi, useApiMutation } from "@/lib/api"
+import { formatDateTime, n, plural, useTimeZone } from "@/lib/time"
 
 export type ProblemRow = {
   id: string
@@ -66,12 +67,16 @@ type ProblemDetailData = ProblemRow & {
   sameError: { id: string; workflowName: string; instanceName: string; status: string }[]
 }
 
+/** Marks the raw data window while its content loads. */
+const loadingRaw = { loading: true }
+
 const statusWords: Record<string, string> = { open: "open", muted: "muted", resolved: "resolved" }
 
 export function ProblemsTable({
   rows,
   selected,
   onOpen,
+  href,
   showInstance = true,
   empty = "No problems here.",
   bare,
@@ -79,34 +84,52 @@ export function ProblemsTable({
   rows: ProblemRow[]
   selected?: string
   onOpen: (id: string) => void
+  /** The address of a row, for the list that opens its first item by itself. */
+  href?: (id: string) => string
   showInstance?: boolean
   empty?: string
   /** Inside a panel that has its own header. */
   bare?: boolean
 }) {
+  const sort = useSort(rows, {
+    id: showInstance ? "problems" : "instance-problems",
+    columns: {
+      status: { label: "Status", value: (p) => (p.regression ? 3 : p.status === "open" ? 2 : p.status === "muted" ? 1 : 0) },
+      workflow: { label: "Workflow", value: (p) => p.workflowName },
+      error: { label: "Error", value: (p) => p.errorMessage },
+      ...(showInstance ? { instance: { label: "Instance", value: (p: ProblemRow) => p.instanceName } } : {}),
+      failures: { label: "Failures", value: (p) => p.count },
+      lastSeen: { label: "Last seen", value: (p) => new Date(p.lastSeen) },
+    },
+  })
   if (rows.length === 0) {
     const empt = <Empty title={empty}>A failure that n8n reports shows up here once, however often it repeats.</Empty>
     return bare ? empt : <Panel>{empt}</Panel>
   }
   return (
-    <Table bare={bare}>
+    <Table bare={bare} sort={sort}>
       <TableHeader>
         <TableRow>
-          <TableHead>Status</TableHead>
-          <TableHead>Workflow</TableHead>
-          <TableHead>Error</TableHead>
-          {showInstance && <TableHead>Instance</TableHead>}
-          <TableHead className="text-end">Failures</TableHead>
-          <TableHead className="text-end">Last seen</TableHead>
+          <TableHead sort={sort.head("status")}>Status</TableHead>
+          <TableHead sort={sort.head("workflow")}>Workflow</TableHead>
+          <TableHead sort={sort.head("error")}>Error</TableHead>
+          {showInstance && <TableHead sort={sort.head("instance")}>Instance</TableHead>}
+          <TableHead className="text-end" sort={sort.head("failures")}>
+            Failures
+          </TableHead>
+          <TableHead className="text-end" sort={sort.head("lastSeen")}>
+            Last seen
+          </TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
-        {rows.map((p) => (
+        {sort.rows.map((p) => (
           <TableRow
             key={p.id}
             data-state={selected === p.id ? "selected" : undefined}
             aria-current={selected === p.id ? "true" : undefined}
             className="hover-row"
+            data-href={href?.(p.id)}
             onClick={() => onOpen(p.id)}
           >
             <TableCell>
@@ -143,7 +166,7 @@ export function ProblemsPage() {
   const instance = params.get("instance") ?? "all"
   const q = params.get("q") ?? ""
   const query = new URLSearchParams({ status, ...(instance !== "all" ? { instance } : {}), ...(q ? { q } : {}) })
-  const rows = useApi<ProblemRow[]>(`/problems?${query}`, { refetchInterval: 15_000 })
+  const rows = useApi<ProblemRow[]>(`/problems?${query}`, { refetchInterval: 15_000, keepRows: true })
   const instances = useApi<{ instances: { id: string; name: string }[] }>("/instances")
   const setParam = (k: string, v: string) => {
     const next = new URLSearchParams(params)
@@ -153,48 +176,49 @@ export function ProblemsPage() {
   }
   const open = (pid: string) => navigate(`/problems/${pid}?${params}`)
   const count = rows.data?.length
+  const filtered = instance !== "all" || q !== ""
 
   const list = (
     <>
-      <PageHead
-        title="Problems"
-        description={
-          count === undefined
-            ? "One row per workflow, node and error. Each alerts once."
-            : `${n(count)} ${statusWords[status] ?? ""} ${count === 1 ? "problem" : "problems"}. One row per workflow, node and error; each alerts once.`
+      <PageHead title="Problems" description="One row per workflow, node and error; each alerts once." />
+      <FilterBar
+        views={
+          <ToggleGroup
+            type="single"
+            value={status}
+            onValueChange={(v) => v && setParam("status", v)}
+            aria-label="Status"
+          >
+            <ToggleGroupItem value="open">Open</ToggleGroupItem>
+            <ToggleGroupItem value="muted">Muted</ToggleGroupItem>
+            <ToggleGroupItem value="resolved">Resolved</ToggleGroupItem>
+          </ToggleGroup>
         }
-      />
-      <div className="flex flex-wrap items-center gap-2">
-        <ToggleGroup type="single" value={status} onValueChange={(v) => v && setParam("status", v)} aria-label="Status">
-          <ToggleGroupItem value="open">Open</ToggleGroupItem>
-          <ToggleGroupItem value="muted">Muted</ToggleGroupItem>
-          <ToggleGroupItem value="resolved">Resolved</ToggleGroupItem>
-        </ToggleGroup>
-        <Select value={instance} onValueChange={(v) => setParam("instance", v)}>
-          <SelectTrigger className="w-44" aria-label="Instance">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All instances</SelectItem>
-            {(instances.data?.instances ?? []).map((i) => (
-              <SelectItem key={i.id} value={i.id}>
-                {i.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <div className="relative w-64 max-md:w-full">
-          <Search className="pointer-events-none absolute start-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            className="ps-8"
-            type="search"
-            aria-label="Search workflow or error"
-            placeholder="Search workflow or error"
-            value={q}
-            onChange={(e) => setParam("q", e.target.value)}
-          />
-        </div>
-      </div>
+        search={<SearchBox label="Search workflow or error" value={q} onChange={(v) => setParam("q", v)} />}
+        active={Number(instance !== "all")}
+        count={count === undefined ? undefined : plural(count, `${statusWords[status] ?? ""} problem`)}
+        onClear={
+          filtered
+            ? () => {
+                const next = new URLSearchParams(params)
+                next.delete("instance")
+                next.delete("q")
+                setParams(next, { replace: true })
+              }
+            : undefined
+        }
+      >
+        <Picker
+          label="Instance"
+          value={instance}
+          defaultValue="all"
+          onChange={(v) => setParam("instance", v)}
+          options={[
+            { value: "all", label: "All" },
+            ...(instances.data?.instances ?? []).map((i) => ({ value: i.id, label: i.name })),
+          ]}
+        />
+      </FilterBar>
       {rows.error ? (
         <Panel>
           <LoadError what="problems" error={rows.error} retry={() => rows.refetch()} />
@@ -204,14 +228,17 @@ export function ProblemsPage() {
           <Loading>Loading problems…</Loading>
         </Panel>
       ) : (
-        <ProblemsTable
-          rows={rows.data ?? []}
-          selected={id}
-          onOpen={open}
-          empty={
-            q ? `No ${statusWords[status] ?? ""} problems match "${q}".` : `No ${statusWords[status] ?? ""} problems.`
-          }
-        />
+        <Reloading busy={rows.isPlaceholderData}>
+          <ProblemsTable
+            rows={rows.data ?? []}
+            selected={id}
+            onOpen={open}
+            href={(pid) => `/problems/${pid}?${params}`}
+            empty={
+              q ? `No ${statusWords[status] ?? ""} problems match "${q}".` : `No ${statusWords[status] ?? ""} problems.`
+            }
+          />
+        </Reloading>
       )}
     </>
   )
@@ -348,7 +375,15 @@ export function ProblemDetail({ id }: { id: string }) {
             {p.latestFailureId && (
               <Button
                 variant="link"
-                onClick={async () => setRaw(await api(`/problems/${id}/failures/${p.latestFailureId}`))}
+                onClick={async () => {
+                  // The window opens at once and fills in when the execution arrives (DS-17).
+                  setRaw(loadingRaw)
+                  try {
+                    setRaw(await api(`/problems/${id}/failures/${p.latestFailureId}`))
+                  } catch (e) {
+                    setRaw({ error: `Could not load the execution: ${describeError(e)}` })
+                  }
+                }}
               >
                 Show full execution
               </Button>
@@ -420,9 +455,13 @@ export function ProblemDetail({ id }: { id: string }) {
           <DialogHeader>
             <DialogTitle>Raw data</DialogTitle>
           </DialogHeader>
-          <pre className="min-w-0 overflow-auto rounded-sm bg-panel p-3 font-mono text-meta whitespace-pre-wrap break-words">
-            {JSON.stringify(raw, null, 2)}
-          </pre>
+          {raw === loadingRaw ? (
+            <Loading>Loading the execution…</Loading>
+          ) : (
+            <pre className="min-w-0 overflow-auto rounded-sm bg-panel p-3 font-mono text-meta whitespace-pre-wrap break-words">
+              {JSON.stringify(raw, null, 2)}
+            </pre>
+          )}
         </DialogContent>
       </Dialog>
       <MergeDialog problem={p} open={merging} onOpenChange={setMerging} />

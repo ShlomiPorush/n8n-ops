@@ -1,10 +1,8 @@
 import { useEffect, useState } from "react"
 import { Link } from "react-router"
-import { Panel, PanelHead, SaveBar } from "@/components/kit"
+import { Panel, PanelHead, SwitchRow, useSaveSource } from "@/components/kit"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Field, FieldContent, FieldDescription, FieldLabel } from "@/components/ui/field"
-import { Switch } from "@/components/ui/switch"
 import { useApiMutation } from "@/lib/api"
 import { n } from "@/lib/time"
 
@@ -31,7 +29,6 @@ export function AgentAccessCard({ id, name, scopesSource, keyScopes, agentAccess
   }, [agentAccess, keyScopes])
   const save = useApiMutation<{ agentAccess: Props["agentAccess"] }>("PATCH", `/instances/${id}`, {
     invalidate: ["/instances", `/instances/${id}`],
-    success: "Agent access saved",
   })
   const groups = new Map<string, string[]>()
   for (const s of [...keyScopes].sort()) {
@@ -47,8 +44,20 @@ export function AgentAccessCard({ id, name, scopesSource, keyScopes, agentAccess
     })
   const unsupported = scopesSource === "declared"
   const stored = initialScopes()
-  const dirty =
-    enabled !== agentAccess.enabled || scopes.size !== stored.size || [...scopes].some((s) => !stored.has(s))
+  const count =
+    Number(enabled !== agentAccess.enabled) +
+    [...scopes].filter((s) => !stored.has(s)).length +
+    [...stored].filter((s) => !scopes.has(s)).length
+  useSaveSource(`agent-access-${id}`, {
+    label: "agent access",
+    saved: "Agent access saved",
+    count,
+    save: () => save.mutateAsync({ agentAccess: { enabled, scopes: [...scopes] } }),
+    discard: () => {
+      setEnabled(agentAccess.enabled)
+      setScopes(initialScopes())
+    },
+  })
 
   return (
     <Panel className="overflow-visible">
@@ -71,13 +80,13 @@ export function AgentAccessCard({ id, name, scopesSource, keyScopes, agentAccess
         </p>
       ) : (
         <div className="grid gap-4 border-t border-line p-pad-x">
-          <Field orientation="horizontal">
-            <Switch id={`agent-access-${id}`} checked={enabled} onCheckedChange={setEnabled} />
-            <FieldContent>
-              <FieldLabel htmlFor={`agent-access-${id}`}>Agents may request access</FieldLabel>
-              <FieldDescription>Off: requests for {name} are refused before anyone is asked.</FieldDescription>
-            </FieldContent>
-          </Field>
+          <SwitchRow
+            id={`agent-access-${id}`}
+            title="Agents may request access"
+            description={`Off: requests for ${name} are refused before anyone is asked.`}
+            checked={enabled}
+            onCheckedChange={setEnabled}
+          />
           {enabled && (
             <div className="grid gap-3">
               <div className="flex flex-wrap items-center gap-2">
@@ -120,17 +129,6 @@ export function AgentAccessCard({ id, name, scopesSource, keyScopes, agentAccess
               </p>
             </div>
           )}
-          <SaveBar
-            dirty={dirty}
-            saving={save.isPending}
-            label="Save agent access"
-            note="Agent access changed"
-            onDiscard={() => {
-              setEnabled(agentAccess.enabled)
-              setScopes(initialScopes())
-            }}
-            onSave={() => save.mutate({ agentAccess: { enabled, scopes: [...scopes] } })}
-          />
         </div>
       )}
     </Panel>

@@ -4,7 +4,7 @@ import { Dot, type HealthState, StatusTag, statusOf, TimeAgo, Tone } from "@/com
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { useApi } from "@/lib/api"
-import { n } from "@/lib/time"
+import { n, plural } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { behind, type InstanceRow } from "./instances"
 
@@ -85,7 +85,7 @@ export function OverviewPage() {
       title="Overview"
       description={
         o
-          ? `${n(attention.length)} ${attention.length === 1 ? "thing needs" : "things need"} you · ${n(o.stats.openProblems)} open ${o.stats.openProblems === 1 ? "problem" : "problems"} across ${n(o.stats.instances)} ${o.stats.instances === 1 ? "instance" : "instances"}`
+          ? `${plural(attention.length, "thing needs", "things need")} you · ${plural(o.stats.openProblems, "open problem")} across ${plural(o.stats.instances, "instance")}`
           : "What needs you now, and how each n8n instance is doing."
       }
     >
@@ -189,7 +189,7 @@ function AttentionRow({ a }: { a: AttentionItem }) {
       >
         <span className="block truncate font-mono text-[0.9em]">{a.errorMessage}</span>
         <span>
-          <UserText>{a.instanceName}</UserText> · {n(a.count)} {a.count === 1 ? "failure" : "failures"}
+          <UserText>{a.instanceName}</UserText> · {plural(a.count, "failure")}
         </span>
       </AlertRow>
     )

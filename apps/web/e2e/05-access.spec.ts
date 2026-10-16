@@ -73,7 +73,7 @@ test("the instance opens read-only access to agents", async ({ request }) => {
   await page.getByText("e2e-n8n", { exact: true }).click()
   await page.getByLabel("Agents may request access").click()
   await page.getByRole("button", { name: "Read only", exact: true }).click()
-  await page.getByRole("button", { name: "Save agent access" }).click()
+  await page.getByRole("button", { name: "Save changes" }).click()
   await expect(page.getByText("Agent access saved")).toBeVisible()
 
   // The workflow map tells the agent where a workflow is and what it may ask for there.

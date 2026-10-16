@@ -1,7 +1,8 @@
-import { AlertTriangle, ArrowRight, CheckCircle2, RefreshCw, Search, ShieldCheck, XCircle } from "lucide-react"
+import { AlertTriangle, ArrowRight, CheckCircle2, RefreshCw, ShieldCheck, XCircle } from "lucide-react"
 import { useState } from "react"
 import { useSearchParams } from "react-router"
-import { Empty, LoadError, Loading, Page, Panel, PanelHead, Row, UserText } from "@/components/kit"
+import { FilterBar, Picker, SearchBox } from "@/components/filter-bar"
+import { Empty, LoadError, Loading, Page, Panel, PanelHead, Reloading, Row, UserText } from "@/components/kit"
 import { Code, TimeAgo, When } from "@/components/status"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -15,11 +16,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { FieldError } from "@/components/ui/field"
-import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, useSort } from "@/components/ui/table"
 import { api, describeError, queryClient, useApi, useApiMutation } from "@/lib/api"
-import { n } from "@/lib/time"
+import { n, plural } from "@/lib/time"
 import { cn } from "@/lib/utils"
 
 type WorkflowRow = {
@@ -62,7 +62,7 @@ export function WorkflowsPage() {
     setParams(next, { replace: true })
   }
   const query = new URLSearchParams({ ...(q ? { q } : {}), ...(instance !== "all" ? { instance } : {}) })
-  const data = useApi<MapData>(`/workflows?${query}`)
+  const data = useApi<MapData>(`/workflows?${query}`, { keepRows: true })
   const instances = useApi<{ instances: { id: string; name: string }[] }>("/instances")
   const sync = useApiMutation<void>("POST", "/workflows/sync", {
     invalidate: [`/workflows?${query}`],
@@ -73,6 +73,17 @@ export function WorkflowsPage() {
   const rows = data.data?.workflows ?? []
   const filtered = Boolean(q) || instance !== "all"
   const rate = (w: WorkflowRow) => (w.runs30d ? Math.round((w.errors30d / w.runs30d) * 1000) / 10 : 0)
+  const sort = useSort(rows, {
+    id: "workflows",
+    columns: {
+      name: { label: "Workflow", value: (w) => w.name },
+      instance: { label: "Instance", value: (w) => w.instanceName },
+      trigger: { label: "Trigger", value: (w) => w.triggerType },
+      lastRun: { label: "Last run", value: (w) => (w.lastRunAt ? new Date(w.lastRunAt) : null) },
+      runs: { label: "Runs 30d", value: (w) => w.runs30d },
+      errors: { label: "Errors", value: (w) => (w.runs30d ? rate(w) : null) },
+    },
+  })
 
   return (
     <Page
@@ -136,33 +147,23 @@ export function WorkflowsPage() {
         </div>
       )}
 
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative w-72 max-md:w-full">
-          <Search className="pointer-events-none absolute start-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            className="ps-8"
-            type="search"
-            aria-label="Search all instances"
-            placeholder="Search all instances…"
-            value={q}
-            onChange={(e) => setParam("q", e.target.value)}
-          />
-        </div>
-        <Select value={instance} onValueChange={(v) => setParam("instance", v)}>
-          <SelectTrigger className="w-44" aria-label="Instance">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All instances</SelectItem>
-            {(instances.data?.instances ?? []).map((i) => (
-              <SelectItem key={i.id} value={i.id}>
-                {i.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <span className="text-muted-foreground tabular-nums">{n(rows.length)} workflows</span>
-      </div>
+      <FilterBar
+        search={<SearchBox label="Search all instances" value={q} onChange={(v) => setParam("q", v)} />}
+        active={Number(instance !== "all")}
+        count={data.data ? plural(rows.length, "workflow") : undefined}
+        onClear={filtered ? () => setParams(new URLSearchParams(), { replace: true }) : undefined}
+      >
+        <Picker
+          label="Instance"
+          value={instance}
+          defaultValue="all"
+          onChange={(v) => setParam("instance", v)}
+          options={[
+            { value: "all", label: "All" },
+            ...(instances.data?.instances ?? []).map((i) => ({ value: i.id, label: i.name })),
+          ]}
+        />
+      </FilterBar>
 
       {data.error ? (
         <Panel>
@@ -179,20 +180,21 @@ export function WorkflowsPage() {
           </Empty>
         </Panel>
       ) : (
-        <Table>
+        <Reloading busy={data.isPlaceholderData}>
+        <Table sort={sort}>
           <TableHeader>
             <TableRow>
-              <TableHead>Workflow</TableHead>
-              <TableHead>Instance</TableHead>
-              <TableHead>Trigger</TableHead>
-              <TableHead className="text-end">Last run</TableHead>
-              <TableHead className="text-end">Runs 30d</TableHead>
-              <TableHead className="text-end">Errors</TableHead>
+              <TableHead sort={sort.head("name")}>Workflow</TableHead>
+              <TableHead sort={sort.head("instance")}>Instance</TableHead>
+              <TableHead sort={sort.head("trigger")}>Trigger</TableHead>
+              <TableHead className="text-end" sort={sort.head("lastRun")}>Last run</TableHead>
+              <TableHead className="text-end" sort={sort.head("runs")}>Runs 30d</TableHead>
+              <TableHead className="text-end" sort={sort.head("errors")}>Errors</TableHead>
               <TableHead />
             </TableRow>
           </TableHeader>
           <TableBody>
-            {rows.map((w) => (
+            {sort.rows.map((w) => (
               <TableRow key={`${w.instanceId}:${w.workflowId}`}>
                 <TableCell className="max-w-80">
                   <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
@@ -245,6 +247,7 @@ export function WorkflowsPage() {
             ))}
           </TableBody>
         </Table>
+        </Reloading>
       )}
       <MoveDialog workflow={moving} onClose={() => setMoving(null)} />
     </Page>
@@ -290,7 +293,7 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
   }
   return (
     <Dialog open={workflow !== null} onOpenChange={(o) => !o && reset()}>
-      <DialogContent className="md:max-w-2xl">
+      <DialogContent className="md:max-w-2xl" keepOnBackdrop>
         <DialogHeader>
           <DialogTitle>Move {workflow?.name}</DialogTitle>
           <DialogDescription>

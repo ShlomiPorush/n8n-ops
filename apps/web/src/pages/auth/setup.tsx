@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { PasswordInput } from "@/components/ui/password-input"
 import { ApiError, api, describeError, useApi } from "@/lib/api"
 import { authClient, authErrorText } from "@/lib/auth-client"
 import { download } from "@/lib/download"
@@ -172,12 +173,12 @@ function AccountStep({ onDone }: { onDone: (password: string) => Promise<void> }
           </Field>
           <Field>
             <FieldLabel htmlFor="password">Password</FieldLabel>
-            <Input id="password" name="password" type="password" autoComplete="new-password" required minLength={12} />
+            <PasswordInput id="password" name="password" autoComplete="new-password" required minLength={12} />
             <FieldDescription>At least 12 characters.</FieldDescription>
           </Field>
           <Field>
             <FieldLabel htmlFor="confirm">Repeat password</FieldLabel>
-            <Input id="confirm" name="confirm" type="password" autoComplete="new-password" required />
+            <PasswordInput id="confirm" name="confirm" autoComplete="new-password" required />
           </Field>
           {error && <FieldError>{error}</FieldError>}
         </FieldGroup>
@@ -237,7 +238,7 @@ function TwoFactorStep({ password: known, onDone }: { password: string; onDone: 
           <FieldGroup>
             <Field>
               <FieldLabel htmlFor="pw">Confirm your password</FieldLabel>
-              <Input id="pw" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+              <PasswordInput id="pw" value={password} onChange={(e) => setPassword(e.target.value)} required />
             </Field>
             <Button type="submit" variant="primary" className="justify-self-end" disabled={busy}>
               Continue

@@ -1,11 +1,12 @@
 import { useInfiniteQuery } from "@tanstack/react-query"
+import { useEffect, useRef } from "react"
 import { Empty, LoadError, Loading, Page, Panel, UserText } from "@/components/kit"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { api } from "@/lib/api"
-import { formatDateTime, formatFull, n, useTimeZone } from "@/lib/time"
+import { formatDateTime, formatFull, n, plural, useTimeZone } from "@/lib/time"
 
 type Entry = { id: number; at: string; actor: string; action: string; target: string; via: string }
 
@@ -18,6 +19,20 @@ export function AuditPage() {
     getNextPageParam: (last) => (last.length === 100 ? last[last.length - 1]?.id : undefined),
   })
   const rows = query.data?.pages.flat() ?? []
+  // Older entries load as the end of the list comes into view, before the reader reaches it (TB-6).
+  const end = useRef<HTMLParagraphElement>(null)
+  const { hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage } = query
+  // biome-ignore lint/correctness/useExhaustiveDependencies: observe again once new rows are drawn
+  useEffect(() => {
+    const el = end.current
+    if (!el || !hasNextPage || isFetchingNextPage || isFetchNextPageError) return
+    const io = new IntersectionObserver((entries) => entries[0]?.isIntersecting && void fetchNextPage(), {
+      root: document.getElementById("main"),
+      rootMargin: "0px 0px 400px 0px",
+    })
+    io.observe(el)
+    return () => io.disconnect()
+  }, [hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage, rows.length])
   return (
     <Page
       title="Audit log"
@@ -80,14 +95,21 @@ export function AuditPage() {
           </TableBody>
         </Table>
       )}
-      {query.hasNextPage && (
-        <Button
-          className="justify-self-start"
-          onClick={() => void query.fetchNextPage()}
-          disabled={query.isFetchingNextPage}
-        >
-          {query.isFetchingNextPage ? "Loading…" : "Load older entries"}
-        </Button>
+      {rows.length > 0 && (
+        <p ref={end} aria-live="polite" className="text-center text-small text-muted-foreground">
+          {isFetchNextPageError ? (
+            <>
+              Could not load older entries.{" "}
+              <Button variant="link" onClick={() => void fetchNextPage()}>
+                Try again
+              </Button>
+            </>
+          ) : hasNextPage ? (
+            "Loading older entries…"
+          ) : (query.data?.pages.length ?? 0) > 1 ? (
+            `All ${plural(rows.length, "entry", "entries")} shown`
+          ) : null}
+        </p>
       )}
     </Page>
   )

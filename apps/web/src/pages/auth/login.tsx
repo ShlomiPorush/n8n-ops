@@ -1,14 +1,25 @@
-import { useState } from "react"
-import { Navigate, useNavigate } from "react-router"
+import { useRef, useState } from "react"
+import { Navigate, useNavigate, useSearchParams } from "react-router"
 import { Button } from "@/components/ui/button"
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { PasswordInput } from "@/components/ui/password-input"
 import { useApi } from "@/lib/api"
 import { authClient, authErrorText } from "@/lib/auth-client"
 import { AuthFrame, TotpInput } from "./shared"
 
+/** Where to go after signing in: the page that was asked for, if it is a page of this app (NL-18). */
+function safeNext(next: string | null): string {
+  if (!next || next.length > 2048 || !next.startsWith("/") || next.startsWith("//")) return "/"
+  const path = new URL(next, window.location.origin).pathname
+  return /^\/(login|setup|api)(\/|$)/.test(path) ? "/" : next
+}
+
 export function LoginPage() {
   const navigate = useNavigate()
+  const [params] = useSearchParams()
+  const next = safeNext(params.get("next"))
+  const passwordRef = useRef<HTMLInputElement>(null)
   const status = useApi<{ hasUser: boolean }>("/setup/status")
   const [step, setStep] = useState<"password" | "totp">("password")
   const [error, setError] = useState("")
@@ -24,7 +35,12 @@ export function LoginPage() {
       password: String(form.get("password")),
     })
     setBusy(false)
-    if (error) return setError(authErrorText(error))
+    if (error) {
+      // The username stays; the password is cleared for the next try.
+      if (passwordRef.current) passwordRef.current.value = ""
+      passwordRef.current?.focus()
+      return setError(authErrorText(error))
+    }
     if (data && "twoFactorRedirect" in data && data.twoFactorRedirect) return setStep("totp")
     // Signed in without two-factor: it must be set up before anything else.
     navigate("/setup", { replace: true })
@@ -36,7 +52,7 @@ export function LoginPage() {
     const { error } = await authClient.twoFactor.verifyTotp({ code })
     setBusy(false)
     if (error) return setError(authErrorText(error))
-    navigate("/", { replace: true })
+    navigate(next, { replace: true })
   }
 
   if (step === "totp")
@@ -67,7 +83,7 @@ export function LoginPage() {
           </Field>
           <Field>
             <FieldLabel htmlFor="password">Password</FieldLabel>
-            <Input id="password" name="password" type="password" autoComplete="current-password" required />
+            <PasswordInput ref={passwordRef} id="password" name="password" autoComplete="current-password" required />
           </Field>
           {error && <FieldError>{error}</FieldError>}
           <Field>

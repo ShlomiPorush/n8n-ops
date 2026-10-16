@@ -19,3 +19,10 @@ describe("timeAgo", () => {
     expect(timeAgo(at(10_000))).toBe("just now")
   })
 })
+
+describe("timeAgo steps (FW-1)", () => {
+  it("counts hours up to two days, then days", () => {
+    expect(timeAgo(at(-30 * 3600_000))).toBe("30 h ago")
+    expect(timeAgo(at(-3 * 86400_000))).toBe("3 d ago")
+  })
+})

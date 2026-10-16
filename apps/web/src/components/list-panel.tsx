@@ -1,13 +1,18 @@
-import { ArrowLeft, X } from "lucide-react"
+import { ArrowLeft } from "lucide-react"
+import { useEffect, useRef } from "react"
+import { useLocation, useNavigate } from "react-router"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable"
+import { ResizablePanel, ResizablePanelGroup, ResizableHandle } from "@/components/ui/resizable"
 import { useMediaQuery } from "@/hooks/use-mobile"
 
 /**
- * A list with a reading pane. From 1280px an opened item reads in a resizable pane beside the list (the
- * list stays and marks the open row). Narrower, the list stands alone and an item opens as a full screen
- * dialog over it. Either way the open item is in the URL.
+ * A list with a reading pane (DS-13). From 1000px an item reads in a pane beside the list, like a mail
+ * client: the list marks the open row, and with nothing open the first item opens by itself, so the pane is
+ * never empty. Narrower, the list stands alone and an item opens as a dialog over it (a sheet on a phone).
+ * Either way the open item is in the address, so Back and reload work.
+ *
+ * Rows mark their address with `data-href`; the first one is what opens by itself.
  */
 export function ListWithPanel({
   list,
@@ -20,17 +25,36 @@ export function ListWithPanel({
   panelTitle: string
   onClose: () => void
 }) {
-  const wide = useMediaQuery("(min-width: 1280px)")
-  if (!panel) return <div className="grid min-w-0 content-start gap-gap">{list}</div>
+  const wide = useMediaQuery("(min-width: 1000px)")
+  const navigate = useNavigate()
+  const { pathname } = useLocation()
+  const listRef = useRef<HTMLDivElement>(null)
+
+  // Open the first item on a wide screen. The address is corrected in place, so Back still leaves the page.
+  useEffect(() => {
+    if (!wide || panel) return
+    const first = listRef.current?.querySelector<HTMLElement>("[data-href]")?.dataset.href
+    if (first) navigate(first, { replace: true })
+  })
+
+  const listColumn = (
+    <div ref={listRef} className="grid min-w-0 content-start gap-gap">
+      {list}
+    </div>
+  )
+  if (!panel) return listColumn
   if (!wide) {
     return (
       <>
-        <div className="grid min-w-0 content-start gap-gap">{list}</div>
+        {listColumn}
         <Dialog open onOpenChange={(o) => !o && onClose()}>
           <DialogContent
             className="md:max-w-[1100px]"
             aria-describedby={undefined}
             showCloseButton={false}
+            pullToClose
+            // The open item is in the address: Back already closes it.
+            history={false}
             // Focus the dialog, not its Back button, so no focus ring shows before the keyboard is used.
             onOpenAutoFocus={(e) => {
               e.preventDefault()
@@ -54,19 +78,26 @@ export function ListWithPanel({
     <div className="absolute inset-0">
       <ResizablePanelGroup orientation="horizontal">
         <ResizablePanel defaultSize="42%" minSize="25%">
-          <div className="grid h-full min-w-0 content-start gap-gap overflow-y-auto py-[22px] ps-7 pe-4">{list}</div>
+          <div
+            ref={listRef}
+            data-scroll-pane
+            className="grid h-full min-w-0 content-start gap-gap overflow-y-auto overscroll-contain py-[22px] ps-[22px] pe-4 lg:ps-7"
+          >
+            {list}
+          </div>
         </ResizablePanel>
         <ResizableHandle withHandle />
         <ResizablePanel defaultSize="58%" minSize="30%">
-          <div className="flex h-full flex-col">
-            <div className="flex h-12 shrink-0 items-center gap-2 border-b border-line ps-pad-x pe-2">
-              <span className="text-small font-semibold text-muted-foreground">{panelTitle}</span>
-              <Button size="icon-sm" className="ms-auto" onClick={onClose} aria-label="Close panel">
-                <X />
-              </Button>
+          <section aria-label={panelTitle} className="flex h-full flex-col">
+            <div
+              // A new item starts at its top (DS-6).
+              key={pathname}
+              data-scroll-pane
+              className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 pt-[22px] pb-15"
+            >
+              {panel}
             </div>
-            <div className="min-h-0 flex-1 overflow-y-auto px-6 pt-5 pb-15">{panel}</div>
-          </div>
+          </section>
         </ResizablePanel>
       </ResizablePanelGroup>
     </div>

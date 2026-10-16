@@ -1,8 +1,21 @@
 import { Download, KeyRound, Plus, ShieldCheck, Trash2 } from "lucide-react"
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { NavLink, useParams } from "react-router"
-import { toast } from "sonner"
-import { Copyable, Empty, LoadError, Loading, Page, Panel, PanelHead, SaveBar, UserText } from "@/components/kit"
+import { toast } from "@/lib/toast"
+import { useConfirm } from "@/components/confirm"
+import {
+  Copyable,
+  countChanges,
+  Empty,
+  LoadError,
+  Loading,
+  Page,
+  Panel,
+  PanelHead,
+  SecretField,
+  UserText,
+  useSaveSource,
+} from "@/components/kit"
 import { When } from "@/components/status"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -17,6 +30,7 @@ import {
 } from "@/components/ui/dialog"
 import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { PasswordInput } from "@/components/ui/password-input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -268,36 +282,50 @@ function SettingRow({
   children: React.ReactNode
   /** The control takes a full line under the label (long values). */
   wide?: boolean
-  /** A switch: it stays at the end of the row, also on a phone. */
+  /** A switch: the whole row is its label, and it stays at the end of the row, also on a phone (FS-1). */
   inline?: boolean
 }) {
+  const text = (
+    <div className="min-w-0">
+      {htmlFor && !inline ? (
+        <label htmlFor={htmlFor} className="font-semibold">
+          {label}
+        </label>
+      ) : (
+        <span className="block font-semibold">{label}</span>
+      )}
+      {hint && <span className="mt-0.5 block text-small text-muted-foreground">{hint}</span>}
+    </div>
+  )
+  if (inline)
+    return (
+      <label
+        htmlFor={htmlFor}
+        className="grid cursor-pointer grid-cols-[minmax(0,1fr)_auto] items-center gap-x-6 border-t border-line px-pad-x py-3"
+      >
+        {text}
+        {children}
+      </label>
+    )
   return (
     <div
       className={cn(
         "grid items-center gap-x-6 gap-y-2 border-t border-line px-pad-x py-3",
-        inline ? "grid-cols-[minmax(0,1fr)_auto]" : !wide && "md:grid-cols-[minmax(0,1fr)_260px]",
+        !wide && "md:grid-cols-[minmax(0,1fr)_260px]",
       )}
     >
-      <div className="min-w-0">
-        {htmlFor ? (
-          <label htmlFor={htmlFor} className="font-semibold">
-            {label}
-          </label>
-        ) : (
-          <span className="font-semibold">{label}</span>
-        )}
-        {hint && <p className="mt-0.5 text-small text-muted-foreground">{hint}</p>}
-      </div>
+      {text}
       <div className="flex min-w-0 items-center gap-2 md:justify-end">{children}</div>
     </div>
   )
 }
 
+/** Form values as loaded. A secret is `undefined` until the user replaces or removes it, and then not sent. */
 const toForm = (def: { fields: FieldDef[] }, data: Record<string, unknown>) =>
   Object.fromEntries(
     def.fields.map((f) => {
       const v = data[f.name]
-      if (f.type === "password") return [f.name, ""]
+      if (f.type === "password") return [f.name, undefined]
       if (f.type === "list") return [f.name, Array.isArray(v) ? v.join(", ") : String(v ?? "")]
       if (f.type === "switch") return [f.name, Boolean(v)]
       return [f.name, v ?? ""]
@@ -310,128 +338,164 @@ export function SettingsForm({ section }: { section: string }) {
   const [values, setValues] = useState<Record<string, unknown>>({})
   const save = useApiMutation<Record<string, unknown>>("PUT", `/settings/${section}`, {
     invalidate: [`/settings/${section}`, "/setup/checklist"],
-    success: "Settings saved",
   })
+  const initial = query.data && def ? toForm(def, query.data) : {}
+  const secrets = def?.fields.filter((f) => f.type === "password").map((f) => f.name) ?? []
+  const plain = def?.fields.filter((f) => f.type !== "password").map((f) => f.name) ?? []
+  const count = query.data
+    ? countChanges(values, initial, plain) + secrets.filter((k) => values[k] !== undefined && values[k] !== "").length
+    : 0
+  // A refresh never overwrites what the user is typing (SV-6); after a save the form takes the saved values.
+  const reload = useRef(true)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only new data replaces the form
   useEffect(() => {
-    if (query.data && def) setValues(toForm(def, query.data))
+    if (query.data && def && (reload.current || count === 0)) {
+      setValues(toForm(def, query.data))
+      reload.current = false
+    }
   }, [query.data, def])
-  if (!def) return null
-  const initial = query.data ? toForm(def, query.data) : {}
-  const dirty =
-    Boolean(query.data) && def.fields.some((f) => String(values[f.name] ?? "") !== String(initial[f.name] ?? ""))
-  const set = (name: string, value: unknown) => setValues((v) => ({ ...v, [name]: value }))
-  function submit() {
-    if (!def) return
-    const body: Record<string, unknown> = {}
-    for (const f of def.fields) {
+
+  function body() {
+    const out: Record<string, unknown> = {}
+    for (const f of def?.fields ?? []) {
       const v = values[f.name]
       if (f.type === "password") {
-        if (typeof v === "string" && v) body[f.name] = v
-      } else if (f.type === "number") body[f.name] = Number(v)
+        // An unchanged secret is never sent again; null removes it.
+        if (v === null || (typeof v === "string" && v)) out[f.name] = v
+      } else if (f.type === "number") out[f.name] = Number(v)
       else if (f.type === "list")
-        body[f.name] = String(v ?? "")
-          .split(",")
+        out[f.name] = String(v ?? "")
+          .split(/[,;\s]+/)
           .map((s) => s.trim())
           .filter(Boolean)
-      else body[f.name] = v
+      else out[f.name] = v
     }
-    save.mutate(body)
+    return out
   }
+  useSaveSource(`settings-${section}`, {
+    label: `the ${def?.title ?? section} settings`,
+    saved: "Settings saved",
+    count,
+    save: async () => {
+      reload.current = true
+      await save.mutateAsync(body())
+    },
+    discard: () => query.data && def && setValues(toForm(def, query.data)),
+  })
+  if (!def) return null
+  const set = (name: string, value: unknown) => setValues((v) => ({ ...v, [name]: value }))
 
   return (
-    <>
-      <Panel>
-        <PanelHead title={def.title} description={def.description} />
-        {query.error ? (
-          <LoadError what={def.title} error={query.error} retry={() => query.refetch()} />
-        ) : query.isLoading ? (
-          <Loading />
-        ) : (
-          def.fields.map((f) => (
-            <SettingRow key={f.name} htmlFor={f.name} label={f.label} hint={f.hint} inline={f.type === "switch"}>
-              {f.type === "switch" ? (
-                <Switch id={f.name} checked={Boolean(values[f.name])} onCheckedChange={(v) => set(f.name, v)} />
-              ) : f.type === "weekday" ? (
-                <Select value={String(values[f.name] ?? 0)} onValueChange={(v) => set(f.name, Number(v))}>
-                  <SelectTrigger id={f.name} className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {weekdays.map((d, i) => (
-                      <SelectItem key={d} value={String(i)}>
-                        {d}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              ) : (
-                <Input
-                  id={f.name}
-                  // Times are typed as 24-hour HH:MM; a native time field would follow the browser's 12-hour clock.
-                  type={f.type === "number" ? "number" : f.type === "password" ? "password" : "text"}
-                  inputMode={f.type === "time" ? "numeric" : undefined}
-                  pattern={f.type === "time" ? "([01][0-9]|2[0-3]):[0-5][0-9]" : undefined}
-                  className={f.type === "time" ? "tabular-nums" : undefined}
-                  placeholder={
-                    f.type === "password"
-                      ? query.data?.[`${f.name}Set`]
-                        ? "Stored. Type to replace."
-                        : "Not set"
-                      : f.type === "time"
-                        ? "HH:MM"
-                        : f.placeholder
-                  }
-                  value={String(values[f.name] ?? "")}
-                  onChange={(e) => set(f.name, e.target.value)}
-                />
-              )}
-            </SettingRow>
-          ))
-        )}
-        {(section === "telegram" || section === "email" || section === "storage") && (
-          <div className="flex flex-wrap items-center gap-2 border-t border-line px-pad-x py-3">
-            {section === "telegram" && <TestTelegramButton />}
-            {section === "email" && <TestEmailButton />}
-            {section === "storage" && <TestStorageButton />}
-            <span className="text-small text-muted-foreground">Uses the saved settings.</span>
-          </div>
-        )}
-      </Panel>
-      <SaveBar
-        dirty={dirty}
-        saving={save.isPending}
-        onSave={submit}
-        onDiscard={() => query.data && setValues(toForm(def, query.data))}
-        note={`${def.title}: unsaved changes`}
-      />
-    </>
+    <Panel>
+      <PanelHead title={def.title} description={def.description} />
+      {query.error ? (
+        <LoadError what={def.title} error={query.error} retry={() => query.refetch()} />
+      ) : query.isLoading ? (
+        <Loading>Loading the {def.title} settings…</Loading>
+      ) : (
+        def.fields.map((f) => (
+          <SettingRow key={f.name} htmlFor={f.name} label={f.label} hint={f.hint} inline={f.type === "switch"}>
+            {f.type === "switch" ? (
+              <Switch id={f.name} checked={Boolean(values[f.name])} onCheckedChange={(v) => set(f.name, v)} />
+            ) : f.type === "password" ? (
+              <SecretField
+                id={f.name}
+                stored={Boolean(query.data?.[`${f.name}Set`])}
+                value={values[f.name] as string | null | undefined}
+                onChange={(v) => set(f.name, v)}
+              />
+            ) : f.type === "weekday" ? (
+              <Select value={String(values[f.name] ?? 0)} onValueChange={(v) => set(f.name, Number(v))}>
+                <SelectTrigger id={f.name} className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {weekdays.map((d, i) => (
+                    <SelectItem key={d} value={String(i)}>
+                      {d}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <Input
+                id={f.name}
+                // Times are typed as 24-hour HH:MM; a native time field would follow the browser's 12-hour clock.
+                type={f.type === "number" ? "number" : "text"}
+                inputMode={f.type === "time" ? "numeric" : undefined}
+                pattern={f.type === "time" ? "([01][0-9]|2[0-3]):[0-5][0-9]" : undefined}
+                className={f.type === "time" ? "tabular-nums" : undefined}
+                placeholder={f.type === "time" ? "HH:MM" : f.placeholder}
+                value={String(values[f.name] ?? "")}
+                onChange={(e) => set(f.name, e.target.value)}
+              />
+            )}
+          </SettingRow>
+        ))
+      )}
+      {query.data && (section === "telegram" || section === "email" || section === "storage") && (
+        <TestRow section={section} data={query.data} unsaved={count > 0} />
+      )}
+    </Panel>
   )
 }
 
-function TestTelegramButton() {
-  const test = useApiMutation<void>("POST", "/alerts/test/telegram", { success: "Test message sent" })
-  return (
-    <Button onClick={() => test.mutate()} disabled={test.isPending}>
-      Send test message
-    </Button>
-  )
-}
+const tests = {
+  telegram: {
+    path: "/alerts/test/telegram",
+    label: "Send test message",
+    busy: "Sending…",
+    done: "Test message sent",
+    needs: (d: Record<string, unknown>) => (d.botTokenSet && d.chatId ? null : "the bot token and the chat ID"),
+  },
+  email: {
+    path: "/alerts/test/email",
+    label: "Send test email",
+    busy: "Sending…",
+    done: "Test email sent",
+    needs: (d: Record<string, unknown>) =>
+      d.smtpHost && Array.isArray(d.recipients) && d.recipients.length > 0 ? null : "the SMTP server and a recipient",
+  },
+  storage: {
+    path: "/backups/test-storage",
+    label: "Upload and verify a test file",
+    busy: "Uploading…",
+    done: "Upload and download verified",
+    needs: (d: Record<string, unknown>) =>
+      d.endpoint && d.bucket && d.secretAccessKeySet ? null : "the endpoint, the bucket and the secret access key",
+  },
+} as const
 
-function TestEmailButton() {
-  const test = useApiMutation<void>("POST", "/alerts/test/email", { success: "Test email sent" })
+/** The connection test of a section. It tests the saved settings; until they exist it says what to save first (FB-1). */
+function TestRow({
+  section,
+  data,
+  unsaved,
+}: {
+  section: keyof typeof tests
+  data: Record<string, unknown>
+  unsaved: boolean
+}) {
+  const t = tests[section]
+  const test = useApiMutation<void>("POST", t.path, { success: t.done })
+  const missing = t.needs(data)
   return (
-    <Button onClick={() => test.mutate()} disabled={test.isPending}>
-      Send test email
-    </Button>
-  )
-}
-
-function TestStorageButton() {
-  const test = useApiMutation<void>("POST", "/backups/test-storage", { success: "Upload and download verified" })
-  return (
-    <Button onClick={() => test.mutate()} disabled={test.isPending}>
-      Upload and verify a test file
-    </Button>
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-line px-pad-x py-3">
+      <Button
+        onClick={() => test.mutate()}
+        disabled={test.isPending || missing !== null}
+        title={missing ? `Save ${missing} first` : undefined}
+      >
+        {test.isPending ? t.busy : t.label}
+      </Button>
+      <span className="text-small text-muted-foreground">
+        {missing
+          ? `Save ${missing} first.`
+          : unsaved
+            ? "Tests the saved settings, not the unsaved changes."
+            : "Tests the saved settings."}
+      </span>
+    </div>
   )
 }
 
@@ -517,7 +581,7 @@ function KeysCard() {
           if (!o) setPrivateKey("")
         }}
       >
-        <DialogContent>
+        <DialogContent keepOnBackdrop>
           <DialogHeader>
             <DialogTitle>New backup key pair</DialogTitle>
             <DialogDescription>
@@ -592,11 +656,11 @@ function AccountCard() {
         <FieldGroup className="max-w-sm gap-3">
           <Field>
             <FieldLabel htmlFor="current">Current password</FieldLabel>
-            <Input id="current" name="current" type="password" autoComplete="current-password" required />
+            <PasswordInput id="current" name="current" autoComplete="current-password" required />
           </Field>
           <Field>
             <FieldLabel htmlFor="next">New password</FieldLabel>
-            <Input id="next" name="next" type="password" minLength={12} autoComplete="new-password" required />
+            <PasswordInput id="next" name="next" minLength={12} autoComplete="new-password" required />
             <FieldDescription>At least 12 characters. Other sessions are signed out.</FieldDescription>
           </Field>
         </FieldGroup>
@@ -633,7 +697,7 @@ function TokensCard() {
   const [kind, setKind] = useState<"mcp" | "rest">("mcp")
   const [canRequestAccess, setCanRequestAccess] = useState(false)
   const [created, setCreated] = useState("")
-  const [revoking, setRevoking] = useState<Token | null>(null)
+  const confirm = useConfirm()
   const create = useApiMutation<{ name: string; kind: string; canRequestAccess: boolean }, { token: string }>(
     "POST",
     "/admin/tokens",
@@ -643,8 +707,16 @@ function TokensCard() {
   )
   const revoke = useApiMutation<string>("DELETE", (id) => `/admin/tokens/${id}`, {
     invalidate: ["/admin/tokens"],
-    success: "Token revoked",
   })
+  async function askRevoke(t: Token) {
+    const ok = await confirm({
+      title: `Revoke the token ${t.name}?`,
+      message: "The agent or script using it loses access at once. This cannot be undone; create a new token to give access again.",
+      confirmLabel: "Revoke token",
+      danger: true,
+    })
+    if (ok) revoke.mutate(t.id, { onSuccess: () => toast.success(`Token ${t.name} revoked`) })
+  }
   const list = tokens.data ?? []
   return (
     <Panel>
@@ -708,7 +780,7 @@ function TokensCard() {
                   {t.lastUsedAt ? <When value={t.lastUsedAt} /> : "Never"}
                 </TableCell>
                 <TableCell className="text-end">
-                  <Button size="sm" variant="danger" onClick={() => setRevoking(t)}>
+                  <Button size="sm" variant="danger" onClick={() => void askRevoke(t)}>
                     <Trash2 /> Revoke
                   </Button>
                 </TableCell>
@@ -717,29 +789,8 @@ function TokensCard() {
           </TableBody>
         </Table>
       )}
-      <Dialog open={revoking !== null} onOpenChange={(o) => !o && setRevoking(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Revoke {revoking?.name}?</DialogTitle>
-            <DialogDescription>
-              The agent or script using this token loses access at once. This cannot be undone; create a new token to
-              give access again.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button onClick={() => setRevoking(null)}>Cancel</Button>
-            <Button
-              variant="danger"
-              disabled={revoke.isPending}
-              onClick={() => revoking && revoke.mutate(revoking.id, { onSuccess: () => setRevoking(null) })}
-            >
-              Revoke
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent>
+        <DialogContent keepOnBackdrop>
           <DialogHeader>
             <DialogTitle>New token</DialogTitle>
             <DialogDescription>The token is shown once. Store it where the agent or script reads it.</DialogDescription>

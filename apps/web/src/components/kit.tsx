@@ -1,9 +1,12 @@
 import { Check, Copy, Loader2, Lock } from "lucide-react"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Link } from "react-router"
-import { toast } from "sonner"
+import { toast } from "@/lib/toast"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Switch } from "@/components/ui/switch"
 import { describeError } from "@/lib/api"
+import { COPIED_MS, DIM_AFTER_MS } from "@/lib/behavior"
 import { cn } from "@/lib/utils"
 
 /*
@@ -369,7 +372,7 @@ export function Copyable({
     try {
       await navigator.clipboard.writeText(value)
       setDone(true)
-      setTimeout(() => setDone(false), 1500)
+      setTimeout(() => setDone(false), COPIED_MS)
       toast.success(`Copied: ${value.length > 80 ? `${value.slice(0, 80)}…` : value}`)
     } catch {
       toast.error("Could not copy. Select the text and copy it instead.")
@@ -379,11 +382,12 @@ export function Copyable({
   return (
     <button
       type="button"
+      data-copy
       onClick={copy}
       title={value}
       aria-label={`${label ?? "Copy"}: ${value}`}
       className={cn(
-        "group/copy inline-flex max-w-full min-w-0 items-center gap-1 rounded-tag px-1 -mx-1 text-start font-mono text-[0.9em] transition-colors duration-150 hover:bg-ink/6",
+        "group/copy inline-flex max-w-full min-w-0 items-center gap-1 rounded-tag px-1 -mx-1 text-start font-mono text-[0.9em] transition-colors duration-150 [@media(hover:hover)]:hover:bg-ink/6",
         className,
       )}
     >
@@ -393,51 +397,12 @@ export function Copyable({
       <Icon
         aria-hidden
         className={cn(
-          "size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity duration-150 group-hover/copy:opacity-100 group-focus-visible/copy:opacity-100",
+          // Faint at rest so the value says it copies without a hover; full on hover and keyboard focus.
+          "size-3.5 shrink-0 text-muted-foreground opacity-50 transition-opacity duration-150 group-hover/copy:opacity-100 group-focus-visible/copy:opacity-100",
           done && "text-ok opacity-100",
         )}
       />
     </button>
-  )
-}
-
-/**
- * The save bar of an editable area: it floats at the bottom of the scrolling area and shows only while
- * there are unsaved changes.
- */
-export function SaveBar({
-  dirty,
-  saving,
-  onSave,
-  onDiscard,
-  label = "Save",
-  disabled,
-  note = "Unsaved changes",
-}: {
-  dirty: boolean
-  saving?: boolean
-  onSave: () => void
-  onDiscard?: () => void
-  label?: string
-  disabled?: boolean
-  note?: React.ReactNode
-}) {
-  if (!dirty) return null
-  return (
-    <section
-      aria-label="Unsaved changes"
-      className="sticky bottom-3 z-20 mx-auto flex w-full max-w-xl flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-line bg-popover py-2.5 ps-pad-x pe-2.5 shadow-float"
-    >
-      <span className="min-w-0 flex-1 font-semibold">{note}</span>
-      {onDiscard && (
-        <Button variant="ghost" onClick={onDiscard} disabled={saving}>
-          Discard
-        </Button>
-      )}
-      <Button variant="primary" onClick={onSave} disabled={saving || disabled}>
-        {saving ? "Saving…" : label}
-      </Button>
-    </section>
   )
 }
 
@@ -447,5 +412,151 @@ export function UserText({ children, className }: { children: React.ReactNode; c
     <span dir="auto" className={className}>
       <bdi>{children}</bdi>
     </span>
+  )
+}
+
+export { countChanges, SaveScope, useSaveSource } from "@/components/save-bar"
+
+/**
+ * A list that reloads keeps its rows on screen until the answer replaces them; they dim only when the
+ * answer takes longer than 200ms, so a fast reload does not flicker and nothing collapses (TB-5).
+ */
+export function Reloading({
+  busy,
+  children,
+  className,
+}: {
+  busy: boolean
+  children: React.ReactNode
+  className?: string
+}) {
+  const [dim, setDim] = useState(false)
+  useEffect(() => {
+    if (!busy) {
+      setDim(false)
+      return
+    }
+    const timer = setTimeout(() => setDim(true), DIM_AFTER_MS)
+    return () => clearTimeout(timer)
+  }, [busy])
+  return (
+    <div aria-busy={busy || undefined} className={cn("grid min-w-0 transition-opacity duration-150", dim && "opacity-60", className)}>
+      {children}
+    </div>
+  )
+}
+
+/**
+ * An on/off setting: the whole row, title and description included, is the label of its switch, so a click
+ * anywhere on it flips the switch (FS-1). A switch that cannot be used says why in `reason`.
+ */
+export function SwitchRow({
+  id,
+  title,
+  description,
+  checked,
+  onCheckedChange,
+  disabled,
+  reason,
+  className,
+}: {
+  id: string
+  title: React.ReactNode
+  description?: React.ReactNode
+  checked: boolean
+  onCheckedChange: (checked: boolean) => void
+  disabled?: boolean
+  reason?: string
+  className?: string
+}) {
+  return (
+    <label
+      htmlFor={id}
+      title={disabled ? reason : undefined}
+      className={cn(
+        "flex min-w-0 items-center gap-4",
+        disabled ? "cursor-not-allowed" : "cursor-pointer",
+        className,
+      )}
+    >
+      <span className="min-w-0 flex-1">
+        <span className="block font-semibold">{title}</span>
+        {description && <span className="mt-0.5 block text-small text-muted-foreground">{description}</span>}
+      </span>
+      <Switch id={id} checked={checked} onCheckedChange={onCheckedChange} disabled={disabled} />
+    </label>
+  )
+}
+
+/**
+ * A stored secret is never shown as a masked field (FS-3). It reads "Stored" with Replace and Remove; the
+ * password field appears only on Replace and takes the focus, and Remove marks it "Removed when you save".
+ * The value is `undefined` while unchanged (and is then not sent), a string when replaced, `null` to remove.
+ */
+export function SecretField({
+  id,
+  stored,
+  value,
+  onChange,
+  removable = true,
+  placeholder = "Not set",
+}: {
+  id: string
+  stored: boolean
+  value: string | null | undefined
+  onChange: (value: string | null | undefined) => void
+  removable?: boolean
+  placeholder?: string
+}) {
+  if (!stored || typeof value === "string")
+    return (
+      <div className="flex min-w-0 items-center gap-2">
+        <Input
+          id={id}
+          type="password"
+          autoComplete="new-password"
+          // Focus moves into the field the moment Replace is chosen.
+          autoFocus={stored}
+          placeholder={stored ? "New value" : placeholder}
+          value={value ?? ""}
+          onChange={(e) => onChange(stored || e.target.value ? e.target.value : undefined)}
+        />
+        {stored && (
+          <Button size="sm" variant="ghost" onClick={() => onChange(undefined)}>
+            Keep
+          </Button>
+        )}
+      </div>
+    )
+  return (
+    <div className="flex min-h-ctl min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+      {value === null ? (
+        <span id={id} className="font-semibold text-fail">
+          Removed when you save
+        </span>
+      ) : (
+        <span id={id} className="font-semibold">
+          Stored
+        </span>
+      )}
+      <span className="ms-auto flex gap-1.5">
+        {value === null ? (
+          <Button size="sm" onClick={() => onChange(undefined)}>
+            Keep
+          </Button>
+        ) : (
+          <>
+            <Button size="sm" onClick={() => onChange("")}>
+              Replace
+            </Button>
+            {removable && (
+              <Button size="sm" variant="danger" onClick={() => onChange(null)}>
+                Remove
+              </Button>
+            )}
+          </>
+        )}
+      </span>
+    </div>
   )
 }

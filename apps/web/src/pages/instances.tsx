@@ -1,10 +1,12 @@
 import { Download, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react"
 import { useEffect, useState } from "react"
 import { Link, useNavigate, useParams } from "react-router"
-import { toast } from "sonner"
+import { toast } from "@/lib/toast"
 import { AgentAccessCard } from "@/components/agent-access-card"
+import { useConfirm } from "@/components/confirm"
 import {
   Copyable,
+  countChanges,
   Empty,
   Kpi,
   Kpis,
@@ -13,8 +15,10 @@ import {
   PageHead,
   Panel,
   PanelHead,
-  SaveBar,
+  SecretField,
+  SwitchRow,
   UserText,
+  useSaveSource,
 } from "@/components/kit"
 import { ListWithPanel } from "@/components/list-panel"
 import { Dot, type HealthState, StatusTag, TimeAgo, Tone, When } from "@/components/status"
@@ -31,7 +35,6 @@ import {
 } from "@/components/ui/dialog"
 import {
   Field,
-  FieldContent,
   FieldDescription,
   FieldError,
   FieldGroup,
@@ -41,12 +44,11 @@ import {
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Switch } from "@/components/ui/switch"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, useSort } from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { api, describeError, queryClient, useApi, useApiMutation } from "@/lib/api"
-import { formatFull, n, useTimeZone } from "@/lib/time"
+import { formatFull, n, plural, useTimeZone } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { type ProblemRow, ProblemsTable } from "./problems"
 
@@ -103,6 +105,9 @@ type InstanceDetailData = InstanceRow & {
   latestVersion: string | null
 }
 
+/** Worse first when sorted high to low: down, needs a look, not checked, healthy. */
+const severity: Record<HealthState, number> = { down: 3, warn: 2, unknown: 1, ok: 0 }
+
 const healthLabel = (i: Pick<InstanceRow, "health" | "healthDetail">) =>
   i.health === "down"
     ? "Not responding"
@@ -134,6 +139,16 @@ export function InstancesPage() {
   const [adding, setAdding] = useState(false)
   const rows = data.data?.instances ?? []
   const latest = data.data?.latestVersion ?? null
+  const sort = useSort(rows, {
+    id: "instances",
+    columns: {
+      name: { label: "Instance", value: (r) => r.name },
+      status: { label: "Status", value: (r) => severity[r.health] },
+      version: { label: "Version", value: (r) => r.version },
+      open: { label: "Open problems", value: (r) => r.openProblems },
+      backup: { label: "Last backup", value: (r) => (r.lastBackup ? new Date(r.lastBackup.at) : null) },
+    },
+  })
   const down = rows.filter((r) => r.health === "down").length
   const warn = rows.filter((r) => r.health === "warn").length
 
@@ -167,24 +182,29 @@ export function InstancesPage() {
           </Empty>
         </Panel>
       ) : (
-        <Table>
+        <Table sort={sort}>
           <TableHeader>
             <TableRow>
-              <TableHead>Instance</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Version</TableHead>
+              <TableHead sort={sort.head("name")}>Instance</TableHead>
+              <TableHead sort={sort.head("status")}>Status</TableHead>
+              <TableHead sort={sort.head("version")}>Version</TableHead>
               <TableHead>API key</TableHead>
-              <TableHead className="text-end">Open</TableHead>
-              <TableHead className="text-end">Last backup</TableHead>
+              <TableHead className="text-end" sort={sort.head("open")}>
+                Open
+              </TableHead>
+              <TableHead className="text-end" sort={sort.head("backup")}>
+                Last backup
+              </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {rows.map((i) => (
+            {sort.rows.map((i) => (
               <TableRow
                 key={i.id}
                 data-state={id === i.id ? "selected" : undefined}
                 aria-current={id === i.id ? "true" : undefined}
                 className="hover-row"
+                data-href={`/instances/${i.id}`}
                 onClick={() => navigate(`/instances/${i.id}`)}
               >
                 <TableCell className="max-w-56 font-semibold">
@@ -253,13 +273,10 @@ function InstanceDetail({ id }: { id: string }) {
   const detail = useApi<InstanceDetailData>(`/instances/${id}`, { refetchInterval: 15_000 })
   const problems = useApi<ProblemRow[]>(`/problems?status=open&instance=${id}`)
   const [editing, setEditing] = useState(false)
-  const [deleting, setDeleting] = useState(false)
+  const confirm = useConfirm()
   const invalidate = [`/instances/${id}`, "/instances", "/overview"]
   const refresh = useApiMutation<void>("POST", `/instances/${id}/refresh`, { invalidate, success: "Checked now" })
-  const remove = useApiMutation<void>("DELETE", `/instances/${id}`, {
-    invalidate: ["/instances", "/overview"],
-    success: "Instance removed",
-  })
+  const remove = useApiMutation<void>("DELETE", `/instances/${id}`, { invalidate: ["/instances", "/overview"] })
   const declare = useApiMutation<{ declaredAccess: "read" | "write" }>("PATCH", `/instances/${id}`, { invalidate })
 
   if (detail.isLoading) return <Loading>Loading the instance…</Loading>
@@ -269,6 +286,22 @@ function InstanceDetail({ id }: { id: string }) {
   if (!i) return <Empty title="This instance no longer exists.">It was removed from n8n-ops.</Empty>
   const hd = i.healthDetail
   const health = i.health
+  const name = i.name
+  async function askRemove() {
+    const ok = await confirm({
+      title: `Remove ${name}?`,
+      message: `n8n-ops stops monitoring it and deletes its ${plural(i?.openProblems ?? 0, "open problem")}, stored failures and backup history from n8n-ops. Nothing changes on the n8n instance, and archives in storage are kept. This cannot be undone.`,
+      confirmLabel: "Remove instance",
+      danger: true,
+    })
+    if (!ok) return
+    remove.mutate(undefined, {
+      onSuccess: () => {
+        toast.success(`${name} removed`)
+        navigate("/instances")
+      },
+    })
+  }
 
   return (
     <div className="grid min-w-0 gap-gap">
@@ -299,7 +332,7 @@ function InstanceDetail({ id }: { id: string }) {
               <Download /> Export credentials
             </Button>
           )}
-          <Button size="sm" variant="danger" onClick={() => setDeleting(true)}>
+          <Button size="sm" variant="danger" onClick={() => void askRemove()}>
             <Trash2 /> Remove
           </Button>
         </div>
@@ -450,6 +483,7 @@ function InstanceDetail({ id }: { id: string }) {
       </Panel>
 
       <AgentAccessCard
+        key={`access-${i.id}`}
         id={i.id}
         name={i.name}
         scopesSource={i.scopesSource}
@@ -457,38 +491,9 @@ function InstanceDetail({ id }: { id: string }) {
         agentAccess={i.agentAccess}
       />
 
-      <OverridesCard instance={i} />
+      <OverridesCard key={`overrides-${i.id}`} instance={i} />
 
       <InstanceDialog open={editing} onOpenChange={setEditing} instance={i} />
-      <Dialog open={deleting} onOpenChange={setDeleting}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Remove {i.name}?</DialogTitle>
-            <DialogDescription>
-              n8n-ops stops monitoring it and deletes its {n(i.openProblems)} open{" "}
-              {i.openProblems === 1 ? "problem" : "problems"}, stored failures and backup history from n8n-ops. Nothing
-              changes on the n8n instance, and archives in storage are kept.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button onClick={() => setDeleting(false)}>Cancel</Button>
-            <Button
-              variant="danger"
-              disabled={remove.isPending}
-              onClick={() =>
-                remove.mutate(undefined, {
-                  onSuccess: () => {
-                    setDeleting(false)
-                    navigate("/instances")
-                  },
-                })
-              }
-            >
-              Remove
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }
@@ -540,22 +545,35 @@ const overrideFields: [string, string][] = [
 
 function OverridesCard({ instance }: { instance: InstanceDetailData }) {
   const stored = () => Object.fromEntries(Object.entries(instance.overrides).map(([k, v]) => [k, String(v)]))
-  const [values, setValues] = useState<Record<string, string>>({})
-  // biome-ignore lint/correctness/useExhaustiveDependencies: reset when the stored overrides change
-  useEffect(() => setValues(stored()), [instance.overrides])
+  const [values, setValues] = useState<Record<string, string>>(stored)
   const save = useApiMutation<{ overrides: Record<string, number | string> }>("PATCH", `/instances/${instance.id}`, {
     invalidate: [`/instances/${instance.id}`],
-    success: "Overrides saved",
   })
   const initial = stored()
-  const dirty = overrideFields.some(([k]) => (values[k] ?? "") !== (initial[k] ?? ""))
-  function submit() {
+  const count = countChanges(
+    values,
+    initial,
+    overrideFields.map(([k]) => k),
+  )
+  // The 15-second refresh never overwrites what the user is typing (SV-6).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only new stored overrides replace the form
+  useEffect(() => {
+    if (count === 0) setValues(stored())
+  }, [instance.overrides])
+  useSaveSource(`overrides-${instance.id}`, {
+    label: "the overrides",
+    saved: "Overrides saved",
+    count,
+    save: () => save.mutateAsync({ overrides: payload() }),
+    discard: () => setValues(initial),
+  })
+  function payload() {
     const overrides: Record<string, number | string> = {}
     for (const [k, v] of Object.entries(values)) {
       if (v === "") continue
       overrides[k] = k === "backupTime" ? v : Number(v)
     }
-    save.mutate({ overrides })
+    return overrides
   }
   return (
     <Panel className="overflow-visible">
@@ -574,21 +592,14 @@ function OverridesCard({ instance }: { instance: InstanceDetailData }) {
           </Field>
         ))}
       </div>
-      <div className="px-pad-x">
-        <SaveBar
-          dirty={dirty}
-          saving={save.isPending}
-          onSave={submit}
-          onDiscard={() => setValues(initial)}
-          label="Save overrides"
-          note="Overrides changed"
-        />
-      </div>
     </Panel>
   )
 }
 
 type Worker = { id: string; name: string }
+
+/** A base URL compared and saved without surrounding spaces and trailing slashes. */
+const normalUrl = (url: string) => url.trim().replace(/\/+$/, "")
 
 export function InstanceDialog({
   open,
@@ -605,7 +616,7 @@ export function InstanceDialog({
   const [form, setForm] = useState({
     name: "",
     baseUrl: "",
-    apiKey: "",
+    apiKey: undefined as string | undefined,
     containerName: "",
     queueMode: false,
     metricsUrl: "",
@@ -621,7 +632,7 @@ export function InstanceDialog({
     setForm({
       name: instance?.name ?? "",
       baseUrl: instance?.baseUrl ?? "",
-      apiKey: "",
+      apiKey: undefined,
       containerName: instance?.containerName ?? "",
       queueMode: instance?.queueMode ?? false,
       metricsUrl: instance?.metricsUrl ?? "",
@@ -630,14 +641,21 @@ export function InstanceDialog({
       workerId: instance?.workerId ?? "",
     })
   }, [open, instance])
-  const set = (k: keyof typeof form, v: string | boolean) => setForm((f) => ({ ...f, [k]: v }))
+  const set = (k: keyof typeof form, v: string | boolean | undefined) => setForm((f) => ({ ...f, [k]: v }))
+  // A stored API key is never sent to a different server: a changed base URL needs the key again (FS-5).
+  const urlChanged = Boolean(instance) && normalUrl(form.baseUrl) !== normalUrl(instance?.baseUrl ?? "")
 
   async function submit() {
+    if (urlChanged && !form.apiKey) {
+      setError("The base URL changed. Enter the API key again, so the stored key is not sent to the new address.")
+      set("apiKey", "")
+      return
+    }
     setBusy(true)
     setError("")
     const body = {
       name: form.name,
-      baseUrl: form.baseUrl.replace(/\/+$/, ""),
+      baseUrl: normalUrl(form.baseUrl),
       containerName: form.containerName || null,
       queueMode: form.queueMode,
       metricsUrl: form.metricsUrl || null,
@@ -665,7 +683,7 @@ export function InstanceDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="md:max-w-xl">
+      <DialogContent className="md:max-w-xl" keepOnBackdrop>
         <DialogHeader>
           <DialogTitle>{instance ? `Edit ${instance.name}` : "Add an instance"}</DialogTitle>
           <DialogDescription>The connection is tested before anything is saved.</DialogDescription>
@@ -688,12 +706,13 @@ export function InstanceDialog({
             </Field>
             <Field>
               <FieldLabel htmlFor="i-key">API key</FieldLabel>
-              <Input
+              <SecretField
                 id="i-key"
-                type="password"
+                stored={Boolean(instance)}
+                removable={false}
+                placeholder=""
                 value={form.apiKey}
-                onChange={(e) => set("apiKey", e.target.value)}
-                placeholder={instance ? "Stored. Type to replace." : ""}
+                onChange={(v) => set("apiKey", v ?? undefined)}
               />
               <FieldDescription>
                 In n8n: Settings → n8n API → Create an API key. "Read only" is enough to monitor; moving and restoring
@@ -705,13 +724,13 @@ export function InstanceDialog({
             <FieldLegend variant="label" className="w-full border-t border-line pt-4">
               Queue
             </FieldLegend>
-            <Field orientation="horizontal">
-              <Switch id="i-queue" checked={form.queueMode} onCheckedChange={(v) => set("queueMode", v)} />
-              <FieldContent>
-                <FieldLabel htmlFor="i-queue">Queue mode</FieldLabel>
-                <FieldDescription>Main process plus separate workers using Redis.</FieldDescription>
-              </FieldContent>
-            </Field>
+            <SwitchRow
+              id="i-queue"
+              title="Queue mode"
+              description="Main process plus separate workers using Redis."
+              checked={form.queueMode}
+              onCheckedChange={(v) => set("queueMode", v)}
+            />
             {form.queueMode && (
               <>
                 <Field>

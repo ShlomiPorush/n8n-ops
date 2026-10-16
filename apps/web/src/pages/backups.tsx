@@ -15,10 +15,11 @@ import {
 } from "@/components/ui/dialog"
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, useSort } from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
 import { api, describeError, useApi, useApiMutation } from "@/lib/api"
-import { formatDateTime, n, useTimeZone } from "@/lib/time"
+import { formatDateTime, n, plural, useTimeZone } from "@/lib/time"
+import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
 
 type Run = {
@@ -69,10 +70,7 @@ export function BackupsPage() {
   const { id } = useParams()
   const navigate = useNavigate()
   const data = useApi<Summary>("/backups", { refetchInterval: 10_000 })
-  const run = useApiMutation<string>("POST", (target) => `/backups/${target}/run`, {
-    invalidate: ["/backups"],
-    success: "Backup started",
-  })
+  const run = useApiMutation<string>("POST", (target) => `/backups/${target}/run`, { invalidate: ["/backups"] })
   const s = data.data
   const okCount = s?.instances.filter((i) => !stale(i)).length ?? 0
   const rows: BackupRow[] = s
@@ -90,6 +88,14 @@ export function BackupsPage() {
       ]
     : []
   const late = s ? s.instances.length - okCount : 0
+  const sort = useSort(rows, {
+    id: "backups",
+    columns: {
+      name: { label: "Instance", value: (r) => r.name },
+      lastOk: { label: "Last success", value: (r) => (r.lastOk ? new Date(r.lastOk.startedAt) : null) },
+      time: { label: "Daily at", value: (r) => r.backupTime },
+    },
+  })
 
   const list = (
     <>
@@ -143,18 +149,18 @@ export function BackupsPage() {
           <Loading>Loading backups…</Loading>
         </Panel>
       ) : (
-        <Table>
+        <Table sort={sort}>
           <TableHeader>
             <TableRow>
-              <TableHead>Instance</TableHead>
-              <TableHead>Last success</TableHead>
+              <TableHead sort={sort.head("name")}>Instance</TableHead>
+              <TableHead sort={sort.head("lastOk")}>Last success</TableHead>
               <TableHead>Includes</TableHead>
-              <TableHead>Daily at</TableHead>
+              <TableHead sort={sort.head("time")}>Daily at</TableHead>
               {s?.configured && <TableHead />}
             </TableRow>
           </TableHeader>
           <TableBody>
-            {rows.map((r) => {
+            {sort.rows.map((r) => {
               const failed = r.lastRun?.status === "failed"
               const late = stale(r)
               return (
@@ -163,6 +169,7 @@ export function BackupsPage() {
                   data-state={id === r.id ? "selected" : undefined}
                   aria-current={id === r.id ? "true" : undefined}
                   className="hover-row"
+                  data-href={`/backups/${r.id}`}
                   onClick={() => navigate(`/backups/${r.id}`)}
                 >
                   <TableCell className="max-w-56 font-semibold">
@@ -201,7 +208,7 @@ export function BackupsPage() {
                         disabled={r.lastRun?.status === "running"}
                         onClick={(e) => {
                           e.stopPropagation()
-                          run.mutate(r.id)
+                          run.mutate(r.id, { onSuccess: () => toast.success(`Backup of ${r.name} started`) })
                         }}
                       >
                         <Play /> {r.lastRun?.status === "running" ? "Running…" : "Run now"}
@@ -240,7 +247,7 @@ function BackupHistory({ id, name }: { id: string; name: string }) {
         </h2>
         {runs.data && (
           <p className="mt-1 text-muted-foreground">
-            {n(list.length)} {list.length === 1 ? "run" : "runs"} ·{" "}
+            {plural(list.length, "run")} ·{" "}
             {n(list.filter((r) => r.status === "failed").length)} failed
           </p>
         )}
@@ -352,7 +359,7 @@ function RestoreDialog({ run, instanceId, onClose }: { run: Run | null; instance
   }
   return (
     <Dialog open={run !== null} onOpenChange={(o) => !o && reset()}>
-      <DialogContent className="md:max-w-lg">
+      <DialogContent className="md:max-w-lg" keepOnBackdrop>
         <DialogHeader>
           <DialogTitle>Restore from {run ? formatDateTime(run.startedAt, tz) : ""}</DialogTitle>
           <DialogDescription>

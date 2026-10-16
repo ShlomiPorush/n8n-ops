@@ -12,6 +12,8 @@ const buttonVariants = cva(
         default: "border-line bg-raise text-ink hover:border-muted-foreground aria-expanded:border-muted-foreground",
         primary: "border-primary bg-primary text-primary-foreground hover:opacity-90",
         danger: "border-line bg-raise text-fail hover:border-fail",
+        // Only the confirm button of a dangerous confirmation is filled red (DS-12).
+        "danger-solid": "border-fail bg-fail text-bg hover:opacity-90",
         ghost: "text-muted-foreground hover:bg-accent hover:text-ink aria-expanded:bg-accent aria-expanded:text-ink",
         link: "h-auto! border-0 px-0! font-semibold text-ink underline hover:opacity-80",
       },

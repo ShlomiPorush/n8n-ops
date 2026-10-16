@@ -20,6 +20,7 @@ import { useTheme } from "next-themes"
 import { Dialog as SheetPrimitive } from "radix-ui"
 import { useEffect, useState } from "react"
 import { Link, Navigate, NavLink, Outlet, useLocation, useNavigate } from "react-router"
+import { SaveScope } from "@/components/save-bar"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -67,8 +68,13 @@ type Me = { twoFactor: boolean }
 /** Signed-in area: redirects to login or to two-factor setup when needed. */
 export function RequireAuth() {
   const me = useApi<Me>("/setup/checklist")
+  const { pathname, search } = useLocation()
   if (me.isLoading) return null
-  if (me.error instanceof ApiError && me.error.status === 401) return <Navigate to="/login" replace />
+  if (me.error instanceof ApiError && me.error.status === 401)
+    // Back to this page after signing in (NL-18).
+    return (
+      <Navigate to={pathname === "/" ? "/login" : `/login?next=${encodeURIComponent(pathname + search)}`} replace />
+    )
   if (me.data && !me.data.twoFactor) return <Navigate to="/setup" replace />
   return <Outlet />
 }
@@ -468,7 +474,9 @@ export function AppShell() {
           id="main"
           className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pt-4 pb-[calc(var(--spacing-tabbar)+16px+env(safe-area-inset-bottom))] md:p-[22px] md:pb-15 lg:px-7"
         >
-          <Outlet />
+          <SaveScope>
+            <Outlet />
+          </SaveScope>
         </main>
         <TabBar />
       </div>

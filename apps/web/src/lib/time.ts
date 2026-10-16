@@ -74,3 +74,12 @@ export function formatDateTime(value: string | Date, zone: string): string {
 export function n(value: number | null | undefined): string {
   return (value ?? 0).toLocaleString("en-US")
 }
+
+/**
+ * A count with its word, singular or plural, with thousands separators (FW-3): "1 problem", "1,920 events".
+ * Every count on screen goes through here so a caption, its confirm and its toast never disagree.
+ */
+export function plural(count: number, one: string, many = `${one}s`): string {
+  return `${n(count)} ${count === 1 ? one : many}`
+}
+

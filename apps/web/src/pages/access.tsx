@@ -1,11 +1,12 @@
 import { Ban, Check, KeyRound, X } from "lucide-react"
 import { useNavigate, useParams, useSearchParams } from "react-router"
+import { useConfirm } from "@/components/confirm"
 import { Empty, LoadError, Loading, PageHead, Panel, PanelHead, UserText } from "@/components/kit"
 import { ListWithPanel } from "@/components/list-panel"
 import { StatusTag, statusOf, TimeAgo, Tone, When } from "@/components/status"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, useSort } from "@/components/ui/table"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useApi, useApiMutation } from "@/lib/api"
 import { formatDateTime, n, useTimeZone } from "@/lib/time"
@@ -56,6 +57,17 @@ export function AccessPage() {
   const shown = all.filter((r) => view === "all" || r.status === "pending" || r.status === "approved")
   const waiting = all.filter((r) => r.status === "pending").length
   const active = all.filter((r) => r.status === "approved").length
+  const sort = useSort(shown, {
+    id: "access",
+    columns: {
+      status: { label: "Status", value: (r) => (r.status === "pending" ? 2 : r.status === "approved" ? 1 : 0) },
+      instance: { label: "Instance", value: (r) => r.instance },
+      agent: { label: "Agent", value: (r) => r.token },
+      reason: { label: "Reason", value: (r) => r.reason },
+      time: { label: "Time", value: (r) => r.minutes },
+      requested: { label: "Requested", value: (r) => new Date(r.requestedAt) },
+    },
+  })
 
   const list = (
     <>
@@ -95,24 +107,27 @@ export function AccessPage() {
           </Empty>
         </Panel>
       ) : (
-        <Table>
+        <Table sort={sort}>
           <TableHeader>
             <TableRow>
-              <TableHead>Status</TableHead>
-              <TableHead>Instance</TableHead>
-              <TableHead>Agent</TableHead>
-              <TableHead>Reason</TableHead>
-              <TableHead>Time</TableHead>
-              <TableHead className="text-end">Requested</TableHead>
+              <TableHead sort={sort.head("status")}>Status</TableHead>
+              <TableHead sort={sort.head("instance")}>Instance</TableHead>
+              <TableHead sort={sort.head("agent")}>Agent</TableHead>
+              <TableHead sort={sort.head("reason")}>Reason</TableHead>
+              <TableHead sort={sort.head("time")}>Time</TableHead>
+              <TableHead className="text-end" sort={sort.head("requested")}>
+                Requested
+              </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {shown.map((r) => (
+            {sort.rows.map((r) => (
               <TableRow
                 key={r.id}
                 data-state={r.id === id ? "selected" : undefined}
                 aria-current={r.id === id ? "true" : undefined}
                 className="hover-row"
+                data-href={`/access/${r.id}${view === "all" ? "?view=all" : ""}`}
                 onClick={() => navigate(`/access/${r.id}${view === "all" ? "?view=all" : ""}`)}
               >
                 <TableCell>
@@ -156,6 +171,7 @@ function AccessDetailPanel({ id }: { id: string }) {
   const approve = useApiMutation<void>("POST", `/access/${id}/approve`, { invalidate, success: "Access approved" })
   const deny = useApiMutation<void>("POST", `/access/${id}/deny`, { invalidate, success: "Request denied" })
   const revoke = useApiMutation<void>("POST", `/access/${id}/revoke`, { invalidate, success: "Access revoked" })
+  const confirm = useConfirm()
   if (detail.isLoading) return <Loading>Loading the request…</Loading>
   if (detail.error && !detail.data)
     return <LoadError what="this request" error={detail.error} retry={() => detail.refetch()} />
@@ -211,7 +227,17 @@ function AccessDetailPanel({ id }: { id: string }) {
             </>
           )}
           {r.status === "approved" && (
-            <Button variant="danger" disabled={busy} onClick={() => revoke.mutate()}>
+            <Button variant="danger" disabled={busy} onClick={async () => {
+                if (
+                  await confirm({
+                    title: `Revoke access to ${r.instance}?`,
+                    message: `The agent ${r.token} loses access at once, before its time is up. This cannot be undone; the agent has to ask again.`,
+                    confirmLabel: "Revoke access",
+                    danger: true,
+                  })
+                )
+                  revoke.mutate()
+              }}>
               <Ban /> Revoke now
             </Button>
           )}

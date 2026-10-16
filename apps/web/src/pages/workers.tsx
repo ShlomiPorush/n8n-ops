@@ -1,6 +1,7 @@
 import { Plus, Trash2 } from "lucide-react"
 import { useState } from "react"
 import { Link } from "react-router"
+import { useConfirm } from "@/components/confirm"
 import { Copyable, Empty, LoadError, Loading, Page, Panel, PanelHead, UserText } from "@/components/kit"
 import { StatusTag, TimeAgo, When } from "@/components/status"
 import { Button } from "@/components/ui/button"
@@ -16,7 +17,8 @@ import {
 import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { useApi, useApiMutation } from "@/lib/api"
-import { n } from "@/lib/time"
+import { n, plural } from "@/lib/time"
+import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
 
 export type Worker = {
@@ -32,11 +34,19 @@ export type Worker = {
 export function WorkersPage() {
   const workers = useApi<Worker[]>("/workers", { refetchInterval: 10_000 })
   const [open, setOpen] = useState(false)
-  const [revoking, setRevoking] = useState<Worker | null>(null)
+  const confirm = useConfirm()
   const revoke = useApiMutation<string>("DELETE", (id) => `/workers/${id}`, {
     invalidate: ["/workers", "/overview/summary"],
-    success: "Worker revoked",
   })
+  async function askRevoke(w: Worker) {
+    const ok = await confirm({
+      title: `Revoke the worker ${w.name}?`,
+      message: `It stops being accepted at once and is removed from its ${plural(w.instances.length, "instance")}. Remove the container on the host too. This cannot be undone; pair it again to bring it back.`,
+      confirmLabel: "Revoke worker",
+      danger: true,
+    })
+    if (ok) revoke.mutate(w.id, { onSuccess: () => toast.success(`Worker ${w.name} revoked`) })
+  }
   const list = workers.data ?? []
   const online = list.filter((w) => w.online).length
   return (
@@ -77,7 +87,7 @@ export function WorkersPage() {
                 <StatusTag kind="worker" status={w.online ? "online" : "offline"} />
               </div>
               <div className="row-span-2 self-center max-md:order-last">
-                <Button size="sm" variant="danger" onClick={() => setRevoking(w)}>
+                <Button size="sm" variant="danger" onClick={() => void askRevoke(w)}>
                   <Trash2 /> Revoke
                 </Button>
               </div>
@@ -114,30 +124,6 @@ export function WorkersPage() {
         )}
       </Panel>
       <AddWorkerDialog open={open} onOpenChange={setOpen} />
-      <Dialog open={revoking !== null} onOpenChange={(o) => !o && setRevoking(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Revoke {revoking?.name}?</DialogTitle>
-            <DialogDescription>
-              It stops being accepted immediately and is removed from its{" "}
-              {revoking
-                ? `${n(revoking.instances.length)} ${revoking.instances.length === 1 ? "instance" : "instances"}`
-                : "instances"}
-              . Remove the container on the host too.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button onClick={() => setRevoking(null)}>Cancel</Button>
-            <Button
-              variant="danger"
-              disabled={revoke.isPending}
-              onClick={() => revoking && revoke.mutate(revoking.id, { onSuccess: () => setRevoking(null) })}
-            >
-              Revoke
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </Page>
   )
 }
@@ -179,7 +165,7 @@ function AddWorkerDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
   }
   return (
     <Dialog open={open} onOpenChange={close}>
-      <DialogContent className="md:max-w-2xl">
+      <DialogContent className="md:max-w-2xl" keepOnBackdrop>
         <DialogHeader>
           <DialogTitle>Add a worker</DialogTitle>
           <DialogDescription>

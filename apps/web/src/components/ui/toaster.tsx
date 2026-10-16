@@ -38,7 +38,8 @@ export function Toaster() {
 
   if (!item) return null
   const Icon = icons[item.tone]
-  const tone = item.tone === "success" ? "ok" : item.tone === "error" ? "fail" : item.tone === "warning" ? "warn" : "info"
+  const tone =
+    item.tone === "success" ? "ok" : item.tone === "error" ? "fail" : item.tone === "warning" ? "warn" : "info"
   return (
     <div
       data-toast

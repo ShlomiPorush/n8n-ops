@@ -94,7 +94,10 @@ export function ProblemsTable({
   const sort = useSort(rows, {
     id: showInstance ? "problems" : "instance-problems",
     columns: {
-      status: { label: "Status", value: (p) => (p.regression ? 3 : p.status === "open" ? 2 : p.status === "muted" ? 1 : 0) },
+      status: {
+        label: "Status",
+        value: (p) => (p.regression ? 3 : p.status === "open" ? 2 : p.status === "muted" ? 1 : 0),
+      },
       workflow: { label: "Workflow", value: (p) => p.workflowName },
       error: { label: "Error", value: (p) => p.errorMessage },
       ...(showInstance ? { instance: { label: "Instance", value: (p: ProblemRow) => p.instanceName } } : {}),

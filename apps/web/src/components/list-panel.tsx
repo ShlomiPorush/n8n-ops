@@ -3,7 +3,7 @@ import { useEffect, useRef } from "react"
 import { useLocation, useNavigate } from "react-router"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { ResizablePanel, ResizablePanelGroup, ResizableHandle } from "@/components/ui/resizable"
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable"
 import { useMediaQuery } from "@/hooks/use-mobile"
 
 /**

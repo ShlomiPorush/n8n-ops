@@ -92,12 +92,7 @@ function TableRow({ className, onClick, onKeyDown, ...props }: React.ComponentPr
 }
 
 /** A column header. With `sort` it is a button that sorts the table by its column (TB-1). */
-function TableHead({
-  className,
-  sort,
-  children,
-  ...props
-}: React.ComponentProps<"th"> & { sort?: SortHead }) {
+function TableHead({ className, sort, children, ...props }: React.ComponentProps<"th"> & { sort?: SortHead }) {
   return (
     <th
       data-slot="table-head"

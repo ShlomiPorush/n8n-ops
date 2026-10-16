@@ -247,8 +247,7 @@ function BackupHistory({ id, name }: { id: string; name: string }) {
         </h2>
         {runs.data && (
           <p className="mt-1 text-muted-foreground">
-            {plural(list.length, "run")} ·{" "}
-            {n(list.filter((r) => r.status === "failed").length)} failed
+            {plural(list.length, "run")} · {n(list.filter((r) => r.status === "failed").length)} failed
           </p>
         )}
       </div>

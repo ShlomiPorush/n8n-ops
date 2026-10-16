@@ -1,6 +1,13 @@
 import * as React from "react"
 import { Button } from "@/components/ui/button"
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { CONFIRM_FOCUS_MS } from "@/lib/behavior"
 
 /*
@@ -77,7 +84,11 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
               <Button id="confirm-cancel" onClick={() => finish(false)}>
                 {pending.cancelLabel ?? "Cancel"}
               </Button>
-              <Button ref={confirmRef} variant={pending.danger ? "danger-solid" : "primary"} onClick={() => finish(true)}>
+              <Button
+                ref={confirmRef}
+                variant={pending.danger ? "danger-solid" : "primary"}
+                onClick={() => finish(true)}
+              >
                 {pending.confirmLabel}
               </Button>
             </DialogFooter>

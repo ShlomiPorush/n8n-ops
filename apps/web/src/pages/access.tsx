@@ -227,7 +227,10 @@ function AccessDetailPanel({ id }: { id: string }) {
             </>
           )}
           {r.status === "approved" && (
-            <Button variant="danger" disabled={busy} onClick={async () => {
+            <Button
+              variant="danger"
+              disabled={busy}
+              onClick={async () => {
                 if (
                   await confirm({
                     title: `Revoke access to ${r.instance}?`,
@@ -237,7 +240,8 @@ function AccessDetailPanel({ id }: { id: string }) {
                   })
                 )
                   revoke.mutate()
-              }}>
+              }}
+            >
               <Ban /> Revoke now
             </Button>
           )}

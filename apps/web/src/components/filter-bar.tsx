@@ -36,9 +36,7 @@ export function Picker({
   const id = React.useId()
   const selected = options.find((o) => o.value === value)
   const searchable = options.length > 10
-  const shown = query
-    ? options.filter((o) => o.label.toLowerCase().includes(query.trim().toLowerCase()))
-    : options
+  const shown = query ? options.filter((o) => o.label.toLowerCase().includes(query.trim().toLowerCase())) : options
   const set = value !== defaultValue
 
   const optionEls = () => [...(listRef.current?.querySelectorAll<HTMLElement>('[role="option"]') ?? [])]

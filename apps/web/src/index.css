@@ -282,6 +282,7 @@
   [data-slot="dialog-content"] {
     inset: auto 0 0 0;
     max-height: 80vh;
+    /* biome-ignore lint/suspicious/noDuplicateProperties: 80vh above is the fallback where dvh is unknown */
     max-height: 80dvh;
     border-radius: 16px 16px 0 0;
     transition: border-radius 0.2s ease;
@@ -386,7 +387,10 @@
   [data-stack] > tbody > tr > td:last-child:has([data-slot="button"]) {
     flex-basis: 100%;
   }
-  [data-stack] > tbody > tr > td:not(:first-child, [colspan]):not(:last-child:has([data-slot="button"]))[data-label]::before {
+  [data-stack]
+    > tbody
+    > tr
+    > td:not(:first-child, [colspan]):not(:last-child:has([data-slot="button"]))[data-label]::before {
     content: attr(data-label) " ";
     color: var(--ui-muted);
     font-weight: 400;

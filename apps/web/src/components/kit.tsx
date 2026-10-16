@@ -1,12 +1,12 @@
 import { Check, Copy, Loader2, Lock } from "lucide-react"
 import { useEffect, useState } from "react"
 import { Link } from "react-router"
-import { toast } from "@/lib/toast"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import { describeError } from "@/lib/api"
 import { COPIED_MS, DIM_AFTER_MS } from "@/lib/behavior"
+import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
 
 /*
@@ -440,7 +440,10 @@ export function Reloading({
     return () => clearTimeout(timer)
   }, [busy])
   return (
-    <div aria-busy={busy || undefined} className={cn("grid min-w-0 transition-opacity duration-150", dim && "opacity-60", className)}>
+    <div
+      aria-busy={busy || undefined}
+      className={cn("grid min-w-0 transition-opacity duration-150", dim && "opacity-60", className)}
+    >
       {children}
     </div>
   )
@@ -473,11 +476,7 @@ export function SwitchRow({
     <label
       htmlFor={id}
       title={disabled ? reason : undefined}
-      className={cn(
-        "flex min-w-0 items-center gap-4",
-        disabled ? "cursor-not-allowed" : "cursor-pointer",
-        className,
-      )}
+      className={cn("flex min-w-0 items-center gap-4", disabled ? "cursor-not-allowed" : "cursor-pointer", className)}
     >
       <span className="min-w-0 flex-1">
         <span className="block font-semibold">{title}</span>

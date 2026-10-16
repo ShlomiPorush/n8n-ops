@@ -181,72 +181,78 @@ export function WorkflowsPage() {
         </Panel>
       ) : (
         <Reloading busy={data.isPlaceholderData}>
-        <Table sort={sort}>
-          <TableHeader>
-            <TableRow>
-              <TableHead sort={sort.head("name")}>Workflow</TableHead>
-              <TableHead sort={sort.head("instance")}>Instance</TableHead>
-              <TableHead sort={sort.head("trigger")}>Trigger</TableHead>
-              <TableHead className="text-end" sort={sort.head("lastRun")}>Last run</TableHead>
-              <TableHead className="text-end" sort={sort.head("runs")}>Runs 30d</TableHead>
-              <TableHead className="text-end" sort={sort.head("errors")}>Errors</TableHead>
-              <TableHead />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {sort.rows.map((w) => (
-              <TableRow key={`${w.instanceId}:${w.workflowId}`}>
-                <TableCell className="max-w-80">
-                  <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                    <a
-                      href={w.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="min-w-0 truncate font-semibold hover:underline"
-                    >
-                      <UserText>{w.name}</UserText>
-                    </a>
-                    {!w.active && <Badge variant="muted">inactive</Badge>}
-                    {w.duplicates.length > 0 && (
-                      <Badge variant="warn" title={`Also on ${w.duplicates.map((d) => d.instanceName).join(", ")}`}>
-                        duplicate
-                      </Badge>
-                    )}
-                  </div>
-                </TableCell>
-                <TableCell>
-                  <UserText>{w.instanceName}</UserText>
-                </TableCell>
-                <TableCell className="max-w-56">
-                  <div className="truncate">{w.triggerType}</div>
-                  {w.triggerDetail && (
-                    <div className="truncate font-mono text-meta text-muted-foreground" title={w.triggerDetail}>
-                      {w.triggerDetail}
-                    </div>
-                  )}
-                </TableCell>
-                <TableCell className="text-end text-muted-foreground">
-                  <When value={w.lastRunAt} />
-                </TableCell>
-                <TableCell className="text-end tabular-nums">{n(w.runs30d)}</TableCell>
-                <TableCell
-                  className={cn(
-                    "text-end tabular-nums",
-                    rate(w) > ERROR_RATE_FAIL ? "font-semibold text-fail" : "text-muted-foreground",
-                  )}
-                  title={`${n(w.errors30d)} of ${n(w.runs30d)} runs failed`}
-                >
-                  {rate(w)}%
-                </TableCell>
-                <TableCell className="text-end">
-                  <Button size="sm" onClick={() => setMoving(w)}>
-                    Move <ArrowRight />
-                  </Button>
-                </TableCell>
+          <Table sort={sort}>
+            <TableHeader>
+              <TableRow>
+                <TableHead sort={sort.head("name")}>Workflow</TableHead>
+                <TableHead sort={sort.head("instance")}>Instance</TableHead>
+                <TableHead sort={sort.head("trigger")}>Trigger</TableHead>
+                <TableHead className="text-end" sort={sort.head("lastRun")}>
+                  Last run
+                </TableHead>
+                <TableHead className="text-end" sort={sort.head("runs")}>
+                  Runs 30d
+                </TableHead>
+                <TableHead className="text-end" sort={sort.head("errors")}>
+                  Errors
+                </TableHead>
+                <TableHead />
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+            </TableHeader>
+            <TableBody>
+              {sort.rows.map((w) => (
+                <TableRow key={`${w.instanceId}:${w.workflowId}`}>
+                  <TableCell className="max-w-80">
+                    <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                      <a
+                        href={w.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="min-w-0 truncate font-semibold hover:underline"
+                      >
+                        <UserText>{w.name}</UserText>
+                      </a>
+                      {!w.active && <Badge variant="muted">inactive</Badge>}
+                      {w.duplicates.length > 0 && (
+                        <Badge variant="warn" title={`Also on ${w.duplicates.map((d) => d.instanceName).join(", ")}`}>
+                          duplicate
+                        </Badge>
+                      )}
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <UserText>{w.instanceName}</UserText>
+                  </TableCell>
+                  <TableCell className="max-w-56">
+                    <div className="truncate">{w.triggerType}</div>
+                    {w.triggerDetail && (
+                      <div className="truncate font-mono text-meta text-muted-foreground" title={w.triggerDetail}>
+                        {w.triggerDetail}
+                      </div>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-end text-muted-foreground">
+                    <When value={w.lastRunAt} />
+                  </TableCell>
+                  <TableCell className="text-end tabular-nums">{n(w.runs30d)}</TableCell>
+                  <TableCell
+                    className={cn(
+                      "text-end tabular-nums",
+                      rate(w) > ERROR_RATE_FAIL ? "font-semibold text-fail" : "text-muted-foreground",
+                    )}
+                    title={`${n(w.errors30d)} of ${n(w.runs30d)} runs failed`}
+                  >
+                    {rate(w)}%
+                  </TableCell>
+                  <TableCell className="text-end">
+                    <Button size="sm" onClick={() => setMoving(w)}>
+                      Move <ArrowRight />
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         </Reloading>
       )}
       <MoveDialog workflow={moving} onClose={() => setMoving(null)} />

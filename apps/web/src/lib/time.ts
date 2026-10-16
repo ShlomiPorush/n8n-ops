@@ -82,4 +82,3 @@ export function n(value: number | null | undefined): string {
 export function plural(count: number, one: string, many = `${one}s`): string {
   return `${n(count)} ${count === 1 ? one : many}`
 }
-

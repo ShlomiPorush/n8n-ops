@@ -1,7 +1,6 @@
 import { Download, KeyRound, Plus, ShieldCheck, Trash2 } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { NavLink, useParams } from "react-router"
-import { toast } from "@/lib/toast"
 import { useConfirm } from "@/components/confirm"
 import {
   Copyable,
@@ -38,6 +37,7 @@ import { api, describeError, useApi, useApiMutation } from "@/lib/api"
 import { authClient, authErrorText } from "@/lib/auth-client"
 import { download } from "@/lib/download"
 import { formatDateTime, useTimeZone } from "@/lib/time"
+import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
 
 type FieldDef = {
@@ -711,7 +711,8 @@ function TokensCard() {
   async function askRevoke(t: Token) {
     const ok = await confirm({
       title: `Revoke the token ${t.name}?`,
-      message: "The agent or script using it loses access at once. This cannot be undone; create a new token to give access again.",
+      message:
+        "The agent or script using it loses access at once. This cannot be undone; create a new token to give access again.",
       confirmLabel: "Revoke token",
       danger: true,
     })

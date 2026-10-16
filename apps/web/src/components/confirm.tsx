@@ -74,8 +74,8 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
               <DialogTitle>{pending.title}</DialogTitle>
             </DialogHeader>
             {pending.message ? (
-              <DialogDescription asChild>
-                <div className="text-body whitespace-pre-line text-ink">{pending.message}</div>
+              <DialogDescription className="text-body whitespace-pre-line text-ink">
+                {pending.message}
               </DialogDescription>
             ) : (
               <DialogDescription className="sr-only">{pending.title}</DialogDescription>

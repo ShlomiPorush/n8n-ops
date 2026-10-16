@@ -135,7 +135,7 @@ export function ProblemsTable({
             data-href={href?.(p.id)}
             onClick={() => onOpen(p.id)}
           >
-            <TableCell>
+            <TableCell data-nolabel>
               <ProblemBadge status={p.status} regression={p.regression} firstSeen={p.firstSeen} />
             </TableCell>
             <TableCell className="max-w-64" data-primary>

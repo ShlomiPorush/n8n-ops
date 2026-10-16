@@ -322,7 +322,7 @@ function InstanceDetail({ id }: { id: string }) {
         </p>
         <div className="flex flex-wrap gap-2 pt-1.5">
           <Button size="sm" onClick={() => refresh.mutate()} disabled={refresh.isPending}>
-            <RefreshCw /> Check now
+            <RefreshCw /> {refresh.isPending ? "Checking…" : "Check now"}
           </Button>
           <Button size="sm" onClick={() => setEditing(true)}>
             <Pencil /> Edit

@@ -130,7 +130,7 @@ export function AccessPage() {
                 data-href={`/access/${r.id}${view === "all" ? "?view=all" : ""}`}
                 onClick={() => navigate(`/access/${r.id}${view === "all" ? "?view=all" : ""}`)}
               >
-                <TableCell>
+                <TableCell data-nolabel>
                   <StatusTag kind="access" status={r.status} />
                 </TableCell>
                 <TableCell className="font-semibold">

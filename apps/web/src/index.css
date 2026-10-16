@@ -398,6 +398,12 @@
     color: var(--ui-muted);
     font-weight: 400;
   }
+  /* A labelled value stays on its label's line, also when it is drawn as a block. */
+  [data-stack] > tbody > tr > td[data-label]:not([data-primary], [data-nolabel], [data-wide], [colspan]) > * {
+    display: inline-flex;
+    max-width: 100%;
+    vertical-align: baseline;
+  }
   [data-stack] > tbody > tr:not(:has(> [data-primary])) > td:first-child::before,
   [data-stack] > tbody > tr > td:last-child:has([data-slot="button"])::before {
     content: none;

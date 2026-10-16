@@ -89,7 +89,7 @@ export function AuditPage() {
                   {a.action}
                 </TableCell>
                 <TableCell className="max-w-md truncate" title={a.target} data-wide data-nolabel>
-                  <UserText>{a.target}</UserText>
+                  {a.target && <UserText>{a.target}</UserText>}
                 </TableCell>
                 <TableCell className="text-muted-foreground">{a.via}</TableCell>
               </TableRow>

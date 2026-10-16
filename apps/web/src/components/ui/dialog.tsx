@@ -192,7 +192,8 @@ function DialogContent({
         </div>
         <div
           data-slot="dialog-body"
-          className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain px-pad-x pb-pad-x max-md:pb-[calc(var(--spacing-pad-x)+env(safe-area-inset-bottom))]"
+          // A footer ends the body itself: padding under it would show below the buttons in a scroll container.
+          className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain px-pad-x pb-pad-x has-[>[data-slot=dialog-footer]:last-child]:pb-0 max-md:pb-[calc(var(--spacing-pad-x)+env(safe-area-inset-bottom))] max-md:has-[>[data-slot=dialog-footer]:last-child]:pb-0"
         >
           {children}
         </div>
@@ -228,7 +229,7 @@ function DialogFooter({ className, children, ...props }: React.ComponentProps<"d
     <div
       data-slot="dialog-footer"
       className={cn(
-        "sticky bottom-0 z-10 -mx-pad-x -mb-pad-x mt-auto flex shrink-0 flex-wrap items-center justify-end gap-2 border-t bg-popover px-pad-x py-3 max-md:-mb-[calc(var(--spacing-pad-x)+env(safe-area-inset-bottom))] max-md:pb-[calc(12px+env(safe-area-inset-bottom))]",
+        "sticky bottom-0 z-10 -mx-pad-x mt-auto flex shrink-0 flex-wrap items-center justify-end gap-2 border-t bg-popover px-pad-x py-3 max-md:pb-[calc(12px+env(safe-area-inset-bottom))]",
         className,
       )}
       {...props}

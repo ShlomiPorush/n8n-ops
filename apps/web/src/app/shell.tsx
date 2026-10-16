@@ -655,6 +655,8 @@ function TabBar() {
                       key={item.to}
                       to={item.to}
                       end={item.to === "/"}
+                      // Replaces the sheet's Back entry, so Back afterwards leaves the new page in one step.
+                      replace
                       aria-current={isActive(item, pathname) ? "page" : undefined}
                       className="flex min-h-touch items-center gap-2.5 rounded-sm px-2.5 aria-[current=page]:bg-primary aria-[current=page]:font-title aria-[current=page]:text-primary-foreground"
                     >
@@ -690,11 +692,13 @@ function TabBar() {
   )
 }
 
-/** Back and Forward return to where the page was scrolled; a new page starts at its top (NL-3). */
+/** Back and Forward return to where the page was scrolled; a new page starts at its top (NL-3). An item opened
+ * on the same page leaves the list where it is. */
 function useScrollMemory(main: HTMLElement | null) {
   const location = useLocation()
   const type = useNavigationType()
   const saved = useRef(new Map<string, number>())
+  const lastPage = useRef(location.pathname.split("/")[1])
   useEffect(() => {
     if (!main) return
     const remember = () => saved.current.set(location.key, main.scrollTop)
@@ -704,8 +708,12 @@ function useScrollMemory(main: HTMLElement | null) {
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs once per history entry
   useLayoutEffect(() => {
     if (!main) return
-    if (type === "POP") main.scrollTop = saved.current.get(location.key) ?? 0
-    else if (type === "PUSH") main.scrollTop = 0
+    const page = location.pathname.split("/")[1]
+    const newPage = page !== lastPage.current
+    lastPage.current = page
+    if (type === "POP") main.scrollTop = saved.current.get(location.key) ?? main.scrollTop
+    // Opening an item of the same page keeps the list where it was behind it.
+    else if (type === "PUSH" && newPage) main.scrollTop = 0
   }, [main, location.key])
 }
 

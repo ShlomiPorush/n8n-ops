@@ -181,6 +181,8 @@ export function ProblemsPage() {
   const open = (pid: string) => navigate(`/problems/${pid}?${params}`)
   const count = rows.data?.length
   const filtered = instance !== "all" || q !== ""
+  // "All" shows every status; the words then name no status.
+  const noun = [statusWords[status], "problems"].filter(Boolean).join(" ")
 
   const list = (
     <>
@@ -200,11 +202,12 @@ export function ProblemsPage() {
             <ToggleGroupItem value="open">Open</ToggleGroupItem>
             <ToggleGroupItem value="muted">Muted</ToggleGroupItem>
             <ToggleGroupItem value="resolved">Resolved</ToggleGroupItem>
+            <ToggleGroupItem value="all">All</ToggleGroupItem>
           </ToggleGroup>
         }
         search={<SearchBox label="Search workflow or error" value={q} onChange={(v) => setParam("q", v)} />}
         active={Number(instance !== "all")}
-        count={count === undefined ? undefined : plural(count, `${statusWords[status] ?? ""} problem`)}
+        count={count === undefined ? undefined : plural(count, [statusWords[status], "problem"].filter(Boolean).join(" "))}
         onClear={
           filtered
             ? () => {
@@ -243,7 +246,7 @@ export function ProblemsPage() {
             onOpen={open}
             href={(pid) => `/problems/${pid}?${params}`}
             empty={
-              q ? `No ${statusWords[status] ?? ""} problems match "${q}".` : `No ${statusWords[status] ?? ""} problems.`
+              q ? `No ${noun} match "${q}".` : `No ${noun}.`
             }
           />
         </Reloading>

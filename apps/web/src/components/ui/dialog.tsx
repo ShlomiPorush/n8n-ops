@@ -158,7 +158,8 @@ function DialogContent({
   const [panel, setPanel] = React.useState<HTMLDivElement | null>(null)
   const closeRef = React.useRef<HTMLButtonElement>(null)
   useSheetGestures(panel, closeRef, pullToClose ?? showCloseButton)
-  useOverlayHistory(history, () => closeRef.current?.click())
+  // This component renders also while its dialog is closed; only a mounted panel holds a Back entry.
+  useOverlayHistory(history && panel !== null, () => closeRef.current?.click())
 
   // A click on the toast is not a click on the backdrop.
   const outside = (e: { target: EventTarget | null; preventDefault(): void }) => {

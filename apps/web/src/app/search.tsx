@@ -259,7 +259,8 @@ export function GlobalSearch({
     setFocused(false)
     input.current?.blur()
     onClose?.()
-    navigate(item.to, item.field ? { state: { focusField: item.field } } : undefined)
+    // From the phone sheet the destination replaces the sheet's Back entry, so no stale step is left (DS-10).
+    navigate(item.to, { replace: sheet, state: item.field ? { focusField: item.field } : undefined })
   }
   const tabs: (Kind | "all")[] = ["all", ...KINDS.map((k) => k.key)]
   const stepKind = (by: number) => setKind(tabs[(tabs.indexOf(kind) + by + tabs.length) % tabs.length] ?? "all")

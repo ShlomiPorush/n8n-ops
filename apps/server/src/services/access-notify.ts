@@ -3,7 +3,8 @@ import type { Ctx } from "../context.ts"
 import { type AccessStatus, accessRequests, apiTokens, instances } from "../db/schema.ts"
 import { AccessError, approveAccess, denyAccess } from "./access.ts"
 import { type CallbackUpdate, telegramClient } from "./alerts.ts"
-import { type Report, sendEmail } from "./reports.ts"
+import { button, type Email, formatDate, kv, mono, panel, panelText, paragraph, render } from "./email-layout.ts"
+import { sendEmail } from "./reports.ts"
 import { clip, escapeHtml, type InlineButton } from "./telegram.ts"
 
 /**
@@ -52,34 +53,51 @@ export function renderAccessTelegram(r: RequestInfo, footer?: string): string {
   ].join("\n")
 }
 
-export function renderAccessEmail(r: RequestInfo, link: string | null): Report {
+/**
+ * The email for a waiting request: who asks, for what and how long, and one button to decide in n8n-ops.
+ * Times are in the time zone set in Settings → General.
+ */
+export function renderAccessEmail(r: RequestInfo, link: string | null, timeZone = "UTC"): Email {
+  const decideBy = `${formatDate(r.decideBy, timeZone, true)} (${timeZone})`
+  const workflows = r.workflowIds.length ? r.workflowIds.join(", ") : "the whole instance"
   const lines = [
     `${r.token} asks for temporary access to ${r.instance}.`,
     "",
     `Reason: ${r.reason}`,
     `Scopes: ${r.scopes.join(", ")}`,
-    `Workflows: ${r.workflowIds.length ? r.workflowIds.join(", ") : "the whole instance"}`,
+    `Workflows: ${workflows}`,
     `For: ${duration(r.minutes)}`,
-    `Decide by: ${r.decideBy.toUTCString()}; then the request expires.`,
+    `Decide by: ${decideBy}; then the request expires.`,
     "",
     link
       ? `Approve or deny: ${link} (sign in with two-factor).`
       : "Approve or deny it on the Agent access page in n8n-ops.",
   ]
-  const esc = escapeHtml
-  const html = [
-    `<p><b>${esc(r.token)}</b> asks for temporary access to <b>${esc(r.instance)}</b>.</p>`,
-    `<p>${esc(r.reason)}</p>`,
-    "<table>",
-    `<tr><td>Scopes</td><td><code>${esc(r.scopes.join(", "))}</code></td></tr>`,
-    `<tr><td>Workflows</td><td>${r.workflowIds.length ? `<code>${esc(r.workflowIds.join(", "))}</code>` : "the whole instance"}</td></tr>`,
-    `<tr><td>For</td><td>${duration(r.minutes)}</td></tr>`,
-    `<tr><td>Decide by</td><td>${esc(r.decideBy.toUTCString())}</td></tr>`,
-    "</table>",
-    link
-      ? `<p><a href="${esc(link)}">Approve or deny in n8n-ops</a> (sign in with two-factor).</p>`
-      : "<p>Approve or deny it on the Agent access page in n8n-ops.</p>",
-  ].join("\n")
+  const html = render({
+    title: `${r.token} asks for access to ${r.instance}`,
+    topic: "Access request",
+    tone: "warn",
+    intro: `Nothing is granted until someone approves it. Without a decision the request expires on ${decideBy}.`,
+    timeZone,
+    blocks: [
+      panel("Why", [panelText(r.reason)]),
+      panel("What it asks for", [
+        kv([
+          ["Agent", r.token],
+          ["Instance", r.instance],
+          ["Scopes", mono(r.scopes.join(", "))],
+          ["Workflows", r.workflowIds.length ? mono(r.workflowIds.join(", ")) : "the whole instance"],
+          ["For", duration(r.minutes)],
+          ["Decide by", decideBy],
+        ]),
+      ]),
+      link
+        ? button("Approve or deny", link)
+        : paragraph("Approve or deny it on the Agent access page in n8n-ops.", true),
+      ...(link ? [paragraph("You sign in with two-factor before deciding.", true)] : []),
+    ],
+    footer: "You get this because Email requests is on in Settings → Agent access.",
+  })
   return { subject: `n8n-ops: ${r.token} asks for access to ${r.instance}`, text: lines.join("\n"), html }
 }
 
@@ -114,6 +132,7 @@ export async function notifyAccess(ctx: Ctx) {
   const settings = await ctx.settings.get("access")
   const { retryMin } = await ctx.settings.get("alerts")
   const email = await ctx.settings.get("email")
+  const timeZone = (await ctx.settings.get("general")).timezone || "UTC"
   const tg = settings.notifyTelegram ? await telegramClient(ctx) : null
   const mail = settings.notifyEmail && Boolean(email.smtpHost && email.recipients.length)
   const now = Date.now()
@@ -137,7 +156,7 @@ export async function notifyAccess(ctx: Ctx) {
     }
     if (needEmail) {
       try {
-        await sendEmail(ctx, renderAccessEmail(info, link))
+        await sendEmail(ctx, renderAccessEmail(info, link, timeZone))
         patch.emailSentAt = new Date()
       } catch (e) {
         errors.push(`Email: ${(e as Error).message}`)

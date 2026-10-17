@@ -200,7 +200,7 @@ export async function buildReport(ctx: Ctx, period: "daily" | "weekly"): Promise
     period,
     openByInstance: allInstances.map((i) => ({ name: i.name, open: open.find((o) => o.instanceId === i.id)?.n ?? 0 })),
     topWorkflows: top.map((t) => ({ workflow: t.workflow, instance: name.get(t.instanceId) ?? "?", failures: t.n })),
-    incidents: incidents.map((i) => ({ at: i.at, text: i.text.replace(/<[^>]+>/g, "").replace(/\n/g, " · ") })),
+    incidents: incidents.map((i) => ({ at: i.at, text: plainText(i.text) })),
     backups,
     versions: allInstances.map((i) => ({ name: i.name, version: i.version })),
     latest: await latestN8nVersion(),
@@ -220,16 +220,21 @@ export async function sendEmail(ctx: Ctx, report: Report) {
       ? { user: email.smtpUser, pass: email.smtpPasswordEnc ? ctx.secrets.decrypt(email.smtpPasswordEnc) : "" }
       : undefined,
   })
-  await transport.sendMail({
-    from: email.from || email.smtpUser,
-    to: email.recipients.join(", "),
+  await transport.sendMail(mailOptions(report, email.from || email.smtpUser, email.recipients))
+}
+
+/** One message to every recipient, with a plain text part beside the HTML (EM-1, EM-6). */
+export function mailOptions(report: Report, from: string, recipients: string[]) {
+  return {
+    from,
+    to: recipients.join(", "),
     subject: report.subject,
     text: report.text,
     html: report.html,
     // SMTP allows 998 characters per line, and a server breaks a longer line wherever it likes, even in the
     // middle of an HTML tag; base64 keeps every line short (EM-3).
-    textEncoding: "base64",
-  })
+    textEncoding: "base64" as const,
+  }
 }
 
 /** Local date parts in the configured time zone. */

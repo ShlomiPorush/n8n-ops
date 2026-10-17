@@ -101,7 +101,7 @@ describe("reports", () => {
     })
     expect(report.subject).toBe("n8n-ops daily report: 3 open problems")
     expect(report.text).toContain("Sync orders")
-    expect(report.html).toContain("Versions (latest n8n 2.44.0)")
+    expect(report.html).toContain("1 instance is behind n8n 2.44.0.")
   })
 
   it("reads local time in the configured time zone", () => {

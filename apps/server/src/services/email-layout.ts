@@ -28,7 +28,7 @@ export class Safe {
 type Text = string | number | Safe | null | undefined
 export type Tone = "ok" | "warn" | "fail" | "info" | "muted"
 
-const escape = (value: string) =>
+const escapeText = (value: string) =>
   value
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -39,7 +39,7 @@ const escape = (value: string) =>
 /** Escape for an attribute or a place that takes no markup. */
 function attr(value: Text): string {
   if (value instanceof Safe) return value.html
-  return escape(value === null || value === undefined ? "" : String(value))
+  return escapeText(value === null || value === undefined ? "" : String(value))
 }
 
 export const FONT = "Onest, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"

@@ -29,7 +29,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Changed
 
-- Every email (the daily and weekly reports, the test email and agent access requests) uses the console's v3 layout: a headline that says what happened, key figures, tinted panels with tables, status tags, and one button to act. It follows dark mode where the mail app does, reads on phones, and keeps its layout in Outlook for Windows. Dates read day/month/year in the time zone set in Settings → General. Messages are sent base64-encoded, so no mail server can break a long line inside the HTML, and addresses keep the colour of the text around them.
+- Every email (the daily and weekly reports, the test email and agent access requests) uses the console's v3 layout: a headline that says what happened, key figures, tinted panels with tables, status tags, and one button to act. It follows dark mode where the mail app does, reads on phones, and is built from tables, so Outlook for Windows keeps the layout. Dates read day/month/year in the time zone set in Settings → General. Messages are sent base64-encoded, so no mail server can break a long line inside the HTML, and addresses keep the colour of the text around them.
 
 ### Fixed
 

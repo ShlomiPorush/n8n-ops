@@ -169,7 +169,8 @@ body, table, td, th, p, a, span, h1, div { font-family: 'Segoe UI', Arial, sans-
 </style><![endif]-->`
 
 const TABLE = 'role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"'
-const spacer = (px: number) => `<tr><td height="${px}" style="height:${px}px;font-size:1px;line-height:1px;">&nbsp;</td></tr>`
+const spacer = (px: number) =>
+  `<tr><td height="${px}" style="height:${px}px;font-size:1px;line-height:1px;">&nbsp;</td></tr>`
 
 /** A 1px divider row; Word draws cell borders unevenly. */
 const rule = (colspan = 1) =>
@@ -222,9 +223,7 @@ export function mono(value: Text, maxLength?: number): Safe {
 /** A link; only http(s) addresses become links, anything else stays text (OT-17). */
 export function link(text: Text, url: string | null | undefined): Safe {
   if (!url || !/^https?:\/\//i.test(url)) return new Safe(e(text))
-  return new Safe(
-    `<a href="${attr(url)}" class="m-ink" style="color:${INK};text-decoration:underline;">${e(text)}</a>`,
-  )
+  return new Safe(`<a href="${attr(url)}" class="m-ink" style="color:${INK};text-decoration:underline;">${e(text)}</a>`)
 }
 
 /** The one call to action of an email: a dark button that works in Outlook as a padded cell. */
@@ -240,7 +239,9 @@ export function button(text: string, url: string | null | undefined): Safe {
 
 export function paragraph(text: Text, muted = false): Safe {
   const [color, cls] = muted ? [MUTED, "m-muted"] : [INK, "m-ink"]
-  return new Safe(`<p class="${cls}" style="margin:0;color:${color};font-size:15px;line-height:1.55;">${lines(text, cls)}</p>`)
+  return new Safe(
+    `<p class="${cls}" style="margin:0;color:${color};font-size:15px;line-height:1.55;">${lines(text, cls)}</p>`,
+  )
 }
 
 /** A tinted message across the full width, as a console banner. */

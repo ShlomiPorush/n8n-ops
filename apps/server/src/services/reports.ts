@@ -2,8 +2,8 @@ import { and, count, desc, eq, gt, isNull } from "drizzle-orm"
 import nodemailer from "nodemailer"
 import type { Ctx } from "../context.ts"
 import { alertOutbox, alertState, backupRuns, failures, instances, problems } from "../db/schema.ts"
+import { type Email, formatDate, panel, plural, render, stats, type Tone, table, tag } from "./email-layout.ts"
 import { compareVersions, latestN8nVersion } from "./instances.ts"
-import { type Email, formatDate, panel, plural, render, stats, table, tag, type Tone } from "./email-layout.ts"
 
 const n = (value: number) => value.toLocaleString("en-US")
 
@@ -110,7 +110,13 @@ export function renderReport(d: ReportData): Report {
       ),
       panel(
         "Health incidents",
-        [table(["When", "What"], d.incidents.map((i) => [stamp(i.at), i.text]), { empty: "No incidents." })],
+        [
+          table(
+            ["When", "What"],
+            d.incidents.map((i) => [stamp(i.at), i.text]),
+            { empty: "No incidents." },
+          ),
+        ],
         { count: d.incidents.length || undefined },
       ),
       panel("Backups", [

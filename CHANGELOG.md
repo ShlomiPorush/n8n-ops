@@ -27,6 +27,10 @@ All notable changes to this project are documented here. The format follows [Kee
 - Application shell (sidebar layout), settings with per-instance defaults, encryption keys, API and MCP tokens, audit log.
 - Project foundation: pnpm workspace with `server`, `web`, `worker` and `shared`, container images, development stack, workflow scripts, CI and Dependabot.
 
+### Changed
+
+- Every email (the daily and weekly reports, the test email and agent access requests) uses the console's v3 layout: a headline that says what happened, key figures, tinted panels with tables, status tags, and one button to act. It follows dark mode where the mail app does, reads on phones, and keeps its layout in Outlook for Windows. Dates read day/month/year in the time zone set in Settings → General. Messages are sent base64-encoded, so no mail server can break a long line inside the HTML, and addresses keep the colour of the text around them.
+
 ### Fixed
 
 - Links in alerts, the Telegram webhook and worker install commands use `N8N_OPS_PUBLIC_URL` when Settings leaves the public URL empty; behind a TLS proxy they were built with http.

@@ -157,8 +157,7 @@ describe("emails", () => {
       "https://ops.example.com/access/1",
       "Asia/Jerusalem",
     )
-    for (const subject of [report().subject, access.subject])
-      expect(subject).not.toMatch(/\p{Extended_Pictographic}/u)
+    for (const subject of [report().subject, access.subject]) expect(subject).not.toMatch(/\p{Extended_Pictographic}/u)
     expect(access.html).toContain("16/10/2026 13:00 (Asia/Jerusalem)")
   })
 

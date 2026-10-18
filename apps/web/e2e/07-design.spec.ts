@@ -37,31 +37,55 @@ test.afterAll(async () => {
   await context.close()
 })
 
-test("each design draws with its own type, corners and surfaces", async () => {
+test("each design draws with its own type, corners, surfaces and shadows, in light and dark", async () => {
   await page.goto("/")
   await expect(shown(page)).toHaveAttribute("data-design", here)
-  const look = () =>
-    page.evaluate(() => {
-      const s = getComputedStyle(document.documentElement)
-      const v = (name: string) => s.getPropertyValue(name).trim()
-      return {
-        font: getComputedStyle(document.body).fontFamily,
-        h1: [v("--ui-h1"), v("--ui-h1-lh"), v("--ui-h1-ls"), v("--ui-h1-w")].join(" "),
-        radius: v("--ui-r-lg"),
-        card: v("--ui-shadow-card"),
-        gap: v("--ui-gap"),
-        panel: v("--ui-panel"),
-        fill: v("--ui-fill"),
-        tint: v("--ui-tint"),
-      }
-    })
-  const mine = await look()
-  expect(mine.font).toContain(here === "regular" ? "Inter" : "Onest")
-  // The same page in the other design, without saving anything.
-  await page.evaluate((d) => document.documentElement.setAttribute("data-design", d), other)
-  const theirs = await look()
-  await page.evaluate((d) => document.documentElement.setAttribute("data-design", d), here)
-  for (const key of Object.keys(mine) as (keyof typeof mine)[]) expect(theirs[key], key).not.toBe(mine[key])
+  await expect(page.getByRole("heading", { name: "Needs attention" })).toBeVisible()
+  /** What the page draws: the body, a key figure and the panel around "Needs attention". */
+  const drawn = (d: "regular" | "compact", dark: boolean) =>
+    page.evaluate(
+      ([d, dark]) => {
+        const html = document.documentElement
+        const before = [html.getAttribute("data-design"), html.classList.contains("dark")] as const
+        html.setAttribute("data-design", d as string)
+        html.classList.toggle("dark", dark as boolean)
+        const body = getComputedStyle(document.body)
+        const figure = getComputedStyle(document.querySelector(".text-figure") as Element)
+        const heading = [...document.querySelectorAll("h2")].find((h) => h.textContent === "Needs attention")
+        const panel = getComputedStyle(heading?.closest("section") as Element)
+        const out = {
+          font: body.fontFamily.split(",")[0],
+          background: body.backgroundColor,
+          figureSize: figure.fontSize,
+          figureWeight: figure.fontWeight,
+          radius: panel.borderTopLeftRadius,
+          shadow: panel.boxShadow.includes("rgba(0, 0, 0, 0.05)") || panel.boxShadow.includes("rgba(0, 0, 0, 0.3)"),
+        }
+        html.setAttribute("data-design", before[0] as string)
+        html.classList.toggle("dark", before[1])
+        return out
+      },
+      [d, dark] as const,
+    )
+  expect(await drawn("regular", false)).toEqual({
+    font: '"Inter Variable"',
+    background: "oklch(1 0 0)",
+    figureSize: "30px",
+    figureWeight: "600",
+    radius: "14px",
+    shadow: true,
+  })
+  expect(await drawn("regular", true)).toMatchObject({ background: "oklch(0.145 0 0)", shadow: true })
+  expect(await drawn("compact", false)).toEqual({
+    font: '"Onest Variable"',
+    background: "rgb(255, 255, 255)",
+    figureSize: "24px",
+    figureWeight: "750",
+    radius: "12px",
+    shadow: false,
+  })
+  expect(await drawn("compact", true)).toMatchObject({ background: "rgb(14, 17, 16)", shadow: false })
+  await expect(shown(page)).toHaveAttribute("data-design", here)
 })
 
 test("switching the design changes the page at once, without a reload, and keeps the rest of General", async () => {
@@ -121,7 +145,7 @@ test("another tab follows when it comes back to the front, and keeps its open di
 
     // Back to the other tab: it reads General again and changes its look in place.
     await tab.bringToFront()
-    await tab.evaluate(() => window.dispatchEvent(new Event("visibilitychange")))
+    await tab.evaluate(() => document.dispatchEvent(new Event("visibilitychange")))
     await expect(shown(tab)).toHaveAttribute("data-design", here)
     await expect(dialog).toBeVisible()
     await expect(dialog.getByLabel("Name", { exact: true })).toHaveValue("not saved")

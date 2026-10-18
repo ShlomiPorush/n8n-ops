@@ -347,6 +347,8 @@ html[data-design="regular"].dark {
 
   --radius-*: initial;
   --radius-kbd: var(--ui-r-kbd);
+  /* A search match marked inside a result. */
+  --radius-mark: 3px;
   --radius-tag: var(--ui-r-tag);
   --radius-sm: var(--ui-r-sm);
   --radius-md: var(--ui-r-sm);

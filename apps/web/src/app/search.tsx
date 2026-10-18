@@ -94,7 +94,7 @@ function Marked({ text, q }: { text: string; q: string }) {
   return (
     <>
       {text.slice(0, at)}
-      <mark className="rounded-kbd bg-warn/22 text-current">{text.slice(at, end)}</mark>
+      <mark className="rounded-mark bg-warn/22 text-current">{text.slice(at, end)}</mark>
       {text.slice(end)}
     </>
   )

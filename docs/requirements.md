@@ -45,14 +45,14 @@ The product is generic and must not depend on the details of this environment. V
 ## 5. UI
 
 - **English only, LTR only.** No Hebrew, no RTL, no localization layer, no language setting.
-- **Component library:** shadcn/ui with the classic **Vega** style, Tailwind CSS, lucide icons. Default neutral color scheme. Light and dark themes.
+- **Component library:** shadcn/ui primitives, Tailwind CSS, lucide icons, with every visual value a design token. Light and dark themes.
 - **Two designs.** Settings → General → Design chooses the look for the whole installation: **Regular** (the default: white cards, icons, the Inter typeface) or **Compact** (the v3 design language: denser screens and flat tinted panels). They are one app with the same pages, functions and behaviour; only the look differs. A switch shows at once for the person who saved it, in other open tabs when they come back to them, and on every next page load; it is audited.
-- **Layout (prototype variant D):**
-  - shadcn Sidebar (inset, collapsible to icons) with breadcrumb header and user menu.
-  - Home (Overview): stat cards, a "needs attention" table, and a tile per instance colored by health.
-  - Problems, Instances, Backups: a full-width table for an overview at a glance. Clicking a row opens a resizable detail panel beside the table (not an overlay); the table stays visible with the row highlighted, and the panel closes back to the full table.
+- **Layout (both designs):**
+  - A top bar with where you are (group, page, opened item), the page's actions and one search for pages, settings, problems, instances and workflows. From 1100px a sidebar that folds into an icon rail (Ctrl+B); down to 761px the icon rail; on phones a tab bar with More, and dialogs as bottom sheets.
+  - Home (Overview): key figures, what needs attention, the instances by health, and recent activity.
+  - Problems, Instances, Backups, Access: a sortable table with filters kept in the address. From 1000px a reading pane beside it opens the first item and follows the selected row; narrower, an item opens as a sheet.
   - Workflows: table with insights; moving a workflow opens a dialog wizard.
-  - Settings: tabs. Workers and Audit log: own pages.
+  - Settings: grouped sections beside one form, with one save bar for unsaved changes. Workers and Audit log: own pages.
 - **Problem page:** workflow, node, error text, counter, first and last seen; actions Mark resolved, Mute 24 h, Open in n8n (deep link to the execution). A drawn workflow graph with the failed node highlighted, the failed node's input as a key/value table (raw JSON on demand), recent occurrences, and other workflows with the same error.
 - **Live updates:** pages update by themselves (server-sent events).
 - **Mobile:** home and problem page are designed mobile first (Telegram links open there). Other pages work on mobile but are designed for desktop.

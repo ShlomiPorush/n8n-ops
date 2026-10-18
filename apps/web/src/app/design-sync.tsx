@@ -1,13 +1,13 @@
 import { useQuery } from "@tanstack/react-query"
 import { useEffect } from "react"
-import { queryClient, readFresh } from "@/lib/api"
+import { markSaved, queryClient, readFresh } from "@/lib/api"
 import { applyDesign } from "@/lib/design"
 
 /*
  * Keeps the page in the design chosen in Settings → General. The server writes the choice on <html> before
  * the page draws (so the sign-in and setup pages, which never read General, have it too); while signed in,
- * this follows the setting: after a save here at once, in another tab when it is focused again, and after
- * the browser restores a page from its back/forward cache. Nothing reloads, so dialogs and edits stay.
+ * this follows the setting: after a save here at once, in another tab when it comes back to the front, and
+ * after the browser restores a page from its back/forward cache. Nothing reloads, so dialogs and edits stay.
  */
 const GENERAL = "/settings/general"
 
@@ -16,20 +16,37 @@ export function DesignSync() {
     queryKey: [GENERAL],
     queryFn: () => readFresh<{ design?: string }>(GENERAL),
     staleTime: 5 * 60_000,
-    refetchOnWindowFocus: "always",
+    // Coming back to the tab is handled below, so it never joins a read that started before.
+    refetchOnWindowFocus: false,
   })
   const design = general.data?.design
   useEffect(() => applyDesign(design), [design])
   useEffect(() => {
+    const onVisible = () => document.visibilityState === "visible" && readAgain()
     window.addEventListener("pageshow", onPageShow)
-    return () => window.removeEventListener("pageshow", onPageShow)
+    window.addEventListener("focus", readAgain)
+    document.addEventListener("visibilitychange", onVisible)
+    return () => {
+      window.removeEventListener("pageshow", onPageShow)
+      window.removeEventListener("focus", readAgain)
+      document.removeEventListener("visibilitychange", onVisible)
+    }
   }, [])
   return null
 }
 
-/** A page restored from the back/forward cache asks for General again; its design may have changed meanwhile. */
+/**
+ * Reads General again from scratch: a read still on its way may have started before another tab saved, so
+ * its answer is not trusted and a new read replaces it.
+ */
+export function readAgain() {
+  markSaved(GENERAL)
+  void queryClient.invalidateQueries({ queryKey: [GENERAL] })
+}
+
+/** A page restored from the back/forward cache reads General again; its design may have changed meanwhile. */
 export function onPageShow(e: Pick<PageTransitionEvent, "persisted">) {
-  if (e.persisted) void queryClient.invalidateQueries({ queryKey: [GENERAL] })
+  if (e.persisted) readAgain()
 }
 
 /**

@@ -1,6 +1,7 @@
 import { useInfiniteQuery } from "@tanstack/react-query"
 import { useEffect, useRef } from "react"
 import { Empty, LoadError, Loading, Page, Panel, UserText } from "@/components/kit"
+import { Initial, ViaIcon } from "@/components/skin/marks"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -82,7 +83,10 @@ export function AuditPage() {
                       <UserText>{a.actor}</UserText>
                     </Badge>
                   ) : (
-                    <UserText>{a.actor}</UserText>
+                    <>
+                      <Initial name={a.actor} />
+                      <UserText>{a.actor}</UserText>
+                    </>
                   )}
                 </TableCell>
                 <TableCell className="font-semibold" data-primary>
@@ -91,7 +95,10 @@ export function AuditPage() {
                 <TableCell className="max-w-md truncate" title={a.target} data-wide data-nolabel>
                   {a.target && <UserText>{a.target}</UserText>}
                 </TableCell>
-                <TableCell className="text-muted-foreground">{a.via}</TableCell>
+                <TableCell className="text-muted-foreground">
+                  <ViaIcon via={a.via} />
+                  {a.via}
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>

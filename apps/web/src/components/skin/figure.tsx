@@ -37,5 +37,12 @@ export function Figure({ value }: { value: number }) {
     }
   }, [design, value])
 
-  return <>{n(shown)}</>
+  if (shown === value) return <>{n(value)}</>
+  // While it counts, assistive technology reads the real figure and skips the moving one.
+  return (
+    <>
+      <span className="sr-only">{n(value)}</span>
+      <span aria-hidden>{n(shown)}</span>
+    </>
+  )
 }

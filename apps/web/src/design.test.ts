@@ -63,7 +63,7 @@ describe("one app, two looks", () => {
     const allowed = (path: string) =>
       path === "src/app/design-sync.tsx" || path === "src/main.tsx" || path.startsWith("src/components/skin/")
     const found = sources
-      .filter(({ text }) => /from "@\/lib\/design"/.test(text))
+      .filter(({ text }) => /from\s+["'](?:@\/lib\/design|(?:\.\.?\/)+(?:lib\/)?design)(?:\.ts)?["']/.test(text))
       .map(({ path }) => rel(path))
       .filter((path) => !allowed(path))
     expect(found).toEqual([])
@@ -85,11 +85,19 @@ describe("one app, two looks", () => {
   })
 
   it("lets the design change classes only, never the markup an attribute or handler depends on", () => {
-    // A variant outside a class string would be a design-dependent value somewhere else.
-    const outside = offenders(/\b(?:regular|compact):[\w[]/).filter(
-      (line) => !/className=|cn\(|"[^"]*\b(?:regular|compact):/.test(line),
+    // Every string that names a design variant must be made of classes only; a variant anywhere else would
+    // be a design-dependent value.
+    const classLike = /^[!-]?[\w@:[\]/.%()&>*=,#'+-]+$/
+    const found = sources.flatMap(({ path, text }) =>
+      [...text.matchAll(/(["'`])((?:(?!\1)[^\\\n])*\b(?:regular|compact):(?:(?!\1)[^\\\n])*)\1/g)]
+        .map((m) => m[2] ?? "")
+        .filter((s) => !s.split(/\s+/).filter(Boolean).every((token) => classLike.test(token)))
+        .map((s) => `${rel(path)}: ${s}`),
     )
-    expect(outside).toEqual([])
+    expect(found).toEqual([])
+    // And no variant outside a string at all.
+    const bare = offenders(/\b(?:regular|compact):[\w[]/).filter((line) => !/["'`][^"'`]*\b(?:regular|compact):/.test(line))
+    expect(bare).toEqual([])
   })
 })
 

@@ -11,6 +11,7 @@ import { useState } from "react"
 import { useSearchParams } from "react-router"
 import { FilterBar, Picker, SearchBox } from "@/components/filter-bar"
 import { Empty, LoadError, Loading, Page, Panel, PanelHead, Reloading, Row, UserText } from "@/components/kit"
+import { RateBar } from "@/components/skin/marks"
 import { Code, TimeAgo, When } from "@/components/status"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -251,6 +252,7 @@ export function WorkflowsPage() {
                     title={`${n(w.errors30d)} of ${n(w.runs30d)} runs failed`}
                   >
                     {rate(w)}%
+                    <RateBar rate={rate(w)} tone={rate(w) > ERROR_RATE_FAIL ? "fail" : rate(w) > 0 ? "warn" : "ok"} />
                   </TableCell>
                   <TableCell className="text-end">
                     <Button size="sm" onClick={() => setMoving(w)}>

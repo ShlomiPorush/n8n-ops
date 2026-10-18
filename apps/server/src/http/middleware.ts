@@ -27,7 +27,9 @@ export function requireToken(ctx: Ctx, kind: "mcp" | "rest") {
   return createMiddleware<Env>(async (c, next) => {
     const challenge = async (error?: "invalid_token" | "insufficient_scope") => {
       const p = await ctx.agents?.provider().catch(() => null)
-      const metadata = p ? `${p.issuer}/.well-known/oauth-protected-resource${kind === "mcp" ? "/mcp" : "/api/v1"}` : null
+      const metadata = p
+        ? `${p.issuer}/.well-known/oauth-protected-resource${kind === "mcp" ? "/mcp" : "/api/v1"}`
+        : null
       const parts = [
         metadata && `resource_metadata="${metadata}"`,
         `scope="${error === "insufficient_scope" ? "ops:read ops:access" : "ops:read"}"`,
@@ -35,7 +37,9 @@ export function requireToken(ctx: Ctx, kind: "mcp" | "rest") {
       ].filter(Boolean)
       c.header("WWW-Authenticate", `Bearer ${parts.join(", ")}`)
       c.header("Access-Control-Expose-Headers", "WWW-Authenticate")
-      return error === "insufficient_scope" ? c.json({ error: "insufficient_scope" }, 403) : c.json({ error: "unauthorized" }, 401)
+      return error === "insufficient_scope"
+        ? c.json({ error: "insufficient_scope" }, 403)
+        : c.json({ error: "unauthorized" }, 401)
     }
     const header = c.req.header("authorization") ?? ""
     const token = header.startsWith("Bearer ") ? header.slice(7).trim() : ""
@@ -47,7 +51,13 @@ export function requireToken(ctx: Ctx, kind: "mcp" | "rest") {
       .where(and(eq(apiTokens.tokenHash, sha256(token)), isNull(apiTokens.revokedAt)))
     if (row && row.kind === kind) {
       await touch(ctx, row.id, row.lastUsedAt)
-      c.set("actor", { kind: "token", id: row.id, name: row.name, tokenKind: kind, canRequestAccess: row.canRequestAccess })
+      c.set("actor", {
+        kind: "token",
+        id: row.id,
+        name: row.name,
+        tokenKind: kind,
+        canRequestAccess: row.canRequestAccess,
+      })
       return next()
     }
     if (row || !ctx.agents) return challenge("invalid_token")

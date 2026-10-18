@@ -12,7 +12,7 @@ import { CLI_CLIENT, resources, SCOPES } from "./provider.ts"
 
 type Bindings = { incoming: IncomingMessage & { body?: unknown }; outgoing: ServerResponse }
 /** The Node request and response under Hono; absent when the app is driven without a server (unit tests). */
-const node = (c: Context) => (c.env as Partial<Bindings> | undefined)?.incoming ? (c.env as Bindings) : null
+const node = (c: Context) => ((c.env as Partial<Bindings> | undefined)?.incoming ? (c.env as Bindings) : null)
 
 const notConfigured = {
   error: "not_configured",
@@ -41,7 +41,10 @@ function limiter(max: number, windowMs: number) {
  */
 function clientAddress(c: Context) {
   const socket = node(c) ? (getConnInfo(c).remote.address ?? "unknown") : "unknown"
-  const trusted = (process.env.N8N_OPS_TRUSTED_PROXIES ?? "").split(",").map((s) => s.trim()).filter(Boolean)
+  const trusted = (process.env.N8N_OPS_TRUSTED_PROXIES ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
   if (trusted.includes(socket)) return c.req.header("x-forwarded-for")?.split(",")[0]?.trim() || socket
   return socket
 }
@@ -145,7 +148,11 @@ export function agentConnectRoutes(ctx: Ctx, agents: AgentConnect) {
 
   app.get("/connect/approve/:uid/request", noStore, requireUser(ctx), async (c) => {
     const it = await interaction(c)
-    if (!it) return c.json({ error: "expired", message: "This request is no longer open. Start the connection again in your agent." }, 410)
+    if (!it)
+      return c.json(
+        { error: "expired", message: "This request is no longer open. Start the connection again in your agent." },
+        410,
+      )
     const loopback = it.redirect ? ["127.0.0.1", "[::1]", "localhost"].includes(it.redirect.hostname) : false
     return c.json({
       flow: it.redirect ? "browser" : "code",
@@ -165,7 +172,11 @@ export function agentConnectRoutes(ctx: Ctx, agents: AgentConnect) {
       .safeParse(await c.req.json().catch(() => null))
     if (!body.success) return c.json({ error: "invalid" }, 400)
     const it = await interaction(c)
-    if (!it) return c.json({ error: "expired", message: "This request is no longer open. Start the connection again in your agent." }, 410)
+    if (!it)
+      return c.json(
+        { error: "expired", message: "This request is no longer open. Start the connection again in your agent." },
+        410,
+      )
     const who = c.get("actor")
     const name = it.client.clientId === CLI_CLIENT ? "Script" : (it.client.clientName ?? "Unnamed agent")
     const finish = (result: Parameters<typeof it.p.provider.interactionResult>[2]) =>
@@ -173,10 +184,15 @@ export function agentConnectRoutes(ctx: Ctx, agents: AgentConnect) {
 
     if (!body.data.approve) {
       await ctx.audit({ actor: actorName(who), action: "Agent connection denied", target: name, via: "web" })
-      return c.json({ redirectTo: await finish({ error: "access_denied", error_description: "The connection was not approved." }) })
+      return c.json({
+        redirectTo: await finish({ error: "access_denied", error_description: "The connection was not approved." }),
+      })
     }
     // Only what was asked can be granted, read is always part of it, and only what is ticked is given.
-    const granted = [SCOPES.read, ...(body.data.scopes.includes(SCOPES.access) && it.asked.includes(SCOPES.access) ? [SCOPES.access] : [])]
+    const granted = [
+      SCOPES.read,
+      ...(body.data.scopes.includes(SCOPES.access) && it.asked.includes(SCOPES.access) ? [SCOPES.access] : []),
+    ]
     const refused = it.asked.filter((s) => !granted.includes(s))
     const resource = resources(it.p.issuer)[it.resource]
     const grant = new it.p.provider.Grant({ accountId: who.id, clientId: it.client.clientId })
@@ -221,7 +237,10 @@ export function agentConnectRoutes(ctx: Ctx, agents: AgentConnect) {
       const parsed = registration.safeParse(await c.req.json().catch(() => null))
       if (!parsed.success)
         return c.json(
-          { error: "invalid_client_metadata", error_description: "Public clients only, with https or loopback redirect URIs." },
+          {
+            error: "invalid_client_metadata",
+            error_description: "Public clients only, with https or loopback redirect URIs.",
+          },
           400,
         )
       // The provider reads an already parsed body from the request.

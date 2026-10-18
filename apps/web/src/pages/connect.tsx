@@ -37,7 +37,11 @@ async function call<T>(uid: string, path: string, body?: unknown): Promise<T> {
  */
 export function ConnectApprovePage() {
   const { uid = "" } = useParams()
-  const request = useQuery({ queryKey: ["connect", uid], queryFn: () => call<ConnectRequest>(uid, "request"), retry: false })
+  const request = useQuery({
+    queryKey: ["connect", uid],
+    queryFn: () => call<ConnectRequest>(uid, "request"),
+    retry: false,
+  })
   const [access, setAccess] = useState(true)
   const [state, setState] = useState<"open" | "busy" | "approved" | "denied">("open")
   const [error, setError] = useState("")
@@ -54,7 +58,11 @@ export function ConnectApprovePage() {
       window.location.assign(redirectTo)
     } catch (e) {
       setState("open")
-      setError(e instanceof ApiError && e.detail ? e.detail : "That did not work. Try again, or start the connection again in your agent.")
+      setError(
+        e instanceof ApiError && e.detail
+          ? e.detail
+          : "That did not work. Try again, or start the connection again in your agent.",
+      )
     }
   }
 
@@ -113,7 +121,9 @@ export function ConnectApprovePage() {
               <Checkbox id="connect-read" checked disabled />
               <FieldContent>
                 <FieldLabel htmlFor="connect-read">Read</FieldLabel>
-                <FieldDescription>Problems, failed executions, instance health, workflows and backups.</FieldDescription>
+                <FieldDescription>
+                  Problems, failed executions, instance health, workflows and backups.
+                </FieldDescription>
               </FieldContent>
             </Field>
             {r.asked.includes("ops:access") && (
@@ -122,7 +132,8 @@ export function ConnectApprovePage() {
                 <FieldContent>
                   <FieldLabel htmlFor="connect-access">May ask for access to n8n instances</FieldLabel>
                   <FieldDescription>
-                    Temporary access to one instance for a task. Nothing is granted until a person approves each request.
+                    Temporary access to one instance for a task. Nothing is granted until a person approves each
+                    request.
                   </FieldDescription>
                 </FieldContent>
               </Field>

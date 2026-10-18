@@ -868,165 +868,169 @@ function TokensCard() {
           count={tokens.data ? list.length : undefined}
           description="Each can read n8n-ops; some may also ask for temporary access to an n8n instance, which a person approves each time."
         />
-      {tokens.error ? (
-        <LoadError what="tokens" error={tokens.error} retry={() => tokens.refetch()} />
-      ) : tokens.isLoading ? (
-        <Loading />
-      ) : list.length === 0 ? (
-        <Empty title="No agent is connected.">Connect one with the address above; it appears here once you approve it.</Empty>
-      ) : (
-        <Table bare>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Rights</TableHead>
-              <TableHead>Approved</TableHead>
-              <TableHead className="text-end">Last used</TableHead>
-              <TableHead />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {list.map((t) => (
-              <TableRow key={t.id}>
-                <TableCell className="font-semibold">
-                  <UserText>{t.name}</UserText>{" "}
-                  {t.kind === "agent" ? (
-                    <span className="text-meta font-normal text-muted-foreground">
-                      {t.connectedVia === "code" ? "with a code" : "through the browser"}
-                      {t.redirectHost ? ` · ${t.redirectHost}` : ""}
-                    </span>
-                  ) : (
-                    <span className="font-mono text-meta font-normal text-muted-foreground">{t.prefix}…</span>
-                  )}
-                </TableCell>
-                <TableCell>
-                  <span className="flex flex-wrap gap-1">
-                    <Badge variant="line">
-                      {t.kind === "agent" ? "read" : t.kind === "mcp" ? "MCP token · read" : "REST token · read"}
-                    </Badge>
-                    {t.canRequestAccess && <Badge variant="line">may request access</Badge>}
-                  </span>
-                </TableCell>
-                <TableCell className="text-muted-foreground">
-                  <When value={t.createdAt} />
-                  {t.approvedBy ? (
-                    <>
-                      {" "}
-                      by <UserText>{t.approvedBy}</UserText>
-                    </>
-                  ) : t.kind !== "agent" ? (
-                    " (made by hand)"
-                  ) : (
-                    ""
-                  )}
-                </TableCell>
-                <TableCell className="text-end text-muted-foreground">
-                  {t.lastUsedAt ? <When value={t.lastUsedAt} /> : "Never"}
-                </TableCell>
-                <TableCell className="text-end">
-                  <Button size="sm" variant="danger" onClick={() => void askRevoke(t)}>
-                    <Trash2 /> {t.kind === "agent" ? "Disconnect" : "Revoke"}
-                  </Button>
-                </TableCell>
+        {tokens.error ? (
+          <LoadError what="tokens" error={tokens.error} retry={() => tokens.refetch()} />
+        ) : tokens.isLoading ? (
+          <Loading />
+        ) : list.length === 0 ? (
+          <Empty title="No agent is connected.">
+            Connect one with the address above; it appears here once you approve it.
+          </Empty>
+        ) : (
+          <Table bare>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Rights</TableHead>
+                <TableHead>Approved</TableHead>
+                <TableHead className="text-end">Last used</TableHead>
+                <TableHead />
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
-      {/* Advanced: a long-lived token made by hand, for a program that cannot connect by approval. */}
-      <SettingRow
-        label="A token made by hand"
-        hint="Advanced. For a program that cannot open the approval link. It lasts until revoked; store it like a password."
-      >
-        <Button
-          size="sm"
-          onClick={() => {
-            setCreated("")
-            setCanRequestAccess(false)
-            setOpen(true)
-          }}
+            </TableHeader>
+            <TableBody>
+              {list.map((t) => (
+                <TableRow key={t.id}>
+                  <TableCell className="font-semibold">
+                    <UserText>{t.name}</UserText>{" "}
+                    {t.kind === "agent" ? (
+                      <span className="text-meta font-normal text-muted-foreground">
+                        {t.connectedVia === "code" ? "with a code" : "through the browser"}
+                        {t.redirectHost ? ` · ${t.redirectHost}` : ""}
+                      </span>
+                    ) : (
+                      <span className="font-mono text-meta font-normal text-muted-foreground">{t.prefix}…</span>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <span className="flex flex-wrap gap-1">
+                      <Badge variant="line">
+                        {t.kind === "agent" ? "read" : t.kind === "mcp" ? "MCP token · read" : "REST token · read"}
+                      </Badge>
+                      {t.canRequestAccess && <Badge variant="line">may request access</Badge>}
+                    </span>
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">
+                    <When value={t.createdAt} />
+                    {t.approvedBy ? (
+                      <>
+                        {" "}
+                        by <UserText>{t.approvedBy}</UserText>
+                      </>
+                    ) : t.kind !== "agent" ? (
+                      " (made by hand)"
+                    ) : (
+                      ""
+                    )}
+                  </TableCell>
+                  <TableCell className="text-end text-muted-foreground">
+                    {t.lastUsedAt ? <When value={t.lastUsedAt} /> : "Never"}
+                  </TableCell>
+                  <TableCell className="text-end">
+                    <Button size="sm" variant="danger" onClick={() => void askRevoke(t)}>
+                      <Trash2 /> {t.kind === "agent" ? "Disconnect" : "Revoke"}
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+        {/* Advanced: a long-lived token made by hand, for a program that cannot connect by approval. */}
+        <SettingRow
+          label="A token made by hand"
+          hint="Advanced. For a program that cannot open the approval link. It lasts until revoked; store it like a password."
         >
-          <Plus /> New token
-        </Button>
-      </SettingRow>
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent keepOnBackdrop>
-          <DialogHeader icon={KeySquareIcon}>
-            <DialogTitle>New token</DialogTitle>
-            <DialogDescription>The token is shown once. Store it where the agent or script reads it.</DialogDescription>
-          </DialogHeader>
-          {created ? (
-            <div className="grid gap-3">
-              <pre
-                className="overflow-x-auto rounded-sm bg-fill p-3 font-mono text-small whitespace-pre-wrap break-all"
-                data-testid="new-token"
-              >
-                {created}
-              </pre>
-              <Copyable value={created} label="Copy token">
-                Copy the token
-              </Copyable>
-            </div>
-          ) : (
-            <form
-              id="token"
-              onSubmit={(e) => {
-                e.preventDefault()
-                const name = String(new FormData(e.currentTarget).get("name"))
-                create.mutate({ name, kind, canRequestAccess }, { onSuccess: (r) => setCreated(r.token) })
-              }}
-            >
-              <FieldGroup>
-                <Field>
-                  <FieldLabel htmlFor="token-name">Name</FieldLabel>
-                  <Input id="token-name" name="name" placeholder="claude-desktop" required />
-                </Field>
-                <Field>
-                  <FieldLabel>Kind</FieldLabel>
-                  <Select value={kind} onValueChange={(v) => setKind(v as "mcp" | "rest")}>
-                    <SelectTrigger className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="mcp">MCP (agents)</SelectItem>
-                      <SelectItem value="rest">REST (scripts)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </Field>
-                <Field orientation="horizontal">
-                  <Checkbox
-                    id="token-access"
-                    checked={canRequestAccess}
-                    onCheckedChange={(v) => setCanRequestAccess(v === true)}
-                  />
-                  <FieldContent>
-                    <FieldLabel htmlFor="token-access">May request access to n8n instances</FieldLabel>
-                    <FieldDescription>
-                      The agent can ask for temporary API access to an instance for a task. Nothing is granted until a
-                      person approves the request.
-                    </FieldDescription>
-                  </FieldContent>
-                </Field>
-              </FieldGroup>
-            </form>
-          )}
-          <DialogFooter>
+          <Button
+            size="sm"
+            onClick={() => {
+              setCreated("")
+              setCanRequestAccess(false)
+              setOpen(true)
+            }}
+          >
+            <Plus /> New token
+          </Button>
+        </SettingRow>
+        <Dialog open={open} onOpenChange={setOpen}>
+          <DialogContent keepOnBackdrop>
+            <DialogHeader icon={KeySquareIcon}>
+              <DialogTitle>New token</DialogTitle>
+              <DialogDescription>
+                The token is shown once. Store it where the agent or script reads it.
+              </DialogDescription>
+            </DialogHeader>
             {created ? (
-              <Button variant="primary" onClick={() => setOpen(false)}>
-                Done
-              </Button>
+              <div className="grid gap-3">
+                <pre
+                  className="overflow-x-auto rounded-sm bg-fill p-3 font-mono text-small whitespace-pre-wrap break-all"
+                  data-testid="new-token"
+                >
+                  {created}
+                </pre>
+                <Copyable value={created} label="Copy token">
+                  Copy the token
+                </Copyable>
+              </div>
             ) : (
-              <>
-                <Button onClick={() => setOpen(false)}>Cancel</Button>
-                <Button variant="primary" type="submit" form="token" disabled={create.isPending}>
-                  Create
-                </Button>
-              </>
+              <form
+                id="token"
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  const name = String(new FormData(e.currentTarget).get("name"))
+                  create.mutate({ name, kind, canRequestAccess }, { onSuccess: (r) => setCreated(r.token) })
+                }}
+              >
+                <FieldGroup>
+                  <Field>
+                    <FieldLabel htmlFor="token-name">Name</FieldLabel>
+                    <Input id="token-name" name="name" placeholder="claude-desktop" required />
+                  </Field>
+                  <Field>
+                    <FieldLabel>Kind</FieldLabel>
+                    <Select value={kind} onValueChange={(v) => setKind(v as "mcp" | "rest")}>
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="mcp">MCP (agents)</SelectItem>
+                        <SelectItem value="rest">REST (scripts)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                  <Field orientation="horizontal">
+                    <Checkbox
+                      id="token-access"
+                      checked={canRequestAccess}
+                      onCheckedChange={(v) => setCanRequestAccess(v === true)}
+                    />
+                    <FieldContent>
+                      <FieldLabel htmlFor="token-access">May request access to n8n instances</FieldLabel>
+                      <FieldDescription>
+                        The agent can ask for temporary API access to an instance for a task. Nothing is granted until a
+                        person approves the request.
+                      </FieldDescription>
+                    </FieldContent>
+                  </Field>
+                </FieldGroup>
+              </form>
             )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </Panel>
+            <DialogFooter>
+              {created ? (
+                <Button variant="primary" onClick={() => setOpen(false)}>
+                  Done
+                </Button>
+              ) : (
+                <>
+                  <Button onClick={() => setOpen(false)}>Cancel</Button>
+                  <Button variant="primary" type="submit" form="token" disabled={create.isPending}>
+                    Create
+                  </Button>
+                </>
+              )}
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </Panel>
     </>
   )
 }

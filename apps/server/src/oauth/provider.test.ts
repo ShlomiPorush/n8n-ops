@@ -36,11 +36,18 @@ beforeAll(async () => {
     const details = await provider.interactionDetails(incoming, outgoing)
     if (deny)
       return c.json({
-        redirectTo: await provider.interactionResult(incoming, outgoing, { error: "access_denied" }, { mergeWithLastSubmission: false }),
+        redirectTo: await provider.interactionResult(
+          incoming,
+          outgoing,
+          { error: "access_denied" },
+          { mergeWithLastSubmission: false },
+        ),
       })
     const params = details.params as Record<string, string>
     const resource = params.resource ?? resources(base).mcp
-    const asked = String(params.scope).split(" ").filter((s) => s.startsWith("ops:"))
+    const asked = String(params.scope)
+      .split(" ")
+      .filter((s) => s.startsWith("ops:"))
     const grant = new provider.Grant({ accountId: "person", clientId: params.client_id })
     grant.addResourceScope(resource, scopes.join(" "))
     const refused = asked.filter((s) => !scopes.includes(s))
@@ -191,7 +198,11 @@ describe("agents connecting through the browser (MCP)", () => {
 
   it("rotates the refresh token, and refuses to widen its scope", async () => {
     const { tokens, clientId } = await connectMcp([SCOPES.read])
-    const next = await tokenRequest({ grant_type: "refresh_token", refresh_token: tokens.refresh_token, client_id: clientId })
+    const next = await tokenRequest({
+      grant_type: "refresh_token",
+      refresh_token: tokens.refresh_token,
+      client_id: clientId,
+    })
     expect(next.status).toBe(200)
     expect(next.data.refresh_token).not.toBe(tokens.refresh_token)
     const wider = await tokenRequest({
@@ -205,11 +216,23 @@ describe("agents connecting through the browser (MCP)", () => {
 
   it("ends the whole connection when a used refresh token comes back", async () => {
     const { tokens, clientId, grantId } = await connectMcp([SCOPES.read])
-    const next = await tokenRequest({ grant_type: "refresh_token", refresh_token: tokens.refresh_token, client_id: clientId })
-    const replay = await tokenRequest({ grant_type: "refresh_token", refresh_token: tokens.refresh_token, client_id: clientId })
+    const next = await tokenRequest({
+      grant_type: "refresh_token",
+      refresh_token: tokens.refresh_token,
+      client_id: clientId,
+    })
+    const replay = await tokenRequest({
+      grant_type: "refresh_token",
+      refresh_token: tokens.refresh_token,
+      client_id: clientId,
+    })
     expect(replay.status).toBe(400)
     expect(await check(next.data.access_token)).toBeUndefined()
-    const after = await tokenRequest({ grant_type: "refresh_token", refresh_token: next.data.refresh_token, client_id: clientId })
+    const after = await tokenRequest({
+      grant_type: "refresh_token",
+      refresh_token: next.data.refresh_token,
+      client_id: clientId,
+    })
     expect(after.status).toBe(400)
     expect(await provider.Grant.find(grantId)).toBeUndefined()
   })
@@ -226,10 +249,18 @@ describe("agents connecting through the browser (MCP)", () => {
   it("lapses after 90 days without a refresh, not after 89", async () => {
     const { tokens, clientId } = await connectMcp([SCOPES.read])
     vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 89 * 86_400_000 })
-    const day89 = await tokenRequest({ grant_type: "refresh_token", refresh_token: tokens.refresh_token, client_id: clientId })
+    const day89 = await tokenRequest({
+      grant_type: "refresh_token",
+      refresh_token: tokens.refresh_token,
+      client_id: clientId,
+    })
     expect(day89.status).toBe(200)
     vi.setSystemTime(Date.now() + 91 * 86_400_000)
-    const day180 = await tokenRequest({ grant_type: "refresh_token", refresh_token: day89.data.refresh_token, client_id: clientId })
+    const day180 = await tokenRequest({
+      grant_type: "refresh_token",
+      refresh_token: day89.data.refresh_token,
+      client_id: clientId,
+    })
     expect(day180.status).toBe(400)
   })
 })
@@ -241,10 +272,16 @@ describe("agents connecting with a code (scripts)", () => {
       form: { client_id: CLI_CLIENT, scope: "ops:read ops:access offline_access", resource: resources(base).rest },
     })
     const poll = () =>
-      tokenRequest({ grant_type: "urn:ietf:params:oauth:grant-type:device_code", device_code: device.data.device_code, client_id: CLI_CLIENT })
+      tokenRequest({
+        grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+        device_code: device.data.device_code,
+        client_id: CLI_CLIENT,
+      })
     const pending = await poll()
     // The person opens the link, compares the code, continues to the approval page and approves.
-    const page = await go(new URL(device.data.verification_uri_complete).pathname + new URL(device.data.verification_uri_complete).search)
+    const page = await go(
+      new URL(device.data.verification_uri_complete).pathname + new URL(device.data.verification_uri_complete).search,
+    )
     const xsrf = /name="xsrf" value="([^"]+)"/.exec(page.data)?.[1] ?? ""
     const confirm = await go("/connect/device", { form: { xsrf, user_code: device.data.user_code, confirm: "yes" } })
     const uid = confirm.location?.split("/connect/approve/")[1] ?? ""
@@ -272,8 +309,12 @@ describe("agents connecting with a code (scripts)", () => {
 
   it("tells the script when the person denies it", async () => {
     const go = browser()
-    const device = await go("/oauth/device", { form: { client_id: CLI_CLIENT, scope: "ops:read", resource: resources(base).rest } })
-    const page = await go(new URL(device.data.verification_uri_complete).pathname + new URL(device.data.verification_uri_complete).search)
+    const device = await go("/oauth/device", {
+      form: { client_id: CLI_CLIENT, scope: "ops:read", resource: resources(base).rest },
+    })
+    const page = await go(
+      new URL(device.data.verification_uri_complete).pathname + new URL(device.data.verification_uri_complete).search,
+    )
     const xsrf = /name="xsrf" value="([^"]+)"/.exec(page.data)?.[1] ?? ""
     const confirm = await go("/connect/device", { form: { xsrf, user_code: device.data.user_code, confirm: "yes" } })
     const uid = confirm.location?.split("/connect/approve/")[1] ?? ""

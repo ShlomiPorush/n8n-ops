@@ -12,8 +12,8 @@ import { TooltipProvider } from "@/components/ui/tooltip"
 import { queryClient } from "@/lib/api"
 import { pinDesign } from "@/lib/design"
 import { LoginPage } from "@/pages/auth/login"
-import { ConnectApprovePage } from "@/pages/connect"
 import { SetupPage } from "@/pages/auth/setup"
+import { ConnectApprovePage } from "@/pages/connect"
 
 // Development only: ?design=regular or ?design=compact previews a design without the server choosing it.
 if (import.meta.env.DEV) pinDesign(new URLSearchParams(window.location.search).get("design"))

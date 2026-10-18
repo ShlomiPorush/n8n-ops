@@ -81,7 +81,10 @@ export function createAgentProvider({ issuer, adapter, cookieKeys, pages }: Agen
         charset: "base-20",
         mask: "****-****",
         userCodeInputSource: async (ctx, form, _out, err) => {
-          ctx.body = pages.codeInput(form, err ? (err.name === "NoCodeError" || "userCode" in err ? "wrong" : "other") : undefined)
+          ctx.body = pages.codeInput(
+            form,
+            err ? (err.name === "NoCodeError" || "userCode" in err ? "wrong" : "other") : undefined,
+          )
         },
         userCodeConfirmSource: async (ctx, form, client, _deviceInfo, userCode) => {
           ctx.body = pages.codeConfirm(form, client.clientName ?? client.clientId, userCode)
@@ -128,7 +131,10 @@ export function createAgentProvider({ issuer, adapter, cookieKeys, pages }: Agen
     findAccount: async (_ctx, id) => ({ accountId: id, claims: async () => ({ sub: id }) }),
     renderError: async (ctx, out) => {
       ctx.type = "html"
-      ctx.body = pages.error(String(out.error ?? "server_error"), out.error_description ? String(out.error_description) : undefined)
+      ctx.body = pages.error(
+        String(out.error ?? "server_error"),
+        out.error_description ? String(out.error_description) : undefined,
+      )
     },
   }
   const provider = new Provider(issuer, configuration)

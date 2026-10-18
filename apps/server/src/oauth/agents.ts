@@ -27,7 +27,8 @@ export function issuerOf(publicUrl: string): string | null {
   try {
     const url = new URL(publicUrl)
     if (url.protocol !== "https:" && url.protocol !== "http:") return null
-    if (url.username || url.password || url.search || url.hash || (url.pathname !== "/" && url.pathname !== "")) return null
+    if (url.username || url.password || url.search || url.hash || (url.pathname !== "/" && url.pathname !== ""))
+      return null
     return url.origin
   } catch {
     return null
@@ -37,10 +38,7 @@ export function issuerOf(publicUrl: string): string | null {
 export type AgentConnect = ReturnType<typeof createAgentConnect>
 
 /** Agents connected by approval: the authorization server for the current public URL, and their records. */
-export function createAgentConnect(
-  ctx: Ctx,
-  { cookieKeys, webDir }: { cookieKeys: string[]; webDir?: string },
-) {
+export function createAgentConnect(ctx: Ctx, { cookieKeys, webDir }: { cookieKeys: string[]; webDir?: string }) {
   const Adapter = storeAdapter(ctx.db)
   const pages = providerPages(webDir, (): Design => ctx.settings.design())
   let current: { issuer: string; provider: AgentProvider } | null = null

@@ -32,7 +32,9 @@ export function requireToken(ctx: Ctx, kind: "mcp" | "rest") {
         : null
       const parts = [
         metadata && `resource_metadata="${metadata}"`,
-        `scope="${error === "insufficient_scope" ? "ops:read ops:access" : "ops:read"}"`,
+        // Both scopes: an MCP client asks for what the challenge names, and the person approving it decides
+        // whether it may also ask for instance access.
+        `scope="ops:read ops:access"`,
         error && `error="${error}"`,
       ].filter(Boolean)
       c.header("WWW-Authenticate", `Bearer ${parts.join(", ")}`)

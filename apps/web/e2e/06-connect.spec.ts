@@ -74,6 +74,8 @@ test("an MCP client finds where to get a token", async () => {
   expect(res.headers.get("www-authenticate")).toContain(
     `resource_metadata="${base}/.well-known/oauth-protected-resource/mcp"`,
   )
+  // The client asks for what the challenge names; the person approving it decides about instance access.
+  expect(res.headers.get("www-authenticate")).toContain(`scope="ops:read ops:access"`)
 
   const resource = (await (await fetch(`${base}/.well-known/oauth-protected-resource/mcp`)).json()) as Record<
     string,

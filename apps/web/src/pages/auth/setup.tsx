@@ -1,13 +1,14 @@
 import { useQueryClient } from "@tanstack/react-query"
-import { Check, Download } from "lucide-react"
+import { Download } from "lucide-react"
 import QRCode from "qrcode"
 import { useEffect, useState } from "react"
 import { Navigate, useNavigate } from "react-router"
+import { Loading, Panel } from "@/components/kit"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { PasswordInput } from "@/components/ui/password-input"
 import { ApiError, api, describeError, useApi } from "@/lib/api"
 import { authClient, authErrorText } from "@/lib/auth-client"
 import { download } from "@/lib/download"
@@ -26,7 +27,12 @@ export function SetupPage() {
   const navigate = useNavigate()
   const client = useQueryClient()
 
-  if (status.isLoading || checklist.isLoading) return <AuthFrame>{null}</AuthFrame>
+  if (status.isLoading || checklist.isLoading)
+    return (
+      <AuthFrame>
+        <Loading />
+      </AuthFrame>
+    )
   const notSignedIn = checklist.error instanceof ApiError && checklist.error.status === 401
   if (status.data?.hasUser && notSignedIn) return <Navigate to="/login" replace />
 
@@ -48,7 +54,30 @@ export function SetupPage() {
 
   return (
     <AuthFrame wide>
-      <Stepper steps={steps} index={index} />
+      <ol aria-label="Setup steps" className="mt-4 flex flex-wrap gap-x-4 gap-y-1.5">
+        {steps.map((s, i) => (
+          <li
+            key={s}
+            aria-current={i === index ? "step" : undefined}
+            className={cn(
+              "flex items-center gap-1.5 text-ctl font-semibold",
+              i === index ? "text-ink" : "text-muted-foreground",
+            )}
+          >
+            <span
+              aria-hidden
+              className={cn(
+                "grid size-5 place-items-center rounded-full text-meta font-bold tabular-nums",
+                i === index ? "bg-primary text-primary-foreground" : i < index ? "tint-ok" : "tint-muted",
+              )}
+            >
+              {i + 1}
+            </span>
+            {s}
+            {i < index && <span className="sr-only"> (done)</span>}
+          </li>
+        ))}
+      </ol>
       {step === "Account" && (
         <AccountStep
           onDone={async (pw) => {
@@ -76,6 +105,30 @@ export function SetupPage() {
   )
 }
 
+/** One setup step: a heading with the question it answers, the form, and the actions under it. */
+function StepFrame({
+  title,
+  description,
+  children,
+  actions,
+}: {
+  title: string
+  description: React.ReactNode
+  children: React.ReactNode
+  actions?: React.ReactNode
+}) {
+  return (
+    <section className="grid gap-gap">
+      <div>
+        <h1 className="text-h1">{title}</h1>
+        <p className="mt-1.5 text-muted-foreground">{description}</p>
+      </div>
+      {children}
+      {actions && <div className="flex flex-wrap items-center justify-end gap-2">{actions}</div>}
+    </section>
+  )
+}
+
 function AccountStep({ onDone }: { onDone: (password: string) => Promise<void> }) {
   const [error, setError] = useState("")
   const [busy, setBusy] = useState(false)
@@ -97,52 +150,40 @@ function AccountStep({ onDone }: { onDone: (password: string) => Promise<void> }
     }
   }
   return (
-    <Card className="shadow-lg">
-      <CardHeader>
-        <CardTitle>Create your account</CardTitle>
-        <CardDescription>
-          n8n-ops has one user. Two-factor authentication is set up next and is required.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <form
-          id="account"
-          onSubmit={(e) => {
-            e.preventDefault()
-            void submit(new FormData(e.currentTarget))
-          }}
-        >
-          <FieldGroup>
-            <Field>
-              <FieldLabel htmlFor="username">Username</FieldLabel>
-              <Input id="username" name="username" autoComplete="username" required minLength={3} autoFocus />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="password">Password</FieldLabel>
-              <Input
-                id="password"
-                name="password"
-                type="password"
-                autoComplete="new-password"
-                required
-                minLength={12}
-              />
-              <FieldDescription>At least 12 characters.</FieldDescription>
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="confirm">Repeat password</FieldLabel>
-              <Input id="confirm" name="confirm" type="password" autoComplete="new-password" required />
-            </Field>
-            {error && <FieldError>{error}</FieldError>}
-          </FieldGroup>
-        </form>
-      </CardContent>
-      <CardFooter className="justify-end border-t">
-        <Button type="submit" form="account" disabled={busy}>
+    <StepFrame
+      title="Create your account"
+      description="n8n-ops has one user. Two-factor authentication is set up next and is required."
+      actions={
+        <Button type="submit" form="account" variant="primary" disabled={busy}>
           Create account
         </Button>
-      </CardFooter>
-    </Card>
+      }
+    >
+      <form
+        id="account"
+        onSubmit={(e) => {
+          e.preventDefault()
+          void submit(new FormData(e.currentTarget))
+        }}
+      >
+        <FieldGroup>
+          <Field>
+            <FieldLabel htmlFor="username">Username</FieldLabel>
+            <Input id="username" name="username" autoComplete="username" required minLength={3} autoFocus />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="password">Password</FieldLabel>
+            <PasswordInput id="password" name="password" autoComplete="new-password" required minLength={12} />
+            <FieldDescription>At least 12 characters.</FieldDescription>
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="confirm">Repeat password</FieldLabel>
+            <PasswordInput id="confirm" name="confirm" autoComplete="new-password" required />
+          </Field>
+          {error && <FieldError>{error}</FieldError>}
+        </FieldGroup>
+      </form>
+    </StepFrame>
   )
 }
 
@@ -183,61 +224,42 @@ function TwoFactorStep({ password: known, onDone }: { password: string; onDone: 
 
   const secret = uri ? (new URL(uri).searchParams.get("secret") ?? "") : ""
   return (
-    <Card className="shadow-lg">
-      <CardHeader>
-        <CardTitle>Set up two-factor authentication</CardTitle>
-        <CardDescription>
-          Required. Scan the code with an authenticator app such as 1Password or Google Authenticator.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col items-center gap-4">
-        {!uri ? (
-          <form
-            className="w-full"
-            onSubmit={(e) => {
-              e.preventDefault()
-              void start(password)
-            }}
-          >
-            <FieldGroup>
-              <Field>
-                <FieldLabel htmlFor="pw">Confirm your password</FieldLabel>
-                <Input
-                  id="pw"
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                />
-              </Field>
-              <Button type="submit" disabled={busy}>
-                Continue
-              </Button>
-            </FieldGroup>
-          </form>
-        ) : (
-          <>
-            {qr && (
-              <div className="rounded-2xl border bg-white p-3 shadow-sm">
-                <img src={qr} alt="Two-factor QR code" className="size-44" />
-              </div>
-            )}
-            <div className="w-full space-y-1.5 text-center">
-              <p className="text-xs text-muted-foreground">Can't scan it? Enter this key:</p>
-              <code
-                className="block rounded-lg bg-muted px-3 py-2 font-mono text-xs tracking-wider break-all"
-                data-testid="totp-secret"
-              >
-                {secret}
-              </code>
-            </div>
-            <p className="text-sm font-medium">Then enter the code it shows</p>
-            <TotpInput onComplete={(code) => void verify(code)} disabled={busy} />
-          </>
-        )}
-        {error && <FieldError>{error}</FieldError>}
-      </CardContent>
-    </Card>
+    <StepFrame
+      title="Set up two-factor authentication"
+      description="Required. Scan the code with an authenticator app such as 1Password or Google Authenticator."
+    >
+      {!uri ? (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            void start(password)
+          }}
+        >
+          <FieldGroup>
+            <Field>
+              <FieldLabel htmlFor="pw">Confirm your password</FieldLabel>
+              <PasswordInput id="pw" value={password} onChange={(e) => setPassword(e.target.value)} required />
+            </Field>
+            <Button type="submit" variant="primary" className="justify-self-end" disabled={busy}>
+              Continue
+            </Button>
+          </FieldGroup>
+        </form>
+      ) : (
+        <Panel className="grid justify-items-center gap-4 p-pad-x">
+          {qr && <img src={qr} alt="Two-factor QR code" className="size-48 rounded-sm bg-white p-2" />}
+          <p className="text-center text-muted-foreground">
+            Can't scan it? Enter this key:{" "}
+            <code className="break-all text-ink" data-testid="totp-secret">
+              {secret}
+            </code>
+          </p>
+          <p className="font-semibold">Then enter the code it shows:</p>
+          <TotpInput onComplete={(code) => void verify(code)} disabled={busy} />
+        </Panel>
+      )}
+      {error && <FieldError>{error}</FieldError>}
+    </StepFrame>
   )
 }
 
@@ -264,44 +286,40 @@ function BackupKeyStep({ onDone }: { onDone: () => Promise<void> }) {
   }
 
   return (
-    <Card className="shadow-lg">
-      <CardHeader>
-        <CardTitle>Your backup key</CardTitle>
-        <CardDescription>
-          Backups are encrypted with a key pair. The server keeps only the public half. Save the private key now: it is
-          shown once, and without it no backup can be restored.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {!privateKey ? (
-          <Button onClick={() => void generate()}>Generate key pair</Button>
-        ) : (
-          <>
-            <pre
-              className="rounded-lg bg-muted p-3 font-mono text-xs break-all whitespace-pre-wrap"
-              data-testid="private-key"
-            >
-              {privateKey}
-            </pre>
-            <Button variant="outline" onClick={() => download("n8n-ops-backup-key.txt", `${privateKey}\n`)}>
-              <Download /> Download key file
-            </Button>
-            <Field orientation="horizontal">
-              <Checkbox id="saved" checked={saved} onCheckedChange={(v) => setSaved(v === true)} />
-              <FieldLabel htmlFor="saved" className="font-normal">
-                I saved the private key somewhere safe, such as a password manager
-              </FieldLabel>
-            </Field>
-          </>
-        )}
-        {error && <FieldError>{error}</FieldError>}
-      </CardContent>
-      <CardFooter className="justify-end border-t">
-        <Button disabled={!privateKey || !saved} onClick={() => void confirm()}>
+    <StepFrame
+      title="Your backup key"
+      description="Backups are encrypted with a key pair. The server keeps only the public half. Save the private key now: it is shown once, and without it no backup can be restored."
+      actions={
+        <Button variant="primary" disabled={!privateKey || !saved} onClick={() => void confirm()}>
           Continue
         </Button>
-      </CardFooter>
-    </Card>
+      }
+    >
+      {!privateKey ? (
+        <Button className="justify-self-start" onClick={() => void generate()}>
+          Generate key pair
+        </Button>
+      ) : (
+        <Panel className="grid gap-3 p-pad-x">
+          <pre
+            className="overflow-x-auto rounded-sm bg-bg p-3 font-mono text-small whitespace-pre-wrap break-all"
+            data-testid="private-key"
+          >
+            {privateKey}
+          </pre>
+          <Button className="justify-self-start" onClick={() => download("n8n-ops-backup-key.txt", `${privateKey}\n`)}>
+            <Download /> Download key file
+          </Button>
+          <Field orientation="horizontal">
+            <Checkbox id="saved" checked={saved} onCheckedChange={(v) => setSaved(v === true)} />
+            <FieldLabel htmlFor="saved" className="font-normal">
+              I saved the private key somewhere safe, such as a password manager
+            </FieldLabel>
+          </Field>
+        </Panel>
+      )}
+      {error && <FieldError>{error}</FieldError>}
+    </StepFrame>
   )
 }
 
@@ -330,39 +348,38 @@ function OptionalStep({
     }
   }
   return (
-    <Card className="shadow-lg">
-      <CardHeader>
-        <CardTitle>{title}</CardTitle>
-        <CardDescription>{description}</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <form
-          id={section}
-          onSubmit={(e) => {
-            e.preventDefault()
-            void submit(new FormData(e.currentTarget))
-          }}
-        >
-          <FieldGroup>
-            {fields.map((f) => (
-              <Field key={f.name}>
-                <FieldLabel htmlFor={f.name}>{f.label}</FieldLabel>
-                <Input id={f.name} name={f.name} type={f.type ?? "text"} placeholder={f.placeholder} required />
-              </Field>
-            ))}
-            {error && <FieldError>{error}</FieldError>}
-          </FieldGroup>
-        </form>
-      </CardContent>
-      <CardFooter className="justify-between border-t">
-        <Button variant="ghost" onClick={onSkip}>
-          Skip for now
-        </Button>
-        <Button type="submit" form={section}>
-          Save and continue
-        </Button>
-      </CardFooter>
-    </Card>
+    <StepFrame
+      title={title}
+      description={description}
+      actions={
+        <>
+          <Button variant="ghost" className="me-auto" onClick={onSkip}>
+            Skip for now
+          </Button>
+          <Button type="submit" form={section} variant="primary">
+            Save and continue
+          </Button>
+        </>
+      }
+    >
+      <form
+        id={section}
+        onSubmit={(e) => {
+          e.preventDefault()
+          void submit(new FormData(e.currentTarget))
+        }}
+      >
+        <FieldGroup>
+          {fields.map((f) => (
+            <Field key={f.name}>
+              <FieldLabel htmlFor={f.name}>{f.label}</FieldLabel>
+              <Input id={f.name} name={f.name} type={f.type ?? "text"} placeholder={f.placeholder} required />
+            </Field>
+          ))}
+          {error && <FieldError>{error}</FieldError>}
+        </FieldGroup>
+      </form>
+    </StepFrame>
   )
 }
 
@@ -398,40 +415,5 @@ function StorageStep({ onDone, onSkip }: { onDone: () => Promise<void>; onSkip: 
       onDone={onDone}
       onSkip={onSkip}
     />
-  )
-}
-
-/** Where the first-run setup stands: done steps checked, the current one ringed, the rest muted. */
-function Stepper({ steps, index }: { steps: readonly string[]; index: number }) {
-  return (
-    <ol className="flex items-start justify-center">
-      {steps.map((label, i) => (
-        <li key={label} className="flex items-start">
-          <div className="flex w-16 flex-col items-center gap-1.5 sm:w-20">
-            <span
-              className={cn(
-                "grid size-7 place-items-center rounded-full border text-xs font-semibold transition-colors",
-                i < index && "border-primary bg-primary text-primary-foreground",
-                i === index && "border-primary text-foreground ring-4 ring-primary/15",
-                i > index && "bg-background text-muted-foreground",
-              )}
-            >
-              {i < index ? <Check className="size-3.5" /> : i + 1}
-            </span>
-            <span
-              className={cn(
-                "text-center text-[11px] leading-tight",
-                i === index ? "font-medium text-foreground" : "text-muted-foreground",
-              )}
-            >
-              {label}
-            </span>
-          </div>
-          {i < steps.length - 1 && (
-            <span className={cn("mt-3.5 h-px w-4 sm:w-6", i < index ? "bg-primary" : "bg-border")} />
-          )}
-        </li>
-      ))}
-    </ol>
   )
 }

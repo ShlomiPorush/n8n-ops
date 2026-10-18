@@ -142,8 +142,8 @@ test("a workflow moves to another instance with its credentials", async () => {
   await page.goto("/instances")
   await page.getByRole("button", { name: "Add instance" }).click()
   await page.getByLabel("Name", { exact: true }).fill("e2e-n8n-b")
-  await page.getByLabel("Base URL").fill(n8nUrl)
-  await page.getByLabel("API key").fill(currentApiKey())
+  await page.getByLabel("Base URL", { exact: true }).fill(n8nUrl)
+  await page.getByLabel("API key", { exact: true }).fill(currentApiKey())
   await page.getByRole("button", { name: "Add instance" }).last().click()
   await expect(page.getByRole("heading", { name: "e2e-n8n-b" })).toBeVisible()
 

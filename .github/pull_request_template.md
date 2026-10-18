@@ -4,4 +4,4 @@
 
 ## Verification
 
-- [ ] A UI change is in both designs, `apps/web` (Regular) and `apps/web-compact` (Compact), with both end-to-end suites updated, or this pull request says why not.
+- [ ] A UI change works the same in both designs (Regular and Compact); any difference is in the look only, through tokens, `regular:`/`compact:` classes or `components/skin`.

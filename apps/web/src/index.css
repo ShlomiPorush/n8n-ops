@@ -1,134 +1,670 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
+@import "@fontsource-variable/onest";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/600.css";
 @import "@fontsource-variable/inter";
 
 @custom-variant dark (&:is(.dark *));
-
-@theme inline {
-  --font-heading: var(--font-sans);
-  --font-sans: "Inter Variable", sans-serif;
-  --color-sidebar-ring: var(--sidebar-ring);
-  --color-sidebar-border: var(--sidebar-border);
-  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-  --color-sidebar-accent: var(--sidebar-accent);
-  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-  --color-sidebar-primary: var(--sidebar-primary);
-  --color-sidebar-foreground: var(--sidebar-foreground);
-  --color-sidebar: var(--sidebar);
-  --color-chart-5: var(--chart-5);
-  --color-chart-4: var(--chart-4);
-  --color-chart-3: var(--chart-3);
-  --color-chart-2: var(--chart-2);
-  --color-chart-1: var(--chart-1);
-  --color-ring: var(--ring);
-  --color-input: var(--input);
-  --color-border: var(--border);
-  --color-destructive: var(--destructive);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-accent: var(--accent);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-muted: var(--muted);
-  --color-secondary-foreground: var(--secondary-foreground);
-  --color-secondary: var(--secondary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-primary: var(--primary);
-  --color-popover-foreground: var(--popover-foreground);
-  --color-popover: var(--popover);
-  --color-card-foreground: var(--card-foreground);
-  --color-card: var(--card);
-  --color-foreground: var(--foreground);
-  --color-background: var(--background);
-  --radius-sm: calc(var(--radius) * 0.6);
-  --radius-md: calc(var(--radius) * 0.8);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) * 1.4);
-  --radius-2xl: calc(var(--radius) * 1.8);
-  --radius-3xl: calc(var(--radius) * 2.2);
-  --radius-4xl: calc(var(--radius) * 2.6);
+/* The full 240px sidebar: above 1100px, unless the user folded it into the icon rail (NL-7). */
+@custom-variant side {
+  @media (min-width: 1101px) {
+    html:not([data-nav="rail"]) & {
+      @slot;
+    }
+  }
+}
+/* Above 1100px with the sidebar folded into the icon rail. */
+@custom-variant folded {
+  @media (min-width: 1101px) {
+    html[data-nav="rail"] & {
+      @slot;
+    }
+  }
 }
 
+/*
+ * Design tokens. Every visual value lives here; components use the Tailwind names below and never raw
+ * colours, sizes or shadows. Two designs share every name and differ only in the values: Compact (the v3
+ * language, the default values below) and Regular (html[data-design="regular"]). Only lib/design.ts sets the
+ * attribute, and nothing but these values and the regular: and compact: variants may depend on it.
+ */
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --ui-font: "Onest Variable", system-ui, sans-serif;
+  --ui-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  /* Compact: the accent is the ink, no brand colour; colour means status only. */
+  --ui-bg: #ffffff;
+  --ui-panel: #f4f6f5;
+  --ui-fill: var(--ui-panel);
+  --ui-side: var(--ui-bg);
+  --ui-raise: #ffffff;
+  --ui-ink: #111814;
+  --ui-muted: #5e6863;
+  --ui-line: #e3e7e5;
+  --ui-accent: #111814;
+  --ui-on-accent: #ffffff;
+  --ui-hover: color-mix(in srgb, var(--ui-accent) 6%, transparent);
+  --ui-focus: #1f5fbf;
+
+  --ui-ok: #12803f;
+  --ui-warn: #9a6200;
+  --ui-fail: #c42b1c;
+  --ui-info: #1f5fbf;
+  /* How strongly a status tints the background of its tag or banner. */
+  --ui-tint: 14%;
+
+  /* Type: size, line height, letter spacing and weight per role. */
+  --ui-h1: 28px;
+  --ui-h1-lh: 1.1;
+  --ui-h1-ls: -0.035em;
+  --ui-h1-w: 800;
+  --ui-figure: 24px;
+  --ui-figure-lh: 1.2;
+  --ui-figure-ls: -0.02em;
+  --ui-figure-w: 750;
+  --ui-title: 19px;
+  --ui-title-lh: 1.25;
+  --ui-title-ls: -0.01em;
+  --ui-title-w: 700;
+  --ui-h2: 16px;
+  --ui-h2-lh: 1.3;
+  --ui-h2-ls: -0.01em;
+  --ui-h2-w: 650;
+  --ui-head: 15px;
+  --ui-head-lh: 1.35;
+  --ui-head-w: 650;
+  --ui-body: 14px;
+  --ui-body-lh: 1.5;
+  --ui-ctl: 13px;
+  --ui-ctl-lh: 1.3;
+  --ui-small: 12.5px;
+  --ui-small-lh: 1.4;
+  --ui-meta: 12px;
+  --ui-meta-lh: 1.4;
+  --ui-w-semibold: 600;
+  --ui-w-title: 650;
+  --ui-w-bold: 700;
+  --ui-w-figure: 750;
+  --ui-w-heavy: 800;
+
+  --ui-r-kbd: 4px;
+  --ui-r-tag: 6px;
+  --ui-r-sm: 8px;
+  --ui-r-option: 10px;
+  --ui-r-lg: 12px;
+  --ui-r-sheet: 16px;
+
+  --ui-shadow-card: 0 0 #0000;
+  --ui-shadow-float: 0 12px 32px rgb(0 0 0 / 0.14);
+  --ui-shadow-modal: 0 24px 60px rgb(0 0 0 / 0.25);
+  --ui-shadow-knob: 0 1px 2px rgb(0 0 0 / 0.25);
+
+  /* Layout values that the plain CSS rules below need; the Tailwind names in @theme mirror them. */
+  --ui-pad-x: 16px;
+  --ui-pad-y: 9px;
+  --ui-gap: 14px;
+  --ui-tabbar: 64px;
+
+  /* shadcn/ui names, mapped onto the tokens so every primitive follows them. */
+  --background: var(--ui-bg);
+  --foreground: var(--ui-ink);
+  --card: var(--ui-panel);
+  --card-foreground: var(--ui-ink);
+  --popover: var(--ui-raise);
+  --popover-foreground: var(--ui-ink);
+  --primary: var(--ui-accent);
+  --primary-foreground: var(--ui-on-accent);
+  --secondary: var(--ui-fill);
+  --secondary-foreground: var(--ui-ink);
+  --muted: var(--ui-fill);
+  --muted-foreground: var(--ui-muted);
+  --accent: var(--ui-hover);
+  --accent-foreground: var(--ui-ink);
+  --destructive: var(--ui-fail);
+  --border: var(--ui-line);
+  --input: var(--ui-line);
+  --ring: var(--ui-focus);
+
+  color-scheme: light;
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --ui-bg: #0e1110;
+  --ui-panel: #171b19;
+  --ui-raise: #0e1110;
+  --ui-ink: #f2f5f3;
+  --ui-muted: #97a29c;
+  --ui-line: #262c29;
+  --ui-accent: #f2f5f3;
+  --ui-on-accent: #0e1110;
+  --ui-focus: #7db3ff;
+
+  --ui-ok: #3fcf7f;
+  --ui-warn: #f0b03f;
+  --ui-fail: #ff6b61;
+  --ui-info: #7db3ff;
+
+  color-scheme: dark;
 }
+
+/*
+ * Regular: the Spectrum refined look of PR #29. Inter, neutral greys, white cards with a hairline ring and a
+ * soft shadow on a white page, a tinted sidebar, softer weights and rounder corners.
+ */
+html[data-design="regular"] {
+  --ui-font: "Inter Variable", system-ui, sans-serif;
+  --ui-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --ui-bg: oklch(1 0 0);
+  --ui-panel: oklch(1 0 0);
+  --ui-fill: oklch(0.97 0 0);
+  --ui-side: oklch(0.985 0 0);
+  --ui-raise: oklch(1 0 0);
+  --ui-ink: oklch(0.145 0 0);
+  --ui-muted: oklch(0.556 0 0);
+  --ui-line: oklch(0.922 0 0);
+  --ui-accent: oklch(0.205 0 0);
+  --ui-on-accent: oklch(0.985 0 0);
+  --ui-hover: oklch(0.97 0 0);
+  --ui-focus: oklch(0.556 0 0);
+
+  --ui-ok: #047857;
+  --ui-warn: #b45309;
+  --ui-fail: #be123c;
+  --ui-info: #0369a1;
+  --ui-tint: 9%;
+
+  --ui-h1: 24px;
+  --ui-h1-lh: 1.33;
+  --ui-h1-ls: -0.025em;
+  --ui-h1-w: 600;
+  --ui-figure: 30px;
+  --ui-figure-lh: 1.2;
+  --ui-figure-ls: -0.025em;
+  --ui-figure-w: 600;
+  --ui-title: 18px;
+  --ui-title-lh: 1.4;
+  --ui-title-ls: -0.015em;
+  --ui-title-w: 600;
+  --ui-h2: 16px;
+  --ui-h2-lh: 1.5;
+  --ui-h2-ls: -0.01em;
+  --ui-h2-w: 600;
+  --ui-head: 16px;
+  --ui-head-lh: 1.5;
+  --ui-head-w: 500;
+  --ui-body: 14px;
+  --ui-body-lh: 1.43;
+  --ui-ctl: 14px;
+  --ui-ctl-lh: 1.43;
+  --ui-small: 13px;
+  --ui-small-lh: 1.45;
+  --ui-meta: 12px;
+  --ui-meta-lh: 1.33;
+  --ui-w-semibold: 500;
+  --ui-w-title: 600;
+  --ui-w-bold: 600;
+  --ui-w-figure: 600;
+  --ui-w-heavy: 600;
+
+  --ui-r-kbd: 4px;
+  --ui-r-tag: 6px;
+  --ui-r-sm: 8px;
+  --ui-r-option: 8px;
+  --ui-r-lg: 14px;
+  --ui-r-sheet: 18px;
+
+  --ui-shadow-card: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --ui-shadow-float: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  --ui-shadow-modal: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+  --ui-shadow-knob: 0 1px 3px rgb(0 0 0 / 0.2);
+
+  --ui-pad-x: 20px;
+  --ui-pad-y: 12px;
+  --ui-gap: 16px;
+}
+
+html[data-design="regular"].dark {
+  --ui-bg: oklch(0.145 0 0);
+  --ui-panel: oklch(0.205 0 0);
+  --ui-fill: oklch(0.269 0 0);
+  --ui-side: oklch(0.205 0 0);
+  --ui-raise: oklch(0.205 0 0);
+  --ui-ink: oklch(0.985 0 0);
+  --ui-muted: oklch(0.708 0 0);
+  --ui-line: oklch(1 0 0 / 10%);
+  --ui-accent: oklch(0.922 0 0);
+  --ui-on-accent: oklch(0.205 0 0);
+  --ui-hover: oklch(0.269 0 0);
+  --ui-focus: oklch(0.708 0 0);
+
+  --ui-ok: #6ee7b7;
+  --ui-warn: #fcd34d;
+  --ui-fail: #fda4af;
+  --ui-info: #7dd3fc;
+  --ui-tint: 12%;
+
+  --ui-shadow-card: 0 1px 2px 0 rgb(0 0 0 / 0.3);
+}
+
+/* The Tailwind theme holds only the tokens: the default palette, sizes and shadows are removed. */
+@theme inline {
+  --color-*: initial;
+  --color-transparent: transparent;
+  --color-current: currentColor;
+  --color-white: #ffffff;
+  --color-black: #000000;
+
+  --color-bg: var(--ui-bg);
+  --color-panel: var(--ui-panel);
+  --color-fill: var(--ui-fill);
+  --color-side: var(--ui-side);
+  --color-raise: var(--ui-raise);
+  --color-ink: var(--ui-ink);
+  --color-line: var(--ui-line);
+  --color-on-accent: var(--ui-on-accent);
+  --color-focus: var(--ui-focus);
+  --color-ok: var(--ui-ok);
+  --color-warn: var(--ui-warn);
+  --color-fail: var(--ui-fail);
+  --color-info: var(--ui-info);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --font-*: initial;
+  --font-sans: var(--ui-font);
+  --font-heading: var(--ui-font);
+  --font-mono: var(--ui-mono);
+
+  /* Type scale: page title, key figure, item title, section title, panel title, body, control, small, meta. */
+  --text-*: initial;
+  --text-h1: var(--ui-h1);
+  --text-h1--line-height: var(--ui-h1-lh);
+  --text-h1--letter-spacing: var(--ui-h1-ls);
+  --text-h1--font-weight: var(--ui-h1-w);
+  --text-figure: var(--ui-figure);
+  --text-figure--line-height: var(--ui-figure-lh);
+  --text-figure--letter-spacing: var(--ui-figure-ls);
+  --text-figure--font-weight: var(--ui-figure-w);
+  --text-title: var(--ui-title);
+  --text-title--line-height: var(--ui-title-lh);
+  --text-title--letter-spacing: var(--ui-title-ls);
+  --text-title--font-weight: var(--ui-title-w);
+  --text-h2: var(--ui-h2);
+  --text-h2--line-height: var(--ui-h2-lh);
+  --text-h2--letter-spacing: var(--ui-h2-ls);
+  --text-h2--font-weight: var(--ui-h2-w);
+  --text-head: var(--ui-head);
+  --text-head--line-height: var(--ui-head-lh);
+  --text-head--font-weight: var(--ui-head-w);
+  --text-body: var(--ui-body);
+  --text-body--line-height: var(--ui-body-lh);
+  --text-ctl: var(--ui-ctl);
+  --text-ctl--line-height: var(--ui-ctl-lh);
+  --text-small: var(--ui-small);
+  --text-small--line-height: var(--ui-small-lh);
+  --text-meta: var(--ui-meta);
+  --text-meta--line-height: var(--ui-meta-lh);
+  /* Inline code and values: a touch smaller than the text around them. */
+  --text-code: 0.9em;
+  /* Phone inputs: 16px so iOS does not zoom. */
+  --text-input-touch: 16px;
+  /* A count that shrinks to a bare dot. */
+  --text-none: 0px;
+
+  --font-weight-*: initial;
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: var(--ui-w-semibold);
+  --font-weight-title: var(--ui-w-title);
+  --font-weight-bold: var(--ui-w-bold);
+  --font-weight-figure: var(--ui-w-figure);
+  --font-weight-heavy: var(--ui-w-heavy);
+
+  --tracking-*: initial;
+  --tracking-tight: -0.01em;
+  --tracking-tighter: -0.02em;
+  --tracking-caps: 0.04em;
+
+  --radius-*: initial;
+  --radius-kbd: var(--ui-r-kbd);
+  --radius-tag: var(--ui-r-tag);
+  --radius-sm: var(--ui-r-sm);
+  --radius-md: var(--ui-r-sm);
+  --radius-option: var(--ui-r-option);
+  --radius-lg: var(--ui-r-lg);
+  --radius-xl: var(--ui-r-lg);
+  --radius-sheet: var(--ui-r-sheet);
+  /* The search results, which float under the field. */
+  --radius-pop: 14px;
+
+  --shadow-*: initial;
+  --shadow-card: var(--ui-shadow-card);
+  --shadow-float: var(--ui-shadow-float);
+  --shadow-modal: var(--ui-shadow-modal);
+  --shadow-knob: var(--ui-shadow-knob);
+  /* A selected option in a list: an ink bar at its start; a selected tab: an ink line under it. */
+  --shadow-selected: inset 3px 0 0 var(--ui-ink);
+  --shadow-tab: inset 0 -2px 0 var(--ui-ink);
+  /* The open search field: a soft ink halo. */
+  --shadow-halo: 0 0 0 3px color-mix(in srgb, var(--ui-ink) 10%, transparent);
+
+  /* Named spacing for the layout tokens; the 4px Tailwind scale stays for small gaps. */
+  --spacing-pad-x: var(--ui-pad-x);
+  --spacing-pad-y: var(--ui-pad-y);
+  --spacing-gap: var(--ui-gap);
+  --spacing-ctl: 34px;
+  --spacing-ctl-sm: 28px;
+  --spacing-chip: 30px;
+  --spacing-touch: 44px;
+  --spacing-side: 240px;
+  --spacing-rail: 72px;
+  --spacing-topbar: 56px;
+  --spacing-bar: 60px;
+  --spacing-tabbar: 64px;
+
+  /* Shell breakpoints: phone up to 760px, icon rail up to 1100px, sidebar above; list and detail from 1280px. */
+  --breakpoint-*: initial;
+  --breakpoint-md: 761px;
+  --breakpoint-lg: 1101px;
+  --breakpoint-xl: 1280px;
+  --breakpoint-2xl: 1600px;
+}
+
+/* Markup that differs between the designs, for decoration only: icons, rings, a card shadow. */
+@custom-variant regular (html[data-design="regular"] &);
+@custom-variant compact (html:not([data-design="regular"]) &);
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    @apply border-border outline-focus;
+  }
+  html,
+  body {
+    height: 100%;
+  }
+  html {
+    font-family: var(--ui-font);
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-bg text-body text-ink antialiased;
+    font-variant-numeric: tabular-nums;
   }
   button:not(:disabled),
   [role="button"]:not(:disabled) {
     cursor: pointer;
   }
-  html {
-    @apply font-sans;
+  :focus-visible {
+    outline: 2px solid var(--ui-focus);
+    outline-offset: 2px;
   }
+  code,
+  kbd,
+  pre,
+  samp {
+    font-family: var(--ui-mono);
+    font-size: 0.9em;
+  }
+  a {
+    text-underline-offset: 3px;
+  }
+  /* Phones: 16px in fields so iOS does not zoom in on focus. */
+  @media (max-width: 760px) {
+    input:not([type="checkbox"]):not([type="radio"]),
+    select,
+    textarea {
+      font-size: var(--text-input-touch);
+    }
+  }
+}
+
+/*
+ * Layers, from the top (OT-3). Use only these values:
+ * toast 100000 > confirm 99999 (a confirm opened from a dialog) > dialog and its backdrop 50 > popovers, menus
+ * and pickers 50 (Radix portals, opened last so they sit above) > save bar 45 > tab bar 40 > More sheet 36 and
+ * its veil 35 > phone top bar 30 > sticky heads inside a page 10 > chart tooltips 3.
+ */
+
+/*
+ * Motion explains a state change and nothing else (AX-8): .12s tooltips and flyouts, .15s switches, chevrons,
+ * grips and hover colours, .2s sheets and dialogs, .3s toast fade. Under reduced motion every transition and
+ * animation is off, the sheet included.
+ */
+/* biome-ignore-start lint/complexity/noImportantStyles: one global rule must beat every utility class */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
+}
+/* biome-ignore-end lint/complexity/noImportantStyles: one global rule must beat every utility class */
+
+/* Thin themed scrollbars (OT-4). */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--ui-muted) 45%, transparent) transparent;
+}
+
+/*
+ * Phone dialogs are bottom sheets (DS-1, DS-2, DS-4): rounded top corners, four fifths of the screen at the
+ * start, square corners and clear of the notch once grown to full height.
+ */
+@media (max-width: 760px) {
+  [data-slot="dialog-content"] {
+    inset: auto 0 0 0;
+    max-height: 80vh;
+    /* biome-ignore lint/suspicious/noDuplicateProperties: 80vh above is the fallback where dvh is unknown */
+    max-height: 80dvh;
+    border-radius: 16px 16px 0 0;
+    transition: border-radius 0.2s ease;
+  }
+  [data-slot="dialog-content"][data-full] {
+    border-radius: 0;
+    padding-top: env(safe-area-inset-top);
+  }
+}
+/* The grip: a short line in a large hit area that turns bolder and ink while held. */
+[data-slot="dialog-grip"] {
+  place-items: center;
+  flex-shrink: 0;
+  width: 120px;
+  height: 20px;
+  margin: 0 auto -4px;
+  touch-action: none;
+  cursor: grab;
+}
+[data-slot="dialog-grip"] > span {
+  width: 40px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--ui-line);
+  transition:
+    width 0.15s ease,
+    height 0.15s ease,
+    background-color 0.15s ease;
+}
+[data-held] [data-slot="dialog-grip"] {
+  cursor: grabbing;
+}
+[data-held] [data-slot="dialog-grip"] > span {
+  width: 56px;
+  height: 5px;
+  background: var(--ui-ink);
+}
+
+/* Sortable headers (TB-1): a small triangle, hidden until sorted, a faint preview on hover. */
+[data-sort-head]::after {
+  content: "";
+  margin-inline-start: 5px;
+  border-inline: 4px solid transparent;
+  border-top: 5px solid currentColor;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+[aria-sort="ascending"] > [data-sort-head]::after {
+  border-top: 0;
+  border-bottom: 5px solid currentColor;
+  opacity: 1;
+}
+[aria-sort="descending"] > [data-sort-head]::after {
+  opacity: 1;
+}
+@media (hover: hover) {
+  [aria-sort="none"] > [data-sort-head]:hover::after {
+    opacity: 0.35;
+  }
+}
+
+/*
+ * Tables stack into rows where they have less than 560px, on a phone or beside a reading pane (TB-14): the
+ * header row goes, the first cell takes the first line, every other value carries its column name, the
+ * actions take the last line and empty cells disappear. A sort control replaces the header row.
+ */
+[data-slot="table-wrap"] {
+  container-type: inline-size;
+}
+[data-slot="table-sort"] {
+  display: none;
+}
+@container (max-width: 559px) {
+  [data-slot="table-sort"] {
+    display: flex;
+  }
+  [data-stack],
+  [data-stack] > tbody {
+    display: block;
+    min-width: 0;
+  }
+  [data-stack] > thead {
+    display: none;
+  }
+  [data-stack] > tbody > tr {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 12px;
+    padding: var(--ui-pad-y) var(--ui-pad-x);
+  }
+  [data-stack] > tbody > tr > td {
+    display: block;
+    min-width: 0;
+    max-width: 100%;
+    padding: 0;
+    text-align: start;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  /* The name of the item leads on its own line: the cell marked data-primary, else the first one. */
+  [data-stack] > tbody > tr > td[data-primary] {
+    order: -1;
+  }
+  [data-stack] > tbody > tr:not(:has(> [data-primary])) > td:first-child,
+  [data-stack] > tbody > tr > td:is([data-primary], [data-wide], [colspan]),
+  [data-stack] > tbody > tr > td:last-child:has([data-slot="button"]) {
+    flex-basis: 100%;
+  }
+  /* Every other value says what it is, since the column header is gone. */
+  [data-stack] > tbody > tr > td[data-label]:not([data-primary], [data-nolabel], [colspan])::before {
+    content: attr(data-label) " ";
+    color: var(--ui-muted);
+    font-weight: 400;
+  }
+  /* A labelled value stays on its label's line, also when it is drawn as a block. */
+  [data-stack] > tbody > tr > td[data-label]:not([data-primary], [data-nolabel], [data-wide], [colspan]) > * {
+    display: inline-flex;
+    max-width: 100%;
+    vertical-align: baseline;
+  }
+  [data-stack] > tbody > tr:not(:has(> [data-primary])) > td:first-child::before,
+  [data-stack] > tbody > tr > td:last-child:has([data-slot="button"])::before {
+    content: none;
+  }
+  [data-stack] > tbody > tr > td:empty {
+    display: none;
+  }
+}
+
+/* Status tint for tags, banners and counters: the status colour at --ui-tint over whatever is below. */
+@utility tint-ok {
+  color: var(--ui-ok);
+  background-color: color-mix(in srgb, var(--ui-ok) var(--ui-tint), transparent);
+}
+@utility tint-warn {
+  color: var(--ui-warn);
+  background-color: color-mix(in srgb, var(--ui-warn) calc(var(--ui-tint) + 1%), transparent);
+}
+@utility tint-fail {
+  color: var(--ui-fail);
+  background-color: color-mix(in srgb, var(--ui-fail) var(--ui-tint), transparent);
+}
+@utility tint-info {
+  color: var(--ui-info);
+  background-color: color-mix(in srgb, var(--ui-info) var(--ui-tint), transparent);
+}
+@utility tint-muted {
+  color: var(--ui-muted);
+  background-color: color-mix(in srgb, var(--ui-muted) var(--ui-tint), transparent);
+}
+
+/* Hover tint for clickable rows, only where there is a pointer so a tapped row does not stay grey. */
+@utility hover-row {
+  cursor: pointer;
+  @media (hover: hover) {
+    &:hover {
+      background-color: color-mix(in srgb, var(--ui-accent) 5%, transparent);
+    }
+  }
+}
+
+/* A panel of rows: tinted, flat, no border or shadow. */
+@utility panel {
+  background-color: var(--ui-panel);
+  border-radius: var(--ui-r-lg);
+}
+
+/* While the save bar shows, every scrolling page keeps room under its last field (SV-1). */
+html[data-unsaved] :is(#main, [data-scroll-pane]) {
+  padding-bottom: 96px;
+}
+@media (max-width: 760px) {
+  html[data-unsaved] #main {
+    padding-bottom: calc(var(--ui-tabbar) + 76px + env(safe-area-inset-bottom));
+  }
+}
+
+/* A target reached from the search is ringed for a moment, so the eye finds it (SR-6). */
+@keyframes search-flash {
+  0%,
+  40% {
+    box-shadow: inset 0 0 0 3px color-mix(in srgb, var(--ui-focus) 45%, transparent);
+  }
+  100% {
+    box-shadow: inset 0 0 0 3px transparent;
+  }
+}
+.search-flash {
+  animation: search-flash 2s ease;
 }

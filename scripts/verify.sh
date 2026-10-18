@@ -93,10 +93,6 @@ run_checks() {
   local filter=()
   if [ -n "$CHANGED_BASE" ]; then
     filter=(--filter "...[$CHANGED_BASE]")
-    # Every UI change goes into both designs, so a change to either web app checks both.
-    if changed_files | grep -qE "^apps/web(-compact)?/"; then
-      filter+=(--filter ./apps/web --filter ./apps/web-compact)
-    fi
   fi
   info "Install"
   install_deps
@@ -176,11 +172,11 @@ run_checks_on_stack() {
   stack exec -T worker node -e "$probe" || die "the socket proxy does not enforce its allowlist"
 }
 
-# One end-to-end round per design, each on a fresh stack: the design's own suite runs from its own app
-# directory, with its own state files, session and stand-in Telegram Bot API.
+# One end-to-end round per design, each on a fresh stack. Both designs are one app with the same functions,
+# so the same suite runs in each and must pass in each; only the look differs.
 run_e2e_round() {
   local design="$1" app="$2"
-  info "End-to-end tests: $design design ($app)"
+  info "End-to-end tests: $design design"
   start_stack
   [ "$design" = regular ] || seed_design "$design"
   [ "$design" = regular ] && run_checks_on_stack
@@ -203,7 +199,7 @@ run_integration() {
   export TELEGRAM_API_URL="http://e2e-runner:8099"
   trap cleanup_stack EXIT
   run_e2e_round regular apps/web
-  run_e2e_round compact apps/web-compact
+  run_e2e_round compact apps/web
 }
 
 main() {

@@ -1,111 +1,118 @@
 import { useInfiniteQuery } from "@tanstack/react-query"
-import { Bot, Code, Cpu, Globe, type LucideIcon, Mail, ScrollText, Send, Settings2, Terminal } from "lucide-react"
-import { Page } from "@/app/shell"
-import { EmptyState } from "@/components/empty-state"
-import { timeAgo } from "@/components/status"
+import { useEffect, useRef } from "react"
+import { Empty, LoadError, Loading, Page, Panel, UserText } from "@/components/kit"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { api } from "@/lib/api"
+import { formatDateTime, formatFull, n, plural, useTimeZone } from "@/lib/time"
 
 type Entry = { id: number; at: string; actor: string; action: string; target: string; via: string }
 
-const viaIcon: Record<string, LucideIcon> = {
-  web: Globe,
-  telegram: Send,
-  email: Mail,
-  mcp: Bot,
-  agent: Bot,
-  rest: Code,
-  worker: Cpu,
-  system: Settings2,
-  cli: Terminal,
-}
-
-/** Who did it: an initial for people, the token name for agents and scripts. */
-function Actor({ name }: { name: string }) {
-  if (name.startsWith("token:"))
-    return (
-      <Badge variant="outline" className="font-mono">
-        {name}
-      </Badge>
-    )
-  return (
-    <span className="flex items-center gap-2">
-      <span className="grid size-6 place-items-center rounded-full bg-muted text-[10px] font-semibold uppercase">
-        {name
-          .replace(/^[a-z]+:/, "")
-          .replace(/^@/, "")
-          .slice(0, 2)}
-      </span>
-      {name}
-    </span>
-  )
-}
-
 export function AuditPage() {
+  const tz = useTimeZone()
   const query = useInfiniteQuery({
-    // Its own key: the Overview reads the same endpoint as a plain list, and the two shapes must not share a cache entry.
     queryKey: ["/admin/audit", "pages"],
     queryFn: ({ pageParam }) => api<Entry[]>(`/admin/audit${pageParam ? `?before=${pageParam}` : ""}`),
     initialPageParam: 0,
     getNextPageParam: (last) => (last.length === 100 ? last[last.length - 1]?.id : undefined),
   })
   const rows = query.data?.pages.flat() ?? []
+  // Older entries load as the end of the list comes into view, before the reader reaches it (TB-6).
+  const end = useRef<HTMLParagraphElement>(null)
+  const { hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage } = query
+  // biome-ignore lint/correctness/useExhaustiveDependencies: observe again once new rows are drawn
+  useEffect(() => {
+    const el = end.current
+    if (!el || !hasNextPage || isFetchingNextPage || isFetchNextPageError) return
+    const io = new IntersectionObserver((entries) => entries[0]?.isIntersecting && void fetchNextPage(), {
+      root: document.getElementById("main"),
+      rootMargin: "0px 0px 400px 0px",
+    })
+    io.observe(el)
+    return () => io.disconnect()
+  }, [hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage, rows.length])
   return (
-    <Page title="Audit log" description="Logins, settings, keys, tokens, restores, moves and exports.">
-      {!query.isLoading && rows.length === 0 ? (
-        <EmptyState icon={ScrollText} title="Nothing recorded yet" description="Sign-ins and changes appear here." />
+    <Page
+      title="Audit log"
+      description={
+        query.data
+          ? `${n(rows.length)}${query.hasNextPage ? "+" : ""} entries. Logins, settings, keys, tokens, restores, moves and exports.`
+          : "Logins, settings, keys, tokens, restores, moves and exports."
+      }
+    >
+      {query.error ? (
+        <Panel>
+          <LoadError what="the audit log" error={query.error} retry={() => query.refetch()} />
+        </Panel>
+      ) : query.isLoading ? (
+        <Panel>
+          <Loading>Loading the audit log…</Loading>
+        </Panel>
+      ) : rows.length === 0 ? (
+        <Panel>
+          <Empty title="Nothing recorded yet.">Sign-ins, changes and agent reads are recorded here.</Empty>
+        </Panel>
       ) : (
-        <div className="overflow-hidden rounded-xl border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="pl-4">When</TableHead>
-                <TableHead>Who</TableHead>
-                <TableHead>What</TableHead>
-                <TableHead>Details</TableHead>
-                <TableHead className="pr-4">Via</TableHead>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>When</TableHead>
+              <TableHead>Who</TableHead>
+              <TableHead>What</TableHead>
+              <TableHead>Details</TableHead>
+              <TableHead>Via</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.map((a) => (
+              <TableRow key={a.id}>
+                <TableCell className="text-muted-foreground tabular-nums">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <time dateTime={a.at}>{formatDateTime(a.at, tz)}</time>
+                    </TooltipTrigger>
+                    <TooltipContent>{formatFull(a.at, tz)}</TooltipContent>
+                  </Tooltip>
+                </TableCell>
+                <TableCell>
+                  {a.actor.startsWith("token:") ? (
+                    <Badge variant="line">
+                      <UserText>{a.actor}</UserText>
+                    </Badge>
+                  ) : (
+                    <UserText>{a.actor}</UserText>
+                  )}
+                </TableCell>
+                <TableCell className="font-semibold" data-primary>
+                  {a.action}
+                </TableCell>
+                <TableCell className="max-w-md truncate" title={a.target} data-wide data-nolabel>
+                  {a.target && <UserText>{a.target}</UserText>}
+                </TableCell>
+                <TableCell className="text-muted-foreground">{a.via}</TableCell>
               </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rows.map((a) => (
-                <TableRow key={a.id}>
-                  <TableCell className="pl-4 whitespace-nowrap" title={new Date(a.at).toLocaleString()}>
-                    <div>{timeAgo(a.at)}</div>
-                    <div className="text-xs text-muted-foreground">{new Date(a.at).toLocaleString()}</div>
-                  </TableCell>
-                  <TableCell>
-                    <Actor name={a.actor} />
-                  </TableCell>
-                  <TableCell className="font-medium">{a.action}</TableCell>
-                  <TableCell className="max-w-xs truncate" title={a.target}>
-                    {a.target}
-                  </TableCell>
-                  <TableCell className="pr-4">
-                    <ViaBadge via={a.via} />
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
+            ))}
+          </TableBody>
+        </Table>
       )}
-      {query.hasNextPage && (
-        <Button variant="outline" onClick={() => void query.fetchNextPage()} disabled={query.isFetchingNextPage}>
-          Load older entries
-        </Button>
+      {rows.length > 0 && (
+        <p ref={end} aria-live="polite" className="text-center text-small text-muted-foreground">
+          {isFetchNextPageError ? (
+            <>
+              Could not load older entries.{" "}
+              <Button variant="link" onClick={() => void fetchNextPage()}>
+                Try again
+              </Button>
+            </>
+          ) : hasNextPage ? (
+            "Loading older entries…"
+          ) : (query.data?.pages.length ?? 0) > 1 ? (
+            `All ${plural(rows.length, "entry", "entries")} shown`
+          ) : null}
+        </p>
       )}
     </Page>
-  )
-}
-
-function ViaBadge({ via }: { via: string }) {
-  const Icon = viaIcon[via] ?? Globe
-  return (
-    <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-      <Icon className="size-3.5" />
-      {via}
-    </span>
   )
 }

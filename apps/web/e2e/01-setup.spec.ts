@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test"
-import { password, saveSecret, saveState, username } from "./helpers.ts"
+import { design, password, saveSecret, saveState, username } from "./helpers.ts"
 import { freshTotp } from "./totp.ts"
 
 // Runs against a fresh stack (empty database), in order: first run, sign out, sign in again.
@@ -13,10 +13,14 @@ test("the server reports ready", async ({ request }) => {
   expect(await res.json()).toMatchObject({ checks: { database: "ok" } })
 })
 
-// A wrong design fails here, before any selector of this suite could mislead.
-test("the regular design is served", async ({ page }) => {
+// The suite runs once per design (scripts/verify.sh). A wrong design fails here, already on the setup page,
+// which never reads the settings: the server writes the design on the page itself.
+test("the chosen design is served, also before setup", async ({ page }) => {
   await page.goto("/")
-  await expect(page.locator('meta[name="n8n-ops-design"]')).toHaveAttribute("content", "regular")
+  await expect(page).toHaveURL(/\/setup$/)
+  await expect(page.locator("html")).toHaveAttribute("data-design", design)
+  const font = await page.evaluate(() => getComputedStyle(document.body).fontFamily)
+  expect(font).toContain(design === "regular" ? "Inter" : "Onest")
 })
 
 test("a fresh install leads through account, two-factor and backup key", async ({ page }) => {
@@ -59,7 +63,7 @@ test("sign-up is closed after setup", async ({ request }) => {
 test("signing in again requires the two-factor code", async ({ page }) => {
   await page.goto("/login")
   await page.getByLabel("Username").fill(username)
-  await page.getByLabel("Password").fill(password)
+  await page.getByLabel("Password", { exact: true }).fill(password)
   await page.getByRole("button", { name: "Continue" }).click()
   await expect(page.getByText("Two-factor code")).toBeVisible()
   await page.getByLabel("Two-factor code").fill(await freshTotp(secret))

@@ -1,10 +1,15 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-design="regular">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="n8n-ops-design" content="regular" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
     <title>n8n-ops</title>
+    <!-- Applies a folded sidebar before the page draws, so it never flashes open. -->
+    <script>
+      try {
+        if (localStorage.getItem("n8n-ops-nav") === "rail") document.documentElement.dataset.nav = "rail"
+      } catch {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

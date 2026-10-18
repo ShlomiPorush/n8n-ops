@@ -1,34 +1,12 @@
-import {
-  AlertTriangle,
-  ArrowRight,
-  ArrowRightLeft,
-  CheckCircle2,
-  Clock,
-  Copy,
-  ExternalLink,
-  type LucideIcon,
-  Mail,
-  MousePointerClick,
-  PowerOff,
-  RefreshCw,
-  Search,
-  ServerOff,
-  ShieldCheck,
-  Webhook,
-  Workflow as WorkflowIcon,
-  XCircle,
-  Zap,
-} from "lucide-react"
+import { AlertTriangle, ArrowRight, ArrowRightLeft as ArrowRightLeftIcon, CheckCircle2, RefreshCw, ShieldCheck, XCircle } from "lucide-react"
 import { useState } from "react"
-import { Link } from "react-router"
-import { Page } from "@/app/shell"
-import { DialogIcon } from "@/components/dialog-icon"
-import { NumberTicker } from "@/components/spectrum/number-ticker"
-import { Code, TimeAgo } from "@/components/status"
+import { useSearchParams } from "react-router"
+import { FilterBar, Picker, SearchBox } from "@/components/filter-bar"
+import { Empty, LoadError, Loading, Page, Panel, PanelHead, Reloading, Row, UserText } from "@/components/kit"
+import { Code, TimeAgo, When } from "@/components/status"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
 import {
   Dialog,
   DialogContent,
@@ -38,11 +16,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { FieldError } from "@/components/ui/field"
-import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Skeleton } from "@/components/ui/skeleton"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, useSort } from "@/components/ui/table"
 import { api, describeError, queryClient, useApi, useApiMutation } from "@/lib/api"
+import { n, plural } from "@/lib/time"
 import { cn } from "@/lib/utils"
 
 type WorkflowRow = {
@@ -71,11 +48,21 @@ type MapData = {
   }
 }
 
+/** Error rate above which a workflow's failures stand out (percent of its runs in 30 days). */
+const ERROR_RATE_FAIL = 3
+
 export function WorkflowsPage() {
-  const [q, setQ] = useState("")
-  const [instance, setInstance] = useState("all")
+  const [params, setParams] = useSearchParams()
+  const q = params.get("q") ?? ""
+  const instance = params.get("instance") ?? "all"
+  const setParam = (k: string, v: string) => {
+    const next = new URLSearchParams(params)
+    if (v && !(k === "instance" && v === "all")) next.set(k, v)
+    else next.delete(k)
+    setParams(next, { replace: true })
+  }
   const query = new URLSearchParams({ ...(q ? { q } : {}), ...(instance !== "all" ? { instance } : {}) })
-  const data = useApi<MapData>(`/workflows?${query}`)
+  const data = useApi<MapData>(`/workflows?${query}`, { keepRows: true })
   const instances = useApi<{ instances: { id: string; name: string }[] }>("/instances")
   const sync = useApiMutation<void>("POST", "/workflows/sync", {
     invalidate: [`/workflows?${query}`],
@@ -83,163 +70,190 @@ export function WorkflowsPage() {
   })
   const [moving, setMoving] = useState<WorkflowRow | null>(null)
   const ins = data.data?.insights
+  const rows = data.data?.workflows ?? []
+  const filtered = Boolean(q) || instance !== "all"
   const rate = (w: WorkflowRow) => (w.runs30d ? Math.round((w.errors30d / w.runs30d) * 1000) / 10 : 0)
+  const sort = useSort(rows, {
+    id: "workflows",
+    columns: {
+      name: { label: "Workflow", value: (w) => w.name },
+      instance: { label: "Instance", value: (w) => w.instanceName },
+      trigger: { label: "Trigger", value: (w) => w.triggerType },
+      lastRun: { label: "Last run", value: (w) => (w.lastRunAt ? new Date(w.lastRunAt) : null) },
+      runs: { label: "Runs 30d", value: (w) => w.runs30d },
+      errors: { label: "Errors", value: (w) => (w.runs30d ? rate(w) : null) },
+    },
+  })
 
   return (
     <Page
       title="Workflows"
-      description="Every workflow on every instance, refreshed every 30 minutes. Duplicates and unused instances help consolidate."
+      description={
+        ins && !filtered
+          ? `${n(rows.length)} workflows · ${n(ins.duplicateGroups.length)} duplicated · ${n(ins.inactive)} inactive. Read from every instance every 30 minutes.`
+          : "Every workflow on every instance, refreshed every 30 minutes. Duplicates and unused instances help consolidate."
+      }
       actions={
-        <Button variant="outline" onClick={() => sync.mutate()} disabled={sync.isPending}>
+        <Button onClick={() => sync.mutate()} disabled={sync.isPending}>
           <RefreshCw /> {sync.isPending ? "Reading instances…" : "Refresh now"}
         </Button>
       }
     >
       {ins && (
-        <div className="@container">
-          <div className="grid gap-4 @3xl:grid-cols-3">
-            <Card className="gap-4">
-              <InsightHead label="Duplicate workflows" value={ins.duplicateGroups.length} icon={Copy} tone="amber" />
-              <CardContent className="space-y-1.5 text-sm">
-                {ins.duplicateGroups.slice(0, 5).map((g) => (
-                  <div key={g.map((w) => w.workflowId).join()}>
-                    {g.map((w, i) => (
-                      <span key={w.workflowId}>
-                        {i > 0 && <span className="text-muted-foreground"> = </span>}
-                        {w.name} <span className="text-muted-foreground">({w.instanceName})</span>
+        <div className="grid items-start gap-gap xl:grid-cols-3">
+          <Panel>
+            <PanelHead title="Duplicate workflows" count={n(ins.duplicateGroups.length)} />
+            {ins.duplicateGroups.length === 0 ? (
+              <p className="border-t border-line px-pad-x py-pad-y text-muted-foreground">No workflow exists twice.</p>
+            ) : (
+              ins.duplicateGroups.slice(0, 5).map((g) => (
+                <div key={g.map((w) => w.workflowId).join()} className="border-t border-line px-pad-x py-pad-y">
+                  {g.map((w, i) => (
+                    <span key={w.workflowId}>
+                      {i > 0 && <span className="text-muted-foreground"> = </span>}
+                      <UserText className="font-semibold">{w.name}</UserText>{" "}
+                      <span className="text-muted-foreground">
+                        (<UserText>{w.instanceName}</UserText>)
                       </span>
-                    ))}
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-            <Card className="gap-4">
-              <InsightHead label="Instances almost unused" value={ins.unusedInstances.length} icon={ServerOff} />
-              <CardContent className="space-y-1.5 text-sm">
-                {ins.unusedInstances.map((u) => (
-                  <Link
-                    key={u.id}
-                    to={`/instances/${u.id}`}
-                    className="flex items-center justify-between gap-2 rounded-md px-2 py-1 -mx-2 hover:bg-muted"
-                  >
-                    <span className="font-medium">{u.name}</span>
-                    <span className="text-xs text-muted-foreground">
-                      {u.runs30d === 0 ? "0 runs in 30 days" : "no active workflow"}
                     </span>
-                  </Link>
-                ))}
-              </CardContent>
-            </Card>
-            <Card className="gap-4">
-              <InsightHead label="Inactive workflows" value={ins.inactive} icon={PowerOff} />
-              <CardContent className="text-sm text-muted-foreground">
-                <p>
-                  Candidates to archive before consolidating. Map read <TimeAgo value={ins.lastSyncedAt} />.
-                </p>
-              </CardContent>
-            </Card>
-          </div>
+                  ))}
+                </div>
+              ))
+            )}
+          </Panel>
+          <Panel>
+            <PanelHead title="Instances almost unused" count={n(ins.unusedInstances.length)} />
+            {ins.unusedInstances.length === 0 ? (
+              <p className="border-t border-line px-pad-x py-pad-y text-muted-foreground">
+                Every instance runs workflows.
+              </p>
+            ) : (
+              ins.unusedInstances.map((u) => (
+                <Row key={u.id} to={`/instances/${u.id}`}>
+                  <UserText className="font-semibold">{u.name}</UserText>
+                  <span className="ms-auto text-small text-muted-foreground">
+                    {u.runs30d === 0 ? "0 runs in 30 days" : "no active workflow"}
+                  </span>
+                </Row>
+              ))
+            )}
+          </Panel>
+          <Panel>
+            <PanelHead title="Inactive workflows" count={n(ins.inactive)} />
+            <p className="border-t border-line px-pad-x py-pad-y text-muted-foreground">
+              Candidates to archive before consolidating. Map read <TimeAgo value={ins.lastSyncedAt} />.
+            </p>
+          </Panel>
         </div>
       )}
 
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative w-72">
-          <Search className="absolute top-2.5 left-2.5 size-4 text-muted-foreground" />
-          <Input
-            className="pl-8"
-            placeholder="Search all instances…"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-          />
-        </div>
-        <Select value={instance} onValueChange={setInstance}>
-          <SelectTrigger className="w-44">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All instances</SelectItem>
-            {(instances.data?.instances ?? []).map((i) => (
-              <SelectItem key={i.id} value={i.id}>
-                {i.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <span className="text-sm text-muted-foreground">{data.data?.workflows.length ?? 0} workflows</span>
-      </div>
+      <FilterBar
+        search={<SearchBox label="Search all instances" value={q} onChange={(v) => setParam("q", v)} />}
+        active={Number(instance !== "all")}
+        count={data.data ? plural(rows.length, "workflow") : undefined}
+        onClear={filtered ? () => setParams(new URLSearchParams(), { replace: true }) : undefined}
+      >
+        <Picker
+          label="Instance"
+          value={instance}
+          defaultValue="all"
+          onChange={(v) => setParam("instance", v)}
+          options={[
+            { value: "all", label: "All" },
+            ...(instances.data?.instances ?? []).map((i) => ({ value: i.id, label: i.name })),
+          ]}
+        />
+      </FilterBar>
 
-      {data.isLoading ? (
-        <Skeleton className="h-40" />
+      {data.error ? (
+        <Panel>
+          <LoadError what="workflows" error={data.error} retry={() => data.refetch()} />
+        </Panel>
+      ) : data.isLoading ? (
+        <Panel>
+          <Loading>Loading the workflow map…</Loading>
+        </Panel>
+      ) : rows.length === 0 ? (
+        <Panel>
+          <Empty title={filtered ? "No workflow matches." : "No workflows yet."}>
+            {filtered ? "Try another search or instance." : 'Use "Refresh now" after adding instances.'}
+          </Empty>
+        </Panel>
       ) : (
-        <div className="rounded-lg border">
-          <Table>
+        <Reloading busy={data.isPlaceholderData}>
+          <Table sort={sort}>
             <TableHeader>
               <TableRow>
-                <TableHead className="pl-4">Workflow</TableHead>
-                <TableHead>Instance</TableHead>
-                <TableHead>Trigger</TableHead>
-                <TableHead>Last run</TableHead>
-                <TableHead className="text-right">Runs 30d</TableHead>
-                <TableHead className="text-right">Errors</TableHead>
+                <TableHead sort={sort.head("name")}>Workflow</TableHead>
+                <TableHead sort={sort.head("instance")}>Instance</TableHead>
+                <TableHead sort={sort.head("trigger")}>Trigger</TableHead>
+                <TableHead className="text-end" sort={sort.head("lastRun")}>
+                  Last run
+                </TableHead>
+                <TableHead className="text-end" sort={sort.head("runs")}>
+                  Runs 30d
+                </TableHead>
+                <TableHead className="text-end" sort={sort.head("errors")}>
+                  Errors
+                </TableHead>
                 <TableHead />
               </TableRow>
             </TableHeader>
             <TableBody>
-              {(data.data?.workflows ?? []).map((w) => (
+              {sort.rows.map((w) => (
                 <TableRow key={`${w.instanceId}:${w.workflowId}`}>
-                  <TableCell className="pl-4">
-                    <div className="flex flex-wrap items-center gap-2 font-medium">
-                      <a href={w.url} target="_blank" rel="noreferrer" className="underline-offset-4 hover:underline">
-                        {w.name}
+                  <TableCell className="max-w-80">
+                    <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                      <a
+                        href={w.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="min-w-0 truncate font-semibold hover:underline"
+                      >
+                        <UserText>{w.name}</UserText>
                       </a>
-                      {!w.active && <Badge variant="secondary">inactive</Badge>}
+                      {!w.active && <Badge variant="muted">inactive</Badge>}
                       {w.duplicates.length > 0 && (
-                        <Badge
-                          variant="outline"
-                          className="border-amber-500/40 text-amber-700 dark:text-amber-400"
-                          title={w.duplicates.map((d) => d.instanceName).join(", ")}
-                        >
+                        <Badge variant="warn" title={`Also on ${w.duplicates.map((d) => d.instanceName).join(", ")}`}>
                           duplicate
                         </Badge>
                       )}
                     </div>
                   </TableCell>
-                  <TableCell>{w.instanceName}</TableCell>
                   <TableCell>
-                    <div className="flex items-start gap-2">
-                      <TriggerIcon type={w.triggerType} />
-                      <div>
-                        <div>{w.triggerType}</div>
-                        {w.triggerDetail && (
-                          <div className="font-mono text-xs text-muted-foreground">{w.triggerDetail}</div>
-                        )}
+                    <UserText>{w.instanceName}</UserText>
+                  </TableCell>
+                  <TableCell className="max-w-56">
+                    <div className="truncate">{w.triggerType}</div>
+                    {w.triggerDetail && (
+                      <div className="truncate font-mono text-meta text-muted-foreground" title={w.triggerDetail}>
+                        {w.triggerDetail}
                       </div>
-                    </div>
+                    )}
                   </TableCell>
-                  <TableCell className="whitespace-nowrap text-muted-foreground">
-                    <TimeAgo value={w.lastRunAt} />
+                  <TableCell className="text-end text-muted-foreground">
+                    <When value={w.lastRunAt} />
                   </TableCell>
-                  <TableCell className="text-right tabular-nums">{w.runs30d}</TableCell>
-                  <TableCell className="text-right">
-                    <ErrorRate rate={rate(w)} runs={w.runs30d} />
+                  <TableCell className="text-end tabular-nums">{n(w.runs30d)}</TableCell>
+                  <TableCell
+                    className={cn(
+                      "text-end tabular-nums",
+                      rate(w) > ERROR_RATE_FAIL ? "font-semibold text-fail" : "text-muted-foreground",
+                    )}
+                    title={`${n(w.errors30d)} of ${n(w.runs30d)} runs failed`}
+                  >
+                    {rate(w)}%
                   </TableCell>
-                  <TableCell className="pr-4 text-right">
-                    <Button size="sm" variant="outline" onClick={() => setMoving(w)}>
+                  <TableCell className="text-end">
+                    <Button size="sm" onClick={() => setMoving(w)}>
                       Move <ArrowRight />
                     </Button>
                   </TableCell>
                 </TableRow>
               ))}
-              {data.data?.workflows.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={7} className="pl-4 text-muted-foreground">
-                    No workflows yet. Use "Refresh now" after adding instances.
-                  </TableCell>
-                </TableRow>
-              )}
             </TableBody>
           </Table>
-        </div>
+        </Reloading>
       )}
       <MoveDialog workflow={moving} onClose={() => setMoving(null)} />
     </Page>
@@ -285,9 +299,8 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
   }
   return (
     <Dialog open={workflow !== null} onOpenChange={(o) => !o && reset()}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
-        <DialogHeader>
-          <DialogIcon icon={ArrowRightLeft} />
+      <DialogContent className="md:max-w-2xl" keepOnBackdrop>
+        <DialogHeader icon={ArrowRightLeftIcon}>
           <DialogTitle>Move {workflow?.name}</DialogTitle>
           <DialogDescription>
             Copies the workflow and its credentials to another instance, verifies it, then switches off the original.
@@ -295,13 +308,13 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
           </DialogDescription>
         </DialogHeader>
         {steps ? (
-          <ul className="space-y-1.5 text-sm">
+          <ul className="grid gap-1.5">
             {steps.map((s) => (
               <li key={s.step} className="flex items-start gap-2">
                 {s.ok ? (
-                  <CheckCircle2 className="mt-0.5 size-4 text-emerald-600" />
+                  <CheckCircle2 aria-label="Done" className="mt-0.5 size-4 shrink-0 text-ok" />
                 ) : (
-                  <XCircle className="mt-0.5 size-4 text-amber-600" />
+                  <XCircle aria-label="Needs you" className="mt-0.5 size-4 shrink-0 text-warn" />
                 )}
                 <span>
                   {s.step}
@@ -332,18 +345,18 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
             </SelectContent>
           </Select>
         ) : (
-          <div className="space-y-3">
-            <h3 className="font-medium">
+          <div className="grid gap-2.5">
+            <h3 className="font-semibold">
               {preview.workflow.name}: {preview.source.name} → {preview.target.name}
             </h3>
             {preview.blockers.map((b) => (
-              <Alert key={b} variant="destructive">
+              <Alert key={b} variant="fail">
                 <XCircle />
                 <AlertTitle>Cannot move</AlertTitle>
                 <AlertDescription>{b}</AlertDescription>
               </Alert>
             ))}
-            <Alert>
+            <Alert variant={preview.credentialsWithSecrets || !preview.credentials.length ? "ok" : "warn"}>
               {preview.credentialsWithSecrets || !preview.credentials.length ? <CheckCircle2 /> : <AlertTriangle />}
               <AlertTitle>Credentials</AlertTitle>
               <AlertDescription>
@@ -355,7 +368,7 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
               </AlertDescription>
             </Alert>
             {preview.webhooks.map((h) => (
-              <Alert key={h.node} className="border-amber-500/50 text-amber-800 dark:text-amber-300">
+              <Alert key={h.node} variant="warn">
                 <AlertTriangle />
                 <AlertTitle>Webhook URL changes ({h.node})</AlertTitle>
                 <AlertDescription>
@@ -366,7 +379,7 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
               </Alert>
             ))}
             {preview.callsWorkflows.length > 0 && (
-              <Alert className="border-amber-500/50 text-amber-800 dark:text-amber-300">
+              <Alert variant="warn">
                 <AlertTriangle />
                 <AlertTitle>Calls other workflows by ID</AlertTitle>
                 <AlertDescription>
@@ -375,7 +388,7 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
                 </AlertDescription>
               </Alert>
             )}
-            <Alert>
+            <Alert variant="info">
               <ShieldCheck />
               <AlertTitle>Safe order</AlertTitle>
               <AlertDescription>
@@ -389,31 +402,29 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
         {error && <FieldError>{error}</FieldError>}
         <DialogFooter>
           {steps ? (
-            <>
-              <Button variant="outline" asChild>
-                <Link to="/workflows" onClick={reset}>
-                  <ExternalLink /> Back to workflows
-                </Link>
-              </Button>
-              <Button onClick={reset}>Done</Button>
-            </>
-          ) : !preview ? (
-            <Button
-              disabled={!target || busy}
-              onClick={() =>
-                act(async () =>
-                  setPreview(await api<Preview>("/workflows/moves/preview", { method: "POST", json: body() })),
-                )
-              }
-            >
-              Review
+            <Button variant="primary" onClick={reset}>
+              Done
             </Button>
+          ) : !preview ? (
+            <>
+              <Button onClick={reset}>Cancel</Button>
+              <Button
+                variant="primary"
+                disabled={!target || busy}
+                onClick={() =>
+                  act(async () =>
+                    setPreview(await api<Preview>("/workflows/moves/preview", { method: "POST", json: body() })),
+                  )
+                }
+              >
+                Review
+              </Button>
+            </>
           ) : (
             <>
-              <Button variant="outline" onClick={() => setPreview(null)}>
-                Back
-              </Button>
+              <Button onClick={() => setPreview(null)}>Back</Button>
               <Button
+                variant="primary"
                 disabled={busy || preview.blockers.length > 0}
                 onClick={() =>
                   act(async () => {
@@ -436,74 +447,5 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  )
-}
-
-function InsightHead({
-  label,
-  value,
-  icon: Icon,
-  tone,
-}: {
-  label: string
-  value: number
-  icon: LucideIcon
-  tone?: "amber"
-}) {
-  return (
-    <div className="flex items-start justify-between gap-3 px-6">
-      <div className="space-y-1.5">
-        <p className="text-sm text-muted-foreground">{label}</p>
-        <div className="text-3xl font-semibold tracking-tight tabular-nums">
-          <NumberTicker value={value} />
-        </div>
-      </div>
-      <div
-        className={cn(
-          "grid size-9 place-items-center rounded-lg bg-muted text-muted-foreground",
-          tone === "amber" && value > 0 && "bg-amber-50 text-amber-600 dark:bg-amber-400/10 dark:text-amber-300",
-        )}
-      >
-        <Icon className="size-4.5" />
-      </div>
-    </div>
-  )
-}
-
-const triggerIcons: Record<string, LucideIcon> = {
-  Webhook: Webhook,
-  Schedule: Clock,
-  Manual: MousePointerClick,
-  "Execute Workflow": WorkflowIcon,
-  IMAP: Mail,
-}
-
-function TriggerIcon({ type }: { type: string }) {
-  const Icon = triggerIcons[type] ?? Zap
-  return (
-    <span className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-md bg-muted text-muted-foreground">
-      <Icon className="size-3.5" />
-    </span>
-  )
-}
-
-/** Error rate over 30 days as a short bar: grey when quiet, amber when some runs fail, red when most do. */
-function ErrorRate({ rate, runs }: { rate: number; runs: number }) {
-  if (!runs) return <span className="text-sm text-muted-foreground">no runs</span>
-  const tone = rate === 0 ? "bg-emerald-500" : rate < 20 ? "bg-amber-500" : "bg-rose-500"
-  return (
-    <div className="ml-auto flex w-28 items-center justify-end gap-2">
-      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
-        <div className={cn("h-full rounded-full", tone)} style={{ width: `${Math.max(rate, rate > 0 ? 4 : 0)}%` }} />
-      </div>
-      <span
-        className={cn(
-          "w-11 text-right text-sm tabular-nums",
-          rate >= 20 && "font-medium text-rose-600 dark:text-rose-400",
-        )}
-      >
-        {rate}%
-      </span>
-    </div>
   )
 }

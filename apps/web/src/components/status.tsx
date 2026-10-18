@@ -1,138 +1,154 @@
-import {
-  BellOff,
-  CircleAlert,
-  CircleCheck,
-  CircleDashed,
-  Clock5,
-  type LucideIcon,
-  RotateCcw,
-  Sparkles,
-  TriangleAlert,
-} from "lucide-react"
+import { CircleAlert, CircleCheck, CircleDashed, Clock5, type LucideIcon, TriangleAlert } from "lucide-react"
+import { useEffect, useState } from "react"
+import { Badge } from "@/components/ui/badge"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { AGO_TICK_MS } from "@/lib/behavior"
+import { formatFull, formatWhen, useTimeZone } from "@/lib/time"
 import { cn } from "@/lib/utils"
 
-export type HealthState = "ok" | "warn" | "down" | "unknown"
+/**
+ * The one place that turns a status into words and a tone. The text is the status; the colour only
+ * reinforces it: ok is green, warn amber, fail red, info blue, muted grey. Nothing else gets colour.
+ */
+export type ToneName = "ok" | "warn" | "fail" | "info" | "muted"
 
-/** A status dot with a soft halo; "down" pulses so it is seen at a glance. */
-export function Dot({ health, className }: { health: HealthState; className?: string }) {
-  return (
-    <span
-      role="img"
-      aria-label={health}
-      className={cn(
-        "relative inline-flex size-2 shrink-0 rounded-full ring-4",
-        health === "ok" && "bg-emerald-500 ring-emerald-500/15",
-        health === "warn" && "bg-amber-500 ring-amber-500/15",
-        health === "down" && "bg-rose-500 ring-rose-500/20",
-        health === "unknown" && "bg-muted-foreground/40 ring-muted-foreground/10",
-        className,
-      )}
-    >
-      {health === "down" && (
-        <span className="absolute inset-0 animate-ping rounded-full bg-rose-500/60 motion-reduce:animate-none" />
-      )}
-    </span>
-  )
+export const statusTable = {
+  health: {
+    ok: { label: "Healthy", tone: "ok" },
+    warn: { label: "Needs a look", tone: "warn" },
+    down: { label: "Down", tone: "fail" },
+    unknown: { label: "Not checked yet", tone: "muted" },
+  },
+  problem: {
+    new: { label: "New", tone: "fail" },
+    regression: { label: "Regression", tone: "fail" },
+    open: { label: "Open", tone: "warn" },
+    muted: { label: "Muted", tone: "muted" },
+    resolved: { label: "Resolved", tone: "ok" },
+  },
+  access: {
+    pending: { label: "Waiting for you", tone: "warn" },
+    approved: { label: "Active", tone: "ok" },
+    denied: { label: "Denied", tone: "fail" },
+    expired: { label: "Expired", tone: "muted" },
+    released: { label: "Released", tone: "muted" },
+    revoked: { label: "Revoked", tone: "fail" },
+  },
+  worker: {
+    online: { label: "online", tone: "ok" },
+    offline: { label: "offline", tone: "fail" },
+  },
+  backup: {
+    ok: { label: "OK", tone: "ok" },
+    running: { label: "Running", tone: "info" },
+    failed: { label: "Failed", tone: "fail" },
+    stale: { label: "Stale", tone: "warn" },
+    expired: { label: "Expired", tone: "muted" },
+  },
+} as const satisfies Record<string, Record<string, { label: string; tone: ToneName }>>
+
+export type StatusKind = keyof typeof statusTable
+
+export function statusOf<K extends StatusKind>(kind: K, status: keyof (typeof statusTable)[K]) {
+  return statusTable[kind][status] as { label: string; tone: ToneName }
 }
 
-export type ToneName = "red" | "amber" | "green" | "blue" | "neutral" | "primary"
-
-// Status badge look from Spectrum UI (https://ui.spectrumhq.in, Apache-2.0): soft fill, inset ring, icon.
-const toneClass: Record<ToneName, string> = {
-  red: "bg-rose-50 text-rose-700 ring-rose-600/20 dark:bg-rose-400/10 dark:text-rose-300 dark:ring-rose-300/25",
-  amber: "bg-amber-50 text-amber-700 ring-amber-600/20 dark:bg-amber-400/10 dark:text-amber-300 dark:ring-amber-300/25",
-  green:
-    "bg-emerald-50 text-emerald-700 ring-emerald-600/20 dark:bg-emerald-400/10 dark:text-emerald-300 dark:ring-emerald-300/25",
-  blue: "bg-sky-50 text-sky-700 ring-sky-600/20 dark:bg-sky-400/10 dark:text-sky-300 dark:ring-sky-300/25",
-  neutral:
-    "bg-neutral-100 text-neutral-600 ring-neutral-500/20 dark:bg-neutral-400/10 dark:text-neutral-300 dark:ring-neutral-300/20",
-  primary: "bg-primary text-primary-foreground ring-primary",
+/** The icon Regular draws before a status word; Compact shows the word alone. The word carries the meaning. */
+const toneIcon: Record<ToneName, LucideIcon> = {
+  ok: CircleCheck,
+  warn: TriangleAlert,
+  fail: CircleAlert,
+  info: CircleDashed,
+  muted: Clock5,
 }
 
-const toneIcon: Record<ToneName, LucideIcon | null> = {
-  red: CircleAlert,
-  amber: TriangleAlert,
-  green: CircleCheck,
-  blue: CircleDashed,
-  neutral: Clock5,
-  primary: null,
+function ToneIcon({ tone }: { tone: ToneName }) {
+  const Icon = toneIcon[tone]
+  return <Icon aria-hidden strokeWidth={2.25} className="hidden shrink-0 regular:block" />
 }
 
-/** A status pill. The icon follows the tone unless one is given; pass icon={null} for none. */
-export function Tone({
-  tone,
-  icon,
-  spin,
+/** A status tag from the central table. children replaces the label when the words must say more. */
+export function StatusTag<K extends StatusKind>({
+  kind,
+  status,
   children,
   className,
 }: {
-  tone: ToneName
-  icon?: LucideIcon | null
-  spin?: boolean
-  children: React.ReactNode
+  kind: K
+  status: keyof (typeof statusTable)[K]
+  children?: React.ReactNode
   className?: string
 }) {
-  const Icon = icon === undefined ? toneIcon[tone] : icon
+  const s = statusOf(kind, status)
+  return (
+    <Badge variant={s.tone} className={className}>
+      <ToneIcon tone={s.tone} />
+      {children ?? s.label}
+    </Badge>
+  )
+}
+
+/** A tag in a tone, for statuses that are not in the table (an HTTP result, a one-off fact). */
+export function Tone({ tone, children, className }: { tone: ToneName; children: React.ReactNode; className?: string }) {
+  return (
+    <Badge variant={tone} className={className}>
+      <ToneIcon tone={tone} />
+      {children}
+    </Badge>
+  )
+}
+
+export type HealthState = "ok" | "warn" | "down" | "unknown"
+
+const dotTone: Record<ToneName, string> = {
+  ok: "bg-ok text-ok",
+  warn: "bg-warn text-warn",
+  fail: "bg-fail text-fail",
+  info: "bg-info text-info",
+  muted: "bg-muted-foreground/50 text-muted-foreground",
+}
+
+/** A small status dot for tight spaces; it carries the status as its accessible name and tooltip. */
+export function Dot({ health, label, className }: { health: HealthState; label?: string; className?: string }) {
+  const s = statusOf("health", health)
   return (
     <span
+      role="img"
+      aria-label={label ?? s.label}
+      title={label ?? s.label}
       className={cn(
-        "inline-flex h-5.5 w-fit shrink-0 items-center gap-1 rounded-full px-2 text-xs leading-none font-medium whitespace-nowrap ring-1 ring-inset select-none",
-        toneClass[tone],
+        "relative inline-block size-2 shrink-0 rounded-full",
+        "regular:ring-4 regular:ring-current/15",
+        dotTone[s.tone],
         className,
       )}
     >
-      {Icon && (
-        <Icon
-          className={cn("size-3 shrink-0", spin && "animate-spin [animation-duration:3s] motion-reduce:animate-none")}
-          strokeWidth={2.25}
-          aria-hidden="true"
-        />
+      {/* Regular: a down instance pulses, so it is seen at a glance. */}
+      {health === "down" && (
+        <span className="absolute inset-0 hidden animate-ping rounded-full bg-fail/60 regular:block motion-reduce:animate-none" />
       )}
-      {children}
     </span>
   )
 }
 
-export function ProblemBadge({
-  status,
-  regression,
-  firstSeen,
-}: {
-  status: string
-  regression: boolean
-  firstSeen?: string
-}) {
-  if (status === "resolved") return <Tone tone="green">Resolved</Tone>
-  if (status === "muted")
-    return (
-      <Tone tone="neutral" icon={BellOff}>
-        Muted
-      </Tone>
-    )
-  if (regression)
-    return (
-      <Tone tone="red" icon={RotateCcw}>
-        Regression
-      </Tone>
-    )
-  if (firstSeen && Date.now() - new Date(firstSeen).getTime() < 86_400_000)
-    return (
-      <Tone tone="red" icon={Sparkles}>
-        New
-      </Tone>
-    )
-  return <Tone tone="amber">Open</Tone>
+/** Which problem status to show: regressions and problems first seen in the last 24 hours stand out. */
+export function problemStatus(p: { status: string; regression: boolean; firstSeen?: string }) {
+  if (p.status === "resolved") return "resolved" as const
+  if (p.status === "muted") return "muted" as const
+  if (p.regression) return "regression" as const
+  if (p.firstSeen && Date.now() - new Date(p.firstSeen).getTime() < 86_400_000) return "new" as const
+  return "open" as const
+}
+
+export function ProblemBadge(p: { status: string; regression: boolean; firstSeen?: string }) {
+  return <StatusTag kind="problem" status={problemStatus(p)} />
 }
 
 export function Code({ children, className }: { children: React.ReactNode; className?: string }) {
-  return (
-    <code className={cn("relative rounded bg-muted px-[0.3rem] py-[0.2rem] font-mono text-sm break-all", className)}>
-      {children}
-    </code>
-  )
+  return <code className={cn("rounded-tag bg-ink/6 px-1.5 py-0.5 font-mono break-all", className)}>{children}</code>
 }
 
-/** "4 min ago", "3 days ago", or a date for older values. */
+/** "4 min ago", "30 h ago", "3 d ago" (FW-1), then months. For ages and deadlines, not for list times. */
 export function timeAgo(value: string | Date | null | undefined): string {
   if (!value) return "never"
   const ms = Date.now() - new Date(value).getTime()
@@ -142,7 +158,8 @@ export function timeAgo(value: string | Date | null | undefined): string {
     if (m < 60) return `in ${m} min`
     const h = Math.round(m / 60)
     if (h < 24) return `in ${h} h`
-    return new Date(value).toLocaleString()
+    const d = Math.round(h / 24)
+    return `in ${d} day${d === 1 ? "" : "s"}`
   }
   if (ms < 0) return "just now"
   const s = Math.floor(ms / 1000)
@@ -150,12 +167,67 @@ export function timeAgo(value: string | Date | null | undefined): string {
   const m = Math.floor(s / 60)
   if (m < 60) return `${m} min ago`
   const h = Math.floor(m / 60)
-  if (h < 24) return `${h} h ago`
+  if (h < 48) return `${h} h ago`
   const d = Math.floor(h / 24)
-  if (d < 30) return `${d} day${d === 1 ? "" : "s"} ago`
-  return new Date(value).toLocaleDateString()
+  if (d < 30) return `${d} d ago`
+  const mo = Math.floor(d / 30)
+  if (mo < 12) return `${mo} month${mo === 1 ? "" : "s"} ago`
+  const y = Math.floor(d / 365)
+  return `${y} year${y === 1 ? "" : "s"} ago`
 }
 
+/** Re-renders on one shared timer, so every "3 min ago" on screen keeps ticking while the page is open (LD-12). */
+const tickers = new Set<() => void>()
+let tickTimer: ReturnType<typeof setInterval> | undefined
+export function useTick() {
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    const tick = () => setTick((t) => t + 1)
+    tickers.add(tick)
+    tickTimer ??= setInterval(() => {
+      for (const t of tickers) t()
+    }, AGO_TICK_MS)
+    return () => {
+      tickers.delete(tick)
+      if (tickers.size === 0) {
+        clearInterval(tickTimer)
+        tickTimer = undefined
+      }
+    }
+  }, [])
+}
+
+/** An age ("18 h ago"), with the exact time in the app's time zone on hover. */
 export function TimeAgo({ value }: { value: string | Date | null | undefined }) {
-  return <time title={value ? new Date(value).toLocaleString() : undefined}>{timeAgo(value)}</time>
+  const tz = useTimeZone()
+  useTick()
+  if (!value) return <span>never</span>
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <time dateTime={new Date(value).toISOString()} className="tabular-nums">
+          {timeAgo(value)}
+        </time>
+      </TooltipTrigger>
+      <TooltipContent>{formatFull(value, tz)}</TooltipContent>
+    </Tooltip>
+  )
+}
+
+/** A time in a list: the time only for today, the date for earlier days; the full time and age on hover. */
+export function When({ value }: { value: string | Date | null | undefined }) {
+  const tz = useTimeZone()
+  if (!value) return <span className="text-muted-foreground">never</span>
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <time dateTime={new Date(value).toISOString()} className="tabular-nums">
+          {formatWhen(value, tz)}
+        </time>
+      </TooltipTrigger>
+      <TooltipContent>
+        {formatFull(value, tz)} · {timeAgo(value)}
+      </TooltipContent>
+    </Tooltip>
+  )
 }

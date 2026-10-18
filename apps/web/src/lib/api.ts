@@ -1,5 +1,5 @@
-import { QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { toast } from "sonner"
+import { keepPreviousData, QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { toast } from "@/lib/toast"
 
 export class ApiError extends Error {
   constructor(
@@ -48,12 +48,40 @@ export const queryClient = new QueryClient({
   },
 })
 
-export function useApi<T>(path: string | null, options: { refetchInterval?: number } = {}) {
+/*
+ * A read that started before a save of the same path must not bring back what the save replaced: React Query
+ * can still write such an answer after the save has invalidated the path. Each successful save moves the
+ * path's epoch on; an answer to a read from an earlier epoch is dropped in favour of what the cache holds.
+ */
+const epochs = new Map<string, number>()
+
+/** Marks a path as just saved, so reads that started before are not trusted. */
+export function markSaved(path: string) {
+  epochs.set(path, (epochs.get(path) ?? 0) + 1)
+}
+
+/** Reads a path for the query cache, dropping an answer that a save overtook. */
+export async function readFresh<T>(path: string, client: QueryClient = queryClient): Promise<T> {
+  const started = epochs.get(path) ?? 0
+  const data = await api<T>(path)
+  if ((epochs.get(path) ?? 0) !== started) {
+    const cached = client.getQueryData<T>([path])
+    if (cached !== undefined) return cached
+  }
+  return data
+}
+
+/**
+ * Reads an API path. With `keepRows` a list whose filters change keeps showing its last rows until the new
+ * answer arrives (`isPlaceholderData` is true meanwhile), instead of dropping to a loading state (TB-5).
+ */
+export function useApi<T>(path: string | null, options: { refetchInterval?: number; keepRows?: boolean } = {}) {
   return useQuery<T>({
     queryKey: [path],
-    queryFn: () => api<T>(path as string),
+    queryFn: () => readFresh<T>(path as string),
     enabled: path !== null,
     refetchInterval: options.refetchInterval,
+    placeholderData: options.keepRows ? keepPreviousData : undefined,
   })
 }
 
@@ -71,7 +99,10 @@ export function useApiMutation<TBody, TResult = unknown>(
         json: method === "DELETE" ? undefined : body,
       }),
     onSuccess: () => {
-      for (const key of invalidate) void client.invalidateQueries({ queryKey: [key] })
+      for (const key of invalidate) {
+        markSaved(key)
+        void client.invalidateQueries({ queryKey: [key] })
+      }
       if (success) toast.success(success)
     },
     onError: (error) => toast.error(describeError(error)),

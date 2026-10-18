@@ -40,7 +40,7 @@ affected_services() {
   local range="$1" files
   files="$(git -C "$REPO_ROOT" diff --name-only "$range")"
   local shared='^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|config/|packages/)'
-  grep -qE "$shared|^(apps/server/|apps/web/|apps/web-compact/|docker/server\.)" <<<"$files" && echo server
+  grep -qE "$shared|^(apps/server/|apps/web/|docker/server\.)" <<<"$files" && echo server
   grep -qE "$shared|^(apps/worker/|docker/worker\.)" <<<"$files" && echo worker
   return 0
 }

@@ -1,30 +1,16 @@
-import {
-  ArrowRightLeft,
-  Ban,
-  Check,
-  CircleX,
-  Clock5,
-  Hourglass,
-  KeyRound,
-  LogOut,
-  type LucideIcon,
-  ShieldCheck,
-  X,
-} from "lucide-react"
-import { useState } from "react"
-import { useNavigate, useParams } from "react-router"
-import { EmptyState } from "@/components/empty-state"
+import { Ban, Check, KeyRound, X } from "lucide-react"
+import { useNavigate, useParams, useSearchParams } from "react-router"
+import { useCrumb } from "@/app/chrome"
+import { useConfirm } from "@/components/confirm"
+import { Empty, LoadError, Loading, PageHead, Panel, PanelHead, UserText } from "@/components/kit"
 import { ListWithPanel } from "@/components/list-panel"
-import { PageHeader } from "@/components/page-header"
-import { TimeAgo, Tone } from "@/components/status"
+import { StatusTag, statusOf, TimeAgo, Tone, When } from "@/components/status"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Skeleton } from "@/components/ui/skeleton"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, useSort } from "@/components/ui/table"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useApi, useApiMutation } from "@/lib/api"
-import { cn } from "@/lib/utils"
+import { formatDateTime, n, useTimeZone } from "@/lib/time"
 
 export type AccessStatus = "pending" | "approved" | "denied" | "expired" | "released" | "revoked"
 
@@ -55,42 +41,6 @@ type AccessDetail = AccessRow & {
   calls: { id: string; at: string; method: string; path: string; status: number; refused: string | null }[]
 }
 
-const tone: Record<AccessStatus, "primary" | "green" | "neutral" | "red" | "amber"> = {
-  pending: "amber",
-  approved: "green",
-  denied: "red",
-  expired: "neutral",
-  released: "neutral",
-  revoked: "red",
-}
-
-const icon: Record<AccessStatus, LucideIcon> = {
-  pending: Hourglass,
-  approved: ShieldCheck,
-  denied: CircleX,
-  expired: Clock5,
-  released: LogOut,
-  revoked: Ban,
-}
-
-/** The status pill of a request. */
-function StatusPill({ status }: { status: AccessStatus }) {
-  return (
-    <Tone tone={tone[status]} icon={icon[status]}>
-      {label[status]}
-    </Tone>
-  )
-}
-
-const label: Record<AccessStatus, string> = {
-  pending: "Waiting for you",
-  approved: "Active",
-  denied: "Denied",
-  expired: "Expired",
-  released: "Released",
-  revoked: "Revoked",
-}
-
 export function duration(minutes: number) {
   if (minutes < 60) return `${minutes} min`
   const h = Math.floor(minutes / 60)
@@ -101,66 +51,107 @@ export function duration(minutes: number) {
 export function AccessPage() {
   const { id } = useParams()
   const navigate = useNavigate()
-  const [view, setView] = useState<"open" | "all">("open")
+  const [params, setParams] = useSearchParams()
+  const view = params.get("view") === "all" ? "all" : "open"
   const rows = useApi<AccessRow[]>("/access", { refetchInterval: 30_000 })
-  const shown = (rows.data ?? []).filter((r) => view === "all" || r.status === "pending" || r.status === "approved")
+  const all = rows.data ?? []
+  const shown = all.filter((r) => view === "all" || r.status === "pending" || r.status === "approved")
+  const waiting = all.filter((r) => r.status === "pending").length
+  const active = all.filter((r) => r.status === "approved").length
+  const sort = useSort(shown, {
+    id: "access",
+    columns: {
+      status: { label: "Status", value: (r) => (r.status === "pending" ? 2 : r.status === "approved" ? 1 : 0) },
+      instance: { label: "Instance", value: (r) => r.instance },
+      agent: { label: "Agent", value: (r) => r.token },
+      reason: { label: "Reason", value: (r) => r.reason },
+      time: { label: "Time", value: (r) => r.minutes },
+      requested: { label: "Requested", value: (r) => new Date(r.requestedAt) },
+    },
+  })
 
   const list = (
     <>
-      <PageHeader
+      <PageHead
         title="Agent access"
-        icon={KeyRound}
-        description="Agents ask for temporary access to an n8n instance for a task. Nothing is granted until you approve, and access ends on its own."
+        updatedAt={rows.dataUpdatedAt || undefined}
+        description={
+          rows.data
+            ? `${n(waiting)} waiting for you · ${n(active)} active. Nothing is granted until you approve, and access ends on its own.`
+            : "Agents ask for temporary access to an n8n instance for a task. Nothing is granted until you approve, and access ends on its own."
+        }
       />
-      <ToggleGroup type="single" variant="outline" value={view} onValueChange={(v) => v && setView(v as "open")}>
-        <ToggleGroupItem value="open">Waiting and active</ToggleGroupItem>
-        <ToggleGroupItem value="all">All</ToggleGroupItem>
+      <ToggleGroup
+        type="single"
+        aria-label="Show"
+        value={view}
+        onValueChange={(v) => v && setParams(v === "all" ? { view: "all" } : {}, { replace: true })}
+      >
+        <ToggleGroupItem value="open">
+          Waiting and active <small>{n(waiting + active)}</small>
+        </ToggleGroupItem>
+        <ToggleGroupItem value="all">
+          All <small>{n(all.length)}</small>
+        </ToggleGroupItem>
       </ToggleGroup>
-      {rows.isLoading ? (
-        <Skeleton className="h-40" />
+      {rows.error ? (
+        <Panel>
+          <LoadError what="access requests" error={rows.error} retry={() => rows.refetch()} />
+        </Panel>
+      ) : rows.isLoading ? (
+        <Panel>
+          <Loading>Loading access requests…</Loading>
+        </Panel>
       ) : shown.length === 0 ? (
-        <EmptyState
-          icon={KeyRound}
-          title={view === "open" ? "Nothing is waiting or active" : "No requests yet"}
-          description="When an agent asks for access to an n8n instance, the request waits here for you."
-        />
+        <Panel>
+          <Empty title={view === "open" ? "Nothing is waiting or active." : "No requests yet."}>
+            An agent with a token that may request access asks here; you approve it in the app, on Telegram or by email.
+          </Empty>
+        </Panel>
       ) : (
-        <Card className="overflow-hidden py-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Status</TableHead>
-                <TableHead>Instance</TableHead>
-                <TableHead>Agent</TableHead>
-                <TableHead>Reason</TableHead>
-                <TableHead>Time</TableHead>
-                <TableHead>Requested</TableHead>
+        <Table sort={sort}>
+          <TableHeader>
+            <TableRow>
+              <TableHead sort={sort.head("status")}>Status</TableHead>
+              <TableHead sort={sort.head("instance")}>Instance</TableHead>
+              <TableHead sort={sort.head("agent")}>Agent</TableHead>
+              <TableHead sort={sort.head("reason")}>Reason</TableHead>
+              <TableHead sort={sort.head("time")}>Time</TableHead>
+              <TableHead className="text-end" sort={sort.head("requested")}>
+                Requested
+              </TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {sort.rows.map((r) => (
+              <TableRow
+                key={r.id}
+                data-state={r.id === id ? "selected" : undefined}
+                aria-current={r.id === id ? "true" : undefined}
+                className="hover-row"
+                data-href={`/access/${r.id}${view === "all" ? "?view=all" : ""}`}
+                onClick={() => navigate(`/access/${r.id}${view === "all" ? "?view=all" : ""}`)}
+              >
+                <TableCell data-nolabel>
+                  <StatusTag kind="access" status={r.status} />
+                </TableCell>
+                <TableCell className="font-semibold">
+                  <UserText>{r.instance}</UserText>
+                </TableCell>
+                <TableCell className="text-muted-foreground">
+                  <UserText>{r.token}</UserText>
+                </TableCell>
+                <TableCell className="max-w-80 truncate font-semibold" title={r.reason} data-primary>
+                  <UserText>{r.reason}</UserText>
+                </TableCell>
+                <TableCell className="tabular-nums">{duration(r.minutes)}</TableCell>
+                <TableCell className="text-end text-muted-foreground">
+                  <When value={r.requestedAt} />
+                </TableCell>
               </TableRow>
-            </TableHeader>
-            <TableBody>
-              {shown.map((r) => (
-                <TableRow
-                  key={r.id}
-                  className={cn("cursor-pointer", r.id === id && "bg-muted")}
-                  onClick={() => navigate(`/access/${r.id}`)}
-                >
-                  <TableCell>
-                    <StatusPill status={r.status} />
-                  </TableCell>
-                  <TableCell className="font-medium">{r.instance}</TableCell>
-                  <TableCell className="text-muted-foreground">{r.token}</TableCell>
-                  <TableCell className="max-w-80 truncate" title={r.reason}>
-                    {r.reason}
-                  </TableCell>
-                  <TableCell className="whitespace-nowrap">{duration(r.minutes)}</TableCell>
-                  <TableCell className="whitespace-nowrap text-muted-foreground">
-                    <TimeAgo value={r.requestedAt} />
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </Card>
+            ))}
+          </TableBody>
+        </Table>
       )}
     </>
   )
@@ -170,30 +161,42 @@ export function AccessPage() {
       list={list}
       panelTitle="Access request"
       panel={id ? <AccessDetailPanel id={id} /> : null}
-      onClose={() => navigate("/access")}
+      onClose={() => navigate(`/access${view === "all" ? "?view=all" : ""}`)}
     />
   )
 }
 
 function AccessDetailPanel({ id }: { id: string }) {
+  const tz = useTimeZone()
   const detail = useApi<AccessDetail>(`/access/${id}`)
-  const invalidate = ["/access", `/access/${id}`]
+  useCrumb(detail.data?.reason)
+  const invalidate = ["/access", `/access/${id}`, "/overview", "/overview/summary"]
   const approve = useApiMutation<void>("POST", `/access/${id}/approve`, { invalidate, success: "Access approved" })
   const deny = useApiMutation<void>("POST", `/access/${id}/deny`, { invalidate, success: "Request denied" })
   const revoke = useApiMutation<void>("POST", `/access/${id}/revoke`, { invalidate, success: "Access revoked" })
-  if (detail.isLoading || !detail.data) return <Skeleton className="h-60" />
+  const confirm = useConfirm()
+  if (detail.isLoading) return <Loading>Loading the request…</Loading>
+  if (detail.error && !detail.data)
+    return <LoadError what="this request" error={detail.error} retry={() => detail.refetch()} />
+  if (!detail.data) return <Empty title="This request no longer exists." />
   const r = detail.data
   const busy = approve.isPending || deny.isPending || revoke.isPending
   return (
-    <div className="space-y-6">
-      <div className="space-y-3">
+    <div className="grid min-w-0 gap-gap">
+      <div className="grid gap-2.5">
         <div className="flex flex-wrap items-center gap-2">
-          <StatusPill status={r.status} />
-          <Badge variant="outline">{r.instance}</Badge>
-          <Badge variant="outline">token: {r.token}</Badge>
+          <StatusTag kind="access" status={r.status} />
+          <Badge variant="line">
+            <UserText>{r.instance}</UserText>
+          </Badge>
+          <Badge variant="line">
+            token: <UserText>{r.token}</UserText>
+          </Badge>
         </div>
-        <h2 className="text-2xl font-semibold tracking-tight">{r.reason}</h2>
-        <p className="text-sm text-muted-foreground">
+        <h2 className="text-title">
+          <UserText>{r.reason}</UserText>
+        </h2>
+        <p className="text-muted-foreground">
           {r.status === "pending" && (
             <>
               Asked <TimeAgo value={r.requestedAt} /> for {duration(r.minutes)}. Expires without a decision{" "}
@@ -202,15 +205,15 @@ function AccessDetailPanel({ id }: { id: string }) {
           )}
           {r.status === "approved" && r.expiresAt && (
             <>
-              Approved by {r.decidedBy} ({r.decidedVia}). Ends {new Date(r.expiresAt).toLocaleString()}.{" "}
+              Approved by {r.decidedBy} ({r.decidedVia}). Ends {formatDateTime(r.expiresAt, tz)}.{" "}
               {r.keyCollected ? "The agent has collected the key." : "The agent has not collected the key yet."}
             </>
           )}
           {r.status !== "pending" && r.status !== "approved" && (
             <>
-              {label[r.status]}
+              {statusOf("access", r.status).label}
               {r.decidedBy ? ` · decided by ${r.decidedBy} (${r.decidedVia})` : ""}
-              {r.endedAt ? ` · ended ${new Date(r.endedAt).toLocaleString()}` : ""}
+              {r.endedAt ? ` · ended ${formatDateTime(r.endedAt, tz)}` : ""}
             </>
           )}
         </p>
@@ -218,100 +221,106 @@ function AccessDetailPanel({ id }: { id: string }) {
         <div className="flex flex-wrap gap-2">
           {r.status === "pending" && (
             <>
-              <Button disabled={busy} onClick={() => approve.mutate()}>
+              <Button variant="primary" disabled={busy} onClick={() => approve.mutate()}>
                 <Check /> Approve
               </Button>
-              <Button variant="outline" disabled={busy} onClick={() => deny.mutate()}>
+              <Button disabled={busy} onClick={() => deny.mutate()}>
                 <X /> Deny
               </Button>
             </>
           )}
           {r.status === "approved" && (
-            <Button variant="outline" className="text-destructive" disabled={busy} onClick={() => revoke.mutate()}>
+            <Button
+              variant="danger"
+              disabled={busy}
+              onClick={async () => {
+                if (
+                  await confirm({
+                    title: `Revoke access to ${r.instance}?`,
+                    message: `The agent ${r.token} loses access at once, before its time is up. This cannot be undone; the agent has to ask again.`,
+                    confirmLabel: "Revoke access",
+                    danger: true,
+                  })
+                )
+                  revoke.mutate()
+              }}
+            >
               <Ban /> Revoke now
             </Button>
           )}
         </div>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <ShieldCheck className="size-4 text-muted-foreground" /> What the agent may do
-          </CardTitle>
-          <CardDescription>
-            Checked by n8n-ops on every call before it reaches {r.instance}.{" "}
-            {r.workflowIds.length ? "Only on the workflows listed." : "On the whole instance."}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
+      <Panel>
+        <PanelHead
+          title="What the agent may do"
+          count={n(r.scopes.length)}
+          description={
+            <>
+              Checked by n8n-ops on every call before it reaches {r.instance}.{" "}
+              {r.workflowIds.length ? "Only on the workflows listed." : "On the whole instance."}
+            </>
+          }
+        />
+        <div className="grid gap-3 border-t border-line p-pad-x">
           <div className="flex flex-wrap gap-1.5">
             {r.scopes.map((s) => (
-              <Badge key={s} variant="secondary" className="font-mono">
+              <Badge key={s} variant="line" className="font-mono">
                 {s}
               </Badge>
             ))}
           </div>
           {r.workflowIds.length > 0 && (
-            <p className="text-sm">
-              Workflows: <span className="font-mono">{r.workflowIds.join(", ")}</span>
+            <p>
+              Workflows: <span className="font-mono text-small">{r.workflowIds.join(", ")}</span>
             </p>
           )}
           {r.keyPrefix && (
-            <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
-              <KeyRound className="size-4" /> Key <span className="font-mono">{r.keyPrefix}…</span>
+            <p className="flex items-center gap-1.5 text-muted-foreground">
+              <KeyRound className="size-4" /> Key <span className="font-mono text-small">{r.keyPrefix}…</span>
             </p>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </Panel>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <ArrowRightLeft className="size-4 text-muted-foreground" /> Calls
-          </CardTitle>
-          <CardDescription>Every call the agent made with this access, newest first.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Table>
+      <Panel>
+        <PanelHead
+          title="Calls"
+          count={n(r.calls.length)}
+          description="Every call the agent made with this access, newest first."
+        />
+        {r.calls.length === 0 ? (
+          <Empty title="No calls yet." />
+        ) : (
+          <Table bare>
             <TableHeader>
               <TableRow>
                 <TableHead>When</TableHead>
                 <TableHead>Call</TableHead>
-                <TableHead className="text-right">Result</TableHead>
+                <TableHead className="text-end">Result</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {r.calls.map((call) => (
                 <TableRow key={call.id}>
-                  <TableCell className="whitespace-nowrap text-muted-foreground">
-                    <TimeAgo value={call.at} />
+                  <TableCell className="text-muted-foreground">
+                    <When value={call.at} />
                   </TableCell>
-                  <TableCell className="font-mono text-xs break-all whitespace-normal">
+                  <TableCell className="font-mono text-small break-all whitespace-normal" data-primary>
                     {call.method} {call.path}
-                    {call.refused && <div className="font-sans break-normal text-destructive">{call.refused}</div>}
+                    {call.refused && <div className="font-sans break-normal text-fail">{call.refused}</div>}
                   </TableCell>
-                  <TableCell className="text-right">
-                    <Tone
-                      tone={call.refused ? "red" : call.status < 400 ? "green" : "amber"}
-                      icon={call.refused ? Ban : undefined}
-                    >
+                  <TableCell className="text-end">
+                    <Tone tone={call.refused ? "fail" : call.status < 400 ? "ok" : "warn"}>
                       {call.refused ? "refused" : call.status}
                     </Tone>
                   </TableCell>
                 </TableRow>
               ))}
-              {r.calls.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={3} className="text-muted-foreground">
-                    No calls yet.
-                  </TableCell>
-                </TableRow>
-              )}
             </TableBody>
           </Table>
-        </CardContent>
-      </Card>
+        )}
+      </Panel>
     </div>
   )
 }
@@ -320,9 +329,13 @@ function AccessDetailPanel({ id }: { id: string }) {
 function Notified({ r }: { r: AccessRow }) {
   const sent = [r.telegramMessageId !== null && "Telegram", r.emailSentAt && "email"].filter(Boolean)
   return (
-    <p className="text-sm text-muted-foreground">
-      {sent.length ? `Sent to ${sent.join(" and ")}.` : "Not sent anywhere yet: connect Telegram or email in Settings."}
-      {r.notifyError && <span className="block text-destructive">Last attempt failed: {r.notifyError}</span>}
+    <p className="text-muted-foreground">
+      {sent.length ? (
+        `Sent to ${sent.join(" and ")}.`
+      ) : (
+        <>Not sent anywhere yet: connect Telegram or email in Settings → Notifications.</>
+      )}
+      {r.notifyError && <span className="block font-semibold text-fail">Last attempt failed: {r.notifyError}</span>}
     </p>
   )
 }

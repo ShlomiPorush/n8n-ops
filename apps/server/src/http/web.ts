@@ -3,62 +3,61 @@ import { extname, join } from "node:path"
 import { serveStatic } from "@hono/node-server/serve-static"
 import type { Hono } from "hono"
 import type { Ctx } from "../context.ts"
-import type { Design } from "../lib/settings.ts"
+import { type Design, designs } from "../lib/settings.ts"
 import type { Env } from "./types.ts"
 
 const IMMUTABLE = "public, max-age=31536000, immutable"
 
+/** The page with the design written on <html>, so the first paint is already in that design. */
+export function withDesign(html: string, design: Design) {
+  const attr = `data-design="${design}"`
+  if (/<html\b[^>]*\sdata-design="[^"]*"/.test(html)) return html.replace(/(<html\b[^>]*\s)data-design="[^"]*"/, `$1${attr}`)
+  return html.replace(/<html\b/, `<html ${attr}`)
+}
+
 /**
- * Serves the two web designs. Page addresses are the same in both (`/problems/:id`); only their built files
- * differ: Regular's under `/assets/`, Compact's under `/compact/assets/`.
+ * Serves the web app. One build carries both designs; the one chosen in Settings → General is written on
+ * <html data-design> of every page, and the app follows it from there.
  *
  * - A hashed asset is served for good; a missing one is a 404 that is not cached, never a page, so an old
- *   tab after an update does not cache HTML in place of a script.
- * - Every other address gets the `index.html` of the design chosen in Settings → General, revalidated on each
- *   load so a switch shows at once. Compact's page is not reachable directly, so the choice cannot be
- *   bypassed. If the chosen design is not installed the other one is served (logged once); if neither is,
- *   the answer is a plain 503.
+ *   tab after an update does not cache HTML in place of a script. `/compact/assets/` (where the separate
+ *   Compact app used to live) answers the same way.
+ * - Every other address gets index.html with the chosen design, revalidated on each load so a switch shows
+ *   at once. Without a build the answer is a plain 503.
  *
  * Mount after every API, health and agent route.
  */
-export function serveWeb(app: Hono<Env>, ctx: Ctx, dirs: Partial<Record<Design, string>>) {
-  if (!dirs.regular && !dirs.compact) return
+export function serveWeb(app: Hono<Env>, ctx: Ctx, dir: string | undefined) {
+  if (!dir) return
 
-  const assets = (prefix: string, root: string | undefined) => {
+  for (const prefix of ["/assets", "/compact/assets"]) {
     app.use(`${prefix}/*`, async (c, next) => {
       await next()
       if (c.res.ok) c.res.headers.set("Cache-Control", IMMUTABLE)
     })
-    if (root)
-      app.use(
-        `${prefix}/*`,
-        // The files of both designs sit in dist/assets; the prefix only names the design.
-        serveStatic({ root, rewriteRequestPath: (path) => path.replace(/^\/compact\/assets\//, "/assets/") }),
-      )
+    if (prefix === "/assets") app.use(`${prefix}/*`, serveStatic({ root: dir }))
     app.get(`${prefix}/*`, (c) => c.text("Not found", 404, { "Cache-Control": "no-store" }))
   }
-  assets("/assets", dirs.regular)
-  assets("/compact/assets", dirs.compact)
 
-  // Each design's index.html, read once: the built files do not change while the server runs.
-  const pages = new Map<Design, string | null>()
+  // index.html in each design, read once: the built files do not change while the server runs.
+  let pages: Record<Design, string> | null | undefined
   const page = (design: Design) => {
-    if (!pages.has(design)) {
-      const file = dirs[design] && join(dirs[design] as string, "index.html")
-      pages.set(design, file && existsSync(file) ? readFileSync(file, "utf8") : null)
+    if (pages === undefined) {
+      const file = join(dir, "index.html")
+      const html = existsSync(file) ? readFileSync(file, "utf8") : null
+      pages = html
+        ? (Object.fromEntries(designs.map((d) => [d, withDesign(html, d)])) as Record<Design, string>)
+        : null
     }
-    return pages.get(design) ?? null
+    return pages?.[design] ?? null
   }
-  let warned = false
 
   app.get("*", async (c) => {
-    const chosen = ctx.settings.design()
     const path = c.req.path
 
-    // Another file at the root of the chosen design's build, such as an icon.
+    // Another file at the root of the build, such as an icon.
     if (extname(path) && extname(path) !== ".html") {
-      const root = dirs[chosen]
-      const res = root ? await serveStatic({ root })(c, async () => {}) : undefined
+      const res = await serveStatic({ root: dir })(c, async () => {})
       if (res) {
         res.headers.set("Cache-Control", "no-cache")
         return res
@@ -66,15 +65,7 @@ export function serveWeb(app: Hono<Env>, ctx: Ctx, dirs: Partial<Record<Design, 
       return c.text("Not found", 404, { "Cache-Control": "no-store" })
     }
 
-    const other: Design = chosen === "regular" ? "compact" : "regular"
-    let html = page(chosen)
-    if (!html) {
-      html = page(other)
-      if (html && !warned) {
-        warned = true
-        ctx.log.error("The chosen web design is not installed; serving the other one", { chosen, served: other })
-      }
-    }
+    const html = page(ctx.settings.design())
     if (!html) return c.text("The web interface is not installed.", 503, { "Cache-Control": "no-store" })
     return c.html(html, 200, { "Cache-Control": "no-cache" })
   })

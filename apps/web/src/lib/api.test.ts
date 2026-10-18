@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { ApiError, api, describeError } from "./api.ts"
+import { QueryClient } from "@tanstack/react-query"
+import { ApiError, api, describeError, markSaved, readFresh } from "./api.ts"
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -38,5 +39,33 @@ describe("describeError", () => {
   it("lists validation issues", () => {
     const error = new ApiError(400, "invalid", [{ path: ["chatId"], message: "required" }])
     expect(describeError(error)).toBe("chatId: required")
+  })
+})
+
+describe("readFresh", () => {
+  it("drops an answer to a read that a save overtook, keeping what the cache holds", async () => {
+    let answer: (r: Response) => void = () => {}
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise<Response>((done) => (answer = done))),
+    )
+    const client = new QueryClient()
+    client.setQueryData(["/settings/general"], { design: "regular" })
+    const old = readFresh<{ design: string }>("/settings/general", client)
+    // The save lands while the old read is still on its way.
+    markSaved("/settings/general")
+    client.setQueryData(["/settings/general"], { design: "compact" })
+    answer(new Response(JSON.stringify({ design: "regular" })))
+    expect(await old).toEqual({ design: "compact" })
+  })
+
+  it("keeps the answer of a read that started after the save", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ design: "compact" }))),
+    )
+    const client = new QueryClient()
+    markSaved("/settings/general")
+    expect(await readFresh("/settings/general", client)).toEqual({ design: "compact" })
   })
 })

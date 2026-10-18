@@ -30,13 +30,13 @@ test("an instance is registered after its connection is tested", async () => {
   await page.goto("/instances")
   await page.getByRole("button", { name: "Add instance" }).click()
   await page.getByLabel("Name", { exact: true }).fill("e2e-n8n")
-  await page.getByLabel("Base URL").fill(n8nUrl)
+  await page.getByLabel("Base URL", { exact: true }).fill(n8nUrl)
 
-  await page.getByLabel("API key").fill("not-a-real-key-123")
+  await page.getByLabel("API key", { exact: true }).fill("not-a-real-key-123")
   await page.getByRole("button", { name: "Add instance" }).last().click()
   await expect(page.getByText(/rejected the API key/)).toBeVisible()
 
-  await page.getByLabel("API key").fill(apiKey)
+  await page.getByLabel("API key", { exact: true }).fill(apiKey)
   await page.getByRole("button", { name: "Add instance" }).last().click()
   await expect(page.getByRole("heading", { name: "e2e-n8n" })).toBeVisible()
   await expect(page.getByText("Read from GET /api/v1/discover")).toBeVisible()
@@ -66,7 +66,7 @@ test("a repeated failure only increases the counter", async () => {
   await expect(page.getByText("Checked now").last()).toBeVisible({ timeout: 30_000 })
   await page.goto("/problems")
   await expect(
-    page.getByRole("row", { name: /Sync orders to ERP/ }).getByRole("cell", { name: "2", exact: true }),
+    page.getByRole("row", { name: /Sync orders to ERP/ }).getByRole("cell", { name: /^(Failures )?2$/ }),
   ).toBeVisible()
 })
 
@@ -86,7 +86,7 @@ test("a resolved problem that fails again is a regression", async () => {
   await expect(page.getByRole("row", { name: /Sync orders to ERP/ }).getByText("Regression")).toBeVisible()
 
   await page.goto("/")
-  await expect(page.getByRole("button", { name: /Regression.*Sync orders to ERP/ })).toBeVisible()
+  await expect(page.getByRole("link", { name: /Regression.*Sync orders to ERP/ })).toBeVisible()
 })
 
 test("a queue-mode instance without metrics or worker URLs says what is missing", async () => {

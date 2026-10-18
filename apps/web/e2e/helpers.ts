@@ -2,6 +2,9 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { expect, type Page } from "@playwright/test"
 import { freshTotp } from "./totp.ts"
 
+/** The design this run of the suite is served in; scripts/verify.sh runs the suite once per design. */
+export const design: "regular" | "compact" = process.env.E2E_DESIGN === "compact" ? "compact" : "regular"
+
 export const username = "operator"
 export const password = "correct horse battery staple"
 const stateFile = "test-results/e2e-state.json"
@@ -54,7 +57,7 @@ export async function signIn(page: Page) {
 async function signInWithPassword(page: Page) {
   await page.goto("/login")
   await page.getByLabel("Username").fill(username)
-  await page.getByLabel("Password").fill(password)
+  await page.getByLabel("Password", { exact: true }).fill(password)
   await page.getByRole("button", { name: "Continue" }).click()
   await expect(page.getByText("Two-factor code")).toBeVisible()
   await page.getByLabel("Two-factor code").fill(await freshTotp(loadSecret()))

@@ -9,15 +9,13 @@ import { settingsRoutes } from "./routes/settings.ts"
 import { setupRoutes } from "./routes/setup.ts"
 
 export type AppOptions = {
-  /** Directory with the built Regular UI, relative to the working directory. Omit to serve no UI. */
+  /** Directory with the built UI, relative to the working directory. Omit to serve no UI. */
   webDir?: string
-  /** Directory with the built Compact UI. */
-  webCompactDir?: string
   /** Extra routers mounted under /api, added by later features. */
   mounts?: { path: string; router: Hono<Env> }[]
 }
 
-export function createApp(ctx: Ctx, { webDir, webCompactDir, mounts = [] }: AppOptions = {}) {
+export function createApp(ctx: Ctx, { webDir, mounts = [] }: AppOptions = {}) {
   const app = new Hono<Env>()
 
   app.get("/healthz/live", (c) => c.json<Health>({ status: "ok", version: ctx.version, checks: {} }))
@@ -45,7 +43,7 @@ export function createApp(ctx: Ctx, { webDir, webCompactDir, mounts = [] }: AppO
     return c.json({ error: "internal_error" }, 500)
   })
 
-  serveWeb(app, ctx, { regular: webDir, compact: webCompactDir })
+  serveWeb(app, ctx, webDir)
 
   return app
 }

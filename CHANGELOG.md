@@ -32,6 +32,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Changed
 
+- Regular and Compact are now one app with the same pages, functions and behaviour; the Design setting changes only the look. Regular gains everything Compact had: the search in the top bar, sortable tables, filter pickers kept in the address, the save bar that asks before leaving, a confirmation before revoking a token or access, Stored/Replace/Remove for secrets, error states with Try again, times in the time zone set in Settings, sheets and a tab bar on phones. It keeps its look: Inter, white cards with a soft shadow, icons in figures, status pills and dialogs, and figures that count up. A design switch shows at once, without a reload.
 - Every email (the daily and weekly reports, the test email and agent access requests) uses the console's v3 layout: a headline that says what happened, key figures, tinted panels with tables, status tags, and one button to act. It follows dark mode where the mail app does, reads on phones, and is built from tables, so Outlook for Windows keeps the layout. Dates read day/month/year in the time zone set in Settings → General. Messages are sent base64-encoded, so no mail server can break a long line inside the HTML, and addresses keep the colour of the text around them.
 
 ### Fixed

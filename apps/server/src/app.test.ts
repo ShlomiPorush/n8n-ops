@@ -1,7 +1,8 @@
 import { mkdirSync, rmSync, writeFileSync } from "node:fs"
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest"
+import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { createApp } from "./app.ts"
 import type { Ctx } from "./context.ts"
+import { withDesign } from "./http/web.ts"
 
 function fakeCtx(databaseUp: boolean): Ctx {
   return {
@@ -50,40 +51,29 @@ describe("routing", () => {
   })
 })
 
-describe("web designs", () => {
-  // serveStatic resolves the web directories relative to the working directory.
-  const regular = `.test-web-${process.pid}`
-  const compact = `.test-web-compact-${process.pid}`
+describe("web", () => {
+  // serveStatic resolves the web directory relative to the working directory.
+  const web = `.test-web-${process.pid}`
   const empty = `.test-web-empty-${process.pid}`
 
   beforeAll(() => {
-    for (const [dir, name] of [
-      [regular, "regular"],
-      [compact, "compact"],
-    ]) {
-      mkdirSync(`${dir}/assets`, { recursive: true })
-      writeFileSync(`${dir}/index.html`, `<html><meta name="n8n-ops-design" content="${name}"></html>`)
-      writeFileSync(`${dir}/assets/index-${name}.js`, `export const design = "${name}"`)
-      writeFileSync(`${dir}/icon.svg`, `<svg data-design="${name}"/>`)
-    }
+    mkdirSync(`${web}/assets`, { recursive: true })
+    writeFileSync(`${web}/index.html`, `<!doctype html><html lang="en" data-design="regular"><body></body></html>`)
+    writeFileSync(`${web}/assets/index-abc.js`, "export const app = true")
+    writeFileSync(`${web}/icon.svg`, "<svg/>")
     mkdirSync(empty, { recursive: true })
   })
   afterAll(() => {
-    for (const dir of [regular, compact, empty]) rmSync(dir, { recursive: true, force: true })
+    for (const dir of [web, empty]) rmSync(dir, { recursive: true, force: true })
   })
 
-  const withDesign = (design: "regular" | "compact") =>
-    ({
-      ...fakeCtx(true),
-      log: { info() {}, warn() {}, error: vi.fn() },
-      settings: { design: () => design },
-    }) as unknown as Ctx
-  const app = (design: "regular" | "compact", dirs = { webDir: regular, webCompactDir: compact }) =>
-    createApp(withDesign(design), dirs)
-  const servedDesign = async (res: Response) => (await res.text()).match(/content="(\w+)"/)?.[1]
+  const ctxIn = (design: () => "regular" | "compact") =>
+    ({ ...fakeCtx(true), settings: { design } }) as unknown as Ctx
+  const app = (design: "regular" | "compact", webDir = web) => createApp(ctxIn(() => design), { webDir })
+  const servedDesign = async (res: Response) => (await res.text()).match(/<html[^>]*data-design="(\w+)"/)?.[1]
 
   it.each(["regular", "compact"] as const)("serves every page address in the chosen design (%s)", async (design) => {
-    for (const path of ["/", "/index.html", "/problems/3f2a", "/login", "/compact/", "/compact/index.html"]) {
+    for (const path of ["/", "/index.html", "/problems/3f2a", "/login", "/setup"]) {
       const res = await app(design).request(path)
       expect(res.status, path).toBe(200)
       expect(res.headers.get("content-type"), path).toContain("text/html")
@@ -92,30 +82,35 @@ describe("web designs", () => {
     }
   })
 
-  it("serves each design's hashed assets under its own prefix, for good, whichever design is chosen", async () => {
+  it("follows a design switch on the next page load", async () => {
+    let design: "regular" | "compact" = "regular"
+    const live = createApp(
+      ctxIn(() => design),
+      { webDir: web },
+    )
+    expect(await servedDesign(await live.request("/"))).toBe("regular")
+    design = "compact"
+    expect(await servedDesign(await live.request("/"))).toBe("compact")
+  })
+
+  it("serves hashed assets for good, whichever design is chosen", async () => {
     for (const design of ["regular", "compact"] as const) {
-      const r = await app(design).request("/assets/index-regular.js")
-      expect(r.status).toBe(200)
-      expect(r.headers.get("cache-control")).toBe("public, max-age=31536000, immutable")
-      expect(await r.text()).toContain('"regular"')
-      const c = await app(design).request("/compact/assets/index-compact.js")
-      expect(c.status).toBe(200)
-      expect(c.headers.get("cache-control")).toBe("public, max-age=31536000, immutable")
-      expect(await c.text()).toContain('"compact"')
+      const res = await app(design).request("/assets/index-abc.js")
+      expect(res.status).toBe(200)
+      expect(res.headers.get("cache-control")).toBe("public, max-age=31536000, immutable")
     }
   })
 
-  it("answers a missing asset with an uncached 404, never a page or the other design's file", async () => {
-    for (const path of ["/assets/missing.js", "/compact/assets/missing.js", "/compact/assets/index-regular.js"]) {
+  it("answers a missing asset, and anything under the old Compact assets, with an uncached 404", async () => {
+    for (const path of ["/assets/missing.js", "/compact/assets/index-abc.js", "/compact/assets/missing.js"]) {
       const res = await app("compact").request(path)
       expect(res.status, path).toBe(404)
       expect(res.headers.get("cache-control"), path).toBe("no-store")
     }
   })
 
-  it("serves other root files from the chosen design only", async () => {
-    expect(await (await app("compact").request("/icon.svg")).text()).toContain('"compact"')
-    expect(await (await app("regular").request("/icon.svg")).text()).toContain('"regular"')
+  it("serves other root files", async () => {
+    expect((await app("compact").request("/icon.svg")).status).toBe(200)
     expect((await app("regular").request("/missing.png")).status).toBe(404)
   })
 
@@ -126,20 +121,21 @@ describe("web designs", () => {
     expect(await res.text()).toBe("")
   })
 
-  it("falls back to the other design when the chosen one is not installed, and says so once", async () => {
-    const ctx = withDesign("compact")
-    const fallback = createApp(ctx, { webDir: regular, webCompactDir: empty })
-    expect(await servedDesign(await fallback.request("/"))).toBe("regular")
-    await fallback.request("/problems")
-    expect(ctx.log.error).toHaveBeenCalledTimes(1)
-  })
-
-  it("answers 503 when neither design is installed", async () => {
-    const res = await app("regular", { webDir: empty, webCompactDir: empty }).request("/")
+  it("answers 503 when the UI is not built", async () => {
+    const res = await app("regular", empty).request("/")
     expect(res.status).toBe(503)
   })
 
   it("keeps API paths out of the pages", async () => {
     expect((await app("compact").request("/api/nope")).status).toBe(404)
+  })
+})
+
+describe("withDesign", () => {
+  it("replaces the design on <html>, or adds it", () => {
+    expect(withDesign('<html lang="en" data-design="regular">', "compact")).toBe(
+      '<html lang="en" data-design="compact">',
+    )
+    expect(withDesign('<html lang="en">', "compact")).toBe('<html data-design="compact" lang="en">')
   })
 })

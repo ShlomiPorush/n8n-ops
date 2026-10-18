@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http"
 import { getConnInfo } from "@hono/node-server/conninfo"
+import { RESPONSE_ALREADY_SENT } from "@hono/node-server/utils/response"
 import type { Context } from "hono"
 import { Hono } from "hono"
 import { z } from "zod"
@@ -12,8 +13,6 @@ import { CLI_CLIENT, resources, SCOPES } from "./provider.ts"
 type Bindings = { incoming: IncomingMessage & { body?: unknown }; outgoing: ServerResponse }
 /** The Node request and response under Hono; absent when the app is driven without a server (unit tests). */
 const node = (c: Context) => (c.env as Partial<Bindings> | undefined)?.incoming ? (c.env as Bindings) : null
-/** Tells @hono/node-server the response was written straight to the socket. */
-const alreadySent = () => new Response(null, { headers: { "x-hono-already-sent": "true" } })
 
 const notConfigured = {
   error: "not_configured",
@@ -232,7 +231,8 @@ export function agentConnectRoutes(ctx: Ctx, agents: AgentConnect) {
     n.outgoing.setHeader("Content-Security-Policy", "frame-ancestors 'none'")
     n.outgoing.setHeader("Referrer-Policy", "no-referrer")
     p.provider.callback()(n.incoming, n.outgoing)
-    return alreadySent()
+    // The provider writes the response to the socket itself.
+    return RESPONSE_ALREADY_SENT
   }
   app.all("/oauth/*", handoff)
   app.all("/connect/device", handoff)

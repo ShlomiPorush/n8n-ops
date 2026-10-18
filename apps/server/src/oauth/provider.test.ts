@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto"
 import type { IncomingMessage, ServerResponse } from "node:http"
 import type { AddressInfo } from "node:net"
 import { serve } from "@hono/node-server"
+import { RESPONSE_ALREADY_SENT } from "@hono/node-server/utils/response"
 import { Hono } from "hono"
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest"
 import { type AgentProvider, CLI_CLIENT, createAgentProvider, resources, SCOPES } from "./provider.ts"
@@ -23,6 +24,8 @@ let base = ""
 let provider: AgentProvider
 let server: ReturnType<typeof serve>
 type Bindings = { incoming: IncomingMessage; outgoing: ServerResponse }
+// biome-ignore lint/suspicious/noExplicitAny: responses in these tests are loose JSON or HTML
+type Loose = any
 
 beforeAll(async () => {
   const app = new Hono<{ Bindings: Bindings }>()
@@ -54,7 +57,7 @@ beforeAll(async () => {
   })
   app.all("*", (c) => {
     provider.callback()(c.env.incoming, c.env.outgoing)
-    return new Response(null, { headers: { "x-hono-already-sent": "true" } })
+    return RESPONSE_ALREADY_SENT
   })
   server = serve({ fetch: app.fetch, port: 0 })
   await new Promise((r) => server.once("listening", r))
@@ -95,7 +98,7 @@ function browser() {
     try {
       data = JSON.parse(text)
     } catch {}
-    return { status: res.status, location: res.headers.get("location"), data: data as Record<string, string> & string }
+    return { status: res.status, location: res.headers.get("location"), data: data as Loose }
   }
 }
 

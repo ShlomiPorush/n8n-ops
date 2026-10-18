@@ -4,7 +4,6 @@ import { Navigate, NavLink, useLocation, useNavigate, useParams } from "react-ro
 import { useCrumb } from "@/app/chrome"
 import { settingsGroups, settingsSectionLabel } from "@/app/settings-sections"
 import { useConfirm } from "@/components/confirm"
-import { allowLeave } from "@/components/save-bar"
 import {
   Copyable,
   countChanges,
@@ -18,6 +17,7 @@ import {
   UserText,
   useSaveSource,
 } from "@/components/kit"
+import { allowLeave } from "@/components/save-bar"
 import { When } from "@/components/status"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"

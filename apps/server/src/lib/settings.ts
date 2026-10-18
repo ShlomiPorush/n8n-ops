@@ -203,7 +203,7 @@ export function createSettings(db: Db, env: { publicUrl?: string } = {}): Settin
   return {
     get,
     async set(key, value) {
-      const parsed = sections[key].parse(value)
+      const parsed = sections[key].parse(value) as typeof value
       if (key !== "general") return write(key, parsed)
       const run = generalWrites.then(async () => {
         await write(key, parsed)

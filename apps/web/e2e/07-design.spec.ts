@@ -1,4 +1,4 @@
-import { expect, type Page, test } from "@playwright/test"
+import { type BrowserContext, expect, type Page, test } from "@playwright/test"
 import { design as here, signIn } from "./helpers.ts"
 
 // Runs last. The design is a look only: switching it in Settings changes the page at once, without a reload,
@@ -7,6 +7,7 @@ test.describe.configure({ mode: "serial" })
 
 const other = here === "regular" ? "compact" : "regular"
 const label = (d: "regular" | "compact") => (d === "regular" ? "Regular" : "Compact")
+let context: BrowserContext
 let page: Page
 let general: Record<string, unknown> = {}
 const shown = (p: Page) => p.locator("html")
@@ -21,7 +22,9 @@ async function choose(p: Page, d: "regular" | "compact") {
 }
 
 test.beforeAll(async ({ browser }) => {
-  page = await browser.newPage()
+  // Its own context, so a second tab can share the session.
+  context = await browser.newContext()
+  page = await context.newPage()
   await signIn(page)
   general = await (await page.request.get("/api/settings/general")).json()
 })
@@ -31,7 +34,7 @@ test.afterAll(async () => {
   if (now.design !== here) await page.request.put("/api/settings/general", { data: { ...now, design: here } })
   await page.goto("/")
   await expect(shown(page)).toHaveAttribute("data-design", here)
-  await page.close()
+  await context.close()
 })
 
 test("each design draws with its own type, corners and surfaces", async () => {
@@ -102,7 +105,7 @@ test("a failed save leaves the design as it was", async () => {
 })
 
 test("another tab follows when it comes back to the front, and keeps its open dialog and edits", async () => {
-  const tab = await page.context().newPage()
+  const tab = await context.newPage()
   try {
     await tab.goto("/instances")
     await expect(shown(tab)).toHaveAttribute("data-design", other)

@@ -57,6 +57,7 @@ test("switching the design reloads into it without asking, and keeps the rest of
   })
   await choose(page, other)
   await expect(page.getByLabel("Time zone")).toBeDisabled()
+  await expect(page.getByRole("combobox", { name: "Design" })).toBeDisabled()
   await expect(served(page)).toHaveAttribute("content", other)
   await page.unroute("**/api/settings/general")
   await expect(page.getByRole("alertdialog")).toHaveCount(0)

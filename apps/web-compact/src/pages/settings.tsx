@@ -478,7 +478,12 @@ export function SettingsForm({ section }: { section: string }) {
                   <ToggleGroupItem value="compact">Compact</ToggleGroupItem>
                 </ToggleGroup>
               ) : f.type === "weekday" ? (
-                <Select value={String(values[f.name] ?? 0)} onValueChange={(v) => set(f.name, Number(v))}>
+                <Select
+                  value={String(values[f.name] ?? 0)}
+                  onValueChange={(v) => set(f.name, Number(v))}
+                  // Radix Select opens on pointerdown and ignores a disabled fieldset, so it is locked itself.
+                  disabled={save.isPending}
+                >
                   <SelectTrigger id={f.name} className="w-full">
                     <SelectValue />
                   </SelectTrigger>

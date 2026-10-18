@@ -115,7 +115,10 @@ stack() {
 
 cleanup_stack() {
   stack down --remove-orphans >/dev/null 2>&1 || true
-  [ -n "${N8N_OPS_DATA_DIR:-}" ] && remove_data_dir "$N8N_OPS_DATA_DIR"
+  # After the last round the data is already gone; the exit trap must not turn that into a failure.
+  if [ -n "${N8N_OPS_DATA_DIR:-}" ]; then
+    remove_data_dir "$N8N_OPS_DATA_DIR"
+  fi
 }
 
 # Stops the stack, confirms nothing of it still runs, and removes its data, so the next round starts fresh.

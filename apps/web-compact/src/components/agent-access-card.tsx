@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Link } from "react-router"
 import { Panel, PanelHead, SwitchRow, useSaveSource } from "@/components/kit"
 import { Button } from "@/components/ui/button"
@@ -37,12 +37,23 @@ export function AgentAccessCard({ id, name, scopesSource, keyScopes, agentAccess
     setEnabled(next.enabled)
     setScopes(next.scopes)
   }
-  // New stored access (a refetch, a change made elsewhere): a card without unsaved changes shows it; unsaved
-  // changes stay, and Discard brings the new value.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: only when the stored access changes
+  // The stored access as it was when a save finished, until the refetch after it brings the saved value.
+  const savedOver = useRef<Props["agentAccess"] | null>(null)
+  // Whenever the card has no unsaved changes, it shows the stored access: after a refetch or a change made
+  // elsewhere, and after edits that were changed back by hand. Unsaved changes stay, and Discard brings the
+  // stored value.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs when the stored access or the count changes
   useEffect(() => {
-    if (count === 0) reset()
-  }, [agentAccess, keyScopes])
+    if (savedOver.current === agentAccess) return
+    savedOver.current = null
+    if (count > 0) return
+    const next = stored()
+    const same =
+      next.enabled === base.enabled &&
+      next.scopes.size === base.scopes.size &&
+      [...next.scopes].every((s) => base.scopes.has(s))
+    if (!same) reset()
+  }, [agentAccess, keyScopes, count])
   const save = useApiMutation<{ agentAccess: Props["agentAccess"] }>("PATCH", `/instances/${id}`, {
     invalidate: ["/instances", `/instances/${id}`],
   })
@@ -65,6 +76,7 @@ export function AgentAccessCard({ id, name, scopesSource, keyScopes, agentAccess
     count,
     save: async () => {
       await save.mutateAsync({ agentAccess: { enabled, scopes: [...scopes] } })
+      savedOver.current = agentAccess
       setBase({ enabled, scopes: new Set(scopes) })
     },
     discard: reset,

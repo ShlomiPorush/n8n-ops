@@ -864,7 +864,7 @@ function TokensCard() {
       <ConnectHow />
       <Panel>
         <PanelHead
-          title="Connected agents"
+          title="Agents and tokens"
           count={tokens.data ? list.length : undefined}
           description="Each can read n8n-ops; some may also ask for temporary access to an n8n instance, which a person approves each time."
         />

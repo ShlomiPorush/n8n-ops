@@ -210,7 +210,7 @@ test("a script the person denies is told so", async () => {
 
 test("Connected agents lists both, and a disconnected agent loses access at once", async () => {
   await page.goto("/settings/tokens")
-  await expect(page.getByRole("heading", { name: "Connected agents" })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Agents and tokens" })).toBeVisible()
   const agentRow = page.getByRole("row").filter({ hasText: "e2e agent" })
   await expect(agentRow).toContainText("through the browser · 127.0.0.1:33418")
   await expect(page.getByRole("row").filter({ hasText: "Script" }).first()).toContainText("with a code")

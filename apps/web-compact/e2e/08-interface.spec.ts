@@ -137,7 +137,10 @@ test("backups that are not set up link to storage and the backup key", async () 
   try {
     await page.goto("/backups")
     await expect(page.getByText("Backups are not set up")).toBeVisible()
-    await expect(page.getByRole("link", { name: "backup storage", exact: true })).toHaveAttribute("href", "/settings/storage")
+    await expect(page.getByRole("link", { name: "backup storage", exact: true })).toHaveAttribute(
+      "href",
+      "/settings/storage",
+    )
     await expect(page.getByRole("link", { name: "backup key", exact: true })).toHaveAttribute("href", "/settings/keys")
   } finally {
     await page.unroute("**/api/backups")

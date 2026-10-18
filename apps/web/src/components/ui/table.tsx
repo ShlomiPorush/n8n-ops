@@ -116,7 +116,7 @@ function TableHead({ className, sort, children, ...props }: React.ComponentProps
           type="button"
           onClick={sort.toggle}
           data-sort-head
-          className="group/sort -mx-1 inline-flex items-center rounded-tag px-1 font-semibold select-none [[aria-sort=ascending]_&]:text-ink [[aria-sort=descending]_&]:text-ink"
+          className="group/sort -mx-1 inline-flex items-center rounded-tag px-1 font-semibold select-none regular:font-medium regular:uppercase [[aria-sort=ascending]_&]:text-ink [[aria-sort=descending]_&]:text-ink"
         >
           {children}
         </button>

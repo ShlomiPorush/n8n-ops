@@ -233,7 +233,7 @@ export function AlertRow({
       <span
         aria-hidden
         className={cn(
-          "w-1 shrink-0 self-stretch rounded-e-[4px]",
+          "w-1 shrink-0 self-stretch rounded-e-kbd",
           tone === "fail" && "bg-fail",
           tone === "warn" && "bg-warn",
           tone === "info" && "bg-info",

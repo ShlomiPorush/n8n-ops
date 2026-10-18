@@ -356,6 +356,8 @@ html[data-design="regular"].dark {
   --radius-sheet: var(--ui-r-sheet);
   /* The search results, which float under the field. */
   --radius-pop: 14px;
+  /* The phone More sheet, which rises from the tab bar. */
+  --radius-drawer: 20px;
 
   --shadow-*: initial;
   --shadow-card: var(--ui-shadow-card);

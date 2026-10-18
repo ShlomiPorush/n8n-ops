@@ -341,7 +341,7 @@ export function SettingsForm({ section }: { section: string }) {
                 {f.type === "switch" ? (
                   <Switch id={f.name} checked={Boolean(values[f.name])} onCheckedChange={(v) => set(f.name, v)} />
                 ) : f.type === "design" ? (
-                  <Select value={String(values[f.name] ?? "regular")} onValueChange={(v) => set(f.name, v)}>
+                  <Select value={String(values[f.name] || "regular")} onValueChange={(v) => set(f.name, v)}>
                     <SelectTrigger id={f.name} className="w-full">
                       <SelectValue />
                     </SelectTrigger>

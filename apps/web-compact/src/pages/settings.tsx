@@ -469,7 +469,7 @@ export function SettingsForm({ section }: { section: string }) {
               <ToggleGroup
                 type="single"
                 aria-label="Design"
-                value={String(values[f.name] ?? "regular")}
+                value={String(values[f.name] || "regular")}
                 onValueChange={(v) => v && set(f.name, v)}
               >
                 <ToggleGroupItem value="regular">Regular</ToggleGroupItem>

@@ -255,6 +255,32 @@ test("agent access edits survive a refresh, and a clean card shows the stored ac
   await expect(read).toBeChecked()
   await expect(unsaved).toHaveCount(0)
 
+  // While a save runs the card is locked, so nothing can be changed under it; afterwards it shows what was saved.
+  await page.getByRole("button", { name: "None", exact: true }).click()
+  await expect(unsaved).toContainText("1 unsaved change")
+  let release = () => {}
+  const held = new Promise<void>((done) => {
+    release = done
+  })
+  await page.route(`**/api/instances/${id}`, async (route) => {
+    if (route.request().method() !== "PATCH") return route.fallback()
+    await held
+    await route.fallback()
+  })
+  try {
+    await unsaved.getByRole("button", { name: "Save changes" }).click()
+    await expect(allowed).toBeDisabled()
+    release()
+    await expect(page.getByText("Agent access saved")).toBeVisible()
+  } finally {
+    release()
+    await page.unroute(`**/api/instances/${id}`)
+  }
+  await expect(allowed).toBeEnabled()
+  await expect(allowed).toBeChecked()
+  await expect(read).not.toBeChecked()
+  await expect(unsaved).toHaveCount(0)
+
   // Back to closed, as the other tests expect.
   await store({ enabled: false, scopes: [] })
   await expect(allowed).not.toBeChecked()

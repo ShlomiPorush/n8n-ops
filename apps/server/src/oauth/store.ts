@@ -1,4 +1,5 @@
-import { and, eq, lt, sql } from "drizzle-orm"
+import { and, eq, isNull, lt, or, sql } from "drizzle-orm"
+import { errors } from "oidc-provider"
 import type { Db } from "../db/client.ts"
 import { oauthStore } from "../db/schema.ts"
 
@@ -7,8 +8,11 @@ type Payload = Record<string, unknown> & { grantId?: string; userCode?: string; 
 /**
  * oidc-provider's storage on Postgres: one row per record, by model name and id, with the few fields the
  * provider looks records up by. An expired record reads as missing; a consumed one carries `consumed`.
+ *
+ * Consuming is atomic: of two requests that use the same refresh token or code at once, one wins; the other is
+ * treated as a reuse, which ends the whole grant (`onReuse`) and fails the request.
  */
-export function storeAdapter(db: Db) {
+export function storeAdapter(db: Db, { onReuse }: { onReuse?: (grantId: string) => Promise<unknown> } = {}) {
   return class PostgresAdapter {
     constructor(readonly name: string) {}
 
@@ -41,10 +45,21 @@ export function storeAdapter(db: Db) {
     }
 
     async consume(id: string) {
-      await db
+      const won = await db
         .update(oauthStore)
         .set({ consumedAt: new Date() })
+        .where(and(eq(oauthStore.type, this.name), eq(oauthStore.id, id), isNull(oauthStore.consumedAt)))
+        .returning({ id: oauthStore.id })
+      if (won.length > 0) return
+      const [row] = await db
+        .select({ grantId: oauthStore.grantId })
+        .from(oauthStore)
         .where(and(eq(oauthStore.type, this.name), eq(oauthStore.id, id)))
+      if (row?.grantId) {
+        await deleteGrant(db, row.grantId)
+        await onReuse?.(row.grantId)
+      }
+      throw new errors.InvalidGrant(`${this.name} already used`)
     }
 
     async destroy(id: string) {
@@ -73,7 +88,10 @@ export async function deleteGrant(db: Db, grantId: string) {
   await db.delete(oauthStore).where(and(eq(oauthStore.type, "Grant"), eq(oauthStore.id, grantId)))
 }
 
-/** Whether a grant still has a refresh token that has not run out or been used: the connection is alive. */
+/**
+ * Whether a grant still has a refresh token that has not run out: one not yet used, or one used in the last
+ * five minutes (the provider marks the old token used just before it stores the new one).
+ */
 export async function grantAlive(db: Db, grantId: string) {
   const [row] = await db
     .select({ n: sql<number>`count(*)::int` })
@@ -82,14 +100,31 @@ export async function grantAlive(db: Db, grantId: string) {
       and(
         eq(oauthStore.type, "RefreshToken"),
         eq(oauthStore.grantId, grantId),
-        sql`${oauthStore.consumedAt} is null`,
         sql`${oauthStore.expiresAt} > now()`,
+        or(isNull(oauthStore.consumedAt), sql`${oauthStore.consumedAt} > now() - interval '5 minutes'`),
       ),
     )
   return (row?.n ?? 0) > 0
 }
 
-/** Removes records that ran out more than a day ago. */
+/** How many agents registered themselves (RFC 7591); a cap keeps open registration from filling the table. */
+export async function registeredClients(db: Db) {
+  const [row] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(oauthStore)
+    .where(eq(oauthStore.type, "Client"))
+  return row?.n ?? 0
+}
+
+/**
+ * Removes records that ran out more than a day ago, and registrations older than a day that no grant uses
+ * (an agent that registered and was never approved).
+ */
 export async function sweepStore(db: Db) {
   await db.delete(oauthStore).where(lt(oauthStore.expiresAt, new Date(Date.now() - 86_400_000)))
+  await db.execute(sql`
+    delete from oauth_store c
+    where c.type = 'Client'
+      and coalesce((c.payload->>'client_id_issued_at')::bigint, 0) < extract(epoch from now()) - 86400
+      and not exists (select 1 from oauth_store g where g.type = 'Grant' and g.payload->>'clientId' = c.id)`)
 }

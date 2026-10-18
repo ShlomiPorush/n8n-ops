@@ -162,6 +162,20 @@ describe("agents connecting through the browser (MCP)", () => {
     })
   })
 
+  it("issues no sender-constrained tokens, which the resources would not check", async () => {
+    const meta = await browser()("/.well-known/oauth-authorization-server")
+    expect(meta.data.dpop_signing_alg_values_supported).toBeUndefined()
+  })
+
+  it("ends the whole connection when the agent revokes even its access token", async () => {
+    const { tokens, clientId, grantId } = await connectMcp([SCOPES.read])
+    const res = await browser()("/oauth/revoke", { form: { token: tokens.access_token, client_id: clientId } })
+    expect(res.status).toBe(200)
+    expect(await provider.Grant.find(grantId)).toBeUndefined()
+    const refresh = await tokenRequest({ grant_type: "refresh_token", refresh_token: tokens.refresh_token, client_id: clientId })
+    expect(refresh.status).toBe(400)
+  })
+
   it("refuses an authorization request without PKCE", async () => {
     const go = browser()
     const reg = await go("/oauth/register", {

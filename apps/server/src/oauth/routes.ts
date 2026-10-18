@@ -8,11 +8,18 @@ import type { Ctx } from "../context.ts"
 import { requireUser } from "../http/middleware.ts"
 import { actorName, type Env } from "../http/types.ts"
 import type { AgentConnect } from "./agents.ts"
+import { registeredClients } from "./store.ts"
 import { CLI_CLIENT, resources, SCOPES } from "./provider.ts"
 
 type Bindings = { incoming: IncomingMessage & { body?: unknown }; outgoing: ServerResponse }
 /** The Node request and response under Hono; absent when the app is driven without a server (unit tests). */
 const node = (c: Context) => ((c.env as Partial<Bindings> | undefined)?.incoming ? (c.env as Bindings) : null)
+
+/** The provider's addresses, each exactly as configured (a uid after authorize and device is the provider's). */
+const PROVIDER_PATHS =
+  /^(\/oauth\/(authorize(\/[\w-]+)?|token|device|revoke|register|jwks|userinfo|logout(\/confirm|\/success)?)|\/connect\/device(\/[\w-]+)?|\/\.well-known\/(oauth-authorization-server|openid-configuration))$/
+/** Registrations kept at most; unused ones are cleared after a day. */
+const MAX_CLIENTS = 500
 
 const notConfigured = {
   error: "not_configured",
@@ -45,7 +52,8 @@ function clientAddress(c: Context) {
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean)
-  if (trusted.includes(socket)) return c.req.header("x-forwarded-for")?.split(",")[0]?.trim() || socket
+  // The address the trusted proxy appended: the last one. Earlier entries come from the client and can be made up.
+  if (trusted.includes(socket)) return c.req.header("x-forwarded-for")?.split(",").at(-1)?.trim() || socket
   return socket
 }
 
@@ -201,6 +209,7 @@ export function agentConnectRoutes(ctx: Ctx, agents: AgentConnect) {
     grant.addOIDCScope("offline_access")
     const grantId = await grant.save()
     await agents.connected({
+      issuer: it.p.issuer,
       grantId,
       name,
       scopes: granted,
@@ -218,6 +227,10 @@ export function agentConnectRoutes(ctx: Ctx, agents: AgentConnect) {
     if (!p) return c.json(notConfigured, 404)
     if (!n) return c.json({ error: "unavailable" }, 501)
     const path = c.req.path
+    // Exactly the provider's own addresses: it would also take a trailing slash or other letter case, which
+    // would slip past the checks below.
+    const raw = new URL(c.req.url).pathname
+    if (raw !== path || !PROVIDER_PATHS.test(path)) return c.json({ error: "not_found" }, 404)
     const address = clientAddress(c)
     const limit =
       path === "/oauth/register"
@@ -233,6 +246,7 @@ export function agentConnectRoutes(ctx: Ctx, agents: AgentConnect) {
                 : null
     if (limit && !limit(address)) return tooMany(c)
     if (path === "/oauth/register" && c.req.method === "POST") {
+      if ((await registeredClients(ctx.db)) >= MAX_CLIENTS) return tooMany(c)
       // Agents register themselves (RFC 7591) as public clients that come back to https or to this computer.
       const parsed = registration.safeParse(await c.req.json().catch(() => null))
       if (!parsed.success)

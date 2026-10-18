@@ -92,6 +92,15 @@ test("registration takes public clients that come back to https or this computer
     body: JSON.stringify({ client_name: "Elsewhere", redirect_uris: ["http://evil.example/cb"] }),
   })
   expect(bad.status).toBe(400)
+  // The same address with a trailing slash or other letter case is not a way around the check.
+  for (const path of ["/oauth/register/", "/oauth/REGISTER"]) {
+    const res = await fetch(`${base}${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ client_name: "Elsewhere", redirect_uris: ["http://evil.example/cb"] }),
+    })
+    expect(res.status, path).toBe(404)
+  }
 })
 
 test("an MCP client connects through the browser, with only the rights the person ticks", async () => {
@@ -269,4 +278,47 @@ test("a used refresh token that comes back ends the connection", async () => {
 
   await page.goto("/audit")
   await expect(page.getByText("Agent disconnected").first()).toBeVisible()
+})
+
+/** Connects a script with a code and returns its first tokens. */
+async function connectScript() {
+  const device = await post("/oauth/device", { client_id: "n8n-ops-cli", scope: "ops:read", resource: `${base}/api/v1` })
+  await page.goto(device.body.verification_uri_complete ?? "")
+  await page.getByRole("button", { name: "Yes, continue", exact: true }).click()
+  await page.getByRole("button", { name: "Approve" }).click()
+  await expect(page.getByRole("heading", { name: "Agent connected" })).toBeVisible()
+  const tokens = await post("/oauth/token", {
+    grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+    device_code: device.body.device_code ?? "",
+    client_id: "n8n-ops-cli",
+  })
+  expect(tokens.status).toBe(200)
+  return tokens.body
+}
+
+test("two refreshes with the same token at once: one wins, and the connection ends", async () => {
+  const tokens = await connectScript()
+  const refresh = () =>
+    post("/oauth/token", { grant_type: "refresh_token", refresh_token: tokens.refresh_token ?? "", client_id: "n8n-ops-cli" })
+  const results = await Promise.all([refresh(), refresh()])
+  expect(results.map((r) => r.status).sort()).toEqual([200, 400])
+  const winner = results.find((r) => r.status === 200)?.body ?? {}
+  const res = await fetch(`${base}/api/v1/problems`, { headers: { authorization: `Bearer ${winner.access_token}` } })
+  expect(res.status).toBe(401)
+})
+
+test("an agent that revokes its access token ends its connection", async () => {
+  const tokens = await connectScript()
+  const revoke = await fetch(`${base}/oauth/revoke`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ token: tokens.access_token ?? "", client_id: "n8n-ops-cli" }),
+  })
+  expect(revoke.status).toBe(200)
+  const again = await post("/oauth/token", {
+    grant_type: "refresh_token",
+    refresh_token: tokens.refresh_token ?? "",
+    client_id: "n8n-ops-cli",
+  })
+  expect(again.status).toBe(400)
 })

@@ -133,6 +133,8 @@ export const apiTokens = pgTable("api_tokens", {
   revokedAt: ts("revoked_at"),
   /** Agent: its grant in the authorization server. */
   grantId: text("grant_id").unique(),
+  /** Agent: the public URL it connected to; a connection made under another one ends. */
+  issuer: text("issuer"),
   /** Agent: the scopes the person granted (ops:read, ops:access). */
   scopes: jsonb("scopes").$type<string[]>(),
   /** Agent: how it connected: through a browser (MCP clients) or with a code (scripts). */

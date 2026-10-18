@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto"
-import { and, eq, isNotNull, isNull, lt } from "drizzle-orm"
+import { and, eq, isNotNull, isNull, lt, ne } from "drizzle-orm"
 import type { Ctx } from "../context.ts"
 import { apiTokens } from "../db/schema.ts"
 import { sha256 } from "../lib/crypto.ts"
@@ -15,7 +15,7 @@ const endText: Record<EndReason, string> = {
   revoked: "revoked",
   unused: "not used for 90 days",
   cut: "a used refresh token came back, or the agent disconnected",
-  unfinished: "approved but never completed",
+  unfinished: "approved but never used",
   address: "the public URL changed",
 }
 
@@ -39,7 +39,10 @@ export type AgentConnect = ReturnType<typeof createAgentConnect>
 
 /** Agents connected by approval: the authorization server for the current public URL, and their records. */
 export function createAgentConnect(ctx: Ctx, { cookieKeys, webDir }: { cookieKeys: string[]; webDir?: string }) {
-  const Adapter = storeAdapter(ctx.db)
+  // A refresh token or code used twice at once: the loser ends the connection, like any reuse.
+  const Adapter = storeAdapter(ctx.db, {
+    onReuse: (grantId) => end({ grantId }, "cut", { by: "n8n-ops", via: "system" }),
+  })
   const pages = providerPages(webDir, (): Design => ctx.settings.design())
   let current: { issuer: string; provider: AgentProvider } | null = null
 
@@ -47,6 +50,8 @@ export function createAgentConnect(ctx: Ctx, { cookieKeys, webDir }: { cookieKey
     const issuer = issuerOf((await ctx.settings.get("general")).publicUrl)
     if (!issuer) return null
     if (current?.issuer !== issuer) {
+      // Connections made under another address (the setting or N8N_OPS_PUBLIC_URL changed) end now.
+      await endOtherIssuers(issuer)
       const created = createAgentProvider({ issuer, adapter: Adapter, cookieKeys, pages })
       // A refresh token used twice, or revoked by the agent, ends its grant; end the connection with it.
       created.on("grant.revoked", (_c, grantId: string) => {
@@ -77,12 +82,13 @@ export function createAgentConnect(ctx: Ctx, { cookieKeys, webDir }: { cookieKey
       .select()
       .from(apiTokens)
       .where(and(eq(apiTokens.grantId, String(at.grantId)), isNull(apiTokens.revokedAt)))
-    if (!row) return { ok: false as const, reason: "invalid" as const }
+    if (!row || row.issuer !== p.issuer) return { ok: false as const, reason: "invalid" as const }
     return { ok: true as const, row, canRequestAccess: scopes.includes(SCOPES.access) }
   }
 
   /** Records a connection a person just approved; its grant is its identity. */
   async function connected(input: {
+    issuer: string
     grantId: string
     name: string
     scopes: string[]
@@ -99,6 +105,7 @@ export function createAgentConnect(ctx: Ctx, { cookieKeys, webDir }: { cookieKey
         tokenHash: sha256(randomBytes(32)),
         canRequestAccess: input.scopes.includes(SCOPES.access),
         grantId: input.grantId,
+        issuer: input.issuer,
         scopes: input.scopes,
         connectedVia: input.via,
         redirectHost: input.redirectHost,
@@ -146,6 +153,15 @@ export function createAgentConnect(ctx: Ctx, { cookieKeys, webDir }: { cookieKey
     return row
   }
 
+  /** Ends the connections made under another public URL. */
+  async function endOtherIssuers(issuer: string) {
+    const rows = await ctx.db
+      .select({ id: apiTokens.id })
+      .from(apiTokens)
+      .where(and(eq(apiTokens.kind, "agent"), isNull(apiTokens.revokedAt), ne(apiTokens.issuer, issuer)))
+    for (const r of rows) await end({ id: r.id }, "address", { by: "n8n-ops", via: "system" })
+  }
+
   /** Ends every connected agent, when the public URL they connected to changes. */
   async function endAll(reason: EndReason, who: { by: string; via: "web" | "system" }) {
     const rows = await ctx.db
@@ -173,6 +189,9 @@ export function createAgentConnect(ctx: Ctx, { cookieKeys, webDir }: { cookieKey
         ),
       )
     for (const row of rows) {
+      if (await grantAlive(ctx.db, row.grantId as string)) continue
+      // Look once more a moment later: a refresh may have been between using the old token and storing the new.
+      await new Promise((r) => setTimeout(r, 2_000))
       if (await grantAlive(ctx.db, row.grantId as string)) continue
       await end({ id: row.id }, row.lastUsedAt ? "unused" : "unfinished", { by: "n8n-ops", via: "system" })
     }

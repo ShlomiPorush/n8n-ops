@@ -74,6 +74,8 @@ export function createAgentProvider({ issuer, adapter, cookieKeys, pages }: Agen
     claims: { openid: ["sub"] },
     features: {
       devInteractions: { enabled: false },
+      // Sender-constrained tokens are not checked by /mcp and /api/v1, so none are issued.
+      dPoP: { enabled: false },
       registration: { enabled: true },
       revocation: { enabled: true },
       deviceFlow: {
@@ -115,6 +117,8 @@ export function createAgentProvider({ issuer, adapter, cookieKeys, pages }: Agen
       },
     },
     pkce: { required: () => true },
+    // Revoking any token of a connection (also an access token, which the default would leave) ends all of it.
+    revokeGrantPolicy: () => true,
     // Every approval is a grant of its own: two agents, even of the same program, never share one.
     loadExistingGrant: async (ctx) => {
       const id = ctx.oidc.result?.consent?.grantId

@@ -66,7 +66,8 @@ describe("the design in the cache", () => {
     let first: (r: Response) => void = () => {}
     const fetch = vi.fn((): Promise<Response> => {
       const body = answers.shift()
-      if (fetch.mock.calls.length === 1) return new Promise((done) => (first = () => done(new Response(JSON.stringify(body)))))
+      if (fetch.mock.calls.length === 1)
+        return new Promise((done) => (first = () => done(new Response(JSON.stringify(body)))))
       return Promise.resolve(new Response(JSON.stringify(body)))
     })
     vi.stubGlobal("fetch", fetch)

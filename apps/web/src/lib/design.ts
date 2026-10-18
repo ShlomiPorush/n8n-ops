@@ -18,10 +18,19 @@ export function currentDesign(): Design {
   return isDesign(value) ? value : "regular"
 }
 
+let pinned = false
+
 /** Shows a design at once, without a reload. Anything that is not a design is ignored. */
 export function applyDesign(value: unknown) {
-  if (!isDesign(value) || root().dataset.design === value) return
+  if (pinned || !isDesign(value) || root().dataset.design === value) return
   root().dataset.design = value
+}
+
+/** Development previews only: shows a design and keeps it, whatever the setting says. */
+export function pinDesign(value: unknown) {
+  if (!isDesign(value)) return
+  applyDesign(value)
+  pinned = true
 }
 
 function subscribe(onChange: () => void) {

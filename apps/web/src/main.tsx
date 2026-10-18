@@ -10,12 +10,12 @@ import { ConfirmProvider } from "@/components/confirm"
 import { Toaster } from "@/components/ui/toaster"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { queryClient } from "@/lib/api"
-import { applyDesign } from "@/lib/design"
+import { pinDesign } from "@/lib/design"
 import { LoginPage } from "@/pages/auth/login"
 import { SetupPage } from "@/pages/auth/setup"
 
 // Development only: ?design=regular or ?design=compact previews a design without the server choosing it.
-if (import.meta.env.DEV) applyDesign(new URLSearchParams(window.location.search).get("design"))
+if (import.meta.env.DEV) pinDesign(new URLSearchParams(window.location.search).get("design"))
 
 const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },

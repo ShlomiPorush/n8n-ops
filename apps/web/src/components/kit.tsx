@@ -312,7 +312,8 @@ export function Kpi({
         <span
           aria-hidden
           className={cn(
-            "hidden size-9 shrink-0 place-items-center rounded-sm bg-fill text-muted-foreground regular:grid",
+            "hidden size-9 shrink-0 place-items-center rounded-sm regular:md:grid",
+            !tone && "bg-fill text-muted-foreground",
             tone === "fail" && "tint-fail",
             tone === "warn" && "tint-warn",
             tone === "ok" && "tint-ok",

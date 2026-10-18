@@ -180,6 +180,8 @@ test("a failed save leaves the design as it was", async () => {
 })
 
 test("after the switch the page takes the other design's layout", async () => {
+  // The discarded edit is gone first, so leaving the page asks nothing.
+  await expect(page.getByRole("region", { name: "Unsaved changes" })).toHaveCount(0)
   expect(await layout(page)).toEqual(laidOut[other])
   // Narrower, both designs keep one page heading and drop the sidebar's fold and workers link the same way.
   await page.setViewportSize({ width: 1000, height: 800 })

@@ -17,7 +17,9 @@ test.beforeAll(async ({ browser }) => {
   page = await browser.newPage()
   await signIn(page)
   // The agent's own callback on its computer: catch the browser's return there.
-  await page.route(`${redirect}**`, (route) => route.fulfill({ status: 200, contentType: "text/plain", body: "back in the agent" }))
+  await page.route(`${redirect}**`, (route) =>
+    route.fulfill({ status: 200, contentType: "text/plain", body: "back in the agent" }),
+  )
 })
 
 test.afterAll(async () => {
@@ -46,7 +48,11 @@ async function mcp(token: string, method: string, params: Record<string, unknown
 }
 
 const toolNames = async (token: string) => {
-  await mcp(token, "initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "e2e", version: "1" } })
+  await mcp(token, "initialize", {
+    protocolVersion: "2025-06-18",
+    capabilities: {},
+    clientInfo: { name: "e2e", version: "1" },
+  })
   const res = await mcp(token, "tools/list")
   expect(res.status).toBe(200)
   const body = (await res.json()) as { result: { tools: { name: string }[] } }
@@ -57,11 +63,20 @@ let browserTokens: Record<string, string> = {}
 let browserClient = ""
 
 test("an MCP client finds where to get a token", async () => {
-  const res = await fetch(`${base}/mcp`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
+  const res = await fetch(`${base}/mcp`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "{}",
+  })
   expect(res.status).toBe(401)
-  expect(res.headers.get("www-authenticate")).toContain(`resource_metadata="${base}/.well-known/oauth-protected-resource/mcp"`)
+  expect(res.headers.get("www-authenticate")).toContain(
+    `resource_metadata="${base}/.well-known/oauth-protected-resource/mcp"`,
+  )
 
-  const resource = (await (await fetch(`${base}/.well-known/oauth-protected-resource/mcp`)).json()) as Record<string, unknown>
+  const resource = (await (await fetch(`${base}/.well-known/oauth-protected-resource/mcp`)).json()) as Record<
+    string,
+    unknown
+  >
   expect(resource).toMatchObject({ resource: `${base}/mcp`, authorization_servers: [base] })
   const server = await fetch(`${base}/.well-known/oauth-authorization-server`)
   expect(server.headers.get("content-type")).toContain("application/json")
@@ -125,7 +140,9 @@ test("an MCP client connects through the browser, with only the rights the perso
   expect(tools).toContain("list_open_problems")
   expect(tools).not.toContain("request_instance_access")
   // A token for the MCP server is not one for the REST API.
-  const rest = await fetch(`${base}/api/v1/problems`, { headers: { authorization: `Bearer ${browserTokens.access_token}` } })
+  const rest = await fetch(`${base}/api/v1/problems`, {
+    headers: { authorization: `Bearer ${browserTokens.access_token}` },
+  })
   expect(rest.status).toBe(401)
 })
 
@@ -165,12 +182,18 @@ test("a script connects with a code that the person compares, then reads the RES
   const tokens = await poll()
   expect(tokens.status).toBe(200)
   expect(tokens.body.scope).toBe("ops:read ops:access")
-  const res = await fetch(`${base}/api/v1/problems`, { headers: { authorization: `Bearer ${tokens.body.access_token}` } })
+  const res = await fetch(`${base}/api/v1/problems`, {
+    headers: { authorization: `Bearer ${tokens.body.access_token}` },
+  })
   expect(res.status).toBe(200)
 })
 
 test("a script the person denies is told so", async () => {
-  const device = await post("/oauth/device", { client_id: "n8n-ops-cli", scope: "ops:read", resource: `${base}/api/v1` })
+  const device = await post("/oauth/device", {
+    client_id: "n8n-ops-cli",
+    scope: "ops:read",
+    resource: `${base}/api/v1`,
+  })
   await page.goto(device.body.verification_uri_complete ?? "")
   await page.getByRole("button", { name: "Continue" }).click()
   await page.getByRole("button", { name: "Yes, continue" }).click()
@@ -212,7 +235,11 @@ test("Connected agents lists both, and a disconnected agent loses access at once
 })
 
 test("a used refresh token that comes back ends the connection", async () => {
-  const device = await post("/oauth/device", { client_id: "n8n-ops-cli", scope: "ops:read", resource: `${base}/api/v1` })
+  const device = await post("/oauth/device", {
+    client_id: "n8n-ops-cli",
+    scope: "ops:read",
+    resource: `${base}/api/v1`,
+  })
   await page.goto(device.body.verification_uri_complete ?? "")
   await page.getByRole("button", { name: "Continue" }).click()
   await page.getByRole("button", { name: "Yes, continue" }).click()
@@ -235,7 +262,9 @@ test("a used refresh token that comes back ends the connection", async () => {
     client_id: "n8n-ops-cli",
   })
   expect(replay.status).toBe(400)
-  const res = await fetch(`${base}/api/v1/problems`, { headers: { authorization: `Bearer ${rotated.body.access_token}` } })
+  const res = await fetch(`${base}/api/v1/problems`, {
+    headers: { authorization: `Bearer ${rotated.body.access_token}` },
+  })
   expect(res.status).toBe(401)
 
   await page.goto("/audit")

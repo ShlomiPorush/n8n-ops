@@ -57,14 +57,17 @@ button.primary{background:var(--ui-accent);border-color:var(--ui-accent);color:v
   return {
     codeInput: (form, error) =>
       error === "denied"
-        ? page("Not connected", "<h1>Not connected</h1><p>The connection was not approved. You can close this page.</p>")
+        ? page(
+            "Not connected",
+            "<h1>Not connected</h1><p>The connection was not approved. You can close this page.</p>",
+          )
         : page(
-        "Connect an agent",
-        `<h1>Connect an agent</h1>
+            "Connect an agent",
+            `<h1>Connect an agent</h1>
 ${error === "wrong" ? '<p class="fail" role="alert">That code is not valid. Check it in your agent and try again.</p>' : error ? '<p class="fail" role="alert">That did not work. Start the connection again in your agent.</p>' : /type="hidden" name="user_code"/.test(form) ? '<p class="muted">An agent asks to connect. Continue to compare its code.</p>' : '<p class="muted">Enter the code your agent shows.</p>'}
 ${form}
 <div class="actions"><button class="primary" type="submit" form="op.deviceInputForm">Continue</button></div>`,
-      ),
+          ),
     codeConfirm: (form, clientName, userCode) =>
       page(
         "Connect an agent",

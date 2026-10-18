@@ -1,4 +1,22 @@
-import { Activity as ActivityIcon, Bug as BugIcon, CircleCheck as CircleCheckIcon, CircleX as CircleXIcon, Download, ExternalLink, HeartPulse as HeartPulseIcon, History as HistoryIcon, Hourglass as HourglassIcon, Loader as LoaderIcon, Network as NetworkIcon, Pencil, Plus, RefreshCw, Server as ServerIcon, Trash2, Workflow as WorkflowIcon } from "lucide-react"
+import {
+  Activity as ActivityIcon,
+  Bug as BugIcon,
+  CircleCheck as CircleCheckIcon,
+  CircleX as CircleXIcon,
+  Download,
+  ExternalLink,
+  HeartPulse as HeartPulseIcon,
+  History as HistoryIcon,
+  Hourglass as HourglassIcon,
+  Loader as LoaderIcon,
+  Network as NetworkIcon,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Server as ServerIcon,
+  Trash2,
+  Workflow as WorkflowIcon,
+} from "lucide-react"
 import { useEffect, useState } from "react"
 import { Link, useNavigate, useParams } from "react-router"
 import { useCrumb } from "@/app/chrome"
@@ -348,13 +366,15 @@ function InstanceDetail({ id }: { id: string }) {
 
       <Kpis>
         <Kpi
-          label="Open problems" icon={BugIcon}
+          label="Open problems"
+          icon={BugIcon}
           value={i.openProblems}
           tone={i.openProblems ? "fail" : undefined}
           to={`/problems?status=open&instance=${i.id}`}
         />
         <Kpi
-          label="Active / total workflows" icon={WorkflowIcon}
+          label="Active / total workflows"
+          icon={WorkflowIcon}
           value={`${n(i.workflowCounts.active)}/${n(i.workflowCounts.total)}`}
           to={`/workflows?instance=${i.id}`}
         />
@@ -387,7 +407,12 @@ function InstanceDetail({ id }: { id: string }) {
         {hd?.queue && (
           <div className="border-t border-line p-pad-x">
             <Kpis>
-              <Kpi label="Waiting" icon={HourglassIcon} value={hd.queue.waiting} tone={hd.backlogActive ? "fail" : undefined} />
+              <Kpi
+                label="Waiting"
+                icon={HourglassIcon}
+                value={hd.queue.waiting}
+                tone={hd.backlogActive ? "fail" : undefined}
+              />
               <Kpi label="Active" icon={LoaderIcon} value={hd.queue.active} />
               <Kpi label="Completed" icon={CircleCheckIcon} value={hd.queue.completed} />
               <Kpi label="Failed" icon={CircleXIcon} value={hd.queue.failed} />

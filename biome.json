@@ -35,10 +35,7 @@
   },
   "overrides": [
     {
-      "includes": [
-        "apps/web/src/components/ui/**",
-        "apps/web/src/hooks/**"
-      ],
+      "includes": ["apps/web/src/components/ui/**", "apps/web/src/hooks/**"],
       "linter": {
         "enabled": false
       }

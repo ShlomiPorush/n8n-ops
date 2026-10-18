@@ -101,7 +101,10 @@ function Updated({ at }: { at: number }) {
 export function Panel({ className, ...props }: React.ComponentProps<"section">) {
   return (
     <section
-      className={cn("min-w-0 overflow-hidden rounded-lg bg-panel regular:shadow-card regular:ring-1 regular:ring-ink/10 [&>:first-child]:border-t-0", className)}
+      className={cn(
+        "min-w-0 overflow-hidden rounded-lg bg-panel regular:shadow-card regular:ring-1 regular:ring-ink/10 [&>:first-child]:border-t-0",
+        className,
+      )}
       {...props}
     />
   )

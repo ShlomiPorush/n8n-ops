@@ -11,7 +11,8 @@ const IMMUTABLE = "public, max-age=31536000, immutable"
 /** The page with the design written on <html>, so the first paint is already in that design. */
 export function withDesign(html: string, design: Design) {
   const attr = `data-design="${design}"`
-  if (/<html\b[^>]*\sdata-design="[^"]*"/.test(html)) return html.replace(/(<html\b[^>]*\s)data-design="[^"]*"/, `$1${attr}`)
+  if (/<html\b[^>]*\sdata-design="[^"]*"/.test(html))
+    return html.replace(/(<html\b[^>]*\s)data-design="[^"]*"/, `$1${attr}`)
   return html.replace(/<html\b/, `<html ${attr}`)
 }
 
@@ -45,9 +46,7 @@ export function serveWeb(app: Hono<Env>, ctx: Ctx, dir: string | undefined) {
     if (pages === undefined) {
       const file = join(dir, "index.html")
       const html = existsSync(file) ? readFileSync(file, "utf8") : null
-      pages = html
-        ? (Object.fromEntries(designs.map((d) => [d, withDesign(html, d)])) as Record<Design, string>)
-        : null
+      pages = html ? (Object.fromEntries(designs.map((d) => [d, withDesign(html, d)])) as Record<Design, string>) : null
     }
     return pages?.[design] ?? null
   }

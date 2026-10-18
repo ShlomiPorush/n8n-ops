@@ -1,4 +1,15 @@
-import { Activity as ActivityIcon, BellOff, Braces as BracesIcon, CalendarPlus as CalendarPlusIcon, CheckCircle2, ExternalLink, GitMerge, GitMerge as GitMergeIcon, History as HistoryIcon, RotateCcw } from "lucide-react"
+import {
+  Activity as ActivityIcon,
+  BellOff,
+  Braces as BracesIcon,
+  CalendarPlus as CalendarPlusIcon,
+  CheckCircle2,
+  ExternalLink,
+  GitMerge,
+  GitMerge as GitMergeIcon,
+  History as HistoryIcon,
+  RotateCcw,
+} from "lucide-react"
 import { useState } from "react"
 import { Link, useNavigate, useParams, useSearchParams } from "react-router"
 import { useCrumb } from "@/app/chrome"
@@ -342,13 +353,15 @@ export function ProblemDetail({ id }: { id: string }) {
 
       <Kpis>
         <Kpi
-          label={p.count === 1 ? "Failure" : "Failures"} icon={ActivityIcon}
+          label={p.count === 1 ? "Failure" : "Failures"}
+          icon={ActivityIcon}
           value={p.count}
           tone={p.status === "open" ? "fail" : undefined}
         />
         <Kpi label="First seen" icon={CalendarPlusIcon} value={<TimeAgo value={p.firstSeen} />} />
         <Kpi
-          label="Last seen" icon={HistoryIcon}
+          label="Last seen"
+          icon={HistoryIcon}
           value={<TimeAgo value={p.lastSeen} />}
           hint={p.status === "muted" && p.mutedUntil ? `Muted until ${formatDateTime(p.mutedUntil, tz)}` : undefined}
         />

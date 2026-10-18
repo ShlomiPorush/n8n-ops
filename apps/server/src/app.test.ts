@@ -67,9 +67,12 @@ describe("web", () => {
     for (const dir of [web, empty]) rmSync(dir, { recursive: true, force: true })
   })
 
-  const ctxIn = (design: () => "regular" | "compact") =>
-    ({ ...fakeCtx(true), settings: { design } }) as unknown as Ctx
-  const app = (design: "regular" | "compact", webDir = web) => createApp(ctxIn(() => design), { webDir })
+  const ctxIn = (design: () => "regular" | "compact") => ({ ...fakeCtx(true), settings: { design } }) as unknown as Ctx
+  const app = (design: "regular" | "compact", webDir = web) =>
+    createApp(
+      ctxIn(() => design),
+      { webDir },
+    )
   const servedDesign = async (res: Response) => (await res.text()).match(/<html[^>]*data-design="(\w+)"/)?.[1]
 
   it.each(["regular", "compact"] as const)("serves every page address in the chosen design (%s)", async (design) => {

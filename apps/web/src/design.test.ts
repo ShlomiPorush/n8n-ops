@@ -77,14 +77,18 @@ describe("one app, two looks", () => {
     expect(found).toEqual([])
     const acting = sources
       .filter(({ path }) => rel(path).startsWith("src/components/skin/"))
-      .filter(({ text }) => /\bon[A-Z]\w*=|\bhref=|\bto=|<Link\b|\bnavigate\(|\buseApi\b|\buseMutation\b|\bfetch\(/.test(text))
+      .filter(({ text }) =>
+        /\bon[A-Z]\w*=|\bhref=|\bto=|<Link\b|\bnavigate\(|\buseApi\b|\buseMutation\b|\bfetch\(/.test(text),
+      )
       .map(({ path }) => rel(path))
     expect(acting).toEqual([])
   })
 
   it("lets the design change classes only, never the markup an attribute or handler depends on", () => {
     // A variant outside a class string would be a design-dependent value somewhere else.
-    const outside = offenders(/\b(?:regular|compact):[\w[]/).filter((line) => !/className=|cn\(|"[^"]*\b(?:regular|compact):/.test(line))
+    const outside = offenders(/\b(?:regular|compact):[\w[]/).filter(
+      (line) => !/className=|cn\(|"[^"]*\b(?:regular|compact):/.test(line),
+    )
     expect(outside).toEqual([])
   })
 })

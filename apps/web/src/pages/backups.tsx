@@ -1,4 +1,14 @@
-import { Archive as ArchiveIcon, ArchiveRestore as ArchiveRestoreIcon, CheckCircle2, Clock as ClockIcon, HardDrive as HardDriveIcon, Play, RotateCcw, ShieldCheck as ShieldCheckIcon, XCircle } from "lucide-react"
+import {
+  Archive as ArchiveIcon,
+  ArchiveRestore as ArchiveRestoreIcon,
+  CheckCircle2,
+  Clock as ClockIcon,
+  HardDrive as HardDriveIcon,
+  Play,
+  RotateCcw,
+  ShieldCheck as ShieldCheckIcon,
+  XCircle,
+} from "lucide-react"
 import { useState } from "react"
 import { Link, useNavigate, useParams } from "react-router"
 import { useCrumb } from "@/app/chrome"
@@ -125,17 +135,20 @@ export function BackupsPage() {
       {s && (
         <Kpis>
           <Kpi
-            label="Backed up on time" icon={ShieldCheckIcon}
+            label="Backed up on time"
+            icon={ShieldCheckIcon}
             value={`${n(okCount)}/${n(s.instances.length)}`}
             tone={late ? "warn" : undefined}
           />
           <Kpi label="Daily backup time" icon={ClockIcon} value={s.retention.backupTime} />
           <Kpi
-            label="Keep days / weeks / months" icon={ArchiveIcon}
+            label="Keep days / weeks / months"
+            icon={ArchiveIcon}
             value={`${n(s.retention.retentionDaily)} / ${n(s.retention.retentionWeekly)} / ${n(s.retention.retentionMonthly)}`}
           />
           <Kpi
-            label="Destination" icon={HardDriveIcon}
+            label="Destination"
+            icon={HardDriveIcon}
             value={
               s.destination ? (
                 <span className="block truncate font-mono text-body font-normal" title={s.destination}>

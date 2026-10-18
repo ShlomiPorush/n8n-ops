@@ -1,4 +1,9 @@
-import { Bug as BugIcon, DatabaseBackup as DatabaseBackupIcon, Server as ServerIcon, Siren as SirenIcon } from "lucide-react"
+import {
+  Bug as BugIcon,
+  DatabaseBackup as DatabaseBackupIcon,
+  Server as ServerIcon,
+  Siren as SirenIcon,
+} from "lucide-react"
 import { Link } from "react-router"
 import { AlertRow, Empty, Kpi, Kpis, LoadError, Loading, Page, Panel, PanelHead, Row, UserText } from "@/components/kit"
 import { Dot, type HealthState, StatusTag, statusOf, TimeAgo, Tone } from "@/components/status"
@@ -117,9 +122,15 @@ export function OverviewPage() {
       ) : (
         <>
           <Kpis>
-            <Kpi label="Need attention" icon={SirenIcon} value={attention.length} tone={attention.length ? "fail" : undefined} />
             <Kpi
-              label="Instances healthy" icon={ServerIcon}
+              label="Need attention"
+              icon={SirenIcon}
+              value={attention.length}
+              tone={attention.length ? "fail" : undefined}
+            />
+            <Kpi
+              label="Instances healthy"
+              icon={ServerIcon}
               value={`${n(o.stats.healthy)}/${n(o.stats.instances)}`}
               hint={
                 o.stats.down || o.stats.warn ? `${n(o.stats.down)} down, ${n(o.stats.warn)} need a look` : undefined
@@ -128,7 +139,12 @@ export function OverviewPage() {
               to="/instances"
             />
             <Kpi label="Open problems" icon={BugIcon} value={o.stats.openProblems} to="/problems?status=open" />
-            <Kpi label="Last backup" icon={DatabaseBackupIcon} value={<TimeAgo value={o.stats.lastBackupAt} />} to="/backups" />
+            <Kpi
+              label="Last backup"
+              icon={DatabaseBackupIcon}
+              value={<TimeAgo value={o.stats.lastBackupAt} />}
+              to="/backups"
+            />
           </Kpis>
 
           <div className="grid items-start gap-gap xl:grid-cols-[minmax(0,1.9fr)_minmax(260px,1fr)]">

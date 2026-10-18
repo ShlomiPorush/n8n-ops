@@ -21,7 +21,7 @@ export function resources(issuer: string) {
 
 export type ProviderPages = {
   /** The device flow's code entry page; `form` is the provider's form, `error` set after a wrong code. */
-  codeInput(form: string, error?: "wrong" | "other"): string
+  codeInput(form: string, error?: "wrong" | "denied" | "other"): string
   /** The device flow's confirmation: the code the agent should be showing. */
   codeConfirm(form: string, clientName: string, userCode: string): string
   /** After a device was approved. */
@@ -83,7 +83,13 @@ export function createAgentProvider({ issuer, adapter, cookieKeys, pages }: Agen
         userCodeInputSource: async (ctx, form, _out, err) => {
           ctx.body = pages.codeInput(
             form,
-            err ? (err.name === "NoCodeError" || "userCode" in err ? "wrong" : "other") : undefined,
+            !err
+              ? undefined
+              : err.name === "AbortedError"
+                ? "denied"
+                : err.name === "NoCodeError" || "userCode" in err
+                  ? "wrong"
+                  : "other",
           )
         },
         userCodeConfirmSource: async (ctx, form, client, _deviceInfo, userCode) => {

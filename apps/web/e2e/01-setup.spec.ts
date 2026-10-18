@@ -13,6 +13,12 @@ test("the server reports ready", async ({ request }) => {
   expect(await res.json()).toMatchObject({ checks: { database: "ok" } })
 })
 
+// A wrong design fails here, before any selector of this suite could mislead.
+test("the regular design is served", async ({ page }) => {
+  await page.goto("/")
+  await expect(page.locator('meta[name="n8n-ops-design"]')).toHaveAttribute("content", "regular")
+})
+
 test("a fresh install leads through account, two-factor and backup key", async ({ page }) => {
   await page.goto("/")
   await expect(page).toHaveURL(/\/setup$/)

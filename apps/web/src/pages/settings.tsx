@@ -45,11 +45,15 @@ import { authClient, authErrorText } from "@/lib/auth-client"
 import { download } from "@/lib/download"
 import { cn } from "@/lib/utils"
 
+/** What the two designs are; the same words in both apps. */
+const designHint =
+  "Regular keeps the original layout. Compact fits more on each screen, with a search in the top bar and sheets on phones. Applies to everyone; the page reloads after saving."
+
 type FieldDef = {
   name: string
   label: string
   hint?: string
-  type?: "text" | "number" | "password" | "switch" | "time" | "list" | "weekday"
+  type?: "text" | "number" | "password" | "switch" | "time" | "list" | "weekday" | "design"
   placeholder?: string
 }
 
@@ -65,6 +69,7 @@ const forms: Record<string, { title: string; description: string; fields: FieldD
         placeholder: "https://ops.example.com",
       },
       { name: "timezone", label: "Time zone", hint: "For report and backup schedules, for example Asia/Jerusalem." },
+      { name: "design", label: "Design", hint: designHint, type: "design" },
     ],
   },
   alerts: {
@@ -307,8 +312,11 @@ export function SettingsForm({ section }: { section: string }) {
         body[f.name] = (Array.isArray(v) ? v : String(v ?? "").split(",")).map((s: string) => s.trim()).filter(Boolean)
       else body[f.name] = v
     }
+    // The design is read when the page loads, so a new one needs a reload once it is saved.
+    const switching = section === "general" && body.design !== query.data?.design
     save.mutate(body, {
       onSuccess: () => {
+        if (switching) return window.location.reload()
         setJustSaved(true)
         window.setTimeout(() => setJustSaved(false), 2000)
       },
@@ -332,6 +340,16 @@ export function SettingsForm({ section }: { section: string }) {
               <div className="flex min-w-64 items-center gap-2">
                 {f.type === "switch" ? (
                   <Switch id={f.name} checked={Boolean(values[f.name])} onCheckedChange={(v) => set(f.name, v)} />
+                ) : f.type === "design" ? (
+                  <Select value={String(values[f.name] ?? "regular")} onValueChange={(v) => set(f.name, v)}>
+                    <SelectTrigger id={f.name} className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="regular">Regular</SelectItem>
+                      <SelectItem value="compact">Compact</SelectItem>
+                    </SelectContent>
+                  </Select>
                 ) : f.type === "weekday" ? (
                   <Select value={String(values[f.name] ?? 0)} onValueChange={(v) => set(f.name, Number(v))}>
                     <SelectTrigger id={f.name} className="w-full">

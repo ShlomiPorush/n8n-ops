@@ -3,6 +3,8 @@ export type ServerConfig = {
   databaseUrl: string
   version: string
   webDir?: string
+  /** The Compact design's built UI; the setting in General chooses which of the two is served. */
+  webCompactDir?: string
   migrationsDir: string
   /** File holding the app secrets key; created on first start. */
   appKeyPath: string
@@ -20,6 +22,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     databaseUrl,
     version: env.N8N_OPS_VERSION ?? "dev",
     webDir: env.WEB_DIR || undefined,
+    webCompactDir: env.WEB_COMPACT_DIR || undefined,
     migrationsDir: env.MIGRATIONS_DIR ?? "drizzle",
     appKeyPath: env.APP_KEY_FILE ?? "/data/app.key",
     publicUrl: env.N8N_OPS_PUBLIC_URL || undefined,

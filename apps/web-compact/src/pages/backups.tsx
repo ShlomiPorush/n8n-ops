@@ -1,6 +1,6 @@
 import { CheckCircle2, Play, RotateCcw, XCircle } from "lucide-react"
 import { useState } from "react"
-import { useNavigate, useParams } from "react-router"
+import { Link, useNavigate, useParams } from "react-router"
 import { useCrumb } from "@/app/chrome"
 import { Copyable, Empty, Kpi, Kpis, LoadError, Loading, Locked, PageHead, Panel, UserText } from "@/components/kit"
 import { ListWithPanel } from "@/components/list-panel"
@@ -111,8 +111,15 @@ export function BackupsPage() {
       />
       {s && !s.configured && (
         <Locked title="Backups are not set up" to="/settings/storage" action="Set backup storage">
-          Backups need storage (Settings → Backup storage) and a backup key (Settings → Backup key). Until both are set,
-          every backup fails rather than writing an unencrypted archive.
+          Backups need{" "}
+          <Link to="/settings/storage" className="underline">
+            backup storage
+          </Link>{" "}
+          and a{" "}
+          <Link to="/settings/keys" className="underline">
+            backup key
+          </Link>
+          . Until both are set, every backup fails rather than writing an unencrypted archive.
         </Locked>
       )}
       {s && (

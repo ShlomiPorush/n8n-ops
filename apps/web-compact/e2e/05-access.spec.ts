@@ -200,3 +200,42 @@ test("access ends on its own when its time is up", async () => {
     await expect(page.getByText("Expired").first()).toBeVisible({ timeout: 3_000 })
   }).toPass({ timeout: 60_000 })
 })
+
+test("agent access edits survive a refresh, and a clean card shows changes made elsewhere", async () => {
+  test.setTimeout(90_000)
+  await page.goto("/instances")
+  await page
+    .getByRole("row")
+    .filter({ has: page.getByText("e2e-n8n-b", { exact: true }) })
+    .click()
+  const allowed = page.getByLabel("Agents may request access")
+  await expect(allowed).not.toBeChecked()
+  const id = new URL(page.url()).pathname.split("/").pop()
+  const store = async (agentAccess: { enabled: boolean; scopes: string[] }) => {
+    expect((await page.request.patch(`/api/instances/${id}`, { data: { agentAccess } })).ok()).toBe(true)
+    // The next read of the instance that starts after the change, so it carries the new value.
+    const read = await page.waitForRequest((r) => r.method() === "GET" && r.url().endsWith(`/api/instances/${id}`), {
+      timeout: 30_000,
+    })
+    await read.response()
+  }
+
+  // Without unsaved changes, a change made elsewhere shows on the next refresh.
+  await store({ enabled: true, scopes: ["workflow:read"] })
+  await expect(allowed).toBeChecked()
+  await expect(page.getByLabel("workflow:read", { exact: true })).toBeChecked()
+
+  // Unsaved changes stay when the stored access changes under them.
+  await page.getByRole("button", { name: "None", exact: true }).click()
+  await expect(page.getByText("1 unsaved change")).toBeVisible()
+  await store({ enabled: false, scopes: [] })
+  await page.waitForTimeout(500)
+  await expect(allowed).toBeChecked()
+  await expect(page.getByLabel("workflow:read", { exact: true })).not.toBeChecked()
+  await expect(page.getByText("1 unsaved change")).toBeVisible()
+
+  // Discard brings the stored value back.
+  await page.getByRole("button", { name: "Discard" }).click()
+  await expect(allowed).not.toBeChecked()
+  await expect(page.getByRole("region", { name: "Unsaved changes" })).toHaveCount(0)
+})

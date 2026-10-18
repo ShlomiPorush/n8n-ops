@@ -93,6 +93,18 @@ test("an agent lists tools and reads problems over MCP", async ({ request }) => 
   expect(failure.data).toBeTruthy()
 })
 
+test("the audit log opens from the Overview without an error, and back", async () => {
+  // The Overview reads the audit log too; moving between them inside the app must not mix their data.
+  await page.goto("/")
+  await expect(page.getByRole("heading", { name: "Recent activity" })).toBeVisible()
+  await page.getByRole("link", { name: "Full audit log" }).click()
+  await expect(page.getByRole("heading", { name: "Audit log" })).toBeVisible()
+  await expect(page.getByRole("columnheader", { name: "What" })).toBeVisible()
+  await page.goBack()
+  await expect(page.getByRole("heading", { name: "Recent activity" })).toBeVisible()
+  await expect(page.getByText("Unexpected Application Error")).toHaveCount(0)
+})
+
 test("MCP reads are recorded in the audit log", async () => {
   await page.goto("/audit")
   await expect(page.getByRole("cell", { name: "MCP read" }).first()).toBeVisible()

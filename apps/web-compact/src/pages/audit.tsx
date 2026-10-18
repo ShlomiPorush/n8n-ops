@@ -13,7 +13,7 @@ type Entry = { id: number; at: string; actor: string; action: string; target: st
 export function AuditPage() {
   const tz = useTimeZone()
   const query = useInfiniteQuery({
-    queryKey: ["/admin/audit"],
+    queryKey: ["/admin/audit", "pages"],
     queryFn: ({ pageParam }) => api<Entry[]>(`/admin/audit${pageParam ? `?before=${pageParam}` : ""}`),
     initialPageParam: 0,
     getNextPageParam: (last) => (last.length === 100 ? last[last.length - 1]?.id : undefined),

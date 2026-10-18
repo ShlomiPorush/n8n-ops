@@ -137,7 +137,8 @@ function BrandMark({ className }: { className?: string }) {
 
 /*
  * The sidebar folds into a 72px icon rail and remembers it in this browser (NL-7). The choice is applied by
- * a script in index.html before the page draws, so a folded sidebar never flashes open.
+ * a script in index.html before the page draws, so a folded sidebar never flashes open. Ctrl+B (Cmd+B on a
+ * Mac) folds and unfolds it where the full sidebar exists, above 1100px.
  */
 const NAV_KEY = "n8n-ops-nav"
 function useNavFolded() {
@@ -155,6 +156,16 @@ function useNavFolded() {
       return next
     })
   }, [])
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() !== "b" || !(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return
+      if (!window.matchMedia("(min-width: 1101px)").matches) return
+      e.preventDefault()
+      toggle()
+    }
+    document.addEventListener("keydown", onKey)
+    return () => document.removeEventListener("keydown", onKey)
+  }, [toggle])
   return { folded, toggle }
 }
 
@@ -173,7 +184,9 @@ function NavToggle({ folded, toggle, className }: { folded: boolean; toggle: () 
           {folded ? <PanelLeftOpen /> : <PanelLeftClose />}
         </Button>
       </TooltipTrigger>
-      <TooltipContent side="right">{label}</TooltipContent>
+      <TooltipContent side="right">
+        {label} <kbd className="font-mono">{/Mac|iPhone|iPad/.test(navigator.platform) ? "⌘B" : "Ctrl+B"}</kbd>
+      </TooltipContent>
     </Tooltip>
   )
 }

@@ -1,4 +1,4 @@
-import { Download, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react"
+import { Download, ExternalLink, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react"
 import { useEffect, useState } from "react"
 import { Link, useNavigate, useParams } from "react-router"
 import { useCrumb } from "@/app/chrome"
@@ -324,6 +324,11 @@ function InstanceDetail({ id }: { id: string }) {
           {i.queueMode && <span>· queue mode</span>}
         </p>
         <div className="flex flex-wrap gap-2 pt-1.5">
+          <Button size="sm" asChild>
+            <a href={i.baseUrl} target="_blank" rel="noreferrer">
+              <ExternalLink /> Open n8n
+            </a>
+          </Button>
           <Button size="sm" onClick={() => refresh.mutate()} disabled={refresh.isPending}>
             <RefreshCw /> {refresh.isPending ? "Checking…" : "Check now"}
           </Button>

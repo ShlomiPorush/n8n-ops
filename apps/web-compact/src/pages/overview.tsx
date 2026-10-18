@@ -1,5 +1,5 @@
 import { Link } from "react-router"
-import { AlertRow, Empty, Kpi, Kpis, LoadError, Loading, Page, Panel, PanelHead, UserText } from "@/components/kit"
+import { AlertRow, Empty, Kpi, Kpis, LoadError, Loading, Page, Panel, PanelHead, Row, UserText } from "@/components/kit"
 import { Dot, type HealthState, StatusTag, statusOf, TimeAgo, Tone } from "@/components/status"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -36,6 +36,8 @@ type Overview = {
   }
 }
 
+type AuditEntry = { id: number; at: string; actor: string; action: string; target: string; via: string }
+
 const target = (item: AttentionItem) =>
   item.kind === "problem"
     ? `/problems/${item.id}`
@@ -53,12 +55,18 @@ export function OverviewPage() {
   const instances = useApi<{ latestVersion: string | null; instances: InstanceRow[] }>("/instances", {
     refetchInterval: 15_000,
   })
+  const activity = useApi<AuditEntry[]>("/admin/audit", { refetchInterval: 30_000 })
   const o = overview.data
   const order: Record<string, number> = { down: 0, warn: 1, unknown: 2, ok: 3 }
   const rows = [...(instances.data?.instances ?? [])].sort(
     (a, b) => (order[a.health] ?? 9) - (order[b.health] ?? 9) || b.openProblems - a.openProblems,
   )
   const attention = o?.attention ?? []
+  // Agents' reads are noisy, and a run of sign-ins says little more than the latest one.
+  const events = (activity.data ?? [])
+    .filter((e) => e.action !== "MCP read")
+    .filter((e, i, all) => e.action !== "Login" || all.findIndex((x) => x.action === "Login") === i)
+    .slice(0, 8)
   const setup = checklist.data
   const missing = setup
     ? [
@@ -138,6 +146,7 @@ export function OverviewPage() {
               )}
             </Panel>
 
+            <div className="grid min-w-0 gap-gap">
             <Panel>
               <PanelHead
                 title="Instances"
@@ -163,6 +172,39 @@ export function OverviewPage() {
                 rows.map((i) => <InstanceLine key={i.id} i={i} latest={instances.data?.latestVersion ?? null} />)
               )}
             </Panel>
+
+            <Panel>
+              <PanelHead
+                title="Recent activity"
+                description="Sign-ins, changes and decisions, newest first."
+                more={{ to: "/audit", label: "Full audit log" }}
+              />
+              {activity.error ? (
+                <LoadError what="recent activity" error={activity.error} retry={() => activity.refetch()} />
+              ) : !activity.data ? (
+                <Loading />
+              ) : events.length === 0 ? (
+                <Empty title="Nothing recorded yet.">Sign-ins and changes appear here.</Empty>
+              ) : (
+                events.map((e) => (
+                  <Row key={e.id} className="grid gap-0.5">
+                    <span className="min-w-0">
+                      <span className="font-semibold">{e.action}</span>
+                      {e.target && (
+                        <span className="text-muted-foreground">
+                          {" · "}
+                          <UserText>{e.target}</UserText>
+                        </span>
+                      )}
+                    </span>
+                    <span className="text-small text-muted-foreground">
+                      <UserText>{e.actor}</UserText> · <TimeAgo value={e.at} />
+                    </span>
+                  </Row>
+                ))
+              )}
+            </Panel>
+            </div>
           </div>
         </>
       )}

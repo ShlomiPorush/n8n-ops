@@ -171,11 +171,11 @@ test("a script connects with a code that the person compares, then reads the RES
     })
   expect((await poll()).body.error).toBe("authorization_pending")
 
+  // The link carries the code: the page asks at once whether the agent shows the same one.
   await page.goto(device.body.verification_uri_complete ?? "")
-  await page.getByRole("button", { name: "Continue" }).click()
   await expect(page.getByRole("heading", { name: "Does your agent show this code?" })).toBeVisible()
   await expect(page.getByText(device.body.user_code ?? "")).toBeVisible()
-  await page.getByRole("button", { name: "Yes, continue" }).click()
+  await page.getByRole("button", { name: "Yes, continue", exact: true }).click()
   await expect(page.getByText("A script asks to use n8n-ops.")).toBeVisible()
   await expect(page.getByLabel("May ask for access to n8n instances")).toBeChecked()
   await page.getByRole("button", { name: "Approve" }).click()
@@ -197,8 +197,7 @@ test("a script the person denies is told so", async () => {
     resource: `${base}/api/v1`,
   })
   await page.goto(device.body.verification_uri_complete ?? "")
-  await page.getByRole("button", { name: "Continue" }).click()
-  await page.getByRole("button", { name: "Yes, continue" }).click()
+  await page.getByRole("button", { name: "Yes, continue", exact: true }).click()
   await page.getByRole("button", { name: "Deny" }).click()
   await expect(page.getByRole("heading", { name: "Not connected" })).toBeVisible()
   const res = await post("/oauth/token", {
@@ -243,8 +242,7 @@ test("a used refresh token that comes back ends the connection", async () => {
     resource: `${base}/api/v1`,
   })
   await page.goto(device.body.verification_uri_complete ?? "")
-  await page.getByRole("button", { name: "Continue" }).click()
-  await page.getByRole("button", { name: "Yes, continue" }).click()
+  await page.getByRole("button", { name: "Yes, continue", exact: true }).click()
   await page.getByRole("button", { name: "Approve" }).click()
   await expect(page.getByRole("heading", { name: "Agent connected" })).toBeVisible()
   const first = await post("/oauth/token", {

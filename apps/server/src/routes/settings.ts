@@ -50,6 +50,7 @@ export function settingsRoutes(ctx: Ctx) {
     if (section === "telegram" && !next.webhookSecret) next.webhookSecret = randomBytes(24).toString("hex")
     const parsed = sections[section].safeParse(next)
     if (!parsed.success) return c.json({ error: "invalid", issues: parsed.error.issues }, 400)
+    const before = section === "general" ? (await ctx.settings.get("general")).publicUrl : null
     await ctx.settings.set(section, parsed.data as never)
     await ctx.audit({
       actor: actorName(c.get("actor")),
@@ -61,6 +62,9 @@ export function settingsRoutes(ctx: Ctx) {
         secretsChanged: Object.keys(body).filter((k) => secretNames.includes(k)),
       },
     })
+    // Agents connected to the old address hold tokens issued by it; they connect again at the new one.
+    if (section === "general" && ctx.agents && before !== (await ctx.settings.get("general")).publicUrl)
+      await ctx.agents.endAll("address", { by: actorName(c.get("actor")), via: "web" })
     // Point the bot at this installation now rather than at the next minute check.
     if (section === "telegram" || section === "general")
       await syncTelegramWebhook(ctx).catch((e: Error) => ctx.log.warn("Telegram webhook not set", { error: e.message }))

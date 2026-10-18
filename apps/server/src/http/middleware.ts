@@ -18,25 +18,56 @@ export function requireUser(ctx: Ctx, options: { allowWithoutTotp?: boolean } = 
   })
 }
 
-/** Requires an API token of the given kind in the Authorization header. */
+/**
+ * Requires a bearer token for /mcp (kind "mcp") or /api/v1 (kind "rest"): a token made by hand of that kind, or
+ * an access token of an agent connected by approval, issued for that resource. Without one the answer says,
+ * as MCP clients expect (RFC 9728), where to find how to get one.
+ */
 export function requireToken(ctx: Ctx, kind: "mcp" | "rest") {
   return createMiddleware<Env>(async (c, next) => {
+    const challenge = async (error?: "invalid_token" | "insufficient_scope") => {
+      const p = await ctx.agents?.provider().catch(() => null)
+      const metadata = p ? `${p.issuer}/.well-known/oauth-protected-resource${kind === "mcp" ? "/mcp" : "/api/v1"}` : null
+      const parts = [
+        metadata && `resource_metadata="${metadata}"`,
+        `scope="${error === "insufficient_scope" ? "ops:read ops:access" : "ops:read"}"`,
+        error && `error="${error}"`,
+      ].filter(Boolean)
+      c.header("WWW-Authenticate", `Bearer ${parts.join(", ")}`)
+      c.header("Access-Control-Expose-Headers", "WWW-Authenticate")
+      return error === "insufficient_scope" ? c.json({ error: "insufficient_scope" }, 403) : c.json({ error: "unauthorized" }, 401)
+    }
     const header = c.req.header("authorization") ?? ""
     const token = header.startsWith("Bearer ") ? header.slice(7).trim() : ""
-    if (!token) return c.json({ error: "unauthorized" }, 401)
+    if (!token) return challenge()
+
     const [row] = await ctx.db
       .select()
       .from(apiTokens)
       .where(and(eq(apiTokens.tokenHash, sha256(token)), isNull(apiTokens.revokedAt)))
-    if (!row || row.kind !== kind) return c.json({ error: "unauthorized" }, 401)
-    await ctx.db.update(apiTokens).set({ lastUsedAt: new Date() }).where(eq(apiTokens.id, row.id))
+    if (row && row.kind === kind) {
+      await touch(ctx, row.id, row.lastUsedAt)
+      c.set("actor", { kind: "token", id: row.id, name: row.name, tokenKind: kind, canRequestAccess: row.canRequestAccess })
+      return next()
+    }
+    if (row || !ctx.agents) return challenge("invalid_token")
+
+    const agent = await ctx.agents.verify(token, kind)
+    if (!agent.ok) return challenge(agent.reason === "insufficient" ? "insufficient_scope" : "invalid_token")
+    await touch(ctx, agent.row.id, agent.row.lastUsedAt)
     c.set("actor", {
       kind: "token",
-      id: row.id,
-      name: row.name,
-      tokenKind: row.kind,
-      canRequestAccess: row.canRequestAccess,
+      id: agent.row.id,
+      name: agent.row.name,
+      tokenKind: kind,
+      canRequestAccess: agent.canRequestAccess && agent.row.canRequestAccess,
     })
-    await next()
+    return next()
   })
+}
+
+/** Records the last use, at most once a minute per token. */
+async function touch(ctx: Ctx, id: string, last: Date | null) {
+  if (last && Date.now() - last.getTime() < 60_000) return
+  await ctx.db.update(apiTokens).set({ lastUsedAt: new Date() }).where(eq(apiTokens.id, id))
 }

@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises"
 import { generateX25519Identity, identityToRecipient } from "age-encryption"
-import { and, desc, eq, isNull, lt } from "drizzle-orm"
+import { and, desc, eq, isNull, lt, ne } from "drizzle-orm"
 import { Hono } from "hono"
 import { z } from "zod"
 import type { Ctx } from "../context.ts"
@@ -50,7 +50,7 @@ export function adminRoutes(ctx: Ctx) {
       .from(apiTokens)
       .where(isNull(apiTokens.revokedAt))
       .orderBy(desc(apiTokens.createdAt))
-    return c.json(rows.map(({ tokenHash: _hash, ...rest }) => rest))
+    return c.json(rows.map(({ tokenHash: _hash, grantId: _grant, ...rest }) => rest))
   })
 
   app.post("/tokens", async (c) => {
@@ -77,10 +77,19 @@ export function adminRoutes(ctx: Ctx) {
   })
 
   app.delete("/tokens/:id", async (c) => {
+    // An agent connected by approval ends with every token of its grant and its instance access.
+    const [agent] = await ctx.db
+      .select({ id: apiTokens.id })
+      .from(apiTokens)
+      .where(and(eq(apiTokens.id, c.req.param("id")), eq(apiTokens.kind, "agent")))
+    if (agent) {
+      const ended = await ctx.agents?.end({ id: agent.id }, "revoked", { by: actorName(c.get("actor")), via: "web" })
+      return ended ? c.json({ ok: true }) : c.json({ error: "not_found" }, 404)
+    }
     const [row] = await ctx.db
       .update(apiTokens)
       .set({ revokedAt: new Date() })
-      .where(and(eq(apiTokens.id, c.req.param("id")), isNull(apiTokens.revokedAt)))
+      .where(and(eq(apiTokens.id, c.req.param("id")), isNull(apiTokens.revokedAt), ne(apiTokens.kind, "agent")))
       .returning({ id: apiTokens.id, name: apiTokens.name })
     if (!row) return c.json({ error: "not_found" }, 404)
     await ctx.audit({ actor: actorName(c.get("actor")), action: "API token revoked", target: row.name, via: "web" })

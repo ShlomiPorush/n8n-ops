@@ -4,6 +4,7 @@ import type { Db } from "./db/client.ts"
 import type { Audit } from "./lib/audit.ts"
 import type { Secrets } from "./lib/crypto.ts"
 import type { SettingsStore } from "./lib/settings.ts"
+import type { AgentConnect } from "./oauth/agents.ts"
 
 /** Everything request handlers and background jobs share. */
 export type Ctx = {
@@ -18,6 +19,8 @@ export type Ctx = {
   log: Logger
   /** "change" events carry the list of UI areas whose data changed, for live updates. */
   events: EventEmitter
+  /** Agents connected by approval (OAuth); absent where the server is not running (unit tests). */
+  agents?: AgentConnect
 }
 
 export type Topic = "problems" | "instances" | "backups" | "workflows" | "workers" | "overview" | "access"

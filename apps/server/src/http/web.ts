@@ -66,6 +66,11 @@ export function serveWeb(app: Hono<Env>, ctx: Ctx, dir: string | undefined) {
 
     const html = page(ctx.settings.design())
     if (!html) return c.text("The web interface is not installed.", 503, { "Cache-Control": "no-store" })
-    return c.html(html, 200, { "Cache-Control": "no-cache" })
+    // No page of the console may be framed by another site (the agent approval page above all).
+    return c.html(html, 200, {
+      "Cache-Control": "no-cache",
+      "X-Frame-Options": "DENY",
+      "Content-Security-Policy": "frame-ancestors 'none'",
+    })
   })
 }

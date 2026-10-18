@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js"
-import { Hono } from "hono"
+import { type Context, Hono } from "hono"
 import { z } from "zod"
 import type { Ctx } from "../context.ts"
 import { requireToken } from "../http/middleware.ts"
@@ -52,6 +52,11 @@ export function restRoutes(ctx: Ctx) {
   const allowedToken = (who: Env["Variables"]["actor"]) =>
     who.kind === "token" && who.canRequestAccess ? who.id : null
   const refused = { error: "not_allowed", message: "This token may not request access to n8n instances." }
+  // An agent connected without ops:access learns which scope it lacks (RFC 6750); it connects again to get it.
+  const refuse = (c: Context) => {
+    c.header("WWW-Authenticate", `Bearer error="insufficient_scope", scope="ops:read ops:access"`)
+    return c.json(refused, 403)
+  }
   const accessError = (e: unknown) => {
     if (!(e instanceof AccessError)) throw e
     const status = e.code === "not_found" ? 404 : e.code === "not_allowed" ? 403 : e.code.startsWith("spec") ? 502 : 400
@@ -59,7 +64,7 @@ export function restRoutes(ctx: Ctx) {
   }
   app.post("/access-requests", async (c) => {
     const tokenId = allowedToken(c.get("actor"))
-    if (!tokenId) return c.json(refused, 403)
+    if (!tokenId) return refuse(c)
     const parsed = z.object(accessRequestShape).safeParse(await c.req.json().catch(() => ({})))
     if (!parsed.success) return c.json({ error: "invalid", issues: parsed.error.issues }, 400)
     try {
@@ -71,7 +76,7 @@ export function restRoutes(ctx: Ctx) {
   })
   app.get("/access-requests/:id", async (c) => {
     const tokenId = allowedToken(c.get("actor"))
-    if (!tokenId) return c.json(refused, 403)
+    if (!tokenId) return refuse(c)
     try {
       return c.json({ data: await collectAccess(ctx, tokenId, c.req.param("id"), await publicBase(ctx, c.req.url)) })
     } catch (e) {
@@ -81,7 +86,7 @@ export function restRoutes(ctx: Ctx) {
   })
   app.post("/access-requests/:id/release", async (c) => {
     const tokenId = allowedToken(c.get("actor"))
-    if (!tokenId) return c.json(refused, 403)
+    if (!tokenId) return refuse(c)
     try {
       return c.json({ data: await releaseAccess(ctx, tokenId, c.req.param("id")) })
     } catch (e) {

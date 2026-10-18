@@ -2,6 +2,7 @@ import type { Hono } from "hono"
 import type { Ctx } from "./context.ts"
 import { instances } from "./db/schema.ts"
 import type { Env } from "./http/types.ts"
+import { agentConnectRoutes } from "./oauth/routes.ts"
 import { accessRoutes } from "./routes/access.ts"
 import { mcpRoutes, restRoutes } from "./routes/agent.ts"
 import { alertTestRoutes, telegramWebhookRoutes } from "./routes/alerts.ts"
@@ -38,6 +39,7 @@ export function features(ctx: Ctx, extra: { mounts?: Mount[]; jobs?: Job[] } = {
     { path: "/mcp", router: mcpRoutes(ctx) },
     { path: "/api/access", router: accessRoutes(ctx) },
     { path: "/n8n", router: n8nProxyRoutes(ctx) },
+    ...(ctx.agents ? [{ path: "/", router: agentConnectRoutes(ctx, ctx.agents) }] : []),
     ...(extra.mounts ?? []),
   ]
   const jobs: Job[] = [
@@ -45,6 +47,7 @@ export function features(ctx: Ctx, extra: { mounts?: Mount[]; jobs?: Job[] } = {
     { name: "probes", everyMs: 10_000, run: enqueueProbes },
     { name: "access-expiry", everyMs: 15_000, run: expireAccess },
     { name: "access-notify", everyMs: 5_000, run: notifyAccess },
+    { name: "agent-connections", everyMs: 15 * 60_000, run: async (c) => c.agents?.sweep() },
     {
       name: "workflow-map",
       everyMs: 30 * 60_000,

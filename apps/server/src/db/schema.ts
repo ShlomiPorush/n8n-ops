@@ -114,18 +114,60 @@ export const auditLog = pgTable(
   (t) => [index("audit_log_at_idx").on(t.at)],
 )
 
+/**
+ * Who may call /mcp and /api/v1. A token made by hand (kind mcp or rest) carries its secret's hash. An agent
+ * connected by approval (kind agent) has no secret of its own: it holds short access tokens and rotating refresh
+ * tokens from the authorization server, all tied to its grant; this row is its identity and its rights.
+ */
 export const apiTokens = pgTable("api_tokens", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
-  kind: text("kind").$type<"mcp" | "rest">().notNull(),
+  kind: text("kind").$type<"mcp" | "rest" | "agent">().notNull(),
   prefix: text("prefix").notNull(),
+  /** For an agent, the hash of a random value nobody holds, so the column stays unique and unusable. */
   tokenHash: text("token_hash").notNull().unique(),
   /** May ask for temporary access to n8n instances (needs human approval each time). */
   canRequestAccess: boolean("can_request_access").notNull().default(false),
   createdAt: created(),
   lastUsedAt: ts("last_used_at"),
   revokedAt: ts("revoked_at"),
+  /** Agent: its grant in the authorization server. */
+  grantId: text("grant_id").unique(),
+  /** Agent: the scopes the person granted (ops:read, ops:access). */
+  scopes: jsonb("scopes").$type<string[]>(),
+  /** Agent: how it connected: through a browser (MCP clients) or with a code (scripts). */
+  connectedVia: text("connected_via").$type<"browser" | "code">(),
+  /** Agent: where the browser was sent back after approval, as the person saw it. */
+  redirectHost: text("redirect_host"),
+  approvedBy: text("approved_by"),
+  /** Agent: why it ended (revoked by a person, unused for 90 days, a reused refresh token, ...). */
+  endReason: text("end_reason"),
 })
+
+/**
+ * The authorization server's own records (oidc-provider): grants, codes, access and refresh tokens, clients
+ * registered by agents, sessions and interactions. Opaque values, looked up by id; never shown in the UI.
+ */
+export const oauthStore = pgTable(
+  "oauth_store",
+  {
+    type: text("type").notNull(),
+    id: text("id").notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+    grantId: text("grant_id"),
+    userCode: text("user_code"),
+    uid: text("uid"),
+    expiresAt: ts("expires_at"),
+    consumedAt: ts("consumed_at"),
+  },
+  (t) => [
+    primaryKey({ columns: [t.type, t.id] }),
+    index("oauth_store_grant_idx").on(t.grantId),
+    index("oauth_store_user_code_idx").on(t.userCode),
+    index("oauth_store_uid_idx").on(t.uid),
+    index("oauth_store_expires_idx").on(t.expiresAt),
+  ],
+)
 
 // ---------------------------------------------------------------------------
 // Workers

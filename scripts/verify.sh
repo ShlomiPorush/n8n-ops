@@ -149,8 +149,9 @@ seed_design() {
     "insert into settings (key, value) values ('general', '{\"publicUrl\":\"\",\"timezone\":\"UTC\",\"design\":\"$design\"}')
      on conflict (key) do update set value = settings.value || '{\"design\":\"$design\"}'::jsonb" ||
     die "could not store the $design design"
-  stack restart server >/dev/null && stack up -d --wait --wait-timeout 120 server ||
+  if ! stack restart server >/dev/null || ! stack up -d --wait --wait-timeout 120 server; then
     die "the server did not come back after storing the design"
+  fi
 }
 
 run_checks_on_stack() {

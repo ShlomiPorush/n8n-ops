@@ -44,10 +44,25 @@ Workers → Add worker gives a one-time token, the commands to run on the host a
 
 ## Agents
 
-Settings → API & MCP tokens. Tokens are read-only, unless a token is also allowed to request access to n8n instances (below).
+Agents connect by approval: nothing to create or paste by hand. Set the public URL in Settings → General first; Settings → Connected agents lists every connected agent with **Disconnect**.
 
-- **MCP** (Streamable HTTP): `https://<your n8n-ops>/mcp` with the header `Authorization: Bearer <MCP token>`. Tools: `list_open_problems`, `get_problem`, `get_failed_execution`, `get_instance_health`, `get_queue_status`, `get_backup_status`, `search_workflows` (by name, workflow ID, webhook path or tag; each result says whether access to its instance can be requested).
-- **REST**: `GET /api/v1/problems`, `/api/v1/problems/{id}`, `/api/v1/problems/{id}/execution`, `/api/v1/instances`, `/api/v1/queues`, `/api/v1/backups`, `/api/v1/workflows?q=` with `Authorization: Bearer <REST token>`.
+- **MCP clients** (Claude Code, Cursor and others): add `https://<your n8n-ops>/mcp` as an MCP server, for example `claude mcp add --transport http n8n-ops https://<your n8n-ops>/mcp`. The client opens n8n-ops in the browser; you sign in, see who asks, where the browser returns to and what it may do, untick what it should not get, and approve. Standard MCP authorization (OAuth 2.1 with PKCE; the client registers itself).
+- **Scripts** (device code, RFC 8628): ask for a code, show the link, wait for the approval, then use the tokens.
+
+  ```bash
+  curl -s https://<your n8n-ops>/oauth/device -d client_id=n8n-ops-cli \
+    -d resource=https://<your n8n-ops>/api/v1 -d "scope=ops:read offline_access"
+  # → user_code, verification_uri_complete, device_code, interval. Open the link: compare the code, approve.
+  curl -s https://<your n8n-ops>/oauth/token -d client_id=n8n-ops-cli \
+    -d grant_type=urn:ietf:params:oauth:grant-type:device_code -d device_code=<device_code>
+  # Every <interval> seconds until it answers with access_token and refresh_token.
+  ```
+
+- **What a connection holds**: an access token good for 15 minutes and for one resource only (`/mcp` or `/api/v1`), and a refresh token that is replaced on every use (`grant_type=refresh_token`). A refresh token used a second time ends the connection, since a copy is out. A connection lasts until you disconnect it and ends by itself after 90 days without use, or when the public URL changes. Scopes: `ops:read` (always) and `ops:access` (may ask for temporary access to n8n instances, below).
+- **A token made by hand** stays under Connected agents → New token, for a program that cannot open the approval link. It lasts until revoked.
+
+- **MCP** (Streamable HTTP): `https://<your n8n-ops>/mcp` with the header `Authorization: Bearer <access token>`. Tools: `list_open_problems`, `get_problem`, `get_failed_execution`, `get_instance_health`, `get_queue_status`, `get_backup_status`, `search_workflows` (by name, workflow ID, webhook path or tag; each result says whether access to its instance can be requested).
+- **REST**: `GET /api/v1/problems`, `/api/v1/problems/{id}`, `/api/v1/problems/{id}/execution`, `/api/v1/instances`, `/api/v1/queues`, `/api/v1/backups`, `/api/v1/workflows?q=` with `Authorization: Bearer <access token>`.
 
 ### Temporary access to n8n instances
 
@@ -58,7 +73,7 @@ An agent that needs to change something in n8n asks n8n-ops instead of holding a
 3. You approve or deny it: with the **Approve** and **Deny** buttons on the Telegram message, from the link in the email, or on the **Agent access** page (also under Needs attention on the Overview). In Telegram only the approvers listed in Settings → Agent access can decide; with none listed, only you in a private chat with the bot. The message then shows the outcome.
 4. The agent collects the key once with `get_access_request` (`GET /api/v1/access-requests/{id}`) and calls the n8n public API at `https://<your n8n-ops>/n8n/<instance>/api/v1` with the key in `X-N8N-API-KEY`, so n8n API clients work by changing only the base URL.
 5. n8n-ops checks every call against the scopes n8n declares for each operation (n8n 2.14 or later) and, when workflow IDs were given, against those workflows; then it forwards the call with the instance's own key and records it on the request.
-6. Access ends when its time is up, when the agent calls `release_instance_access` (`POST /api/v1/access-requests/{id}/release`), or when you revoke it. Revoking the token revokes its access too.
+6. Access ends when its time is up, when the agent calls `release_instance_access` (`POST /api/v1/access-requests/{id}/release`), or when you revoke it. Disconnecting the agent revokes its access too.
 
 ## Locked out
 

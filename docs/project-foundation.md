@@ -19,7 +19,7 @@ Verified locally on 2026-10-14 in WSL (Docker 29.8.2): `scripts/verify.sh` full 
 
 - **Problem:** a team running many self-hosted n8n instances gets tens of failure emails per day and ignores them; backups are unreliable; moving workflows between instances is manual.
 - **Product:** one self-hosted web application that monitors n8n instances through their public API, groups failures into problems, sends a small number of Telegram alerts and email reports, exposes failures to AI agents over MCP and REST, backs up workflows and credentials encrypted to S3-compatible storage, and helps consolidate instances.
-- **Users:** one operator (single local account). Agents use read-only tokens.
+- **Users:** one operator (single local account). Agents connect by approval (OAuth) or use read-only tokens made by hand.
 - **Stage:** v1 implemented and verified in the test stack; first release and production deployment pending.
 - **Deployment shape:** Docker Compose. `server` and its PostgreSQL run on any host that can reach the n8n instances. An optional `worker` runs on each n8n Docker host.
 - **Non-goals for v1:** full-instance backup (`pg_dump`), automatic container discovery, write actions over REST or MCP, multiple users or roles, localization.

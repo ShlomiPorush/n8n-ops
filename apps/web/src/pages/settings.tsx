@@ -330,6 +330,8 @@ export function SettingsForm({ section }: { section: string }) {
         <CardDescription>{def.description}</CardDescription>
       </CardHeader>
       <CardContent>
+        {/* Locked while a save is on its way, so nothing typed meanwhile is lost when a design switch reloads. */}
+        <fieldset disabled={save.isPending} className="contents">
         <FieldGroup>
           {def.fields.map((f) => (
             <Field key={f.name} orientation="responsive">
@@ -396,6 +398,7 @@ export function SettingsForm({ section }: { section: string }) {
             </Field>
           ))}
         </FieldGroup>
+        </fieldset>
       </CardContent>
       <CardFooter className="gap-2 border-t">
         <Button onClick={submit} disabled={save.isPending || query.isLoading}>

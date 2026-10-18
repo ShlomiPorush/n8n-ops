@@ -177,6 +177,7 @@ export function createSettings(db: Db, env: { publicUrl?: string } = {}): Settin
   let currentDesign: Design = defaults.general.design
   // General is written one at a time, so the design in memory always ends as the last one stored.
   let generalWrites: Promise<unknown> = Promise.resolve()
+  let generalVersion = 0
 
   async function get<K extends SectionName>(key: K): Promise<Section<K>> {
     const [row] = await db.select().from(settingsTable).where(eq(settingsTable.key, key))
@@ -209,6 +210,7 @@ export function createSettings(db: Db, env: { publicUrl?: string } = {}): Settin
         await write(key, parsed)
         // Updated where the value is stored, so a later failure in the request cannot leave memory behind.
         currentDesign = (parsed as Section<"general">).design
+        generalVersion += 1
       })
       generalWrites = run.catch(() => {})
       await run
@@ -222,7 +224,10 @@ export function createSettings(db: Db, env: { publicUrl?: string } = {}): Settin
 
   async function loadDesign(log: Logger, retryMs = 5_000): Promise<void> {
     try {
-      currentDesign = (await get("general")).design
+      // A General saved while this read was on its way is newer than what the read returns: keep it.
+      const seen = generalVersion
+      const stored = (await get("general")).design
+      if (generalVersion === seen) currentDesign = stored
     } catch (error) {
       log.warn("Could not read the web design; serving the default until the database answers", {
         error: (error as Error).message,

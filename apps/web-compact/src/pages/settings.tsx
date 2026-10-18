@@ -454,7 +454,9 @@ export function SettingsForm({ section }: { section: string }) {
       ) : query.isLoading ? (
         <Loading>Loading the {def.title} settings…</Loading>
       ) : (
-        def.fields.map((f) => (
+        // Locked while a save is on its way, so nothing typed meanwhile is lost when a design switch reloads.
+        <fieldset disabled={save.isPending} className="contents">
+        {def.fields.map((f) => (
           <SettingRow key={f.name} htmlFor={f.name} label={f.label} hint={f.hint} inline={f.type === "switch"}>
             {f.type === "switch" ? (
               <Switch id={f.name} checked={Boolean(values[f.name])} onCheckedChange={(v) => set(f.name, v)} />
@@ -502,7 +504,8 @@ export function SettingsForm({ section }: { section: string }) {
               />
             )}
           </SettingRow>
-        ))
+        ))}
+        </fieldset>
       )}
       {query.data && (section === "telegram" || section === "email" || section === "storage") && (
         <TestRow section={section} data={query.data} unsaved={count > 0} />

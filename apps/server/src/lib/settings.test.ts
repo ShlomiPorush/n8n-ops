@@ -143,3 +143,29 @@ describe("web design", () => {
     }
   })
 })
+
+describe("web design, a startup read racing a save", () => {
+  it("keeps a design saved while the startup read was on its way", async () => {
+    let release: (rows: unknown[]) => void = () => {}
+    let row: object = { design: "regular" }
+    const db = {
+      select: () => ({
+        from: () => ({ where: () => new Promise((resolve) => (release = resolve)) }),
+      }),
+      insert: () => ({
+        values: ({ value }: { value: object }) => ({
+          onConflictDoUpdate: async () => {
+            row = value
+          },
+        }),
+      }),
+    } as unknown as Db
+    const settings = createSettings(db)
+    const loading = settings.loadDesign({ info() {}, warn() {} })
+    await settings.set("general", { publicUrl: "", timezone: "UTC", design: "compact" })
+    release([{ value: { design: "regular" } }]) // the read started before the save
+    await loading
+    expect(settings.design()).toBe("compact")
+    expect((row as { design: string }).design).toBe("compact")
+  })
+})

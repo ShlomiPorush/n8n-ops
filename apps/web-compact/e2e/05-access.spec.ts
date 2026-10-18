@@ -217,10 +217,9 @@ test("agent access edits survive a refresh, and a clean card shows the stored ac
   const store = async (agentAccess: { enabled: boolean; scopes: string[] }) => {
     expect((await page.request.patch(`/api/instances/${id}`, { data: { agentAccess } })).ok()).toBe(true)
     // The next read of the instance that starts after the change, so it carries the new value.
-    const request = await page.waitForRequest(
-      (r) => r.method() === "GET" && r.url().endsWith(`/api/instances/${id}`),
-      { timeout: 30_000 },
-    )
+    const request = await page.waitForRequest((r) => r.method() === "GET" && r.url().endsWith(`/api/instances/${id}`), {
+      timeout: 30_000,
+    })
     const response = await request.response()
     await response?.finished()
     // The answer is drawn within a frame; wait for two to be sure.

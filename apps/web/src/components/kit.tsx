@@ -354,6 +354,8 @@ export function Kpi({
         <b
           className={cn(
             "block text-figure tabular-nums",
+            // Words ("just now", "14 h ago") a size down in Regular, so they fit a narrow card on one line.
+            typeof value !== "number" && "regular:text-h1",
             tone === "fail" && "text-fail",
             tone === "warn" && "text-warn",
             tone === "ok" && "text-ok",

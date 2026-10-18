@@ -40,7 +40,7 @@ export const settingsGroups = [
     label: "Access",
     items: [
       ["access", "Agent access"],
-      ["tokens", "API & MCP tokens"],
+      ["tokens", "Connected agents"],
       ["account", "Account"],
     ],
   },

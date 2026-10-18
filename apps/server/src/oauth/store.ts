@@ -109,10 +109,7 @@ export async function grantAlive(db: Db, grantId: string) {
 
 /** How many agents registered themselves (RFC 7591); a cap keeps open registration from filling the table. */
 export async function registeredClients(db: Db) {
-  const [row] = await db
-    .select({ n: sql<number>`count(*)::int` })
-    .from(oauthStore)
-    .where(eq(oauthStore.type, "Client"))
+  const [row] = await db.select({ n: sql<number>`count(*)::int` }).from(oauthStore).where(eq(oauthStore.type, "Client"))
   return row?.n ?? 0
 }
 

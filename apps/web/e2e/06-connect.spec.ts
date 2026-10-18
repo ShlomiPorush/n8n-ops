@@ -282,7 +282,11 @@ test("a used refresh token that comes back ends the connection", async () => {
 
 /** Connects a script with a code and returns its first tokens. */
 async function connectScript() {
-  const device = await post("/oauth/device", { client_id: "n8n-ops-cli", scope: "ops:read", resource: `${base}/api/v1` })
+  const device = await post("/oauth/device", {
+    client_id: "n8n-ops-cli",
+    scope: "ops:read",
+    resource: `${base}/api/v1`,
+  })
   await page.goto(device.body.verification_uri_complete ?? "")
   await page.getByRole("button", { name: "Yes, continue", exact: true }).click()
   await page.getByRole("button", { name: "Approve" }).click()
@@ -299,7 +303,11 @@ async function connectScript() {
 test("two refreshes with the same token at once: one wins, and the connection ends", async () => {
   const tokens = await connectScript()
   const refresh = () =>
-    post("/oauth/token", { grant_type: "refresh_token", refresh_token: tokens.refresh_token ?? "", client_id: "n8n-ops-cli" })
+    post("/oauth/token", {
+      grant_type: "refresh_token",
+      refresh_token: tokens.refresh_token ?? "",
+      client_id: "n8n-ops-cli",
+    })
   const results = await Promise.all([refresh(), refresh()])
   expect(results.map((r) => r.status).sort()).toEqual([200, 400])
   const winner = results.find((r) => r.status === 200)?.body ?? {}

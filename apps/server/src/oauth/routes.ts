@@ -8,8 +8,8 @@ import type { Ctx } from "../context.ts"
 import { requireUser } from "../http/middleware.ts"
 import { actorName, type Env } from "../http/types.ts"
 import type { AgentConnect } from "./agents.ts"
-import { registeredClients } from "./store.ts"
 import { CLI_CLIENT, resources, SCOPES } from "./provider.ts"
+import { registeredClients } from "./store.ts"
 
 type Bindings = { incoming: IncomingMessage & { body?: unknown }; outgoing: ServerResponse }
 /** The Node request and response under Hono; absent when the app is driven without a server (unit tests). */

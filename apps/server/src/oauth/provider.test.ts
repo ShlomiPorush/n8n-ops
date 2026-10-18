@@ -172,7 +172,11 @@ describe("agents connecting through the browser (MCP)", () => {
     const res = await browser()("/oauth/revoke", { form: { token: tokens.access_token, client_id: clientId } })
     expect(res.status).toBe(200)
     expect(await provider.Grant.find(grantId)).toBeUndefined()
-    const refresh = await tokenRequest({ grant_type: "refresh_token", refresh_token: tokens.refresh_token, client_id: clientId })
+    const refresh = await tokenRequest({
+      grant_type: "refresh_token",
+      refresh_token: tokens.refresh_token,
+      client_id: clientId,
+    })
     expect(refresh.status).toBe(400)
   })
 

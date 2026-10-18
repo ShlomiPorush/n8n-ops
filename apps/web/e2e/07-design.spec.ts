@@ -95,7 +95,8 @@ test("each design draws with its own type, corners, surfaces and shadows, in lig
 async function layout(p: Page) {
   await p.goto("/")
   const activity = p.locator("section", { has: p.getByRole("heading", { name: "Recent activity" }) })
-  await expect(activity.getByText("Login").first()).toBeVisible()
+  // The first entry under the head: not the loading line (status) or an error (alert). Signing in records one.
+  await expect(activity.locator(":scope > header + div:not([role])")).toBeVisible()
   return p.evaluate(() => {
     const shown = (el: Element | null) => Boolean(el && el.getClientRects().length > 0)
     const frame = document.querySelector('[data-slot="page-frame"]')

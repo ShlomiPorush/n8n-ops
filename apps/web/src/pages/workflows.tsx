@@ -1,21 +1,34 @@
 import {
   AlertTriangle,
   ArrowRight,
+  ArrowRightLeft,
   CheckCircle2,
+  Clock,
+  Copy,
   ExternalLink,
+  type LucideIcon,
+  Mail,
+  MousePointerClick,
+  PowerOff,
   RefreshCw,
   Search,
+  ServerOff,
   ShieldCheck,
+  Webhook,
+  Workflow as WorkflowIcon,
   XCircle,
+  Zap,
 } from "lucide-react"
 import { useState } from "react"
 import { Link } from "react-router"
 import { Page } from "@/app/shell"
+import { DialogIcon } from "@/components/dialog-icon"
+import { NumberTicker } from "@/components/spectrum/number-ticker"
 import { Code, TimeAgo } from "@/components/status"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
 import {
   Dialog,
   DialogContent,
@@ -85,12 +98,9 @@ export function WorkflowsPage() {
       {ins && (
         <div className="@container">
           <div className="grid gap-4 @3xl:grid-cols-3">
-            <Card>
-              <CardHeader>
-                <CardDescription>Duplicate workflows</CardDescription>
-                <CardTitle className="text-2xl">{ins.duplicateGroups.length}</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-1 text-sm">
+            <Card className="gap-4">
+              <InsightHead label="Duplicate workflows" value={ins.duplicateGroups.length} icon={Copy} tone="amber" />
+              <CardContent className="space-y-1.5 text-sm">
                 {ins.duplicateGroups.slice(0, 5).map((g) => (
                   <div key={g.map((w) => w.workflowId).join()}>
                     {g.map((w, i) => (
@@ -103,24 +113,25 @@ export function WorkflowsPage() {
                 ))}
               </CardContent>
             </Card>
-            <Card>
-              <CardHeader>
-                <CardDescription>Instances almost unused</CardDescription>
-                <CardTitle className="text-2xl">{ins.unusedInstances.length}</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-1 text-sm">
+            <Card className="gap-4">
+              <InsightHead label="Instances almost unused" value={ins.unusedInstances.length} icon={ServerOff} />
+              <CardContent className="space-y-1.5 text-sm">
                 {ins.unusedInstances.map((u) => (
-                  <Link key={u.id} to={`/instances/${u.id}`} className="block underline-offset-4 hover:underline">
-                    {u.name} · {u.runs30d === 0 ? "0 runs in 30 days" : "no active workflow"}
+                  <Link
+                    key={u.id}
+                    to={`/instances/${u.id}`}
+                    className="flex items-center justify-between gap-2 rounded-md px-2 py-1 -mx-2 hover:bg-muted"
+                  >
+                    <span className="font-medium">{u.name}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {u.runs30d === 0 ? "0 runs in 30 days" : "no active workflow"}
+                    </span>
                   </Link>
                 ))}
               </CardContent>
             </Card>
-            <Card>
-              <CardHeader>
-                <CardDescription>Inactive workflows</CardDescription>
-                <CardTitle className="text-2xl">{ins.inactive}</CardTitle>
-              </CardHeader>
+            <Card className="gap-4">
+              <InsightHead label="Inactive workflows" value={ins.inactive} icon={PowerOff} />
               <CardContent className="text-sm text-muted-foreground">
                 <p>
                   Candidates to archive before consolidating. Map read <TimeAgo value={ins.lastSyncedAt} />.
@@ -195,20 +206,25 @@ export function WorkflowsPage() {
                   </TableCell>
                   <TableCell>{w.instanceName}</TableCell>
                   <TableCell>
-                    <div>{w.triggerType}</div>
-                    {w.triggerDetail && (
-                      <div className="font-mono text-xs text-muted-foreground">{w.triggerDetail}</div>
-                    )}
+                    <div className="flex items-start gap-2">
+                      <TriggerIcon type={w.triggerType} />
+                      <div>
+                        <div>{w.triggerType}</div>
+                        {w.triggerDetail && (
+                          <div className="font-mono text-xs text-muted-foreground">{w.triggerDetail}</div>
+                        )}
+                      </div>
+                    </div>
                   </TableCell>
                   <TableCell className="whitespace-nowrap text-muted-foreground">
                     <TimeAgo value={w.lastRunAt} />
                   </TableCell>
                   <TableCell className="text-right tabular-nums">{w.runs30d}</TableCell>
-                  <TableCell className={cn("text-right tabular-nums", rate(w) > 3 && "font-medium text-destructive")}>
-                    {rate(w)}%
+                  <TableCell className="text-right">
+                    <ErrorRate rate={rate(w)} runs={w.runs30d} />
                   </TableCell>
                   <TableCell className="pr-4 text-right">
-                    <Button size="sm" variant="ghost" onClick={() => setMoving(w)}>
+                    <Button size="sm" variant="outline" onClick={() => setMoving(w)}>
                       Move <ArrowRight />
                     </Button>
                   </TableCell>
@@ -271,6 +287,7 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
     <Dialog open={workflow !== null} onOpenChange={(o) => !o && reset()}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
+          <DialogIcon icon={ArrowRightLeft} />
           <DialogTitle>Move {workflow?.name}</DialogTitle>
           <DialogDescription>
             Copies the workflow and its credentials to another instance, verifies it, then switches off the original.
@@ -419,5 +436,74 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  )
+}
+
+function InsightHead({
+  label,
+  value,
+  icon: Icon,
+  tone,
+}: {
+  label: string
+  value: number
+  icon: LucideIcon
+  tone?: "amber"
+}) {
+  return (
+    <div className="flex items-start justify-between gap-3 px-6">
+      <div className="space-y-1.5">
+        <p className="text-sm text-muted-foreground">{label}</p>
+        <div className="text-3xl font-semibold tracking-tight tabular-nums">
+          <NumberTicker value={value} />
+        </div>
+      </div>
+      <div
+        className={cn(
+          "grid size-9 place-items-center rounded-lg bg-muted text-muted-foreground",
+          tone === "amber" && value > 0 && "bg-amber-50 text-amber-600 dark:bg-amber-400/10 dark:text-amber-300",
+        )}
+      >
+        <Icon className="size-4.5" />
+      </div>
+    </div>
+  )
+}
+
+const triggerIcons: Record<string, LucideIcon> = {
+  Webhook: Webhook,
+  Schedule: Clock,
+  Manual: MousePointerClick,
+  "Execute Workflow": WorkflowIcon,
+  IMAP: Mail,
+}
+
+function TriggerIcon({ type }: { type: string }) {
+  const Icon = triggerIcons[type] ?? Zap
+  return (
+    <span className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-md bg-muted text-muted-foreground">
+      <Icon className="size-3.5" />
+    </span>
+  )
+}
+
+/** Error rate over 30 days as a short bar: grey when quiet, amber when some runs fail, red when most do. */
+function ErrorRate({ rate, runs }: { rate: number; runs: number }) {
+  if (!runs) return <span className="text-sm text-muted-foreground">no runs</span>
+  const tone = rate === 0 ? "bg-emerald-500" : rate < 20 ? "bg-amber-500" : "bg-rose-500"
+  return (
+    <div className="ml-auto flex w-28 items-center justify-end gap-2">
+      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+        <div className={cn("h-full rounded-full", tone)} style={{ width: `${Math.max(rate, rate > 0 ? 4 : 0)}%` }} />
+      </div>
+      <span
+        className={cn(
+          "w-11 text-right text-sm tabular-nums",
+          rate >= 20 && "font-medium text-rose-600 dark:text-rose-400",
+        )}
+      >
+        {rate}%
+      </span>
+    </div>
   )
 }

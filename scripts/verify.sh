@@ -93,6 +93,10 @@ run_checks() {
   local filter=()
   if [ -n "$CHANGED_BASE" ]; then
     filter=(--filter "...[$CHANGED_BASE]")
+    # Every UI change goes into both designs, so a change to either web app checks both.
+    if changed_files | grep -qE "^apps/web(-compact)?/"; then
+      filter+=(--filter ./apps/web --filter ./apps/web-compact)
+    fi
   fi
   info "Install"
   install_deps
@@ -111,27 +115,49 @@ stack() {
 
 cleanup_stack() {
   stack down --remove-orphans >/dev/null 2>&1 || true
-  [ -n "${N8N_OPS_DATA_DIR:-}" ] && remove_data_dir "$N8N_OPS_DATA_DIR"
+  # After the last round the data is already gone; the exit trap must not turn that into a failure.
+  if [ -n "${N8N_OPS_DATA_DIR:-}" ]; then
+    remove_data_dir "$N8N_OPS_DATA_DIR"
+  fi
 }
 
-run_integration() {
-  info "Integration: images and stack"
-  build_images verify "verify-$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
+# Stops the stack, confirms nothing of it still runs, and removes its data, so the next round starts fresh.
+stop_stack() {
+  stack down --remove-orphans || die "the verification stack did not stop"
+  [ -z "$(stack ps -q)" ] || die "the verification stack still runs after stopping it"
+  remove_data_dir "$N8N_OPS_DATA_DIR"
+  unset N8N_OPS_DATA_DIR
+}
+
+start_stack() {
   N8N_OPS_DATA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/n8n-ops-verify.XXXXXX")"
   export N8N_OPS_DATA_DIR
-  # Telegram calls go to the stand-in Bot API inside the end-to-end test runner, never to Telegram.
-  export TELEGRAM_API_URL="http://e2e-runner:8099"
   prepare_data_dirs "$N8N_OPS_DATA_DIR"
   # The end-to-end tests drop the worker's pairing token into its data directory.
   docker run --rm --user 0 -v "$N8N_OPS_DATA_DIR/worker:/target" "$TOOLCHAIN_IMAGE" chmod 0777 /target
-  trap cleanup_stack EXIT
   stack up -d --remove-orphans --wait --wait-timeout 180 || {
     stack ps
     stack logs --tail 50
     die "the verification stack did not become healthy"
   }
   check_non_root "$PROJECT" server postgres worker socket-proxy
+}
 
+# Stores the design in the fresh database and restarts the server to read it, so even first-run setup
+# shows that design.
+seed_design() {
+  local design="$1"
+  # shellcheck disable=SC2016 # expands inside the container
+  stack exec -T postgres sh -c 'psql -v ON_ERROR_STOP=1 -q -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "$0"' \
+    "insert into settings (key, value) values ('general', '{\"publicUrl\":\"\",\"timezone\":\"UTC\",\"design\":\"$design\"}')
+     on conflict (key) do update set value = settings.value || '{\"design\":\"$design\"}'::jsonb" ||
+    die "could not store the $design design"
+  if ! stack restart server >/dev/null || ! stack up -d --wait --wait-timeout 120 server; then
+    die "the server did not come back after storing the design"
+  fi
+}
+
+run_checks_on_stack() {
   info "Integration: health endpoint"
   TOOLCHAIN_EXTRA_ARGS=(--network "${PROJECT}_default")
   # shellcheck disable=SC2016 # expands inside the container
@@ -148,17 +174,36 @@ run_integration() {
   process.exit(got[0] === 200 && got[1] === 403 && got[2] === 403 ? 0 : 1);
 })()'
   stack exec -T worker node -e "$probe" || die "the socket proxy does not enforce its allowlist"
+}
 
-  info "End-to-end tests"
+# One end-to-end round per design, each on a fresh stack: the design's own suite runs from its own app
+# directory, with its own state files, session and stand-in Telegram Bot API.
+run_e2e_round() {
+  local design="$1" app="$2"
+  info "End-to-end tests: $design design ($app)"
+  start_stack
+  [ "$design" = regular ] || seed_design "$design"
+  [ "$design" = regular ] && run_checks_on_stack
   # The alias lets the server reach the stand-in Telegram Bot API that the tests run (TELEGRAM_API_URL).
   docker run --rm --network "${PROJECT}_default" --network-alias e2e-runner \
-    --user "$(id -u):$(id -g)" -e HOME=/tmp -e CI="${CI:-}" \
+    --user "$(id -u):$(id -g)" -e HOME=/tmp -e CI="${CI:-}" -e E2E_DESIGN="$design" \
     -e E2E_BASE_URL=http://server:8080 -e E2E_N8N_CONTAINER="${PROJECT}-n8n-1" \
-    -v "$N8N_OPS_DATA_DIR/worker:/worker-data" -v "$REPO_ROOT:/repo" -w /repo/apps/web \
+    -v "$N8N_OPS_DATA_DIR/worker:/worker-data" -v "$REPO_ROOT:/repo" -w "/repo/$app" \
     "$PLAYWRIGHT_IMAGE" node node_modules/@playwright/test/cli.js test || {
     stack logs --tail 60 server worker
-    die "end-to-end tests failed"
+    die "end-to-end tests failed ($design design)"
   }
+  stop_stack
+}
+
+run_integration() {
+  info "Integration: images and stack"
+  build_images verify "verify-$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
+  # Telegram calls go to the stand-in Bot API inside the end-to-end test runner, never to Telegram.
+  export TELEGRAM_API_URL="http://e2e-runner:8099"
+  trap cleanup_stack EXIT
+  run_e2e_round regular apps/web
+  run_e2e_round compact apps/web-compact
 }
 
 main() {

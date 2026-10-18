@@ -1,8 +1,26 @@
-import { CheckCircle2, Play, RotateCcw, XCircle } from "lucide-react"
+import {
+  Archive,
+  ArchiveRestore,
+  CheckCircle2,
+  Clock,
+  Database,
+  DatabaseBackup,
+  HardDrive,
+  KeyRound,
+  Play,
+  RotateCcw,
+  ShieldCheck,
+  Workflow as WorkflowIcon,
+  XCircle,
+} from "lucide-react"
 import { useState } from "react"
 import { Link, useNavigate, useParams } from "react-router"
+import { DialogIcon } from "@/components/dialog-icon"
 import { ListWithPanel } from "@/components/list-panel"
-import { Dot, TimeAgo, Tone } from "@/components/status"
+import { PageHeader } from "@/components/page-header"
+import { StatCard } from "@/components/stat-card"
+import { Dot, TimeAgo, Tone, timeAgo } from "@/components/status"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import {
@@ -92,12 +110,11 @@ export function BackupsPage() {
 
   const list = (
     <>
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Backups</h1>
-        <p className="text-muted-foreground">
-          Encrypted with your backup public key before upload. Click an instance for its history and restore.
-        </p>
-      </div>
+      <PageHeader
+        title="Backups"
+        icon={DatabaseBackup}
+        description="Encrypted with your backup public key before upload. Click an instance for its history and restore."
+      />
       {s && !s.configured && (
         <Card className="border-amber-500/50">
           <CardHeader>
@@ -119,20 +136,34 @@ export function BackupsPage() {
       {s && (
         <div className="@container">
           <div className="grid grid-cols-2 gap-4 @3xl:grid-cols-4">
-            <Stat label="Backed up on time" value={`${okCount}/${s.instances.length}`} />
-            <Stat label="Daily backup time" value={s.retention.backupTime} />
-            <Stat
+            <StatCard
+              size="sm"
+              label="Backed up on time"
+              value={okCount}
+              total={s.instances.length}
+              icon={ShieldCheck}
+              tone={okCount < s.instances.length ? "amber" : "default"}
+            />
+            <StatCard size="sm" label="Daily backup time" value={s.retention.backupTime} icon={Clock} />
+            <StatCard
+              size="sm"
               label="Keep days / weeks / months"
               value={`${s.retention.retentionDaily} / ${s.retention.retentionWeekly} / ${s.retention.retentionMonthly}`}
+              icon={Archive}
             />
-            <Stat label="Destination" value={<span className="text-sm break-all">{s.destination ?? "not set"}</span>} />
+            <StatCard
+              size="sm"
+              label="Destination"
+              value={<span className="font-mono text-sm break-all">{s.destination ?? "not set"}</span>}
+              icon={HardDrive}
+            />
           </div>
         </div>
       )}
       {data.isLoading ? (
         <Skeleton className="h-40" />
       ) : (
-        <div className="rounded-lg border">
+        <div className="overflow-hidden rounded-xl border">
           <Table>
             <TableHeader>
               <TableRow>
@@ -157,17 +188,38 @@ export function BackupsPage() {
                       {r.name}
                     </span>
                   </TableCell>
-                  <TableCell className={cn(stale(r) && "font-medium text-amber-600 dark:text-amber-400")}>
-                    <TimeAgo value={r.lastOk?.startedAt} />
+                  <TableCell>
+                    {r.lastRun?.status === "failed" ? (
+                      <Tone tone="red">Failed</Tone>
+                    ) : stale(r) ? (
+                      <Tone tone="amber" icon={Clock}>
+                        {r.lastOk ? timeAgo(r.lastOk.startedAt) : "never"}
+                      </Tone>
+                    ) : (
+                      <span className="text-sm">
+                        <TimeAgo value={r.lastOk?.startedAt} />
+                      </span>
+                    )}
                   </TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {r.id === "self"
-                      ? "database dump"
-                      : r.withSecrets
-                        ? "workflows + credential secrets"
-                        : "workflows, credentials without secrets"}
+                  <TableCell>
+                    <div className="flex flex-wrap gap-1">
+                      {r.id === "self" ? (
+                        <Badge variant="outline">
+                          <Database /> database dump
+                        </Badge>
+                      ) : (
+                        <>
+                          <Badge variant="outline">
+                            <WorkflowIcon /> workflows
+                          </Badge>
+                          <Badge variant="outline" className={cn(!r.withSecrets && "text-muted-foreground")}>
+                            <KeyRound /> {r.withSecrets ? "credential secrets" : "credentials, no secrets"}
+                          </Badge>
+                        </>
+                      )}
+                    </div>
                   </TableCell>
-                  <TableCell className="text-muted-foreground">{r.backupTime}</TableCell>
+                  <TableCell className="font-mono text-xs text-muted-foreground">{r.backupTime}</TableCell>
                   <TableCell className="pr-4 text-right">
                     <Button
                       size="sm"
@@ -201,17 +253,6 @@ export function BackupsPage() {
   )
 }
 
-function Stat({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <Card className="gap-1 py-4">
-      <CardHeader className="px-4">
-        <CardDescription>{label}</CardDescription>
-        <CardTitle className="text-xl font-semibold tabular-nums">{value}</CardTitle>
-      </CardHeader>
-    </Card>
-  )
-}
-
 function BackupHistory({ id, name }: { id: string; name: string }) {
   const runs = useApi<Run[]>(`/backups/${id}/runs`, { refetchInterval: 5_000 })
   const [restoring, setRestoring] = useState<Run | null>(null)
@@ -235,9 +276,17 @@ function BackupHistory({ id, name }: { id: string; name: string }) {
               <TableCell className="whitespace-nowrap">{new Date(r.startedAt).toLocaleString()}</TableCell>
               <TableCell>
                 {r.status === "ok" ? (
-                  <Tone tone="green">{r.deletedAt ? "Expired" : r.includesSecrets ? "OK · with secrets" : "OK"}</Tone>
+                  r.deletedAt ? (
+                    <Tone tone="neutral">Expired</Tone>
+                  ) : (
+                    <Tone tone="green" icon={r.includesSecrets ? KeyRound : undefined}>
+                      {r.includesSecrets ? "OK · with secrets" : "OK"}
+                    </Tone>
+                  )
                 ) : r.status === "running" ? (
-                  <Tone tone="neutral">Running</Tone>
+                  <Tone tone="blue" spin>
+                    Running
+                  </Tone>
                 ) : (
                   <div className="space-y-1">
                     <Tone tone="red">Failed</Tone>
@@ -316,6 +365,7 @@ function RestoreDialog({ run, instanceId, onClose }: { run: Run | null; instance
     <Dialog open={run !== null} onOpenChange={(o) => !o && reset()}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
+          <DialogIcon icon={ArchiveRestore} />
           <DialogTitle>Restore from {run ? new Date(run.startedAt).toLocaleString() : ""}</DialogTitle>
           <DialogDescription>
             Restores one workflow with its credentials as an inactive copy. Your private key is used in memory and never

@@ -1,20 +1,32 @@
 # syntax=docker/dockerfile:1
 # n8n-ops server: API, MCP, pollers, and the built UI. Build context: repository root.
 
-FROM node:24.21.0-bookworm-slim AS build
+FROM node:24.21.0-bookworm-slim AS deps
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 RUN corepack enable
 WORKDIR /src
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/server/package.json apps/server/
 COPY apps/web/package.json apps/web/
+COPY apps/web-compact/package.json apps/web-compact/
 COPY packages/shared/package.json packages/shared/
-RUN pnpm install --frozen-lockfile --filter "@n8n-ops/server..." --filter "@n8n-ops/web..."
+RUN pnpm install --frozen-lockfile --filter "@n8n-ops/server..." --filter "@n8n-ops/web..." \
+  --filter "@n8n-ops/web-compact..."
 COPY config config
 COPY packages/shared packages/shared
-COPY apps/server apps/server
+
+# Each design builds in its own stage, so a change to one does not rebuild the other.
+FROM deps AS web
 COPY apps/web apps/web
-RUN pnpm --filter @n8n-ops/web run build && pnpm --filter @n8n-ops/server run build
+RUN pnpm --filter @n8n-ops/web run build
+
+FROM deps AS web-compact
+COPY apps/web-compact apps/web-compact
+RUN pnpm --filter @n8n-ops/web-compact run build
+
+FROM deps AS build
+COPY apps/server apps/server
+RUN pnpm --filter @n8n-ops/server run build
 
 FROM node:24.21.0-bookworm-slim
 # pg_dump for the nightly backup of the n8n-ops database (must match the PostgreSQL 18 server).
@@ -34,11 +46,13 @@ ENV NODE_ENV=production \
     N8N_OPS_VERSION=${VERSION} \
     PORT=8080 \
     WEB_DIR=web \
+    WEB_COMPACT_DIR=web-compact \
     MIGRATIONS_DIR=drizzle
 WORKDIR /app
 COPY --from=build /src/apps/server/dist ./dist
 COPY --from=build /src/apps/server/drizzle ./drizzle
-COPY --from=build /src/apps/web/dist ./web
+COPY --from=web /src/apps/web/dist ./web
+COPY --from=web-compact /src/apps/web-compact/dist ./web-compact
 RUN mkdir -p /data && chown node:node /data
 USER node
 EXPOSE 8080

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import type { Db } from "../db/client.ts"
 import { createSettings, defaults, resolveInstanceSettings } from "./settings.ts"
 
@@ -39,5 +39,133 @@ describe("public URL", () => {
 
   it("stays empty when neither is set", async () => {
     expect((await createSettings(dbWith()).get("general")).publicUrl).toBe("")
+  })
+})
+
+describe("web design", () => {
+  const log = { info() {}, warn() {} }
+  // A stand-in database: a stored General row, writes that can be slowed down, reads that can fail.
+  function fakeDb(stored?: object, { slowFirstWrite = false, failReads = 0 } = {}) {
+    let row = stored
+    let writes = 0
+    let reads = 0
+    const db = {
+      select: () => ({
+        from: () => ({
+          where: async () => {
+            reads += 1
+            if (reads <= failReads) throw new Error("database down")
+            return row ? [{ value: row }] : []
+          },
+        }),
+      }),
+      insert: () => ({
+        values: ({ value }: { value: object }) => ({
+          onConflictDoUpdate: async () => {
+            writes += 1
+            if (slowFirstWrite && writes === 1) await new Promise((r) => setTimeout(r, 30))
+            row = value
+          },
+        }),
+      }),
+    }
+    return { db: db as unknown as Db, stored: () => row }
+  }
+
+  it("is Regular while nothing is stored", async () => {
+    const settings = createSettings(fakeDb().db)
+    expect((await settings.get("general")).design).toBe("regular")
+    expect(settings.design()).toBe("regular")
+  })
+
+  it("reads an installation saved before designs existed as Regular, keeping its other values", async () => {
+    const settings = createSettings(fakeDb({ publicUrl: "https://ops.example.com", timezone: "Asia/Jerusalem" }).db)
+    expect(await settings.get("general")).toEqual({
+      publicUrl: "https://ops.example.com",
+      timezone: "Asia/Jerusalem",
+      design: "regular",
+    })
+  })
+
+  it("reads an unknown stored design as Regular without resetting the rest of General", async () => {
+    const settings = createSettings(
+      fakeDb({ publicUrl: "https://ops.example.com", timezone: "Asia/Jerusalem", design: "wide" }).db,
+    )
+    const general = await settings.get("general")
+    expect(general.design).toBe("regular")
+    expect(general.timezone).toBe("Asia/Jerusalem")
+    expect(general.publicUrl).toBe("https://ops.example.com")
+  })
+
+  it("refuses to store an unknown design", async () => {
+    const settings = createSettings(fakeDb().db)
+    await expect(
+      settings.set("general", { publicUrl: "", timezone: "UTC", design: "wide" as "regular" }),
+    ).rejects.toThrow()
+    expect(settings.design()).toBe("regular")
+  })
+
+  it("follows a saved General at once", async () => {
+    const settings = createSettings(fakeDb().db)
+    await settings.set("general", { publicUrl: "", timezone: "UTC", design: "compact" })
+    expect(settings.design()).toBe("compact")
+  })
+
+  it("ends as the last of two overlapping saves, like the database", async () => {
+    const store = fakeDb(undefined, { slowFirstWrite: true })
+    const settings = createSettings(store.db)
+    await Promise.all([
+      settings.set("general", { publicUrl: "", timezone: "UTC", design: "compact" }),
+      settings.set("general", { publicUrl: "", timezone: "UTC", design: "regular" }),
+    ])
+    expect(settings.design()).toBe("regular")
+    expect((store.stored() as { design: string }).design).toBe("regular")
+  })
+
+  it("loads the stored design at startup", async () => {
+    const settings = createSettings(fakeDb({ design: "compact" }).db)
+    await settings.loadDesign(log)
+    expect(settings.design()).toBe("compact")
+  })
+
+  it("serves the default while the database does not answer, then picks up the stored design", async () => {
+    vi.useFakeTimers()
+    try {
+      const settings = createSettings(fakeDb({ design: "compact" }, { failReads: 2 }).db)
+      await settings.loadDesign(log, 1_000)
+      expect(settings.design()).toBe("regular")
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(settings.design()).toBe("regular")
+      await vi.advanceTimersByTimeAsync(2_000)
+      expect(settings.design()).toBe("compact")
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe("web design, a startup read racing a save", () => {
+  it("keeps a design saved while the startup read was on its way", async () => {
+    let release: (rows: unknown[]) => void = () => {}
+    let row: object = { design: "regular" }
+    const db = {
+      select: () => ({
+        from: () => ({ where: () => new Promise((resolve) => (release = resolve)) }),
+      }),
+      insert: () => ({
+        values: ({ value }: { value: object }) => ({
+          onConflictDoUpdate: async () => {
+            row = value
+          },
+        }),
+      }),
+    } as unknown as Db
+    const settings = createSettings(db)
+    const loading = settings.loadDesign({ info() {}, warn() {} })
+    await settings.set("general", { publicUrl: "", timezone: "UTC", design: "compact" })
+    release([{ value: { design: "regular" } }]) // the read started before the save
+    await loading
+    expect(settings.design()).toBe("compact")
+    expect((row as { design: string }).design).toBe("compact")
   })
 })

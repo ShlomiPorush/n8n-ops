@@ -1,9 +1,37 @@
-import { CheckCircle2, Download, Info, Pencil, Plus, RefreshCw, Trash2, X } from "lucide-react"
+import {
+  Activity,
+  Bug,
+  CheckCircle2,
+  CircleDashed,
+  CircleX,
+  Cpu,
+  Download,
+  Eye,
+  HeartPulse,
+  History,
+  Info,
+  KeySquare,
+  Network,
+  Pencil,
+  PenLine,
+  Plus,
+  RefreshCw,
+  Server,
+  SlidersHorizontal,
+  Trash2,
+  TriangleAlert,
+  Workflow as WorkflowIcon,
+  X,
+} from "lucide-react"
 import { useEffect, useState } from "react"
 import { useNavigate, useParams } from "react-router"
 import { toast } from "sonner"
 import { AgentAccessCard } from "@/components/agent-access-card"
+import { DialogIcon } from "@/components/dialog-icon"
+import { EmptyState } from "@/components/empty-state"
 import { ListWithPanel } from "@/components/list-panel"
+import { PageHeader } from "@/components/page-header"
+import { StatCard } from "@/components/stat-card"
 import { Dot, type HealthState, TimeAgo, Tone } from "@/components/status"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -11,6 +39,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -113,39 +142,35 @@ export function InstancesPage() {
 
   const list = (
     <>
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Instances</h1>
-          <p className="text-muted-foreground">
-            {rows.length} registered{data.data?.latestVersion ? ` · latest n8n ${data.data.latestVersion}` : ""}
-          </p>
-        </div>
-        <Button onClick={() => setAdding(true)}>
-          <Plus /> Add instance
-        </Button>
-      </div>
+      <PageHeader
+        title="Instances"
+        icon={Server}
+        description={`${rows.length} registered${data.data?.latestVersion ? ` · latest n8n ${data.data.latestVersion}` : ""}`}
+        actions={
+          <Button onClick={() => setAdding(true)}>
+            <Plus /> Add instance
+          </Button>
+        }
+      />
       {data.isLoading ? (
         <Skeleton className="h-40" />
       ) : rows.length === 0 ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>No instances yet</CardTitle>
-            <CardDescription>
-              Add an n8n instance with its URL and an API key. Read-only is enough for monitoring.
-            </CardDescription>
-          </CardHeader>
-        </Card>
+        <EmptyState
+          icon={Server}
+          title="No instances yet"
+          description="Add an n8n instance with its URL and an API key. Read-only is enough for monitoring."
+        />
       ) : (
-        <div className="rounded-lg border">
+        <div className="@container overflow-hidden rounded-xl border">
           <Table>
             <TableHeader>
               <TableRow>
                 <TableHead className="pl-4">Instance</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead>Version</TableHead>
-                <TableHead>API key</TableHead>
+                <TableHead className="hidden @lg:table-cell">Version</TableHead>
+                <TableHead className="hidden @xl:table-cell">API key</TableHead>
                 <TableHead className="text-right">Open</TableHead>
-                <TableHead className="pr-4">Last backup</TableHead>
+                <TableHead className="hidden pr-4 @2xl:table-cell">Last backup</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -162,25 +187,58 @@ export function InstancesPage() {
                       {i.name}
                     </span>
                   </TableCell>
-                  <TableCell className={cn(i.health === "ok" && "text-muted-foreground")}>{healthLabel(i)}</TableCell>
                   <TableCell>
+                    <Tone
+                      tone={
+                        i.health === "down"
+                          ? "red"
+                          : i.health === "warn"
+                            ? "amber"
+                            : i.health === "ok"
+                              ? "green"
+                              : "neutral"
+                      }
+                      icon={i.health === "down" ? CircleX : i.health === "unknown" ? CircleDashed : undefined}
+                    >
+                      {healthLabel(i)}
+                    </Tone>
+                  </TableCell>
+                  <TableCell className="hidden @lg:table-cell">
                     <span
                       className={cn(
+                        "font-mono text-xs",
+                        !i.version && "text-muted-foreground",
                         behind(i.version, data.data?.latestVersion ?? null) && "text-amber-600 dark:text-amber-400",
                       )}
+                      title={
+                        behind(i.version, data.data?.latestVersion ?? null)
+                          ? `n8n ${data.data?.latestVersion} is out`
+                          : undefined
+                      }
                     >
                       {i.version ?? "unknown"}
                     </span>
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="hidden @xl:table-cell">
                     {i.capabilities.find((c) => c.key === "move")?.available ? (
-                      <Badge>read + write</Badge>
+                      <Badge variant="outline" className="gap-1">
+                        <PenLine /> read + write
+                      </Badge>
                     ) : (
-                      <Badge variant="secondary">read only</Badge>
+                      <Badge variant="outline" className="gap-1 text-muted-foreground">
+                        <Eye /> read only
+                      </Badge>
                     )}
                   </TableCell>
-                  <TableCell className="text-right tabular-nums">{i.openProblems}</TableCell>
-                  <TableCell className="pr-4 text-muted-foreground">
+                  <TableCell
+                    className={cn(
+                      "text-right font-medium tabular-nums",
+                      i.openProblems > 0 ? "text-rose-600 dark:text-rose-400" : "text-muted-foreground",
+                    )}
+                  >
+                    {i.openProblems}
+                  </TableCell>
+                  <TableCell className="hidden pr-4 text-muted-foreground @2xl:table-cell">
                     {i.lastBackup ? (
                       <span className={cn(i.lastBackup.status === "failed" && "text-destructive")}>
                         <TimeAgo value={i.lastBackup.at} />
@@ -236,6 +294,7 @@ function InstanceDetail({ id }: { id: string }) {
           <h2 className="text-3xl font-semibold tracking-tight">{i.name}</h2>
           <Tone
             tone={i.health === "down" ? "red" : i.health === "warn" ? "amber" : i.health === "ok" ? "green" : "neutral"}
+            icon={i.health === "down" ? CircleX : i.health === "unknown" ? CircleDashed : undefined}
           >
             {healthLabel(i)}
           </Tone>
@@ -268,13 +327,32 @@ function InstanceDetail({ id }: { id: string }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
-        <Stat label="Open problems" value={i.openProblems} />
-        <Stat label="Active / total workflows" value={`${i.workflowCounts.active}/${i.workflowCounts.total}`} />
-        <Stat label="Executions, 30 days" value={i.workflowCounts.runs30d.toLocaleString()} />
-        <Stat label="Failures checked" value={<TimeAgo value={i.lastPollAt} />} />
-        <Stat label="Health checked" value={<TimeAgo value={i.healthCheckedAt} />} />
-        <Stat label="Collection" value={i.collection === "worker" ? "Through worker" : "Direct"} />
+      <div className="@container">
+        <div className="grid grid-cols-2 gap-4 @3xl:grid-cols-3">
+          <StatCard
+            size="sm"
+            label="Open problems"
+            value={i.openProblems}
+            icon={Bug}
+            tone={i.openProblems ? "red" : "default"}
+          />
+          <StatCard
+            size="sm"
+            label="Active / total workflows"
+            value={i.workflowCounts.active}
+            total={i.workflowCounts.total}
+            icon={WorkflowIcon}
+          />
+          <StatCard size="sm" label="Executions, 30 days" value={i.workflowCounts.runs30d} icon={Activity} />
+          <StatCard size="sm" label="Failures checked" value={<TimeAgo value={i.lastPollAt} />} icon={History} />
+          <StatCard size="sm" label="Health checked" value={<TimeAgo value={i.healthCheckedAt} />} icon={HeartPulse} />
+          <StatCard
+            size="sm"
+            label="Collection"
+            value={i.collection === "worker" ? "Through worker" : "Direct"}
+            icon={i.collection === "worker" ? Cpu : Network}
+          />
+        </div>
       </div>
       {i.lastPollError && (
         <Card className="border-destructive/50">
@@ -287,7 +365,9 @@ function InstanceDetail({ id }: { id: string }) {
 
       <Card>
         <CardHeader>
-          <CardTitle>Health</CardTitle>
+          <CardTitle className="flex items-center gap-2">
+            <HeartPulse className="size-4 text-muted-foreground" /> Health
+          </CardTitle>
           <CardDescription>
             {i.collection === "worker"
               ? `Collected on the host by ${i.worker?.name ?? "the assigned worker"}.`
@@ -360,7 +440,9 @@ function InstanceDetail({ id }: { id: string }) {
 
       <Card>
         <CardHeader>
-          <CardTitle>Open problems</CardTitle>
+          <CardTitle className="flex items-center gap-2">
+            <Bug className="size-4 text-muted-foreground" /> Open problems
+          </CardTitle>
         </CardHeader>
         <CardContent>
           <ProblemsTable
@@ -373,7 +455,9 @@ function InstanceDetail({ id }: { id: string }) {
 
       <Card>
         <CardHeader>
-          <CardTitle>API key and what it allows</CardTitle>
+          <CardTitle className="flex items-center gap-2">
+            <KeySquare className="size-4 text-muted-foreground" /> API key and what it allows
+          </CardTitle>
           <CardDescription>
             {i.scopesSource === "discovered"
               ? `Read from GET /api/v1/discover · checked ${i.scopesCheckedAt ? new Date(i.scopesCheckedAt).toLocaleString() : "never"}`
@@ -438,6 +522,7 @@ function InstanceDetail({ id }: { id: string }) {
       <Dialog open={deleting} onOpenChange={setDeleting}>
         <DialogContent>
           <DialogHeader>
+            <DialogIcon icon={TriangleAlert} tone="red" />
             <DialogTitle>Remove {i.name}?</DialogTitle>
             <DialogDescription>
               n8n-ops stops monitoring it and deletes its problems, stored failures and backup history from n8n-ops.
@@ -445,6 +530,9 @@ function InstanceDetail({ id }: { id: string }) {
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
+            <DialogClose asChild>
+              <Button variant="outline">Cancel</Button>
+            </DialogClose>
             <Button
               variant="destructive"
               onClick={() =>
@@ -482,17 +570,6 @@ async function exportCredentials(id: string, name: string) {
   } catch (error) {
     toast.error((error as Error).message, { id: loading })
   }
-}
-
-function Stat({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <Card className="gap-1 py-4">
-      <CardHeader className="px-4">
-        <CardDescription>{label}</CardDescription>
-        <CardTitle className="text-xl font-semibold tabular-nums">{value}</CardTitle>
-      </CardHeader>
-    </Card>
-  )
 }
 
 function HealthRow({ label, ok, detail }: { label: string; ok?: boolean; detail?: string }) {
@@ -545,7 +622,9 @@ function OverridesCard({ instance }: { instance: InstanceDetailData }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Overrides</CardTitle>
+        <CardTitle className="flex items-center gap-2">
+          <SlidersHorizontal className="size-4 text-muted-foreground" /> Overrides
+        </CardTitle>
         <CardDescription>Empty fields use the global default shown as the placeholder.</CardDescription>
       </CardHeader>
       <CardContent>
@@ -650,25 +729,29 @@ export function InstanceDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
+      <DialogContent className="sm:max-w-xl">
         <DialogHeader>
+          <DialogIcon icon={Server} />
           <DialogTitle>{instance ? `Edit ${instance.name}` : "Add an instance"}</DialogTitle>
           <DialogDescription>The connection is tested before anything is saved.</DialogDescription>
         </DialogHeader>
         <FieldGroup>
-          <Field>
-            <FieldLabel htmlFor="i-name">Name</FieldLabel>
-            <Input id="i-name" value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="n8n-1" />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="i-url">Base URL</FieldLabel>
-            <Input
-              id="i-url"
-              value={form.baseUrl}
-              onChange={(e) => set("baseUrl", e.target.value)}
-              placeholder="https://n8n.example.com"
-            />
-          </Field>
+          <FormSection title="Connection" first />
+          <div className="grid gap-4 sm:grid-cols-[2fr_3fr]">
+            <Field>
+              <FieldLabel htmlFor="i-name">Name</FieldLabel>
+              <Input id="i-name" value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="n8n-1" />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="i-url">Base URL</FieldLabel>
+              <Input
+                id="i-url"
+                value={form.baseUrl}
+                onChange={(e) => set("baseUrl", e.target.value)}
+                placeholder="https://n8n.example.com"
+              />
+            </Field>
+          </div>
           <Field>
             <FieldLabel htmlFor="i-key">API key</FieldLabel>
             <Input
@@ -683,6 +766,7 @@ export function InstanceDialog({
               need workflow:create, workflow:activate and credential:create.
             </FieldDescription>
           </Field>
+          <FormSection title="Queue" />
           <Field orientation="horizontal">
             <Switch id="i-queue" checked={form.queueMode} onCheckedChange={(v) => set("queueMode", v)} />
             <FieldContent>
@@ -717,6 +801,7 @@ export function InstanceDialog({
               </Field>
             </>
           )}
+          <FormSection title="Health and the Docker host" />
           <Field>
             <FieldLabel>Check health and metrics</FieldLabel>
             <Select value={form.collection} onValueChange={(v) => set("collection", v)}>
@@ -771,5 +856,14 @@ export function InstanceDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  )
+}
+
+/** A titled break between groups of fields in a long form. */
+function FormSection({ title, first }: { title: string; first?: boolean }) {
+  return (
+    <div className={cn("text-xs font-medium tracking-wide text-muted-foreground uppercase", !first && "border-t pt-5")}>
+      {title}
+    </div>
   )
 }

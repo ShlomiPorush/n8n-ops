@@ -32,8 +32,9 @@ const ctx: Ctx = {
   events: new EventEmitter().setMaxListeners(100),
 }
 
+await ctx.settings.loadDesign(log)
 const { mounts, start } = features(ctx)
-const app = createApp(ctx, { webDir: config.webDir, mounts })
+const app = createApp(ctx, { webDir: config.webDir, webCompactDir: config.webCompactDir, mounts })
 const server = serve({ fetch: app.fetch, port: config.port }, ({ port }) => {
   log.info(`n8n-ops server ${config.version} listening`, { port })
 })

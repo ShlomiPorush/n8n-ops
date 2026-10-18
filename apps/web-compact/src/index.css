@@ -1,0 +1,493 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/onest";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/600.css";
+
+@custom-variant dark (&:is(.dark *));
+/* The full 240px sidebar: above 1100px, unless the user folded it into the icon rail (NL-7). */
+@custom-variant side {
+  @media (min-width: 1101px) {
+    html:not([data-nav="rail"]) & {
+      @slot;
+    }
+  }
+}
+/* Above 1100px with the sidebar folded into the icon rail. */
+@custom-variant folded {
+  @media (min-width: 1101px) {
+    html[data-nav="rail"] & {
+      @slot;
+    }
+  }
+}
+
+/*
+ * Design tokens. Every visual value lives here; components use the Tailwind names below and never raw
+ * colours, sizes or shadows. The accent is the ink: no brand colour. Colour means status only.
+ */
+:root {
+  --ui-font: "Onest Variable", system-ui, sans-serif;
+  --ui-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  --ui-bg: #ffffff;
+  --ui-panel: #f4f6f5;
+  --ui-raise: #ffffff;
+  --ui-ink: #111814;
+  --ui-muted: #5e6863;
+  --ui-line: #e3e7e5;
+  --ui-accent: #111814;
+  --ui-on-accent: #ffffff;
+  --ui-focus: #1f5fbf;
+
+  --ui-ok: #12803f;
+  --ui-warn: #9a6200;
+  --ui-fail: #c42b1c;
+  --ui-info: #1f5fbf;
+
+  /* Layout values that the plain CSS rules below need; the Tailwind names in @theme mirror them. */
+  --ui-pad-x: 16px;
+  --ui-pad-y: 9px;
+  --ui-tabbar: 64px;
+
+  /* shadcn/ui names, mapped onto the tokens so every primitive follows them. */
+  --background: var(--ui-bg);
+  --foreground: var(--ui-ink);
+  --card: var(--ui-panel);
+  --card-foreground: var(--ui-ink);
+  --popover: var(--ui-bg);
+  --popover-foreground: var(--ui-ink);
+  --primary: var(--ui-accent);
+  --primary-foreground: var(--ui-on-accent);
+  --secondary: var(--ui-panel);
+  --secondary-foreground: var(--ui-ink);
+  --muted: var(--ui-panel);
+  --muted-foreground: var(--ui-muted);
+  --accent: color-mix(in srgb, var(--ui-accent) 6%, transparent);
+  --accent-foreground: var(--ui-ink);
+  --destructive: var(--ui-fail);
+  --border: var(--ui-line);
+  --input: var(--ui-line);
+  --ring: var(--ui-focus);
+
+  color-scheme: light;
+}
+
+.dark {
+  --ui-bg: #0e1110;
+  --ui-panel: #171b19;
+  --ui-raise: #0e1110;
+  --ui-ink: #f2f5f3;
+  --ui-muted: #97a29c;
+  --ui-line: #262c29;
+  --ui-accent: #f2f5f3;
+  --ui-on-accent: #0e1110;
+  --ui-focus: #7db3ff;
+
+  --ui-ok: #3fcf7f;
+  --ui-warn: #f0b03f;
+  --ui-fail: #ff6b61;
+  --ui-info: #7db3ff;
+
+  color-scheme: dark;
+}
+
+/* The Tailwind theme holds only the tokens: the default palette, sizes and shadows are removed. */
+@theme inline {
+  --color-*: initial;
+  --color-transparent: transparent;
+  --color-current: currentColor;
+  --color-white: #ffffff;
+  --color-black: #000000;
+
+  --color-bg: var(--ui-bg);
+  --color-panel: var(--ui-panel);
+  --color-raise: var(--ui-raise);
+  --color-ink: var(--ui-ink);
+  --color-line: var(--ui-line);
+  --color-on-accent: var(--ui-on-accent);
+  --color-focus: var(--ui-focus);
+  --color-ok: var(--ui-ok);
+  --color-warn: var(--ui-warn);
+  --color-fail: var(--ui-fail);
+  --color-info: var(--ui-info);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --font-*: initial;
+  --font-sans: var(--ui-font);
+  --font-heading: var(--ui-font);
+  --font-mono: var(--ui-mono);
+
+  /* Type scale: page title, key figure, item title, section title, panel title, body, control, small, meta. */
+  --text-*: initial;
+  --text-h1: 28px;
+  --text-h1--line-height: 1.1;
+  --text-h1--letter-spacing: -0.035em;
+  --text-h1--font-weight: 800;
+  --text-figure: 24px;
+  --text-figure--line-height: 1.2;
+  --text-figure--letter-spacing: -0.02em;
+  --text-figure--font-weight: 750;
+  --text-title: 19px;
+  --text-title--line-height: 1.25;
+  --text-title--letter-spacing: -0.01em;
+  --text-title--font-weight: 700;
+  --text-h2: 16px;
+  --text-h2--line-height: 1.3;
+  --text-h2--letter-spacing: -0.01em;
+  --text-h2--font-weight: 650;
+  --text-head: 15px;
+  --text-head--line-height: 1.35;
+  --text-head--font-weight: 650;
+  --text-body: 14px;
+  --text-body--line-height: 1.5;
+  --text-ctl: 13px;
+  --text-ctl--line-height: 1.3;
+  --text-small: 12.5px;
+  --text-small--line-height: 1.4;
+  --text-meta: 12px;
+  --text-meta--line-height: 1.4;
+  /* Phone inputs: 16px so iOS does not zoom. */
+  --text-input-touch: 16px;
+
+  --font-weight-*: initial;
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-title: 650;
+  --font-weight-bold: 700;
+  --font-weight-figure: 750;
+  --font-weight-heavy: 800;
+
+  --tracking-*: initial;
+  --tracking-tight: -0.01em;
+  --tracking-tighter: -0.02em;
+
+  --radius-*: initial;
+  --radius-tag: 6px;
+  --radius-sm: 8px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 12px;
+  --radius-sheet: 16px;
+
+  --shadow-*: initial;
+  --shadow-float: 0 12px 32px rgb(0 0 0 / 0.14);
+  --shadow-modal: 0 24px 60px rgb(0 0 0 / 0.25);
+  --shadow-knob: 0 1px 2px rgb(0 0 0 / 0.25);
+
+  /* Named spacing for the layout tokens; the 4px Tailwind scale stays for small gaps. */
+  --spacing-pad-x: 16px;
+  --spacing-pad-y: 9px;
+  --spacing-gap: 14px;
+  --spacing-ctl: 34px;
+  --spacing-ctl-sm: 28px;
+  --spacing-chip: 30px;
+  --spacing-touch: 44px;
+  --spacing-side: 240px;
+  --spacing-rail: 72px;
+  --spacing-topbar: 56px;
+  --spacing-bar: 60px;
+  --spacing-tabbar: 64px;
+
+  /* Shell breakpoints: phone up to 760px, icon rail up to 1100px, sidebar above; list and detail from 1280px. */
+  --breakpoint-*: initial;
+  --breakpoint-md: 761px;
+  --breakpoint-lg: 1101px;
+  --breakpoint-xl: 1280px;
+  --breakpoint-2xl: 1600px;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-focus;
+  }
+  html,
+  body {
+    height: 100%;
+  }
+  html {
+    font-family: var(--ui-font);
+  }
+  body {
+    @apply bg-bg text-body text-ink antialiased;
+    font-variant-numeric: tabular-nums;
+  }
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+  :focus-visible {
+    outline: 2px solid var(--ui-focus);
+    outline-offset: 2px;
+  }
+  code,
+  kbd,
+  pre,
+  samp {
+    font-family: var(--ui-mono);
+    font-size: 0.9em;
+  }
+  a {
+    text-underline-offset: 3px;
+  }
+  /* Phones: 16px in fields so iOS does not zoom in on focus. */
+  @media (max-width: 760px) {
+    input:not([type="checkbox"]):not([type="radio"]),
+    select,
+    textarea {
+      font-size: var(--text-input-touch);
+    }
+  }
+}
+
+/*
+ * Layers, from the top (OT-3). Use only these values:
+ * toast 100000 > confirm 99999 (a confirm opened from a dialog) > dialog and its backdrop 50 > popovers, menus
+ * and pickers 50 (Radix portals, opened last so they sit above) > save bar 45 > tab bar 40 > More sheet 36 and
+ * its veil 35 > phone top bar 30 > sticky heads inside a page 10 > chart tooltips 3.
+ */
+
+/*
+ * Motion explains a state change and nothing else (AX-8): .12s tooltips and flyouts, .15s switches, chevrons,
+ * grips and hover colours, .2s sheets and dialogs, .3s toast fade. Under reduced motion every transition and
+ * animation is off, the sheet included.
+ */
+/* biome-ignore-start lint/complexity/noImportantStyles: one global rule must beat every utility class */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
+}
+/* biome-ignore-end lint/complexity/noImportantStyles: one global rule must beat every utility class */
+
+/* Thin themed scrollbars (OT-4). */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--ui-muted) 45%, transparent) transparent;
+}
+
+/*
+ * Phone dialogs are bottom sheets (DS-1, DS-2, DS-4): rounded top corners, four fifths of the screen at the
+ * start, square corners and clear of the notch once grown to full height.
+ */
+@media (max-width: 760px) {
+  [data-slot="dialog-content"] {
+    inset: auto 0 0 0;
+    max-height: 80vh;
+    /* biome-ignore lint/suspicious/noDuplicateProperties: 80vh above is the fallback where dvh is unknown */
+    max-height: 80dvh;
+    border-radius: 16px 16px 0 0;
+    transition: border-radius 0.2s ease;
+  }
+  [data-slot="dialog-content"][data-full] {
+    border-radius: 0;
+    padding-top: env(safe-area-inset-top);
+  }
+}
+/* The grip: a short line in a large hit area that turns bolder and ink while held. */
+[data-slot="dialog-grip"] {
+  place-items: center;
+  flex-shrink: 0;
+  width: 120px;
+  height: 20px;
+  margin: 0 auto -4px;
+  touch-action: none;
+  cursor: grab;
+}
+[data-slot="dialog-grip"] > span {
+  width: 40px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--ui-line);
+  transition:
+    width 0.15s ease,
+    height 0.15s ease,
+    background-color 0.15s ease;
+}
+[data-held] [data-slot="dialog-grip"] {
+  cursor: grabbing;
+}
+[data-held] [data-slot="dialog-grip"] > span {
+  width: 56px;
+  height: 5px;
+  background: var(--ui-ink);
+}
+
+/* Sortable headers (TB-1): a small triangle, hidden until sorted, a faint preview on hover. */
+[data-sort-head]::after {
+  content: "";
+  margin-inline-start: 5px;
+  border-inline: 4px solid transparent;
+  border-top: 5px solid currentColor;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+[aria-sort="ascending"] > [data-sort-head]::after {
+  border-top: 0;
+  border-bottom: 5px solid currentColor;
+  opacity: 1;
+}
+[aria-sort="descending"] > [data-sort-head]::after {
+  opacity: 1;
+}
+@media (hover: hover) {
+  [aria-sort="none"] > [data-sort-head]:hover::after {
+    opacity: 0.35;
+  }
+}
+
+/*
+ * Tables stack into rows where they have less than 560px, on a phone or beside a reading pane (TB-14): the
+ * header row goes, the first cell takes the first line, every other value carries its column name, the
+ * actions take the last line and empty cells disappear. A sort control replaces the header row.
+ */
+[data-slot="table-wrap"] {
+  container-type: inline-size;
+}
+[data-slot="table-sort"] {
+  display: none;
+}
+@container (max-width: 559px) {
+  [data-slot="table-sort"] {
+    display: flex;
+  }
+  [data-stack],
+  [data-stack] > tbody {
+    display: block;
+    min-width: 0;
+  }
+  [data-stack] > thead {
+    display: none;
+  }
+  [data-stack] > tbody > tr {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 12px;
+    padding: var(--ui-pad-y) var(--ui-pad-x);
+  }
+  [data-stack] > tbody > tr > td {
+    display: block;
+    min-width: 0;
+    max-width: 100%;
+    padding: 0;
+    text-align: start;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  /* The name of the item leads on its own line: the cell marked data-primary, else the first one. */
+  [data-stack] > tbody > tr > td[data-primary] {
+    order: -1;
+  }
+  [data-stack] > tbody > tr:not(:has(> [data-primary])) > td:first-child,
+  [data-stack] > tbody > tr > td:is([data-primary], [data-wide], [colspan]),
+  [data-stack] > tbody > tr > td:last-child:has([data-slot="button"]) {
+    flex-basis: 100%;
+  }
+  /* Every other value says what it is, since the column header is gone. */
+  [data-stack] > tbody > tr > td[data-label]:not([data-primary], [data-nolabel], [colspan])::before {
+    content: attr(data-label) " ";
+    color: var(--ui-muted);
+    font-weight: 400;
+  }
+  /* A labelled value stays on its label's line, also when it is drawn as a block. */
+  [data-stack] > tbody > tr > td[data-label]:not([data-primary], [data-nolabel], [data-wide], [colspan]) > * {
+    display: inline-flex;
+    max-width: 100%;
+    vertical-align: baseline;
+  }
+  [data-stack] > tbody > tr:not(:has(> [data-primary])) > td:first-child::before,
+  [data-stack] > tbody > tr > td:last-child:has([data-slot="button"])::before {
+    content: none;
+  }
+  [data-stack] > tbody > tr > td:empty {
+    display: none;
+  }
+}
+
+/* Status tint for tags, banners and counters: the status colour at 14% over whatever is below. */
+@utility tint-ok {
+  color: var(--ui-ok);
+  background-color: color-mix(in srgb, var(--ui-ok) 14%, transparent);
+}
+@utility tint-warn {
+  color: var(--ui-warn);
+  background-color: color-mix(in srgb, var(--ui-warn) 15%, transparent);
+}
+@utility tint-fail {
+  color: var(--ui-fail);
+  background-color: color-mix(in srgb, var(--ui-fail) 14%, transparent);
+}
+@utility tint-info {
+  color: var(--ui-info);
+  background-color: color-mix(in srgb, var(--ui-info) 14%, transparent);
+}
+@utility tint-muted {
+  color: var(--ui-muted);
+  background-color: color-mix(in srgb, var(--ui-muted) 14%, transparent);
+}
+
+/* Hover tint for clickable rows, only where there is a pointer so a tapped row does not stay grey. */
+@utility hover-row {
+  cursor: pointer;
+  @media (hover: hover) {
+    &:hover {
+      background-color: color-mix(in srgb, var(--ui-accent) 5%, transparent);
+    }
+  }
+}
+
+/* A panel of rows: tinted, flat, no border or shadow. */
+@utility panel {
+  background-color: var(--ui-panel);
+  border-radius: 12px;
+}
+
+/* While the save bar shows, every scrolling page keeps room under its last field (SV-1). */
+html[data-unsaved] :is(#main, [data-scroll-pane]) {
+  padding-bottom: 96px;
+}
+@media (max-width: 760px) {
+  html[data-unsaved] #main {
+    padding-bottom: calc(var(--ui-tabbar) + 76px + env(safe-area-inset-bottom));
+  }
+}
+
+/* A target reached from the search is ringed for a moment, so the eye finds it (SR-6). */
+@keyframes search-flash {
+  0%,
+  40% {
+    box-shadow: inset 0 0 0 3px color-mix(in srgb, var(--ui-focus) 45%, transparent);
+  }
+  100% {
+    box-shadow: inset 0 0 0 3px transparent;
+  }
+}
+.search-flash {
+  animation: search-flash 2s ease;
+}

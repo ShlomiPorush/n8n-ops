@@ -46,6 +46,7 @@ The product is generic and must not depend on the details of this environment. V
 
 - **English only, LTR only.** No Hebrew, no RTL, no localization layer, no language setting.
 - **Component library:** shadcn/ui with the classic **Vega** style, Tailwind CSS, lucide icons. Default neutral color scheme. Light and dark themes.
+- **Two designs.** Settings → General → Design chooses, for the whole installation, between **Regular** (the layout described here, the default) and **Compact** (the v3 design language: denser screens, a top bar with search, sheets on phones). Both cover every page and feature; a new UI feature is built in both. Switching reloads the page into the other design and is audited.
 - **Layout (prototype variant D):**
   - shadcn Sidebar (inset, collapsible to icons) with breadcrumb header and user menu.
   - Home (Overview): stat cards, a "needs attention" table, and a tile per instance colored by health.

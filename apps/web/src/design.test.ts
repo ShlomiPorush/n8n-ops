@@ -91,12 +91,20 @@ describe("one app, two looks", () => {
     const found = sources.flatMap(({ path, text }) =>
       [...text.matchAll(/(["'`])((?:(?!\1)[^\\\n])*\b(?:regular|compact):(?:(?!\1)[^\\\n])*)\1/g)]
         .map((m) => m[2] ?? "")
-        .filter((s) => !s.split(/\s+/).filter(Boolean).every((token) => classLike.test(token)))
+        .filter(
+          (s) =>
+            !s
+              .split(/\s+/)
+              .filter(Boolean)
+              .every((token) => classLike.test(token)),
+        )
         .map((s) => `${rel(path)}: ${s}`),
     )
     expect(found).toEqual([])
     // And no variant outside a string at all.
-    const bare = offenders(/\b(?:regular|compact):[\w[]/).filter((line) => !/["'`][^"'`]*\b(?:regular|compact):/.test(line))
+    const bare = offenders(/\b(?:regular|compact):[\w[]/).filter(
+      (line) => !/["'`][^"'`]*\b(?:regular|compact):/.test(line),
+    )
     expect(bare).toEqual([])
   })
 })

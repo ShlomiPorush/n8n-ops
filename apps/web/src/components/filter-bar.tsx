@@ -81,6 +81,8 @@ export function Picker({
           className={cn(
             "inline-flex h-chip max-w-full min-w-0 shrink-0 items-center gap-1.5 rounded-full border border-line bg-raise ps-3 pe-2.5 text-ctl font-semibold whitespace-nowrap text-ink transition-colors duration-150 [@media(hover:hover)]:hover:border-muted-foreground",
             "data-set:border-primary data-set:bg-primary data-set:text-primary-foreground",
+            // Regular: a squarer, quieter control; a filter in use is a grey fill, as on #29.
+            "regular:h-9 regular:rounded-sm regular:font-medium regular:data-set:border-line regular:data-set:bg-fill regular:data-set:text-ink",
           )}
         >
           <span className="font-medium opacity-75">{label}:</span>
@@ -186,7 +188,7 @@ export function SearchBox({
   return (
     <label
       className={cn(
-        "flex h-ctl min-w-0 cursor-text items-center gap-2 rounded-sm border border-input bg-bg px-2.5 transition-colors duration-150 focus-within:border-primary",
+        "flex h-ctl min-w-0 cursor-text items-center gap-2 rounded-sm border border-input bg-bg px-2.5 transition-colors duration-150 focus-within:border-primary regular:h-9 regular:shadow-card",
         className,
       )}
     >

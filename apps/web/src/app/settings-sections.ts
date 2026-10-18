@@ -1,3 +1,5 @@
+import { Bell, Bot, Globe, HardDrive, KeyRound, KeySquare, type LucideIcon, Mail, Send, SlidersHorizontal, UserRound } from "lucide-react"
+
 /** The settings sections, grouped as they appear beside the form, in the sidebar flyout and in the picker. */
 export const settingsGroups = [
   {
@@ -39,3 +41,17 @@ const sections: readonly (readonly [string, string])[] = settingsGroups.flatMap(
 )
 
 export const settingsSectionLabel = (section: string): string | undefined => sections.find(([k]) => k === section)?.[1]
+
+/** Each section's icon, drawn by Regular beside its name (#29). */
+export const settingsIcons: Record<SettingsSection, LucideIcon> = {
+  general: Globe,
+  defaults: SlidersHorizontal,
+  alerts: Bell,
+  telegram: Send,
+  email: Mail,
+  storage: HardDrive,
+  keys: KeyRound,
+  access: Bot,
+  tokens: KeySquare,
+  account: UserRound,
+}

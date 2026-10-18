@@ -3,7 +3,10 @@ import {
   ArrowRight,
   ArrowRightLeft as ArrowRightLeftIcon,
   CheckCircle2,
+  Copy as CopyIcon,
+  PowerOff as PowerOffIcon,
   RefreshCw,
+  ServerOff as ServerOffIcon,
   ShieldCheck,
   XCircle,
 } from "lucide-react"
@@ -60,6 +63,9 @@ type MapData = {
 /** Error rate above which a workflow's failures stand out (percent of its runs in 30 days). */
 const ERROR_RATE_FAIL = 3
 
+/** Regular: the insight panels are summary cards whose lines run without rules (#29). */
+const summary = "regular:pb-3 regular:[&>:not(header)]:border-t-0 regular:[&>:not(header)]:py-2"
+
 export function WorkflowsPage() {
   const [params, setParams] = useSearchParams()
   const q = params.get("q") ?? ""
@@ -110,8 +116,13 @@ export function WorkflowsPage() {
     >
       {ins && (
         <div className="grid items-start gap-gap xl:grid-cols-3">
-          <Panel>
-            <PanelHead title="Duplicate workflows" count={n(ins.duplicateGroups.length)} />
+          <Panel className={summary}>
+            <PanelHead
+              title="Duplicate workflows"
+              count={n(ins.duplicateGroups.length)}
+              icon={CopyIcon}
+              tone={ins.duplicateGroups.length ? "warn" : undefined}
+            />
             {ins.duplicateGroups.length === 0 ? (
               <p className="border-t border-line px-pad-x py-pad-y text-muted-foreground">No workflow exists twice.</p>
             ) : (
@@ -130,8 +141,8 @@ export function WorkflowsPage() {
               ))
             )}
           </Panel>
-          <Panel>
-            <PanelHead title="Instances almost unused" count={n(ins.unusedInstances.length)} />
+          <Panel className={summary}>
+            <PanelHead title="Instances almost unused" count={n(ins.unusedInstances.length)} icon={ServerOffIcon} />
             {ins.unusedInstances.length === 0 ? (
               <p className="border-t border-line px-pad-x py-pad-y text-muted-foreground">
                 Every instance runs workflows.
@@ -147,8 +158,8 @@ export function WorkflowsPage() {
               ))
             )}
           </Panel>
-          <Panel>
-            <PanelHead title="Inactive workflows" count={n(ins.inactive)} />
+          <Panel className={summary}>
+            <PanelHead title="Inactive workflows" count={n(ins.inactive)} icon={PowerOffIcon} />
             <p className="border-t border-line px-pad-x py-pad-y text-muted-foreground">
               Candidates to archive before consolidating. Map read <TimeAgo value={ins.lastSyncedAt} />.
             </p>

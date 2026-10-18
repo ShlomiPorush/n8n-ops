@@ -1,8 +1,10 @@
 import { Check, Copy, Inbox, Loader2, Lock, type LucideIcon } from "lucide-react"
 import { useEffect, useState } from "react"
-import { Link } from "react-router"
+import { Link, useLocation } from "react-router"
 import { PageActions, useTopBar } from "@/app/chrome"
+import { pageOf } from "@/app/nav"
 import { Figure } from "@/components/skin/figure"
+import { PageIcon, PageTitle } from "@/components/skin/page-title"
 import { timeAgo, useTick } from "@/components/status"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -60,23 +62,34 @@ export function PageHead({
 }) {
   const wide = useTopBar()
   const fresh = updatedAt ? <Updated at={updatedAt} /> : null
+  const said = Boolean(description || fresh)
   if (wide)
     return (
       <>
         {actions && <PageActions>{actions}</PageActions>}
-        {(description || fresh) && (
-          <p className="mb-1 text-muted-foreground">
-            {description}
-            {description && fresh && " · "}
-            {fresh}
-          </p>
-        )}
+        {/* Regular also draws the page's icon and name here, large, above the line (#29). */}
+        <div
+          data-slot="page-head"
+          className={cn("mb-1 regular:flex regular:items-start regular:gap-3.5", !said && "compact:hidden")}
+        >
+          <PageIcon />
+          <div className="min-w-0">
+            <PageTitle title={title} />
+            {said && (
+              <p className="text-muted-foreground regular:mt-0.5">
+                {description}
+                {description && fresh && " · "}
+                {fresh}
+              </p>
+            )}
+          </div>
+        </div>
       </>
     )
   return (
     <div className="mb-1 grid gap-1.5">
       <div className="flex items-start gap-3">
-        <h1 className="min-w-0 flex-1 text-figure font-heavy tracking-tighter break-words">{title}</h1>
+        <h1 className="min-w-0 flex-1 text-figure font-heavy tracking-tighter break-words regular:text-h1">{title}</h1>
         {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
       </div>
       {(description || fresh) && (
@@ -118,6 +131,8 @@ export function PanelHead({
   action,
   description,
   className,
+  icon: Icon,
+  tone,
 }: {
   title: React.ReactNode
   count?: React.ReactNode
@@ -125,12 +140,51 @@ export function PanelHead({
   action?: React.ReactNode
   description?: React.ReactNode
   className?: string
+  /**
+   * Makes the panel a summary card in Regular (#29): the title a small label, the count a large figure under it,
+   * and this icon in a tile at the end. Compact keeps its one line head.
+   */
+  icon?: LucideIcon
+  tone?: "warn"
 }) {
   return (
-    <header className={cn("px-pad-x pt-[13px] pb-[9px]", className)}>
-      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-2">
-        <h2 className="text-head">{title}</h2>
-        {count !== undefined && <span className="font-medium text-muted-foreground tabular-nums">{count}</span>}
+    <header
+      className={cn(
+        "px-pad-x pt-[13px] pb-[9px] regular:pt-5 regular:pb-4",
+        Icon && "regular:relative regular:pe-16 regular:pt-6",
+        className,
+      )}
+    >
+      {Icon && (
+        <span
+          aria-hidden
+          className={cn(
+            "absolute end-pad-x top-6 hidden size-9 place-items-center rounded-sm regular:grid",
+            tone === "warn" ? "tint-warn" : "bg-fill text-muted-foreground",
+          )}
+        >
+          <Icon className="size-4.5" />
+        </span>
+      )}
+      <div
+        className={cn(
+          "flex flex-wrap items-center gap-x-2.5 gap-y-2",
+          Icon && "regular:flex-col regular:items-start regular:gap-y-1",
+        )}
+      >
+        <h2 className={cn("text-head", Icon && "regular:text-body regular:font-normal regular:text-muted-foreground")}>
+          {title}
+        </h2>
+        {count !== undefined && (
+          <span
+            className={cn(
+              "font-medium text-muted-foreground tabular-nums",
+              Icon && "regular:text-figure regular:text-ink",
+            )}
+          >
+            {count}
+          </span>
+        )}
         {(more || action) && (
           <div className="ms-auto flex items-center gap-2">
             {action}
@@ -142,7 +196,9 @@ export function PanelHead({
           </div>
         )}
       </div>
-      {description && <p className="mt-0.5 text-small text-muted-foreground">{description}</p>}
+      {description && (
+        <p className="mt-0.5 text-small text-muted-foreground regular:mt-1 regular:text-body">{description}</p>
+      )}
     </header>
   )
 }
@@ -160,7 +216,7 @@ export function Row({
   to?: string
   onClick?: () => void
   current?: boolean
-  /** A 3px status edge at the start; healthy rows keep it quiet. */
+  /** A 3px status edge at the start; healthy rows keep it quiet. Regular has no edges: its tags carry status. */
   edge?: "ok" | "warn" | "fail" | "info" | "muted"
   children: React.ReactNode
 }) {
@@ -168,7 +224,7 @@ export function Row({
     "flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 border-t border-line px-pad-x py-pad-y",
     (to || onClick) && "hover-row",
     current && "bg-accent",
-    edge && "border-s-3",
+    edge && "border-s-3 regular:border-s-0",
     edge === "ok" && "border-s-ok/55",
     edge === "warn" && "border-s-warn",
     edge === "fail" && "border-s-fail",
@@ -214,7 +270,7 @@ export function KV({
   )
 }
 
-/** An alert row: a 4px status bar, the text, one action. */
+/** An alert row: a 4px status bar (Compact; Regular's tag carries the status), the text, one action. */
 export function AlertRow({
   tone,
   title,
@@ -233,7 +289,7 @@ export function AlertRow({
       <span
         aria-hidden
         className={cn(
-          "w-1 shrink-0 self-stretch rounded-e-kbd",
+          "w-1 shrink-0 self-stretch rounded-e-kbd regular:hidden",
           tone === "fail" && "bg-fail",
           tone === "warn" && "bg-warn",
           tone === "info" && "bg-info",
@@ -246,7 +302,7 @@ export function AlertRow({
       {action && <div className="shrink-0 self-center pe-pad-x">{action}</div>}
     </>
   )
-  const cls = "flex items-start gap-3.5 border-t border-line pe-pad-x"
+  const cls = "flex items-start gap-3.5 border-t border-line pe-pad-x regular:ps-pad-x"
   if (to)
     return (
       <Link to={to} className={cn(cls, "hover-row")}>
@@ -355,18 +411,25 @@ export function Empty({
   title,
   children,
   action,
-  icon: Icon = Inbox,
+  icon,
   className,
 }: {
   title: React.ReactNode
   children?: React.ReactNode
   action?: React.ReactNode
-  /** Drawn by Regular only, above the sentence. */
+  /** Drawn by Regular only, above the sentence; the page's own icon when not given. */
   icon?: LucideIcon
   className?: string
 }) {
+  const Icon = icon ?? pageOf(useLocation().pathname)?.item.icon ?? Inbox
   return (
-    <div className={cn("px-pad-x py-9 text-center text-muted-foreground", className)}>
+    <div
+      className={cn(
+        "px-pad-x py-9 text-center text-muted-foreground",
+        "regular:m-pad-x regular:rounded-lg regular:border regular:border-dashed regular:border-line regular:py-10",
+        className,
+      )}
+    >
       <span
         aria-hidden
         className="mx-auto mb-3 hidden size-11 place-items-center rounded-full bg-fill ring-8 ring-fill/40 regular:grid"

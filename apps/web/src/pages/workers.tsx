@@ -3,6 +3,7 @@ import { useState } from "react"
 import { Link } from "react-router"
 import { useConfirm } from "@/components/confirm"
 import { Copyable, Empty, LoadError, Loading, Page, Panel, PanelHead, UserText } from "@/components/kit"
+import { HostMark } from "@/components/skin/marks"
 import { StatusTag, TimeAgo, When } from "@/components/status"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -64,8 +65,13 @@ export function WorkersPage() {
         </Button>
       }
     >
-      <Panel>
-        <PanelHead title="Paired workers" count={workers.data ? n(list.length) : undefined} />
+      {/* Regular sets each worker on a card of its own (#29); Compact lists them in one panel. */}
+      <Panel className="regular:grid regular:gap-3 regular:overflow-visible regular:rounded-none regular:bg-transparent regular:shadow-none regular:ring-0">
+        <PanelHead
+          title="Paired workers"
+          count={workers.data ? n(list.length) : undefined}
+          className="regular:px-0 regular:pt-0 regular:pb-0"
+        />
         {workers.error ? (
           <LoadError what="workers" error={workers.error} retry={() => workers.refetch()} />
         ) : workers.isLoading ? (
@@ -80,11 +86,13 @@ export function WorkersPage() {
               key={w.id}
               className={cn(
                 "grid gap-x-4 gap-y-1.5 border-t border-s-3 border-line px-pad-x py-3 md:grid-cols-[minmax(0,1fr)_auto]",
+                "regular:max-w-3xl regular:rounded-lg regular:border-0 regular:bg-panel regular:p-5 regular:shadow-card regular:ring-1 regular:ring-ink/10",
                 w.online ? "border-s-ok/55" : "border-s-fail",
               )}
             >
-              <div className="flex min-w-0 flex-wrap items-center gap-2">
-                <UserText className="font-semibold">{w.name}</UserText>
+              <div className="flex min-w-0 flex-wrap items-center gap-2 regular:gap-3">
+                <HostMark />
+                <UserText className="font-semibold regular:text-head">{w.name}</UserText>
                 <StatusTag kind="worker" status={w.online ? "online" : "offline"} />
               </div>
               <div className="row-span-2 self-center max-md:order-last">
@@ -108,7 +116,7 @@ export function WorkersPage() {
                     <>no instances yet (assign it on the instance)</>
                   )}
                 </p>
-                <p className="mt-0.5 flex flex-wrap gap-x-4 text-small">
+                <p className="mt-0.5 flex flex-wrap gap-x-4 text-small regular:mt-3 regular:gap-x-0 regular:divide-x regular:divide-line regular:border-t regular:border-line regular:pt-3 regular:[&>span]:px-4 regular:[&>span:first-child]:ps-0">
                   <span>
                     Last seen <TimeAgo value={w.lastSeenAt} />
                   </span>

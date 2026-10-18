@@ -1,23 +1,15 @@
 import { useQueryClient } from "@tanstack/react-query"
 import {
-  Bug,
   ChevronRight,
-  Cpu,
-  DatabaseBackup,
   Ellipsis,
-  KeyRound,
-  LayoutDashboard,
   LogOut,
   Monitor,
   Moon,
   PanelLeftClose,
   PanelLeftOpen,
-  ScrollText,
-  Server,
   Settings,
   ShieldCheck,
   Sun,
-  Workflow,
 } from "lucide-react"
 import { useTheme } from "next-themes"
 import { Popover as PopoverPrimitive, Dialog as SheetPrimitive } from "radix-ui"
@@ -25,6 +17,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { Link, Navigate, NavLink, Outlet, useLocation, useNavigate, useNavigationType } from "react-router"
 import { ChromeContext } from "@/app/chrome"
 import { DesignSync } from "@/app/design-sync"
+import { groups, isActive, type NavItem, operate, pageOf, system } from "@/app/nav"
 import { GlobalSearch, PhoneSearch, type SearchPage } from "@/app/search"
 import { settingsGroups } from "@/app/settings-sections"
 import { SaveScope } from "@/components/save-bar"
@@ -48,24 +41,6 @@ import { useOverlayHistory } from "@/lib/overlay-history"
 import { n, plural } from "@/lib/time"
 import { cn } from "@/lib/utils"
 
-type NavItem = { to: string; label: string; icon: typeof Bug; count?: "problems" | "access" }
-const operate: NavItem[] = [
-  { to: "/", label: "Overview", icon: LayoutDashboard },
-  { to: "/problems", label: "Problems", icon: Bug, count: "problems" },
-  { to: "/instances", label: "Instances", icon: Server },
-  { to: "/workflows", label: "Workflows", icon: Workflow },
-  { to: "/backups", label: "Backups", icon: DatabaseBackup },
-  { to: "/access", label: "Agent access", icon: KeyRound, count: "access" },
-]
-const system: NavItem[] = [
-  { to: "/workers", label: "Workers", icon: Cpu },
-  { to: "/settings", label: "Settings", icon: Settings },
-  { to: "/audit", label: "Audit log", icon: ScrollText },
-]
-const groups = [
-  { label: "Operate", items: operate },
-  { label: "System", items: system },
-]
 /** The phone tab bar: the four pages used most; every page is in the More sheet. */
 const tabs = operate.slice(0, 4)
 /** Every page, for the search. */
@@ -88,18 +63,6 @@ export function RequireAuth() {
     )
   if (me.data && !me.data.twoFactor) return <Navigate to="/setup" replace />
   return <Outlet />
-}
-
-const isActive = (item: NavItem, pathname: string) =>
-  item.to === "/" ? pathname === "/" : pathname === item.to || pathname.startsWith(`${item.to}/`)
-
-/** The page of an address, and the navigation group it belongs to. */
-function pageOf(pathname: string) {
-  for (const g of groups) {
-    const item = g.items.find((i) => isActive(i, pathname))
-    if (item) return { group: g.label, item }
-  }
-  return null
 }
 
 /** How many things on this page wait for action, and how urgent they are. Nothing when there is nothing to do. */
@@ -211,8 +174,9 @@ function TopBar({
   // While the search is in use it widens and the page buttons step aside (SR-2).
   const [searching, setSearching] = useState(false)
   return (
-    <header className="hidden h-bar shrink-0 items-center border-b border-line bg-bg md:flex">
-      <div className="flex h-full w-rail shrink-0 items-center justify-center gap-2.5 border-e border-line bg-side side:w-side side:justify-start side:ps-[18px] side:pe-2.5">
+    // A subgrid of the shell: the brand above the sidebar's column, the bar above the page's.
+    <header className="hidden h-bar border-b border-line bg-bg md:col-span-2 md:col-start-1 md:row-start-1 md:grid md:grid-cols-subgrid regular:h-16 regular:border-b-0 regular:bg-transparent">
+      <div className="flex h-full min-w-0 items-center justify-center gap-2.5 border-e border-line bg-side side:justify-start side:ps-[18px] side:pe-2.5 regular:border-e-0 regular:bg-transparent">
         <Link to="/" aria-label="n8n-ops, Overview" className="flex shrink-0 rounded-sm">
           <BrandMark />
         </Link>
@@ -220,18 +184,25 @@ function TopBar({
           <span className="block truncate text-head font-bold tracking-tight">n8n-ops</span>
           <span className="block truncate text-meta text-muted-foreground">Operations console</span>
         </span>
-        <NavToggle {...nav} className="hidden side:inline-flex" />
+        <NavToggle {...nav} className="hidden compact:side:inline-flex" />
       </div>
-      <nav aria-label="You are here" className="flex h-full min-w-0 flex-1 items-center px-[22px] lg:px-7">
-        <ol className="flex min-w-0 items-center gap-2">
-          {page && (
-            <li className="hidden shrink-0 items-center gap-2 text-small font-semibold text-muted-foreground lg:flex">
-              {page.group}
-              <ChevronRight aria-hidden className="size-3.5" />
-            </li>
-          )}
-          <li className="min-w-0 shrink-0">
-            <h1 className="truncate text-title font-heavy tracking-tighter">
+      <div className="flex h-full min-w-0 items-center regular:mt-2 regular:me-2 regular:h-auto regular:border-b regular:border-line">
+        {/* Regular folds the sidebar from the start of the bar, behind a short divider (#29). */}
+        <NavToggle {...nav} className="ms-3 hidden regular:lg:inline-flex" />
+        <span aria-hidden className="ms-2 hidden h-4 w-px shrink-0 bg-line regular:lg:block" />
+        <nav
+          aria-label="You are here"
+          className="flex h-full min-w-0 flex-1 items-center px-[22px] lg:px-7 regular:lg:ps-3.5"
+        >
+          <ol className="flex min-w-0 items-center gap-2">
+            {page && (
+              <li className="hidden shrink-0 items-center gap-2 text-small font-semibold text-muted-foreground compact:lg:flex">
+                {page.group}
+                <ChevronRight aria-hidden className="size-3.5" />
+              </li>
+            )}
+            <li className="min-w-0 shrink-0">
+              <h1 className="truncate text-title font-heavy tracking-tighter regular:text-body regular:font-medium regular:tracking-normal">
               {page && !atRoot && crumb ? (
                 <Link to={page.item.to} className="underline-offset-3 [@media(hover:hover)]:hover:underline">
                   {page.item.label}
@@ -256,6 +227,7 @@ function TopBar({
         className={cn("flex shrink-0 items-center gap-2 pe-3 empty:hidden", searching && "hidden")}
       />
       <GlobalSearch pages={searchPages} variant="bar" onOpenChange={setSearching} className="me-[22px] lg:me-7" />
+      </div>
     </header>
   )
 }
@@ -356,43 +328,19 @@ function SideNav({ nav }: { nav: ReturnType<typeof useNavFolded> }) {
   const { pathname } = useLocation()
   const counts = useCounts()
   const workers = counts.summary?.workers
-  const workerTone = !workers?.total
-    ? "muted"
-    : workers.online === workers.total
-      ? "ok"
-      : workers.online
-        ? "warn"
-        : "fail"
   return (
     <nav
       aria-label="Main"
-      className="hidden w-rail shrink-0 flex-col items-center gap-0.5 overflow-y-auto border-e border-line bg-side px-2.5 py-3.5 transition-[width] duration-200 md:flex side:w-side side:items-stretch"
+      className="hidden min-h-0 flex-col items-center gap-0.5 overflow-y-auto border-e border-line bg-side px-2.5 py-3.5 md:col-start-1 md:row-start-2 md:flex side:items-stretch regular:border-e-0 regular:bg-transparent"
     >
-      {/* Folded on a wide screen, the toggle sits at the top of the rail. */}
-      <NavToggle {...nav} className="mb-2 hidden folded:inline-flex" />
+      {/* Folded on a wide screen, the toggle sits at the top of the rail (Regular keeps it in the bar). */}
+      <NavToggle {...nav} className="mb-2 hidden compact:folded:inline-flex" />
 
-      <Link
-        to="/workers"
-        title={workers?.total ? `Workers: ${n(workers.online)} of ${n(workers.total)} online` : "No worker paired"}
-        className="mx-1 mb-3 hidden items-center gap-2.5 rounded-sm bg-fill px-3 py-2.5 side:flex [@media(hover:hover)]:hover:bg-accent"
-      >
-        <span
-          aria-hidden
-          className={cn(
-            "size-2 shrink-0 rounded-full",
-            workerTone === "ok" && "bg-ok",
-            workerTone === "warn" && "bg-warn",
-            workerTone === "fail" && "bg-fail",
-            workerTone === "muted" && "bg-muted-foreground/50",
-          )}
-        />
-        <span className="min-w-0">
-          <b className="block truncate text-ctl">Workers</b>
-          <span className={cn("block text-meta text-muted-foreground", workerTone === "fail" && "text-fail")}>
-            {workers?.total ? `${n(workers.online)} of ${n(workers.total)} online` : "none paired"}
-          </span>
-        </span>
-      </Link>
+      {/* Compact shows how the workers are doing at the top of the sidebar, Regular at its foot (#29). */}
+      <WorkersStatus
+        workers={workers}
+        className="mx-1 mb-3 hidden bg-fill py-2.5 compact:side:flex [@media(hover:hover)]:hover:bg-accent"
+      />
 
       {groups.map((g) => (
         <div key={g.label} className="flex flex-col items-center gap-0.5 side:items-stretch">
@@ -429,12 +377,15 @@ function SideNav({ nav }: { nav: ReturnType<typeof useNavFolded> }) {
                       // Rail: an 8px dot; sidebar: the number in a tag.
                       "absolute end-2 top-[7px] size-2 rounded-full text-none side:static side:ms-auto side:size-auto side:rounded-tag side:px-[7px] side:py-px side:text-meta side:font-bold side:tabular-nums",
                       count.tone === "fail" ? "bg-fail" : "bg-warn",
-                      // On the filled active item the number takes the item's colour instead of a tint.
+                      // On the filled active item the number takes the item's colour instead of a tint;
+                      // Regular's active item is a soft grey, so its number keeps the tint (#29).
                       active
                         ? "side:bg-transparent side:text-current"
                         : count.tone === "fail"
                           ? "side:tint-fail"
                           : "side:tint-warn",
+                      active && (count.tone === "fail" ? "regular:side:tint-fail" : "regular:side:tint-warn"),
+                      "regular:side:rounded-full",
                     )}
                   >
                     {n(count.value)}
@@ -462,11 +413,57 @@ function SideNav({ nav }: { nav: ReturnType<typeof useNavFolded> }) {
         </div>
       ))}
 
-      <div className="mt-auto flex flex-col items-center gap-1 pt-3.5 side:flex-row side:px-1">
+      <WorkersStatus
+        workers={workers}
+        className="mx-1 mt-3.5 hidden py-2 regular:side:mt-auto regular:side:flex [@media(hover:hover)]:hover:bg-accent"
+      />
+      <div className="mt-auto flex flex-col items-center gap-1 pt-3.5 side:flex-row side:px-1 regular:side:mt-0 regular:side:pt-1">
         <UserMenu />
         <ThemeButton />
       </div>
     </nav>
+  )
+}
+
+/** How many workers are online, linking to the Workers page; drawn where each design wants it. */
+function WorkersStatus({
+  workers,
+  className,
+}: {
+  workers: Summary["workers"] | undefined
+  className?: string
+}) {
+  const tone = !workers?.total
+    ? "muted"
+    : workers.online === workers.total
+      ? "ok"
+      : workers.online
+        ? "warn"
+        : "fail"
+  return (
+    <Link
+      to="/workers"
+      data-slot="workers-status"
+      title={workers?.total ? `Workers: ${n(workers.online)} of ${n(workers.total)} online` : "No worker paired"}
+      className={cn("items-center gap-2.5 rounded-sm px-3", className)}
+    >
+      <span
+        aria-hidden
+        className={cn(
+          "size-2 shrink-0 rounded-full",
+          tone === "ok" && "bg-ok",
+          tone === "warn" && "bg-warn",
+          tone === "fail" && "bg-fail",
+          tone === "muted" && "bg-muted-foreground/50",
+        )}
+      />
+      <span className="min-w-0">
+        <b className="block truncate text-ctl">Workers</b>
+        <span className={cn("block text-meta text-muted-foreground", tone === "fail" && "text-fail")}>
+          {workers?.total ? `${n(workers.online)} of ${n(workers.total)} online` : "none paired"}
+        </span>
+      </span>
+    </Link>
   )
 }
 
@@ -787,21 +784,29 @@ export function AppShell() {
   return (
     <ChromeContext.Provider value={{ actionsSlot, setCrumb }}>
       <DesignSync />
-      <div className="flex h-dvh flex-col overflow-hidden bg-bg">
+      {/*
+       * Two columns from 761px: the brand and the sidebar, then the bar and the page. Compact splits them with
+       * lines; Regular sets the sidebar on a grey canvas and the bar and page in one floating card (#29). The
+       * card is drawn behind them, so the order of the page for the keyboard and screen readers stays as is.
+       */}
+      <div className="grid h-dvh grid-cols-[minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-bg transition-[grid-template-columns] duration-200 md:grid-cols-[var(--spacing-rail)_minmax(0,1fr)] side:grid-cols-[var(--spacing-side)_minmax(0,1fr)] regular:md:bg-canvas">
+        <div
+          aria-hidden
+          data-slot="page-frame"
+          className="pointer-events-none hidden rounded-lg bg-bg shadow-card ring-1 ring-ink/10 md:col-start-2 md:row-span-2 md:row-start-1 md:m-2 md:ms-0 regular:md:block"
+        />
         <TopBar crumb={crumb} nav={nav} setActionsSlot={setActionsSlot} />
         <PhoneTopBar />
-        <div className="flex min-h-0 flex-1">
-          <SideNav nav={nav} />
-          <main
-            ref={setMain}
-            id="main"
-            className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pt-4 pb-[calc(var(--spacing-tabbar)+16px+env(safe-area-inset-bottom))] md:p-[22px] md:pb-15 lg:px-7"
-          >
-            <SaveScope>
-              <Outlet />
-            </SaveScope>
-          </main>
-        </div>
+        <SideNav nav={nav} />
+        <main
+          ref={setMain}
+          id="main"
+          className="relative col-start-1 row-start-2 min-h-0 overflow-y-auto overscroll-contain px-3 pt-4 pb-[calc(var(--spacing-tabbar)+16px+env(safe-area-inset-bottom))] md:col-start-2 md:p-[22px] md:pb-15 lg:px-7 regular:md:me-2 regular:md:mb-2 regular:md:rounded-b-lg"
+        >
+          <SaveScope>
+            <Outlet />
+          </SaveScope>
+        </main>
         <TabBar />
       </div>
     </ChromeContext.Provider>

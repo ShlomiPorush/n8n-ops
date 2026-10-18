@@ -495,7 +495,10 @@ export function GlobalSearch({
       className={cn(
         "flex min-w-0 cursor-text items-center gap-2 rounded-sm border px-2.5 transition-[border-color,box-shadow,background-color] duration-150",
         sheet ? "h-[46px] flex-1 border-primary bg-bg" : "h-ctl",
-        !sheet && (wide ? "h-10 border-primary bg-bg shadow-halo" : "border-transparent bg-fill"),
+        !sheet &&
+          (wide
+            ? "h-10 border-primary bg-bg shadow-halo"
+            : "border-transparent bg-fill regular:border-line regular:bg-bg regular:shadow-card"),
       )}
     >
       <Search aria-hidden className="size-4 shrink-0 text-muted-foreground" />

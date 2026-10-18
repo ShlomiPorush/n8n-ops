@@ -8,6 +8,7 @@ import { Link } from "react-router"
 import { AlertRow, Empty, Kpi, Kpis, LoadError, Loading, Page, Panel, PanelHead, Row, UserText } from "@/components/kit"
 import { Dot, type HealthState, StatusTag, statusOf, TimeAgo, Tone } from "@/components/status"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { StepArrow } from "@/components/skin/marks"
 import { Badge } from "@/components/ui/badge"
 import { useApi } from "@/lib/api"
 import { n, plural } from "@/lib/time"
@@ -55,6 +56,15 @@ const target = (item: AttentionItem) =>
           ? `/access/${item.id}`
           : "/workers"
 
+/* Regular: each missing setup step is an outline button with an arrow, starting with a capital (#29). */
+const step =
+  "regular:inline-flex regular:h-8 regular:items-center regular:gap-1.5 regular:rounded-sm regular:border regular:border-line regular:bg-bg regular:px-3 regular:text-ctl regular:font-medium regular:shadow-card regular:[@media(hover:hover)]:hover:bg-fill"
+const stepText = "regular:inline-block regular:first-letter:uppercase"
+
+/* Regular: recent activity as a timeline, a dot per entry on a line that joins them (#29). */
+const timeline =
+  "regular:relative regular:border-t-0 regular:ps-[calc(var(--spacing-pad-x)+22px)] regular:before:absolute regular:before:start-pad-x regular:before:top-[19px] regular:before:size-2 regular:before:rounded-full regular:before:bg-muted-foreground/40 regular:before:ring-4 regular:before:ring-panel regular:after:absolute regular:after:start-[calc(var(--spacing-pad-x)+3.5px)] regular:after:top-7 regular:after:-bottom-5 regular:after:w-px regular:after:bg-line regular:last:after:hidden"
+
 export function OverviewPage() {
   const overview = useApi<Overview>("/overview", { refetchInterval: 15_000 })
   const checklist = useApi<{ telegram: boolean; storage: boolean; instance: boolean }>("/setup/checklist")
@@ -77,18 +87,21 @@ export function OverviewPage() {
   const missing = setup
     ? [
         !setup.instance && (
-          <Link key="i" to="/instances">
-            Add an n8n instance
+          <Link key="i" to="/instances" className={step}>
+            <span className={stepText}>Add an n8n instance</span>
+            <StepArrow />
           </Link>
         ),
         !setup.telegram && (
-          <Link key="t" to="/settings/telegram">
-            connect Telegram for alerts
+          <Link key="t" to="/settings/telegram" className={step}>
+            <span className={stepText}>connect Telegram for alerts</span>
+            <StepArrow />
           </Link>
         ),
         !setup.storage && (
-          <Link key="s" to="/settings/storage">
-            set backup storage
+          <Link key="s" to="/settings/storage" className={step}>
+            <span className={stepText}>set backup storage</span>
+            <StepArrow />
           </Link>
         ),
       ].filter(Boolean)
@@ -105,9 +118,25 @@ export function OverviewPage() {
       }
     >
       {missing.length > 0 && (
-        <Alert variant="warn">
-          <AlertTitle>Finish setting up</AlertTitle>
-          <AlertDescription>{missing.flatMap((el, i) => (i === 0 ? [el] : [", ", el]))}.</AlertDescription>
+        // Regular draws the banner as a warm card whose steps are buttons (#29); the words stay the same.
+        <Alert
+          variant="warn"
+          className="regular:gap-1 regular:border regular:border-warm-line regular:bg-warm regular:p-6 regular:text-ink"
+        >
+          <AlertTitle className="regular:text-head regular:font-semibold">Finish setting up</AlertTitle>
+          <AlertDescription className="regular:mt-3 regular:flex regular:flex-wrap regular:gap-2 regular:[&_a]:no-underline">
+            {missing.flatMap((el, i) =>
+              i === 0
+                ? [el]
+                : [
+                    <span key={`sep${i}`} className="regular:hidden">
+                      ,{" "}
+                    </span>,
+                    el,
+                  ],
+            )}
+            <span className="regular:hidden">.</span>
+          </AlertDescription>
         </Alert>
       )}
 
@@ -131,7 +160,12 @@ export function OverviewPage() {
             <Kpi
               label="Instances healthy"
               icon={ServerIcon}
-              value={`${n(o.stats.healthy)}/${n(o.stats.instances)}`}
+              value={
+                <>
+                  {n(o.stats.healthy)}
+                  <span className="regular:text-muted-foreground">/{n(o.stats.instances)}</span>
+                </>
+              }
               hint={
                 o.stats.down || o.stats.warn ? `${n(o.stats.down)} down, ${n(o.stats.warn)} need a look` : undefined
               }
@@ -155,7 +189,12 @@ export function OverviewPage() {
                 description="Agents waiting for access, new problems and regressions from the last 24 hours, health issues, stale backups, offline workers."
               />
               {attention.length ? (
-                attention.map((a) => <AttentionRow key={`${a.kind}:${a.id}`} a={a} />)
+                // Regular sets the rows in a box of their own inside the card (#29).
+                <div className="regular:mx-pad-x regular:mb-pad-x regular:overflow-hidden regular:rounded-lg regular:border regular:border-line regular:[&>:first-child]:border-t-0">
+                  {attention.map((a) => (
+                    <AttentionRow key={`${a.kind}:${a.id}`} a={a} />
+                  ))}
+                </div>
               ) : (
                 <Empty title="Nothing needs you right now.">
                   New problems, health issues and requests show up here.
@@ -204,7 +243,7 @@ export function OverviewPage() {
                   <Empty title="Nothing recorded yet.">Sign-ins and changes appear here.</Empty>
                 ) : (
                   events.map((e) => (
-                    <Row key={e.id} className="grid gap-0.5">
+                    <Row key={e.id} className={cn("grid gap-0.5", timeline)}>
                       <span className="min-w-0">
                         <span className="font-semibold">{e.action}</span>
                         {e.target && (
@@ -287,7 +326,7 @@ function InstanceLine({ i, latest }: { i: InstanceRow; latest: string | null }) 
   return (
     <div
       className={cn(
-        "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-0.5 border-t border-s-3 border-line px-pad-x py-pad-y",
+        "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-0.5 border-t border-s-3 border-line px-pad-x py-pad-y regular:border-s-0",
         s.tone === "ok" && "border-s-ok/55",
         s.tone === "warn" && "border-s-warn",
         s.tone === "fail" && "border-s-fail",

@@ -1,4 +1,5 @@
-import { Bot, Code, Cpu, Globe, type LucideIcon, Mail, Send, Settings2, Terminal } from "lucide-react"
+import { ArrowRight, Bot, Code, Cpu, Globe, type LucideIcon, Mail, Send, Settings2, Terminal } from "lucide-react"
+import { type SettingsSection, settingsIcons } from "@/app/settings-sections"
 import { cn } from "@/lib/utils"
 
 /*
@@ -44,6 +45,30 @@ export function RateBar({ rate, tone }: { rate: number; tone: "fail" | "warn" | 
         className={cn("block h-full rounded-full", tone === "fail" ? "bg-fail" : tone === "ok" ? "bg-ok" : "bg-warn")}
         style={{ width: `${Math.min(100, Math.max(rate, rate > 0 ? 4 : 0))}%` }}
       />
+    </span>
+  )
+}
+
+/** An arrow after a step that leads somewhere, as on #29's buttons. */
+export function StepArrow() {
+  return <ArrowRight aria-hidden className="hidden size-3.5 shrink-0 regular:block" />
+}
+
+/** A settings section's icon, before its name in the section list. */
+export function SectionIcon({ section }: { section: string }) {
+  const Icon = settingsIcons[section as SettingsSection]
+  if (!Icon) return null
+  return <Icon aria-hidden className="hidden size-4 shrink-0 text-muted-foreground regular:block" />
+}
+
+/** A worker's host, in a tile before its name. */
+export function HostMark() {
+  return (
+    <span
+      aria-hidden
+      className="hidden size-10 shrink-0 place-items-center rounded-lg bg-fill text-muted-foreground ring-1 ring-ink/10 regular:grid"
+    >
+      <Cpu className="size-5" />
     </span>
   )
 }

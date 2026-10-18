@@ -5,6 +5,7 @@ import { useCrumb } from "@/app/chrome"
 import { afterGeneralSave } from "@/app/design-sync"
 import { settingsGroups, settingsSectionLabel } from "@/app/settings-sections"
 import { useConfirm } from "@/components/confirm"
+import { SectionIcon } from "@/components/skin/marks"
 import {
   Copyable,
   countChanges,
@@ -262,18 +263,25 @@ export function SettingsPage() {
                   key={k}
                   to={`/settings/${k}`}
                   aria-current={section === k ? "true" : undefined}
-                  className="rounded-sm px-2.5 py-1.5 font-medium text-ink aria-[current=true]:bg-primary aria-[current=true]:font-title aria-[current=true]:text-primary-foreground regular:aria-[current=true]:bg-fill regular:aria-[current=true]:text-ink regular:aria-[current=true]:font-semibold [@media(hover:hover)]:hover:bg-accent [@media(hover:hover)]:aria-[current=true]:hover:bg-primary"
+                  className="rounded-sm px-2.5 py-1.5 font-medium text-ink aria-[current=true]:bg-primary aria-[current=true]:font-title aria-[current=true]:text-primary-foreground regular:flex regular:items-center regular:gap-2.5 regular:aria-[current=true]:bg-fill regular:aria-[current=true]:text-ink regular:aria-[current=true]:font-semibold [@media(hover:hover)]:hover:bg-accent [@media(hover:hover)]:aria-[current=true]:hover:bg-primary regular:[@media(hover:hover)]:aria-[current=true]:hover:bg-fill"
                 >
+                  <SectionIcon section={k} />
                   {l}
                 </NavLink>
               ))}
             </div>
           ))}
         </nav>
-        <div className="grid min-w-0 max-w-3xl gap-gap">
+        {/*
+         * Regular draws the section as one card with its title inside (#29); the forms in it lose their own
+         * card and the rows their lines.
+         */}
+        <div className="grid min-w-0 max-w-3xl gap-gap regular:content-start regular:gap-0 regular:self-start regular:overflow-hidden regular:rounded-lg regular:bg-panel regular:shadow-card regular:ring-1 regular:ring-ink/10 regular:[&>section]:rounded-none regular:[&>section]:shadow-none regular:[&>section]:ring-0 regular:[&>section+section]:border-t regular:[&>section+section]:border-line">
           {/* Each section opens with a large title and one paragraph about what it is for (FS-8). */}
-          <div className="grid gap-1.5">
-            <h2 className="text-figure font-heavy tracking-tighter">{label}</h2>
+          <div data-slot="settings-head" className="grid gap-1.5 regular:gap-1 regular:px-pad-x regular:pt-6 regular:pb-2">
+            <h2 className="text-figure font-heavy tracking-tighter regular:text-head regular:font-semibold regular:tracking-normal">
+              {label}
+            </h2>
             <p className="max-w-[75ch] text-muted-foreground">
               {forms[section]?.description ?? sectionDescriptions[section]}
             </p>
@@ -323,7 +331,7 @@ function SettingRow({
       <label
         htmlFor={htmlFor}
         data-setting-row
-        className="grid cursor-pointer grid-cols-[minmax(0,1fr)_auto] items-center gap-x-6 border-t border-line px-pad-x py-3"
+        className="grid cursor-pointer grid-cols-[minmax(0,1fr)_auto] items-center gap-x-6 border-t border-line px-pad-x py-3 regular:border-t-0 regular:py-4"
       >
         {text}
         {children}
@@ -333,7 +341,7 @@ function SettingRow({
     <div
       data-setting-row
       className={cn(
-        "grid items-center gap-x-6 gap-y-2 border-t border-line px-pad-x py-3",
+        "grid items-center gap-x-6 gap-y-2 border-t border-line px-pad-x py-3 regular:border-t-0 regular:py-4",
         !wide && "md:grid-cols-[minmax(0,1fr)_260px]",
       )}
     >

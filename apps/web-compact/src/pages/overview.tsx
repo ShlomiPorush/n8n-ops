@@ -147,63 +147,63 @@ export function OverviewPage() {
             </Panel>
 
             <div className="grid min-w-0 gap-gap">
-            <Panel>
-              <PanelHead
-                title="Instances"
-                count={instances.data ? n(rows.length) : undefined}
-                more={rows.length ? { to: "/instances", label: "All instances" } : undefined}
-              />
-              {instances.error ? (
-                <LoadError what="instances" error={instances.error} retry={() => instances.refetch()} />
-              ) : !instances.data ? (
-                <Loading />
-              ) : rows.length === 0 ? (
-                <Empty
-                  title="No instances yet."
-                  action={
-                    <Link to="/instances" className="font-semibold underline">
-                      Add an instance
-                    </Link>
-                  }
-                >
-                  Add your n8n instances on the Instances page.
-                </Empty>
-              ) : (
-                rows.map((i) => <InstanceLine key={i.id} i={i} latest={instances.data?.latestVersion ?? null} />)
-              )}
-            </Panel>
+              <Panel>
+                <PanelHead
+                  title="Instances"
+                  count={instances.data ? n(rows.length) : undefined}
+                  more={rows.length ? { to: "/instances", label: "All instances" } : undefined}
+                />
+                {instances.error ? (
+                  <LoadError what="instances" error={instances.error} retry={() => instances.refetch()} />
+                ) : !instances.data ? (
+                  <Loading />
+                ) : rows.length === 0 ? (
+                  <Empty
+                    title="No instances yet."
+                    action={
+                      <Link to="/instances" className="font-semibold underline">
+                        Add an instance
+                      </Link>
+                    }
+                  >
+                    Add your n8n instances on the Instances page.
+                  </Empty>
+                ) : (
+                  rows.map((i) => <InstanceLine key={i.id} i={i} latest={instances.data?.latestVersion ?? null} />)
+                )}
+              </Panel>
 
-            <Panel>
-              <PanelHead
-                title="Recent activity"
-                description="Sign-ins, changes and decisions, newest first."
-                more={{ to: "/audit", label: "Full audit log" }}
-              />
-              {activity.error ? (
-                <LoadError what="recent activity" error={activity.error} retry={() => activity.refetch()} />
-              ) : !activity.data ? (
-                <Loading />
-              ) : events.length === 0 ? (
-                <Empty title="Nothing recorded yet.">Sign-ins and changes appear here.</Empty>
-              ) : (
-                events.map((e) => (
-                  <Row key={e.id} className="grid gap-0.5">
-                    <span className="min-w-0">
-                      <span className="font-semibold">{e.action}</span>
-                      {e.target && (
-                        <span className="text-muted-foreground">
-                          {" · "}
-                          <UserText>{e.target}</UserText>
-                        </span>
-                      )}
-                    </span>
-                    <span className="text-small text-muted-foreground">
-                      <UserText>{e.actor}</UserText> · <TimeAgo value={e.at} />
-                    </span>
-                  </Row>
-                ))
-              )}
-            </Panel>
+              <Panel>
+                <PanelHead
+                  title="Recent activity"
+                  description="Sign-ins, changes and decisions, newest first."
+                  more={{ to: "/audit", label: "Full audit log" }}
+                />
+                {activity.error ? (
+                  <LoadError what="recent activity" error={activity.error} retry={() => activity.refetch()} />
+                ) : !activity.data ? (
+                  <Loading />
+                ) : events.length === 0 ? (
+                  <Empty title="Nothing recorded yet.">Sign-ins and changes appear here.</Empty>
+                ) : (
+                  events.map((e) => (
+                    <Row key={e.id} className="grid gap-0.5">
+                      <span className="min-w-0">
+                        <span className="font-semibold">{e.action}</span>
+                        {e.target && (
+                          <span className="text-muted-foreground">
+                            {" · "}
+                            <UserText>{e.target}</UserText>
+                          </span>
+                        )}
+                      </span>
+                      <span className="text-small text-muted-foreground">
+                        <UserText>{e.actor}</UserText> · <TimeAgo value={e.at} />
+                      </span>
+                    </Row>
+                  ))
+                )}
+              </Panel>
             </div>
           </div>
         </>

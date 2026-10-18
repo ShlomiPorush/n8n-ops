@@ -704,7 +704,6 @@ function KeysCard() {
         </DialogContent>
       </Dialog>
     </Panel>
-    </>
   )
 }
 
@@ -1028,5 +1027,6 @@ function TokensCard() {
         </DialogContent>
       </Dialog>
     </Panel>
+    </>
   )
 }

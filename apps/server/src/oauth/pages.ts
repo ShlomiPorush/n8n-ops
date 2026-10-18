@@ -3,7 +3,7 @@ import { join } from "node:path"
 import type { Design } from "../lib/settings.ts"
 import type { ProviderPages } from "./provider.ts"
 
-const escape = (s: string) =>
+const htmlText = (s: string) =>
   s.replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch] ?? ch)
 
 /** The built app's stylesheet, so these few server pages wear the app's fonts, colours and both designs. */
@@ -34,7 +34,7 @@ export function providerPages(webDir: string | undefined, design: () => Design):
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
-<title>${escape(title)} · n8n-ops</title>
+<title>${htmlText(title)} · n8n-ops</title>
 ${css ? `<link rel="stylesheet" href="${css}">` : ""}
 <script>try{var t=localStorage.getItem("n8n-ops-theme");if(t==="dark"||(t!=="light"&&matchMedia("(prefers-color-scheme: dark)").matches))document.documentElement.classList.add("dark")}catch(e){}</script>
 <style>
@@ -67,20 +67,20 @@ ${form}
       page(
         "Connect an agent",
         `<h1>Does your agent show this code?</h1>
-<div class="code">${escape(userCode)}</div>
-<p><b>${escape(clientName)}</b> asks to connect to n8n-ops. Continue only if you started this yourself and your agent shows the same code. The name is what the agent says about itself.</p>
+<div class="code">${htmlText(userCode)}</div>
+<p><b>${htmlText(clientName)}</b> asks to connect to n8n-ops. Continue only if you started this yourself and your agent shows the same code. The name is what the agent says about itself.</p>
 ${form}
 <div class="actions"><button class="primary" autofocus type="submit" form="op.deviceConfirmForm">Yes, continue</button><button type="submit" form="op.deviceConfirmForm" name="abort" value="yes">Cancel</button></div>`,
       ),
     success: (clientName) =>
       page(
         "Agent connected",
-        `<h1>Agent connected</h1><p>${escape(clientName)} can use n8n-ops now. You can close this page; your agent carries on by itself.</p>`,
+        `<h1>Agent connected</h1><p>${htmlText(clientName)} can use n8n-ops now. You can close this page; your agent carries on by itself.</p>`,
       ),
     error: (code, description) =>
       page(
         "Not connected",
-        `<h1>Not connected</h1><p>${escape(errors[code] ?? "Something went wrong with this connection. Start it again in your agent.")}</p>${description && !errors[code] ? `<p class="muted">${escape(description)}</p>` : ""}`,
+        `<h1>Not connected</h1><p>${htmlText(errors[code] ?? "Something went wrong with this connection. Start it again in your agent.")}</p>${description && !errors[code] ? `<p class="muted">${htmlText(description)}</p>` : ""}`,
       ),
   }
 }

@@ -352,6 +352,7 @@ export function Kpi({
     <>
       <span className="flex min-w-0 flex-col">
         <b
+          data-slot="kpi-figure"
           className={cn(
             "block text-figure tabular-nums",
             // Words ("just now", "14 h ago") a size down in Regular, so they fit a narrow card on one line.

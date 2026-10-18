@@ -50,7 +50,7 @@ test("each design draws with its own type, corners, surfaces and shadows, in lig
         html.setAttribute("data-design", d as string)
         html.classList.toggle("dark", dark as boolean)
         const body = getComputedStyle(document.body)
-        const figure = getComputedStyle(document.querySelector(".text-figure") as Element)
+        const figure = getComputedStyle(document.querySelector('[data-slot="kpi-figure"]') as Element)
         const heading = [...document.querySelectorAll("h2")].find((h) => h.textContent === "Needs attention")
         const panel = getComputedStyle(heading?.closest("section") as Element)
         const out = {
@@ -86,6 +86,48 @@ test("each design draws with its own type, corners, surfaces and shadows, in lig
   })
   expect(await drawn("compact", true)).toMatchObject({ background: "rgb(14, 17, 16)", shadow: false })
   await expect(shown(page)).toHaveAttribute("data-design", here)
+})
+
+/**
+ * How the Overview is laid out, as drawn now: the two designs share every element and function, but Regular
+ * keeps #29's frame, page title, foot of the sidebar and timeline, and Compact its lines and status edges.
+ */
+async function layout(p: Page) {
+  await p.goto("/")
+  const activity = p.locator("section", { has: p.getByRole("heading", { name: "Recent activity" }) })
+  await expect(activity.getByText("Login").first()).toBeVisible()
+  return p.evaluate(() => {
+    const shown = (el: Element | null) => Boolean(el && el.getClientRects().length > 0)
+    const frame = document.querySelector('[data-slot="page-frame"]')
+    const box = frame?.getBoundingClientRect()
+    const nav = document.querySelector('nav[aria-label="Main"]') as HTMLElement
+    // What the keyboard reaches in the sidebar, in order: is the workers link before the pages or after them?
+    const stops = [...nav.querySelectorAll<HTMLElement>("a, button")]
+      .filter((el) => el.getClientRects().length > 0)
+      .map((el) => (el.dataset.slot === "workers-status" ? "workers" : (el.getAttribute("href") ?? el.textContent)))
+    const activity = [...document.querySelectorAll("h2")].find((h) => h.textContent === "Recent activity")
+    const entry = activity?.closest("section")?.querySelector("header + *") as Element
+    return {
+      frame: shown(frame) && box ? { top: box.top, right: window.innerWidth - box.right } : null,
+      title: shown(document.querySelector('[data-slot="page-title"]')),
+      headings: [...document.querySelectorAll("h1")].filter(shown).length,
+      toggles: [...document.querySelectorAll("button")].filter(
+        (b) => /^(Collapse|Expand) menu$/.test(b.getAttribute("aria-label") ?? "") && b.getClientRects().length > 0,
+      ).length,
+      workers: stops.indexOf("workers") < stops.indexOf("/") ? "top" : "foot",
+      timeline: getComputedStyle(entry, "::before").content !== "none",
+      entryLine: getComputedStyle(entry).borderTopWidth,
+    }
+  })
+}
+
+const laidOut = {
+  regular: { frame: { top: 8, right: 8 }, title: true, headings: 1, toggles: 1, workers: "foot", timeline: true, entryLine: "0px" },
+  compact: { frame: null, title: false, headings: 1, toggles: 1, workers: "top", timeline: false, entryLine: "1px" },
+}
+
+test("the page is laid out in this design's own way", async () => {
+  expect(await layout(page)).toEqual(laidOut[here])
 })
 
 test("switching the design changes the page at once, without a reload, and keeps the rest of General", async () => {
@@ -126,6 +168,17 @@ test("a failed save leaves the design as it was", async () => {
     await page.unroute("**/api/settings/general")
   }
   await page.getByRole("region", { name: "Unsaved changes" }).getByRole("button", { name: "Discard" }).click()
+})
+
+test("after the switch the page takes the other design's layout", async () => {
+  expect(await layout(page)).toEqual(laidOut[other])
+  // Narrower, both designs keep one page heading and drop the sidebar's fold and workers link the same way.
+  await page.setViewportSize({ width: 1000, height: 800 })
+  expect(await layout(page)).toMatchObject({ headings: 1, title: other === "regular", toggles: 0 })
+  await page.setViewportSize({ width: 390, height: 800 })
+  expect(await layout(page)).toMatchObject({ frame: null, headings: 1, title: false, toggles: 0 })
+  await page.setViewportSize({ width: 1280, height: 720 })
+  await page.goto("/settings/general")
 })
 
 test("another tab follows when it comes back to the front, and keeps its open dialog and edits", async () => {

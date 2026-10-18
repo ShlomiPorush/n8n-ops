@@ -122,7 +122,15 @@ async function layout(p: Page) {
 }
 
 const laidOut = {
-  regular: { frame: { top: 8, right: 8 }, title: true, headings: 1, toggles: 1, workers: "foot", timeline: true, entryLine: "0px" },
+  regular: {
+    frame: { top: 8, right: 8 },
+    title: true,
+    headings: 1,
+    toggles: 1,
+    workers: "foot",
+    timeline: true,
+    entryLine: "0px",
+  },
   compact: { frame: null, title: false, headings: 1, toggles: 1, workers: "top", timeline: false, entryLine: "1px" },
 }
 

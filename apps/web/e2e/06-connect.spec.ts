@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto"
+import { createServer, type Server } from "node:http"
 import { expect, type Page, test } from "@playwright/test"
 import { signIn } from "./helpers.ts"
 
@@ -12,18 +13,19 @@ test.describe.configure({ mode: "serial" })
 const base = process.env.E2E_BASE_URL ?? "http://server:8080"
 const redirect = "http://127.0.0.1:33418/callback"
 let page: Page
+let callback: Server
 
 test.beforeAll(async ({ browser }) => {
   page = await browser.newPage()
   await signIn(page)
-  // The agent's own callback on its computer: catch the browser's return there.
-  await page.route(`${redirect}**`, (route) =>
-    route.fulfill({ status: 200, contentType: "text/plain", body: "back in the agent" }),
-  )
+  // The agent listens on its computer for the browser to come back, as an MCP client does.
+  callback = createServer((_req, res) => res.end("back in the agent"))
+  await new Promise<void>((resolve) => callback.listen(33418, "127.0.0.1", resolve))
 })
 
 test.afterAll(async () => {
   await page.close()
+  callback.close()
 })
 
 async function post(path: string, form: Record<string, string>) {

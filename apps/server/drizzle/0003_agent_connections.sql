@@ -11,6 +11,7 @@ CREATE TABLE "oauth_store" (
 );
 --> statement-breakpoint
 ALTER TABLE "api_tokens" ADD COLUMN "grant_id" text;--> statement-breakpoint
+ALTER TABLE "api_tokens" ADD COLUMN "issuer" text;--> statement-breakpoint
 ALTER TABLE "api_tokens" ADD COLUMN "scopes" jsonb;--> statement-breakpoint
 ALTER TABLE "api_tokens" ADD COLUMN "connected_via" text;--> statement-breakpoint
 ALTER TABLE "api_tokens" ADD COLUMN "redirect_host" text;--> statement-breakpoint

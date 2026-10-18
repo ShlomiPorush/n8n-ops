@@ -1,5 +1,5 @@
 {
-  "id": "b6e3d85d-9ed3-4ea2-a89a-2dbbe55a501f",
+  "id": "79a61726-d570-4027-86de-add4bde7e47a",
   "prevId": "b3eae9f0-d12d-4a52-83e9-82e0d623a52c",
   "version": "7",
   "dialect": "postgresql",
@@ -675,6 +675,12 @@
         },
         "grant_id": {
           "name": "grant_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "issuer": {
+          "name": "issuer",
           "type": "text",
           "primaryKey": false,
           "notNull": false

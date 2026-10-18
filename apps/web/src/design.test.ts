@@ -101,6 +101,8 @@ describe("one app, two looks", () => {
         .map((s) => `${rel(path)}: ${s}`),
     )
     expect(found).toEqual([])
+    // Nor in an attribute other than className (a title, a label, a value).
+    expect(offenders(/\b(?!className\b)[a-zA-Z-]+=\{?["'`][^"'`]*\b(?:regular|compact):/)).toEqual([])
     // And no variant outside a string at all.
     const bare = offenders(/\b(?:regular|compact):[\w[]/).filter(
       (line) => !/["'`][^"'`]*\b(?:regular|compact):/.test(line),

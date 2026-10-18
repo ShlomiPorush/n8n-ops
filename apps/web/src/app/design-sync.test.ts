@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { queryClient, readFresh } from "@/lib/api"
 import { afterGeneralSave, onPageShow, readAgain } from "./design-sync"
 
@@ -6,7 +6,16 @@ vi.mock("@/lib/design", () => ({ applyDesign: vi.fn() }))
 
 const GENERAL = "/settings/general"
 
+// readAgain runs at most once a second; each test starts a little later than the last.
+let clock = Date.now()
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] })
+  clock += 10_000
+  vi.setSystemTime(clock)
+})
+
 afterEach(() => {
+  vi.useRealTimers()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
   queryClient.clear()
@@ -50,6 +59,29 @@ describe("the design in the cache", () => {
     )
     await read().catch(() => {})
     expect(queryClient.getQueryData([GENERAL])).toEqual({ design: "compact", timezone: "UTC" })
+  })
+
+  it("with nothing cached yet, a read that a save overtook reads again instead of answering old", async () => {
+    const answers = [{ design: "regular" }, { design: "compact" }]
+    let first: (r: Response) => void = () => {}
+    const fetch = vi.fn((): Promise<Response> => {
+      const body = answers.shift()
+      if (fetch.mock.calls.length === 1) return new Promise((done) => (first = () => done(new Response(JSON.stringify(body)))))
+      return Promise.resolve(new Response(JSON.stringify(body)))
+    })
+    vi.stubGlobal("fetch", fetch)
+    const before = readFresh(GENERAL)
+    readAgain()
+    first(new Response(""))
+    expect(await before).toEqual({ design: "compact" })
+    expect(fetch).toHaveBeenCalledTimes(2)
+  })
+
+  it("reads once when focus and visibility arrive together", () => {
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries").mockResolvedValue()
+    readAgain()
+    readAgain()
+    expect(invalidate).toHaveBeenCalledTimes(1)
   })
 
   it("coming back to a tab does not trust a read that started before", async () => {

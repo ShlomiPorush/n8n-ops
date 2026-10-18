@@ -62,13 +62,15 @@ export function markSaved(path: string) {
 
 /** Reads a path for the query cache, dropping an answer that a save overtook. */
 export async function readFresh<T>(path: string, client: QueryClient = queryClient): Promise<T> {
-  const started = epochs.get(path) ?? 0
-  const data = await api<T>(path)
-  if ((epochs.get(path) ?? 0) !== started) {
+  let data: T
+  // A few tries at most: an overtaken answer is replaced by the cache, or, with nothing cached yet, read again.
+  for (let attempt = 0; ; attempt++) {
+    const started = epochs.get(path) ?? 0
+    data = await api<T>(path)
+    if ((epochs.get(path) ?? 0) === started || attempt === 2) return data
     const cached = client.getQueryData<T>([path])
     if (cached !== undefined) return cached
   }
-  return data
 }
 
 /**

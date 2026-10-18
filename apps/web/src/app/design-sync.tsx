@@ -22,13 +22,14 @@ export function DesignSync() {
   const design = general.data?.design
   useEffect(() => applyDesign(design), [design])
   useEffect(() => {
+    const onFocus = () => readAgain()
     const onVisible = () => document.visibilityState === "visible" && readAgain()
     window.addEventListener("pageshow", onPageShow)
-    window.addEventListener("focus", readAgain)
+    window.addEventListener("focus", onFocus)
     document.addEventListener("visibilitychange", onVisible)
     return () => {
       window.removeEventListener("pageshow", onPageShow)
-      window.removeEventListener("focus", readAgain)
+      window.removeEventListener("focus", onFocus)
       document.removeEventListener("visibilitychange", onVisible)
     }
   }, [])
@@ -39,7 +40,11 @@ export function DesignSync() {
  * Reads General again from scratch: a read still on its way may have started before another tab saved, so
  * its answer is not trusted and a new read replaces it.
  */
-export function readAgain() {
+let lastRead = 0
+export function readAgain(now = Date.now()) {
+  // Coming back to a tab fires focus and visibilitychange together; one read is enough.
+  if (now - lastRead < 1000) return
+  lastRead = now
   markSaved(GENERAL)
   void queryClient.invalidateQueries({ queryKey: [GENERAL] })
 }

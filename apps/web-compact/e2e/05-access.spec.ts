@@ -240,7 +240,8 @@ test("agent access edits survive a refresh, and a clean card shows the stored ac
   await expect(unsaved).toContainText("1 unsaved change")
 
   // Changed back by hand, the card has nothing unsaved and shows what is stored now.
-  await read.check()
+  // The click itself makes the card clean, so it shows the stored access and the scope list goes.
+  await read.click()
   await expect(allowed).not.toBeChecked()
   await expect(unsaved).toHaveCount(0)
 

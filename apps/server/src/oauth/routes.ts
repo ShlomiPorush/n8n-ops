@@ -9,7 +9,7 @@ import { requireUser } from "../http/middleware.ts"
 import { actorName, type Env } from "../http/types.ts"
 import type { AgentConnect } from "./agents.ts"
 import { CLI_CLIENT, resources, SCOPES } from "./provider.ts"
-import { registeredClients } from "./store.ts"
+import { roomForClient } from "./store.ts"
 
 type Bindings = { incoming: IncomingMessage & { body?: unknown }; outgoing: ServerResponse }
 /** The Node request and response under Hono; absent when the app is driven without a server (unit tests). */
@@ -246,7 +246,7 @@ export function agentConnectRoutes(ctx: Ctx, agents: AgentConnect) {
                 : null
     if (limit && !limit(address)) return tooMany(c)
     if (path === "/oauth/register" && c.req.method === "POST") {
-      if ((await registeredClients(ctx.db)) >= MAX_CLIENTS) return tooMany(c)
+      if (!(await roomForClient(ctx.db, MAX_CLIENTS))) return tooMany(c)
       // Agents register themselves (RFC 7591) as public clients that come back to https or to this computer.
       const parsed = registration.safeParse(await c.req.json().catch(() => null))
       if (!parsed.success)

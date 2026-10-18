@@ -100,17 +100,38 @@ export async function grantAlive(db: Db, grantId: string) {
       and(
         eq(oauthStore.type, "RefreshToken"),
         eq(oauthStore.grantId, grantId),
-        sql`${oauthStore.expiresAt} > now()`,
-        or(isNull(oauthStore.consumedAt), sql`${oauthStore.consumedAt} > now() - interval '5 minutes'`),
+        or(
+          and(isNull(oauthStore.consumedAt), sql`${oauthStore.expiresAt} > now()`),
+          sql`${oauthStore.consumedAt} > now() - interval '5 minutes'`,
+        ),
       ),
     )
   return (row?.n ?? 0) > 0
 }
 
-/** How many agents registered themselves (RFC 7591); a cap keeps open registration from filling the table. */
-export async function registeredClients(db: Db) {
+/**
+ * Makes room for one more self-registered agent (RFC 7591) under a cap, so open registration cannot fill the
+ * table: when full, the oldest registrations no person approved go first. False when every one is approved.
+ */
+export async function roomForClient(db: Db, max: number) {
   const [row] = await db.select({ n: sql<number>`count(*)::int` }).from(oauthStore).where(eq(oauthStore.type, "Client"))
-  return row?.n ?? 0
+  const over = (row?.n ?? 0) - max + 1
+  if (over <= 0) return true
+  const evicted = await db
+    .delete(oauthStore)
+    .where(
+      and(
+        eq(oauthStore.type, "Client"),
+        sql`${oauthStore.id} in (
+          select x.id from oauth_store x
+          where x.type = 'Client'
+            and not exists (select 1 from oauth_store g where g.type = 'Grant' and g.payload->>'clientId' = x.id)
+          order by coalesce((x.payload->>'client_id_issued_at')::bigint, 0)
+          limit ${over})`,
+      ),
+    )
+    .returning({ id: oauthStore.id })
+  return evicted.length === over
 }
 
 /**

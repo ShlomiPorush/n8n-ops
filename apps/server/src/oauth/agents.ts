@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto"
-import { and, eq, isNotNull, isNull, lt, ne } from "drizzle-orm"
+import { and, eq, isNotNull, isNull, lt, ne, or } from "drizzle-orm"
 import type { Ctx } from "../context.ts"
 import { apiTokens } from "../db/schema.ts"
 import { sha256 } from "../lib/crypto.ts"
@@ -153,13 +153,27 @@ export function createAgentConnect(ctx: Ctx, { cookieKeys, webDir }: { cookieKey
     return row
   }
 
-  /** Ends the connections made under another public URL. */
-  async function endOtherIssuers(issuer: string) {
+  /** Ends the connections made under another public URL, or every one when there is no public URL. */
+  async function endOtherIssuers(issuer: string | null) {
     const rows = await ctx.db
       .select({ id: apiTokens.id })
       .from(apiTokens)
-      .where(and(eq(apiTokens.kind, "agent"), isNull(apiTokens.revokedAt), ne(apiTokens.issuer, issuer)))
+      .where(
+        and(
+          eq(apiTokens.kind, "agent"),
+          isNull(apiTokens.revokedAt),
+          issuer ? or(ne(apiTokens.issuer, issuer), isNull(apiTokens.issuer)) : undefined,
+        ),
+      )
     for (const r of rows) await end({ id: r.id }, "address", { by: "n8n-ops", via: "system" })
+  }
+
+  /**
+   * Brings connections in line with the public URL as it is now; run at start, before any request, and by the
+   * sweep. A connection whose URL changed or went away ends with its instance access.
+   */
+  async function reconcile() {
+    await endOtherIssuers(issuerOf((await ctx.settings.get("general")).publicUrl))
   }
 
   /** Ends every connected agent, when the public URL they connected to changes. */
@@ -176,6 +190,7 @@ export function createAgentConnect(ctx: Ctx, { cookieKeys, webDir }: { cookieKey
    * records that ran out are cleared. Requests check tokens themselves, so nothing waits for this job.
    */
   async function sweep() {
+    await reconcile()
     const quarterHourAgo = new Date(Date.now() - 15 * 60_000)
     const rows = await ctx.db
       .select()
@@ -198,5 +213,5 @@ export function createAgentConnect(ctx: Ctx, { cookieKeys, webDir }: { cookieKey
     await sweepStore(ctx.db)
   }
 
-  return { provider, verify, connected, end, endAll, sweep }
+  return { provider, verify, connected, end, endAll, sweep, reconcile }
 }

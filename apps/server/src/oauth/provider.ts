@@ -76,7 +76,10 @@ export function createAgentProvider({ issuer, adapter, cookieKeys, pages }: Agen
       devInteractions: { enabled: false },
       // Sender-constrained tokens are not checked by /mcp and /api/v1, so none are issued.
       dPoP: { enabled: false },
-      registration: { enabled: true },
+      // Agents register themselves, once; they get no token to change their registration later.
+      registration: { enabled: true, issueRegistrationAccessToken: false },
+      // Not offered: every request goes through /oauth/authorize, where the checks are.
+      pushedAuthorizationRequests: { enabled: false },
       revocation: { enabled: true },
       deviceFlow: {
         enabled: true,

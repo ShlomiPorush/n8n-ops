@@ -69,6 +69,8 @@ function allowedRedirect(value: string) {
   }
 }
 
+// A client may ask for scopes when it registers (the MCP SDK sends those of the resource); they are dropped:
+// what an agent may do is decided by the person who approves it, not by its registration.
 const registration = z
   .object({
     redirect_uris: z.array(z.string().max(500).refine(allowedRedirect)).min(1).max(5),
@@ -76,7 +78,6 @@ const registration = z
     token_endpoint_auth_method: z.literal("none").default("none"),
     grant_types: z.array(z.enum(["authorization_code", "refresh_token"])).optional(),
     response_types: z.array(z.literal("code")).optional(),
-    scope: z.string().max(200).optional(),
   })
   .strip()
 

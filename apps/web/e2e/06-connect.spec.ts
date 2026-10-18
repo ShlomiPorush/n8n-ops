@@ -107,7 +107,13 @@ test("an MCP client connects through the browser, with only the rights the perso
   const reg = await fetch(`${base}/oauth/register`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ client_name: "e2e agent", redirect_uris: [redirect], token_endpoint_auth_method: "none" }),
+    // As the MCP SDK registers: with the scopes the resource lists.
+    body: JSON.stringify({
+      client_name: "e2e agent",
+      redirect_uris: [redirect],
+      token_endpoint_auth_method: "none",
+      scope: "ops:read ops:access",
+    }),
   })
   expect(reg.status).toBe(201)
   browserClient = ((await reg.json()) as { client_id: string }).client_id

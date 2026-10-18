@@ -1,7 +1,8 @@
-import { Check, Copy, Loader2, Lock } from "lucide-react"
+import { Check, Copy, Inbox, Loader2, Lock, type LucideIcon } from "lucide-react"
 import { useEffect, useState } from "react"
 import { Link } from "react-router"
 import { PageActions, useTopBar } from "@/app/chrome"
+import { Figure } from "@/components/skin/figure"
 import { timeAgo, useTick } from "@/components/status"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -100,7 +101,7 @@ function Updated({ at }: { at: number }) {
 export function Panel({ className, ...props }: React.ComponentProps<"section">) {
   return (
     <section
-      className={cn("min-w-0 overflow-hidden rounded-lg bg-panel [&>:first-child]:border-t-0", className)}
+      className={cn("min-w-0 overflow-hidden rounded-lg bg-panel regular:shadow-card regular:ring-1 regular:ring-ink/10 [&>:first-child]:border-t-0", className)}
       {...props}
     />
   )
@@ -252,12 +253,16 @@ export function AlertRow({
   return <div className={cls}>{body}</div>
 }
 
-/** Key figures: a large number over a muted label. Cell lines are outlines, so a short last row leaves no block. */
+/**
+ * Key figures: a large number with a muted label. Compact draws one outlined block (cell lines are outlines,
+ * so a short last row leaves no block); Regular draws a card per figure with its icon.
+ */
 export function Kpis({ className, children }: { className?: string; children: React.ReactNode }) {
   return (
     <div
       className={cn(
         "grid grid-cols-[repeat(auto-fit,minmax(170px,1fr))] overflow-hidden rounded-lg border border-line bg-bg",
+        "regular:gap-gap regular:overflow-visible regular:border-0 regular:bg-transparent",
         className,
       )}
     >
@@ -272,31 +277,53 @@ export function Kpi({
   hint,
   tone,
   to,
+  icon: Icon,
 }: {
   label: React.ReactNode
-  value: React.ReactNode
+  /** A number is formatted the same way everywhere (and rolls in, in Regular). */
+  value: React.ReactNode | number
   hint?: React.ReactNode
   tone?: "fail" | "warn" | "ok"
   /** Every count is a link to the list it counts. */
   to?: string
+  /** What the figure is about; drawn by Regular only, beside the figure. */
+  icon?: LucideIcon
 }) {
   const inner = (
     <>
-      <b
-        className={cn(
-          "block text-figure tabular-nums",
-          tone === "fail" && "text-fail",
-          tone === "warn" && "text-warn",
-          tone === "ok" && "text-ok",
-        )}
-      >
-        {value}
-      </b>
-      <span className="block text-small text-muted-foreground">{label}</span>
-      {hint && <span className="mt-0.5 block text-meta text-muted-foreground">{hint}</span>}
+      <span className="flex min-w-0 flex-col">
+        <b
+          className={cn(
+            "block text-figure tabular-nums",
+            tone === "fail" && "text-fail",
+            tone === "warn" && "text-warn",
+            tone === "ok" && "text-ok",
+          )}
+        >
+          {typeof value === "number" ? <Figure value={value} /> : value}
+        </b>
+        <span className="block text-small text-muted-foreground regular:-order-1 regular:mb-1">{label}</span>
+        {hint && <span className="mt-0.5 block text-meta text-muted-foreground">{hint}</span>}
+      </span>
+      {Icon && (
+        <span
+          aria-hidden
+          className={cn(
+            "hidden size-9 shrink-0 place-items-center rounded-sm bg-fill text-muted-foreground regular:grid",
+            tone === "fail" && "tint-fail",
+            tone === "warn" && "tint-warn",
+            tone === "ok" && "tint-ok",
+          )}
+        >
+          <Icon className="size-4.5" />
+        </span>
+      )}
     </>
   )
-  const cls = "block min-w-0 px-pad-x py-[11px] outline outline-line"
+  const cls = cn(
+    "flex min-w-0 items-start justify-between gap-3 px-pad-x py-[11px] outline outline-line",
+    "regular:rounded-lg regular:bg-panel regular:p-5 regular:shadow-card regular:ring-1 regular:ring-ink/10 regular:outline-0",
+  )
   return to ? (
     <Link to={to} className={cn(cls, "hover-row")}>
       {inner}
@@ -324,15 +351,24 @@ export function Empty({
   title,
   children,
   action,
+  icon: Icon = Inbox,
   className,
 }: {
   title: React.ReactNode
   children?: React.ReactNode
   action?: React.ReactNode
+  /** Drawn by Regular only, above the sentence. */
+  icon?: LucideIcon
   className?: string
 }) {
   return (
     <div className={cn("px-pad-x py-9 text-center text-muted-foreground", className)}>
+      <span
+        aria-hidden
+        className="mx-auto mb-3 hidden size-11 place-items-center rounded-full bg-fill ring-8 ring-fill/40 regular:grid"
+      >
+        <Icon className="size-5" />
+      </span>
       <b className="mb-1 block font-title text-ink">{title}</b>
       {children && <p className="mx-auto max-w-prose">{children}</p>}
       {action && <div className="mt-3.5 flex justify-center">{action}</div>}
@@ -431,7 +467,7 @@ export function Copyable({
       title={value}
       aria-label={`${label ?? "Copy"}: ${value}`}
       className={cn(
-        "group/copy inline-flex max-w-full min-w-0 items-center gap-1 rounded-tag px-1 -mx-1 text-start font-mono text-[0.9em] transition-colors duration-150 [@media(hover:hover)]:hover:bg-ink/6",
+        "group/copy inline-flex max-w-full min-w-0 items-center gap-1 rounded-tag px-1 -mx-1 text-start font-mono text-code transition-colors duration-150 [@media(hover:hover)]:hover:bg-ink/6",
         className,
       )}
     >

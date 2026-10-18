@@ -94,7 +94,7 @@ function Marked({ text, q }: { text: string; q: string }) {
   return (
     <>
       {text.slice(0, at)}
-      <mark className="rounded-[3px] bg-warn/22 text-current">{text.slice(at, end)}</mark>
+      <mark className="rounded-kbd bg-warn/22 text-current">{text.slice(at, end)}</mark>
       {text.slice(end)}
     </>
   )
@@ -329,7 +329,7 @@ export function GlobalSearch({
         "grid min-h-0 grid-rows-[minmax(0,1fr)_auto] overflow-hidden bg-popover text-popover-foreground",
         sheet
           ? "flex-1"
-          : "absolute inset-x-0 top-[calc(100%+6px)] z-45 h-[min(560px,calc(100dvh-90px))] rounded-[14px] shadow-float",
+          : "absolute inset-x-0 top-[calc(100%+6px)] z-45 h-[min(560px,calc(100dvh-90px))] rounded-pop shadow-float",
       )}
     >
       <div className={cn("grid min-h-0", sheet ? "grid-rows-[auto_minmax(0,1fr)]" : "grid-cols-[180px_minmax(0,1fr)]")}>
@@ -360,8 +360,8 @@ export function GlobalSearch({
                 className={cn(
                   "flex shrink-0 items-center gap-2 rounded-sm px-2.5 py-1.5 text-start text-ctl font-semibold text-muted-foreground outline-none focus-visible:outline-offset-[-2px] aria-selected:text-ink",
                   sheet
-                    ? "rounded-none py-2.5 aria-selected:shadow-[inset_0_-2px_0_var(--ui-ink)]"
-                    : "aria-selected:bg-panel [@media(hover:hover)]:hover:bg-panel",
+                    ? "rounded-none py-2.5 aria-selected:shadow-tab"
+                    : "aria-selected:bg-fill [@media(hover:hover)]:hover:bg-fill",
                   count === "0" && "opacity-45",
                 )}
               >
@@ -391,7 +391,7 @@ export function GlobalSearch({
             return (
               <div key={g.kind} className="mb-2">
                 {kind === "all" ? (
-                  <div className="px-3 pt-2 pb-1 text-meta font-bold tracking-[0.04em] text-muted-foreground uppercase">
+                  <div className="px-3 pt-2 pb-1 text-meta font-bold tracking-caps text-muted-foreground uppercase">
                     {meta?.label} · {n(f?.total ?? 0)}
                   </div>
                 ) : (
@@ -400,7 +400,7 @@ export function GlobalSearch({
                       type="button"
                       onMouseDown={(e) => !sheet && e.preventDefault()}
                       onClick={() => choose({ id: "all", title: "", to: f.all ?? "/" })}
-                      className="mb-1 flex w-full items-center gap-2 rounded-[10px] bg-panel px-3 py-2.5 text-start text-small font-semibold"
+                      className="mb-1 flex w-full items-center gap-2 rounded-option bg-fill px-3 py-2.5 text-start text-small font-semibold"
                     >
                       {n(f.total)} found · Open in {meta?.label}
                       <ArrowRight aria-hidden className="ms-auto size-4" />
@@ -421,7 +421,7 @@ export function GlobalSearch({
                       onMouseMove={() => setActive(i)}
                       onClick={() => choose(item)}
                       onKeyDown={(e) => e.key === "Enter" && choose(item)}
-                      className="grid cursor-pointer grid-cols-[22px_minmax(0,1fr)_auto] items-center gap-x-2 rounded-[10px] px-2.5 py-2 aria-selected:bg-panel aria-selected:shadow-[inset_3px_0_0_var(--ui-ink)]"
+                      className="grid cursor-pointer grid-cols-[22px_minmax(0,1fr)_auto] items-center gap-x-2 rounded-option px-2.5 py-2 aria-selected:bg-fill aria-selected:shadow-selected"
                     >
                       <Icon aria-hidden className="size-4 text-muted-foreground" />
                       <span className="min-w-0">
@@ -471,7 +471,7 @@ export function GlobalSearch({
       {!sheet && (
         <div
           aria-hidden
-          className="flex items-center gap-3 border-t border-line px-3 py-2 text-meta text-muted-foreground [&_kbd]:rounded-[4px] [&_kbd]:border [&_kbd]:border-line [&_kbd]:px-1 [&_kbd]:font-mono"
+          className="flex items-center gap-3 border-t border-line px-3 py-2 text-meta text-muted-foreground [&_kbd]:rounded-kbd [&_kbd]:border [&_kbd]:border-line [&_kbd]:px-1 [&_kbd]:font-mono"
         >
           <span>
             <kbd>↑</kbd> <kbd>↓</kbd> move
@@ -497,8 +497,8 @@ export function GlobalSearch({
         sheet ? "h-[46px] flex-1 border-primary bg-bg" : "h-ctl",
         !sheet &&
           (wide
-            ? "h-10 border-primary bg-bg shadow-[0_0_0_3px_color-mix(in_srgb,var(--ui-ink)_10%,transparent)]"
-            : "border-transparent bg-panel"),
+            ? "h-10 border-primary bg-bg shadow-halo"
+            : "border-transparent bg-fill"),
       )}
     >
       <Search aria-hidden className="size-4 shrink-0 text-muted-foreground" />
@@ -527,7 +527,7 @@ export function GlobalSearch({
       {!sheet && !q && (
         <kbd
           aria-hidden
-          className="rounded-[4px] border border-line px-1.5 font-mono text-meta text-muted-foreground @max-[150px]:hidden"
+          className="rounded-kbd border border-line px-1.5 font-mono text-meta text-muted-foreground @max-[150px]:hidden"
         >
           /
         </kbd>

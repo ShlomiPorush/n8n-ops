@@ -4,6 +4,7 @@
 @import "@fontsource-variable/onest";
 @import "@fontsource/ibm-plex-mono/400.css";
 @import "@fontsource/ibm-plex-mono/600.css";
+@import "@fontsource-variable/inter";
 
 @custom-variant dark (&:is(.dark *));
 /* The full 240px sidebar: above 1100px, unless the user folded it into the icon rail (NL-7). */
@@ -25,30 +26,85 @@
 
 /*
  * Design tokens. Every visual value lives here; components use the Tailwind names below and never raw
- * colours, sizes or shadows. The accent is the ink: no brand colour. Colour means status only.
+ * colours, sizes or shadows. Two designs share every name and differ only in the values: Compact (the v3
+ * language, the default values below) and Regular (html[data-design="regular"]). Only lib/design.ts sets the
+ * attribute, and nothing but these values and the regular: and compact: variants may depend on it.
  */
 :root {
   --ui-font: "Onest Variable", system-ui, sans-serif;
   --ui-mono: "IBM Plex Mono", ui-monospace, monospace;
 
+  /* Compact: the accent is the ink, no brand colour; colour means status only. */
   --ui-bg: #ffffff;
   --ui-panel: #f4f6f5;
+  --ui-fill: var(--ui-panel);
+  --ui-side: var(--ui-bg);
   --ui-raise: #ffffff;
   --ui-ink: #111814;
   --ui-muted: #5e6863;
   --ui-line: #e3e7e5;
   --ui-accent: #111814;
   --ui-on-accent: #ffffff;
+  --ui-hover: color-mix(in srgb, var(--ui-accent) 6%, transparent);
   --ui-focus: #1f5fbf;
 
   --ui-ok: #12803f;
   --ui-warn: #9a6200;
   --ui-fail: #c42b1c;
   --ui-info: #1f5fbf;
+  /* How strongly a status tints the background of its tag or banner. */
+  --ui-tint: 14%;
+
+  /* Type: size, line height, letter spacing and weight per role. */
+  --ui-h1: 28px;
+  --ui-h1-lh: 1.1;
+  --ui-h1-ls: -0.035em;
+  --ui-h1-w: 800;
+  --ui-figure: 24px;
+  --ui-figure-lh: 1.2;
+  --ui-figure-ls: -0.02em;
+  --ui-figure-w: 750;
+  --ui-title: 19px;
+  --ui-title-lh: 1.25;
+  --ui-title-ls: -0.01em;
+  --ui-title-w: 700;
+  --ui-h2: 16px;
+  --ui-h2-lh: 1.3;
+  --ui-h2-ls: -0.01em;
+  --ui-h2-w: 650;
+  --ui-head: 15px;
+  --ui-head-lh: 1.35;
+  --ui-head-w: 650;
+  --ui-body: 14px;
+  --ui-body-lh: 1.5;
+  --ui-ctl: 13px;
+  --ui-ctl-lh: 1.3;
+  --ui-small: 12.5px;
+  --ui-small-lh: 1.4;
+  --ui-meta: 12px;
+  --ui-meta-lh: 1.4;
+  --ui-w-semibold: 600;
+  --ui-w-title: 650;
+  --ui-w-bold: 700;
+  --ui-w-figure: 750;
+  --ui-w-heavy: 800;
+
+  --ui-r-kbd: 4px;
+  --ui-r-tag: 6px;
+  --ui-r-sm: 8px;
+  --ui-r-option: 10px;
+  --ui-r-lg: 12px;
+  --ui-r-sheet: 16px;
+
+  --ui-shadow-card: 0 0 #0000;
+  --ui-shadow-float: 0 12px 32px rgb(0 0 0 / 0.14);
+  --ui-shadow-modal: 0 24px 60px rgb(0 0 0 / 0.25);
+  --ui-shadow-knob: 0 1px 2px rgb(0 0 0 / 0.25);
 
   /* Layout values that the plain CSS rules below need; the Tailwind names in @theme mirror them. */
   --ui-pad-x: 16px;
   --ui-pad-y: 9px;
+  --ui-gap: 14px;
   --ui-tabbar: 64px;
 
   /* shadcn/ui names, mapped onto the tokens so every primitive follows them. */
@@ -56,15 +112,15 @@
   --foreground: var(--ui-ink);
   --card: var(--ui-panel);
   --card-foreground: var(--ui-ink);
-  --popover: var(--ui-bg);
+  --popover: var(--ui-raise);
   --popover-foreground: var(--ui-ink);
   --primary: var(--ui-accent);
   --primary-foreground: var(--ui-on-accent);
-  --secondary: var(--ui-panel);
+  --secondary: var(--ui-fill);
   --secondary-foreground: var(--ui-ink);
-  --muted: var(--ui-panel);
+  --muted: var(--ui-fill);
   --muted-foreground: var(--ui-muted);
-  --accent: color-mix(in srgb, var(--ui-accent) 6%, transparent);
+  --accent: var(--ui-hover);
   --accent-foreground: var(--ui-ink);
   --destructive: var(--ui-fail);
   --border: var(--ui-line);
@@ -93,6 +149,106 @@
   color-scheme: dark;
 }
 
+/*
+ * Regular: the Spectrum refined look of PR #29. Inter, neutral greys, white cards with a hairline ring and a
+ * soft shadow on a white page, a tinted sidebar, softer weights and rounder corners.
+ */
+html[data-design="regular"] {
+  --ui-font: "Inter Variable", system-ui, sans-serif;
+  --ui-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --ui-bg: oklch(1 0 0);
+  --ui-panel: oklch(1 0 0);
+  --ui-fill: oklch(0.97 0 0);
+  --ui-side: oklch(0.985 0 0);
+  --ui-raise: oklch(1 0 0);
+  --ui-ink: oklch(0.145 0 0);
+  --ui-muted: oklch(0.556 0 0);
+  --ui-line: oklch(0.922 0 0);
+  --ui-accent: oklch(0.205 0 0);
+  --ui-on-accent: oklch(0.985 0 0);
+  --ui-hover: oklch(0.97 0 0);
+  --ui-focus: oklch(0.556 0 0);
+
+  --ui-ok: #047857;
+  --ui-warn: #b45309;
+  --ui-fail: #be123c;
+  --ui-info: #0369a1;
+  --ui-tint: 9%;
+
+  --ui-h1: 24px;
+  --ui-h1-lh: 1.33;
+  --ui-h1-ls: -0.025em;
+  --ui-h1-w: 600;
+  --ui-figure: 30px;
+  --ui-figure-lh: 1.2;
+  --ui-figure-ls: -0.025em;
+  --ui-figure-w: 600;
+  --ui-title: 18px;
+  --ui-title-lh: 1.4;
+  --ui-title-ls: -0.015em;
+  --ui-title-w: 600;
+  --ui-h2: 16px;
+  --ui-h2-lh: 1.5;
+  --ui-h2-ls: -0.01em;
+  --ui-h2-w: 600;
+  --ui-head: 16px;
+  --ui-head-lh: 1.5;
+  --ui-head-w: 500;
+  --ui-body: 14px;
+  --ui-body-lh: 1.43;
+  --ui-ctl: 14px;
+  --ui-ctl-lh: 1.43;
+  --ui-small: 13px;
+  --ui-small-lh: 1.45;
+  --ui-meta: 12px;
+  --ui-meta-lh: 1.33;
+  --ui-w-semibold: 500;
+  --ui-w-title: 600;
+  --ui-w-bold: 600;
+  --ui-w-figure: 600;
+  --ui-w-heavy: 600;
+
+  --ui-r-kbd: 4px;
+  --ui-r-tag: 6px;
+  --ui-r-sm: 8px;
+  --ui-r-option: 8px;
+  --ui-r-lg: 14px;
+  --ui-r-sheet: 18px;
+
+  --ui-shadow-card: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --ui-shadow-float: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  --ui-shadow-modal: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+  --ui-shadow-knob: 0 1px 3px rgb(0 0 0 / 0.2);
+
+  --ui-pad-x: 20px;
+  --ui-pad-y: 12px;
+  --ui-gap: 16px;
+}
+
+html[data-design="regular"].dark {
+  --ui-bg: oklch(0.145 0 0);
+  --ui-panel: oklch(0.205 0 0);
+  --ui-fill: oklch(0.269 0 0);
+  --ui-side: oklch(0.205 0 0);
+  --ui-raise: oklch(0.205 0 0);
+  --ui-ink: oklch(0.985 0 0);
+  --ui-muted: oklch(0.708 0 0);
+  --ui-line: oklch(1 0 0 / 10%);
+  --ui-accent: oklch(0.922 0 0);
+  --ui-on-accent: oklch(0.205 0 0);
+  --ui-hover: oklch(0.269 0 0);
+  --ui-focus: oklch(0.708 0 0);
+
+  --ui-ok: #6ee7b7;
+  --ui-warn: #fcd34d;
+  --ui-fail: #fda4af;
+  --ui-info: #7dd3fc;
+  --ui-tint: 12%;
+
+  --ui-shadow-card: 0 1px 2px 0 rgb(0 0 0 / 0.3);
+}
+
 /* The Tailwind theme holds only the tokens: the default palette, sizes and shadows are removed. */
 @theme inline {
   --color-*: initial;
@@ -103,6 +259,8 @@
 
   --color-bg: var(--ui-bg);
   --color-panel: var(--ui-panel);
+  --color-fill: var(--ui-fill);
+  --color-side: var(--ui-side);
   --color-raise: var(--ui-raise);
   --color-ink: var(--ui-ink);
   --color-line: var(--ui-line);
@@ -139,66 +297,81 @@
 
   /* Type scale: page title, key figure, item title, section title, panel title, body, control, small, meta. */
   --text-*: initial;
-  --text-h1: 28px;
-  --text-h1--line-height: 1.1;
-  --text-h1--letter-spacing: -0.035em;
-  --text-h1--font-weight: 800;
-  --text-figure: 24px;
-  --text-figure--line-height: 1.2;
-  --text-figure--letter-spacing: -0.02em;
-  --text-figure--font-weight: 750;
-  --text-title: 19px;
-  --text-title--line-height: 1.25;
-  --text-title--letter-spacing: -0.01em;
-  --text-title--font-weight: 700;
-  --text-h2: 16px;
-  --text-h2--line-height: 1.3;
-  --text-h2--letter-spacing: -0.01em;
-  --text-h2--font-weight: 650;
-  --text-head: 15px;
-  --text-head--line-height: 1.35;
-  --text-head--font-weight: 650;
-  --text-body: 14px;
-  --text-body--line-height: 1.5;
-  --text-ctl: 13px;
-  --text-ctl--line-height: 1.3;
-  --text-small: 12.5px;
-  --text-small--line-height: 1.4;
-  --text-meta: 12px;
-  --text-meta--line-height: 1.4;
+  --text-h1: var(--ui-h1);
+  --text-h1--line-height: var(--ui-h1-lh);
+  --text-h1--letter-spacing: var(--ui-h1-ls);
+  --text-h1--font-weight: var(--ui-h1-w);
+  --text-figure: var(--ui-figure);
+  --text-figure--line-height: var(--ui-figure-lh);
+  --text-figure--letter-spacing: var(--ui-figure-ls);
+  --text-figure--font-weight: var(--ui-figure-w);
+  --text-title: var(--ui-title);
+  --text-title--line-height: var(--ui-title-lh);
+  --text-title--letter-spacing: var(--ui-title-ls);
+  --text-title--font-weight: var(--ui-title-w);
+  --text-h2: var(--ui-h2);
+  --text-h2--line-height: var(--ui-h2-lh);
+  --text-h2--letter-spacing: var(--ui-h2-ls);
+  --text-h2--font-weight: var(--ui-h2-w);
+  --text-head: var(--ui-head);
+  --text-head--line-height: var(--ui-head-lh);
+  --text-head--font-weight: var(--ui-head-w);
+  --text-body: var(--ui-body);
+  --text-body--line-height: var(--ui-body-lh);
+  --text-ctl: var(--ui-ctl);
+  --text-ctl--line-height: var(--ui-ctl-lh);
+  --text-small: var(--ui-small);
+  --text-small--line-height: var(--ui-small-lh);
+  --text-meta: var(--ui-meta);
+  --text-meta--line-height: var(--ui-meta-lh);
+  /* Inline code and values: a touch smaller than the text around them. */
+  --text-code: 0.9em;
   /* Phone inputs: 16px so iOS does not zoom. */
   --text-input-touch: 16px;
+  /* A count that shrinks to a bare dot. */
+  --text-none: 0px;
 
   --font-weight-*: initial;
   --font-weight-normal: 400;
   --font-weight-medium: 500;
-  --font-weight-semibold: 600;
-  --font-weight-title: 650;
-  --font-weight-bold: 700;
-  --font-weight-figure: 750;
-  --font-weight-heavy: 800;
+  --font-weight-semibold: var(--ui-w-semibold);
+  --font-weight-title: var(--ui-w-title);
+  --font-weight-bold: var(--ui-w-bold);
+  --font-weight-figure: var(--ui-w-figure);
+  --font-weight-heavy: var(--ui-w-heavy);
 
   --tracking-*: initial;
   --tracking-tight: -0.01em;
   --tracking-tighter: -0.02em;
+  --tracking-caps: 0.04em;
 
   --radius-*: initial;
-  --radius-tag: 6px;
-  --radius-sm: 8px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
-  --radius-xl: 12px;
-  --radius-sheet: 16px;
+  --radius-kbd: var(--ui-r-kbd);
+  --radius-tag: var(--ui-r-tag);
+  --radius-sm: var(--ui-r-sm);
+  --radius-md: var(--ui-r-sm);
+  --radius-option: var(--ui-r-option);
+  --radius-lg: var(--ui-r-lg);
+  --radius-xl: var(--ui-r-lg);
+  --radius-sheet: var(--ui-r-sheet);
+  /* The search results, which float under the field. */
+  --radius-pop: 14px;
 
   --shadow-*: initial;
-  --shadow-float: 0 12px 32px rgb(0 0 0 / 0.14);
-  --shadow-modal: 0 24px 60px rgb(0 0 0 / 0.25);
-  --shadow-knob: 0 1px 2px rgb(0 0 0 / 0.25);
+  --shadow-card: var(--ui-shadow-card);
+  --shadow-float: var(--ui-shadow-float);
+  --shadow-modal: var(--ui-shadow-modal);
+  --shadow-knob: var(--ui-shadow-knob);
+  /* A selected option in a list: an ink bar at its start; a selected tab: an ink line under it. */
+  --shadow-selected: inset 3px 0 0 var(--ui-ink);
+  --shadow-tab: inset 0 -2px 0 var(--ui-ink);
+  /* The open search field: a soft ink halo. */
+  --shadow-halo: 0 0 0 3px color-mix(in srgb, var(--ui-ink) 10%, transparent);
 
   /* Named spacing for the layout tokens; the 4px Tailwind scale stays for small gaps. */
-  --spacing-pad-x: 16px;
-  --spacing-pad-y: 9px;
-  --spacing-gap: 14px;
+  --spacing-pad-x: var(--ui-pad-x);
+  --spacing-pad-y: var(--ui-pad-y);
+  --spacing-gap: var(--ui-gap);
   --spacing-ctl: 34px;
   --spacing-ctl-sm: 28px;
   --spacing-chip: 30px;
@@ -216,6 +389,10 @@
   --breakpoint-xl: 1280px;
   --breakpoint-2xl: 1600px;
 }
+
+/* Markup that differs between the designs, for decoration only: icons, rings, a card shadow. */
+@custom-variant regular (html[data-design="regular"] &);
+@custom-variant compact (html:not([data-design="regular"]) &);
 
 @layer base {
   * {
@@ -430,26 +607,26 @@
   }
 }
 
-/* Status tint for tags, banners and counters: the status colour at 14% over whatever is below. */
+/* Status tint for tags, banners and counters: the status colour at --ui-tint over whatever is below. */
 @utility tint-ok {
   color: var(--ui-ok);
-  background-color: color-mix(in srgb, var(--ui-ok) 14%, transparent);
+  background-color: color-mix(in srgb, var(--ui-ok) var(--ui-tint), transparent);
 }
 @utility tint-warn {
   color: var(--ui-warn);
-  background-color: color-mix(in srgb, var(--ui-warn) 15%, transparent);
+  background-color: color-mix(in srgb, var(--ui-warn) calc(var(--ui-tint) + 1%), transparent);
 }
 @utility tint-fail {
   color: var(--ui-fail);
-  background-color: color-mix(in srgb, var(--ui-fail) 14%, transparent);
+  background-color: color-mix(in srgb, var(--ui-fail) var(--ui-tint), transparent);
 }
 @utility tint-info {
   color: var(--ui-info);
-  background-color: color-mix(in srgb, var(--ui-info) 14%, transparent);
+  background-color: color-mix(in srgb, var(--ui-info) var(--ui-tint), transparent);
 }
 @utility tint-muted {
   color: var(--ui-muted);
-  background-color: color-mix(in srgb, var(--ui-muted) 14%, transparent);
+  background-color: color-mix(in srgb, var(--ui-muted) var(--ui-tint), transparent);
 }
 
 /* Hover tint for clickable rows, only where there is a pointer so a tapped row does not stay grey. */
@@ -465,7 +642,7 @@
 /* A panel of rows: tinted, flat, no border or shadow. */
 @utility panel {
   background-color: var(--ui-panel);
-  border-radius: 12px;
+  border-radius: var(--ui-r-lg);
 }
 
 /* While the save bar shows, every scrolling page keeps room under its last field (SV-1). */

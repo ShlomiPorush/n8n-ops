@@ -1,7 +1,8 @@
-import { ChevronDown, Download, KeyRound, Plus, ShieldCheck, Trash2 } from "lucide-react"
+import { ChevronDown, Download, KeyRound, KeySquare as KeySquareIcon, Plus, ShieldCheck, Trash2 } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { Navigate, NavLink, useLocation, useNavigate, useParams } from "react-router"
 import { useCrumb } from "@/app/chrome"
+import { afterGeneralSave } from "@/app/design-sync"
 import { settingsGroups, settingsSectionLabel } from "@/app/settings-sections"
 import { useConfirm } from "@/components/confirm"
 import {
@@ -17,7 +18,6 @@ import {
   UserText,
   useSaveSource,
 } from "@/components/kit"
-import { allowLeave } from "@/components/save-bar"
 import { When } from "@/components/status"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -46,7 +46,7 @@ import { cn } from "@/lib/utils"
 
 /** What the two designs are; the same words in both apps. */
 const designHint =
-  "Regular keeps the original layout. Compact fits more on each screen, with a search in the top bar and sheets on phones. Applies to everyone; the page reloads after saving."
+  "How the console looks, for everyone. Both have the same pages and functions: Regular has white cards, icons and the Inter typeface; Compact fits more on each screen. It changes as soon as you save."
 
 export type FieldDef = {
   name: string
@@ -254,7 +254,7 @@ export function SettingsPage() {
         <nav aria-label="Settings categories" className="sticky top-0 hidden flex-col gap-0.5 min-[1024px]:flex">
           {settingsGroups.map((g) => (
             <div key={g.label} className="flex flex-col gap-0.5">
-              <div className="px-2.5 pt-2.5 pb-1 text-meta font-bold tracking-[0.04em] text-muted-foreground uppercase">
+              <div className="px-2.5 pt-2.5 pb-1 text-meta font-bold tracking-caps text-muted-foreground uppercase">
                 {g.label}
               </div>
               {g.items.map(([k, l]) => (
@@ -431,16 +431,11 @@ export function SettingsForm({ section }: { section: string }) {
     count,
     save: async () => {
       const sent = body()
-      const switching = section === "general" && sent.design !== initial.design
       await save.mutateAsync(sent)
       // Only a successful save lets the next answer replace the form; a failed one keeps the edits (SV-3).
       reload.current = true
-      // The design is read when the page loads, so a new one needs a reload; the change is saved, so no
-      // "unsaved changes" question.
-      if (switching) {
-        allowLeave()
-        window.location.reload()
-      }
+      // A new design shows at once, without a reload.
+      if (section === "general") afterGeneralSave(sent)
     },
     discard: () => query.data && def && setValues(toForm(def, query.data)),
   })
@@ -454,7 +449,7 @@ export function SettingsForm({ section }: { section: string }) {
       ) : query.isLoading ? (
         <Loading>Loading the {def.title} settings…</Loading>
       ) : (
-        // Locked while a save is on its way, so nothing typed meanwhile is lost when a design switch reloads.
+        // Locked while a save is on its way, so nothing typed meanwhile is lost when the saved values come back.
         <fieldset disabled={save.isPending} className="contents">
           {def.fields.map((f) => (
             <SettingRow key={f.name} htmlFor={f.name} label={f.label} hint={f.hint} inline={f.type === "switch"}>
@@ -660,7 +655,7 @@ function KeysCard() {
         }}
       >
         <DialogContent keepOnBackdrop>
-          <DialogHeader>
+          <DialogHeader icon={KeyRound}>
             <DialogTitle>New backup key pair</DialogTitle>
             <DialogDescription>
               New backups use the new key. Archives made before keep needing the old private key, so keep it too.
@@ -668,7 +663,7 @@ function KeysCard() {
           </DialogHeader>
           {privateKey ? (
             <div className="grid gap-3">
-              <pre className="overflow-x-auto rounded-sm bg-panel p-3 font-mono text-small whitespace-pre-wrap break-all">
+              <pre className="overflow-x-auto rounded-sm bg-fill p-3 font-mono text-small whitespace-pre-wrap break-all">
                 {privateKey}
               </pre>
               <Button
@@ -870,14 +865,14 @@ function TokensCard() {
       )}
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent keepOnBackdrop>
-          <DialogHeader>
+          <DialogHeader icon={KeySquareIcon}>
             <DialogTitle>New token</DialogTitle>
             <DialogDescription>The token is shown once. Store it where the agent or script reads it.</DialogDescription>
           </DialogHeader>
           {created ? (
             <div className="grid gap-3">
               <pre
-                className="overflow-x-auto rounded-sm bg-panel p-3 font-mono text-small whitespace-pre-wrap break-all"
+                className="overflow-x-auto rounded-sm bg-fill p-3 font-mono text-small whitespace-pre-wrap break-all"
                 data-testid="new-token"
               >
                 {created}

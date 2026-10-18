@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowRight, CheckCircle2, RefreshCw, ShieldCheck, XCircle } from "lucide-react"
+import { AlertTriangle, ArrowRight, ArrowRightLeft as ArrowRightLeftIcon, CheckCircle2, RefreshCw, ShieldCheck, XCircle } from "lucide-react"
 import { useState } from "react"
 import { useSearchParams } from "react-router"
 import { FilterBar, Picker, SearchBox } from "@/components/filter-bar"
@@ -300,7 +300,7 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
   return (
     <Dialog open={workflow !== null} onOpenChange={(o) => !o && reset()}>
       <DialogContent className="md:max-w-2xl" keepOnBackdrop>
-        <DialogHeader>
+        <DialogHeader icon={ArrowRightLeftIcon}>
           <DialogTitle>Move {workflow?.name}</DialogTitle>
           <DialogDescription>
             Copies the workflow and its credentials to another instance, verifies it, then switches off the original.

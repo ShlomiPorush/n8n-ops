@@ -1,3 +1,4 @@
+import { TriangleAlert } from "lucide-react"
 import * as React from "react"
 import { Button } from "@/components/ui/button"
 import {
@@ -70,7 +71,11 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
               setTimeout(() => confirmRef.current?.focus(), CONFIRM_FOCUS_MS)
             }}
           >
-            <DialogHeader className="pe-pad-x">
+            <DialogHeader
+              className="pe-pad-x"
+              icon={pending.danger ? TriangleAlert : undefined}
+              tone={pending.danger ? "fail" : undefined}
+            >
               <DialogTitle>{pending.title}</DialogTitle>
             </DialogHeader>
             {pending.message ? (

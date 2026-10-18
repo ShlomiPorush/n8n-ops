@@ -7,10 +7,28 @@ import { createCn } from "cn/config"
 export const cn = createCn({
   extend: {
     classGroups: {
-      "font-size": [{ text: ["h1", "figure", "title", "h2", "head", "body", "ctl", "small", "meta", "input-touch"] }],
+      "font-size": [
+        {
+          text: [
+            "h1",
+            "figure",
+            "title",
+            "h2",
+            "head",
+            "body",
+            "ctl",
+            "small",
+            "meta",
+            "code",
+            "none",
+            "input-touch",
+          ],
+        },
+      ],
       "font-weight": [{ font: ["title", "figure", "heavy"] }],
-      shadow: [{ shadow: ["float", "modal", "knob"] }],
-      rounded: [{ rounded: ["tag", "sheet"] }],
+      tracking: [{ tracking: ["caps"] }],
+      shadow: [{ shadow: ["card", "float", "modal", "knob", "selected", "tab", "halo"] }],
+      rounded: [{ rounded: ["kbd", "tag", "option", "sheet", "pop"] }],
     },
   },
 })

@@ -147,12 +147,6 @@ function SaveBar({
   )
 }
 
-/** Lets the page reload without the "unsaved changes" question, for a reload that follows a save. */
-let leaving = false
-export function allowLeave() {
-  leaving = true
-}
-
 /** Unsaved changes are protected: a reload or closing the tab asks the browser, a move inside the app asks here. */
 function useLeaveGuard(count: number) {
   const confirm = useConfirm()
@@ -171,9 +165,7 @@ function useLeaveGuard(count: number) {
   }, [blocker, confirm, count])
   React.useEffect(() => {
     if (count === 0) return
-    const warn = (e: BeforeUnloadEvent) => {
-      if (!leaving) e.preventDefault()
-    }
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault()
     window.addEventListener("beforeunload", warn)
     return () => window.removeEventListener("beforeunload", warn)
   }, [count])

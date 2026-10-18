@@ -1,3 +1,4 @@
+import { Bug as BugIcon, DatabaseBackup as DatabaseBackupIcon, Server as ServerIcon, Siren as SirenIcon } from "lucide-react"
 import { Link } from "react-router"
 import { AlertRow, Empty, Kpi, Kpis, LoadError, Loading, Page, Panel, PanelHead, Row, UserText } from "@/components/kit"
 import { Dot, type HealthState, StatusTag, statusOf, TimeAgo, Tone } from "@/components/status"
@@ -116,9 +117,9 @@ export function OverviewPage() {
       ) : (
         <>
           <Kpis>
-            <Kpi label="Need attention" value={n(attention.length)} tone={attention.length ? "fail" : undefined} />
+            <Kpi label="Need attention" icon={SirenIcon} value={attention.length} tone={attention.length ? "fail" : undefined} />
             <Kpi
-              label="Instances healthy"
+              label="Instances healthy" icon={ServerIcon}
               value={`${n(o.stats.healthy)}/${n(o.stats.instances)}`}
               hint={
                 o.stats.down || o.stats.warn ? `${n(o.stats.down)} down, ${n(o.stats.warn)} need a look` : undefined
@@ -126,8 +127,8 @@ export function OverviewPage() {
               tone={o.stats.down ? "fail" : o.stats.warn ? "warn" : undefined}
               to="/instances"
             />
-            <Kpi label="Open problems" value={n(o.stats.openProblems)} to="/problems?status=open" />
-            <Kpi label="Last backup" value={<TimeAgo value={o.stats.lastBackupAt} />} to="/backups" />
+            <Kpi label="Open problems" icon={BugIcon} value={o.stats.openProblems} to="/problems?status=open" />
+            <Kpi label="Last backup" icon={DatabaseBackupIcon} value={<TimeAgo value={o.stats.lastBackupAt} />} to="/backups" />
           </Kpis>
 
           <div className="grid items-start gap-gap xl:grid-cols-[minmax(0,1.9fr)_minmax(260px,1fr)]">
@@ -230,7 +231,7 @@ function AttentionRow({ a }: { a: AttentionItem }) {
           </>
         }
       >
-        <span className="block truncate font-mono text-[0.9em]">{a.errorMessage}</span>
+        <span className="block truncate font-mono text-code">{a.errorMessage}</span>
         <span>
           <UserText>{a.instanceName}</UserText> · {plural(a.count, "failure")}
         </span>

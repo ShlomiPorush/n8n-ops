@@ -1,3 +1,4 @@
+import { CircleAlert, CircleCheck, CircleDashed, Clock5, type LucideIcon, TriangleAlert } from "lucide-react"
 import { useEffect, useState } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -52,6 +53,20 @@ export function statusOf<K extends StatusKind>(kind: K, status: keyof (typeof st
   return statusTable[kind][status] as { label: string; tone: ToneName }
 }
 
+/** The icon Regular draws before a status word; Compact shows the word alone. The word carries the meaning. */
+const toneIcon: Record<ToneName, LucideIcon> = {
+  ok: CircleCheck,
+  warn: TriangleAlert,
+  fail: CircleAlert,
+  info: CircleDashed,
+  muted: Clock5,
+}
+
+function ToneIcon({ tone }: { tone: ToneName }) {
+  const Icon = toneIcon[tone]
+  return <Icon aria-hidden strokeWidth={2.25} className="hidden shrink-0 regular:block" />
+}
+
 /** A status tag from the central table. children replaces the label when the words must say more. */
 export function StatusTag<K extends StatusKind>({
   kind,
@@ -67,6 +82,7 @@ export function StatusTag<K extends StatusKind>({
   const s = statusOf(kind, status)
   return (
     <Badge variant={s.tone} className={className}>
+      <ToneIcon tone={s.tone} />
       {children ?? s.label}
     </Badge>
   )
@@ -76,6 +92,7 @@ export function StatusTag<K extends StatusKind>({
 export function Tone({ tone, children, className }: { tone: ToneName; children: React.ReactNode; className?: string }) {
   return (
     <Badge variant={tone} className={className}>
+      <ToneIcon tone={tone} />
       {children}
     </Badge>
   )
@@ -84,11 +101,11 @@ export function Tone({ tone, children, className }: { tone: ToneName; children: 
 export type HealthState = "ok" | "warn" | "down" | "unknown"
 
 const dotTone: Record<ToneName, string> = {
-  ok: "bg-ok",
-  warn: "bg-warn",
-  fail: "bg-fail",
-  info: "bg-info",
-  muted: "bg-muted-foreground/50",
+  ok: "bg-ok text-ok",
+  warn: "bg-warn text-warn",
+  fail: "bg-fail text-fail",
+  info: "bg-info text-info",
+  muted: "bg-muted-foreground/50 text-muted-foreground",
 }
 
 /** A small status dot for tight spaces; it carries the status as its accessible name and tooltip. */
@@ -99,8 +116,18 @@ export function Dot({ health, label, className }: { health: HealthState; label?:
       role="img"
       aria-label={label ?? s.label}
       title={label ?? s.label}
-      className={cn("inline-block size-2 shrink-0 rounded-full", dotTone[s.tone], className)}
-    />
+      className={cn(
+        "relative inline-block size-2 shrink-0 rounded-full",
+        "regular:ring-4 regular:ring-current/15",
+        dotTone[s.tone],
+        className,
+      )}
+    >
+      {/* Regular: a down instance pulses, so it is seen at a glance. */}
+      {health === "down" && (
+        <span className="absolute inset-0 hidden animate-ping rounded-full bg-fail/60 regular:block motion-reduce:animate-none" />
+      )}
+    </span>
   )
 }
 

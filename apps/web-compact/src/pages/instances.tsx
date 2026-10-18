@@ -1,4 +1,4 @@
-import { Download, ExternalLink, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react"
+import { Activity as ActivityIcon, Bug as BugIcon, CircleCheck as CircleCheckIcon, CircleX as CircleXIcon, Download, ExternalLink, HeartPulse as HeartPulseIcon, History as HistoryIcon, Hourglass as HourglassIcon, Loader as LoaderIcon, Network as NetworkIcon, Pencil, Plus, RefreshCw, Server as ServerIcon, Trash2, Workflow as WorkflowIcon } from "lucide-react"
 import { useEffect, useState } from "react"
 import { Link, useNavigate, useParams } from "react-router"
 import { useCrumb } from "@/app/chrome"
@@ -348,20 +348,20 @@ function InstanceDetail({ id }: { id: string }) {
 
       <Kpis>
         <Kpi
-          label="Open problems"
-          value={n(i.openProblems)}
+          label="Open problems" icon={BugIcon}
+          value={i.openProblems}
           tone={i.openProblems ? "fail" : undefined}
           to={`/problems?status=open&instance=${i.id}`}
         />
         <Kpi
-          label="Active / total workflows"
+          label="Active / total workflows" icon={WorkflowIcon}
           value={`${n(i.workflowCounts.active)}/${n(i.workflowCounts.total)}`}
           to={`/workflows?instance=${i.id}`}
         />
-        <Kpi label="Executions, 30 days" value={n(i.workflowCounts.runs30d)} />
-        <Kpi label="Failures checked" value={<TimeAgo value={i.lastPollAt} />} />
-        <Kpi label="Health checked" value={<TimeAgo value={i.healthCheckedAt} />} />
-        <Kpi label="Collection" value={i.collection === "worker" ? "Worker" : "Direct"} />
+        <Kpi label="Executions, 30 days" icon={ActivityIcon} value={i.workflowCounts.runs30d} />
+        <Kpi label="Failures checked" icon={HistoryIcon} value={<TimeAgo value={i.lastPollAt} />} />
+        <Kpi label="Health checked" icon={HeartPulseIcon} value={<TimeAgo value={i.healthCheckedAt} />} />
+        <Kpi label="Collection" icon={NetworkIcon} value={i.collection === "worker" ? "Worker" : "Direct"} />
       </Kpis>
       {i.lastPollError && (
         <Alert variant="fail">
@@ -387,10 +387,10 @@ function InstanceDetail({ id }: { id: string }) {
         {hd?.queue && (
           <div className="border-t border-line p-pad-x">
             <Kpis>
-              <Kpi label="Waiting" value={n(hd.queue.waiting)} tone={hd.backlogActive ? "fail" : undefined} />
-              <Kpi label="Active" value={n(hd.queue.active)} />
-              <Kpi label="Completed" value={n(hd.queue.completed)} />
-              <Kpi label="Failed" value={n(hd.queue.failed)} />
+              <Kpi label="Waiting" icon={HourglassIcon} value={hd.queue.waiting} tone={hd.backlogActive ? "fail" : undefined} />
+              <Kpi label="Active" icon={LoaderIcon} value={hd.queue.active} />
+              <Kpi label="Completed" icon={CircleCheckIcon} value={hd.queue.completed} />
+              <Kpi label="Failed" icon={CircleXIcon} value={hd.queue.failed} />
             </Kpis>
           </div>
         )}
@@ -692,7 +692,7 @@ export function InstanceDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="md:max-w-xl" keepOnBackdrop>
-        <DialogHeader>
+        <DialogHeader icon={ServerIcon}>
           <DialogTitle>{instance ? `Edit ${instance.name}` : "Add an instance"}</DialogTitle>
           <DialogDescription>The connection is tested before anything is saved.</DialogDescription>
         </DialogHeader>

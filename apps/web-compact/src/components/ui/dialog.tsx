@@ -1,4 +1,4 @@
-import { XIcon } from "lucide-react"
+import { type LucideIcon, XIcon } from "lucide-react"
 import { Dialog as DialogPrimitive } from "radix-ui"
 import * as React from "react"
 import { Button } from "@/components/ui/button"
@@ -212,7 +212,17 @@ function DialogContent({
   )
 }
 
-function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
+function DialogHeader({
+  className,
+  icon: Icon,
+  tone,
+  children,
+  ...props
+}: React.ComponentProps<"div"> & {
+  /** What the dialog is about; Regular draws it above the title, red for an action that removes something. */
+  icon?: LucideIcon
+  tone?: "fail"
+}) {
   return (
     <div
       data-slot="dialog-header"
@@ -221,7 +231,20 @@ function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
         className,
       )}
       {...props}
-    />
+    >
+      {Icon && (
+        <span
+          aria-hidden
+          className={cn(
+            "mb-1 hidden size-10 place-items-center rounded-lg bg-fill ring-1 ring-line ring-inset regular:grid",
+            tone === "fail" && "tint-fail ring-fail/20",
+          )}
+        >
+          <Icon className="size-5" />
+        </span>
+      )}
+      {children}
+    </div>
   )
 }
 

@@ -1,4 +1,4 @@
-import { Plus, Trash2 } from "lucide-react"
+import { Cpu as CpuIcon, Plus, Trash2 } from "lucide-react"
 import { useState } from "react"
 import { Link } from "react-router"
 import { useConfirm } from "@/components/confirm"
@@ -140,7 +140,7 @@ function CopyBlock({ label, text }: { label: string; text: string }) {
           Copy
         </Copyable>
       </div>
-      <pre className="max-h-72 overflow-auto rounded-sm bg-panel p-4 font-mono text-small leading-relaxed">{text}</pre>
+      <pre className="max-h-72 overflow-auto rounded-sm bg-fill p-4 font-mono text-small leading-relaxed">{text}</pre>
     </div>
   )
 }
@@ -167,7 +167,7 @@ function AddWorkerDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
   return (
     <Dialog open={open} onOpenChange={close}>
       <DialogContent className="md:max-w-2xl" keepOnBackdrop>
-        <DialogHeader>
+        <DialogHeader icon={CpuIcon}>
           <DialogTitle>Add a worker</DialogTitle>
           <DialogDescription>
             {result

@@ -1,4 +1,4 @@
-import { BellOff, CheckCircle2, ExternalLink, GitMerge, RotateCcw } from "lucide-react"
+import { Activity as ActivityIcon, BellOff, Braces as BracesIcon, CalendarPlus as CalendarPlusIcon, CheckCircle2, ExternalLink, GitMerge, GitMerge as GitMergeIcon, History as HistoryIcon, RotateCcw } from "lucide-react"
 import { useState } from "react"
 import { Link, useNavigate, useParams, useSearchParams } from "react-router"
 import { useCrumb } from "@/app/chrome"
@@ -310,7 +310,7 @@ export function ProblemDetail({ id }: { id: string }) {
         <h2 className="text-title">
           <UserText>{p.workflowName}</UserText>
         </h2>
-        <p className="rounded-sm bg-panel px-3 py-2 font-mono text-small break-words">{p.errorMessage}</p>
+        <p className="rounded-sm bg-fill px-3 py-2 font-mono text-small break-words">{p.errorMessage}</p>
         {p.error?.description && <p className="text-muted-foreground">{p.error.description}</p>}
         <div className="flex flex-wrap gap-2 pt-1">
           {p.status === "resolved" ? (
@@ -342,13 +342,13 @@ export function ProblemDetail({ id }: { id: string }) {
 
       <Kpis>
         <Kpi
-          label={p.count === 1 ? "Failure" : "Failures"}
-          value={n(p.count)}
+          label={p.count === 1 ? "Failure" : "Failures"} icon={ActivityIcon}
+          value={p.count}
           tone={p.status === "open" ? "fail" : undefined}
         />
-        <Kpi label="First seen" value={<TimeAgo value={p.firstSeen} />} />
+        <Kpi label="First seen" icon={CalendarPlusIcon} value={<TimeAgo value={p.firstSeen} />} />
         <Kpi
-          label="Last seen"
+          label="Last seen" icon={HistoryIcon}
           value={<TimeAgo value={p.lastSeen} />}
           hint={p.status === "muted" && p.mutedUntil ? `Muted until ${formatDateTime(p.mutedUntil, tz)}` : undefined}
         />
@@ -464,13 +464,13 @@ export function ProblemDetail({ id }: { id: string }) {
 
       <Dialog open={raw !== null} onOpenChange={(o) => !o && setRaw(null)}>
         <DialogContent className="md:max-w-4xl" aria-describedby={undefined}>
-          <DialogHeader>
+          <DialogHeader icon={BracesIcon}>
             <DialogTitle>Raw data</DialogTitle>
           </DialogHeader>
           {raw === loadingRaw ? (
             <Loading>Loading the execution…</Loading>
           ) : (
-            <pre className="min-w-0 overflow-auto rounded-sm bg-panel p-3 font-mono text-meta whitespace-pre-wrap break-words">
+            <pre className="min-w-0 overflow-auto rounded-sm bg-fill p-3 font-mono text-meta whitespace-pre-wrap break-words">
               {JSON.stringify(raw, null, 2)}
             </pre>
           )}
@@ -501,7 +501,7 @@ function MergeDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
-        <DialogHeader>
+        <DialogHeader icon={GitMergeIcon}>
           <DialogTitle>Merge into another problem</DialogTitle>
           <DialogDescription>
             Its {n(problem.count)} {problem.count === 1 ? "failure moves" : "failures move"} to the chosen problem, and

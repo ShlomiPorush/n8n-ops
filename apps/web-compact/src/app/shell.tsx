@@ -23,6 +23,7 @@ import { useTheme } from "next-themes"
 import { Popover as PopoverPrimitive, Dialog as SheetPrimitive } from "radix-ui"
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { Link, Navigate, NavLink, Outlet, useLocation, useNavigate, useNavigationType } from "react-router"
+import { DesignSync } from "@/app/design-sync"
 import { ChromeContext } from "@/app/chrome"
 import { GlobalSearch, PhoneSearch, type SearchPage } from "@/app/search"
 import { settingsGroups } from "@/app/settings-sections"
@@ -211,7 +212,7 @@ function TopBar({
   const [searching, setSearching] = useState(false)
   return (
     <header className="hidden h-bar shrink-0 items-center border-b border-line bg-bg md:flex">
-      <div className="flex h-full w-rail shrink-0 items-center justify-center gap-2.5 border-e border-line side:w-side side:justify-start side:ps-[18px] side:pe-2.5">
+      <div className="flex h-full w-rail shrink-0 items-center justify-center gap-2.5 border-e border-line bg-side side:w-side side:justify-start side:ps-[18px] side:pe-2.5">
         <Link to="/" aria-label="n8n-ops, Overview" className="flex shrink-0 rounded-sm">
           <BrandMark />
         </Link>
@@ -365,7 +366,7 @@ function SideNav({ nav }: { nav: ReturnType<typeof useNavFolded> }) {
   return (
     <nav
       aria-label="Main"
-      className="hidden w-rail shrink-0 flex-col items-center gap-0.5 overflow-y-auto border-e border-line bg-bg px-2.5 py-3.5 transition-[width] duration-200 md:flex side:w-side side:items-stretch"
+      className="hidden w-rail shrink-0 flex-col items-center gap-0.5 overflow-y-auto border-e border-line bg-side px-2.5 py-3.5 transition-[width] duration-200 md:flex side:w-side side:items-stretch"
     >
       {/* Folded on a wide screen, the toggle sits at the top of the rail. */}
       <NavToggle {...nav} className="mb-2 hidden folded:inline-flex" />
@@ -373,7 +374,7 @@ function SideNav({ nav }: { nav: ReturnType<typeof useNavFolded> }) {
       <Link
         to="/workers"
         title={workers?.total ? `Workers: ${n(workers.online)} of ${n(workers.total)} online` : "No worker paired"}
-        className="mx-1 mb-3 hidden items-center gap-2.5 rounded-sm bg-panel px-3 py-2.5 side:flex [@media(hover:hover)]:hover:bg-accent"
+        className="mx-1 mb-3 hidden items-center gap-2.5 rounded-sm bg-fill px-3 py-2.5 side:flex [@media(hover:hover)]:hover:bg-accent"
       >
         <span
           aria-hidden
@@ -411,6 +412,7 @@ function SideNav({ nav }: { nav: ReturnType<typeof useNavFolded> }) {
                   "relative flex h-[42px] w-12 items-center justify-center gap-2.5 rounded-sm text-ink transition-colors duration-150 side:h-8 side:w-full side:justify-start side:px-2.5",
                   "[@media(hover:hover)]:hover:bg-accent",
                   "aria-[current=page]:bg-primary aria-[current=page]:font-title aria-[current=page]:text-primary-foreground [@media(hover:hover)]:aria-[current=page]:hover:bg-primary",
+                  "regular:aria-[current=page]:bg-fill regular:aria-[current=page]:font-semibold regular:aria-[current=page]:text-ink regular:[@media(hover:hover)]:aria-[current=page]:hover:bg-fill",
                 )}
               >
                 <item.icon
@@ -425,7 +427,7 @@ function SideNav({ nav }: { nav: ReturnType<typeof useNavFolded> }) {
                   <span
                     className={cn(
                       // Rail: an 8px dot; sidebar: the number in a tag.
-                      "absolute end-2 top-[7px] size-2 rounded-full text-[0px] side:static side:ms-auto side:size-auto side:rounded-tag side:px-[7px] side:py-px side:text-meta side:font-bold side:tabular-nums",
+                      "absolute end-2 top-[7px] size-2 rounded-full text-none side:static side:ms-auto side:size-auto side:rounded-tag side:px-[7px] side:py-px side:text-meta side:font-bold side:tabular-nums",
                       count.tone === "fail" ? "bg-fail" : "bg-warn",
                       // On the filled active item the number takes the item's colour instead of a tint.
                       active
@@ -505,7 +507,7 @@ function UserMenu({ compact }: { compact?: boolean }) {
             compact && "side:flex-none",
           )}
         >
-          <span className="grid size-7 shrink-0 place-items-center rounded-full bg-panel text-meta font-bold">
+          <span className="grid size-7 shrink-0 place-items-center rounded-full bg-fill text-meta font-bold">
             {name.slice(0, 2).toUpperCase()}
           </span>
           {!compact && (
@@ -671,7 +673,7 @@ function TabBar() {
                       // Replaces the sheet's Back entry, so Back afterwards leaves the new page in one step.
                       replace
                       aria-current={isActive(item, pathname) ? "page" : undefined}
-                      className="flex min-h-touch items-center gap-2.5 rounded-sm px-2.5 aria-[current=page]:bg-primary aria-[current=page]:font-title aria-[current=page]:text-primary-foreground"
+                      className="flex min-h-touch items-center gap-2.5 rounded-sm px-2.5 aria-[current=page]:bg-primary aria-[current=page]:font-title aria-[current=page]:text-primary-foreground regular:aria-[current=page]:bg-fill regular:aria-[current=page]:font-semibold regular:aria-[current=page]:text-ink"
                     >
                       <item.icon aria-hidden className="size-[18px] shrink-0" />
                       {item.label}
@@ -784,6 +786,7 @@ export function AppShell() {
 
   return (
     <ChromeContext.Provider value={{ actionsSlot, setCrumb }}>
+      <DesignSync />
       <div className="flex h-dvh flex-col overflow-hidden bg-bg">
         <TopBar crumb={crumb} nav={nav} setActionsSlot={setActionsSlot} />
         <PhoneTopBar />

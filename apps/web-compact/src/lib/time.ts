@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
-import { api } from "./api"
+import { readFresh } from "./api"
 
 /**
  * The time zone set in Settings → General, used for every time on screen so the console, reports and
@@ -8,7 +8,7 @@ import { api } from "./api"
 export function useTimeZone(): string {
   const general = useQuery({
     queryKey: ["/settings/general"],
-    queryFn: () => api<{ timezone?: string }>("/settings/general"),
+    queryFn: () => readFresh<{ timezone?: string }>("/settings/general"),
     staleTime: 5 * 60_000,
   })
   return validZone(general.data?.timezone)

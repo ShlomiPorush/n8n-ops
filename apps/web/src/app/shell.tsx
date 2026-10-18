@@ -203,30 +203,30 @@ function TopBar({
             )}
             <li className="min-w-0 shrink-0">
               <h1 className="truncate text-title font-heavy tracking-tighter regular:text-body regular:font-medium regular:tracking-normal">
-              {page && !atRoot && crumb ? (
-                <Link to={page.item.to} className="underline-offset-3 [@media(hover:hover)]:hover:underline">
-                  {page.item.label}
-                </Link>
-              ) : (
-                <span aria-current={crumb ? undefined : "page"}>{page?.item.label ?? "n8n-ops"}</span>
-              )}
-            </h1>
-          </li>
-          {crumb && (
-            <li className="flex min-w-0 items-center gap-2">
-              <ChevronRight aria-hidden className="size-4 shrink-0 text-muted-foreground" />
-              <span aria-current="page" className="truncate text-body font-semibold" dir="auto">
-                <bdi>{crumb}</bdi>
-              </span>
+                {page && !atRoot && crumb ? (
+                  <Link to={page.item.to} className="underline-offset-3 [@media(hover:hover)]:hover:underline">
+                    {page.item.label}
+                  </Link>
+                ) : (
+                  <span aria-current={crumb ? undefined : "page"}>{page?.item.label ?? "n8n-ops"}</span>
+                )}
+              </h1>
             </li>
-          )}
-        </ol>
-      </nav>
-      <div
-        ref={setActionsSlot}
-        className={cn("flex shrink-0 items-center gap-2 pe-3 empty:hidden", searching && "hidden")}
-      />
-      <GlobalSearch pages={searchPages} variant="bar" onOpenChange={setSearching} className="me-[22px] lg:me-7" />
+            {crumb && (
+              <li className="flex min-w-0 items-center gap-2">
+                <ChevronRight aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+                <span aria-current="page" className="truncate text-body font-semibold" dir="auto">
+                  <bdi>{crumb}</bdi>
+                </span>
+              </li>
+            )}
+          </ol>
+        </nav>
+        <div
+          ref={setActionsSlot}
+          className={cn("flex shrink-0 items-center gap-2 pe-3 empty:hidden", searching && "hidden")}
+        />
+        <GlobalSearch pages={searchPages} variant="bar" onOpenChange={setSearching} className="me-[22px] lg:me-7" />
       </div>
     </header>
   )
@@ -426,20 +426,8 @@ function SideNav({ nav }: { nav: ReturnType<typeof useNavFolded> }) {
 }
 
 /** How many workers are online, linking to the Workers page; drawn where each design wants it. */
-function WorkersStatus({
-  workers,
-  className,
-}: {
-  workers: Summary["workers"] | undefined
-  className?: string
-}) {
-  const tone = !workers?.total
-    ? "muted"
-    : workers.online === workers.total
-      ? "ok"
-      : workers.online
-        ? "warn"
-        : "fail"
+function WorkersStatus({ workers, className }: { workers: Summary["workers"] | undefined; className?: string }) {
+  const tone = !workers?.total ? "muted" : workers.online === workers.total ? "ok" : workers.online ? "warn" : "fail"
   return (
     <Link
       to="/workers"

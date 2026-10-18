@@ -5,7 +5,6 @@ import { useCrumb } from "@/app/chrome"
 import { afterGeneralSave } from "@/app/design-sync"
 import { settingsGroups, settingsSectionLabel } from "@/app/settings-sections"
 import { useConfirm } from "@/components/confirm"
-import { SectionIcon } from "@/components/skin/marks"
 import {
   Copyable,
   countChanges,
@@ -19,6 +18,7 @@ import {
   UserText,
   useSaveSource,
 } from "@/components/kit"
+import { SectionIcon } from "@/components/skin/marks"
 import { When } from "@/components/status"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -278,7 +278,10 @@ export function SettingsPage() {
          */}
         <div className="grid min-w-0 max-w-3xl gap-gap regular:content-start regular:gap-0 regular:self-start regular:overflow-hidden regular:rounded-lg regular:bg-panel regular:shadow-card regular:ring-1 regular:ring-ink/10 regular:[&>section]:rounded-none regular:[&>section]:shadow-none regular:[&>section]:ring-0 regular:[&>section+section]:border-t regular:[&>section+section]:border-line">
           {/* Each section opens with a large title and one paragraph about what it is for (FS-8). */}
-          <div data-slot="settings-head" className="grid gap-1.5 regular:gap-1 regular:px-pad-x regular:pt-6 regular:pb-2">
+          <div
+            data-slot="settings-head"
+            className="grid gap-1.5 regular:gap-1 regular:px-pad-x regular:pt-6 regular:pb-2"
+          >
             <h2 className="text-figure font-heavy tracking-tighter regular:text-head regular:font-semibold regular:tracking-normal">
               {label}
             </h2>

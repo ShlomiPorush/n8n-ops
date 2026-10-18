@@ -1,4 +1,14 @@
-import { Bug, Cpu, DatabaseBackup, KeyRound, LayoutDashboard, ScrollText, Server, Settings, Workflow } from "lucide-react"
+import {
+  Bug,
+  Cpu,
+  DatabaseBackup,
+  KeyRound,
+  LayoutDashboard,
+  ScrollText,
+  Server,
+  Settings,
+  Workflow,
+} from "lucide-react"
 
 /** The pages of the navigation, in two groups; the sidebar, the tab bar, the search and page titles use them. */
 export type NavItem = { to: string; label: string; icon: typeof Bug; count?: "problems" | "access" }

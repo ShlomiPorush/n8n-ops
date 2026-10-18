@@ -4,11 +4,12 @@ import {
   Server as ServerIcon,
   Siren as SirenIcon,
 } from "lucide-react"
+import { Fragment } from "react"
 import { Link } from "react-router"
 import { AlertRow, Empty, Kpi, Kpis, LoadError, Loading, Page, Panel, PanelHead, Row, UserText } from "@/components/kit"
+import { StepArrow } from "@/components/skin/marks"
 import { Dot, type HealthState, StatusTag, statusOf, TimeAgo, Tone } from "@/components/status"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { StepArrow } from "@/components/skin/marks"
 import { Badge } from "@/components/ui/badge"
 import { useApi } from "@/lib/api"
 import { n, plural } from "@/lib/time"
@@ -86,25 +87,10 @@ export function OverviewPage() {
   const setup = checklist.data
   const missing = setup
     ? [
-        !setup.instance && (
-          <Link key="i" to="/instances" className={step}>
-            <span className={stepText}>Add an n8n instance</span>
-            <StepArrow />
-          </Link>
-        ),
-        !setup.telegram && (
-          <Link key="t" to="/settings/telegram" className={step}>
-            <span className={stepText}>connect Telegram for alerts</span>
-            <StepArrow />
-          </Link>
-        ),
-        !setup.storage && (
-          <Link key="s" to="/settings/storage" className={step}>
-            <span className={stepText}>set backup storage</span>
-            <StepArrow />
-          </Link>
-        ),
-      ].filter(Boolean)
+        !setup.instance && { key: "instance", to: "/instances", text: "Add an n8n instance" },
+        !setup.telegram && { key: "telegram", to: "/settings/telegram", text: "connect Telegram for alerts" },
+        !setup.storage && { key: "storage", to: "/settings/storage", text: "set backup storage" },
+      ].filter((s) => s !== false)
     : []
 
   return (
@@ -125,16 +111,15 @@ export function OverviewPage() {
         >
           <AlertTitle className="regular:text-head regular:font-semibold">Finish setting up</AlertTitle>
           <AlertDescription className="regular:mt-3 regular:flex regular:flex-wrap regular:gap-2 regular:[&_a]:no-underline">
-            {missing.flatMap((el, i) =>
-              i === 0
-                ? [el]
-                : [
-                    <span key={`sep${i}`} className="regular:hidden">
-                      ,{" "}
-                    </span>,
-                    el,
-                  ],
-            )}
+            {missing.map((s, i) => (
+              <Fragment key={s.key}>
+                {i > 0 && <span className="regular:hidden">, </span>}
+                <Link to={s.to} className={step}>
+                  <span className={stepText}>{s.text}</span>
+                  <StepArrow />
+                </Link>
+              </Fragment>
+            ))}
             <span className="regular:hidden">.</span>
           </AlertDescription>
         </Alert>

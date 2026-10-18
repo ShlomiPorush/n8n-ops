@@ -421,7 +421,8 @@ export function Empty({
   icon?: LucideIcon
   className?: string
 }) {
-  const Icon = icon ?? pageOf(useLocation().pathname)?.item.icon ?? Inbox
+  const { pathname } = useLocation()
+  const Icon = icon ?? pageOf(pathname)?.item.icon ?? Inbox
   return (
     <div
       className={cn(

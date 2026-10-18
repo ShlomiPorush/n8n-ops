@@ -31,10 +31,13 @@ function Table({
     }
   })
   return (
-    <div data-slot="table-wrap" className={cn(
+    <div
+      data-slot="table-wrap"
+      className={cn(
         "grid min-w-0",
         !bare && "rounded-lg bg-card regular:overflow-hidden regular:shadow-card regular:ring-1 regular:ring-ink/10",
-      )}>
+      )}
+    >
       {sort && stack && <PhoneSort control={sort.control} />}
       <div data-slot="table-container" className="relative w-full min-w-0 overflow-x-auto">
         <table

@@ -332,72 +332,72 @@ export function SettingsForm({ section }: { section: string }) {
       <CardContent>
         {/* Locked while a save is on its way, so nothing typed meanwhile is lost when a design switch reloads. */}
         <fieldset disabled={save.isPending} className="contents">
-        <FieldGroup>
-          {def.fields.map((f) => (
-            <Field key={f.name} orientation="responsive">
-              <FieldContent>
-                <FieldLabel htmlFor={f.name}>{f.label}</FieldLabel>
-                {f.hint && <FieldDescription>{f.hint}</FieldDescription>}
-              </FieldContent>
-              <div className="flex min-w-64 items-center gap-2">
-                {f.type === "switch" ? (
-                  <Switch id={f.name} checked={Boolean(values[f.name])} onCheckedChange={(v) => set(f.name, v)} />
-                ) : f.type === "design" ? (
-                  <Select value={String(values[f.name] || "regular")} onValueChange={(v) => set(f.name, v)}>
-                    <SelectTrigger id={f.name} className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="regular">Regular</SelectItem>
-                      <SelectItem value="compact">Compact</SelectItem>
-                    </SelectContent>
-                  </Select>
-                ) : f.type === "weekday" ? (
-                  <Select value={String(values[f.name] ?? 0)} onValueChange={(v) => set(f.name, Number(v))}>
-                    <SelectTrigger id={f.name} className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {weekdays.map((d, i) => (
-                        <SelectItem key={d} value={String(i)}>
-                          {d}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                ) : (
-                  <Input
-                    id={f.name}
-                    type={
-                      f.type === "number"
-                        ? "number"
-                        : f.type === "password"
-                          ? "password"
-                          : f.type === "time"
-                            ? "time"
-                            : "text"
-                    }
-                    placeholder={
-                      f.type === "password"
-                        ? values[`${f.name}Set`]
-                          ? "Stored. Type to replace."
-                          : "Not set"
-                        : f.placeholder
-                    }
-                    value={
-                      f.type === "password"
-                        ? String(values[f.name] ?? "")
-                        : f.type === "list" && Array.isArray(values[f.name])
-                          ? (values[f.name] as string[]).join(", ")
-                          : String(values[f.name] ?? "")
-                    }
-                    onChange={(e) => set(f.name, e.target.value)}
-                  />
-                )}
-              </div>
-            </Field>
-          ))}
-        </FieldGroup>
+          <FieldGroup>
+            {def.fields.map((f) => (
+              <Field key={f.name} orientation="responsive">
+                <FieldContent>
+                  <FieldLabel htmlFor={f.name}>{f.label}</FieldLabel>
+                  {f.hint && <FieldDescription>{f.hint}</FieldDescription>}
+                </FieldContent>
+                <div className="flex min-w-64 items-center gap-2">
+                  {f.type === "switch" ? (
+                    <Switch id={f.name} checked={Boolean(values[f.name])} onCheckedChange={(v) => set(f.name, v)} />
+                  ) : f.type === "design" ? (
+                    <Select value={String(values[f.name] || "regular")} onValueChange={(v) => set(f.name, v)}>
+                      <SelectTrigger id={f.name} className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="regular">Regular</SelectItem>
+                        <SelectItem value="compact">Compact</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  ) : f.type === "weekday" ? (
+                    <Select value={String(values[f.name] ?? 0)} onValueChange={(v) => set(f.name, Number(v))}>
+                      <SelectTrigger id={f.name} className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {weekdays.map((d, i) => (
+                          <SelectItem key={d} value={String(i)}>
+                            {d}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Input
+                      id={f.name}
+                      type={
+                        f.type === "number"
+                          ? "number"
+                          : f.type === "password"
+                            ? "password"
+                            : f.type === "time"
+                              ? "time"
+                              : "text"
+                      }
+                      placeholder={
+                        f.type === "password"
+                          ? values[`${f.name}Set`]
+                            ? "Stored. Type to replace."
+                            : "Not set"
+                          : f.placeholder
+                      }
+                      value={
+                        f.type === "password"
+                          ? String(values[f.name] ?? "")
+                          : f.type === "list" && Array.isArray(values[f.name])
+                            ? (values[f.name] as string[]).join(", ")
+                            : String(values[f.name] ?? "")
+                      }
+                      onChange={(e) => set(f.name, e.target.value)}
+                    />
+                  )}
+                </div>
+              </Field>
+            ))}
+          </FieldGroup>
         </fieldset>
       </CardContent>
       <CardFooter className="gap-2 border-t">

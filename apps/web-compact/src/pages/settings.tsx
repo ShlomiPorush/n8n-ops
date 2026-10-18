@@ -456,55 +456,55 @@ export function SettingsForm({ section }: { section: string }) {
       ) : (
         // Locked while a save is on its way, so nothing typed meanwhile is lost when a design switch reloads.
         <fieldset disabled={save.isPending} className="contents">
-        {def.fields.map((f) => (
-          <SettingRow key={f.name} htmlFor={f.name} label={f.label} hint={f.hint} inline={f.type === "switch"}>
-            {f.type === "switch" ? (
-              <Switch id={f.name} checked={Boolean(values[f.name])} onCheckedChange={(v) => set(f.name, v)} />
-            ) : f.type === "password" ? (
-              <SecretField
-                id={f.name}
-                stored={Boolean(query.data?.[`${f.name}Set`])}
-                value={values[f.name] as string | null | undefined}
-                onChange={(v) => set(f.name, v)}
-              />
-            ) : f.type === "design" ? (
-              <ToggleGroup
-                type="single"
-                aria-label="Design"
-                value={String(values[f.name] || "regular")}
-                onValueChange={(v) => v && set(f.name, v)}
-              >
-                <ToggleGroupItem value="regular">Regular</ToggleGroupItem>
-                <ToggleGroupItem value="compact">Compact</ToggleGroupItem>
-              </ToggleGroup>
-            ) : f.type === "weekday" ? (
-              <Select value={String(values[f.name] ?? 0)} onValueChange={(v) => set(f.name, Number(v))}>
-                <SelectTrigger id={f.name} className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {weekdays.map((d, i) => (
-                    <SelectItem key={d} value={String(i)}>
-                      {d}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            ) : (
-              <Input
-                id={f.name}
-                // Times are typed as 24-hour HH:MM; a native time field would follow the browser's 12-hour clock.
-                type={f.type === "number" ? "number" : "text"}
-                inputMode={f.type === "time" ? "numeric" : undefined}
-                pattern={f.type === "time" ? "([01][0-9]|2[0-3]):[0-5][0-9]" : undefined}
-                className={f.type === "time" ? "tabular-nums" : undefined}
-                placeholder={f.type === "time" ? "HH:MM" : f.placeholder}
-                value={String(values[f.name] ?? "")}
-                onChange={(e) => set(f.name, e.target.value)}
-              />
-            )}
-          </SettingRow>
-        ))}
+          {def.fields.map((f) => (
+            <SettingRow key={f.name} htmlFor={f.name} label={f.label} hint={f.hint} inline={f.type === "switch"}>
+              {f.type === "switch" ? (
+                <Switch id={f.name} checked={Boolean(values[f.name])} onCheckedChange={(v) => set(f.name, v)} />
+              ) : f.type === "password" ? (
+                <SecretField
+                  id={f.name}
+                  stored={Boolean(query.data?.[`${f.name}Set`])}
+                  value={values[f.name] as string | null | undefined}
+                  onChange={(v) => set(f.name, v)}
+                />
+              ) : f.type === "design" ? (
+                <ToggleGroup
+                  type="single"
+                  aria-label="Design"
+                  value={String(values[f.name] || "regular")}
+                  onValueChange={(v) => v && set(f.name, v)}
+                >
+                  <ToggleGroupItem value="regular">Regular</ToggleGroupItem>
+                  <ToggleGroupItem value="compact">Compact</ToggleGroupItem>
+                </ToggleGroup>
+              ) : f.type === "weekday" ? (
+                <Select value={String(values[f.name] ?? 0)} onValueChange={(v) => set(f.name, Number(v))}>
+                  <SelectTrigger id={f.name} className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {weekdays.map((d, i) => (
+                      <SelectItem key={d} value={String(i)}>
+                        {d}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Input
+                  id={f.name}
+                  // Times are typed as 24-hour HH:MM; a native time field would follow the browser's 12-hour clock.
+                  type={f.type === "number" ? "number" : "text"}
+                  inputMode={f.type === "time" ? "numeric" : undefined}
+                  pattern={f.type === "time" ? "([01][0-9]|2[0-3]):[0-5][0-9]" : undefined}
+                  className={f.type === "time" ? "tabular-nums" : undefined}
+                  placeholder={f.type === "time" ? "HH:MM" : f.placeholder}
+                  value={String(values[f.name] ?? "")}
+                  onChange={(e) => set(f.name, e.target.value)}
+                />
+              )}
+            </SettingRow>
+          ))}
         </fieldset>
       )}
       {query.data && (section === "telegram" || section === "email" || section === "storage") && (

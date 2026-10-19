@@ -242,7 +242,9 @@ function secureDir(dir) {
   if (win) {
     // Mode bits are no ACL on Windows: the folder is limited to this user, SYSTEM and Administrators.
     try {
-      const sid = /"(S-1-[0-9-]+)"\s*$/.exec(execFileSync(system32("whoami.exe"), ["/user", "/fo", "csv", "/nh"]).toString().trim())
+      const sid = /"(S-1-[0-9-]+)"\s*$/.exec(
+        execFileSync(system32("whoami.exe"), ["/user", "/fo", "csv", "/nh"]).toString().trim(),
+      )
       if (!sid) throw new Error("no SID")
       execFileSync(
         system32("icacls.exe"),

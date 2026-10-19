@@ -43,6 +43,9 @@ $Fields = @(
   @('userCode', 's'), @('link', 's'), @('deviceExpiresAt', 'n'), @('interval', 'n'), @('nextPollAt', 'n'), @('toRevoke', 's')
 )
 $Utf8 = New-Object System.Text.UTF8Encoding($false)
+# Windows tools by their full path: started from Git Bash, for one, whoami.exe may be a different program.
+$Icacls = Join-Path $env:SystemRoot 'System32\icacls.exe'
+$Whoami = Join-Path $env:SystemRoot 'System32\whoami.exe'
 
 class OpsFail : System.Exception {
   [string]$Code
@@ -130,7 +133,7 @@ function Get-InstallId([string]$install) {
 function Invoke-Icacls([string[]]$arguments) {
   for ($i = 0; ; $i++) {
     $ErrorActionPreference = 'Continue'
-    & icacls.exe @arguments *> $null
+    & $Icacls @arguments *> $null
     $code = $LASTEXITCODE
     $ErrorActionPreference = 'Stop'
     if ($code -eq 0) { return }
@@ -205,10 +208,10 @@ function Protect-Dir([string]$dir) {
   }
   # Limited to this user, SYSTEM and Administrators (well-known SIDs, so no localized names).
   try {
-    $who = (& whoami.exe /user /fo csv /nh) -join ''
+    $who = (& $Whoami /user /fo csv /nh) -join ''
     if ($who -notmatch '"(S-1-[0-9-]+)"\s*$') { throw 'no SID' }
     $sid = $Matches[1]
-    & icacls.exe $dir /inheritance:r /grant:r "*${sid}:(OI)(CI)F" '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' /Q *> $null
+    & $Icacls $dir /inheritance:r /grant:r "*${sid}:(OI)(CI)F" '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' /Q *> $null
     if ($LASTEXITCODE -ne 0) { throw 'icacls' }
     # The owner may always change an ACL, so the folder and its files must be this user's. (Only now: taking
     # ownership needs the full control just granted. No /C, which would hide a failure behind exit code 0.)

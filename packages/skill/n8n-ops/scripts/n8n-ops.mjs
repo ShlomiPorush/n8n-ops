@@ -69,6 +69,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const print = (value) => process.stdout.write(`${JSON.stringify(value)}\n`)
 const host = () => (win ? process.env.COMPUTERNAME || os.hostname() : os.hostname())
 const sameHost = (h) => String(h).toLowerCase() === host().toLowerCase()
+// Windows tools by their full path: in Git Bash, for one, whoami is a different program.
+const system32 = (exe) => path.join(process.env.SystemRoot || "C:\\Windows", "System32", exe)
 
 const HELP = `n8n-ops: use n8n-ops after a person approves it.
 
@@ -240,10 +242,10 @@ function secureDir(dir) {
   if (win) {
     // Mode bits are no ACL on Windows: the folder is limited to this user, SYSTEM and Administrators.
     try {
-      const sid = /"(S-1-[0-9-]+)"\s*$/.exec(execFileSync("whoami", ["/user", "/fo", "csv", "/nh"]).toString().trim())
+      const sid = /"(S-1-[0-9-]+)"\s*$/.exec(execFileSync(system32("whoami.exe"), ["/user", "/fo", "csv", "/nh"]).toString().trim())
       if (!sid) throw new Error("no SID")
       execFileSync(
-        "icacls",
+        system32("icacls.exe"),
         [
           dir,
           "/inheritance:r",
@@ -283,7 +285,7 @@ function secureDir(dir) {
 function icacls(args) {
   for (let i = 0; ; i++) {
     try {
-      execFileSync("icacls", args, { stdio: "ignore" })
+      execFileSync(system32("icacls.exe"), args, { stdio: "ignore" })
       return
     } catch (e) {
       if (i >= 4) throw e

@@ -473,6 +473,15 @@ for (const impl of impls) {
       })
     }
 
+    const gitBin = "C:\\Program Files\\Git\\usr\\bin"
+    if (win && fs.existsSync(path.join(gitBin, "whoami.exe"))) {
+      it("works when another whoami comes first on the PATH, as in Git Bash", async () => {
+        const inst = fresh()
+        const r = await run(impl, inst, server, ["connect"], { PATH: `${gitBin};${process.env.PATH}` })
+        assert.equal(r.json?.status, "pending", r.out + r.err)
+      })
+    }
+
     if (win) {
       it("refuses a credentials folder that grants others access", async () => {
         const inst = fresh()

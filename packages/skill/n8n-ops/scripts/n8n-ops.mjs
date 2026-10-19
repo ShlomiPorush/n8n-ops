@@ -138,7 +138,10 @@ function context(urlOption) {
   const issuer = url.origin
   const install = installDir()
   const dir = credentialsDir()
-  const key = createHash("sha256").update(`${issuer}\n${installId(install)}`).digest("hex").slice(0, 32)
+  const key = createHash("sha256")
+    .update(`${issuer}\n${installId(install)}`)
+    .digest("hex")
+    .slice(0, 32)
   return {
     issuer,
     install,

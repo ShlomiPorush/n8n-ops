@@ -31,7 +31,10 @@ function command(impl, dir) {
   // The entry points agents run, which pick a version themselves.
   if (impl === "entry-sh") return ["sh", [path.join(dir, "n8n-ops")]]
   if (impl === "entry-ps")
-    return ["powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", path.join(dir, "n8n-ops.ps1")]]
+    return [
+      "powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", path.join(dir, "n8n-ops.ps1")],
+    ]
   if (impl === "ps")
     return [
       "powershell.exe",
@@ -221,7 +224,13 @@ for (const impl of impls) {
       })
       assert.equal(res.json.error, "insecure_url")
       await connected(impl, inst, server)
-      for (const p of ["../oauth/token", "%2e%2e/%2E%2e/oauth/token", "https://evil.example/x", "//evil.example/x", "a b"]) {
+      for (const p of [
+        "../oauth/token",
+        "%2e%2e/%2E%2e/oauth/token",
+        "https://evil.example/x",
+        "//evil.example/x",
+        "a b",
+      ]) {
         const r = await run(impl, inst, server, ["get", p])
         assert.equal(r.json?.error, "bad_path", `${p}: ${r.out}`)
       }

@@ -29,7 +29,8 @@ const TIMEOUT_MS = 15_000
 const POLL_SECONDS = Number(process.env.N8N_OPS_TEST_POLL_SECONDS) || 5
 const SECRET = /^[A-Za-z0-9._~+/=-]{1,4096}$/
 // Every value in a connection file: no quote, backslash or control character, so the shell version reads it too.
-const PLAIN = /^[^"\\\u0000-\u001f\u007f]*$/
+// biome-ignore lint/suspicious/noControlCharactersInRegex: refusing control characters is the point
+const PLAIN =/^[^"\\\u0000-\u001f\u007f]*$/
 const PATH_CHARS = /^[A-Za-z0-9._~!$&'()*+,;=:@/?%-]+$/
 const FIELDS = [
   ["v", "n"],
@@ -149,7 +150,11 @@ function context(urlOption) {
 /** The skill's folder: one connection per place the skill is installed (one agent). */
 function installDir() {
   const dir = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
-  if (win) return path.resolve(dir).replace(/[\\/]+$/, "").toLowerCase()
+  if (win)
+    return path
+      .resolve(dir)
+      .replace(/[\\/]+$/, "")
+      .toLowerCase()
   try {
     return fs.realpathSync(dir)
   } catch {
@@ -469,7 +474,13 @@ async function request(ctx, method, url, { form, bearer, json } = {}) {
   let res
   try {
     // No redirects: a secret never follows one to another address.
-    res = await fetch(url, { method, headers, body: payload, redirect: "manual", signal: AbortSignal.timeout(TIMEOUT_MS) })
+    res = await fetch(url, {
+      method,
+      headers,
+      body: payload,
+      redirect: "manual",
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    })
   } catch (e) {
     const code = e?.cause?.code ?? e?.code
     throw new Fail("unreachable", `Cannot reach ${ctx.issuer} (${code ?? e?.name ?? "network error"}).`, {
@@ -547,8 +558,7 @@ async function connect(ctx, replace) {
     let rec = readRecord(ctx) ?? emptyRecord(ctx)
     rec = await revokePending(ctx, rec)
     if (rec.refreshToken && !replace) return { status: "already_connected", label: rec.label, scope: rec.scope }
-    if (rec.deviceCode && rec.deviceExpiresAt - now() > 30)
-      return pending(rec)
+    if (rec.deviceCode && rec.deviceExpiresAt - now() > 30) return pending(rec)
     assertMine(ctx, lock)
     const r = await oauth(ctx, "/oauth/device", {
       scope: SCOPE,

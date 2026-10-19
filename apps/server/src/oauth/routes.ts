@@ -9,8 +9,8 @@ import { requireUser } from "../http/middleware.ts"
 import { actorName, type Env } from "../http/types.ts"
 import type { AgentConnect } from "./agents.ts"
 import { cleanLabel } from "./label.ts"
-import { skillRoutes } from "./skill.ts"
 import { CLI_CLIENT, resources, SCOPES } from "./provider.ts"
+import { skillRoutes } from "./skill.ts"
 import { roomForClient } from "./store.ts"
 
 type Bindings = { incoming: IncomingMessage & { body?: unknown }; outgoing: ServerResponse }
@@ -228,7 +228,10 @@ export function agentConnectRoutes(ctx: Ctx, agents: AgentConnect) {
 
   // The skill for agents that run commands (they connect with a code).
   app.get("/connect/skill", (c) => c.redirect("/connect/skill/", 301))
-  app.route("/", skillRoutes(async () => (await agents.provider())?.issuer ?? null, agents.skillDir))
+  app.route(
+    "/",
+    skillRoutes(async () => (await agents.provider())?.issuer ?? null, agents.skillDir),
+  )
 
   // Everything else of OAuth is the provider's: discovery, authorize, token, device, revoke, register.
   const handoff = async (c: Context) => {

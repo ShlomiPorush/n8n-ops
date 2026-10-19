@@ -29,7 +29,13 @@ export async function startFakeServer(port = 0) {
     const access = id()
     s.refresh.set(refresh, { grant, consumed: false })
     s.access.set(access, { grant, exp: Date.now() + ttl * 1000 })
-    return { access_token: access, refresh_token: refresh, token_type: "Bearer", expires_in: ttl, scope: s.grants.get(grant).scope }
+    return {
+      access_token: access,
+      refresh_token: refresh,
+      token_type: "Bearer",
+      expires_in: ttl,
+      scope: s.grants.get(grant).scope,
+    }
   }
   const endGrant = (grant) => {
     const g = s.grants.get(grant)
@@ -56,7 +62,13 @@ export async function startFakeServer(port = 0) {
       s.lastLabel = form.client_label ?? null
       const deviceCode = id()
       const userCode = `${randomBytes(2).toString("hex").toUpperCase()}-${randomBytes(2).toString("hex").toUpperCase()}`
-      s.devices.set(deviceCode, { userCode, label: form.client_label, state: "pending", scope: form.scope, resource: form.resource })
+      s.devices.set(deviceCode, {
+        userCode,
+        label: form.client_label,
+        state: "pending",
+        scope: form.scope,
+        resource: form.resource,
+      })
       return send(200, {
         device_code: deviceCode,
         user_code: userCode,
@@ -132,7 +144,9 @@ export async function startFakeServer(port = 0) {
       if (url.pathname === "/api/v1/access-requests" && req.method === "POST" && !scope.includes("ops:access"))
         return send(403, { error: "not_allowed", message: "This token may not request access to n8n instances." })
       s.lastBody = raw
-      return send(200, { data: { method: req.method, path: url.pathname, query: url.search, body: raw ? JSON.parse(raw) : null } })
+      return send(200, {
+        data: { method: req.method, path: url.pathname, query: url.search, body: raw ? JSON.parse(raw) : null },
+      })
     }
     send(404, { error: "not_found" })
   })

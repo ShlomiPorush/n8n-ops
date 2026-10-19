@@ -28,7 +28,11 @@ function install(name = ".claude-test") {
 function command(impl, dir) {
   if (impl === "node") return [process.execPath, [path.join(dir, "n8n-ops.mjs")]]
   if (impl === "sh") return ["sh", [path.join(dir, "n8n-ops.sh")]]
-  if (impl === "ps") return ["powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", path.join(dir, "n8n-ops.ps1")]]
+  if (impl === "ps")
+    return [
+      "powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", path.join(dir, "n8n-ops.ps1")],
+    ]
   throw new Error(`unknown impl ${impl}`)
 }
 
@@ -87,7 +91,8 @@ async function connected(impl, inst, server, opts) {
 }
 
 function noSecrets(server, ...results) {
-  for (const r of results) for (const s of server.secrets()) assert.ok(!r.out.includes(s), "a token appeared in the output")
+  for (const r of results)
+    for (const s of server.secrets()) assert.ok(!r.out.includes(s), "a token appeared in the output")
 }
 
 after(() => fs.rmSync(root, { recursive: true, force: true }))
@@ -100,7 +105,13 @@ for (const impl of impls) {
     })
     after(() => server.close())
     const fresh = () => {
-      Object.assign(server, { accessTtl: 900, refreshAccessTtl: null, dropNextRefresh: false, revokeStatus: 200, refreshDelayMs: 0 })
+      Object.assign(server, {
+        accessTtl: 900,
+        refreshAccessTtl: null,
+        dropNextRefresh: false,
+        revokeStatus: 200,
+        refreshDelayMs: 0,
+      })
       for (const k of Object.keys(server.counts)) server.counts[k] = 0
       return install()
     }
@@ -175,7 +186,10 @@ for (const impl of impls) {
       const inst = fresh()
       await connected(impl, inst, server, { access: false })
       const body = path.join(inst.base, "body.json")
-      fs.writeFileSync(body, JSON.stringify({ instance: "prod", reason: "Fix the failing webhook", scopes: ["workflow:read"], minutes: 5 }))
+      fs.writeFileSync(
+        body,
+        JSON.stringify({ instance: "prod", reason: "Fix the failing webhook", scopes: ["workflow:read"], minutes: 5 }),
+      )
       const r = await run(impl, inst, server, ["post", "access-requests", "--json-file", body])
       assert.equal(r.json.error, "insufficient_scope", r.out + r.err)
       const ok = await run(impl, inst, server, ["post", "access-requests/x/release"])
@@ -188,7 +202,12 @@ for (const impl of impls) {
       const [cmd, base] = command(impl, inst.dir)
       const res = await new Promise((resolve) => {
         const child = spawn(cmd, [...base, "status", "--url", "http://example.com"], {
-          env: { ...process.env, N8N_OPS_CREDENTIALS: inst.creds, N8N_OPS_NO_NODE: impl === "node" ? "" : "1", ...(win ? { USERPROFILE: root } : {}) },
+          env: {
+            ...process.env,
+            N8N_OPS_CREDENTIALS: inst.creds,
+            N8N_OPS_NO_NODE: impl === "node" ? "" : "1",
+            ...(win ? { USERPROFILE: root } : {}),
+          },
         })
         let out = ""
         child.stdout.on("data", (d) => {
@@ -262,11 +281,17 @@ for (const impl of impls) {
       assert.equal(oldGrants.length, 1)
       const c = await run(impl, inst, server, ["connect", "--replace"])
       assert.equal(c.json.status, "pending")
-      assert.ok(oldGrants.every((g) => server.grants.get(g).alive), "the old one works while the new one waits")
+      assert.ok(
+        oldGrants.every((g) => server.grants.get(g).alive),
+        "the old one works while the new one waits",
+      )
       server.approve()
       const w = await run(impl, inst, server, ["connect", "--wait"])
       assert.equal(w.json.status, "connected", w.out + w.err)
-      assert.ok(oldGrants.every((g) => !server.grants.get(g).alive), "the old one ended")
+      assert.ok(
+        oldGrants.every((g) => !server.grants.get(g).alive),
+        "the old one ended",
+      )
       assert.equal((await run(impl, inst, server, ["get", "instances"])).code, 0)
     })
 

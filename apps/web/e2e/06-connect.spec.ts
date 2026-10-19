@@ -226,7 +226,9 @@ test("a script that names itself is shown by that name, and its reads are in the
     device_code: device.body.device_code ?? "",
     client_id: "n8n-ops-cli",
   })
-  const res = await fetch(`${base}/api/v1/instances`, { headers: { authorization: `Bearer ${tokens.body.access_token}` } })
+  const res = await fetch(`${base}/api/v1/instances`, {
+    headers: { authorization: `Bearer ${tokens.body.access_token}` },
+  })
   expect(res.status).toBe(200)
 
   await page.goto("/settings/tokens")

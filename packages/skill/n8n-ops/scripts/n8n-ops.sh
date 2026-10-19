@@ -4,6 +4,8 @@
 # One of three versions with one contract (see n8n-ops.mjs): same commands, same JSON output and error codes, same
 # files and the same lock, so they can run side by side. Tokens never appear in the output, and never on a command
 # line (other users can read those): curl reads them from its standard input.
+# R_* fields are read and written through eval (record_read, record_write).
+# shellcheck disable=SC2034
 set -u
 set -f
 umask 077
@@ -133,6 +135,8 @@ setup() {
 check_private() {
   [ -L "$1" ] && fail insecure_credentials "$1 must be plain, not a link."
   [ -O "$1" ] || fail insecure_credentials "$1 belongs to another user. Use a folder of your own."
+  # The mode string itself is what is checked; the path is ours.
+  # shellcheck disable=SC2012
   mode=$(ls -ld "$1" | cut -c5-11)
   case "$mode" in
     ------ | "------ " | ------@ | ------.) ;;

@@ -85,7 +85,7 @@ run_guards() {
       [ "$mode" = 100755 ] || [ "$path" = scripts/lib/common.sh ] || { echo "$path is not executable"; fail=1; }
     done < <(git ls-files -s "scripts/*.sh")
 
-    # The skill's shell versions run with plain POSIX sh on the agent's computer.
+    # The shell versions of the agent skill run with plain POSIX sh.
     skill=(packages/skill/n8n-ops/scripts/n8n-ops packages/skill/n8n-ops/scripts/n8n-ops.sh)
     shellcheck -s sh "${skill[@]}" || fail=1
     shfmt -d -ln posix -i 2 -ci "${skill[@]}" || { echo "Run: shfmt -w -ln posix -i 2 -ci ${skill[*]}"; fail=1; }

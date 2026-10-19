@@ -30,7 +30,7 @@ const POLL_SECONDS = Number(process.env.N8N_OPS_TEST_POLL_SECONDS) || 5
 const SECRET = /^[A-Za-z0-9._~+/=-]{1,4096}$/
 // Every value in a connection file: no quote, backslash or control character, so the shell version reads it too.
 // biome-ignore lint/suspicious/noControlCharactersInRegex: refusing control characters is the point
-const PLAIN =/^[^"\\\u0000-\u001f\u007f]*$/
+const PLAIN = /^[^"\\\u0000-\u001f\u007f]*$/
 const PATH_CHARS = /^[A-Za-z0-9._~!$&'()*+,;=:@/?%-]+$/
 const FIELDS = [
   ["v", "n"],

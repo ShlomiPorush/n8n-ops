@@ -143,6 +143,8 @@ function Invoke-Icacls([string[]]$arguments) {
 # in. Anything but plain allow and deny entries (conditional or callback ones) counts too: refused, not guessed.
 function Find-OtherAllowed([string]$saved, [string]$userSid) {
   $allowed = @($userSid, 'SY', 'BA', 'S-1-5-18', 'S-1-5-32-544')
+  # SDDL writes the built-in Administrator account (RID 500) as LA, so a user who is that account shows as LA.
+  if ($userSid -match '^S-1-5-21-[0-9-]+-500$') { $allowed += 'LA' }
   foreach ($line in ($saved -split "`r?`n")) {
     $at = $line.IndexOf('D:')
     if ($at -lt 0) { continue }

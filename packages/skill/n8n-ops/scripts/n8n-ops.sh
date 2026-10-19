@@ -57,8 +57,8 @@ jnum() {
   v=$(tr -d '\r\n' <"$2" | sed -n 's/.*"'"$1"'"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p')
   printf '%s' "${v:-0}"
 }
-secret_ok() { case "$1" in "" | *[!A-Za-z0-9._~+/=-]*) return 1 ;; esac; }
-plain_ok() { case "$1" in *[\"\\]*) return 1 ;; esac; }
+secret_ok() { case "$1" in "" | *[!A-Za-z0-9._~+/=-]*) return 1 ;; esac }
+plain_ok() { case "$1" in *[\"\\]*) return 1 ;; esac }
 
 HELP="n8n-ops: use n8n-ops after a person approves it.
 
@@ -72,8 +72,10 @@ HELP="n8n-ops: use n8n-ops after a person approves it.
   --url <address>       The n8n-ops address (or N8N_OPS_URL)."
 
 sha() {
-  if command -v sha256sum >/dev/null 2>&1; then sha256sum
-  elif command -v shasum >/dev/null 2>&1; then shasum -a 256
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256
   else openssl dgst -sha256 -r; fi
 }
 
@@ -81,7 +83,7 @@ sha() {
 setup() {
   command -v curl >/dev/null 2>&1 || fail missing_curl "curl is needed. Install curl, or Node 20 or later."
   raw="${URL_OPTION:-${N8N_OPS_URL:-}}"
-  if [ -z "$raw" ]; then case "$DEFAULT_URL" in __*) ;; *) raw="$DEFAULT_URL" ;; esac; fi
+  if [ -z "$raw" ]; then case "$DEFAULT_URL" in __*) ;; *) raw="$DEFAULT_URL" ;; esac fi
   [ -n "$raw" ] || fail no_url "No n8n-ops address. Pass --url https://<your n8n-ops> or set N8N_OPS_URL."
   raw=${raw%/}
   case "$raw" in

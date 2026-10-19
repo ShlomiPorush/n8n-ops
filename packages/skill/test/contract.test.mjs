@@ -135,6 +135,9 @@ for (const impl of impls) {
       // Asking again while the code is open shows the same code, without a new one.
       const again = await run(impl, inst, server, ["connect"])
       assert.equal(again.json.code, c.json.code)
+      // Unless the person needs a new one.
+      const renewed = await run(impl, inst, server, ["connect", "--replace"])
+      assert.notEqual(renewed.json.code, c.json.code)
       server.approve()
       const w = await run(impl, inst, server, ["connect", "--wait"])
       assert.equal(w.json.status, "connected", w.out + w.err)

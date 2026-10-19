@@ -656,7 +656,8 @@ async function connect(ctx, replace) {
     let rec = readRecord(ctx) ?? emptyRecord(ctx)
     rec = await revokePending(ctx, rec)
     if (rec.refreshToken && !replace) return { status: "already_connected", label: rec.label, scope: rec.scope }
-    if (rec.deviceCode && rec.deviceExpiresAt - now() > 30) return pending(rec)
+    // The open code again, unless asked for a new one (--replace: the link did not work for the person).
+    if (rec.deviceCode && rec.deviceExpiresAt - now() > 30 && !replace) return pending(rec)
     assertMine(ctx, lock)
     const r = await oauth(ctx, "/oauth/device", {
       scope: SCOPE,

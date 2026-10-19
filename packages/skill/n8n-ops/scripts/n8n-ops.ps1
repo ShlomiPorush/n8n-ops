@@ -533,7 +533,8 @@ function Invoke-Connect($ctx, [bool]$replace) {
     if (-not $rec) { $rec = New-Record $ctx }
     $rec = Invoke-RevokePending $ctx $rec
     if ($rec.refreshToken -and -not $replace) { return Write-Json ([ordered]@{ status = 'already_connected'; label = $rec.label; scope = $rec.scope }) }
-    if ($rec.deviceCode -and ($rec.deviceExpiresAt - (Now)) -gt 30) { return Write-Json (Get-Pending $rec) }
+    # The open code again, unless asked for a new one (--replace: the link did not work for the person).
+    if ($rec.deviceCode -and ($rec.deviceExpiresAt - (Now)) -gt 30 -and -not $replace) { return Write-Json (Get-Pending $rec) }
     Assert-Mine $ctx $lock
     $r = Invoke-OAuth $ctx '/oauth/device' ([ordered]@{ scope = $Scope; resource = "$($ctx.issuer)/api/v1"; client_label = $ctx.label })
     if ($r.status -ne 200) { throw (New-HttpFail $r 'Asking to connect') }

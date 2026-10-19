@@ -451,7 +451,8 @@ cmd_connect() {
     printf '{"status":"already_connected","label":"%s","scope":"%s"}\n' "$(esc "$R_label")" "$(esc "$R_scope")"
     return 0
   fi
-  if [ -n "$R_deviceCode" ] && [ $((R_deviceExpiresAt - $(now))) -gt 30 ]; then
+  # The open code again, unless asked for a new one (--replace: the link did not work for the person).
+  if [ -n "$R_deviceCode" ] && [ $((R_deviceExpiresAt - $(now))) -gt 30 ] && [ "$REPLACE" != 1 ]; then
     print_pending
     return 0
   fi

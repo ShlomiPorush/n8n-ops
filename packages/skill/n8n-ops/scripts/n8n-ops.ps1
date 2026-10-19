@@ -123,17 +123,43 @@ function Get-InstallId([string]$install) {
   }
   $id = & $read
   if ($id) { return $id }
-  # A folder the agent cannot write: its path stands in for the id.
-  $sha = [Security.Cryptography.SHA256]::Create().ComputeHash($Utf8.GetBytes($install.ToLowerInvariant()))
-  (-join ($sha | ForEach-Object { $_.ToString('x2') })).Substring(0, 32)
+  Fail 'cannot_save' "Cannot write in $install. The agent's id is kept there; allow writing it."
 }
 
-# The first account other than this user, SYSTEM and Administrators that an ACL (SDDL) allows anything.
-function Find-OtherAllowed([string]$sddl, [string]$userSid) {
+# icacls over the folder and its files; tried again while other commands add or replace files in it.
+function Invoke-Icacls([string[]]$arguments) {
+  for ($i = 0; ; $i++) {
+    $ErrorActionPreference = 'Continue'
+    & icacls.exe @arguments *> $null
+    $code = $LASTEXITCODE
+    $ErrorActionPreference = 'Stop'
+    if ($code -eq 0) { return }
+    if ($i -ge 4) { throw "icacls $($arguments[1]) failed" }
+    Start-Sleep -Milliseconds (100 + (Get-Random -Maximum 200))
+  }
+}
+
+# What in saved ACLs (icacls /save: one SDDL line per object) lets anyone but this user, SYSTEM and Administrators
+# in. Anything but plain allow and deny entries (conditional or callback ones) counts too: refused, not guessed.
+function Find-OtherAllowed([string]$saved, [string]$userSid) {
   $allowed = @($userSid, 'SY', 'BA', 'S-1-5-18', 'S-1-5-32-544')
-  foreach ($m in [regex]::Matches($sddl, '\(([^()]*)\)')) {
-    $f = $m.Groups[1].Value -split ';'
-    if ($f.Count -ge 6 -and ($f[0] -eq 'A' -or $f[0] -eq 'OA') -and $f[5] -and $allowed -notcontains $f[5]) { return $f[5] }
+  foreach ($line in ($saved -split "`r?`n")) {
+    $at = $line.IndexOf('D:')
+    if ($at -lt 0) { continue }
+    $dacl = ($line.Substring($at + 2) -split 'S:')[0]
+    $depth = 0; $ace = ''
+    foreach ($ch in $dacl.ToCharArray()) {
+      if ($ch -eq '(') {
+        $depth++
+        if ($depth -gt 1) { return 'a conditional entry' }
+        $ace = ''
+      } elseif ($ch -eq ')') {
+        $depth--
+        $f = $ace -split ';'
+        if (@('A', 'D', 'OA', 'OD') -cnotcontains $f[0]) { return "an entry of type $($f[0])" }
+        if (($f[0] -ceq 'A' -or $f[0] -ceq 'OA') -and ($f.Count -lt 6 -or $allowed -notcontains $f[5])) { return $f[-1] }
+      } elseif ($depth -eq 1) { $ace += $ch }
+    }
   }
   $null
 }
@@ -182,12 +208,14 @@ function Protect-Dir([string]$dir) {
     $sid = $Matches[1]
     & icacls.exe $dir /inheritance:r /grant:r "*${sid}:(OI)(CI)F" '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' /Q *> $null
     if ($LASTEXITCODE -ne 0) { throw 'icacls' }
+    # The owner may always change an ACL, so the folder and its files must be this user's. (Only now: taking
+    # ownership needs the full control just granted. No /C, which would hide a failure behind exit code 0.)
+    Invoke-Icacls @($dir, '/setowner', "*$sid", '/T', '/Q')
     # Granting does not remove other entries: read the folder's and its files' ACLs back and allow no one else.
     # (icacls, not Get-Acl: started from PowerShell 7, Windows PowerShell may fail to load the module Get-Acl is in.)
     $saved = Join-Path $dir ".acl-$(Hex 4)"
     try {
-      & icacls.exe $dir /save $saved /T /C /Q *> $null
-      if ($LASTEXITCODE -ne 0) { throw 'icacls /save' }
+      Invoke-Icacls @($dir, '/save', $saved, '/T', '/Q')
       $other = Find-OtherAllowed ([IO.File]::ReadAllText($saved, [Text.Encoding]::Unicode)) $sid
       if ($other) { Fail 'insecure_credentials' "Others can open $dir ($other). Remove their access." }
     } finally { if ([IO.File]::Exists($saved)) { [IO.File]::Delete($saved) } }
@@ -294,7 +322,8 @@ function Invoke-Hook([string]$point) {
 
 function Test-LockEmpty($held) { $held.PSObject.Properties['empty'] -and $held.empty }
 
-function Enter-Lock($ctx) {
+# Takes the lock; $own is a lock this process held before, which counts as taken if it is back in place.
+function Enter-Lock($ctx, [string]$own) {
   Protect-Dir $ctx.dir
   $token = Hex 16
   $line = ConvertTo-Json -Compress -InputObject ([ordered]@{ pid = $PID; host = (HostName); token = $token; startedAt = (Now) })
@@ -306,10 +335,17 @@ function Enter-Lock($ctx) {
       try { $bytes = $Utf8.GetBytes($line); $fs.Write($bytes, 0, $bytes.Length) } finally { $fs.Dispose() }
       $created = $true
     } catch [IO.IOException] {
-      if (-not [IO.File]::Exists($ctx.lock)) { Fail 'cannot_save' "Cannot create a lock in $($ctx.dir)." }
+      if (-not [IO.File]::Exists($ctx.lock) -and -not [IO.Directory]::Exists($ctx.dir)) { Fail 'cannot_save' "Cannot create a lock in $($ctx.dir)." }
+    } catch [UnauthorizedAccessException] {
+      # Windows refuses for a moment to create a file whose name is still being deleted (a lock just released).
+      if ([DateTime]::UtcNow -gt $deadline) { Fail 'cannot_save' "Cannot create a lock in $($ctx.dir)." }
+      Start-Sleep -Milliseconds (50 + (Get-Random -Maximum 100))
+      continue
     } catch { Fail 'cannot_save' "Cannot create a lock in $($ctx.dir)." }
     if ($created) { Invoke-Hook 'locked'; return $token }
     $held = Read-Lock $ctx.lock
+    # Another process moved this one's lock away by mistake and has put it back.
+    if ($own -and $held -and -not (Test-LockEmpty $held) -and $held.token -eq $own) { return $own }
     $dead = $false
     if ($held) {
       # A holder that died between creating the lock and writing its name leaves it empty; that takes a moment.
@@ -614,7 +650,7 @@ function Get-AccessToken($ctx, [string]$stale) {
       Invoke-Hook 'before-write'
       if (-not (Test-Mine $ctx $lock)) {
         # The lock was taken while this one waited for n8n-ops: keep the new tokens anyway, under a fresh lock.
-        $again = Enter-Lock $ctx
+        $again = Enter-Lock $ctx $lock
         try { Write-Record $ctx $next } finally { Exit-Lock $ctx $again }
       } else { Write-Record $ctx $next }
       return $next.accessToken

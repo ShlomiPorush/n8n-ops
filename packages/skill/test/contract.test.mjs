@@ -424,6 +424,49 @@ for (const impl of impls) {
       assert.equal(server.counts.reuse, 0, "the refresh token was never used twice")
     })
 
+    it("keeps new tokens when its lock was moved away and put back while it refreshed", async () => {
+      const inst = fresh()
+      server.accessTtl = 30
+      server.refreshAccessTtl = 900
+      await connected(impl, inst, server)
+      const hold = path.join(inst.base, "hold-write")
+      const p = run(impl, inst, server, ["get", "instances"], {
+        N8N_OPS_TEST_HOLD_BEFORE_WRITE: hold,
+        N8N_OPS_LOCK_WAIT_MS: "8000",
+      })
+      await reached(hold)
+      const lock = path.join(inst.creds, fs.readdirSync(inst.creds).find((f) => f.endsWith(".lock")) ?? "")
+      // As a mistaken breaker would: it moves the lock away, and a live third process takes the place...
+      fs.renameSync(lock, `${lock}.moved`)
+      const host = win ? process.env.COMPUTERNAME : os.hostname()
+      fs.writeFileSync(lock, JSON.stringify({ pid: process.pid, host, token: "third", startedAt: Math.floor(Date.now() / 1000) }))
+      fs.writeFileSync(`${hold}.go`, "")
+      await sleep(1000)
+      // ...then the third lets go, and the first lock is put back.
+      fs.rmSync(lock)
+      fs.renameSync(`${lock}.moved`, lock)
+      const r = await p
+      assert.equal(r.code, 0, r.out + r.err)
+      const refreshes = server.counts.refresh
+      assert.equal((await run(impl, inst, server, ["get", "instances"])).code, 0)
+      assert.equal(server.counts.refresh, refreshes, "the new tokens were kept")
+      assert.equal(server.counts.reuse, 0)
+    })
+
+    if (!win) {
+      it("refuses to run from a skill folder it cannot write its id in", async () => {
+        const inst = fresh()
+        const skillDir = path.dirname(inst.dir)
+        fs.chmodSync(skillDir, 0o555)
+        try {
+          const r = await run(impl, inst, server, ["status"])
+          assert.equal(r.json?.error, "cannot_save", r.out + r.err)
+        } finally {
+          fs.chmodSync(skillDir, 0o755)
+        }
+      })
+    }
+
     if (win) {
       it("refuses a credentials folder that grants others access", async () => {
         const inst = fresh()

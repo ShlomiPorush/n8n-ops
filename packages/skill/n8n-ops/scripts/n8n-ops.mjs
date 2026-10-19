@@ -183,8 +183,9 @@ function installId(install) {
   } finally {
     fs.rmSync(tmp, { force: true })
   }
-  // A folder the agent cannot write: its path stands in for the id.
-  return read() ?? createHash("sha256").update(install.toLowerCase()).digest("hex").slice(0, 32)
+  const id = read()
+  if (!id) throw new Fail("cannot_save", `Cannot write in ${install}. The agent's id is kept there; allow writing it.`)
+  return id
 }
 
 /** What the agent is called on the approval page and in Settings: which agent, on which computer. */
@@ -254,10 +255,13 @@ function secureDir(dir) {
         ],
         { stdio: "ignore" },
       )
+      // The owner may always change an ACL, so the folder and its files must be this user's. (Only now: taking
+      // ownership needs the full control just granted. No /C, which would hide a failure behind exit code 0.)
+      icacls([dir, "/setowner", `*${sid[1]}`, "/T", "/Q"])
       // Granting does not remove other entries: read the folder's and its files' ACLs back and allow no one else.
       const saved = path.join(dir, `.acl-${hex(4)}`)
       try {
-        execFileSync("icacls", [dir, "/save", saved, "/T", "/C", "/Q"], { stdio: "ignore" })
+        icacls([dir, "/save", saved, "/T", "/Q"])
         const other = othersAllowed(fs.readFileSync(saved).toString("utf16le"), sid[1])
         if (other) throw new Fail("insecure_credentials", `Others can open ${dir} (${other}). Remove their access.`)
       } finally {
@@ -275,12 +279,43 @@ function secureDir(dir) {
   secured = true
 }
 
-/** The first account other than this user, SYSTEM and Administrators that an ACL (SDDL) allows anything. */
-function othersAllowed(sddl, userSid) {
+/** icacls over the folder and its files; tried again while other commands add or replace files in it. */
+function icacls(args) {
+  for (let i = 0; ; i++) {
+    try {
+      execFileSync("icacls", args, { stdio: "ignore" })
+      return
+    } catch (e) {
+      if (i >= 4) throw e
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100 + Math.random() * 200)
+    }
+  }
+}
+
+/**
+ * What in saved ACLs (icacls /save: one SDDL line per object) lets anyone but this user, SYSTEM and Administrators
+ * in. Anything but plain allow and deny entries (conditional or callback ones) counts too: refused, not guessed.
+ */
+function othersAllowed(saved, userSid) {
   const allowed = new Set([userSid, "SY", "BA", "S-1-5-18", "S-1-5-32-544"])
-  for (const ace of sddl.matchAll(/\(([^()]*)\)/g)) {
-    const [type, , , , , sid] = ace[1].split(";")
-    if ((type === "A" || type === "OA") && sid && !allowed.has(sid)) return sid
+  for (const line of saved.split(/\r?\n/)) {
+    const at = line.indexOf("D:")
+    if (at < 0) continue
+    const dacl = line.slice(at + 2).split(/S:/)[0]
+    let depth = 0
+    let ace = ""
+    for (const ch of dacl) {
+      if (ch === "(") {
+        depth++
+        if (depth > 1) return "a conditional entry"
+        ace = ""
+      } else if (ch === ")") {
+        depth--
+        const [type, , , , , sid] = ace.split(";")
+        if (!["A", "D", "OA", "OD"].includes(type)) return `an entry of type ${type}`
+        if ((type === "A" || type === "OA") && !allowed.has(sid)) return sid
+      } else if (depth === 1) ace += ch
+    }
   }
   return null
 }
@@ -403,7 +438,8 @@ async function hook(point) {
   for (let i = 0; i < 1200 && !fs.existsSync(`${at}.go`); i++) await sleep(50)
 }
 
-async function acquire(ctx) {
+/** Takes the lock; `own` is a lock this process held before, which counts as taken if it is back in place. */
+async function acquire(ctx, own) {
   secureDir(ctx.dir)
   const token = hex(16)
   const line = JSON.stringify({ pid: process.pid, host: host(), token, startedAt: now() })
@@ -418,9 +454,17 @@ async function acquire(ctx) {
       return token
     } catch (e) {
       if (fd !== undefined) fs.closeSync(fd)
+      // Windows refuses for a moment to create a file whose name is still being deleted (a lock just released).
+      const deleting = win && (e.code === "EPERM" || e.code === "EACCES") && Date.now() < deadline
+      if (deleting) {
+        await sleep(50 + Math.random() * 100)
+        continue
+      }
       if (e.code !== "EEXIST") throw new Fail("cannot_save", `Cannot create a lock in ${ctx.dir}.`)
     }
     const held = readLock(ctx.lock)
+    // Another process moved this one's lock away by mistake and has put it back.
+    if (own && held && !held.empty && held.token === own) return own
     // A holder that died between creating the lock and writing its name leaves it empty; that takes a moment.
     const dead = held?.empty
       ? Date.now() - held.mtime > 60_000
@@ -474,8 +518,8 @@ function release(ctx, token) {
   if (mine(ctx, token)) fs.rmSync(ctx.lock, { force: true })
 }
 
-async function withLock(ctx, fn) {
-  const token = await acquire(ctx)
+async function withLock(ctx, fn, own) {
+  const token = await acquire(ctx, own)
   try {
     return await fn(token)
   } finally {
@@ -767,7 +811,7 @@ async function accessToken(ctx, stale) {
       await hook("before-write")
       if (!mine(ctx, lock)) {
         // The lock was taken while this one waited for n8n-ops: keep the new tokens anyway, under a fresh lock.
-        await withLock(ctx, async () => writeRecord(ctx, next))
+        await withLock(ctx, async () => writeRecord(ctx, next), lock)
       } else writeRecord(ctx, next)
       return next.accessToken
     }

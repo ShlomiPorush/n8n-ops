@@ -110,7 +110,8 @@ setup() {
   DIR="${N8N_OPS_CREDENTIALS:-$base/n8n-ops}"
   case "$DIR" in /*) ;; *) DIR="$(pwd -P)/$DIR" ;; esac
   plain_ok "$DIR" || fail insecure_credentials "The n8n-ops folder's path cannot contain quotes or backslashes."
-  key=$(printf '%s\n%s' "$ISSUER" "$(install_id)" | sha | cut -c1-32)
+  install_id
+  key=$(printf '%s\n%s' "$ISSUER" "$ID" | sha | cut -c1-32)
   FILE="$DIR/$key.json"
   LOCK="$DIR/$key.lock"
   if [ -n "${N8N_OPS_AGENT_NAME:-}" ]; then
@@ -150,9 +151,8 @@ install_id() {
     id=$(head -n1 "$f" 2>/dev/null | tr -d '\r')
     case "$id" in "" | *[!0-9a-f]*) id="" ;; esac
   fi
-  # A folder the agent cannot write: its path stands in for the id.
-  [ ${#id} -eq 32 ] || id=$(lower "$INSTALL" | sha | cut -c1-32)
-  printf '%s' "$id"
+  [ ${#id} -eq 32 ] || fail cannot_save "Cannot write in $INSTALL. The agent's id is kept there; allow writing it."
+  ID=$id
 }
 
 # Only this user may open the folder and its files; never loosened or fixed silently.
@@ -272,7 +272,9 @@ hook() {
 
 alive() { kill -0 "$1" 2>/dev/null; }
 
+# acquire [OWN]: takes the lock; OWN is a lock this process held before, which counts as taken if it is back in place.
 acquire() {
+  own=${1:-}
   secure_dir
   token=$(rand 16)
   line=$(printf '{"pid":%s,"host":"%s","token":"%s","startedAt":%s}' "$$" "$(host)" "$token" "$(now)")
@@ -291,6 +293,11 @@ acquire() {
     dead=0
     if [ -e "$LOCK" ]; then
       htoken=$(lock_field "$held" token)
+      # Another process moved this one's lock away by mistake and has put it back.
+      if [ -n "$own" ] && [ "$htoken" = "$own" ]; then
+        LOCKTOKEN=$own
+        return 0
+      fi
       if [ -z "$htoken" ]; then
         # A holder that died between creating the lock and writing its name leaves it empty; that takes a moment.
         [ -n "$(find "$LOCK" -mmin +1 2>/dev/null)" ] && dead=1
@@ -589,8 +596,9 @@ access_token() {
     hook before-write
     if ! mine; then
       # The lock was taken while this one waited for n8n-ops: keep the new tokens anyway, under a fresh lock.
+      held_before=$LOCKTOKEN
       LOCKTOKEN=""
-      acquire
+      acquire "$held_before"
     fi
     record_write
     TOKEN=$R_accessToken

@@ -1,7 +1,7 @@
 // The command's contract, run against every version this computer can run (N8N_OPS_IMPLS picks them): the same
 // answers, and the same care with the refresh token, which the server cuts off the moment it is used twice.
 import assert from "node:assert/strict"
-import { spawn } from "node:child_process"
+import { execFileSync, spawn } from "node:child_process"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
@@ -28,6 +28,10 @@ function install(name = ".claude-test") {
 function command(impl, dir) {
   if (impl === "node") return [process.execPath, [path.join(dir, "n8n-ops.mjs")]]
   if (impl === "sh") return ["sh", [path.join(dir, "n8n-ops.sh")]]
+  // The entry points agents run, which pick a version themselves.
+  if (impl === "entry-sh") return ["sh", [path.join(dir, "n8n-ops")]]
+  if (impl === "entry-ps")
+    return ["powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", path.join(dir, "n8n-ops.ps1")]]
   if (impl === "ps")
     return [
       "powershell.exe",
@@ -217,7 +221,7 @@ for (const impl of impls) {
       })
       assert.equal(res.json.error, "insecure_url")
       await connected(impl, inst, server)
-      for (const p of ["../oauth/token", "https://evil.example/x", "//evil.example/x", "a b"]) {
+      for (const p of ["../oauth/token", "%2e%2e/%2E%2e/oauth/token", "https://evil.example/x", "//evil.example/x", "a b"]) {
         const r = await run(impl, inst, server, ["get", p])
         assert.equal(r.json?.error, "bad_path", `${p}: ${r.out}`)
       }
@@ -241,22 +245,81 @@ for (const impl of impls) {
       const lost = await run(impl, inst, server, ["get", "instances"])
       assert.equal(lost.json.error, "unreachable", lost.out + lost.err)
       const orphan = server.orphan
-      const next = await run(impl, inst, server, ["get", "instances"])
+      const refreshes = server.counts.refresh
+      // Right after, the lost refresh might still be on its way: nothing is sent.
+      const soon = await run(impl, inst, server, ["get", "instances"])
+      assert.equal(soon.json.error, "busy", soon.out + soon.err)
+      assert.equal(server.counts.refresh, refreshes)
+      const next = await run(impl, inst, server, ["get", "instances"], { N8N_OPS_TEST_REFRESH_GRACE: "0" })
       assert.equal(next.json.error, "connection_ended", next.out + next.err)
       assert.equal(server.grants.get(server.refresh.get(orphan).grant).alive, false, "the orphaned token's grant ended")
     })
 
-    it("keeps the token when the request never left the computer", async () => {
+    it("treats an answer that broke off like a lost one", async () => {
       const inst = fresh()
       await connected(impl, inst, server)
       server.expireAccessTokens()
+      server.truncateNextRefresh = true
+      const broken = await run(impl, inst, server, ["get", "instances"])
+      assert.equal(broken.json.error, "unreachable", broken.out + broken.err)
+      assert.equal((await run(impl, inst, server, ["status"])).json.status, "connected", "the connection is kept")
+      const orphan = server.orphan
+      const next = await run(impl, inst, server, ["get", "instances"], { N8N_OPS_TEST_REFRESH_GRACE: "0" })
+      assert.equal(next.json.error, "connection_ended", next.out + next.err)
+      assert.equal(server.grants.get(server.refresh.get(orphan).grant).alive, false)
+    })
+
+    it("keeps the token when the refresh never left the computer", async () => {
+      const inst = fresh()
+      // The stored access token runs out within a minute, so the next command refreshes before calling.
+      server.accessTtl = 30
+      server.refreshAccessTtl = 900
+      await connected(impl, inst, server)
       await server.stop()
       const down = await run(impl, inst, server, ["get", "instances"])
       assert.equal(down.json.error, "unreachable", down.out + down.err)
       await server.start()
       const up = await run(impl, inst, server, ["get", "instances"])
       assert.equal(up.code, 0, up.out + up.err)
+      assert.equal(server.counts.refresh, 1, "only the refresh that reached n8n-ops")
       assert.equal(server.counts.reuse, 0)
+    })
+
+    it("keeps an old connection it could not end yet, even when the new one ends", async () => {
+      const inst = fresh()
+      const alive = () => [...server.grants.entries()].filter(([, g]) => g.alive).map(([id]) => id)
+      const others = new Set(alive())
+      await connected(impl, inst, server)
+      const [old] = alive().filter((g) => !others.has(g))
+      server.revokeStatus = 500
+      await run(impl, inst, server, ["connect", "--replace"])
+      server.approve()
+      const w = await run(impl, inst, server, ["connect", "--wait"])
+      assert.equal(w.json.status, "connected", w.out + w.err)
+      assert.equal(server.grants.get(old).alive, true, "n8n-ops did not confirm, so it is still to be ended")
+      // The new connection ends; the old one must still be ended.
+      for (const id of alive()) if (id !== old && !others.has(id)) server.grants.get(id).alive = false
+      server.expireAccessTokens()
+      const ended = await run(impl, inst, server, ["get", "instances"])
+      assert.equal(ended.json.error, "connection_ended", ended.out + ended.err)
+      server.revokeStatus = 200
+      const again = await run(impl, inst, server, ["connect"])
+      assert.equal(again.json.status, "pending", again.out + again.err)
+      assert.equal(server.grants.get(old).alive, false, "ended once n8n-ops answered")
+    })
+
+    it("works in a folder whose path has spaces, and leaves no temp files", async () => {
+      const inst = fresh()
+      inst.creds = path.join(inst.base, "my creds")
+      // A file named like the path's first word, which a split path would hit.
+      fs.writeFileSync(path.join(inst.base, "my"), "keep")
+      server.accessTtl = 30
+      server.refreshAccessTtl = 900
+      await connected(impl, inst, server)
+      assert.equal((await run(impl, inst, server, ["get", "instances"])).code, 0)
+      assert.equal(fs.readFileSync(path.join(inst.base, "my"), "utf8"), "keep")
+      const left = fs.readdirSync(inst.creds).filter((f) => !/^[0-9a-f]{32}\.json$/.test(f))
+      assert.deepEqual(left, [])
     })
 
     it("disconnects, and keeps what n8n-ops did not confirm to try again", async () => {
@@ -352,6 +415,18 @@ for (const impl of impls) {
       assert.equal(server.counts.reuse, 0, "the refresh token was never used twice")
     })
 
+    if (win) {
+      it("refuses a credentials folder that grants others access", async () => {
+        const inst = fresh()
+        fs.mkdirSync(inst.creds, { recursive: true })
+        // Everyone may read, inherited by every file in it.
+        execFileSync("icacls", [inst.creds, "/grant", "*S-1-1-0:(OI)(CI)R", "/Q"], { stdio: "ignore" })
+        const r = await run(impl, inst, server, ["connect"])
+        assert.equal(r.json.error, "insecure_credentials", r.out + r.err)
+        assert.match(r.json.message, /S-1-1-0|WD/)
+      })
+    }
+
     if (!win) {
       it("refuses a credentials folder others can open", async () => {
         const inst = fresh()
@@ -394,3 +469,25 @@ if (first && second) {
     })
   })
 }
+
+// The entry points pick a version (Node when there is one) and pass the arguments on as they are.
+describe("n8n-ops entry points", () => {
+  let server
+  before(async () => {
+    server = await startFakeServer()
+  })
+  after(() => server.close())
+  const entry = win ? "entry-ps" : "entry-sh"
+  for (const [name, env] of [
+    ["with Node", { N8N_OPS_NO_NODE: "" }],
+    ["without Node", { N8N_OPS_NO_NODE: "1" }],
+  ]) {
+    it(`${entry} ${name} keeps a query with & as it is`, async () => {
+      const inst = install()
+      await connected("node", inst, server)
+      const r = await run(entry, inst, server, ["get", "problems?status=open&instance=x"], env)
+      assert.equal(r.code, 0, r.out + r.err)
+      assert.equal(r.json.data.query, "?status=open&instance=x")
+    })
+  }
+})

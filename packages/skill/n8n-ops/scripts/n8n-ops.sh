@@ -16,11 +16,13 @@ CLIENT_ID="n8n-ops-cli"
 SCOPE="ops:read ops:access offline_access"
 WAIT_SECONDS="${N8N_OPS_WAIT_SECONDS:-90}"
 POLL_SECONDS="${N8N_OPS_TEST_POLL_SECONDS:-5}"
+# A refresh is retried only once it cannot be in flight any more: twice the request timeout (tests shorten it).
+REFRESH_GRACE="${N8N_OPS_TEST_REFRESH_GRACE:-30}"
 LOCK_WAIT_MS="${N8N_OPS_LOCK_WAIT_MS:-20000}"
 FIELDS="v:n issuer:s label:s generation:s refreshToken:s accessToken:s accessExpiresAt:n scope:s refreshStartedAt:n refreshRetried:n deviceCode:s userCode:s link:s deviceExpiresAt:n interval:n nextPollAt:n toRevoke:s"
 
 LOCKTOKEN=""
-TMPFILES=""
+TMPD=""
 SECURED=0
 
 now() { date +%s; }
@@ -33,8 +35,7 @@ esc() { printf '%s' "$1" | tr -d '\000-\037' | sed 's/\\/\\\\/g; s/"/\\"/g'; }
 
 cleanup() {
   [ -n "$LOCKTOKEN" ] && release
-  # shellcheck disable=SC2086 # a list of private temp files without spaces
-  [ -n "$TMPFILES" ] && rm -f $TMPFILES
+  [ -n "$TMPD" ] && rm -rf -- "$TMPD"
   return 0
 }
 trap cleanup EXIT
@@ -109,7 +110,7 @@ setup() {
   DIR="${N8N_OPS_CREDENTIALS:-$base/n8n-ops}"
   case "$DIR" in /*) ;; *) DIR="$(pwd -P)/$DIR" ;; esac
   plain_ok "$DIR" || fail insecure_credentials "The n8n-ops folder's path cannot contain quotes or backslashes."
-  key=$(printf '%s\n%s' "$ISSUER" "$INSTALL" | sha | cut -c1-32)
+  key=$(printf '%s\n%s' "$ISSUER" "$(install_id)" | sha | cut -c1-32)
   FILE="$DIR/$key.json"
   LOCK="$DIR/$key.lock"
   if [ -n "${N8N_OPS_AGENT_NAME:-}" ]; then
@@ -133,6 +134,27 @@ setup() {
   fi
 }
 
+# This install's id, kept in the skill's folder (.install-id), so every version agrees on it however each one spells
+# the folder's path. Published in one step: written aside, then linked into place, which fails if one is there.
+install_id() {
+  f="$INSTALL/.install-id"
+  id=$(head -n1 "$f" 2>/dev/null | tr -d '\r')
+  case "$id" in "" | *[!0-9a-f]*) id="" ;; esac
+  if [ ${#id} -ne 32 ]; then
+    t="$f.$(rand 6)"
+    if (
+      set -C
+      printf '%s\n' "$(rand 16)" >"$t"
+    ) 2>/dev/null; then ln "$t" "$f" 2>/dev/null || :; fi
+    rm -f "$t"
+    id=$(head -n1 "$f" 2>/dev/null | tr -d '\r')
+    case "$id" in "" | *[!0-9a-f]*) id="" ;; esac
+  fi
+  # A folder the agent cannot write: its path stands in for the id.
+  [ ${#id} -eq 32 ] || id=$(lower "$INSTALL" | sha | cut -c1-32)
+  printf '%s' "$id"
+}
+
 # Only this user may open the folder and its files; never loosened or fixed silently.
 check_private() {
   [ -L "$1" ] && fail insecure_credentials "$1 must be plain, not a link."
@@ -152,6 +174,23 @@ secure_dir() {
   [ -d "$DIR" ] || fail insecure_credentials "$DIR must be a plain folder."
   check_private "$DIR"
   SECURED=1
+  # Temp files of commands that were killed (their own cleanup never ran).
+  set +f
+  for d in "$DIR"/.tmp.*; do
+    [ -d "$d" ] || continue
+    pid=${d##*/.tmp.}
+    pid=${pid%%.*}
+    alive "$pid" || rm -rf -- "$d"
+  done
+  set -f
+}
+
+# A private folder for this command's temp files, inside the credentials folder (so a rename stays atomic).
+tmpdir() {
+  [ -n "$TMPD" ] && return 0
+  secure_dir
+  TMPD="$DIR/.tmp.$$.$(rand 4)"
+  mkdir "$TMPD" 2>/dev/null || fail cannot_save "Cannot write in $DIR. Allow this agent to write there."
 }
 
 # The connection: one shell variable per field, R_<name>.
@@ -200,8 +239,8 @@ record_write() {
     esac
     sep=","
   done
-  tmp="$FILE.$(rand 6).tmp"
-  TMPFILES="$TMPFILES $tmp"
+  tmpdir
+  tmp="$TMPD/record.$(rand 6)"
   # noclobber: created new, private by the umask.
   if ! (
     set -C
@@ -304,9 +343,9 @@ assert_mine() { mine || fail busy "Another n8n-ops command took over this connec
 # standard input (printf is built in, so they are on no command line). Sets STATUS, RESP and SENT (no when the name,
 # the connection or TLS failed first, so nothing reached n8n-ops).
 http() {
-  RESP="$DIR/.resp.$(rand 6)"
-  errf="$DIR/.err.$(rand 6)"
-  TMPFILES="$TMPFILES $RESP $errf"
+  tmpdir
+  RESP="$TMPD/resp.$(rand 6)"
+  errf="$TMPD/err.$(rand 6)"
   STATUS=$(printf 'url = "%s"\nrequest = "%s"\nheader = "Accept: application/json"\n%s\n' "$2" "$1" "${3:-}" |
     curl -q -sS -K - --proto "=$PROTO" --max-time 15 --connect-timeout 10 -o "$RESP" -w '%{http_code}' 2>"$errf")
   rc=$?
@@ -523,6 +562,10 @@ access_token() {
   fi
   b_started=$R_refreshStartedAt
   b_retried=$R_refreshRetried
+  # A refresh that started moments ago may still be on its way (its holder lost the lock): never send it twice.
+  if [ "$R_refreshStartedAt" != 0 ] && [ $(($(now) - R_refreshStartedAt)) -lt "$REFRESH_GRACE" ]; then
+    fail busy "Another n8n-ops command is refreshing this connection. Nothing was sent; run it again."
+  fi
   if [ "$R_refreshStartedAt" != 0 ]; then
     # The last refresh got no answer; trying once more either continues the connection or ends it there.
     [ "$R_refreshRetried" != 0 ] && fail connection_ended "Two refreshes got no answer, so this connection cannot be trusted. Run: n8n-ops connect --replace"
@@ -555,7 +598,16 @@ access_token() {
     return 0
   fi
   if [ "$(jstr error "$RESP")" = invalid_grant ]; then
-    record_remove
+    # An old connection still to be ended (after --replace) keeps its place until n8n-ops confirms it.
+    if [ -n "$R_toRevoke" ]; then
+      keep=$R_toRevoke
+      name=$R_label
+      record_clear
+      R_toRevoke=$keep R_label=$name
+      record_write
+    else
+      record_remove
+    fi
     fail connection_ended "This connection has ended (disconnected in n8n-ops, unused for 90 days, or its token was used twice). Run: n8n-ops connect"
   fi
   # n8n-ops answered with an error before spending the token (a 4xx); a 5xx may have come after.
@@ -569,6 +621,8 @@ access_token() {
 api_url() {
   bad="Give a path of the API, for example: problems?status=open (percent-encode anything else)"
   case "$1" in "" | *://* | //* | *[!A-Za-z0-9._~!\$\&\'\(\)*+,\;=:@/?%-]*) fail bad_path "$bad" ;; esac
+  # Encoded dots too: a server or proxy that decodes them would take the token out of the API.
+  case "$(lower "$1")" in *%2e*) fail bad_path "$bad" ;; esac
   case "$1" in /*) URL="$ISSUER/api/v1$1" ;; *) URL="$ISSUER/api/v1/$1" ;; esac
   case "$URL" in "$ISSUER"/api/v1/*) ;; *) fail bad_path "$bad" ;; esac
   case "$URL" in */../* | */./* | */.. | */.) fail bad_path "$bad" ;; esac
@@ -587,8 +641,8 @@ cmd_api() {
   bodyfile=""
   if [ "$method" = POST ]; then
     secure_dir
-    bodyfile="$DIR/.body.$(rand 6)"
-    TMPFILES="$TMPFILES $bodyfile"
+    tmpdir
+    bodyfile="$TMPD/body.$(rand 6)"
     if [ -n "$JSON_FILE" ]; then
       cat -- "$JSON_FILE" >"$bodyfile" 2>/dev/null || fail bad_body "Cannot read $JSON_FILE."
     else

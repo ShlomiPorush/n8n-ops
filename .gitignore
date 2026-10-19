@@ -25,3 +25,6 @@ test-results/
 *.log
 .DS_Store
 Thumbs.db
+
+# Written by the skill command when run from the repository.
+packages/skill/n8n-ops/.install-id

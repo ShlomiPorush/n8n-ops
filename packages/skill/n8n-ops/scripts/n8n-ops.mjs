@@ -27,6 +27,8 @@ const LOCK_WAIT_MS = Number(process.env.N8N_OPS_LOCK_WAIT_MS) || 20_000
 const TIMEOUT_MS = 15_000
 // RFC 8628: 5 seconds between polls unless the server says otherwise (tests shorten it).
 const POLL_SECONDS = Number(process.env.N8N_OPS_TEST_POLL_SECONDS) || 5
+// A refresh is retried only once it cannot be in flight any more: twice the request timeout (tests shorten it).
+const REFRESH_GRACE = Number(process.env.N8N_OPS_TEST_REFRESH_GRACE ?? 30)
 const SECRET = /^[A-Za-z0-9._~+/=-]{1,4096}$/
 // Every value in a connection file: no quote, backslash or control character, so the shell version reads it too.
 // biome-ignore lint/suspicious/noControlCharactersInRegex: refusing control characters is the point
@@ -136,7 +138,7 @@ function context(urlOption) {
   const issuer = url.origin
   const install = installDir()
   const dir = credentialsDir()
-  const key = createHash("sha256").update(`${issuer}\n${install}`).digest("hex").slice(0, 32)
+  const key = createHash("sha256").update(`${issuer}\n${installId(install)}`).digest("hex").slice(0, 32)
   return {
     issuer,
     install,
@@ -149,17 +151,37 @@ function context(urlOption) {
 
 /** The skill's folder: one connection per place the skill is installed (one agent). */
 function installDir() {
-  const dir = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
-  if (win)
-    return path
-      .resolve(dir)
-      .replace(/[\\/]+$/, "")
-      .toLowerCase()
-  try {
-    return fs.realpathSync(dir)
-  } catch {
-    return path.resolve(dir)
+  return path.resolve(path.dirname(path.dirname(fileURLToPath(import.meta.url))))
+}
+
+/**
+ * This install's id, kept in the skill's folder (`.install-id`), so every version agrees on it however each one
+ * spells the folder's path (short 8.3 names, links, letter case). Published in one step: written aside, then
+ * linked into place, which fails if another process got there first.
+ */
+function installId(install) {
+  const file = path.join(install, ".install-id")
+  const read = () => {
+    try {
+      const id = fs.readFileSync(file, "utf8").trim()
+      return /^[0-9a-f]{32}$/.test(id) ? id : null
+    } catch {
+      return null
+    }
   }
+  const existing = read()
+  if (existing) return existing
+  const tmp = `${file}.${hex(6)}`
+  try {
+    fs.writeFileSync(tmp, `${hex(16)}\n`, { flag: "wx" })
+    fs.linkSync(tmp, file)
+  } catch {
+    // Another process published one first, or the folder cannot be written.
+  } finally {
+    fs.rmSync(tmp, { force: true })
+  }
+  // A folder the agent cannot write: its path stands in for the id.
+  return read() ?? createHash("sha256").update(install.toLowerCase()).digest("hex").slice(0, 32)
 }
 
 /** What the agent is called on the approval page and in Settings: which agent, on which computer. */
@@ -229,7 +251,17 @@ function secureDir(dir) {
         ],
         { stdio: "ignore" },
       )
-    } catch {
+      // Granting does not remove other entries: read the folder's and its files' ACLs back and allow no one else.
+      const saved = path.join(dir, `.acl-${hex(4)}`)
+      try {
+        execFileSync("icacls", [dir, "/save", saved, "/T", "/C", "/Q"], { stdio: "ignore" })
+        const other = othersAllowed(fs.readFileSync(saved).toString("utf16le"), sid[1])
+        if (other) throw new Fail("insecure_credentials", `Others can open ${dir} (${other}). Remove their access.`)
+      } finally {
+        fs.rmSync(saved, { force: true })
+      }
+    } catch (e) {
+      if (e instanceof Fail) throw e
       throw new Fail("insecure_credentials", `Could not limit ${dir} to your user (icacls failed).`)
     }
   } else {
@@ -238,6 +270,16 @@ function secureDir(dir) {
     if (st.mode & 0o077) throw new Fail("insecure_credentials", `Others can open ${dir}. Run: chmod 700 '${dir}'`)
   }
   secured = true
+}
+
+/** The first account other than this user, SYSTEM and Administrators that an ACL (SDDL) allows anything. */
+function othersAllowed(sddl, userSid) {
+  const allowed = new Set([userSid, "SY", "BA", "S-1-5-18", "S-1-5-32-544"])
+  for (const ace of sddl.matchAll(/\(([^()]*)\)/g)) {
+    const [type, , , , , sid] = ace[1].split(";")
+    if ((type === "A" || type === "OA") && sid && !allowed.has(sid)) return sid
+  }
+  return null
 }
 
 function checkFile(file) {
@@ -487,7 +529,13 @@ async function request(ctx, method, url, { form, bearer, json } = {}) {
       sent: !NOT_SENT.has(code),
     })
   }
-  const text = await res.text().catch(() => "")
+  let text
+  try {
+    text = await res.text()
+  } catch {
+    // The answer started and broke off: n8n-ops got the request and may have spent a one-time secret.
+    throw new Fail("unreachable", `The answer from ${ctx.issuer} broke off.`, { sent: true })
+  }
   let parsed = null
   try {
     parsed = JSON.parse(text)
@@ -505,8 +553,9 @@ function httpFail(r, what) {
 
 function tokensFrom(r) {
   const t = r.json ?? {}
-  const scope = String(t.scope ?? "")
-  if (!SECRET.test(String(t.access_token)) || !SECRET.test(String(t.refresh_token)) || !PLAIN.test(scope))
+  const scope = typeof t.scope === "string" ? t.scope : ""
+  const ok = (v) => typeof v === "string" && SECRET.test(v)
+  if (!ok(t.access_token) || !ok(t.refresh_token) || !PLAIN.test(scope))
     throw new Fail("unexpected_answer", "n8n-ops answered without usable tokens.")
   return {
     refreshToken: t.refresh_token,
@@ -685,6 +734,9 @@ async function accessToken(ctx, stale) {
     // Another command refreshed while this one waited for the lock.
     if (usable(rec) && rec.accessToken !== stale) return rec.accessToken
     const before = { refreshStartedAt: rec.refreshStartedAt, refreshRetried: rec.refreshRetried }
+    // A refresh that started moments ago may still be on its way (its holder lost the lock): never send it twice.
+    if (rec.refreshStartedAt && now() - rec.refreshStartedAt < REFRESH_GRACE)
+      throw new Fail("busy", "Another n8n-ops command is refreshing this connection. Nothing was sent; run it again.")
     if (rec.refreshStartedAt) {
       // The last refresh got no answer; it may or may not have reached n8n-ops. Trying once more either continues
       // the connection or ends it there, which also ends the new token nobody received.
@@ -717,7 +769,9 @@ async function accessToken(ctx, stale) {
       return next.accessToken
     }
     if (r.json?.error === "invalid_grant") {
-      removeRecord(ctx)
+      // An old connection still to be ended (after --replace) keeps its place until n8n-ops confirms it.
+      if (rec.toRevoke) writeRecord(ctx, { ...emptyRecord(ctx), label: rec.label, toRevoke: rec.toRevoke })
+      else removeRecord(ctx)
       throw new Fail(
         "connection_ended",
         "This connection has ended (disconnected in n8n-ops, unused for 90 days, or its token was used twice). Run: n8n-ops connect",
@@ -733,7 +787,9 @@ function apiUrl(ctx, p) {
   const value = String(p ?? "")
   const bad = "Give a path of the API, for example: problems?status=open (percent-encode anything else)"
   // The same characters in every version (the shell version passes the path to curl as it is).
-  if (!PATH_CHARS.test(value) || value.includes("://") || value.startsWith("//")) throw new Fail("bad_path", bad)
+  // Encoded dots too: a server or proxy that decodes them would take the token out of the API.
+  if (!PATH_CHARS.test(value) || value.includes("://") || value.startsWith("//") || /%2e/i.test(value))
+    throw new Fail("bad_path", bad)
   const url = new URL(`${ctx.issuer}/api/v1${value.startsWith("/") ? "" : "/"}${value}`)
   if (url.origin !== ctx.issuer || !url.pathname.startsWith("/api/v1/")) throw new Fail("bad_path", bad)
   return url.toString()

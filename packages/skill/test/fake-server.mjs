@@ -17,6 +17,7 @@ export async function startFakeServer(port = 0) {
     refreshAccessTtl: null,
     deviceInterval: undefined,
     dropNextRefresh: false,
+    truncateNextRefresh: false,
     refreshDelayMs: 0,
     revokeStatus: 200,
     slowDownOnce: false,
@@ -119,6 +120,15 @@ export async function startFakeServer(port = 0) {
           s.dropNextRefresh = false
           s.orphan = tokens.refresh_token
           req.socket.destroy()
+          return
+        }
+        if (s.truncateNextRefresh) {
+          // The answer starts, then the connection breaks.
+          s.truncateNextRefresh = false
+          s.orphan = tokens.refresh_token
+          res.writeHead(200, { "content-type": "application/json", "content-length": "400" })
+          res.write('{"access_token":"')
+          setTimeout(() => req.socket.destroy(), 50)
           return
         }
         return send(200, tokens)

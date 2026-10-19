@@ -27,6 +27,9 @@ $ClientId = 'n8n-ops-cli'
 $Scope = 'ops:read ops:access offline_access'
 $WaitSeconds = 90
 if ($env:N8N_OPS_WAIT_SECONDS) { $WaitSeconds = [int]$env:N8N_OPS_WAIT_SECONDS }
+# A refresh is retried only once it cannot be in flight any more: twice the request timeout (tests shorten it).
+$RefreshGrace = 30
+if ($null -ne $env:N8N_OPS_TEST_REFRESH_GRACE) { $RefreshGrace = [long]$env:N8N_OPS_TEST_REFRESH_GRACE }
 $PollSeconds = 5
 if ($env:N8N_OPS_TEST_POLL_SECONDS) { $PollSeconds = [long]$env:N8N_OPS_TEST_POLL_SECONDS }
 $LockWaitMs = 20000
@@ -96,12 +99,43 @@ function Get-Context([string]$urlOption) {
   $issuer = "$($u.Scheme)://$($u.Authority)"
   $install = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot)).TrimEnd('\', '/').ToLowerInvariant()
   $dir = Get-CredentialsDir
-  $sha = [Security.Cryptography.SHA256]::Create().ComputeHash($Utf8.GetBytes("$issuer`n$install"))
+  $sha = [Security.Cryptography.SHA256]::Create().ComputeHash($Utf8.GetBytes("$issuer`n$(Get-InstallId $install)"))
   $key = (-join ($sha | ForEach-Object { $_.ToString('x2') })).Substring(0, 32)
   @{
     issuer = $issuer; install = $install; dir = $dir
     file = Join-Path $dir "$key.json"; lock = Join-Path $dir "$key.lock"; label = Get-Label $install
   }
+}
+
+# This install's id, kept in the skill's folder (.install-id), so every version agrees on it however each one spells
+# the folder's path. Published in one step: written aside, then moved into place, which fails if one is there.
+function Get-InstallId([string]$install) {
+  $file = Join-Path $install '.install-id'
+  $read = {
+    try { $id = ([IO.File]::ReadAllText($file)).Trim(); if ($id -match '^[0-9a-f]{32}$') { return $id } } catch {}
+    return $null
+  }
+  $id = & $read
+  if ($id) { return $id }
+  $tmp = "$file.$(Hex 6)"
+  try { [IO.File]::WriteAllText($tmp, "$(Hex 16)`n"); [IO.File]::Move($tmp, $file) } catch {} finally {
+    try { if ([IO.File]::Exists($tmp)) { [IO.File]::Delete($tmp) } } catch {}
+  }
+  $id = & $read
+  if ($id) { return $id }
+  # A folder the agent cannot write: its path stands in for the id.
+  $sha = [Security.Cryptography.SHA256]::Create().ComputeHash($Utf8.GetBytes($install.ToLowerInvariant()))
+  (-join ($sha | ForEach-Object { $_.ToString('x2') })).Substring(0, 32)
+}
+
+# The first account other than this user, SYSTEM and Administrators that an ACL (SDDL) allows anything.
+function Find-OtherAllowed([string]$sddl, [string]$userSid) {
+  $allowed = @($userSid, 'SY', 'BA', 'S-1-5-18', 'S-1-5-32-544')
+  foreach ($m in [regex]::Matches($sddl, '\(([^()]*)\)')) {
+    $f = $m.Groups[1].Value -split ';'
+    if ($f.Count -ge 6 -and ($f[0] -eq 'A' -or $f[0] -eq 'OA') -and $f[5] -and $allowed -notcontains $f[5]) { return $f[5] }
+  }
+  $null
 }
 
 function Get-Label([string]$install) {
@@ -148,8 +182,17 @@ function Protect-Dir([string]$dir) {
     $sid = $Matches[1]
     & icacls.exe $dir /inheritance:r /grant:r "*${sid}:(OI)(CI)F" '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' /Q *> $null
     if ($LASTEXITCODE -ne 0) { throw 'icacls' }
+    # Granting does not remove other entries: read the folder's and its files' ACLs back and allow no one else.
+    # (icacls, not Get-Acl: started from PowerShell 7, Windows PowerShell may fail to load the module Get-Acl is in.)
+    $saved = Join-Path $dir ".acl-$(Hex 4)"
+    try {
+      & icacls.exe $dir /save $saved /T /C /Q *> $null
+      if ($LASTEXITCODE -ne 0) { throw 'icacls /save' }
+      $other = Find-OtherAllowed ([IO.File]::ReadAllText($saved, [Text.Encoding]::Unicode)) $sid
+      if ($other) { Fail 'insecure_credentials' "Others can open $dir ($other). Remove their access." }
+    } finally { if ([IO.File]::Exists($saved)) { [IO.File]::Delete($saved) } }
   } catch [OpsFail] { throw } catch {
-    Fail 'insecure_credentials' "Could not limit $dir to your user (icacls failed)."
+    Fail 'insecure_credentials' "Could not limit $dir to your user ($($_.Exception.Message))."
   }
   $script:Secured = $true
 }
@@ -358,7 +401,10 @@ function Invoke-Ops($ctx, [string]$method, [string]$url, $form, [string]$bearer,
     $f.Sent = -not (Test-NotSent $_.Exception)
     throw $f
   }
-  $bytes = $res.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult()
+  try { $bytes = $res.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult() } catch {
+    # The answer started and broke off: n8n-ops got the request and may have spent a one-time secret.
+    throw [OpsFail]::new('unreachable', "The answer from $($ctx.issuer) broke off.")
+  }
   $text = $Utf8.GetString($bytes)
   $parsed = $null
   try { $parsed = $text | ConvertFrom-Json } catch {}
@@ -543,6 +589,10 @@ function Get-AccessToken($ctx, [string]$stale) {
     # Another command refreshed while this one waited for the lock.
     if ((Test-Usable $rec) -and $rec.accessToken -ne $stale) { return $rec.accessToken }
     $before = @{ refreshStartedAt = $rec.refreshStartedAt; refreshRetried = $rec.refreshRetried }
+    # A refresh that started moments ago may still be on its way (its holder lost the lock): never send it twice.
+    if ($rec.refreshStartedAt -and ((Now) - $rec.refreshStartedAt) -lt $RefreshGrace) {
+      Fail 'busy' 'Another n8n-ops command is refreshing this connection. Nothing was sent; run it again.'
+    }
     if ($rec.refreshStartedAt) {
       # The last refresh got no answer; trying once more either continues the connection or ends it there.
       if ($rec.refreshRetried) { Fail 'connection_ended' 'Two refreshes got no answer, so this connection cannot be trusted. Run: n8n-ops connect --replace' }
@@ -570,7 +620,9 @@ function Get-AccessToken($ctx, [string]$stale) {
       return $next.accessToken
     }
     if ((Get-Field $r 'error') -eq 'invalid_grant') {
-      Remove-Record $ctx
+      # An old connection still to be ended (after --replace) keeps its place until n8n-ops confirms it.
+      if ($rec.toRevoke) { Write-Record $ctx (Merge (New-Record $ctx) @{ label = $rec.label; toRevoke = $rec.toRevoke }) }
+      else { Remove-Record $ctx }
       Fail 'connection_ended' 'This connection has ended (disconnected in n8n-ops, unused for 90 days, or its token was used twice). Run: n8n-ops connect'
     }
     # n8n-ops answered with an error before spending the token (a 4xx); a 5xx may have come after.
@@ -581,7 +633,8 @@ function Get-AccessToken($ctx, [string]$stale) {
 
 function Get-ApiUrl($ctx, [string]$p) {
   $bad = 'Give a path of the API, for example: problems?status=open (percent-encode anything else)'
-  if (-not $p -or $p -notmatch $PathChars -or $p.Contains('://') -or $p.StartsWith('//')) { Fail 'bad_path' $bad }
+  # Encoded dots too: a server or proxy that decodes them would take the token out of the API.
+  if (-not $p -or $p -notmatch $PathChars -or $p.Contains('://') -or $p.StartsWith('//') -or $p -match '%2e') { Fail 'bad_path' $bad }
   $sep = '/'; if ($p.StartsWith('/')) { $sep = '' }
   $u = $null
   if (-not [Uri]::TryCreate("$($ctx.issuer)/api/v1$sep$p", [UriKind]::Absolute, [ref]$u)) { Fail 'bad_path' $bad }

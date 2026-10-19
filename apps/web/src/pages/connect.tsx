@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query"
 import { TriangleAlert } from "lucide-react"
 import { useState } from "react"
 import { useParams } from "react-router"
-import { KV, LoadError, Loading, Panel } from "@/components/kit"
+import { KV, LoadError, Loading, Panel, UserText } from "@/components/kit"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -12,7 +12,7 @@ import { AuthFrame } from "./auth/shared"
 
 type ConnectRequest = {
   flow: "browser" | "code"
-  client: { name: string | null; builtIn: boolean }
+  client: { name: string | null; builtIn: boolean; label?: string | null }
   redirect: { host: string; loopback: boolean } | null
   resource: "mcp" | "rest"
   asked: ("ops:read" | "ops:access")[]
@@ -67,7 +67,7 @@ export function ConnectApprovePage() {
   }
 
   const r = request.data
-  const name = r ? (r.client.builtIn ? "A script" : (r.client.name ?? "An unnamed agent")) : ""
+  const name = r ? (r.client.builtIn ? (r.client.label ?? "A script") : (r.client.name ?? "An unnamed agent")) : ""
   return (
     <AuthFrame wide title="Connect an agent" description={r ? `${name} asks to use n8n-ops.` : undefined}>
       {request.error ? (
@@ -94,7 +94,18 @@ export function ConnectApprovePage() {
       ) : (
         <>
           <Panel>
-            <KV label="Agent">{r.client.builtIn ? "Script or command line" : (r.client.name ?? "No name given")}</KV>
+            <KV label="Agent">
+              {r.client.builtIn && r.client.label ? (
+                <>
+                  <UserText>{r.client.label}</UserText>{" "}
+                  <span className="text-meta text-muted-foreground">(a script or command line; its own name)</span>
+                </>
+              ) : r.client.builtIn ? (
+                "Script or command line"
+              ) : (
+                (r.client.name ?? "No name given")
+              )}
+            </KV>
             {r.redirect && (
               <KV label="Returns to">
                 <span className="font-mono">{r.redirect.host}</span>

@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto"
 import { and, eq, isNotNull, isNull, lt, ne, or } from "drizzle-orm"
 import type { Ctx } from "../context.ts"
 import { apiTokens } from "../db/schema.ts"
+import { tokenActor } from "../http/types.ts"
 import { sha256 } from "../lib/crypto.ts"
 import type { Design } from "../lib/settings.ts"
 import { revokeAccessOfToken } from "../services/access.ts"
@@ -38,7 +39,10 @@ export function issuerOf(publicUrl: string): string | null {
 export type AgentConnect = ReturnType<typeof createAgentConnect>
 
 /** Agents connected by approval: the authorization server for the current public URL, and their records. */
-export function createAgentConnect(ctx: Ctx, { cookieKeys, webDir }: { cookieKeys: string[]; webDir?: string }) {
+export function createAgentConnect(
+  ctx: Ctx,
+  { cookieKeys, webDir, skillDir }: { cookieKeys: string[]; webDir?: string; skillDir?: string },
+) {
   // A refresh token or code used twice at once: the loser ends the connection, like any reuse.
   const Adapter = storeAdapter(ctx.db, {
     onReuse: (grantId) => end({ grantId }, "cut", { by: "n8n-ops", via: "system" }),
@@ -115,7 +119,7 @@ export function createAgentConnect(ctx: Ctx, { cookieKeys, webDir }: { cookieKey
     await ctx.audit({
       actor: input.approvedBy,
       action: "Agent connected",
-      target: `${input.name} (${input.via === "code" ? "with a code" : "through the browser"}${input.scopes.includes(SCOPES.access) ? ", may request instance access" : ""})`,
+      target: `${row ? tokenActor(row) : input.name} (${input.via === "code" ? "with a code" : "through the browser"}${input.scopes.includes(SCOPES.access) ? ", may request instance access" : ""})`,
       via: "web",
     })
     return row
@@ -146,7 +150,7 @@ export function createAgentConnect(ctx: Ctx, { cookieKeys, webDir }: { cookieKey
     await ctx.audit({
       actor: who.by,
       action: "Agent disconnected",
-      target: `${row.name} (${endText[reason]})`,
+      target: `${tokenActor(row)} (${endText[reason]})`,
       via: who.via,
     })
     await revokeAccessOfToken(ctx, row.id, { by: who.by, via: who.via })
@@ -213,5 +217,5 @@ export function createAgentConnect(ctx: Ctx, { cookieKeys, webDir }: { cookieKey
     await sweepStore(ctx.db)
   }
 
-  return { provider, verify, connected, end, endAll, sweep, reconcile }
+  return { provider, verify, connected, end, endAll, sweep, reconcile, skillDir }
 }

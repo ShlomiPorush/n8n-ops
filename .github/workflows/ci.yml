@@ -64,10 +64,33 @@ jobs:
         if: github.event_name != 'pull_request'
         run: scripts/verify.sh --skip-guards
 
+  skill:
+    # The skill runs on the agent's computer: its three versions are checked where they run (Linux runs in Verify).
+    name: Skill (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.code == 'true' || github.event_name != 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            impls: node,ps
+          - os: macos-latest
+            impls: node,sh
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Contract tests
+        working-directory: packages/skill
+        env:
+          N8N_OPS_IMPLS: ${{ matrix.impls }}
+        run: node --test --test-concurrency=1 test/contract.test.mjs
+
   summary:
     name: CI summary
     if: always()
-    needs: [changes, guards, verify]
+    needs: [changes, guards, verify, skill]
     runs-on: ubuntu-latest
     steps:
       - name: Check results

@@ -1,0 +1,10 @@
+{
+  "name": "@n8n-ops/skill",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The n8n-ops skill for agents that run commands: connect with a code a person approves, then use the REST API",
+  "scripts": {
+    "test": "node --test --test-concurrency=1 test/contract.test.mjs"
+  }
+}

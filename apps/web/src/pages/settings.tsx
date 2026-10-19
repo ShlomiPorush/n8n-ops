@@ -798,6 +798,23 @@ function ConnectHow() {
         description="Nothing to copy into the agent by hand: it asks, you approve in this browser, and it appears below."
       />
       <SettingRow
+        label="Agents that run commands"
+        hint="T3 Code, Claude Code, Codex and others: paste this to the agent. It installs the n8n-ops skill and shows you a link and a code to approve. Each agent you install it in connects, and appears below, on its own."
+        wide
+      >
+        {base.startsWith("https://") ? (
+          <Copyable
+            value={`Install the n8n-ops skill into your personal skills folder as described at ${base}/connect/skill/, then connect to n8n-ops.`}
+            label="Copy the sentence for the agent"
+            className="text-small"
+          />
+        ) : (
+          <p className="text-small text-muted-foreground">
+            Agents download the skill from n8n-ops, so its public URL must start with https://.
+          </p>
+        )}
+      </SettingRow>
+      <SettingRow
         label="MCP clients"
         hint="Add this address as an MCP server, for example in Claude Code or Cursor. A browser opens here to approve it."
         wide
@@ -812,8 +829,8 @@ function ConnectHow() {
         </div>
       </SettingRow>
       <SettingRow
-        label="Scripts"
-        hint="Ask for a code, open the link it returns and approve, then fetch the tokens with the device code. The README shows the whole exchange."
+        label="Your own scripts"
+        hint="Ask for a code, open the link it returns and approve, then fetch the tokens with the device code. The README shows the whole exchange; the skill's command does all of it for you."
         wide
       >
         <Copyable

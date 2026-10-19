@@ -207,6 +207,40 @@ test("a script connects with a code that the person compares, then reads the RES
   expect(res.status).toBe(200)
 })
 
+test("a script that names itself is shown by that name, and its reads are in the audit log", async () => {
+  const label = "e2e skill on host-1"
+  const device = await post("/oauth/device", {
+    client_id: "n8n-ops-cli",
+    scope: "ops:read offline_access",
+    resource: `${base}/api/v1`,
+    client_label: label,
+  })
+  await page.goto(device.body.verification_uri_complete ?? "")
+  await expect(page.getByText(label).first()).toBeVisible()
+  await page.getByRole("button", { name: "Yes, continue", exact: true }).click()
+  await expect(page.getByText(`${label} asks to use n8n-ops.`)).toBeVisible()
+  await page.getByRole("button", { name: "Approve" }).click()
+  await expect(page.getByRole("heading", { name: "Agent connected" })).toBeVisible()
+  const tokens = await post("/oauth/token", {
+    grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+    device_code: device.body.device_code ?? "",
+    client_id: "n8n-ops-cli",
+  })
+  const res = await fetch(`${base}/api/v1/instances`, { headers: { authorization: `Bearer ${tokens.body.access_token}` } })
+  expect(res.status).toBe(200)
+
+  await page.goto("/settings/tokens")
+  await expect(page.getByRole("row").filter({ hasText: label })).toContainText("with a code")
+  await page.goto("/audit")
+  await expect(page.getByRole("row").filter({ hasText: "API read" }).filter({ hasText: label }).first()).toBeVisible()
+})
+
+test("the skill is not served over the stack's plain http address", async () => {
+  const res = await fetch(`${base}/connect/skill/SKILL.md`)
+  expect(res.status).toBe(404)
+  expect(((await res.json()) as { error: string }).error).toBe("not_configured")
+})
+
 test("a script the person denies is told so", async () => {
   const device = await post("/oauth/device", {
     client_id: "n8n-ops-cli",

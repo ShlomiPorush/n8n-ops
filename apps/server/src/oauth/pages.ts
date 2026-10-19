@@ -68,19 +68,19 @@ ${error === "wrong" ? '<p class="fail" role="alert">That code is not valid. Chec
 ${form}
 <div class="actions"><button class="primary" type="submit" form="op.deviceInputForm">Continue</button></div>`,
           ),
-    codeConfirm: (form, clientName, userCode) =>
+    codeConfirm: (form, clientName, userCode, label) =>
       page(
         "Connect an agent",
         `<h1>Does your agent show this code?</h1>
 <div class="code">${htmlText(userCode)}</div>
-<p><b>${htmlText(clientName)}</b> asks to connect to n8n-ops. Continue only if you started this yourself and your agent shows the same code. The name is what the agent says about itself.</p>
+<p><b>${htmlText(label ?? clientName)}</b>${label ? ` <span class="muted">(${htmlText(clientName)})</span>` : ""} asks to connect to n8n-ops. Continue only if you started this yourself and your agent shows the same code. The name is what the agent says about itself.</p>
 ${form}
 <div class="actions"><button class="primary" autofocus type="submit" form="op.deviceConfirmForm">Yes, continue</button><button type="submit" form="op.deviceConfirmForm" name="abort" value="yes">Cancel</button></div>`,
       ),
-    success: (clientName) =>
+    success: (clientName, label) =>
       page(
         "Agent connected",
-        `<h1>Agent connected</h1><p>${htmlText(clientName)} can use n8n-ops now. You can close this page; your agent carries on by itself.</p>`,
+        `<h1>Agent connected</h1><p>${htmlText(label ?? clientName)} can use n8n-ops now. You can close this page; your agent carries on by itself.</p>`,
       ),
     error: (code, description) =>
       page(

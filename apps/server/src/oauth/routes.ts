@@ -8,6 +8,8 @@ import type { Ctx } from "../context.ts"
 import { requireUser } from "../http/middleware.ts"
 import { actorName, type Env } from "../http/types.ts"
 import type { AgentConnect } from "./agents.ts"
+import { cleanLabel } from "./label.ts"
+import { skillRoutes } from "./skill.ts"
 import { CLI_CLIENT, resources, SCOPES } from "./provider.ts"
 import { roomForClient } from "./store.ts"
 
@@ -149,7 +151,9 @@ export function agentConnectRoutes(ctx: Ctx, agents: AgentConnect) {
         .filter((s): s is (typeof SCOPES)[keyof typeof SCOPES] => s === SCOPES.read || s === SCOPES.access)
       const resource = params.resource === resources(p.issuer).rest ? "rest" : "mcp"
       const redirect = params.redirect_uri ? new URL(params.redirect_uri) : null
-      return { p, n, details, params, client, asked, resource, redirect } as const
+      // Only a script (the built-in client, device flow) names itself per request; it is its own word.
+      const label = client.clientId === CLI_CLIENT ? cleanLabel(params.client_label) : null
+      return { p, n, details, params, client, asked, resource, redirect, label } as const
     } catch {
       return null
     }
@@ -168,6 +172,7 @@ export function agentConnectRoutes(ctx: Ctx, agents: AgentConnect) {
       client: {
         name: it.client.clientName ?? null,
         builtIn: it.client.clientId === CLI_CLIENT,
+        label: it.label,
       },
       redirect: it.redirect ? { host: it.redirect.host, loopback } : null,
       resource: it.resource,
@@ -187,7 +192,7 @@ export function agentConnectRoutes(ctx: Ctx, agents: AgentConnect) {
         410,
       )
     const who = c.get("actor")
-    const name = it.client.clientId === CLI_CLIENT ? "Script" : (it.client.clientName ?? "Unnamed agent")
+    const name = it.client.clientId === CLI_CLIENT ? (it.label ?? "Script") : (it.client.clientName ?? "Unnamed agent")
     const finish = (result: Parameters<typeof it.p.provider.interactionResult>[2]) =>
       it.p.provider.interactionResult(it.n.incoming, it.n.outgoing, result, { mergeWithLastSubmission: false })
 
@@ -220,6 +225,10 @@ export function agentConnectRoutes(ctx: Ctx, agents: AgentConnect) {
     })
     return c.json({ redirectTo: await finish({ login: { accountId: who.id }, consent: { grantId } }) })
   })
+
+  // The skill for agents that run commands (they connect with a code).
+  app.get("/connect/skill", (c) => c.redirect("/connect/skill/", 301))
+  app.route("/", skillRoutes(async () => (await agents.provider())?.issuer ?? null, agents.skillDir))
 
   // Everything else of OAuth is the provider's: discovery, authorize, token, device, revoke, register.
   const handoff = async (c: Context) => {

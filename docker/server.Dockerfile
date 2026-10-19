@@ -40,11 +40,14 @@ ENV NODE_ENV=production \
     N8N_OPS_VERSION=${VERSION} \
     PORT=8080 \
     WEB_DIR=web \
+    SKILL_DIR=skill \
     MIGRATIONS_DIR=drizzle
 WORKDIR /app
 COPY --from=build /src/apps/server/dist ./dist
 COPY --from=build /src/apps/server/drizzle ./drizzle
 COPY --from=web /src/apps/web/dist ./web
+# The agent skill, served at /connect/skill/ with the public URL filled in.
+COPY packages/skill/n8n-ops ./skill
 RUN mkdir -p /data && chown node:node /data
 USER node
 EXPOSE 8080

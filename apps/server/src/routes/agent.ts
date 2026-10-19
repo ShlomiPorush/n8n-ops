@@ -23,6 +23,19 @@ import {
 export function restRoutes(ctx: Ctx) {
   const app = new Hono<Env>()
   app.use("*", requireToken(ctx, "rest"))
+  // Reads leave the same trail as MCP tool calls.
+  app.use("*", async (c, next) => {
+    if (c.req.method === "GET") {
+      const url = new URL(c.req.url)
+      await ctx.audit({
+        actor: actorName(c.get("actor")),
+        action: "API read",
+        target: `${url.pathname}${url.search}`.slice(0, 300),
+        via: "rest",
+      })
+    }
+    await next()
+  })
   app.get("/problems", async (c) =>
     c.json({
       data: await agentProblems(ctx, {

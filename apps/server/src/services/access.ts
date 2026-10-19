@@ -1,5 +1,6 @@
 import { and, desc, eq, inArray, lt, or } from "drizzle-orm"
 import { type Ctx, changed } from "../context.ts"
+import { tokenActor } from "../http/types.ts"
 import { type AccessStatus, accessCalls, accessRequests, apiTokens, instances } from "../db/schema.ts"
 import type { AuditVia } from "../lib/audit.ts"
 import { newToken, sha256 } from "../lib/crypto.ts"
@@ -117,7 +118,7 @@ export async function requestAccess(ctx: Ctx, tokenId: string, input: AccessRequ
     .returning()
   if (!row) throw new Error("the request was not stored")
   await ctx.audit({
-    actor: `token:${token.name}`,
+    actor: tokenActor(token),
     action: "Instance access requested",
     target: instance.name,
     via: "agent",
@@ -197,7 +198,7 @@ export async function revokeAccessOfToken(ctx: Ctx, tokenId: string, who: Decide
 
 async function auditDecision(ctx: Ctx, id: string, action: string, who: Decider) {
   const [row] = await ctx.db
-    .select({ instance: instances.name, token: apiTokens.name })
+    .select({ instance: instances.name, token: apiTokens.name, tokenId: apiTokens.id })
     .from(accessRequests)
     .innerJoin(instances, eq(accessRequests.instanceId, instances.id))
     .innerJoin(apiTokens, eq(accessRequests.tokenId, apiTokens.id))
@@ -205,7 +206,7 @@ async function auditDecision(ctx: Ctx, id: string, action: string, who: Decider)
   await ctx.audit({
     actor: who.by,
     action,
-    target: `${row?.instance ?? "?"} for token:${row?.token ?? "?"}`,
+    target: `${row?.instance ?? "?"} for ${row ? tokenActor({ id: row.tokenId, name: row.token }) : "token:?"}`,
     via: who.via,
     details: { requestId: id },
   })
@@ -252,7 +253,7 @@ export async function collectAccess(ctx: Ctx, tokenId: string, id: string, publi
 
 export async function releaseAccess(ctx: Ctx, tokenId: string, id: string) {
   const [row] = await ctx.db
-    .select({ name: apiTokens.name })
+    .select({ id: apiTokens.id, name: apiTokens.name })
     .from(accessRequests)
     .innerJoin(apiTokens, eq(accessRequests.tokenId, apiTokens.id))
     .where(and(eq(accessRequests.id, id), eq(accessRequests.tokenId, tokenId)))
@@ -263,7 +264,7 @@ export async function releaseAccess(ctx: Ctx, tokenId: string, id: string) {
     .where(and(eq(accessRequests.id, id), inArray(accessRequests.status, ["pending", "approved"])))
     .returning()
   if (!updated) throw new AccessError("not_active", "The request is not pending or active.")
-  await auditDecision(ctx, id, "Instance access released", { by: `token:${row.name}`, via: "agent" })
+  await auditDecision(ctx, id, "Instance access released", { by: tokenActor(row), via: "agent" })
   return { id, status: updated.status }
 }
 

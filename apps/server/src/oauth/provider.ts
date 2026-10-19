@@ -1,4 +1,5 @@
 import Provider, { type Configuration, errors } from "oidc-provider"
+import { cleanLabel } from "./label.ts"
 
 /*
  * The authorization server through which agents connect (OAuth 2.1 as used by MCP): MCP clients by the
@@ -23,9 +24,9 @@ export type ProviderPages = {
   /** The device flow's code entry page; `form` is the provider's form, `error` set after a wrong code. */
   codeInput(form: string, error?: "wrong" | "denied" | "other"): string
   /** The device flow's confirmation: the code the agent should be showing. */
-  codeConfirm(form: string, clientName: string, userCode: string): string
+  codeConfirm(form: string, clientName: string, userCode: string, label: string | null): string
   /** After a device was approved. */
-  success(clientName: string): string
+  success(clientName: string, label: string | null): string
   /** Any error page of the provider. */
   error(code: string, description?: string): string
 }
@@ -71,6 +72,8 @@ export function createAgentProvider({ issuer, adapter, cookieKeys, pages }: Agen
       pushed_authorization_request: "/oauth/par",
     },
     scopes: ["offline_access"],
+    // A script's name for itself on the code pages and in the list of agents (see cleanLabel).
+    extraParams: ["client_label"],
     claims: { openid: ["sub"] },
     features: {
       devInteractions: { enabled: false },
@@ -98,10 +101,10 @@ export function createAgentProvider({ issuer, adapter, cookieKeys, pages }: Agen
           )
         },
         userCodeConfirmSource: async (ctx, form, client, _deviceInfo, userCode) => {
-          ctx.body = pages.codeConfirm(form, client.clientName ?? client.clientId, userCode)
+          ctx.body = pages.codeConfirm(form, client.clientName ?? client.clientId, userCode, deviceLabel(ctx))
         },
         successSource: async (ctx) => {
-          ctx.body = pages.success(ctx.oidc.client?.clientName ?? "The agent")
+          ctx.body = pages.success(ctx.oidc.client?.clientName ?? "The agent", deviceLabel(ctx))
         },
       },
       resourceIndicators: {
@@ -157,3 +160,9 @@ export function createAgentProvider({ issuer, adapter, cookieKeys, pages }: Agen
 }
 
 export type AgentProvider = ReturnType<typeof createAgentProvider>
+
+/** The label the device code was asked with, when it is plain text. */
+function deviceLabel(ctx: { oidc: unknown }) {
+  const oidc = ctx.oidc as { deviceCode?: { params?: Record<string, unknown> } }
+  return cleanLabel(oidc.deviceCode?.params?.client_label)
+}

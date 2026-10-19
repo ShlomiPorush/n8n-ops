@@ -2,7 +2,7 @@
 FROM node:24.21.0-bookworm-slim
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates git shellcheck shfmt \
+  && apt-get install -y --no-install-recommends ca-certificates curl git shellcheck shfmt \
   && rm -rf /var/lib/apt/lists/*
 
 # pnpm comes from corepack, pinned by "packageManager" in package.json. Prepared here so runs need no

@@ -110,6 +110,7 @@ function run(impl: string, inst: ReturnType<typeof install>, args: string[]) {
         N8N_OPS_CREDENTIALS: inst.creds,
         N8N_OPS_NO_NODE: impl === "node" ? "" : "1",
         N8N_OPS_TEST_POLL_SECONDS: "1",
+        N8N_OPS_WAIT_SECONDS: "20",
         ...(win ? { USERPROFILE: root } : {}),
       },
     })
@@ -168,10 +169,14 @@ function browser() {
 /** The person opens the link the agent showed, compares the code, and approves with these scopes. */
 async function approve(link: string, scopes: string[]) {
   const go = browser()
-  const page = await go(new URL(link).pathname + new URL(link).search)
-  const xsrf = /name="xsrf" value="([^"]+)"/.exec(page.data)?.[1] ?? ""
+  const xsrfOf = (html: string) => /name="xsrf" value="([^"]+)"/.exec(html)?.[1] ?? ""
+  // The link carries the code: its page submits it at once, and the answer asks to compare it.
+  const input = await go(new URL(link).pathname + new URL(link).search)
   const userCode = new URL(link).searchParams.get("user_code") ?? ""
-  const confirm = await go("/connect/device", { form: { xsrf, user_code: userCode, confirm: "yes" } })
+  const page = await go("/connect/device", { form: { xsrf: xsrfOf(input.data), user_code: userCode } })
+  const confirm = await go("/connect/device", {
+    form: { xsrf: xsrfOf(page.data), user_code: userCode, confirm: "yes" },
+  })
   const uid = confirm.location?.split("/connect/approve/")[1] ?? ""
   const approval = await go(`/connect/approve/${uid}/decision`, { json: { scopes } })
   await go(approval.data.redirectTo)
@@ -223,7 +228,8 @@ for (const impl of impls) {
       const inst = install()
       const c = await run(impl, inst, ["connect"])
       await approve(c.json.link, [SCOPES.read])
-      await run(impl, inst, ["connect", "--wait"])
+      const w = await run(impl, inst, ["connect", "--wait"])
+      expect(w.json?.status, w.out).toBe("connected")
       const { refreshToken } = record(inst)
       const d = await run(impl, inst, ["disconnect"])
       expect(d.json, d.out).toEqual({ status: "disconnected" })

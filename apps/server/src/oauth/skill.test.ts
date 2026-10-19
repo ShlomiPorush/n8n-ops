@@ -50,7 +50,13 @@ beforeAll(async () => {
     const details = await provider.interactionDetails(incoming, outgoing)
     const params = details.params as Record<string, string>
     const grant = new provider.Grant({ accountId: "person", clientId: params.client_id })
-    grant.addResourceScope(params.resource ?? resources(base).rest, scopes.join(" "))
+    const resource = params.resource ?? resources(base).rest
+    grant.addResourceScope(resource, scopes.join(" "))
+    // What was asked and not ticked is refused, as on the real approval page.
+    const refused = String(params.scope)
+      .split(" ")
+      .filter((s) => s.startsWith("ops:") && !scopes.includes(s))
+    if (refused.length) grant.rejectResourceScope(resource, refused.join(" "))
     grant.addOIDCScope("offline_access")
     const grantId = await grant.save()
     const redirectTo = await provider.interactionResult(
@@ -198,7 +204,7 @@ for (const impl of impls) {
       expect(label).toMatch(/^Codex \(\.codex-test\) on /)
       expect(page).toContain(`<i>${label}</i>`)
       const w = await run(impl, inst, ["connect", "--wait"])
-      expect(w.json, w.out).toMatchObject({ status: "connected", scope: "ops:read ops:access offline_access" })
+      expect(w.json, w.out).toMatchObject({ status: "connected", scope: "ops:read ops:access" })
 
       const r = await run(impl, inst, ["get", "problems"])
       expect(r.json?.data, r.out).toMatchObject({ path: "/api/v1/problems", scope: "ops:read ops:access" })

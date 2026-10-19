@@ -439,7 +439,10 @@ for (const impl of impls) {
       // As a mistaken breaker would: it moves the lock away, and a live third process takes the place...
       fs.renameSync(lock, `${lock}.moved`)
       const host = win ? process.env.COMPUTERNAME : os.hostname()
-      fs.writeFileSync(lock, JSON.stringify({ pid: process.pid, host, token: "third", startedAt: Math.floor(Date.now() / 1000) }))
+      fs.writeFileSync(
+        lock,
+        JSON.stringify({ pid: process.pid, host, token: "third", startedAt: Math.floor(Date.now() / 1000) }),
+      )
       fs.writeFileSync(`${hold}.go`, "")
       await sleep(1000)
       // ...then the third lets go, and the first lock is put back.

@@ -412,7 +412,7 @@ clear_pending() { R_deviceCode='' R_userCode='' R_link='' R_deviceExpiresAt=0 R_
 print_pending() {
   left=$((R_deviceExpiresAt - $(now)))
   [ $left -lt 0 ] && left=0
-  printf '{"status":"pending","link":"%s","code":"%s","expiresIn":%s,"next":"Show the person the link and the code, then run: n8n-ops connect --wait"}\n' \
+  printf '{"status":"pending","link":"%s","code":"%s","expiresIn":%s,"next":"End your turn with a reply that shows the person the link and the code and asks them to reply once they approve. When they reply, run: n8n-ops connect --wait"}\n' \
     "$(esc "$R_link")" "$(esc "$R_userCode")" "$left"
 }
 

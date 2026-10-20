@@ -32,8 +32,8 @@ ${list}
 
 On Linux and macOS, make \`scripts/n8n-ops\` and \`scripts/n8n-ops.sh\` executable (\`chmod +x\`).
 
-Then read \`n8n-ops/SKILL.md\` and connect: run \`n8n-ops connect\`, show the person the link and the code it
-prints, and run \`n8n-ops connect --wait\` until it answers \`connected\`.
+Then read \`n8n-ops/SKILL.md\` and follow its Connecting steps. Show the person the link and the code that
+\`n8n-ops connect\` prints in the reply that ends your turn.
 `
 }
 

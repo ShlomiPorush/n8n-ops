@@ -14,6 +14,8 @@ const scripts = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "n
 const impls = (process.env.N8N_OPS_IMPLS ?? (win ? "node,ps" : "node,sh")).split(",").filter(Boolean)
 const root = fs.mkdtempSync(path.join(process.env.N8N_OPS_TEST_TMP ?? os.tmpdir(), "n8n-ops-skill-"))
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const CONNECT_NEXT =
+  "End your turn with a reply that shows the person the link and the code and asks them to reply once they approve. When they reply, run: n8n-ops connect --wait"
 
 /** A fresh install of the skill (its own folder, so its own connection) and its own credentials folder. */
 function install(name = ".claude-test") {
@@ -130,6 +132,8 @@ for (const impl of impls) {
       assert.equal(c.json.status, "pending")
       assert.match(c.json.link, new RegExp(`^${server.issuer}/connect/device\\?user_code=`))
       assert.match(c.json.code, /^[A-Z0-9]{4}-[A-Z0-9]{4}$/)
+      // The same hint from every version: the link and the code go in the reply that ends the agent's turn.
+      assert.equal(c.json.next, CONNECT_NEXT)
       assert.match(server.lastLabel, /^Claude Code \(\.claude-test\) on /)
       assert.equal((await run(impl, inst, server, ["status"])).json.status, "pending")
       // Asking again while the code is open shows the same code, without a new one.

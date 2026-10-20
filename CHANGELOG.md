@@ -39,5 +39,6 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Fixed
 
+- An agent connecting with the n8n-ops skill now shows the link and the code in the reply that ends its turn, where you see them, instead of in text between commands that the agent app may fold away. You approve and reply, or the agent waits in the background when it can.
 - Compact: agent access settings on an instance keep unsaved changes when the page refreshes its data, and show a change made elsewhere when nothing is unsaved.
 - Links in alerts, the Telegram webhook and worker install commands use `N8N_OPS_PUBLIC_URL` when Settings leaves the public URL empty; behind a TLS proxy they were built with http.

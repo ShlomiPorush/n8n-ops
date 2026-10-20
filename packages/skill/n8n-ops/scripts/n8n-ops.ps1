@@ -513,7 +513,7 @@ function Show-Status($ctx) {
 function Get-Pending($rec) {
   [ordered]@{
     status = 'pending'; link = $rec.link; code = $rec.userCode; expiresIn = [Math]::Max([long]0, $rec.deviceExpiresAt - (Now))
-    next = 'Show the person the link and the code, then run: n8n-ops connect --wait'
+    next = 'End your turn with a reply that shows the person the link and the code and asks them to reply once they approve. When they reply, run: n8n-ops connect --wait'
   }
 }
 

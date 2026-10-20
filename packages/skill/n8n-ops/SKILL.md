@@ -23,11 +23,18 @@ person the message as it is.
 ## Connecting (once)
 
 1. Run `n8n-ops connect`. It answers `{"status": "pending", "link": "...", "code": "..."}`.
-2. Show the person the link and the code exactly as printed, and ask them to open the link, sign in, check that the
-   page shows the same code, and approve. They decide whether this agent may also ask for instance access.
-3. Run `n8n-ops connect --wait`. While it answers `still_waiting`, run it again. `connected` means done; `denied`
-   or `expired` means start again only if the person wants to. If the person says the link or the code did not
-   work, `n8n-ops connect --replace` gives a new one.
+2. Show the person the link and the code exactly as printed in the reply that ends your turn, with the code on its
+   own line: text written between commands is often folded away and never seen. Ask them to open the link, sign in,
+   check that the page shows the same code, approve, and then reply to you. They decide whether this agent may also
+   ask for instance access.
+3. When the person replies, run `n8n-ops connect --wait`. While it answers `still_waiting`, run it again.
+   `connected` means done; `denied` or `expired` means start again only if the person wants to. If the person says
+   the link or the code did not work, `n8n-ops connect --replace` gives a new one.
+
+Only if your tools can keep a command running after your turn ends and wake you when it finishes: start
+`n8n-ops connect --wait` in the background just before that reply and end your turn without waiting for it, so the
+person does not have to reply. Each time it wakes you with `still_waiting`, start it again the same way; stop at any
+other answer.
 
 `status` says whether this agent is connected. The connection belongs to this agent install (the folder this skill
 is in) and is shared by all its sessions. Run `disconnect` only when the person asks. If a command answers

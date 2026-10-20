@@ -281,6 +281,8 @@ describe("serving the skill", () => {
     expect(script).toContain('const DEFAULT_URL = "https://ops.example.com"')
     const note = await (await app("https://ops.example.com").request("/connect/skill/")).text()
     expect(note).toContain("https://ops.example.com/connect/skill/scripts/n8n-ops.ps1 → n8n-ops/scripts/n8n-ops.ps1")
+    // Text between commands is often folded away, so the link and the code must close the agent's turn.
+    expect(note).toContain("prints in the reply that ends your turn")
   })
 
   it("serves nothing over plain http to another computer, nor other files", async () => {

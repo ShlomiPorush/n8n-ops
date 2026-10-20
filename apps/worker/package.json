@@ -11,7 +11,7 @@
   "devDependencies": {
     "@types/node": "24.19.2",
     "esbuild": "0.28.2",
-    "vitest": "5.0.4"
+    "vitest": "5.0.5"
   },
   "dependencies": {
     "@n8n-ops/shared": "workspace:*",

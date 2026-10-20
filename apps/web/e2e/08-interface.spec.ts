@@ -210,11 +210,14 @@ test("the time zone is chosen from a list with a search, and Back closes the lis
     await expect(page.getByText("Settings saved")).toBeVisible()
     expect((await (await page.request.get("/api/settings/general")).json()).timezone).toBe("Asia/Jerusalem")
 
-    // A click beside the list closes it too. None of the ways it closed left an entry behind: Back now
-    // leaves the page.
+    // A click beside the list only closes it, even on a link. None of the ways it closed left an entry
+    // behind: Back now leaves the page.
+    const overview = await page.getByRole("link", { name: "Overview", exact: true }).first().boundingBox()
     await field.click()
-    await page.getByText("For report and backup schedules").click()
+    await expect(search).toBeVisible()
+    await page.mouse.click((overview?.x ?? 0) + 10, (overview?.y ?? 0) + 10)
     await expect(search).toHaveCount(0)
+    await expect(page).toHaveURL(/\/settings\/general$/)
     await dialogClosed(page)
     await page.goBack()
     await expect(page).toHaveURL(/\/account$/)

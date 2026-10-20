@@ -30,7 +30,7 @@ function zoneOptions(current: string): PickerOption[] {
 
 /**
  * The time zone of the installation, chosen from a list with a search (by city, region or offset). An empty
- * value is UTC. Back closes the list before it leaves the page.
+ * value is UTC. Back, Escape or a click beside the list closes it before anything leaves the page.
  */
 export function TimeZonePicker({
   id,
@@ -52,7 +52,9 @@ export function TimeZonePicker({
   const offset = zone === "UTC" ? null : zoneOffset(zone, new Date())
   const shown = `${zone.replaceAll("_", " ")}${offset ? ` (${offset})` : ""}`
   return (
-    <PopoverPrimitive.Root open={picker.open} onOpenChange={picker.setOpen}>
+    // Modal, like a dialog: a click beside the list only closes it. Going through to a link behind it would
+    // leave the page while the list still holds its Back entry, and cost a second Back later.
+    <PopoverPrimitive.Root modal open={picker.open} onOpenChange={picker.setOpen}>
       <PopoverPrimitive.Trigger asChild>
         <button
           id={id}

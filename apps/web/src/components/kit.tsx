@@ -516,19 +516,7 @@ export function Copyable({
   /** What the value is, for the accessible name ("Copy execution ID"). */
   label?: string
 }) {
-  const [done, setDone] = useState(false)
-  const copy = async (e: React.MouseEvent) => {
-    e.stopPropagation()
-    e.preventDefault()
-    try {
-      await navigator.clipboard.writeText(value)
-      setDone(true)
-      setTimeout(() => setDone(false), COPIED_MS)
-      toast.success(`Copied: ${value.length > 80 ? `${value.slice(0, 80)}…` : value}`)
-    } catch {
-      toast.error("Could not copy. Select the text and copy it instead.")
-    }
-  }
+  const { done, copy } = useCopy(value)
   const Icon = done ? Check : Copy
   return (
     <button
@@ -554,6 +542,50 @@ export function Copyable({
         )}
       />
     </button>
+  )
+}
+
+/** Copies a value: a check for 1.5s and a toast that says what was copied. */
+function useCopy(value: string) {
+  const [done, setDone] = useState(false)
+  const copy = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    e.preventDefault()
+    try {
+      await navigator.clipboard.writeText(value)
+      setDone(true)
+      setTimeout(() => setDone(false), COPIED_MS)
+      toast.success(`Copied: ${value.length > 80 ? `${value.slice(0, 80)}…` : value}`)
+    } catch {
+      toast.error("Could not copy. Select the text and copy it instead.")
+    }
+  }
+  return { done, copy }
+}
+
+/**
+ * A command or text to paste somewhere else, in full: it wraps instead of being cut, reads left to right,
+ * can be selected by hand, and has its own Copy button.
+ */
+export function Command({
+  value,
+  label,
+}: {
+  value: string
+  /** The Copy button's accessible name ("Copy the command"). */
+  label: string
+}) {
+  const { done, copy } = useCopy(value)
+  return (
+    <div className="flex w-full min-w-0 items-start gap-2 rounded-sm border border-line bg-fill py-1.5 ps-3 pe-1.5">
+      <code dir="ltr" className="min-w-0 flex-1 py-1 font-mono text-small whitespace-pre-wrap wrap-anywhere select-all">
+        {value}
+      </code>
+      <Button size="sm" onClick={copy} aria-label={label} className="shrink-0">
+        {done ? <Check className="text-ok" /> : <Copy />}
+        {done ? "Copied" : "Copy"}
+      </Button>
+    </div>
   )
 }
 

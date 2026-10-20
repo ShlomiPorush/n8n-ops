@@ -1,5 +1,5 @@
-import { Ban, Check, KeyRound, X } from "lucide-react"
-import { useNavigate, useParams, useSearchParams } from "react-router"
+import { Ban, Check, KeyRound, Plug, X } from "lucide-react"
+import { Link, useNavigate, useParams, useSearchParams } from "react-router"
 import { useCrumb } from "@/app/chrome"
 import { useConfirm } from "@/components/confirm"
 import { Empty, LoadError, Loading, PageHead, Panel, PanelHead, UserText } from "@/components/kit"
@@ -75,6 +75,13 @@ export function AccessPage() {
       <PageHead
         title="Agent access"
         updatedAt={rows.dataUpdatedAt || undefined}
+        actions={
+          <Button asChild>
+            <Link to="/agents">
+              <Plug /> Connected agents
+            </Link>
+          </Button>
+        }
         description={
           rows.data
             ? `${n(waiting)} waiting for you · ${n(active)} active. Nothing is granted until you approve, and access ends on its own.`

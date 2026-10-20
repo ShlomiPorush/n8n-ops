@@ -1,16 +1,4 @@
-import {
-  Bell,
-  Bot,
-  Globe,
-  HardDrive,
-  KeyRound,
-  KeySquare,
-  type LucideIcon,
-  Mail,
-  Send,
-  SlidersHorizontal,
-  UserRound,
-} from "lucide-react"
+import { Bell, Bot, Globe, HardDrive, KeyRound, type LucideIcon, Mail, Send, SlidersHorizontal } from "lucide-react"
 
 /** The settings sections, grouped as they appear beside the form, in the sidebar flyout and in the picker. */
 export const settingsGroups = [
@@ -38,11 +26,7 @@ export const settingsGroups = [
   },
   {
     label: "Access",
-    items: [
-      ["access", "Agent access"],
-      ["tokens", "Connected agents"],
-      ["account", "Account"],
-    ],
+    items: [["access", "Agent access"]],
   },
 ] as const
 
@@ -64,6 +48,4 @@ export const settingsIcons: Record<SettingsSection, LucideIcon> = {
   storage: HardDrive,
   keys: KeyRound,
   access: Bot,
-  tokens: KeySquare,
-  account: UserRound,
 }

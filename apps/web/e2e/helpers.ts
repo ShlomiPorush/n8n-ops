@@ -66,6 +66,13 @@ export async function dialogClosed(page: Page) {
     .toBeNull()
 }
 
+/** Opens the New token dialog on Connected agents, where the token made by hand is folded away. */
+export async function openNewToken(page: Page) {
+  await page.goto("/agents")
+  await page.getByRole("button", { name: "Advanced: a token made by hand" }).click()
+  await page.getByRole("button", { name: "New token" }).click()
+}
+
 async function signInWithPassword(page: Page) {
   await page.goto("/login")
   await page.getByLabel("Username").fill(username)

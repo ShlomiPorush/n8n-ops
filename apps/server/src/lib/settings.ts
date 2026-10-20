@@ -28,11 +28,26 @@ export const designs = ["regular", "compact"] as const
 export type Design = (typeof designs)[number]
 export const isDesign = (value: unknown): value is Design => designs.includes(value as Design)
 
+/**
+ * An IANA time zone name, such as Europe/Berlin or UTC. A fixed offset such as +03:00 is refused although
+ * Intl takes it: it would not follow daylight saving.
+ */
+export function isTimeZone(value: unknown): value is string {
+  if (typeof value !== "string" || !/^[A-Za-z][\w+-]*(\/[\w+-]+)*$/.test(value)) return false
+  try {
+    new Intl.DateTimeFormat("en", { timeZone: value })
+    return true
+  } catch {
+    return false
+  }
+}
+
 export const sections = {
   general: z.object({
     /** Public URL of this n8n-ops installation, used in links sent by Telegram and email. */
     publicUrl: z.string(),
-    timezone: z.string(),
+    /** Empty means UTC. */
+    timezone: z.string().refine((v) => v === "" || isTimeZone(v), "choose a time zone from the list"),
     /** Which of the two web designs the whole installation uses. */
     design: z.enum(designs),
   }),
@@ -184,6 +199,9 @@ export function createSettings(db: Db, env: { publicUrl?: string } = {}): Settin
     const stored = { ...((row?.value as Record<string, unknown>) ?? {}) }
     // An unknown stored design falls back on its own; it must not reset the rest of General.
     if (key === "general" && "design" in stored && !isDesign(stored.design)) delete stored.design
+    // So does a time zone stored before they were checked, which every reader took as UTC.
+    if (key === "general" && "timezone" in stored && stored.timezone !== "" && !isTimeZone(stored.timezone))
+      delete stored.timezone
     const merged = { ...defaults[key], ...stored }
     const parsed = sections[key].safeParse(merged)
     const value = (parsed.success ? parsed.data : defaults[key]) as Section<K>

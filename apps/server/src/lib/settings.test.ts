@@ -105,6 +105,25 @@ describe("web design", () => {
     expect(settings.design()).toBe("regular")
   })
 
+  it("refuses a time zone that is not an IANA name, also a fixed offset", async () => {
+    const settings = createSettings(fakeDb().db)
+    for (const timezone of ["Mars/Base", "+03:00", "UTC+3", "Asia/Jerusalem; drop"])
+      await expect(settings.set("general", { publicUrl: "", timezone, design: "regular" })).rejects.toThrow()
+    for (const timezone of ["", "UTC", "Asia/Jerusalem", "America/Argentina/Buenos_Aires", "Etc/GMT+3"])
+      await settings.set("general", { publicUrl: "", timezone, design: "regular" })
+  })
+
+  it("reads a stored time zone that is not one as UTC without resetting the rest of General", async () => {
+    const settings = createSettings(
+      fakeDb({ publicUrl: "https://ops.example.com", timezone: "+03:00", design: "compact" }).db,
+    )
+    expect(await settings.get("general")).toEqual({
+      publicUrl: "https://ops.example.com",
+      timezone: "UTC",
+      design: "compact",
+    })
+  })
+
   it("follows a saved General at once", async () => {
     const settings = createSettings(fakeDb().db)
     await settings.set("general", { publicUrl: "", timezone: "UTC", design: "compact" })

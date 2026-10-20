@@ -231,7 +231,7 @@ test("a script that names itself is shown by that name, and its reads are in the
   })
   expect(res.status).toBe(200)
 
-  await page.goto("/settings/tokens")
+  await page.goto("/agents")
   await expect(page.getByRole("row").filter({ hasText: label })).toContainText("with a code")
   await page.goto("/audit")
   await expect(page.getByRole("row").filter({ hasText: "API read" }).filter({ hasText: label }).first()).toBeVisible()
@@ -262,7 +262,7 @@ test("a script the person denies is told so", async () => {
 })
 
 test("Connected agents lists both, and a disconnected agent loses access at once", async () => {
-  await page.goto("/settings/tokens")
+  await page.goto("/agents")
   await expect(page.getByRole("heading", { name: "Agents and tokens" })).toBeVisible()
   const agentRow = page.getByRole("row").filter({ hasText: "e2e agent" })
   await expect(agentRow).toContainText("through the browser · 127.0.0.1:33418")

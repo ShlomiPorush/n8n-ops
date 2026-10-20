@@ -1,29 +1,13 @@
-import { ChevronDown, Download, KeyRound, KeySquare as KeySquareIcon, Plus, ShieldCheck, Trash2 } from "lucide-react"
+import { ChevronDown, Download, KeyRound, ShieldCheck } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { Navigate, NavLink, useLocation, useNavigate, useParams } from "react-router"
 import { useCrumb } from "@/app/chrome"
 import { afterGeneralSave } from "@/app/design-sync"
 import { settingsGroups, settingsSectionLabel } from "@/app/settings-sections"
-import { useConfirm } from "@/components/confirm"
-import {
-  Copyable,
-  countChanges,
-  Empty,
-  LoadError,
-  Loading,
-  Locked,
-  Page,
-  Panel,
-  PanelHead,
-  SecretField,
-  UserText,
-  useSaveSource,
-} from "@/components/kit"
+import { Command, countChanges, LoadError, Loading, Page, Panel, SecretField, useSaveSource } from "@/components/kit"
 import { SectionIcon } from "@/components/skin/marks"
-import { When } from "@/components/status"
-import { Badge } from "@/components/ui/badge"
+import { TimeZonePicker } from "@/components/time-zone-picker"
 import { Button } from "@/components/ui/button"
-import { Checkbox } from "@/components/ui/checkbox"
 import {
   Dialog,
   DialogContent,
@@ -32,15 +16,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import { PasswordInput } from "@/components/ui/password-input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { api, describeError, useApi, useApiMutation } from "@/lib/api"
-import { authClient, authErrorText } from "@/lib/auth-client"
 import { download } from "@/lib/download"
 import { formatDateTime, useTimeZone } from "@/lib/time"
 import { toast } from "@/lib/toast"
@@ -54,7 +34,7 @@ export type FieldDef = {
   name: string
   label: string
   hint?: string
-  type?: "text" | "number" | "password" | "switch" | "time" | "list" | "weekday" | "design"
+  type?: "text" | "number" | "password" | "switch" | "time" | "list" | "weekday" | "design" | "timezone"
   placeholder?: string
 }
 
@@ -72,7 +52,8 @@ export const forms: Record<string, { title: string; description: string; fields:
       {
         name: "timezone",
         label: "Time zone",
-        hint: "For report and backup schedules and every time shown here, for example Asia/Jerusalem. Empty: UTC.",
+        hint: "For report and backup schedules and every time shown here. Search by city, region or offset.",
+        type: "timezone",
       },
       {
         name: "design",
@@ -211,9 +192,6 @@ const weekdays = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Frida
 /** What each section is for, under its title. Forms take theirs from their definition. */
 const sectionDescriptions: Record<string, string> = {
   keys: "Keys that protect backups and the secrets n8n-ops stores.",
-  tokens:
-    "Agents and scripts that use n8n-ops. They connect by approval: you approve each one here, and revoke it when it is done.",
-  account: "Your password and two-factor sign-in.",
 }
 
 /** The section last open, so Settings reopens where it was left during this visit (NL-4). */
@@ -293,16 +271,17 @@ export function SettingsPage() {
           </div>
           {section in forms && <SettingsForm key={section} section={section} />}
           {section === "keys" && <KeysCard />}
-          {section === "account" && <AccountCard />}
-          {section === "tokens" && <TokensCard />}
         </div>
       </div>
     </Page>
   )
 }
 
-/** A settings row: the label and its explanation at the start, the control at the end. */
-function SettingRow({
+/**
+ * A settings row: the label and its explanation at the start, the control at the end. A wide control takes
+ * its own line under the label and starts at the start of it, like the text.
+ */
+export function SettingRow({
   htmlFor,
   label,
   hint,
@@ -351,7 +330,7 @@ function SettingRow({
       )}
     >
       {text}
-      <div className="flex min-w-0 items-center gap-2 md:justify-end">{children}</div>
+      <div className={cn("flex min-w-0 items-center gap-2", !wide && "md:justify-end")}>{children}</div>
     </div>
   )
 }
@@ -485,6 +464,13 @@ export function SettingsForm({ section }: { section: string }) {
                   <ToggleGroupItem value="regular">Regular</ToggleGroupItem>
                   <ToggleGroupItem value="compact">Compact</ToggleGroupItem>
                 </ToggleGroup>
+              ) : f.type === "timezone" ? (
+                <TimeZonePicker
+                  id={f.name}
+                  value={String(values[f.name] ?? "")}
+                  onChange={(v) => set(f.name, v)}
+                  disabled={save.isPending}
+                />
               ) : f.type === "weekday" ? (
                 <Select
                   value={String(values[f.name] ?? 0)}
@@ -630,7 +616,7 @@ function KeysCard() {
             wide
           >
             {keys.data?.backupRecipient ? (
-              <Copyable value={keys.data.backupRecipient} label="Copy public key" className="text-small" />
+              <Command value={keys.data.backupRecipient} label="Copy the public key" />
             ) : (
               <span className="text-muted-foreground">Not set</span>
             )}
@@ -704,350 +690,5 @@ function KeysCard() {
         </DialogContent>
       </Dialog>
     </Panel>
-  )
-}
-
-function AccountCard() {
-  const session = authClient.useSession()
-  const [busy, setBusy] = useState(false)
-  async function changePassword(form: FormData) {
-    setBusy(true)
-    const { error } = await authClient.changePassword({
-      currentPassword: String(form.get("current")),
-      newPassword: String(form.get("next")),
-      revokeOtherSessions: true,
-    })
-    setBusy(false)
-    if (error) toast.error(`Password not changed: ${authErrorText(error)}`)
-    else toast.success("Password changed. Other sessions were signed out.")
-  }
-  const username = (session.data?.user as { username?: string } | undefined)?.username
-  return (
-    <Panel>
-      <PanelHead title="Sign-in" description={`Signed in as ${username ?? ""}.`} />
-      <SettingRow label="Two-factor (TOTP)" hint="Required for this installation.">
-        <span className="flex items-center gap-2 font-semibold text-ok">
-          <ShieldCheck className="size-4" /> On
-        </span>
-      </SettingRow>
-      <form
-        className="grid gap-3 border-t border-line px-pad-x py-3"
-        onSubmit={(e) => {
-          e.preventDefault()
-          void changePassword(new FormData(e.currentTarget))
-          e.currentTarget.reset()
-        }}
-      >
-        <b className="font-semibold">Change password</b>
-        <FieldGroup className="max-w-sm gap-3">
-          <Field>
-            <FieldLabel htmlFor="current">Current password</FieldLabel>
-            <PasswordInput id="current" name="current" autoComplete="current-password" required />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="next">New password</FieldLabel>
-            <PasswordInput id="next" name="next" minLength={12} autoComplete="new-password" required />
-            <FieldDescription>At least 12 characters. Other sessions are signed out.</FieldDescription>
-          </Field>
-        </FieldGroup>
-        <div>
-          <Button type="submit" disabled={busy}>
-            Change password
-          </Button>
-        </div>
-      </form>
-      <SettingRow label="Locked out?" hint="Reset the password and two-factor from the server." wide>
-        <Copyable
-          value="docker compose exec server node dist/cli.js reset-password"
-          label="Copy command"
-          className="text-small"
-        />
-      </SettingRow>
-    </Panel>
-  )
-}
-
-type Token = {
-  id: string
-  name: string
-  kind: "mcp" | "rest" | "agent"
-  canRequestAccess: boolean
-  prefix: string
-  createdAt: string
-  lastUsedAt: string | null
-  connectedVia: "browser" | "code" | null
-  redirectHost: string | null
-  approvedBy: string | null
-}
-
-/** How an agent connects: the MCP address to add, or a code for a script. Needs the public URL. */
-function ConnectHow() {
-  const general = useApi<{ publicUrl: string }>("/settings/general")
-  const base = (general.data?.publicUrl ?? "").replace(/\/+$/, "")
-  if (general.isLoading) return null
-  if (!base)
-    return (
-      <Locked title="Set the public URL first" to="/settings/general" action="Open General">
-        Agents connect to the address people open. Set it in Settings → General, then come back here.
-      </Locked>
-    )
-  return (
-    <Panel>
-      <PanelHead
-        title="Connect an agent"
-        description="Nothing to copy into the agent by hand: it asks, you approve in this browser, and it appears below."
-      />
-      <SettingRow
-        label="Agents that run commands"
-        hint="T3 Code, Claude Code, Codex and others: paste this to the agent. It installs the n8n-ops skill and shows you a link and a code to approve. Each agent you install it in connects, and appears below, on its own."
-        wide
-      >
-        {base.startsWith("https://") ? (
-          <Copyable
-            value={`Install the n8n-ops skill into your personal skills folder as described at ${base}/connect/skill/, then connect to n8n-ops.`}
-            label="Copy the sentence for the agent"
-            className="text-small"
-          />
-        ) : (
-          <p className="text-small text-muted-foreground">
-            Agents download the skill from n8n-ops, so its public URL must start with https://.
-          </p>
-        )}
-      </SettingRow>
-      <SettingRow
-        label="MCP clients"
-        hint="Add this address as an MCP server, for example in Claude Code or Cursor. A browser opens here to approve it."
-        wide
-      >
-        <div className="grid min-w-0 gap-2">
-          <Copyable value={`${base}/mcp`} label="Copy the MCP address" className="text-small" />
-          <Copyable
-            value={`claude mcp add --transport http n8n-ops ${base}/mcp`}
-            label="Copy the Claude Code command"
-            className="text-small"
-          />
-        </div>
-      </SettingRow>
-      <SettingRow
-        label="Your own scripts"
-        hint="Ask for a code, open the link it returns and approve, then fetch the tokens with the device code. The README shows the whole exchange; the skill's command does all of it for you."
-        wide
-      >
-        <Copyable
-          value={`curl -s ${base}/oauth/device -d client_id=n8n-ops-cli -d resource=${base}/api/v1 -d "scope=ops:read offline_access"`}
-          label="Copy the command"
-          className="text-small"
-        />
-      </SettingRow>
-    </Panel>
-  )
-}
-
-function TokensCard() {
-  const tokens = useApi<Token[]>("/admin/tokens")
-  const [open, setOpen] = useState(false)
-  const [kind, setKind] = useState<"mcp" | "rest">("mcp")
-  const [canRequestAccess, setCanRequestAccess] = useState(false)
-  const [created, setCreated] = useState("")
-  const confirm = useConfirm()
-  const create = useApiMutation<{ name: string; kind: string; canRequestAccess: boolean }, { token: string }>(
-    "POST",
-    "/admin/tokens",
-    {
-      invalidate: ["/admin/tokens"],
-    },
-  )
-  const revoke = useApiMutation<string>("DELETE", (id) => `/admin/tokens/${id}`, {
-    invalidate: ["/admin/tokens"],
-  })
-  async function askRevoke(t: Token) {
-    const agent = t.kind === "agent"
-    const ok = await confirm({
-      title: agent ? `Disconnect ${t.name}?` : `Revoke the token ${t.name}?`,
-      message: agent
-        ? "It loses access at once, with any n8n instance access it holds. It can connect again only with a new approval."
-        : "The agent or script using it loses access at once. This cannot be undone; create a new token to give access again.",
-      confirmLabel: agent ? "Disconnect" : "Revoke token",
-      danger: true,
-    })
-    if (ok)
-      revoke.mutate(t.id, {
-        onSuccess: () => toast.success(agent ? `${t.name} disconnected` : `Token ${t.name} revoked`),
-      })
-  }
-  const list = tokens.data ?? []
-  return (
-    <>
-      <ConnectHow />
-      <Panel>
-        <PanelHead
-          title="Agents and tokens"
-          count={tokens.data ? list.length : undefined}
-          description="Each can read n8n-ops; some may also ask for temporary access to an n8n instance, which a person approves each time."
-        />
-        {tokens.error ? (
-          <LoadError what="tokens" error={tokens.error} retry={() => tokens.refetch()} />
-        ) : tokens.isLoading ? (
-          <Loading />
-        ) : list.length === 0 ? (
-          <Empty title="No agent is connected.">
-            Connect one with the address above; it appears here once you approve it.
-          </Empty>
-        ) : (
-          <Table bare>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Rights</TableHead>
-                <TableHead>Approved</TableHead>
-                <TableHead className="text-end">Last used</TableHead>
-                <TableHead />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {list.map((t) => (
-                <TableRow key={t.id}>
-                  <TableCell className="font-semibold">
-                    <UserText>{t.name}</UserText>{" "}
-                    {t.kind === "agent" ? (
-                      <span className="text-meta font-normal text-muted-foreground">
-                        {t.connectedVia === "code" ? "with a code" : "through the browser"}
-                        {t.redirectHost ? ` · ${t.redirectHost}` : ""}
-                      </span>
-                    ) : (
-                      <span className="font-mono text-meta font-normal text-muted-foreground">{t.prefix}…</span>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <span className="flex flex-wrap gap-1">
-                      <Badge variant="line">
-                        {t.kind === "agent" ? "read" : t.kind === "mcp" ? "MCP token · read" : "REST token · read"}
-                      </Badge>
-                      {t.canRequestAccess && <Badge variant="line">may request access</Badge>}
-                    </span>
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">
-                    <When value={t.createdAt} />
-                    {t.approvedBy ? (
-                      <>
-                        {" "}
-                        by <UserText>{t.approvedBy}</UserText>
-                      </>
-                    ) : t.kind !== "agent" ? (
-                      " (made by hand)"
-                    ) : (
-                      ""
-                    )}
-                  </TableCell>
-                  <TableCell className="text-end text-muted-foreground">
-                    {t.lastUsedAt ? <When value={t.lastUsedAt} /> : "Never"}
-                  </TableCell>
-                  <TableCell className="text-end">
-                    <Button size="sm" variant="danger" onClick={() => void askRevoke(t)}>
-                      <Trash2 /> {t.kind === "agent" ? "Disconnect" : "Revoke"}
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
-        {/* Advanced: a long-lived token made by hand, for a program that cannot connect by approval. */}
-        <SettingRow
-          label="A token made by hand"
-          hint="Advanced. For a program that cannot open the approval link. It lasts until revoked; store it like a password."
-        >
-          <Button
-            size="sm"
-            onClick={() => {
-              setCreated("")
-              setCanRequestAccess(false)
-              setOpen(true)
-            }}
-          >
-            <Plus /> New token
-          </Button>
-        </SettingRow>
-        <Dialog open={open} onOpenChange={setOpen}>
-          <DialogContent keepOnBackdrop>
-            <DialogHeader icon={KeySquareIcon}>
-              <DialogTitle>New token</DialogTitle>
-              <DialogDescription>
-                The token is shown once. Store it where the agent or script reads it.
-              </DialogDescription>
-            </DialogHeader>
-            {created ? (
-              <div className="grid gap-3">
-                <pre
-                  className="overflow-x-auto rounded-sm bg-fill p-3 font-mono text-small whitespace-pre-wrap break-all"
-                  data-testid="new-token"
-                >
-                  {created}
-                </pre>
-                <Copyable value={created} label="Copy token">
-                  Copy the token
-                </Copyable>
-              </div>
-            ) : (
-              <form
-                id="token"
-                onSubmit={(e) => {
-                  e.preventDefault()
-                  const name = String(new FormData(e.currentTarget).get("name"))
-                  create.mutate({ name, kind, canRequestAccess }, { onSuccess: (r) => setCreated(r.token) })
-                }}
-              >
-                <FieldGroup>
-                  <Field>
-                    <FieldLabel htmlFor="token-name">Name</FieldLabel>
-                    <Input id="token-name" name="name" placeholder="claude-desktop" required />
-                  </Field>
-                  <Field>
-                    <FieldLabel>Kind</FieldLabel>
-                    <Select value={kind} onValueChange={(v) => setKind(v as "mcp" | "rest")}>
-                      <SelectTrigger className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="mcp">MCP (agents)</SelectItem>
-                        <SelectItem value="rest">REST (scripts)</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </Field>
-                  <Field orientation="horizontal">
-                    <Checkbox
-                      id="token-access"
-                      checked={canRequestAccess}
-                      onCheckedChange={(v) => setCanRequestAccess(v === true)}
-                    />
-                    <FieldContent>
-                      <FieldLabel htmlFor="token-access">May request access to n8n instances</FieldLabel>
-                      <FieldDescription>
-                        The agent can ask for temporary API access to an instance for a task. Nothing is granted until a
-                        person approves the request.
-                      </FieldDescription>
-                    </FieldContent>
-                  </Field>
-                </FieldGroup>
-              </form>
-            )}
-            <DialogFooter>
-              {created ? (
-                <Button variant="primary" onClick={() => setOpen(false)}>
-                  Done
-                </Button>
-              ) : (
-                <>
-                  <Button onClick={() => setOpen(false)}>Cancel</Button>
-                  <Button variant="primary" type="submit" form="token" disabled={create.isPending}>
-                    Create
-                  </Button>
-                </>
-              )}
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      </Panel>
-    </>
   )
 }

@@ -1,5 +1,5 @@
 import { expect, type Page, test } from "@playwright/test"
-import { currentApiKey, dialogClosed, n8nUrl, signIn } from "./helpers.ts"
+import { currentApiKey, dialogClosed, n8nUrl, openNewToken, signIn } from "./helpers.ts"
 
 // Temporary access for agents: an MCP token that may request access asks for an instance, a person approves,
 // the agent collects the key once and calls n8n through the n8n-ops proxy, which enforces scopes and workflows.
@@ -47,8 +47,7 @@ const proxy = (path: string, accessKey: string, init: RequestInit = {}) =>
   fetch(`${baseUrl}${path}`, { ...init, headers: { "X-N8N-API-KEY": accessKey, "content-type": "application/json" } })
 
 test("a token may be allowed to request access", async () => {
-  await page.goto("/settings/tokens")
-  await page.getByRole("button", { name: "New token" }).click()
+  await openNewToken(page)
   await page.getByLabel("Name").fill("e2e-access-agent")
   await page.getByLabel("May request access to n8n instances").check()
   await page.getByRole("button", { name: "Create" }).click()

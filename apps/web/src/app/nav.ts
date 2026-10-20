@@ -4,9 +4,11 @@ import {
   DatabaseBackup,
   KeyRound,
   LayoutDashboard,
+  Plug,
   ScrollText,
   Server,
   Settings,
+  UserRound,
   Workflow,
 } from "lucide-react"
 
@@ -19,6 +21,7 @@ export const operate: NavItem[] = [
   { to: "/workflows", label: "Workflows", icon: Workflow },
   { to: "/backups", label: "Backups", icon: DatabaseBackup },
   { to: "/access", label: "Agent access", icon: KeyRound, count: "access" },
+  { to: "/agents", label: "Connected agents", icon: Plug },
 ]
 export const system: NavItem[] = [
   { to: "/workers", label: "Workers", icon: Cpu },
@@ -29,13 +32,17 @@ export const groups = [
   { label: "Operate", items: operate },
   { label: "System", items: system },
 ]
+/** The signed-in person's own pages, opened from the account menu instead of the navigation. */
+export const personal: NavItem[] = [{ to: "/account", label: "Account", icon: UserRound }]
+/** Every page, also those outside the navigation: page titles, icons and the search use it. */
+export const pageGroups = [...groups, { label: "You", items: personal }]
 
 export const isActive = (item: NavItem, pathname: string) =>
   item.to === "/" ? pathname === "/" : pathname === item.to || pathname.startsWith(`${item.to}/`)
 
-/** The page of an address, and the navigation group it belongs to. */
+/** The page of an address, and the group it belongs to. */
 export function pageOf(pathname: string) {
-  for (const g of groups) {
+  for (const g of pageGroups) {
     const item = g.items.find((i) => isActive(i, pathname))
     if (item) return { group: g.label, item }
   }

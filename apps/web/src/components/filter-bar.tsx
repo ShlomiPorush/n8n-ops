@@ -9,7 +9,25 @@ import { cn } from "@/lib/utils"
  * badge counts the filters in use.
  */
 
-export type PickerOption = { value: string; label: string; hint?: React.ReactNode }
+export type PickerOption = {
+  value: string
+  label: string
+  hint?: React.ReactNode
+  /** More text the search matches besides the label. */
+  search?: string
+}
+
+/** Whether a picker is open and what is typed in its search; closing it in any way clears the search. */
+export function usePicker() {
+  const [open, setOpenState] = React.useState(false)
+  const [query, setQuery] = React.useState("")
+  const id = React.useId()
+  const setOpen = React.useCallback((o: boolean) => {
+    setOpenState(o)
+    if (!o) setQuery("")
+  }, [])
+  return { open, setOpen, query, setQuery, id }
+}
 
 /**
  * A list filter: a pill that names its filter and value ("Instance: All"), drawn solid when it is not at its
@@ -29,15 +47,69 @@ export function Picker({
   onChange: (value: string) => void
   defaultValue: string
 }) {
-  const [open, setOpen] = React.useState(false)
-  const [query, setQuery] = React.useState("")
+  const picker = usePicker()
+  const selected = options.find((o) => o.value === value)
+  const set = value !== defaultValue
+
+  return (
+    <PopoverPrimitive.Root open={picker.open} onOpenChange={picker.setOpen}>
+      <PopoverPrimitive.Trigger asChild>
+        <button
+          type="button"
+          aria-haspopup="listbox"
+          aria-controls={picker.open ? picker.id : undefined}
+          data-set={set || undefined}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+              e.preventDefault()
+              picker.setOpen(true)
+            }
+          }}
+          className={cn(
+            "inline-flex h-chip max-w-full min-w-0 shrink-0 items-center gap-1.5 rounded-full border border-line bg-raise ps-3 pe-2.5 text-ctl font-semibold whitespace-nowrap text-ink transition-colors duration-150 [@media(hover:hover)]:hover:border-muted-foreground",
+            "data-set:border-primary data-set:bg-primary data-set:text-primary-foreground",
+            // Regular: a squarer, quieter control; a filter in use is a grey fill, as on #29.
+            "regular:h-9 regular:rounded-sm regular:font-medium regular:data-set:border-line regular:data-set:bg-fill regular:data-set:text-ink",
+          )}
+        >
+          <span className="font-medium opacity-75">{label}:</span>
+          <span className="min-w-0 truncate">{selected?.label ?? value}</span>
+          <ChevronDown
+            aria-hidden
+            className={cn(
+              "size-3.5 shrink-0 opacity-75 transition-transform duration-150",
+              picker.open && "rotate-180",
+            )}
+          />
+        </button>
+      </PopoverPrimitive.Trigger>
+      <PickerContent picker={picker} label={label} value={value} options={options} onChange={onChange} />
+    </PopoverPrimitive.Root>
+  )
+}
+
+/** The open picker: a search field when there are more than ten choices, and the listbox under it. */
+export function PickerContent({
+  picker,
+  label,
+  value,
+  options,
+  onChange,
+  className,
+}: {
+  picker: ReturnType<typeof usePicker>
+  label: string
+  value: string
+  options: PickerOption[]
+  onChange: (value: string) => void
+  className?: string
+}) {
+  const { id, query, setQuery, setOpen } = picker
   const listRef = React.useRef<HTMLDivElement>(null)
   const searchRef = React.useRef<HTMLInputElement>(null)
-  const id = React.useId()
-  const selected = options.find((o) => o.value === value)
   const searchable = options.length > 10
-  const shown = query ? options.filter((o) => o.label.toLowerCase().includes(query.trim().toLowerCase())) : options
-  const set = value !== defaultValue
+  const q = query.trim().toLowerCase()
+  const shown = q ? options.filter((o) => `${o.label} ${o.search ?? ""}`.toLowerCase().includes(q)) : options
 
   const optionEls = () => [...(listRef.current?.querySelectorAll<HTMLElement>('[role="option"]') ?? [])]
   const pick = (v: string) => {
@@ -59,117 +131,87 @@ export function Picker({
   }
 
   return (
-    <PopoverPrimitive.Root
-      open={open}
-      onOpenChange={(o) => {
-        setOpen(o)
-        if (!o) setQuery("")
-      }}
-    >
-      <PopoverPrimitive.Trigger asChild>
-        <button
-          type="button"
-          aria-haspopup="listbox"
-          aria-controls={open ? id : undefined}
-          data-set={set || undefined}
-          onKeyDown={(e) => {
-            if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-              e.preventDefault()
-              setOpen(true)
-            }
-          }}
-          className={cn(
-            "inline-flex h-chip max-w-full min-w-0 shrink-0 items-center gap-1.5 rounded-full border border-line bg-raise ps-3 pe-2.5 text-ctl font-semibold whitespace-nowrap text-ink transition-colors duration-150 [@media(hover:hover)]:hover:border-muted-foreground",
-            "data-set:border-primary data-set:bg-primary data-set:text-primary-foreground",
-            // Regular: a squarer, quieter control; a filter in use is a grey fill, as on #29.
-            "regular:h-9 regular:rounded-sm regular:font-medium regular:data-set:border-line regular:data-set:bg-fill regular:data-set:text-ink",
-          )}
-        >
-          <span className="font-medium opacity-75">{label}:</span>
-          <span className="min-w-0 truncate">{selected?.label ?? value}</span>
-          <ChevronDown
-            aria-hidden
-            className={cn("size-3.5 shrink-0 opacity-75 transition-transform duration-150", open && "rotate-180")}
+    <PopoverPrimitive.Portal>
+      <PopoverPrimitive.Content
+        align="start"
+        sideOffset={6}
+        collisionPadding={8}
+        aria-label={label}
+        onOpenAutoFocus={(e) => {
+          e.preventDefault()
+          // Into the search field if there is one, else onto the chosen option.
+          if (searchable) searchRef.current?.focus()
+          else (optionEls().find((el) => el.getAttribute("aria-selected") === "true") ?? optionEls()[0])?.focus()
+        }}
+        className={cn(
+          // The list shrinks to the room left on screen, for example above a phone's keyboard.
+          "z-50 flex max-h-(--radix-popover-content-available-height) w-[min(320px,calc(100vw-16px))] flex-col gap-1 rounded-lg bg-popover p-1.5 text-popover-foreground shadow-float outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0",
+          className,
+        )}
+      >
+        {searchable && (
+          <input
+            ref={searchRef}
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "ArrowDown") {
+                e.preventDefault()
+                optionEls()[0]?.focus()
+              } else if (e.key === "Enter" && shown[0]) {
+                e.preventDefault()
+                pick(shown[0].value)
+              }
+            }}
+            placeholder={`Search ${label.toLowerCase()}…`}
+            aria-label={`Search ${label.toLowerCase()}`}
+            aria-controls={id}
+            aria-autocomplete="list"
+            autoComplete="off"
+            spellCheck={false}
+            className="h-ctl w-full shrink-0 rounded-sm border border-input bg-bg px-3 text-body outline-none focus:border-primary"
           />
-        </button>
-      </PopoverPrimitive.Trigger>
-      <PopoverPrimitive.Portal>
-        <PopoverPrimitive.Content
-          align="start"
-          sideOffset={6}
-          collisionPadding={8}
+        )}
+        <div
+          ref={listRef}
+          id={id}
+          role="listbox"
           aria-label={label}
-          onOpenAutoFocus={(e) => {
-            e.preventDefault()
-            // Into the search field if there is one, else onto the chosen option.
-            if (searchable) searchRef.current?.focus()
-            else (optionEls().find((el) => el.getAttribute("aria-selected") === "true") ?? optionEls()[0])?.focus()
-          }}
-          className="z-50 grid w-[min(320px,calc(100vw-16px))] gap-1 rounded-lg bg-popover p-1.5 text-popover-foreground shadow-float outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0"
+          onKeyDown={onListKey}
+          className="grid max-h-[min(320px,45vh)] min-h-0 overflow-y-auto"
         >
-          {searchable && (
-            <input
-              ref={searchRef}
-              type="search"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
+          {shown.map((o) => (
+            <div
+              key={o.value}
+              role="option"
+              tabIndex={-1}
+              aria-selected={o.value === value}
+              onClick={() => pick(o.value)}
               onKeyDown={(e) => {
-                if (e.key === "ArrowDown") {
+                if (e.key === "Enter" || e.key === " ") {
                   e.preventDefault()
-                  optionEls()[0]?.focus()
-                } else if (e.key === "Enter" && shown[0]) {
-                  e.preventDefault()
-                  pick(shown[0].value)
+                  pick(o.value)
                 }
               }}
-              placeholder={`Search ${label.toLowerCase()}…`}
-              aria-controls={id}
-              aria-autocomplete="list"
-              autoComplete="off"
-              spellCheck={false}
-              className="h-ctl w-full rounded-sm border border-input bg-bg px-3 text-body outline-none focus:border-primary"
-            />
+              className="flex min-h-8 cursor-pointer items-center gap-2 rounded-sm px-2.5 py-1.5 outline-none focus-visible:outline-offset-[-2px] aria-selected:font-semibold [@media(hover:hover)]:hover:bg-accent"
+            >
+              <span
+                aria-hidden
+                className={cn("size-1.5 shrink-0 rounded-full", o.value === value ? "bg-ink" : "bg-transparent")}
+              />
+              <span className="min-w-0 flex-1 truncate">{o.label}</span>
+              {o.hint !== undefined && <span className="text-meta text-muted-foreground tabular-nums">{o.hint}</span>}
+            </div>
+          ))}
+          {shown.length === 0 && (
+            <p role="status" className="px-2.5 py-3 text-small text-muted-foreground">
+              No matches
+            </p>
           )}
-          <div
-            ref={listRef}
-            id={id}
-            role="listbox"
-            aria-label={label}
-            onKeyDown={onListKey}
-            className="grid max-h-[min(320px,45vh)] overflow-y-auto"
-          >
-            {shown.map((o) => (
-              <div
-                key={o.value}
-                role="option"
-                tabIndex={-1}
-                aria-selected={o.value === value}
-                onClick={() => pick(o.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault()
-                    pick(o.value)
-                  }
-                }}
-                className="flex min-h-8 cursor-pointer items-center gap-2 rounded-sm px-2.5 py-1.5 outline-none focus-visible:outline-offset-[-2px] aria-selected:font-semibold [@media(hover:hover)]:hover:bg-accent"
-              >
-                <span
-                  aria-hidden
-                  className={cn("size-1.5 shrink-0 rounded-full", o.value === value ? "bg-ink" : "bg-transparent")}
-                />
-                <span className="min-w-0 flex-1 truncate">{o.label}</span>
-                {o.hint !== undefined && <span className="text-meta text-muted-foreground tabular-nums">{o.hint}</span>}
-              </div>
-            ))}
-            {shown.length === 0 && (
-              <p role="status" className="px-2.5 py-3 text-small text-muted-foreground">
-                No matches
-              </p>
-            )}
-          </div>
-        </PopoverPrimitive.Content>
-      </PopoverPrimitive.Portal>
-    </PopoverPrimitive.Root>
+        </div>
+      </PopoverPrimitive.Content>
+    </PopoverPrimitive.Portal>
   )
 }
 

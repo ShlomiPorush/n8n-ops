@@ -1,6 +1,6 @@
 import { createServer, type Server } from "node:http"
 import { type APIRequestContext, expect, type Page, test } from "@playwright/test"
-import { dialogClosed, signIn } from "./helpers.ts"
+import { dialogClosed, openNewToken, signIn } from "./helpers.ts"
 
 // Approving access requests from Telegram and email. The server's Telegram calls go to a stand-in Bot API run
 // here (verify.sh points TELEGRAM_API_URL at this runner); email goes to Mailpit in the test stack.
@@ -120,8 +120,7 @@ test("Telegram and email are connected", async () => {
   await page.getByRole("button", { name: "Save" }).click()
   await expect(page.getByText("Settings saved")).toBeVisible()
 
-  await page.goto("/settings/tokens")
-  await page.getByRole("button", { name: "New token" }).click()
+  await openNewToken(page)
   await page.getByLabel("Name").fill("e2e-approvals-agent")
   await page.getByLabel("May request access to n8n instances").check()
   await page.getByRole("button", { name: "Create" }).click()

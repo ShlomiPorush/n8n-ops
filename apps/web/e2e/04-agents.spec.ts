@@ -1,5 +1,5 @@
 import { expect, type Page, test } from "@playwright/test"
-import { dialogClosed, signIn } from "./helpers.ts"
+import { dialogClosed, openNewToken, signIn } from "./helpers.ts"
 
 // Read-only access for agents: REST with a REST token, MCP with an MCP token, and the audit trail.
 test.describe.configure({ mode: "serial" })
@@ -18,8 +18,7 @@ test.afterAll(async () => {
 
 for (const kind of ["rest", "mcp"] as const) {
   test(`a ${kind.toUpperCase()} token is created once and shown once`, async () => {
-    await page.goto("/settings/tokens")
-    await page.getByRole("button", { name: "New token" }).click()
+    await openNewToken(page)
     await page.getByLabel("Name").fill(`e2e-${kind}`)
     if (kind === "rest") {
       await page.getByRole("combobox").last().click()

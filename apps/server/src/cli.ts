@@ -45,6 +45,6 @@ await createAudit(db)({
 console.log(`Username: ${u.username ?? u.name}`)
 console.log(`New password: ${password}`)
 console.log(
-  "Two-factor was turned off and must be set up again after signing in. Change the password in Settings > Account.",
+  "Two-factor was turned off and must be set up again after signing in. Change the password on the Account page.",
 )
 await database.close()

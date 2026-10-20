@@ -78,7 +78,7 @@ services:
 
   # S3-compatible storage for development and the end-to-end tests (S3Mock, in memory).
   s3:
-    image: adobe/s3mock:4.11.0
+    image: adobe/s3mock:5.2.3
     env_file: docker/s3-dev.env
 
   # SMTP for development and the end-to-end tests (Mailpit): catches every email, read through its API on :8025.

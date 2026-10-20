@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto"
 import { createServer, type Server } from "node:http"
 import { expect, type Page, test } from "@playwright/test"
-import { signIn } from "./helpers.ts"
+import { dialogClosed, signIn } from "./helpers.ts"
 
 /*
  * Agents connect by approval (OAuth), against the real server and database: an MCP client through the browser,
@@ -278,6 +278,7 @@ test("Connected agents lists both, and a disconnected agent loses access at once
 
   await agentRow.getByRole("button", { name: "Disconnect" }).click()
   await page.getByRole("alertdialog").getByRole("button", { name: "Disconnect" }).click()
+  await dialogClosed(page)
   await expect(page.getByRole("row").filter({ hasText: "e2e agent" })).toHaveCount(0)
   expect((await mcp(refreshed.body.access_token ?? "", "tools/list")).status).toBe(401)
   const after = await post("/oauth/token", {

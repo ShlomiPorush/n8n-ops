@@ -64,6 +64,7 @@ test("the worker is assigned to the instance", async () => {
   await page.getByLabel("Container name").fill(container)
   await page.getByRole("button", { name: "Save" }).click()
   await expect(page.getByRole("button", { name: "Export credentials" })).toBeVisible()
+  await dialogClosed(page)
 })
 
 test("a backup through the worker includes credential secrets", async () => {

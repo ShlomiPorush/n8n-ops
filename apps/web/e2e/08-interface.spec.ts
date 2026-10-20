@@ -1,5 +1,5 @@
 import { expect, type Page, test } from "@playwright/test"
-import { signIn } from "./helpers.ts"
+import { dialogClosed, signIn } from "./helpers.ts"
 
 // The shared ways of moving around: search, sorting, filters in the address, the keyboard, Back, unsaved
 // changes, the sidebar and the links out to n8n.
@@ -108,6 +108,7 @@ test("leaving with unsaved changes asks first", async () => {
   const ask = page.getByRole("alertdialog", { name: "Leave without saving?" })
   await expect(ask).toBeVisible()
   await ask.getByRole("button", { name: "Stay" }).click()
+  await dialogClosed(page)
   await expect(page).toHaveURL(/\/settings\/general/)
   await expect(field).toHaveValue("https://ops.example.test")
   await page.getByRole("button", { name: "Discard" }).click()

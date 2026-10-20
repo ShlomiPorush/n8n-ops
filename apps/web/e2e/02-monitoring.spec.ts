@@ -1,5 +1,5 @@
 import { expect, type Page, test } from "@playwright/test"
-import { n8nFailingWorkflow, n8nSetup, n8nTrigger, n8nUrl, signIn } from "./helpers.ts"
+import { dialogClosed, n8nFailingWorkflow, n8nSetup, n8nTrigger, n8nUrl, signIn } from "./helpers.ts"
 
 // A real n8n 2.44 runs in the test stack. These tests register it, make a workflow fail,
 // and follow the failure through problems: first sync, repeat failures, resolve, regression.
@@ -96,6 +96,7 @@ test("a queue-mode instance without metrics or worker URLs says what is missing"
     await page.getByLabel("Queue mode").click()
     await page.getByRole("button", { name: "Save" }).click()
     await expect(page.getByRole("dialog")).toBeHidden()
+    await dialogClosed(page)
   }
   await page.goto("/instances")
   await page.getByRole("row", { name: /e2e-n8n/ }).click()

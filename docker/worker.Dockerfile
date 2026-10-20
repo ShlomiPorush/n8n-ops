@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # n8n-ops worker: outbound-only agent for an n8n Docker host. Build context: repository root.
 
-FROM node:24.21.0-bookworm-slim AS build
+FROM node:26.12.0-bookworm-slim AS build
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 RUN corepack enable
 WORKDIR /src
@@ -14,7 +14,7 @@ COPY packages/shared packages/shared
 COPY apps/worker apps/worker
 RUN pnpm --filter @n8n-ops/worker run build
 
-FROM node:24.21.0-bookworm-slim
+FROM node:26.12.0-bookworm-slim
 ARG VERSION=dev
 ENV NODE_ENV=production \
     N8N_OPS_VERSION=${VERSION} \

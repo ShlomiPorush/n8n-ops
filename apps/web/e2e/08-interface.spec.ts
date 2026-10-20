@@ -192,24 +192,34 @@ test("the time zone is chosen from a list with a search, and Back closes the lis
   await expect(search).toHaveCount(0)
   await expect(page).toHaveURL(/\/settings\/general$/)
 
-  await field.click()
-  await expect(search).toHaveValue("")
-  await search.fill("jerusalem")
-  await page.getByRole("option", { name: /Asia\/Jerusalem/ }).click()
-  await dialogClosed(page)
-  await expect(field).toHaveAccessibleName(/^Time zone: Asia\/Jerusalem \(UTC\+0[23]:00\)$/)
-  // Opened again, the list is whole.
+  // Opened again, the list is whole; Escape closes it and returns to the field.
   await field.click()
   await expect(search).toHaveValue("")
   await page.keyboard.press("Escape")
-  await dialogClosed(page)
+  await expect(search).toHaveCount(0)
   await expect(field).toBeFocused()
+  await dialogClosed(page)
 
   try {
+    // Picked and saved at once, without waiting for the list to give back its Back entry.
+    await field.click()
+    await search.fill("jerusalem")
+    await page.getByRole("option", { name: /Asia\/Jerusalem/ }).click()
+    await expect(field).toHaveAccessibleName(/^Time zone: Asia\/Jerusalem \(UTC\+0[23]:00\)$/)
     await page.getByRole("button", { name: "Save" }).click()
     await expect(page.getByText("Settings saved")).toBeVisible()
     expect((await (await page.request.get("/api/settings/general")).json()).timezone).toBe("Asia/Jerusalem")
-    // Only zone names are stored: a fixed offset would not follow daylight saving.
+
+    // A click beside the list closes it too. None of the ways it closed left an entry behind: Back now
+    // leaves the page.
+    await field.click()
+    await page.getByText("For report and backup schedules").click()
+    await expect(search).toHaveCount(0)
+    await dialogClosed(page)
+    await page.goBack()
+    await expect(page).toHaveURL(/\/account$/)
+
+    // A new time zone must be a zone name: a fixed offset would not follow daylight saving.
     const offset = await page.request.put("/api/settings/general", { data: { timezone: "+03:00" } })
     expect(offset.status()).toBe(400)
   } finally {

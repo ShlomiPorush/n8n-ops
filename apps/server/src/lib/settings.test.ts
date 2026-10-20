@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 import type { Db } from "../db/client.ts"
-import { createSettings, defaults, resolveInstanceSettings } from "./settings.ts"
+import { createSettings, defaults, isTimeZone, mayStoreTimeZone, resolveInstanceSettings } from "./settings.ts"
 
 describe("instance settings", () => {
   it("uses the global defaults without overrides", () => {
@@ -105,19 +105,31 @@ describe("web design", () => {
     expect(settings.design()).toBe("regular")
   })
 
-  it("refuses a time zone that is not an IANA name, also a fixed offset", async () => {
-    const settings = createSettings(fakeDb().db)
-    for (const timezone of ["Mars/Base", "+03:00", "UTC+3", "Asia/Jerusalem; drop"])
-      await expect(settings.set("general", { publicUrl: "", timezone, design: "regular" })).rejects.toThrow()
-    for (const timezone of ["", "UTC", "Asia/Jerusalem", "America/Argentina/Buenos_Aires", "Etc/GMT+3"])
-      await settings.set("general", { publicUrl: "", timezone, design: "regular" })
+  it("takes only zone names as a new time zone, not a fixed offset", () => {
+    for (const zone of ["UTC", "Asia/Jerusalem", "America/Argentina/Buenos_Aires", "Etc/GMT+3"])
+      expect(isTimeZone(zone)).toBe(true)
+    for (const zone of ["", "Mars/Base", "+03:00", "UTC+3", "Asia/Jerusalem; drop"])
+      expect(isTimeZone(zone)).toBe(false)
+    expect(mayStoreTimeZone("UTC", "Asia/Jerusalem")).toBe(true)
+    expect(mayStoreTimeZone("UTC", "")).toBe(true)
+    expect(mayStoreTimeZone("UTC", "+03:00")).toBe(false)
+    // One saved before time zones were checked stays while it is not changed.
+    expect(mayStoreTimeZone("+03:00", "+03:00")).toBe(true)
   })
 
-  it("reads a stored time zone that is not one as UTC without resetting the rest of General", async () => {
-    const settings = createSettings(
-      fakeDb({ publicUrl: "https://ops.example.com", timezone: "+03:00", design: "compact" }).db,
+  it("refuses to store a time zone no clock knows", async () => {
+    const settings = createSettings(fakeDb().db)
+    for (const timezone of ["Mars/Base", "Asia/Jerusalem; drop"])
+      await expect(settings.set("general", { publicUrl: "", timezone, design: "regular" })).rejects.toThrow()
+  })
+
+  it("keeps a fixed offset stored before, and reads an unknown time zone as UTC without resetting General", async () => {
+    const offset = createSettings(fakeDb({ publicUrl: "https://ops.example.com", timezone: "+03:00" }).db)
+    expect((await offset.get("general")).timezone).toBe("+03:00")
+    const unknown = createSettings(
+      fakeDb({ publicUrl: "https://ops.example.com", timezone: "Mars/Base", design: "compact" }).db,
     )
-    expect(await settings.get("general")).toEqual({
+    expect(await unknown.get("general")).toEqual({
       publicUrl: "https://ops.example.com",
       timezone: "UTC",
       design: "compact",

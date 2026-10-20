@@ -3,7 +3,7 @@ import { Hono } from "hono"
 import type { Ctx } from "../context.ts"
 import { requireUser } from "../http/middleware.ts"
 import { actorName, type Env } from "../http/types.ts"
-import { type SectionName, sections } from "../lib/settings.ts"
+import { mayStoreTimeZone, type SectionName, sections } from "../lib/settings.ts"
 import { syncTelegramWebhook } from "../services/alerts.ts"
 
 /** Secret fields: stored encrypted as <name>Enc, written as plain <name>, read back only as <name>Set. */
@@ -50,6 +50,12 @@ export function settingsRoutes(ctx: Ctx) {
     if (section === "telegram" && !next.webhookSecret) next.webhookSecret = randomBytes(24).toString("hex")
     const parsed = sections[section].safeParse(next)
     if (!parsed.success) return c.json({ error: "invalid", issues: parsed.error.issues }, 400)
+    // A new time zone must be a zone name; a fixed offset saved before stays until it is replaced.
+    if (section === "general" && !mayStoreTimeZone(current.timezone, next.timezone))
+      return c.json(
+        { error: "invalid", issues: [{ path: ["timezone"], message: "choose a time zone from the list" }] },
+        400,
+      )
     const before = section === "general" ? (await ctx.settings.get("general")).publicUrl : null
     await ctx.settings.set(section, parsed.data as never)
     await ctx.audit({

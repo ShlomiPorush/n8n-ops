@@ -52,7 +52,7 @@ export function AgentsPage() {
   return (
     <Page
       title="Connected agents"
-      description="Agents and scripts that read n8n-ops. Each one connects once you approve it, and keeps access until you disconnect it."
+      description="Agents and scripts that read n8n-ops. Each one connects only once you approve it, and you can disconnect it here at any time."
       className="max-w-5xl"
     >
       <ConnectCard />

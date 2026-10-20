@@ -369,7 +369,7 @@ export function ProblemDetail({ id }: { id: string }) {
 
       <Panel>
         <PanelHead
-          title="Where it broke"
+          title="Where It Broke"
           description="Drawn from the workflow and the run data of the latest failure."
         />
         <FlowGraph nodes={p.graph} />
@@ -378,7 +378,7 @@ export function ProblemDetail({ id }: { id: string }) {
       <div className="grid items-start gap-gap 2xl:grid-cols-2">
         <Panel>
           <PanelHead
-            title="Input of the failed node"
+            title="Input of the Failed Node"
             description={
               p.nodeInput.length
                 ? `${n(p.nodeInput.length)} item${p.nodeInput.length === 1 ? "" : "s"}; the first is shown.`
@@ -417,7 +417,7 @@ export function ProblemDetail({ id }: { id: string }) {
         </Panel>
         <div className="grid gap-gap">
           <Panel>
-            <PanelHead title="Recent occurrences" count={n(p.occurrences.length)} />
+            <PanelHead title="Recent Occurrences" count={n(p.occurrences.length)} />
             <Table bare className="min-w-0">
               <TableHeader>
                 <TableRow>
@@ -478,7 +478,7 @@ export function ProblemDetail({ id }: { id: string }) {
       <Dialog open={raw !== null} onOpenChange={(o) => !o && setRaw(null)}>
         <DialogContent className="md:max-w-4xl" aria-describedby={undefined}>
           <DialogHeader icon={BracesIcon}>
-            <DialogTitle>Raw data</DialogTitle>
+            <DialogTitle>Raw Data</DialogTitle>
           </DialogHeader>
           {raw === loadingRaw ? (
             <Loading>Loading the execution…</Loading>
@@ -515,7 +515,7 @@ function MergeDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader icon={GitMergeIcon}>
-          <DialogTitle>Merge into another problem</DialogTitle>
+          <DialogTitle>Merge into Another Problem</DialogTitle>
           <DialogDescription>
             Its {n(problem.count)} {problem.count === 1 ? "failure moves" : "failures move"} to the chosen problem, and
             future failures with this error count there too.

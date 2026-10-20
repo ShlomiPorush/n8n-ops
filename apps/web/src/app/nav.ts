@@ -23,13 +23,13 @@ export const operate: NavItem[] = [
 ]
 /** Agents: connecting them first, then the access they ask for. */
 export const agents: NavItem[] = [
-  { to: "/agents", label: "Connected agents", icon: Plug },
-  { to: "/access", label: "Agent access", icon: KeyRound, count: "access" },
+  { to: "/agents", label: "Connected Agents", icon: Plug },
+  { to: "/access", label: "Agent Access", icon: KeyRound, count: "access" },
 ]
 export const system: NavItem[] = [
   { to: "/workers", label: "Workers", icon: Cpu },
   { to: "/settings", label: "Settings", icon: Settings },
-  { to: "/audit", label: "Audit log", icon: ScrollText },
+  { to: "/audit", label: "Audit Log", icon: ScrollText },
 ]
 export const groups = [
   { label: "Operate", items: operate },

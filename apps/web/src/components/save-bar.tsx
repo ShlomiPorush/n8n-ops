@@ -156,7 +156,7 @@ function useLeaveGuard(count: number) {
   React.useEffect(() => {
     if (blocker.state !== "blocked") return
     void confirm({
-      title: "Leave without saving?",
+      title: "Leave Without Saving?",
       message: `${plural(count, "unsaved change")} will be lost.`,
       confirmLabel: "Leave without saving",
       cancelLabel: "Stay",

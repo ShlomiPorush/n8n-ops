@@ -643,7 +643,7 @@ function TabBar() {
             tabIndex={-1}
             className="fixed inset-x-0 bottom-[calc(var(--spacing-tabbar)+env(safe-area-inset-bottom))] z-36 flex max-h-[calc(100dvh-var(--spacing-tabbar)-60px-env(safe-area-inset-bottom))] flex-col gap-0.5 overflow-y-auto overscroll-contain rounded-t-drawer border-b border-line bg-bg px-3 pt-2 pb-3 duration-200 ease-out data-[state=closed]:animate-out data-[state=closed]:slide-out-to-bottom-8 data-[state=open]:animate-in data-[state=open]:slide-in-from-bottom-8 md:hidden"
           >
-            <SheetPrimitive.Title className="sr-only">All pages</SheetPrimitive.Title>
+            <SheetPrimitive.Title className="sr-only">All Pages</SheetPrimitive.Title>
             <span aria-hidden className="mx-auto mt-1 mb-1.5 h-1 w-10 shrink-0 rounded-full bg-muted-foreground/50" />
             {groups.map((g) => (
               <div key={g.label} className="flex flex-col gap-0.5">

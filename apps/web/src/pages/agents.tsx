@@ -51,7 +51,7 @@ type Token = {
 export function AgentsPage() {
   return (
     <Page
-      title="Connected agents"
+      title="Connected Agents"
       description="Agents and scripts that read n8n-ops. Each one connects only once you approve it, and you can disconnect it here at any time."
       className="max-w-5xl"
     >
@@ -75,13 +75,13 @@ function ConnectCard() {
   return (
     <Panel>
       <PanelHead
-        title="Connect an agent"
+        title="Connect an Agent"
         description="The agent asks, you approve it in this browser, and it appears below. Nothing to create or paste by hand."
       />
       <Tabs defaultValue="skill" className="px-pad-x pb-5">
         <TabsList aria-label="Kind of agent">
-          <TabsTrigger value="skill">Coding agent</TabsTrigger>
-          <TabsTrigger value="mcp">MCP client</TabsTrigger>
+          <TabsTrigger value="skill">Coding Agent</TabsTrigger>
+          <TabsTrigger value="mcp">MCP Client</TabsTrigger>
           <TabsTrigger value="script">Script</TabsTrigger>
         </TabsList>
         <TabsContent value="skill" className="grid gap-3">
@@ -149,7 +149,7 @@ function AgentsCard() {
   async function askRevoke(t: Token) {
     const agent = t.kind === "agent"
     const ok = await confirm({
-      title: agent ? `Disconnect ${t.name}?` : `Revoke the token ${t.name}?`,
+      title: agent ? `Disconnect ${t.name}?` : `Revoke the Token ${t.name}?`,
       message: agent
         ? "It loses access at once, with any n8n instance access it holds. It can connect again only with a new approval."
         : "The agent or script using it loses access at once. This cannot be undone; create a new token to give access again.",
@@ -166,7 +166,7 @@ function AgentsCard() {
     <>
       <Panel>
         <PanelHead
-          title="Agents and tokens"
+          title="Agents and Tokens"
           count={tokens.data ? list.length : undefined}
           description="Each can read n8n-ops; some may also ask for temporary access to an n8n instance, which a person approves each time."
         />
@@ -289,7 +289,7 @@ function HandMadeToken() {
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent keepOnBackdrop>
           <DialogHeader icon={KeySquareIcon}>
-            <DialogTitle>New token</DialogTitle>
+            <DialogTitle>New Token</DialogTitle>
             <DialogDescription>The token is shown once. Store it where the agent or script reads it.</DialogDescription>
           </DialogHeader>
           {created ? (

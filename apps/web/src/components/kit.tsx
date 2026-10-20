@@ -466,7 +466,7 @@ export function LoadError({ error, retry, what }: { error: unknown; retry?: () =
 
 /**
  * Locked: shown instead of a control that needs something missing. It says what is missing, why it
- * matters, and links to where it is set ("Settings → Backup storage").
+ * matters, and links to where it is set ("Settings → Backup Storage").
  */
 export function Locked({
   title,

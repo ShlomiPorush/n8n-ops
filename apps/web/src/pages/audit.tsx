@@ -36,7 +36,7 @@ export function AuditPage() {
   }, [hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage, rows.length])
   return (
     <Page
-      title="Audit log"
+      title="Audit Log"
       description={
         query.data
           ? `${n(rows.length)}${query.hasNextPage ? "+" : ""} entries. Logins, settings, keys, tokens, restores, moves and exports.`

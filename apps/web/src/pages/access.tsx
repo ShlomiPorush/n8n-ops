@@ -73,12 +73,12 @@ export function AccessPage() {
   const list = (
     <>
       <PageHead
-        title="Agent access"
+        title="Agent Access"
         updatedAt={rows.dataUpdatedAt || undefined}
         actions={
           <Button asChild>
             <Link to="/agents">
-              <Plug /> Connected agents
+              <Plug /> Connected Agents
             </Link>
           </Button>
         }
@@ -95,7 +95,7 @@ export function AccessPage() {
         onValueChange={(v) => v && setParams(v === "all" ? { view: "all" } : {}, { replace: true })}
       >
         <ToggleGroupItem value="open">
-          Waiting and active <small>{n(waiting + active)}</small>
+          Waiting and Active <small>{n(waiting + active)}</small>
         </ToggleGroupItem>
         <ToggleGroupItem value="all">
           All <small>{n(all.length)}</small>
@@ -166,7 +166,7 @@ export function AccessPage() {
   return (
     <ListWithPanel
       list={list}
-      panelTitle="Access request"
+      panelTitle="Access Request"
       panel={id ? <AccessDetailPanel id={id} /> : null}
       onClose={() => navigate(`/access${view === "all" ? "?view=all" : ""}`)}
     />
@@ -243,7 +243,7 @@ function AccessDetailPanel({ id }: { id: string }) {
               onClick={async () => {
                 if (
                   await confirm({
-                    title: `Revoke access to ${r.instance}?`,
+                    title: `Revoke Access to ${r.instance}?`,
                     message: `The agent ${r.token} loses access at once, before its time is up. This cannot be undone; the agent has to ask again.`,
                     confirmLabel: "Revoke access",
                     danger: true,
@@ -260,7 +260,7 @@ function AccessDetailPanel({ id }: { id: string }) {
 
       <Panel>
         <PanelHead
-          title="What the agent may do"
+          title="What the Agent May Do"
           count={n(r.scopes.length)}
           description={
             <>

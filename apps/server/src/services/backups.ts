@@ -30,7 +30,7 @@ export function archiveKey(instanceName: string, date = new Date()) {
 
 async function backupRecipient(ctx: Ctx) {
   const { backupRecipient } = await ctx.settings.get("keys")
-  if (!backupRecipient) throw new Error("No backup key. Generate one in Settings > Encryption keys.")
+  if (!backupRecipient) throw new Error("No backup key. Generate one in Settings > Encryption Keys.")
   return backupRecipient
 }
 

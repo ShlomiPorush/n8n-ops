@@ -147,7 +147,7 @@ export function renderReport(d: ReportData): Report {
         },
       ),
     ],
-    footer: `You get this because the ${d.period} report is on in Settings → Email reports.`,
+    footer: `You get this because the ${d.period} report is on in Settings → Email Reports.`,
   })
   return { subject: `${title}: ${plural(totalOpen, "open problem")}`, text, html }
 }

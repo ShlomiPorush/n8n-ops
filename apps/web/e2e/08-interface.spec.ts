@@ -168,7 +168,7 @@ test("Connected agents and Account are pages of their own, and their old Setting
   const sections = page.getByRole("navigation", { name: "Settings categories" })
   await page.goto("/settings/general")
   await expect(sections.getByRole("link", { name: "Agent access" })).toBeVisible()
-  await expect(sections.getByRole("link", { name: /Connected agents|Account/ })).toHaveCount(0)
+  await expect(sections.getByRole("link", { name: /Connected Agents|Account/i })).toHaveCount(0)
 
   // Agent access leads to Connected agents, and the account menu to Account.
   await page.goto("/access")

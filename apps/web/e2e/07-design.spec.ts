@@ -40,8 +40,8 @@ test.afterAll(async () => {
 test("each design draws with its own type, corners, surfaces and shadows, in light and dark", async () => {
   await page.goto("/")
   await expect(shown(page)).toHaveAttribute("data-design", here)
-  await expect(page.getByRole("heading", { name: "Needs attention" })).toBeVisible()
-  /** What the page draws: the body, a key figure and the panel around "Needs attention". */
+  await expect(page.getByRole("heading", { name: "Needs Attention" })).toBeVisible()
+  /** What the page draws: the body, a key figure and the panel around "Needs Attention". */
   const drawn = (d: "regular" | "compact", dark: boolean) =>
     page.evaluate(
       ([d, dark]) => {
@@ -51,7 +51,7 @@ test("each design draws with its own type, corners, surfaces and shadows, in lig
         html.classList.toggle("dark", dark as boolean)
         const body = getComputedStyle(document.body)
         const figure = getComputedStyle(document.querySelector('[data-slot="kpi-figure"]') as Element)
-        const heading = [...document.querySelectorAll("h2")].find((h) => h.textContent === "Needs attention")
+        const heading = [...document.querySelectorAll("h2")].find((h) => h.textContent === "Needs Attention")
         const panel = getComputedStyle(heading?.closest("section") as Element)
         const out = {
           font: body.fontFamily.split(",")[0],
@@ -94,7 +94,7 @@ test("each design draws with its own type, corners, surfaces and shadows, in lig
  */
 async function layout(p: Page) {
   await p.goto("/")
-  const activity = p.locator("section", { has: p.getByRole("heading", { name: "Recent activity" }) })
+  const activity = p.locator("section", { has: p.getByRole("heading", { name: "Recent Activity" }) })
   // The first entry under the head: not the loading line (status) or an error (alert). Signing in records one.
   await expect(activity.locator(":scope > header + div:not([role])")).toBeVisible()
   return p.evaluate(() => {
@@ -106,7 +106,7 @@ async function layout(p: Page) {
     const stops = [...nav.querySelectorAll<HTMLElement>("a, button")]
       .filter((el) => el.getClientRects().length > 0)
       .map((el) => (el.dataset.slot === "workers-status" ? "workers" : (el.getAttribute("href") ?? el.textContent)))
-    const activity = [...document.querySelectorAll("h2")].find((h) => h.textContent === "Recent activity")
+    const activity = [...document.querySelectorAll("h2")].find((h) => h.textContent === "Recent Activity")
     const entry = activity?.closest("section")?.querySelector("header + *") as Element
     return {
       frame: shown(frame) && box ? { top: box.top, right: window.innerWidth - box.right } : null,

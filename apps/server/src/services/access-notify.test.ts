@@ -45,6 +45,6 @@ describe("request messages", () => {
     expect(withLink.text).toContain("https://ops.example.com/access/3f2a")
     expect(withLink.html).toContain('href="https://ops.example.com/access/3f2a"')
     expect(withLink.html).toContain("Fix the &lt;Set&gt; node")
-    expect(renderAccessEmail(request, null).text).toContain("Agent access page")
+    expect(renderAccessEmail(request, null).text).toContain("Agent Access page")
   })
 })

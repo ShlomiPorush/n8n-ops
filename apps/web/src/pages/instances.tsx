@@ -458,7 +458,7 @@ function InstanceDetail({ id }: { id: string }) {
 
       <Panel>
         <PanelHead
-          title="Open problems"
+          title="Open Problems"
           count={problems.data ? n(problems.data.length) : undefined}
           more={problems.data?.length ? { to: `/problems?status=open&instance=${i.id}`, label: "All" } : undefined}
         />
@@ -477,7 +477,7 @@ function InstanceDetail({ id }: { id: string }) {
 
       <Panel>
         <PanelHead
-          title="API key and what it allows"
+          title="API Key and What It Allows"
           description={
             i.scopesSource === "discovered"
               ? `Read from GET /api/v1/discover · checked ${i.scopesCheckedAt ? formatFull(i.scopesCheckedAt, tz) : "never"}`
@@ -718,7 +718,7 @@ export function InstanceDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="md:max-w-xl" keepOnBackdrop>
         <DialogHeader icon={ServerIcon}>
-          <DialogTitle>{instance ? `Edit ${instance.name}` : "Add an instance"}</DialogTitle>
+          <DialogTitle>{instance ? `Edit ${instance.name}` : "Add an Instance"}</DialogTitle>
           <DialogDescription>The connection is tested before anything is saved.</DialogDescription>
         </DialogHeader>
         <FieldGroup>
@@ -796,7 +796,7 @@ export function InstanceDialog({
           </FieldSet>
           <FieldSet>
             <FieldLegend variant="label" className="w-full border-t border-line pt-4">
-              Health and host
+              Health and Host
             </FieldLegend>
             <Field>
               <FieldLabel>Check health and metrics</FieldLabel>

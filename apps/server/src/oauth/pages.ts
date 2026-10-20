@@ -58,20 +58,20 @@ button.primary{background:var(--ui-accent);border-color:var(--ui-accent);color:v
     codeInput: (form, error) =>
       error === "denied"
         ? page(
-            "Not connected",
-            "<h1>Not connected</h1><p>The connection was not approved. You can close this page.</p>",
+            "Not Connected",
+            "<h1>Not Connected</h1><p>The connection was not approved. You can close this page.</p>",
           )
         : page(
-            "Connect an agent",
-            `<h1>Connect an agent</h1>
+            "Connect an Agent",
+            `<h1>Connect an Agent</h1>
 ${error === "wrong" ? '<p class="fail" role="alert">That code is not valid. Check it in your agent and try again.</p>' : error ? '<p class="fail" role="alert">That did not work. Start the connection again in your agent.</p>' : /type="hidden" name="user_code"/.test(form) ? '<p class="muted">An agent asks to connect. Continue to compare its code.</p>' : '<p class="muted">Enter the code your agent shows.</p>'}
 ${form}
 <div class="actions"><button class="primary" type="submit" form="op.deviceInputForm">Continue</button></div>`,
           ),
     codeConfirm: (form, clientName, userCode, label) =>
       page(
-        "Connect an agent",
-        `<h1>Does your agent show this code?</h1>
+        "Connect an Agent",
+        `<h1>Does Your Agent Show This Code?</h1>
 <div class="code">${htmlText(userCode)}</div>
 <p><b>${htmlText(label ?? clientName)}</b>${label ? ` <span class="muted">(${htmlText(clientName)})</span>` : ""} asks to connect to n8n-ops. Continue only if you started this yourself and your agent shows the same code. The name is what the agent says about itself.</p>
 ${form}
@@ -79,13 +79,13 @@ ${form}
       ),
     success: (clientName, label) =>
       page(
-        "Agent connected",
-        `<h1>Agent connected</h1><p>${htmlText(label ?? clientName)} can use n8n-ops now. You can close this page; your agent carries on by itself.</p>`,
+        "Agent Connected",
+        `<h1>Agent Connected</h1><p>${htmlText(label ?? clientName)} can use n8n-ops now. You can close this page; your agent carries on by itself.</p>`,
       ),
     error: (code, description) =>
       page(
-        "Not connected",
-        `<h1>Not connected</h1><p>${htmlText(errors[code] ?? "Something went wrong with this connection. Start it again in your agent.")}</p>${description && !errors[code] ? `<p class="muted">${htmlText(description)}</p>` : ""}`,
+        "Not Connected",
+        `<h1>Not Connected</h1><p>${htmlText(errors[code] ?? "Something went wrong with this connection. Start it again in your agent.")}</p>${description && !errors[code] ? `<p class="muted">${htmlText(description)}</p>` : ""}`,
       ),
   }
 }

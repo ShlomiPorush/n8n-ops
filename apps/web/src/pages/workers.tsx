@@ -41,7 +41,7 @@ export function WorkersPage() {
   })
   async function askRevoke(w: Worker) {
     const ok = await confirm({
-      title: `Revoke the worker ${w.name}?`,
+      title: `Revoke the Worker ${w.name}?`,
       message: `It stops being accepted at once and is removed from its ${plural(w.instances.length, "instance")}. Remove the container on the host too. This cannot be undone; pair it again to bring it back.`,
       confirmLabel: "Revoke worker",
       danger: true,
@@ -68,7 +68,7 @@ export function WorkersPage() {
       {/* Regular sets each worker on a card of its own (#29); Compact lists them in one panel. */}
       <Panel className="regular:grid regular:gap-3 regular:overflow-visible regular:rounded-none regular:bg-transparent regular:shadow-none regular:ring-0">
         <PanelHead
-          title="Paired workers"
+          title="Paired Workers"
           count={workers.data ? n(list.length) : undefined}
           className="regular:px-0 regular:pt-0 regular:pb-0"
         />
@@ -176,7 +176,7 @@ function AddWorkerDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
     <Dialog open={open} onOpenChange={close}>
       <DialogContent className="md:max-w-2xl" keepOnBackdrop>
         <DialogHeader icon={CpuIcon}>
-          <DialogTitle>Add a worker</DialogTitle>
+          <DialogTitle>Add a Worker</DialogTitle>
           <DialogDescription>
             {result
               ? `Run this on the n8n Docker host. The token works once and expires in ${result.expiresInMinutes} minutes.`

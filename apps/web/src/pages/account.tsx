@@ -31,7 +31,7 @@ export function AccountPage() {
       className="max-w-3xl"
     >
       <Panel>
-        <PanelHead title="Sign-in" />
+        <PanelHead title="Sign-In" />
         <SettingRow label="Two-factor (TOTP)" hint="Required for this installation.">
           <span className="flex items-center gap-2 font-semibold text-ok">
             <ShieldCheck className="size-4" /> On
@@ -45,7 +45,7 @@ export function AccountPage() {
             e.currentTarget.reset()
           }}
         >
-          <b className="font-semibold">Change password</b>
+          <b className="font-semibold">Change Password</b>
           <FieldGroup className="max-w-sm gap-3">
             <Field>
               <FieldLabel htmlFor="current">Current password</FieldLabel>
@@ -66,7 +66,7 @@ export function AccountPage() {
       </Panel>
       <Panel>
         <PanelHead
-          title="Locked out?"
+          title="Locked Out?"
           description="Run this on the server, in the n8n-ops folder. It prints a new password, signs out every session and turns two-factor off; you set it up again at the next sign-in."
         />
         <div className="px-pad-x pb-4">

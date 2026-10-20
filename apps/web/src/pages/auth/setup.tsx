@@ -16,7 +16,7 @@ import { cn } from "@/lib/utils"
 import { AuthFrame, TotpInput } from "./shared"
 
 type Checklist = { twoFactor: boolean; backupKey: boolean; telegram: boolean; storage: boolean; instance: boolean }
-const steps = ["Account", "Two-factor", "Backup key", "Telegram", "Storage"] as const
+const steps = ["Account", "Two-Factor", "Backup Key", "Telegram", "Storage"] as const
 type Step = (typeof steps)[number]
 
 export function SetupPage() {
@@ -39,8 +39,8 @@ export function SetupPage() {
   const c = checklist.data
   let step: Step | "done" = "done"
   if (!status.data?.hasUser) step = "Account"
-  else if (c && !c.twoFactor) step = "Two-factor"
-  else if (c && !c.backupKey) step = "Backup key"
+  else if (c && !c.twoFactor) step = "Two-Factor"
+  else if (c && !c.backupKey) step = "Backup Key"
   else if (c && !c.telegram && !skipped.includes("Telegram")) step = "Telegram"
   else if (c && !c.storage && !skipped.includes("Storage")) step = "Storage"
   if (step === "done") return <Navigate to="/" replace />
@@ -86,8 +86,8 @@ export function SetupPage() {
           }}
         />
       )}
-      {step === "Two-factor" && <TwoFactorStep password={password} onDone={refresh} />}
-      {step === "Backup key" && <BackupKeyStep onDone={refresh} />}
+      {step === "Two-Factor" && <TwoFactorStep password={password} onDone={refresh} />}
+      {step === "Backup Key" && <BackupKeyStep onDone={refresh} />}
       {step === "Telegram" && <TelegramStep onDone={refresh} onSkip={() => skip("Telegram")} />}
       {step === "Storage" && (
         <StorageStep
@@ -151,7 +151,7 @@ function AccountStep({ onDone }: { onDone: (password: string) => Promise<void> }
   }
   return (
     <StepFrame
-      title="Create your account"
+      title="Create Your Account"
       description="n8n-ops has one user. Two-factor authentication is set up next and is required."
       actions={
         <Button type="submit" form="account" variant="primary" disabled={busy}>
@@ -225,7 +225,7 @@ function TwoFactorStep({ password: known, onDone }: { password: string; onDone: 
   const secret = uri ? (new URL(uri).searchParams.get("secret") ?? "") : ""
   return (
     <StepFrame
-      title="Set up two-factor authentication"
+      title="Set Up Two-Factor Authentication"
       description="Required. Scan the code with an authenticator app such as 1Password or Google Authenticator."
     >
       {!uri ? (
@@ -287,7 +287,7 @@ function BackupKeyStep({ onDone }: { onDone: () => Promise<void> }) {
 
   return (
     <StepFrame
-      title="Your backup key"
+      title="Your Backup Key"
       description="Backups are encrypted with a key pair. The server keeps only the public half. Save the private key now: it is shown once, and without it no backup can be restored."
       actions={
         <Button variant="primary" disabled={!privateKey || !saved} onClick={() => void confirm()}>
@@ -386,7 +386,7 @@ function OptionalStep({
 function TelegramStep({ onDone, onSkip }: { onDone: () => Promise<void>; onSkip: () => void }) {
   return (
     <OptionalStep
-      title="Telegram alerts"
+      title="Telegram Alerts"
       description="Where alerts go. Create a bot with @BotFather and add it to your chat or group. You can do this later in Settings."
       section="telegram"
       fields={[
@@ -402,7 +402,7 @@ function TelegramStep({ onDone, onSkip }: { onDone: () => Promise<void>; onSkip:
 function StorageStep({ onDone, onSkip }: { onDone: () => Promise<void>; onSkip: () => void }) {
   return (
     <OptionalStep
-      title="Backup storage"
+      title="Backup Storage"
       description="Any S3-compatible service. You can do this later in Settings."
       section="storage"
       fields={[

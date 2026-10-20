@@ -174,7 +174,7 @@ export const forms: Record<string, { title: string; description: string; fields:
       {
         name: "notifyEmail",
         label: "Email requests",
-        hint: "To the recipients set under Email reports, with a link to decide here.",
+        hint: "To the recipients set under Email Reports, with a link to decide here.",
         type: "switch",
       },
       {
@@ -655,7 +655,7 @@ function KeysCard() {
       >
         <DialogContent keepOnBackdrop>
           <DialogHeader icon={KeyRound}>
-            <DialogTitle>New backup key pair</DialogTitle>
+            <DialogTitle>New Backup Key Pair</DialogTitle>
             <DialogDescription>
               New backups use the new key. Archives made before keep needing the old private key, so keep it too.
             </DialogDescription>

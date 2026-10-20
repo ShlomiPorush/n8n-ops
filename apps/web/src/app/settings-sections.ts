@@ -6,7 +6,7 @@ export const settingsGroups = [
     label: "Installation",
     items: [
       ["general", "General"],
-      ["defaults", "Instance defaults"],
+      ["defaults", "Instance Defaults"],
     ],
   },
   {
@@ -14,19 +14,19 @@ export const settingsGroups = [
     items: [
       ["alerts", "Alerts"],
       ["telegram", "Telegram"],
-      ["email", "Email reports"],
+      ["email", "Email Reports"],
     ],
   },
   {
     label: "Backups",
     items: [
-      ["storage", "Backup storage"],
-      ["keys", "Encryption keys"],
+      ["storage", "Backup Storage"],
+      ["keys", "Encryption Keys"],
     ],
   },
   {
     label: "Access",
-    items: [["access", "Agent access"]],
+    items: [["access", "Agent Access"]],
   },
 ] as const
 

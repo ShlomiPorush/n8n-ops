@@ -69,7 +69,7 @@ export function ConnectApprovePage() {
   const r = request.data
   const name = r ? (r.client.builtIn ? (r.client.label ?? "A script") : (r.client.name ?? "An unnamed agent")) : ""
   return (
-    <AuthFrame wide title="Connect an agent" description={r ? `${name} asks to use n8n-ops.` : undefined}>
+    <AuthFrame wide title="Connect an Agent" description={r ? `${name} asks to use n8n-ops.` : undefined}>
       {request.error ? (
         request.error instanceof ApiError && request.error.status === 410 ? (
           <Alert variant="warn">

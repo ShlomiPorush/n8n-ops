@@ -169,7 +169,7 @@ export function OverviewPage() {
           <div className="grid items-start gap-gap xl:grid-cols-[minmax(0,1.9fr)_minmax(260px,1fr)]">
             <Panel>
               <PanelHead
-                title="Needs attention"
+                title="Needs Attention"
                 count={attention.length ? n(attention.length) : undefined}
                 description="Agents waiting for access, new problems and regressions from the last 24 hours, health issues, stale backups, offline workers."
               />
@@ -216,7 +216,7 @@ export function OverviewPage() {
 
               <Panel>
                 <PanelHead
-                  title="Recent activity"
+                  title="Recent Activity"
                   description="Sign-ins, changes and decisions, newest first."
                   more={{ to: "/audit", label: "Full audit log" }}
                 />

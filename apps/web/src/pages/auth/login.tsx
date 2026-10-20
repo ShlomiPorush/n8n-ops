@@ -57,7 +57,7 @@ export function LoginPage() {
 
   if (step === "totp")
     return (
-      <AuthFrame title="Two-factor code" description="Enter the 6-digit code from your authenticator app.">
+      <AuthFrame title="Two-Factor Code" description="Enter the 6-digit code from your authenticator app.">
         <div className="grid justify-items-start gap-4">
           <TotpInput onComplete={(code) => void verify(code)} disabled={busy} />
           {error && <FieldError>{error}</FieldError>}
@@ -69,7 +69,7 @@ export function LoginPage() {
     )
 
   return (
-    <AuthFrame title="Welcome back" description="Sign in to n8n-ops.">
+    <AuthFrame title="Welcome Back" description="Sign in to n8n-ops.">
       <form
         onSubmit={(e) => {
           e.preventDefault()

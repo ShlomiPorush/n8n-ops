@@ -14,7 +14,7 @@ export type Storage = {
   client: S3Client
 }
 
-/** S3-compatible storage from Settings > Backup storage, or null when it is not configured. */
+/** S3-compatible storage from Settings > Backup Storage, or null when it is not configured. */
 export async function storageFor(ctx: Ctx): Promise<Storage | null> {
   const s = await ctx.settings.get("storage")
   if (!s.bucket || !s.accessKeyId || !s.secretAccessKeyEnc) return null
@@ -32,7 +32,7 @@ export async function storageFor(ctx: Ctx): Promise<Storage | null> {
 
 export async function requireStorage(ctx: Ctx): Promise<Storage> {
   const storage = await storageFor(ctx)
-  if (!storage) throw new Error("Backup storage is not configured. Set it in Settings > Backup storage.")
+  if (!storage) throw new Error("Backup storage is not configured. Set it in Settings > Backup Storage.")
   return storage
 }
 

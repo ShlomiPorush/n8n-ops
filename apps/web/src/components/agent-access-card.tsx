@@ -86,7 +86,7 @@ export function AgentAccessCard({ id, name, scopesSource, keyScopes, agentAccess
   return (
     <Panel className="overflow-visible">
       <PanelHead
-        title="Agent access"
+        title="Agent Access"
         description={
           <>
             Agents with a token that may request access can ask for temporary access to {name}, within what you allow

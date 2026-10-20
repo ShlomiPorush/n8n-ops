@@ -118,7 +118,7 @@ export function WorkflowsPage() {
         <div className="grid items-start gap-gap xl:grid-cols-3">
           <Panel className={summary}>
             <PanelHead
-              title="Duplicate workflows"
+              title="Duplicate Workflows"
               count={n(ins.duplicateGroups.length)}
               icon={CopyIcon}
               tone={ins.duplicateGroups.length ? "warn" : undefined}
@@ -142,7 +142,7 @@ export function WorkflowsPage() {
             )}
           </Panel>
           <Panel className={summary}>
-            <PanelHead title="Instances almost unused" count={n(ins.unusedInstances.length)} icon={ServerOffIcon} />
+            <PanelHead title="Instances Almost Unused" count={n(ins.unusedInstances.length)} icon={ServerOffIcon} />
             {ins.unusedInstances.length === 0 ? (
               <p className="border-t border-line px-pad-x py-pad-y text-muted-foreground">
                 Every instance runs workflows.
@@ -159,7 +159,7 @@ export function WorkflowsPage() {
             )}
           </Panel>
           <Panel className={summary}>
-            <PanelHead title="Inactive workflows" count={n(ins.inactive)} icon={PowerOffIcon} />
+            <PanelHead title="Inactive Workflows" count={n(ins.inactive)} icon={PowerOffIcon} />
             <p className="border-t border-line px-pad-x py-pad-y text-muted-foreground">
               Candidates to archive before consolidating. Map read <TimeAgo value={ins.lastSyncedAt} />.
             </p>

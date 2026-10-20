@@ -71,7 +71,7 @@ export function renderAccessEmail(r: RequestInfo, link: string | null, timeZone 
     "",
     link
       ? `Approve or deny: ${link} (sign in with two-factor).`
-      : "Approve or deny it on the Agent access page in n8n-ops.",
+      : "Approve or deny it on the Agent Access page in n8n-ops.",
   ]
   const html = render({
     title: `${r.token} asks for access to ${r.instance}`,
@@ -93,10 +93,10 @@ export function renderAccessEmail(r: RequestInfo, link: string | null, timeZone 
       ]),
       link
         ? button("Approve or deny", link)
-        : paragraph("Approve or deny it on the Agent access page in n8n-ops.", true),
+        : paragraph("Approve or deny it on the Agent Access page in n8n-ops.", true),
       ...(link ? [paragraph("You sign in with two-factor before deciding.", true)] : []),
     ],
-    footer: "You get this because Email requests is on in Settings → Agent access.",
+    footer: "You get this because Email requests is on in Settings → Agent Access.",
   })
   return { subject: `n8n-ops: ${r.token} asks for access to ${r.instance}`, text: lines.join("\n"), html }
 }

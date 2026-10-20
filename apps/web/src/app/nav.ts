@@ -12,7 +12,7 @@ import {
   Workflow,
 } from "lucide-react"
 
-/** The pages of the navigation, in two groups; the sidebar, the tab bar, the search and page titles use them. */
+/** The pages of the navigation, in groups; the sidebar, the tab bar, the search and page titles use them. */
 export type NavItem = { to: string; label: string; icon: typeof Bug; count?: "problems" | "access" }
 export const operate: NavItem[] = [
   { to: "/", label: "Overview", icon: LayoutDashboard },
@@ -20,8 +20,11 @@ export const operate: NavItem[] = [
   { to: "/instances", label: "Instances", icon: Server },
   { to: "/workflows", label: "Workflows", icon: Workflow },
   { to: "/backups", label: "Backups", icon: DatabaseBackup },
-  { to: "/access", label: "Agent access", icon: KeyRound, count: "access" },
+]
+/** Agents: connecting them first, then the access they ask for. */
+export const agents: NavItem[] = [
   { to: "/agents", label: "Connected agents", icon: Plug },
+  { to: "/access", label: "Agent access", icon: KeyRound, count: "access" },
 ]
 export const system: NavItem[] = [
   { to: "/workers", label: "Workers", icon: Cpu },
@@ -30,6 +33,7 @@ export const system: NavItem[] = [
 ]
 export const groups = [
   { label: "Operate", items: operate },
+  { label: "Agents", items: agents },
   { label: "System", items: system },
 ]
 /** The signed-in person's own pages, opened from the account menu instead of the navigation. */

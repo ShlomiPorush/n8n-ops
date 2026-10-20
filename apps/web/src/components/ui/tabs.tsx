@@ -15,13 +15,17 @@ function Tabs({ className, orientation = "horizontal", ...props }: React.Compone
   )
 }
 
-// Tabs scroll sideways instead of wrapping; the active one has a 2px ink underline.
+/*
+ * Tabs scroll sideways instead of wrapping, without a scroll bar (important: the global thin scroll bar rule
+ * would win otherwise); the active one has a 2px ink underline. The line under them is drawn inside the list,
+ * so nothing sticks out of it to scroll up and down.
+ */
 function TabsList({ className, ...props }: React.ComponentProps<typeof TabsPrimitive.List>) {
   return (
     <TabsPrimitive.List
       data-slot="tabs-list"
       className={cn(
-        "flex w-full min-w-0 items-stretch gap-5 overflow-x-auto border-b border-line [scrollbar-width:none]",
+        "relative flex w-full min-w-0 items-stretch gap-5 overflow-x-auto overflow-y-hidden [scrollbar-width:none]! before:absolute before:inset-x-0 before:bottom-0 before:h-px before:bg-line",
         className,
       )}
       {...props}
@@ -34,7 +38,7 @@ function TabsTrigger({ className, ...props }: React.ComponentProps<typeof TabsPr
     <TabsPrimitive.Trigger
       data-slot="tabs-trigger"
       className={cn(
-        "-mb-px inline-flex shrink-0 items-center gap-1.5 border-b-2 border-transparent pt-1 pb-2 text-ctl font-semibold whitespace-nowrap text-muted-foreground transition-colors duration-150 hover:text-ink disabled:pointer-events-none disabled:opacity-50 data-[state=active]:border-primary data-[state=active]:text-ink [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+        "relative inline-flex shrink-0 items-center gap-1.5 border-b-2 border-transparent pt-1 pb-2 text-ctl font-semibold whitespace-nowrap text-muted-foreground transition-colors duration-150 hover:text-ink disabled:pointer-events-none disabled:opacity-50 data-[state=active]:border-primary data-[state=active]:text-ink [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         className,
       )}
       {...props}

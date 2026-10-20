@@ -54,6 +54,17 @@ export async function signIn(page: Page) {
   writeFileSync(sessionFile, JSON.stringify(await page.context().cookies()))
 }
 
+/**
+ * Waits until a dialog closed by hand is gone and has given back its Back entry. It calls history.back() once its
+ * panel has faded out, and that back cancels a page.goto or reload started in the meantime (net::ERR_ABORTED).
+ */
+export async function dialogClosed(page: Page) {
+  await expect(page.getByRole("dialog")).toHaveCount(0)
+  await expect
+    .poll(() => page.evaluate(() => (window.history.state as { overlay?: number } | null)?.overlay ?? null))
+    .toBeNull()
+}
+
 async function signInWithPassword(page: Page) {
   await page.goto("/login")
   await page.getByLabel("Username").fill(username)

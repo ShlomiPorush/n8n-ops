@@ -1,6 +1,6 @@
 import { writeFileSync } from "node:fs"
 import { expect, type Page, test } from "@playwright/test"
-import { currentApiKey, loadPrivateKey, n8nApi, n8nUrl, signIn } from "./helpers.ts"
+import { currentApiKey, dialogClosed, loadPrivateKey, n8nApi, n8nUrl, signIn } from "./helpers.ts"
 
 // Storage, a paired worker, an encrypted backup with credential secrets, a restore, and a move
 // with credentials, all against the real n8n and S3Mock in the test stack.
@@ -47,6 +47,7 @@ test("a worker pairs with a one-time token", async () => {
   expect(token).toMatch(/^nops_pair_/)
   writeFileSync("/worker-data/pairing-token", token)
   await page.keyboard.press("Escape")
+  await dialogClosed(page)
   // The worker reads the token file within a few seconds, then reports in.
   await expect(async () => {
     await page.reload()
@@ -107,6 +108,7 @@ test("a wrong private key is refused", async () => {
   await page.getByRole("button", { name: "Open archive" }).click()
   await expect(page.getByText(/Cannot open the archive/)).toBeVisible()
   await page.keyboard.press("Escape")
+  await dialogClosed(page)
 })
 
 test("a workflow moves to another instance with its credentials", async () => {

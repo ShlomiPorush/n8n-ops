@@ -1,6 +1,6 @@
 import { createServer, type Server } from "node:http"
 import { type APIRequestContext, expect, type Page, test } from "@playwright/test"
-import { signIn } from "./helpers.ts"
+import { dialogClosed, signIn } from "./helpers.ts"
 
 // Approving access requests from Telegram and email. The server's Telegram calls go to a stand-in Bot API run
 // here (verify.sh points TELEGRAM_API_URL at this runner); email goes to Mailpit in the test stack.
@@ -127,6 +127,7 @@ test("Telegram and email are connected", async () => {
   await page.getByRole("button", { name: "Create" }).click()
   token = ((await page.getByTestId("new-token").textContent()) ?? "").trim()
   await page.getByRole("button", { name: "Done" }).click()
+  await dialogClosed(page)
 })
 
 test("a new request reaches Telegram with buttons and email with a link", async ({ request }) => {

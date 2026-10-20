@@ -1,5 +1,5 @@
 import { expect, type Page, test } from "@playwright/test"
-import { signIn } from "./helpers.ts"
+import { dialogClosed, signIn } from "./helpers.ts"
 
 // Read-only access for agents: REST with a REST token, MCP with an MCP token, and the audit trail.
 test.describe.configure({ mode: "serial" })
@@ -29,6 +29,7 @@ for (const kind of ["rest", "mcp"] as const) {
     tokens[kind] = ((await page.getByTestId("new-token").textContent()) ?? "").trim()
     expect(tokens[kind]).toMatch(kind === "mcp" ? /^nops_mcp_/ : /^nops_api_/)
     await page.getByRole("button", { name: "Done" }).click()
+    await dialogClosed(page)
   })
 }
 

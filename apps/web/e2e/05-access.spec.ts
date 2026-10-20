@@ -1,5 +1,5 @@
 import { expect, type Page, test } from "@playwright/test"
-import { currentApiKey, n8nUrl, signIn } from "./helpers.ts"
+import { currentApiKey, dialogClosed, n8nUrl, signIn } from "./helpers.ts"
 
 // Temporary access for agents: an MCP token that may request access asks for an instance, a person approves,
 // the agent collects the key once and calls n8n through the n8n-ops proxy, which enforces scopes and workflows.
@@ -54,6 +54,7 @@ test("a token may be allowed to request access", async () => {
   await page.getByRole("button", { name: "Create" }).click()
   token = ((await page.getByTestId("new-token").textContent()) ?? "").trim()
   await page.getByRole("button", { name: "Done" }).click()
+  await dialogClosed(page)
   await expect(page.getByText("may request access")).toBeVisible()
 })
 

@@ -56,9 +56,9 @@ export async function signIn(page: Page) {
 
 /**
  * Waits until a dialog or confirmation closed without leaving the page has given back its Back entry. It calls
- * history.back() once its panel has faded out, and that back cancels a page.goto or reload started in the meantime
- * (net::ERR_ABORTED). The entry stays while the panel fades, so this also waits for the panel to go. Only for the
- * top overlay: one still open underneath keeps an entry of its own.
+ * history.back() once its panel is gone (a dialog after its fade-out), and that back cancels a page.goto or reload
+ * started in the meantime (net::ERR_ABORTED). Only for the top overlay: one still open underneath that holds an
+ * entry of its own keeps this waiting; one without an entry, such as a reading pane, does not.
  */
 export async function dialogClosed(page: Page) {
   await expect

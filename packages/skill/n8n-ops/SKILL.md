@@ -33,8 +33,8 @@ person the message as it is.
 
 Only if your tools can keep a command running after your turn ends and wake you when it finishes: start
 `n8n-ops connect --wait` in the background just before that reply and end your turn without waiting for it, so the
-person does not have to reply. Each time it wakes you with `still_waiting`, start it again the same way; stop at any
-other answer.
+person does not have to reply. Each time it wakes you with `still_waiting`, start it again the same way; at any other
+answer stop waiting and tell the person the result.
 
 `status` says whether this agent is connected. The connection belongs to this agent install (the folder this skill
 is in) and is shared by all its sessions. Run `disconnect` only when the person asks. If a command answers

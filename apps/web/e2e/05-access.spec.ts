@@ -96,6 +96,51 @@ test("the instance opens read-only access to agents", async ({ request }) => {
   }).toPass({ timeout: 30_000 })
 })
 
+test("an agent finds a workflow by part of one tag, read as written", async ({ request }) => {
+  const n8nApi = (path: string, init: RequestInit = {}) =>
+    fetch(`${n8nUrl}/api/v1${path}`, {
+      ...init,
+      headers: { "X-N8N-API-KEY": currentApiKey(), "content-type": "application/json" },
+    })
+  const setTags = async (ids: string[]) => {
+    const res = await n8nApi(`/workflows/${workflowId}/tags`, {
+      method: "PUT",
+      body: JSON.stringify(ids.map((id) => ({ id }))),
+    })
+    expect(res.status, await res.text()).toBe(200)
+  }
+  const syncNow = async () => {
+    await page.goto("/workflows")
+    const [res] = await Promise.all([
+      page.waitForResponse((r) => r.url().endsWith("/api/workflows/sync")),
+      page.getByRole("button", { name: "Refresh now" }).click(),
+    ])
+    const results = (await res.json()) as { instance: string; error?: string }[]
+    expect(results.filter((r) => r.error)).toEqual([])
+  }
+  const found = async (query: string) =>
+    ((await mcp(request, "search_workflows", { query })).value as { workflowId: string }[]).map((h) => h.workflowId)
+
+  const before = ((await (await n8nApi(`/workflows/${workflowId}/tags`)).json()) as { id: string }[]).map((t) => t.id)
+  const created: string[] = []
+  try {
+    // Two tags, so the JSON text of the list holds `", "`; one with a backslash, which JSON doubles.
+    for (const name of [String.raw`ops C:\data archive`, "e2e second"]) {
+      const res = await n8nApi("/tags", { method: "POST", body: JSON.stringify({ name }) })
+      expect(res.ok, await res.clone().text()).toBe(true)
+      created.push(((await res.json()) as { id: string }).id)
+    }
+    await setTags([...before, ...created])
+    await syncNow()
+    expect(await found(String.raw`C:\data`)).toContain(workflowId)
+    expect(await found('", "')).not.toContain(workflowId)
+  } finally {
+    await setTags(before)
+    for (const id of created) await n8nApi(`/tags/${id}`, { method: "DELETE" })
+    await syncNow()
+  }
+})
+
 test("an agent asks for what the instance allows, and nothing beyond it", async ({ request }) => {
   const tooMuch = await mcp(request, "request_instance_access", {
     instance: "e2e-n8n",

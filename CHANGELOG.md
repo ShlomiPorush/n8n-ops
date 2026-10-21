@@ -44,6 +44,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Fixed
 
+- Agent workflow search matches each tag as written: a tag with a backslash, such as `C:\data`, is found, and a search for quotes or commas no longer matches every tagged workflow.
 - Searching problems and workflows reads a backslash literally, as agent workflow search already did: `C:\data` or a lone `\` now finds names that contain it instead of being read as a LIKE escape.
 - Backups read long file names from an archive in linear time; a long name entry with a long run of NUL bytes followed by other bytes could stall the reader.
 - Commands and keys in Settings no longer sit at the right edge of the card or end in "…": they start at the left, like the text above them, and wrap in full.

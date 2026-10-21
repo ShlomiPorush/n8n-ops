@@ -7,7 +7,7 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
 PROJECT="n8n-ops-verify"
-PLAYWRIGHT_IMAGE="mcr.microsoft.com/playwright:v1.64.0-noble"
+PLAYWRIGHT_IMAGE="mcr.microsoft.com/playwright:v1.64.1-noble"
 CHANGED_BASE=""
 GUARDS=1
 CHECKS=1

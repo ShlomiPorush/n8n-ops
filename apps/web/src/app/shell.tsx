@@ -20,6 +20,7 @@ import { DesignSync } from "@/app/design-sync"
 import { groups, isActive, type NavItem, operate, pageGroups, pageOf } from "@/app/nav"
 import { GlobalSearch, PhoneSearch, type SearchPage } from "@/app/search"
 import { settingsGroups } from "@/app/settings-sections"
+import { BrandMark } from "@/components/brand-mark"
 import { SaveScope } from "@/components/save-bar"
 import { Button } from "@/components/ui/button"
 import {
@@ -83,20 +84,6 @@ function useCounts() {
       return null
     },
   }
-}
-
-function BrandMark({ className }: { className?: string }) {
-  return (
-    <span
-      aria-hidden
-      className={cn(
-        "grid size-[30px] shrink-0 place-items-center rounded-sm bg-primary text-ctl font-heavy text-primary-foreground",
-        className,
-      )}
-    >
-      n
-    </span>
-  )
 }
 
 /*

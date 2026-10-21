@@ -22,6 +22,7 @@ import { Link, useNavigate, useParams } from "react-router"
 import { useCrumb } from "@/app/chrome"
 import { AgentAccessCard } from "@/components/agent-access-card"
 import { useConfirm } from "@/components/confirm"
+import { ItemRow, ItemsHeader } from "@/components/item-row"
 import {
   Copyable,
   countChanges,
@@ -38,7 +39,6 @@ import {
   UserText,
   useSaveSource,
 } from "@/components/kit"
-import { ItemRow, ItemsHeader } from "@/components/item-row"
 import { ListWithPanel } from "@/components/list-panel"
 import { Dot, type HealthState, StatusTag, TimeAgo, Tone, When } from "@/components/status"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"

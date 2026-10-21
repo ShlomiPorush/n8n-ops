@@ -15,6 +15,7 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router"
 import { useCrumb } from "@/app/chrome"
 import { FilterBar, Picker, SearchBox } from "@/components/filter-bar"
 import { FlowGraph, type GraphNode } from "@/components/flow-graph"
+import { ItemRow, ItemsHeader, Said } from "@/components/item-row"
 import {
   Copyable,
   Empty,
@@ -29,7 +30,6 @@ import {
   Reloading,
   UserText,
 } from "@/components/kit"
-import { ItemRow, ItemsHeader, Said } from "@/components/item-row"
 import { ListWithPanel } from "@/components/list-panel"
 import { ProblemBadge, TimeAgo, When } from "@/components/status"
 import { Badge } from "@/components/ui/badge"

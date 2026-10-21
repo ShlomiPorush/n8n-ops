@@ -102,13 +102,8 @@ test("an agent finds a workflow by part of one tag, read as written", async ({ r
       ...init,
       headers: { "X-N8N-API-KEY": currentApiKey(), "content-type": "application/json" },
     })
-  const setTags = async (ids: string[]) => {
-    const res = await n8nApi(`/workflows/${workflowId}/tags`, {
-      method: "PUT",
-      body: JSON.stringify(ids.map((id) => ({ id }))),
-    })
-    expect(res.status, await res.text()).toBe(200)
-  }
+  const setTags = (ids: string[]) =>
+    n8nApi(`/workflows/${workflowId}/tags`, { method: "PUT", body: JSON.stringify(ids.map((id) => ({ id }))) })
   const syncNow = async () => {
     await page.goto("/workflows")
     const [res] = await Promise.all([
@@ -130,13 +125,16 @@ test("an agent finds a workflow by part of one tag, read as written", async ({ r
       expect(res.ok, await res.clone().text()).toBe(true)
       created.push(((await res.json()) as { id: string }).id)
     }
-    await setTags([...before, ...created])
+    const tagged = await setTags([...before, ...created])
+    expect(tagged.status, await tagged.text()).toBe(200)
     await syncNow()
     expect(await found(String.raw`C:\data`)).toContain(workflowId)
     expect(await found('", "')).not.toContain(workflowId)
   } finally {
-    await setTags(before)
-    for (const id of created) await n8nApi(`/tags/${id}`, { method: "DELETE" })
+    // Every step runs even when one fails; a soft failure still fails the test.
+    expect.soft((await setTags(before)).status, "restore the workflow's tags").toBe(200)
+    for (const id of created)
+      expect.soft((await n8nApi(`/tags/${id}`, { method: "DELETE" })).status, "delete the test tag").toBe(200)
     await syncNow()
   }
 })

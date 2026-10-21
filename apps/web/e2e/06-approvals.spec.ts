@@ -172,11 +172,16 @@ test("only an approver can approve from Telegram, and the message shows the outc
   expect(approved.status).toBe("approved")
   expect(approved.decidedBy).toBe(`telegram:${chatId}`)
   expect(approved.key).toMatch(/^nops_n8n_/)
-  const edited = calls.find(
-    (c) =>
-      c.method === "editMessageText" && c.body.message_id === messageId && String(c.body.text).includes("Approved by"),
-  )
+  const edits = () => calls.filter((c) => c.method === "editMessageText" && c.body.message_id === messageId)
+  const edited = edits().find((c) => String(c.body.text).includes(`✅ <b>Approved</b> by ${chatId} via Telegram`))
+  expect(String(edited?.body.text).startsWith("✅ <b>Access request</b>")).toBe(true)
   expect(edited?.body.reply_markup).toEqual({ inline_keyboard: [] })
+
+  // Once the agent is done, the message says so too.
+  expect((await mcp(request, "release_instance_access", { requestId: id })).status).toBe("released")
+  await expect(async () => {
+    expect(edits().some((c) => String(c.body.text).includes("⏹ <b>Released</b> by the agent at "))).toBe(true)
+  }).toPass({ timeout: 20_000 })
 })
 
 test("Deny from Telegram denies", async ({ request }) => {
@@ -189,7 +194,9 @@ test("Deny from Telegram denies", async ({ request }) => {
     expect(
       calls.some(
         (c) =>
-          c.method === "editMessageText" && c.body.message_id === messageId && String(c.body.text).includes("Denied"),
+          c.method === "editMessageText" &&
+          c.body.message_id === messageId &&
+          String(c.body.text).includes("❌ <b>Denied</b> by "),
       ),
     ).toBe(true)
   }).toPass({ timeout: 10_000 })
@@ -208,7 +215,7 @@ test("a decision in n8n-ops updates the Telegram message too", async ({ request 
       (c) =>
         c.method === "editMessageText" &&
         c.body.message_id === messageId &&
-        String(c.body.text).includes("Approved by operator"),
+        String(c.body.text).includes("✅ <b>Approved</b> by operator via n8n-ops"),
     )
     expect(edit).toBeTruthy()
   }).toPass({ timeout: 20_000 })

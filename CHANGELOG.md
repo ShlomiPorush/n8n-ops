@@ -40,6 +40,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - Connected Agents is a page of its own. The navigation has an Agents section with Connected Agents and, under it, Agent Access, which also has a button to Connected Agents. It shows how to connect in three tabs (coding agent, MCP client, script) with every command in full and a Copy button, then the connected agents and tokens, and keeps the token made by hand folded under Advanced. Account (password, two-factor and the reset command) is a page of its own too, opened from the account menu. Their old Settings addresses still open them.
 - Headings and navigation use Title Case, as English interfaces usually do: page and section names, card and dialog titles, tabs, the Settings sections and the pages that approve an agent (Agent Access, Email Reports, Connect an Agent). Buttons, field names and sentences keep their case. Sentences, emails and the README that name a page follow the new names.
 - The time zone in Settings → General is chosen from a list of every zone with its current offset, with a search by city, region or offset, instead of typed by hand.
+- The Telegram message of an access request shows its outcome at a glance: its first line starts with ✅, ❌ or ⌛, and under the request it says who decided and where ("✅ Approved by @name via Telegram", or via n8n-ops) and until when the access lasts. When approved access ends, the message is edited again to say how: released by the agent, ended on time, or revoked, with the time.
 
 ### Fixed
 

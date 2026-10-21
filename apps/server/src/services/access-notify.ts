@@ -1,4 +1,4 @@
-import { and, eq, isNotNull, isNull, ne, type SQL } from "drizzle-orm"
+import { and, eq, gt, isNotNull, isNull, ne, or, type SQL } from "drizzle-orm"
 import type { Ctx } from "../context.ts"
 import { type AccessStatus, accessRequests, apiTokens, instances } from "../db/schema.ts"
 import { AccessError, approveAccess, denyAccess } from "./access.ts"
@@ -9,8 +9,8 @@ import { clip, escapeHtml, type InlineButton } from "./telegram.ts"
 
 /**
  * Tells approvers about new access requests: a Telegram message with Approve and Deny buttons, and an email with
- * a link to the request in n8n-ops. Failed sends are retried. Once a request is decided, expires or ends, its
- * Telegram message is edited to say so and loses its buttons.
+ * a link to the request in n8n-ops. Failed sends are retried. Once a request is decided or expires, and again when
+ * approved access ends, its Telegram message is edited to say so, without buttons.
  */
 
 type RequestInfo = {
@@ -31,17 +31,62 @@ export function duration(minutes: number) {
   return m ? `${h} h ${m} min` : `${h} h`
 }
 
-const outcome: Record<Exclude<AccessStatus, "pending">, string> = {
-  approved: "Approved",
-  denied: "Denied",
-  expired: "Expired",
-  released: "Approved, then released by the agent",
-  revoked: "Revoked",
+/** How a request ended up: decided, then perhaps ended. */
+type Outcome = {
+  status: AccessStatus
+  decidedAt: Date | null
+  decidedBy: string | null
+  decidedVia: string | null
+  expiresAt: Date | null
+  endedAt: Date | null
 }
 
-export function renderAccessTelegram(r: RequestInfo, footer?: string): string {
+const channels: Record<string, string> = { telegram: "Telegram", web: "n8n-ops", email: "the email link" }
+
+/** Who decided, as people know them: a Telegram user without the "telegram:" mark, and where they decided. */
+function decider(r: Outcome) {
+  const who = (r.decidedBy ?? "someone").replace(/^telegram:/, "")
+  const channel = r.decidedVia ? channels[r.decidedVia] : undefined
+  return escapeHtml(channel ? `${who} via ${channel}` : who)
+}
+
+/** Hours and minutes in the console's time zone; an unknown zone falls back to UTC. */
+function clock(when: Date, timeZone: string) {
+  const format = (zone: string) =>
+    new Intl.DateTimeFormat("en-GB", { timeZone: zone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(
+      when,
+    )
+  try {
+    return format(timeZone)
+  } catch {
+    return format("UTC")
+  }
+}
+
+/**
+ * What a decided or ended request's message shows: an icon for its first line, so the outcome is clear at a glance,
+ * and lines under the request saying who decided where, and then how the access ended.
+ */
+export function accessOutcome(r: Outcome, timeZone: string): { icon: string; lines: string[] } {
+  const at = (when: Date | null) => (when ? ` at ${clock(when, timeZone)}` : "")
+  if (r.status === "pending") return { icon: "🔐", lines: [] }
+  if (!r.decidedAt) {
+    if (r.status === "expired") return { icon: "⌛", lines: ["⌛ <b>Expired</b> without a decision"] }
+    if (r.status === "released") return { icon: "↩️", lines: [`↩️ <b>Withdrawn</b> by the agent${at(r.endedAt)}`] }
+    return { icon: "⛔", lines: [`⛔ <b>Revoked</b> before a decision${at(r.endedAt)}`] }
+  }
+  if (r.status === "denied") return { icon: "❌", lines: [`❌ <b>Denied</b> by ${decider(r)}`] }
+  const lines = [`✅ <b>Approved</b> by ${decider(r)}`]
+  if (r.status === "approved") lines.push(`Access until ${r.expiresAt ? clock(r.expiresAt, timeZone) : "?"}`)
+  else if (r.status === "released") lines.push(`⏹ <b>Released</b> by the agent${at(r.endedAt)}`)
+  else if (r.status === "expired") lines.push(`⌛ <b>Access ended</b>${at(r.endedAt)}`)
+  else lines.push(`⛔ <b>Revoked</b>${at(r.endedAt)}`)
+  return { icon: "✅", lines }
+}
+
+export function renderAccessTelegram(r: RequestInfo, outcome?: { icon: string; lines: string[] }): string {
   return [
-    `🔐 <b>Access request</b> · ${escapeHtml(r.instance)}`,
+    `${outcome?.icon ?? "🔐"} <b>Access request</b> · ${escapeHtml(r.instance)}`,
     `<b>${escapeHtml(r.token)}</b>: ${escapeHtml(clip(r.reason, 500))}`,
     "",
     `Scopes: <code>${escapeHtml(r.scopes.join(", "))}</code>`,
@@ -49,7 +94,7 @@ export function renderAccessTelegram(r: RequestInfo, footer?: string): string {
       ? `Workflows: <code>${escapeHtml(r.workflowIds.join(", "))}</code>`
       : "Workflows: the whole instance",
     `For ${duration(r.minutes)}`,
-    ...(footer ? ["", footer] : []),
+    ...(outcome?.lines.length ? ["", ...outcome.lines] : []),
   ].join("\n")
 }
 
@@ -169,28 +214,28 @@ export async function notifyAccess(ctx: Ctx) {
   await closeTelegramMessages(ctx)
 }
 
-/** Edits the Telegram message of every decided or ended request to its outcome, without buttons. */
+/**
+ * Edits the Telegram message of every decided or ended request to its outcome, without buttons: once when it is
+ * decided, and again when approved access ends (released, expired or revoked).
+ */
 export async function closeTelegramMessages(ctx: Ctx) {
   const tg = await telegramClient(ctx)
   if (!tg) return
+  const timeZone = (await ctx.settings.get("general")).timezone || "UTC"
+  // Taken before reading, so access that ends while a message is being edited still gets its own edit.
+  const readAt = new Date()
   const done = await requestsWith(
     ctx,
     and(
       isNotNull(accessRequests.telegramMessageId),
-      isNull(accessRequests.telegramClosedAt),
       ne(accessRequests.status, "pending"),
+      or(isNull(accessRequests.telegramClosedAt), gt(accessRequests.endedAt, accessRequests.telegramClosedAt)),
     ),
   )
   for (const { r, info } of done) {
-    const status = r.status as Exclude<AccessStatus, "pending">
-    const by = r.decidedBy ? ` by ${escapeHtml(r.decidedBy)}` : ""
-    const footer =
-      status === "expired" && !r.decidedAt
-        ? "<i>Expired without a decision</i>"
-        : `<i>${outcome[status]}${status === "approved" || status === "denied" ? by : ""}</i>`
     try {
-      await tg.api.edit(tg.chatId, r.telegramMessageId ?? 0, renderAccessTelegram(info, footer))
-      await ctx.db.update(accessRequests).set({ telegramClosedAt: new Date() }).where(eq(accessRequests.id, r.id))
+      await tg.api.edit(tg.chatId, r.telegramMessageId ?? 0, renderAccessTelegram(info, accessOutcome(r, timeZone)))
+      await ctx.db.update(accessRequests).set({ telegramClosedAt: readAt }).where(eq(accessRequests.id, r.id))
     } catch (e) {
       ctx.log.warn("could not update the access request message", { requestId: r.id, error: (e as Error).message })
     }

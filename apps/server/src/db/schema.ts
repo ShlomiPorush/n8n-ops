@@ -471,7 +471,7 @@ export const accessRequests = pgTable(
     /** The key, encrypted, until the agent collects it once; then cleared. */
     keyEnc: text("key_enc"),
     keyCollectedAt: ts("key_collected_at"),
-    /** Telegram message with the Approve and Deny buttons; edited once the request is decided or expires. */
+    /** Telegram message with the Approve and Deny buttons; edited when it is decided and when access ends. */
     telegramMessageId: integer("telegram_message_id"),
     telegramClosedAt: ts("telegram_closed_at"),
     emailSentAt: ts("email_sent_at"),

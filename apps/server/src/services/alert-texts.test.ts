@@ -139,8 +139,7 @@ describe("telegramPlainText", () => {
 
   it("joins lines with a dot", () => {
     expect(telegramPlainText("<b>one</b>\ntwo\nthree")).toBe("one · two · three")
-  })
-})
+  })})
 
 describe("the Overview's backup item", () => {
   it("shows the alert as written", () => {

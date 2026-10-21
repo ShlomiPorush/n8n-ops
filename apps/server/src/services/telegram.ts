@@ -132,11 +132,17 @@ export const html = (strings: TemplateStringsArray, ...values: unknown[]) => Tel
  * decoded twice), lines joined. Exact for text made with `html`, whose only tags are its own.
  * Not an HTML sanitizer: callers show the result as text.
  */
-export const telegramPlainText = (html: TelegramHtml | string) =>
-  String(html)
-    .replace(/<[^>]+>/g, "")
+export function telegramPlainText(html: TelegramHtml | string) {
+  // Tags are dropped until none is left. One pass already leaves none; the loop makes that plain to code scanning.
+  let text = String(html)
+  for (let previous = ""; text !== previous; ) {
+    previous = text
+    text = text.replace(/<[^>]+>/g, "")
+  }
+  return text
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
     .replace(/&amp;/g, "&")
     .replace(/\n/g, " · ")
+}

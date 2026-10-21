@@ -84,9 +84,12 @@ test("list filters live in the address, survive a reload and clear in one step",
 test("a row opens from the keyboard", async () => {
   await page.goto("/instances")
   // On a wide screen the first instance opens by itself, and the list is drawn again beside it. A row
-  // focused before that is gone, so the Enter would reach nothing: wait until it has opened.
-  await expect(page).toHaveURL(/\/instances\/[^/?#]+/)
+  // focused before that is gone, so the Enter would reach nothing: wait for the pane, which only the new
+  // layout has (the address changes before it is drawn).
+  await expect(page.getByRole("region", { name: "Instance", exact: true })).toBeVisible()
   const row = page.getByRole("row").filter({ has: page.getByText("e2e-n8n-b", { exact: true }) })
+  // Not open already, or the heading below would prove nothing.
+  await expect(row).not.toHaveAttribute("aria-current", "true")
   await row.focus()
   await page.keyboard.press("Enter")
   await expect(page.getByRole("heading", { name: "e2e-n8n-b" })).toBeVisible()

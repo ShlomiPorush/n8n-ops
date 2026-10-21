@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, gt, inArray, lte } from "drizzle-orm"
 import { type Ctx, changed } from "../context.ts"
 import { type AlertKind, alertGroups, alertOutbox, alertState, instances, problems } from "../db/schema.ts"
-import { clip, escapeHtml, type InlineButton, Telegram, TelegramError } from "./telegram.ts"
+import { clip, html, type InlineButton, Telegram, TelegramError, TelegramHtml } from "./telegram.ts"
 
 type ProblemRow = typeof problems.$inferSelect
 
@@ -20,32 +20,34 @@ export async function enqueueProblemAlert(ctx: Ctx, problem: ProblemRow, reason:
 }
 
 /** Queues an immediate alert (health, backup, test). */
-export async function enqueueAlert(ctx: Ctx, kind: Exclude<AlertKind, "problem">, text: string) {
+export async function enqueueAlert(ctx: Ctx, kind: Exclude<AlertKind, "problem">, text: TelegramHtml) {
   const alerts = await ctx.settings.get("alerts")
   if ((kind === "health" && !alerts.health) || (kind === "backup" && !alerts.backup)) return
-  await ctx.db.insert(alertOutbox).values({ kind, text })
+  await ctx.db.insert(alertOutbox).values({ kind, text: String(text) })
 }
 
 /**
  * Tracks an ongoing condition (instance down, backup stale) so it alerts once when it starts
- * and once when it clears.
+ * and once when it clears. The texts are made only when the condition changes.
  */
 export async function setCondition(
   ctx: Ctx,
   key: string,
   active: boolean,
-  { kind, start, clear }: { kind: "health" | "backup"; start: string; clear?: string },
+  { kind, start, clear }: { kind: "health" | "backup"; start: () => TelegramHtml; clear?: () => TelegramHtml },
 ) {
   const [row] = await ctx.db.select().from(alertState).where(eq(alertState.key, key))
   if (active && !row?.active) {
+    const text = start()
+    const detail = String(text)
     await ctx.db
       .insert(alertState)
-      .values({ key, active: true, since: new Date(), detail: start })
-      .onConflictDoUpdate({ target: alertState.key, set: { active: true, since: new Date(), detail: start } })
-    await enqueueAlert(ctx, kind, start)
+      .values({ key, active: true, since: new Date(), detail })
+      .onConflictDoUpdate({ target: alertState.key, set: { active: true, since: new Date(), detail } })
+    await enqueueAlert(ctx, kind, text)
   } else if (!active && row?.active) {
     await ctx.db.update(alertState).set({ active: false, since: new Date() }).where(eq(alertState.key, key))
-    if (clear) await enqueueAlert(ctx, kind, clear)
+    if (clear) await enqueueAlert(ctx, kind, clear())
   }
 }
 
@@ -58,8 +60,8 @@ export type GroupLine = {
   status: string
 }
 
-/** Text of a grouped problem message (HTML). */
-export function renderProblemGroup(error: string, lines: GroupLine[], footer?: string): string {
+/** Text of a grouped problem message. */
+export function renderProblemGroup(error: string, lines: GroupLine[], footer?: TelegramHtml): TelegramHtml {
   const regression = lines.some((l) => l.regression)
   const title =
     lines.length === 1
@@ -71,17 +73,18 @@ export function renderProblemGroup(error: string, lines: GroupLine[], footer?: s
     .slice(0, 15)
     .map(
       (l) =>
-        `• <b>${escapeHtml(clip(l.workflowName, 80))}</b> on ${escapeHtml(l.instanceName)} · ${escapeHtml(clip(l.nodeName, 60))}` +
-        `${l.regression ? " (again)" : ""}${l.status !== "open" ? ` [${l.status}]` : ""}`,
+        html`• <b>${clip(l.workflowName, 80)}</b> on ${clip(l.instanceName, 200)} · ${clip(l.nodeName, 60)}${
+          l.regression ? " (again)" : ""
+        }${l.status !== "open" ? ` [${l.status}]` : ""}`,
     )
-  if (lines.length > 15) body.push(`…and ${lines.length - 15} more`)
-  return [
-    `<b>${title}</b>`,
-    `<code>${escapeHtml(clip(error, 500))}</code>`,
-    "",
+  if (lines.length > 15) body.push(html`…and ${lines.length - 15} more`)
+  return TelegramHtml.join([
+    html`<b>${title}</b>`,
+    html`<code>${clip(error, 500)}</code>`,
+    html``,
     ...body,
-    ...(footer ? ["", footer] : []),
-  ].join("\n")
+    ...(footer ? [html``, footer] : []),
+  ])
 }
 
 export async function telegramClient(ctx: Ctx) {
@@ -204,7 +207,7 @@ export async function dispatchAlerts(ctx: Ctx) {
 
   for (const row of due.filter((d) => d.kind !== "problem")) {
     try {
-      const messageId = await tg.api.send(tg.chatId, row.text)
+      const messageId = await tg.api.send(tg.chatId, TelegramHtml.stored(row.text))
       await ctx.db
         .update(alertOutbox)
         .set({ status: "sent", sentAt: new Date(), telegramMessageId: messageId })
@@ -276,7 +279,7 @@ export async function handleTelegramCallback(ctx: Ctx, update: CallbackUpdate): 
     renderProblemGroup(
       group.groupKey,
       lines,
-      `<i>${action === "r" ? "Resolved" : "Muted for 24 hours"} by ${escapeHtml(who)}</i>`,
+      html`<i>${action === "r" ? "Resolved" : "Muted for 24 hours"} by ${who}</i>`,
     ),
   )
   await tg.api.answerCallback(cb.id, action === "r" ? "Marked as resolved" : "Muted for 24 hours")
@@ -301,5 +304,5 @@ export async function syncTelegramWebhook(ctx: Ctx) {
 export async function sendTestTelegram(ctx: Ctx) {
   const tg = await telegramClient(ctx)
   if (!tg) throw new Error("Telegram is not configured: set the bot token and chat ID.")
-  await tg.api.send(tg.chatId, "<b>n8n-ops test message</b>\nAlerts will arrive here.")
+  await tg.api.send(tg.chatId, html`<b>n8n-ops test message</b>\nAlerts will arrive here.`)
 }

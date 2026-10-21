@@ -24,6 +24,20 @@ export type AttentionItem =
   | { kind: "worker"; id: string; name: string; at: Date | null }
   | { kind: "access"; id: string; name: string; detail: string; at: Date | null }
 
+/** A backup alert that is still active, with the alert's text as written (names and errors not escaped). */
+export function backupItem(
+  instance: Pick<typeof instances.$inferSelect, "id" | "name">,
+  state: Pick<typeof alertState.$inferSelect, "detail" | "since">,
+): AttentionItem {
+  return {
+    kind: "backup",
+    id: instance.id,
+    name: instance.name,
+    detail: telegramPlainText(state.detail ?? ""),
+    at: state.since,
+  }
+}
+
 /**
  * What needs the operator now: agents waiting for access, recent new problems and regressions, unhealthy
  * instances, stale backups, offline workers.
@@ -87,14 +101,7 @@ export async function attention(ctx: Ctx): Promise<AttentionItem[]> {
   const stale = await ctx.db.select().from(alertState).where(eq(alertState.active, true))
   for (const s of stale.filter((x) => x.key.startsWith("backup:"))) {
     const instance = all.find((i) => s.key === `backup:${i.id}`)
-    if (instance)
-      items.push({
-        kind: "backup",
-        id: instance.id,
-        name: instance.name,
-        detail: telegramPlainText(s.detail ?? ""),
-        at: s.since,
-      })
+    if (instance) items.push(backupItem(instance, s))
   }
   const offlineSince = new Date(Date.now() - WORKER_ONLINE_MS)
   for (const w of await ctx.db.select().from(workers).where(isNull(workers.revokedAt))) {

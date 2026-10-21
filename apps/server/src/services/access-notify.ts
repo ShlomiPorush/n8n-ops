@@ -5,7 +5,7 @@ import { AccessError, approveAccess, denyAccess } from "./access.ts"
 import { type CallbackUpdate, telegramClient } from "./alerts.ts"
 import { button, type Email, formatDate, kv, mono, panel, panelText, paragraph, render } from "./email-layout.ts"
 import { sendEmail } from "./reports.ts"
-import { clip, escapeHtml, type InlineButton } from "./telegram.ts"
+import { clip, html, type InlineButton, TelegramHtml } from "./telegram.ts"
 
 /**
  * Tells approvers about new access requests: a Telegram message with Approve and Deny buttons, and an email with
@@ -47,7 +47,7 @@ const channels: Record<string, string> = { telegram: "Telegram", web: "n8n-ops",
 function decider(r: Outcome) {
   const who = (r.decidedBy ?? "someone").replace(/^telegram:/, "")
   const channel = r.decidedVia ? channels[r.decidedVia] : undefined
-  return escapeHtml(channel ? `${who} via ${channel}` : who)
+  return clip(channel ? `${who} via ${channel}` : who, 200)
 }
 
 /** Hours and minutes in the console's time zone; an unknown zone falls back to UTC. */
@@ -67,35 +67,36 @@ function clock(when: Date, timeZone: string) {
  * What a decided or ended request's message shows: an icon for its first line, so the outcome is clear at a glance,
  * and lines under the request saying who decided where, and then how the access ended.
  */
-export function accessOutcome(r: Outcome, timeZone: string): { icon: string; lines: string[] } {
+export function accessOutcome(r: Outcome, timeZone: string): { icon: string; lines: TelegramHtml[] } {
   const at = (when: Date | null) => (when ? ` at ${clock(when, timeZone)}` : "")
   if (r.status === "pending") return { icon: "🔐", lines: [] }
   if (!r.decidedAt) {
-    if (r.status === "expired") return { icon: "⌛", lines: ["⌛ <b>Expired</b> without a decision"] }
-    if (r.status === "released") return { icon: "↩️", lines: [`↩️ <b>Withdrawn</b> by the agent${at(r.endedAt)}`] }
-    return { icon: "⛔", lines: [`⛔ <b>Revoked</b> before a decision${at(r.endedAt)}`] }
+    if (r.status === "expired") return { icon: "⌛", lines: [html`⌛ <b>Expired</b> without a decision`] }
+    if (r.status === "released")
+      return { icon: "↩️", lines: [html`↩️ <b>Withdrawn</b> by the agent${at(r.endedAt)}`] }
+    return { icon: "⛔", lines: [html`⛔ <b>Revoked</b> before a decision${at(r.endedAt)}`] }
   }
-  if (r.status === "denied") return { icon: "❌", lines: [`❌ <b>Denied</b> by ${decider(r)}`] }
-  const lines = [`✅ <b>Approved</b> by ${decider(r)}`]
-  if (r.status === "approved") lines.push(`Access until ${r.expiresAt ? clock(r.expiresAt, timeZone) : "?"}`)
-  else if (r.status === "released") lines.push(`⏹ <b>Released</b> by the agent${at(r.endedAt)}`)
-  else if (r.status === "expired") lines.push(`⌛ <b>Access ended</b>${at(r.endedAt)}`)
-  else lines.push(`⛔ <b>Revoked</b>${at(r.endedAt)}`)
+  if (r.status === "denied") return { icon: "❌", lines: [html`❌ <b>Denied</b> by ${decider(r)}`] }
+  const lines = [html`✅ <b>Approved</b> by ${decider(r)}`]
+  if (r.status === "approved") lines.push(html`Access until ${r.expiresAt ? clock(r.expiresAt, timeZone) : "?"}`)
+  else if (r.status === "released") lines.push(html`⏹ <b>Released</b> by the agent${at(r.endedAt)}`)
+  else if (r.status === "expired") lines.push(html`⌛ <b>Access ended</b>${at(r.endedAt)}`)
+  else lines.push(html`⛔ <b>Revoked</b>${at(r.endedAt)}`)
   return { icon: "✅", lines }
 }
 
-export function renderAccessTelegram(r: RequestInfo, outcome?: { icon: string; lines: string[] }): string {
-  return [
-    `${outcome?.icon ?? "🔐"} <b>Access request</b> · ${escapeHtml(r.instance)}`,
-    `<b>${escapeHtml(r.token)}</b>: ${escapeHtml(clip(r.reason, 500))}`,
-    "",
-    `Scopes: <code>${escapeHtml(r.scopes.join(", "))}</code>`,
+export function renderAccessTelegram(r: RequestInfo, outcome?: { icon: string; lines: TelegramHtml[] }): TelegramHtml {
+  return TelegramHtml.join([
+    html`${outcome?.icon ?? "🔐"} <b>Access request</b> · ${clip(r.instance, 200)}`,
+    html`<b>${clip(r.token, 200)}</b>: ${clip(r.reason, 500)}`,
+    html``,
+    html`Scopes: <code>${r.scopes.join(", ")}</code>`,
     r.workflowIds.length
-      ? `Workflows: <code>${escapeHtml(r.workflowIds.join(", "))}</code>`
-      : "Workflows: the whole instance",
-    `For ${duration(r.minutes)}`,
-    ...(outcome?.lines.length ? ["", ...outcome.lines] : []),
-  ].join("\n")
+      ? html`Workflows: <code>${r.workflowIds.join(", ")}</code>`
+      : html`Workflows: the whole instance`,
+    html`For ${duration(r.minutes)}`,
+    ...(outcome?.lines.length ? [html``, ...outcome.lines] : []),
+  ])
 }
 
 /**

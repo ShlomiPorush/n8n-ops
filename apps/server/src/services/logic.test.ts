@@ -4,6 +4,7 @@ import { type HealthReport, healthOf } from "./health.ts"
 import { compareVersions, effectiveScopes } from "./instances.ts"
 import { fingerprint, isNewer } from "./problems.ts"
 import { renderReport, zonedParts } from "./reports.ts"
+import { html } from "./telegram.ts"
 
 describe("fingerprint", () => {
   it("is the same for the same workflow, node and exact error", () => {
@@ -41,21 +42,29 @@ describe("renderProblemGroup", () => {
   }
 
   it("titles a single new problem", () => {
-    expect(renderProblemGroup("connect ECONNREFUSED", [line])).toContain("<b>New problem</b>")
+    expect(String(renderProblemGroup("connect ECONNREFUSED", [line]))).toContain("<b>New problem</b>")
   })
 
   it("titles a group with the number of workflows", () => {
-    const text = renderProblemGroup("boom", [line, { ...line, workflowName: "Update stock" }])
+    const text = String(renderProblemGroup("boom", [line, { ...line, workflowName: "Update stock" }]))
     expect(text).toContain("New problem in 2 workflows")
     expect(text).toContain("Update stock")
   })
 
   it("marks regressions", () => {
-    expect(renderProblemGroup("boom", [{ ...line, regression: true }])).toContain("<b>Regression</b>")
+    expect(String(renderProblemGroup("boom", [{ ...line, regression: true }]))).toContain("<b>Regression</b>")
   })
 
   it("escapes HTML in error text", () => {
-    expect(renderProblemGroup("<script>", [line])).toContain("&lt;script&gt;")
+    expect(String(renderProblemGroup("<script>", [line]))).toContain("&lt;script&gt;")
+  })
+
+  it("escapes and shortens the instance name, and keeps the footer's markup", () => {
+    const text = String(
+      renderProblemGroup("boom", [{ ...line, instanceName: `R&D ${"x".repeat(300)}` }], html`<i>${"by a&b"}</i>`),
+    )
+    expect(text).toContain(` on R&amp;D ${"x".repeat(195)}… · HTTP Request`)
+    expect(text.endsWith("\n\n<i>by a&amp;b</i>")).toBe(true)
   })
 })
 

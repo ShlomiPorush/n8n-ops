@@ -2,21 +2,28 @@ import { eq } from "drizzle-orm"
 import { type Ctx, changed } from "../context.ts"
 import { type Health, instances } from "../db/schema.ts"
 import { parseQueueMetrics, probe, type QueueMetrics } from "../n8n/client.ts"
+import { z } from "zod"
 import { setCondition } from "./alerts.ts"
 import type { Instance } from "./instances.ts"
-import { messageText } from "./telegram.ts"
+import { clip, html } from "./telegram.ts"
 
-export type ProbeResult = { ok: boolean; status: number; ms: number; error?: string }
+const probeResult = z.object({ ok: z.boolean(), status: z.number(), ms: z.number(), error: z.string().optional() })
 
-export type HealthReport = {
-  main: ProbeResult
-  readiness: ProbeResult
-  workers: (ProbeResult & { url: string })[]
-  queue: QueueMetrics | null
-  metricsError?: string
-  checkedAt: string
-  via: "direct" | "worker"
-}
+/** A health report as a worker sends it (collection mode "worker"); the server checks it before using it. */
+export const probeReport = z.object({
+  main: probeResult,
+  readiness: probeResult,
+  workers: z.array(probeResult.extend({ url: z.string() })),
+  queue: z
+    .object({ waiting: z.number(), active: z.number(), completed: z.number(), failed: z.number() })
+    .nullable() satisfies z.ZodType<QueueMetrics | null>,
+  metricsError: z.string().optional(),
+  checkedAt: z.string(),
+})
+
+export type ProbeResult = z.infer<typeof probeResult>
+
+export type HealthReport = z.infer<typeof probeReport> & { via: "direct" | "worker" }
 
 /** Checks an instance from the server (collection mode "direct"). */
 export async function collectDirect(instance: Instance): Promise<HealthReport> {
@@ -49,18 +56,18 @@ export function healthOf(report: HealthReport, backlogActive: boolean): Health {
   return "ok"
 }
 
-const failure = (p: ProbeResult) => messageText(p.error ?? `HTTP ${p.status}`, 500)
+const failure = (p: ProbeResult) => clip(p.error ?? `HTTP ${p.status}`, 500)
 
-/** Telegram texts (HTML) of the health alerts. Names, URLs and errors come from outside and are escaped. */
+/** Telegram texts of the health alerts. Names, URLs and errors come from outside and are shortened. */
 export const healthAlerts = {
-  down: (name: string, main: ProbeResult) => `<b>${messageText(name)} is not responding</b>\n${failure(main)}`,
-  up: (name: string) => `<b>${messageText(name)} is responding again</b>`,
+  down: (name: string, main: ProbeResult) => html`<b>${clip(name, 200)} is not responding</b>\n${failure(main)}`,
+  up: (name: string) => html`<b>${clip(name, 200)} is responding again</b>`,
   workerDown: (name: string, worker: ProbeResult & { url: string }) =>
-    `<b>Worker down on ${messageText(name)}</b>\n${messageText(worker.url)}: ${failure(worker)}`,
-  workerUp: (name: string, url: string) => `<b>Worker back on ${messageText(name)}</b>\n${messageText(url)}`,
+    html`<b>Worker down on ${clip(name, 200)}</b>\n${clip(worker.url, 200)}: ${failure(worker)}`,
+  workerUp: (name: string, url: string) => html`<b>Worker back on ${clip(name, 200)}</b>\n${clip(url, 200)}`,
   backlog: (name: string, waiting: number, minutes: number) =>
-    `<b>Queue backlog on ${messageText(name)}</b>\n${waiting} jobs waiting for more than ${minutes} minutes`,
-  backlogCleared: (name: string) => `<b>Queue backlog cleared on ${messageText(name)}</b>`,
+    html`<b>Queue backlog on ${clip(name, 200)}</b>\n${waiting} jobs waiting for more than ${minutes} minutes`,
+  backlogCleared: (name: string) => html`<b>Queue backlog cleared on ${clip(name, 200)}</b>`,
 }
 
 /** Stores a health report and raises or clears health alerts (requirement C3). */
@@ -85,20 +92,20 @@ export async function applyHealth(ctx: Ctx, instance: Instance, report: HealthRe
   const name = instance.name
   await setCondition(ctx, `down:${instance.id}`, !report.main.ok, {
     kind: "health",
-    start: healthAlerts.down(name, report.main),
-    clear: healthAlerts.up(name),
+    start: () => healthAlerts.down(name, report.main),
+    clear: () => healthAlerts.up(name),
   })
   for (const w of report.workers) {
     await setCondition(ctx, `worker:${instance.id}:${w.url}`, !w.ok, {
       kind: "health",
-      start: healthAlerts.workerDown(name, w),
-      clear: healthAlerts.workerUp(name, w.url),
+      start: () => healthAlerts.workerDown(name, w),
+      clear: () => healthAlerts.workerUp(name, w.url),
     })
   }
   await setCondition(ctx, `backlog:${instance.id}`, backlogActive, {
     kind: "health",
-    start: healthAlerts.backlog(name, waiting, s.backlogMinutes),
-    clear: healthAlerts.backlogCleared(name),
+    start: () => healthAlerts.backlog(name, waiting, s.backlogMinutes),
+    clear: () => healthAlerts.backlogCleared(name),
   })
   return health
 }

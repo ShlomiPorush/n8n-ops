@@ -47,10 +47,10 @@ export class Telegram {
     return json.result as T
   }
 
-  async send(chatId: string, text: string, buttons: InlineButton[][] = []): Promise<number> {
+  async send(chatId: string, text: TelegramHtml, buttons: InlineButton[][] = []): Promise<number> {
     const result = await this.call<{ message_id: number }>("sendMessage", {
       chat_id: chatId,
-      text,
+      text: String(text),
       parse_mode: "HTML",
       link_preview_options: { is_disabled: true },
       ...(buttons.length ? { reply_markup: { inline_keyboard: buttons } } : {}),
@@ -58,12 +58,12 @@ export class Telegram {
     return result.message_id
   }
 
-  async edit(chatId: string, messageId: number, text: string, buttons: InlineButton[][] = []) {
+  async edit(chatId: string, messageId: number, text: TelegramHtml, buttons: InlineButton[][] = []) {
     try {
       await this.call("editMessageText", {
         chat_id: chatId,
         message_id: messageId,
-        text,
+        text: String(text),
         parse_mode: "HTML",
         link_preview_options: { is_disabled: true },
         reply_markup: { inline_keyboard: buttons },
@@ -84,23 +84,56 @@ export class Telegram {
 }
 
 export function escapeHtml(text: string): string {
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
 }
 
-/** Shortens text for a message line. */
+/** Shortens text for a message line. Counts characters, so an emoji is never cut in half. */
 export function clip(text: string, max = 300): string {
-  return text.length > max ? `${text.slice(0, max - 1)}…` : text
+  if (text.length <= max) return text
+  const kept: string[] = []
+  for (const char of text) {
+    if (kept.length === max) return `${kept.slice(0, max - 1).join("")}…`
+    kept.push(char)
+  }
+  return text
 }
 
-/** A value from outside (a name, URL or error) for a message: shortened, then escaped. */
-export const messageText = (text: string, max = 200) => escapeHtml(clip(text, max))
+/**
+ * Telegram HTML (parse mode HTML). Only `html` and `TelegramHtml.join` make it, so every value from outside in it
+ * was escaped; message senders and alert queues accept nothing else.
+ */
+export class TelegramHtml {
+  private constructor(private readonly text: string) {}
+
+  toString() {
+    return this.text
+  }
+
+  static template(strings: TemplateStringsArray, values: unknown[]) {
+    const part = (value: unknown) => (value instanceof TelegramHtml ? value.text : escapeHtml(String(value)))
+    return new TelegramHtml(strings.reduce((out, s, i) => out + s + (i < values.length ? part(values[i]) : ""), ""))
+  }
+
+  static join(parts: TelegramHtml[], separator = "\n") {
+    return new TelegramHtml(parts.map((p) => p.text).join(escapeHtml(separator)))
+  }
+
+  /** Text this code made with `html` and stored (the alert outbox), read back for sending. */
+  static stored(text: string) {
+    return new TelegramHtml(text)
+  }
+}
+
+/** Builds Telegram HTML: the template's own text is markup, every value is escaped unless it is TelegramHtml. */
+export const html = (strings: TemplateStringsArray, ...values: unknown[]) => TelegramHtml.template(strings, values)
 
 /**
  * Telegram HTML as display text: tags dropped, entities read back (`&amp;` last, so nothing is
- * decoded twice), lines joined. Not an HTML sanitizer: callers show the result as text.
+ * decoded twice), lines joined. Exact for text made with `html`, whose only tags are its own.
+ * Not an HTML sanitizer: callers show the result as text.
  */
-export const telegramPlainText = (html: string) =>
-  html
+export const telegramPlainText = (html: TelegramHtml | string) =>
+  String(html)
     .replace(/<[^>]+>/g, "")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")

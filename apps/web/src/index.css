@@ -54,6 +54,8 @@
   --ui-info: #1f5fbf;
   /* How strongly a status tints the background of its tag or banner. */
   --ui-tint: 14%;
+  /* The dot of the brand mark, on the accent tile: a green that stands out from the tile in each theme. */
+  --ui-mark: #3fcf7f;
 
   /* Type: size, line height, letter spacing and weight per role. */
   --ui-h1: 28px;
@@ -150,6 +152,7 @@
   --ui-warn: #f0b03f;
   --ui-fail: #ff6b61;
   --ui-info: #7db3ff;
+  --ui-mark: #12803f;
 
   color-scheme: dark;
 }
@@ -286,6 +289,7 @@ html[data-design="regular"].dark {
   --color-warn: var(--ui-warn);
   --color-fail: var(--ui-fail);
   --color-info: var(--ui-info);
+  --color-mark: var(--ui-mark);
 
   --color-background: var(--background);
   --color-foreground: var(--foreground);

@@ -34,6 +34,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Changed
 
+- An icon of its own: a lowercase n with a green dot, in the browser tab, the top bar and the sign-in page, instead of the letter n.
 - Regular and Compact are now one app with the same pages, functions and behaviour; the Design setting changes only the look. Regular gains everything Compact had: the search in the top bar, sortable tables, filter pickers kept in the address, the save bar that asks before leaving, a confirmation before revoking a token or access, Stored/Replace/Remove for secrets, error states with Try again, times in the time zone set in Settings, sheets and a tab bar on phones. It keeps the look of #29: the page as one floating card on a grey canvas beside the sidebar, a large title with the page icon, Inter, white cards with a soft shadow and roomy rows without status edges, lists set in their own box, Recent activity as a timeline, setup steps as buttons, filters as outline buttons, table headers in small capitals, summary cards on Workflows, a card per worker, Settings sections as one card with icons beside their names, the workers status at the foot of the sidebar, and figures that count up. A design switch shows at once, without a reload.
 - Every email (the daily and weekly reports, the test email and agent access requests) uses the console's v3 layout: a headline that says what happened, key figures, tinted panels with tables, status tags, and one button to act. It follows dark mode where the mail app does, reads on phones, and is built from tables, so Outlook for Windows keeps the layout. Dates read day/month/year in the time zone set in Settings → General. Messages are sent base64-encoded, so no mail server can break a long line inside the HTML, and addresses keep the colour of the text around them.
 
@@ -45,6 +46,7 @@ All notable changes to this project are documented here. The format follows [Kee
 ### Fixed
 
 - Agent workflow search matches each tag as written: a tag with a backslash, such as `C:\data`, is found, and a search for quotes or commas no longer matches every tagged workflow.
+- Health and backup alerts in Telegram escape instance names, worker URLs and error messages, and shorten long ones. A `<` or `&` in an error made Telegram refuse the alert, so it never arrived, and markup in it could add formatting or a link. The Overview now shows these alerts with `&` and `<` as written. Alerts queued or raised before the update keep their old text.
 - Searching problems and workflows reads a backslash literally, as agent workflow search already did: `C:\data` or a lone `\` now finds names that contain it instead of being read as a LIKE escape.
 - Backups read long file names from an archive in linear time; a long name entry with a long run of NUL bytes followed by other bytes could stall the reader.
 - Commands and keys in Settings no longer sit at the right edge of the card or end in "…": they start at the left, like the text above them, and wrap in full.

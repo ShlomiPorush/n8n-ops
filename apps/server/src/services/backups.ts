@@ -11,7 +11,17 @@ import { clientFor, type Instance } from "./instances.ts"
 import { zonedParts } from "./reports.ts"
 import { selectKeep } from "./retention.ts"
 import { deleteObject, getObject, objectKey, putObject, requireStorage, storageFor, verifyObject } from "./storage.ts"
+import { messageText } from "./telegram.ts"
 import { enqueueJob, pendingJobs } from "./workers.ts"
+
+/** Telegram texts (HTML) of the backup alerts. The name and the worker's error are escaped. */
+export const backupAlerts = {
+  failed: (name: string, error?: string) =>
+    `<b>Backup failed on ${messageText(name)}</b>\n${messageText(error ?? "", 500)}`,
+  working: (name: string) => `<b>Backups of ${messageText(name)} are working again</b>`,
+  stale: (name: string, hours: number) =>
+    `<b>Backup is stale on ${messageText(name)}</b>\nNo successful backup for more than ${hours} hours.`,
+}
 
 const exec = promisify(execFile)
 type Run = typeof backupRuns.$inferSelect
@@ -149,12 +159,12 @@ export async function finishRun(
   const name = instance?.name ?? "n8n-ops"
   if (!outcome.ok) {
     ctx.log.warn("backup failed", { instance: name, error: outcome.error })
-    await enqueueAlert(ctx, "backup", `<b>Backup failed on ${name}</b>\n${outcome.error ?? ""}`)
+    await enqueueAlert(ctx, "backup", backupAlerts.failed(name, outcome.error))
   } else {
     await setCondition(ctx, `backup:${run.instanceId ?? "self"}`, false, {
       kind: "backup",
       start: "",
-      clear: `<b>Backups of ${name} are working again</b>`,
+      clear: backupAlerts.working(name),
     })
     await applyRetention(ctx, run.instanceId, instance?.overrides ?? {})
   }
@@ -216,7 +226,7 @@ export async function scheduleBackups(ctx: Ctx, now = new Date()) {
     const stale = now.getTime() - reference.getTime() > s.staleBackupHours * 3600_000
     await setCondition(ctx, `backup:${instance.id}`, stale, {
       kind: "backup",
-      start: `<b>Backup is stale on ${instance.name}</b>\nNo successful backup for more than ${s.staleBackupHours} hours.`,
+      start: backupAlerts.stale(instance.name, s.staleBackupHours),
     })
   }
   await maybeSelfBackup(ctx, local)

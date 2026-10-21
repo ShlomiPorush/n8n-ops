@@ -1,17 +1,13 @@
 import { REGEXP_ONLY_DIGITS } from "input-otp"
 import { useState } from "react"
+import { BrandMark } from "@/components/brand-mark"
 import { InputOTP, InputOTPGroup, InputOTPSeparator, InputOTPSlot } from "@/components/ui/input-otp"
 import { cn } from "@/lib/utils"
 
 export function Logo() {
   return (
     <div className="flex items-center gap-2.5">
-      <span
-        aria-hidden
-        className="grid size-[30px] place-items-center rounded-sm bg-primary text-ctl font-heavy text-primary-foreground"
-      >
-        n
-      </span>
+      <BrandMark />
       <span className="text-head font-bold tracking-tight">n8n-ops</span>
     </div>
   )

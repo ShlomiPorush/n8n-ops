@@ -4,6 +4,7 @@ import type { Ctx } from "../context.ts"
 import { alertOutbox, alertState, backupRuns, failures, instances, problems } from "../db/schema.ts"
 import { type Email, formatDate, panel, plural, render, stats, type Tone, table, tag } from "./email-layout.ts"
 import { compareVersions, latestN8nVersion } from "./instances.ts"
+import { telegramPlainText } from "./telegram.ts"
 
 const n = (value: number) => value.toLocaleString("en-US")
 
@@ -152,16 +153,6 @@ export function renderReport(d: ReportData): Report {
   return { subject: `${title}: ${plural(totalOpen, "open problem")}`, text, html }
 }
 
-/** Telegram HTML as plain text: tags dropped, entities read back, lines joined. */
-const plainText = (html: string) =>
-  html
-    .replace(/<[^>]+>/g, "")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&amp;/g, "&")
-    .replace(/\n/g, " · ")
-
 export async function buildReport(ctx: Ctx, period: "daily" | "weekly"): Promise<Report> {
   const since = new Date(Date.now() - (period === "daily" ? 1 : 7) * 86_400_000)
   const allInstances = await ctx.db.select().from(instances)
@@ -200,7 +191,7 @@ export async function buildReport(ctx: Ctx, period: "daily" | "weekly"): Promise
     period,
     openByInstance: allInstances.map((i) => ({ name: i.name, open: open.find((o) => o.instanceId === i.id)?.n ?? 0 })),
     topWorkflows: top.map((t) => ({ workflow: t.workflow, instance: name.get(t.instanceId) ?? "?", failures: t.n })),
-    incidents: incidents.map((i) => ({ at: i.at, text: plainText(i.text) })),
+    incidents: incidents.map((i) => ({ at: i.at, text: telegramPlainText(i.text) })),
     backups,
     versions: allInstances.map((i) => ({ name: i.name, version: i.version })),
     latest: await latestN8nVersion(),

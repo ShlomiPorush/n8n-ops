@@ -4,6 +4,7 @@ import type { Ctx } from "../context.ts"
 import { accessRequests, alertState, apiTokens, backupRuns, instances, problems, workers } from "../db/schema.ts"
 import { requireUser } from "../http/middleware.ts"
 import type { Env } from "../http/types.ts"
+import { telegramPlainText } from "../services/telegram.ts"
 
 export const WORKER_ONLINE_MS = 90_000
 
@@ -91,7 +92,7 @@ export async function attention(ctx: Ctx): Promise<AttentionItem[]> {
         kind: "backup",
         id: instance.id,
         name: instance.name,
-        detail: (s.detail ?? "").replace(/<[^>]+>/g, ""),
+        detail: telegramPlainText(s.detail ?? ""),
         at: s.since,
       })
   }

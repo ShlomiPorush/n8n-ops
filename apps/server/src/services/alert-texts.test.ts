@@ -107,7 +107,8 @@ describe("clip", () => {
   it("never cuts an emoji in half", () => {
     const clipped = clip(`${"a".repeat(498)}😀😀😀`, 500)
     expect(clipped).toBe(`${"a".repeat(498)}😀…`)
-    expect(clipped.isWellFormed()).toBe(true)
+    expect(clipped).not.toMatch(/\p{Cs}/u) // no lone surrogate
+    expect("😀".slice(0, 1)).toMatch(/\p{Cs}/u) // half an emoji is one
   })
 
   it("counts characters, not UTF-16 units", () => {

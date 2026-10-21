@@ -237,6 +237,7 @@ export function BackupsPage() {
                     <ItemRow
                       lead={dot}
                       title={<UserText>{r.name}</UserText>}
+                      titleText={r.name}
                       end={
                         <>
                           <Said>Last success</Said>
@@ -246,10 +247,11 @@ export function BackupsPage() {
                       sub={
                         <>
                           {tag && <>{tag} </>}
-                          {includes} · daily at {r.backupTime}
+                          {includes}
                         </>
                       }
-                      subEnd={runNow || undefined}
+                      subEnd={<span className="tabular-nums">daily at {r.backupTime}</span>}
+                      action={runNow || undefined}
                     />
                   ) : (
                     <>

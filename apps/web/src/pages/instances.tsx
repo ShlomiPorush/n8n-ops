@@ -218,6 +218,7 @@ export function InstancesPage() {
                 <ItemRow
                   lead={<Dot health={i.health} />}
                   title={<UserText>{i.name}</UserText>}
+                  titleText={i.name}
                   end={
                     i.openProblems > 0 ? (
                       <span className="font-semibold text-fail">{plural(i.openProblems, "open problem")}</span>

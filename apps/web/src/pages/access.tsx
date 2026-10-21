@@ -131,6 +131,7 @@ export function AccessPage() {
               <TableRow key={r.id} {...rowProps(r)}>
                 <ItemRow
                   title={<UserText>{r.reason}</UserText>}
+                  titleText={r.reason}
                   end={<StatusTag kind="access" status={r.status} />}
                   sub={
                     <>

@@ -141,6 +141,7 @@ export function ProblemsTable({
             <TableRow key={p.id} {...rowProps(p)}>
               <ItemRow
                 title={<UserText>{p.workflowName}</UserText>}
+                titleText={p.workflowName}
                 end={
                   <>
                     <b className="font-semibold">{n(p.count)}</b>{" "}

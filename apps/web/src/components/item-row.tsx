@@ -22,23 +22,30 @@ export function ItemsHeader({ label }: { label: string }) {
 
 /**
  * One item: an optional lead (a status), the title with a figure at its end, a muted line with its own end
- * value, and an optional detail line. Title, line and detail cut off with an ellipsis; the end values never do.
+ * value, and an optional detail line or action. Title, line and detail cut off with an ellipsis, so put
+ * nothing there that must always show; the end values never cut off.
  */
 export function ItemRow({
   lead,
   title,
+  titleText,
   end,
   sub,
   subEnd,
   detail,
+  action,
 }: {
   /** A small status mark (a dot) before the title; a status tag goes at the start of the line instead. */
   lead?: React.ReactNode
   title: React.ReactNode
+  /** The whole title, shown on hover when it is cut off. */
+  titleText?: string
   end?: React.ReactNode
   sub?: React.ReactNode
   subEnd?: React.ReactNode
   detail?: React.ReactNode
+  /** A button on a line of its own, in place of the detail. */
+  action?: React.ReactNode
 }) {
   const led = lead !== undefined
   const main = led ? "col-start-2" : "col-start-1"
@@ -52,22 +59,42 @@ export function ItemRow({
           led ? "grid-cols-[auto_minmax(0,1fr)_auto]" : "grid-cols-[minmax(0,1fr)_auto]",
         )}
       >
-        {led && <div className="col-start-1 row-start-1 flex self-center">{lead}</div>}
-        <div data-part="title" className={cn(main, "row-start-1 min-w-0 truncate font-semibold")}>
+        {led && (
+          <div data-part="lead" className="col-start-1 row-start-1 flex self-center">
+            {lead}
+          </div>
+        )}
+        <div data-part="title" title={titleText} className={cn(main, "row-start-1 min-w-0 truncate font-semibold")}>
           {title}
         </div>
         {end !== undefined && (
-          <div className={cn(side, "row-start-1 text-end whitespace-nowrap tabular-nums")}>{end}</div>
+          <div data-part="end" className={cn(side, "row-start-1 text-end whitespace-nowrap tabular-nums")}>
+            {end}
+          </div>
         )}
         {sub !== undefined && (
-          <div className={cn(main, "row-start-2 min-w-0 truncate text-small text-muted-foreground")}>{sub}</div>
+          <div data-part="sub" className={cn(main, "row-start-2 min-w-0 truncate text-small text-muted-foreground")}>
+            {sub}
+          </div>
         )}
         {subEnd !== undefined && (
-          <div className={cn(side, "row-start-2 text-end text-small whitespace-nowrap text-muted-foreground")}>
+          <div
+            data-part="sub-end"
+            className={cn(side, "row-start-2 text-end text-small whitespace-nowrap text-muted-foreground")}
+          >
             {subEnd}
           </div>
         )}
-        {detail !== undefined && <div className={cn(main, "col-span-2 row-start-3 min-w-0 truncate")}>{detail}</div>}
+        {detail !== undefined && (
+          <div data-part="detail" className={cn(main, "col-span-2 row-start-3 min-w-0 truncate")}>
+            {detail}
+          </div>
+        )}
+        {action !== undefined && (
+          <div data-part="action" className={cn(main, "col-span-2 row-start-3 pt-1")}>
+            {action}
+          </div>
+        )}
       </div>
     </TableCell>
   )

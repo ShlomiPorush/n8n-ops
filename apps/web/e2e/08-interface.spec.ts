@@ -85,13 +85,16 @@ test("a row opens from the keyboard, with Enter and with Space, and keeps its fo
   await page.goto("/instances")
   // On a wide screen the first instance opens by itself.
   await expect(page.locator('tr[aria-current="true"]')).toHaveCount(1)
+  const names = ["e2e-n8n", "e2e-n8n-b"]
+  const rowOf = (name: string) => page.getByRole("row").filter({ has: page.getByText(name, { exact: true }) })
+  // Start from the one that is not open, or the heading below would prove nothing.
+  if ((await rowOf(names[0] as string).getAttribute("aria-current")) === "true") names.reverse()
   for (const [name, key] of [
-    ["e2e-n8n-b", "Enter"],
-    ["e2e-n8n", "Space"],
+    [names[0] as string, "Enter"],
+    [names[1] as string, "Space"],
   ] as const) {
-    const row = page.getByRole("row").filter({ has: page.getByText(name, { exact: true }) })
-    // Not open already, or the heading below would prove nothing.
-    if ((await row.getAttribute("aria-current")) === "true") continue
+    const row = rowOf(name)
+    await expect(row).not.toHaveAttribute("aria-current", "true")
     await row.focus()
     await page.keyboard.press(key)
     await expect(page.getByRole("heading", { name, exact: true })).toBeVisible()
@@ -151,6 +154,12 @@ test("beside the reading pane every row shows all its values, at any width of th
             }
             const title = item.querySelector('[data-part="title"]') as HTMLElement
             if (title.getBoundingClientRect().width < 120) out.push(`"${title.textContent}" has no room`)
+            // The end values, the status and the action are never shortened.
+            for (const part of item.querySelectorAll<HTMLElement>(
+              '[data-part="end"], [data-part="sub-end"], [data-part="lead"], [data-part="action"]',
+            )) {
+              if (part.scrollWidth > part.clientWidth + 1) out.push(`"${part.textContent}" is cut off`)
+            }
           }
           return out
         })

@@ -139,6 +139,12 @@ async function pendingRequest(ctx: Ctx, id: string) {
   return row
 }
 
+/**
+ * Set with every change of status, in the same update: the request's Telegram message no longer shows its status,
+ * so it is edited again (see closeTelegramMessages).
+ */
+const messageOutdated = { telegramClosedAt: null }
+
 export async function approveAccess(ctx: Ctx, id: string, who: Decider) {
   const row = await pendingRequest(ctx, id)
   const key = newToken(KEY_PREFIX)
@@ -154,6 +160,7 @@ export async function approveAccess(ctx: Ctx, id: string, who: Decider) {
       keyPrefix: key.slice(0, KEY_PREFIX.length + 5),
       keyHash: sha256(key),
       keyEnc: ctx.secrets.encrypt(key),
+      ...messageOutdated,
     })
     // Only one decision wins if two approvers press at once.
     .where(and(eq(accessRequests.id, id), eq(accessRequests.status, "pending")))
@@ -167,7 +174,7 @@ export async function denyAccess(ctx: Ctx, id: string, who: Decider) {
   await pendingRequest(ctx, id)
   const [updated] = await ctx.db
     .update(accessRequests)
-    .set({ status: "denied", decidedAt: new Date(), decidedBy: who.by, decidedVia: who.via })
+    .set({ status: "denied", decidedAt: new Date(), decidedBy: who.by, decidedVia: who.via, ...messageOutdated })
     .where(and(eq(accessRequests.id, id), eq(accessRequests.status, "pending")))
     .returning()
   if (!updated) throw new AccessError("already_decided", "The request was decided meanwhile.")
@@ -179,7 +186,7 @@ export async function denyAccess(ctx: Ctx, id: string, who: Decider) {
 export async function revokeAccess(ctx: Ctx, id: string, who: Decider) {
   const [updated] = await ctx.db
     .update(accessRequests)
-    .set({ status: "revoked", endedAt: new Date(), keyEnc: null })
+    .set({ status: "revoked", endedAt: new Date(), keyEnc: null, ...messageOutdated })
     .where(and(eq(accessRequests.id, id), inArray(accessRequests.status, ["pending", "approved"])))
     .returning()
   if (!updated) throw new AccessError("not_active", "The request is not pending or active.")
@@ -260,7 +267,7 @@ export async function releaseAccess(ctx: Ctx, tokenId: string, id: string) {
   if (!row) throw new AccessError("not_found", "There is no such request for this token.")
   const [updated] = await ctx.db
     .update(accessRequests)
-    .set({ status: "released", endedAt: new Date(), keyEnc: null })
+    .set({ status: "released", endedAt: new Date(), keyEnc: null, ...messageOutdated })
     .where(and(eq(accessRequests.id, id), inArray(accessRequests.status, ["pending", "approved"])))
     .returning()
   if (!updated) throw new AccessError("not_active", "The request is not pending or active.")
@@ -273,7 +280,7 @@ export async function expireAccess(ctx: Ctx) {
   const now = new Date()
   const ended = await ctx.db
     .update(accessRequests)
-    .set({ status: "expired", endedAt: now, keyEnc: null })
+    .set({ status: "expired", endedAt: now, keyEnc: null, ...messageOutdated })
     .where(
       or(
         and(eq(accessRequests.status, "pending"), lt(accessRequests.decideBy, now)),

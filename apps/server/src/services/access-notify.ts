@@ -1,4 +1,4 @@
-import { and, eq, gt, isNotNull, isNull, ne, or, type SQL } from "drizzle-orm"
+import { and, eq, isNotNull, isNull, ne, type SQL } from "drizzle-orm"
 import type { Ctx } from "../context.ts"
 import { type AccessStatus, accessRequests, apiTokens, instances } from "../db/schema.ts"
 import { AccessError, approveAccess, denyAccess } from "./access.ts"
@@ -218,24 +218,35 @@ export async function notifyAccess(ctx: Ctx) {
  * Edits the Telegram message of every decided or ended request to its outcome, without buttons: once when it is
  * decided, and again when approved access ends (released, expired or revoked).
  */
-export async function closeTelegramMessages(ctx: Ctx) {
+export function closeTelegramMessages(ctx: Ctx) {
+  // One run at a time (the scheduler and button presses both call this), so an older edit never lands after a newer.
+  closing = closing.catch(() => undefined).then(() => closeOutdated(ctx))
+  return closing
+}
+let closing: Promise<void> = Promise.resolve()
+
+async function closeOutdated(ctx: Ctx) {
   const tg = await telegramClient(ctx)
   if (!tg) return
   const timeZone = (await ctx.settings.get("general")).timezone || "UTC"
-  // Taken before reading, so access that ends while a message is being edited still gets its own edit.
-  const readAt = new Date()
-  const done = await requestsWith(
+  // Every change of status clears telegramClosedAt in the same update (access.ts), so these are the messages
+  // that do not show their request's status yet.
+  const outdated = await requestsWith(
     ctx,
     and(
       isNotNull(accessRequests.telegramMessageId),
       ne(accessRequests.status, "pending"),
-      or(isNull(accessRequests.telegramClosedAt), gt(accessRequests.endedAt, accessRequests.telegramClosedAt)),
+      isNull(accessRequests.telegramClosedAt),
     ),
   )
-  for (const { r, info } of done) {
+  for (const { r, info } of outdated) {
     try {
       await tg.api.edit(tg.chatId, r.telegramMessageId ?? 0, renderAccessTelegram(info, accessOutcome(r, timeZone)))
-      await ctx.db.update(accessRequests).set({ telegramClosedAt: readAt }).where(eq(accessRequests.id, r.id))
+      // Marked as shown only if the status is still the one shown; if it changed meanwhile, the next run edits again.
+      await ctx.db
+        .update(accessRequests)
+        .set({ telegramClosedAt: new Date() })
+        .where(and(eq(accessRequests.id, r.id), eq(accessRequests.status, r.status)))
     } catch (e) {
       ctx.log.warn("could not update the access request message", { requestId: r.id, error: (e as Error).message })
     }

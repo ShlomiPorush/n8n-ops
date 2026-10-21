@@ -473,6 +473,7 @@ export const accessRequests = pgTable(
     keyCollectedAt: ts("key_collected_at"),
     /** Telegram message with the Approve and Deny buttons; edited when it is decided and when access ends. */
     telegramMessageId: integer("telegram_message_id"),
+    /** When the message last showed the current status; cleared on every change of status. */
     telegramClosedAt: ts("telegram_closed_at"),
     emailSentAt: ts("email_sent_at"),
     /** Last attempt to notify approvers, and its error, for retries. */

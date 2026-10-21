@@ -91,3 +91,19 @@ export function escapeHtml(text: string): string {
 export function clip(text: string, max = 300): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text
 }
+
+/** A value from outside (a name, URL or error) for a message: shortened, then escaped. */
+export const messageText = (text: string, max = 200) => escapeHtml(clip(text, max))
+
+/**
+ * Telegram HTML as display text: tags dropped, entities read back (`&amp;` last, so nothing is
+ * decoded twice), lines joined. Not an HTML sanitizer: callers show the result as text.
+ */
+export const telegramPlainText = (html: string) =>
+  html
+    .replace(/<[^>]+>/g, "")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, "&")
+    .replace(/\n/g, " · ")

@@ -4,6 +4,7 @@ import { type Health, instances } from "../db/schema.ts"
 import { parseQueueMetrics, probe, type QueueMetrics } from "../n8n/client.ts"
 import { setCondition } from "./alerts.ts"
 import type { Instance } from "./instances.ts"
+import { messageText } from "./telegram.ts"
 
 export type ProbeResult = { ok: boolean; status: number; ms: number; error?: string }
 
@@ -48,6 +49,20 @@ export function healthOf(report: HealthReport, backlogActive: boolean): Health {
   return "ok"
 }
 
+const failure = (p: ProbeResult) => messageText(p.error ?? `HTTP ${p.status}`, 500)
+
+/** Telegram texts (HTML) of the health alerts. Names, URLs and errors come from outside and are escaped. */
+export const healthAlerts = {
+  down: (name: string, main: ProbeResult) => `<b>${messageText(name)} is not responding</b>\n${failure(main)}`,
+  up: (name: string) => `<b>${messageText(name)} is responding again</b>`,
+  workerDown: (name: string, worker: ProbeResult & { url: string }) =>
+    `<b>Worker down on ${messageText(name)}</b>\n${messageText(worker.url)}: ${failure(worker)}`,
+  workerUp: (name: string, url: string) => `<b>Worker back on ${messageText(name)}</b>\n${messageText(url)}`,
+  backlog: (name: string, waiting: number, minutes: number) =>
+    `<b>Queue backlog on ${messageText(name)}</b>\n${waiting} jobs waiting for more than ${minutes} minutes`,
+  backlogCleared: (name: string) => `<b>Queue backlog cleared on ${messageText(name)}</b>`,
+}
+
 /** Stores a health report and raises or clears health alerts (requirement C3). */
 export async function applyHealth(ctx: Ctx, instance: Instance, report: HealthReport) {
   const s = await ctx.settings.forInstance(instance.overrides)
@@ -70,20 +85,20 @@ export async function applyHealth(ctx: Ctx, instance: Instance, report: HealthRe
   const name = instance.name
   await setCondition(ctx, `down:${instance.id}`, !report.main.ok, {
     kind: "health",
-    start: `<b>${name} is not responding</b>\n${report.main.error ?? `HTTP ${report.main.status}`}`,
-    clear: `<b>${name} is responding again</b>`,
+    start: healthAlerts.down(name, report.main),
+    clear: healthAlerts.up(name),
   })
   for (const w of report.workers) {
     await setCondition(ctx, `worker:${instance.id}:${w.url}`, !w.ok, {
       kind: "health",
-      start: `<b>Worker down on ${name}</b>\n${w.url}: ${w.error ?? `HTTP ${w.status}`}`,
-      clear: `<b>Worker back on ${name}</b>\n${w.url}`,
+      start: healthAlerts.workerDown(name, w),
+      clear: healthAlerts.workerUp(name, w.url),
     })
   }
   await setCondition(ctx, `backlog:${instance.id}`, backlogActive, {
     kind: "health",
-    start: `<b>Queue backlog on ${name}</b>\n${waiting} jobs waiting for more than ${s.backlogMinutes} minutes`,
-    clear: `<b>Queue backlog cleared on ${name}</b>`,
+    start: healthAlerts.backlog(name, waiting, s.backlogMinutes),
+    clear: healthAlerts.backlogCleared(name),
   })
   return health
 }

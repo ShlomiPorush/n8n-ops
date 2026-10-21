@@ -16,8 +16,7 @@ import { enqueueJob, pendingJobs } from "./workers.ts"
 
 /** Telegram texts of the backup alerts. The name and the worker's error come from outside and are shortened. */
 export const backupAlerts = {
-  failed: (name: string, error?: string) =>
-    html`<b>Backup failed on ${clip(name, 200)}</b>\n${clip(error ?? "", 500)}`,
+  failed: (name: string, error?: string) => html`<b>Backup failed on ${clip(name, 200)}</b>\n${clip(error ?? "", 500)}`,
   working: (name: string) => html`<b>Backups of ${clip(name, 200)} are working again</b>`,
   stale: (name: string, hours: number) =>
     html`<b>Backup is stale on ${clip(name, 200)}</b>\nNo successful backup for more than ${hours} hours.`,

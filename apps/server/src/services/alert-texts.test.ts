@@ -125,7 +125,7 @@ describe("telegramPlainText", () => {
   })
 
   it("reads any value back exactly", () => {
-    for (const value of ['<a href="x">&amp;</a>', "&lt;&gt;&quot;&amp;", "a & b < c > d \" e", "&&amp;;"])
+    for (const value of ['<a href="x">&amp;</a>', "&lt;&gt;&quot;&amp;", 'a & b < c > d " e', "&&amp;;"])
       expect(telegramPlainText(html`${value}`)).toBe(value)
   })
 

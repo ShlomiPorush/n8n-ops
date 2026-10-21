@@ -72,8 +72,7 @@ export function accessOutcome(r: Outcome, timeZone: string): { icon: string; lin
   if (r.status === "pending") return { icon: "🔐", lines: [] }
   if (!r.decidedAt) {
     if (r.status === "expired") return { icon: "⌛", lines: [html`⌛ <b>Expired</b> without a decision`] }
-    if (r.status === "released")
-      return { icon: "↩️", lines: [html`↩️ <b>Withdrawn</b> by the agent${at(r.endedAt)}`] }
+    if (r.status === "released") return { icon: "↩️", lines: [html`↩️ <b>Withdrawn</b> by the agent${at(r.endedAt)}`] }
     return { icon: "⛔", lines: [html`⛔ <b>Revoked</b> before a decision${at(r.endedAt)}`] }
   }
   if (r.status === "denied") return { icon: "❌", lines: [html`❌ <b>Denied</b> by ${decider(r)}`] }

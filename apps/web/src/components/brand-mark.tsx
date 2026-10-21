@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils"
 export function BrandMark({ className }: { className?: string }) {
   return (
     <span aria-hidden className={cn("grid size-[30px] shrink-0 place-items-center rounded-sm bg-primary", className)}>
-      <svg viewBox="0 0 32 32" className="size-full">
+      <svg aria-hidden="true" viewBox="0 0 32 32" className="size-full">
         <path
           d="M10 10.5V24M10 16.5a6 6 0 0 1 12 0V24"
           fill="none"

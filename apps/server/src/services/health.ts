@@ -109,3 +109,14 @@ export async function applyHealth(ctx: Ctx, instance: Instance, report: HealthRe
   })
   return health
 }
+
+/** Applies a health report a worker sent. One that does not fit is logged and leaves the last known health. */
+export async function applyWorkerReport(ctx: Ctx, instance: Instance, result: unknown, worker: string) {
+  const report = probeReport.safeParse(result)
+  if (report.success) return applyHealth(ctx, instance, { ...report.data, via: "worker" })
+  ctx.log.warn("worker sent an invalid health report", {
+    instance: instance.name,
+    worker,
+    issues: report.error.issues.slice(0, 5).map((i) => `${i.path.join(".")}: ${i.message}`),
+  })
+}

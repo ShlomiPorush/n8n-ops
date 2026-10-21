@@ -84,14 +84,30 @@ export function accessOutcome(r: Outcome, timeZone: string): { icon: string; lin
   return { icon: "✅", lines }
 }
 
+/** A list within about `max` characters, so the message stays under Telegram's limit; the rest is counted. */
+function listWithin(items: string[], max: number) {
+  const shown: string[] = []
+  let length = 0
+  for (const item of items) {
+    const text = clip(item, 100)
+    if (shown.length && length + 2 + text.length > max) break
+    shown.push(text)
+    length += (shown.length > 1 ? 2 : 0) + text.length
+  }
+  const rest = items.length - shown.length
+  return { text: shown.join(", "), more: rest ? ` and ${rest} more` : "" }
+}
+
 export function renderAccessTelegram(r: RequestInfo, outcome?: { icon: string; lines: TelegramHtml[] }): TelegramHtml {
+  const scopes = listWithin(r.scopes, 600)
+  const workflows = listWithin(r.workflowIds, 1500)
   return TelegramHtml.join([
     html`${outcome?.icon ?? "🔐"} <b>Access request</b> · ${clip(r.instance, 200)}`,
     html`<b>${clip(r.token, 200)}</b>: ${clip(r.reason, 500)}`,
     html``,
-    html`Scopes: <code>${r.scopes.join(", ")}</code>`,
+    html`Scopes: <code>${scopes.text}</code>${scopes.more}`,
     r.workflowIds.length
-      ? html`Workflows: <code>${r.workflowIds.join(", ")}</code>`
+      ? html`Workflows: <code>${workflows.text}</code>${workflows.more}`
       : html`Workflows: the whole instance`,
     html`For ${duration(r.minutes)}`,
     ...(outcome?.lines.length ? [html``, ...outcome.lines] : []),

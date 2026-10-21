@@ -1,7 +1,9 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
+import type { Ctx } from "../context.ts"
 import { backupItem } from "../routes/overview.ts"
 import { backupAlerts } from "./backups.ts"
-import { healthAlerts, type ProbeResult, probeReport } from "./health.ts"
+import { applyWorkerReport, healthAlerts, type ProbeResult, probeReport } from "./health.ts"
+import type { Instance } from "./instances.ts"
 import { clip, html, TelegramHtml, telegramPlainText } from "./telegram.ts"
 
 const failed = (error?: string): ProbeResult => ({ ok: false, status: 503, ms: 12, error })
@@ -179,5 +181,34 @@ describe("a worker's health report", () => {
     const parsed = probeReport.safeParse(broken)
     expect(parsed.success).toBe(false)
     expect(parsed.error?.issues.map((i) => i.path.join("."))).toEqual(["main.error", "workers.0.url"])
+  })
+
+  // applyHealth starts by reading the instance's settings, so a call to it shows here as that read.
+  const reached = new Error("applyHealth was called")
+  const fakeCtx = () => {
+    const warn = vi.fn()
+    const forInstance = vi.fn(async () => {
+      throw reached
+    })
+    return { ctx: { log: { warn }, settings: { forInstance } } as unknown as Ctx, warn, forInstance }
+  }
+  const instance = { id: "i1", name: "prod", overrides: {} } as unknown as Instance
+
+  it("reaches the health alerts when it fits", async () => {
+    const { ctx, warn } = fakeCtx()
+    await expect(applyWorkerReport(ctx, instance, report, "w")).rejects.toBe(reached)
+    expect(warn).not.toHaveBeenCalled()
+  })
+
+  it("is logged and skipped when it does not fit", async () => {
+    const { ctx, warn, forInstance } = fakeCtx()
+    const broken = { ...report, main: { ok: false, status: 0, ms: 1, error: { code: 1 } } }
+    await expect(applyWorkerReport(ctx, instance, broken, "w")).resolves.toBeUndefined()
+    expect(forInstance).not.toHaveBeenCalled()
+    expect(warn).toHaveBeenCalledWith("worker sent an invalid health report", {
+      instance: "prod",
+      worker: "w",
+      issues: [expect.stringMatching(/^main\.error: /)],
+    })
   })
 })

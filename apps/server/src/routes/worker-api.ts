@@ -5,7 +5,7 @@ import { z } from "zod"
 import type { Ctx } from "../context.ts"
 import { backupRuns, instances, workerJobs, workers } from "../db/schema.ts"
 import { finishRun } from "../services/backups.ts"
-import { applyHealth, probeReport } from "../services/health.ts"
+import { applyWorkerReport } from "../services/health.ts"
 import { presignUpload, requireStorage, verifyObject } from "../services/storage.ts"
 import { claimJob, deliverToWaiter, pairWorker, workerByIdentity } from "../services/workers.ts"
 
@@ -93,17 +93,7 @@ export function workerApiRoutes(ctx: Ctx) {
     if (job.kind === "backup") await finishBackupJob(ctx, String(job.payload.runId), ok, result, error)
     if (job.kind === "probe" && job.instanceId && ok) {
       const [instance] = await ctx.db.select().from(instances).where(eq(instances.id, job.instanceId))
-      if (instance) {
-        // A report that does not fit leaves the last known health as it was.
-        const report = probeReport.safeParse(result)
-        if (report.success) await applyHealth(ctx, instance, { ...report.data, via: "worker" })
-        else
-          ctx.log.warn("worker sent an invalid health report", {
-            instance: instance.name,
-            worker: c.get("worker").name,
-            issues: report.error.issues.slice(0, 5).map((i) => `${i.path.join(".")}: ${i.message}`),
-          })
-      }
+      if (instance) await applyWorkerReport(ctx, instance, result, c.get("worker").name)
     }
     return c.json({ ok: true })
   })

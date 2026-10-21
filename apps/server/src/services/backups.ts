@@ -10,7 +10,9 @@ import { enqueueAlert, setCondition } from "./alerts.ts"
 import { clientFor, type Instance } from "./instances.ts"
 import { zonedParts } from "./reports.ts"
 import { selectKeep } from "./retention.ts"
+import { deleteObject, getObject, objectKey, putObject, requireStorage, storageFor, verifyObject } from "./storage.ts"
 import { messageText } from "./telegram.ts"
+import { enqueueJob, pendingJobs } from "./workers.ts"
 
 /** Telegram texts (HTML) of the backup alerts. The name and the worker's error are escaped. */
 export const backupAlerts = {
@@ -20,8 +22,6 @@ export const backupAlerts = {
   stale: (name: string, hours: number) =>
     `<b>Backup is stale on ${messageText(name)}</b>\nNo successful backup for more than ${hours} hours.`,
 }
-import { deleteObject, getObject, objectKey, putObject, requireStorage, storageFor, verifyObject } from "./storage.ts"
-import { enqueueJob, pendingJobs } from "./workers.ts"
 
 const exec = promisify(execFile)
 type Run = typeof backupRuns.$inferSelect

@@ -26,16 +26,14 @@ export function ItemsHeader({ label }: { label: string }) {
  */
 export function ItemRow({
   lead,
-  leadClassName,
   title,
   end,
   sub,
   subEnd,
   detail,
 }: {
+  /** A small status mark (a dot) before the title; a status tag goes at the start of the line instead. */
   lead?: React.ReactNode
-  /** A fixed width for the lead, so the titles of all rows line up. */
-  leadClassName?: string
   title: React.ReactNode
   end?: React.ReactNode
   sub?: React.ReactNode
@@ -46,13 +44,7 @@ export function ItemRow({
   const main = led ? "col-start-2" : "col-start-1"
   const side = led ? "col-start-3" : "col-start-2"
   return (
-    <TableCell
-      className={cn(
-        "whitespace-normal",
-        // Compact marks the open item with an edge as well; Regular draws no status edges (#29).
-        "compact:[[data-state=selected]>&]:shadow-[inset_3px_0_0_var(--ui-ink)]",
-      )}
-    >
+    <TableCell className="whitespace-normal">
       <div
         data-slot="item-row"
         className={cn(
@@ -60,8 +52,10 @@ export function ItemRow({
           led ? "grid-cols-[auto_minmax(0,1fr)_auto]" : "grid-cols-[minmax(0,1fr)_auto]",
         )}
       >
-        {led && <div className={cn("col-start-1 row-start-1 flex self-center", leadClassName)}>{lead}</div>}
-        <div className={cn(main, "row-start-1 min-w-0 truncate font-semibold")}>{title}</div>
+        {led && <div className="col-start-1 row-start-1 flex self-center">{lead}</div>}
+        <div data-part="title" className={cn(main, "row-start-1 min-w-0 truncate font-semibold")}>
+          {title}
+        </div>
         {end !== undefined && (
           <div className={cn(side, "row-start-1 text-end whitespace-nowrap tabular-nums")}>{end}</div>
         )}

@@ -65,9 +65,8 @@ test("a repeated failure only increases the counter", async () => {
   await page.getByRole("button", { name: "Check now" }).click()
   await expect(page.getByText("Checked now").last()).toBeVisible({ timeout: 30_000 })
   await page.goto("/problems")
-  await expect(
-    page.getByRole("row", { name: /Sync orders to ERP/ }).getByRole("cell", { name: /^(Failures )?2$/ }),
-  ).toBeVisible()
+  // Beside the reading pane the row is an item that says "2 failures".
+  await expect(page.getByRole("row", { name: /Sync orders to ERP/ })).toContainText("2 failures")
 })
 
 test("a resolved problem that fails again is a regression", async () => {

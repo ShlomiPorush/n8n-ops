@@ -140,8 +140,6 @@ export function ProblemsTable({
           {sort.rows.map((p) => (
             <TableRow key={p.id} {...rowProps(p)}>
               <ItemRow
-                lead={<ProblemBadge status={p.status} regression={p.regression} firstSeen={p.firstSeen} />}
-                leadClassName="w-[5.25rem] regular:w-[6.75rem]"
                 title={<UserText>{p.workflowName}</UserText>}
                 end={
                   <>
@@ -151,6 +149,7 @@ export function ProblemsTable({
                 }
                 sub={
                   <>
+                    <ProblemBadge status={p.status} regression={p.regression} firstSeen={p.firstSeen} />{" "}
                     <UserText>{p.nodeName}</UserText>
                     {showInstance && (
                       <>

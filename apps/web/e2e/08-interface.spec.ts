@@ -81,18 +81,108 @@ test("list filters live in the address, survive a reload and clear in one step",
   await expect(page.getByLabel("Search all instances")).toHaveValue("")
 })
 
-test("a row opens from the keyboard", async () => {
+test("a row opens from the keyboard, with Enter and with Space, and keeps its focus", async () => {
   await page.goto("/instances")
-  // On a wide screen the first instance opens by itself, and the list is drawn again beside it. A row
-  // focused before that is gone, so the Enter would reach nothing: wait for the pane, which only the new
-  // layout has (the address changes before it is drawn).
-  await expect(page.getByRole("region", { name: "Instance", exact: true })).toBeVisible()
-  const row = page.getByRole("row").filter({ has: page.getByText("e2e-n8n-b", { exact: true }) })
-  // Not open already, or the heading below would prove nothing.
-  await expect(row).not.toHaveAttribute("aria-current", "true")
-  await row.focus()
-  await page.keyboard.press("Enter")
-  await expect(page.getByRole("heading", { name: "e2e-n8n-b" })).toBeVisible()
+  // On a wide screen the first instance opens by itself.
+  await expect(page.locator('tr[aria-current="true"]')).toHaveCount(1)
+  for (const [name, key] of [
+    ["e2e-n8n-b", "Enter"],
+    ["e2e-n8n", "Space"],
+  ] as const) {
+    const row = page.getByRole("row").filter({ has: page.getByText(name, { exact: true }) })
+    // Not open already, or the heading below would prove nothing.
+    if ((await row.getAttribute("aria-current")) === "true") continue
+    await row.focus()
+    await page.keyboard.press(key)
+    await expect(page.getByRole("heading", { name, exact: true })).toBeVisible()
+    await expect(row).toHaveAttribute("aria-current", "true")
+    await expect(row).toBeFocused()
+  }
+})
+
+test("the list stays in place while its first item opens by itself, so focus is kept", async () => {
+  // Hold the list until a field of the page has focus; then the rows arrive and the first one opens.
+  let release = () => {}
+  const held = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const list = /\/api\/problems\?/
+  await page.route(list, async (route) => {
+    await held
+    await route.continue()
+  })
+  try {
+    await page.goto("/problems")
+    const box = page.getByLabel("Search workflow or error")
+    await expect(box).toBeVisible()
+    await expect(page.locator("tbody tr")).toHaveCount(0)
+    await expect(page).toHaveURL(/\/problems$/)
+    await box.focus()
+    const field = await box.elementHandle()
+    release()
+    await expect(page).toHaveURL(/\/problems\/[^/?]+/)
+    await expect(page.getByRole("region", { name: "Problem", exact: true }).getByRole("heading").first()).toBeVisible()
+    expect(await field?.evaluate((el) => el.isConnected && document.activeElement === el)).toBe(true)
+  } finally {
+    release()
+    await page.unroute(list)
+  }
+})
+
+test("beside the reading pane every row shows all its values, at any width of the list", async () => {
+  await page.setViewportSize({ width: 1920, height: 1000 })
+  try {
+    for (const path of ["/problems?status=all", "/instances", "/access?view=all", "/backups"]) {
+      await page.goto(path)
+      const rows = page.locator('[data-slot="table-container"] [data-slot="item-row"]')
+      await expect(rows.first()).toBeVisible()
+      // Wide enough for the old table rule (560px), yet the list draws items and cuts nothing off.
+      const clipped = () =>
+        page.evaluate(() => {
+          const out: string[] = []
+          const container = document.querySelector('[data-slot="table-container"]') as HTMLElement
+          if (container.scrollWidth > container.clientWidth) out.push("the list scrolls sideways")
+          const edge = container.getBoundingClientRect().right + 1
+          for (const item of container.querySelectorAll('[data-slot="item-row"]')) {
+            for (const part of item.children) {
+              const box = part.getBoundingClientRect()
+              if (box.right > edge) out.push(`"${part.textContent}" goes past the edge`)
+            }
+            const title = item.querySelector('[data-part="title"]') as HTMLElement
+            if (title.getBoundingClientRect().width < 120) out.push(`"${title.textContent}" has no room`)
+          }
+          return out
+        })
+      expect(await clipped(), path).toEqual([])
+      // The narrowest the list can be made: Home on the handle moves it as far as it goes.
+      await page.locator('[data-slot="resizable-handle"]').focus()
+      await page.keyboard.press("Home")
+      await expect
+        .poll(() =>
+          page
+            .locator('[data-slot="table-container"]')
+            .first()
+            .evaluate((el) => el.clientWidth),
+        )
+        .toBeLessThan(400)
+      expect(await clipped(), `${path}, narrowest`).toEqual([])
+    }
+  } finally {
+    await page.setViewportSize({ width: 1440, height: 900 })
+  }
+})
+
+test("a list beside the reading pane sorts from its sort control", async () => {
+  await page.goto("/instances")
+  const first = page.locator("tbody tr").first()
+  await expect(first).toBeVisible()
+  const sort = page.getByRole("combobox", { name: "Sort by" })
+  await sort.click()
+  await page.getByRole("option", { name: "Instance, Z to A" }).click()
+  await expect(first).toContainText("e2e-n8n-b")
+  await sort.click()
+  await page.getByRole("option", { name: "Instance, A to Z" }).click()
+  await expect(first).not.toContainText("e2e-n8n-b")
 })
 
 test("Back closes a dialog and stays on the page", async () => {

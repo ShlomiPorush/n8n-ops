@@ -139,6 +139,19 @@ test("the page is laid out in this design's own way", async () => {
   expect(await layout(page)).toEqual(laidOut[here])
 })
 
+test("a list beside the reading pane marks its open item in this design's own way", async () => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto("/instances")
+  const open = page.locator('tr[aria-current="true"] > td')
+  await expect(open).toHaveCount(1)
+  const drawn = await open.evaluate((td) => ({
+    edge: getComputedStyle(td).boxShadow.includes("inset"),
+    padding: getComputedStyle(td).paddingTop,
+  }))
+  // Compact adds an edge at the start of the open item; Regular has no status edges and roomier rows.
+  expect(drawn).toEqual(here === "regular" ? { edge: false, padding: "12px" } : { edge: true, padding: "9px" })
+})
+
 test("switching the design changes the page at once, without a reload, and keeps the rest of General", async () => {
   const dialogs: string[] = []
   page.on("dialog", (dialog) => {

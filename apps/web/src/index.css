@@ -577,6 +577,10 @@ html[data-design="regular"].dark {
 [data-slot="table-wrap"][data-items] > [data-slot="table-sort"] {
   display: flex;
 }
+/* Compact marks the open item with an edge at its start as well; Regular draws no status edges (#29). */
+html:not([data-design="regular"]) tr[data-state="selected"] > td:has(> [data-slot="item-row"]) {
+  box-shadow: inset 3px 0 0 var(--ui-ink);
+}
 @container (max-width: 559px) {
   [data-slot="table-sort"] {
     display: flex;

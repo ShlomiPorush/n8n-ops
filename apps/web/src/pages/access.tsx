@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router"
 import { useCrumb } from "@/app/chrome"
 import { useConfirm } from "@/components/confirm"
 import { Empty, LoadError, Loading, PageHead, Panel, PanelHead, UserText } from "@/components/kit"
+import { ItemRow, ItemsHeader, Said } from "@/components/item-row"
 import { ListWithPanel } from "@/components/list-panel"
 import { StatusTag, statusOf, TimeAgo, Tone, When } from "@/components/status"
 import { Badge } from "@/components/ui/badge"
@@ -69,8 +70,15 @@ export function AccessPage() {
       requested: { label: "Requested", value: (r) => new Date(r.requestedAt) },
     },
   })
+  const rowProps = (r: AccessRow) => ({
+    "data-state": r.id === id ? "selected" : undefined,
+    "aria-current": r.id === id ? ("true" as const) : undefined,
+    className: "hover-row",
+    "data-href": `/access/${r.id}${view === "all" ? "?view=all" : ""}`,
+    onClick: () => navigate(`/access/${r.id}${view === "all" ? "?view=all" : ""}`),
+  })
 
-  const list = (
+  const list = (items: boolean) => (
     <>
       <PageHead
         title="Agent Access"
@@ -115,6 +123,35 @@ export function AccessPage() {
             An agent with a token that may request access asks here; you approve it in the app, on Telegram or by email.
           </Empty>
         </Panel>
+      ) : items ? (
+        <Table sort={sort} items>
+          <ItemsHeader label="Access request" />
+          <TableBody>
+            {sort.rows.map((r) => (
+              <TableRow key={r.id} {...rowProps(r)}>
+                <ItemRow
+                  title={<UserText>{r.reason}</UserText>}
+                  end={<StatusTag kind="access" status={r.status} />}
+                  sub={
+                    <>
+                      <UserText>{r.instance}</UserText>
+                      {" · "}
+                      <UserText>{r.token}</UserText>
+                      {" · "}
+                      <span className="tabular-nums">{duration(r.minutes)}</span>
+                    </>
+                  }
+                  subEnd={
+                    <>
+                      <Said>Requested</Said>
+                      <When value={r.requestedAt} />
+                    </>
+                  }
+                />
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
       ) : (
         <Table sort={sort}>
           <TableHeader>
@@ -131,14 +168,7 @@ export function AccessPage() {
           </TableHeader>
           <TableBody>
             {sort.rows.map((r) => (
-              <TableRow
-                key={r.id}
-                data-state={r.id === id ? "selected" : undefined}
-                aria-current={r.id === id ? "true" : undefined}
-                className="hover-row"
-                data-href={`/access/${r.id}${view === "all" ? "?view=all" : ""}`}
-                onClick={() => navigate(`/access/${r.id}${view === "all" ? "?view=all" : ""}`)}
-              >
+              <TableRow key={r.id} {...rowProps(r)}>
                 <TableCell data-nolabel>
                   <StatusTag kind="access" status={r.status} />
                 </TableCell>

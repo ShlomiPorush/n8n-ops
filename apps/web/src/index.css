@@ -573,6 +573,10 @@ html[data-design="regular"].dark {
 [data-slot="table-sort"] {
   display: none;
 }
+/* A list of items has no header row either, at any width. */
+[data-slot="table-wrap"][data-items] > [data-slot="table-sort"] {
+  display: flex;
+}
 @container (max-width: 559px) {
   [data-slot="table-sort"] {
     display: flex;

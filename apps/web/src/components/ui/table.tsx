@@ -9,14 +9,22 @@ import { cn } from "@/lib/utils"
  * a reading pane) it stacks: each row becomes a small card
  * with the first cell on its own line, the others labelled from their column header, and the actions on the
  * last line (TB-14). Pass bare to place it inside a panel, stack={false} to keep the columns on a phone.
+ * Pass items when every row is one ItemRow (a list beside a reading pane): the sort control then always shows.
  */
 function Table({
   className,
   bare,
-  stack = true,
+  stack: stackProp = true,
+  items,
   sort,
   ...props
-}: React.ComponentProps<"table"> & { bare?: boolean; stack?: boolean; sort?: { control: SortControl } }) {
+}: React.ComponentProps<"table"> & {
+  bare?: boolean
+  stack?: boolean
+  items?: boolean
+  sort?: { control: SortControl }
+}) {
+  const stack = stackProp && !items
   const ref = React.useRef<HTMLTableElement>(null)
   // Label every cell with its column header, so a stacked row still says what each value is.
   React.useLayoutEffect(() => {
@@ -33,18 +41,19 @@ function Table({
   return (
     <div
       data-slot="table-wrap"
+      data-items={items ? "" : undefined}
       className={cn(
         "grid min-w-0",
         !bare && "rounded-lg bg-card regular:overflow-hidden regular:shadow-card regular:ring-1 regular:ring-ink/10",
       )}
     >
-      {sort && stack && <PhoneSort control={sort.control} />}
+      {sort && (stack || items) && <PhoneSort control={sort.control} />}
       <div data-slot="table-container" className="relative w-full min-w-0 overflow-x-auto">
         <table
           ref={ref}
           data-slot="table"
           data-stack={stack ? "" : undefined}
-          className={cn("w-full min-w-[560px] border-collapse text-body", className)}
+          className={cn("w-full border-collapse text-body", items ? "table-fixed" : "min-w-[560px]", className)}
           {...props}
         />
       </div>

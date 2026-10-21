@@ -106,7 +106,9 @@ export function ListWithPanel({
           <div
             ref={measure}
             data-scroll-pane
-            className="grid h-full min-w-0 content-start gap-gap overflow-y-auto overscroll-contain py-[22px] ps-[22px] pe-4 [scrollbar-gutter:stable] lg:ps-7"
+            // Rows keep their full height (auto-rows-max): in a grid of fixed height a scrolling table would
+            // otherwise shrink to nothing once the column is taller than the screen.
+            className="grid h-full min-w-0 auto-rows-max content-start gap-gap overflow-y-auto overscroll-contain py-[22px] ps-[22px] pe-4 [scrollbar-gutter:stable] lg:ps-7"
           >
             {content}
           </div>

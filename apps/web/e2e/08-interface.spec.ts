@@ -142,6 +142,7 @@ test("beside the reading pane every row shows all its values, at any width of th
           const out: string[] = []
           const container = document.querySelector('[data-slot="table-container"]') as HTMLElement
           if (container.scrollWidth > container.clientWidth) out.push("the list scrolls sideways")
+          if (container.scrollHeight > container.clientHeight) out.push("the list is cut off at the bottom")
           const edge = container.getBoundingClientRect().right + 1
           for (const item of container.querySelectorAll('[data-slot="item-row"]')) {
             for (const part of item.children) {

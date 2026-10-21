@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, ilike, isNotNull, or, type SQL, sql } from "drizzle-orm"
 import type { Ctx } from "../context.ts"
 import { backupRuns, failures, instances, workflows } from "../db/schema.ts"
+import { likeContains } from "../lib/like.ts"
 import { listProblems, problemDetail } from "../routes/problems.ts"
 import { grantableScopes } from "./access.ts"
 import { effectiveScopes, executionUrl, latestN8nVersion } from "./instances.ts"
@@ -116,13 +117,12 @@ export async function agentWorkflows(ctx: Ctx, opts: { q?: string; instance?: st
   const where: SQL[] = []
   if (opts.q) {
     // Agents often hold an ID, a webhook URL or a tag rather than the exact name.
-    const contains = (v: string) => `%${v.replace(/[%_\\]/g, "\\$&")}%`
-    const like = contains(opts.q)
+    const like = likeContains(opts.q)
     const path = opts.q.replace(/^https?:\/\/[^/]+/, "").replace(/^\/webhook(-test)?\//, "")
     const match = or(
       ilike(workflows.name, like),
       eq(workflows.workflowId, opts.q),
-      path.length >= 3 ? ilike(workflows.triggerDetail, contains(path)) : undefined,
+      path.length >= 3 ? ilike(workflows.triggerDetail, likeContains(path)) : undefined,
       sql`${workflows.tags}::text ilike ${like}`,
     )
     if (match) where.push(match)

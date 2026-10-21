@@ -82,7 +82,8 @@ export function readTar(archive: Uint8Array): TarEntry[] {
     const name = longName ?? (prefix ? `${prefix}/${readString(block, 0, 100)}` : readString(block, 0, 100))
     longName = null
     const data = archive.subarray(offset + BLOCK, offset + BLOCK + size)
-    if (type === "L") longName = decoder.decode(data).replace(/\0+$/, "")
+    // A GNU long name ends at its first NUL (read in linear time; a trailing-NUL regex is quadratic).
+    if (type === "L") longName = readString(data, 0, data.length)
     else if (type === "0" || type === "\0") entries.push({ name: name.replace(/^\.\//, ""), data: data.slice() })
     offset += BLOCK + Math.ceil(size / BLOCK) * BLOCK
   }

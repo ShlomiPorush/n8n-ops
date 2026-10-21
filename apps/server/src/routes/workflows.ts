@@ -6,6 +6,7 @@ import type { Ctx } from "../context.ts"
 import { instances, workflows } from "../db/schema.ts"
 import { requireUser } from "../http/middleware.ts"
 import { actorName, type Env } from "../http/types.ts"
+import { likeContains } from "../lib/like.ts"
 import { workflowUrl } from "../services/instances.ts"
 import { exportCredentials, previewMove, runMove } from "../services/moves.ts"
 import { syncWorkflows } from "../services/workflows.ts"
@@ -22,7 +23,7 @@ export function workflowRoutes(ctx: Ctx) {
     const instanceId = c.req.query("instance")
     const q = c.req.query("q")
     if (instanceId) where.push(eq(workflows.instanceId, instanceId))
-    if (q) where.push(ilike(workflows.name, `%${q.replace(/[%_]/g, "\\$&")}%`))
+    if (q) where.push(ilike(workflows.name, likeContains(q)))
     const rows = await ctx.db
       .select({ w: workflows, instanceName: instances.name, baseUrl: instances.baseUrl })
       .from(workflows)

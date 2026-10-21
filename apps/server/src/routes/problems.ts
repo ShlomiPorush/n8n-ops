@@ -5,6 +5,7 @@ import type { Ctx } from "../context.ts"
 import { failures, instances, problems } from "../db/schema.ts"
 import { requireUser } from "../http/middleware.ts"
 import { actorName, type Env } from "../http/types.ts"
+import { likeContains } from "../lib/like.ts"
 import type { N8nWorkflow } from "../n8n/client.ts"
 import { workflowGraph } from "../n8n/execution.ts"
 import { executionUrl } from "../services/instances.ts"
@@ -18,7 +19,7 @@ export async function listProblems(
   if (status === "open" || status === "muted" || status === "resolved") where.push(eq(problems.status, status))
   if (instanceId) where.push(eq(problems.instanceId, instanceId))
   if (q) {
-    const like = `%${q.replace(/[%_]/g, "\\$&")}%`
+    const like = likeContains(q)
     where.push(
       or(ilike(problems.workflowName, like), ilike(problems.errorMessage, like), ilike(problems.nodeName, like)),
     )

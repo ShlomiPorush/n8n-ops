@@ -44,6 +44,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Fixed
 
+- Searching problems and workflows reads a backslash literally, as agent workflow search already did: `C:\data` or a lone `\` now finds names that contain it instead of being read as a LIKE escape.
+- Backups read long file names from n8n's export in linear time; a name padded with many NUL bytes could stall the reader.
 - Commands and keys in Settings no longer sit at the right edge of the card or end in "…": they start at the left, like the text above them, and wrap in full.
 - A new time zone must be a zone name: a typo is refused when saved instead of being stored and shown as UTC, and so is a fixed offset such as `+03:00`, which would not follow daylight saving. An offset saved before keeps working until you choose a zone; an unknown zone saved before reads as UTC without resetting the other General settings.
 - An agent connecting with the n8n-ops skill now shows the link and the code in the reply that ends its turn, where you see them, instead of in text between commands that the agent app may fold away. You approve and reply, or the agent waits in the background when it can.

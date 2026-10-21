@@ -196,17 +196,15 @@ export function BackupsPage() {
                   label={failed ? "Last backup failed" : late ? "Backup is late" : "Backed up on time"}
                 />
               )
-              const lastOk = (
-                <span className="inline-flex items-center gap-2">
-                  <span className={cn(late && "font-semibold text-warn")}>
-                    <When value={r.lastOk?.startedAt} />
-                  </span>
-                  {failed ? (
-                    <StatusTag kind="backup" status="failed" />
-                  ) : (
-                    late && <StatusTag kind="backup" status="stale" />
-                  )}
+              const lastOkTime = (
+                <span className={cn(late && "font-semibold text-warn")}>
+                  <When value={r.lastOk?.startedAt} />
                 </span>
+              )
+              const tag = failed ? (
+                <StatusTag kind="backup" status="failed" />
+              ) : (
+                late && <StatusTag kind="backup" status="stale" />
               )
               const includes =
                 r.id === "self"
@@ -242,10 +240,15 @@ export function BackupsPage() {
                       end={
                         <>
                           <Said>Last success</Said>
-                          {lastOk}
+                          {lastOkTime}
                         </>
                       }
-                      sub={`${includes} · daily at ${r.backupTime}`}
+                      sub={
+                        <>
+                          {tag && <>{tag} </>}
+                          {includes} · daily at {r.backupTime}
+                        </>
+                      }
                       subEnd={runNow || undefined}
                     />
                   ) : (
@@ -256,7 +259,12 @@ export function BackupsPage() {
                           <UserText className="truncate">{r.name}</UserText>
                         </span>
                       </TableCell>
-                      <TableCell>{lastOk}</TableCell>
+                      <TableCell>
+                        <span className="flex items-center gap-2">
+                          {lastOkTime}
+                          {tag}
+                        </span>
+                      </TableCell>
                       <TableCell className="text-muted-foreground">{includes}</TableCell>
                       <TableCell className="text-muted-foreground tabular-nums">{r.backupTime}</TableCell>
                       {runNow && <TableCell className="text-end">{runNow}</TableCell>}

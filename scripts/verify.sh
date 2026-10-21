@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The single verification entry point, used locally, in CI and by the release workflow.
-# Usage: scripts/verify.sh [--changed [BASE]] [--guards-only] [--skip-guards] [--skip-integration]
+# Usage: scripts/verify.sh [--changed [BASE]] [--guards-only] [--skip-guards] [--skip-integration] [--design NAME]
 set -euo pipefail
 
 # shellcheck source=scripts/lib/common.sh
@@ -12,6 +12,7 @@ CHANGED_BASE=""
 GUARDS=1
 CHECKS=1
 INTEGRATION=1
+DESIGNS=(regular compact)
 
 usage() {
   cat <<'EOF'
@@ -23,6 +24,8 @@ Usage: scripts/verify.sh [options]
   --guards-only       Only the repository guards (language, Compose, shell scripts).
   --skip-guards       Everything except the guards.
   --skip-integration  Skip the container stack and end-to-end tests.
+  --design NAME       End-to-end tests in one design only (regular or compact); CI runs each in its own job.
+                      Without it they run once per design.
 EOF
 }
 
@@ -38,6 +41,16 @@ while [ $# -gt 0 ]; do
     --guards-only) CHECKS=0 INTEGRATION=0 ;;
     --skip-guards) GUARDS=0 ;;
     --skip-integration) INTEGRATION=0 ;;
+    --design)
+      case "${2:-}" in
+        regular | compact) DESIGNS=("$2") ;;
+        *)
+          usage
+          die "--design needs regular or compact"
+          ;;
+      esac
+      shift
+      ;;
     -h | --help)
       usage
       exit 0
@@ -187,7 +200,7 @@ run_e2e_round() {
   info "End-to-end tests: $design design"
   start_stack
   [ "$design" = regular ] || seed_design "$design"
-  [ "$design" = regular ] && run_checks_on_stack
+  run_checks_on_stack
   # The alias lets the server reach the stand-in Telegram Bot API that the tests run (TELEGRAM_API_URL).
   docker run --rm --network "${PROJECT}_default" --network-alias e2e-runner \
     --user "$(id -u):$(id -g)" -e HOME=/tmp -e CI="${CI:-}" -e E2E_DESIGN="$design" \
@@ -206,8 +219,10 @@ run_integration() {
   # Telegram calls go to the stand-in Bot API inside the end-to-end test runner, never to Telegram.
   export TELEGRAM_API_URL="http://e2e-runner:8099"
   trap cleanup_stack EXIT
-  run_e2e_round regular apps/web
-  run_e2e_round compact apps/web
+  local design
+  for design in "${DESIGNS[@]}"; do
+    run_e2e_round "$design" apps/web
+  done
 }
 
 main() {

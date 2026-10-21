@@ -48,9 +48,14 @@ jobs:
       - run: scripts/verify.sh --guards-only
 
   verify:
-    name: Verify
+    # One job per design, side by side: each runs the whole end-to-end suite on its own stack.
+    name: Verify (${{ matrix.design }})
     needs: changes
     if: needs.changes.outputs.code == 'true' || github.event_name != 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        design: [regular, compact]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -59,10 +64,10 @@ jobs:
           fetch-depth: 0
       - name: Verify changed areas
         if: github.event_name == 'pull_request'
-        run: scripts/verify.sh --skip-guards --changed origin/main
+        run: scripts/verify.sh --skip-guards --changed origin/main --design ${{ matrix.design }}
       - name: Verify everything
         if: github.event_name != 'pull_request'
-        run: scripts/verify.sh --skip-guards
+        run: scripts/verify.sh --skip-guards --design ${{ matrix.design }}
 
   skill:
     # The skill runs on the agent's computer: its three versions are checked where they run (Linux runs in Verify).

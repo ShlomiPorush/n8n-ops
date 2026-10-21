@@ -123,7 +123,8 @@ export async function agentWorkflows(ctx: Ctx, opts: { q?: string; instance?: st
       ilike(workflows.name, like),
       eq(workflows.workflowId, opts.q),
       path.length >= 3 ? ilike(workflows.triggerDetail, likeContains(path)) : undefined,
-      sql`${workflows.tags}::text ilike ${like}`,
+      // Each tag on its own: the JSON text of the list doubles backslashes and has quotes and commas of its own.
+      sql`exists (select 1 from jsonb_array_elements_text(${workflows.tags}) as t(tag) where t.tag ilike ${like})`,
     )
     if (match) where.push(match)
   }

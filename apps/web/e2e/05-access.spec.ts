@@ -96,6 +96,49 @@ test("the instance opens read-only access to agents", async ({ request }) => {
   }).toPass({ timeout: 30_000 })
 })
 
+test("an agent finds a workflow by part of one tag, read as written", async ({ request }) => {
+  const n8nApi = (path: string, init: RequestInit = {}) =>
+    fetch(`${n8nUrl}/api/v1${path}`, {
+      ...init,
+      headers: { "X-N8N-API-KEY": currentApiKey(), "content-type": "application/json" },
+    })
+  const setTags = (ids: string[]) =>
+    n8nApi(`/workflows/${workflowId}/tags`, { method: "PUT", body: JSON.stringify(ids.map((id) => ({ id }))) })
+  const syncNow = async () => {
+    await page.goto("/workflows")
+    const [res] = await Promise.all([
+      page.waitForResponse((r) => r.url().endsWith("/api/workflows/sync")),
+      page.getByRole("button", { name: "Refresh now" }).click(),
+    ])
+    const results = (await res.json()) as { instance: string; error?: string }[]
+    expect(results.filter((r) => r.error)).toEqual([])
+  }
+  const found = async (query: string) =>
+    ((await mcp(request, "search_workflows", { query })).value as { workflowId: string }[]).map((h) => h.workflowId)
+
+  const before = ((await (await n8nApi(`/workflows/${workflowId}/tags`)).json()) as { id: string }[]).map((t) => t.id)
+  const created: string[] = []
+  try {
+    // Two tags, so the JSON text of the list holds `", "`; one with a backslash, which JSON doubles.
+    for (const name of [String.raw`ops C:\data archive`, "e2e second"]) {
+      const res = await n8nApi("/tags", { method: "POST", body: JSON.stringify({ name }) })
+      expect(res.ok, await res.clone().text()).toBe(true)
+      created.push(((await res.json()) as { id: string }).id)
+    }
+    const tagged = await setTags([...before, ...created])
+    expect(tagged.status, await tagged.text()).toBe(200)
+    await syncNow()
+    expect(await found(String.raw`C:\data`)).toContain(workflowId)
+    expect(await found('", "')).not.toContain(workflowId)
+  } finally {
+    // Every step runs even when one fails; a soft failure still fails the test.
+    expect.soft((await setTags(before)).status, "restore the workflow's tags").toBe(200)
+    for (const id of created)
+      expect.soft((await n8nApi(`/tags/${id}`, { method: "DELETE" })).status, "delete the test tag").toBe(200)
+    await syncNow()
+  }
+})
+
 test("an agent asks for what the instance allows, and nothing beyond it", async ({ request }) => {
   const tooMuch = await mcp(request, "request_instance_access", {
     instance: "e2e-n8n",

@@ -70,7 +70,10 @@ export function AccountPage() {
           description="Run this on the server, in the n8n-ops folder. It prints a new password, signs out every session and turns two-factor off; you set it up again at the next sign-in."
         />
         <div className="px-pad-x pb-4">
-          <Command value="docker compose exec -u node server node dist/cli.js reset-password" label="Copy the command" />
+          <Command
+            value="docker compose exec -u node server node dist/cli.js reset-password"
+            label="Copy the command"
+          />
         </div>
       </Panel>
     </Page>

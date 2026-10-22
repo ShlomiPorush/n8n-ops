@@ -513,6 +513,13 @@ function InstanceDetail({ id }: { id: string }) {
         )}
       </Panel>
 
+      <InstanceBackupCard
+        key={`backup-destinations-${i.id}`}
+        instanceId={i.id}
+        mode={i.backupDestinations}
+        destinationIds={i.backupDestinationIds}
+      />
+
       <Panel>
         <PanelHead
           title="Open Problems"
@@ -579,13 +586,6 @@ function InstanceDetail({ id }: { id: string }) {
         scopesSource={i.scopesSource}
         keyScopes={i.effectiveScopes}
         agentAccess={i.agentAccess}
-      />
-
-      <InstanceBackupCard
-        key={`backup-destinations-${i.id}`}
-        instanceId={i.id}
-        mode={i.backupDestinations}
-        destinationIds={i.backupDestinationIds}
       />
 
       <OverridesCard key={`overrides-${i.id}`} instance={i} />

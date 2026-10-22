@@ -383,7 +383,7 @@ type ListBackup =
 
 /** The tabs look like segments in Regular; Compact keeps the underlined tabs. */
 const tabsLook =
-  "regular:w-fit regular:max-w-full regular:gap-1 regular:rounded-lg regular:bg-fill regular:bg-none regular:p-1"
+  "regular:w-fit regular:max-w-full regular:gap-1 regular:rounded-lg regular:bg-fill regular:p-1 regular:before:hidden"
 const tabLook =
   "regular:rounded-sm regular:border-b-0 regular:px-3 regular:py-1.5 regular:data-[state=active]:bg-panel regular:data-[state=active]:shadow-card"
 const tabPanel = "grid min-w-0 gap-gap data-[state=inactive]:hidden"

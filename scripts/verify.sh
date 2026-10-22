@@ -123,7 +123,10 @@ run_guards() {
 run_checks() {
   local filter=()
   if [ -n "$CHANGED_BASE" ]; then
-    filter=(--filter "...[$CHANGED_BASE]")
+    # Never the root package: its scripts run the same script in every package, so a root file such as
+    # CHANGELOG.md would build apps/web twice at once into the same dist. Shared root files already
+    # force a full sweep (main), so nothing is left unchecked.
+    filter=(--filter "...[$CHANGED_BASE]" --filter "!n8n-ops")
   fi
   info "Install"
   install_deps

@@ -1,6 +1,6 @@
 {
   "name": "n8n-ops",
-  "version": "0.1.0",
+  "version": "0.0.0",
   "private": true,
   "description": "Operations console for self-hosted n8n instances",
   "license": "MIT",

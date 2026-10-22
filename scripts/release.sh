@@ -1,61 +1,49 @@
 #!/usr/bin/env bash
-# Create a versioned release and publish the container images. Does not deploy anything.
-# Usage: scripts/release.sh --target ghcr --bump <patch|minor|major> [--dry-run]
+# Releases a version: the release commit and tag, both images on GHCR, and the GitHub Release. Deploys
+# nothing. Normally run by the Release workflow (.github/workflows/release.yml), which verifies the
+# commit first; run by hand it runs scripts/verify.sh itself.
+# Usage: scripts/release.sh --target ghcr --bump <patch|minor|major> [--skip-verify --expect-sha SHA] [--dry-run]
 set -euo pipefail
 
 # shellcheck source=scripts/lib/common.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
 REGISTRY="ghcr.io/shlomiporush"
+SOURCE_URL="https://github.com/ShlomiPorush/n8n-ops"
 IMAGES=(server:n8n-ops worker:n8n-ops-worker)
 TARGET=""
 BUMP=""
+EXPECT_SHA=""
+SKIP_VERIFY=0
 DRY_RUN=0
+RESUME=0
+VERSION=""
+TAG=""
 
 usage() {
   cat <<'EOF'
-Usage: scripts/release.sh --target ghcr --bump <patch|minor|major> [--dry-run]
+Usage: scripts/release.sh --target ghcr --bump <patch|minor|major> [--skip-verify --expect-sha SHA] [--dry-run]
 
-  --target ghcr   Required. Publish images to ghcr.io/shlomiporush.
-  --bump KIND     Required. Semantic version part to increase.
-  --dry-run       Check everything and print the plan without changing anything.
+  --target ghcr     Required. Publish images to ghcr.io/shlomiporush.
+  --bump KIND       Required. Semantic version part to increase.
+  --expect-sha SHA  Refuse unless main is exactly this commit (the one the workflow verified).
+  --skip-verify     Do not run scripts/verify.sh. Only with --expect-sha.
+  --dry-run         Check everything and print the plan without changing anything.
 
-Steps: preflight (clean main in sync with origin, release notes present, version unused),
-full scripts/verify.sh, version and changelog update, release commit, annotated tag,
-image build and push, then push of the commit and tag. Deployment is a separate, manual step.
+Steps: preflight (clean main in sync with origin, release notes present, version unused), full
+scripts/verify.sh, version and changelog update, release commit and tag pushed together, both images
+built from the tag and pushed, then :latest, then the GitHub Release from the CHANGELOG section.
+When the newest tag has no GitHub Release yet, an earlier run stopped halfway: this run finishes that
+version instead of starting a new one, reusing what is already published and refusing anything that
+was not built from the tag. Needs docker with buildx, git and gh (logged in to GitHub and GHCR).
 EOF
 }
 
-while [ $# -gt 0 ]; do
-  case "$1" in
-    --target)
-      TARGET="${2:-}"
-      shift
-      ;;
-    --bump)
-      BUMP="${2:-}"
-      shift
-      ;;
-    --dry-run) DRY_RUN=1 ;;
-    -h | --help)
-      usage
-      exit 0
-      ;;
-    *)
-      usage
-      die "unknown option: $1"
-      ;;
-  esac
-  shift
-done
-
-[ "$TARGET" = ghcr ] || die "an explicit target is required: --target ghcr"
-[[ "$BUMP" =~ ^(patch|minor|major)$ ]] || die "--bump must be patch, minor or major"
-
 git_() { git -C "$REPO_ROOT" "$@"; }
 
-current_version() {
-  sed -nE 's/^  "version": "([0-9]+\.[0-9]+\.[0-9]+)",$/\1/p' "$REPO_ROOT/package.json" | head -1
+# Reads the version from package.json content on stdin.
+version_in() {
+  sed -nE 's/^  "version": "([0-9]+\.[0-9]+\.[0-9]+)",$/\1/p' | head -1
 }
 
 next_version() {
@@ -72,35 +60,214 @@ unreleased_notes() {
   awk '/^## \[Unreleased\]/ { on = 1; next } /^## \[/ { on = 0 } on && NF' "$REPO_ROOT/CHANGELOG.md"
 }
 
+# Prints the notes of one released version from CHANGELOG content on stdin. Fails unless the
+# CHANGELOG has exactly one dated section for it, with at least one entry.
+release_notes() {
+  local version="$1" text count notes
+  text="$(cat)"
+  count="$(grep -cE "^## \[${version//./\\.}\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$" <<<"$text" || true)"
+  [ "$count" = 1 ] || die "CHANGELOG.md must have exactly one dated section for $version (found $count)"
+  notes="$(awk -v head="## [$version] - " '
+    index($0, head) == 1 { on = 1; next }
+    on && /^## / { exit }
+    on { lines[++n] = $0 }
+    END {
+      s = 1; while (s <= n && lines[s] ~ /^[[:space:]]*$/) s++
+      e = n; while (e >= s && lines[e] ~ /^[[:space:]]*$/) e--
+      for (i = s; i <= e; i++) print lines[i]
+    }' <<<"$text")"
+  grep -qvE '^[[:space:]]*(#.*)?$' <<<"$notes" || die "the CHANGELOG.md section for $version has no entries"
+  printf '%s\n' "$notes"
+}
+
+# Prints "present" or "missing" for a GitHub Release. Any other failure stops the release.
+release_state() {
+  local out
+  if out="$(gh release view "$1" --json tagName 2>&1)"; then
+    echo present
+  elif grep -qi "release not found" <<<"$out"; then
+    echo missing
+  else
+    die "cannot read the GitHub Release $1: $out"
+  fi
+}
+
+# Prints "missing", "match" (built from the given commit) or "other" for an image tag. A registry
+# that cannot be read stops the release: it must never count as a free version.
+image_state() {
+  local ref="$1" revision="$2" out
+  if ! out="$(docker buildx imagetools inspect "$ref" --format '{{json .Image}}' 2>&1)"; then
+    if grep -qiE "not found|manifest unknown" <<<"$out"; then
+      echo missing
+      return
+    fi
+    die "cannot read $ref from the registry: $out"
+  fi
+  if grep -q "\"org.opencontainers.image.revision\":\"$revision\"" <<<"$out"; then
+    echo match
+  else
+    echo other
+  fi
+}
+
+newest_tag() {
+  git_ tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -1
+}
+
 preflight() {
   info "Preflight"
   require_docker
+  command -v gh >/dev/null 2>&1 || die "gh (the GitHub CLI) is required"
   [ "$(git_ rev-parse --abbrev-ref HEAD)" = main ] || die "releases are made from main"
   [ -z "$(git_ status --porcelain)" ] || die "the working tree is not clean"
   git_ fetch --quiet --tags origin main
-  [ "$(git_ rev-parse HEAD)" = "$(git_ rev-parse origin/main)" ] || die "main is not in sync with origin/main"
+  local head
+  head="$(git_ rev-parse HEAD)"
+  [ "$head" = "$(git_ rev-parse origin/main)" ] || die "main is not in sync with origin/main"
+  if [ -n "$EXPECT_SHA" ] && [ "$head" != "$EXPECT_SHA" ]; then
+    die "main is at $head, not at the verified $EXPECT_SHA: something was merged meanwhile. Run the release again."
+  fi
+
+  local newest state
+  newest="$(newest_tag)"
+  if [ -n "$newest" ]; then
+    state="$(release_state "$newest")"
+    if [ "$state" = missing ]; then
+      RESUME=1 TAG="$newest" VERSION="${newest#v}"
+      git_ merge-base --is-ancestor "$TAG" HEAD || die "$TAG is not on main"
+      [ "$(git_ show "$TAG:package.json" | version_in)" = "$VERSION" ] || die "package.json at $TAG is not $VERSION"
+      echo "    $TAG was not finished: this run finishes it and ignores --bump $BUMP. Run again for the next version."
+      return
+    fi
+  fi
+
   [ -n "$(unreleased_notes)" ] || die "CHANGELOG.md has no entries under [Unreleased]"
-  local current
-  current="$(current_version)"
+  local current pair
+  current="$(version_in <"$REPO_ROOT/package.json")"
   [ -n "$current" ] || die "cannot read the version from package.json"
   VERSION="$(next_version "$current")"
   TAG="v$VERSION"
   git_ rev-parse -q --verify "refs/tags/$TAG" >/dev/null && die "tag $TAG already exists"
-  local pair
   for pair in "${IMAGES[@]}"; do
-    if docker manifest inspect "$REGISTRY/${pair#*:}:$VERSION" >/dev/null 2>&1; then
-      die "$REGISTRY/${pair#*:}:$VERSION is already published"
-    fi
+    state="$(image_state "$REGISTRY/${pair#*:}:$VERSION" none)"
+    [ "$state" = missing ] || die "$REGISTRY/${pair#*:}:$VERSION is already published"
   done
   echo "    $current -> $VERSION ($TAG)"
 }
 
+create_tag() {
+  if [ $SKIP_VERIFY -eq 0 ]; then
+    info "Full verification"
+    "$REPO_ROOT/scripts/verify.sh"
+  fi
+  info "Updating version and changelog"
+  sed -i -E "0,/^  \"version\": \"[0-9.]+\",$/s//  \"version\": \"$VERSION\",/" "$REPO_ROOT/package.json"
+  sed -i "s/^## \[Unreleased\]$/## [Unreleased]\n\n## [$VERSION] - $(date -u +%Y-%m-%d)/" "$REPO_ROOT/CHANGELOG.md"
+  release_notes "$VERSION" <"$REPO_ROOT/CHANGELOG.md" >/dev/null
+  git_ add package.json CHANGELOG.md
+  git_ commit --quiet -m "Release $TAG"
+  git_ tag -a "$TAG" -m "$TAG"
+  info "Pushing the release commit and $TAG"
+  # Both or neither: a tag on origin is what a later run finishes.
+  git_ push --quiet --atomic origin HEAD:refs/heads/main "refs/tags/$TAG" ||
+    die "pushing the release commit and $TAG failed, so nothing was published. Run the release again."
+}
+
+publish_images() {
+  local revision src pair app name ref state
+  revision="$(git_ rev-parse "$TAG^{commit}")"
+  src="$(mktemp -d)"
+  # shellcheck disable=SC2064 # expand now: the path is fixed
+  trap "rm -rf '$src'" EXIT
+  git_ archive "$TAG" | tar -x -C "$src"
+  for pair in "${IMAGES[@]}"; do
+    app="${pair%%:*}" name="${pair#*:}" ref="$REGISTRY/${pair#*:}:$VERSION"
+    state="$(image_state "$ref" "$revision")"
+    case "$state" in
+      match) echo "    $ref is already published from $TAG" ;;
+      other) die "$ref exists but was not built from $TAG; it is left as it is" ;;
+      missing)
+        info "Building and pushing $ref"
+        docker buildx build --push --provenance=mode=max --sbom=true \
+          -f "$src/docker/$app.Dockerfile" --build-arg "VERSION=$VERSION" \
+          --label "org.opencontainers.image.revision=$revision" \
+          --label "org.opencontainers.image.source=$SOURCE_URL" \
+          --label "org.opencontainers.image.version=$VERSION" \
+          -t "$ref" "$src" || die "building or pushing $ref failed. Run the release again to finish $TAG."
+        ;;
+    esac
+  done
+  for pair in "${IMAGES[@]}"; do
+    ref="$REGISTRY/${pair#*:}:$VERSION"
+    state="$(image_state "$ref" "$revision")"
+    [ "$state" = match ] || die "$ref is not the image built from $TAG"
+  done
+  # :latest moves only once both images of this version are there.
+  for pair in "${IMAGES[@]}"; do
+    name="${pair#*:}"
+    info "Pointing $REGISTRY/$name:latest at $VERSION"
+    docker buildx imagetools create --tag "$REGISTRY/$name:latest" "$REGISTRY/$name:$VERSION" ||
+      die "moving $REGISTRY/$name:latest failed. Run the release again to finish $TAG."
+  done
+}
+
+publish_release() {
+  local notes state
+  notes="$(mktemp)"
+  git_ show "$TAG:CHANGELOG.md" | release_notes "$VERSION" >"$notes"
+  info "Creating the GitHub Release $TAG"
+  if ! gh release create "$TAG" --verify-tag --title "n8n-ops $VERSION" --notes-file "$notes"; then
+    # The request may have succeeded with its answer lost.
+    state="$(release_state "$TAG")"
+    [ "$state" = present ] || die "creating the GitHub Release $TAG failed. Run the release again to finish it."
+    echo "    the GitHub Release $TAG exists"
+  fi
+  rm -f "$notes"
+}
+
 main() {
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --target)
+        TARGET="${2:-}"
+        shift
+        ;;
+      --bump)
+        BUMP="${2:-}"
+        shift
+        ;;
+      --expect-sha)
+        EXPECT_SHA="${2:-}"
+        shift
+        ;;
+      --skip-verify) SKIP_VERIFY=1 ;;
+      --dry-run) DRY_RUN=1 ;;
+      -h | --help)
+        usage
+        exit 0
+        ;;
+      *)
+        usage
+        die "unknown option: $1"
+        ;;
+    esac
+    shift
+  done
+
+  [ "$TARGET" = ghcr ] || die "an explicit target is required: --target ghcr"
+  [[ "$BUMP" =~ ^(patch|minor|major)$ ]] || die "--bump must be patch, minor or major"
+  [ -z "$EXPECT_SHA" ] || [[ "$EXPECT_SHA" =~ ^[0-9a-f]{40}$ ]] || die "--expect-sha must be a full commit SHA"
+  [ $SKIP_VERIFY -eq 0 ] || [ -n "$EXPECT_SHA" ] || die "--skip-verify needs --expect-sha of the verified commit"
+
   preflight
   if [ $DRY_RUN -eq 1 ]; then
-    info "Dry run. Release notes for $TAG:"
-    unreleased_notes | sed 's/^/    /'
-    info "Would run scripts/verify.sh, commit package.json and CHANGELOG.md, tag $TAG, and push:"
+    if [ $RESUME -eq 1 ]; then
+      info "Dry run. Would finish $TAG: the missing images, :latest and the GitHub Release."
+    else
+      info "Dry run. Release notes for $TAG:"
+      unreleased_notes | sed 's/^/    /'
+      info "Would commit package.json and CHANGELOG.md, push them with $TAG, then publish:"
+    fi
     local pair
     for pair in "${IMAGES[@]}"; do
       echo "    $REGISTRY/${pair#*:}:$VERSION and :latest"
@@ -108,33 +275,12 @@ main() {
     return 0
   fi
 
-  info "Full verification"
-  "$REPO_ROOT/scripts/verify.sh"
-
-  info "Updating version and changelog"
-  sed -i -E "0,/^  \"version\": \"[0-9.]+\",$/s//  \"version\": \"$VERSION\",/" "$REPO_ROOT/package.json"
-  sed -i "s/^## \[Unreleased\]$/## [Unreleased]\n\n## [$VERSION] - $(date -u +%Y-%m-%d)/" "$REPO_ROOT/CHANGELOG.md"
-  git_ add package.json CHANGELOG.md
-  git_ commit --quiet -m "Release $TAG"
-  git_ tag -a "$TAG" -m "$TAG"
-
-  local pair app name
-  for pair in "${IMAGES[@]}"; do
-    app="${pair%%:*}" name="${pair#*:}"
-    info "Building $REGISTRY/$name:$VERSION"
-    docker build -f "$REPO_ROOT/docker/$app.Dockerfile" --build-arg "VERSION=$VERSION" \
-      -t "$REGISTRY/$name:$VERSION" -t "$REGISTRY/$name:latest" "$REPO_ROOT" || die "image build failed"
-  done
-  for pair in "${IMAGES[@]}"; do
-    name="${pair#*:}"
-    docker push --quiet "$REGISTRY/$name:$VERSION" ||
-      die "push failed (log in with: docker login ghcr.io). The release commit and $TAG exist only locally."
-    docker push --quiet "$REGISTRY/$name:latest"
-  done
-
-  git_ push --quiet origin main
-  git_ push --quiet origin "refs/tags/$TAG"
+  [ $RESUME -eq 1 ] || create_tag
+  publish_images
+  publish_release
   info "Released $TAG. Deploying is a separate step."
 }
 
-main
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  main "$@"
+fi

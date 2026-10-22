@@ -5,6 +5,8 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  # The Release workflow runs the whole CI on the commit it releases.
+  workflow_call:
   schedule:
     # Weekly full sweep that ignores path filters.
     - cron: "17 3 * * 1"
@@ -13,7 +15,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  # Named after the running workflow, so a release's CI never waits behind, or replaces, the CI of main.
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:

@@ -98,6 +98,8 @@ run_guards() {
       [ "$mode" = 100755 ] || [ "$path" = scripts/lib/common.sh ] || { echo "$path is not executable"; fail=1; }
     done < <(git ls-files -s "scripts/*.sh")
 
+    bash scripts/test-release.sh || fail=1
+
     # Scripts inside the images run with plain POSIX sh.
     mapfile -t image_scripts < <(git ls-files -co --exclude-standard "docker/*.sh")
     shellcheck -s sh "${image_scripts[@]}" || fail=1

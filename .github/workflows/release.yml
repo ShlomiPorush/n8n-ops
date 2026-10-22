@@ -1,0 +1,60 @@
+name: Release
+
+# Releases the next version from main on a button press: the whole CI on this commit, then
+# scripts/release.sh, which pushes the release commit and tag together, publishes both images to GHCR
+# (version, then :latest) and creates the GitHub Release from the CHANGELOG section. A run that
+# stopped halfway is finished by the next run, which ignores the bump. Deploys nothing.
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version part to increase (ignored while an earlier release is unfinished)
+        type: choice
+        options: [patch, minor, major]
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    name: Release
+    needs: verify
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          fetch-tags: true
+      # The builder that stores provenance and an SBOM with each image.
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Release
+        # Inputs reach the script through the environment, never through ${{ }} in the script.
+        env:
+          BUMP: ${{ inputs.bump }}
+          VERIFIED_SHA: ${{ github.sha }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin <<<"$GH_TOKEN"
+          scripts/release.sh --target ghcr --bump "$BUMP" --skip-verify --expect-sha "$VERIFIED_SHA"

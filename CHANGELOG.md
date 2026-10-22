@@ -7,7 +7,7 @@ All notable changes to this project are documented here. The format follows [Kee
 ### Added
 
 - **Failure monitoring.** Reads every instance's failed executions and groups them into problems, one per workflow, node and exact error, with the full stored execution. Regressions, auto-resolve, mute, merge and retention; the first sync is silent.
-- **Alerts and reports.** One Telegram alert per problem, which later failures edit instead of repeating, with Resolved and Mute buttons; alerts when an instance, a queue worker or a backup fails and when it recovers. Daily and weekly email reports that read on phones, in dark mode and in Outlook.
+- **Alerts and reports.** One Telegram alert per problem, with Resolved and Mute buttons; several workflows failing with the same error become one message, which later problems edit instead of repeating. Alerts when an instance or a queue worker goes down and when it recovers, when a queue backlog lasts, and when a backup fails or is overdue. Daily and weekly email reports that read on phones, in dark mode and in Outlook.
 - **Health.** Main processes, queue workers and queue backlog, checked from n8n-ops or from inside the n8n host.
 - **Instances.** Registration with a connection test. The API key's scopes, read from n8n 2.14 and later or declared on older versions, turn features on and off. A version check against the latest n8n release.
 - **Backups.** Workflows and credential secrets, encrypted with your public key before they leave the n8n host, verified in S3-compatible storage, scheduled per instance with daily, weekly and monthly retention, and a nightly backup of the n8n-ops database. Restore of a single workflow with its credentials, and export of decrypted credentials as an encrypted file.

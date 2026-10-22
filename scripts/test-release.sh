@@ -179,7 +179,7 @@ dir="$(checkout)"
 echo change >"$dir/file" && git -C "$dir" add file && git -C "$dir" commit --quiet -m "Merged meanwhile" && git -C "$dir" push --quiet origin main
 EXPECT="$stale" release
 check "main moved after verification: the run stops" [ $? -ne 0 ]
-check "  and says why" said "something was merged meanwhile"
+check "  and says why" said "something was pushed meanwhile"
 check "  and publishes nothing" [ ! -e "$STATE/images/ghcr.io_shlomiporush_n8n-ops_0.1.0" ]
 check "  and pushes no tag" lacks_tag v0.1.0
 

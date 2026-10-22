@@ -3,7 +3,9 @@ name: Release
 # Releases the next version from main on a button press: the whole CI on this commit, then
 # scripts/release.sh, which pushes the release commit and tag together, publishes both images to GHCR
 # (version, then :latest) and creates the GitHub Release from the CHANGELOG section. A run that
-# stopped halfway is finished by the next run, which ignores the bump. Deploys nothing.
+# stopped halfway is finished by the next run, which ignores the bump: start a new run, since
+# "Re-run failed jobs" keeps the old commit and stops once the release commit is on main. Deploys
+# nothing.
 on:
   workflow_dispatch:
     inputs:

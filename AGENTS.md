@@ -39,7 +39,7 @@ All scripts are Bash for WSL or Linux with Docker. Node, pnpm, shellcheck and sh
 - `scripts/local.sh build|up|start|down|status|logs|nuke`: development stack.
 - `scripts/verify.sh [--changed [BASE]] [--guards-only] [--skip-guards] [--skip-integration] [--design regular|compact]`: the only verification entry point. CI runs the same script, one job per design.
 - `scripts/try-pr.sh <number>|status|restore`: run a pull request on the development stack.
-- Releases: the **Release** workflow (Actions → Release → Run workflow on `main`, choose patch, minor or major) runs the whole CI on the commit, then `scripts/release.sh`: release commit and tag, both images on GHCR (the version, then `:latest`) and the GitHub Release from the CHANGELOG section. A run that stopped halfway is finished by the next run. `scripts/test-release.sh` (run by the guards) covers each way a run can stop. Never deploys.
+- Releases: the **Release** workflow (Actions → Release → Run workflow on `main`, choose patch, minor or major) runs the whole CI on the commit, then `scripts/release.sh`: release commit and tag, both images on GHCR (the version, then `:latest`) and the GitHub Release from the CHANGELOG section. A run that stopped halfway is finished by the next run (a new Run workflow, not "Re-run failed jobs"). `scripts/test-release.sh` (run by the guards) covers each way a run can stop. Never deploys.
 - Ad-hoc commands in the toolchain: `source scripts/lib/common.sh && build_toolchain && in_toolchain "pnpm ..."`.
 
 Before finishing a change, run `scripts/verify.sh` (or `--changed` for a quick pass) and report its result.

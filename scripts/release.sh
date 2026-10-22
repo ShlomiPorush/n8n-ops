@@ -126,7 +126,7 @@ preflight() {
   head="$(git_ rev-parse HEAD)"
   [ "$head" = "$(git_ rev-parse origin/main)" ] || die "main is not in sync with origin/main"
   if [ -n "$EXPECT_SHA" ] && [ "$head" != "$EXPECT_SHA" ]; then
-    die "main is at $head, not at the verified $EXPECT_SHA: something was merged meanwhile. Run the release again."
+    die "main is at $head, not at the verified $EXPECT_SHA: something was pushed meanwhile. Start a new release run."
   fi
 
   local newest state

@@ -199,9 +199,9 @@ function AddWorkerDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
                 id="worker-name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="docker-host-1"
+                placeholder="Docker Office"
+                maxLength={60}
               />
-              <FieldDescription>Letters, digits, dot, dash and underscore.</FieldDescription>
             </Field>
             <Field orientation="horizontal">
               <Checkbox id="worker-proxy" checked={socketProxy} onCheckedChange={(v) => setSocketProxy(v === true)} />
@@ -241,7 +241,7 @@ function AddWorkerDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
               <Button onClick={() => close(false)}>Cancel</Button>
               <Button
                 variant="primary"
-                disabled={!name || (socketProxy && containerList.length === 0) || create.isPending}
+                disabled={!name.trim() || (socketProxy && containerList.length === 0) || create.isPending}
                 onClick={() =>
                   create.mutate(
                     { name, socketProxy, containers: socketProxy ? containerList : [] },

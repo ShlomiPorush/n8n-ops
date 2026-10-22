@@ -9,6 +9,10 @@ All notable changes to this project are documented here. The format follows [Kee
 - When the server cannot sign in to PostgreSQL or reach it at startup, it says why in one line and what to do, instead of a stack trace. A refused password explains that changing it in `.env` does not change it in an existing database, and how to set it.
 - The production `docker-compose.yml` shows the server's health check, so tools that read the compose file show it too. The check itself is unchanged.
 
+### Fixed
+
+- Add a Worker accepts any name up to 60 characters, such as "Docker Office". Before, a name with a space was refused with a technical pattern message. A refused value in the dialog is now explained in words.
+
 ## [0.1.0] - 2026-10-22
 
 ### Added

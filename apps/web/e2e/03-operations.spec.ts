@@ -35,10 +35,14 @@ test("backup storage is configured and verified", async () => {
 test("a worker pairs with a one-time token", async () => {
   await page.goto("/workers")
   await page.getByRole("button", { name: "Add worker" }).first().click()
-  await page.getByLabel("Name").fill("e2e-host")
+  await page.getByLabel("Name").fill("E2E Host")
   // The socket proxy is on by default and needs the n8n containers to allow.
   await expect(page.getByLabel("Limit Docker access with a socket proxy")).toBeChecked()
   await expect(page.getByRole("button", { name: "Create pairing token" })).toBeDisabled()
+  // A refused value is explained in words, not as a pattern.
+  await page.getByLabel("n8n containers").fill("n8n-main, flow!")
+  await page.getByRole("button", { name: "Create pairing token" }).click()
+  await expect(page.getByText("Container names use letters, digits, dot, dash, underscore and *")).toBeVisible()
   await page.getByLabel("n8n containers").fill("n8n-main, flow*")
   await page.getByRole("button", { name: "Create pairing token" }).click()
   await expect(page.getByText("wollomatic/socket-proxy:")).toBeVisible()
@@ -60,7 +64,7 @@ test("the worker is assigned to the instance", async () => {
   await page.getByRole("row", { name: /e2e-n8n/ }).click()
   await page.getByRole("button", { name: "Edit" }).click()
   await page.getByRole("combobox").filter({ hasText: "None" }).click()
-  await page.getByRole("option", { name: "e2e-host" }).click()
+  await page.getByRole("option", { name: "E2E Host" }).click()
   await page.getByLabel("Container name").fill(container)
   await page.getByRole("button", { name: "Save" }).click()
   await expect(page.getByRole("button", { name: "Export credentials" })).toBeVisible()

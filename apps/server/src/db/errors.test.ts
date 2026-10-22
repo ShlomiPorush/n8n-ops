@@ -25,9 +25,7 @@ describe("describeDatabaseError", () => {
 
   it("names the host that cannot be reached", () => {
     expect(describeDatabaseError(queryError("ECONNREFUSED"), url)).toContain("Cannot reach PostgreSQL at postgres:5432")
-    expect(describeDatabaseError(Object.assign(new Error("x"), { code: "ENOTFOUND" }), url)).toContain(
-      "(ENOTFOUND)",
-    )
+    expect(describeDatabaseError(Object.assign(new Error("x"), { code: "ENOTFOUND" }), url)).toContain("(ENOTFOUND)")
   })
 
   it("names a missing user or database", () => {

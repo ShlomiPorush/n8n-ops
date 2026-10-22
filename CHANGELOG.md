@@ -6,10 +6,13 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Changed
 
+- When the server cannot sign in to PostgreSQL or reach it at startup, it says why in one line and what to do, instead of a stack trace. A refused password explains that changing it in `.env` does not change it in an existing database, and how to set it.
+- The production `docker-compose.yml` shows the server's health check, so tools that read the compose file show it too. The check itself is unchanged.
 - Adding a worker is one file: Add a Worker gives a `docker-compose.yml` with the server address and the pairing token in it, to save in an empty folder on the n8n host and start with `docker compose up -d`. There are no commands to run and no `.env` or Docker group to fill in: the worker image hands `./data` to its user and, without the socket proxy, joins the Docker socket's group by itself, and the socket proxy runs as root with no capabilities to open the socket. The worker image is pinned to the server's version instead of `latest`.
 
 ### Fixed
 
+- Add a Worker accepts any name up to 60 characters, such as "Docker Office". Before, a name with a space was refused with a technical pattern message. A refused value in the dialog is now explained in words.
 - The commands Add a Worker gave wrote `.env` with `cat >`, which replaced any `.env` already in that folder.
 
 ## [0.1.0] - 2026-10-22

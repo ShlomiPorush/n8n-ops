@@ -28,7 +28,7 @@ Open `https://<DOMAIN>`. The first visit runs the setup: your account, two-facto
 
 `N8N_OPS_PUBLIC_URL` (`https://<DOMAIN>` by default) must be the HTTPS address users open. It enables secure cookies, is trusted for sign-in, and is used in links sent by Telegram and email.
 
-The compose file pulls the `ghcr.io/shlomiporush/n8n-ops` image of the release set in `VERSION`; the [releases](https://github.com/ShlomiPorush/n8n-ops/releases) list them. **No release has been published yet**, so this works from the first release on.
+The compose file pulls the `ghcr.io/shlomiporush/n8n-ops` image of the release set in `VERSION`; the [releases](https://github.com/ShlomiPorush/n8n-ops/releases) list them.
 
 ## Add n8n instances
 

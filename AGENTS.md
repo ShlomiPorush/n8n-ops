@@ -4,7 +4,7 @@
 
 n8n-ops is a self-hosted operations console for many n8n instances: failure monitoring and problem grouping, Telegram alerts and email reports, MCP and REST access for agents, encrypted backups to S3-compatible storage, and instance consolidation.
 
-**Stage: v1 implemented; not released or deployed yet.**
+**Stage: v1 released as 0.1.0 (2026-10-22).**
 
 - Product requirements: `docs/requirements.md`
 - Foundation and repository contract (what exists, decisions, scripts, CI): `docs/project-foundation.md`

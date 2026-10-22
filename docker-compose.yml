@@ -60,7 +60,13 @@ services:
       - "traefik.http.routers.n8n-ops.tls=true"
       - "traefik.http.routers.n8n-ops.service=n8n-ops"
       - "traefik.http.routers.n8n-ops.middlewares=default@file"
-    # The image's health check calls /healthz/ready, which includes the database.
+    # Calls /healthz/ready, which includes the database; the same check as the image's, written out here.
+    healthcheck:
+      test: ["CMD", "as-node", "node", "dist/healthcheck.js"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
     depends_on:
       postgres:
         condition: service_healthy

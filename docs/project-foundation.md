@@ -1,6 +1,6 @@
 # n8n-ops Project Foundation
 
-Status: Foundation and all v1 features implemented (2026-10-14). Not yet released or deployed.
+Status: Foundation and all v1 features implemented (2026-10-14). Released as 0.1.0 (2026-10-22).
 
 This document separates what exists in the repository from what is still planned. A planned item does not exist until its status and verification evidence say otherwise. Product behavior is specified in [requirements.md](requirements.md).
 
@@ -20,7 +20,7 @@ Verified locally on 2026-10-14 in WSL (Docker 29.8.2): `scripts/verify.sh` full 
 - **Problem:** a team running many self-hosted n8n instances gets tens of failure emails per day and ignores them; backups are unreliable; moving workflows between instances is manual.
 - **Product:** one self-hosted web application that monitors n8n instances through their public API, groups failures into problems, sends a small number of Telegram alerts and email reports, exposes failures to AI agents over MCP and REST, backs up workflows and credentials encrypted to S3-compatible storage, and helps consolidate instances.
 - **Users:** one operator (single local account). Agents connect by approval (OAuth) or use read-only tokens made by hand.
-- **Stage:** v1 implemented and verified in the test stack; first release and production deployment pending.
+- **Stage:** v1 released as 0.1.0 (2026-10-22); production deployment and acceptance pending.
 - **Deployment shape:** Docker Compose. `server` and its PostgreSQL run on any host that can reach the n8n instances. An optional `worker` runs on each n8n Docker host.
 - **Non-goals for v1:** full-instance backup (`pg_dump`), automatic container discovery, write actions over REST or MCP, multiple users or roles, localization.
 
@@ -111,7 +111,7 @@ Development data lives in `${XDG_DATA_HOME:-~/.local/share}/n8n-ops-dev` on the 
 | 4 | Local workflow | Done | `start`, `status`, `down`, data kept, `nuke` confirmed and refused |
 | 5 | Verify workflow | Done | Full sweep passes locally and in CI |
 | 6 | Try PR workflow | Done | Exercised against the foundation pull request (see the pull request) |
-| 7 | Release workflow | Done, not yet used | `scripts/test-release.sh` and a rehearsal against a local registry; no release has been published |
+| 7 | Release workflow | Done | `scripts/test-release.sh`, a rehearsal against a local registry, and the 0.1.0 release |
 | 8 | Path-filtered CI | Done | Change detection, guards, verify, summary job |
 | 9 | Dependency management | Done | `.github/dependabot.yml` for npm, Actions, Docker and Compose |
 | 10 | GitHub configuration | Done | Matches the owner's standard; nothing changed |
@@ -144,4 +144,4 @@ All scripts: Bash inside WSL (or any Linux with Docker), `#!/usr/bin/env bash`, 
 
 ## Next step
 
-First release, 0.1.0, with the Release workflow and `minor` (owner's decision). GHCR creates new packages as private: make `n8n-ops` and `n8n-ops-worker` public in their package settings, or the README install cannot pull them. Then deployment and the production prerequisites in `requirements.md` section 9. Accepting v1 (section 11) needs the real instances, Telegram and storage.
+Production deployment and the production prerequisites in `requirements.md` section 9. Accepting v1 (section 11) needs the real instances, Telegram and storage.

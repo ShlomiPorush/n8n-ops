@@ -4,6 +4,11 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Changed
+
+- When the server cannot sign in to PostgreSQL or reach it at startup, it says why in one line and what to do, instead of a stack trace. A refused password explains that PostgreSQL keeps the password the database was created with, and how to set it again.
+- The production `docker-compose.yml` shows the server's health check, so tools that read the compose file show it too. The check itself is unchanged.
+
 ## [0.1.0] - 2026-10-22
 
 ### Added

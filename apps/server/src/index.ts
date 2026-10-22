@@ -6,6 +6,7 @@ import { createAuth } from "./auth/auth.ts"
 import { loadConfig } from "./config.ts"
 import { type Ctx, consoleLogger } from "./context.ts"
 import { createDatabase } from "./db/client.ts"
+import { describeDatabaseError } from "./db/errors.ts"
 import { features } from "./features.ts"
 import { createAudit } from "./lib/audit.ts"
 import { createSecrets, loadOrCreateAppKey } from "./lib/crypto.ts"
@@ -16,7 +17,14 @@ const config = loadConfig()
 const log = consoleLogger
 const database = createDatabase(config.databaseUrl)
 
-await database.migrate(config.migrationsDir)
+try {
+  await database.migrate(config.migrationsDir)
+} catch (error) {
+  const problem = describeDatabaseError(error, config.databaseUrl)
+  if (!problem) throw error
+  log.error(problem)
+  process.exit(1)
+}
 const { key, created } = await loadOrCreateAppKey(config.appKeyPath)
 if (created)
   log.warn("Created a new app secrets key. Download a copy from Settings > Keys.", { path: config.appKeyPath })

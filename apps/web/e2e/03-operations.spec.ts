@@ -145,9 +145,13 @@ test("a backup through the worker includes credential secrets", async () => {
   await expect(result.getByText("This server")).toBeVisible()
   // The copy in the mapped folder is on the host, encrypted.
   const folder = "/backups-data/nightly/e2e-n8n"
-  const archives = readdirSync(folder, { recursive: true }).map(String).filter((f) => f.endsWith(".tar.gz.age"))
+  const archives = readdirSync(folder, { recursive: true })
+    .map(String)
+    .filter((f) => f.endsWith(".tar.gz.age"))
   expect(archives).toHaveLength(1)
-  const head = readFileSync(join(folder, archives[0] ?? "")).subarray(0, 21).toString()
+  const head = readFileSync(join(folder, archives[0] ?? ""))
+    .subarray(0, 21)
+    .toString()
   expect(head).toBe("age-encryption.org/v1")
 })
 

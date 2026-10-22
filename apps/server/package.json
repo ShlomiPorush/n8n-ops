@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "esbuild src/index.ts src/healthcheck.ts src/cli.ts --bundle --platform=node --target=node24 --format=esm --outdir=dist --external:cpu-features --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\"",
+    "build": "esbuild src/index.ts src/healthcheck.ts src/cli.ts --bundle --platform=node --target=node24 --format=esm --outdir=dist --external:cpu-features --inject:src/esm-shims.ts --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\"",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
     "test:integration": "vitest run --config vitest.integration.config.ts"

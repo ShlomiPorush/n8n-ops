@@ -609,7 +609,7 @@ export function DestinationFields({
           The newest archive of each of the last days, weeks and months is kept, per instance; older ones are removed
           here. The newest archive is always kept.
         </FieldDescription>
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid gap-3 min-[480px]:grid-cols-3">
           {(["daily", "weekly", "monthly"] as const).map((k) => (
             <Field key={k}>
               <FieldLabel htmlFor={`d-keep-${k}`}>Keep {k}</FieldLabel>
@@ -637,7 +637,7 @@ export function DestinationFields({
             onCheckedChange={(v) => setForm((f) => ({ ...f, lock: v }))}
           />
           {form.lock && (
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-3 min-[480px]:grid-cols-2">
               <Field>
                 <FieldLabel>Lock mode</FieldLabel>
                 <Select
@@ -663,7 +663,7 @@ export function DestinationFields({
                   onChange={(e) => setForm((f) => ({ ...f, lockDays: e.target.value }))}
                 />
               </Field>
-              <FieldDescription className="sm:col-span-2">
+              <FieldDescription className="min-[480px]:col-span-2">
                 Retention removes an archive only after its lock ends. A lock longer than the retention keeps archives
                 (and their cost) for the whole lock.
               </FieldDescription>
@@ -744,7 +744,7 @@ function DeleteDestination({
         <ToggleGroup
           type="single"
           aria-label="Its archives"
-          className="w-full flex-col items-stretch sm:flex-row"
+          className="w-full flex-col items-stretch min-[480px]:flex-row"
           value={files}
           onValueChange={(v) => v && setFiles(v as "keep" | "delete")}
         >

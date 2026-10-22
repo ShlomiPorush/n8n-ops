@@ -36,7 +36,9 @@ describe("describeDatabaseError", () => {
   })
 
   it("names a refused user or a missing database", () => {
-    expect(describeDatabaseError(queryError("28000"), url)).toContain('refused user "n8n_ops" before checking a password')
+    expect(describeDatabaseError(queryError("28000"), url)).toContain(
+      'refused user "n8n_ops" before checking a password',
+    )
     expect(describeDatabaseError(queryError("3D000"), url)).toContain('no database "n8n_ops"')
   })
 

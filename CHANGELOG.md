@@ -34,6 +34,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Changed
 
+- The production `docker-compose.yml` runs behind Traefik on the external `traefik` network, routed by `DOMAIN`, and publishes no port. Its data lives in `data/` and `postgres-data/` beside it, owned for the server by a one-shot `data-init`, so there is no port or directory to set and no `chown` to run by hand. `.env.example` asks only for `VERSION` (required, no `latest` by default), `DOMAIN` and the database password; `DATABASE_URL` and `N8N_OPS_PUBLIC_URL` are built from them. Every service runs with no new privileges, no Linux capabilities beyond what its start needs and rotated logs, the server with a read-only root filesystem, and PostgreSQL no longer receives the server's settings. The worker is no longer in this file: Workers → Add worker gives the compose file for the n8n host.
 - Problems, Instances, Backups and Agent Access show each row as a short item of two or three lines when the list sits beside the reading pane or on a narrow screen, so no value is cut off at any width; a sort control above the list replaces the column headers. The list stays in place while an item opens, so the keyboard focus is kept.
 - CI checks Regular and Compact side by side, one job per design, so Verify finishes in about two thirds of the time. `scripts/verify.sh --design regular|compact` runs the end-to-end tests in one design; without it they still run in both.
 - An icon of its own: a lowercase n with a green dot, in the browser tab, the top bar and the sign-in page, instead of the letter n.
@@ -47,6 +48,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Fixed
 
+- The server reports the version of its image. The image tag set in `.env` reached the server as `N8N_OPS_VERSION` and replaced it, so a deployment of `latest` showed "latest".
 - Health and backup alerts in Telegram escape instance names, worker URLs and error messages, and shorten long ones. A `<` or `&` in an error made Telegram refuse the alert, so it never arrived, and markup in it could add formatting or a link. Every Telegram message is now built one way, so names in problem alerts and access requests are shortened too, an access request with a long list of scopes or workflows shows as many as fit and counts the rest, and a long text is never cut in the middle of an emoji, which Telegram would also refuse. The Overview now shows these alerts with `&` and `<` as written. Alerts queued or raised before the update keep their old text.
 - A health report from a worker with a field of the wrong type is logged and skipped. Before, it stopped the health alerts for that instance on every check.
 - Agent workflow search matches each tag as written: a tag with a backslash, such as `C:\data`, is found, and a search for quotes or commas no longer matches every tagged workflow.

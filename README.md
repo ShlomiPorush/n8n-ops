@@ -12,19 +12,21 @@ Requirements and design: [docs/requirements.md](docs/requirements.md). How the r
 
 ## Install
 
-Requirements: Docker with Compose, a host that can reach your n8n instances, and an HTTPS reverse proxy (or Cloudflare Access) in front of n8n-ops.
+Requirements: Docker with Compose, a host that can reach your n8n instances, and [Traefik](https://traefik.io/traefik/) on that host with an external `traefik` network, an `https` entrypoint with TLS, and a `default@file` middleware. With another reverse proxy, change the labels in `docker-compose.yml`.
 
 ```bash
+mkdir n8n-ops && cd n8n-ops
 curl -O https://raw.githubusercontent.com/ShlomiPorush/n8n-ops/main/docker-compose.yml
 curl -o .env https://raw.githubusercontent.com/ShlomiPorush/n8n-ops/main/.env.example
-# Edit .env: N8N_OPS_PUBLIC_URL, passwords, data directory.
-mkdir -p /srv/n8n-ops/server /srv/n8n-ops/postgres && chown 1000:1000 /srv/n8n-ops/server
+# Edit .env: VERSION, DOMAIN and POSTGRES_PASSWORD.
 docker compose up -d
 ```
 
-Open the public URL. The first visit runs the setup: your account, two-factor authentication (required), and the backup key pair. **Save the private backup key** when it is shown; without it no backup can be restored. Telegram and storage can be set then or later in Settings.
+The data stays in `data/` (the app key) and `postgres-data/` next to the compose file.
 
-`N8N_OPS_PUBLIC_URL` must be the HTTPS address users open. It enables secure cookies, is trusted for sign-in, and is used in links sent by Telegram and email.
+Open `https://<DOMAIN>`. The first visit runs the setup: your account, two-factor authentication (required), and the backup key pair. **Save the private backup key** when it is shown; without it no backup can be restored. Telegram and storage can be set then or later in Settings.
+
+`N8N_OPS_PUBLIC_URL` (`https://<DOMAIN>` by default) must be the HTTPS address users open. It enables secure cookies, is trusted for sign-in, and is used in links sent by Telegram and email.
 
 The compose file pulls `ghcr.io/shlomiporush/n8n-ops` images, which `scripts/release.sh` publishes. **No release has been published yet**, so this works from the first release on.
 

@@ -28,3 +28,7 @@ Thumbs.db
 
 # Written by the skill command when run from the repository.
 packages/skill/n8n-ops/.install-id
+
+# Production data, when the stack runs from a checkout
+/data/
+/postgres-data/

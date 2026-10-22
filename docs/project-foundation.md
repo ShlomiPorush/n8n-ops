@@ -93,9 +93,10 @@ Shared TypeScript settings are in `config/tsconfig.base.json`. Dockerfiles, thei
 
 | Service | Runtime user | Health check | Persistent state | Host directory | Named volume | Backup lifecycle |
 |---|---|---|---|---|---|---|
-| `server` | `node`, UID 1000 | `node dist/healthcheck.js` calls `/healthz/ready` (database reachable) | App secrets key file (from the first feature on) | `${N8N_OPS_DATA_DIR}/server` | None | Operator downloads the key from Settings; never in the repository |
-| `postgres` | `postgres`, UID 999 (official entrypoint drops privileges) | `pg_isready` | Database files | `${N8N_OPS_DATA_DIR}/postgres` | None | Nightly encrypted dump to S3 (requirement D8, planned) |
-| `worker` | `node`, UID 1000, plus the Docker socket's group via `group_add` | `node dist/healthcheck.js` checks the last heartbeat | Worker identity file (planned) | `${N8N_OPS_WORKER_DIR}` (production), `${N8N_OPS_DATA_DIR}/worker` (development) | None | Re-pair on loss |
+| `server` | `node`, UID 1000 | `node dist/healthcheck.js` calls `/healthz/ready` (database reachable) | App secrets key file (from the first feature on) | `./data` (production), `${N8N_OPS_DATA_DIR}/server` (development) | None | Operator downloads the key from Settings; never in the repository |
+| `data-init` (production only) | root with only `CHOWN`, one-shot | None; `server` waits for it to exit successfully | None | `./data` | None | Not applicable |
+| `postgres` | `postgres`, UID 999 (official entrypoint drops privileges) | `pg_isready` | Database files | `./postgres-data` (production), `${N8N_OPS_DATA_DIR}/postgres` (development) | None | Nightly encrypted dump to S3 (requirement D8, planned) |
+| `worker` | `node`, UID 1000; through `socket-proxy`, or with the Docker socket's group via `group_add` | `node dist/healthcheck.js` checks the last heartbeat | Worker identity file (planned) | `./data` beside the compose file that Add worker generates (production), `${N8N_OPS_DATA_DIR}/worker` (development) | None | Re-pair on loss |
 
 Socket access is root-equivalent on the host even for a non-root process. It is accepted for `worker` only and contained by no inbound ports, outbound HTTPS, a revocable identity and no database credentials. `scripts/local.sh status` and `scripts/verify.sh` fail if any process in these services runs as UID 0.
 
@@ -137,7 +138,7 @@ All scripts: Bash inside WSL (or any Linux with Docker), `#!/usr/bin/env bash`, 
 
 | Question | Why it matters | Needed | Owner |
 |---|---|---|---|
-| Where `server` is hosted and which reverse proxy fronts it | Production deployment only | Decide before the first deployment | Shlomi |
+| Where `server` is hosted (the reverse proxy is Traefik) | Production deployment only | Decide before the first deployment | Shlomi |
 | Encrypted versus searchable stored executions (B4) | Stored executions are plain JSONB for search; at-rest protection relies on the database host | Owner decision | Shlomi |
 
 ## Next step

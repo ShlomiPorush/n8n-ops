@@ -1,41 +1,127 @@
-# Production deployment. Images are published to GHCR by scripts/release.sh; nothing is built here.
-# Configure through .env (copy .env.example). The "worker" profile runs on an n8n Docker host.
+# Production deployment. Runs the images scripts/release.sh publishes to GHCR; nothing is built here.
+# Behind Traefik on the external "traefik" network, so no port is published. Configure through .env
+# (copy .env.example); every variable is documented there.
+#
+# Persistent data lives in host directories next to this file:
+#   ./data           the server's app key (losing it loses every stored secret)
+#   ./postgres-data  the database
+# "docker compose down" keeps both.
+#
+# Compose interpolation is limited to VERSION, DOMAIN and the PostgreSQL credentials. Everything the
+# server reads comes through env_file.
+#
+# Hardening on every service: no new privileges, all Linux capabilities dropped (data-init and
+# postgres get back only what they need while they start as root) and log rotation. The server and
+# data-init also run with a read-only root filesystem.
 name: n8n-ops
 
 services:
   server:
-    image: ghcr.io/shlomiporush/n8n-ops:${N8N_OPS_VERSION:-latest}
-    env_file: .env
+    image: ghcr.io/shlomiporush/n8n-ops:${VERSION:?Set VERSION in .env to the release to run}
+    container_name: n8n-ops
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Writes nothing outside /data and /tmp at runtime.
+    read_only: true
+    tmpfs:
+      - /tmp
+    # No mem_limit: the nightly backup of the n8n-ops database holds the whole dump in memory, so a
+    # fixed ceiling would stop the server once the database outgrows it.
+    cpus: "1.0"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+    env_file:
+      - .env
+    networks:
+      - traefik
+      - n8n-ops
+    volumes:
+      - ./data:/data
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik"
+      - "traefik.http.services.n8n-ops.loadbalancer.server.port=8080"
+      - "traefik.http.routers.n8n-ops.entrypoints=https"
+      - "traefik.http.routers.n8n-ops.rule=Host(`${DOMAIN:?Set DOMAIN in .env}`)"
+      - "traefik.http.routers.n8n-ops.tls=true"
+      - "traefik.http.routers.n8n-ops.service=n8n-ops"
+      - "traefik.http.routers.n8n-ops.middlewares=default@file"
+    # The image's health check calls /healthz/ready, which includes the database.
     depends_on:
       postgres:
         condition: service_healthy
-    ports:
-      - "${N8N_OPS_PORT:-8080}:8080"
+      data-init:
+        condition: service_completed_successfully
+
+  # One-shot: hands ./data to the server's runtime user (node, UID 1000), then exits. A host
+  # directory created by root would otherwise refuse the app key. Idempotent, so it is safe on every
+  # "up".
+  data-init:
+    image: ghcr.io/shlomiporush/n8n-ops:${VERSION:?Set VERSION in .env to the release to run}
+    container_name: n8n-ops-data-init
+    user: "0:0"
+    entrypoint: ["chown", "-R", "node:node", "/data"]
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+    read_only: true
+    mem_limit: 128m
+    cpus: "0.5"
+    restart: "no"
+    network_mode: none
     volumes:
-      - ${N8N_OPS_DATA_DIR:-./data}/server:/data
-    restart: unless-stopped
+      - ./data:/data
 
   postgres:
     image: postgres:18.6-bookworm
-    env_file: .env
+    container_name: n8n-ops-postgres
+    security_opt:
+      - no-new-privileges:true
+    # The official entrypoint starts as root, fixes the ownership of the data and socket directories,
+    # then drops to the postgres user. These five capabilities are exactly what that needs.
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    mem_limit: 1g
+    cpus: "1.0"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+    # Only its own three values: the server's secrets in .env never reach this container.
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in .env}
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     volumes:
-      - ${N8N_OPS_DATA_DIR:-./data}/postgres:/var/lib/postgresql
+      # PostgreSQL 18 keeps its data in a versioned directory under /var/lib/postgresql.
+      - ./postgres-data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
       interval: 10s
       timeout: 5s
       retries: 5
-    restart: unless-stopped
+    networks:
+      - n8n-ops
 
-  # A worker without the socket proxy (full Docker access). Workers → Add worker in the UI generates a
-  # compose file with the recommended socket proxy instead.
-  worker:
-    profiles: [worker]
-    image: ghcr.io/shlomiporush/n8n-ops-worker:${N8N_OPS_VERSION:-latest}
-    env_file: .env
-    group_add:
-      - "${DOCKER_SOCKET_GID:-docker}"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - ${N8N_OPS_WORKER_DIR:-./worker-data}:/data
-    restart: unless-stopped
+networks:
+  # The server and the database. Not internal: the server reaches n8n, Telegram, SMTP and storage.
+  n8n-ops:
+  traefik:
+    external: true

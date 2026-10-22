@@ -538,9 +538,9 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
         </TabsList>
 
         <TabsContent value="overview" forceMount className={tabPanel}>
-          {pollError}
           <StatusStrip instance={i} footer={collected} />
-          <Kpis>
+          {/* Four figures in one row wherever the pane has room for them, two by two below that. */}
+          <Kpis className="grid-cols-2 @min-[36rem]/pane:grid-cols-4">
             <Kpi
               label="Open problems"
               icon={BugIcon}
@@ -561,7 +561,6 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
             <PanelHead
               title="Open Problems"
               count={n(i.openProblems)}
-              description={i.openProblems > 3 ? "The three seen most recently." : undefined}
               more={i.openProblems > 0 ? { to: `/instances/${i.id}?tab=problems`, label: "All" } : undefined}
             />
             <InstanceProblems query={problems} limit={3} onOpen={(pid) => navigate(`/problems/${pid}`)} />
@@ -807,9 +806,20 @@ function StatusStrip({ instance: i, footer }: { instance: InstanceDetailData; fo
           </div>
         ))}
       </div>
-      <p className="border-t border-line px-pad-x py-1.5 text-small text-muted-foreground">
-        Health checked <TimeAgo value={i.healthCheckedAt} /> · Failures checked <TimeAgo value={i.lastPollAt} /> ·{" "}
-        {footer}
+      <p className="border-t border-line px-pad-x py-1.5 text-small break-words text-muted-foreground">
+        Health checked <TimeAgo value={i.healthCheckedAt} /> ·{" "}
+        {i.lastPollError ? (
+          // The whole error is in the Health tab; here it takes the place of the time failures were read.
+          <span className="text-fail">
+            <b className="font-semibold">Reading failures failed:</b>{" "}
+            <span className="font-mono">{i.lastPollError}</span>
+          </span>
+        ) : (
+          <>
+            Failures checked <TimeAgo value={i.lastPollAt} />
+          </>
+        )}{" "}
+        · {footer}
       </p>
     </Panel>
   )

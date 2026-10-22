@@ -425,14 +425,20 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
     settings: useUnsaved(`overrides-${id}`),
   }
   // The tabs scroll sideways in a narrow pane; the open one is brought into sight, also when the address opened it.
+  // Only the list scrolls: scrollIntoView would also move the pane up to the tabs while a field is being edited.
   const pane = useRef<HTMLDivElement>(null)
   const loaded = Boolean(detail.data)
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs when another tab opens or a mark widens a tab
   useEffect(() => {
     if (!loaded) return
-    pane.current
-      ?.querySelector<HTMLElement>('[role="tab"][data-state="active"]')
-      ?.scrollIntoView({ block: "nearest", inline: "nearest" })
+    const list = pane.current?.querySelector<HTMLElement>('[role="tablist"]')
+    // The list is positioned, so a tab's offsetLeft is measured from the list's own start.
+    const open = list?.querySelector<HTMLElement>('[role="tab"][data-state="active"]')
+    if (!list || !open) return
+    const start = open.offsetLeft
+    const end = start + open.offsetWidth
+    if (start < list.scrollLeft) list.scrollLeft = start
+    else if (end > list.scrollLeft + list.clientWidth) list.scrollLeft = end - list.clientWidth
   }, [tab, loaded, unsaved.backups, unsaved.access, unsaved.settings])
 
   if (detail.isLoading) return <Loading>Loading the instance…</Loading>

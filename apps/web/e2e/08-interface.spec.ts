@@ -352,13 +352,15 @@ test("an instance tab has its own address, which reload and Back follow", async 
   const tab = (name: string | RegExp) => page.getByRole("tab", { name })
   await expect(tab("Overview")).toHaveAttribute("aria-selected", "true")
 
+  /** The pane's address: the instance, and the tab when it is not the overview. */
+  const at = (search: string) => (url: URL) => url.pathname === `/instances/${id}` && url.search === search
   await tab(/^Health/).click()
-  await expect(page).toHaveURL(new RegExp(`/instances/${id}?tab=health$`))
+  await expect(page).toHaveURL(at("?tab=health"))
   await expect(page.getByRole("heading", { name: "Health", exact: true })).toBeVisible()
   await page.reload()
   await expect(tab(/^Health/)).toHaveAttribute("aria-selected", "true")
   await page.goBack()
-  await expect(page).toHaveURL(new RegExp(`/instances/${id}$`))
+  await expect(page).toHaveURL(at(""))
   await expect(tab("Overview")).toHaveAttribute("aria-selected", "true")
 
   // An unknown tab shows the overview.
@@ -370,9 +372,9 @@ test("an instance tab has its own address, which reload and Back follow", async 
   await tab("Overview").focus()
   await page.keyboard.press("ArrowRight")
   await expect(tab(/^Problems/)).toBeFocused()
-  await expect(page).toHaveURL(new RegExp(`/instances/${id}$`))
+  await expect(page).toHaveURL(at(""))
   await page.keyboard.press("Enter")
-  await expect(page).toHaveURL(new RegExp(`/instances/${id}?tab=problems$`))
+  await expect(page).toHaveURL(at("?tab=problems"))
   await expect(tab(/^Problems/)).toHaveAttribute("aria-selected", "true")
 })
 

@@ -32,20 +32,34 @@ export function workerRoutes(ctx: Ctx) {
   app.post("/pairing", async (c) => {
     const body = z
       .object({
+        // Only shown to people (lists, audit log, alerts), so any readable name will do.
         name: z
           .string()
-          .min(1)
-          .max(60)
-          .regex(/^[a-zA-Z0-9_.-]+$/),
+          .trim()
+          .min(1, "Give the worker a name")
+          .max(60, "Keep the name to 60 characters")
+          .regex(/^[^\p{Cc}]+$/u, "The name cannot contain control characters"),
         socketProxy: z.boolean().default(true),
-        containers: z.array(z.string().max(100).regex(CONTAINER_PATTERN)).max(50).default([]),
+        containers: z
+          .array(
+            z
+              .string()
+              .max(100, "Keep each container name to 100 characters")
+              .regex(CONTAINER_PATTERN, "Container names use letters, digits, dot, dash, underscore and *"),
+          )
+          .max(50, "List at most 50 containers")
+          .default([]),
       })
       .refine((b) => !b.socketProxy || b.containers.length > 0, {
         message: "List the n8n containers the worker may run commands in",
         path: ["containers"],
       })
       .safeParse(await c.req.json().catch(() => ({})))
-    if (!body.success) return c.json({ error: "invalid", issues: body.error.issues }, 400)
+    if (!body.success) {
+      // Every message above is written for people, so the dialog shows them as they are.
+      const message = [...new Set(body.error.issues.map((i) => i.message))].join(". ")
+      return c.json({ error: "invalid", message, issues: body.error.issues }, 400)
+    }
     const token = await createPairingToken(ctx, body.data.name)
     const { publicUrl } = await ctx.settings.get("general")
     const server = publicUrl || new URL(c.req.url).origin

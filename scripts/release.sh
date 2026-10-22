@@ -103,7 +103,8 @@ image_state() {
     fi
     die "cannot read $ref from the registry: $out"
   fi
-  if grep -q "\"org.opencontainers.image.revision\":\"$revision\"" <<<"$out"; then
+  # The JSON comes indented; compare without white space.
+  if grep -qF "\"org.opencontainers.image.revision\":\"$revision\"" <<<"$(tr -d '[:space:]' <<<"$out")"; then
     echo match
   else
     echo other

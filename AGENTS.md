@@ -17,7 +17,7 @@ Items marked planned in those documents do not exist yet. Check the repository b
 - Never commit environment-specific details: instance names, hostnames, IP addresses, local paths, API keys, tokens or passwords. They belong in the ignored `docs/private/` or in ignored environment files.
 - The product UI is English only and LTR only. Do not add localization or RTL support.
 - Keep the repository root minimal. Every root file is listed and justified in the foundation document.
-- Add user-visible or operational changes under `Unreleased` in `CHANGELOG.md`. Do not bump versions in pull requests; `scripts/release.sh` does that.
+- Add user-visible or operational changes under `Unreleased` in `CHANGELOG.md`, written for the next release (no Changed or Fixed entries about things that were never released). Do not bump versions in pull requests; the Release workflow does that.
 - Install with the lockfile (`pnpm install --frozen-lockfile`, done by the scripts).
 
 ## Layout
@@ -39,7 +39,7 @@ All scripts are Bash for WSL or Linux with Docker. Node, pnpm, shellcheck and sh
 - `scripts/local.sh build|up|start|down|status|logs|nuke`: development stack.
 - `scripts/verify.sh [--changed [BASE]] [--guards-only] [--skip-guards] [--skip-integration] [--design regular|compact]`: the only verification entry point. CI runs the same script, one job per design.
 - `scripts/try-pr.sh <number>|status|restore`: run a pull request on the development stack.
-- `scripts/release.sh --target ghcr --bump patch|minor|major [--dry-run]`: release images. Never deploys.
+- Releases: the **Release** workflow (Actions → Release → Run workflow on `main`, choose patch, minor or major) runs the whole CI on the commit, then `scripts/release.sh`: release commit and tag, both images on GHCR (the version, then `:latest`) and the GitHub Release from the CHANGELOG section. A run that stopped halfway is finished by the next run. `scripts/test-release.sh` (run by the guards) covers each way a run can stop. Never deploys.
 - Ad-hoc commands in the toolchain: `source scripts/lib/common.sh && build_toolchain && in_toolchain "pnpm ..."`.
 
 Before finishing a change, run `scripts/verify.sh` (or `--changed` for a quick pass) and report its result.

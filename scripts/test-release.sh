@@ -39,7 +39,8 @@ if [ "$1 $2" = "imagetools inspect" ]; then
   [ -n "${MOCK_REGISTRY_DOWN:-}" ] && { echo "ERROR: unauthorized: authentication required" >&2; exit 1; }
   f="$STATE/images/$(key "$3")"
   [ -f "$f" ] || { echo "ERROR: $3: not found" >&2; exit 1; }
-  printf '{"linux/amd64":{"config":{"Labels":{"org.opencontainers.image.revision":"%s"}}}}\n' "$(cat "$f")"
+  # Indented, as docker prints it.
+  printf '{\n  "architecture": "amd64",\n  "config": {\n    "Labels": {\n      "org.opencontainers.image.revision": "%s"\n    }\n  }\n}\n' "$(cat "$f")"
   exit 0
 fi
 if [ "$1 $2" = "imagetools create" ]; then
@@ -140,6 +141,9 @@ has_tag() { git -C "$WORK/case/origin.git" rev-parse -q --verify "refs/tags/$1" 
 image_rev() { cat "$STATE/images/ghcr.io_shlomiporush_$1" 2>/dev/null; }
 tag_rev() { git -C "$WORK/case/origin.git" rev-parse "$1^{commit}"; }
 has_release() { [ -f "$STATE/releases/$1" ]; }
+lacks_tag() { ! has_tag "$1"; }
+lacks_release() { ! has_release "$1"; }
+nothing_built() { ! grep -q "buildx build" "$STATE/calls"; }
 said() { grep -q "$1" "$WORK/case/out"; }
 complete() {
   local rev
@@ -165,7 +169,7 @@ check "the GitHub Release has the title and the section's notes" \
 dir="$(checkout)"
 sed -i 's/^## \[Unreleased\]$/## [Unreleased]\n\n### Fixed\n\n- A fix./' "$dir/CHANGELOG.md"
 git -C "$dir" commit --quiet -am "Fix" && git -C "$dir" push --quiet origin main
-BUMP=patch release
+BUMP="patch" release
 check "the next run releases 0.1.1 with --bump patch" complete 0.1.1
 check "0.1.1's notes hold only its own entries" [ "$(sed -n '2,$p' "$STATE/releases/v0.1.1")" = "$(printf '### Fixed\n\n- A fix.')" ]
 
@@ -177,13 +181,13 @@ EXPECT="$stale" release
 check "main moved after verification: the run stops" [ $? -ne 0 ]
 check "  and says why" said "something was merged meanwhile"
 check "  and publishes nothing" [ ! -e "$STATE/images/ghcr.io_shlomiporush_n8n-ops_0.1.0" ]
-check "  and pushes no tag" eval '! has_tag v0.1.0'
+check "  and pushes no tag" lacks_tag v0.1.0
 
 sandbox
 printf '#!/bin/sh\nexit 1\n' >"$WORK/case/origin.git/hooks/pre-receive" && chmod +x "$WORK/case/origin.git/hooks/pre-receive"
 release
 check "origin refuses the push: the run stops" [ $? -ne 0 ]
-check "  before any image is built" eval '! grep -q "buildx build" "$STATE/calls"'
+check "  before any image is built" nothing_built
 rm "$WORK/case/origin.git/hooks/pre-receive"
 release
 check "  and the next run releases 0.1.0 in full" complete 0.1.0
@@ -194,12 +198,12 @@ check "the second image fails: the run stops" [ $? -ne 0 ]
 check "  with the tag on origin" has_tag v0.1.0
 check "  the first image published" [ "$(image_rev n8n-ops_0.1.0)" = "$(tag_rev v0.1.0)" ]
 check "  and :latest not moved" [ ! -e "$STATE/images/ghcr.io_shlomiporush_n8n-ops_latest" ]
-check "  and no GitHub Release" eval '! has_release v0.1.0'
-BUMP=major release
+check "  and no GitHub Release" lacks_release v0.1.0
+BUMP="major" release
 check "the next run finishes 0.1.0 and ignores the bump" complete 0.1.0
 check "  and says so" said "v0.1.0 was not finished"
 check "  without building the first image again" [ "$(grep -c "buildx build.*n8n-ops:0.1.0" "$STATE/calls")" = 1 ]
-check "  and starts no other version" eval '! has_tag v1.0.0'
+check "  and starts no other version" lacks_tag v1.0.0
 
 sandbox
 MOCK_FAIL_BUILD=n8n-ops-worker release
@@ -226,18 +230,18 @@ sandbox
 printf other >"$STATE/images/ghcr.io_shlomiporush_n8n-ops_0.1.0"
 release
 check "the next version is already in the registry: the run stops" [ $? -ne 0 ]
-check "  before tagging" eval '! has_tag v0.1.0'
+check "  before tagging" lacks_tag v0.1.0
 
 sandbox
 MOCK_REGISTRY_DOWN=1 release
 check "a registry that cannot be read stops the run" [ $? -ne 0 ]
-check "  and is not taken for a free version" eval '! has_tag v0.1.0'
+check "  and is not taken for a free version" lacks_tag v0.1.0
 
 sandbox
 MOCK_FAIL_BUILD=n8n-ops-worker release
 MOCK_GH_DOWN=1 release
 check "GitHub that cannot be read stops the run" [ $? -ne 0 ]
-check "  and starts no new version" eval '! has_tag v0.2.0'
+check "  and starts no new version" lacks_tag v0.2.0
 
 sandbox
 dir="$(checkout)"

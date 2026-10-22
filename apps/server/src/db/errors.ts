@@ -9,12 +9,16 @@ export function describeDatabaseError(error: unknown, databaseUrl: string): stri
   switch (code) {
     case "28P01":
       return (
-        `PostgreSQL refused the password for user "${user}". PostgreSQL keeps the password the database was ` +
-        `created with, so a password changed in .env afterwards does not reach it. Set it to the one in .env: ` +
+        `PostgreSQL refused the password for user "${user}". Changing the password in .env does not change ` +
+        `it in a database that already exists. Set it to the one in .env: ` +
         `docker compose exec postgres psql -U ${user} -d ${database}, then \\password ${user}.`
       )
     case "28000":
-      return `PostgreSQL has no user "${user}". Check POSTGRES_USER and DATABASE_URL in .env.`
+      // Also a pg_hba.conf rule or a required client certificate, so the user may well exist.
+      return (
+        `PostgreSQL refused user "${user}" before checking a password. Check POSTGRES_USER and DATABASE_URL ` +
+        `in .env, and the database's authentication rules.`
+      )
     case "3D000":
       return `PostgreSQL has no database "${database}". Check POSTGRES_DB and DATABASE_URL in .env.`
     case "ECONNREFUSED":
@@ -22,6 +26,7 @@ export function describeDatabaseError(error: unknown, databaseUrl: string): stri
     case "EAI_AGAIN":
     case "ETIMEDOUT":
     case "EHOSTUNREACH":
+    case "CONNECT_TIMEOUT":
       return (
         `Cannot reach PostgreSQL at ${host}:${port} (${code}). Check that the postgres service is running ` +
         `and that DATABASE_URL in .env points to it.`

@@ -28,8 +28,15 @@ describe("describeDatabaseError", () => {
     expect(describeDatabaseError(Object.assign(new Error("x"), { code: "ENOTFOUND" }), url)).toContain("(ENOTFOUND)")
   })
 
-  it("names a missing user or database", () => {
-    expect(describeDatabaseError(queryError("28000"), url)).toContain('no user "n8n_ops"')
+  it("explains a connection that opened but never answered as PostgreSQL", () => {
+    // postgres.js reports this one with its own code, not ETIMEDOUT.
+    expect(describeDatabaseError(queryError("CONNECT_TIMEOUT"), url)).toContain(
+      "Cannot reach PostgreSQL at postgres:5432 (CONNECT_TIMEOUT)",
+    )
+  })
+
+  it("names a refused user or a missing database", () => {
+    expect(describeDatabaseError(queryError("28000"), url)).toContain('refused user "n8n_ops" before checking a password')
     expect(describeDatabaseError(queryError("3D000"), url)).toContain('no database "n8n_ops"')
   })
 

@@ -1,5 +1,6 @@
 import { hkdfSync } from "node:crypto"
 import { EventEmitter } from "node:events"
+import { writeSync } from "node:fs"
 import { serve } from "@hono/node-server"
 import { createApp } from "./app.ts"
 import { createAuth } from "./auth/auth.ts"
@@ -22,7 +23,8 @@ try {
 } catch (error) {
   const problem = describeDatabaseError(error, config.databaseUrl)
   if (!problem) throw error
-  log.error(problem)
+  // Written synchronously: console output to a pipe may still be pending when the process exits.
+  writeSync(2, `${JSON.stringify({ level: "error", msg: problem })}\n`)
   process.exit(1)
 }
 const { key, created } = await loadOrCreateAppKey(config.appKeyPath)

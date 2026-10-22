@@ -20,7 +20,7 @@ import {
   Trash2,
   Workflow as WorkflowIcon,
 } from "lucide-react"
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Link, useNavigate, useParams, useSearchParams } from "react-router"
 import { useCrumb } from "@/app/chrome"
 import { AgentAccessCard } from "@/components/agent-access-card"
@@ -156,6 +156,9 @@ const healthLabel = (i: Pick<InstanceRow, "health" | "healthDetail">) =>
         ? "Healthy"
         : "Not checked yet"
 
+/** Whether the API key may change anything in n8n: any scope beyond listing and reading. */
+const canWrite = (i: Pick<InstanceRow, "effectiveScopes">) => i.effectiveScopes.some((s) => !/:(list|read)$/.test(s))
+
 /** Whether a version is older than the latest n8n release. */
 export const behind = (version: string | null, latest: string | null) => {
   if (!version || !latest) return false
@@ -267,7 +270,7 @@ export function InstancesPage() {
                         <span className="font-mono">{i.version ?? "version unknown"}</span>
                       )}
                       {" · "}
-                      {i.capabilities.find((c) => c.key === "move")?.available ? "read + write" : "read only"}
+                      {canWrite(i) ? "read + write" : "read only"}
                     </>
                   }
                   subEnd={
@@ -329,9 +332,7 @@ export function InstancesPage() {
                   )}
                 </TableCell>
                 <TableCell>
-                  <Badge variant="line">
-                    {i.capabilities.find((c) => c.key === "move")?.available ? "read + write" : "read only"}
-                  </Badge>
+                  <Badge variant="line">{canWrite(i) ? "read + write" : "read only"}</Badge>
                 </TableCell>
                 <TableCell className={cn("text-end tabular-nums", i.openProblems > 0 && "font-semibold text-fail")}>
                   {n(i.openProblems)}
@@ -386,6 +387,15 @@ const tabsLook =
 const tabLook =
   "regular:rounded-sm regular:border-b-0 regular:px-3 regular:py-1.5 regular:data-[state=active]:bg-panel regular:data-[state=active]:shadow-card"
 const tabPanel = "grid min-w-0 gap-gap data-[state=inactive]:hidden"
+/*
+ * In a pane narrower than 52rem a Regular card of four is too narrow for a figure beside its icon, so the
+ * icon goes (it only illustrates) and the figure is a size smaller; "128,400" then still fits.
+ */
+const kpisInPane = cn(
+  "grid-cols-2 @min-[36rem]/pane:grid-cols-4",
+  "@max-[52rem]/pane:**:data-[slot=kpi-icon]:hidden!",
+  "regular:@max-[52rem]/pane:**:data-[slot=kpi-figure]:text-h1",
+)
 
 function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
   const navigate = useNavigate()
@@ -414,6 +424,16 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
     access: useUnsaved(`agent-access-${id}`),
     settings: useUnsaved(`overrides-${id}`),
   }
+  // The tabs scroll sideways in a narrow pane; the open one is brought into sight, also when the address opened it.
+  const pane = useRef<HTMLDivElement>(null)
+  const loaded = Boolean(detail.data)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs when another tab opens, which the DOM shows
+  useEffect(() => {
+    if (!loaded) return
+    pane.current
+      ?.querySelector<HTMLElement>('[role="tab"][data-state="active"]')
+      ?.scrollIntoView({ block: "nearest", inline: "nearest" })
+  }, [tab, loaded])
 
   if (detail.isLoading) return <Loading>Loading the instance…</Loading>
   if (detail.error && !detail.data)
@@ -454,7 +474,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
   const overrides = Object.keys(i.overrides).length
 
   return (
-    <div className="@container/pane grid min-w-0 gap-gap">
+    <div ref={pane} className="@container/pane grid min-w-0 gap-gap">
       <div className="grid gap-2">
         <div className="flex flex-wrap items-center gap-x-2.5 gap-y-2">
           <div className="me-auto flex min-w-0 flex-wrap items-center gap-2.5">
@@ -540,7 +560,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
         <TabsContent value="overview" forceMount className={tabPanel}>
           <StatusStrip instance={i} footer={collected} />
           {/* Four figures in one row wherever the pane has room for them, two by two below that. */}
-          <Kpis className="grid-cols-2 @min-[36rem]/pane:grid-cols-4">
+          <Kpis className={kpisInPane}>
             <Kpi
               label="Open problems"
               icon={BugIcon}
@@ -573,8 +593,8 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
                   : "The default destinations"}
               </Glance>
               <Glance icon={KeyRoundIcon} title="Access" onClick={() => show("access")}>
-                {i.capabilities.find((c) => c.key === "move")?.available ? "Read + write" : "Read-only"} key · {allowed}{" "}
-                of {i.capabilities.length} allowed · agents {i.agentAccess.enabled ? "may ask" : "off"}
+                {canWrite(i) ? "Read + write" : "Read-only"} key · {allowed} of {i.capabilities.length} allowed · agents{" "}
+                {i.agentAccess.enabled ? "may ask" : "off"}
               </Glance>
               <Glance icon={SlidersHorizontalIcon} title="Settings" onClick={() => show("settings")}>
                 {overrides ? `${plural(overrides, "override")}, the rest default` : "Every setting is the default"}

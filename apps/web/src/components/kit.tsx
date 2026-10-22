@@ -370,6 +370,7 @@ export function Kpi({
       {Icon && (
         <span
           aria-hidden
+          data-slot="kpi-icon"
           className={cn(
             "hidden size-9 shrink-0 place-items-center rounded-sm regular:md:grid",
             !tone && "bg-fill text-muted-foreground",

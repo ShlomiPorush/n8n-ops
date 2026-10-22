@@ -76,7 +76,8 @@ export function SaveBarHost() {
     <div
       ref={setEl}
       data-slot="save-bar-host"
-      className="sticky bottom-0 z-10 -mx-pad-x -mb-pad-x shrink-0 px-2.5 pb-2.5 empty:hidden max-md:-mb-[calc(var(--spacing-pad-x)+env(safe-area-inset-bottom))] max-md:pb-[calc(10px+env(safe-area-inset-bottom))]"
+      // While it holds the bar, the body drops its own bottom padding (dialog.tsx), as it does for a footer.
+      className="sticky bottom-0 z-10 -mx-pad-x mt-auto shrink-0 px-2.5 pb-2.5 empty:hidden max-md:pb-[calc(10px+env(safe-area-inset-bottom))]"
     />
   )
 }

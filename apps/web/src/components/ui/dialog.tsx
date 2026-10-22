@@ -200,8 +200,9 @@ function DialogContent({
         </div>
         <div
           data-slot="dialog-body"
-          // A footer ends the body itself: padding under it would show below the buttons in a scroll container.
-          className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain px-pad-x pb-pad-x has-[>[data-slot=dialog-footer]:last-child]:pb-0 max-md:pb-[calc(var(--spacing-pad-x)+env(safe-area-inset-bottom))] max-md:has-[>[data-slot=dialog-footer]:last-child]:pb-0"
+          // A footer, or the save bar while it shows, ends the body itself: padding under it would show below
+          // the buttons in a scroll container.
+          className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain px-pad-x pb-pad-x has-[>[data-slot=dialog-footer]:last-child]:pb-0 has-[>[data-slot=save-bar-host]:not(:empty):last-child]:pb-0 max-md:pb-[calc(var(--spacing-pad-x)+env(safe-area-inset-bottom))] max-md:has-[>[data-slot=dialog-footer]:last-child]:pb-0 max-md:has-[>[data-slot=save-bar-host]:not(:empty):last-child]:pb-0"
         >
           {children}
         </div>

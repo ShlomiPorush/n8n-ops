@@ -183,11 +183,15 @@ test("n8n-ops backs up its own database to the destinations", async () => {
     .getByRole("button", { name: "Run now" })
     .click()
   await page.getByRole("row", { name: /n8n-ops database/ }).click()
-  await expect(page.getByText("OK · with secrets")).toBeVisible({ timeout: 90_000 })
-  const archives = readdirSync("/backups-data/nightly/_n8n-ops", { recursive: true })
-    .map(String)
-    .filter((f) => f.endsWith(".dump.age"))
-  expect(archives).toHaveLength(1)
+  // The pane of the instance opened before is replaced by the database's own history.
+  const history = page.getByRole("region", { name: "Backups · n8n-ops database" })
+  await expect(history.getByText("OK · with secrets")).toBeVisible({ timeout: 90_000 })
+  await expect(history.getByText("Written")).toHaveCount(2)
+  const dumps = () =>
+    readdirSync("/backups-data/nightly/_n8n-ops", { recursive: true })
+      .map(String)
+      .filter((f) => f.endsWith(".dump.age"))
+  expect(dumps()).toHaveLength(1)
 })
 
 test("a workflow is restored from the backup with the private key", async () => {

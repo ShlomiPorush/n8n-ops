@@ -598,7 +598,7 @@ export function UserText({ children, className }: { children: React.ReactNode; c
   )
 }
 
-export { countChanges, SaveScope, useSaveSource } from "@/components/save-bar"
+export { countChanges, SaveBarHost, SaveScope, useSaveSource, useUnsaved } from "@/components/save-bar"
 
 /**
  * A list that reloads keeps its rows on screen until the answer replaces them; they dim only when the

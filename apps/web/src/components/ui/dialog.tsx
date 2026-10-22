@@ -105,7 +105,14 @@ function useSheetGestures(
       if (dy > 0 && canPullClose && dy > Math.min(SHEET_PULL_CLOSE_PX, panel.offsetHeight / 4)) {
         panel.style.transform = "translateY(100%)"
         // Close through the dialog's own Close, so its owner's cleanup and its Back entry run.
-        setTimeout(() => closeRef.current?.click(), SHEET_SLIDE_MS)
+        setTimeout(() => {
+          closeRef.current?.click()
+          // A close that was refused (unsaved changes, and the user chose Stay) leaves the sheet open: bring
+          // it back up instead of leaving it out of sight.
+          setTimeout(() => {
+            if (panel.isConnected && panel.dataset.state === "open") panel.style.transform = ""
+          }, SHEET_SLIDE_MS)
+        }, SHEET_SLIDE_MS)
       } else {
         panel.style.transform = ""
       }

@@ -1,7 +1,7 @@
 import { ArrowLeft } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useLocation, useNavigate } from "react-router"
-import { Empty } from "@/components/kit"
+import { Empty, SaveBarHost } from "@/components/kit"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable"
@@ -92,6 +92,8 @@ export function ListWithPanel({
                 <DialogTitle>{panelTitle}</DialogTitle>
               </DialogHeader>
               <div className="min-w-0">{panel}</div>
+              {/* The sheet covers the page, so its unsaved changes are saved from inside it. */}
+              <SaveBarHost />
             </DialogContent>
           </Dialog>
         )}

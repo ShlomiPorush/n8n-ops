@@ -39,6 +39,7 @@ test("an instance is registered after its connection is tested", async () => {
   await page.getByLabel("API key", { exact: true }).fill(apiKey)
   await page.getByRole("button", { name: "Add instance" }).last().click()
   await expect(page.getByRole("heading", { name: "e2e-n8n" })).toBeVisible()
+  await page.getByRole("tab", { name: "Access" }).click()
   await expect(page.getByText("Read from GET /api/v1/discover")).toBeVisible()
 })
 
@@ -101,6 +102,7 @@ test("a queue-mode instance without metrics or worker URLs says what is missing"
   }
   await page.goto("/instances")
   await page.getByRole("row", { name: /e2e-n8n/ }).click()
+  await page.getByRole("tab", { name: /^Health/ }).click()
   await expect(alert).toHaveCount(0)
 
   await toggleQueueMode()

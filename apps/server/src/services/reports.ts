@@ -25,6 +25,7 @@ type ReportData = {
 
 const backupWords: Record<string, [string, Tone]> = {
   ok: ["OK", "ok"],
+  partial: ["Some copies failed", "warn"],
   failed: ["Failed", "fail"],
   running: ["Running", "info"],
   none: ["Never", "muted"],
@@ -40,7 +41,7 @@ export function renderReport(d: ReportData): Report {
   const behind = d.latest
     ? d.versions.filter((v) => v.version && compareVersions(v.version, d.latest as string) < 0)
     : []
-  const badBackups = d.backups.filter((b) => b.status === "failed" || b.status === "none")
+  const badBackups = d.backups.filter((b) => b.status === "failed" || b.status === "partial" || b.status === "none")
   const stamp = (at: Date | null) => (at ? formatDate(at, timeZone, true) : "never")
   const sections: { title: string; rows: string[][] }[] = [
     { title: `Open problems: ${totalOpen}`, rows: instancesWithOpen.map((i) => [i.name, String(i.open)]) },

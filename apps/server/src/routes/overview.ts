@@ -1,4 +1,4 @@
-import { and, count, desc, eq, gt, isNull } from "drizzle-orm"
+import { and, count, desc, eq, gt, inArray, isNull } from "drizzle-orm"
 import { Hono } from "hono"
 import type { Ctx } from "../context.ts"
 import { accessRequests, alertState, apiTokens, backupRuns, instances, problems, workers } from "../db/schema.ts"
@@ -99,9 +99,17 @@ export async function attention(ctx: Ctx): Promise<AttentionItem[]> {
     items.push({ kind: "instance", id: i.id, name: i.name, health: i.health, detail, at: i.healthCheckedAt })
   }
   const stale = await ctx.db.select().from(alertState).where(eq(alertState.active, true))
-  for (const s of stale.filter((x) => x.key.startsWith("backup:"))) {
-    const instance = all.find((i) => s.key === `backup:${i.id}`)
-    if (instance) items.push(backupItem(instance, s))
+  // Keys are backup:<instance id or self>:<destination id>; one item per instance or n8n-ops, the oldest first.
+  const seen = new Set<string>()
+  for (const s of stale
+    .filter((x) => x.key.startsWith("backup:"))
+    .sort((a, b) => a.since.getTime() - b.since.getTime())) {
+    const target = s.key.split(":")[1] ?? ""
+    if (seen.has(target)) continue
+    const instance = target === "self" ? { id: "self", name: "n8n-ops database" } : all.find((i) => i.id === target)
+    if (!instance) continue
+    seen.add(target)
+    items.push(backupItem(instance, s))
   }
   const offlineSince = new Date(Date.now() - WORKER_ONLINE_MS)
   for (const w of await ctx.db.select().from(workers).where(isNull(workers.revokedAt))) {
@@ -150,7 +158,7 @@ export function overviewRoutes(ctx: Ctx) {
     const [lastBackup] = await ctx.db
       .select({ at: backupRuns.finishedAt })
       .from(backupRuns)
-      .where(eq(backupRuns.status, "ok"))
+      .where(inArray(backupRuns.status, ["ok", "partial"]))
       .orderBy(desc(backupRuns.finishedAt))
       .limit(1)
     return c.json({

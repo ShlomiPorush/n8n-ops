@@ -1,4 +1,12 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes, timingSafeEqual } from "node:crypto"
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  createHmac,
+  hkdfSync,
+  randomBytes,
+  timingSafeEqual,
+} from "node:crypto"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname } from "node:path"
 
@@ -6,13 +14,17 @@ import { dirname } from "node:path"
 export type Secrets = {
   encrypt(plain: string): string
   decrypt(sealed: string): string
+  /** HMAC-SHA256 of the value (base64url), with a key derived from the app key for signing short-lived tokens. */
+  mac(value: string): string
 }
 
 const VERSION = "v1"
 
 export function createSecrets(key: Buffer): Secrets {
   if (key.length !== 32) throw new Error("the app key must be 32 bytes")
+  const macKey = Buffer.from(hkdfSync("sha256", key, "n8n-ops", "signed-tokens", 32))
   return {
+    mac: (value) => createHmac("sha256", macKey).update(value).digest("base64url"),
     encrypt(plain) {
       const iv = randomBytes(12)
       const cipher = createCipheriv("aes-256-gcm", key, iv)

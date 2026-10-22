@@ -13,10 +13,11 @@ import { ApiError, api, describeError, useApi } from "@/lib/api"
 import { authClient, authErrorText } from "@/lib/auth-client"
 import { download } from "@/lib/download"
 import { cn } from "@/lib/utils"
+import { DestinationFields, type DestinationForm, destinationBody, destinationForm } from "../destinations"
 import { AuthFrame, TotpInput } from "./shared"
 
 type Checklist = { twoFactor: boolean; backupKey: boolean; telegram: boolean; storage: boolean; instance: boolean }
-const steps = ["Account", "Two-Factor", "Backup Key", "Telegram", "Storage"] as const
+const steps = ["Account", "Two-Factor", "Backup Key", "Telegram", "Destination"] as const
 type Step = (typeof steps)[number]
 
 export function SetupPage() {
@@ -42,7 +43,7 @@ export function SetupPage() {
   else if (c && !c.twoFactor) step = "Two-Factor"
   else if (c && !c.backupKey) step = "Backup Key"
   else if (c && !c.telegram && !skipped.includes("Telegram")) step = "Telegram"
-  else if (c && !c.storage && !skipped.includes("Storage")) step = "Storage"
+  else if (c && !c.storage && !skipped.includes("Destination")) step = "Destination"
   if (step === "done") return <Navigate to="/" replace />
 
   const refresh = async () => {
@@ -89,14 +90,14 @@ export function SetupPage() {
       {step === "Two-Factor" && <TwoFactorStep password={password} onDone={refresh} />}
       {step === "Backup Key" && <BackupKeyStep onDone={refresh} />}
       {step === "Telegram" && <TelegramStep onDone={refresh} onSkip={() => skip("Telegram")} />}
-      {step === "Storage" && (
-        <StorageStep
+      {step === "Destination" && (
+        <DestinationStep
           onDone={async () => {
             await refresh()
             navigate("/")
           }}
           onSkip={() => {
-            skip("Storage")
+            skip("Destination")
             navigate("/")
           }}
         />
@@ -399,21 +400,42 @@ function TelegramStep({ onDone, onSkip }: { onDone: () => Promise<void>; onSkip:
   )
 }
 
-function StorageStep({ onDone, onSkip }: { onDone: () => Promise<void>; onSkip: () => void }) {
+/** The first backup destination: an S3 bucket or the mapped folder. The others are in Settings. */
+function DestinationStep({ onDone, onSkip }: { onDone: () => Promise<void>; onSkip: () => void }) {
+  const [form, setForm] = useState<DestinationForm>(() => ({ ...destinationForm(null, "s3"), name: "Backups" }))
+  const [error, setError] = useState("")
+  const [busy, setBusy] = useState(false)
+  async function submit() {
+    setBusy(true)
+    setError("")
+    try {
+      await api("/destinations", { method: "POST", json: destinationBody(form, null) })
+      await onDone()
+    } catch (e) {
+      setError(describeError(e))
+    } finally {
+      setBusy(false)
+    }
+  }
   return (
-    <OptionalStep
-      title="Backup Storage"
-      description="Any S3-compatible service. You can do this later in Settings."
-      section="storage"
-      fields={[
-        { name: "endpoint", label: "Endpoint", placeholder: "https://s3.example.com" },
-        { name: "bucket", label: "Bucket" },
-        { name: "region", label: "Region", placeholder: "us-east-1" },
-        { name: "accessKeyId", label: "Access key ID" },
-        { name: "secretAccessKey", label: "Secret access key", type: "password" },
-      ]}
-      onDone={onDone}
-      onSkip={onSkip}
-    />
+    <StepFrame
+      title="Backup Destination"
+      description="Where encrypted backups are written. You can add more, such as SFTP or WebDAV, and change this in Settings later."
+      actions={
+        <>
+          <Button variant="ghost" className="me-auto" onClick={onSkip}>
+            Skip for now
+          </Button>
+          <Button variant="primary" onClick={() => void submit()} disabled={busy || !form.name.trim()}>
+            {busy ? "Testing…" : "Test and continue"}
+          </Button>
+        </>
+      }
+    >
+      <fieldset disabled={busy} className="contents">
+        <DestinationFields form={form} setForm={setForm} destination={null} locked={false} only={["s3", "local"]} />
+      </fieldset>
+      {error && <FieldError>{error}</FieldError>}
+    </StepFrame>
   )
 }

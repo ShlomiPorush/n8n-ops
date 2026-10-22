@@ -25,6 +25,7 @@ import { download } from "@/lib/download"
 import { formatDateTime, useTimeZone } from "@/lib/time"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
+import { DestinationsSection } from "@/pages/destinations"
 
 /** What the two designs are; the same words in both apps. */
 const designHint =
@@ -113,24 +114,6 @@ export const forms: Record<string, { title: string; description: string; fields:
       { name: "smtpPassword", label: "SMTP password", type: "password" },
     ],
   },
-  storage: {
-    title: "Backup storage",
-    description: "Any S3-compatible service. Archives are encrypted before upload.",
-    fields: [
-      { name: "endpoint", label: "Endpoint", placeholder: "https://s3.example.com" },
-      { name: "region", label: "Region" },
-      { name: "bucket", label: "Bucket" },
-      { name: "prefix", label: "Key prefix" },
-      { name: "accessKeyId", label: "Access key ID" },
-      { name: "secretAccessKey", label: "Secret access key", type: "password" },
-      {
-        name: "forcePathStyle",
-        label: "Path-style URLs",
-        hint: "Needed by most self-hosted services such as MinIO.",
-        type: "switch",
-      },
-    ],
-  },
   defaults: {
     title: "Instance defaults",
     description: "Used by every instance unless it has an override.",
@@ -138,9 +121,6 @@ export const forms: Record<string, { title: string; description: string; fields:
       { name: "pollIntervalSec", label: "Check for failures every (seconds)", type: "number" },
       { name: "healthIntervalSec", label: "Health check every (seconds)", type: "number" },
       { name: "backupTime", label: "Daily backup time", type: "time" },
-      { name: "retentionDaily", label: "Keep daily backups", type: "number" },
-      { name: "retentionWeekly", label: "Keep weekly backups", type: "number" },
-      { name: "retentionMonthly", label: "Keep monthly backups", type: "number" },
       { name: "staleBackupHours", label: "Backup is stale after (hours)", type: "number" },
       { name: "executionRetentionDays", label: "Keep failed executions (days)", type: "number" },
       { name: "autoResolveDays", label: "Auto-resolve after days without failures", type: "number" },
@@ -192,6 +172,8 @@ const weekdays = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Frida
 /** What each section is for, under its title. Forms take theirs from their definition. */
 const sectionDescriptions: Record<string, string> = {
   keys: "Keys that protect backups and the secrets n8n-ops stores.",
+  destinations:
+    "Where encrypted backups are written: S3, a folder on this server, SFTP or WebDAV. Each keeps its own retention. Instances use the default destinations unless they choose others.",
 }
 
 /** The section last open, so Settings reopens where it was left during this visit (NL-4). */
@@ -202,6 +184,8 @@ export function SettingsPage() {
   const navigate = useNavigate()
   const label = section ? settingsSectionLabel(section) : undefined
   useCrumb(label)
+  // Backup Storage became Backup Destinations; links to the old section still arrive.
+  if (section === "storage") return <Navigate to="/settings/destinations" replace />
   if (!section || !label) return <Navigate to={`/settings/${lastSection}`} replace />
   lastSection = section
   return (
@@ -271,6 +255,7 @@ export function SettingsPage() {
           </div>
           {section in forms && <SettingsForm key={section} section={section} />}
           {section === "keys" && <KeysCard />}
+          {section === "destinations" && <DestinationsSection />}
         </div>
       </div>
     </Page>
@@ -506,7 +491,7 @@ export function SettingsForm({ section }: { section: string }) {
           ))}
         </fieldset>
       )}
-      {query.data && (section === "telegram" || section === "email" || section === "storage") && (
+      {query.data && (section === "telegram" || section === "email") && (
         <TestRow section={section} data={query.data} unsaved={count > 0} />
       )}
     </Panel>
@@ -528,14 +513,6 @@ const tests = {
     done: "Test email sent",
     needs: (d: Record<string, unknown>) =>
       d.smtpHost && Array.isArray(d.recipients) && d.recipients.length > 0 ? null : "the SMTP server and a recipient",
-  },
-  storage: {
-    path: "/backups/test-storage",
-    label: "Upload and verify a test file",
-    busy: "Uploading…",
-    done: "Upload and download verified",
-    needs: (d: Record<string, unknown>) =>
-      d.endpoint && d.bucket && d.secretAccessKeySet ? null : "the endpoint, the bucket and the secret access key",
   },
 } as const
 

@@ -1,5 +1,4 @@
 import {
-  Archive as ArchiveIcon,
   ArchiveRestore as ArchiveRestoreIcon,
   CheckCircle2,
   Clock as ClockIcon,
@@ -33,26 +32,44 @@ import { api, describeError, useApi, useApiMutation } from "@/lib/api"
 import { formatDateTime, n, plural, useTimeZone } from "@/lib/time"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
+import { type DestinationKind, KindIcon } from "./destinations"
+
+type Copy = {
+  id: string
+  destinationId: string
+  destination: string
+  kind: DestinationKind
+  status: "pending" | "writing" | "ok" | "failed"
+  error: string | null
+  attempts: number
+  retainUntil: string | null
+  legacy: boolean
+  deletedAt: string | null
+}
 
 type Run = {
   id: string
   instanceId: string | null
-  status: "running" | "ok" | "failed"
+  status: "running" | "ok" | "partial" | "failed"
   includesSecrets: boolean
   workflows: number | null
   credentials: number | null
   sizeBytes: number | null
   error: string | null
+  spooledAt: string | null
   startedAt: string
   finishedAt: string | null
-  deletedAt: string | null
+  copies?: Copy[]
 }
+
+type Target = { id: string; name: string; kind: DestinationKind }
 
 type BackupRow = {
   id: string
   name: string
   lastRun: Run | null
   lastOk: Run | null
+  destinations: Target[]
   backupTime: string
   staleBackupHours: number
   withSecrets: boolean
@@ -60,10 +77,11 @@ type BackupRow = {
 
 type Summary = {
   configured: boolean
-  destination: string | null
-  retention: { retentionDaily: number; retentionWeekly: number; retentionMonthly: number; backupTime: string }
+  backupKey: boolean
+  backupTime: string
+  destinations: (Target & { enabled: boolean; isDefault: boolean; where: string })[]
   instances: BackupRow[]
-  self: Run | null
+  self: { lastRun: Run | null; lastOk: Run | null; destinations: Target[]; staleBackupHours: number }
 }
 
 export const formatSize = (bytes: number | null) =>
@@ -73,10 +91,16 @@ export const formatSize = (bytes: number | null) =>
       ? `${n(bytes)} B`
       : bytes < 1048576
         ? `${(bytes / 1024).toFixed(1)} KB`
-        : `${(bytes / 1048576).toFixed(1)} MB`
+        : bytes < 1073741824
+          ? `${(bytes / 1048576).toFixed(1)} MB`
+          : `${(bytes / 1073741824).toFixed(2)} GB`
 
 const stale = (row: BackupRow) =>
   !row.lastOk || Date.now() - new Date(row.lastOk.startedAt).getTime() > row.staleBackupHours * 3600_000
+
+/** Archives that can still be restored: written and not expired, on at least one destination. */
+const restorable = (r: Run) =>
+  (r.status === "ok" || r.status === "partial") && (r.copies ?? []).some((c) => c.status === "ok" && !c.deletedAt)
 
 export function BackupsPage() {
   const { id } = useParams()
@@ -84,22 +108,26 @@ export function BackupsPage() {
   const data = useApi<Summary>("/backups", { refetchInterval: 10_000 })
   const run = useApiMutation<string>("POST", (target) => `/backups/${target}/run`, { invalidate: ["/backups"] })
   const s = data.data
-  const okCount = s?.instances.filter((i) => !stale(i)).length ?? 0
+  const backedUp = s?.instances.filter((i) => i.destinations.length) ?? []
+  const okCount = backedUp.filter((i) => !stale(i)).length
   const rows: BackupRow[] = s
     ? [
         ...s.instances,
         {
           id: "self",
           name: "n8n-ops database",
-          lastRun: s.self,
-          lastOk: s.self?.status === "ok" ? s.self : null,
-          backupTime: s.retention.backupTime,
-          staleBackupHours: 48,
+          lastRun: s.self.lastRun,
+          lastOk: s.self.lastOk,
+          destinations: s.self.destinations,
+          backupTime: s.backupTime,
+          staleBackupHours: s.self.staleBackupHours,
           withSecrets: true,
         },
       ]
     : []
-  const late = s ? s.instances.length - okCount : 0
+  const late = backedUp.length - okCount
+  const none = s ? s.instances.length - backedUp.length : 0
+  const enabled = s?.destinations.filter((d) => d.enabled) ?? []
   const sort = useSort(rows, {
     id: "backups",
     columns: {
@@ -116,21 +144,21 @@ export function BackupsPage() {
         updatedAt={data.dataUpdatedAt || undefined}
         description={
           s?.configured
-            ? `${n(okCount)} of ${n(s.instances.length)} instances backed up on time${late ? `, ${n(late)} late` : ""}. Encrypted with your backup public key before upload.`
-            : "Encrypted with your backup public key before upload. Click an instance for its history and restore."
+            ? `${n(okCount)} of ${n(s.instances.length)} instances backed up on time${late ? `, ${n(late)} late` : ""}${none ? `, ${n(none)} not backed up` : ""}. Encrypted with your backup public key before they are written.`
+            : "Encrypted with your backup public key before they are written. Click an instance for its history and restore."
         }
       />
       {s && !s.configured && (
-        <Locked title="Backups are not set up" to="/settings/storage" action="Set backup storage">
-          Backups need{" "}
-          <Link to="/settings/storage" className="underline">
-            backup storage
+        <Locked title="Backups are not set up" to="/settings/destinations" action="Add a backup destination">
+          Backups need a{" "}
+          <Link to="/settings/destinations" className="underline">
+            backup destination
           </Link>{" "}
           and a{" "}
           <Link to="/settings/keys" className="underline">
             backup key
           </Link>
-          . Until both are set, every backup fails rather than writing an unencrypted archive.
+          . Until both are set, no backup is written, and never an unencrypted one.
         </Locked>
       )}
       {s && (
@@ -139,27 +167,22 @@ export function BackupsPage() {
             label="Backed up on time"
             icon={ShieldCheckIcon}
             value={`${n(okCount)}/${n(s.instances.length)}`}
-            tone={late ? "warn" : undefined}
+            tone={late || none ? "warn" : undefined}
           />
-          <Kpi label="Daily backup time" icon={ClockIcon} value={s.retention.backupTime} />
+          <Kpi label="Daily backup time" icon={ClockIcon} value={s.backupTime} />
           <Kpi
-            label="Keep days / weeks / months"
-            icon={ArchiveIcon}
-            value={`${n(s.retention.retentionDaily)} / ${n(s.retention.retentionWeekly)} / ${n(s.retention.retentionMonthly)}`}
-          />
-          <Kpi
-            label="Destination"
+            label="Destinations"
             icon={HardDriveIcon}
             value={
-              s.destination ? (
-                <span className="block truncate font-mono text-body font-normal" title={s.destination}>
-                  {s.destination}
+              enabled.length ? (
+                <span className="block truncate text-body font-normal" title={enabled.map((d) => d.where).join("\n")}>
+                  {enabled.map((d) => d.name).join(", ")}
                 </span>
               ) : (
-                <span className="text-body font-normal text-muted-foreground">not set</span>
+                <span className="text-body font-normal text-muted-foreground">none yet</span>
               )
             }
-            to="/settings/storage"
+            to="/settings/destinations"
           />
         </Kpis>
       )}
@@ -181,6 +204,7 @@ export function BackupsPage() {
                 <TableHead sort={sort.head("name")}>Instance</TableHead>
                 <TableHead sort={sort.head("lastOk")}>Last success</TableHead>
                 <TableHead>Includes</TableHead>
+                <TableHead>To</TableHead>
                 <TableHead sort={sort.head("time")}>Daily at</TableHead>
                 {s?.configured && <TableHead />}
               </TableRow>
@@ -188,21 +212,37 @@ export function BackupsPage() {
           )}
           <TableBody>
             {sort.rows.map((r) => {
+              const nowhere = r.destinations.length === 0
               const failed = r.lastRun?.status === "failed"
+              const partial = r.lastRun?.status === "partial"
               const late = stale(r)
               const dot = (
                 <Dot
-                  health={failed ? "down" : late ? "warn" : "ok"}
-                  label={failed ? "Last backup failed" : late ? "Backup is late" : "Backed up on time"}
+                  health={nowhere || failed ? "down" : late || partial ? "warn" : "ok"}
+                  label={
+                    nowhere
+                      ? "Not backed up"
+                      : failed
+                        ? "Last backup failed"
+                        : partial
+                          ? "Some copies of the last backup failed"
+                          : late
+                            ? "Backup is late"
+                            : "Backed up on time"
+                  }
                 />
               )
               const lastOkTime = (
-                <span className={cn(late && "font-semibold text-warn")}>
+                <span className={cn(late && !nowhere && "font-semibold text-warn")}>
                   <When value={r.lastOk?.startedAt} />
                 </span>
               )
-              const tag = failed ? (
+              const tag = nowhere ? (
+                <StatusTag kind="backup" status="none" />
+              ) : failed ? (
                 <StatusTag kind="backup" status="failed" />
+              ) : partial ? (
+                <StatusTag kind="backup" status="partial" />
               ) : (
                 late && <StatusTag kind="backup" status="stale" />
               )
@@ -212,10 +252,12 @@ export function BackupsPage() {
                   : r.withSecrets
                     ? "workflows + credential secrets"
                     : "workflows, credentials without secrets"
+              const to = nowhere ? "no destination" : r.destinations.map((d) => d.name).join(", ")
               const runNow = s?.configured && (
                 <Button
                   size="sm"
-                  disabled={r.lastRun?.status === "running"}
+                  disabled={r.lastRun?.status === "running" || nowhere}
+                  title={nowhere ? "Choose a backup destination first" : undefined}
                   onClick={(e) => {
                     e.stopPropagation()
                     run.mutate(r.id, { onSuccess: () => toast.success(`Backup of ${r.name} started`) })
@@ -247,7 +289,7 @@ export function BackupsPage() {
                       sub={
                         <>
                           {tag && <>{tag} </>}
-                          {includes}
+                          {includes} · to {to}
                         </>
                       }
                       subEnd={<span className="tabular-nums">daily at {r.backupTime}</span>}
@@ -268,6 +310,9 @@ export function BackupsPage() {
                         </span>
                       </TableCell>
                       <TableCell className="text-muted-foreground">{includes}</TableCell>
+                      <TableCell className={cn("max-w-56 truncate", nowhere ? "text-fail" : "text-muted-foreground")}>
+                        {to}
+                      </TableCell>
                       <TableCell className="text-muted-foreground tabular-nums">{r.backupTime}</TableCell>
                       {runNow && <TableCell className="text-end">{runNow}</TableCell>}
                     </>
@@ -289,6 +334,37 @@ export function BackupsPage() {
       panel={id ? <BackupHistory id={id} name={selected?.name ?? ""} /> : null}
       onClose={() => navigate("/backups")}
     />
+  )
+}
+
+/** Where each copy of a run is, and how it went. */
+function Copies({ copies }: { copies: Copy[] }) {
+  const tz = useTimeZone()
+  if (!copies.length) return null
+  return (
+    <ul className="mt-1.5 grid gap-1">
+      {copies.map((c) => {
+        const status = c.status === "ok" && c.deletedAt ? "expired" : c.status
+        return (
+          <li key={c.id} className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-small">
+            <KindIcon kind={c.kind} className="size-3.5" />
+            <span className="font-medium">
+              <UserText>{c.destination}</UserText>
+            </span>
+            <StatusTag kind="copy" status={status} />
+            {c.status === "ok" && !c.deletedAt && c.retainUntil && new Date(c.retainUntil) > new Date() && (
+              <span className="text-muted-foreground">locked until {formatDateTime(c.retainUntil, tz)}</span>
+            )}
+            {c.status === "pending" && c.attempts > 0 && (
+              <span className="text-muted-foreground">tried {plural(c.attempts, "time")}, trying again</span>
+            )}
+            {(c.status === "failed" || (c.status === "pending" && c.error)) && c.error && (
+              <span className="basis-full font-mono text-meta break-words text-muted-foreground">{c.error}</span>
+            )}
+          </li>
+        )
+      })}
+    </ul>
   )
 }
 
@@ -332,30 +408,45 @@ function BackupHistory({ id, name }: { id: string; name: string }) {
           <TableBody>
             {list.map((r) => (
               <TableRow key={r.id}>
-                <TableCell className="text-muted-foreground">
+                <TableCell className="align-top text-muted-foreground">
                   <When value={r.startedAt} />
                 </TableCell>
                 <TableCell className="whitespace-normal">
-                  {r.status === "ok" ? (
-                    <StatusTag kind="backup" status={r.deletedAt ? "expired" : "ok"}>
-                      {r.deletedAt ? "Expired" : r.includesSecrets ? "OK · with secrets" : "OK"}
+                  {r.status === "ok" || r.status === "partial" ? (
+                    <StatusTag kind="backup" status={restorable(r) ? r.status : "expired"}>
+                      {!restorable(r)
+                        ? "Expired"
+                        : r.status === "partial"
+                          ? "Some copies failed"
+                          : r.includesSecrets
+                            ? "OK · with secrets"
+                            : "OK"}
                     </StatusTag>
                   ) : r.status === "running" ? (
-                    <StatusTag kind="backup" status="running" />
+                    <StatusTag kind="backup" status="running">
+                      {r.spooledAt ? "Writing copies" : "Running"}
+                    </StatusTag>
                   ) : (
-                    <div className="grid gap-1">
-                      <StatusTag kind="backup" status="failed" />
-                      <div className="max-w-80 font-mono text-meta break-words text-muted-foreground">{r.error}</div>
-                    </div>
+                    <StatusTag kind="backup" status="failed" />
                   )}
+                  {r.status === "failed" &&
+                    !(r.copies ?? []).some((c) => c.error && c.error !== r.error) &&
+                    r.error && (
+                      <div className="mt-1 max-w-80 font-mono text-meta break-words text-muted-foreground">
+                        {r.error}
+                      </div>
+                    )}
+                  <Copies copies={r.copies ?? []} />
                 </TableCell>
-                <TableCell className="text-end tabular-nums">{r.workflows === null ? "–" : n(r.workflows)}</TableCell>
-                <TableCell className="text-end tabular-nums">
+                <TableCell className="text-end align-top tabular-nums">
+                  {r.workflows === null ? "–" : n(r.workflows)}
+                </TableCell>
+                <TableCell className="text-end align-top tabular-nums">
                   {r.credentials === null ? "–" : n(r.credentials)}
                 </TableCell>
-                <TableCell className="text-end tabular-nums">{formatSize(r.sizeBytes)}</TableCell>
-                <TableCell className="text-end">
-                  {r.status === "ok" && !r.deletedAt && id !== "self" && (
+                <TableCell className="text-end align-top tabular-nums">{formatSize(r.sizeBytes)}</TableCell>
+                <TableCell className="text-end align-top">
+                  {restorable(r) && id !== "self" && (
                     <Button size="sm" onClick={() => setRestoring(r)}>
                       <RotateCcw /> Restore
                     </Button>

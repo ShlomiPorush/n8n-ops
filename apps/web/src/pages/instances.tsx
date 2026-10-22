@@ -70,6 +70,7 @@ import { api, describeError, queryClient, useApi, useApiMutation } from "@/lib/a
 import { formatFull, n, plural, useTimeZone } from "@/lib/time"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
+import { InstanceBackupCard } from "./destinations"
 import { type ProblemRow, ProblemsTable } from "./problems"
 
 type Capability = {
@@ -123,6 +124,8 @@ type InstanceDetailData = InstanceRow & {
   workflowCounts: { total: number; active: number; runs30d: number }
   effectiveSettings: Record<string, number | string>
   latestVersion: string | null
+  backupDestinations: "default" | "custom"
+  backupDestinationIds: string[]
 }
 
 /** Worse first when sorted high to low: down, needs a look, not checked, healthy. */
@@ -365,7 +368,7 @@ function InstanceDetail({ id }: { id: string }) {
   async function askRemove() {
     const ok = await confirm({
       title: `Remove ${name}?`,
-      message: `n8n-ops stops monitoring it and deletes its ${plural(i?.openProblems ?? 0, "open problem")}, stored failures and backup history from n8n-ops. Nothing changes on the n8n instance, and archives in storage are kept. This cannot be undone.`,
+      message: `n8n-ops stops monitoring it and deletes its ${plural(i?.openProblems ?? 0, "open problem")}, stored failures and backup history from n8n-ops. Nothing changes on the n8n instance, and archives on the backup destinations are kept. This cannot be undone.`,
       confirmLabel: "Remove instance",
       danger: true,
     })
@@ -578,6 +581,13 @@ function InstanceDetail({ id }: { id: string }) {
         agentAccess={i.agentAccess}
       />
 
+      <InstanceBackupCard
+        key={`backup-destinations-${i.id}`}
+        instanceId={i.id}
+        mode={i.backupDestinations}
+        destinationIds={i.backupDestinationIds}
+      />
+
       <OverridesCard key={`overrides-${i.id}`} instance={i} />
 
       <InstanceDialog open={editing} onOpenChange={setEditing} instance={i} />
@@ -620,9 +630,6 @@ const overrideFields: [string, string][] = [
   ["pollIntervalSec", "Check for failures every (s)"],
   ["healthIntervalSec", "Health check every (s)"],
   ["backupTime", "Daily backup time"],
-  ["retentionDaily", "Keep daily backups"],
-  ["retentionWeekly", "Keep weekly backups"],
-  ["retentionMonthly", "Keep monthly backups"],
   ["staleBackupHours", "Backup stale after (h)"],
   ["executionRetentionDays", "Keep failed executions (days)"],
   ["autoResolveDays", "Auto-resolve after (days)"],

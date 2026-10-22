@@ -10,10 +10,9 @@ import { syncTelegramWebhook } from "../services/alerts.ts"
 const secretFields: Partial<Record<SectionName, string[]>> = {
   telegram: ["botToken"],
   email: ["smtpPassword"],
-  storage: ["secretAccessKey"],
 }
 
-const editable: SectionName[] = ["general", "defaults", "alerts", "telegram", "email", "storage", "access"]
+const editable: SectionName[] = ["general", "defaults", "alerts", "telegram", "email", "backups", "access"]
 
 export function settingsRoutes(ctx: Ctx) {
   const app = new Hono<Env>()

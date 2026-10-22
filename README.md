@@ -5,7 +5,7 @@ An operations console for teams that run many self-hosted n8n instances.
 - **Failures without the inbox.** Reads every instance's failed executions, groups them into problems (one per workflow, node and error) and sends one Telegram alert per problem. Several workflows failing with the same error become one message, which later failures edit instead of repeating. Daily and weekly email reports cover the rest.
 - **Health.** Main processes, queue workers and queue backlog, with an alert when something goes down and when it recovers.
 - **Agents.** A read-only MCP server and REST API return the full picture of a failure: the failed node, its input, the stack and the stored execution.
-- **Backups.** Workflows and credential secrets, encrypted on the n8n host with your public key, verified in S3-compatible storage, with retention and a tested restore of single workflows.
+- **Backups.** Workflows and credential secrets, encrypted on the n8n host with your public key, written to one or more destinations (S3-compatible storage with optional Object Lock, a folder on the host, SFTP, WebDAV) and verified there, with retention per destination and a tested restore of single workflows.
 - **Consolidation.** A map of every workflow on every instance, duplicates, almost unused instances, and moving a workflow with its credentials after a review of what will change.
 
 Requirements and design: [docs/requirements.md](docs/requirements.md). How the repository works: [docs/project-foundation.md](docs/project-foundation.md).
@@ -22,13 +22,24 @@ curl -o .env https://raw.githubusercontent.com/ShlomiPorush/n8n-ops/main/.env.ex
 docker compose up -d
 ```
 
-The data stays in `data/` (the app key) and `postgres-data/` next to the compose file.
+The data stays in `data/` (the app key) and `postgres-data/` next to the compose file. `backups/` holds the archives of folder destinations, if you add one.
 
-Open `https://<DOMAIN>`. The first visit runs the setup: your account, two-factor authentication (required), and the backup key pair. **Save the private backup key** when it is shown; without it no backup can be restored. Telegram and storage can be set then or later in Settings.
+Open `https://<DOMAIN>`. The first visit runs the setup: your account, two-factor authentication (required), and the backup key pair. **Save the private backup key** when it is shown; without it no backup can be restored. Telegram and the first backup destination can be set then or later in Settings.
 
 `N8N_OPS_PUBLIC_URL` (`https://<DOMAIN>` by default) must be the HTTPS address users open. It enables secure cookies, is trusted for sign-in, and is used in links sent by Telegram and email.
 
 The compose file pulls the `ghcr.io/shlomiporush/n8n-ops` image of the release set in `VERSION`; the [releases](https://github.com/ShlomiPorush/n8n-ops/releases) list them.
+
+## Backup destinations
+
+Settings → Backup Destinations. Each destination is tested with a small file before it is saved, and every archive written there is checked against its size and SHA-256. Instances back up to the destinations marked as default, unless an instance chooses others on its page.
+
+- **S3**: any S3-compatible service. The keys need to put, get and delete objects in the bucket. With **Object Lock** on (the bucket must have been created with Object Lock), each archive is locked for the days you set, and the keys also need to read and set object retention.
+- **Folder**: `/backups` in the server container, mapped to `./backups` beside the compose file. A copy on the same host as n8n-ops is not off-site; pair it with another destination.
+- **SFTP**: user name with a password or a private key. The server's host key is pinned: "Read from server" shows it before any password is sent; compare it with the server's own.
+- **WebDAV**: an `https://` URL of a folder, for example Nextcloud or a NAS.
+
+Retention is set per destination: the newest archive of each of the last N days, weeks and months, per instance. The worker sends the encrypted archive to n8n-ops, which keeps it in `data/spool` until every copy is written and tries a failed copy again within a day; the largest archive accepted (2 GiB by default) is set under the n8n-ops database backup on the same page.
 
 ## Add n8n instances
 

@@ -1,6 +1,7 @@
 import { hkdfSync } from "node:crypto"
 import { EventEmitter } from "node:events"
 import { writeSync } from "node:fs"
+import type { Server } from "node:http"
 import { serve } from "@hono/node-server"
 import { createApp } from "./app.ts"
 import { createAuth } from "./auth/auth.ts"
@@ -13,6 +14,7 @@ import { createAudit } from "./lib/audit.ts"
 import { createSecrets, loadOrCreateAppKey } from "./lib/crypto.ts"
 import { createSettings } from "./lib/settings.ts"
 import { createAgentConnect } from "./oauth/agents.ts"
+import { UPLOAD_DEADLINE_MS } from "./routes/worker-api.ts"
 
 const config = loadConfig()
 const log = consoleLogger
@@ -55,7 +57,9 @@ const { mounts, start } = features(ctx)
 const app = createApp(ctx, { webDir: config.webDir, mounts })
 const server = serve({ fetch: app.fetch, port: config.port }, ({ port }) => {
   log.info(`n8n-ops server ${config.version} listening`, { port })
-})
+}) as Server
+// A worker's backup upload may take longer than Node's default five minutes; the upload has its own deadline.
+server.requestTimeout = UPLOAD_DEADLINE_MS + 5 * 60_000
 const stop = start()
 
 const shutdown = (signal: string) => {

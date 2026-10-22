@@ -1,4 +1,5 @@
 import {
+  bigint,
   bigserial,
   boolean,
   index,
@@ -93,7 +94,7 @@ export const twoFactor = pgTable(
 // Settings and audit
 // ---------------------------------------------------------------------------
 
-/** One row per settings section (alerts, telegram, email, storage, keys, defaults). Secrets inside are encrypted. */
+/** One row per settings section (alerts, telegram, email, backups, keys, defaults). Secrets inside are encrypted. */
 export const settings = pgTable("settings", {
   key: text("key").primaryKey(),
   value: jsonb("value").notNull(),
@@ -231,6 +232,8 @@ export const instances = pgTable("instances", {
   /** Highest execution id already processed. */
   executionCursor: text("execution_cursor"),
   overrides: jsonb("overrides").$type<Record<string, unknown>>().notNull().default({}),
+  /** "default": back up to the default destinations, as they change; "custom": to those it chose. */
+  backupDestinations: text("backup_destinations").$type<"default" | "custom">().notNull().default("default"),
   /** Whether agents may ask for temporary access, and the most they may ever be granted. */
   agentAccess: jsonb("agent_access").$type<AgentAccessPolicy>().notNull().default({ enabled: false, scopes: [] }),
   createdAt: created(),
@@ -415,25 +418,109 @@ export const workerJobs = pgTable(
   (t) => [index("worker_jobs_queue_idx").on(t.workerId, t.status)],
 )
 
+/** ok: every copy was written and verified; partial: some were; failed: none was. */
+export type RunStatus = "running" | "ok" | "partial" | "failed"
+
 export const backupRuns = pgTable(
   "backup_runs",
   {
     id: uuid("id").primaryKey().defaultRandom(),
     /** Null for the n8n-ops self backup. */
     instanceId: uuid("instance_id").references(() => instances.id, { onDelete: "cascade" }),
-    status: text("status").$type<"running" | "ok" | "failed">().notNull(),
+    status: text("status").$type<RunStatus>().notNull(),
     includesSecrets: boolean("includes_secrets").notNull().default(false),
     workflows: integer("workflows"),
     credentials: integer("credentials"),
-    sizeBytes: integer("size_bytes"),
+    sizeBytes: bigint("size_bytes", { mode: "number" }),
     sha256: text("sha256"),
-    objectKey: text("object_key"),
     error: text("error"),
+    /** Set when the worker starts its one upload of the archive; a second upload is refused. */
+    uploadStartedAt: ts("upload_started_at"),
+    /** The encrypted archive is in the spool with the declared size and checksum; copies can be written. */
+    spooledAt: ts("spooled_at"),
     startedAt: ts("started_at").notNull().defaultNow(),
+    finishedAt: ts("finished_at"),
+  },
+  (t) => [index("backup_runs_instance_idx").on(t.instanceId, t.startedAt)],
+)
+
+export type DestinationKind = "s3" | "local" | "sftp" | "webdav"
+export type RetentionPolicy = { daily: number; weekly: number; monthly: number }
+export type ObjectLock = { mode: "COMPLIANCE" | "GOVERNANCE"; days: number }
+
+/** Where archives are written. An instance writes to the default ones or to those it chose. */
+export const backupDestinations = pgTable("backup_destinations", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull().unique(),
+  kind: text("kind").$type<DestinationKind>().notNull(),
+  /**
+   * Where the archives are (bucket and prefix, folder, host and path, URL, and the account where it decides
+   * the place). Fixed once set, so earlier copies are always found where they were written.
+   */
+  location: jsonb("location").$type<Record<string, unknown>>().notNull(),
+  /** Credentials; secret fields are stored encrypted as <name>Enc. */
+  credentials: jsonb("credentials").$type<Record<string, unknown>>().notNull().default({}),
+  retention: jsonb("retention").$type<RetentionPolicy>().notNull(),
+  /** S3 Object Lock for every new copy; null when off. */
+  objectLock: jsonb("object_lock").$type<ObjectLock | null>(),
+  enabled: boolean("enabled").notNull().default(true),
+  isDefault: boolean("is_default").notNull().default(false),
+  /** When the location became fixed: on creation, or for settings carried over incomplete, at their first test. */
+  lockedAt: ts("locked_at"),
+  createdAt: created(),
+  updatedAt: updated(),
+})
+
+export type CopyStatus = "pending" | "writing" | "ok" | "failed"
+
+/** One archive of one run on one destination. */
+export const backupCopies = pgTable(
+  "backup_copies",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    runId: uuid("run_id")
+      .notNull()
+      .references(() => backupRuns.id, { onDelete: "cascade" }),
+    destinationId: uuid("destination_id")
+      .notNull()
+      .references(() => backupDestinations.id, { onDelete: "restrict" }),
+    /** Path of the archive under the destination's root. */
+    objectKey: text("object_key").notNull(),
+    status: text("status").$type<CopyStatus>().notNull().default("pending"),
+    attempts: integer("attempts").notNull().default(0),
+    nextAttemptAt: ts("next_attempt_at"),
+    error: text("error"),
+    /** S3 version of the copy, so expiry removes that version and not only hides it. */
+    versionId: text("version_id"),
+    /** Object Lock: the copy cannot be deleted before this time. */
+    retainUntil: ts("retain_until"),
+    /** Read back (or checked by the service) with the run's size and SHA-256. */
+    verifiedAt: ts("verified_at"),
+    /** Written before destinations existed; verified with the checks of that time. */
+    legacy: boolean("legacy").notNull().default(false),
+    createdAt: created(),
     finishedAt: ts("finished_at"),
     deletedAt: ts("deleted_at"),
   },
-  (t) => [index("backup_runs_instance_idx").on(t.instanceId, t.startedAt)],
+  (t) => [
+    uniqueIndex("backup_copies_run_destination_idx").on(t.runId, t.destinationId),
+    index("backup_copies_destination_idx").on(t.destinationId, t.status),
+  ],
+)
+
+/** Destinations an instance chose; used only when its backup destinations are "custom". */
+export const instanceBackupDestinations = pgTable(
+  "instance_backup_destinations",
+  {
+    instanceId: uuid("instance_id")
+      .notNull()
+      .references(() => instances.id, { onDelete: "cascade" }),
+    destinationId: uuid("destination_id")
+      .notNull()
+      .references(() => backupDestinations.id, { onDelete: "cascade" }),
+    createdAt: created(),
+  },
+  (t) => [primaryKey({ columns: [t.instanceId, t.destinationId] })],
 )
 
 // ---------------------------------------------------------------------------

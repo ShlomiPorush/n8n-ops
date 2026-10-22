@@ -8,6 +8,10 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
 PROJECT="n8n-ops-verify"
 PLAYWRIGHT_IMAGE="mcr.microsoft.com/playwright:v1.64.1-noble"
+# Real servers for the backup destination stores: OpenSSH for SFTP, rclone's WebDAV server over HTTPS.
+SFTP_IMAGE="lscr.io/linuxserver/openssh-server:10.3_p1-r1-ls239"
+WEBDAV_IMAGE="rclone/rclone:1.75.2"
+STORES_DONE=0
 CHANGED_BASE=""
 GUARDS=1
 CHECKS=1
@@ -136,6 +140,12 @@ run_checks() {
   in_toolchain "pnpm -r ${filter[*]:+${filter[*]@Q}} run typecheck \
     && pnpm -r ${filter[*]:+${filter[*]@Q}} run test \
     && pnpm -r ${filter[*]:+${filter[*]@Q}} --filter=./apps/* run build"
+  info "Database schema matches its migrations"
+  # A schema change without its migration would otherwise only show when the next migration is generated.
+  # shellcheck disable=SC2016 # expands inside the container
+  in_toolchain 'cd apps/server && out="$(pnpm exec drizzle-kit generate --name schema-check 2>&1)"; echo "$out" | tail -1;
+    grep -q "No schema changes" <<<"$out"' ||
+    die "the schema in apps/server/src/db/schema.ts has changes without a migration; run drizzle-kit generate"
 }
 
 stack() {
@@ -143,7 +153,12 @@ stack() {
     docker compose -p "$PROJECT" --project-directory "$REPO_ROOT" -f "$REPO_ROOT/docker/docker-compose-dev.example.yml" "$@"
 }
 
+stop_store_servers() {
+  docker rm -f "${PROJECT}-sftp" "${PROJECT}-webdav" >/dev/null 2>&1 || true
+}
+
 cleanup_stack() {
+  stop_store_servers
   stack down --remove-orphans >/dev/null 2>&1 || true
   # After the last round the data is already gone; the exit trap must not turn that into a failure.
   if [ -n "${N8N_OPS_DATA_DIR:-}" ]; then
@@ -153,6 +168,7 @@ cleanup_stack() {
 
 # Stops the stack, confirms nothing of it still runs, and removes its data, so the next round starts fresh.
 stop_stack() {
+  stop_store_servers
   stack down --remove-orphans || die "the verification stack did not stop"
   [ -z "$(stack ps -q)" ] || die "the verification stack still runs after stopping it"
   remove_data_dir "$N8N_OPS_DATA_DIR"
@@ -239,6 +255,41 @@ run_checks_on_stack() {
   done
 }
 
+# The database upgrades on earlier releases' data, and each backup destination store against a real server
+# of its kind. Once per run: they do not depend on the design.
+run_server_integration() {
+  [ "$STORES_DONE" = 0 ] || return 0
+  STORES_DONE=1
+  info "Integration: database upgrades and backup destination stores"
+  local net="${PROJECT}_default" certs="$N8N_OPS_DATA_DIR/certs"
+  mkdir -p "$certs"
+  # A throwaway certificate for the WebDAV server; the tests trust it, nothing else does.
+  TOOLCHAIN_EXTRA_ARGS=(-v "$certs:/certs")
+  in_toolchain "openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj /CN=webdav \
+    -addext subjectAltName=DNS:webdav -keyout /certs/key.pem -out /certs/cert.pem 2>/dev/null \
+    && chmod 0644 /certs/key.pem" || die "could not make the WebDAV test certificate"
+  docker run -d --name "${PROJECT}-sftp" --network "$net" --network-alias sftp \
+    -e PUID=1000 -e PGID=1000 -e USER_NAME=n8n-ops -e USER_PASSWORD=sftp-test-password -e PASSWORD_ACCESS=true \
+    "$SFTP_IMAGE" >/dev/null || die "the SFTP test server did not start"
+  docker run -d --name "${PROJECT}-webdav" --network "$net" --network-alias webdav --user 65534:65534 -e HOME=/tmp \
+    -v "$certs:/certs:ro" "$WEBDAV_IMAGE" serve webdav /tmp --addr :8443 \
+    --cert /certs/cert.pem --key /certs/key.pem --user n8n-ops --pass webdav-test-password >/dev/null ||
+    die "the WebDAV test server did not start"
+  TOOLCHAIN_EXTRA_ARGS=(--network "$net" -v "$certs:/certs:ro"
+    -e MIGRATION_DATABASE_URL=postgres://n8n_ops:dev-only-password@postgres:5432/n8n_ops
+    -e S3_ENDPOINT=http://s3:9090
+    -e SFTP_HOST=sftp -e SFTP_PORT=2222 -e SFTP_USER=n8n-ops -e SFTP_PASSWORD=sftp-test-password -e SFTP_PATH=/config
+    -e WEBDAV_URL=https://webdav:8443/ -e WEBDAV_USER=n8n-ops -e WEBDAV_PASSWORD=webdav-test-password
+    -e WEBDAV_CA=/certs/cert.pem)
+  in_toolchain "pnpm --filter @n8n-ops/server run test:integration" || {
+    docker logs --tail 30 "${PROJECT}-sftp" 2>&1 || true
+    docker logs --tail 30 "${PROJECT}-webdav" 2>&1 || true
+    die "the server integration tests failed"
+  }
+  TOOLCHAIN_EXTRA_ARGS=()
+  stop_store_servers
+}
+
 # One end-to-end round per design, each on a fresh stack. Both designs are one app with the same functions,
 # so the same suite runs in each and must pass in each; only the look differs.
 run_e2e_round() {
@@ -247,11 +298,13 @@ run_e2e_round() {
   start_stack
   [ "$design" = regular ] || seed_design "$design"
   run_checks_on_stack
+  run_server_integration
   # The alias lets the server reach the stand-in Telegram Bot API that the tests run (TELEGRAM_API_URL).
   docker run --rm --network "${PROJECT}_default" --network-alias e2e-runner \
     --user "$(id -u):$(id -g)" -e HOME=/tmp -e CI="${CI:-}" -e E2E_DESIGN="$design" \
     -e E2E_BASE_URL=http://server:8080 -e E2E_N8N_CONTAINER="${PROJECT}-n8n-1" \
-    -v "$N8N_OPS_DATA_DIR/pairing:/worker-data" -v "$REPO_ROOT:/repo" -w "/repo/$app" \
+    -v "$N8N_OPS_DATA_DIR/pairing:/worker-data" -v "$N8N_OPS_DATA_DIR/backups:/backups-data:ro" \
+    -v "$REPO_ROOT:/repo" -w "/repo/$app" \
     "$PLAYWRIGHT_IMAGE" node node_modules/@playwright/test/cli.js test || {
     stack logs --tail 60 server worker
     die "end-to-end tests failed ($design design)"

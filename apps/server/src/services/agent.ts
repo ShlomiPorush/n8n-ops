@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, ilike, isNotNull, or, type SQL, sql } from "drizzle-orm"
+import { and, asc, desc, eq, ilike, inArray, isNotNull, or, type SQL, sql } from "drizzle-orm"
 import type { Ctx } from "../context.ts"
 import { backupRuns, failures, instances, workflows } from "../db/schema.ts"
 import { likeContains } from "../lib/like.ts"
@@ -99,11 +99,18 @@ export async function agentBackups(ctx: Ctx) {
       const [lastOk] = await ctx.db
         .select()
         .from(backupRuns)
-        .where(and(eq(backupRuns.instanceId, i.id), eq(backupRuns.status, "ok"), isNotNull(backupRuns.finishedAt)))
+        .where(
+          and(
+            eq(backupRuns.instanceId, i.id),
+            inArray(backupRuns.status, ["ok", "partial"]),
+            isNotNull(backupRuns.finishedAt),
+          ),
+        )
         .orderBy(desc(backupRuns.startedAt))
         .limit(1)
       return {
         instance: i.name,
+        // partial: some destinations have the archive, others failed (see error).
         lastRun: last ? { status: last.status, startedAt: last.startedAt, error: last.error } : null,
         lastSuccess: lastOk
           ? { at: lastOk.startedAt, includesSecrets: lastOk.includesSecrets, sizeBytes: lastOk.sizeBytes }

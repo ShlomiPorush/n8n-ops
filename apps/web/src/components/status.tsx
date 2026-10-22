@@ -41,8 +41,18 @@ export const statusTable = {
   backup: {
     ok: { label: "OK", tone: "ok" },
     running: { label: "Running", tone: "info" },
+    partial: { label: "Some copies failed", tone: "warn" },
     failed: { label: "Failed", tone: "fail" },
     stale: { label: "Stale", tone: "warn" },
+    expired: { label: "Expired", tone: "muted" },
+    none: { label: "Not backed up", tone: "fail" },
+  },
+  /** One archive on one destination. */
+  copy: {
+    pending: { label: "Waiting", tone: "info" },
+    writing: { label: "Writing", tone: "info" },
+    ok: { label: "Written", tone: "ok" },
+    failed: { label: "Failed", tone: "fail" },
     expired: { label: "Expired", tone: "muted" },
   },
 } as const satisfies Record<string, Record<string, { label: string; tone: ToneName }>>

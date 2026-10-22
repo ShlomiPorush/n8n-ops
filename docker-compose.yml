@@ -5,7 +5,8 @@
 # Persistent data lives in host directories next to this file:
 #   ./data           the server's app key (losing it loses every stored secret)
 #   ./postgres-data  the database
-# "docker compose down" keeps both.
+#   ./backups        archives of backup destinations of the kind "Folder" (unused otherwise)
+# "docker compose down" keeps all three.
 #
 # Compose interpolation is limited to VERSION, DOMAIN and the PostgreSQL credentials. Everything the
 # server reads comes through env_file.
@@ -31,7 +32,7 @@ services:
       - DAC_READ_SEARCH
       - SETUID
       - SETGID
-    # Writes nothing outside /data and /tmp at runtime.
+    # Writes nothing outside /data, /backups and /tmp at runtime.
     read_only: true
     tmpfs:
       - /tmp
@@ -51,6 +52,7 @@ services:
       - n8n-ops
     volumes:
       - ./data:/data
+      - ./backups:/backups
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=traefik"

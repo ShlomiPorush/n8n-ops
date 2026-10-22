@@ -1,9 +1,9 @@
-import { count } from "drizzle-orm"
+import { count, eq } from "drizzle-orm"
 import { Hono } from "hono"
 import { z } from "zod"
 import { LOGIN_DOMAIN } from "../auth/auth.ts"
 import type { Ctx } from "../context.ts"
-import { instances, user } from "../db/schema.ts"
+import { backupDestinations, instances, user } from "../db/schema.ts"
 import { requireUser } from "../http/middleware.ts"
 import type { Env } from "../http/types.ts"
 
@@ -42,17 +42,17 @@ export function setupRoutes(ctx: Ctx) {
   // What the first-run checklist still needs.
   app.get("/checklist", requireUser(ctx, { allowWithoutTotp: true }), async (c) => {
     const actor = c.get("actor")
-    const [keys, telegram, storage, [inst]] = await Promise.all([
+    const [keys, telegram, [destinations], [inst]] = await Promise.all([
       ctx.settings.get("keys"),
       ctx.settings.get("telegram"),
-      ctx.settings.get("storage"),
+      ctx.db.select({ n: count() }).from(backupDestinations).where(eq(backupDestinations.enabled, true)),
       ctx.db.select({ n: count() }).from(instances),
     ])
     return c.json({
       twoFactor: actor.kind === "user" && actor.twoFactorEnabled,
       backupKey: Boolean(keys.backupRecipient && keys.privateKeySavedAt),
       telegram: Boolean(telegram.botTokenEnc && telegram.chatId),
-      storage: Boolean(storage.bucket && storage.secretAccessKeyEnc),
+      storage: (destinations?.n ?? 0) > 0,
       instance: (inst?.n ?? 0) > 0,
     })
   })

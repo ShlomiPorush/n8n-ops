@@ -47,7 +47,7 @@ test("a fresh install leads through account, two-factor and backup key", async (
 
   await expect(page.getByText("Telegram alerts")).toBeVisible()
   await page.getByRole("button", { name: "Skip for now" }).click()
-  await expect(page.getByText("Backup storage")).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Backup Destination" })).toBeVisible()
   await page.getByRole("button", { name: "Skip for now" }).click()
 
   await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible()

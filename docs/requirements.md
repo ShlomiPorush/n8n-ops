@@ -10,7 +10,7 @@ One place to operate all of our n8n instances:
 
 - Replace the tens of error emails per day (currently deleted unread) with a small number of meaningful alerts.
 - Give an AI agent an API that returns the full picture of a failure, not only "something failed".
-- Reliable, encrypted, off-site backups of workflows and credentials, with tested restore.
+- Reliable, encrypted backups of workflows and credentials to one or more destinations, with tested restore.
 - Make it easy to move workflows between instances and consolidate the 16 instances into a few.
 
 ## 2. Target environment
@@ -93,12 +93,13 @@ Workflow-level only in v1. Full-instance backup (`pg_dump` plus `N8N_ENCRYPTION_
 
 - **D1** Per instance, on a schedule: export workflows, and with a worker, `export:credentials --decrypted` through `docker exec`. Decrypted credentials are kept on purpose so they can be moved to systems other than n8n.
 - **D2** Every archive is encrypted with **age** on the host where it is produced, using a public key. If no key is configured the job fails; there is never an unencrypted fallback. Keys never appear on a command line or in the repository.
-- **D3** Each instance is backed up independently; one failure never stops the others. Status, size, counts and history are stored per instance.
-- **D4** Retention (default 7 daily, 4 weekly, 6 monthly), configurable globally and per instance.
-- **D5** Upload to S3-compatible storage, verified (size and checksum). The provider is configuration only.
+- **D3** Each instance is backed up independently; one failure never stops the others. Status, size, counts and history are stored per instance, with every copy of every run.
+- **D4** Retention per destination (default 7 daily, 4 weekly, 6 monthly), applied per instance on that destination. The newest archive is always kept. (Added after v1: until then retention was global with a per-instance override; the upgrade keeps, per field, the largest value in use.)
+- **D5** Destinations (added after v1; v1 had one S3-compatible store): S3-compatible storage, a folder on the host mapped into the server container at `/backups`, SFTP with a pinned host key, and WebDAV over HTTPS. Several at once; each is tested before it is saved, and every copy is verified with the archive's size and SHA-256 (the service's own checksum, or reading it back) before it counts. The worker sends the encrypted archive to the server, which keeps it in its data directory until every copy is written, and tries a failed copy again within a day. Each instance backs up to the default destinations, as they change, or to those it chose. The place of a destination never changes once set; two destinations may not share a place.
+- **D5a** S3 Object Lock per destination (added after v1): every new copy is locked for a number of days in Compliance (default, 30 days) or Governance mode, and retention removes it only after the lock ends.
 - **D6** Restore one workflow with its credentials into the same instance (as an inactive copy) or another instance. The private key is pasted at restore time, used in memory, and never stored. Tested in a scratch container before v1 is accepted.
-- **D7** Alert when a backup fails or the last successful backup is older than a threshold (default 26 h).
-- **D8** n8n-ops backs up its own database nightly to the same S3 storage, encrypted with the same age key.
+- **D7** Alert when a backup fails or the last successful backup is older than a threshold (default 26 h), per destination: the alert names the destination, and a destination that recovers says so.
+- **D8** n8n-ops backs up its own database nightly, encrypted with the same age key, to the default destinations or those chosen for it.
 
 ### E. API and agent
 
@@ -119,8 +120,8 @@ Workflow-level only in v1. Full-instance backup (`pg_dump` plus `N8N_ENCRYPTION_
 - **G1** One local user, built on a ready-made auth library (Better Auth): password plus **mandatory TOTP**, lockout after repeated failures, password reset from the server CLI only.
 - **G2** Audit log: logins, settings changes, scope changes, restores, moves, exports, worker pairing, Telegram button presses, MCP reads.
 - **G3** English, LTR, light and dark themes.
-- **G4** Settings in the UI: alerts, Telegram, email reports, backup storage, keys, instance defaults. The account (password, two-factor) and the connected agents and tokens have pages of their own. Instance-related settings (backup schedule and retention, poll interval, alert thresholds, auto-resolve days) have a global default with per-instance override. SMTP, Telegram and S3 are global only.
-- **G5** First-run setup wizard: account and TOTP, backup key pair (private key shown once, must confirm it was saved), then Telegram, storage and first instance (these three can be skipped and finished later; home shows what is missing).
+- **G4** Settings in the UI: alerts, Telegram, email reports, backup destinations, keys, instance defaults. The account (password, two-factor) and the connected agents and tokens have pages of their own. Instance-related settings (backup schedule, poll interval, alert thresholds, auto-resolve days) have a global default with per-instance override; which destinations an instance backs up to is chosen on the instance. SMTP, Telegram and the destinations themselves are global.
+- **G5** First-run setup wizard: account and TOTP, backup key pair (private key shown once, must confirm it was saved), then Telegram, the first backup destination and first instance (these three can be skipped and finished later; home shows what is missing).
 
 ### Not in v1
 
@@ -157,7 +158,7 @@ Everything else is visible only in the UI and the API.
 ## 8. Security and data handling
 
 - The UI is reachable from the internet behind a reverse proxy with TLS or behind Cloudflare Access. Login requires TOTP.
-- Secrets (instance API keys, SMTP, Telegram token, S3 keys) are encrypted at rest with an app key generated in the UI on first run and stored in a file in the data volume. Not in environment variables, not in the repository.
+- Secrets (instance API keys, SMTP, Telegram token, backup destination credentials) are encrypted at rest with an app key generated in the UI on first run and stored in a file in the data volume. Not in environment variables, not in the repository.
 - Backups use age with a public key on the server; the private key exists only with Shlomi (password manager). An attacker on the server cannot read any archive.
 - Failed executions may contain customer data: encrypted at rest, retention limited.
 - Only the worker uses Docker, by default through a socket proxy that alone holds the socket and allows ping and exec in the listed n8n containers. Neither has inbound ports.

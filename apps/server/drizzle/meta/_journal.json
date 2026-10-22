@@ -29,6 +29,20 @@
       "when": 1792364222932,
       "tag": "0003_agent_connections",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792696782233,
+      "tag": "0004_backup_destinations",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792696783079,
+      "tag": "0005_drop_legacy_backup_columns",
+      "breakpoints": true
     }
   ]
 }

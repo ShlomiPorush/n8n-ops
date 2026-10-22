@@ -66,6 +66,14 @@ describe("backup alert texts", () => {
     )
   })
 
+  it("name the destination when only its copies are concerned", () => {
+    expect(text(backupAlerts.failed("prod", "timeout", "NAS"))).toBe("<b>Backup failed on prod to NAS</b>\ntimeout")
+    expect(text(backupAlerts.working("prod", "NAS & co"))).toBe(
+      "<b>Backups of prod to NAS &amp; co are working again</b>",
+    )
+    expect(text(backupAlerts.stale("prod", 26, "S3"))).toContain("<b>Backup is stale on prod to S3</b>")
+  })
+
   it("escape the name and the worker's error, and shorten the error", () => {
     expect(text(backupAlerts.failed("R&D", link))).toBe(`<b>Backup failed on R&amp;D</b>\n${escapedLink}`)
     expect(text(backupAlerts.working("<prod>"))).toBe("<b>Backups of &lt;prod&gt; are working again</b>")

@@ -33,3 +33,16 @@ export function selectKeep<T extends { id: string; at: Date }>(archives: T[], po
   pick(policy.monthly, (d) => d.toISOString().slice(0, 7))
   return keep
 }
+
+/**
+ * The copies on one destination that retention removes now: those the policy no longer keeps, except while an
+ * Object Lock still holds them. Those wait for their lock to end.
+ */
+export function selectExpired<T extends { id: string; at: Date; retainUntil: Date | null }>(
+  copies: T[],
+  policy: RetentionPolicy,
+  now = new Date(),
+): T[] {
+  const keep = selectKeep(copies, policy)
+  return copies.filter((c) => !keep.has(c.id) && !(c.retainUntil && c.retainUntil > now))
+}

@@ -1,9 +1,17 @@
 import { capabilityStatus } from "@n8n-ops/shared"
-import { and, asc, count, desc, eq, isNull } from "drizzle-orm"
+import { and, asc, count, desc, eq, inArray, isNull } from "drizzle-orm"
 import { Hono } from "hono"
 import { z } from "zod"
 import type { Ctx } from "../context.ts"
-import { backupRuns, instances, problems, workers, workflows } from "../db/schema.ts"
+import {
+  backupDestinations,
+  backupRuns,
+  instanceBackupDestinations,
+  instances,
+  problems,
+  workers,
+  workflows,
+} from "../db/schema.ts"
 import { requireUser } from "../http/middleware.ts"
 import { actorName, type Env } from "../http/types.ts"
 import { instanceOverridesSchema } from "../lib/settings.ts"
@@ -153,7 +161,55 @@ export function instanceRoutes(ctx: Ctx) {
       },
       effectiveSettings: await ctx.settings.forInstance(row.overrides),
       latestVersion: await latestN8nVersion(),
+      backupDestinationIds: (
+        await ctx.db
+          .select({ id: instanceBackupDestinations.destinationId })
+          .from(instanceBackupDestinations)
+          .where(eq(instanceBackupDestinations.instanceId, row.id))
+      ).map((r) => r.id),
     })
+  })
+
+  /** Where this instance's backups go: the default destinations as they change, or the ones chosen here. */
+  app.put("/:id/backup-destinations", async (c) => {
+    const [row] = await ctx.db
+      .select()
+      .from(instances)
+      .where(eq(instances.id, c.req.param("id")))
+    if (!row) return c.json({ error: "not_found" }, 404)
+    const body = z
+      .object({ mode: z.enum(["default", "custom"]), destinationIds: z.array(z.string().uuid()).max(50).default([]) })
+      .safeParse(await c.req.json().catch(() => ({})))
+    if (!body.success) return c.json({ error: "invalid", issues: body.error.issues }, 400)
+    const ids = [...new Set(body.data.destinationIds)]
+    const known = ids.length
+      ? await ctx.db
+          .select({ id: backupDestinations.id })
+          .from(backupDestinations)
+          .where(inArray(backupDestinations.id, ids))
+      : []
+    if (known.length !== ids.length)
+      return c.json({ error: "invalid", message: "A chosen destination no longer exists." }, 400)
+    await ctx.db.transaction(async (tx) => {
+      await tx
+        .update(instances)
+        .set({ backupDestinations: body.data.mode, updatedAt: new Date() })
+        .where(eq(instances.id, row.id))
+      await tx.delete(instanceBackupDestinations).where(eq(instanceBackupDestinations.instanceId, row.id))
+      // The choice is kept while defaults are used, so switching back restores it.
+      if (ids.length)
+        await tx
+          .insert(instanceBackupDestinations)
+          .values(ids.map((destinationId) => ({ instanceId: row.id, destinationId })))
+    })
+    await ctx.audit({
+      actor: actorName(c.get("actor")),
+      action: "Instance backup destinations changed",
+      target: row.name,
+      via: "web",
+      details: { mode: body.data.mode, destinations: ids.length },
+    })
+    return c.json({ ok: true })
   })
 
   app.patch("/:id", async (c) => {

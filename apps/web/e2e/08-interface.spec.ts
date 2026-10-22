@@ -244,7 +244,7 @@ test("an instance opens in n8n in a new tab", async () => {
   await expect(open).toHaveAttribute("href", /^https?:\/\//)
 })
 
-test("backups that are not set up link to storage and the backup key", async () => {
+test("backups that are not set up link to the destinations and the backup key", async () => {
   await page.route("**/api/backups", async (route) => {
     const res = await route.fetch()
     await route.fulfill({ response: res, json: { ...(await res.json()), configured: false } })
@@ -252,9 +252,9 @@ test("backups that are not set up link to storage and the backup key", async () 
   try {
     await page.goto("/backups")
     await expect(page.getByText("Backups are not set up")).toBeVisible()
-    await expect(page.getByRole("link", { name: "backup storage", exact: true })).toHaveAttribute(
+    await expect(page.getByRole("link", { name: "backup destination", exact: true })).toHaveAttribute(
       "href",
-      "/settings/storage",
+      "/settings/destinations",
     )
     await expect(page.getByRole("link", { name: "backup key", exact: true })).toHaveAttribute("href", "/settings/keys")
   } finally {

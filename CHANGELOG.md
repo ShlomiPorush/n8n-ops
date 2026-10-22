@@ -4,7 +4,19 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+
+- **Backup destinations.** Backups can go to several places at once: S3-compatible storage, a folder on the host (mapped to `/backups` in the server container), SFTP and WebDAV (HTTPS). Every copy is read back, or checked by the service, against the archive's size and SHA-256 before it counts. Each destination is tested before it is saved, has its own daily, weekly and monthly retention, can be the default and can be turned off. Settings → Backup Destinations.
+- **Destinations per instance.** Each instance backs up to the default destinations, following them as they change, or to the ones chosen on its page. The nightly backup of the n8n-ops database has its own choice.
+- **Object Lock for S3.** An S3 destination can lock every archive it writes for a number of days (Compliance or Governance mode), so nobody can delete it early, not even with its keys. Retention removes an archive only after its lock ends.
+- Alerts and the Overview now say which destination a failed or overdue backup is about. The history of each backup shows every copy: where it is, whether it was written, and why not.
+
 ### Changed
+
+- **Backup Storage became Backup Destinations.** On upgrade, the S3 storage becomes the first destination with every archive written so far. Retention moves from the instances to the destinations: the S3 destination keeps, for each of daily, weekly and monthly, the largest number any instance kept, so no archive is removed earlier than before; the previous values are in the audit log. Lower them on the destination if you want to.
+- The worker now sends the encrypted archive to the n8n-ops server, which writes the copies; the archive stays encrypted with your public key all the way. Workers already installed keep working without an update.
+- The production `docker-compose.yml` maps `./backups` to `/backups` for folder destinations. Add the line to an existing compose file to use them.
+- The setup's last step adds the first backup destination (S3 or the folder) instead of S3 storage.
 
 - When the server cannot sign in to PostgreSQL or reach it at startup, it says why in one line and what to do, instead of a stack trace. A refused password explains that changing it in `.env` does not change it in an existing database, and how to set it.
 - The production `docker-compose.yml` shows the server's health check, so tools that read the compose file show it too. The check itself is unchanged.

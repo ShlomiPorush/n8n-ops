@@ -134,5 +134,5 @@ dev_compose() {
 # tests leave the worker's pairing token.
 prepare_data_dirs() {
   local dir="$1"
-  mkdir -p "$dir/server" "$dir/postgres" "$dir/worker" "$dir/pairing"
+  mkdir -p "$dir/server" "$dir/postgres" "$dir/worker" "$dir/pairing" "$dir/backups"
 }

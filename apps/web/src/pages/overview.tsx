@@ -89,7 +89,7 @@ export function OverviewPage() {
     ? [
         !setup.instance && { key: "instance", to: "/instances", text: "Add an n8n instance" },
         !setup.telegram && { key: "telegram", to: "/settings/telegram", text: "connect Telegram for alerts" },
-        !setup.storage && { key: "storage", to: "/settings/storage", text: "set backup storage" },
+        !setup.storage && { key: "storage", to: "/settings/destinations", text: "add a backup destination" },
       ].filter((s) => s !== false)
     : []
 

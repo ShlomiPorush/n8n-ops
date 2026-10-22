@@ -10,9 +10,6 @@ export const instanceSettingsSchema = z.object({
   pollIntervalSec: z.number().int().min(15).max(3600),
   healthIntervalSec: z.number().int().min(10).max(3600),
   backupTime: time,
-  retentionDaily: z.number().int().min(1).max(90),
-  retentionWeekly: z.number().int().min(0).max(52),
-  retentionMonthly: z.number().int().min(0).max(60),
   staleBackupHours: z.number().int().min(1).max(720),
   executionRetentionDays: z.number().int().min(1).max(3650),
   autoResolveDays: z.number().int().min(1).max(365),
@@ -88,14 +85,12 @@ export const sections = {
     smtpUser: z.string(),
     smtpPasswordEnc: z.string().optional(),
   }),
-  storage: z.object({
-    endpoint: z.string(),
-    region: z.string(),
-    bucket: z.string(),
-    prefix: z.string(),
-    accessKeyId: z.string(),
-    secretAccessKeyEnc: z.string().optional(),
-    forcePathStyle: z.boolean(),
+  backups: z.object({
+    /** Where the n8n-ops database backup goes: the default destinations, or those listed. */
+    selfDestinations: z.enum(["default", "custom"]),
+    selfDestinationIds: z.array(z.string().uuid()),
+    /** Largest archive accepted, in MiB. Archives are built in memory, so this also bounds memory use. */
+    maxArchiveMb: z.number().int().min(16).max(20_480),
   }),
   access: z.object({
     /** Longest temporary access an agent may get to an n8n instance. */
@@ -136,9 +131,6 @@ export const defaults: { [K in SectionName]: Section<K> } = {
     pollIntervalSec: 60,
     healthIntervalSec: 30,
     backupTime: "02:00",
-    retentionDaily: 7,
-    retentionWeekly: 4,
-    retentionMonthly: 6,
     staleBackupHours: 26,
     executionRetentionDays: 30,
     autoResolveDays: 7,
@@ -168,7 +160,7 @@ export const defaults: { [K in SectionName]: Section<K> } = {
     smtpSecure: false,
     smtpUser: "",
   },
-  storage: { endpoint: "", region: "us-east-1", bucket: "", prefix: "n8n-ops", accessKeyId: "", forcePathStyle: true },
+  backups: { selfDestinations: "default", selfDestinationIds: [], maxArchiveMb: 2048 },
   access: { maxMinutes: 240, pendingMinutes: 30, notifyTelegram: true, notifyEmail: true, telegramApprovers: [] },
   keys: {},
 }

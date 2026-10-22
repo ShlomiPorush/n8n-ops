@@ -20,7 +20,7 @@ export const settingsGroups = [
   {
     label: "Backups",
     items: [
-      ["storage", "Backup Storage"],
+      ["destinations", "Backup Destinations"],
       ["keys", "Encryption Keys"],
     ],
   },
@@ -45,7 +45,7 @@ export const settingsIcons: Record<SettingsSection, LucideIcon> = {
   alerts: Bell,
   telegram: Send,
   email: Mail,
-  storage: HardDrive,
+  destinations: HardDrive,
   keys: KeyRound,
   access: Bot,
 }

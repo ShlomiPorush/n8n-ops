@@ -7,6 +7,7 @@ import { accessRoutes } from "./routes/access.ts"
 import { mcpRoutes, restRoutes } from "./routes/agent.ts"
 import { alertTestRoutes, telegramWebhookRoutes } from "./routes/alerts.ts"
 import { backupRoutes } from "./routes/backups.ts"
+import { destinationRoutes } from "./routes/destinations.ts"
 import { eventRoutes } from "./routes/events.ts"
 import { instanceRoutes } from "./routes/instances.ts"
 import { n8nProxyRoutes } from "./routes/n8n-proxy.ts"
@@ -16,6 +17,7 @@ import { workerRoutes } from "./routes/workers.ts"
 import { credentialExportRoutes, workflowRoutes } from "./routes/workflows.ts"
 import { expireAccess } from "./services/access.ts"
 import { notifyAccess } from "./services/access-notify.ts"
+import { kickCopies } from "./services/backup-copies.ts"
 import { enqueueProbes, scheduleBackups } from "./services/backups.ts"
 import { type Job, startScheduler } from "./services/scheduler.ts"
 import { syncWorkflows } from "./services/workflows.ts"
@@ -33,6 +35,7 @@ export function features(ctx: Ctx, extra: { mounts?: Mount[]; jobs?: Job[] } = {
     { path: "/api/workers", router: workerRoutes(ctx) },
     { path: "/api/worker", router: workerApiRoutes(ctx) as unknown as Hono<Env> },
     { path: "/api/backups", router: backupRoutes(ctx) },
+    { path: "/api/destinations", router: destinationRoutes(ctx) },
     { path: "/api/workflows", router: workflowRoutes(ctx) },
     { path: "/api/events", router: eventRoutes(ctx) },
     { path: "/api/v1", router: restRoutes(ctx) },
@@ -44,6 +47,8 @@ export function features(ctx: Ctx, extra: { mounts?: Mount[]; jobs?: Job[] } = {
   ]
   const jobs: Job[] = [
     { name: "backups", everyMs: 5 * 60_000, run: scheduleBackups },
+    // Copies due again, cut off by a restart, or waiting for a free destination; new archives start it at once.
+    { name: "backup-copies", everyMs: 30_000, run: kickCopies },
     { name: "probes", everyMs: 10_000, run: enqueueProbes },
     { name: "access-expiry", everyMs: 15_000, run: expireAccess },
     { name: "access-notify", everyMs: 5_000, run: notifyAccess },

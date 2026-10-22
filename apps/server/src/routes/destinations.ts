@@ -292,9 +292,21 @@ export function destinationRoutes(ctx: Ctx) {
       )
     const live = copies.filter((x) => x.status === "ok" && !x.deletedAt)
     if (files.data === "delete") {
-      const locked = live.filter((x) => x.retainUntil && x.retainUntil > new Date())
+      // Everything written there goes: kept archives, what failed copies left, and versions listed for removal.
+      const objects = copies.flatMap((x) => [
+        ...((x.status === "ok" && !x.deletedAt) || x.status === "failed"
+          ? [{ key: x.objectKey, versionId: x.versionId, until: x.status === "ok" ? x.retainUntil : null }]
+          : []),
+        ...x.leftovers.map((l) => ({
+          key: x.objectKey,
+          versionId: l.versionId,
+          until: l.retainUntil ? new Date(l.retainUntil) : null,
+        })),
+      ])
+      const now = new Date()
+      const locked = objects.filter((o) => o.until && o.until > now)
       if (locked.length) {
-        const until = locked.reduce((a, b) => ((a.retainUntil ?? 0) > (b.retainUntil ?? 0) ? a : b)).retainUntil
+        const until = locked.reduce((a, b) => ((a.until ?? 0) > (b.until ?? 0) ? a : b)).until
         return c.json(
           {
             error: "conflict",
@@ -305,8 +317,13 @@ export function destinationRoutes(ctx: Ctx) {
       }
       const store = openStore(ctx, d)
       try {
-        for (const copy of live)
-          await withDeadline(5 * 60_000, "Deleting an archive", (s) => store.remove(copy.objectKey, s, copy.versionId))
+        for (const o of objects)
+          await withDeadline(5 * 60_000, "Deleting an archive", (s) => store.remove(o.key, s, o.versionId))
+        if (d.kind !== "s3")
+          for (const x of copies.filter((c) => c.status === "failed"))
+            await withDeadline(60_000, "Deleting a temporary file", (s) =>
+              store.remove(`${x.objectKey}.part`, s),
+            ).catch(() => {})
       } catch (error) {
         return c.json(
           {

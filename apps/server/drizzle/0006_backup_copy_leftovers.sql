@@ -1,0 +1,1 @@
+ALTER TABLE "backup_copies" ADD COLUMN "leftovers" jsonb DEFAULT '[]'::jsonb NOT NULL;

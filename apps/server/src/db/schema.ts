@@ -472,6 +472,7 @@ export const backupDestinations = pgTable("backup_destinations", {
 })
 
 export type CopyStatus = "pending" | "writing" | "ok" | "failed"
+export type Leftover = { versionId: string | null; retainUntil: string | null }
 
 /** One archive of one run on one destination. */
 export const backupCopies = pgTable(
@@ -498,6 +499,11 @@ export const backupCopies = pgTable(
     verifiedAt: ts("verified_at"),
     /** Written before destinations existed; verified with the checks of that time. */
     legacy: boolean("legacy").notNull().default(false),
+    /**
+     * Objects written under this copy's key that it does not hold: an S3 version from a failed attempt, or the
+     * file of a copy that failed. Removed once no lock holds them (retainUntil passed or none).
+     */
+    leftovers: jsonb("leftovers").$type<Leftover[]>().notNull().default([]),
     createdAt: created(),
     finishedAt: ts("finished_at"),
     deletedAt: ts("deleted_at"),

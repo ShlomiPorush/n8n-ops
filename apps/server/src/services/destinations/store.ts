@@ -31,6 +31,10 @@ export interface Store {
 
 export type PutResult = { versionId?: string }
 
+/** An error after the object was written (an S3 lock that could not be set) names what was written. */
+export const writtenBy = (error: unknown) =>
+  (error as { written?: { versionId: string | null } } | null)?.written ?? null
+
 export class StoreError extends Error {}
 
 /** Reads the copy back and compares size and SHA-256, for services that keep no checksum of their own. */

@@ -100,7 +100,11 @@ export function s3Store(location: S3Location, credentials: S3Credentials, object
       // Object Lock asks for an MD5 of the body on many S3-compatible services, as AWS once did.
       const lock = retainUntil && objectLock ? { until: retainUntil, md5: await md5OfFile(file, signal) } : undefined
       const put = await putBody(key, createReadStream(file, { signal }), expected, signal, lock)
-      if (lock) await ensureLocked(key, put.versionId, lock.until, signal)
+      if (lock)
+        await ensureLocked(key, put.versionId, lock.until, signal).catch((error: Error) => {
+          // The object exists: the caller records its version for removal, whatever went wrong with the lock.
+          throw Object.assign(error, { written: { versionId: put.versionId ?? null } })
+        })
       return put
     },
 

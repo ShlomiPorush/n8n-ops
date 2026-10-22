@@ -43,6 +43,13 @@
       "when": 1792696783079,
       "tag": "0005_drop_legacy_backup_columns",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792701737679,
+      "tag": "0006_backup_copy_leftovers",
+      "breakpoints": true
     }
   ]
 }

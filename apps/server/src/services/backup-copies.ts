@@ -1,11 +1,19 @@
 import { and, asc, eq, inArray, isNotNull, isNull, lt, lte, or, sql } from "drizzle-orm"
 import { type Ctx, changed } from "../context.ts"
-import { alertState, backupCopies, backupDestinations, backupRuns, instances, workerJobs } from "../db/schema.ts"
+import {
+  alertState,
+  backupCopies,
+  backupDestinations,
+  backupRuns,
+  instances,
+  type Leftover,
+  workerJobs,
+} from "../db/schema.ts"
 import { enqueueAlert, setCondition } from "./alerts.ts"
 import { backupAlerts, backupCondition } from "./backup-alerts.ts"
 import { type Destination, openStore } from "./destinations/index.ts"
 import type { Store } from "./destinations/store.ts"
-import { withDeadline } from "./destinations/store.ts"
+import { withDeadline, writtenBy } from "./destinations/store.ts"
 import { selectExpired } from "./retention.ts"
 import { removeSpool, spoolDir, spoolExists, spooledRuns, spoolFile } from "./spool.ts"
 
@@ -163,13 +171,18 @@ async function writeCopy(ctx: Ctx, copyId: string) {
   const name = await targetName(ctx, run.instanceId)
   const dir = spoolDir(ctx)
 
-  const fail = async (message: string, final: boolean) => {
+  const fail = async (message: string, final: boolean, extra: Partial<typeof backupCopies.$inferInsert> = {}) => {
     await ctx.db
       .update(backupCopies)
       .set(
         final
-          ? { status: "failed", error: message, nextAttemptAt: null, finishedAt: new Date() }
-          : { status: "pending", error: message, nextAttemptAt: new Date(Date.now() + attempt * 5 * 60_000) },
+          ? { status: "failed", error: message, nextAttemptAt: null, finishedAt: new Date(), ...extra }
+          : {
+              status: "pending",
+              error: message,
+              nextAttemptAt: new Date(Date.now() + attempt * 5 * 60_000),
+              ...extra,
+            },
       )
       .where(eq(backupCopies.id, copyId))
     if (final) {
@@ -179,42 +192,76 @@ async function writeCopy(ctx: Ctx, copyId: string) {
     await settleRun(ctx, run.id)
   }
 
-  if (!destination.enabled) return fail("The destination was turned off before this copy was written.", true)
-  if (!(await spoolExists(dir, run.id))) return fail("The archive is no longer in the spool.", true)
+  // Given up before writing: whatever an earlier attempt wrote under the key stays listed for removal (removing
+  // an object that is not there is no error).
+  const giveUp = (message: string) =>
+    fail(message, true, {
+      versionId: null,
+      retainUntil: null,
+      leftovers:
+        claimed.attempts > 0
+          ? [
+              ...claimed.leftovers,
+              { versionId: claimed.versionId, retainUntil: claimed.retainUntil?.toISOString() ?? null },
+            ]
+          : claimed.leftovers,
+    })
+  if (!destination.enabled) return giveUp("The destination was turned off before this copy was written.")
+  if (!(await spoolExists(dir, run.id))) return giveUp("The archive is no longer in the spool.")
   const expected = { size: Number(run.sizeBytes), sha256: String(run.sha256) }
   const retainUntil = destination.objectLock
     ? new Date(Date.now() + destination.objectLock.days * 86_400_000)
     : undefined
+  // Everything written under this copy's key that it will not hold is listed, so nothing written is forgotten:
+  // it is removed now when it can be, otherwise once its lock ends (sweepRetention).
+  const leftovers: Leftover[] = [...claimed.leftovers]
+  /** What the copy has written and still holds (an S3 version, or the object itself elsewhere). */
+  let current: { versionId: string | null; retainUntil: Date | null } | null = claimed.versionId
+    ? { versionId: claimed.versionId, retainUntil: claimed.retainUntil }
+    : null
+  const discard = async (open: Store, held: { versionId: string | null; retainUntil: Date | null }) => {
+    await withDeadline(5 * 60_000, "Removing a failed copy", (s) =>
+      open.remove(claimed.objectKey, s, held.versionId),
+    ).catch((error: Error) => {
+      ctx.log.warn("a failed copy stays until its lock ends", { key: claimed.objectKey, error: error.message })
+      leftovers.push({ versionId: held.versionId, retainUntil: held.retainUntil?.toISOString() ?? null })
+    })
+  }
   let store: Store | null = null
   try {
     store = openStore(ctx, destination)
     const open = store
-    let written: { versionId: string | null; retainUntil: Date | null } | null = null
-    // A version an earlier attempt wrote (S3 keeping versions) is checked first, so a retry does not leave it
-    // behind unrecorded; if it is not right, it is removed (unless a lock holds it) and written again.
-    if (claimed.versionId) {
-      const earlier = claimed.versionId
+    // A version an earlier attempt wrote (S3 keeping versions) is checked first; if it is not right it is
+    // removed, or kept listed while a lock holds it, and the archive is written again.
+    if (current) {
+      const earlier = current
       try {
         await withDeadline(COPY_DEADLINE_MS, "Verifying the copy", (s) =>
-          open.verify(claimed.objectKey, expected, s, earlier),
+          open.verify(claimed.objectKey, expected, s, earlier.versionId),
         )
-        written = { versionId: earlier, retainUntil: claimed.retainUntil }
       } catch {
-        await withDeadline(5 * 60_000, "Removing a failed copy", (s) =>
-          open.remove(claimed.objectKey, s, earlier),
-        ).catch((error: Error) =>
-          ctx.log.warn("a failed copy stays until its lock ends", { key: claimed.objectKey, error: error.message }),
-        )
+        await discard(open, earlier)
+        current = null
       }
     }
-    if (!written) {
-      const put = await withDeadline(COPY_DEADLINE_MS, "Writing the copy", (s) =>
-        open.put(claimed.objectKey, spoolFile(dir, run.id), expected, s, retainUntil),
-      )
-      // Recorded before it is verified, so the version is known whatever happens next.
-      written = { versionId: put.versionId ?? null, retainUntil: retainUntil ?? null }
-      await ctx.db.update(backupCopies).set(written).where(eq(backupCopies.id, copyId))
-      const version = written.versionId
+    if (!current) {
+      try {
+        const put = await withDeadline(COPY_DEADLINE_MS, "Writing the copy", (s) =>
+          open.put(claimed.objectKey, spoolFile(dir, run.id), expected, s, retainUntil),
+        )
+        current = { versionId: put.versionId ?? null, retainUntil: retainUntil ?? null }
+      } catch (error) {
+        const written = writtenBy(error)
+        if (written) current = { versionId: written.versionId, retainUntil: retainUntil ?? null }
+        throw error
+      } finally {
+        // Recorded before it is verified, so what was written is known whatever happens next.
+        await ctx.db
+          .update(backupCopies)
+          .set({ versionId: current?.versionId ?? null, retainUntil: current?.retainUntil ?? null, leftovers })
+          .where(eq(backupCopies.id, copyId))
+      }
+      const version = current.versionId
       await withDeadline(COPY_DEADLINE_MS, "Verifying the copy", (s) =>
         open.verify(claimed.objectKey, expected, s, version),
       )
@@ -224,7 +271,8 @@ async function writeCopy(ctx: Ctx, copyId: string) {
       .set({
         status: "ok",
         error: null,
-        ...written,
+        ...current,
+        leftovers,
         verifiedAt: new Date(),
         finishedAt: new Date(),
         nextAttemptAt: null,
@@ -239,7 +287,20 @@ async function writeCopy(ctx: Ctx, copyId: string) {
     await settleRun(ctx, run.id)
   } catch (error) {
     const final = attempt >= COPY_ATTEMPTS || Date.now() - run.startedAt.getTime() > COPY_WINDOW_MS
-    await fail((error as Error).message || String(error), final)
+    if (final && store) {
+      // Given up: what it wrote under its key goes too (or waits for its lock), and a temporary file with it.
+      if (current) await discard(store, current)
+      if (destination.kind !== "s3")
+        await withDeadline(60_000, "Removing a temporary file", (s) =>
+          (store as Store).remove(`${claimed.objectKey}.part`, s),
+        ).catch(() => {})
+      current = null
+    }
+    await fail((error as Error).message || String(error), final, {
+      versionId: current?.versionId ?? null,
+      retainUntil: current?.retainUntil ?? null,
+      leftovers,
+    })
   } finally {
     await store?.close().catch(() => {})
   }
@@ -346,19 +407,47 @@ export async function sweepRetention(ctx: Ctx) {
     .from(backupCopies)
     .innerJoin(backupRuns, eq(backupCopies.runId, backupRuns.id))
     .where(and(eq(backupCopies.status, "ok"), isNull(backupCopies.deletedAt)))
+  const withLeftovers = await ctx.db
+    .select()
+    .from(backupCopies)
+    .where(sql`jsonb_array_length(${backupCopies.leftovers}) > 0`)
   const destinations = await ctx.db.select().from(backupDestinations)
   for (const d of destinations) {
     const targets = pairs.filter((p) => p.destinationId === d.id)
-    if (!targets.length || busy.has(d.id)) continue
+    const leftover = withLeftovers.filter((c) => c.destinationId === d.id)
+    if ((!targets.length && !leftover.length) || busy.has(d.id)) continue
     const store = openStore(ctx, d)
     try {
       for (const t of targets) await applyRetention(ctx, d, t.instanceId, store)
+      for (const copy of leftover) await clearLeftovers(ctx, copy, store)
     } catch (error) {
       ctx.log.warn("retention could not run", { destination: d.name, error: (error as Error).message })
     } finally {
       await store.close().catch(() => {})
     }
   }
+}
+
+/** Removes the objects a copy wrote but does not hold, once no lock holds them; the rest stay listed. */
+export async function clearLeftovers(ctx: Ctx, copy: typeof backupCopies.$inferSelect, store: Store, now = new Date()) {
+  const remaining: Leftover[] = []
+  for (const l of copy.leftovers) {
+    // The object at the key itself (no version) belongs to the copy while the copy holds it.
+    const held = !l.versionId && copy.status === "ok" && !copy.deletedAt
+    if (held || (l.retainUntil && new Date(l.retainUntil) > now)) {
+      if (!held) remaining.push(l)
+      continue
+    }
+    try {
+      await withDeadline(5 * 60_000, "Removing a leftover archive", (s) => store.remove(copy.objectKey, s, l.versionId))
+    } catch (error) {
+      ctx.log.warn("could not remove a leftover archive", { key: copy.objectKey, error: (error as Error).message })
+      remaining.push(l)
+    }
+  }
+  if (remaining.length !== copy.leftovers.length)
+    await ctx.db.update(backupCopies).set({ leftovers: remaining }).where(eq(backupCopies.id, copy.id))
+  return remaining
 }
 
 /** Ends the ongoing alerts of a destination or of an instance's copies there, without a message. */

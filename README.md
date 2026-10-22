@@ -12,7 +12,7 @@ Requirements and design: [docs/requirements.md](docs/requirements.md). How the r
 
 ## Install
 
-Requirements: Docker with Compose, a host that can reach your n8n instances, and [Traefik](https://traefik.io/traefik/) on that host with an external `traefik` network, an `https` entrypoint with TLS, and a `default@file` middleware. With another reverse proxy, change the labels in `docker-compose.yml`.
+Requirements: Docker with Compose, a host that can reach your n8n instances, and [Traefik](https://traefik.io/traefik/) on that host with an external `traefik` network, an `https` entrypoint with TLS, and a `default@file` middleware. With another reverse proxy, replace the Traefik labels and the `traefik` network in `docker-compose.yml` with the way your proxy reaches port 8080 of the `server` service.
 
 ```bash
 mkdir n8n-ops && cd n8n-ops

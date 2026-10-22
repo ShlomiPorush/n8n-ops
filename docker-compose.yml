@@ -69,13 +69,21 @@ services:
     entrypoint: ["chown", "-R", "node:node", "/data"]
     security_opt:
       - no-new-privileges:true
+    # CHOWN to change the owner, DAC_READ_SEARCH to walk a directory the server keeps private (0700):
+    # without it, chown fails there and the server never starts.
     cap_drop:
       - ALL
     cap_add:
       - CHOWN
+      - DAC_READ_SEARCH
     read_only: true
     mem_limit: 128m
     cpus: "0.5"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: "no"
     network_mode: none
     volumes:

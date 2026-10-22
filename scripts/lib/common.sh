@@ -97,7 +97,8 @@ check_socket_proxy() {
   [ "$(docker inspect -f '{{json .HostConfig.CapDrop}} {{json .HostConfig.CapAdd}}' "$cid")" = '["ALL"] null' ] ||
     die "socket-proxy holds capabilities"
   [ "$(docker inspect -f '{{.HostConfig.ReadonlyRootfs}}' "$cid")" = true ] || die "socket-proxy has a writable file system"
-  docker inspect -f '{{range .HostConfig.SecurityOpt}}{{println .}}{{end}}' "$cid" | grep -q '^no-new-privileges' ||
+  # On only as "no-new-privileges" or "no-new-privileges:true"; ":false" turns it off.
+  docker inspect -f '{{range .HostConfig.SecurityOpt}}{{println .}}{{end}}' "$cid" | grep -qxE 'no-new-privileges(:true)?' ||
     die "socket-proxy may gain new privileges"
   [ -z "$(docker port "$cid")" ] || die "socket-proxy publishes a port"
   echo "    socket-proxy holds no capabilities, read-only, no new privileges, no published port"

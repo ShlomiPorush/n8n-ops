@@ -36,7 +36,7 @@ The product is generic and must not depend on the details of this environment. V
 - **Deployment:** Docker Compose. `server` can run on any host that can reach the instances; it does not have to run next to n8n. Running it elsewhere means it can still alert when the n8n host itself is down.
 - **Components:**
   - `server`: UI, REST API, MCP server, pollers, alerting, scheduler. No Docker socket.
-  - `worker` (optional, at most one per Docker host): the only component with the Docker socket. It opens an outbound HTTPS connection to `server`, pulls jobs and reports results. It has no inbound ports. Each instance is assigned to at most one worker.
+  - `worker` (optional, at most one per Docker host): the only n8n-ops component that uses Docker, through `socket-proxy` (recommended; the proxy holds the socket and allows only ping and exec in the listed n8n containers) or the socket itself. It opens an outbound HTTPS connection to `server`, pulls jobs and reports results. It has no inbound ports. Each instance is assigned to at most one worker.
 - **Worker pairing:** "Add worker" in the UI creates a one-time pairing token (expires in 15 minutes). The worker exchanges it for a permanent identity; the token is then invalid. Every worker is listed with status and last seen, and can be revoked.
 - **Two operating modes:**
   - **API only (no worker):** monitoring, problems, MCP, workflow map, workflow backups, and moves where credentials are recreated empty. The UI states clearly that credential secrets are not backed up.
@@ -160,7 +160,7 @@ Everything else is visible only in the UI and the API.
 - Secrets (instance API keys, SMTP, Telegram token, S3 keys) are encrypted at rest with an app key generated in the UI on first run and stored in a file in the data volume. Not in environment variables, not in the repository.
 - Backups use age with a public key on the server; the private key exists only with Shlomi (password manager). An attacker on the server cannot read any archive.
 - Failed executions may contain customer data: encrypted at rest, retention limited.
-- The worker is the only component with the Docker socket and has no inbound ports.
+- Only the worker uses Docker, by default through a socket proxy that alone holds the socket and allows ping and exec in the listed n8n containers. Neither has inbound ports.
 - API keys for n8n are read-only by default. Write scopes are optional and enable only the features that need them.
 - The repository is public: no environment-specific names, addresses or secrets in it.
 

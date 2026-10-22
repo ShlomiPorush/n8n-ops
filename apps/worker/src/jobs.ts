@@ -112,7 +112,9 @@ tar -cf ${WORK}.tar -C ${WORK} .`,
     if (!res.ok) throw new Error(`upload failed: HTTP ${res.status} ${(await res.text()).slice(0, 300)}`)
     return { ok: true, result: { size: sealed.size, sha256: sealed.sha256Base64, workflows, credentials } }
   } catch (error) {
-    return { ok: false, error: (error as Error).message }
+    // The code (ECONNRESET and the like) tells a cut connection from other failures.
+    const { message, code } = error as NodeJS.ErrnoException
+    return { ok: false, error: code ? `${message} (${code})` : message }
   } finally {
     await cleanup(docker, container)
   }

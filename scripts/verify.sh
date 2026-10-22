@@ -200,6 +200,40 @@ run_checks_on_stack() {
   process.exit(got[0] === 200 && got[1] === 403 && got[2] === 403 ? 0 : 1);
 })()'
   stack exec -T -u node worker node -e "$probe" || die "the socket proxy does not enforce its allowlist"
+
+  info "Integration: the proxy check refuses a proxy that may gain privileges"
+  # The same container with the setting on passes, so the refusal is for that setting alone.
+  local fake value outcome
+  for value in true false; do
+    fake="$(docker run -d --rm --label "com.docker.compose.project=${PROJECT}-fake" \
+      --label com.docker.compose.service=socket-proxy --cap-drop ALL --read-only \
+      --security-opt "no-new-privileges:$value" "$TOOLCHAIN_IMAGE" sleep 60)"
+    if (check_socket_proxy "${PROJECT}-fake") >/dev/null 2>&1; then outcome=passed; else outcome=refused; fi
+    docker rm -f "$fake" >/dev/null
+    echo "    no-new-privileges:$value $outcome"
+    case "$value:$outcome" in
+      true:passed | false:refused) ;;
+      *) die "check_socket_proxy got no-new-privileges:$value wrong" ;;
+    esac
+  done
+
+  info "Integration: the worker joins the group of the socket it uses, and only that one"
+  # Runs the worker image's entrypoint with the host's socket mounted, as the generated compose
+  # does without the proxy, and reads the groups the worker would run with.
+  local gid groups expect setting name mount env got envs
+  gid="$(stat -c %g /var/run/docker.sock)"
+  [ "$gid" != 1000 ] || die "the Docker socket's group is 1000, the worker's own; this check cannot tell them apart"
+  for setting in "default|/var/run/docker.sock||yes" "proxy|/var/run/docker.sock|DOCKER_HOST=tcp://socket-proxy:2375|no" \
+    "unix|/custom.sock|DOCKER_HOST=unix:///custom.sock|yes" "bare|/custom.sock|DOCKER_HOST=/custom.sock|yes"; do
+    IFS='|' read -r name mount env expect <<<"$setting"
+    envs=()
+    [ -z "$env" ] || envs=(-e "$env")
+    groups="$(docker run --rm -v "/var/run/docker.sock:$mount" "${envs[@]}" n8n-ops-worker:verify \
+      sh -c 'awk "/^Groups/ { \$1 = \"\"; print }" /proc/self/status')"
+    if grep -qw "$gid" <<<"$groups"; then got=yes; else got=no; fi
+    echo "    $name: groups$groups (socket group $gid: $got)"
+    [ "$got" = "$expect" ] || die "the worker entrypoint gives the wrong groups for $name"
+  done
 }
 
 # One end-to-end round per design, each on a fresh stack. Both designs are one app with the same functions,

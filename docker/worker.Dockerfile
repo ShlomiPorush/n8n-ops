@@ -22,7 +22,11 @@ ENV NODE_ENV=production \
 WORKDIR /app
 COPY --from=build /src/apps/worker/dist ./dist
 RUN mkdir -p /data && chown node:node /data
-# Runs as "node". Access to the Docker socket comes from the socket's group (Compose group_add), never from root.
-USER node
-HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 CMD ["node", "dist/healthcheck.js"]
+# Starts as root to hand /data to node and, with the Docker socket mounted, to give node the socket's
+# group (docker/worker-entrypoint.sh); then runs as node. Docker access comes from that group or from
+# the socket proxy, never from root. The health check runs as node too.
+COPY --chmod=0755 docker/as-node.sh /usr/local/bin/as-node
+COPY --chmod=0755 docker/worker-entrypoint.sh /usr/local/bin/worker-entrypoint
+HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 CMD ["as-node", "node", "dist/healthcheck.js"]
+ENTRYPOINT ["worker-entrypoint"]
 CMD ["node", "dist/index.js"]

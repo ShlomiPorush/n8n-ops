@@ -8,7 +8,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
 PROJECT="$DEV_PROJECT"
 export N8N_OPS_DATA_DIR="${N8N_OPS_DATA_DIR:-$DEV_DEFAULT_DATA_DIR}"
-SERVICES=(server postgres worker socket-proxy)
+# The socket proxy is checked on its own: it may run as root to open the Docker socket.
+SERVICES=(server postgres worker)
 
 usage() {
   cat <<EOF
@@ -41,6 +42,7 @@ build() {
 status() {
   compose ps
   check_non_root "$PROJECT" "${SERVICES[@]}"
+  check_socket_proxy "$PROJECT"
 }
 
 nuke() {

@@ -136,7 +136,7 @@ run_checks() {
 }
 
 stack() {
-  DOCKER_SOCKET_GID="$(docker_socket_gid)" N8N_OPS_IMAGE_TAG=verify N8N_OPS_PORT=0 \
+  N8N_OPS_IMAGE_TAG=verify N8N_OPS_PORT=0 \
     docker compose -p "$PROJECT" --project-directory "$REPO_ROOT" -f "$REPO_ROOT/docker/docker-compose-dev.example.yml" "$@"
 }
 
@@ -160,14 +160,13 @@ start_stack() {
   N8N_OPS_DATA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/n8n-ops-verify.XXXXXX")"
   export N8N_OPS_DATA_DIR
   prepare_data_dirs "$N8N_OPS_DATA_DIR"
-  # The end-to-end tests drop the worker's pairing token into its data directory.
-  docker run --rm --user 0 -v "$N8N_OPS_DATA_DIR/worker:/target" "$TOOLCHAIN_IMAGE" chmod 0777 /target
   stack up -d --remove-orphans --wait --wait-timeout 180 || {
     stack ps
     stack logs --tail 50
     die "the verification stack did not become healthy"
   }
-  check_non_root "$PROJECT" server postgres worker socket-proxy
+  check_non_root "$PROJECT" server postgres worker
+  check_socket_proxy "$PROJECT"
 }
 
 # Stores the design in the fresh database and restarts the server to read it, so even first-run setup
@@ -200,7 +199,7 @@ run_checks_on_stack() {
   console.log("    ping, list, exec in postgres:", got.join(", "));
   process.exit(got[0] === 200 && got[1] === 403 && got[2] === 403 ? 0 : 1);
 })()'
-  stack exec -T worker node -e "$probe" || die "the socket proxy does not enforce its allowlist"
+  stack exec -T -u node worker node -e "$probe" || die "the socket proxy does not enforce its allowlist"
 }
 
 # One end-to-end round per design, each on a fresh stack. Both designs are one app with the same functions,
@@ -215,7 +214,7 @@ run_e2e_round() {
   docker run --rm --network "${PROJECT}_default" --network-alias e2e-runner \
     --user "$(id -u):$(id -g)" -e HOME=/tmp -e CI="${CI:-}" -e E2E_DESIGN="$design" \
     -e E2E_BASE_URL=http://server:8080 -e E2E_N8N_CONTAINER="${PROJECT}-n8n-1" \
-    -v "$N8N_OPS_DATA_DIR/worker:/worker-data" -v "$REPO_ROOT:/repo" -w "/repo/$app" \
+    -v "$N8N_OPS_DATA_DIR/pairing:/worker-data" -v "$REPO_ROOT:/repo" -w "/repo/$app" \
     "$PLAYWRIGHT_IMAGE" node node_modules/@playwright/test/cli.js test || {
     stack logs --tail 60 server worker
     die "end-to-end tests failed ($design design)"

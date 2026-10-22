@@ -13,7 +13,7 @@ if (!serverUrl) {
 const version = process.env.N8N_OPS_VERSION ?? "dev"
 const dataDir = process.env.WORKER_DATA_DIR ?? "/data"
 const identityFile = `${dataDir}/identity.json`
-const pairingFile = `${dataDir}/pairing-token`
+const pairingFile = process.env.PAIRING_TOKEN_FILE ?? `${dataDir}/pairing-token`
 const heartbeatFile = process.env.HEARTBEAT_FILE ?? DEFAULT_HEARTBEAT_FILE
 const docker = new Docker(process.env.DOCKER_HOST || process.env.DOCKER_SOCKET || "/var/run/docker.sock")
 const log = (msg: string, extra: Record<string, unknown> = {}) => console.log(JSON.stringify({ msg, ...extra }))
@@ -67,7 +67,8 @@ async function pair(token: string): Promise<string | null> {
   }
   const { identity, workerId, name } = (await res.json()) as { identity: string; workerId: string; name: string }
   await writeFile(identityFile, JSON.stringify({ identity, workerId, name }), { mode: 0o600 })
-  await rm(pairingFile, { force: true })
+  // The token is spent now; a file that cannot be removed (a read-only mount) does no harm.
+  await rm(pairingFile, { force: true }).catch(() => {})
   log("paired", { workerId, name })
   return identity
 }

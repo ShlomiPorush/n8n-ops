@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { CONTAINER_PATTERN, proxyRules, workerInstall } from "./worker-install.ts"
+import { CONTAINER_PATTERN, proxyRules, workerInstall, workerTag } from "./worker-install.ts"
 
 // The proxy anchors every pattern (^...$), as the tests do here.
 const allows = (pattern: string, path: string) => new RegExp(`^${pattern}$`).test(path)
@@ -38,22 +38,54 @@ describe("socket proxy rules", () => {
 })
 
 describe("worker install", () => {
-  const base = { serverUrl: "https://ops.example.com", token: "nops_pair_x" }
+  const base = { serverUrl: "https://ops.example.com", token: "nops_pair_x", serverVersion: "0.2.0" }
 
-  it("gives only the proxy the Docker socket", () => {
-    const { compose, commands } = workerInstall({ ...base, socketProxy: true, containers: ["n8n"] })
+  it("is one compose file that holds everything, with nothing to fill in or run first", () => {
+    const install = workerInstall({ ...base, socketProxy: true, containers: ["n8n"] })
+    expect(Object.keys(install)).toEqual(["compose"])
+    expect(install.compose).toContain('N8N_OPS_SERVER_URL: "https://ops.example.com"')
+    expect(install.compose).toContain('PAIRING_TOKEN: "nops_pair_x"')
+    expect(install.compose).not.toContain("env_file")
+    expect(install.compose).not.toContain("DOCKER_SOCKET_GID")
+    expect(install.compose).not.toMatch(/\$\{/)
+  })
+
+  it("pins the worker to the server's release, and uses latest for a development build", () => {
+    expect(workerInstall({ ...base, socketProxy: false, containers: [] }).compose).toContain(
+      "image: ghcr.io/shlomiporush/n8n-ops-worker:0.2.0",
+    )
+    expect(workerTag("dev")).toBe("latest")
+    expect(workerTag("pr67-bc934b9")).toBe("latest")
+  })
+
+  it("keeps values literal for Compose", () => {
+    const { compose } = workerInstall({
+      ...base,
+      serverUrl: 'https://ops.example.com/a$HOME"b',
+      socketProxy: false,
+      containers: [],
+    })
+    expect(compose).toContain('N8N_OPS_SERVER_URL: "https://ops.example.com/a$$HOME\\"b"')
+  })
+
+  it("gives only the proxy the Docker socket, and runs the proxy as root with no capabilities", () => {
+    const { compose } = workerInstall({ ...base, socketProxy: true, containers: ["n8n"] })
     expect(compose).toContain("wollomatic/socket-proxy:")
     expect(compose).toContain("DOCKER_HOST: tcp://socket-proxy:2375")
     expect(compose.split("\n").filter((line) => line.includes("docker.sock"))).toHaveLength(1)
     expect(compose).toContain("/var/run/docker.sock:/var/run/docker.sock:ro")
     expect(compose).toContain("internal: true")
-    expect(commands).toContain("PAIRING_TOKEN=nops_pair_x")
-    expect(commands).toContain("N8N_OPS_SERVER_URL=https://ops.example.com")
+    const proxy = compose.slice(compose.indexOf("  socket-proxy:"))
+    expect(proxy).toContain('user: "0:0"')
+    expect(proxy).toContain("cap_drop: [ALL]")
+    expect(proxy).toContain("read_only: true")
+    expect(proxy).not.toContain("ports:")
   })
 
-  it("mounts the socket in the worker without the proxy", () => {
+  it("mounts the socket in the worker without the proxy, with no group to fill in", () => {
     const { compose } = workerInstall({ ...base, socketProxy: false, containers: [] })
     expect(compose).not.toContain("socket-proxy")
+    expect(compose).not.toContain("group_add")
     expect(compose).toContain("- /var/run/docker.sock:/var/run/docker.sock")
   })
 })

@@ -87,6 +87,22 @@ check_non_root() {
   done
 }
 
+# The socket proxy may run as root, only to open the Docker socket: it must hold no capability, run
+# with no new privileges on a read-only file system, and publish no port.
+check_socket_proxy() {
+  local project="$1" cid
+  cid="$(docker ps -q --filter "label=com.docker.compose.project=$project" --filter "label=com.docker.compose.service=socket-proxy")"
+  [ -n "$cid" ] || die "service socket-proxy is not running"
+  # The image has no shell, so the check reads what Docker enforces: every capability dropped, none added.
+  [ "$(docker inspect -f '{{json .HostConfig.CapDrop}} {{json .HostConfig.CapAdd}}' "$cid")" = '["ALL"] null' ] ||
+    die "socket-proxy holds capabilities"
+  [ "$(docker inspect -f '{{.HostConfig.ReadonlyRootfs}}' "$cid")" = true ] || die "socket-proxy has a writable file system"
+  docker inspect -f '{{range .HostConfig.SecurityOpt}}{{println .}}{{end}}' "$cid" | grep -q '^no-new-privileges' ||
+    die "socket-proxy may gain new privileges"
+  [ -z "$(docker port "$cid")" ] || die "socket-proxy publishes a port"
+  echo "    socket-proxy holds no capabilities, read-only, no new privileges, no published port"
+}
+
 # Removes a project-owned data directory. Files written by containers may belong to other UIDs,
 # so the contents are deleted from a throwaway container.
 remove_data_dir() {
@@ -106,18 +122,16 @@ DEV_DEFAULT_DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/n8n-ops-dev"
 dev_compose() {
   [ -f "$DEV_COMPOSE_FILE" ] || die "docker-compose-dev.yml is missing. Create it with:
   cp docker/docker-compose-dev.example.yml docker-compose-dev.yml"
+  # DOCKER_SOCKET_GID only for docker-compose-dev.yml copies made before the socket proxy ran as root.
   N8N_OPS_DATA_DIR="${N8N_OPS_DATA_DIR:-$DEV_DEFAULT_DATA_DIR}" N8N_OPS_IMAGE_TAG=dev \
     DOCKER_SOCKET_GID="$(docker_socket_gid)" \
     docker compose -p "$DEV_PROJECT" --project-directory "$REPO_ROOT" -f "$DEV_COMPOSE_FILE" "$@"
 }
 
-# Creates the stack's data directories. The server image hands its own directory to UID 1000 when
-# it starts. The worker runs as UID 1000, which is not always the host user (CI runners use 1001),
-# so its directory is handed to UID 1000 from a container.
+# Creates the stack's data directories. The server and worker images hand their own directories to
+# their users when they start, so nothing is prepared for them. "pairing" is where the end-to-end
+# tests leave the worker's pairing token.
 prepare_data_dirs() {
   local dir="$1"
-  mkdir -p "$dir/server" "$dir/postgres" "$dir/worker"
-  build_toolchain
-  docker run --rm --user 0 -v "$dir:/target" "$TOOLCHAIN_IMAGE" chown 1000:1000 /target/worker ||
-    die "could not prepare $dir"
+  mkdir -p "$dir/server" "$dir/postgres" "$dir/worker" "$dir/pairing"
 }

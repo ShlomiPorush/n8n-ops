@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Changed
+
+- Adding a worker is one file: Add a Worker gives a `docker-compose.yml` with the server address and the pairing token in it, to save in an empty folder on the n8n host and start with `docker compose up -d`. There are no commands to run and no `.env` or Docker group to fill in: the worker image hands `./data` to its user and, without the socket proxy, joins the Docker socket's group by itself, and the socket proxy runs as root with no capabilities to open the socket. The worker image is pinned to the server's version instead of `latest`.
+
+### Fixed
+
+- The commands Add a Worker gave wrote `.env` with `cat >`, which replaced any `.env` already in that folder.
+
 ## [0.1.0] - 2026-10-22
 
 ### Added

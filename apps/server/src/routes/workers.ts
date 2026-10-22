@@ -58,7 +58,7 @@ export function workerRoutes(ctx: Ctx) {
     return c.json({
       token,
       expiresInMinutes: PAIRING_TTL_MS / 60_000,
-      ...workerInstall({ serverUrl: server, token, ...body.data }),
+      ...workerInstall({ serverUrl: server, token, serverVersion: ctx.version, ...body.data }),
     })
   })
 

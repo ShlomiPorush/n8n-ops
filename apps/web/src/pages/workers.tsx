@@ -137,7 +137,7 @@ export function WorkersPage() {
   )
 }
 
-type Pairing = { token: string; compose: string; commands: string; expiresInMinutes: number }
+type Pairing = { token: string; compose: string; expiresInMinutes: number }
 
 function CopyBlock({ label, text }: { label: string; text: string }) {
   return (
@@ -179,14 +179,13 @@ function AddWorkerDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
           <DialogTitle>Add a Worker</DialogTitle>
           <DialogDescription>
             {result
-              ? `Run this on the n8n Docker host. The token works once and expires in ${result.expiresInMinutes} minutes.`
+              ? `In an empty folder on the n8n Docker host, save this as docker-compose.yml and run docker compose up -d. The token in it works once and expires in ${result.expiresInMinutes} minutes.`
               : "Name it after the host it runs on."}
           </DialogDescription>
         </DialogHeader>
         {result ? (
           <div className="grid min-w-0 gap-4">
-            <CopyBlock label="1. Commands" text={result.commands} />
-            <CopyBlock label="2. docker-compose.yml" text={result.compose} />
+            <CopyBlock label="docker-compose.yml" text={result.compose} />
             <pre className="hidden" data-testid="pairing-token">
               {result.token}
             </pre>

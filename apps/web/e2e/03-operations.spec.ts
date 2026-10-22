@@ -45,6 +45,11 @@ test("a worker pairs with a one-time token", async () => {
   await expect(page.getByText("containers/(n8n-main|flow[^/]*)/exec")).toBeVisible()
   const token = ((await page.getByTestId("pairing-token").textContent()) ?? "").trim()
   expect(token).toMatch(/^nops_pair_/)
+  // One file to save, with the token and the address in it: no commands, no .env.
+  await expect(page.getByText("docker-compose.yml", { exact: true })).toBeVisible()
+  await expect(page.getByText("Commands", { exact: true })).toHaveCount(0)
+  await expect(page.getByText(`PAIRING_TOKEN: "${token}"`)).toBeVisible()
+  await expect(page.getByText(/N8N_OPS_SERVER_URL: "http/)).toBeVisible()
   writeFileSync("/worker-data/pairing-token", token)
   await page.keyboard.press("Escape")
   await dialogClosed(page)

@@ -98,6 +98,18 @@ export const formatSize = (bytes: number | null) =>
 const stale = (row: BackupRow) =>
   !row.lastOk || Date.now() - new Date(row.lastOk.startedAt).getTime() > row.staleBackupHours * 3600_000
 
+/**
+ * Why a failed run failed, when its copies do not already say it: a failure before the archive was ready (the
+ * export, the upload, space or size) leaves every copy with the same general message, and the cause is here.
+ * When the copies failed one by one, the run's error only repeats theirs, and is not shown twice.
+ */
+export function runFailure(r: Pick<Run, "status" | "error" | "copies">) {
+  if (r.status !== "failed" || !r.error) return null
+  const copyErrors = (r.copies ?? []).map((c) => c.error).filter((e): e is string => Boolean(e))
+  const repeats = copyErrors.length > 0 && copyErrors.every((e) => r.error?.includes(e))
+  return repeats ? null : r.error
+}
+
 /** Archives that can still be restored: written and not expired, on at least one destination. */
 const restorable = (r: Run) =>
   (r.status === "ok" || r.status === "partial") && (r.copies ?? []).some((c) => c.status === "ok" && !c.deletedAt)
@@ -429,13 +441,11 @@ function BackupHistory({ id, name }: { id: string; name: string }) {
                   ) : (
                     <StatusTag kind="backup" status="failed" />
                   )}
-                  {r.status === "failed" &&
-                    !(r.copies ?? []).some((c) => c.error && c.error !== r.error) &&
-                    r.error && (
-                      <div className="mt-1 max-w-80 font-mono text-meta break-words text-muted-foreground">
-                        {r.error}
-                      </div>
-                    )}
+                  {runFailure(r) && (
+                    <div className="mt-1 max-w-80 font-mono text-meta break-words text-muted-foreground">
+                      {runFailure(r)}
+                    </div>
+                  )}
                   <Copies copies={r.copies ?? []} />
                 </TableCell>
                 <TableCell className="text-end align-top tabular-nums">

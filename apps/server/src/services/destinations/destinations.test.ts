@@ -8,6 +8,7 @@ import {
   placeOf,
   placesOverlap,
 } from "./index.ts"
+import { sftpRoot } from "./sftp.ts"
 import { checkKey, cleanFolder } from "./store.ts"
 
 const s3 = (bucket: string, prefix: string, endpoint = "https://s3.example.com") => ({
@@ -120,5 +121,15 @@ describe("destination settings", () => {
     expect(describeLocation({ kind: "sftp", location: { host: "nas", port: 2222, username: "u", path: "/b" } })).toBe(
       "sftp://u@nas:2222/b",
     )
+  })
+})
+
+describe("sftpRoot", () => {
+  it("keeps an absolute folder absolute, the root included; only an empty path is the home folder", () => {
+    expect(sftpRoot("/")).toBe("/")
+    expect(sftpRoot("//")).toBe("/")
+    expect(sftpRoot(" /backups/n8n/ ")).toBe("/backups/n8n")
+    expect(sftpRoot("backups/")).toBe("backups")
+    expect(sftpRoot("")).toBe(".")
   })
 })

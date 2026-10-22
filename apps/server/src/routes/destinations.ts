@@ -19,6 +19,7 @@ import {
   placeOf,
   placesOverlap,
   retentionSchema,
+  sameLock,
 } from "../services/destinations/index.ts"
 import { fetchHostKey } from "../services/destinations/sftp.ts"
 import { withDeadline } from "../services/destinations/store.ts"
@@ -44,6 +45,10 @@ const fail = (status: Fail["status"], message: string, issues?: unknown): Fail =
   message,
   issues,
 })
+
+/** Whether two flat objects hold the same values; PostgreSQL stores JSON keys in an order of its own. */
+const sameFields = (a: Record<string, unknown>, b: Record<string, unknown>) =>
+  [...new Set([...Object.keys(a), ...Object.keys(b)])].every((k) => a[k] === b[k])
 
 /** Stored credentials: plain fields as given, secrets encrypted; a secret left out stays, null removes it. */
 function mergeCredentials(
@@ -123,21 +128,27 @@ export function destinationRoutes(ctx: Ctx) {
     current: Destination | null,
   ): Promise<Fail | { row: Omit<Destination, "id" | "createdAt" | "updatedAt">; tested: boolean; notes: string[] }> {
     const kind = body.kind
+    // A fixed place is kept exactly as stored, even one an earlier version allowed and today's rules would not
+    // (a key prefix with a space), so turning it off or replacing its keys always works.
     const lockedLocation = current?.lockedAt ? current.location : null
-    if (
-      lockedLocation &&
-      body.location &&
-      JSON.stringify(locationSchemas[kind].parse(body.location)) !== JSON.stringify(lockedLocation)
-    )
-      return fail(400, "Where archives go cannot change once set; add a new destination for a new place.")
-    const parsedLocation = locationSchemas[kind].safeParse(body.location ?? current?.location ?? {})
-    if (!parsedLocation.success)
-      return fail(
-        400,
-        "Check the destination's settings.",
-        parsedLocation.error.issues.map((i) => ({ ...i, path: ["location", ...i.path] })),
-      )
-    const location = parsedLocation.data as Record<string, unknown>
+    let location: Record<string, unknown>
+    if (lockedLocation) {
+      if (body.location && !sameFields(body.location, lockedLocation)) {
+        const asNew = locationSchemas[kind].safeParse(body.location)
+        if (!asNew.success || !sameFields(asNew.data, lockedLocation))
+          return fail(400, "Where archives go cannot change once set; add a new destination for a new place.")
+      }
+      location = lockedLocation
+    } else {
+      const parsedLocation = locationSchemas[kind].safeParse(body.location ?? current?.location ?? {})
+      if (!parsedLocation.success)
+        return fail(
+          400,
+          "Check the destination's settings.",
+          parsedLocation.error.issues.map((i) => ({ ...i, path: ["location", ...i.path] })),
+        )
+      location = parsedLocation.data as Record<string, unknown>
+    }
     const objectLock = body.objectLock !== undefined ? body.objectLock : (current?.objectLock ?? null)
     if (objectLock && kind !== "s3") return fail(400, "Object Lock is only for S3 destinations.")
     const credentials = mergeCredentials(ctx, kind, current?.credentials ?? {}, body.credentials ?? {})
@@ -168,7 +179,7 @@ export function destinationRoutes(ctx: Ctx) {
     const touches =
       !current?.lockedAt ||
       body.credentials !== undefined ||
-      (body.objectLock !== undefined && JSON.stringify(body.objectLock) !== JSON.stringify(current.objectLock))
+      (body.objectLock !== undefined && !sameLock(body.objectLock, current.objectLock))
     let notes: string[] = []
     if (touches) {
       try {

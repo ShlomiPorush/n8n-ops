@@ -340,7 +340,12 @@ function bodyOf(form: Form, d: Destination | null) {
   if (!d) return { ...body, kind: form.kind, location, credentials, objectLock }
   if (!d.lockedAt) body.location = location
   if (Object.keys(credentials).length) body.credentials = credentials
-  if (JSON.stringify(objectLock) !== JSON.stringify(d.objectLock)) body.objectLock = objectLock
+  // Compared field by field: the stored lock may list its fields in another order.
+  if (
+    (objectLock?.mode ?? null) !== (d.objectLock?.mode ?? null) ||
+    (objectLock?.days ?? null) !== (d.objectLock?.days ?? null)
+  )
+    body.objectLock = objectLock
   return body
 }
 

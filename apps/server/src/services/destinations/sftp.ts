@@ -45,9 +45,16 @@ export function fetchHostKey(host: string, port: number, signal: AbortSignal): P
   })
 }
 
+/** The folder as typed, without trailing slashes; "/" stays the root, and only an empty path is the home folder. */
+export function sftpRoot(path: string) {
+  const trimmed = path.trim()
+  if (!trimmed) return "."
+  return trimmed.replace(/(.)\/+$/, "$1")
+}
+
 export function sftpStore(location: SftpLocation, credentials: SftpCredentials): Store {
   let session: Promise<{ conn: Client; sftp: SFTPWrapper }> | null = null
-  const root = location.path.trim().replace(/\/+$/, "") || "."
+  const root = sftpRoot(location.path)
 
   function connect(signal: AbortSignal) {
     if (!session) {
@@ -99,7 +106,10 @@ export function sftpStore(location: SftpLocation, credentials: SftpCredentials):
     const handle = await call<Buffer>((cb) => sftp.open(path, "r", cb))
     try {
       const { size } = await call<{ size: number }>((cb) => sftp.fstat(handle, cb))
-      const reads: Promise<Buffer>[] = []
+      // Each read settles into a result, never a rejection left unwatched: a later read can fail, or the
+      // connection drop, while an earlier one is still awaited.
+      type Read = Promise<{ chunk: Buffer } | { error: Error }>
+      const reads: Read[] = []
       let next = 0
       const ask = () => {
         if (next >= size) return
@@ -107,23 +117,31 @@ export function sftpStore(location: SftpLocation, credentials: SftpCredentials):
         const length = Math.min(CHUNK, size - position)
         next += length
         reads.push(
-          new Promise<Buffer>((resolve, reject) =>
+          new Promise((resolve) =>
             sftp.read(handle, Buffer.alloc(length), 0, length, position, (error, bytes, buffer) =>
-              error
-                ? reject(error)
-                : bytes === length
-                  ? resolve(buffer)
-                  : reject(new StoreError("the server sent a short read")),
+              resolve(
+                error
+                  ? { error }
+                  : bytes === length
+                    ? { chunk: buffer }
+                    : { error: new StoreError("the server sent a short read") },
+              ),
             ),
           ),
         )
       }
-      for (let i = 0; i < PARALLEL; i++) ask()
-      while (reads.length) {
-        signal.throwIfAborted()
-        const chunk = await (reads.shift() as Promise<Buffer>)
-        ask()
-        yield chunk
+      try {
+        for (let i = 0; i < PARALLEL; i++) ask()
+        while (reads.length) {
+          signal.throwIfAborted()
+          const read = await (reads.shift() as Read)
+          if ("error" in read) throw read.error
+          ask()
+          yield read.chunk
+        }
+      } finally {
+        // Reads still in flight finish before the handle closes, whether the copy was read whole or not.
+        await Promise.all(reads)
       }
     } finally {
       await call((cb) => sftp.close(handle, cb)).catch(() => {})

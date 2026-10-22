@@ -79,6 +79,10 @@ export const objectLockSchema = z
 
 export const defaultRetention: RetentionPolicy = { daily: 7, weekly: 4, monthly: 6 }
 
+/** Whether two Object Lock settings are the same, whatever order their fields were stored in. */
+export const sameLock = (a: ObjectLock | null | undefined, b: ObjectLock | null | undefined) =>
+  (a?.mode ?? null) === (b?.mode ?? null) && (a?.days ?? null) === (b?.days ?? null)
+
 /** A destination as the UI sees it: secrets only as "set" flags, never their ciphertext. */
 export function destinationView(d: Destination) {
   const { credentials, ...rest } = d

@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto"
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterAll, describe, expect, it } from "vitest"
@@ -45,7 +45,29 @@ describe("the local folder store", () => {
     await expect(store.put("../outside.age", file, expected, signal())).rejects.toThrow(/not a valid archive path/)
     mkdirSync(join(work, "elsewhere"), { recursive: true })
     symlinkSync(join(work, "elsewhere"), join(root, "team/nas/link"))
-    await expect(store.put("link/x.age", file, expected, signal())).rejects.toThrow(/outside the destination/)
+    await expect(store.put("link/x/y.age", file, expected, signal())).rejects.toThrow(/symbolic link/)
+    // Nothing was created through the link.
+    expect(readdirSync(join(work, "elsewhere"))).toEqual([])
+  })
+
+  it("refuses a destination folder that is itself a link out of /backups", async () => {
+    mkdirSync(join(work, "tmp-elsewhere"), { recursive: true })
+    symlinkSync(join(work, "tmp-elsewhere"), join(root, "linked"))
+    const linked = localStore({ folder: "linked" }, { root, requireMount: false })
+    const { file, expected } = archive(10)
+    await expect(linked.put("x.age", file, expected, signal())).rejects.toThrow(/symbolic link/)
+    expect(readdirSync(join(work, "tmp-elsewhere"))).toEqual([])
+  })
+
+  it("never writes through a temporary file that is a link", async () => {
+    mkdirSync(join(root, "team/nas/prod"), { recursive: true })
+    const outside = join(work, "victim.txt")
+    writeFileSync(outside, "keep")
+    symlinkSync(outside, join(root, "team/nas/prod/c.age.part"))
+    const { file, expected } = archive(500)
+    await store.put("prod/c.age", file, expected, signal())
+    expect(readFileSync(outside, "utf8")).toBe("keep")
+    await store.verify("prod/c.age", expected, signal())
   })
 
   it("refuses to write when /backups is not mapped to the host", async () => {

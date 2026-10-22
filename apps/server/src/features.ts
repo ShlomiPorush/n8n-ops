@@ -17,7 +17,7 @@ import { workerRoutes } from "./routes/workers.ts"
 import { credentialExportRoutes, workflowRoutes } from "./routes/workflows.ts"
 import { expireAccess } from "./services/access.ts"
 import { notifyAccess } from "./services/access-notify.ts"
-import { kickCopies } from "./services/backup-copies.ts"
+import { kickCopies, sweepRetention } from "./services/backup-copies.ts"
 import { enqueueProbes, scheduleBackups } from "./services/backups.ts"
 import { type Job, startScheduler } from "./services/scheduler.ts"
 import { syncWorkflows } from "./services/workflows.ts"
@@ -49,6 +49,8 @@ export function features(ctx: Ctx, extra: { mounts?: Mount[]; jobs?: Job[] } = {
     { name: "backups", everyMs: 5 * 60_000, run: scheduleBackups },
     // Copies due again, cut off by a restart, or waiting for a free destination; new archives start it at once.
     { name: "backup-copies", everyMs: 30_000, run: kickCopies },
+    // Expired archives also go where nothing new is written, such as a destination turned off.
+    { name: "backup-retention", everyMs: 6 * 3600_000, run: sweepRetention },
     { name: "probes", everyMs: 10_000, run: enqueueProbes },
     { name: "access-expiry", everyMs: 15_000, run: expireAccess },
     { name: "access-notify", everyMs: 5_000, run: notifyAccess },

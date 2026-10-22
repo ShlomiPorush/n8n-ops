@@ -112,11 +112,14 @@ async function copyPass(ctx: Ctx) {
     if (writing.has(row.copy.id) || busy.has(row.destination.id)) continue
     writing.add(row.copy.id)
     busy.add(row.destination.id)
-    void writeCopy(ctx, row.copy.id).finally(() => {
-      writing.delete(row.copy.id)
-      busy.delete(row.destination.id)
-      void kickCopies(ctx)
-    })
+    // A failure outside the copy's own handling (the database gone for a moment) leaves the copy to the next pass.
+    void writeCopy(ctx, row.copy.id)
+      .catch((error: Error) => ctx.log.warn("backup copy interrupted", { copy: row.copy.id, error: error.message }))
+      .finally(() => {
+        writing.delete(row.copy.id)
+        busy.delete(row.destination.id)
+        void kickCopies(ctx)
+      })
   }
 
   // Runs whose copies are all done; and spool files no run needs any more.
@@ -186,19 +189,42 @@ async function writeCopy(ctx: Ctx, copyId: string) {
   try {
     store = openStore(ctx, destination)
     const open = store
-    const put = await withDeadline(COPY_DEADLINE_MS, "Writing the copy", (s) =>
-      open.put(claimed.objectKey, spoolFile(dir, run.id), expected, s, retainUntil),
-    )
-    await withDeadline(COPY_DEADLINE_MS, "Verifying the copy", (s) =>
-      open.verify(claimed.objectKey, expected, s, put.versionId),
-    )
+    let written: { versionId: string | null; retainUntil: Date | null } | null = null
+    // A version an earlier attempt wrote (S3 keeping versions) is checked first, so a retry does not leave it
+    // behind unrecorded; if it is not right, it is removed (unless a lock holds it) and written again.
+    if (claimed.versionId) {
+      const earlier = claimed.versionId
+      try {
+        await withDeadline(COPY_DEADLINE_MS, "Verifying the copy", (s) =>
+          open.verify(claimed.objectKey, expected, s, earlier),
+        )
+        written = { versionId: earlier, retainUntil: claimed.retainUntil }
+      } catch {
+        await withDeadline(5 * 60_000, "Removing a failed copy", (s) =>
+          open.remove(claimed.objectKey, s, earlier),
+        ).catch((error: Error) =>
+          ctx.log.warn("a failed copy stays until its lock ends", { key: claimed.objectKey, error: error.message }),
+        )
+      }
+    }
+    if (!written) {
+      const put = await withDeadline(COPY_DEADLINE_MS, "Writing the copy", (s) =>
+        open.put(claimed.objectKey, spoolFile(dir, run.id), expected, s, retainUntil),
+      )
+      // Recorded before it is verified, so the version is known whatever happens next.
+      written = { versionId: put.versionId ?? null, retainUntil: retainUntil ?? null }
+      await ctx.db.update(backupCopies).set(written).where(eq(backupCopies.id, copyId))
+      const version = written.versionId
+      await withDeadline(COPY_DEADLINE_MS, "Verifying the copy", (s) =>
+        open.verify(claimed.objectKey, expected, s, version),
+      )
+    }
     await ctx.db
       .update(backupCopies)
       .set({
         status: "ok",
         error: null,
-        versionId: put.versionId ?? null,
-        retainUntil: retainUntil ?? null,
+        ...written,
         verifiedAt: new Date(),
         finishedAt: new Date(),
         nextAttemptAt: null,
@@ -307,6 +333,31 @@ export async function applyRetention(ctx: Ctx, destination: Destination, instanc
     }
   } finally {
     if (!store) await open.close().catch(() => {})
+  }
+}
+
+/**
+ * Retention on every destination for every instance (and n8n-ops) with archives there, also where no new copy is
+ * written any more: a destination turned off, an instance that chose others, or a lock that has ended since.
+ */
+export async function sweepRetention(ctx: Ctx) {
+  const pairs = await ctx.db
+    .selectDistinct({ destinationId: backupCopies.destinationId, instanceId: backupRuns.instanceId })
+    .from(backupCopies)
+    .innerJoin(backupRuns, eq(backupCopies.runId, backupRuns.id))
+    .where(and(eq(backupCopies.status, "ok"), isNull(backupCopies.deletedAt)))
+  const destinations = await ctx.db.select().from(backupDestinations)
+  for (const d of destinations) {
+    const targets = pairs.filter((p) => p.destinationId === d.id)
+    if (!targets.length || busy.has(d.id)) continue
+    const store = openStore(ctx, d)
+    try {
+      for (const t of targets) await applyRetention(ctx, d, t.instanceId, store)
+    } catch (error) {
+      ctx.log.warn("retention could not run", { destination: d.name, error: (error as Error).message })
+    } finally {
+      await store.close().catch(() => {})
+    }
   }
 }
 

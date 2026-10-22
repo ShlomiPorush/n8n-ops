@@ -17,15 +17,15 @@ function Tabs({ className, orientation = "horizontal", ...props }: React.Compone
 
 /*
  * Tabs scroll sideways instead of wrapping, without a scroll bar (important: the global thin scroll bar rule
- * would win otherwise); the active one has a 2px ink underline. The line under them is drawn inside the list,
- * so nothing sticks out of it to scroll up and down.
+ * would win otherwise); the active one has a 2px ink underline. The line under them is the list's background,
+ * so nothing sticks out of it to scroll up and down, and it scrolls with the tabs (local) to their end.
  */
 function TabsList({ className, ...props }: React.ComponentProps<typeof TabsPrimitive.List>) {
   return (
     <TabsPrimitive.List
       data-slot="tabs-list"
       className={cn(
-        "relative flex w-full min-w-0 items-stretch gap-5 overflow-x-auto overflow-y-hidden [scrollbar-width:none]! before:absolute before:inset-x-0 before:bottom-0 before:h-px before:bg-line",
+        "relative flex w-full min-w-0 items-stretch gap-5 overflow-x-auto overflow-y-hidden bg-[linear-gradient(var(--color-line),var(--color-line))] bg-size-[100%_1px] bg-local bg-bottom bg-no-repeat [scrollbar-width:none]!",
         className,
       )}
       {...props}

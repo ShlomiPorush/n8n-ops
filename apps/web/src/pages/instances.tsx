@@ -383,7 +383,7 @@ type ListBackup =
 
 /** The tabs look like segments in Regular; Compact keeps the underlined tabs. */
 const tabsLook =
-  "regular:w-fit regular:max-w-full regular:gap-1 regular:rounded-lg regular:bg-fill regular:p-1 regular:before:hidden"
+  "regular:w-fit regular:max-w-full regular:gap-1 regular:rounded-lg regular:bg-fill regular:bg-none regular:p-1"
 const tabLook =
   "regular:rounded-sm regular:border-b-0 regular:px-3 regular:py-1.5 regular:data-[state=active]:bg-panel regular:data-[state=active]:shadow-card"
 const tabPanel = "grid min-w-0 gap-gap data-[state=inactive]:hidden"
@@ -427,13 +427,13 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
   // The tabs scroll sideways in a narrow pane; the open one is brought into sight, also when the address opened it.
   const pane = useRef<HTMLDivElement>(null)
   const loaded = Boolean(detail.data)
-  // biome-ignore lint/correctness/useExhaustiveDependencies: runs when another tab opens, which the DOM shows
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs when another tab opens or a mark widens a tab
   useEffect(() => {
     if (!loaded) return
     pane.current
       ?.querySelector<HTMLElement>('[role="tab"][data-state="active"]')
       ?.scrollIntoView({ block: "nearest", inline: "nearest" })
-  }, [tab, loaded])
+  }, [tab, loaded, unsaved.backups, unsaved.access, unsaved.settings])
 
   if (detail.isLoading) return <Loading>Loading the instance…</Loading>
   if (detail.error && !detail.data)

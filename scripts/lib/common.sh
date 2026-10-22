@@ -68,17 +68,21 @@ docker_socket_gid() {
   stat -c %g "$sock"
 }
 
-# Fails when any process of a running Compose service runs as UID 0.
+# Fails when any process of a running Compose service runs as UID 0. The server's health check
+# starts as root for a moment before it drops to node, so a root process must still be there after
+# a few looks a second apart.
 check_non_root() {
-  local project="$1" service cid uids
+  local project="$1" service cid uids try
   shift
   for service in "$@"; do
     cid="$(docker ps -q --filter "label=com.docker.compose.project=$project" --filter "label=com.docker.compose.service=$service")"
     [ -n "$cid" ] || die "service $service is not running"
-    uids="$(docker top "$cid" -o pid,uid | awk 'NR > 1 { print $2 }' | sort -u | tr '\n' ' ')"
-    if grep -qw 0 <<<"$uids"; then
-      die "service $service runs a process as root (UIDs: $uids)"
-    fi
+    for try in 1 2 3 4 5; do
+      uids="$(docker top "$cid" -o pid,uid | awk 'NR > 1 { print $2 }' | sort -u | tr '\n' ' ')"
+      grep -qw 0 <<<"$uids" || break
+      [ "$try" = 5 ] && die "service $service runs a process as root (UIDs: $uids)"
+      sleep 1
+    done
     echo "    $service runs as UID ${uids% }"
   done
 }

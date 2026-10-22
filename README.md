@@ -83,7 +83,7 @@ An agent that needs to change something in n8n asks n8n-ops instead of holding a
 ## Locked out
 
 ```bash
-docker compose exec server node dist/cli.js reset-password
+docker compose exec -u node server node dist/cli.js reset-password
 ```
 
 It prints a new password and turns two-factor off until you sign in and set it up again.

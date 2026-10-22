@@ -93,8 +93,7 @@ Shared TypeScript settings are in `config/tsconfig.base.json`. Dockerfiles, thei
 
 | Service | Runtime user | Health check | Persistent state | Host directory | Named volume | Backup lifecycle |
 |---|---|---|---|---|---|---|
-| `server` | `node`, UID 1000 | `node dist/healthcheck.js` calls `/healthz/ready` (database reachable) | App secrets key file (from the first feature on) | `./data` (production), `${N8N_OPS_DATA_DIR}/server` (development) | None | Operator downloads the key from Settings; never in the repository |
-| `data-init` (production only) | root with only `CHOWN` and `DAC_READ_SEARCH`, one-shot | None; `server` waits for it to exit successfully | None | `./data` | None | Not applicable |
+| `server` | `node`, UID 1000 (the entrypoint starts as root to hand `/data` to `node`, then drops) | `node dist/healthcheck.js` calls `/healthz/ready` (database reachable) | App secrets key file (from the first feature on) | `./data` (production), `${N8N_OPS_DATA_DIR}/server` (development) | None | Operator downloads the key from Settings; never in the repository |
 | `postgres` | `postgres`, UID 999 (official entrypoint drops privileges) | `pg_isready` | Database files | `./postgres-data` (production), `${N8N_OPS_DATA_DIR}/postgres` (development) | None | Nightly encrypted dump to S3 (requirement D8, planned) |
 | `worker` | `node`, UID 1000; through `socket-proxy`, or with the Docker socket's group via `group_add` | `node dist/healthcheck.js` checks the last heartbeat | Worker identity file (planned) | `./data` beside the compose file that Add worker generates (production), `${N8N_OPS_DATA_DIR}/worker` (development) | None | Re-pair on loss |
 

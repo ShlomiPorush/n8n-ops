@@ -98,6 +98,14 @@ run_guards() {
       [ "$mode" = 100755 ] || [ "$path" = scripts/lib/common.sh ] || { echo "$path is not executable"; fail=1; }
     done < <(git ls-files -s "scripts/*.sh")
 
+    # Scripts inside the images run with plain POSIX sh.
+    mapfile -t image_scripts < <(git ls-files -co --exclude-standard "docker/*.sh")
+    shellcheck -s sh "${image_scripts[@]}" || fail=1
+    shfmt -d -ln posix -i 2 -ci "${image_scripts[@]}" || { echo "Run: shfmt -w -ln posix -i 2 -ci docker/*.sh"; fail=1; }
+    while read -r mode _ _ path; do
+      [ "$mode" = 100755 ] || { echo "$path is not executable"; fail=1; }
+    done < <(git ls-files -s "docker/*.sh")
+
     # The shell versions of the agent skill run with plain POSIX sh.
     skill=(packages/skill/n8n-ops/scripts/n8n-ops packages/skill/n8n-ops/scripts/n8n-ops.sh)
     shellcheck -s sh "${skill[@]}" || fail=1

@@ -10,9 +10,9 @@
 # Compose interpolation is limited to VERSION, DOMAIN and the PostgreSQL credentials. Everything the
 # server reads comes through env_file.
 #
-# Hardening on every service: no new privileges, all Linux capabilities dropped (data-init and
-# postgres get back only what they need while they start as root) and log rotation. The server and
-# data-init also run with a read-only root filesystem.
+# Hardening on every service: no new privileges, all Linux capabilities dropped (both get back only
+# what they need while they start as root) and log rotation. The server also runs with a read-only
+# root filesystem.
 name: n8n-ops
 
 services:
@@ -21,8 +21,16 @@ services:
     container_name: n8n-ops
     security_opt:
       - no-new-privileges:true
+    # The image starts as root only to hand ./data to node, then runs the server as node with no
+    # capability left: CHOWN for the owner, DAC_READ_SEARCH to walk a ./data kept private (0700),
+    # SETUID and SETGID to switch to node.
     cap_drop:
       - ALL
+    cap_add:
+      - CHOWN
+      - DAC_READ_SEARCH
+      - SETUID
+      - SETGID
     # Writes nothing outside /data and /tmp at runtime.
     read_only: true
     tmpfs:
@@ -56,38 +64,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      data-init:
-        condition: service_completed_successfully
-
-  # One-shot: hands ./data to the server's runtime user (node, UID 1000), then exits. A host
-  # directory created by root would otherwise refuse the app key. Idempotent, so it is safe on every
-  # "up".
-  data-init:
-    image: ghcr.io/shlomiporush/n8n-ops:${VERSION:?Set VERSION in .env to the release to run}
-    container_name: n8n-ops-data-init
-    user: "0:0"
-    entrypoint: ["chown", "-R", "node:node", "/data"]
-    security_opt:
-      - no-new-privileges:true
-    # CHOWN to change the owner, DAC_READ_SEARCH to walk a directory the server keeps private (0700):
-    # without it, chown fails there and the server never starts.
-    cap_drop:
-      - ALL
-    cap_add:
-      - CHOWN
-      - DAC_READ_SEARCH
-    read_only: true
-    mem_limit: 128m
-    cpus: "0.5"
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-    restart: "no"
-    network_mode: none
-    volumes:
-      - ./data:/data
 
   postgres:
     image: postgres:18.6-bookworm

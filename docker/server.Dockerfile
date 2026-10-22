@@ -49,7 +49,11 @@ COPY --from=web /src/apps/web/dist ./web
 # The agent skill, served at /connect/skill/ with the public URL filled in.
 COPY packages/skill/n8n-ops ./skill
 RUN mkdir -p /data && chown node:node /data
-USER node
+# Starts as root to hand /data to node, then runs as node (docker/server-entrypoint.sh). The health
+# check and any command run with "docker compose exec -u node" run as node too.
+COPY --chmod=0755 docker/as-node.sh /usr/local/bin/as-node
+COPY --chmod=0755 docker/server-entrypoint.sh /usr/local/bin/server-entrypoint
 EXPOSE 8080
-HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=3 CMD ["node", "dist/healthcheck.js"]
+HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=3 CMD ["as-node", "node", "dist/healthcheck.js"]
+ENTRYPOINT ["server-entrypoint"]
 CMD ["node", "dist/index.js"]

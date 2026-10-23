@@ -921,7 +921,6 @@ function StatusStrip({ instance: i, footer }: { instance: InstanceDetailData; fo
   )
 }
 
-
 /** The words for the last backup run; the list may still load, or may have failed. */
 function backupWords(backup: ListBackup) {
   if (backup.state === "loading") return { value: "…", tone: undefined, hint: undefined }

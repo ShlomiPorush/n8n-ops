@@ -378,6 +378,19 @@ test("an instance tab has its own address, which reload and Back follow", async 
   await expect(tab(/^Problems/)).toHaveAttribute("aria-selected", "true")
 })
 
+test("a clicked tab shows no focus ring until a key is pressed on it", async () => {
+  await openInstanceB()
+  const health = page.getByRole("tab", { name: /^Health/ })
+  const outline = () => health.evaluate((el) => getComputedStyle(el).outlineStyle)
+  await health.click()
+  await expect(health).toBeFocused()
+  expect(await outline()).toBe("none")
+  // A key pressed on the same tab, focus not moving, brings the ring back.
+  await page.keyboard.press("Enter")
+  await expect(health).toBeFocused()
+  expect(await outline()).toBe("solid")
+})
+
 test("edits on several instance tabs survive a switch, and one save bar saves or discards them all", async () => {
   await openInstanceB()
   const tab = (name: string) => page.getByRole("tab", { name: new RegExp(`^${name}`) })

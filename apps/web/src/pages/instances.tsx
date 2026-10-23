@@ -562,7 +562,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
             value="problems"
             icon={BugIcon}
             label="Problems"
-            mark={i.openProblems > 0 && <Badge variant="fail">{n(i.openProblems)}</Badge>}
+            mark={i.openProblems > 0 && <TabCount count={i.openProblems} />}
           />
           <PaneTabTrigger
             value="health"
@@ -791,6 +791,18 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
 function UnsavedMark() {
   return (
     <span role="img" aria-label="Unsaved changes" title="Unsaved changes" className="size-2 rounded-full bg-info" />
+  )
+}
+
+/** On the icon's corner of a stacked tab there is room for two digits; a reader still hears the whole count. */
+function TabCount({ count }: { count: number }) {
+  return (
+    <Badge variant="fail">
+      <span className="@max-[40rem]/pane:sr-only">{n(count)}</span>
+      <span aria-hidden className="hidden @max-[40rem]/pane:inline">
+        {count > 99 ? "99+" : count}
+      </span>
+    </Badge>
   )
 }
 

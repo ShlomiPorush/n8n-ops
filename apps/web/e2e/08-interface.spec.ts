@@ -498,13 +498,17 @@ test("on a phone the instance tabs are a bar at the bottom of a sheet that keeps
     await expect(sheet.getByRole("tab", { name: /^Health/ })).toBeFocused()
     await expect.poll(bottom).toBeGreaterThan(700)
 
-    // The sheet keeps four fifths of the screen on a long tab and on a short one.
+    // The sheet keeps at least four fifths of the screen on a long tab and on a short one. (It still grows
+    // when its content is scrolled, which a click may do to bring a tab into view.)
     const height = async () => (await sheet.boundingBox())?.height ?? 0
+    const fifths = 844 * 0.8 - 1
+    expect(await height()).toBeGreaterThanOrEqual(fifths)
     await sheet.getByRole("tab", { name: /^Settings/ }).click()
-    const tall = await height()
-    expect(tall).toBeGreaterThanOrEqual(844 * 0.8 - 1)
+    await expect(sheet.getByLabel("Auto-resolve after (days)")).toBeVisible()
+    expect(await height()).toBeGreaterThanOrEqual(fifths)
     await sheet.getByRole("tab", { name: /^Problems/ }).click()
-    expect(await height()).toBe(tall)
+    await expect(sheet.getByLabel("Auto-resolve after (days)")).toBeHidden()
+    expect(await height()).toBeGreaterThanOrEqual(fifths)
   } finally {
     await page.setViewportSize({ width: 1440, height: 900 })
   }

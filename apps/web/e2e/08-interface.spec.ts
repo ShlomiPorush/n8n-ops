@@ -513,7 +513,10 @@ test("on a phone the instance tabs are a bar at the bottom of a sheet that keeps
 
 test("a problem's tabs have their own address, and Merge opens from its menu and gives the focus back", async () => {
   await page.goto("/problems?status=all")
-  await page.getByRole("row", { name: /Sync orders to ERP/ }).first().click()
+  await page
+    .getByRole("row", { name: /Sync orders to ERP/ })
+    .first()
+    .click()
   const tab = (name: RegExp) => page.getByRole("tab", { name })
   await expect(tab(/^Overview/)).toHaveAttribute("aria-selected", "true")
   await expect(page.getByRole("heading", { name: "Where It Broke" })).toBeVisible()

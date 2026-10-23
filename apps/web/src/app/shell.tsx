@@ -803,8 +803,9 @@ const scrollPage = (pathname: string) => {
 
 /**
  * The scrolling areas of a page by name: the page itself ("page"), then each area marked `data-scroll-pane`: the
- * list column ("list") and the open item ("item"). Read from the whole document: below 1000px, and on a short
- * screen, the item opens as a dialog or a phone sheet, in a portal outside the page.
+ * list column ("list") and the open item ("item"). Read from the whole document: below 1000px the item opens as a
+ * dialog or a phone sheet, in a portal outside the page. On a short screen the list and the item do not scroll on
+ * their own (NL-1): the page holds their place.
  */
 function scrollAreas(main: HTMLElement) {
   const areas = new Map<string, HTMLElement>([["page", main]])

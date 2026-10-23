@@ -415,10 +415,10 @@ type ListBackup =
 /*
  * In a pane narrower than 52rem a Regular card of four is too narrow for a figure beside its icon, so the
  * icon goes (it only illustrates) and the figure is a size smaller; "128,400" then still fits. On a phone
- * the cards are two by two and take less padding, so the four do not fill the screen.
+ * the cards are two by two however wide the sheet (MO-8) and take less padding, so the four do not fill the screen.
  */
 const kpisInPane = cn(
-  "grid-cols-2 @min-[36rem]/pane:grid-cols-4",
+  "grid-cols-2 md:@min-[36rem]/pane:grid-cols-4",
   "@max-[52rem]/pane:**:data-[slot=kpi-icon]:hidden!",
   "regular:@max-[52rem]/pane:**:data-[slot=kpi-figure]:text-h1",
   "regular:@max-[36rem]/pane:**:data-[slot=kpi]:p-3.5",

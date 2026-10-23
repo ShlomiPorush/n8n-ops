@@ -506,7 +506,7 @@ export function Kpis({
         "grid overflow-clip rounded-lg border border-line bg-bg",
         row
           ? kpiRow
-          : "grid-cols-[repeat(auto-fit,minmax(170px,1fr))] max-md:[&>:last-child:nth-child(odd)]:col-span-full",
+          : "grid-cols-[repeat(auto-fit,minmax(170px,1fr))] max-md:grid-cols-2 max-md:[&>:last-child:nth-child(odd)]:col-span-full",
         "regular:gap-gap regular:overflow-visible regular:border-0 regular:bg-transparent",
         className,
       )}

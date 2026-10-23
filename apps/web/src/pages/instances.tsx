@@ -403,7 +403,7 @@ const tabLook = cn(
   "regular:data-[state=active]:bg-panel regular:data-[state=active]:shadow-card",
 )
 const tabMark =
-  "flex @max-[40rem]/pane:absolute @max-[40rem]/pane:top-0 @max-[40rem]/pane:start-1/2 @max-[40rem]/pane:ms-1.5"
+  "flex @max-[40rem]/pane:absolute @max-[40rem]/pane:top-0 @max-[40rem]/pane:start-1/2 @max-[40rem]/pane:ms-0.5"
 const tabPanel = "grid min-w-0 gap-gap data-[state=inactive]:hidden"
 /*
  * In a pane narrower than 52rem a Regular card of four is too narrow for a figure beside its icon, so the
@@ -797,7 +797,7 @@ function UnsavedMark() {
 /** On the icon's corner of a stacked tab there is room for two digits; a reader still hears the whole count. */
 function TabCount({ count }: { count: number }) {
   return (
-    <Badge variant="fail">
+    <Badge variant="fail" className="@max-[40rem]/pane:px-1">
       <span className="@max-[40rem]/pane:sr-only">{n(count)}</span>
       <span aria-hidden className="hidden @max-[40rem]/pane:inline">
         {count > 99 ? "99+" : count}

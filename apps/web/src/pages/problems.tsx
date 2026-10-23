@@ -214,11 +214,11 @@ export function ProblemsTable({
                 sub={
                   <>
                     <ProblemBadge status={p.status} regression={p.regression} firstSeen={p.firstSeen} />{" "}
-                    <UserText>{p.nodeName}</UserText>
+                    <UserText title={p.nodeName}>{p.nodeName}</UserText>
                     {showInstance && (
                       <>
                         {" · "}
-                        <UserText>{p.instanceName}</UserText>
+                        <UserText title={p.instanceName}>{p.instanceName}</UserText>
                       </>
                     )}
                   </>
@@ -264,8 +264,12 @@ export function ProblemsTable({
               <ProblemBadge status={p.status} regression={p.regression} firstSeen={p.firstSeen} />
             </TableCell>
             <TableCell className="max-w-64" data-primary>
-              <UserText className="block truncate font-semibold">{p.workflowName}</UserText>
-              <UserText className="block truncate text-meta text-muted-foreground">{p.nodeName}</UserText>
+              <UserText className="block truncate font-semibold" title={p.workflowName}>
+                {p.workflowName}
+              </UserText>
+              <UserText className="block truncate text-meta text-muted-foreground" title={p.nodeName}>
+                {p.nodeName}
+              </UserText>
             </TableCell>
             <TableCell className="max-w-80 truncate font-mono text-small" title={p.errorMessage} data-wide data-nolabel>
               {p.errorMessage}
@@ -351,7 +355,7 @@ export function ProblemsPage() {
           />
         }
         listKey={`${status}|${instance}|${q}`}
-        drawn={rows.isPlaceholderData ? null : rows.data}
+        loading={rows.isFetching || rows.isPlaceholderData}
         count={
           shown === undefined ? undefined : (
             <>
@@ -824,7 +828,9 @@ export function ProblemDetail({ id }: { id: string }) {
                   to={`/problems/${s.id}`}
                   className="hover-row flex items-center gap-2.5 border-t border-line px-pad-x py-pad-y"
                 >
-                  <UserText className="min-w-0 truncate font-semibold">{s.workflowName}</UserText>
+                  <UserText className="min-w-0 truncate font-semibold" title={s.workflowName}>
+                    {s.workflowName}
+                  </UserText>
                   <UserText className="ms-auto text-small text-muted-foreground">{s.instanceName}</UserText>
                 </RowLink>
               ))}

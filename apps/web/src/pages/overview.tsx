@@ -322,7 +322,9 @@ function InstanceLine({ i, latest }: { i: InstanceRow; latest: string | null }) 
     >
       <Link to={`/instances/${i.id}`} className="flex min-w-0 items-center gap-2 font-semibold hover:underline">
         <Dot health={health} />
-        <UserText className="truncate">{i.name}</UserText>
+        <UserText className="truncate" title={i.name}>
+          {i.name}
+        </UserText>
       </Link>
       <div className="flex items-center gap-1.5">
         {health !== "ok" && <StatusTag kind="health" status={health} />}

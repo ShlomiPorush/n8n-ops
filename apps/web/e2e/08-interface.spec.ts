@@ -74,7 +74,11 @@ test("a table sorts by its column headers and by its Sort button, in one order, 
   // Default order puts the list back as it came, with no column sorted and nothing to turn around.
   await menu.getByRole("radio", { name: "Default order" }).check()
   await expect(head).toHaveAttribute("aria-sort", "none")
-  await expect(menu.getByRole("radio", { name: "A to Z" })).toBeDisabled()
+  // With no column there is no kind to word the order by: Order says Ascending and Descending, and is off (TB-28).
+  for (const name of ["Ascending", "Descending"]) {
+    await expect(menu.getByRole("radio", { name, exact: true })).toBeDisabled()
+    await expect(menu.getByRole("radio", { name, exact: true })).not.toBeChecked()
+  }
   await expect(button).not.toHaveAttribute("data-set")
   await page.keyboard.press("Escape")
   await expect(menu).toBeHidden()
@@ -109,6 +113,39 @@ test("list filters live in the address, survive a reload and clear in one step",
   await page.getByRole("button", { name: "Clear filters" }).click()
   await expect(page).not.toHaveURL(/[?&]q=/)
   await expect(page.getByLabel("Search all instances")).toHaveValue("")
+})
+
+test("Clear filters drops a search typed but not sent yet, so it does not come back (SR-9)", async () => {
+  await page.goto("/workflows")
+  // An instance picked shows Clear filters while the search is still empty in the address.
+  await page.getByRole("button", { name: /^Instance:/ }).click()
+  await page.getByRole("option", { name: "e2e-n8n", exact: true }).click()
+  await expect(page).toHaveURL(/[?&]instance=/)
+  const box = page.getByLabel("Search all instances")
+  const searched: string[] = []
+  let cleared = false
+  const watch = (r: Request) => {
+    const url = new URL(r.url())
+    if (cleared && url.pathname === "/api/workflows" && (url.searchParams.get("q") ?? "") !== "") {
+      searched.push(url.search)
+    }
+  }
+  page.on("request", watch)
+  try {
+    // Typed and cleared within the pause of 300ms before a search is sent.
+    await box.fill("Sync orders")
+    await page.getByRole("button", { name: "Clear filters" }).click()
+    cleared = true
+    await expect(page).not.toHaveURL(/[?&]instance=/)
+    await expect(box).toHaveValue("")
+    // Well past the pause: a search still on its way would have been asked for by now, and put q back.
+    await page.waitForTimeout(1000)
+    expect(searched).toEqual([])
+    await expect(page).not.toHaveURL(/[?&]q=/)
+    await expect(box).toHaveValue("")
+  } finally {
+    page.off("request", watch)
+  }
 })
 
 test("a row opens from the keyboard, with Enter and with Space, and keeps its focus", async () => {
@@ -1528,32 +1565,42 @@ test("the Problems list asks the server for its order and draws the rows as they
 test("a new filter starts the list at its first row, and the filter bar stays in sight (TB-7, NL-16)", async () => {
   // A short screen and sixty rows for every filter, so the list scrolls whatever the run recorded: the first
   // problem of all and copies of it under ids of their own.
-  await page.setViewportSize({ width: 1440, height: 600 })
   const list = (url: URL) => url.pathname === "/api/problems"
   let seed: { id: string } | undefined
   await page.route(list, async (route) => {
-    const res = await route.fetch()
-    seed ??= ((await res.json()) as { items: { id: string }[] }).items[0]
-    const first = seed
-    const items = first
-      ? [first, ...Array.from({ length: 59 }, (_, i) => ({ ...first, id: `${first.id}-copy-${i}` }))]
-      : []
-    await route.fulfill({ response: res, json: { items, total: items.length } })
+    try {
+      const res = await route.fetch()
+      seed ??= ((await res.json()) as { items: { id: string }[] }).items[0]
+      const first = seed
+      const items = first
+        ? [first, ...Array.from({ length: 59 }, (_, i) => ({ ...first, id: `${first.id}-copy-${i}` }))]
+        : []
+      await route.fulfill({ response: res, json: { items, total: items.length } })
+    } catch {
+      // The page moved on (a new filter or the next width's page load) and dropped this request meanwhile.
+    }
   })
   try {
-    await page.goto("/problems?status=all")
-    const column = page.locator("[data-scroll-pane]").first()
-    const rows = column.locator("[data-href]")
-    await expect(rows).toHaveCount(60)
-    await column.evaluate((el) => {
-      el.scrollTop = el.scrollHeight
-    })
-    await expect(rows.first()).not.toBeInViewport()
-    // The filters stuck at the top of the list column while it scrolled.
-    await expect(page.getByRole("radio", { name: "Open", exact: true })).toBeInViewport()
-    await page.getByRole("radio", { name: "Open", exact: true }).click()
-    await expect(page).not.toHaveURL(/status=all/)
-    await expect(rows.first()).toBeInViewport()
+    // Beside the reading pane the list scrolls in its own column; narrower, with no pane, in the page itself.
+    for (const [width, scroller] of [
+      [1440, "[data-scroll-pane]"],
+      [900, "#main"],
+    ] as const) {
+      await page.setViewportSize({ width, height: 600 })
+      await page.goto("/problems?status=all")
+      const column = page.locator(scroller).first()
+      const rows = column.locator("[data-href]")
+      await expect(rows).toHaveCount(60)
+      await column.evaluate((el) => {
+        el.scrollTop = el.scrollHeight
+      })
+      await expect(rows.first()).not.toBeInViewport()
+      // The filters stuck at the top of where the list scrolls.
+      await expect(page.getByRole("radio", { name: "Open", exact: true })).toBeInViewport()
+      await page.getByRole("radio", { name: "Open", exact: true }).click()
+      await expect(page).not.toHaveURL(/status=all/)
+      await expect(rows.first()).toBeInViewport()
+    }
   } finally {
     await page.unroute(list)
     await page.setViewportSize({ width: 1440, height: 900 })

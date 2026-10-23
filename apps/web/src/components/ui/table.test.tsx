@@ -1,6 +1,18 @@
 import { renderToStaticMarkup } from "react-dom/server"
 import { describe, expect, it } from "vitest"
-import { isDefaultOrder, orderWords, RANK_WORDS, SortButton, type SortControl, sortLabel, sortRows } from "./table.tsx"
+import {
+  isDefaultOrder,
+  orderWords,
+  RANK_WORDS,
+  SortButton,
+  type SortControl,
+  type Sorting,
+  type SortOrder,
+  type SortState,
+  sortLabel,
+  sortRows,
+  useSort,
+} from "./table.tsx"
 
 describe("the words of a Sort menu (TB-28)", () => {
   it("names the two orders by what the column holds", () => {
@@ -54,6 +66,52 @@ describe("the default order (TB-3, TB-11)", () => {
     expect(isDefaultOrder({ key: "status", dir: "ascending" }, arrival)).toBe(false)
     expect(isDefaultOrder({ key: "failures", dir: "descending" }, arrival)).toBe(false)
     expect(isDefaultOrder({ key: "failures", dir: "descending" })).toBe(false)
+  })
+})
+
+// Instances and Agent access rank by the column they show as Status.
+describe("a list ranked by its Status column (TB-1, TB-11, TB-28)", () => {
+  type Row = { name: string; rank: number }
+  const rows: Row[] = [
+    { name: "a", rank: 0 },
+    { name: "b", rank: 2 },
+    { name: "c", rank: 0 },
+    { name: "d", rank: 1 },
+  ]
+  const columns = {
+    status: { label: "Status", kind: "number" as const, words: RANK_WORDS, value: (r: Row) => r.rank },
+    name: { label: "Name", kind: "text" as const, value: (r: Row) => r.name },
+  }
+  /** What `useSort` gives the page, with the order picked given as `order`, as the page's state would hold it. */
+  const sorting = (order?: SortOrder) => {
+    let got: Sorting<Row> | undefined
+    function Probe() {
+      got = useSort(rows, { id: "ranked", rank: "status", columns, order })
+      return null
+    }
+    renderToStaticMarkup(<Probe />)
+    return got as Sorting<Row>
+  }
+
+  it("puts the highest rank first by default, then the rows as they came", () => {
+    const { rows: sorted, control } = sorting()
+    expect(sorted.map((r) => r.name)).toEqual(["b", "d", "a", "c"])
+    expect(control.isDefault).toBe(true)
+  })
+
+  it("counts Status, needs a look first, as the default order: no dot", () => {
+    const set = () => {}
+    expect(sorting([{ key: "status", dir: "descending" }, set]).control.isDefault).toBe(true)
+    expect(sorting([{ key: "status", dir: "ascending" }, set]).control.isDefault).toBe(false)
+    expect(sorting([{ key: "name", dir: "ascending" }, set]).control.isDefault).toBe(false)
+  })
+
+  it("turns the list around on a first click on the Status header", () => {
+    const picked: (SortState | null)[] = []
+    sorting([null, (s) => picked.push(s)])
+      .head("status")
+      .toggle()
+    expect(picked).toEqual([{ key: "status", dir: "ascending" }])
   })
 })
 

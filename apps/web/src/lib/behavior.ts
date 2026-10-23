@@ -28,6 +28,8 @@ export const SHEET_SLIDE_MS = 200
 export const AGO_TICK_MS = 30_000
 /** A list searched on the server asks once typing has paused this long (SR-9). */
 export const SEARCH_PAUSE_MS = 300
+/** Rows of new filters that take longer than this no longer move their list to its first row (TB-7; the 8 s wait of TB-4). */
+export const LIST_WAIT_MS = 8000
 /** A press that moves more than this before its click was selecting text, so the row holds (TB-8). */
 export const ROW_HOLD_MOVE_PX = 3
 

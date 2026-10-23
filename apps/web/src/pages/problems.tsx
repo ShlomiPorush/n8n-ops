@@ -244,7 +244,8 @@ export function ProblemsPage() {
   const q = params.get("q") ?? ""
   const query = new URLSearchParams({ status, ...(instance !== "all" ? { instance } : {}), ...(q ? { q } : {}) })
   const rows = useApi<ProblemRow[]>(`/problems?${query}`, { refetchInterval: 15_000, keepRows: true })
-  // A failed refresh keeps the rows; the head says so (TB-5, LD-12).
+  // A failed refresh keeps the rows and the head says so; new filters that failed keep the previous rows and the
+  // filter line says so (TB-5, LD-12).
   const view = loadView(rows)
   const instances = useApi<{ instances: { id: string; name: string }[] }>("/instances")
   const setParam = (k: string, v: string) => {
@@ -279,7 +280,13 @@ export function ProblemsPage() {
         search={<SearchBox label="Search workflow or error" value={q} onChange={(v) => setParam("q", v)} />}
         active={Number(instance !== "all")}
         count={
-          count === undefined ? undefined : plural(count, [statusWords[status], "problem"].filter(Boolean).join(" "))
+          count === undefined ? undefined : (
+            <>
+              {/* New filters that failed keep the previous rows, and this line says so instead of a count (TB-5). */}
+              {rows.previous !== "failed" && plural(count, [statusWords[status], "problem"].filter(Boolean).join(" "))}
+              <RefreshNote live={rows} what={noun} small />
+            </>
+          )
         }
         onClear={
           filtered
@@ -312,14 +319,20 @@ export function ProblemsPage() {
           <Loading>Loading problems…</Loading>
         </Panel>
       ) : (
-        <Reloading busy={rows.isPlaceholderData}>
+        <Reloading busy={rows.isPlaceholderData || (rows.previous === "failed" && rows.isFetching)}>
           <ProblemsTable
             rows={rows.data ?? []}
             selected={id}
             onOpen={open}
             href={(pid) => `/problems/${pid}?${params}`}
             items={items}
-            empty={q ? `No ${noun} match "${q}".` : `No ${noun}.`}
+            empty={
+              rows.previous === "failed"
+                ? "The previous list was empty."
+                : q
+                  ? `No ${noun} match "${q}".`
+                  : `No ${noun}.`
+            }
           />
         </Reloading>
       )}

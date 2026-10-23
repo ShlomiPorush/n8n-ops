@@ -10,6 +10,7 @@ import {
   Loading,
   Panel,
   PanelHead,
+  RefreshNote,
   SecretField,
   SwitchRow,
   UserText,
@@ -197,14 +198,21 @@ export function DestinationsSection({ hidden = false }: { hidden?: boolean }) {
       <Panel hidden={hidden}>
         <PanelHead
           title="Destinations"
-          count={list.data ? n(data.length) : undefined}
+          count={
+            list.data ? (
+              <>
+                {n(data.length)}
+                {/* A failed refresh keeps what is shown and says so beside the title (TB-5, LD-12). */}
+                <RefreshNote live={list} separator=" · " />
+              </>
+            ) : undefined
+          }
           action={
             <Button variant="primary" size="sm" onClick={() => setEditing("new")}>
               <Plus /> Add destination
             </Button>
           }
         />
-        {/* A failed refresh keeps what is shown (TB-5). */}
         {loadView(list) === "failed" ? (
           <LoadError what="the destinations" error={list.error} retry={() => list.refetch()} />
         ) : loadView(list) === "loading" ? (
@@ -885,6 +893,9 @@ const changes = (a: Choice, b: Choice) =>
     ? a.ids.filter((x) => !b.ids.includes(x)).length + b.ids.filter((x) => !a.ids.includes(x)).length
     : 0)
 
+/** A panel's description is small text in Compact and body text in Regular (PanelHead); Try again in it matches. */
+const descriptionText = "text-small regular:text-body"
+
 /** On an instance: where its backups go. */
 export function InstanceBackupCard({
   instanceId,
@@ -915,7 +926,16 @@ export function InstanceBackupCard({
   })
   return (
     <Panel className="overflow-visible">
-      <PanelHead title="Backup Destinations" description="Where this instance's encrypted backups are written." />
+      <PanelHead
+        title="Backup Destinations"
+        description={
+          <>
+            Where this instance's encrypted backups are written.
+            {/* A failed refresh keeps what is shown and says so here (TB-5, LD-12). */}
+            <RefreshNote live={destinations} separator=" " textClass={descriptionText} />
+          </>
+        }
+      />
       <fieldset disabled={save.isPending} className="border-t border-line p-pad-x">
         {loadView(destinations) === "failed" ? (
           <LoadError what="the destinations" error={destinations.error} retry={() => destinations.refetch()} />
@@ -979,7 +999,13 @@ function SelfBackupCard({ destinations, hidden }: { destinations: Destination[];
     <Panel className="overflow-visible" hidden={hidden}>
       <PanelHead
         title="n8n-ops Database"
-        description="n8n-ops backs up its own database every night, encrypted with the same key."
+        description={
+          <>
+            n8n-ops backs up its own database every night, encrypted with the same key.
+            {/* A failed refresh keeps what is shown and says so here (TB-5, LD-12). */}
+            <RefreshNote live={query} separator=" " textClass={descriptionText} />
+          </>
+        }
       />
       <fieldset disabled={save.isPending} className="grid gap-4 border-t border-line p-pad-x">
         {loadView(query) === "failed" ? (

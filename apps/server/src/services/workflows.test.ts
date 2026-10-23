@@ -89,24 +89,22 @@ describe("executionsSince", () => {
     expect(queries.map((q) => q.startedAfter)).toEqual([since, since])
   })
 
-  it("pages without the filter where n8n rejects it, until a page has nothing in the window", async () => {
+  it("pages without the filter where n8n rejects it, to the end, keeping what started in the window", async () => {
     const queries: Query[] = []
-    // Newest ID first, as n8n lists them. "queued" has a lower ID than "old" but waited and started later.
+    // Newest ID first, as n8n lists them. "queued" has a lower ID than the whole page before it but waited in the
+    // queue and started inside the window.
     const pages: Record<string, { data: ReturnType<typeof run>[]; nextCursor: string | null }> = {
       first: { data: [run("cancelled", null), run("b", "2026-10-05T00:00:00.000Z")], nextCursor: "c1" },
       c1: { data: [run("c", "2026-10-01T00:00:00.000Z"), run("old", "2026-09-30T23:59:00.000Z")], nextCursor: "c2" },
-      c2: {
-        data: [run("queued", "2026-10-01T00:01:00.000Z"), run("older", "2026-09-20T00:00:00.000Z")],
-        nextCursor: "c3",
-      },
-      c3: { data: [run("oldest", "2026-09-10T00:00:00.000Z")], nextCursor: "c4" },
+      c2: { data: [run("older", "2026-09-20T00:00:00.000Z")], nextCursor: "c3" },
+      c3: { data: [run("queued", "2026-10-01T00:01:00.000Z"), run("oldest", "2026-09-10T00:00:00.000Z")], nextCursor: null },
     }
     const client = {
       listExecutions: async (q: Query) => {
         queries.push(q)
         if (q.startedAfter) throw rejected()
         const page = pages[q.cursor ?? "first"]
-        if (!page) throw new Error("read past the window")
+        if (!page) throw new Error("read past the end")
         return page
       },
     }
@@ -118,6 +116,19 @@ describe("executionsSince", () => {
       { limit: 250, cursor: "c2" },
       { limit: 250, cursor: "c3" },
     ])
+  })
+
+  it("stops at the page cap", async () => {
+    let calls = 0
+    const client = {
+      listExecutions: async (q: Query) => {
+        calls++
+        if (q.startedAfter) throw rejected()
+        return { data: [run("a", "2026-10-02T00:00:00.000Z")], nextCursor: `c${calls}` }
+      },
+    }
+    expect(await executionsSince(client, since, 3)).toHaveLength(3)
+    expect(calls).toBe(4) // the refused first try, then three pages
   })
 
   it("passes other errors on", async () => {

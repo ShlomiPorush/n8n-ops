@@ -188,7 +188,10 @@ async function setup(
   }
   // Alerts queued with the database clock are due to a dispatch in the same millisecond only by luck; make them due.
   const dispatch = async () => {
-    await d.db.update(alertOutbox).set({ sendAfter: new Date(0) }).where(eq(alertOutbox.status, "pending"))
+    await d.db
+      .update(alertOutbox)
+      .set({ sendAfter: new Date(0) })
+      .where(eq(alertOutbox.status, "pending"))
     await dispatchAlerts(ctx)
   }
   return { ctx, db: d.db, a, b, problem, warnings, dispatch }

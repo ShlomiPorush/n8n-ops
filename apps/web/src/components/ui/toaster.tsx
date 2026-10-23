@@ -1,7 +1,7 @@
 import { CircleAlert, CircleCheck, Info, Loader2, LoaderCircle, TriangleAlert, X } from "lucide-react"
 import { useLayoutEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
-import { currentToast, type ToastTone, toast, useCurrentToast } from "@/lib/toast"
+import { currentToast, type ToastItem, type ToastTone, toast, useCurrentToast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
 
 const icons: Record<ToastTone, typeof Info> = {
@@ -19,6 +19,9 @@ const icons: Record<ToastTone, typeof Info> = {
  * replaces another, so a replacement under a still pointer is held too. When the keyboard was in the toast it
  * replaces, the keyboard moves to this one's action, else its X. Errors interrupt screen readers (role="alert");
  * everything else is polite.
+ *
+ * Its wrapper is always there, empty while no toast shows: a layer opened before a toast keeps the page beside it
+ * inert except this wrapper (DS-8, lib/inert.ts), so a toast that shows later can still be used.
  */
 export function Toaster() {
   const item = useCurrentToast()
@@ -30,11 +33,6 @@ export function Toaster() {
       ref.current?.querySelector<HTMLElement>("[data-toast-action], [data-toast-close]")?.focus({ preventScroll: true })
   }, [item?.key])
 
-  if (!item) return null
-  const Icon = icons[item.tone]
-  const tone =
-    item.tone === "success" ? "ok" : item.tone === "error" ? "fail" : item.tone === "warning" ? "warn" : "info"
-  const key = item.key
   // The toast on screen when the pointer moves, not the one this render drew: a replacement may not be drawn yet.
   const pointer = (over: boolean) => {
     const shown = currentToast()?.key
@@ -53,62 +51,72 @@ export function Toaster() {
         "max-md:inset-x-3 max-md:bottom-[calc(var(--spacing-tabbar)+12px+env(safe-area-inset-bottom))] max-md:w-auto",
       )}
     >
-      <div
-        data-toast
-        key={key}
-        ref={ref}
-        role={item.tone === "error" ? "alert" : "status"}
-        onFocus={() => toast.hold(key, "focus")}
-        onBlur={(e) => {
-          // Moving between the action and X keeps it held.
-          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) toast.release(key, "focus")
-        }}
+      {item && <ToastBody item={item} panel={ref} />}
+    </div>
+  )
+}
+
+function ToastBody({ item, panel }: { item: ToastItem; panel: React.Ref<HTMLDivElement> }) {
+  const Icon = icons[item.tone]
+  const tone =
+    item.tone === "success" ? "ok" : item.tone === "error" ? "fail" : item.tone === "warning" ? "warn" : "info"
+  const key = item.key
+  return (
+    <div
+      data-toast
+      key={key}
+      ref={panel}
+      role={item.tone === "error" ? "alert" : "status"}
+      onFocus={() => toast.hold(key, "focus")}
+      onBlur={(e) => {
+        // Moving between the action and X keeps it held.
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) toast.release(key, "focus")
+      }}
+      className={cn(
+        "flex items-start gap-2.5 rounded-lg border-s-4 bg-popover py-2.5 ps-3 pe-1.5 text-body text-popover-foreground shadow-float transition-opacity duration-300 animate-in fade-in-0 slide-in-from-bottom-2",
+        tone === "ok" && "border-s-ok",
+        tone === "fail" && "border-s-fail",
+        tone === "warn" && "border-s-warn",
+        tone === "info" && "border-s-info",
+        item.leaving && "opacity-0",
+      )}
+    >
+      <Icon
+        aria-hidden
         className={cn(
-          "flex items-start gap-2.5 rounded-lg border-s-4 bg-popover py-2.5 ps-3 pe-1.5 text-body text-popover-foreground shadow-float transition-opacity duration-300 animate-in fade-in-0 slide-in-from-bottom-2",
-          tone === "ok" && "border-s-ok",
-          tone === "fail" && "border-s-fail",
-          tone === "warn" && "border-s-warn",
-          tone === "info" && "border-s-info",
-          item.leaving && "opacity-0",
+          "mt-0.5 size-4 shrink-0",
+          tone === "ok" && "text-ok",
+          tone === "fail" && "text-fail",
+          tone === "warn" && "text-warn",
+          tone === "info" && "text-info",
+          item.tone === "loading" && "animate-spin text-muted-foreground",
         )}
-      >
-        <Icon
-          aria-hidden
-          className={cn(
-            "mt-0.5 size-4 shrink-0",
-            tone === "ok" && "text-ok",
-            tone === "fail" && "text-fail",
-            tone === "warn" && "text-warn",
-            tone === "info" && "text-info",
-            item.tone === "loading" && "animate-spin text-muted-foreground",
-          )}
-        />
-        <p className="min-w-0 flex-1 py-px [overflow-wrap:anywhere]">{item.message}</p>
-        {item.action && (
-          // A running action keeps the keyboard: aria-disabled, not disabled, and its clicks are ignored (FB-2).
-          <Button
-            data-toast-action
-            size="sm"
-            aria-label={item.action.ariaLabel}
-            aria-disabled={item.running || undefined}
-            aria-busy={item.running || undefined}
-            onClick={() => toast.act(key)}
-            className="-my-1"
-          >
-            {item.running && <LoaderCircle aria-hidden className="animate-spin" />}
-            {item.action.label}
-          </Button>
-        )}
-        <button
-          type="button"
-          data-toast-close
-          aria-label="Close"
-          onClick={() => toast.dismiss(item.id)}
-          className="-my-1 grid size-7 shrink-0 place-items-center rounded-sm text-muted-foreground [@media(hover:hover)]:hover:bg-accent [@media(hover:hover)]:hover:text-ink"
+      />
+      <p className="min-w-0 flex-1 py-px [overflow-wrap:anywhere]">{item.message}</p>
+      {item.action && (
+        // A running action keeps the keyboard: aria-disabled, not disabled, and its clicks are ignored (FB-2).
+        <Button
+          data-toast-action
+          size="sm"
+          aria-label={item.action.ariaLabel}
+          aria-disabled={item.running || undefined}
+          aria-busy={item.running || undefined}
+          onClick={() => toast.act(key)}
+          className="-my-1"
         >
-          <X aria-hidden className="size-4" />
-        </button>
-      </div>
+          {item.running && <LoaderCircle aria-hidden className="animate-spin" />}
+          {item.action.label}
+        </Button>
+      )}
+      <button
+        type="button"
+        data-toast-close
+        aria-label="Close"
+        onClick={() => toast.dismiss(item.id)}
+        className="-my-1 grid size-7 shrink-0 place-items-center rounded-sm text-muted-foreground [@media(hover:hover)]:hover:bg-accent [@media(hover:hover)]:hover:text-ink"
+      >
+        <X aria-hidden className="size-4" />
+      </button>
     </div>
   )
 }

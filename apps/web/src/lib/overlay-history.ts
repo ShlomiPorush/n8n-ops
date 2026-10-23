@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react"
+import { useCallback, useEffect, useRef, useSyncExternalStore } from "react"
 import { type NavigateOptions, type To, useNavigate } from "react-router"
 
 /*
@@ -29,6 +29,36 @@ let ignore = 0
 let seq = 0
 let listening = false
 
+/*
+ * Whether overlays hold the history now: one is open, or a step back that takes an entry away has not landed
+ * yet. Meanwhile the current entry may be an overlay's, and an address corrected in place through the router
+ * would drop its `overlay` mark, so the close could no longer take it away (DS-10). Such a correction waits.
+ */
+const heldListeners = new Set<() => void>()
+let held = false
+function heldChanged() {
+  const now = stack.length > 0 || ignore > 0
+  if (now === held) return
+  held = now
+  for (const listener of [...heldListeners]) listener()
+}
+
+/** Whether an overlay holds a history entry now, or one being taken away (see `useOverlaysHeld`). */
+export function overlaysHeld(): boolean {
+  return held
+}
+
+/** Calls `listener` each time `overlaysHeld()` changes. */
+export function onOverlaysHeld(listener: () => void): () => void {
+  heldListeners.add(listener)
+  return () => heldListeners.delete(listener)
+}
+
+/** `overlaysHeld()`, as state: an address that is only corrected waits while it is true (NL-3, DS-10). */
+export function useOverlaysHeld(): boolean {
+  return useSyncExternalStore(onOverlaysHeld, overlaysHeld, overlaysHeld)
+}
+
 /**
  * The entry is one step above the page in the router's count (`idx`) too, so a page that later takes its place
  * (`useNavigateFromOverlay`) is one step above the page before it: when the router undoes a blocked Back from
@@ -44,6 +74,7 @@ function push(entry: Entry) {
 function onPopState() {
   if (ignore > 0) {
     ignore -= 1
+    heldChanged()
     return
   }
   const top = stack.at(-1)
@@ -70,6 +101,7 @@ export function holdOverlayEntry(close: () => void, isOpen?: () => boolean): () 
   }
   const entry: Entry = { id: ++seq, close, isOpen, pushed: false, left: false }
   stack.push(entry)
+  heldChanged()
   // Pushed on the next task, so a mount that is undone at once (React strict mode) leaves no entry.
   const timer = setTimeout(() => {
     if (!entry.left) push(entry)
@@ -78,15 +110,17 @@ export function holdOverlayEntry(close: () => void, isOpen?: () => boolean): () 
     clearTimeout(timer)
     stack.splice(stack.indexOf(entry), 1)
     // Never pushed, or no longer on our entry (a navigation from inside the overlay replaced it): nothing to undo.
-    if (!entry.pushed || window.history.state?.overlay !== entry.id) return
-    // A navigation from inside the overlay is on its way, or waits on the Leave question: the navigation takes
-    // the entry, or `stayAfterBlock` takes it away when the page stays.
-    if (entry.left) waiting.push(entry)
-    else {
-      // Closed by hand: take the entry away, so the next Back really leaves the page.
-      ignore += 1
-      window.history.back()
+    if (entry.pushed && window.history.state?.overlay === entry.id) {
+      // A navigation from inside the overlay is on its way, or waits on the Leave question: the navigation takes
+      // the entry, or `stayAfterBlock` takes it away when the page stays.
+      if (entry.left) waiting.push(entry)
+      else {
+        // Closed by hand: take the entry away, so the next Back really leaves the page.
+        ignore += 1
+        window.history.back()
+      }
     }
+    heldChanged()
   }
 }
 
@@ -140,6 +174,7 @@ export function stayAfterBlock() {
   // Still on the newest one's entry: nothing moved meanwhile, and their entries are the top ones.
   if (closed.some((e) => e.id === window.history.state?.overlay)) {
     ignore += 1
+    heldChanged()
     window.history.go(-closed.length)
   }
 }

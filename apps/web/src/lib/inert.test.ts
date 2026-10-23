@@ -60,3 +60,23 @@ describe("a layer makes the page beside it inert (DS-8)", () => {
     expect(inert()).toEqual(["already"])
   })
 })
+
+describe("a toast that shows after a layer opened (DS-8)", () => {
+  // The wrapper is drawn while no toast shows (ui/toaster.test.tsx).
+  it("can be used, since the wrapper it shows in was left usable", () => {
+    // body > #root (page, the empty toast wrapper), the layer
+    const page = new Fake("page")
+    const wrapper = new Fake("toaster", "DIV", true)
+    const root = new Fake("root").with(page, wrapper)
+    const layer = new Fake("layer")
+    const body = new Fake("body").with(root, layer)
+    const undo = inertBeside(layer as unknown as Element, body as unknown as Element)
+    // Check now's answer arrives while the phone search is open.
+    const shown = new Fake("toast")
+    wrapper.with(shown)
+    const path = [body, root, wrapper, shown]
+    expect(path.filter((el) => el.attrs.has("inert")).map((el) => el.name)).toEqual([])
+    expect(page.attrs.has("inert")).toBe(true)
+    undo()
+  })
+})

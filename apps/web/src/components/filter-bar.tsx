@@ -3,7 +3,7 @@ import { Popover as PopoverPrimitive } from "radix-ui"
 import * as React from "react"
 import { SortButton, type SortControl, toolButton } from "@/components/ui/table"
 import { LIST_WAIT_MS, SEARCH_PAUSE_MS, touchOnly } from "@/lib/behavior"
-import { popoverPadding } from "@/lib/popover-room"
+import { usePopoverRoom } from "@/lib/popover-room"
 import { cn } from "@/lib/utils"
 
 /*
@@ -125,6 +125,8 @@ export function PickerContent({
   className?: string
 }) {
   const { id, query, setQuery, setOpen } = picker
+  // Between the phone's top bar and tab bar, measured again while open (MP-5).
+  const room = usePopoverRoom(picker.open)
   const listRef = React.useRef<HTMLDivElement>(null)
   const searchRef = React.useRef<HTMLInputElement>(null)
   const searchable = options.length > 10
@@ -154,7 +156,7 @@ export function PickerContent({
       <PopoverPrimitive.Content
         align="start"
         sideOffset={6}
-        collisionPadding={popoverPadding()}
+        collisionPadding={room}
         aria-label={label}
         onOpenAutoFocus={(e) => {
           e.preventDefault()

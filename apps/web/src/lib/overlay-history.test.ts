@@ -101,6 +101,29 @@ describe("overlay history", () => {
     expect(win.history.position).toBe(1)
   })
 
+  it("says overlays hold the history until the last one's entry is really gone, so a correction waits (DS-10)", async () => {
+    const { holdOverlayEntry, overlaysHeld, onOverlaysHeld } = await load()
+    const heard = vi.fn()
+    onOverlaysHeld(() => heard(overlaysHeld()))
+    expect(overlaysHeld()).toBe(false)
+    // Merge, then a picker in it.
+    const merge = holdOverlayEntry(() => {})
+    const picker = holdOverlayEntry(() => {})
+    vi.runAllTimers()
+    expect(overlaysHeld()).toBe(true)
+    picker()
+    vi.runAllTimers()
+    expect(overlaysHeld()).toBe(true)
+    merge()
+    // Its entry is still the current one until the step back lands: a correction now would replace it.
+    expect(win.history.state?.overlay).toBeDefined()
+    expect(overlaysHeld()).toBe(true)
+    vi.runAllTimers()
+    expect(win.history.state).toEqual({ page: "/instances" })
+    expect(overlaysHeld()).toBe(false)
+    expect(heard.mock.calls).toEqual([[true], [false]])
+  })
+
   it("tells those waiting on a move that the page stayed, until they stop listening (SR-6)", async () => {
     const { onMoveKept, stayAfterBlock } = await load()
     const kept = vi.fn()

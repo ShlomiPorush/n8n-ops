@@ -793,7 +793,12 @@ test("Ctrl+B folds the sidebar into the rail and back", async () => {
 })
 
 test("the Settings flyout is a menu that closes on resize, and Settings clicked again adds no Back step (NL-8, NL-4)", async () => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  // From 1000px the list opens its first item by itself, in place of /instances. Wait for it, so the entry Back
+  // returns to has its final address whether the list loaded fast or slow.
   await page.goto("/instances")
+  await expect(page).toHaveURL(/\/instances\/[^/?]+$/)
+  const from = page.url()
   await page.goto("/settings/alerts")
   const settings = page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Settings", exact: true })
   await expect(settings).toHaveAttribute("aria-haspopup", "menu")
@@ -810,7 +815,7 @@ test("the Settings flyout is a menu that closes on resize, and Settings clicked 
   await settings.click()
   await expect(page).toHaveURL(/\/settings\/alerts$/)
   await page.goBack()
-  await expect(page).toHaveURL(/\/instances$/)
+  await expect(page).toHaveURL(from)
 })
 
 test("an instance opens in n8n in a new tab", async () => {
@@ -1207,6 +1212,35 @@ test("an instance's tabs stay at the top of its pane, another tab starts under t
     await page.goBack()
     await expect(region.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true")
     await expect.poll(() => pane.evaluate((el) => el.scrollTop)).toBeGreaterThan(1190)
+  } finally {
+    await page.setViewportSize({ width: 1440, height: 900 })
+  }
+})
+
+test("Back returns to the top of a tab that was never scrolled (NL-3)", async () => {
+  await page.setViewportSize({ width: 1440, height: 600 })
+  try {
+    await openInstanceB()
+    const region = page.getByRole("region", { name: "Instance", exact: true })
+    const pane = region.locator("[data-scroll-pane]")
+    // Long enough that a scroll left over from another tab would show.
+    await lengthenOpenTab(region)
+    expect(await pane.evaluate((el) => el.scrollTop)).toBe(0)
+
+    const health = region.getByRole("tab", { name: /^Health/ })
+    await health.click()
+    await expect(health).toHaveAttribute("aria-selected", "true")
+    await lengthenOpenTab(region)
+    await pane.evaluate((el) => {
+      el.scrollTop = 800
+    })
+    await settle()
+    expect(await pane.evaluate((el) => el.scrollTop)).toBeGreaterThan(700)
+
+    // The overview was only seen at its top: Back opens it there, not where Health was scrolled.
+    await page.goBack()
+    await expect(region.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true")
+    await expect.poll(() => pane.evaluate((el) => el.scrollTop)).toBe(0)
   } finally {
     await page.setViewportSize({ width: 1440, height: 900 })
   }

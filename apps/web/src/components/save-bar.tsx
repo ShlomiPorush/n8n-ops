@@ -52,7 +52,8 @@ export function formChanged(values: Record<string, unknown>, opened: Record<stri
 /*
  * The save bar (SV-1, SV-3). No autosave and no Edit mode: fields are editable at once. Every editable area
  * registers its unsaved changes here, and one dark bar floats at the bottom center while any exist, with the
- * total count, Discard and Save changes. Save writes each changed area and ends in one toast: what was saved,
+ * total count, Discard and Save changes. Save first checks every changed field and sends nothing while one
+ * fails (the first is focused and named). Then it writes each changed area and ends in one toast: what was saved,
  * or, when an area failed, which one and why; a failed area keeps its changes. The page keeps room for the bar
  * while it shows. Leaving the page, signing out or closing the browser tab with unsaved changes asks first;
  * the question starts on Stay. An area may keep its changes across moves inside a part of the app (Settings
@@ -70,6 +71,43 @@ export type SaveSource = {
   discard: () => void
   /** A path prefix, such as "/settings/": moves inside it keep these changes, so they do not ask. */
   keepsOn?: string
+  /**
+   * Checks the changed fields before anything is sent (SV-1): marks each that fails (`aria-invalid` and a note
+   * under its line) and returns them. One problem anywhere stops the whole save.
+   */
+  check?: () => FieldProblem[]
+}
+
+/** A changed field that failed its check before a save (SV-1, SV-12). */
+export type FieldProblem = {
+  /** The field's label, as its row shows it. */
+  label: string
+  /** What is wrong, in words that follow the label: '"bob" is not an email address'. */
+  problem: string
+  /** The id of the field's control, to find which comes first on the page. */
+  id: string
+  /** Opens the field's section when it is not shown, and puts the focus in the field. */
+  reveal: () => void
+}
+
+/** What the save bar says when fields failed their check: the first by name, and how many (SV-1). */
+export function checkOutcome(problems: Pick<FieldProblem, "label" | "problem">[]): string | null {
+  const first = problems[0]
+  if (!first) return null
+  return problems.length === 1
+    ? `${first.label}: ${first.problem}`
+    : `${problems.length} fields need a valid value, starting with ${first.label}`
+}
+
+/** Problems in the order their fields come on the page; a section out of sight comes after the one shown. */
+function inPageOrder(problems: FieldProblem[]) {
+  const position = (p: FieldProblem) => document.getElementById(p.id)
+  return [...problems].sort((a, b) => {
+    const x = position(a)
+    const y = position(b)
+    if (!x || !y || x === y) return 0
+    return x.compareDocumentPosition(y) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1
+  })
 }
 
 type Entry = { label: string; count: number; keepsOn?: string; get: () => SaveSource }
@@ -181,6 +219,13 @@ export function SaveScope({ children }: { children: React.ReactNode }) {
   )
 
   async function save() {
+    // Every changed field is checked first; the first that fails takes the focus, and nothing is sent (SV-1).
+    const problems = inPageOrder(list.flatMap((entry) => entry.get().check?.() ?? []))
+    if (problems[0]) {
+      problems[0].reveal()
+      toast.error(checkOutcome(problems) ?? "")
+      return
+    }
     setSaving(true)
     const saved: SaveSource[] = []
     const failed: { label: string; detail: string }[] = []

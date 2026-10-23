@@ -816,6 +816,7 @@ export function UserText({ children, className }: { children: React.ReactNode; c
 
 export {
   countChanges,
+  type FieldProblem,
   formChanged,
   SaveBarHost,
   SaveScope,
@@ -908,6 +909,8 @@ export function SecretField({
   onChange,
   removable = true,
   placeholder = "Not set",
+  invalid,
+  describedBy,
 }: {
   id: string
   stored: boolean
@@ -915,6 +918,9 @@ export function SecretField({
   onChange: (value: string | null | undefined) => void
   removable?: boolean
   placeholder?: string
+  /** The field failed its check before a save, and the note that says why (SV-1). */
+  invalid?: boolean
+  describedBy?: string
 }) {
   if (!stored || typeof value === "string")
     return (
@@ -923,6 +929,8 @@ export function SecretField({
           id={id}
           type="password"
           autoComplete="new-password"
+          aria-invalid={invalid || undefined}
+          aria-describedby={describedBy}
           // Focus moves into the field the moment Replace is chosen.
           autoFocus={stored}
           placeholder={stored ? "New value" : placeholder}

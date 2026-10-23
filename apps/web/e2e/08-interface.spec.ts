@@ -1,4 +1,4 @@
-import { expect, type Page, test } from "@playwright/test"
+import { expect, type Page, type Request, test } from "@playwright/test"
 import { dialogClosed, discardChanges, signIn } from "./helpers.ts"
 
 // The shared ways of moving around: search, sorting, filters in the address, the keyboard, Back, unsaved
@@ -507,10 +507,16 @@ test("a section that fails to save keeps its changes and its dot, and the toast 
   const stale = page.getByLabel("Backup is stale after (hours)")
   const unsaved = page.getByRole("region", { name: "Unsaved changes" })
   const nextStale = String((before.defaults.staleBackupHours ?? 0) + 1)
+  const nextRetry = String(before.alerts.retryMin === 7 ? 8 : 7)
+  // A value the page's own check takes, which the server then refuses.
+  await page.route("**/api/settings/alerts", (route) =>
+    route.request().method() === "PUT"
+      ? route.fulfill({ status: 400, json: { error: "invalid", message: "Refused by the server for this test." } })
+      : route.fallback(),
+  )
   try {
     await page.goto("/settings/alerts")
-    // The server takes 1 to 60 minutes.
-    await retry.fill("99")
+    await retry.fill(nextRetry)
     await settingsLink("Instance Defaults").click()
     await stale.fill(nextStale)
     await expect(unsaved).toContainText("2 unsaved changes")
@@ -526,14 +532,133 @@ test("a section that fails to save keeps its changes and its dot, and the toast 
     expect((await readSettings("defaults")).staleBackupHours).toBe(Number(nextStale))
     expect((await readSettings("alerts")).retryMin).toBe(before.alerts.retryMin)
     await settingsLink("Alerts").click()
-    await expect(retry).toHaveValue("99")
+    await expect(retry).toHaveValue(nextRetry)
 
     await unsaved.getByRole("button", { name: "Discard" }).click()
     await expect(unsaved).toHaveCount(0)
     await expect(retry).toHaveValue(String(before.alerts.retryMin))
     await expect(sectionDot("Alerts")).toHaveCount(0)
   } finally {
+    await page.unroute("**/api/settings/alerts")
     await page.request.put("/api/settings/defaults", { data: { staleBackupHours: before.defaults.staleBackupHours } })
+  }
+})
+
+test("a changed field that fails its check stops the save, opens its section, takes the focus and is named", async () => {
+  const before = { alerts: await readSettings("alerts") }
+  const unsaved = page.getByRole("region", { name: "Unsaved changes" })
+  const retry = page.getByLabel("Retry failed sends every (minutes)")
+  const recipients = page.getByLabel("Recipients")
+  const sent: string[] = []
+  const onRequest = (r: Request) => {
+    if (r.method() === "PUT" && r.url().includes("/api/settings/")) sent.push(r.url())
+  }
+  page.on("request", onRequest)
+  try {
+    // The server takes 1 to 60 minutes; the page checks it the same way before it sends anything.
+    await page.goto("/settings/alerts")
+    await retry.fill("99")
+    await settingsLink("Email Reports").click()
+    await recipients.fill("bob")
+    await recipients.press("Enter")
+    await expect(page.getByRole("button", { name: "Remove bob" })).toBeVisible()
+    await unsaved.getByRole("button", { name: "Save changes" }).click()
+
+    // The first failing field on the page takes the focus, is marked and says why; the message counts them.
+    await expect(page.getByText("2 fields need a valid value, starting with Recipients")).toBeVisible()
+    await expect(recipients).toBeFocused()
+    await expect(recipients).toHaveAttribute("aria-invalid", "true")
+    await expect(page.locator("#recipients-problem")).toHaveText('"bob" is not an email address')
+
+    // With that one fixed, the one left opens its own section.
+    await page.getByRole("button", { name: "Remove bob" }).click()
+    await expect(recipients).not.toHaveAttribute("aria-invalid", "true")
+    await unsaved.getByRole("button", { name: "Save changes" }).click()
+    await expect(page).toHaveURL(/\/settings\/alerts$/)
+    await expect(retry).toBeFocused()
+    await expect(retry).toHaveAttribute("aria-invalid", "true")
+    await expect(page.getByText("Retry failed sends every (minutes): use a whole number from 1 to 60")).toBeVisible()
+    expect(sent).toEqual([])
+
+    await unsaved.getByRole("button", { name: "Discard" }).click()
+    await expect(unsaved).toHaveCount(0)
+    await expect(retry).toHaveValue(String(before.alerts.retryMin))
+    await expect(retry).not.toHaveAttribute("aria-invalid", "true")
+  } finally {
+    page.off("request", onRequest)
+  }
+  expect((await readSettings("alerts")).retryMin).toBe(before.alerts.retryMin)
+})
+
+test("a Design change sends the design alone, so it never stores a Public URL it did not change", async () => {
+  const before = (await (await page.request.get("/api/settings/general")).json()) as Record<string, unknown>
+  const [other, back] = before.design === "compact" ? ["Regular", "Compact"] : ["Compact", "Regular"]
+  const unsaved = page.getByRole("region", { name: "Unsaved changes" })
+  const put = () =>
+    page.waitForRequest((r) => r.method() === "PUT" && new URL(r.url()).pathname === "/api/settings/general")
+  try {
+    await page.goto("/settings/general")
+    let sent = put()
+    await page.getByRole("radio", { name: other }).click()
+    await unsaved.getByRole("button", { name: "Save changes" }).click()
+    expect((await sent).postDataJSON()).toEqual({ design: other?.toLowerCase() })
+    await expect(unsaved).toHaveCount(0)
+    // Everything else stays as stored, the Public URL included.
+    expect(await (await page.request.get("/api/settings/general")).json()).toEqual({
+      ...before,
+      design: other?.toLowerCase(),
+    })
+
+    sent = put()
+    await page.getByRole("radio", { name: back }).click()
+    await unsaved.getByRole("button", { name: "Save changes" }).click()
+    expect((await sent).postDataJSON()).toEqual({ design: before.design })
+    await expect(unsaved).toHaveCount(0)
+  } finally {
+    await page.request.put("/api/settings/general", { data: { design: before.design } })
+    // The page is drawn in the stored design again for the tests after this one.
+    await page.goto("/")
+    await expect(page.locator("html")).toHaveAttribute("data-design", String(before.design))
+  }
+})
+
+test("Send test email tests the values on screen without saving them, and a change drops its result", async () => {
+  const before = await (await page.request.get("/api/settings/email")).json()
+  const unsaved = page.getByRole("region", { name: "Unsaved changes" })
+  const recipients = page.getByLabel("Recipients")
+  const draft = `draft-${Date.now()}@example.com`
+  const mailApi = process.env.E2E_MAIL_URL ?? "http://mail:8025"
+  try {
+    await page.goto("/settings/email")
+    await recipients.fill(draft)
+    await recipients.press("Enter")
+    await page.getByRole("button", { name: "Send test email" }).click()
+
+    // The result shows beside the button, for the recipients on screen, unsaved.
+    const sentTo = page.getByText(`Sent to ${[...(before.recipients as string[]), draft].join(", ")}`, { exact: true })
+    await expect(sentTo).toBeVisible({ timeout: 20_000 })
+    await expect(page.getByText("Accepted", { exact: true })).toBeVisible()
+    await expect(async () => {
+      const list = (await (await fetch(`${mailApi}/api/v1/messages`)).json()) as {
+        messages: { To: { Address: string }[] }[]
+      }
+      expect(list.messages.some((m) => m.To.some((t) => t.Address === draft))).toBe(true)
+    }).toPass({ timeout: 20_000 })
+
+    // A change on screen leaves values the result does not belong to.
+    const port = page.getByLabel("SMTP port")
+    await port.fill("2526")
+    await expect(page.getByText("Changed since the last test. Send a test again.")).toBeVisible()
+    await expect(page.getByText("Accepted", { exact: true })).toHaveCount(0)
+    // Put back, they are the tested values again.
+    await port.fill(String(before.smtpPort))
+    await expect(page.getByText("Accepted", { exact: true })).toBeVisible()
+
+    await unsaved.getByRole("button", { name: "Discard" }).click()
+    await expect(unsaved).toHaveCount(0)
+  } finally {
+    // A test stores nothing.
+    expect(await (await page.request.get("/api/settings/email")).json()).toEqual(before)
   }
 })
 

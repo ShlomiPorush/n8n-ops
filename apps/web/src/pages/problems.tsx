@@ -34,7 +34,7 @@ import {
   UserText,
 } from "@/components/kit"
 import { ListWithPanel } from "@/components/list-panel"
-import { PaneTabPanel, type PaneTabItem, PaneTabs, usePaneTab } from "@/components/pane-tabs"
+import { type PaneTabItem, PaneTabPanel, PaneTabs, usePaneTab } from "@/components/pane-tabs"
 import { ProblemBadge, TimeAgo, When } from "@/components/status"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -46,12 +46,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, useSort } from "@/components/ui/table"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
@@ -396,10 +391,22 @@ export function ProblemDetail({ id }: { id: string }) {
   const tabs: PaneTabItem[] = [
     { value: "overview", icon: LayoutDashboardIcon, label: "Overview" },
     { value: "input", icon: BracesIcon, label: "Input" },
-    { value: "occurrences", icon: HistoryIcon, label: "Occurrences", count: { value: p.count, tone: "plain" as const } },
+    {
+      value: "occurrences",
+      icon: HistoryIcon,
+      label: "Occurrences",
+      count: { value: p.count, tone: "plain" as const },
+    },
     // Only when the error shows up in other workflows too.
     ...(p.sameError.length > 0
-      ? [{ value: "same", icon: CopyIcon, label: "Same error", count: { value: p.sameError.length, tone: "plain" as const } }]
+      ? [
+          {
+            value: "same",
+            icon: CopyIcon,
+            label: "Same error",
+            count: { value: p.sameError.length, tone: "plain" as const },
+          },
+        ]
       : []),
   ] satisfies PaneTabItem[]
 
@@ -477,7 +484,9 @@ export function ProblemDetail({ id }: { id: string }) {
               label="Last seen"
               icon={HistoryIcon}
               value={<TimeAgo value={p.lastSeen} />}
-              hint={p.status === "muted" && p.mutedUntil ? `Muted until ${formatDateTime(p.mutedUntil, tz)}` : undefined}
+              hint={
+                p.status === "muted" && p.mutedUntil ? `Muted until ${formatDateTime(p.mutedUntil, tz)}` : undefined
+              }
             />
           </Kpis>
           <Panel>
@@ -553,7 +562,9 @@ export function ProblemDetail({ id }: { id: string }) {
               title="Recent Occurrences"
               count={n(p.occurrences.length)}
               description={
-                p.occurrences.length < p.count ? `The latest ${n(p.occurrences.length)} of ${plural(p.count, "failure")}.` : undefined
+                p.occurrences.length < p.count
+                  ? `The latest ${n(p.occurrences.length)} of ${plural(p.count, "failure")}.`
+                  : undefined
               }
             />
             {p.occurrences.length === 0 ? (

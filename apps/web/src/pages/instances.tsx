@@ -44,7 +44,7 @@ import {
   useUnsaved,
 } from "@/components/kit"
 import { ListWithPanel } from "@/components/list-panel"
-import { PaneTabPanel, type PaneTabItem, PaneTabs, usePaneTab } from "@/components/pane-tabs"
+import { type PaneTabItem, PaneTabPanel, PaneTabs, usePaneTab } from "@/components/pane-tabs"
 import { Dot, type HealthState, StatusTag, statusOf, type statusTable, TimeAgo, Tone, When } from "@/components/status"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -517,7 +517,6 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
       </div>
 
       <PaneTabs label="Instance sections" items={tabs} value={tab} onValueChange={show}>
-
         <PaneTabPanel value="overview">
           <StatusStrip instance={i} footer={collected} />
           {/* Four figures in one row wherever the pane has room for them, two by two below that. */}

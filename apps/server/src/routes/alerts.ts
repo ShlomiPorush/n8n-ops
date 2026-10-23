@@ -35,8 +35,7 @@ export function alertTestRoutes(ctx: Ctx) {
   app.use("*", requireUser(ctx))
   app.post("/test/telegram", async (c) => {
     try {
-      await sendTestTelegram(ctx)
-      return c.json({ ok: true })
+      return c.json({ ok: true, ...(await sendTestTelegram(ctx)) })
     } catch (error) {
       return c.json({ error: "invalid", issues: [{ path: ["telegram"], message: (error as Error).message }] }, 400)
     }

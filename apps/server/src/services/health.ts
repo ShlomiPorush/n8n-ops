@@ -90,20 +90,24 @@ export async function applyHealth(ctx: Ctx, instance: Instance, report: HealthRe
 
   if (health !== instance.health) changed(ctx, "instances", "overview")
   const name = instance.name
+  const subject = { instanceId: instance.id }
   await setCondition(ctx, `down:${instance.id}`, !report.main.ok, {
     kind: "health",
+    subject,
     start: () => healthAlerts.down(name, report.main),
     clear: () => healthAlerts.up(name),
   })
   for (const w of report.workers) {
     await setCondition(ctx, `worker:${instance.id}:${w.url}`, !w.ok, {
       kind: "health",
+      subject,
       start: () => healthAlerts.workerDown(name, w),
       clear: () => healthAlerts.workerUp(name, w.url),
     })
   }
   await setCondition(ctx, `backlog:${instance.id}`, backlogActive, {
     kind: "health",
+    subject,
     start: () => healthAlerts.backlog(name, waiting, s.backlogMinutes),
     clear: () => healthAlerts.backlogCleared(name),
   })

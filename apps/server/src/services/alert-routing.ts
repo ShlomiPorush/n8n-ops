@@ -5,6 +5,9 @@ import { html, type InlineButton, isTopicGone, type Telegram, type TelegramHtml 
 /** What an alert is about. Health and backup alerts know only the instance; the n8n-ops backup not even that. */
 export type AlertSubject = { instanceId?: string; workflowName?: string; tags?: string[] }
 
+/** The subject of an alert about an instance, or about n8n-ops itself (null), which only the default topic takes. */
+export const instanceSubject = (instanceId: string | null): AlertSubject => (instanceId ? { instanceId } : {})
+
 /**
  * Workflow patterns run in a separate V8 context with a time limit, so a pattern that backtracks without end
  * (`^(a+)+$` against a long name) stops after PATTERN_MS instead of holding the server. The pattern and the name go

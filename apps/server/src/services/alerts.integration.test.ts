@@ -347,7 +347,10 @@ describe("Telegram forum topics", () => {
     await enqueueProblemAlert(t.ctx, await t.problem(t.a.id, "Import leads"), "new")
     bot.failNextSends(1)
     await dispatchAlerts(t.ctx)
-    const still = await t.db.select().from(alertGroups).where(eq(alertGroups.id, gone?.id ?? ""))
+    const still = await t.db
+      .select()
+      .from(alertGroups)
+      .where(eq(alertGroups.id, gone?.id ?? ""))
     expect(still[0]?.closedAt).toBeNull()
 
     await t.db.update(alertOutbox).set({ sendAfter: new Date(0) })
@@ -355,7 +358,10 @@ describe("Telegram forum topics", () => {
     const last = bot.sends().at(-1)
     expect(String(last?.body.text)).toContain("Sync orders")
     expect(String(last?.body.text)).toContain("Import leads")
-    const closed = await t.db.select().from(alertGroups).where(eq(alertGroups.id, gone?.id ?? ""))
+    const closed = await t.db
+      .select()
+      .from(alertGroups)
+      .where(eq(alertGroups.id, gone?.id ?? ""))
     expect(closed[0]?.closedAt).not.toBeNull()
   })
 

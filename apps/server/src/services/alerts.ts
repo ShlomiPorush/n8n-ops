@@ -382,8 +382,7 @@ export async function handleTelegramCallback(ctx: Ctx, update: CallbackUpdate): 
       action === "r"
         ? { status: "resolved" as const, resolvedAt: new Date(), mutedUntil: null }
         : { status: "muted" as const, mutedUntil: new Date(Date.now() + 24 * 3600_000) }
-    if (group.problemIds.length)
-      await ctx.db.update(problems).set(patch).where(inArray(problems.id, group.problemIds))
+    if (group.problemIds.length) await ctx.db.update(problems).set(patch).where(inArray(problems.id, group.problemIds))
     changed(ctx, "problems", "overview")
     await ctx.audit({
       actor: `telegram:${who}`,

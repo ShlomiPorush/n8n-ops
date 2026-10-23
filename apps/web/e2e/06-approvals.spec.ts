@@ -293,6 +293,30 @@ test("the test message and access requests go to their topics, and to General wh
   expect(first?.body.message_thread_id).toBe(12)
   expect(again?.body.message_thread_id).toBeUndefined()
   expect(String(again?.body.text)).toContain("Topic 12 was not found, so this went to General.")
+
+  // An access request whose topic is gone goes to General, and its note stays when the message shows the decision.
+  goneTopics.add(34)
+  const lost = "Read the topic routing of alerts (topic gone)"
+  const lostId = await ask(request, lost)
+  let fallback: Call | undefined
+  await expect(async () => {
+    // The refused try into topic 34 is recorded too, without a message ID.
+    fallback = calls.find((c) => c.method === "sendMessage" && c.messageId && String(c.body.text).includes(lost))
+    expect(fallback).toBeTruthy()
+  }).toPass({ timeout: 30_000 })
+  if (!fallback) throw new Error("no message")
+  expect(fallback.body.message_thread_id).toBeUndefined()
+  expect(String(fallback.body.text)).toContain("Topic 34 was not found, so this went to General.")
+  await press(request, `xd:${lostId}`, Number(chatId), fallback.messageId ?? 0)
+  await expect(async () => {
+    const edit = calls.find(
+      (c) =>
+        c.method === "editMessageText" &&
+        c.body.message_id === fallback.messageId &&
+        String(c.body.text).includes("❌ <b>Denied</b> by "),
+    )
+    expect(String(edit?.body.text)).toContain("Topic 34 was not found, so this went to General.")
+  }).toPass({ timeout: 20_000 })
   goneTopics.clear()
 
   // Back to one chat without topics for the specs that follow.

@@ -341,8 +341,8 @@ export const alertGroups = pgTable("alert_groups", {
   telegramMessageId: integer("telegram_message_id").notNull(),
   /** The topic its alerts were routed to; problems group and edit only within it. Null is General. */
   threadId: integer("thread_id"),
-  /** Where the message is: null with a `threadId` means the topic was gone and it went to General. */
-  sentThreadId: integer("sent_thread_id"),
+  /** Telegram refused the topic and the message went to General; known only from that answer, never assumed. */
+  fellBack: boolean("fell_back").notNull().default(false),
   /** Set when the message cannot take later problems: its send failed, or it was deleted with its topic. */
   closedAt: ts("closed_at"),
   problemIds: jsonb("problem_ids").$type<string[]>().notNull().default([]),
@@ -574,6 +574,8 @@ export const accessRequests = pgTable(
     keyCollectedAt: ts("key_collected_at"),
     /** Telegram message with the Approve and Deny buttons; edited when it is decided and when access ends. */
     telegramMessageId: integer("telegram_message_id"),
+    /** The access requests topic, when it was gone and the message went to General; its note stays in every edit. */
+    telegramMissingTopic: integer("telegram_missing_topic"),
     /** When the message last showed the current status; cleared on every change of status. */
     telegramClosedAt: ts("telegram_closed_at"),
     emailSentAt: ts("email_sent_at"),

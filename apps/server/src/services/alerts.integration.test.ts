@@ -66,7 +66,11 @@ function botApi() {
   const calls: Call[] = []
   const goneTopics = new Set<number>()
   const goneMessages = new Set<number>()
+  /** Edits in the order Telegram applied them: the last one is what the message shows. */
+  const applied: Call[] = []
   let failNext = 0
+  let failNextSends = 0
+  let editGate: Promise<void> | null = null
   let nextId = 100
   const answer = (body: unknown) =>
     new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } })
@@ -74,8 +78,9 @@ function botApi() {
     const method = String(url).split("/").pop() ?? ""
     const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
     calls.push({ method, body })
-    if (failNext > 0) {
-      failNext--
+    if (failNext > 0 || (method === "sendMessage" && failNextSends > 0)) {
+      if (failNext > 0) failNext--
+      else failNextSends--
       throw new TypeError("fetch failed")
     }
     const thread = body.message_thread_id as number | undefined
@@ -84,14 +89,32 @@ function botApi() {
     if (method === "editMessageText" && goneMessages.has(body.message_id as number))
       return answer({ ok: false, error_code: 400, description: "Bad Request: message to edit not found" })
     if (method === "sendMessage") return answer({ ok: true, result: { message_id: nextId++ } })
+    if (method === "editMessageText") {
+      const gate = editGate
+      editGate = null
+      if (gate) await gate
+      applied.push({ method, body })
+    }
     return answer({ ok: true, result: true })
   }
   return {
     calls,
+    applied,
     goneTopics,
     goneMessages,
     failNextCalls: (n: number) => {
       failNext = n
+    },
+    failNextSends: (n: number) => {
+      failNextSends = n
+    },
+    /** Holds the next edit until the returned function is called. */
+    holdNextEdit: () => {
+      let release = () => {}
+      editGate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      return release
     },
     sends: () => calls.filter((c) => c.method === "sendMessage"),
     edits: () => calls.filter((c) => c.method === "editMessageText"),
@@ -223,9 +246,9 @@ describe("Telegram forum topics", () => {
     expect(String(bot.edits()[0]?.body.text)).toContain("Import leads")
     expect(String(bot.edits()[0]?.body.text)).toContain("Sync orders")
     const groups = await t.db.select().from(alertGroups)
-    expect(groups.map((g) => [g.threadId, g.sentThreadId, g.problemIds.length]).sort()).toEqual([
-      [12, 12, 2],
-      [13, 13, 1],
+    expect(groups.map((g) => [g.threadId, g.fellBack, g.problemIds.length]).sort()).toEqual([
+      [12, false, 2],
+      [13, false, 1],
     ])
     expect(inTopic12).toBeDefined()
   })
@@ -242,7 +265,7 @@ describe("Telegram forum topics", () => {
     expect(String(sends[3]?.body.text)).toMatch(/^<i>Topic 42 was not found.*\nalpha is down$/)
     expect(t.warnings.filter((w) => w.includes("topic not found"))).toHaveLength(2)
     const [group] = await t.db.select().from(alertGroups)
-    expect([group?.threadId, group?.sentThreadId]).toEqual([42, null])
+    expect([group?.threadId, group?.fellBack]).toEqual([42, true])
 
     await enqueueProblemAlert(t.ctx, await t.problem(t.a.id, "Import leads"), "new")
     await dispatchAlerts(t.ctx)
@@ -312,6 +335,56 @@ describe("Telegram forum topics", () => {
     expect(bot.sends()).toHaveLength(1)
     const [row] = await t.db.select().from(alertOutbox)
     expect(row?.status).toBe("pending")
+  })
+
+  it("keeps the problems of a gone message when the new message fails, until one goes out", async () => {
+    const t = await setup({ defaultThreadId: 7 })
+    await enqueueProblemAlert(t.ctx, await t.problem(t.a.id, "Sync orders"), "new")
+    await dispatchAlerts(t.ctx)
+    const [gone] = await t.db.select().from(alertGroups)
+    bot.goneMessages.add(gone?.telegramMessageId ?? 0)
+
+    await enqueueProblemAlert(t.ctx, await t.problem(t.a.id, "Import leads"), "new")
+    bot.failNextSends(1)
+    await dispatchAlerts(t.ctx)
+    const still = await t.db.select().from(alertGroups).where(eq(alertGroups.id, gone?.id ?? ""))
+    expect(still[0]?.closedAt).toBeNull()
+
+    await t.db.update(alertOutbox).set({ sendAfter: new Date(0) })
+    await dispatchAlerts(t.ctx)
+    const last = bot.sends().at(-1)
+    expect(String(last?.body.text)).toContain("Sync orders")
+    expect(String(last?.body.text)).toContain("Import leads")
+    const closed = await t.db.select().from(alertGroups).where(eq(alertGroups.id, gone?.id ?? ""))
+    expect(closed[0]?.closedAt).not.toBeNull()
+  })
+
+  it("never lets a button press and a new problem overwrite each other's edit", async () => {
+    const t = await setup({ defaultThreadId: 7 })
+    await enqueueProblemAlert(t.ctx, await t.problem(t.a.id, "Sync orders"), "new")
+    await dispatchAlerts(t.ctx)
+    const [group] = await t.db.select().from(alertGroups)
+    await enqueueProblemAlert(t.ctx, await t.problem(t.a.id, "Import leads"), "new")
+
+    // The press starts first and its edit is slow; the dispatch comes in meanwhile.
+    const release = bot.holdNextEdit()
+    const press = handleTelegramCallback(t.ctx, {
+      callback_query: {
+        id: "cb1",
+        data: `m:${group?.id}`,
+        from: { id: 1, username: "ops" },
+        message: { message_id: group?.telegramMessageId ?? 0, chat: { id: "-100" } },
+      },
+    })
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    const dispatch = dispatchAlerts(t.ctx)
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    release()
+    await Promise.all([press, dispatch])
+
+    const shown = String(bot.applied.at(-1)?.body.text)
+    expect(shown).toContain("Sync orders")
+    expect(shown).toContain("Import leads")
   })
 
   it("says when the test message went to General", async () => {

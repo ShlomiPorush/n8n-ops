@@ -95,8 +95,25 @@ export type GroupLine = {
 }
 
 /** The note a group's message keeps in every edit when it went to General because its topic was gone. */
-const groupNote = (group: Pick<GroupRow, "threadId" | "sentThreadId">) =>
-  group.threadId !== null && group.sentThreadId === null ? topicGoneNote(group.threadId) : undefined
+const groupNote = (group: Pick<GroupRow, "threadId" | "fellBack">) =>
+  group.fellBack && group.threadId !== null ? topicGoneNote(group.threadId) : undefined
+
+const groupLocks = new Map<string, Promise<unknown>>()
+
+/**
+ * Runs one change of a group's message at a time, so a button press and a dispatch that adds problems never edit
+ * from stale reads (the last edit would drop the other's change). Each reads the group again inside. One server
+ * process, as supported.
+ */
+function withGroup<T>(groupId: string, fn: () => Promise<T>): Promise<T> {
+  const run = (groupLocks.get(groupId) ?? Promise.resolve()).catch(() => undefined).then(fn)
+  const tail = run.catch(() => undefined)
+  groupLocks.set(groupId, tail)
+  void tail.then(() => {
+    if (groupLocks.get(groupId) === tail) groupLocks.delete(groupId)
+  })
+  return run
+}
 
 /** Text of a grouped problem message. */
 export function renderProblemGroup(
@@ -232,27 +249,37 @@ export async function dispatchAlerts(ctx: Ctx) {
         )
         .orderBy(desc(alertGroups.createdAt))
         .limit(1)
+      // A group whose message is gone (deleted with its topic): the new message takes its problems too. The group is
+      // closed only once that message is out, so a failed attempt finds it again and loses none of them.
+      let retire: string | undefined
       if (recent && settings.editWindowMin > 0) {
-        const all = [...new Set([...recent.problemIds, ...newIds])]
-        const { lines, first } = await groupLines(ctx, all)
-        try {
-          await tg.api.edit(
-            tg.chatId,
-            recent.telegramMessageId,
-            renderProblemGroup(groupKey, lines, undefined, groupNote(recent)),
-            await groupButtons(ctx, recent.id, first?.id),
-          )
-          await ctx.db.update(alertGroups).set({ problemIds: all }).where(eq(alertGroups.id, recent.id))
+        const outcome = await withGroup(recent.id, async () => {
+          const [current] = await ctx.db.select().from(alertGroups).where(eq(alertGroups.id, recent.id))
+          if (!current || current.closedAt) return { merged: false as const }
+          const all = [...new Set([...current.problemIds, ...newIds])]
+          const { lines, first } = await groupLines(ctx, all)
+          try {
+            await tg.api.edit(
+              tg.chatId,
+              current.telegramMessageId,
+              renderProblemGroup(groupKey, lines, undefined, groupNote(current)),
+              await groupButtons(ctx, current.id, first?.id),
+            )
+          } catch (error) {
+            if (!isMessageGone(error)) throw error
+            return { merged: false as const, carry: all }
+          }
+          await ctx.db.update(alertGroups).set({ problemIds: all }).where(eq(alertGroups.id, current.id))
           await ctx.db
             .update(alertOutbox)
-            .set({ status: "merged", sentAt: new Date(), telegramMessageId: recent.telegramMessageId })
+            .set({ status: "merged", sentAt: new Date(), telegramMessageId: current.telegramMessageId })
             .where(inArray(alertOutbox.id, ids))
-          continue
-        } catch (error) {
-          // The message is gone (deleted with its topic): a new message takes its problems and these.
-          if (!isMessageGone(error)) throw error
-          await ctx.db.update(alertGroups).set({ closedAt: new Date() }).where(eq(alertGroups.id, recent.id))
-          newIds = all
+          return { merged: true as const }
+        })
+        if (outcome.merged) continue
+        if (outcome.carry) {
+          newIds = outcome.carry
+          retire = recent.id
         }
       }
       const { lines, first } = await groupLines(ctx, newIds)
@@ -279,8 +306,9 @@ export async function dispatchAlerts(ctx: Ctx) {
       if (sent.fellBack) fellBack(threadId)
       await ctx.db
         .update(alertGroups)
-        .set({ telegramMessageId: sent.messageId, sentThreadId: sent.threadId })
+        .set({ telegramMessageId: sent.messageId, fellBack: sent.fellBack })
         .where(eq(alertGroups.id, group.id))
+      if (retire) await ctx.db.update(alertGroups).set({ closedAt: new Date() }).where(eq(alertGroups.id, retire))
       await ctx.db
         .update(alertOutbox)
         .set({ status: "sent", sentAt: new Date(), telegramMessageId: sent.messageId })
@@ -343,44 +371,47 @@ export async function handleTelegramCallback(ctx: Ctx, update: CallbackUpdate): 
   if (String(cb.message?.chat?.id) !== tg.chatId) return false
   const [action, groupId] = cb.data.split(":")
   if (!groupId || (action !== "r" && action !== "m")) return false
-  const [group] = await ctx.db.select().from(alertGroups).where(eq(alertGroups.id, groupId))
-  if (!group) {
-    await tg.api.answerCallback(cb.id, "This alert is no longer known.")
+  return withGroup(groupId, async () => {
+    const [group] = await ctx.db.select().from(alertGroups).where(eq(alertGroups.id, groupId))
+    if (!group) {
+      await tg.api.answerCallback(cb.id, "This alert is no longer known.")
+      return true
+    }
+    const who = cb.from?.username ? `@${cb.from.username}` : (cb.from?.first_name ?? "someone")
+    const patch =
+      action === "r"
+        ? { status: "resolved" as const, resolvedAt: new Date(), mutedUntil: null }
+        : { status: "muted" as const, mutedUntil: new Date(Date.now() + 24 * 3600_000) }
+    if (group.problemIds.length)
+      await ctx.db.update(problems).set(patch).where(inArray(problems.id, group.problemIds))
+    changed(ctx, "problems", "overview")
+    await ctx.audit({
+      actor: `telegram:${who}`,
+      action: action === "r" ? "Problem resolved" : "Problem muted for 24 hours",
+      target: `${group.problemIds.length} problem(s): ${clip(group.groupKey, 120)}`,
+      via: "telegram",
+    })
+    const { lines } = await groupLines(ctx, group.problemIds)
+    // The pressed message itself: its group may never have stored the ID (a send that timed out but arrived).
+    const messageId = cb.message?.message_id ?? group.telegramMessageId
+    try {
+      await tg.api.edit(
+        tg.chatId,
+        messageId,
+        renderProblemGroup(
+          group.groupKey,
+          lines,
+          html`<i>${action === "r" ? "Resolved" : "Muted for 24 hours"} by ${who}</i>`,
+          groupNote(group),
+        ),
+      )
+    } catch (error) {
+      // The problems changed already; the person still gets the answer.
+      ctx.log.warn("could not update the alert message", { groupId, error: (error as Error).message })
+    }
+    await tg.api.answerCallback(cb.id, action === "r" ? "Marked as resolved" : "Muted for 24 hours")
     return true
-  }
-  const who = cb.from?.username ? `@${cb.from.username}` : (cb.from?.first_name ?? "someone")
-  const patch =
-    action === "r"
-      ? { status: "resolved" as const, resolvedAt: new Date(), mutedUntil: null }
-      : { status: "muted" as const, mutedUntil: new Date(Date.now() + 24 * 3600_000) }
-  if (group.problemIds.length) await ctx.db.update(problems).set(patch).where(inArray(problems.id, group.problemIds))
-  changed(ctx, "problems", "overview")
-  await ctx.audit({
-    actor: `telegram:${who}`,
-    action: action === "r" ? "Problem resolved" : "Problem muted for 24 hours",
-    target: `${group.problemIds.length} problem(s): ${clip(group.groupKey, 120)}`,
-    via: "telegram",
   })
-  const { lines } = await groupLines(ctx, group.problemIds)
-  // The pressed message itself: its group may never have stored the ID (a send that timed out but arrived).
-  const messageId = cb.message?.message_id ?? group.telegramMessageId
-  try {
-    await tg.api.edit(
-      tg.chatId,
-      messageId,
-      renderProblemGroup(
-        group.groupKey,
-        lines,
-        html`<i>${action === "r" ? "Resolved" : "Muted for 24 hours"} by ${who}</i>`,
-        groupNote(group),
-      ),
-    )
-  } catch (error) {
-    // The problems changed already; the person still gets the answer.
-    ctx.log.warn("could not update the alert message", { groupId, error: (error as Error).message })
-  }
-  await tg.api.answerCallback(cb.id, action === "r" ? "Marked as resolved" : "Muted for 24 hours")
-  return true
 }
 
 let appliedWebhook = ""

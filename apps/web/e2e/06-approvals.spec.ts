@@ -275,7 +275,11 @@ test("the test message and access requests go to their topics, and to General wh
   await page.goto("/settings/telegram")
   await page.getByRole("button", { name: "Send test message" }).click()
   await expect(page.getByText("Test message sent")).toBeVisible()
-  expect(sends().slice(before).map((c) => c.body.message_thread_id)).toEqual([12])
+  expect(
+    sends()
+      .slice(before)
+      .map((c) => c.body.message_thread_id),
+  ).toEqual([12])
 
   const reason = "Read the topic routing of alerts (topics)"
   await ask(request, reason)

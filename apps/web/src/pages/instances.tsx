@@ -40,6 +40,7 @@ import {
   PageHead,
   Panel,
   PanelHead,
+  RefreshLine,
   RefreshNote,
   SecretField,
   SwitchRow,
@@ -882,10 +883,11 @@ function InstanceProblems({
   const preview = limit !== undefined
   // The full list sorts on the server, so the order covers every open problem of the instance (TB-4); a new order
   // keeps the rows on screen until its answer comes. Keyed by the instance, so no rows of another one stay.
-  const order = useSortOrder("instance-problems")
-  const query = useApi<ProblemList>(problemsPath({ status: "open", instance: instanceId }, preview ? null : order[0]), {
-    keepRows: !preview,
-  })
+  const sort = useSortOrder("instance-problems")
+  const query = useApi<ProblemList>(
+    problemsPath({ status: "open", instance: instanceId }, preview ? null : sort.asked),
+    { keepRows: !preview },
+  )
   if (query.isLoading) return <Loading />
   if (query.error && !query.data)
     return <LoadError what="the open problems" error={query.error} retry={() => void query.refetch()} />
@@ -893,11 +895,14 @@ function InstanceProblems({
   const total = query.data?.total ?? 0
   return (
     <>
+      {/* A refresh or a new order that failed keeps the rows on screen, and this line says so with Try again
+          (TB-5, LD-12); the headers stay in the order the rows are in (TB-4). */}
+      {!preview && <RefreshLine live={query} what="open problems" />}
       <ProblemsTable
         items
         bare
         preview={preview}
-        order={preview ? undefined : order}
+        order={preview ? undefined : sort.shown(query)}
         rows={preview ? rows.slice(0, limit) : rows}
         showInstance={false}
         empty="No open problems on this instance."

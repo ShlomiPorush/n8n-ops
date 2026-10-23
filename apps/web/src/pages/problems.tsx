@@ -156,8 +156,9 @@ export function ProblemsTable({
   /** A few rows picked by the caller: shown in their order, without a sort control. */
   preview?: boolean
   /**
-   * The order the rows were asked for (`useSortOrder`, sent through `problemsPath`). The server sorts every
-   * problem before it sends the first 200, so the rows are drawn as they came, never sorted again here (TB-4).
+   * The order the rows are in (`shown` of `useSortOrder`, whose order is sent through `problemsPath`). The server
+   * sorts every problem before it sends the first 200, so the rows are drawn as they came, never sorted again here
+   * (TB-4).
    */
   order?: SortOrder
 }) {
@@ -286,10 +287,11 @@ export function ProblemsPage() {
   const status = params.get("status") ?? "open"
   const instance = params.get("instance") ?? "all"
   const q = params.get("q") ?? ""
-  // The order is asked of the server, so it covers every problem and not only the 200 sent (TB-4).
-  const order = useSortOrder("problems")
+  // The order is asked of the server, so it covers every problem and not only the 200 sent (TB-4). An order whose
+  // rows failed to come leaves the rows and the headers in the order before it, and the filter line says so.
+  const sort = useSortOrder("problems")
   const filters = { status, ...(instance !== "all" ? { instance } : {}), ...(q ? { q } : {}) }
-  const rows = useApi<ProblemList>(problemsPath(filters, order[0]), { refetchInterval: 15_000, keepRows: true })
+  const rows = useApi<ProblemList>(problemsPath(filters, sort.asked), { refetchInterval: 15_000, keepRows: true })
   // A failed refresh keeps the rows and the head says so; new filters that failed keep the previous rows and the
   // filter line says so (TB-5, LD-12).
   const view = loadView(rows)
@@ -371,7 +373,7 @@ export function ProblemsPage() {
         <Reloading busy={rows.isPlaceholderData || (rows.previous === "failed" && rows.isFetching)}>
           <ProblemsTable
             rows={rows.data?.items ?? []}
-            order={order}
+            order={sort.shown(rows)}
             selected={id}
             onOpen={open}
             href={(pid) => `/problems/${pid}?${params}`}

@@ -5,10 +5,12 @@ import postgres from "postgres"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import type { Ctx } from "../context.ts"
 import { createDatabase, type Database } from "../db/client.ts"
-import { instances, problems } from "../db/schema.ts"
+import { apiTokens, instances, problems } from "../db/schema.ts"
 import { createAudit } from "../lib/audit.ts"
+import { sha256 } from "../lib/crypto.ts"
 import { agentProblems } from "../services/agent.ts"
-import { countProblems, listProblems, type ProblemFilter } from "./problems.ts"
+import { restRoutes } from "./agent.ts"
+import { listProblems, type ProblemFilter, problemPage } from "./problems.ts"
 
 // The Problems list against a real PostgreSQL (TB-4, TB-18): sorted before the limit, so a sort covers every
 // problem and not only the 200 sent; a total that counts what the filters match; the agents' list unchanged.
@@ -37,14 +39,15 @@ beforeAll(async () => {
   database = createDatabase(url.toString())
   await database.migrate(join(import.meta.dirname, "../../drizzle"))
   ctx = { db: database.db, audit: createAudit(database.db), events: new EventEmitter() } as unknown as Ctx
-  const [alpha, beta] = await database.db
+  const [alpha, beta, aster] = await database.db
     .insert(instances)
     .values([
       { name: "alpha-n8n", baseUrl: "http://alpha:5678", apiKeyEnc: "v1:x:y:z" },
       { name: "Beta-n8n", baseUrl: "http://beta:5678", apiKeyEnc: "v1:x:y:z" },
+      { name: "aster-n8n", baseUrl: "http://aster:5678", apiKeyEnc: "v1:x:y:z" },
     ])
     .returning()
-  if (!alpha || !beta) throw new Error("no instances")
+  if (!alpha || !beta || !aster) throw new Error("no instances")
   let seq = 0
   const row = (instanceId: string, state: Partial<typeof problems.$inferInsert>) => {
     seq += 1
@@ -83,8 +86,21 @@ beforeAll(async () => {
   await named("resolved", beta.id, { status: "resolved", count: 4000, resolvedAt: ago(day) })
   // Merged into another problem: listed nowhere, counted nowhere.
   await named("merged", alpha.id, { mergedInto: ids.worst, count: 9999, lastSeen: ago(minute / 2) })
+  // Alike in every value a list sorts by, so only the id can settle their order; one of them has a blank name.
+  const same = { workflowName: "Twin job", errorMessage: "Same error", count: 3, firstSeen: ago(3 * day) }
+  const at = ago(2 * day)
+  for (const key of ["twin1", "twin2", "twin3", "twin4"])
+    await named(key, aster.id, { ...same, fingerprint: `fp-${key}`, lastSeen: at })
+  await named("blank", aster.id, {
+    ...same,
+    workflowName: "  ",
+    errorMessage: "",
+    fingerprint: "fp-blank",
+    lastSeen: at,
+  })
   ids.alpha = alpha.id
   ids.beta = beta.id
+  ids.aster = aster.id
 })
 
 afterAll(async () => {
@@ -93,7 +109,7 @@ afterAll(async () => {
   await admin.end()
 })
 
-const OPEN = PLAIN + 4 // the plain ones, worst, regression, new, aardvark
+const OPEN = PLAIN + 9 // the plain ones, worst, regression, new, aardvark, the four twins and the blank one
 
 /** Every problem the filters match, in the default order: what a total must count. */
 const everything = (filter: ProblemFilter) => listProblems(ctx, { ...filter, limit: 100_000 })
@@ -158,7 +174,7 @@ describe("the Problems list", () => {
     expect(oldest[0]?.id).toBe(ids.worst)
   })
 
-  it("counts every problem the filters match, the same ones the list holds", async () => {
+  it("counts every problem the filters match, the same ones the list holds, in the answer that sends them", async () => {
     const filters: ProblemFilter[] = [
       { status: "open" },
       { status: "all" },
@@ -171,13 +187,39 @@ describe("the Problems list", () => {
       { status: "open", q: "nothing like this" },
     ]
     for (const filter of filters) {
-      expect(await countProblems(ctx, filter)).toBe((await everything(filter)).length)
+      const all = await everything(filter)
+      const page = await problemPage(ctx, filter)
+      expect(page.total).toBe(all.length)
+      // The rows are the list's own first 200, without the count riding on them.
+      expect(page.items).toEqual(all.slice(0, 200))
     }
-    expect(await countProblems(ctx, { status: "open" })).toBe(OPEN)
+    const total = async (filter: ProblemFilter) => (await problemPage(ctx, filter)).total
+    expect(await total({ status: "open" })).toBe(OPEN)
     // Every status, and the merged one left out.
-    expect(await countProblems(ctx, { status: "all" })).toBe(OPEN + 2)
-    expect(await countProblems(ctx, { status: "open", instanceId: ids.beta })).toBe(1)
-    expect(await countProblems(ctx, { status: "open", q: "nothing like this" })).toBe(0)
+    expect(await total({ status: "all" })).toBe(OPEN + 2)
+    expect(await total({ status: "open", instanceId: ids.beta })).toBe(1)
+    // A number, also where nothing matches.
+    expect(await total({ status: "open", q: "nothing like this" })).toBe(0)
+    expect(typeof (await total({ status: "open" }))).toBe("number")
+  })
+
+  it("settles values that are alike in everything by the id, in both directions, and keeps blank text last", async () => {
+    const twins = ["twin1", "twin2", "twin3", "twin4"].map((k) => ids[k] ?? "").sort()
+    const aster = { status: "open", instanceId: ids.aster } as const
+    for (const sort of ["status", "failures", "lastSeen", "instance", "workflow", "error"] as const) {
+      for (const order of ["asc", "desc"] as const) {
+        const rows = (await listProblems(ctx, { ...aster, order: { sort, order } })).map((r) => r.id)
+        const alike = rows.filter((id) => id !== ids.blank)
+        expect(alike, `${sort} ${order}`).toEqual(twins)
+        // A blank name or error comes after every named one, whichever way the column is turned (TB-2).
+        if (sort === "workflow" || sort === "error") expect(rows.at(-1), `${sort} ${order}`).toBe(ids.blank)
+      }
+    }
+    // Among every open problem too: blank last both ways.
+    for (const order of ["asc", "desc"] as const) {
+      const rows = await listProblems(ctx, { status: "open", order: { sort: "workflow", order }, limit: 100_000 })
+      expect(rows.at(-1)?.id).toBe(ids.blank)
+    }
   })
 
   it("keeps the agents' list as it was: a bare list, most recently seen first", async () => {
@@ -188,5 +230,23 @@ describe("the Problems list", () => {
     expect(rows.map((r) => r.id)).not.toContain(ids.regression)
     const filtered = await agentProblems(ctx, { instance: "Beta-n8n", status: "muted" })
     expect(filtered.map((r) => r.id)).toEqual([ids.muted])
+  })
+
+  it("answers the agents' REST call with `{ data: [...] }`, a bare list and no total", async () => {
+    const token = `n8nops_rest_${randomBytes(16).toString("hex")}`
+    await database.db
+      .insert(apiTokens)
+      .values({ name: "list test", kind: "rest", prefix: token.slice(0, 12), tokenHash: sha256(token) })
+    const res = await restRoutes(ctx).request("/problems?status=open&limit=3", {
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { data: { id: string; workflowName: string }[] }
+    expect(Object.keys(body)).toEqual(["data"])
+    expect(Array.isArray(body.data)).toBe(true)
+    expect(body.data).toHaveLength(3)
+    // Most recently seen first, as it always was.
+    expect(body.data[0]?.workflowName).toBe("Workflow 1")
+    expect(body.data[0]).not.toHaveProperty("total")
   })
 })

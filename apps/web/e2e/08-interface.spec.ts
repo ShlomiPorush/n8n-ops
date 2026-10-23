@@ -1139,6 +1139,7 @@ test("new filters whose list fails to load keep the previous rows, and the filte
   const muted = (url: URL) => url.pathname === "/api/problems" && url.searchParams.get("status") === "muted"
   await page.route(muted, (route) => route.fulfill({ status: 500, json: { error: "internal_error" } }))
   const note = page.getByRole("status").filter({ hasText: "Could not load muted problems; showing the previous list" })
+  const countLine = page.locator('[data-slot="list-count"]')
   try {
     await page.getByRole("radio", { name: "Muted" }).click()
     await expect(page).toHaveURL(/[?&]status=muted/)
@@ -1147,7 +1148,7 @@ test("new filters whose list fails to load keep the previous rows, and the filte
     // The rows stay instead of an error, and the line takes the place of a count that would name them muted.
     await expect(rows).toHaveCount(shown)
     await expect(page.getByText("Could not load problems")).toHaveCount(0)
-    await expect(page.getByText(/^[\d,]+ muted problems?$/)).toHaveCount(0)
+    await expect(countLine).not.toHaveText(/^[\d,]+ muted problems?/)
     await expect(page.getByRole("status").filter({ hasText: "Could not refresh" })).toHaveCount(0)
   } finally {
     await page.unroute(muted)
@@ -1156,16 +1157,18 @@ test("new filters whose list fails to load keep the previous rows, and the filte
   await page.getByRole("button", { name: "Try again" }).click()
   await expect(note).toHaveCount(0)
   await expect(page.getByText("Could not load problems")).toHaveCount(0)
-  await expect(page.getByText(/^[\d,]+ muted problems?$/)).toBeVisible()
+  await expect(countLine).toHaveText(/^[\d,]+ muted problems?$/)
 })
 
 test("the Problems count line counts every problem, also above the 200 the list holds (TB-18)", async () => {
   await page.goto("/problems?status=all")
   const rows = page.locator("[data-scroll-pane]").first().locator("[data-href]")
   await expect(rows.first()).toBeVisible()
-  // Every problem is on screen: a plain count, and no note about the others.
+  // Every problem is on screen: a plain count, and no note about the others. The count line only: Regular's top
+  // bar has a link that counts the open problems too.
+  const countLine = page.locator('[data-slot="list-count"]')
   const shown = await rows.count()
-  await expect(page.getByText(new RegExp(`^${shown} problems?$`))).toBeVisible()
+  await expect(countLine).toHaveText(new RegExp(`^${shown} problems?$`))
   await expect(page.getByText(/^Showing the first/)).toHaveCount(0)
 
   // The server says there are more than it sent.
@@ -1177,7 +1180,7 @@ test("the Problems count line counts every problem, also above the 200 the list 
   try {
     await page.reload()
     await expect(rows.first()).toBeVisible()
-    await expect(page.getByText(new RegExp(`^${shown} of 1,240 problems$`))).toBeVisible()
+    await expect(countLine).toHaveText(new RegExp(`^${shown} of 1,240 problems$`))
     await expect(
       page.getByText(`Showing the first ${shown} in this order. Search or filter to find the others.`),
     ).toBeVisible()
@@ -1217,6 +1220,102 @@ test("the Problems list asks the server for its order and draws the rows as they
       (href) => href.split("?")[0]?.split("/").pop() ?? "",
     )
   await expect.poll(ids).toEqual(answer.items.map((p) => p.id))
+})
+
+test("an order whose list fails to load leaves the rows and the sort control in the order the rows are in (TB-4)", async () => {
+  await page.goto("/problems?status=all")
+  const column = page.locator("[data-scroll-pane]").first()
+  const rows = column.locator("[data-href]")
+  await expect(rows.first()).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Where It Broke" })).toBeVisible()
+  const before = await rows.evaluateAll((els) => els.map((el) => el.getAttribute("data-href")))
+  const sortBy = column.getByRole("combobox", { name: "Sort by" })
+  await expect(sortBy).toHaveText("Sort by")
+  const sorted = (url: URL) =>
+    url.pathname === "/api/problems" && url.searchParams.get("status") === "all" && url.searchParams.has("sort")
+  await page.route(sorted, (route) => route.fulfill({ status: 500, json: { error: "internal_error" } }))
+  const note = page.getByRole("status").filter({ hasText: "Could not load problems; showing the previous list" })
+  try {
+    await sortBy.click()
+    await page.getByRole("option", { name: "Failures, high to low" }).click()
+    // It is asked again twice before it counts as failed, which takes a few seconds.
+    await expect(note).toBeVisible({ timeout: 15_000 })
+    // The rows stay in the order they came in, and so does the control: no order is picked yet.
+    await expect(sortBy).toHaveText("Sort by")
+    expect(await rows.evaluateAll((els) => els.map((el) => el.getAttribute("data-href")))).toEqual(before)
+  } finally {
+    await page.unroute(sorted)
+  }
+  // Try again asks for the order picked; once its rows come, the control shows it.
+  await page.locator('[data-slot="list-count"]').getByRole("button", { name: "Try again" }).click()
+  await expect(note).toHaveCount(0)
+  await expect(sortBy).toHaveText("Failures, high to low")
+})
+
+test("the open problems of an instance say when a new order or a refresh failed, and keep the rows (TB-4, TB-5)", async () => {
+  const id = await openInstanceB()
+  // Stand-in rows, so the test does not depend on which problems are open: two, the fewer failures first.
+  const problem = (n: number, count: number) => ({
+    id: `00000000-0000-4000-8000-00000000000${n}`,
+    status: "open",
+    regression: false,
+    workflowId: `wf-${n}`,
+    workflowName: `E2E stand-in ${n}`,
+    nodeName: "Call ERP",
+    errorMessage: "ERP refused",
+    count,
+    firstSeen: new Date(Date.now() - 3 * 86_400_000).toISOString(),
+    lastSeen: new Date(Date.now() - n * 60_000).toISOString(),
+    mutedUntil: null,
+    instanceId: id,
+    instanceName: "e2e-n8n-b",
+  })
+  const [few, many] = [problem(1, 2), problem(2, 9)]
+  let sortFails = true
+  let fails = false
+  const list = (url: URL) => url.pathname === "/api/problems" && url.searchParams.get("instance") === id
+  await page.route(list, (route) => {
+    const sort = new URL(route.request().url()).searchParams.get("sort")
+    if (fails || (sort && sortFails)) return route.fulfill({ status: 500, json: { error: "internal_error" } })
+    return route.fulfill({ json: { items: sort === "failures" ? [many, few] : [few, many], total: 2 } })
+  })
+  try {
+    await page.goto(`/instances/${id}?tab=problems`)
+    const panel = page.getByRole("tabpanel")
+    const rows = panel.locator("tbody tr")
+    const sortBy = panel.getByRole("combobox", { name: "Sort by" })
+    await expect(rows.first()).toContainText("E2E stand-in 1")
+
+    // A new order whose list fails: the rows and the sort control stay as they are, and a line says so.
+    await sortBy.click()
+    await page.getByRole("option", { name: "Failures, high to low" }).click()
+    const note = panel
+      .getByRole("status")
+      .filter({ hasText: "Could not load open problems; showing the previous list" })
+    await expect(note).toBeVisible({ timeout: 15_000 })
+    await expect(sortBy).toHaveText("Sort by")
+    await expect(rows.first()).toContainText("E2E stand-in 1")
+    // Try again brings the order once the server answers.
+    sortFails = false
+    await panel.getByRole("button", { name: "Try again" }).click()
+    await expect(note).toHaveCount(0)
+    await expect(sortBy).toHaveText("Failures, high to low")
+    await expect(rows.first()).toContainText("E2E stand-in 2")
+
+    // A refresh that fails, as coming back to the window brings, keeps the rows and says so.
+    fails = true
+    await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")))
+    const failed = panel.getByRole("status").filter({ hasText: "Could not refresh" })
+    await expect(failed).toBeVisible({ timeout: 15_000 })
+    await expect(rows).toHaveCount(2)
+    await expect(sortBy).toHaveText("Failures, high to low")
+    fails = false
+    await panel.getByRole("button", { name: "Try again" }).click()
+    await expect(failed).toHaveCount(0)
+    await expect(rows.first()).toContainText("E2E stand-in 2")
+  } finally {
+    await page.unroute(list)
+  }
 })
 
 test("the audit log keeps its entries when older ones fail to load, and waits for Try again", async () => {

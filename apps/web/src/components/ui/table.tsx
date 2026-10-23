@@ -152,9 +152,9 @@ function TableCell({ className, ...props }: React.ComponentProps<"td">) {
 /* Sorting by the column headers (TB-1 to TB-3). Numbers and times sort high to low first, text A to Z first;
  * each further click reverses. Empty values stay last in both directions and equal values keep their order. The
  * chosen order survives refreshes and page switches for this visit (not a reload). Where the header row is not
- * drawn, `PhoneSort` sets the same order. A list sorted on the server (TB-4) reads its order with
- * `useSortOrder` before it asks for the rows and hands it to `useSort` as `order`: the rows are then drawn in the
- * order they came, and the headers and the sort control still share that one order. */
+ * drawn, `PhoneSort` sets the same order. A list sorted on the server (TB-4) asks for its rows in the order
+ * `useSortOrder` holds and hands the order of its answer to `useSort` as `order`: the rows are then drawn in the
+ * order they came, and the headers and the sort control share the order the rows are in. */
 
 type SortValue = string | number | Date | null | undefined
 /**
@@ -195,8 +195,8 @@ function firstDirection<T>(rows: T[], column: SortColumn<T>): SortState["dir"] {
     : "ascending"
 }
 
-/** The order picked for a list, remembered by its id for this visit (TB-3); null while none is picked. */
-export function useSortOrder(id: string, initial?: SortState): SortOrder {
+/** The order picked for a list sorted in the page, remembered by its id for this visit (TB-3). */
+function useOwnOrder(id: string, initial?: SortState): SortOrder {
   const [state, setState] = React.useState<SortState | null>(() => remembered.get(id) ?? initial ?? null)
   const set = React.useCallback(
     (next: SortState) => {
@@ -206,6 +206,65 @@ export function useSortOrder(id: string, initial?: SortState): SortOrder {
     [id],
   )
   return [state, set]
+}
+
+/** What the order of a list sorted on the server reads from its answer, as `useApi(path, { keepRows: true })` gives it. */
+export type SortAnswer = {
+  data: unknown
+  isPlaceholderData?: boolean
+  /** "failed" while the rows on screen are an older answer kept after the asked one failed (lib/load-state.ts). */
+  previous?: "loading" | "failed"
+  refetch?: () => unknown
+}
+
+const sameOrder = (a: SortState | null, b: SortState | null) => a?.key === b?.key && a?.dir === b?.dir
+
+/**
+ * Which order a list sorted on the server shows (TB-4). The order asked for is the latest choice; the order applied
+ * is the one the rows on screen came in. The headers and the sort control show a new choice at once, while its rows
+ * are on their way. When they fail to come, the rows stay in the applied order and so do the headers, also after
+ * several choices in a row (an answer to an older one was dropped as it came). Only an applied order is
+ * remembered for this visit (TB-3). Free of React, for the tests.
+ */
+export function sortTracker(id: string, initial: SortState | null = null) {
+  let applied = remembered.get(id) ?? initial
+  return {
+    /** The order to ask for first: the one remembered. */
+    initial: applied,
+    shown(asked: SortState | null, answer: SortAnswer): SortState | null {
+      if (answer.data !== undefined && !answer.isPlaceholderData && answer.previous === undefined) {
+        // The rows of this answer came in the order asked for.
+        applied = asked
+        if (asked) remembered.set(id, asked)
+        else remembered.delete(id)
+      }
+      return answer.previous === "failed" ? applied : asked
+    },
+  }
+}
+
+/** The order of a list sorted on the server: `asked` builds its address, `shown` the headers for its answer (TB-4). */
+export type ServerSort = { asked: SortState | null; shown: (answer: SortAnswer) => SortOrder }
+
+/**
+ * The order of a list sorted on the server. Ask for the rows with `asked`, then hand `shown(answer)` to `useSort`
+ * as its `order`: the headers and the sort control then show the order the rows are in (`sortTracker`). Picking
+ * again the order whose rows failed to come asks for them again.
+ */
+export function useSortOrder(id: string, initial?: SortState): ServerSort {
+  const tracker = React.useRef<ReturnType<typeof sortTracker>>(null)
+  tracker.current ??= sortTracker(id, initial)
+  const [asked, setAsked] = React.useState<SortState | null>(() => tracker.current?.initial ?? null)
+  return {
+    asked,
+    shown: (answer) => [
+      tracker.current?.shown(asked, answer) ?? asked,
+      (next) => {
+        if (!sameOrder(next, asked)) setAsked(next)
+        else if (answer.previous === "failed") void answer.refetch?.()
+      },
+    ],
+  }
 }
 
 export function useSort<T>(
@@ -220,7 +279,10 @@ export function useSort<T>(
     id: string
     columns: Record<string, SortColumn<T>>
     initial?: SortState
-    /** The order of a list sorted on the server, from `useSortOrder`: the rows are not sorted again here (TB-4). */
+    /**
+     * The order of a list sorted on the server, `shown(answer)` of `useSortOrder`: the order its rows are in, which
+     * the headers show; the rows are not sorted again here (TB-4).
+     */
     order?: SortOrder
     /**
      * The column and direction the rows arrive in. While no column is picked, a first click on it turns the list
@@ -229,7 +291,7 @@ export function useSort<T>(
     arrival?: SortState
   },
 ): Sorting<T> {
-  const own = useSortOrder(id, initial)
+  const own = useOwnOrder(id, initial)
   const [state, set] = order ?? own
   const server = order !== undefined
   const list = rows ?? []

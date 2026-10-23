@@ -89,26 +89,31 @@ describe("executionsSince", () => {
     expect(queries.map((q) => q.startedAfter)).toEqual([since, since])
   })
 
-  it("pages without the filter where n8n rejects it, and stops at the first older run", async () => {
+  it("pages without the filter where n8n rejects it, until a page has nothing in the window", async () => {
     const queries: Query[] = []
+    // Newest ID first, as n8n lists them. "queued" has a lower ID than "old" but waited and started later.
+    const pages: Record<string, { data: ReturnType<typeof run>[]; nextCursor: string | null }> = {
+      first: { data: [run("cancelled", null), run("b", "2026-10-05T00:00:00.000Z")], nextCursor: "c1" },
+      c1: { data: [run("c", "2026-10-01T00:00:00.000Z"), run("old", "2026-09-30T23:59:00.000Z")], nextCursor: "c2" },
+      c2: { data: [run("queued", "2026-10-01T00:01:00.000Z"), run("older", "2026-09-20T00:00:00.000Z")], nextCursor: "c3" },
+      c3: { data: [run("oldest", "2026-09-10T00:00:00.000Z")], nextCursor: "c4" },
+    }
     const client = {
       listExecutions: async (q: Query) => {
         queries.push(q)
         if (q.startedAfter) throw rejected()
-        if (!q.cursor) return { data: [run("a", null), run("b", "2026-10-05T00:00:00.000Z")], nextCursor: "c1" }
-        if (q.cursor === "c1")
-          return {
-            data: [run("c", "2026-10-01T10:00:00.000Z"), run("old", "2026-09-20T00:00:00.000Z")],
-            nextCursor: "c2",
-          }
-        throw new Error("read past the window")
+        const page = pages[q.cursor ?? "first"]
+        if (!page) throw new Error("read past the window")
+        return page
       },
     }
-    expect((await executionsSince(client, since)).map((e) => e.workflowId)).toEqual(["a", "b", "c"])
+    expect((await executionsSince(client, since)).map((e) => e.workflowId)).toEqual(["b", "c", "queued"])
     expect(queries).toEqual([
       { limit: 250, cursor: undefined, startedAfter: since },
       { limit: 250 },
       { limit: 250, cursor: "c1" },
+      { limit: 250, cursor: "c2" },
+      { limit: 250, cursor: "c3" },
     ])
   })
 

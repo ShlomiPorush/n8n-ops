@@ -50,7 +50,9 @@ const rejectsStartedAfter = (error: unknown) =>
 
 /**
  * Executions started at or after `since`, newest first, at most `maxPages` pages of 250. When the instance does not
- * know the `startedAfter` filter, it pages without it and stops at the first execution that started earlier.
+ * know the `startedAfter` filter, it pages without it and keeps the executions that started in the window. n8n
+ * orders by ID, not by start, and a run that waited in the queue starts after newer ones, so it stops only at a page
+ * with nothing in the window. A run that never started (cancelled while queued) is not counted, as with the filter.
  */
 export async function executionsSince(client: ExecutionLister, since: string, maxPages = 40) {
   const sinceMs = Date.parse(since)
@@ -66,9 +68,10 @@ export async function executionsSince(client: ExecutionLister, since: string, ma
       filtered = false
       res = await client.listExecutions({ limit: 250 })
     }
-    const fresh = filtered ? res.data : res.data.filter((e) => !e.startedAt || Date.parse(e.startedAt) >= sinceMs)
+    const fresh = filtered ? res.data : res.data.filter((e) => e.startedAt && Date.parse(e.startedAt) >= sinceMs)
     out.push(...fresh)
-    if (fresh.length < res.data.length || !res.nextCursor) break
+    const pastWindow = !filtered && !fresh.length && res.data.some((e) => e.startedAt)
+    if (pastWindow || !res.nextCursor) break
     cursor = res.nextCursor
   }
   return out

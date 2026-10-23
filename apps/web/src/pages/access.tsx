@@ -7,6 +7,7 @@ import { FilterBar } from "@/components/filter-bar"
 import { ItemRow, ItemsHeader, Said } from "@/components/item-row"
 import {
   BusyButton,
+  Copyable,
   Empty,
   LoadError,
   Loading,
@@ -398,12 +399,21 @@ function AccessDetailPanel({ id }: { id: string }) {
           </div>
           {r.workflowIds.length > 0 && (
             <p>
-              Workflows: <span className="font-mono text-small">{r.workflowIds.join(", ")}</span>
+              Workflows:{" "}
+              {r.workflowIds.map((id, i) => (
+                <span key={id}>
+                  {i > 0 && ", "}
+                  <Copyable value={id} label="Copy workflow ID" className="text-small" />
+                </span>
+              ))}
             </p>
           )}
           {r.keyPrefix && (
             <p className="flex items-center gap-1.5 text-muted-foreground">
-              <KeyRound className="size-4" /> Key <span className="font-mono text-small">{r.keyPrefix}…</span>
+              <KeyRound className="size-4" /> Key{" "}
+              <Copyable value={r.keyPrefix} label="Copy key prefix" className="text-small">
+                {r.keyPrefix}…
+              </Copyable>
             </p>
           )}
         </div>

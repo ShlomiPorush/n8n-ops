@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable"
 import { useIsMobile, useMediaQuery } from "@/hooks/use-mobile"
+import { SPLIT_QUERY } from "@/lib/behavior"
 
 /** Below this content width a list draws its rows as items; a little more is needed to go back (no flicker). */
 const ITEMS_BELOW = 560
@@ -24,8 +25,12 @@ export function usePaneNav() {
 /**
  * A list with a reading pane (DS-13). From 1000px an item reads in a pane beside the list, like a mail
  * client: the list marks the open row, and with nothing open the first item opens by itself, so the pane is
- * never empty. Narrower, the list stands alone and an item opens as a dialog over it (a sheet on a phone).
- * Either way the open item is in the address, so Back and reload work.
+ * never empty. Narrower, the list stands alone, the page scrolls as one and an item opens as a dialog over it (a
+ * sheet on a phone). Either way the open item is in the address, so Back and reload work.
+ *
+ * The split is chosen by width only. On a screen 600px high or less the list and the pane stay side by side, but
+ * neither scrolls on its own: the page scrolls them as one (NL-1). That is CSS on the same elements, so a change of
+ * height, such as an on-screen keyboard, never unmounts the open item and what is typed in it (SV-6).
  *
  * Beside the pane, and wherever the list is narrow, its rows are items of a few lines instead of table
  * columns, so nothing is cut off: pass `list` as a function to get that choice. On a wide screen the list
@@ -44,7 +49,7 @@ export function ListWithPanel({
   panelTitle: string
   onClose: () => void
 }) {
-  const wide = useMediaQuery("(min-width: 1000px)")
+  const wide = useMediaQuery(SPLIT_QUERY)
   const phone = useIsMobile()
   const [nav, setNav] = useState<HTMLDivElement | null>(null)
   const navigate = useNavigate()
@@ -133,28 +138,30 @@ export function ListWithPanel({
     )
   }
   return (
-    // Fills the scrolling main area; the list and the pane scroll on their own.
-    <div className="absolute inset-0">
-      <ResizablePanelGroup orientation="horizontal">
-        <ResizablePanel defaultSize="40%" minSize="360px">
+    // Fills the scrolling main area; the list and the pane scroll on their own. On a short screen it grows with
+    // the taller of the two instead, the library's fixed height and scrolling are undone (`!` beats its inline
+    // styles), and main scrolls the whole page.
+    <div className="absolute inset-0 short:bottom-auto">
+      <ResizablePanelGroup orientation="horizontal" className="short:h-auto! short:overflow-visible!">
+        <ResizablePanel defaultSize="40%" minSize="360px" className="short:overflow-visible!">
           <div
             ref={measure}
             data-scroll-pane="list"
             // Rows keep their full height (auto-rows-max): in a grid of fixed height a scrolling table would
             // otherwise shrink to nothing once the column is taller than the screen.
-            className="grid h-full min-w-0 auto-rows-max content-start gap-gap overflow-y-auto overscroll-contain py-[22px] ps-[22px] pe-4 [scrollbar-gutter:stable] lg:ps-7"
+            className="grid h-full min-w-0 auto-rows-max content-start gap-gap overflow-y-auto overscroll-contain py-[22px] ps-[22px] pe-4 [scrollbar-gutter:stable] short:h-auto short:overflow-visible lg:ps-7"
           >
             {content}
           </div>
         </ResizablePanel>
         <ResizableHandle withHandle />
-        <ResizablePanel defaultSize="60%" minSize="30%">
-          <section aria-label={panelTitle} className="flex h-full flex-col">
+        <ResizablePanel defaultSize="60%" minSize="30%" className="short:overflow-visible!">
+          <section aria-label={panelTitle} className="flex h-full flex-col short:h-auto">
             <div
               // A new item starts at its top (DS-6).
               key={pathname}
               data-scroll-pane="item"
-              className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+              className="min-h-0 flex-1 overflow-y-auto overscroll-contain short:overflow-visible"
             >
               {/* The padding is on the content, not on the scroller, so the item's tabs stick at its very top (DS-14). */}
               <div className="px-6 pt-[22px] pb-15">

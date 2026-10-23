@@ -439,11 +439,11 @@ function flatten(value: unknown): [string, string][] {
 const problemTab = "overview"
 /*
  * Three figures share the pane's width, so in a narrow pane a card has no room for an icon beside its figure (the
- * icon only illustrates) and the figure is a size smaller; on a phone smaller again, with less padding, so
- * "11 mo ago" still fits a third of the screen.
+ * icon only illustrates) and the figure is a size smaller, smaller again with less padding in a narrower one. On a
+ * phone they go two to a line and the third takes the whole line (MO-8, kit.tsx Kpis).
  */
 const kpisInPane = cn(
-  "grid-cols-3",
+  "grid-cols-3 max-md:grid-cols-2",
   "@max-[52rem]/pane:**:data-[slot=kpi-icon]:hidden!",
   "regular:@min-[36rem]/pane:@max-[52rem]/pane:**:data-[slot=kpi-figure]:text-h1",
   // Regular's own rule for a figure in words (kit.tsx) is more specific than a plain one: both designs say it.

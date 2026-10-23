@@ -7,6 +7,7 @@ import { useDiscardGuard } from "@/components/discard-guard"
 import { FieldPicker } from "@/components/field-picker"
 import {
   BusyButton,
+  Copyable,
   Empty,
   formChanged,
   LoadError,
@@ -243,7 +244,9 @@ export function DestinationsSection({ hidden = false }: { hidden?: boolean }) {
                   </span>
                   <Tags d={d} />
                 </div>
-                <div className="mt-1 font-mono text-small break-all text-muted-foreground">{d.where}</div>
+                <div className="mt-1 text-muted-foreground">
+                  <Copyable value={d.where} label="Copy location" className="text-small" wrap />
+                </div>
                 <div className="mt-1 text-small text-muted-foreground">
                   Keeps {retentionText(d.retention)} · {plural(d.copies, "archive")}
                   {d.lastOkAt && (

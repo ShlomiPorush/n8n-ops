@@ -96,6 +96,7 @@ import {
 } from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import { Tip } from "@/components/ui/tooltip"
 import { api, describeError, queryClient, useApi, useApiMutation } from "@/lib/api"
 import { loadView } from "@/lib/load-state"
 import { healthCounts, n, plural } from "@/lib/numbers"
@@ -297,9 +298,9 @@ export function InstancesPage() {
                           )}
                           {" · "}
                           {behind(i.version, latest) ? (
-                            <Badge variant="warn" title={`Latest is ${latest}`}>
-                              {i.version}
-                            </Badge>
+                            <Tip content={`Latest is ${latest}`}>
+                              <Badge variant="warn">{i.version}</Badge>
+                            </Tip>
                           ) : (
                             <span className="font-mono">{i.version ?? "version unknown"}</span>
                           )}
@@ -358,9 +359,9 @@ export function InstancesPage() {
                     </TableCell>
                     <TableCell>
                       {behind(i.version, latest) ? (
-                        <Badge variant="warn" title={`Latest is ${latest}`}>
-                          {i.version}
-                        </Badge>
+                        <Tip content={`Latest is ${latest}`}>
+                          <Badge variant="warn">{i.version}</Badge>
+                        </Tip>
                       ) : (
                         <span className="font-mono text-small">{i.version ?? "unknown"}</span>
                       )}
@@ -414,10 +415,10 @@ type ListBackup =
 /*
  * In a pane narrower than 52rem a Regular card of four is too narrow for a figure beside its icon, so the
  * icon goes (it only illustrates) and the figure is a size smaller; "128,400" then still fits. On a phone
- * the cards are two by two and take less padding, so the four do not fill the screen.
+ * the cards are two by two however wide the sheet (MO-8) and take less padding, so the four do not fill the screen.
  */
 const kpisInPane = cn(
-  "grid-cols-2 @min-[36rem]/pane:grid-cols-4",
+  "grid-cols-2 md:@min-[36rem]/pane:grid-cols-4",
   "@max-[52rem]/pane:**:data-[slot=kpi-icon]:hidden!",
   "regular:@max-[52rem]/pane:**:data-[slot=kpi-figure]:text-h1",
   "regular:@max-[36rem]/pane:**:data-[slot=kpi]:p-3.5",

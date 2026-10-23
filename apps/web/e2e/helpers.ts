@@ -73,10 +73,10 @@ export async function discardChanges(page: Page) {
   await expect(ask).toHaveCount(0)
 }
 
-/** Opens the New token dialog on Connected agents, where the token made by hand is folded away. */
+/** Opens the New token dialog on Connected agents, where the token made by hand is folded away (a native fold). */
 export async function openNewToken(page: Page) {
   await page.goto("/agents")
-  await page.getByRole("button", { name: "Advanced: a token made by hand" }).click()
+  await page.locator("summary", { hasText: "Advanced: a token made by hand" }).click()
   await page.getByRole("button", { name: "New token" }).click()
 }
 

@@ -1,5 +1,5 @@
 import { ChevronRight, KeySquare as KeySquareIcon, Plus, Trash2 } from "lucide-react"
-import { useId, useState } from "react"
+import { useState } from "react"
 import { useConfirm } from "@/components/confirm"
 import { useDiscardGuard } from "@/components/discard-guard"
 import { FieldPicker } from "@/components/field-picker"
@@ -35,7 +35,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useApi, useApiMutation } from "@/lib/api"
 import { loadView } from "@/lib/load-state"
 import { toast } from "@/lib/toast"
-import { cn } from "@/lib/utils"
 
 type Token = {
   id: string
@@ -210,7 +209,13 @@ function AgentsCard() {
                         {t.redirectHost ? ` · ${t.redirectHost}` : ""}
                       </span>
                     ) : (
-                      <span className="font-mono text-meta font-normal text-muted-foreground">{t.prefix}…</span>
+                      <Copyable
+                        value={t.prefix}
+                        label="Copy token prefix"
+                        className="text-meta font-normal text-muted-foreground"
+                      >
+                        {t.prefix}…
+                      </Copyable>
                     )}
                   </TableCell>
                   <TableCell>
@@ -255,7 +260,6 @@ function AgentsCard() {
 
 /** Advanced, and folded away: a long-lived token made by hand, for a program that cannot connect by approval. */
 function HandMadeToken() {
-  const [shown, setShown] = useState(false)
   const [open, setOpen] = useState(false)
   const [name, setName] = useState("")
   const [kind, setKind] = useState<"mcp" | "rest">("mcp")
@@ -263,7 +267,6 @@ function HandMadeToken() {
   const [openedKind, setOpenedKind] = useState(kind)
   const [canRequestAccess, setCanRequestAccess] = useState(false)
   const [created, setCreated] = useState("")
-  const id = useId()
   // Until the token is made, anything typed or changed is asked about before it is dropped (DS-9).
   const dirty = !created && (name.trim() !== "" || kind !== openedKind || canRequestAccess)
   const guard = useDiscardGuard(dirty, () => setOpen(false))
@@ -274,21 +277,16 @@ function HandMadeToken() {
   )
   return (
     <Panel>
-      <button
-        type="button"
-        aria-expanded={shown}
-        aria-controls={id}
-        onClick={() => setShown((s) => !s)}
-        className="flex w-full items-center gap-2 px-pad-x py-3 text-start font-semibold outline-none focus-visible:outline-offset-[-2px] [@media(hover:hover)]:hover:bg-accent"
-      >
-        <ChevronRight
-          aria-hidden
-          className={cn("size-4 shrink-0 transition-transform duration-150", shown && "rotate-90")}
-        />
-        Advanced: a token made by hand
-      </button>
-      {shown && (
-        <div id={id} className="grid justify-items-start gap-3 border-t border-line px-pad-x py-3">
+      {/* A native fold (AX-12): the browser gives it its keys and its state; no text is selected on a double click (AX-10). */}
+      <details className="group/fold">
+        <summary className="flex w-full cursor-pointer list-none items-center gap-2 px-pad-x py-3 text-start font-semibold select-none focus-visible:outline-offset-[-2px] [@media(hover:hover)]:hover:bg-accent [&::-webkit-details-marker]:hidden">
+          <ChevronRight
+            aria-hidden
+            className="size-4 shrink-0 transition-transform duration-150 group-open/fold:rotate-90"
+          />
+          Advanced: a token made by hand
+        </summary>
+        <div className="grid justify-items-start gap-3 border-t border-line px-pad-x py-3">
           <p className="max-w-[75ch] text-muted-foreground">
             For a program that cannot open the approval link. The token lasts until you revoke it; store it like a
             password.
@@ -305,7 +303,7 @@ function HandMadeToken() {
             <Plus /> New token
           </Button>
         </div>
-      )}
+      </details>
       <Dialog open={open} onOpenChange={guard.onOpenChange}>
         <DialogContent keepOnBackdrop>
           <DialogHeader icon={KeySquareIcon}>

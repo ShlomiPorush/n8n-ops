@@ -44,6 +44,7 @@ import {
 } from "@/components/ui/dialog"
 import { FieldError } from "@/components/ui/field"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, useSort } from "@/components/ui/table"
+import { Tip } from "@/components/ui/tooltip"
 import { api, describeError, queryClient, useApi, useApiMutation } from "@/lib/api"
 import { loadView } from "@/lib/load-state"
 import { counts, errorRate, n, plural } from "@/lib/numbers"
@@ -104,9 +105,10 @@ function ErrorRateCell({ rate, errors, runs }: { rate: number | null; errors: nu
         "text-end tabular-nums",
         rate > ERROR_RATE_FAIL ? "font-semibold text-fail" : "text-muted-foreground",
       )}
-      title={`${n(errors)} of ${plural(runs, "run")} failed`}
     >
-      {rate}%
+      <Tip content={`${n(errors)} of ${plural(runs, "run")} failed`}>
+        <span>{rate}%</span>
+      </Tip>
       <RateBar rate={rate} tone={rate > ERROR_RATE_FAIL ? "fail" : rate > 0 ? "warn" : "ok"} />
     </TableCell>
   )
@@ -307,9 +309,9 @@ export function WorkflowsPage() {
                       </a>
                       {!w.active && <Badge variant="muted">inactive</Badge>}
                       {w.duplicates.length > 0 && (
-                        <Badge variant="warn" title={`Also on ${w.duplicates.map((d) => d.instanceName).join(", ")}`}>
-                          duplicate
-                        </Badge>
+                        <Tip content={`Also on ${w.duplicates.map((d) => d.instanceName).join(", ")}`}>
+                          <Badge variant="warn">duplicate</Badge>
+                        </Tip>
                       )}
                     </div>
                   </TableCell>

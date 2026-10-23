@@ -779,6 +779,76 @@ test("Merge lands on the problem merged into, and Back returns to the problem it
   }
 })
 
+test("Back from an instance added on another one asks, Stay keeps it without a reload, and Leave goes back", async () => {
+  const added = await openInstanceB()
+  await page
+    .getByRole("row")
+    .filter({ has: page.getByText("e2e-n8n", { exact: true }) })
+    .click()
+  await expect(page.getByRole("heading", { name: "e2e-n8n", exact: true })).toBeVisible()
+  const first = new URL(page.url()).pathname
+  // An add that is only answered, with e2e-n8n-b as the new instance: nothing is stored.
+  const add = (url: URL) => url.pathname === "/api/instances"
+  await page.route(add, (route) =>
+    route.request().method() === "POST" ? route.fulfill({ json: { id: added } }) : route.continue(),
+  )
+  const unsaved = page.getByRole("region", { name: "Unsaved changes" })
+  const ask = page.getByRole("alertdialog", { name: "Leave without saving?" })
+  // A mark on the window that a reload would wipe.
+  const notReloaded = () => page.evaluate(() => (window as { e2eSamePage?: boolean }).e2eSamePage === true)
+  try {
+    await page.getByRole("button", { name: "Add instance" }).click()
+    const dialog = page.getByRole("dialog", { name: "Add an instance" })
+    await dialog.getByLabel("Name", { exact: true }).fill("e2e-added")
+    await dialog.getByLabel("Base URL", { exact: true }).fill("http://n8n.example.invalid")
+    await dialog.getByLabel("API key", { exact: true }).fill("not-a-real-key")
+    await expect.poll(overlayEntry).not.toBeNull()
+    await dialog.getByRole("button", { name: "Add instance" }).click()
+    await expect(page).toHaveURL((url) => url.pathname === `/instances/${added}`)
+    await expect(dialog).toHaveCount(0)
+    await page.evaluate(() => {
+      ;(window as { e2eSamePage?: boolean }).e2eSamePage = true
+    })
+
+    const settings = page.getByRole("tab", { name: /^Settings/ })
+    const field = page.getByLabel("Auto-resolve after (days)")
+    /** The tab is a Back step on the same page, which does not ask. */
+    const backFromTab = async () => {
+      await page.goBack()
+      await expect(page).toHaveURL((url) => url.pathname === `/instances/${added}` && url.search === "")
+      await expect(ask).toHaveCount(0)
+    }
+    await settings.click()
+    const typed = (await field.inputValue()) === "8" ? "7" : "8"
+    await field.fill(typed)
+    await expect(unsaved).toContainText("1 unsaved change")
+    await backFromTab()
+
+    // Back to the instance the dialog was opened on asks; Stay keeps the page, with no reload, and what was typed.
+    await page.goBack()
+    await expect(ask).toBeVisible()
+    await ask.getByRole("button", { name: "Stay" }).click()
+    await expect(ask).toHaveCount(0)
+    expect(await notReloaded()).toBe(true)
+    await expect(page).toHaveURL((url) => url.pathname === `/instances/${added}`)
+    await expect(unsaved).toContainText("1 unsaved change")
+    await settings.click()
+    await expect(field).toHaveValue(typed)
+    await backFromTab()
+
+    // Back again, and Leave goes to that instance, with no dialog step left on the way.
+    await page.goBack()
+    await ask.getByRole("button", { name: "Leave without saving" }).click()
+    await expect(page).toHaveURL((url) => url.pathname === first)
+    await expect(page.getByRole("heading", { name: "e2e-n8n", exact: true })).toBeVisible()
+    await expect(unsaved).toHaveCount(0)
+    expect(await overlayEntry()).toBeNull()
+    expect(await notReloaded()).toBe(true)
+  } finally {
+    await page.unroute(add)
+  }
+})
+
 // Last: it leaves the page on sign-in.
 test("a session that ends on an open page goes to sign-in, back to that page, without asking", async () => {
   await page.goto("/settings/alerts")

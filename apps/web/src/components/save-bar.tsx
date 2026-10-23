@@ -1,9 +1,10 @@
 import * as React from "react"
 import { createPortal } from "react-dom"
-import { useBlocker } from "react-router"
+import { type Blocker, useBlocker } from "react-router"
 import { useConfirm } from "@/components/confirm"
 import { Button } from "@/components/ui/button"
 import { describeError } from "@/lib/api"
+import { stayAfterBlock } from "@/lib/overlay-history"
 import { unsavedGuardOn } from "@/lib/session"
 import { plural } from "@/lib/time"
 import { toast } from "@/lib/toast"
@@ -29,9 +30,16 @@ function flatten(value: Record<string, unknown>, prefix = "", out: Record<string
   return out
 }
 
-/** Whether a dialog's form differs from how it opened, compared as `countChanges` does, nested fields too (DS-9). */
+/**
+ * Whether a dialog's form differs from how it opened, compared as `countChanges` does, nested fields too (DS-9).
+ * A stored secret marked for removal (null, SecretField) is a change of its own: it is not the same as keeping
+ * it (undefined) or an empty replacement ("").
+ */
 export function formChanged(values: Record<string, unknown>, opened: Record<string, unknown>) {
-  return countChanges(flatten(values), flatten(opened)) > 0
+  const now = flatten(values)
+  const then = flatten(opened)
+  if (countChanges(now, then) > 0) return true
+  return Object.keys({ ...now, ...then }).some((k) => (now[k] === null) !== (then[k] === null))
 }
 
 /*
@@ -65,7 +73,9 @@ const UnsavedContext = React.createContext<ReadonlySet<string>>(new Set())
 /** Sets the element the bar shows in instead of the page, such as a sheet that traps the focus. */
 const HostContext = React.createContext<((host: HTMLElement | null) => void) | null>(null)
 /** Asks before a leave that the router does not see, such as signing out; true to go on. */
-const LeaveContext = React.createContext<() => Promise<boolean>>(async () => true)
+const LeaveContext = React.createContext<ConfirmLeave>(async () => true)
+/** Asks "Leave without saving?"; true to go on. The signal closes the question as Stay. */
+type ConfirmLeave = (signal?: AbortSignal) => Promise<boolean>
 
 /** Registers an editable area with the page's save bar while it has unsaved changes. */
 export function useSaveSource(id: string, source: SaveSource) {
@@ -214,7 +224,7 @@ function SaveBar({
 }: {
   count: number
   keepsOn: (string | undefined)[]
-  confirmLeave: () => Promise<boolean>
+  confirmLeave: ConfirmLeave
   saving: boolean
   /** A dialog's place for the bar; without one it floats over the page. */
   host: HTMLElement | null
@@ -266,18 +276,61 @@ function SaveBar({
  */
 function useLeaveQuestion(count: number) {
   const confirm = useConfirm()
-  return React.useCallback(async () => {
-    if (count === 0 || !unsavedGuardOn()) return true
-    return confirm({
-      title: "Leave Without Saving?",
-      message: `${plural(count, "unsaved change")} will be lost.`,
-      confirmLabel: "Leave without saving",
-      cancelLabel: "Stay",
-      danger: true,
-      focusCancel: true,
-      noHistory: true,
-    })
-  }, [confirm, count])
+  return React.useCallback(
+    async (signal?: AbortSignal) => {
+      if (count === 0 || !unsavedGuardOn()) return true
+      return confirm({
+        title: "Leave Without Saving?",
+        message: `${plural(count, "unsaved change")} will be lost.`,
+        confirmLabel: "Leave without saving",
+        cancelLabel: "Stay",
+        danger: true,
+        focusCancel: true,
+        noHistory: true,
+        signal,
+      })
+    },
+    [confirm, count],
+  )
+}
+
+/**
+ * Answers the router's blocked moves with one Leave question at a time (SV-1); `update` takes every blocker
+ * the router reports. Back or Forward while the question is open is blocked again and already undone by the
+ * router: it counts as Stay, so one question and one block remain and the history stays as it was. The answer
+ * acts on the router's current block, and only while it is still blocked: a move that a finished navigation
+ * cleared is not proceeded or reset from a stale block. A move that is not made restores the overlays it was
+ * made from (`stayAfterBlock`).
+ */
+export function leaveAsker(ask: (signal: AbortSignal) => Promise<boolean>, current: () => Blocker) {
+  let asking: { controller: AbortController; dropped: boolean } | null = null
+  return {
+    update(blocker: Blocker) {
+      if (asking) {
+        // Blocked again, or no longer blocked: the open question ends as Stay.
+        asking.controller.abort()
+        return
+      }
+      if (blocker.state !== "blocked") return
+      const question = { controller: new AbortController(), dropped: false }
+      asking = question
+      void ask(question.controller.signal).then((leave) => {
+        if (question.dropped) return
+        asking = null
+        const block = current()
+        if (block.state === "blocked" && leave && !question.controller.signal.aborted) return block.proceed()
+        if (block.state === "blocked") block.reset()
+        stayAfterBlock()
+      })
+    },
+    /** The guard is gone (the page unmounted): the question closes and its answer does nothing. */
+    stop() {
+      if (!asking) return
+      asking.dropped = true
+      asking.controller.abort()
+      asking = null
+    },
+  }
 }
 
 /**
@@ -285,7 +338,7 @@ function useLeaveQuestion(count: number) {
  * A move that every changed area keeps its changes across does not ask. A session that ended or was signed out
  * switches the guard off, so leaving for sign-in does not ask (NL-18).
  */
-function useLeaveGuard(count: number, keepsOn: (string | undefined)[], confirmLeave: () => Promise<boolean>) {
+function useLeaveGuard(count: number, keepsOn: (string | undefined)[], confirmLeave: ConfirmLeave) {
   const blocker = useBlocker(
     ({ currentLocation, nextLocation }) =>
       count > 0 &&
@@ -293,10 +346,17 @@ function useLeaveGuard(count: number, keepsOn: (string | undefined)[], confirmLe
       currentLocation.pathname !== nextLocation.pathname &&
       !keepsOn.every((prefix) => prefix && nextLocation.pathname.startsWith(prefix)),
   )
-  React.useEffect(() => {
-    if (blocker.state !== "blocked") return
-    void confirmLeave().then((leave) => (leave ? blocker.proceed() : blocker.reset()))
-  }, [blocker, confirmLeave])
+  const latest = React.useRef({ blocker, confirmLeave })
+  latest.current = { blocker, confirmLeave }
+  const [asker] = React.useState(() =>
+    leaveAsker(
+      (signal) => latest.current.confirmLeave(signal),
+      () => latest.current.blocker,
+    ),
+  )
+  // Only a new blocker from the router is news; a changed count while the question is open is not (SV-1).
+  React.useEffect(() => asker.update(blocker), [asker, blocker])
+  React.useEffect(() => () => asker.stop(), [asker])
   React.useEffect(() => {
     if (count === 0) return
     const warn = (e: BeforeUnloadEvent) => {

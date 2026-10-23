@@ -6,7 +6,9 @@ import { type NavigateOptions, type To, useNavigate } from "react-router"
  * holds one extra history entry at the same address; Back pops that entry and closes the overlay on top.
  * Closing by hand removes the entry again, so the next Back really leaves the page. A close that asks first
  * (DS-9) and is kept open holds its entry again, so the history stays as it was. A navigation from inside an
- * overlay takes the place of its entry (`useNavigateFromOverlay`), so no stale step is left behind.
+ * overlay takes the place of its entry (`useNavigateFromOverlay`), so no stale step is left behind. When the
+ * Leave question keeps the page instead (SV-1), the overlays were not left: `stayAfterBlock` makes it a plain
+ * close again.
  */
 
 type Entry = {
@@ -15,10 +17,12 @@ type Entry = {
   /** Whether the overlay is still open; without it a Back that closes is taken as closed. */
   isOpen?: () => boolean
   pushed: boolean
-  /** A navigation from inside the overlay replaced its entry: nothing is pushed or taken away for it any more. */
+  /** A navigation from inside the overlay takes its entry: nothing is pushed or taken away for it meanwhile. */
   left: boolean
 }
 const stack: Entry[] = []
+/** Overlays that closed while a navigation from them waited on the Leave question; their entry is still there. */
+let waiting: Entry[] = []
 let ignore = 0
 let seq = 0
 let listening = false
@@ -46,6 +50,37 @@ function onPopState() {
   }
 }
 
+/**
+ * Holds a history entry for an overlay that just opened; Back calls `close`. Returns what to call when it
+ * closes. `useOverlayHistory` is the way to use it; it is a plain function so its history can be tested.
+ */
+export function holdOverlayEntry(close: () => void, isOpen?: () => boolean): () => void {
+  if (!listening) {
+    window.addEventListener("popstate", onPopState)
+    listening = true
+  }
+  const entry: Entry = { id: ++seq, close, isOpen, pushed: false, left: false }
+  stack.push(entry)
+  // Pushed on the next task, so a mount that is undone at once (React strict mode) leaves no entry.
+  const timer = setTimeout(() => {
+    if (!entry.left) push(entry)
+  })
+  return () => {
+    clearTimeout(timer)
+    stack.splice(stack.indexOf(entry), 1)
+    // Never pushed, or no longer on our entry (a navigation from inside the overlay replaced it): nothing to undo.
+    if (!entry.pushed || window.history.state?.overlay !== entry.id) return
+    // A navigation from inside the overlay is on its way, or waits on the Leave question: the navigation takes
+    // the entry, or `stayAfterBlock` takes it away when the page stays.
+    if (entry.left) waiting.push(entry)
+    else {
+      // Closed by hand: take the entry away, so the next Back really leaves the page.
+      ignore += 1
+      window.history.back()
+    }
+  }
+}
+
 /** Holds a history entry while `open`; Back calls `close`. Pass `isOpen` when a close may be refused. */
 export function useOverlayHistory(open: boolean, close: () => void, isOpen?: () => boolean) {
   const closeRef = useRef(close)
@@ -54,32 +89,10 @@ export function useOverlayHistory(open: boolean, close: () => void, isOpen?: () 
   isOpenRef.current = isOpen
   useEffect(() => {
     if (!open) return
-    if (!listening) {
-      window.addEventListener("popstate", onPopState)
-      listening = true
-    }
-    const entry: Entry = {
-      id: ++seq,
-      close: () => closeRef.current(),
-      isOpen: isOpenRef.current ? () => isOpenRef.current?.() ?? false : undefined,
-      pushed: false,
-      left: false,
-    }
-    stack.push(entry)
-    // Pushed on the next task, so a mount that is undone at once (React strict mode) leaves no entry.
-    const timer = setTimeout(() => {
-      if (!entry.left) push(entry)
-    })
-    return () => {
-      clearTimeout(timer)
-      stack.splice(stack.indexOf(entry), 1)
-      // Still on our entry: the overlay was closed by hand, so take the entry away. After a navigation from
-      // inside the overlay the entry was replaced by the new page's (useNavigateFromOverlay), and it stays.
-      if (entry.pushed && !entry.left && window.history.state?.overlay === entry.id) {
-        ignore += 1
-        window.history.back()
-      }
-    }
+    return holdOverlayEntry(
+      () => closeRef.current(),
+      isOpenRef.current ? () => isOpenRef.current?.() ?? false : undefined,
+    )
   }, [open])
 }
 
@@ -91,13 +104,32 @@ export function leaveOverlays(): boolean {
   const current = window.history.state?.overlay
   const onEntry = stack.some((e) => e.pushed && e.id === current)
   for (const e of stack) e.left = true
+  waiting = []
   return onEntry
+}
+
+/**
+ * A navigation was blocked by the Leave question and the page stays (SV-1): overlays it was made from were not
+ * left after all. One still open holds its entry as before; one that closed meanwhile takes its entry away now,
+ * as a plain close does, so no extra Back step is left behind (DS-10).
+ */
+export function stayAfterBlock() {
+  for (const e of stack) e.left = false
+  const closed = waiting
+  waiting = []
+  if (closed.length === 0) return
+  // Still on the newest one's entry: nothing moved meanwhile, and their entries are the top ones.
+  if (closed.some((e) => e.id === window.history.state?.overlay)) {
+    ignore += 1
+    window.history.go(-closed.length)
+  }
 }
 
 /**
  * Navigates from inside a dialog or sheet, after a success such as Merge or Add instance (DS-10, DS-18). The
  * new page takes the place of the overlay's Back entry, so Back from it goes to the page the overlay was opened
- * on, and the overlay's close does not step back as well. Call it before closing the overlay.
+ * on, and the overlay's close does not step back as well. Call it before closing the overlay. When the Leave
+ * question keeps the page, the close counts as a plain close (`stayAfterBlock`).
  */
 export function useNavigateFromOverlay() {
   const navigate = useNavigate()

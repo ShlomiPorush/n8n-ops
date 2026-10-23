@@ -17,7 +17,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - The worker now sends the encrypted archive to the n8n-ops server, which writes the copies; the archive stays encrypted with your public key all the way. Workers already installed keep working without an update.
 - The production `docker-compose.yml` maps `./backups` to `/backups` for folder destinations. Add the line to an existing compose file to use them.
 - The setup's last step adds the first backup destination (S3 or the folder) instead of S3 storage.
-- **The page of an instance has tabs:** Overview, Problems, Health, Backups, Access and Settings. The Overview shows on one screen whether the instance is fine: its health checks in one line, open problems, workflows, executions and the last backup run, the three problems seen most recently, and a line for each of the other tabs. Each tab has its own address (`?tab=health`). Edits on several tabs are kept while switching and saved together, and a tab with unsaved changes is marked. Export credentials and Remove moved into the menu beside Edit. The open problems are listed as items, so nothing scrolls sideways.
+- **The page of an instance has tabs:** Overview, Problems, Health, Backups, Access and Settings. The Overview shows on one screen whether the instance is fine: its health checks in one line, open problems, workflows, executions and the last backup run, the three problems seen most recently, and a line for each of the other tabs. Each tab has its own address (`?tab=health`). Edits on several tabs are kept while switching and saved together, and a tab with unsaved changes is marked. Export credentials and Remove moved into the menu beside Edit. The open problems are listed as items, so nothing scrolls sideways. The tabs share the full width; on a phone each shows its icon over its name, so all six fit.
 - On a phone or a small tablet, the save bar of a page opened as a sheet (an instance, for example) shows inside the sheet, where it can be reached.
 
 - When the server cannot sign in to PostgreSQL or reach it at startup, it says why in one line and what to do, instead of a stack trace. A refused password explains that changing it in `.env` does not change it in an existing database, and how to set it.
@@ -26,6 +26,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Fixed
 
+- Clicking a tab (Connected Agents, for example) no longer leaves a focus ring around it, cut off at the top and bottom. The ring still shows, whole, when the tabs are used with the keyboard.
 - `scripts/verify.sh --changed` (and the CI of pull requests) no longer builds the web app twice at once when a file at the root such as `CHANGELOG.md` changed, which could fail the build at random.
 - Add a Worker accepts any name up to 60 characters, such as "Docker Office". Before, a name with a space was refused with a technical pattern message. A refused value in the dialog is now explained in words.
 - The commands Add a Worker gave wrote `.env` with `cat >`, which replaced any `.env` already in that folder.

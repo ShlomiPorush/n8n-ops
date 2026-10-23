@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils"
 /*
  * A list beside a reading pane draws each row as an item of two or three lines instead of table columns, so
  * nothing is cut off at any pane width. It stays a table of one column: rows keep their keyboard, selection
- * and address, and the sort control above the rows replaces the header. Values read in the order they show.
+ * and address, and the list's Sort button (TB-28) sorts it without a header. Values read in the order they show.
  */
 
 /** The header of a list of items: one column, read by assistive tech, not drawn. */

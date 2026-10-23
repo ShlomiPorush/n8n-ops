@@ -108,6 +108,7 @@ export function AuditPage() {
           <Empty title="Nothing recorded yet.">Sign-ins, changes and agent reads are recorded here.</Empty>
         </Panel>
       ) : (
+        // No Sort button and no header sort (TB-28): the log is paged on the server, newest first.
         <Table>
           <TableHeader>
             <TableRow>

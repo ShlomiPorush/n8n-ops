@@ -26,6 +26,7 @@ import { useCrumb } from "@/app/chrome"
 import { AgentAccessCard } from "@/components/agent-access-card"
 import { useConfirm } from "@/components/confirm"
 import { useDiscardGuard } from "@/components/discard-guard"
+import { FilterBar } from "@/components/filter-bar"
 import { ItemRow, ItemsHeader } from "@/components/item-row"
 import {
   BusyButton,
@@ -81,6 +82,9 @@ import {
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
+  RANK_WORDS,
+  SortButton,
+  type SortOrder,
   Table,
   TableBody,
   TableCell,
@@ -99,7 +103,7 @@ import { formatFull, n, plural, useTimeZone } from "@/lib/time"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
 import { InstanceBackupCard } from "./destinations"
-import { type ProblemList, ProblemsTable, problemsPath } from "./problems"
+import { type ProblemList, ProblemsTable, problemsPath, useProblemsSort } from "./problems"
 
 type Capability = {
   key: string
@@ -195,14 +199,20 @@ export function InstancesPage() {
   const [adding, setAdding] = useState(false)
   const rows = data.data?.instances ?? []
   const latest = data.data?.latestVersion ?? null
+  // Down and needing a look first, then by name as the server sends them: Status high to low (TB-11).
   const sort = useSort(rows, {
     id: "instances",
+    rank: "status",
     columns: {
-      name: { label: "Instance", value: (r) => r.name },
-      status: { label: "Status", value: (r) => severity[r.health] },
-      version: { label: "Version", value: (r) => r.version },
-      open: { label: "Open problems", value: (r) => r.openProblems },
-      backup: { label: "Last backup", value: (r) => (r.lastBackup ? new Date(r.lastBackup.at) : null) },
+      name: { label: "Instance", kind: "text", value: (r) => r.name },
+      status: { label: "Status", kind: "number", words: RANK_WORDS, value: (r) => severity[r.health] },
+      version: { label: "Version", kind: "text", value: (r) => r.version },
+      open: { label: "Open problems", kind: "number", value: (r) => r.openProblems },
+      backup: {
+        label: "Last backup",
+        kind: "date",
+        value: (r) => (r.lastBackup ? new Date(r.lastBackup.at) : null),
+      },
     },
   })
   const rowProps = (i: InstanceRow) => ({
@@ -255,121 +265,126 @@ export function InstancesPage() {
             Add an n8n instance with its URL and an API key. Read-only is enough for monitoring.
           </Empty>
         </Panel>
-      ) : items ? (
-        <Table sort={sort} items>
-          <ItemsHeader label="Instance" />
-          <TableBody>
-            {sort.rows.map((i) => (
-              <TableRow key={i.id} {...rowProps(i)}>
-                <ItemRow
-                  lead={<Dot health={i.health} />}
-                  title={<UserText>{i.name}</UserText>}
-                  titleText={i.name}
-                  end={
-                    i.openProblems > 0 ? (
-                      <span className="font-semibold text-fail">{plural(i.openProblems, "open problem")}</span>
-                    ) : (
-                      <span className="text-small text-muted-foreground">No open problems</span>
-                    )
-                  }
-                  sub={
-                    <>
+      ) : (
+        <>
+          <FilterBar count={plural(rows.length, "instance")} sort={{ control: sort.control, name: "instances" }} />
+          {items ? (
+            <Table items>
+              <ItemsHeader label="Instance" />
+              <TableBody>
+                {sort.rows.map((i) => (
+                  <TableRow key={i.id} {...rowProps(i)}>
+                    <ItemRow
+                      lead={<Dot health={i.health} />}
+                      title={<UserText>{i.name}</UserText>}
+                      titleText={i.name}
+                      end={
+                        i.openProblems > 0 ? (
+                          <span className="font-semibold text-fail">{plural(i.openProblems, "open problem")}</span>
+                        ) : (
+                          <span className="text-small text-muted-foreground">No open problems</span>
+                        )
+                      }
+                      sub={
+                        <>
+                          {i.health === "ok" ? (
+                            healthLabel(i)
+                          ) : (
+                            <StatusTag kind="health" status={i.health}>
+                              {healthLabel(i)}
+                            </StatusTag>
+                          )}
+                          {" · "}
+                          {behind(i.version, latest) ? (
+                            <Badge variant="warn" title={`Latest is ${latest}`}>
+                              {i.version}
+                            </Badge>
+                          ) : (
+                            <span className="font-mono">{i.version ?? "version unknown"}</span>
+                          )}
+                          {" · "}
+                          {canWrite(i) ? "read + write" : "read only"}
+                        </>
+                      }
+                      subEnd={
+                        i.lastBackup ? (
+                          <span className={cn(i.lastBackup.status === "failed" && "font-semibold text-fail")}>
+                            {i.lastBackup.status === "failed" ? "Backup failed " : "Backup "}
+                            <When value={i.lastBackup.at} />
+                          </span>
+                        ) : (
+                          "No backup yet"
+                        )
+                      }
+                    />
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead sort={sort.head("name")}>Instance</TableHead>
+                  <TableHead sort={sort.head("status")}>Status</TableHead>
+                  <TableHead sort={sort.head("version")}>Version</TableHead>
+                  <TableHead>API key</TableHead>
+                  <TableHead className="text-end" sort={sort.head("open")}>
+                    Open
+                  </TableHead>
+                  <TableHead className="text-end" sort={sort.head("backup")}>
+                    Last backup
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {sort.rows.map((i) => (
+                  <TableRow key={i.id} {...rowProps(i)}>
+                    <TableCell className="max-w-56 font-semibold" truncate title={i.name}>
+                      <span className="flex items-center gap-2">
+                        <Dot health={i.health} />
+                        <UserText className="truncate">{i.name}</UserText>
+                      </span>
+                    </TableCell>
+                    <TableCell>
                       {i.health === "ok" ? (
-                        healthLabel(i)
+                        <span className="text-muted-foreground">{healthLabel(i)}</span>
                       ) : (
                         <StatusTag kind="health" status={i.health}>
                           {healthLabel(i)}
                         </StatusTag>
                       )}
-                      {" · "}
+                    </TableCell>
+                    <TableCell>
                       {behind(i.version, latest) ? (
                         <Badge variant="warn" title={`Latest is ${latest}`}>
                           {i.version}
                         </Badge>
                       ) : (
-                        <span className="font-mono">{i.version ?? "version unknown"}</span>
+                        <span className="font-mono text-small">{i.version ?? "unknown"}</span>
                       )}
-                      {" · "}
-                      {canWrite(i) ? "read + write" : "read only"}
-                    </>
-                  }
-                  subEnd={
-                    i.lastBackup ? (
-                      <span className={cn(i.lastBackup.status === "failed" && "font-semibold text-fail")}>
-                        {i.lastBackup.status === "failed" ? "Backup failed " : "Backup "}
-                        <When value={i.lastBackup.at} />
-                      </span>
-                    ) : (
-                      "No backup yet"
-                    )
-                  }
-                />
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      ) : (
-        <Table sort={sort}>
-          <TableHeader>
-            <TableRow>
-              <TableHead sort={sort.head("name")}>Instance</TableHead>
-              <TableHead sort={sort.head("status")}>Status</TableHead>
-              <TableHead sort={sort.head("version")}>Version</TableHead>
-              <TableHead>API key</TableHead>
-              <TableHead className="text-end" sort={sort.head("open")}>
-                Open
-              </TableHead>
-              <TableHead className="text-end" sort={sort.head("backup")}>
-                Last backup
-              </TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {sort.rows.map((i) => (
-              <TableRow key={i.id} {...rowProps(i)}>
-                <TableCell className="max-w-56 font-semibold">
-                  <span className="flex items-center gap-2">
-                    <Dot health={i.health} />
-                    <UserText className="truncate">{i.name}</UserText>
-                  </span>
-                </TableCell>
-                <TableCell>
-                  {i.health === "ok" ? (
-                    <span className="text-muted-foreground">{healthLabel(i)}</span>
-                  ) : (
-                    <StatusTag kind="health" status={i.health}>
-                      {healthLabel(i)}
-                    </StatusTag>
-                  )}
-                </TableCell>
-                <TableCell>
-                  {behind(i.version, latest) ? (
-                    <Badge variant="warn" title={`Latest is ${latest}`}>
-                      {i.version}
-                    </Badge>
-                  ) : (
-                    <span className="font-mono text-small">{i.version ?? "unknown"}</span>
-                  )}
-                </TableCell>
-                <TableCell>
-                  <Badge variant="line">{canWrite(i) ? "read + write" : "read only"}</Badge>
-                </TableCell>
-                <TableCell className={cn("text-end tabular-nums", i.openProblems > 0 && "font-semibold text-fail")}>
-                  {n(i.openProblems)}
-                </TableCell>
-                <TableCell className="text-end text-muted-foreground">
-                  {i.lastBackup ? (
-                    <span className={cn(i.lastBackup.status === "failed" && "font-semibold text-fail")}>
-                      <When value={i.lastBackup.at} />
-                    </span>
-                  ) : (
-                    "never"
-                  )}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="line">{canWrite(i) ? "read + write" : "read only"}</Badge>
+                    </TableCell>
+                    <TableCell className={cn("text-end tabular-nums", i.openProblems > 0 && "font-semibold text-fail")}>
+                      {n(i.openProblems)}
+                    </TableCell>
+                    <TableCell className="text-end text-muted-foreground">
+                      {i.lastBackup ? (
+                        <span className={cn(i.lastBackup.status === "failed" && "font-semibold text-fail")}>
+                          <When value={i.lastBackup.at} />
+                        </span>
+                      ) : (
+                        "never"
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </>
       )}
       <InstanceDialog open={adding} onOpenChange={setAdding} afterAdd={(newId) => `/instances/${newId}`} />
     </>
@@ -580,23 +595,26 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
             <LastBackupKpi id={i.id} backup={backup} />
           </Kpis>
           <Panel>
-            <PanelHead
-              title="Open Problems"
-              count={n(i.openProblems)}
+            <InstanceProblems
+              key={i.id}
+              instanceId={i.id}
+              count={i.openProblems}
               more={i.openProblems > 0 ? { to: `/instances/${i.id}?tab=problems`, label: "All" } : undefined}
+              limit={3}
+              onOpen={(pid) => navigate(`/problems/${pid}`)}
             />
-            <InstanceProblems key={i.id} instanceId={i.id} limit={3} onOpen={(pid) => navigate(`/problems/${pid}`)} />
           </Panel>
         </PaneTabPanel>
 
         <PaneTabPanel value="problems">
           <Panel>
-            <PanelHead
-              title="Open Problems"
-              count={n(i.openProblems)}
+            <InstanceProblems
+              key={i.id}
+              instanceId={i.id}
+              count={i.openProblems}
               more={{ to: `/problems?status=open&instance=${i.id}`, label: "Open in Problems" }}
+              onOpen={(pid) => navigate(`/problems/${pid}`)}
             />
-            <InstanceProblems key={i.id} instanceId={i.id} onOpen={(pid) => navigate(`/problems/${pid}`)} />
           </Panel>
         </PaneTabPanel>
 
@@ -866,43 +884,76 @@ function LastBackupPanel({ id, backup }: { id: string; backup: ListBackup }) {
   )
 }
 
+/** The order of a preview, which has no Sort button: the default, never changed. */
+const noOrder: SortOrder = [null, () => {}]
+
 /**
  * The open problems of the instance, what needs a look first unless another order is picked. The server sends
- * the first 200 and how many there are in all; a preview shows the first few.
+ * the first 200 and how many there are in all; a preview shows the first few. The full list has its Sort
+ * button in its panel head, before the link to Problems (TB-28).
  */
 function InstanceProblems({
   instanceId,
+  count,
+  more,
   limit,
   onOpen,
 }: {
   instanceId: string
-  /** A preview of the first few, in the order the server sends by default, without a sort control. */
+  /** The instance's open problems, for the panel head. */
+  count: number
+  more?: { to: string; label: string }
+  /** A preview of the first few, in the order the server sends by default, with no Sort button. */
   limit?: number
   onOpen: (id: string) => void
 }) {
   const preview = limit !== undefined
   // The full list sorts on the server, so the order covers every open problem of the instance (TB-4); a new order
   // keeps the rows on screen until its answer comes. Keyed by the instance, so no rows of another one stay.
-  const sort = useSortOrder("instance-problems")
+  const order = useSortOrder("instance-problems")
   const query = useApi<ProblemList>(
-    problemsPath({ status: "open", instance: instanceId }, preview ? null : sort.asked),
+    problemsPath({ status: "open", instance: instanceId }, preview ? null : order.asked),
     { keepRows: !preview },
   )
-  if (query.isLoading) return <Loading />
-  if (query.error && !query.data)
-    return <LoadError what="the open problems" error={query.error} retry={() => void query.refetch()} />
   const rows = query.data?.items ?? []
   const total = query.data?.total ?? 0
+  // The headers and the Sort button show the order the rows are in (TB-4). The preview's rows come in the default
+  // order, so its answer must not count as the order picked being applied.
+  const sort = useProblemsSort(rows, preview ? noOrder : order.shown(query), false)
+  const head = (
+    <PanelHead
+      title="Open Problems"
+      count={n(count)}
+      more={more}
+      action={
+        !preview && rows.length > 0 ? <SortButton control={sort.control} name="open problems" small /> : undefined
+      }
+    />
+  )
+  if (query.isLoading)
+    return (
+      <>
+        {head}
+        <Loading />
+      </>
+    )
+  if (query.error && !query.data)
+    return (
+      <>
+        {head}
+        <LoadError what="the open problems" error={query.error} retry={() => void query.refetch()} />
+      </>
+    )
   return (
     <>
+      {head}
       {/* A refresh or a new order that failed keeps the rows on screen, and this line says so with Try again
-          (TB-5, LD-12); the headers stay in the order the rows are in (TB-4). */}
+          (TB-5, LD-12); the headers and the Sort button stay in the order the rows are in (TB-4). */}
       {!preview && <RefreshLine live={query} what="open problems" />}
       <ProblemsTable
         items
         bare
-        preview={preview}
-        order={preview ? undefined : sort.shown(query)}
+        sort={preview ? undefined : sort}
         rows={preview ? rows.slice(0, limit) : rows}
         showInstance={false}
         empty="No open problems on this instance."
@@ -1236,11 +1287,15 @@ export function InstanceDialog({
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="none">None</SelectItem>
-                    {(workers.data ?? []).map((w) => (
-                      <SelectItem key={w.id} value={w.id}>
-                        {w.name}
-                      </SelectItem>
-                    ))}
+                    {/* By name: the list says no more than the names, so the Workers page's offline-first order would
+                        look random here. */}
+                    {[...(workers.data ?? [])]
+                      .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base", numeric: true }))
+                      .map((w) => (
+                        <SelectItem key={w.id} value={w.id}>
+                          {w.name}
+                        </SelectItem>
+                      ))}
                   </SelectContent>
                 </Select>
               )}

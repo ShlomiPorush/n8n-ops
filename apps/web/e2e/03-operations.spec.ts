@@ -200,7 +200,7 @@ test("n8n-ops backs up its own database to the destinations", async () => {
     .getByRole("button", { name: "Run now" })
     .click()
   await page.getByRole("row", { name: /n8n-ops database/ }).click()
-  // The pane of the instance opened before is replaced by the database's own history.
+  // The pane shows the database's own history, whichever backup opened by itself first.
   const history = page.getByRole("region", { name: "Backups · n8n-ops database" })
   await expect(history.getByText("OK · with secrets")).toBeVisible({ timeout: 90_000 })
   await expect(history.getByText("Written")).toHaveCount(2)

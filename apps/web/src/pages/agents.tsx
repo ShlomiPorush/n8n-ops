@@ -188,6 +188,7 @@ function AgentsCard() {
         ) : list.length === 0 ? (
           <Empty title="No agent is connected.">Connect one above; it appears here once you approve it.</Empty>
         ) : (
+          // No Sort button (TB-28): a short list of tokens, in the order they were made.
           <Table bare>
             <TableHeader>
               <TableRow>

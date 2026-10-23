@@ -15,8 +15,7 @@ afterEach(() => vi.useRealTimers())
 const wait = (ms: number) => vi.advanceTimersByTimeAsync(ms)
 
 /** An Undo offer for "Sync orders" whose request the test settles. */
-function offer(undo: () => Promise<unknown>) {
-  const after = vi.fn()
+function offer(undo: () => Promise<unknown>, after = vi.fn(() => Promise.resolve())) {
   return {
     after,
     offer: {
@@ -64,6 +63,41 @@ describe("offerUndo (FB-16)", () => {
     expect(currentToast()).toMatchObject({ tone: "success", message: "Resolve undone: Sync orders" })
     expect(currentToast()?.action).toBeUndefined()
     expect(after).toHaveBeenCalledTimes(1)
+  })
+
+  it("says it is undone only once the lists answered, and offers Refresh when they could not", async () => {
+    const { toast, currentToast, offerUndo } = await load()
+    const undo = vi.fn(() => Promise.resolve({ ok: true }))
+    let fail = () => {}
+    const after = vi.fn(() => new Promise<void>((_, reject) => (fail = () => reject(new Error("refresh_failed")))))
+    offerUndo(offer(undo, after).offer)
+    const key = currentToast()?.key ?? 0
+    toast.act(key)
+    await wait(0)
+    // Still the Undo toast, locked, while the lists are read again.
+    expect(currentToast()).toMatchObject({ key, running: true })
+
+    fail()
+    await wait(0)
+    expect(currentToast()).toMatchObject({
+      tone: "success",
+      message: "Resolve undone: Sync orders. Could not refresh the list.",
+      action: { label: "Refresh" },
+    })
+    await wait(60_000)
+    expect(currentToast()?.action?.label).toBe("Refresh")
+
+    // Refresh reads again and never sends Undo again; failing again, it offers the same.
+    after.mockImplementationOnce(() => Promise.reject(new Error("refresh_failed")))
+    toast.act(currentToast()?.key ?? 0)
+    await wait(0)
+    expect(currentToast()?.action?.label).toBe("Refresh")
+    after.mockImplementationOnce(() => Promise.resolve())
+    toast.act(currentToast()?.key ?? 0)
+    await wait(0)
+    expect(currentToast()).toBeNull()
+    expect(after).toHaveBeenCalledTimes(3)
+    expect(undo).toHaveBeenCalledTimes(1)
   })
 
   it("says nothing was undone when the problem changed after the action", async () => {

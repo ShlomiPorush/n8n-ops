@@ -700,12 +700,13 @@ test("a failed Check now says what failed and why, and its toast waits while the
   const close = toast.getByRole("button", { name: "Close" })
   try {
     await page.getByRole("button", { name: "Check now" }).click()
+    // The button shows the result for a moment (FB-7). Checked first: "Failed" shows for two seconds only.
+    await expect(page.getByRole("button", { name: "Failed", exact: true })).toBeDisabled()
     // The toast names the instance and the server's reason (FB-3, FB-4).
     await expect(toast).toHaveText("Could not check e2e-n8n-b: n8n did not answer.")
     // The keyboard goes into it at once: it then holds past its four seconds (FB-2).
     await close.focus()
-    // The button shows the result for a moment, then its label again (FB-7).
-    await expect(page.getByRole("button", { name: "Failed" })).toBeDisabled()
+    // Then the button has its label again.
     await expect(page.getByRole("button", { name: "Check now" })).toBeEnabled()
   } finally {
     await page.unroute(refresh)

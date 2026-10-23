@@ -6,7 +6,7 @@ import postgres from "postgres"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import type { Ctx } from "../context.ts"
 import { createDatabase, type Database } from "../db/client.ts"
-import { instances, problemReceipts, problems } from "../db/schema.ts"
+import { auditLog, instances, problemReceipts, problems } from "../db/schema.ts"
 import { createAudit } from "../lib/audit.ts"
 import type { N8nExecution } from "../n8n/client.ts"
 import {
@@ -18,9 +18,10 @@ import {
   undoProblemAction,
 } from "./problems.ts"
 
-// Undo of problem actions against a real PostgreSQL (FB-16): exact restore, single use, two tabs at once, and
-// refusal after any later change (a newer action, a new failure, an ended mute, auto-resolve). The database is
-// made for this file from MIGRATION_DATABASE_URL, a role that may create databases, with every migration applied.
+// Undo of problem actions against a real PostgreSQL (FB-16): exact restore, single use, two tabs at once, refusal
+// after any later change (a newer action, a new failure, a merge, an ended mute, auto-resolve), and the audit row
+// saved with the change or not at all. The database is made for this file from MIGRATION_DATABASE_URL, a role that
+// may create databases, with every migration applied.
 const adminUrl = process.env.MIGRATION_DATABASE_URL
 if (!adminUrl) throw new Error("MIGRATION_DATABASE_URL is required (scripts/verify.sh sets it)")
 
@@ -216,14 +217,38 @@ describe("undo of a problem action", () => {
     expect(await read(p.id)).toEqual(regressed)
   })
 
-  it("a new failure that changes no state leaves the receipt usable", async () => {
-    const p = await problem()
-    const receipt = await act(p.id, "mute")
-    await ingestExecution(ctx, instance, failureOf(p, `exec-quiet-${p.id}`), { silent: true })
-    const counted = await read(p.id)
-    expect(counted).toMatchObject({ status: "muted", count: 1 })
-    expect((await undoProblemAction(ctx, p.id, receipt.id)).ok).toBe(true)
-    expect(state(await read(p.id))).toEqual(state(p))
+  it("is refused after a new failure that left the status as it was (Reopen or Mute, then a failure)", async () => {
+    const cases = [
+      {
+        action: "reopen" as const,
+        before: { status: "resolved" as const, resolvedAt: new Date("2026-10-19T10:00:00Z") },
+      },
+      { action: "mute" as const, before: {} },
+    ]
+    for (const { action, before } of cases) {
+      const p = await problem(before)
+      const receipt = await act(p.id, action)
+      const acted = await read(p.id)
+      await ingestExecution(ctx, instance, failureOf(p, `exec-${action}-${p.id}`), { silent: true })
+      const counted = await read(p.id)
+      // The failure is counted on the problem as the action left it: an Undo would hide it under resolved.
+      expect(counted, action).toMatchObject({ status: acted.status, count: 1 })
+
+      expect(await undoProblemAction(ctx, p.id, receipt.id), action).toEqual({ ok: false, error: "already_changed" })
+      expect(await read(p.id), action).toEqual(counted)
+    }
+  })
+
+  it("is refused after another problem was merged into it", async () => {
+    const p = await problem({ count: 1 })
+    const from = await problem({ count: 2 })
+    const receipt = await act(p.id, "resolve")
+    await mergeProblems(ctx, from.id, p.id)
+    const merged = await read(p.id)
+    expect(merged).toMatchObject({ status: "resolved", count: 3 })
+
+    expect(await undoProblemAction(ctx, p.id, receipt.id)).toEqual({ ok: false, error: "already_changed" })
+    expect(await read(p.id)).toEqual(merged)
   })
 
   it("is refused after housekeeping ended the mute", async () => {
@@ -281,15 +306,115 @@ describe("undo of a problem action", () => {
     expect(await ctx.db.select().from(problemReceipts).where(eq(problemReceipts.id, receipt.id))).toHaveLength(0)
   })
 
-  it("moves the version on every change of state, whoever makes it, and on nothing else", async () => {
+  it("moves the version on a change of state or a new occurrence, whoever makes it, and on nothing else", async () => {
     const p = await problem()
-    await ctx.db.update(problems).set({ lastSeen: new Date(), workflowName: "Renamed" }).where(eq(problems.id, p.id))
+    await ctx.db.update(problems).set({ workflowName: "Renamed" }).where(eq(problems.id, p.id))
     expect((await read(p.id)).version).toBe(p.version)
+    await ctx.db.update(problems).set({ lastSeen: new Date() }).where(eq(problems.id, p.id))
+    expect((await read(p.id)).version).toBe(p.version + 1)
+    await ctx.db.update(problems).set({ count: 5 }).where(eq(problems.id, p.id))
+    expect((await read(p.id)).version).toBe(p.version + 2)
     // As Telegram's Mute button and housekeeping write it: straight to the row.
     await ctx.db
       .update(problems)
       .set({ status: "muted", mutedUntil: new Date(Date.now() + hour) })
       .where(eq(problems.id, p.id))
-    expect((await read(p.id)).version).toBe(p.version + 1)
+    expect((await read(p.id)).version).toBe(p.version + 3)
+  })
+
+  it("a failure read again (already counted) leaves the receipt usable", async () => {
+    const p = await problem()
+    const execution = failureOf(p, `exec-again-${p.id}`)
+    await ingestExecution(ctx, instance, execution, { silent: true })
+    const receipt = await act(p.id, "mute")
+    await ingestExecution(ctx, instance, execution, { silent: true })
+    expect(await read(p.id)).toMatchObject({ status: "muted", count: 1, version: receipt.version })
+    expect((await undoProblemAction(ctx, p.id, receipt.id)).ok).toBe(true)
+  })
+
+  it("clearing expired receipts does not wait for one another transaction holds", async () => {
+    const p = await problem()
+    const old = await act(p.id, "resolve")
+    await ctx.db
+      .update(problemReceipts)
+      .set({ expiresAt: new Date(Date.now() - 1000) })
+      .where(eq(problemReceipts.id, old.id))
+    // Another transaction (an Undo of that receipt, say) holds it until released.
+    let release = () => {}
+    const released = new Promise<void>((resolve) => (release = resolve))
+    let holding = () => {}
+    const held = new Promise<void>((resolve) => (holding = resolve))
+    const holder = ctx.db.transaction(async (tx) => {
+      await tx.select().from(problemReceipts).where(eq(problemReceipts.id, old.id)).for("update")
+      holding()
+      await released
+    })
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      await held
+      const other = await problem()
+      const waited = new Promise<"waited">((resolve) => (timer = setTimeout(() => resolve("waited"), 2000)))
+      const acted = applyProblemAction(ctx, other.id, "resolve").then(() => "acted" as const)
+      expect(await Promise.race([acted, waited])).toBe("acted")
+    } finally {
+      clearTimeout(timer)
+      release()
+      await holder
+    }
+    // Left for a later action once free.
+    await act((await problem()).id, "resolve")
+    expect(await ctx.db.select().from(problemReceipts).where(eq(problemReceipts.id, old.id))).toHaveLength(0)
+  })
+})
+
+describe("the audit row of a problem action", () => {
+  const by = { actor: "admin", via: "web" as const }
+  const failing = () =>
+    ({
+      ...ctx,
+      audit: async () => {
+        throw new Error("audit log unavailable")
+      },
+    }) as Ctx
+  const receiptsOf = (id: string) => ctx.db.select().from(problemReceipts).where(eq(problemReceipts.problemId, id))
+
+  it("is written with the action and with its Undo, naming the problem", async () => {
+    const p = await problem()
+    const result = await applyProblemAction(ctx, p.id, "resolve", { audit: { ...by, action: "Problem resolved" } })
+    const receipt = result?.receipt
+    if (!receipt) throw new Error("no receipt")
+    expect(
+      (await undoProblemAction(ctx, p.id, receipt.id, { audit: { ...by, action: "Problem action undone" } })).ok,
+    ).toBe(true)
+    const rows = await ctx.db
+      .select()
+      .from(auditLog)
+      .where(eq(auditLog.target, `${p.workflowName} · ${p.nodeName}`))
+      .orderBy(auditLog.id)
+    expect(rows).toMatchObject([
+      { actor: "admin", via: "web", action: "Problem resolved" },
+      { actor: "admin", via: "web", action: "Problem action undone", details: { action: "resolve", status: "open" } },
+    ])
+  })
+
+  it("saves neither the action nor its receipt when it cannot be written", async () => {
+    const p = await problem()
+    await expect(
+      applyProblemAction(failing(), p.id, "mute", { audit: { ...by, action: "Problem muted" } }),
+    ).rejects.toThrow("audit log unavailable")
+    expect(await read(p.id)).toEqual(p)
+    expect(await receiptsOf(p.id)).toHaveLength(0)
+  })
+
+  it("leaves the Undo undone and its receipt usable when it cannot be written", async () => {
+    const p = await problem()
+    const receipt = await act(p.id, "resolve")
+    const resolved = await read(p.id)
+    await expect(
+      undoProblemAction(failing(), p.id, receipt.id, { audit: { ...by, action: "Problem action undone" } }),
+    ).rejects.toThrow("audit log unavailable")
+    expect(await read(p.id)).toEqual(resolved)
+    expect((await receiptsOf(p.id))[0]?.usedAt).toBeNull()
+    expect((await undoProblemAction(ctx, p.id, receipt.id)).ok).toBe(true)
   })
 })

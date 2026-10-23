@@ -270,8 +270,9 @@ export const problems = pgTable(
     /** When set, this problem was merged into another one by the operator. */
     mergedInto: uuid("merged_into"),
     /**
-     * Moves on with every change of the state an Undo restores (status, regression, mute end, resolved time, merge),
-     * whoever makes it: a trigger in migration 0007 bumps it, so ingest, housekeeping and Telegram count too (FB-16).
+     * Moves on with every change of the state an Undo restores (status, regression, mute end, resolved time, merge)
+     * and with every new occurrence (count, first and last seen), whoever makes it: a trigger in migration 0007 bumps
+     * it, so ingest, merges, housekeeping and Telegram count too (FB-16).
      */
     version: integer("version").notNull().default(0),
     createdAt: created(),

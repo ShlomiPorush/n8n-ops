@@ -7,11 +7,15 @@ import { toast } from "@/lib/toast"
  * Act at once, offer Undo (FB-16). The action has run and the server answered with a receipt; its success toast
  * offers Undo for UNDO_MS, longer while the pointer or the keyboard is on it (FB-2). Undo sends the receipt back;
  * while it runs the toast stays and its button is locked, and the toast that follows takes over:
- * - done: "<what> undone: <name>";
+ * - done: `after` refreshes what shows the object, then "<what> undone: <name>"; when that refresh fails, the same
+ *   text says the list did not refresh and offers Refresh until closed, which reads again and never resends Undo;
  * - refused, because the object changed since, the receipt was used or is too old: says so, nothing changed;
  * - failed (network, server): "Could not undo: <reason>" with Retry until closed.
- * Whatever the outcome, `after` refreshes what shows the object.
+ * After a refusal or a failure `after` refreshes too, without holding the message.
  */
+
+/** Added to the undone text when the lists could not be read again. */
+const REFRESH_FAILED_TEXT = "Could not refresh the list."
 
 export type UndoOffer = {
   /** The success toast of the action: "Problem resolved: Sync orders". */
@@ -24,8 +28,8 @@ export type UndoOffer = {
   undone: string
   /** Sends the receipt back. */
   undo: () => Promise<unknown>
-  /** Refreshes the lists and panes that show the object. */
-  after?: () => void
+  /** Refreshes the lists and panes that show the object; rejects when one of them could not be read again. */
+  after?: () => Promise<unknown>
 }
 
 /** What a refused Undo says, by the server's code; undefined for a failure worth retrying. */
@@ -53,7 +57,6 @@ export function offerUndo(offer: UndoOffer) {
 async function runUndo(offer: UndoOffer): Promise<void> {
   try {
     await offer.undo()
-    toast.success(offer.undone)
   } catch (error) {
     const refused = error instanceof ApiError ? undoRefusal(error.code, offer.name) : undefined
     if (refused) toast[refused.tone](refused.text)
@@ -63,7 +66,29 @@ async function runUndo(offer: UndoOffer): Promise<void> {
         duration: Number.POSITIVE_INFINITY,
         action: { label: "Retry", ariaLabel: `Retry: ${offer.ariaLabel}`, run: () => runUndo(offer) },
       })
-  } finally {
-    offer.after?.()
+    // The page shows a refresh that failed here itself (TB-5); the message stays about the Undo.
+    offer.after?.().catch(() => {})
+    return
   }
+  try {
+    await offer.after?.()
+    toast.success(offer.undone)
+  } catch {
+    if (!sessionEnding()) offerRefresh(offer)
+  }
+}
+
+/** Undone, but the lists still show the old state: Refresh reads them again, without sending Undo again. */
+function offerRefresh(offer: UndoOffer) {
+  toast.success(`${offer.undone}. ${REFRESH_FAILED_TEXT}`, {
+    duration: Number.POSITIVE_INFINITY,
+    action: {
+      label: "Refresh",
+      // Done: the toast closes and the lists show the restored state; failed again: the same offer comes back.
+      run: () =>
+        offer.after?.().catch(() => {
+          if (!sessionEnding()) offerRefresh(offer)
+        }),
+    },
+  })
 }

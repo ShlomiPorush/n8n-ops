@@ -182,7 +182,8 @@ function useSheetGestures(
  * a dialog with typed input sets `keepOnBackdrop`, and its owner routes every close through `useDiscardGuard`,
  * which asks before dropping what was typed (DS-9): X, Escape, Back and the pull-down all reach the owner's
  * `onOpenChange`. A dialog whose state is in the address already gets Back from the router and sets
- * `history={false}`.
+ * `history={false}`, and `scrollPane` when Back and Forward should also return its body to where it was
+ * scrolled (NL-3).
  */
 function DialogContent({
   className,
@@ -191,6 +192,7 @@ function DialogContent({
   keepOnBackdrop = false,
   pullToClose,
   history = true,
+  scrollPane,
   onPointerDownOutside,
   onInteractOutside,
   onOpenAutoFocus,
@@ -201,6 +203,8 @@ function DialogContent({
   /** Whether pulling the phone sheet down closes it; by default when it has a Close button. */
   pullToClose?: boolean
   history?: boolean
+  /** Names the body as a scrolling area of the page, whose place each history entry keeps (`data-scroll-pane`). */
+  scrollPane?: string
 }) {
   // The panel mounts after this component (the portal waits a render), so it is tracked as state.
   const [panel, setPanel] = React.useState<HTMLDivElement | null>(null)
@@ -256,6 +260,7 @@ function DialogContent({
         </div>
         <div
           data-slot="dialog-body"
+          data-scroll-pane={scrollPane}
           // A footer, or a pane's footer while it holds the save bar or tabs, ends the body itself: padding under
           // it would show below the buttons in a scroll container.
           className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain px-pad-x pb-pad-x has-[>[data-slot=dialog-footer]:last-child]:pb-0 has-[>[data-slot=pane-footer]:last-child>:not(:empty)]:pb-0 max-md:pb-[calc(var(--spacing-pad-x)+env(safe-area-inset-bottom))] max-md:has-[>[data-slot=dialog-footer]:last-child]:pb-0 max-md:has-[>[data-slot=pane-footer]:last-child>:not(:empty)]:pb-0"

@@ -83,7 +83,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - **A Public URL from `N8N_OPS_PUBLIC_URL` is no longer written to the database by an unrelated save.** Before, saving General (only the design, for example) stored it, and a later change of the variable had no effect. An address stored that way before shows "Replaces …, set by N8N_OPS_PUBLIC_URL" with Reset to the environment value.
 - Email recipients and Telegram approvers are checked when saved: "bob" or "bob@exmaple" is refused, by name, instead of being saved without a word.
 - A Settings section opened from another one starts at its top, instead of at the scroll position of the one before.
-- Back and Forward bring the list beside an open item, and the item itself, back to where they were scrolled, not only the page. A place left at its top without scrolling is brought back to its top too.
+- Back and Forward bring the list beside an open item, and the item itself, back to where they were scrolled, not only the page. This holds also for an item open as a dialog on a small tablet or as a sheet on a phone, for each of its tabs. A place left at its top without scrolling is brought back to its top too.
 - Clicking Settings in the sidebar while a Settings section is open no longer adds a step that Back has to undo.
 - Dialogs keep 16px from the edges of the screen on small tablets; a wide one, such as an instance opened from the list, touched them.
 - On a phone, menus and lists of choices open between the top bar and the tab bar instead of over them.

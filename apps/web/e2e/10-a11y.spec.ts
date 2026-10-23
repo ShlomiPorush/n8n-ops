@@ -1,5 +1,5 @@
 import AxeBuilder from "@axe-core/playwright"
-import { type BrowserContext, expect, type Locator, type Page, type Request, test } from "@playwright/test"
+import { type BrowserContext, expect, type Locator, type Page, test } from "@playwright/test"
 import { signIn } from "./helpers.ts"
 
 // Accessibility is tested, not assumed (AX-11): every main page, with an item open where the page has a reading
@@ -9,20 +9,11 @@ import { signIn } from "./helpers.ts"
 
 let context: BrowserContext
 let page: Page
-/** Requests on their way, but not the live updates (/api/events), which stay open for as long as the page. */
-const pending = new Set<Request>()
 
 test.beforeAll(async ({ browser }) => {
   // axe needs a page of a context of its own.
   context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
   page = await context.newPage()
-  page.on("request", (r) => {
-    // A page load drops what the page before it still waited for; those requests report neither end.
-    if (r.isNavigationRequest() && r.frame() === page.mainFrame()) pending.clear()
-    if (!new URL(r.url()).pathname.startsWith("/api/events")) pending.add(r)
-  })
-  page.on("requestfinished", (r) => pending.delete(r))
-  page.on("requestfailed", (r) => pending.delete(r))
   // The theme follows the system here, so emulating the system's scheme switches it (OT-4).
   await page.addInitScript(() => localStorage.setItem("n8n-ops-theme", "system"))
   await signIn(page)
@@ -46,21 +37,12 @@ const excluded = (rule: string, target: string) => exclusions.some((e) => e.rule
 /**
  * Waits until the page has its data and nothing on it still moves, so the scan sees what a person sees. What the
  * page is for is checked by the caller first (its `ready` content): a page that is still loading, or that failed
- * and so asks for nothing more, would pass any check of "nothing loads".
+ * and so asks for nothing more, would pass any check of "nothing loads". Then what the page shows of its own
+ * loading: no part still says it is loading, nothing is busy. Requests on the wire are not waited for: some stay
+ * open far longer than the page needs them (the live updates, the setup checklist).
  */
 async function settled() {
-  // No request on its way for half a second.
-  const left = () => [...pending].map((r) => r.url())
-  await expect
-    .poll(
-      async () => {
-        if (pending.size) return left()
-        await page.waitForTimeout(500)
-        return left()
-      },
-      { timeout: 15_000 },
-    )
-    .toEqual([])
+  await expect(page.getByRole("status").filter({ hasText: /^Loading/ })).toHaveCount(0, { timeout: 15_000 })
   await expect(page.locator('[aria-busy="true"]')).toHaveCount(0, { timeout: 15_000 })
   // Nothing failed to load (LoadError, or a list's next page).
   await expect(page.getByText(/^Could not load /)).toHaveCount(0)

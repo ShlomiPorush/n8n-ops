@@ -15,6 +15,7 @@ import { useTheme } from "next-themes"
 import { Popover as PopoverPrimitive, Dialog as SheetPrimitive } from "radix-ui"
 import { cloneElement, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { Link, Navigate, NavLink, Outlet, useLocation, useNavigate, useNavigationType } from "react-router"
+import { AttentionBell } from "@/app/attention-bell"
 import { ChromeContext } from "@/app/chrome"
 import { DesignSync } from "@/app/design-sync"
 import { groups, isActive, type NavItem, operate, pageGroups, pageOf } from "@/app/nav"
@@ -34,13 +35,13 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { useMediaQuery } from "@/hooks/use-mobile"
+import { useIsMobile, useMediaQuery } from "@/hooks/use-mobile"
 import { ApiError, useApi } from "@/lib/api"
 import { authClient } from "@/lib/auth-client"
 import { SCROLL_RESTORE_MS } from "@/lib/behavior"
 import { useLiveUpdates } from "@/lib/live"
 import { n, plural } from "@/lib/numbers"
-import { useOverlayHistory } from "@/lib/overlay-history"
+import { useNavigateFromOverlay, useOverlayHistory } from "@/lib/overlay-history"
 import { placeSpot, readSpot, type ScrollSpot, shownEntry } from "@/lib/scroll-spot"
 import { loginPath, sessionClosed, sessionStarted } from "@/lib/session"
 import { toast } from "@/lib/toast"
@@ -227,7 +228,11 @@ function TopBar({
           ref={setActionsSlot}
           className={cn("flex shrink-0 items-center gap-2 pe-3 empty:hidden", searching && "hidden")}
         />
-        <GlobalSearch pages={searchPages} variant="bar" onOpenChange={setSearching} className="me-[22px] lg:me-7" />
+        <GlobalSearch pages={searchPages} variant="bar" onOpenChange={setSearching} />
+        {/* Needs attention from every page (NL-19). */}
+        <div className="ms-2.5 me-[22px] flex shrink-0 items-center lg:me-7">
+          <AttentionBell />
+        </div>
       </div>
     </header>
   )
@@ -566,13 +571,10 @@ function UserMenu({ compact }: { compact?: boolean }) {
 }
 
 /**
- * Phone: a slim top bar with the page name, a pill with the count of open problems when there are any, the
- * search and the account menu. (NL-9 and NL-10 now put a Needs attention bell where the pill is.)
+ * Phone: a slim top bar with the page name, the Needs attention bell (NL-9, NL-19), the search and the account menu.
  */
 function PhoneTopBar() {
   const { pathname } = useLocation()
-  const counts = useCounts()
-  const open = counts.summary?.openProblems ?? 0
   return (
     <header
       data-slot="phone-top-bar"
@@ -585,15 +587,8 @@ function PhoneTopBar() {
         <span className="truncate text-meta font-semibold text-muted-foreground">n8n-ops</span>
         <span className="truncate text-h2 font-bold">{pageOf(pathname)?.item.label ?? "n8n-ops"}</span>
       </div>
-      {open > 0 && pathname !== "/problems" && (
-        <Link
-          to="/problems"
-          className="tint-fail ms-auto flex h-8 shrink-0 items-center gap-[7px] rounded-full px-3 text-ctl font-semibold before:size-[7px] before:rounded-full before:bg-current"
-        >
-          {plural(open, "problem")}
-        </Link>
-      )}
-      <div className={cn("flex shrink-0 items-center", !(open > 0 && pathname !== "/problems") && "ms-auto")}>
+      <div className="ms-auto flex shrink-0 items-center">
+        <AttentionBell phone />
         <PhoneSearch pages={searchPages} />
         <UserMenu compact />
       </div>
@@ -601,21 +596,64 @@ function PhoneTopBar() {
   )
 }
 
-/** Phone: the bottom tab bar. The fifth tab opens every page in a sheet above the bar; Back closes it. */
+/**
+ * Phone: the bottom tab bar. The fifth tab opens every page in a sheet above the bar (NL-9). The sheet is a layer:
+ * Escape, Back and a tap beside it close it, the focus moves into it and back to More, and the page behind it is
+ * inert while the tab bar stays usable, so a tab goes straight to its page. A page chosen in it opens through the
+ * unsaved-changes guard: the sheet closes once the move is made, and stays when the Leave question keeps the page
+ * (SV-1). It closes when the width crosses 760px. More carries a pip for the counters of the pages it holds, named
+ * and in the worst of their tones (NL-10).
+ */
 function TabBar() {
   const { pathname } = useLocation()
   const counts = useCounts()
   const [more, setMore] = useState(false)
   useOverlayHistory(more, () => setMore(false))
-  // A page chosen in the sheet closes it.
+  const navigateFromSheet = useNavigateFromOverlay()
+  // A page chosen in the sheet or in the tab bar closes it, once the move is made.
   // biome-ignore lint/correctness/useExhaustiveDependencies: closes on every navigation
   useEffect(() => setMore(false), [pathname])
+  // Above 760px the sheet and the tab bar are gone, so the sheet closes and the page is usable again.
+  const phone = useIsMobile()
+  useEffect(() => {
+    if (!phone) setMore(false)
+  }, [phone])
+  /**
+   * Opens a page from the sheet or the tab bar while the sheet is open, and says whether it did; a click with a
+   * modifier is left to the browser (a new tab). The page already open only closes the sheet.
+   */
+  const openFromSheet = (to: string, e: React.MouseEvent<HTMLAnchorElement>) => {
+    if (!more || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return false
+    e.preventDefault()
+    if (to === pathname) setMore(false)
+    else navigateFromSheet(to)
+    return true
+  }
+  // The page and its top bar wait behind the sheet; the tab bar does not.
+  useEffect(() => {
+    if (!more) return
+    const behind = [document.getElementById("main"), document.querySelector('[data-slot="phone-top-bar"]')].filter(
+      (el): el is HTMLElement => el !== null && !el.hasAttribute("inert"),
+    )
+    for (const el of behind) el.setAttribute("inert", "")
+    return () => {
+      for (const el of behind) el.removeAttribute("inert")
+    }
+  }, [more])
   const inMore = !tabs.some((t) => isActive(t, pathname))
-  const pip = groups.flatMap((g) => g.items).some((i) => !tabs.includes(i) && counts.of(i))
+  const held = groups
+    .flatMap((g) => g.items)
+    .filter((i) => !tabs.includes(i))
+    .flatMap((i) => {
+      const count = counts.of(i)
+      return count ? [{ ...count, label: i.label }] : []
+    })
+  const pipTone = held.some((c) => c.tone === "fail") ? "fail" : held.length ? "warn" : null
   const tabClass =
     "relative flex flex-1 flex-col items-center justify-center gap-[3px] text-meta font-semibold text-muted-foreground aria-[current=page]:text-ink [&_svg]:size-[22px]"
   return (
-    <>
+    // Not modal, so the tab bar stays usable; the page behind is made inert above. The root holds the trigger too.
+    <SheetPrimitive.Root open={more} onOpenChange={setMore} modal={false}>
       <nav
         aria-label="Main"
         data-slot="tab-bar"
@@ -630,6 +668,12 @@ function TabBar() {
               end={t.to === "/"}
               aria-current={isActive(t, pathname) ? "page" : undefined}
               className={tabClass}
+              onClick={(e) => {
+                // With the sheet open the page takes the sheet's Back step, as a move from inside it does, so the
+                // sheet's close does not step back as well (DS-10). The sheet closes once the move is made (the
+                // pathname effect above), so Stay in the Leave question keeps it open with its Back step.
+                openFromSheet(t.to, e)
+              }}
             >
               <t.icon aria-hidden />
               {t.label}
@@ -646,79 +690,100 @@ function TabBar() {
             </NavLink>
           )
         })}
-        <button
-          type="button"
-          className={tabClass}
-          aria-current={inMore ? "page" : undefined}
-          aria-expanded={more}
-          onClick={() => setMore((v) => !v)}
-        >
-          <Ellipsis aria-hidden />
-          More
-          {pip && (
-            <span className="absolute start-[calc(50%+6px)] top-[9px] size-2 rounded-full border-2 border-panel bg-warn" />
-          )}
-        </button>
+        {/* The trigger of the sheet, so the focus comes back to it when the sheet closes. */}
+        <SheetPrimitive.Trigger asChild>
+          <button type="button" className={tabClass} aria-current={inMore ? "page" : undefined}>
+            <Ellipsis aria-hidden />
+            More
+            {pipTone && (
+              <span
+                className={cn(
+                  "absolute start-[calc(50%+6px)] top-[9px] size-2 rounded-full border-2 border-panel",
+                  pipTone === "fail" ? "bg-fail" : "bg-warn",
+                )}
+              >
+                <span className="sr-only">{held.map((c) => `${c.label}: ${c.says}`).join(", ")}</span>
+              </span>
+            )}
+          </button>
+        </SheetPrimitive.Trigger>
       </nav>
-      <SheetPrimitive.Root open={more} onOpenChange={setMore}>
-        <SheetPrimitive.Portal>
-          <SheetPrimitive.Overlay className="fixed inset-x-0 top-0 bottom-[calc(var(--spacing-tabbar)+env(safe-area-inset-bottom))] z-35 bg-black/40 duration-200 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0 md:hidden" />
-          <SheetPrimitive.Content
-            aria-describedby={undefined}
-            // Focus the sheet itself, not its first link, so no tooltip pops up on open.
-            onOpenAutoFocus={(e) => {
+      {/*
+       * The veil is drawn here: a sheet that is not modal draws no overlay of its own. It fades with the sheet and
+       * a tap on it closes the sheet.
+       */}
+      <div
+        aria-hidden
+        data-state={more ? "open" : "closed"}
+        onClick={() => setMore(false)}
+        className="invisible fixed inset-x-0 top-0 bottom-[calc(var(--spacing-tabbar)+env(safe-area-inset-bottom))] z-35 bg-black/40 opacity-0 transition-[opacity,visibility] duration-200 data-[state=open]:visible data-[state=open]:opacity-100 md:hidden"
+      />
+      <SheetPrimitive.Portal>
+        <SheetPrimitive.Content
+          aria-describedby={undefined}
+          // Focus the sheet itself, not its first link, so no tooltip pops up on open.
+          onOpenAutoFocus={(e) => {
+            e.preventDefault()
+            ;(e.currentTarget as HTMLElement).focus()
+          }}
+          // A tab closes the sheet itself once its move starts (above); the toast stays usable over the sheet, and
+          // the Leave question asked for a move from it is not beside it: Stay keeps the sheet (SV-1).
+          onInteractOutside={(e) => {
+            if (
+              e.target instanceof Element &&
+              e.target.closest('[data-slot="tab-bar"], [data-toast], [role="alertdialog"]')
+            )
               e.preventDefault()
-              ;(e.currentTarget as HTMLElement).focus()
-            }}
-            tabIndex={-1}
-            className="fixed inset-x-0 bottom-[calc(var(--spacing-tabbar)+env(safe-area-inset-bottom))] z-36 flex max-h-[calc(100dvh-var(--spacing-tabbar)-60px-env(safe-area-inset-bottom))] flex-col gap-0.5 overflow-y-auto overscroll-contain rounded-t-drawer border-b border-line bg-bg px-3 pt-2 pb-3 duration-200 ease-out data-[state=closed]:animate-out data-[state=closed]:slide-out-to-bottom-8 data-[state=open]:animate-in data-[state=open]:slide-in-from-bottom-8 md:hidden"
-          >
-            <SheetPrimitive.Title className="sr-only">All Pages</SheetPrimitive.Title>
-            <span aria-hidden className="mx-auto mt-1 mb-1.5 h-1 w-10 shrink-0 rounded-full bg-muted-foreground/50" />
-            {groups.map((g) => (
-              <div key={g.label} className="flex flex-col gap-0.5">
-                <div className="px-3 pt-2.5 pb-1 text-meta font-semibold text-muted-foreground">{g.label}</div>
-                {g.items.map((item) => {
-                  const count = counts.of(item)
-                  return (
-                    <NavLink
-                      key={item.to}
-                      to={item.to}
-                      end={item.to === "/"}
-                      // Replaces the sheet's Back entry, so Back afterwards leaves the new page in one step.
-                      replace
-                      aria-current={isActive(item, pathname) ? "page" : undefined}
-                      className="flex min-h-touch items-center gap-2.5 rounded-sm px-2.5 aria-[current=page]:bg-primary aria-[current=page]:font-title aria-[current=page]:text-primary-foreground regular:aria-[current=page]:bg-fill regular:aria-[current=page]:font-semibold regular:aria-[current=page]:text-ink"
-                    >
-                      <item.icon aria-hidden className="size-[18px] shrink-0" />
-                      {item.label}
-                      {count && (
-                        <span
-                          title={count.says}
-                          className={cn(
-                            "ms-auto rounded-tag px-[7px] py-px text-meta font-bold tabular-nums",
-                            isActive(item, pathname)
-                              ? "bg-transparent text-current"
-                              : count.tone === "fail"
-                                ? "tint-fail"
-                                : "tint-warn",
-                          )}
-                        >
-                          {n(count.value)}
-                        </span>
-                      )}
-                    </NavLink>
-                  )
-                })}
-              </div>
-            ))}
-            <div className="mt-2 flex items-center gap-1 border-t border-line pt-2">
-              <ThemeButton />
+          }}
+          tabIndex={-1}
+          className="fixed inset-x-0 bottom-[calc(var(--spacing-tabbar)+env(safe-area-inset-bottom))] z-36 flex max-h-[calc(100dvh-var(--spacing-tabbar)-60px-env(safe-area-inset-bottom))] flex-col gap-0.5 overflow-y-auto overscroll-contain rounded-t-drawer border-b border-line bg-bg px-3 pt-2 pb-3 duration-200 ease-out data-[state=closed]:animate-out data-[state=closed]:slide-out-to-bottom-8 data-[state=open]:animate-in data-[state=open]:slide-in-from-bottom-8 md:hidden"
+        >
+          <SheetPrimitive.Title className="sr-only">All Pages</SheetPrimitive.Title>
+          <span aria-hidden className="mx-auto mt-1 mb-1.5 h-1 w-10 shrink-0 rounded-full bg-muted-foreground/50" />
+          {groups.map((g) => (
+            <div key={g.label} className="flex flex-col gap-0.5">
+              <div className="px-3 pt-2.5 pb-1 text-meta font-semibold text-muted-foreground">{g.label}</div>
+              {g.items.map((item) => {
+                const count = counts.of(item)
+                return (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    end={item.to === "/"}
+                    // The page takes the sheet's Back entry, so Back afterwards leaves it in one step (DS-10). The
+                    // sheet closes once the move is made: when the Leave question keeps the page, it stays open.
+                    onClick={(e) => openFromSheet(item.to, e)}
+                    aria-current={isActive(item, pathname) ? "page" : undefined}
+                    className="flex min-h-touch items-center gap-2.5 rounded-sm px-2.5 aria-[current=page]:bg-primary aria-[current=page]:font-title aria-[current=page]:text-primary-foreground regular:aria-[current=page]:bg-fill regular:aria-[current=page]:font-semibold regular:aria-[current=page]:text-ink"
+                  >
+                    <item.icon aria-hidden className="size-[18px] shrink-0" />
+                    {item.label}
+                    {count && (
+                      <span
+                        title={count.says}
+                        className={cn(
+                          "ms-auto rounded-tag px-[7px] py-px text-meta font-bold tabular-nums",
+                          isActive(item, pathname)
+                            ? "bg-transparent text-current"
+                            : count.tone === "fail"
+                              ? "tint-fail"
+                              : "tint-warn",
+                        )}
+                      >
+                        {n(count.value)}
+                      </span>
+                    )}
+                  </NavLink>
+                )
+              })}
             </div>
-          </SheetPrimitive.Content>
-        </SheetPrimitive.Portal>
-      </SheetPrimitive.Root>
-    </>
+          ))}
+          <div className="mt-2 flex items-center gap-1 border-t border-line pt-2">
+            <ThemeButton />
+          </div>
+        </SheetPrimitive.Content>
+      </SheetPrimitive.Portal>
+    </SheetPrimitive.Root>
   )
 }
 

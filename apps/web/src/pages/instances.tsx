@@ -431,7 +431,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
   useCrumb(detail.data?.name)
   const [editing, setEditing] = useState(false)
   const confirm = useConfirm()
-  const invalidate = [`/instances/${id}`, "/instances", "/overview"]
+  const invalidate = [`/instances/${id}`, "/instances", "/overview", "/overview/attention"]
   // Toasts name the instance (FB-4), read when the request ends.
   const named = () => detail.data?.name ?? "the instance"
   const refresh = useApiMutation<void>("POST", `/instances/${id}/refresh`, {
@@ -440,7 +440,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
     failed: () => `check ${named()}`,
   })
   const remove = useApiMutation<void>("DELETE", `/instances/${id}`, {
-    invalidate: ["/instances", "/overview"],
+    invalidate: ["/instances", "/overview", "/overview/attention"],
     failed: () => `remove ${named()}`,
   })
   const declare = useApiMutation<{ declaredAccess: "read" | "write" }>("PATCH", `/instances/${id}`, {

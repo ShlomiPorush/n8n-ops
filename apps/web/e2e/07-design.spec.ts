@@ -41,6 +41,8 @@ test("each design draws with its own type, corners, surfaces and shadows, in lig
   await page.goto("/")
   await expect(shown(page)).toHaveAttribute("data-design", here)
   await expect(page.getByRole("heading", { name: "Needs Attention" })).toBeVisible()
+  // The panels are drawn before the first answer (FB-17): wait for the figure to hold its number, not "Loading".
+  await expect(page.locator('[data-slot="kpi-figure"]').first()).toHaveText(/^\d/)
   /** What the page draws: the body, a key figure and the panel around "Needs Attention". */
   const drawn = (d: "regular" | "compact", dark: boolean) =>
     page.evaluate(

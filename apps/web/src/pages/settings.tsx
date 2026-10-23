@@ -703,7 +703,9 @@ export function SettingsForm({ section, active = true }: { section: string; acti
       // Only a successful save lets the next answer replace the form; a failed one keeps the edits (SV-3).
       reload.current = true
       setProblems({})
-      // The typed text went out with the list it was added to.
+      // The typed text went out with the list it was added to: it stays on screen as part of that list, also
+      // when the next read fails.
+      setValues((v) => withPending(v, pending))
       setPending({})
       if (def?.fields.some((f) => f.type === "password" && f.name in sent)) secretSaved()
       // A new design shows at once, without a reload.
@@ -870,7 +872,7 @@ export function SettingsForm({ section, active = true }: { section: string; acti
         </fieldset>
       )}
       {query.data && (section === "telegram" || section === "email") && (
-        <TestRow section={section} data={query.data} values={values} secretsSaved={secretsSaved} />
+        <TestRow section={section} data={query.data} values={current} secretsSaved={secretsSaved} />
       )}
     </Panel>
   )

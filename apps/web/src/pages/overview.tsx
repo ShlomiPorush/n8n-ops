@@ -13,7 +13,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { useApi } from "@/lib/api"
 import { loadView } from "@/lib/load-state"
-import { n, plural } from "@/lib/time"
+import { healthCounts, n, plural } from "@/lib/numbers"
 import { cn } from "@/lib/utils"
 import { behind, type InstanceRow } from "./instances"
 
@@ -153,9 +153,7 @@ export function OverviewPage() {
                   <span className="regular:text-muted-foreground">/{n(o.stats.instances)}</span>
                 </>
               }
-              hint={
-                o.stats.down || o.stats.warn ? `${n(o.stats.down)} down, ${n(o.stats.warn)} need a look` : undefined
-              }
+              hint={o.stats.down || o.stats.warn ? healthCounts(o.stats.down, o.stats.warn) : undefined}
               tone={o.stats.down ? "fail" : o.stats.warn ? "warn" : undefined}
               to="/instances"
             />

@@ -3,6 +3,7 @@ import { useEffect, useState } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { AGO_TICK_MS } from "@/lib/behavior"
+import { plural } from "@/lib/numbers"
 import { formatFull, formatWhen, useTimeZone } from "@/lib/time"
 import { cn } from "@/lib/utils"
 
@@ -159,8 +160,8 @@ export function Code({ children, className }: { children: React.ReactNode; class
 }
 
 /**
- * "4 min ago", "30 h ago", "3 d ago" as FW-1 steps, then months, which FW-1 does not have; ahead of now, "in 3 h"
- * for deadlines. For ages and deadlines, not for list times.
+ * "4 min ago", "30 h ago", "3 d ago" as FW-1 steps, rounded, then months, which FW-1 does not have; ahead of now,
+ * "in 3 h" for deadlines. For ages and deadlines, not for list times.
  */
 export function timeAgo(value: string | Date | null | undefined): string {
   if (!value) return "never"
@@ -171,22 +172,19 @@ export function timeAgo(value: string | Date | null | undefined): string {
     if (m < 60) return `in ${m} min`
     const h = Math.round(m / 60)
     if (h < 24) return `in ${h} h`
-    const d = Math.round(h / 24)
-    return `in ${d} day${d === 1 ? "" : "s"}`
+    return `in ${plural(Math.round(h / 24), "day")}`
   }
-  if (ms < 0) return "just now"
-  const s = Math.floor(ms / 1000)
-  if (s < 60) return "just now"
-  const m = Math.floor(s / 60)
+  if (ms < 60_000) return "just now"
+  // Each step rounds from the exact age, so 59 min 40 s reads "1 h ago", not "60 min ago".
+  const m = Math.round(ms / 60_000)
   if (m < 60) return `${m} min ago`
-  const h = Math.floor(m / 60)
+  const h = Math.round(ms / 3600_000)
   if (h < 48) return `${h} h ago`
-  const d = Math.floor(h / 24)
+  const d = Math.round(ms / 86400_000)
   if (d < 30) return `${d} d ago`
   const mo = Math.floor(d / 30)
-  if (mo < 12) return `${mo} month${mo === 1 ? "" : "s"} ago`
-  const y = Math.floor(d / 365)
-  return `${y} year${y === 1 ? "" : "s"} ago`
+  if (mo < 12) return `${plural(mo, "month")} ago`
+  return `${plural(Math.floor(mo / 12), "year")} ago`
 }
 
 /** Re-renders on one shared timer, so every "3 min ago" on screen keeps ticking while the page is open (LD-12). */

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { useDesign } from "@/lib/design"
-import { n } from "@/lib/time"
+import { n } from "@/lib/numbers"
 
 const ROLL_MS = 900
 

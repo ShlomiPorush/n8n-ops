@@ -85,6 +85,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - Dialogs keep 16px from the edges of the screen on small tablets; a wide one, such as an instance opened from the list, touched them.
 - On a phone, menus and lists of choices open between the top bar and the tab bar instead of over them.
 - A second finger on a phone sheet while pulling it no longer moves or closes it; it springs back and waits until every finger is lifted.
+- **A workflow with no runs in 30 days shows a grey "-" for its errors instead of "0%",** with "No runs in the last 30 days" on hover. A backup without a known size or count shows the same "-".
+- Counts read right everywhere: "1 workflow", "1 entry", "1 of 1 instance", "1 needs a look", and a kind with none is left out ("12 workflows · 3 inactive", not "· 0 duplicated"; "2 need a look", not "0 down, 2 need a look"). Backup sizes drop trailing zeros ("1 MB", "1.5 MB", not "1.0 MB"). "Ago" times are rounded ("1 h 40 min" reads "2 h ago"), and an age just under a year reads "1 year ago" instead of "0 years ago".
 
 ## [0.1.0] - 2026-10-22
 

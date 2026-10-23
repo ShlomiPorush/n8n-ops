@@ -25,4 +25,15 @@ describe("timeAgo steps (FW-1)", () => {
     expect(timeAgo(at(-30 * 3600_000))).toBe("30 h ago")
     expect(timeAgo(at(-3 * 86400_000))).toBe("3 d ago")
   })
+
+  it("rounds each step, and a rounded step moves on to the next unit", () => {
+    expect(timeAgo(at(-100 * 60_000))).toBe("2 h ago")
+    expect(timeAgo(at(-(59 * 60_000 + 40_000)))).toBe("1 h ago")
+    expect(timeAgo(at(-47.6 * 3600_000))).toBe("2 d ago")
+  })
+
+  it("names months and years in the singular for one", () => {
+    expect(timeAgo(at(-40 * 86400_000))).toBe("1 month ago")
+    expect(timeAgo(at(-362 * 86400_000))).toBe("1 year ago")
+  })
 })

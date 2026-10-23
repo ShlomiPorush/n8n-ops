@@ -20,7 +20,7 @@ import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from "@
 import { Input } from "@/components/ui/input"
 import { useApi, useApiMutation } from "@/lib/api"
 import { loadView } from "@/lib/load-state"
-import { n, plural } from "@/lib/time"
+import { n, plural } from "@/lib/numbers"
 import { cn } from "@/lib/utils"
 
 export type Worker = {

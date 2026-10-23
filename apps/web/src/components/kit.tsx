@@ -807,6 +807,11 @@ export function UserText({
   )
 }
 
+/** A muted "-" where there is nothing to measure or nothing was recorded, never a made-up 0 (FB-8). */
+export function NoValue() {
+  return <span className="text-muted-foreground">-</span>
+}
+
 export {
   countChanges,
   type FieldProblem,

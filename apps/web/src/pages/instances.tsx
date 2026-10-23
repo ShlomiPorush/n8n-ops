@@ -388,12 +388,15 @@ type ListBackup =
  * In a pane narrower than 40rem (a phone) six labels in a row do not fit, so each tab stacks its icon over a
  * smaller label, and its mark moves to the icon's corner.
  */
-const tabsLook =
-  "gap-0 regular:gap-1 regular:rounded-lg regular:bg-fill regular:p-1 regular:before:hidden regular:@max-[40rem]/pane:gap-0"
+const tabsLook = cn(
+  "gap-0 regular:gap-1 regular:rounded-lg regular:bg-fill regular:p-1 regular:before:hidden",
+  "regular:@max-[40rem]/pane:gap-0 regular:@max-[40rem]/pane:p-0.5",
+)
+// The tabs grow to share out the room; their own padding only sets how narrow a pane still fits them in a row.
 const tabLook = cn(
   "flex-1 justify-center px-2",
-  "@max-[40rem]/pane:flex-col @max-[40rem]/pane:gap-0.5 @max-[40rem]/pane:px-0.5 @max-[40rem]/pane:text-meta",
-  "regular:rounded-sm regular:border-b-0 regular:px-3 regular:py-1.5 regular:@max-[40rem]/pane:px-0.5",
+  "@max-[40rem]/pane:flex-col @max-[40rem]/pane:gap-0.5 @max-[40rem]/pane:px-0 @max-[40rem]/pane:text-meta",
+  "regular:rounded-sm regular:border-b-0 regular:px-2 regular:py-1.5 regular:@max-[40rem]/pane:px-0",
   "regular:data-[state=active]:bg-panel regular:data-[state=active]:shadow-card",
 )
 const tabMark =

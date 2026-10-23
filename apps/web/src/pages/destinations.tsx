@@ -1,7 +1,8 @@
+import { type NumberLimits, numberProblem } from "@n8n-ops/shared"
 import { useQueryClient } from "@tanstack/react-query"
 import { Cloud, FolderOpen, Globe, HardDrive, type LucideIcon, Plus, Server, Trash2 } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
-import { Link } from "react-router"
+import { Link, useNavigate } from "react-router"
 import { useDiscardGuard } from "@/components/discard-guard"
 import {
   BusyButton,
@@ -44,6 +45,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { api, describeError, useApi, useApiMutation } from "@/lib/api"
 import { loadView } from "@/lib/load-state"
+import { whenDrawn } from "@/lib/reveal"
 import { n, plural } from "@/lib/time"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
@@ -509,6 +511,7 @@ export function DestinationFields({
           <FieldLabel>Kind</FieldLabel>
           <ToggleGroup
             type="single"
+            segmented
             aria-label="Kind"
             value={form.kind}
             onValueChange={(v) =>
@@ -586,16 +589,42 @@ export function DestinationFields({
                   onChange={(v) => setCredential(f.name, v)}
                 />
               ) : f.type === "key" ? (
-                destination?.credentials[`${f.name}Set`] && form.credentials[f.name] === undefined ? (
-                  <SecretField id={`d-${f.name}`} stored value={undefined} onChange={(v) => setCredential(f.name, v)} />
-                ) : (
-                  <Textarea
+                // A stored key reads Stored, or "Removed when you save" with Keep while its removal waits (FS-3);
+                // Replace opens the field for the new key.
+                destination?.credentials[`${f.name}Set`] && typeof form.credentials[f.name] !== "string" ? (
+                  <SecretField
                     id={`d-${f.name}`}
-                    className="font-mono text-small"
-                    placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
-                    value={form.credentials[f.name] ?? ""}
-                    onChange={(e) => setCredential(f.name, e.target.value || undefined)}
+                    stored
+                    value={form.credentials[f.name]}
+                    onChange={(v) => setCredential(f.name, v)}
                   />
+                ) : (
+                  <div className="grid gap-1.5">
+                    <Textarea
+                      id={`d-${f.name}`}
+                      className="font-mono text-small"
+                      placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+                      // The focus moves into the field the moment Replace is chosen.
+                      autoFocus={Boolean(destination?.credentials[`${f.name}Set`])}
+                      value={form.credentials[f.name] ?? ""}
+                      onChange={(e) =>
+                        setCredential(
+                          f.name,
+                          destination?.credentials[`${f.name}Set`] ? e.target.value : e.target.value || undefined,
+                        )
+                      }
+                    />
+                    {destination?.credentials[`${f.name}Set`] && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="justify-self-start"
+                        onClick={() => setCredential(f.name, undefined)}
+                      >
+                        Keep the stored key
+                      </Button>
+                    )}
+                  </div>
                 )
               ) : (
                 <div className="flex min-w-0 gap-2">
@@ -772,6 +801,7 @@ function DeleteDestination({
         </DialogHeader>
         <ToggleGroup
           type="single"
+          segmented
           aria-label="Its archives"
           className="w-full flex-col items-stretch min-[480px]:flex-row"
           value={files}
@@ -828,6 +858,7 @@ function DestinationChoice({
     <div className="grid gap-3">
       <ToggleGroup
         type="single"
+        segmented
         aria-label="Backup destinations"
         value={choice.mode}
         onValueChange={(v) => v && onChange({ ...choice, mode: v as Choice["mode"] })}
@@ -962,15 +993,25 @@ export function InstanceBackupCard({
   )
 }
 
-type BackupSettings = { selfDestinations: "default" | "custom"; selfDestinationIds: string[]; maxArchiveMb: number }
+type BackupSettings = {
+  selfDestinations: "default" | "custom"
+  selfDestinationIds: string[]
+  maxArchiveMb: number
+  meta?: { limits?: Record<string, NumberLimits> }
+}
 
 /** Where the n8n-ops database backup goes, and the largest archive accepted. */
 function SelfBackupCard({ destinations, hidden }: { destinations: Destination[]; hidden: boolean }) {
   const query = useApi<BackupSettings>("/settings/backups")
+  const navigate = useNavigate()
   const stored = query.data ? { mode: query.data.selfDestinations, ids: query.data.selfDestinationIds } : null
   const state = useChoice(stored)
   const [max, setMax] = useState("")
   const maxBase = useRef("")
+  // What is wrong with a changed Largest archive, found before a save (SV-1); a new value clears it.
+  const [maxProblem, setMaxProblem] = useState<string | null>(null)
+  const shown = useRef(!hidden)
+  shown.current = !hidden
   // biome-ignore lint/correctness/useExhaustiveDependencies: only new stored settings replace an unchanged field
   useEffect(() => {
     if (!query.data) return
@@ -988,6 +1029,25 @@ function SelfBackupCard({ destinations, hidden }: { destinations: Destination[];
     count,
     // Kept while another Settings section is open (SV-1).
     keepsOn: "/settings/",
+    check: () => {
+      const problem = max === maxBase.current ? null : numberProblem(max, query.data?.meta?.limits?.maxArchiveMb ?? {})
+      setMaxProblem(problem)
+      if (!problem) return []
+      const reveal = () => {
+        if (!shown.current) navigate("/settings/destinations")
+        whenDrawn(
+          () => {
+            const el = document.getElementById("max-archive")
+            return el && !el.closest("[hidden]") ? el : null
+          },
+          (el) => {
+            el.scrollIntoView({ block: "center" })
+            el.focus({ preventScroll: true })
+          },
+        )
+      }
+      return [{ label: "Largest archive (MiB)", problem, id: "max-archive", reveal }]
+    },
     save: async () => {
       if (!state.choice) return
       await save.mutateAsync({
@@ -1001,6 +1061,7 @@ function SelfBackupCard({ destinations, hidden }: { destinations: Destination[];
     discard: () => {
       state.discard()
       setMax(maxBase.current)
+      setMaxProblem(null)
     },
   })
   return (
@@ -1025,10 +1086,22 @@ function SelfBackupCard({ destinations, hidden }: { destinations: Destination[];
             <DestinationChoice id="self" destinations={destinations} choice={state.choice} onChange={state.setChoice} />
             <Field>
               <FieldLabel htmlFor="max-archive">Largest archive (MiB)</FieldLabel>
-              <Input id="max-archive" type="number" min={16} value={max} onChange={(e) => setMax(e.target.value)} />
+              <Input
+                id="max-archive"
+                type="number"
+                min={16}
+                value={max}
+                aria-invalid={maxProblem ? true : undefined}
+                aria-describedby={maxProblem ? "max-archive-problem" : undefined}
+                onChange={(e) => {
+                  setMax(e.target.value)
+                  setMaxProblem(null)
+                }}
+              />
               <FieldDescription>
                 For every backup. Archives are built in memory, so this also bounds the memory a backup takes.
               </FieldDescription>
+              {maxProblem && <FieldError id="max-archive-problem">{maxProblem}</FieldError>}
             </Field>
           </>
         )}

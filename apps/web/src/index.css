@@ -394,6 +394,8 @@ html[data-design="regular"].dark {
    * content, so it spans the visible width at any scroll position and its children paint over it.
    */
   --shadow-rule: inset 0 -1px 0 var(--ui-line);
+  /* The chosen segment of a segmented control, raised a little off its track (FS-14). */
+  --shadow-segment: 0 1px 2px rgb(0 0 0 / 0.08);
   /* The open search field: a soft ink halo. */
   --shadow-halo: 0 0 0 3px color-mix(in srgb, var(--ui-ink) 10%, transparent);
 

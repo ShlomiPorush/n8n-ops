@@ -2,6 +2,7 @@ import { and, count, desc, eq, gt, isNull } from "drizzle-orm"
 import nodemailer from "nodemailer"
 import type { Ctx } from "../context.ts"
 import { alertOutbox, alertState, backupRuns, failures, instances, problems } from "../db/schema.ts"
+import { emailAccount } from "./draft-tests.ts"
 import { type Email, formatDate, panel, plural, render, stats, type Tone, table, tag } from "./email-layout.ts"
 import { compareVersions, latestN8nVersion } from "./instances.ts"
 import { telegramPlainText } from "./telegram.ts"
@@ -200,19 +201,16 @@ export async function buildReport(ctx: Ctx, period: "daily" | "weekly"): Promise
   })
 }
 
-export async function sendEmail(ctx: Ctx, report: Report) {
-  const email = await ctx.settings.get("email")
-  if (!email.smtpHost || !email.recipients.length)
-    throw new Error("Email is not configured: set the SMTP server and recipients.")
-  const transport = nodemailer.createTransport({
-    host: email.smtpHost,
-    port: email.smtpPort,
-    secure: email.smtpSecure,
-    auth: email.smtpUser
-      ? { user: email.smtpUser, pass: email.smtpPasswordEnc ? ctx.secrets.decrypt(email.smtpPasswordEnc) : "" }
-      : undefined,
-  })
-  await transport.sendMail(mailOptions(report, email.from || email.smtpUser, email.recipients))
+/**
+ * Sends an email with the stored Email settings, or for a test with the values on screen over them (`draft`,
+ * FS-19; see emailAccount for which password goes where). Returns who it was sent to.
+ */
+export async function sendEmail(ctx: Ctx, report: Report, draft: Record<string, unknown> = {}) {
+  const account = emailAccount(await ctx.settings.get("email"), draft, (enc) => ctx.secrets.decrypt(enc))
+  const { from, recipients, ...server } = account
+  const transport = nodemailer.createTransport(server)
+  await transport.sendMail(mailOptions(report, from, recipients))
+  return recipients
 }
 
 /** One message to every recipient, with a plain text part beside the HTML (EM-1, EM-6). */

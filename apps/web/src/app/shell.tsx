@@ -694,13 +694,22 @@ function TabBar() {
   )
 }
 
+/**
+ * The page a path shows, for the scroll: its first segment, except that each Settings section counts as a page
+ * of its own, so a newly opened section starts at its top (FS-10).
+ */
+const scrollPage = (pathname: string) => {
+  const [, first, second] = pathname.split("/")
+  return first === "settings" ? `settings/${second ?? ""}` : first
+}
+
 /** Back and Forward return to where the page was scrolled; a new page starts at its top (NL-3). An item opened
  * on the same page leaves the list where it is. */
 function useScrollMemory(main: HTMLElement | null) {
   const location = useLocation()
   const type = useNavigationType()
   const saved = useRef(new Map<string, number>())
-  const lastPage = useRef(location.pathname.split("/")[1])
+  const lastPage = useRef(scrollPage(location.pathname))
   useEffect(() => {
     if (!main) return
     const remember = () => saved.current.set(location.key, main.scrollTop)
@@ -710,7 +719,7 @@ function useScrollMemory(main: HTMLElement | null) {
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs once per history entry
   useLayoutEffect(() => {
     if (!main) return
-    const page = location.pathname.split("/")[1]
+    const page = scrollPage(location.pathname)
     const newPage = page !== lastPage.current
     lastPage.current = page
     if (type === "POP") main.scrollTop = saved.current.get(location.key) ?? main.scrollTop

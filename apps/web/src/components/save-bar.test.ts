@@ -1,6 +1,6 @@
 import { createMemoryRouter, type Location } from "react-router"
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { formChanged, guardLeaves, leaveAsker, saveOutcome } from "./save-bar.tsx"
+import { checkOutcome, formChanged, guardLeaves, leaveAsker, saveOutcome } from "./save-bar.tsx"
 
 describe("formChanged", () => {
   const opened = {
@@ -378,5 +378,18 @@ describe("saveOutcome", () => {
       tone: "error",
       text: "Could not save the overrides (Not found.) and agent access (Something went wrong on the server.)",
     })
+  })
+})
+
+describe("checkOutcome", () => {
+  it("says nothing when every field passed", () => {
+    expect(checkOutcome([])).toBeNull()
+  })
+
+  it("names one failed field with its problem, and several by the first (SV-1)", () => {
+    const recipients = { label: "Recipients", problem: '"bob" is not an email address' }
+    const time = { label: "Daily report time", problem: "use a 24-hour time as HH:MM, for example 07:30" }
+    expect(checkOutcome([recipients])).toBe('Recipients: "bob" is not an email address')
+    expect(checkOutcome([time, recipients])).toBe("2 fields need a valid value, starting with Daily report time")
   })
 })

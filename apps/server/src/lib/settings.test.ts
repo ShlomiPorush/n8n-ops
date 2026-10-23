@@ -1,10 +1,13 @@
 import { describe, expect, it, vi } from "vitest"
 import type { Db } from "../db/client.ts"
 import {
+  changedValueIssues,
   createSettings,
   defaults,
+  invalidAnswer,
   isTimeZone,
   mayStoreTimeZone,
+  numberLimits,
   resolveInstanceSettings,
   smtpPasswordNeeded,
 } from "./settings.ts"
@@ -75,6 +78,42 @@ describe("public URL", () => {
 
   it("stays empty when neither is set", async () => {
     expect((await createSettings(dbWith()).get("general")).publicUrl).toBe("")
+  })
+
+  it("is not part of what is stored, which a save starts from (FS-6)", async () => {
+    const settings = createSettings(dbWith({ design: "compact" }), { publicUrl: "https://ops.example.com" })
+    expect((await settings.stored("general")).publicUrl).toBe("")
+    expect((await settings.get("general")).publicUrl).toBe("https://ops.example.com")
+    expect(settings.fromEnv()).toEqual({ publicUrl: "https://ops.example.com" })
+    expect(createSettings(dbWith()).fromEnv()).toEqual({})
+  })
+})
+
+describe("checks before a value is stored", () => {
+  it("reads the range of each number from the schema", () => {
+    expect(numberLimits("alerts")).toMatchObject({
+      retryMin: { min: 1, max: 60 },
+      groupingWindowSec: { min: 0, max: 3600 },
+    })
+    expect(numberLimits("defaults").backlogThreshold).toEqual({ min: 1 })
+    expect(numberLimits("general")).toEqual({})
+  })
+
+  it("checks only the fields a save changes", () => {
+    const stored = { ...defaults.email, recipients: ["bob"] }
+    expect(changedValueIssues("email", stored, { ...stored, from: "ops@example.com" })).toEqual([])
+    expect(changedValueIssues("email", stored, { ...stored, recipients: ["bob", "ops@example.com"] })).toEqual([
+      { path: ["recipients"], message: '"bob" is not an email address' },
+    ])
+  })
+
+  it("names each refused field by its label", () => {
+    expect(
+      invalidAnswer("email", [
+        { path: ["dailyTime"], message: "use HH:MM" },
+        { path: ["smtpPort"], message: "use a whole number from 1 to 65535" },
+      ]).message,
+    ).toBe("Daily report time: use HH:MM SMTP port: use a whole number from 1 to 65535")
   })
 })
 

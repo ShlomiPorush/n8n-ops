@@ -62,7 +62,8 @@ export function useUnsaved(id: string) {
 
 /**
  * Where the save bar shows inside a dialog: a sheet traps the focus and covers the page, so the bar would be
- * out of reach under it. Put it last in the dialog's body; the bar sticks to the bottom of the body there.
+ * out of reach under it. Put it in a footer that sticks to the bottom of the dialog's body (list-panel.tsx);
+ * below it there may be the pane's own tabs, which then keep the clearance for the phone's home bar.
  */
 export function SaveBarHost() {
   const setHost = React.useContext(HostContext)
@@ -76,8 +77,7 @@ export function SaveBarHost() {
     <div
       ref={setEl}
       data-slot="save-bar-host"
-      // While it holds the bar, the body drops its own bottom padding (dialog.tsx), as it does for a footer.
-      className="sticky bottom-0 z-10 -mx-pad-x mt-auto shrink-0 px-2.5 pb-2.5 empty:hidden max-md:pb-[calc(10px+env(safe-area-inset-bottom))]"
+      className="px-2.5 pb-2.5 empty:hidden max-md:pb-[calc(10px+env(safe-area-inset-bottom))] max-md:has-[+[data-slot=pane-nav]:not(:empty)]:pb-2.5"
     />
   )
 }

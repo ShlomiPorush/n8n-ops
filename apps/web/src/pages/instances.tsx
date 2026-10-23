@@ -2,7 +2,6 @@ import {
   Activity as ActivityIcon,
   Archive as ArchiveIcon,
   Bug as BugIcon,
-  ChevronRight,
   CircleCheck as CircleCheckIcon,
   CircleX as CircleXIcon,
   Download,
@@ -23,6 +22,7 @@ import {
   Workflow as WorkflowIcon,
 } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
+import { createPortal } from "react-dom"
 import { Link, useNavigate, useParams, useSearchParams } from "react-router"
 import { useCrumb } from "@/app/chrome"
 import { AgentAccessCard } from "@/components/agent-access-card"
@@ -45,7 +45,7 @@ import {
   useSaveSource,
   useUnsaved,
 } from "@/components/kit"
-import { ListWithPanel } from "@/components/list-panel"
+import { ListWithPanel, usePaneNav } from "@/components/list-panel"
 import { Dot, type HealthState, StatusTag, statusOf, type statusTable, TimeAgo, Tone, When } from "@/components/status"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -388,22 +388,33 @@ type ListBackup =
  * In a pane narrower than 40rem (a phone) six labels in a row do not fit, so each tab stacks its icon over a
  * smaller label, and its mark moves to the icon's corner.
  */
-const tabsLook = cn(
-  "gap-0 regular:gap-1 regular:rounded-lg regular:bg-fill regular:p-1 regular:before:hidden",
-  "@max-[40rem]/pane:gap-1 regular:@max-[40rem]/pane:p-0.5",
-)
-/*
- * In a row the tabs are equal cells; their own padding only sets how narrow a pane still fits them. Stacked, each
- * keeps its label's width and the room left is shared out on top of it, so long labels never touch.
- */
-const tabLook = cn(
-  "flex-1 justify-center px-2",
-  "@max-[40rem]/pane:flex-auto @max-[40rem]/pane:flex-col @max-[40rem]/pane:gap-0.5 @max-[40rem]/pane:px-0 @max-[40rem]/pane:text-meta",
-  "regular:rounded-sm regular:border-b-0 regular:px-2 regular:py-1.5 regular:@max-[40rem]/pane:px-0",
-  "regular:data-[state=active]:bg-panel regular:data-[state=active]:shadow-card",
-)
-const tabMark =
-  "flex @max-[40rem]/pane:absolute @max-[40rem]/pane:top-0 @max-[40rem]/pane:start-1/2 @max-[40rem]/pane:ms-0.5"
+type TabsLook = { list: string; tab: string; icon?: string; mark: string; shortCount: boolean }
+const topTabs: TabsLook = {
+  list: cn(
+    "gap-0 regular:gap-1 regular:rounded-lg regular:bg-fill regular:p-1 regular:before:hidden",
+    "@max-[40rem]/pane:gap-1 regular:@max-[40rem]/pane:p-0.5",
+  ),
+  /*
+   * In a row the tabs are equal cells; their own padding only sets how narrow a pane still fits them. Stacked,
+   * each keeps its label's width and the room left is shared out on top of it, so long labels never touch.
+   */
+  tab: cn(
+    "flex-1 justify-center px-2",
+    "@max-[40rem]/pane:flex-auto @max-[40rem]/pane:flex-col @max-[40rem]/pane:gap-0.5 @max-[40rem]/pane:px-0 @max-[40rem]/pane:text-meta",
+    "regular:rounded-sm regular:border-b-0 regular:px-2 regular:py-1.5 regular:@max-[40rem]/pane:px-0",
+    "regular:data-[state=active]:bg-panel regular:data-[state=active]:shadow-card",
+  ),
+  mark: "flex @max-[40rem]/pane:absolute @max-[40rem]/pane:top-0 @max-[40rem]/pane:start-1/2 @max-[40rem]/pane:ms-0.5",
+  shortCount: false,
+}
+/** At the bottom of a phone sheet the tabs are a bar like the app's own tab bar, the same in both designs. */
+const barTabs: TabsLook = {
+  list: "h-tabbar gap-0 before:hidden",
+  tab: "flex-1 flex-col justify-center gap-[3px] border-b-0 px-0 py-0 text-meta",
+  icon: "size-[22px]",
+  mark: "absolute top-1 start-1/2 ms-1",
+  shortCount: true,
+}
 const tabPanel = "grid min-w-0 gap-gap data-[state=inactive]:hidden"
 /*
  * In a pane narrower than 52rem a Regular card of four is too narrow for a figure beside its icon, so the
@@ -444,14 +455,17 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
     access: useUnsaved(`agent-access-${id}`),
     settings: useUnsaved(`overrides-${id}`),
   }
-  // The tabs scroll sideways in a narrow pane; the open one is brought into sight, also when the address opened it.
-  // Only the list scrolls: scrollIntoView would also move the pane up to the tabs while a field is being edited.
-  const pane = useRef<HTMLDivElement>(null)
+  // On a phone the tabs are a bar at the bottom of the sheet, outside this pane.
+  const nav = usePaneNav()
+  const look = nav ? barTabs : topTabs
+  // Tabs that still do not fit scroll sideways; the open one is brought into sight, also when the address opened
+  // it. Only the list scrolls: scrollIntoView would also move the pane up to the tabs while a field is edited.
+  const tabList = useRef<HTMLDivElement>(null)
   const loaded = Boolean(detail.data)
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs when another tab opens or a mark widens a tab
   useEffect(() => {
     if (!loaded) return
-    const list = pane.current?.querySelector<HTMLElement>('[role="tablist"]')
+    const list = tabList.current
     // The list is positioned, so a tab's offsetLeft is measured from the list's own start.
     const open = list?.querySelector<HTMLElement>('[role="tab"][data-state="active"]')
     if (!list || !open) return
@@ -459,7 +473,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
     const end = start + open.offsetWidth
     if (start < list.scrollLeft) list.scrollLeft = start
     else if (end > list.scrollLeft + list.clientWidth) list.scrollLeft = end - list.clientWidth
-  }, [tab, loaded, unsaved.backups, unsaved.access, unsaved.settings])
+  }, [tab, loaded, nav, unsaved.backups, unsaved.access, unsaved.settings])
 
   if (detail.isLoading) return <Loading>Loading the instance…</Loading>
   if (detail.error && !detail.data)
@@ -496,11 +510,50 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
     i.collection === "worker"
       ? `Collected on the host by ${i.worker?.name ?? "the assigned worker"}`
       : "Checked from the n8n-ops server"
-  const allowed = i.capabilities.filter((c) => c.available).length
-  const overrides = Object.keys(i.overrides).length
+
+  const tabs = (
+    <TabsList ref={tabList} aria-label="Instance sections" className={look.list}>
+      <PaneTabTrigger look={look} value="overview" icon={LayoutDashboardIcon} label="Overview" />
+      <PaneTabTrigger
+        look={look}
+        value="problems"
+        icon={BugIcon}
+        label="Problems"
+        mark={i.openProblems > 0 && <TabCount count={i.openProblems} short={look.shortCount} />}
+      />
+      <PaneTabTrigger
+        look={look}
+        value="health"
+        icon={HeartPulseIcon}
+        label="Health"
+        mark={(health === "down" || health === "warn") && <Dot health={health} label={healthLabel(i)} />}
+      />
+      <PaneTabTrigger
+        look={look}
+        value="backups"
+        icon={ArchiveIcon}
+        label="Backups"
+        mark={unsaved.backups && <UnsavedMark />}
+      />
+      <PaneTabTrigger
+        look={look}
+        value="access"
+        icon={KeyRoundIcon}
+        label="Access"
+        mark={unsaved.access && <UnsavedMark />}
+      />
+      <PaneTabTrigger
+        look={look}
+        value="settings"
+        icon={SlidersHorizontalIcon}
+        label="Settings"
+        mark={unsaved.settings && <UnsavedMark />}
+      />
+    </TabsList>
+  )
 
   return (
-    <div ref={pane} className="@container/pane grid min-w-0 gap-gap">
+    <div className="@container/pane grid min-w-0 gap-gap">
       {/* What the instance is comes first; the actions sit beside it, or below it in a narrow pane. */}
       <div className="grid gap-2 @min-[40rem]/pane:grid-cols-[minmax(0,1fr)_auto] @min-[40rem]/pane:gap-x-2.5">
         <div className="flex min-w-0 flex-wrap items-center gap-2.5">
@@ -556,34 +609,8 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
       </div>
 
       <Tabs value={tab} onValueChange={(v) => isPaneTab(v) && show(v)} activationMode="manual">
-        <TabsList aria-label="Instance sections" className={tabsLook}>
-          <PaneTabTrigger value="overview" icon={LayoutDashboardIcon} label="Overview" />
-          <PaneTabTrigger
-            value="problems"
-            icon={BugIcon}
-            label="Problems"
-            mark={i.openProblems > 0 && <TabCount count={i.openProblems} />}
-          />
-          <PaneTabTrigger
-            value="health"
-            icon={HeartPulseIcon}
-            label="Health"
-            mark={(health === "down" || health === "warn") && <Dot health={health} label={healthLabel(i)} />}
-          />
-          <PaneTabTrigger
-            value="backups"
-            icon={ArchiveIcon}
-            label="Backups"
-            mark={unsaved.backups && <UnsavedMark />}
-          />
-          <PaneTabTrigger value="access" icon={KeyRoundIcon} label="Access" mark={unsaved.access && <UnsavedMark />} />
-          <PaneTabTrigger
-            value="settings"
-            icon={SlidersHorizontalIcon}
-            label="Settings"
-            mark={unsaved.settings && <UnsavedMark />}
-          />
-        </TabsList>
+        {/* A portal keeps the tabs in the Tabs above, so the keyboard and the open tab work the same. */}
+        {nav ? createPortal(tabs, nav) : tabs}
 
         <TabsContent value="overview" forceMount className={tabPanel}>
           <StatusStrip instance={i} footer={collected} />
@@ -612,22 +639,6 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
               more={i.openProblems > 0 ? { to: `/instances/${i.id}?tab=problems`, label: "All" } : undefined}
             />
             <InstanceProblems query={problems} limit={3} onOpen={(pid) => navigate(`/problems/${pid}`)} />
-          </Panel>
-          <Panel>
-            <div className="grid grid-cols-1 gap-px bg-line @min-[36rem]/pane:grid-cols-3">
-              <Glance icon={ArchiveIcon} title="Backups" onClick={() => show("backups")}>
-                {i.backupDestinations === "custom"
-                  ? plural(i.backupDestinationIds.length, "chosen destination")
-                  : "The default destinations"}
-              </Glance>
-              <Glance icon={KeyRoundIcon} title="Access" onClick={() => show("access")}>
-                {canWrite(i) ? "Read + write" : "Read-only"} key · {allowed} of {i.capabilities.length} allowed · agents{" "}
-                {i.agentAccess.enabled ? "may ask" : "off"}
-              </Glance>
-              <Glance icon={SlidersHorizontalIcon} title="Settings" onClick={() => show("settings")}>
-                {overrides ? `${plural(overrides, "override")}, the rest default` : "Every setting is the default"}
-              </Glance>
-            </div>
           </Panel>
         </TabsContent>
 
@@ -794,12 +805,15 @@ function UnsavedMark() {
   )
 }
 
-/** On the icon's corner of a stacked tab there is room for two digits; a reader still hears the whole count. */
-function TabCount({ count }: { count: number }) {
+/**
+ * On the icon's corner of a stacked tab there is room for two digits (`short` in the bottom bar, by the pane's
+ * width at the top); a reader still hears the whole count.
+ */
+function TabCount({ count, short }: { count: number; short: boolean }) {
   return (
-    <Badge variant="fail" className="@max-[40rem]/pane:px-1">
-      <span className="@max-[40rem]/pane:sr-only">{n(count)}</span>
-      <span aria-hidden className="hidden @max-[40rem]/pane:inline">
+    <Badge variant="fail" className={short ? "px-1" : "@max-[40rem]/pane:px-1"}>
+      <span className={short ? "sr-only" : "@max-[40rem]/pane:sr-only"}>{n(count)}</span>
+      <span aria-hidden className={short ? undefined : "hidden @max-[40rem]/pane:inline"}>
         {count > 99 ? "99+" : count}
       </span>
     </Badge>
@@ -808,21 +822,23 @@ function TabCount({ count }: { count: number }) {
 
 /** The mark (a count, a health dot, unsaved changes) comes after the label, so a tab's name starts with the label. */
 function PaneTabTrigger({
+  look,
   value,
   icon: Icon,
   label,
   mark,
 }: {
+  look: TabsLook
   value: PaneTab
   icon: LucideIcon
   label: string
   mark?: React.ReactNode
 }) {
   return (
-    <TabsTrigger value={value} className={tabLook}>
-      <Icon aria-hidden />
+    <TabsTrigger value={value} className={look.tab}>
+      <Icon aria-hidden className={look.icon} />
       <span>{label}</span>
-      {mark && <span className={tabMark}>{mark}</span>}
+      {mark && <span className={look.mark}>{mark}</span>}
     </TabsTrigger>
   )
 }
@@ -905,33 +921,6 @@ function StatusStrip({ instance: i, footer }: { instance: InstanceDetailData; fo
   )
 }
 
-/** One line that sums up a tab and opens it. */
-function Glance({
-  icon: Icon,
-  title,
-  onClick,
-  children,
-}: {
-  icon: LucideIcon
-  title: string
-  onClick: () => void
-  children: React.ReactNode
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="hover-row grid min-w-0 content-start gap-0.5 bg-panel px-pad-x py-pad-y text-start"
-    >
-      <span className="flex items-center gap-2 font-semibold">
-        <Icon aria-hidden className="size-4 text-muted-foreground" />
-        {title}
-        <ChevronRight aria-hidden className="ms-auto size-4 text-muted-foreground" />
-      </span>
-      <span className="text-small text-muted-foreground">{children}</span>
-    </button>
-  )
-}
 
 /** The words for the last backup run; the list may still load, or may have failed. */
 function backupWords(backup: ListBackup) {

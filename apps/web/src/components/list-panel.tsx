@@ -1,15 +1,25 @@
 import { ArrowLeft } from "lucide-react"
-import { useCallback, useEffect, useRef, useState } from "react"
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react"
 import { useLocation, useNavigate } from "react-router"
 import { Empty, SaveBarHost } from "@/components/kit"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable"
-import { useMediaQuery } from "@/hooks/use-mobile"
+import { useIsMobile, useMediaQuery } from "@/hooks/use-mobile"
 
 /** Below this content width a list draws its rows as items; a little more is needed to go back (no flicker). */
 const ITEMS_BELOW = 560
 const TABLE_FROM = ITEMS_BELOW + 24
+
+const PaneNavContext = createContext<HTMLElement | null>(null)
+
+/**
+ * Where an item opened as a phone sheet puts its own tabs: a bar at the bottom of the sheet, in reach of the
+ * thumb, like the app's tab bar. Null anywhere else, where the tabs stay at the top of the item.
+ */
+export function usePaneNav() {
+  return useContext(PaneNavContext)
+}
 
 /**
  * A list with a reading pane (DS-13). From 1000px an item reads in a pane beside the list, like a mail
@@ -35,6 +45,8 @@ export function ListWithPanel({
   onClose: () => void
 }) {
   const wide = useMediaQuery("(min-width: 1000px)")
+  const phone = useIsMobile()
+  const [nav, setNav] = useState<HTMLDivElement | null>(null)
   const navigate = useNavigate()
   const { pathname } = useLocation()
   const listRef = useRef<HTMLDivElement | null>(null)
@@ -74,6 +86,8 @@ export function ListWithPanel({
           <Dialog open onOpenChange={(o) => !o && onClose()}>
             <DialogContent
               className="md:max-w-[1100px]"
+              // On a phone the sheet keeps four fifths of the screen whatever is open in it (index.css).
+              data-pane-sheet=""
               aria-describedby={undefined}
               showCloseButton={false}
               pullToClose
@@ -91,9 +105,24 @@ export function ListWithPanel({
                 </Button>
                 <DialogTitle>{panelTitle}</DialogTitle>
               </DialogHeader>
-              <div className="min-w-0">{panel}</div>
-              {/* The sheet covers the page, so its unsaved changes are saved from inside it. */}
-              <SaveBarHost />
+              <PaneNavContext.Provider value={phone ? nav : null}>
+                <div className="min-w-0">{panel}</div>
+              </PaneNavContext.Provider>
+              {/*
+               * Sticks to the bottom of the sheet: the save bar (the sheet covers the page, so its unsaved
+               * changes are saved from inside it), then the item's tabs on a phone. While either shows, the body
+               * drops its own bottom padding (dialog.tsx).
+               */}
+              <div data-slot="pane-footer" className="sticky bottom-0 z-10 -mx-pad-x mt-auto shrink-0">
+                <SaveBarHost />
+                {phone && (
+                  <div
+                    ref={setNav}
+                    data-slot="pane-nav"
+                    className="border-t border-line bg-popover pb-[env(safe-area-inset-bottom)] empty:hidden"
+                  />
+                )}
+              </div>
             </DialogContent>
           </Dialog>
         )}

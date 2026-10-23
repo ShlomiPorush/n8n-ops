@@ -101,8 +101,10 @@ export function PageHead({
         <h1 className="min-w-0 flex-1 text-h1 font-heavy break-words regular:tracking-tighter compact:max-[381px]:text-h1-narrow">
           {title}
         </h1>
-        {/* Compact: the main action without its icon, so the title keeps its room. */}
-        {actions && <div className="flex shrink-0 items-center gap-2 compact:[&>*>svg]:hidden">{actions}</div>}
+        {/* Compact: the main action without its icon, so the title keeps its room; a busy ring or result stays. */}
+        {actions && (
+          <div className="flex shrink-0 items-center gap-2 compact:[&>*>svg:not([data-status])]:hidden">{actions}</div>
+        )}
       </div>
       {said && (
         <p className="text-muted-foreground">
@@ -867,7 +869,14 @@ export function BusyButton({
         if (run && !e.defaultPrevented) void clock.start(run)
       }}
     >
-      {Shown && <Shown aria-hidden className={cn(busy && "animate-spin")} />}
+      {Shown && (
+        <Shown
+          aria-hidden
+          // The ring and the result mark say how the request goes (FB-7), so no design hides them with the icon.
+          data-status={Shown === Icon ? undefined : ""}
+          className={cn(busy && "animate-spin")}
+        />
+      )}
       <span className={labelClassName}>
         {busy ? busyLabel : state === "done" ? "Done" : state === "failed" ? "Failed" : children}
       </span>

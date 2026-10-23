@@ -42,7 +42,7 @@ import { SCROLL_RESTORE_MS } from "@/lib/behavior"
 import { useLiveUpdates } from "@/lib/live"
 import { n, plural } from "@/lib/numbers"
 import { useNavigateFromOverlay, useOverlayHistory } from "@/lib/overlay-history"
-import { placeSpot, readSpot, type ScrollSpot } from "@/lib/scroll-spot"
+import { placeSpot, readSpot, type ScrollSpot, shownEntry } from "@/lib/scroll-spot"
 import { loginPath, sessionClosed, sessionStarted } from "@/lib/session"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
@@ -856,9 +856,13 @@ function useScrollMemory(main: HTMLElement | null) {
     if (!main) return
     // Capture, on the document: the areas scroll inside the page or in a dialog's portal, and scroll events do
     // not bubble. Other dialogs (Edit instance, Merge) are not marked, so their scrolling is not noted.
+    // The address moves first: the router pushes or pops the history entry at once and shows it a render later. A
+    // scroll heard in between (a tab cut short as it hides) is not noted, or it would overwrite the place of the
+    // entry left; the entry shown next notes its own start. Dialogs' history entries keep the router's key.
     const remember = (e: Event) => {
       if (restoring.current) return
       if (e.target !== main && !(e.target instanceof HTMLElement && e.target.matches("[data-scroll-pane]"))) return
+      if (shownEntry(window.history.state) !== entry.current) return
       saved.current.set(entry.current, readSpot(scrollAreas(main)))
     }
     document.addEventListener("scroll", remember, { capture: true, passive: true })

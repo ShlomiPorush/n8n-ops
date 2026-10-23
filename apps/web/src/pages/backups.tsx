@@ -14,6 +14,7 @@ import { useCrumb } from "@/app/chrome"
 import { useDiscardGuard } from "@/components/discard-guard"
 import { ItemRow, ItemsHeader, Said } from "@/components/item-row"
 import {
+  BusyButton,
   Copyable,
   Empty,
   Kpi,
@@ -44,7 +45,6 @@ import { Textarea } from "@/components/ui/textarea"
 import { api, describeError, useApi, useApiMutation } from "@/lib/api"
 import { loadView } from "@/lib/load-state"
 import { formatDateTime, n, plural, useTimeZone } from "@/lib/time"
-import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
 import { type DestinationKind, KindIcon } from "./destinations"
 
@@ -134,7 +134,13 @@ export function BackupsPage() {
   const data = useApi<Summary>("/backups", { refetchInterval: 10_000 })
   // A failed refresh keeps the rows; the head says so (TB-5, LD-12).
   const view = loadView(data)
-  const run = useApiMutation<string>("POST", (target) => `/backups/${target}/run`, { invalidate: ["/backups"] })
+  const target = (id: string) =>
+    id === "self" ? "the n8n-ops database" : (data.data?.instances.find((i) => i.id === id)?.name ?? "the instance")
+  const run = useApiMutation<string>("POST", (id) => `/backups/${id}/run`, {
+    invalidate: ["/backups"],
+    success: (id) => `Backup of ${target(id)} started`,
+    failed: (id) => `start the backup of ${target(id)}`,
+  })
   const s = data.data
   const backedUp = s?.instances.filter((i) => i.destinations.length) ?? []
   const okCount = backedUp.filter((i) => !stale(i)).length
@@ -281,18 +287,19 @@ export function BackupsPage() {
                     ? "workflows + credential secrets"
                     : "workflows, credentials without secrets"
               const to = nowhere ? "no destination" : r.destinations.map((d) => d.name).join(", ")
+              // One click starts one run: the button is locked until the request ends (FB-7).
               const button = (
-                <Button
+                <BusyButton
                   size="sm"
+                  icon={Play}
+                  busyLabel="Starting…"
                   disabled={r.lastRun?.status === "running" || nowhere}
                   aria-describedby={nowhere ? `run-reason-${r.id}` : undefined}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    run.mutate(r.id, { onSuccess: () => toast.success(`Backup of ${r.name} started`) })
-                  }}
+                  onClick={(e) => e.stopPropagation()}
+                  run={() => run.mutateAsync(r.id)}
                 >
-                  <Play /> {r.lastRun?.status === "running" ? "Running…" : "Run now"}
-                </Button>
+                  {r.lastRun?.status === "running" ? "Running…" : "Run now"}
+                </BusyButton>
               )
               // A button that cannot run says why in words beside it, not in a tip (AX-9, FB-1).
               const runNow =
@@ -635,9 +642,11 @@ function RestoreDialog({ run, instanceId, onClose }: { run: Run | null; instance
           ) : !inspection ? (
             <>
               <Button onClick={() => void guard.requestClose()}>Cancel</Button>
-              <Button
+              <BusyButton
                 variant="primary"
-                disabled={!key.trim() || busy}
+                disabled={!key.trim()}
+                busy={busy}
+                busyLabel="Opening…"
                 onClick={() =>
                   step(async () =>
                     setInspection(
@@ -649,15 +658,17 @@ function RestoreDialog({ run, instanceId, onClose }: { run: Run | null; instance
                   )
                 }
               >
-                {busy ? "Opening…" : "Open archive"}
-              </Button>
+                Open archive
+              </BusyButton>
             </>
           ) : (
             <>
               <Button onClick={() => void guard.requestClose()}>Cancel</Button>
-              <Button
+              <BusyButton
                 variant="primary"
-                disabled={!workflowId || busy}
+                disabled={!workflowId}
+                busy={busy}
+                busyLabel="Restoring…"
                 onClick={() =>
                   step(async () =>
                     setResult(
@@ -669,8 +680,8 @@ function RestoreDialog({ run, instanceId, onClose }: { run: Run | null; instance
                   )
                 }
               >
-                {busy ? "Restoring…" : "Restore"}
-              </Button>
+                Restore
+              </BusyButton>
             </>
           )}
         </DialogFooter>

@@ -28,6 +28,7 @@ import { useConfirm } from "@/components/confirm"
 import { useDiscardGuard } from "@/components/discard-guard"
 import { ItemRow, ItemsHeader } from "@/components/item-row"
 import {
+  BusyButton,
   Copyable,
   countChanges,
   Empty,
@@ -406,9 +407,23 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
   const [editing, setEditing] = useState(false)
   const confirm = useConfirm()
   const invalidate = [`/instances/${id}`, "/instances", "/overview"]
-  const refresh = useApiMutation<void>("POST", `/instances/${id}/refresh`, { invalidate, success: "Checked now" })
-  const remove = useApiMutation<void>("DELETE", `/instances/${id}`, { invalidate: ["/instances", "/overview"] })
-  const declare = useApiMutation<{ declaredAccess: "read" | "write" }>("PATCH", `/instances/${id}`, { invalidate })
+  // Toasts name the instance (FB-4), read when the request ends.
+  const named = () => detail.data?.name ?? "the instance"
+  const refresh = useApiMutation<void>("POST", `/instances/${id}/refresh`, {
+    invalidate,
+    success: () => `Checked ${named()} now`,
+    failed: () => `check ${named()}`,
+  })
+  const remove = useApiMutation<void>("DELETE", `/instances/${id}`, {
+    invalidate: ["/instances", "/overview"],
+    failed: () => `remove ${named()}`,
+  })
+  const declare = useApiMutation<{ declaredAccess: "read" | "write" }>("PATCH", `/instances/${id}`, {
+    invalidate,
+    success: (b) =>
+      `The API key of ${named()} ${b.declaredAccess === "write" ? "can read and write" : "can only read"}`,
+    failed: () => `change what the API key of ${named()} can do`,
+  })
   const unsaved = {
     backups: useUnsaved(`backup-destinations-${id}`),
     access: useUnsaved(`agent-access-${id}`),
@@ -497,10 +512,15 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
               <ExternalLink /> Open n8n
             </a>
           </Button>
-          <Button size="sm" onClick={() => refresh.mutate()} disabled={refresh.isPending}>
-            <RefreshCw />
-            <span className="@max-[34rem]/pane:sr-only">{refresh.isPending ? "Checking…" : "Check now"}</span>
-          </Button>
+          <BusyButton
+            size="sm"
+            icon={RefreshCw}
+            busyLabel="Checking…"
+            labelClassName="@max-[34rem]/pane:sr-only"
+            run={() => refresh.mutateAsync()}
+          >
+            Check now
+          </BusyButton>
           <Button size="sm" onClick={() => setEditing(true)}>
             <Pencil />
             <span className="@max-[34rem]/pane:sr-only">Edit</span>
@@ -888,9 +908,9 @@ async function exportCredentials(id: string, name: string) {
     a.download = `${name}-credentials.json.age`
     a.click()
     URL.revokeObjectURL(url)
-    toast.success("Downloaded. Decrypt with: age -d -i backup-key.txt", { id: loading })
+    toast.success(`Credentials of ${name} downloaded. Decrypt with: age -d -i backup-key.txt`, { id: loading })
   } catch (error) {
-    toast.error(`Export failed: ${(error as Error).message}`, { id: loading })
+    toast.error(`Could not export the credentials of ${name}: ${(error as Error).message}`, { id: loading })
   }
 }
 
@@ -1219,13 +1239,15 @@ export function InstanceDialog({
         </FieldGroup>
         <DialogFooter>
           <Button onClick={() => void guard.requestClose()}>Cancel</Button>
-          <Button
+          <BusyButton
             variant="primary"
             onClick={() => void submit()}
-            disabled={busy || !form.name || !form.baseUrl || (!instance && !form.apiKey)}
+            busy={busy}
+            busyLabel="Testing connection…"
+            disabled={!form.name || !form.baseUrl || (!instance && !form.apiKey)}
           >
-            {busy ? "Testing connection…" : instance ? "Save" : "Add instance"}
-          </Button>
+            {instance ? "Save" : "Add instance"}
+          </BusyButton>
         </DialogFooter>
       </DialogContent>
     </Dialog>

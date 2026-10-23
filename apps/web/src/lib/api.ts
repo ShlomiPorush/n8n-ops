@@ -116,14 +116,30 @@ export function useApi<T>(path: string | null, options: { refetchInterval?: numb
   return useKeptRows(path, query, Boolean(options.keepRows))
 }
 
+/** A toast text, or one built from the request body when it names the object ("Checked n8n-1 now"). */
+type ToastText<TBody> = string | ((body: TBody) => string)
+
+/** The error toast of a request: what failed, then why ("Could not resolve Sync orders: Not found.", FB-3). */
+export function failureText(failed: string | undefined, error: unknown): string {
+  return failed ? `Could not ${failed}: ${describeError(error)}` : describeError(error)
+}
+
 /**
- * A mutation that shows a toast on error and invalidates the given query paths on success. With `quiet` the
- * caller says what failed itself, such as the save bar naming each area (SV-3).
+ * A mutation that shows a toast on error and invalidates the given query paths on success. Toasts name the object
+ * and the result (FB-4): `success` is the whole text ("Problem resolved: Sync orders"), `failed` what could not be
+ * done ("resolve Sync orders" reads "Could not resolve Sync orders: <reason>", FB-3). Either may be a function of
+ * the body, read when the request ends. With `quiet` the caller says what failed itself, such as the save bar
+ * naming each area (SV-3).
  */
 export function useApiMutation<TBody, TResult = unknown>(
   method: "POST" | "PUT" | "PATCH" | "DELETE",
   path: string | ((body: TBody) => string),
-  { invalidate = [], success, quiet = false }: { invalidate?: string[]; success?: string; quiet?: boolean } = {},
+  {
+    invalidate = [],
+    success,
+    failed,
+    quiet = false,
+  }: { invalidate?: string[]; success?: ToastText<TBody>; failed?: ToastText<TBody>; quiet?: boolean } = {},
 ) {
   const client = useQueryClient()
   return useMutation<TResult, Error, TBody>({
@@ -132,16 +148,17 @@ export function useApiMutation<TBody, TResult = unknown>(
         method,
         json: method === "DELETE" ? undefined : body,
       }),
-    onSuccess: () => {
+    onSuccess: (_, body) => {
       for (const key of invalidate) {
         markSaved(key)
         void client.invalidateQueries({ queryKey: [key] })
       }
-      if (success) toast.success(success)
+      if (success) toast.success(typeof success === "function" ? success(body) : success)
     },
     // On the way to sign-in after the session ended, no error toast is shown (NL-18).
-    onError: (error) => {
-      if (!quiet && !sessionEnding()) toast.error(describeError(error))
+    onError: (error, body) => {
+      if (!quiet && !sessionEnding())
+        toast.error(failureText(typeof failed === "function" ? failed(body) : failed, error))
     },
   })
 }
@@ -154,7 +171,15 @@ export function describeError(error: unknown): string {
       not_found: "Not found.",
       internal_error: "Something went wrong on the server. Check the server logs.",
     }
-    return error.detail ?? known[error.code] ?? error.message
+    const said = error.detail ?? known[error.code]
+    if (said) return said
+    // An answer without our error body came from something in between, such as a proxy whose n8n-ops is down:
+    // say that in words, not "http_502" (FB-3). It follows "Could not …: ", so it does not start that way too.
+    if (error.code === `http_${error.status}` && !error.issues?.length)
+      return [502, 503, 504].includes(error.status)
+        ? "n8n-ops did not answer. Try again in a moment."
+        : `The server answered with error ${error.status}.`
+    return error.message
   }
   return error instanceof Error ? error.message : String(error)
 }

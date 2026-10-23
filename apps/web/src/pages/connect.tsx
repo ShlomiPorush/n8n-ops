@@ -2,9 +2,8 @@ import { useQuery } from "@tanstack/react-query"
 import { TriangleAlert } from "lucide-react"
 import { useState } from "react"
 import { useParams } from "react-router"
-import { KV, LoadError, Loading, Panel, RefreshNote, UserText } from "@/components/kit"
+import { BusyButton, KV, LoadError, Loading, Panel, RefreshNote, UserText } from "@/components/kit"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Field, FieldContent, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { ApiError } from "@/lib/api"
@@ -46,8 +45,11 @@ export function ConnectApprovePage() {
   const [access, setAccess] = useState(true)
   const [state, setState] = useState<"open" | "busy" | "approved" | "denied">("open")
   const [error, setError] = useState("")
+  // Which answer is being sent, so only its button shows that it is busy (FB-7).
+  const [sending, setSending] = useState(true)
 
   async function decide(approve: boolean) {
+    setSending(approve)
     setState("busy")
     setError("")
     try {
@@ -170,12 +172,23 @@ export function ConnectApprovePage() {
             </p>
           )}
           <div className="flex flex-wrap gap-2">
-            <Button variant="primary" disabled={state === "busy"} onClick={() => void decide(true)}>
+            <BusyButton
+              variant="primary"
+              busy={state === "busy" && sending}
+              busyLabel="Approving…"
+              disabled={state === "busy"}
+              onClick={() => void decide(true)}
+            >
               Approve
-            </Button>
-            <Button disabled={state === "busy"} onClick={() => void decide(false)}>
+            </BusyButton>
+            <BusyButton
+              busy={state === "busy" && !sending}
+              busyLabel="Denying…"
+              disabled={state === "busy"}
+              onClick={() => void decide(false)}
+            >
               Deny
-            </Button>
+            </BusyButton>
           </div>
         </>
       )}

@@ -1,6 +1,6 @@
 import { QueryClient } from "@tanstack/react-query"
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { ApiError, api, describeError, markSaved, NetworkError, readFresh } from "./api.ts"
+import { ApiError, api, describeError, failureText, markSaved, NetworkError, readFresh } from "./api.ts"
 import { sessionStarted } from "./session.ts"
 
 afterEach(() => vi.unstubAllGlobals())
@@ -76,9 +76,39 @@ describe("describeError", () => {
     expect(describeError(new ApiError(401, "unauthorized"))).toBe("Your session ended. Sign in again.")
   })
 
+  it("says in words what an answer without an error body means, not its code (FB-3)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("<html>Bad Gateway</html>", { status: 502 })),
+    )
+    const proxied = await api("/x").catch((e: unknown) => e)
+    expect(describeError(proxied)).toBe("n8n-ops did not answer. Try again in a moment.")
+    expect(describeError(new ApiError(504, "http_504"))).toBe("n8n-ops did not answer. Try again in a moment.")
+    expect(describeError(new ApiError(413, "http_413"))).toBe("The server answered with error 413.")
+    expect(failureText("check n8n-1", new ApiError(503, "http_503"))).toBe(
+      "Could not check n8n-1: n8n-ops did not answer. Try again in a moment.",
+    )
+  })
+
   it("lists validation issues", () => {
     const error = new ApiError(400, "invalid", [{ path: ["chatId"], message: "required" }])
     expect(describeError(error)).toBe("chatId: required")
+  })
+})
+
+describe("failureText", () => {
+  it("says what failed, then the server's reason (FB-3)", () => {
+    expect(failureText("resolve Sync orders", new ApiError(404, "not_found"))).toBe(
+      "Could not resolve Sync orders: Not found.",
+    )
+    const detail = new ApiError(409, "conflict", undefined, "A backup of n8n-1 is already running.")
+    expect(failureText("start the backup of n8n-1", detail)).toBe(
+      "Could not start the backup of n8n-1: A backup of n8n-1 is already running.",
+    )
+  })
+
+  it("is only the reason when the caller names nothing", () => {
+    expect(failureText(undefined, new ApiError(404, "not_found"))).toBe("Not found.")
   })
 })
 

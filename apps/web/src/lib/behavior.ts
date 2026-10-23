@@ -10,6 +10,12 @@ export const COPIED_MS = 1500
 export const TOAST_MS = 4000
 /** How long a toast takes to fade out (FB-2). */
 export const TOAST_FADE_MS = 300
+/** A toast let go by the pointer or the keyboard stays at least this long, and a fading one caught comes back for it (FB-2). */
+export const TOAST_REST_MS = 1500
+/** A busy button shows "Done" this long after its request succeeded (FB-7). */
+export const DONE_MS = 3000
+/** A busy button shows "Failed" this long after its request failed (FB-7). */
+export const FAILED_MS = 2000
 /** The confirm button, or the safe answer of a question that protects changes, takes the focus after this delay (DS-12). */
 export const CONFIRM_FOCUS_MS = 100
 /** A sheet pulled down past min(this, a quarter of its height) closes (DS-3). */

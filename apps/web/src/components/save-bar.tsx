@@ -1,3 +1,4 @@
+import { LoaderCircle } from "lucide-react"
 import * as React from "react"
 import { createPortal } from "react-dom"
 import {
@@ -270,6 +271,8 @@ function SaveBar({
         disabled={saving}
         className="border-bg bg-bg text-ink hover:border-bg hover:opacity-90 disabled:cursor-wait disabled:opacity-60"
       >
+        {/* The busy ring (FB-7) is drawn here: kit.tsx imports this file, so its BusyButton cannot be used. */}
+        {saving && <LoaderCircle aria-hidden className="animate-spin" />}
         {saving ? "Saving…" : "Save changes"}
       </Button>
     </section>,

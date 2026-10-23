@@ -1,7 +1,6 @@
 import { ShieldCheck } from "lucide-react"
 import { useState } from "react"
-import { Command, Page, Panel, PanelHead } from "@/components/kit"
-import { Button } from "@/components/ui/button"
+import { BusyButton, Command, Page, Panel, PanelHead } from "@/components/kit"
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { PasswordInput } from "@/components/ui/password-input"
 import { UNREACHABLE_TEXT } from "@/lib/api"
@@ -67,9 +66,9 @@ export function AccountPage() {
             </Field>
           </FieldGroup>
           <div>
-            <Button type="submit" disabled={busy}>
+            <BusyButton type="submit" busy={busy} busyLabel="Changing…">
               Change password
-            </Button>
+            </BusyButton>
           </div>
         </form>
       </Panel>

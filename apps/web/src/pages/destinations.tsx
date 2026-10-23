@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react"
 import { Link } from "react-router"
 import { useDiscardGuard } from "@/components/discard-guard"
 import {
+  BusyButton,
   Empty,
   formChanged,
   LoadError,
@@ -191,7 +192,10 @@ function Tags({ d }: { d: Destination }) {
 export function DestinationsSection({ hidden = false }: { hidden?: boolean }) {
   const list = useApi<Destination[]>("/destinations")
   const [editing, setEditing] = useState<Destination | "new" | null>(null)
-  const test = useApiMutation<string>("POST", (id) => `/destinations/${id}/test`)
+  const named = (id: string) => list.data?.find((d) => d.id === id)?.name ?? "the destination"
+  const test = useApiMutation<string, { notes?: string[] }>("POST", (id) => `/destinations/${id}/test`, {
+    failed: (id) => `use ${named(id)}`,
+  })
   const data = list.data ?? []
   return (
     <>
@@ -254,20 +258,16 @@ export function DestinationsSection({ hidden = false }: { hidden?: boolean }) {
                 )}
               </div>
               <div className="flex shrink-0 gap-2">
-                <Button
+                <BusyButton
                   size="sm"
-                  disabled={test.isPending}
-                  onClick={() =>
-                    test.mutate(d.id, {
-                      onSuccess: (res) => {
-                        const notes = (res as { notes?: string[] }).notes ?? []
-                        toast.success(`${d.name} works${notes.length ? `. ${notes.join(" ")}` : ""}`)
-                      },
-                    })
-                  }
+                  busyLabel="Testing…"
+                  run={async () => {
+                    const notes = (await test.mutateAsync(d.id)).notes ?? []
+                    toast.success(`${d.name} works${notes.length ? `. ${notes.join(" ")}` : ""}`)
+                  }}
                 >
-                  {test.isPending && test.variables === d.id ? "Testing…" : "Test"}
-                </Button>
+                  Test
+                </BusyButton>
                 <Button size="sm" onClick={() => setEditing(d)}>
                   Edit
                 </Button>
@@ -438,9 +438,15 @@ export function DestinationDialog({
               </Button>
             )}
             <Button onClick={() => void guard.requestClose()}>Cancel</Button>
-            <Button variant="primary" onClick={() => void submit()} disabled={busy || !form.name.trim()}>
-              {busy ? "Testing…" : destination ? "Save" : "Test and add"}
-            </Button>
+            <BusyButton
+              variant="primary"
+              onClick={() => void submit()}
+              busy={busy}
+              busyLabel="Testing…"
+              disabled={!form.name.trim()}
+            >
+              {destination ? "Save" : "Test and add"}
+            </BusyButton>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -601,12 +607,14 @@ export function DestinationFields({
                     placeholder={f.placeholder}
                   />
                   {f.name === "hostKey" && (
-                    <Button
+                    <BusyButton
                       onClick={() => void readHostKey()}
-                      disabled={hostKeyBusy || !String(form.location.host ?? "").trim()}
+                      busy={hostKeyBusy}
+                      busyLabel="Reading…"
+                      disabled={!String(form.location.host ?? "").trim()}
                     >
-                      {hostKeyBusy ? "Reading…" : "Read from server"}
-                    </Button>
+                      Read from server
+                    </BusyButton>
                   )}
                 </div>
               )}
@@ -778,9 +786,9 @@ function DeleteDestination({
         {error && <FieldError>{error}</FieldError>}
         <DialogFooter>
           <Button onClick={() => onClose(false)}>Cancel</Button>
-          <Button variant="danger-solid" onClick={() => void remove()} disabled={busy}>
-            {busy ? "Deleting…" : files === "delete" ? "Delete destination and archives" : "Delete destination"}
-          </Button>
+          <BusyButton variant="danger-solid" onClick={() => void remove()} busy={busy} busyLabel="Deleting…">
+            {files === "delete" ? "Delete destination and archives" : "Delete destination"}
+          </BusyButton>
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -4,7 +4,17 @@ import { Navigate, NavLink, useLocation, useNavigate, useParams } from "react-ro
 import { useCrumb } from "@/app/chrome"
 import { afterGeneralSave } from "@/app/design-sync"
 import { settingsGroups, settingsSectionLabel } from "@/app/settings-sections"
-import { Command, countChanges, LoadError, Loading, Page, Panel, SecretField, useSaveSource } from "@/components/kit"
+import {
+  Command,
+  countChanges,
+  LoadError,
+  Loading,
+  Page,
+  Panel,
+  SecretField,
+  useSaveSource,
+  useUnsavedIds,
+} from "@/components/kit"
 import { SectionIcon } from "@/components/skin/marks"
 import { TimeZonePicker } from "@/components/time-zone-picker"
 import { Button } from "@/components/ui/button"
@@ -179,15 +189,24 @@ const sectionDescriptions: Record<string, string> = {
 /** The section last open, so Settings reopens where it was left during this visit (NL-4). */
 let lastSection = "general"
 
+/** The save bar area that holds a section's unsaved changes. */
+const draftOf = (section: string) => (section === "destinations" ? "backup-settings" : `settings-${section}`)
+const sectionKeys: string[] = settingsGroups.flatMap((g) => g.items.map(([k]) => k))
+
 export function SettingsPage() {
   const { section } = useParams()
   const navigate = useNavigate()
+  const unsaved = useUnsavedIds()
   const label = section ? settingsSectionLabel(section) : undefined
   useCrumb(label)
   // Backup Storage became Backup Destinations; links to the old section still arrive.
   if (section === "storage") return <Navigate to="/settings/destinations" replace />
   if (!section || !label) return <Navigate to={`/settings/${lastSection}`} replace />
   lastSection = section
+  const holds = (k: string) => unsaved.has(draftOf(k))
+  // Changes are kept across the sections (SV-1): a section that holds some stays mounted, out of sight, after
+  // the one shown, so the shown one is drawn as before.
+  const mounted = [section, ...sectionKeys.filter((k) => k !== section && holds(k))]
   return (
     <Page title="Settings" description="How n8n-ops reaches you, where backups go, and who may use its API.">
       <div className="grid items-start gap-gap min-[1024px]:grid-cols-[212px_minmax(0,1fr)] min-[1024px]:gap-7">
@@ -204,7 +223,7 @@ export function SettingsPage() {
                 <optgroup key={g.label} label={g.label}>
                   {g.items.map(([k, l]) => (
                     <option key={k} value={k}>
-                      {l}
+                      {holds(k) ? `${l} (unsaved)` : l}
                     </option>
                   ))}
                 </optgroup>
@@ -227,10 +246,19 @@ export function SettingsPage() {
                   key={k}
                   to={`/settings/${k}`}
                   aria-current={section === k ? "true" : undefined}
-                  className="rounded-sm px-2.5 py-1.5 font-medium text-ink aria-[current=true]:bg-primary aria-[current=true]:font-title aria-[current=true]:text-primary-foreground regular:flex regular:items-center regular:gap-2.5 regular:aria-[current=true]:bg-fill regular:aria-[current=true]:text-ink regular:aria-[current=true]:font-semibold [@media(hover:hover)]:hover:bg-accent [@media(hover:hover)]:aria-[current=true]:hover:bg-primary regular:[@media(hover:hover)]:aria-[current=true]:hover:bg-fill"
+                  className="flex items-center rounded-sm px-2.5 py-1.5 font-medium text-ink aria-[current=true]:bg-primary aria-[current=true]:font-title aria-[current=true]:text-primary-foreground regular:gap-2.5 regular:aria-[current=true]:bg-fill regular:aria-[current=true]:text-ink regular:aria-[current=true]:font-semibold [@media(hover:hover)]:hover:bg-accent [@media(hover:hover)]:aria-[current=true]:hover:bg-primary regular:[@media(hover:hover)]:aria-[current=true]:hover:bg-fill"
                 >
                   <SectionIcon section={k} />
                   {l}
+                  {/* A section holding unsaved changes is marked (SV-1). */}
+                  {holds(k) && (
+                    <span
+                      role="img"
+                      aria-label="Unsaved changes"
+                      title="Unsaved changes"
+                      className="ms-auto size-[7px] shrink-0 rounded-full bg-info"
+                    />
+                  )}
                 </NavLink>
               ))}
             </div>
@@ -253,9 +281,15 @@ export function SettingsPage() {
               {forms[section]?.description ?? sectionDescriptions[section]}
             </p>
           </div>
-          {section in forms && <SettingsForm key={section} section={section} />}
-          {section === "keys" && <KeysCard />}
-          {section === "destinations" && <DestinationsSection />}
+          {mounted.map((k) =>
+            k in forms ? (
+              <SettingsForm key={k} section={k} active={k === section} />
+            ) : k === "destinations" ? (
+              <DestinationsSection key={k} hidden={k !== section} />
+            ) : k === "keys" ? (
+              <KeysCard key={k} />
+            ) : null,
+          )}
         </div>
       </div>
     </Page>
@@ -370,13 +404,19 @@ export const smtpServerChanged = (stored: Record<string, unknown>, next: Record<
   return server(stored) !== server(next)
 }
 
-export function SettingsForm({ section }: { section: string }) {
+/**
+ * One section's form. It stays mounted while another section shows and it holds unsaved changes, so they are kept
+ * across the sections and one save bar saves them all (SV-1); `active` is false while it is out of sight.
+ */
+export function SettingsForm({ section, active = true }: { section: string; active?: boolean }) {
   const def = forms[section]
   const query = useApi<Record<string, unknown>>(`/settings/${section}`)
-  useRevealField(!query.isLoading)
+  useRevealField(!query.isLoading && active)
   const [values, setValues] = useState<Record<string, unknown>>({})
+  // The save bar says what failed, naming the section (SV-3).
   const save = useApiMutation<Record<string, unknown>>("PUT", `/settings/${section}`, {
     invalidate: [`/settings/${section}`, "/setup/checklist"],
+    quiet: true,
   })
   const initial = query.data && def ? toForm(def, query.data) : {}
   const secrets = def?.fields.filter((f) => f.type === "password").map((f) => f.name) ?? []
@@ -415,6 +455,7 @@ export function SettingsForm({ section }: { section: string }) {
     label: `the ${def?.title ?? section} settings`,
     saved: "Settings saved",
     count,
+    keepsOn: "/settings/",
     save: async () => {
       const sent = body()
       // The stored SMTP password is never sent to another server: a new host or port needs it again (FS-5).
@@ -424,9 +465,8 @@ export function SettingsForm({ section }: { section: string }) {
         smtpServerChanged(query.data, sent) &&
         !sent.smtpPassword
       ) {
-        toast.error("The SMTP server changed. Enter the SMTP password again, so the stored one is not sent to it.")
         setValues((v) => ({ ...v, smtpPassword: "" }))
-        throw new Error("password_needed")
+        throw new Error("The SMTP server changed. Enter the SMTP password again, so the stored one is not sent to it.")
       }
       await save.mutateAsync(sent)
       // Only a successful save lets the next answer replace the form; a failed one keeps the edits (SV-3).
@@ -440,7 +480,7 @@ export function SettingsForm({ section }: { section: string }) {
   const set = (name: string, value: unknown) => setValues((v) => ({ ...v, [name]: value }))
 
   return (
-    <Panel>
+    <Panel hidden={!active}>
       {query.error ? (
         <LoadError what={def.title} error={query.error} retry={() => query.refetch()} />
       ) : query.isLoading ? (

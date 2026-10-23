@@ -2,6 +2,7 @@ import { Cpu as CpuIcon, Plus, Trash2 } from "lucide-react"
 import { useState } from "react"
 import { Link } from "react-router"
 import { useConfirm } from "@/components/confirm"
+import { useDiscardGuard } from "@/components/discard-guard"
 import { Copyable, Empty, LoadError, Loading, Page, Panel, PanelHead, UserText } from "@/components/kit"
 import { HostMark } from "@/components/skin/marks"
 import { StatusTag, TimeAgo, When } from "@/components/status"
@@ -163,17 +164,17 @@ function AddWorkerDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
     "/workers/pairing",
   )
   const containerList = containers.split(/[\s,]+/).filter(Boolean)
-  const close = (o: boolean) => {
-    onOpenChange(o)
-    if (!o) {
-      setResult(null)
-      setName("")
-      setContainers("")
-      setSocketProxy(true)
-    }
-  }
+  // Until the pairing token is made, anything typed or changed is asked about before it is dropped (DS-9).
+  const dirty = !result && (name.trim() !== "" || containers.trim() !== "" || !socketProxy)
+  const guard = useDiscardGuard(dirty, () => {
+    onOpenChange(false)
+    setResult(null)
+    setName("")
+    setContainers("")
+    setSocketProxy(true)
+  })
   return (
-    <Dialog open={open} onOpenChange={close}>
+    <Dialog open={open} onOpenChange={guard.onOpenChange}>
       <DialogContent className="md:max-w-2xl" keepOnBackdrop>
         <DialogHeader icon={CpuIcon}>
           <DialogTitle>Add a Worker</DialogTitle>
@@ -232,12 +233,12 @@ function AddWorkerDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
         )}
         <DialogFooter>
           {result ? (
-            <Button variant="primary" onClick={() => close(false)}>
+            <Button variant="primary" onClick={() => void guard.requestClose("finished")}>
               Done
             </Button>
           ) : (
             <>
-              <Button onClick={() => close(false)}>Cancel</Button>
+              <Button onClick={() => void guard.requestClose()}>Cancel</Button>
               <Button
                 variant="primary"
                 disabled={!name.trim() || (socketProxy && containerList.length === 0) || create.isPending}

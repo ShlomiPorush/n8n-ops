@@ -1,6 +1,7 @@
 import { QueryClient } from "@tanstack/react-query"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { ApiError, api, describeError, markSaved, readFresh } from "./api.ts"
+import { sessionStarted } from "./session.ts"
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -32,6 +33,18 @@ describe("api", () => {
 })
 
 describe("describeError", () => {
+  it("sends a signed-in page to sign-in when the session ended, and still throws (NL-18)", async () => {
+    const replace = vi.fn()
+    vi.stubGlobal("window", { location: { pathname: "/problems", search: "?status=all", replace } })
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 })),
+    )
+    sessionStarted()
+    await expect(api("/x")).rejects.toMatchObject({ status: 401 })
+    expect(replace).toHaveBeenCalledWith("/login?next=%2Fproblems%3Fstatus%3Dall")
+  })
+
   it("explains known codes", () => {
     expect(describeError(new ApiError(401, "unauthorized"))).toBe("Your session ended. Sign in again.")
   })

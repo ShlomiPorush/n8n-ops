@@ -15,7 +15,8 @@ import { CONFIRM_FOCUS_MS } from "@/lib/behavior"
  * The one confirmation (DS-12, DS-20, FW-8). Ask only before an action that deletes, is permanent or affects
  * many items; a single reversible action runs on one click. The question names the object, the count and the
  * consequence, and the button is named after the action. A dangerous action gets the one solid red button of
- * the app. The confirm button takes the focus, so Enter confirms; Escape, Cancel, the backdrop and Back cancel.
+ * the app. The confirm button takes the focus, so Enter confirms; a question that protects changes (Leave,
+ * Discard) starts on its safe answer instead (`focusCancel`). Escape, Cancel, the backdrop and Back cancel.
  */
 
 export type ConfirmOptions = {
@@ -25,6 +26,15 @@ export type ConfirmOptions = {
   confirmLabel: string
   cancelLabel?: string
   danger?: boolean
+  /** The focus starts on the safe answer (Stay, Keep editing), so Enter never drops work. */
+  focusCancel?: boolean
+  /**
+   * No Back entry of its own: the question is asked during Back, Forward or a router block, and an entry pushed
+   * then would disturb the history it protects (DS-10).
+   */
+  noHistory?: boolean
+  /** Closes the question as cancelled, such as when the dialog it was asked for saves and closes (DS-9). */
+  signal?: AbortSignal
 }
 
 type Ask = (options: ConfirmOptions) => Promise<boolean>
@@ -36,18 +46,31 @@ export function useConfirm(): Ask {
   return ask
 }
 
+type Pending = ConfirmOptions & { resolve: (ok: boolean) => void }
+
 export function ConfirmProvider({ children }: { children: React.ReactNode }) {
-  const [pending, setPending] = React.useState<(ConfirmOptions & { resolve: (ok: boolean) => void }) | null>(null)
+  const [pending, setPending] = React.useState<Pending | null>(null)
   const confirmRef = React.useRef<HTMLButtonElement>(null)
+  const cancelRef = React.useRef<HTMLButtonElement>(null)
 
   const ask = React.useCallback<Ask>(
     (options) =>
       new Promise<boolean>((resolve) => {
+        if (options.signal?.aborted) return resolve(false)
+        const question: Pending = { ...options, resolve }
         // A second question replaces the first, which counts as cancelled.
         setPending((previous) => {
           previous?.resolve(false)
-          return { ...options, resolve }
+          return question
         })
+        options.signal?.addEventListener(
+          "abort",
+          () => {
+            resolve(false)
+            setPending((current) => (current === question ? null : current))
+          },
+          { once: true },
+        )
       }),
     [],
   )
@@ -65,10 +88,12 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
             role="alertdialog"
             aria-label={pending.title}
             showCloseButton={false}
+            history={!pending.noHistory}
             className="md:max-w-[460px]"
             onOpenAutoFocus={(e) => {
               e.preventDefault()
-              setTimeout(() => confirmRef.current?.focus(), CONFIRM_FOCUS_MS)
+              const target = pending.focusCancel ? cancelRef : confirmRef
+              setTimeout(() => target.current?.focus(), CONFIRM_FOCUS_MS)
             }}
           >
             <DialogHeader
@@ -86,7 +111,7 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
               <DialogDescription className="sr-only">{pending.title}</DialogDescription>
             )}
             <DialogFooter>
-              <Button id="confirm-cancel" onClick={() => finish(false)}>
+              <Button id="confirm-cancel" ref={cancelRef} onClick={() => finish(false)}>
                 {pending.cancelLabel ?? "Cancel"}
               </Button>
               <Button

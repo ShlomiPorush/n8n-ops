@@ -1,6 +1,7 @@
 import { ChevronRight, KeySquare as KeySquareIcon, Plus, Trash2 } from "lucide-react"
 import { useId, useState } from "react"
 import { useConfirm } from "@/components/confirm"
+import { useDiscardGuard } from "@/components/discard-guard"
 import {
   Command,
   Copyable,
@@ -245,10 +246,16 @@ function AgentsCard() {
 function HandMadeToken() {
   const [shown, setShown] = useState(false)
   const [open, setOpen] = useState(false)
+  const [name, setName] = useState("")
   const [kind, setKind] = useState<"mcp" | "rest">("mcp")
+  // The kind the dialog opened with: it starts on the kind chosen last time.
+  const [openedKind, setOpenedKind] = useState(kind)
   const [canRequestAccess, setCanRequestAccess] = useState(false)
   const [created, setCreated] = useState("")
   const id = useId()
+  // Until the token is made, anything typed or changed is asked about before it is dropped (DS-9).
+  const dirty = !created && (name.trim() !== "" || kind !== openedKind || canRequestAccess)
+  const guard = useDiscardGuard(dirty, () => setOpen(false))
   const create = useApiMutation<{ name: string; kind: string; canRequestAccess: boolean }, { token: string }>(
     "POST",
     "/admin/tokens",
@@ -278,6 +285,8 @@ function HandMadeToken() {
           <Button
             onClick={() => {
               setCreated("")
+              setName("")
+              setOpenedKind(kind)
               setCanRequestAccess(false)
               setOpen(true)
             }}
@@ -286,7 +295,7 @@ function HandMadeToken() {
           </Button>
         </div>
       )}
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open} onOpenChange={guard.onOpenChange}>
         <DialogContent keepOnBackdrop>
           <DialogHeader icon={KeySquareIcon}>
             <DialogTitle>New Token</DialogTitle>
@@ -309,14 +318,20 @@ function HandMadeToken() {
               id="token"
               onSubmit={(e) => {
                 e.preventDefault()
-                const name = String(new FormData(e.currentTarget).get("name"))
                 create.mutate({ name, kind, canRequestAccess }, { onSuccess: (r) => setCreated(r.token) })
               }}
             >
               <FieldGroup>
                 <Field>
                   <FieldLabel htmlFor="token-name">Name</FieldLabel>
-                  <Input id="token-name" name="name" placeholder="claude-desktop" required />
+                  <Input
+                    id="token-name"
+                    name="name"
+                    placeholder="claude-desktop"
+                    required
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                  />
                 </Field>
                 <Field>
                   <FieldLabel>Kind</FieldLabel>
@@ -349,12 +364,12 @@ function HandMadeToken() {
           )}
           <DialogFooter>
             {created ? (
-              <Button variant="primary" onClick={() => setOpen(false)}>
+              <Button variant="primary" onClick={() => void guard.requestClose("finished")}>
                 Done
               </Button>
             ) : (
               <>
-                <Button onClick={() => setOpen(false)}>Cancel</Button>
+                <Button onClick={() => void guard.requestClose()}>Cancel</Button>
                 <Button variant="primary" type="submit" form="token" disabled={create.isPending}>
                   Create
                 </Button>

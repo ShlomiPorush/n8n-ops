@@ -10,7 +10,7 @@ export const COPIED_MS = 1500
 export const TOAST_MS = 4000
 /** How long a toast takes to fade out (FB-2). */
 export const TOAST_FADE_MS = 300
-/** The confirm button takes the focus after this delay, so Enter confirms (DS-12). */
+/** The confirm button, or the safe answer of a question that protects changes, takes the focus after this delay (DS-12). */
 export const CONFIRM_FOCUS_MS = 100
 /** A sheet pulled down past min(this, a quarter of its height) closes (DS-3). */
 export const SHEET_PULL_CLOSE_PX = 120

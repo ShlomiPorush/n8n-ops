@@ -2,8 +2,10 @@ import { useQueryClient } from "@tanstack/react-query"
 import { Cloud, FolderOpen, Globe, HardDrive, type LucideIcon, Plus, Server, Trash2 } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { Link } from "react-router"
+import { useDiscardGuard } from "@/components/discard-guard"
 import {
   Empty,
+  formChanged,
   LoadError,
   Loading,
   Panel,
@@ -183,14 +185,15 @@ function Tags({ d }: { d: Destination }) {
 // Settings > Backup Destinations
 // ---------------------------------------------------------------------------
 
-export function DestinationsSection() {
+/** Settings → Backup Destinations. `hidden` keeps it mounted out of sight while another section shows (SV-1). */
+export function DestinationsSection({ hidden = false }: { hidden?: boolean }) {
   const list = useApi<Destination[]>("/destinations")
   const [editing, setEditing] = useState<Destination | "new" | null>(null)
   const test = useApiMutation<string>("POST", (id) => `/destinations/${id}/test`)
   const data = list.data ?? []
   return (
     <>
-      <Panel>
+      <Panel hidden={hidden}>
         <PanelHead
           title="Destinations"
           count={list.data ? n(data.length) : undefined}
@@ -263,7 +266,7 @@ export function DestinationsSection() {
           ))
         )}
       </Panel>
-      <SelfBackupCard destinations={data} />
+      <SelfBackupCard destinations={data} hidden={hidden} />
       <DestinationDialog
         destination={editing === "new" ? null : editing}
         open={editing !== null}
@@ -361,15 +364,23 @@ export function DestinationDialog({
 }) {
   const client = useQueryClient()
   const [form, setForm] = useState<Form>(() => formOf(destination))
+  const [opened, setOpened] = useState<Form>(form)
   const [error, setError] = useState("")
   const [busy, setBusy] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  // Filled when the dialog opens or another destination is chosen, not when a refresh brings the same one again:
+  // that would replace what is being typed (SV-6).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the stored values are read when it opens, not followed
   useEffect(() => {
     if (!open) return
-    setForm(formOf(destination))
+    const start = formOf(destination)
+    setForm(start)
+    setOpened(start)
     setError("")
-  }, [open, destination])
+  }, [open, destination?.id])
   const locked = Boolean(destination?.lockedAt)
+  // Every close asks first while the form differs from how it opened (DS-9).
+  const guard = useDiscardGuard(formChanged(form, opened), () => onOpenChange(false))
 
   async function submit() {
     setBusy(true)
@@ -385,7 +396,7 @@ export function DestinationDialog({
       toast.success(
         `${destination ? "Saved" : "Added"} ${form.name.trim()}${notes.length ? `. ${notes.join(" ")}` : ""}`,
       )
-      onOpenChange(false)
+      void guard.requestClose("saved")
       await client.invalidateQueries()
     } catch (e) {
       setError(describeError(e))
@@ -396,7 +407,7 @@ export function DestinationDialog({
 
   return (
     <>
-      <Dialog open={open && !deleting} onOpenChange={onOpenChange}>
+      <Dialog open={open && !deleting} onOpenChange={guard.onOpenChange}>
         <DialogContent className="md:max-w-xl" keepOnBackdrop>
           <DialogHeader icon={destination ? kinds[destination.kind].icon : FolderOpen}>
             <DialogTitle>{destination ? `Edit ${destination.name}` : "Add a Backup Destination"}</DialogTitle>
@@ -416,7 +427,7 @@ export function DestinationDialog({
                 <Trash2 /> Delete
               </Button>
             )}
-            <Button onClick={() => onOpenChange(false)}>Cancel</Button>
+            <Button onClick={() => void guard.requestClose()}>Cancel</Button>
             <Button variant="primary" onClick={() => void submit()} disabled={busy || !form.name.trim()}>
               {busy ? "Testing…" : destination ? "Save" : "Test and add"}
             </Button>
@@ -887,7 +898,7 @@ export function InstanceBackupCard({
   const save = useApiMutation<{ mode: string; destinationIds: string[] }>(
     "PUT",
     `/instances/${instanceId}/backup-destinations`,
-    { invalidate: [`/instances/${instanceId}`, "/backups"] },
+    { invalidate: [`/instances/${instanceId}`, "/backups"], quiet: true },
   )
   useSaveSource(`backup-destinations-${instanceId}`, {
     label: "the backup destinations",
@@ -924,7 +935,7 @@ export function InstanceBackupCard({
 type BackupSettings = { selfDestinations: "default" | "custom"; selfDestinationIds: string[]; maxArchiveMb: number }
 
 /** Where the n8n-ops database backup goes, and the largest archive accepted. */
-function SelfBackupCard({ destinations }: { destinations: Destination[] }) {
+function SelfBackupCard({ destinations, hidden }: { destinations: Destination[]; hidden: boolean }) {
   const query = useApi<BackupSettings>("/settings/backups")
   const stored = query.data ? { mode: query.data.selfDestinations, ids: query.data.selfDestinationIds } : null
   const state = useChoice(stored)
@@ -938,12 +949,15 @@ function SelfBackupCard({ destinations }: { destinations: Destination[] }) {
   }, [query.data?.maxArchiveMb])
   const save = useApiMutation<Partial<BackupSettings>>("PUT", "/settings/backups", {
     invalidate: ["/settings/backups", "/backups"],
+    quiet: true,
   })
   const count = state.count + Number(max !== maxBase.current)
   useSaveSource("backup-settings", {
     label: "the backup settings",
     saved: "Backup settings saved",
     count,
+    // Kept while another Settings section is open (SV-1).
+    keepsOn: "/settings/",
     save: async () => {
       if (!state.choice) return
       await save.mutateAsync({
@@ -960,7 +974,7 @@ function SelfBackupCard({ destinations }: { destinations: Destination[] }) {
     },
   })
   return (
-    <Panel className="overflow-visible">
+    <Panel className="overflow-visible" hidden={hidden}>
       <PanelHead
         title="n8n-ops Database"
         description="n8n-ops backs up its own database every night, encrypted with the same key."

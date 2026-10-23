@@ -25,11 +25,13 @@ import { Link, useNavigate, useParams } from "react-router"
 import { useCrumb } from "@/app/chrome"
 import { AgentAccessCard } from "@/components/agent-access-card"
 import { useConfirm } from "@/components/confirm"
+import { useDiscardGuard } from "@/components/discard-guard"
 import { ItemRow, ItemsHeader } from "@/components/item-row"
 import {
   Copyable,
   countChanges,
   Empty,
+  formChanged,
   Kpi,
   Kpis,
   LoadError,
@@ -79,6 +81,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, useSort 
 import { Textarea } from "@/components/ui/textarea"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { api, describeError, queryClient, useApi, useApiMutation } from "@/lib/api"
+import { useNavigateFromOverlay } from "@/lib/overlay-history"
 import { formatFull, n, plural, useTimeZone } from "@/lib/time"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
@@ -351,7 +354,7 @@ export function InstancesPage() {
           </TableBody>
         </Table>
       )}
-      <InstanceDialog open={adding} onOpenChange={setAdding} onSaved={(newId) => navigate(`/instances/${newId}`)} />
+      <InstanceDialog open={adding} onOpenChange={setAdding} afterAdd={(newId) => `/instances/${newId}`} />
     </>
   )
 
@@ -909,6 +912,7 @@ function OverridesCard({ instance }: { instance: InstanceDetailData }) {
   const [values, setValues] = useState<Record<string, string>>(stored)
   const save = useApiMutation<{ overrides: Record<string, number | string> }>("PATCH", `/instances/${instance.id}`, {
     invalidate: [`/instances/${instance.id}`],
+    quiet: true,
   })
   const initial = stored()
   const count = countChanges(
@@ -966,14 +970,16 @@ export function InstanceDialog({
   open,
   onOpenChange,
   instance,
-  onSaved,
+  afterAdd,
 }: {
   open: boolean
   onOpenChange: (o: boolean) => void
   instance?: InstanceRow
-  onSaved?: (id: string) => void
+  /** Where to go once a new instance is added. */
+  afterAdd?: (id: string) => string
 }) {
   const workers = useApi<Worker[]>(open ? "/workers" : null)
+  const navigateOut = useNavigateFromOverlay()
   const [form, setForm] = useState({
     name: "",
     baseUrl: "",
@@ -985,6 +991,7 @@ export function InstanceDialog({
     collection: "direct" as "direct" | "worker",
     workerId: "",
   })
+  const [opened, setOpened] = useState(form)
   const [error, setError] = useState("")
   const [busy, setBusy] = useState(false)
   // Filled when the dialog opens or another instance is chosen, not when the 15-second refresh brings the same
@@ -993,7 +1000,7 @@ export function InstanceDialog({
   useEffect(() => {
     if (!open) return
     setError("")
-    setForm({
+    const start = {
       name: instance?.name ?? "",
       baseUrl: instance?.baseUrl ?? "",
       apiKey: undefined,
@@ -1003,9 +1010,13 @@ export function InstanceDialog({
       workerHealthUrls: (instance?.workerHealthUrls ?? []).join("\n"),
       collection: instance?.collection ?? "direct",
       workerId: instance?.workerId ?? "",
-    })
+    }
+    setForm(start)
+    setOpened(start)
   }, [open, instance?.id])
   const set = (k: keyof typeof form, v: string | boolean | undefined) => setForm((f) => ({ ...f, [k]: v }))
+  // Every close asks first while the form differs from how it opened (DS-9).
+  const guard = useDiscardGuard(formChanged(form, opened), () => onOpenChange(false))
   // A stored API key is never sent to a different server: a changed base URL needs the key again (FS-5).
   const urlChanged = Boolean(instance) && normalUrl(form.baseUrl) !== normalUrl(instance?.baseUrl ?? "")
 
@@ -1031,11 +1042,12 @@ export function InstanceDialog({
     try {
       if (instance) {
         await api(`/instances/${instance.id}`, { method: "PATCH", json: body })
-        onOpenChange(false)
+        void guard.requestClose("saved")
       } else {
         const res = await api<{ id: string }>("/instances", { method: "POST", json: body })
-        onOpenChange(false)
-        onSaved?.(res.id)
+        // The new instance's page takes the dialog's Back entry, so Back goes to the list (DS-10).
+        if (afterAdd) navigateOut(afterAdd(res.id))
+        void guard.requestClose("saved")
       }
       await queryClient.invalidateQueries()
     } catch (e) {
@@ -1046,7 +1058,7 @@ export function InstanceDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={guard.onOpenChange}>
       <DialogContent className="md:max-w-xl" keepOnBackdrop>
         <DialogHeader icon={ServerIcon}>
           <DialogTitle>{instance ? `Edit ${instance.name}` : "Add an Instance"}</DialogTitle>
@@ -1149,7 +1161,18 @@ export function InstanceDialog({
               {workers.data && workers.data.length === 0 ? (
                 <p className="rounded-sm border border-dashed border-muted-foreground/55 px-3 py-2 text-small text-muted-foreground">
                   No worker is paired yet. Pair one in{" "}
-                  <Link to="/workers" className="font-semibold text-ink underline" onClick={() => onOpenChange(false)}>
+                  <Link
+                    to="/workers"
+                    className="font-semibold text-ink underline"
+                    onClick={async (e) => {
+                      // Leaving asks first like any close. Workers then takes the dialog's Back entry, before the
+                      // dialog closes, so its close does not step back as well (DS-10).
+                      e.preventDefault()
+                      if (!(await guard.confirmDiscard())) return
+                      navigateOut("/workers")
+                      void guard.requestClose("finished")
+                    }}
+                  >
                     Workers
                   </Link>{" "}
                   to back up credential secrets and move credentials.
@@ -1185,7 +1208,7 @@ export function InstanceDialog({
           {error && <FieldError>{error}</FieldError>}
         </FieldGroup>
         <DialogFooter>
-          <Button onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button onClick={() => void guard.requestClose()}>Cancel</Button>
           <Button
             variant="primary"
             onClick={() => void submit()}

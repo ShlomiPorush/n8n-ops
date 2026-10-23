@@ -3,6 +3,8 @@ import { createPortal } from "react-dom"
 import { useBlocker } from "react-router"
 import { useConfirm } from "@/components/confirm"
 import { Button } from "@/components/ui/button"
+import { describeError } from "@/lib/api"
+import { unsavedGuardOn } from "@/lib/session"
 import { plural } from "@/lib/time"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
@@ -17,12 +19,29 @@ export function countChanges(values: Record<string, unknown>, loaded: Record<str
   return names.filter((k) => text(values[k]) !== text(loaded[k])).length
 }
 
+/** Nested form values as one level of dotted names, for `countChanges`. */
+function flatten(value: Record<string, unknown>, prefix = "", out: Record<string, unknown> = {}) {
+  for (const [k, v] of Object.entries(value)) {
+    if (v !== null && typeof v === "object" && !Array.isArray(v))
+      flatten(v as Record<string, unknown>, `${prefix}${k}.`, out)
+    else out[`${prefix}${k}`] = Array.isArray(v) ? v.join(",") : v
+  }
+  return out
+}
+
+/** Whether a dialog's form differs from how it opened, compared as `countChanges` does, nested fields too (DS-9). */
+export function formChanged(values: Record<string, unknown>, opened: Record<string, unknown>) {
+  return countChanges(flatten(values), flatten(opened)) > 0
+}
+
 /*
  * The save bar (SV-1, SV-3). No autosave and no Edit mode: fields are editable at once. Every editable area
  * registers its unsaved changes here, and one dark bar floats at the bottom center while any exist, with the
- * total count, Discard and Save changes. Save writes each changed area and ends in one toast that names
- * what was saved; an area that fails keeps its changes and shows its own error. The page keeps room for the
- * bar while it shows. Leaving the page or the browser tab with unsaved changes asks first.
+ * total count, Discard and Save changes. Save writes each changed area and ends in one toast: what was saved,
+ * or, when an area failed, which one and why; a failed area keeps its changes. The page keeps room for the bar
+ * while it shows. Leaving the page, signing out or closing the browser tab with unsaved changes asks first;
+ * the question starts on Stay. An area may keep its changes across moves inside a part of the app (Settings
+ * across its sections), and such a move does not ask.
  */
 
 export type SaveSource = {
@@ -31,33 +50,48 @@ export type SaveSource = {
   /** The toast when only this area was saved: "Overrides saved". */
   saved: string
   count: number
+  /** Throws when the save failed; the error's message says why. Use a quiet mutation, the bar says what failed. */
   save: () => Promise<unknown>
   discard: () => void
+  /** A path prefix, such as "/settings/": moves inside it keep these changes, so they do not ask. */
+  keepsOn?: string
 }
 
-type Entry = { label: string; count: number; get: () => SaveSource }
+type Entry = { label: string; count: number; keepsOn?: string; get: () => SaveSource }
 type Register = (id: string, entry: Entry | null) => void
 const SaveContext = React.createContext<Register | null>(null)
 /** The ids of the areas that have unsaved changes, read only. */
 const UnsavedContext = React.createContext<ReadonlySet<string>>(new Set())
 /** Sets the element the bar shows in instead of the page, such as a sheet that traps the focus. */
 const HostContext = React.createContext<((host: HTMLElement | null) => void) | null>(null)
+/** Asks before a leave that the router does not see, such as signing out; true to go on. */
+const LeaveContext = React.createContext<() => Promise<boolean>>(async () => true)
 
 /** Registers an editable area with the page's save bar while it has unsaved changes. */
 export function useSaveSource(id: string, source: SaveSource) {
   const register = React.useContext(SaveContext)
   const latest = React.useRef(source)
   latest.current = source
-  const { label, count } = source
+  const { label, count, keepsOn } = source
   React.useEffect(() => {
-    register?.(id, count > 0 ? { label, count, get: () => latest.current } : null)
-  }, [register, id, label, count])
+    register?.(id, count > 0 ? { label, count, keepsOn, get: () => latest.current } : null)
+  }, [register, id, label, count, keepsOn])
   React.useEffect(() => () => register?.(id, null), [register, id])
 }
 
 /** Whether the area registered under this id has unsaved changes, for a mark on the tab that holds it. */
 export function useUnsaved(id: string) {
   return React.useContext(UnsavedContext).has(id)
+}
+
+/** The ids of every area with unsaved changes, for marks on a list of sections. */
+export function useUnsavedIds(): ReadonlySet<string> {
+  return React.useContext(UnsavedContext)
+}
+
+/** Asks "Leave without saving?" when there are unsaved changes; resolves true to go on. */
+export function useConfirmLeave() {
+  return React.useContext(LeaveContext)
 }
 
 /**
@@ -82,6 +116,27 @@ export function SaveBarHost() {
   )
 }
 
+/**
+ * The one toast that ends a save of several areas (SV-3). A failure is never covered by a success: it names
+ * each area that failed with its reason, after what was saved.
+ */
+export function saveOutcome(
+  saved: { label: string; saved: string }[],
+  failed: { label: string; detail: string }[],
+): { tone: "success" | "error"; text: string } | null {
+  if (failed.length === 0) {
+    if (saved.length === 0) return null
+    if (saved.length === 1) return { tone: "success", text: saved[0]?.saved ?? "" }
+    return { tone: "success", text: `Saved ${joinWords(saved.map((s) => s.label))}` }
+  }
+  const reasons = failed.map((f) => (failed.length === 1 ? `${f.label}: ${f.detail}` : `${f.label} (${f.detail})`))
+  const failure = `Could not save ${joinWords(reasons)}`
+  return {
+    tone: "error",
+    text: saved.length ? `Saved ${joinWords(saved.map((s) => s.label))}. ${failure}` : failure,
+  }
+}
+
 export function SaveScope({ children }: { children: React.ReactNode }) {
   const [entries, setEntries] = React.useState<Record<string, Entry>>({})
   const [saving, setSaving] = React.useState(false)
@@ -98,38 +153,45 @@ export function SaveScope({ children }: { children: React.ReactNode }) {
   }, [])
   const list = Object.values(entries)
   const count = list.reduce((sum, e) => sum + e.count, 0)
+  const confirmLeave = useLeaveQuestion(count)
 
   async function save() {
     setSaving(true)
     const saved: SaveSource[] = []
+    const failed: { label: string; detail: string }[] = []
     for (const entry of list) {
+      const source = entry.get()
       try {
-        const source = entry.get()
         await source.save()
         saved.push(source)
-      } catch {
-        // The area's own error toast says what failed; its changes stay.
+      } catch (e) {
+        // Its changes stay, and the toast below says what failed.
+        failed.push({ label: source.label, detail: describeError(e) })
       }
     }
     setSaving(false)
-    if (saved.length === 1) toast.success(saved[0]?.saved ?? "")
-    else if (saved.length > 1) toast.success(`Saved ${joinWords(saved.map((s) => s.label))}`)
+    const outcome = saveOutcome(saved, failed)
+    if (outcome) toast[outcome.tone](outcome.text)
   }
 
   return (
     <SaveContext.Provider value={register}>
       <UnsavedContext.Provider value={unsaved}>
         <HostContext.Provider value={setHost}>
-          {children}
-          <SaveBar
-            count={count}
-            saving={saving}
-            host={host}
-            onSave={() => void save()}
-            onDiscard={() => {
-              for (const entry of list) entry.get().discard()
-            }}
-          />
+          <LeaveContext.Provider value={confirmLeave}>
+            {children}
+            <SaveBar
+              count={count}
+              keepsOn={list.map((e) => e.keepsOn)}
+              confirmLeave={confirmLeave}
+              saving={saving}
+              host={host}
+              onSave={() => void save()}
+              onDiscard={() => {
+                for (const entry of list) entry.get().discard()
+              }}
+            />
+          </LeaveContext.Provider>
         </HostContext.Provider>
       </UnsavedContext.Provider>
     </SaveContext.Provider>
@@ -143,19 +205,23 @@ function joinWords(words: string[]) {
 
 function SaveBar({
   count,
+  keepsOn,
+  confirmLeave,
   saving,
   host,
   onSave,
   onDiscard,
 }: {
   count: number
+  keepsOn: (string | undefined)[]
+  confirmLeave: () => Promise<boolean>
   saving: boolean
   /** A dialog's place for the bar; without one it floats over the page. */
   host: HTMLElement | null
   onSave: () => void
   onDiscard: () => void
 }) {
-  useLeaveGuard(count)
+  useLeaveGuard(count, keepsOn, confirmLeave)
   React.useEffect(() => {
     // The scrolling page keeps room for the bar only while it shows, so it never covers the last field.
     document.documentElement.toggleAttribute("data-unsaved", count > 0)
@@ -194,25 +260,48 @@ function SaveBar({
   )
 }
 
-/** Unsaved changes are protected: a reload or closing the tab asks the browser, a move inside the app asks here. */
-function useLeaveGuard(count: number) {
+/**
+ * "Leave without saving?" with the focus on Stay, so Enter keeps the work (SV-1, DS-12). It writes no Back
+ * entry of its own, since it is asked during Back and Forward too (DS-10).
+ */
+function useLeaveQuestion(count: number) {
   const confirm = useConfirm()
-  const blocker = useBlocker(
-    ({ currentLocation, nextLocation }) => count > 0 && currentLocation.pathname !== nextLocation.pathname,
-  )
-  React.useEffect(() => {
-    if (blocker.state !== "blocked") return
-    void confirm({
+  return React.useCallback(async () => {
+    if (count === 0 || !unsavedGuardOn()) return true
+    return confirm({
       title: "Leave Without Saving?",
       message: `${plural(count, "unsaved change")} will be lost.`,
       confirmLabel: "Leave without saving",
       cancelLabel: "Stay",
       danger: true,
-    }).then((leave) => (leave ? blocker.proceed() : blocker.reset()))
-  }, [blocker, confirm, count])
+      focusCancel: true,
+      noHistory: true,
+    })
+  }, [confirm, count])
+}
+
+/**
+ * Unsaved changes are protected: a reload or closing the tab asks the browser, a move inside the app asks here.
+ * A move that every changed area keeps its changes across does not ask. A session that ended or was signed out
+ * switches the guard off, so leaving for sign-in does not ask (NL-18).
+ */
+function useLeaveGuard(count: number, keepsOn: (string | undefined)[], confirmLeave: () => Promise<boolean>) {
+  const blocker = useBlocker(
+    ({ currentLocation, nextLocation }) =>
+      count > 0 &&
+      unsavedGuardOn() &&
+      currentLocation.pathname !== nextLocation.pathname &&
+      !keepsOn.every((prefix) => prefix && nextLocation.pathname.startsWith(prefix)),
+  )
+  React.useEffect(() => {
+    if (blocker.state !== "blocked") return
+    void confirmLeave().then((leave) => (leave ? blocker.proceed() : blocker.reset()))
+  }, [blocker, confirmLeave])
   React.useEffect(() => {
     if (count === 0) return
-    const warn = (e: BeforeUnloadEvent) => e.preventDefault()
+    const warn = (e: BeforeUnloadEvent) => {
+      if (unsavedGuardOn()) e.preventDefault()
+    }
     window.addEventListener("beforeunload", warn)
     return () => window.removeEventListener("beforeunload", warn)
   }, [count])

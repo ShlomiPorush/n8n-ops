@@ -1309,13 +1309,17 @@ test("a new filter starts the list at its first row, and the filter bar stays in
   const list = (url: URL) => url.pathname === "/api/problems"
   let seed: { id: string } | undefined
   await page.route(list, async (route) => {
-    const res = await route.fetch()
-    seed ??= ((await res.json()) as { items: { id: string }[] }).items[0]
-    const first = seed
-    const items = first
-      ? [first, ...Array.from({ length: 59 }, (_, i) => ({ ...first, id: `${first.id}-copy-${i}` }))]
-      : []
-    await route.fulfill({ response: res, json: { items, total: items.length } })
+    try {
+      const res = await route.fetch()
+      seed ??= ((await res.json()) as { items: { id: string }[] }).items[0]
+      const first = seed
+      const items = first
+        ? [first, ...Array.from({ length: 59 }, (_, i) => ({ ...first, id: `${first.id}-copy-${i}` }))]
+        : []
+      await route.fulfill({ response: res, json: { items, total: items.length } })
+    } catch {
+      // The page moved on (a new filter or the next width's page load) and dropped this request meanwhile.
+    }
   })
   try {
     // Beside the reading pane the list scrolls in its own column; narrower, with no pane, in the page itself.

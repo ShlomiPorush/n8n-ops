@@ -670,8 +670,9 @@ function TabBar() {
               className={tabClass}
               onClick={(e) => {
                 // With the sheet open the page takes the sheet's Back step, as a move from inside it does, so the
-                // sheet's close does not step back as well (DS-10); a move the Leave question keeps is a plain close.
-                if (openFromSheet(t.to, e)) setMore(false)
+                // sheet's close does not step back as well (DS-10). The sheet closes once the move is made (the
+                // pathname effect above), so Stay in the Leave question keeps it open with its Back step.
+                openFromSheet(t.to, e)
               }}
             >
               <t.icon aria-hidden />

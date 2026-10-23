@@ -357,8 +357,10 @@ const kpisInPane = cn(
   "grid-cols-3",
   "@max-[52rem]/pane:**:data-[slot=kpi-icon]:hidden!",
   "regular:@min-[36rem]/pane:@max-[52rem]/pane:**:data-[slot=kpi-figure]:text-h1",
-  "@max-[36rem]/pane:**:data-[slot=kpi-figure]:text-h2",
-  "regular:@max-[36rem]/pane:**:data-[slot=kpi]:p-3.5",
+  // Regular's own rule for a figure in words (kit.tsx) is more specific than a plain one: both designs say it.
+  "compact:@max-[36rem]/pane:**:data-[slot=kpi-figure]:text-h2",
+  "regular:@max-[36rem]/pane:**:data-[slot=kpi-figure]:text-h2",
+  "regular:@max-[36rem]/pane:gap-2 regular:@max-[36rem]/pane:**:data-[slot=kpi]:p-3",
   "compact:@max-[36rem]/pane:**:data-[slot=kpi]:px-3",
 )
 

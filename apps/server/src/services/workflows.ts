@@ -2,7 +2,7 @@ import { and, eq, notInArray } from "drizzle-orm"
 import type { Ctx } from "../context.ts"
 import { workflows } from "../db/schema.ts"
 import { sha256 } from "../lib/crypto.ts"
-import type { N8nWorkflow } from "../n8n/client.ts"
+import { N8nError, type N8nExecution, type N8nWorkflow } from "../n8n/client.ts"
 import { describeTrigger } from "../n8n/execution.ts"
 import { clientFor, type Instance } from "./instances.ts"
 
@@ -39,25 +39,54 @@ export function calledWorkflowIds(workflow: Pick<N8nWorkflow, "nodes">): string[
   return [...new Set(ids.map((id) => String(id).replace(/^=/, "")))].filter((id) => id && !id.includes("{{"))
 }
 
+type ExecutionPage = { data: Pick<N8nExecution, "workflowId" | "status" | "startedAt">[]; nextCursor: string | null }
+type ExecutionLister = {
+  listExecutions(query: { limit?: number; cursor?: string; startedAfter?: string }): Promise<ExecutionPage>
+}
+
+/** Older n8n (2.30 among them) has no `startedAfter` filter on GET /executions and answers 400 to it. */
+const rejectsStartedAfter = (error: unknown) =>
+  error instanceof N8nError && error.status === 400 && /startedAfter/.test(error.body ?? "")
+
+/**
+ * Executions started at or after `since`, newest first, at most `maxPages` pages of 250. When the instance does not
+ * know the `startedAfter` filter, it pages without it and stops at the first execution that started earlier.
+ */
+export async function executionsSince(client: ExecutionLister, since: string, maxPages = 40) {
+  const sinceMs = Date.parse(since)
+  const out: ExecutionPage["data"] = []
+  let filtered = true
+  let cursor: string | undefined
+  for (let page = 0; page < maxPages; page++) {
+    let res: ExecutionPage
+    try {
+      res = await client.listExecutions({ limit: 250, cursor, ...(filtered ? { startedAfter: since } : {}) })
+    } catch (error) {
+      if (!filtered || page > 0 || !rejectsStartedAfter(error)) throw error
+      filtered = false
+      res = await client.listExecutions({ limit: 250 })
+    }
+    const fresh = filtered ? res.data : res.data.filter((e) => !e.startedAt || Date.parse(e.startedAt) >= sinceMs)
+    out.push(...fresh)
+    if (fresh.length < res.data.length || !res.nextCursor) break
+    cursor = res.nextCursor
+  }
+  return out
+}
+
 /** Reads every workflow of an instance and its run counts for the last 30 days (requirement F1). */
 export async function syncWorkflows(ctx: Ctx, instance: Instance) {
   const client = clientFor(ctx, instance)
   const all = await client.listWorkflows()
   const stats = new Map<string, { runs: number; errors: number; last: Date | null }>()
   const since = new Date(Date.now() - 30 * 86_400_000).toISOString()
-  let cursor: string | undefined
-  for (let page = 0; page < 40; page++) {
-    const res = await client.listExecutions({ limit: 250, cursor, startedAfter: since })
-    for (const e of res.data) {
-      const s = stats.get(e.workflowId) ?? { runs: 0, errors: 0, last: null }
-      s.runs++
-      if (e.status === "error" || e.status === "crashed") s.errors++
-      const at = e.startedAt ? new Date(e.startedAt) : null
-      if (at && (!s.last || at > s.last)) s.last = at
-      stats.set(e.workflowId, s)
-    }
-    if (!res.nextCursor) break
-    cursor = res.nextCursor
+  for (const e of await executionsSince(client, since)) {
+    const s = stats.get(e.workflowId) ?? { runs: 0, errors: 0, last: null }
+    s.runs++
+    if (e.status === "error" || e.status === "crashed") s.errors++
+    const at = e.startedAt ? new Date(e.startedAt) : null
+    if (at && (!s.last || at > s.last)) s.last = at
+    stats.set(e.workflowId, s)
   }
   for (const w of all) {
     const trigger = describeTrigger(w)

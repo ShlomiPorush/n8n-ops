@@ -86,6 +86,19 @@ export function markSaved(path: string) {
   epochs.set(path, (epochs.get(path) ?? 0) + 1)
 }
 
+/**
+ * Refreshes every cached read under the given paths, lists with any filters included ("/problems" covers
+ * "/problems?status=open" and "/problems/3f2a"), and marks them saved so an older answer cannot come back.
+ */
+export function refreshAreas(...prefixes: string[]) {
+  const under = (key: unknown): key is string => typeof key === "string" && prefixes.some((p) => key.startsWith(p))
+  for (const query of queryClient.getQueryCache().getAll()) {
+    const key = query.queryKey[0]
+    if (under(key)) markSaved(key)
+  }
+  void queryClient.invalidateQueries({ predicate: (q) => under(q.queryKey[0]) })
+}
+
 /** Reads a path for the query cache, dropping an answer that a save overtook. */
 export async function readFresh<T>(path: string, client: QueryClient = queryClient): Promise<T> {
   let data: T

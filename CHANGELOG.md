@@ -10,6 +10,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - **Destinations per instance.** Each instance backs up to the default destinations, following them as they change, or to the ones chosen on its page. The nightly backup of the n8n-ops database has its own choice. An instance left with no destination says "Choose a destination first" beside its Run now button.
 - **Object Lock for S3.** An S3 destination can lock every archive it writes for a number of days (Compliance or Governance mode), so nobody can delete it early, not even with its keys. Retention removes an archive only after its lock ends.
 - Alerts and the Overview now say which destination a failed or overdue backup is about. The history of each backup shows every copy: where it is, whether it was written, and why not.
+- **Undo for problem actions.** Mark resolved, Mute 24 h, Reopen and Unmute still act at once, and their message now offers Undo for ten seconds, longer while the pointer or the keyboard is on it. Undo puts back exactly what the action changed, the regression mark and the mute end included. When the problem changed after the action (from another tab, a new failure or a mute that ended), it says "Already changed" and changes nothing. If Undo cannot reach the server, the message says why and offers Retry. Each Undo is in the audit log.
+- **Unmute.** A muted problem has an Unmute button where Mute was. It ends the mute and keeps the regression mark.
 
 ### Changed
 
@@ -28,6 +30,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - The production `docker-compose.yml` shows the server's health check, so tools that read the compose file show it too. The check itself is unchanged.
 - Adding a worker is one file: Add a Worker gives a `docker-compose.yml` with the server address and the pairing token in it, to save in an empty folder on the n8n host and start with `docker compose up -d`. There are no commands to run and no `.env` or Docker group to fill in: the worker image hands `./data` to its user and, without the socket proxy, joins the Docker socket's group by itself, and the socket proxy runs as root with no capabilities to open the socket. The worker image is pinned to the server's version instead of `latest`.
 - **Messages name what they are about.** "Problem resolved: Sync orders", "Access approved for claude on n8n-1", "Checked n8n-1 now", "Backup of n8n-1 started". When something fails, the message says what and why: "Could not resolve Sync orders: Not found." instead of only "Not found.".
+- **Deny on an access request asks first**, since the decision is final: the question names the agent and the instance, and Cancel leaves the request waiting.
 - Buttons that send a request show a spinning ring with what they are doing ("Checking…"). The buttons that act on one click (Run now, Check now, Test, Approve, Mark resolved, Mute, Reopen, Refresh now) then show "Done" or "Failed" for a moment before their label comes back.
 
 ### Fixed

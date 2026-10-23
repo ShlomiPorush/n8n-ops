@@ -269,6 +269,11 @@ export const problems = pgTable(
     resolvedAt: ts("resolved_at"),
     /** When set, this problem was merged into another one by the operator. */
     mergedInto: uuid("merged_into"),
+    /**
+     * Moves on with every change of the state an Undo restores (status, regression, mute end, resolved time, merge),
+     * whoever makes it: a trigger in migration 0007 bumps it, so ingest, housekeeping and Telegram count too (FB-16).
+     */
+    version: integer("version").notNull().default(0),
     createdAt: created(),
   },
   (t) => [
@@ -277,6 +282,33 @@ export const problems = pgTable(
     index("problems_instance_idx").on(t.instanceId),
   ],
 )
+
+/** The state of a problem that its actions change and an Undo puts back. Times as ISO strings. */
+export type ProblemState = {
+  status: ProblemStatus
+  regression: boolean
+  mutedUntil: string | null
+  resolvedAt: string | null
+}
+
+export type ProblemAction = "resolve" | "mute" | "reopen" | "unmute"
+
+/**
+ * One receipt per problem action, for its Undo (FB-16): the version the action left and the state before it. Single
+ * use and short lived; an Undo applies only while the problem is still at that version.
+ */
+export const problemReceipts = pgTable("problem_receipts", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  problemId: uuid("problem_id")
+    .notNull()
+    .references(() => problems.id, { onDelete: "cascade" }),
+  action: text("action").$type<ProblemAction>().notNull(),
+  version: integer("version").notNull(),
+  prior: jsonb("prior").$type<ProblemState>().notNull(),
+  createdAt: created(),
+  expiresAt: ts("expires_at").notNull(),
+  usedAt: ts("used_at"),
+})
 
 export const failures = pgTable(
   "failures",

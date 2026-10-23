@@ -1,15 +1,17 @@
 import { and, desc, eq, ilike, isNull, ne, or, type SQL } from "drizzle-orm"
 import { Hono } from "hono"
 import { z } from "zod"
-import type { Ctx } from "../context.ts"
-import { failures, instances, problems } from "../db/schema.ts"
+import { type Ctx, changed } from "../context.ts"
+import { failures, instances, type ProblemAction, problems } from "../db/schema.ts"
 import { requireUser } from "../http/middleware.ts"
 import { actorName, type Env } from "../http/types.ts"
 import { likeContains } from "../lib/like.ts"
 import type { N8nWorkflow } from "../n8n/client.ts"
 import { workflowGraph } from "../n8n/execution.ts"
 import { executionUrl } from "../services/instances.ts"
-import { mergeProblems } from "../services/problems.ts"
+import { applyProblemAction, mergeProblems, undoProblemAction } from "../services/problems.ts"
+
+const uuid = z.string().uuid()
 
 export async function listProblems(
   ctx: Ctx,
@@ -133,32 +135,61 @@ export function problemRoutes(ctx: Ctx) {
     return row ? c.json(row) : c.json({ error: "not_found" }, 404)
   })
 
-  const setStatus =
-    (status: "open" | "resolved" | "muted", action: string) => async (c: import("hono").Context<Env>) => {
-      const hours = status === "muted" ? Number((await c.req.json().catch(() => ({})))?.hours ?? 24) : 0
-      const [row] = await ctx.db
-        .update(problems)
-        .set({
-          status,
-          resolvedAt: status === "resolved" ? new Date() : null,
-          mutedUntil:
-            status === "muted" ? new Date(Date.now() + Math.min(Math.max(hours, 1), 24 * 30) * 3600_000) : null,
-          ...(status === "open" ? { regression: false } : {}),
-        })
-        .where(eq(problems.id, c.req.param("id") ?? ""))
-        .returning()
-      if (!row) return c.json({ error: "not_found" }, 404)
-      await ctx.audit({
-        actor: actorName(c.get("actor")),
-        action,
-        target: `${row.workflowName} · ${row.nodeName}`,
-        via: "web",
-      })
-      return c.json({ ok: true })
-    }
-  app.post("/:id/resolve", setStatus("resolved", "Problem resolved"))
-  app.post("/:id/mute", setStatus("muted", "Problem muted"))
-  app.post("/:id/reopen", setStatus("open", "Problem reopened"))
+  /*
+   * Resolve, Mute, Reopen and Unmute act at once and answer with a receipt for Undo (FB-16, FB-11):
+   * `{ ok, changed, receipt: { id, problemId, action, version, prior, expiresAt } }`. An action that found the
+   * problem already in that state changes nothing and answers `changed: false` without a receipt.
+   */
+  const act = (action: ProblemAction, audited: string) => async (c: import("hono").Context<Env>) => {
+    const id = c.req.param("id") ?? ""
+    if (!uuid.safeParse(id).success) return c.json({ error: "not_found" }, 404)
+    const body = action === "mute" ? await c.req.json().catch(() => ({})) : {}
+    const result = await applyProblemAction(ctx, id, action, { muteHours: Number(body?.hours ?? 24) })
+    if (!result) return c.json({ error: "not_found" }, 404)
+    const { problem, receipt } = result
+    if (!receipt) return c.json({ ok: true, changed: false, status: problem.status })
+    await ctx.audit({
+      actor: actorName(c.get("actor")),
+      action: audited,
+      target: `${problem.workflowName} · ${problem.nodeName}`,
+      via: "web",
+    })
+    changed(ctx, "problems", "overview")
+    const { id: receiptId, problemId, version, prior, expiresAt } = receipt
+    return c.json({
+      ok: true,
+      changed: true,
+      status: problem.status,
+      receipt: { id: receiptId, problemId, action, version, prior, expiresAt },
+    })
+  }
+  app.post("/:id/resolve", act("resolve", "Problem resolved"))
+  app.post("/:id/mute", act("mute", "Problem muted"))
+  app.post("/:id/reopen", act("reopen", "Problem reopened"))
+  app.post("/:id/unmute", act("unmute", "Problem unmuted"))
+
+  /*
+   * Undo by receipt: 404 receipt_not_found (unknown, cleaned up, or another problem's), 409 receipt_used,
+   * receipt_expired, or already_changed when the problem changed after the action. A refusal changes nothing.
+   */
+  app.post("/:id/undo/:receipt", async (c) => {
+    const id = c.req.param("id")
+    const receiptId = c.req.param("receipt")
+    if (!uuid.safeParse(id).success || !uuid.safeParse(receiptId).success)
+      return c.json({ error: "receipt_not_found" }, 404)
+    const result = await undoProblemAction(ctx, id, receiptId)
+    if (!result.ok) return c.json({ error: result.error }, result.error === "receipt_not_found" ? 404 : 409)
+    const { problem, receipt } = result
+    await ctx.audit({
+      actor: actorName(c.get("actor")),
+      action: "Problem action undone",
+      target: `${problem.workflowName} · ${problem.nodeName}`,
+      via: "web",
+      details: { action: receipt.action, status: problem.status },
+    })
+    changed(ctx, "problems", "overview")
+    return c.json({ ok: true, status: problem.status })
+  })
 
   app.post("/:id/merge", async (c) => {
     const parsed = z.object({ into: z.string().uuid() }).safeParse(await c.req.json().catch(() => ({})))

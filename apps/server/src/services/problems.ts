@@ -1,6 +1,6 @@
 import { and, eq, isNull, lt, sql } from "drizzle-orm"
 import { type Ctx, changed } from "../context.ts"
-import { failures, instances, problems } from "../db/schema.ts"
+import { failures, instances, type ProblemAction, type ProblemState, problemReceipts, problems } from "../db/schema.ts"
 import { sha256 } from "../lib/crypto.ts"
 import type { N8nExecution } from "../n8n/client.ts"
 import { extractFailure } from "../n8n/execution.ts"
@@ -151,9 +151,11 @@ export async function pollInstance(ctx: Ctx, instance: Instance) {
   }
 }
 
-/** Daily housekeeping: auto-resolve quiet problems, end expired mutes, drop old failed executions. */
-export async function housekeeping(ctx: Ctx) {
-  const now = Date.now()
+/**
+ * Daily housekeeping: auto-resolve quiet problems, end expired mutes, drop old failed executions. `now` is for
+ * tests that need a mute to have ended.
+ */
+export async function housekeeping(ctx: Ctx, now = Date.now()) {
   const all = await ctx.db.select().from(instances)
   for (const instance of all) {
     const s = await ctx.settings.forInstance(instance.overrides)
@@ -185,6 +187,131 @@ export async function housekeeping(ctx: Ctx) {
     .set({ status: "open", mutedUntil: null })
     .where(and(eq(problems.status, "muted"), lt(problems.mutedUntil, new Date(now))))
   return { checked: all.length }
+}
+
+/*
+ * Problem actions and their Undo (FB-16). Resolve, Mute, Reopen and Unmute act at once and answer with a receipt:
+ * the version the action left and the state before it. Undo puts that state back in one update that applies only
+ * while the problem is still at that version, so it never overwrites a later change (another tab, a new failure,
+ * an ended mute). A receipt is used once and kept RECEIPT_TTL_MS; the toast offers it for seconds.
+ */
+
+/** How long a receipt can be used. */
+export const RECEIPT_TTL_MS = 15 * 60_000
+
+type StateRow = Pick<Problem, "status" | "regression" | "mutedUntil" | "resolvedAt">
+type Problem = typeof problems.$inferSelect
+export type ProblemReceipt = typeof problemReceipts.$inferSelect
+export type UndoRefusal = "receipt_not_found" | "receipt_used" | "receipt_expired" | "already_changed"
+
+/** The part of a problem an action changes and its Undo puts back. */
+export function stateOf(p: StateRow): ProblemState {
+  return {
+    status: p.status,
+    regression: p.regression,
+    mutedUntil: p.mutedUntil?.toISOString() ?? null,
+    resolvedAt: p.resolvedAt?.toISOString() ?? null,
+  }
+}
+
+/** The columns that put a stored state back. */
+export function restoring(state: ProblemState) {
+  return {
+    status: state.status,
+    regression: state.regression,
+    mutedUntil: state.mutedUntil ? new Date(state.mutedUntil) : null,
+    resolvedAt: state.resolvedAt ? new Date(state.resolvedAt) : null,
+  }
+}
+
+/** What an action changes, or null when the problem is already where it would put it (nothing to undo). */
+export function actionChange(action: ProblemAction, p: StateRow, now: Date, muteHours = 24): Partial<StateRow> | null {
+  switch (action) {
+    case "resolve":
+      return p.status === "resolved" ? null : { status: "resolved", resolvedAt: now, mutedUntil: null }
+    case "mute": {
+      if (p.status === "muted") return null
+      const hours = Number.isFinite(muteHours) ? Math.min(Math.max(muteHours, 1), 24 * 30) : 24
+      return { status: "muted", mutedUntil: new Date(now.getTime() + hours * 3600_000), resolvedAt: null }
+    }
+    // Reopen starts the problem afresh, so it is no longer a regression.
+    case "reopen":
+      return p.status === "open" ? null : { status: "open", resolvedAt: null, mutedUntil: null, regression: false }
+    // Unmute only ends the mute: a regression stays one (FB-11).
+    case "unmute":
+      return p.status === "muted" ? { status: "open", mutedUntil: null } : null
+  }
+}
+
+/** Why a receipt cannot be used, before the problem is looked at; null when it can. */
+export function receiptRefusal(
+  receipt: Pick<ProblemReceipt, "problemId" | "usedAt" | "expiresAt"> | undefined,
+  problemId: string,
+  now: Date,
+): UndoRefusal | null {
+  if (!receipt || receipt.problemId !== problemId) return "receipt_not_found"
+  if (receipt.usedAt) return "receipt_used"
+  if (receipt.expiresAt <= now) return "receipt_expired"
+  return null
+}
+
+/**
+ * Applies a problem action. Null when the problem does not exist; `receipt` is null when the action changed nothing
+ * because the problem was already in that state (another tab did it).
+ */
+export async function applyProblemAction(
+  ctx: Pick<Ctx, "db">,
+  id: string,
+  action: ProblemAction,
+  { muteHours = 24, now = new Date() }: { muteHours?: number; now?: Date } = {},
+): Promise<{ problem: Problem; receipt: ProblemReceipt | null } | null> {
+  return ctx.db.transaction(async (tx) => {
+    const [before] = await tx.select().from(problems).where(eq(problems.id, id)).for("update")
+    if (!before) return null
+    const change = actionChange(action, before, now, muteHours)
+    if (!change) return { problem: before, receipt: null }
+    const [after] = await tx.update(problems).set(change).where(eq(problems.id, id)).returning()
+    if (!after) return null
+    // Old receipts go when new ones are made; nothing else needs them.
+    await tx.delete(problemReceipts).where(lt(problemReceipts.expiresAt, now))
+    const [receipt] = await tx
+      .insert(problemReceipts)
+      .values({
+        problemId: id,
+        action,
+        version: after.version,
+        prior: stateOf(before),
+        expiresAt: new Date(now.getTime() + RECEIPT_TTL_MS),
+      })
+      .returning()
+    return { problem: after, receipt: receipt ?? null }
+  })
+}
+
+/**
+ * Undoes the action of a receipt: one update, only while the problem is still at the version the action left, in
+ * the transaction that uses the receipt up. The receipt row is locked first, so of two Undos at once (two tabs) the
+ * second waits and then finds it used. A refusal changes nothing.
+ */
+export async function undoProblemAction(
+  ctx: Pick<Ctx, "db">,
+  id: string,
+  receiptId: string,
+  now = new Date(),
+): Promise<{ ok: true; problem: Problem; receipt: ProblemReceipt } | { ok: false; error: UndoRefusal }> {
+  return ctx.db.transaction(async (tx) => {
+    const [receipt] = await tx.select().from(problemReceipts).where(eq(problemReceipts.id, receiptId)).for("update")
+    const refusal = receiptRefusal(receipt, id, now)
+    if (refusal || !receipt) return { ok: false as const, error: refusal ?? "receipt_not_found" }
+    const [problem] = await tx
+      .update(problems)
+      .set(restoring(receipt.prior))
+      .where(and(eq(problems.id, id), eq(problems.version, receipt.version)))
+      .returning()
+    if (!problem) return { ok: false as const, error: "already_changed" as const }
+    await tx.update(problemReceipts).set({ usedAt: now }).where(eq(problemReceipts.id, receipt.id))
+    return { ok: true as const, problem, receipt }
+  })
 }
 
 /** Merges problem `from` into `into`: its failures move, and future failures of `from` count on `into`. */

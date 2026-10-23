@@ -79,7 +79,16 @@ import {
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, useSort } from "@/components/ui/table"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+  useSort,
+  useSortOrder,
+} from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { api, describeError, queryClient, useApi, useApiMutation } from "@/lib/api"
@@ -89,7 +98,7 @@ import { formatFull, n, plural, useTimeZone } from "@/lib/time"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
 import { InstanceBackupCard } from "./destinations"
-import { type ProblemRow, ProblemsTable } from "./problems"
+import { type ProblemList, ProblemsTable, problemsPath } from "./problems"
 
 type Capability = {
   key: string
@@ -403,7 +412,6 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
   const [tab, show] = usePaneTab("overview")
   const detail = useApi<InstanceDetailData>(`/instances/${id}`, { refetchInterval: 15_000 })
   useCrumb(detail.data?.name)
-  const problems = useApi<ProblemRow[]>(`/problems?status=open&instance=${id}`)
   const [editing, setEditing] = useState(false)
   const confirm = useConfirm()
   const invalidate = [`/instances/${id}`, "/instances", "/overview"]
@@ -576,7 +584,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
               count={n(i.openProblems)}
               more={i.openProblems > 0 ? { to: `/instances/${i.id}?tab=problems`, label: "All" } : undefined}
             />
-            <InstanceProblems query={problems} limit={3} onOpen={(pid) => navigate(`/problems/${pid}`)} />
+            <InstanceProblems key={i.id} instanceId={i.id} limit={3} onOpen={(pid) => navigate(`/problems/${pid}`)} />
           </Panel>
         </PaneTabPanel>
 
@@ -587,7 +595,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
               count={n(i.openProblems)}
               more={{ to: `/problems?status=open&instance=${i.id}`, label: "Open in Problems" }}
             />
-            <InstanceProblems query={problems} total={i.openProblems} onOpen={(pid) => navigate(`/problems/${pid}`)} />
+            <InstanceProblems key={i.id} instanceId={i.id} onOpen={(pid) => navigate(`/problems/${pid}`)} />
           </Panel>
         </PaneTabPanel>
 
@@ -858,38 +866,46 @@ function LastBackupPanel({ id, backup }: { id: string; backup: ListBackup }) {
 }
 
 /**
- * The open problems of the instance, most recently seen first. The list is limited to 200 problems; a
- * preview shows the first few in that order.
+ * The open problems of the instance, what needs a look first unless another order is picked. The server sends
+ * the first 200 and how many there are in all; a preview shows the first few.
  */
 function InstanceProblems({
-  query,
+  instanceId,
   limit,
-  total,
   onOpen,
 }: {
-  query: { data?: ProblemRow[]; isLoading: boolean; error: unknown; refetch: () => unknown }
+  instanceId: string
+  /** A preview of the first few, in the order the server sends by default, without a sort control. */
   limit?: number
-  total?: number
   onOpen: (id: string) => void
 }) {
+  const preview = limit !== undefined
+  // The full list sorts on the server, so the order covers every open problem of the instance (TB-4); a new order
+  // keeps the rows on screen until its answer comes. Keyed by the instance, so no rows of another one stay.
+  const order = useSortOrder("instance-problems")
+  const query = useApi<ProblemList>(problemsPath({ status: "open", instance: instanceId }, preview ? null : order[0]), {
+    keepRows: !preview,
+  })
   if (query.isLoading) return <Loading />
   if (query.error && !query.data)
     return <LoadError what="the open problems" error={query.error} retry={() => void query.refetch()} />
-  const rows = query.data ?? []
+  const rows = query.data?.items ?? []
+  const total = query.data?.total ?? 0
   return (
     <>
       <ProblemsTable
         items
         bare
-        preview={limit !== undefined}
-        rows={limit === undefined ? rows : rows.slice(0, limit)}
+        preview={preview}
+        order={preview ? undefined : order}
+        rows={preview ? rows.slice(0, limit) : rows}
         showInstance={false}
         empty="No open problems on this instance."
         onOpen={onOpen}
       />
-      {total !== undefined && rows.length < total && (
+      {!preview && rows.length < total && (
         <p className="border-t border-line px-pad-x py-pad-y text-small text-muted-foreground">
-          Showing the {n(rows.length)} most recently seen. Search and filter them in Problems.
+          Showing {n(rows.length)} of {n(total)}. Search and filter them all in Problems.
         </p>
       )}
     </>

@@ -82,3 +82,11 @@ export function n(value: number | null | undefined): string {
 export function plural(count: number, one: string, many = `${one}s`): string {
   return `${n(count)} ${count === 1 ? one : many}`
 }
+
+/**
+ * The count line of a list the server sends only part of (TB-17, TB-18): "200 of 1,240 problems" while rows are
+ * left out, else "12 problems". The total is every row the filters match, so it agrees with the nav counter.
+ */
+export function countOf(shown: number, total: number, one: string, many = `${one}s`): string {
+  return shown < total ? `${n(shown)} of ${plural(total, one, many)}` : plural(shown, one, many)
+}

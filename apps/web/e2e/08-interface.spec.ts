@@ -1072,7 +1072,10 @@ test("Merge lands on the problem merged into, and Back returns to the problem it
   const merge = (url: URL) => /^\/api\/problems\/[^/]+\/merge$/.test(url.pathname)
   await page.route(candidates, (route) =>
     route.fulfill({
-      json: [{ id: "e2e-merge-target", workflowName: "Merge target", errorMessage: "Stand-in problem" }],
+      json: {
+        items: [{ id: "e2e-merge-target", workflowName: "Merge target", errorMessage: "Stand-in problem" }],
+        total: 1,
+      },
     }),
   )
   await page.route(merge, (route) => route.fulfill({ json: { ok: true } }))
@@ -1154,6 +1157,66 @@ test("new filters whose list fails to load keep the previous rows, and the filte
   await expect(note).toHaveCount(0)
   await expect(page.getByText("Could not load problems")).toHaveCount(0)
   await expect(page.getByText(/^[\d,]+ muted problems?$/)).toBeVisible()
+})
+
+test("the Problems count line counts every problem, also above the 200 the list holds (TB-18)", async () => {
+  await page.goto("/problems?status=all")
+  const rows = page.locator("[data-scroll-pane]").first().locator("[data-href]")
+  await expect(rows.first()).toBeVisible()
+  // Every problem is on screen: a plain count, and no note about the others.
+  const shown = await rows.count()
+  await expect(page.getByText(new RegExp(`^${shown} problems?$`))).toBeVisible()
+  await expect(page.getByText(/^Showing the first/)).toHaveCount(0)
+
+  // The server says there are more than it sent.
+  const list = (url: URL) => url.pathname === "/api/problems" && url.searchParams.get("status") === "all"
+  await page.route(list, async (route) => {
+    const res = await route.fetch()
+    await route.fulfill({ response: res, json: { ...(await res.json()), total: 1240 } })
+  })
+  try {
+    await page.reload()
+    await expect(rows.first()).toBeVisible()
+    await expect(page.getByText(new RegExp(`^${shown} of 1,240 problems$`))).toBeVisible()
+    await expect(
+      page.getByText(`Showing the first ${shown} in this order. Search or filter to find the others.`),
+    ).toBeVisible()
+  } finally {
+    await page.unroute(list)
+  }
+})
+
+test("the Problems list asks the server for its order and draws the rows as they come (TB-4)", async () => {
+  await page.goto("/problems?status=all")
+  const column = page.locator("[data-scroll-pane]").first()
+  const rows = column.locator("[data-href]")
+  await expect(rows.first()).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Where It Broke" })).toBeVisible()
+  // Beside the reading pane the list has no header row; its sort control sets the same order.
+  const sorted = (url: URL) =>
+    url.pathname === "/api/problems" &&
+    url.searchParams.get("status") === "all" &&
+    url.searchParams.get("sort") === "failures" &&
+    url.searchParams.get("order") === "desc"
+  const [asked] = await Promise.all([
+    page.waitForResponse((res) => sorted(new URL(res.url())) && res.ok()),
+    (async () => {
+      await column.getByRole("combobox", { name: "Sort by" }).click()
+      await page.getByRole("option", { name: "Failures, high to low" }).click()
+    })(),
+  ])
+  const answer = (await asked.json()) as { items: { id: string; count: number }[]; total: number }
+  expect(answer.items.length).toBeGreaterThan(0)
+  expect(answer.total).toBeGreaterThanOrEqual(answer.items.length)
+  // The most failures first, and the rows in the server's order, not sorted again in the page.
+  const counts = answer.items.map((p) => p.count)
+  expect(counts).toEqual([...counts].sort((a, b) => b - a))
+  await expect(rows).toHaveCount(answer.items.length)
+  const ids = async () =>
+    (await rows.evaluateAll((els) => els.map((el) => el.getAttribute("data-href") ?? ""))).map(
+      (href) => href.split("?")[0]?.split("/").pop() ?? "",
+    )
+  await expect.poll(ids).toEqual(answer.items.map((p) => p.id))
 })
 
 test("the audit log keeps its entries when older ones fail to load, and waits for Try again", async () => {

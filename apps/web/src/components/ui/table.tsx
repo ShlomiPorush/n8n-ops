@@ -152,11 +152,18 @@ function TableCell({ className, ...props }: React.ComponentProps<"td">) {
 /* Sorting by the column headers (TB-1 to TB-3). Numbers and times sort high to low first, text A to Z first;
  * each further click reverses. Empty values stay last in both directions and equal values keep their order. The
  * chosen order survives refreshes and page switches for this visit (not a reload). Where the header row is not
- * drawn, `PhoneSort` sets the same order. */
+ * drawn, `PhoneSort` sets the same order. A list sorted on the server (TB-4) reads its order with
+ * `useSortOrder` before it asks for the rows and hands it to `useSort` as `order`: the rows are then drawn in the
+ * order they came, and the headers and the sort control still share that one order. */
 
 type SortValue = string | number | Date | null | undefined
-type SortColumn<T> = { label: string; value: (row: T) => SortValue }
-type SortState = { key: string; dir: "ascending" | "descending" }
+/**
+ * `kind` says what the column holds, so its first direction is known without rows to look at, as a list sorted
+ * on the server needs: `text` A to Z, `number` and `date` high to low (TB-1).
+ */
+type SortColumn<T> = { label: string; value: (row: T) => SortValue; kind?: "text" | "number" | "date" }
+export type SortState = { key: string; dir: "ascending" | "descending" }
+export type SortOrder = [state: SortState | null, set: (state: SortState) => void]
 export type SortHead = { state: "ascending" | "descending" | "none"; toggle: () => void }
 /** What the phone sort control needs: the columns, which of them hold numbers, and the current order. */
 export type SortControl = {
@@ -179,6 +186,7 @@ const comparable = (v: SortValue): string | number | null => {
 }
 
 function firstDirection<T>(rows: T[], column: SortColumn<T>): SortState["dir"] {
+  if (column.kind) return column.kind === "text" ? "ascending" : "descending"
   return rows.some((r) => {
     const v = column.value(r)
     return typeof v === "number" || v instanceof Date
@@ -187,19 +195,47 @@ function firstDirection<T>(rows: T[], column: SortColumn<T>): SortState["dir"] {
     : "ascending"
 }
 
+/** The order picked for a list, remembered by its id for this visit (TB-3); null while none is picked. */
+export function useSortOrder(id: string, initial?: SortState): SortOrder {
+  const [state, setState] = React.useState<SortState | null>(() => remembered.get(id) ?? initial ?? null)
+  const set = React.useCallback(
+    (next: SortState) => {
+      remembered.set(id, next)
+      setState(next)
+    },
+    [id],
+  )
+  return [state, set]
+}
+
 export function useSort<T>(
   rows: T[] | undefined,
-  { id, columns, initial }: { id: string; columns: Record<string, SortColumn<T>>; initial?: SortState },
+  {
+    id,
+    columns,
+    initial,
+    order,
+    arrival,
+  }: {
+    id: string
+    columns: Record<string, SortColumn<T>>
+    initial?: SortState
+    /** The order of a list sorted on the server, from `useSortOrder`: the rows are not sorted again here (TB-4). */
+    order?: SortOrder
+    /**
+     * The column and direction the rows arrive in. While no column is picked, a first click on it turns the list
+     * around instead of asking again for the order already shown (TB-1).
+     */
+    arrival?: SortState
+  },
 ): Sorting<T> {
-  const [state, setState] = React.useState<SortState | null>(() => remembered.get(id) ?? initial ?? null)
-  const set = (next: SortState) => {
-    remembered.set(id, next)
-    setState(next)
-  }
+  const own = useSortOrder(id, initial)
+  const [state, set] = order ?? own
+  const server = order !== undefined
   const list = rows ?? []
   const sorted = React.useMemo(() => {
     const column = state && columns[state.key]
-    if (!state || !column) return list
+    if (server || !state || !column) return list
     const sign = state.dir === "ascending" ? 1 : -1
     return list
       .map((row, i) => ({ row, i, v: comparable(column.value(row)) }))
@@ -213,7 +249,7 @@ export function useSort<T>(
       })
       .map((x) => x.row)
     // biome-ignore lint/correctness/useExhaustiveDependencies: columns are declared inline by each page
-  }, [list, state])
+  }, [list, state, server])
   return {
     rows: sorted,
     control: {
@@ -232,8 +268,13 @@ export function useSort<T>(
         state: current,
         toggle: () => {
           if (!column) return
+          const turn = (dir: SortState["dir"]) => (dir === "ascending" ? "descending" : "ascending")
           const dir =
-            current === "none" ? firstDirection(list, column) : current === "ascending" ? "descending" : "ascending"
+            current !== "none"
+              ? turn(current)
+              : !state && arrival?.key === key
+                ? turn(arrival.dir)
+                : firstDirection(list, column)
           set({ key, dir })
         },
       }

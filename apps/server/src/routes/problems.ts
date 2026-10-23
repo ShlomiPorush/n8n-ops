@@ -1,4 +1,4 @@
-import { and, desc, eq, ilike, isNull, ne, or, type SQL } from "drizzle-orm"
+import { and, asc, count, desc, eq, ilike, isNull, ne, or, type SQL, sql } from "drizzle-orm"
 import { Hono } from "hono"
 import { z } from "zod"
 import { type Ctx, changed } from "../context.ts"
@@ -13,10 +13,10 @@ import { applyProblemAction, mergeProblems, undoProblemAction } from "../service
 
 const uuid = z.string().uuid()
 
-export async function listProblems(
-  ctx: Ctx,
-  { status, instanceId, q, limit = 200 }: { status?: string; instanceId?: string; q?: string; limit?: number },
-) {
+/** The list's filters. The rows and their total are read through one `where`, so the two always agree (TB-18). */
+export type ProblemFilter = { status?: string; instanceId?: string; q?: string }
+
+function problemWhere({ status, instanceId, q }: ProblemFilter) {
   const where: (SQL | undefined)[] = [isNull(problems.mergedInto)]
   if (status === "open" || status === "muted" || status === "resolved") where.push(eq(problems.status, status))
   if (instanceId) where.push(eq(problems.instanceId, instanceId))
@@ -26,6 +26,77 @@ export async function listProblems(
       or(ilike(problems.workflowName, like), ilike(problems.errorMessage, like), ilike(problems.nodeName, like)),
     )
   }
+  return and(...where)
+}
+
+/*
+ * What needs a look comes first (TB-11), the way the Status column reads a problem (`problemStatus` in the UI):
+ * a regression, then a problem first seen in the last 24 hours, then open, muted and resolved.
+ */
+const problemRank = sql<number>`case
+  when ${problems.status} = 'resolved' then 0
+  when ${problems.status} = 'muted' then 1
+  when ${problems.regression} then 4
+  when ${problems.firstSeen} > now() - interval '24 hours' then 3
+  else 2 end`
+
+/**
+ * The columns the list sorts by, the ones the Problems table shows. Text compares without case, as the table's
+ * own sort does.
+ */
+const problemSorts = {
+  status: problemRank,
+  workflow: sql`lower(${problems.workflowName})`,
+  error: sql`lower(${problems.errorMessage})`,
+  instance: sql`lower(${instances.name})`,
+  failures: problems.count,
+  lastSeen: problems.lastSeen,
+}
+export const problemSortKeys = Object.keys(problemSorts) as [ProblemSortKey, ...ProblemSortKey[]]
+export type ProblemSortKey = keyof typeof problemSorts
+export type ProblemOrder = { sort: ProblemSortKey; order: "asc" | "desc" }
+
+/**
+ * The order of a list, sorted on the server before the limit so it covers every problem, not only the rows sent
+ * (TB-4). With no order asked for, what needs a look first, then the most recently seen. A chosen column keeps
+ * that order among equal values, in both directions, as the table's own sort keeps the order rows came in; the
+ * id settles the rest, so a refresh never shuffles equal rows.
+ */
+function problemOrderBy(order: ProblemOrder | null | "recent") {
+  const settle = [desc(problems.lastSeen), asc(problems.id)]
+  // The agents' order (requirements E1): most recently seen first, as it always was.
+  if (order === "recent") return settle
+  const ranked = [desc(problemRank), ...settle]
+  if (!order) return ranked
+  const column = problemSorts[order.sort]
+  return [order.order === "asc" ? asc(column) : desc(column), ...ranked]
+}
+
+const sortQuery = z.object({ sort: z.enum(problemSortKeys), order: z.enum(["asc", "desc"]) })
+
+/**
+ * The order asked for in `?sort=<column>&order=asc|desc`. Anything else, an unknown column or direction or
+ * only one of the two, is the default order.
+ */
+export function parseProblemOrder(sort: string | undefined, order: string | undefined): ProblemOrder | null {
+  const parsed = sortQuery.safeParse({ sort, order })
+  return parsed.success ? parsed.data : null
+}
+
+/** All problems that match the filters, not only the rows a list sends (TB-18). */
+export async function countProblems(ctx: Ctx, filter: ProblemFilter) {
+  const [row] = await ctx.db
+    .select({ total: count() })
+    .from(problems)
+    .innerJoin(instances, eq(problems.instanceId, instances.id))
+    .where(problemWhere(filter))
+  return row?.total ?? 0
+}
+
+export async function listProblems(
+  ctx: Ctx,
+  { order = null, limit = 200, ...filter }: ProblemFilter & { order?: ProblemOrder | null | "recent"; limit?: number },
+) {
   return ctx.db
     .select({
       id: problems.id,
@@ -44,8 +115,8 @@ export async function listProblems(
     })
     .from(problems)
     .innerJoin(instances, eq(problems.instanceId, instances.id))
-    .where(and(...where))
-    .orderBy(desc(problems.lastSeen))
+    .where(problemWhere(filter))
+    .orderBy(...problemOrderBy(order))
     .limit(limit)
 }
 
@@ -112,15 +183,16 @@ export function problemRoutes(ctx: Ctx) {
   const app = new Hono<Env>()
   app.use("*", requireUser(ctx))
 
-  app.get("/", async (c) =>
-    c.json(
-      await listProblems(ctx, {
-        status: c.req.query("status") ?? "open",
-        instanceId: c.req.query("instance"),
-        q: c.req.query("q"),
-      }),
-    ),
-  )
+  /*
+   * `{ items, total }`: the first 200 problems in the order asked for (`?sort=<column>&order=asc|desc`, else what
+   * needs a look first) and how many match the filters in all, so the list can say "200 of 1,240" (TB-4, TB-18).
+   */
+  app.get("/", async (c) => {
+    const filter = { status: c.req.query("status") ?? "open", instanceId: c.req.query("instance"), q: c.req.query("q") }
+    const order = parseProblemOrder(c.req.query("sort"), c.req.query("order"))
+    const [items, total] = await Promise.all([listProblems(ctx, { ...filter, order }), countProblems(ctx, filter)])
+    return c.json({ items, total })
+  })
 
   app.get("/:id", async (c) => {
     const detail = await problemDetail(ctx, c.req.param("id"))

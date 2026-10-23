@@ -186,7 +186,12 @@ async function setup(
     if (!p) throw new Error("no problem")
     return p
   }
-  return { ctx, db: d.db, a, b, problem, warnings }
+  // Alerts queued with the database clock are due to a dispatch in the same millisecond only by luck; make them due.
+  const dispatch = async () => {
+    await d.db.update(alertOutbox).set({ sendAfter: new Date(0) }).where(eq(alertOutbox.status, "pending"))
+    await dispatchAlerts(ctx)
+  }
+  return { ctx, db: d.db, a, b, problem, warnings, dispatch }
 }
 
 describe("Telegram forum topics", () => {
@@ -230,7 +235,7 @@ describe("Telegram forum topics", () => {
     await t.ctx.settings.set("telegram", { ...(await t.ctx.settings.get("telegram")), routes, defaultThreadId: 12 })
     await enqueueProblemAlert(t.ctx, await t.problem(t.a.id, "Sync orders"), "new")
     await enqueueProblemAlert(t.ctx, await t.problem(t.b.id, "Sync orders"), "new")
-    await dispatchAlerts(t.ctx)
+    await t.dispatch()
     expect(
       bot
         .sends()
@@ -239,7 +244,7 @@ describe("Telegram forum topics", () => {
     ).toEqual([12, 13])
 
     await enqueueProblemAlert(t.ctx, await t.problem(t.a.id, "Import leads"), "new")
-    await dispatchAlerts(t.ctx)
+    await t.dispatch()
     expect(bot.sends()).toHaveLength(2)
     expect(bot.edits()).toHaveLength(1)
     const inTopic12 = bot.sends().find((c) => c.body.message_thread_id === 12)
@@ -258,7 +263,7 @@ describe("Telegram forum topics", () => {
     bot.goneTopics.add(42)
     await enqueueProblemAlert(t.ctx, await t.problem(t.a.id, "Sync orders"), "new")
     await enqueueAlert(t.ctx, "health", html`alpha is down`, { instanceId: t.a.id })
-    await dispatchAlerts(t.ctx)
+    await t.dispatch()
     const sends = bot.sends()
     expect(sends.map((c) => c.body.message_thread_id)).toEqual([42, undefined, 42, undefined])
     expect(String(sends[1]?.body.text)).toMatch(/^<i>Topic 42 was not found, so this went to General\.<\/i>\n<b>/)
@@ -268,7 +273,7 @@ describe("Telegram forum topics", () => {
     expect([group?.threadId, group?.fellBack]).toEqual([42, true])
 
     await enqueueProblemAlert(t.ctx, await t.problem(t.a.id, "Import leads"), "new")
-    await dispatchAlerts(t.ctx)
+    await t.dispatch()
     expect(bot.sends()).toHaveLength(4)
     expect(String(bot.edits()[0]?.body.text)).toMatch(/^<i>Topic 42 was not found/)
 
@@ -289,13 +294,13 @@ describe("Telegram forum topics", () => {
   it("sends a new message with every problem when the message to edit is gone", async () => {
     const t = await setup({ defaultThreadId: 7 })
     await enqueueProblemAlert(t.ctx, await t.problem(t.a.id, "Sync orders"), "new")
-    await dispatchAlerts(t.ctx)
+    await t.dispatch()
     const first = bot.sends()[0]
     const [group] = await t.db.select().from(alertGroups)
     bot.goneMessages.add(group?.telegramMessageId ?? 0)
 
     await enqueueProblemAlert(t.ctx, await t.problem(t.a.id, "Import leads"), "new")
-    await dispatchAlerts(t.ctx)
+    await t.dispatch()
     expect(first).toBeDefined()
     expect(bot.edits()).toHaveLength(1)
     const again = bot.sends()[1]
@@ -313,11 +318,10 @@ describe("Telegram forum topics", () => {
     const t = await setup({ defaultThreadId: 5 })
     await enqueueProblemAlert(t.ctx, await t.problem(t.a.id, "Sync orders"), "new")
     bot.failNextCalls(1)
-    await dispatchAlerts(t.ctx)
+    await t.dispatch()
     const [pending] = await t.db.select().from(alertOutbox)
     expect([pending?.status, pending?.attempts]).toEqual(["pending", 1])
-    await t.db.update(alertOutbox).set({ sendAfter: new Date(0) })
-    await dispatchAlerts(t.ctx)
+    await t.dispatch()
     expect(bot.edits()).toHaveLength(0)
     expect(bot.sends()).toHaveLength(2)
     const groups = await t.db.select().from(alertGroups)
@@ -331,7 +335,7 @@ describe("Telegram forum topics", () => {
     const t = await setup({ defaultThreadId: 5 })
     await enqueueAlert(t.ctx, "health", html`alpha is down`, { instanceId: t.a.id })
     bot.failNextCalls(1)
-    await dispatchAlerts(t.ctx)
+    await t.dispatch()
     expect(bot.sends()).toHaveLength(1)
     const [row] = await t.db.select().from(alertOutbox)
     expect(row?.status).toBe("pending")
@@ -340,21 +344,20 @@ describe("Telegram forum topics", () => {
   it("keeps the problems of a gone message when the new message fails, until one goes out", async () => {
     const t = await setup({ defaultThreadId: 7 })
     await enqueueProblemAlert(t.ctx, await t.problem(t.a.id, "Sync orders"), "new")
-    await dispatchAlerts(t.ctx)
+    await t.dispatch()
     const [gone] = await t.db.select().from(alertGroups)
     bot.goneMessages.add(gone?.telegramMessageId ?? 0)
 
     await enqueueProblemAlert(t.ctx, await t.problem(t.a.id, "Import leads"), "new")
     bot.failNextSends(1)
-    await dispatchAlerts(t.ctx)
+    await t.dispatch()
     const still = await t.db
       .select()
       .from(alertGroups)
       .where(eq(alertGroups.id, gone?.id ?? ""))
     expect(still[0]?.closedAt).toBeNull()
 
-    await t.db.update(alertOutbox).set({ sendAfter: new Date(0) })
-    await dispatchAlerts(t.ctx)
+    await t.dispatch()
     const last = bot.sends().at(-1)
     expect(String(last?.body.text)).toContain("Sync orders")
     expect(String(last?.body.text)).toContain("Import leads")
@@ -368,7 +371,7 @@ describe("Telegram forum topics", () => {
   it("never lets a button press and a new problem overwrite each other's edit", async () => {
     const t = await setup({ defaultThreadId: 7 })
     await enqueueProblemAlert(t.ctx, await t.problem(t.a.id, "Sync orders"), "new")
-    await dispatchAlerts(t.ctx)
+    await t.dispatch()
     const [group] = await t.db.select().from(alertGroups)
     await enqueueProblemAlert(t.ctx, await t.problem(t.a.id, "Import leads"), "new")
 
@@ -383,10 +386,10 @@ describe("Telegram forum topics", () => {
       },
     })
     await new Promise((resolve) => setTimeout(resolve, 200))
-    const dispatch = dispatchAlerts(t.ctx)
+    const dispatching = t.dispatch()
     await new Promise((resolve) => setTimeout(resolve, 200))
     release()
-    await Promise.all([press, dispatch])
+    await Promise.all([press, dispatching])
 
     const shown = String(bot.applied.at(-1)?.body.text)
     expect(shown).toContain("Sync orders")
@@ -417,7 +420,7 @@ describe("Telegram forum topics", () => {
     await database.migrate(folder)
 
     const t = await setup({}, database)
-    await dispatchAlerts(t.ctx)
+    await t.dispatch()
     expect(bot.edits().map((c) => c.body.message_id)).toEqual([55])
     expect(bot.sends().map((c) => [c.body.message_thread_id, c.body.text])).toEqual([[undefined, "old is down"]])
   })

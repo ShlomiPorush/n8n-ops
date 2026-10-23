@@ -521,13 +521,22 @@ test("a problem's tabs have their own address, and Merge opens from its menu and
   await expect(tab(/^Overview/)).toHaveAttribute("aria-selected", "true")
   await expect(page.getByRole("heading", { name: "Where It Broke" })).toBeVisible()
 
+  // Each tab opened is a step in the history of the same problem, with the list's filters kept.
+  const problem = new URL(page.url())
+  const at = (which: string) => (url: URL) =>
+    url.pathname === problem.pathname &&
+    url.searchParams.get("status") === "all" &&
+    url.searchParams.get("tab") === which
+  await tab(/^Input/).click()
+  await expect(page).toHaveURL(at("input"))
   await tab(/^Occurrences/).click()
-  await expect(page).toHaveURL((url) => url.searchParams.get("tab") === "occurrences")
+  await expect(page).toHaveURL(at("occurrences"))
   await expect(page.getByRole("heading", { name: "Recent Occurrences" })).toBeVisible()
   await page.reload()
   await expect(tab(/^Occurrences/)).toHaveAttribute("aria-selected", "true")
   await page.goBack()
-  await expect(tab(/^Overview/)).toHaveAttribute("aria-selected", "true")
+  await expect(page).toHaveURL(at("input"))
+  await expect(tab(/^Input/)).toHaveAttribute("aria-selected", "true")
 
   // A tab that is not there (unknown, or no other workflow has the same error) opens the overview.
   await page.goto(`${new URL(page.url()).pathname}?tab=nothing`)

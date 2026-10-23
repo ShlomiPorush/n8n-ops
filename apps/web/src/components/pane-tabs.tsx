@@ -128,10 +128,10 @@ export function PaneTabs({
     const to = refocus.current
     if (!to) return
     refocus.current = null
+    // The noted tab may be gone too (it moved and went away at once): then the open tab takes the focus.
     const el =
-      to === "open"
-        ? list.current?.querySelector<HTMLElement>('[role="tab"][data-state="active"]')
-        : document.getElementById(to)
+      (to === "open" ? null : document.getElementById(to)) ??
+      list.current?.querySelector<HTMLElement>('[role="tab"][data-state="active"]')
     el?.focus({ preventScroll: true })
   })
   // Tabs that still do not fit scroll sideways; the open one is brought into sight, also when the address opened it.

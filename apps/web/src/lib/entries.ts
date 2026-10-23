@@ -17,6 +17,14 @@ export function addEntries(list: readonly string[], text: string): string[] {
 }
 
 /**
+ * The Add field's text after a paste: the pasted text takes the place of the selection, or goes in at the
+ * cursor, as a browser pastes it. `start` and `end` are the field's selection when the paste came.
+ */
+export function pasteInto(text: string, pasted: string, start: number, end: number): string {
+  return text.slice(0, start) + pasted + text.slice(end)
+}
+
+/**
  * Splits what is in an Add field after a key or a paste: the entries before the last separator are done, and
  * the rest is still being typed.
  */

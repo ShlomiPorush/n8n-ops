@@ -1,14 +1,18 @@
 import { settingLabel } from "@n8n-ops/shared"
 import { describe, expect, it } from "vitest"
+import { createTestRuns } from "@/lib/test-run"
 import {
+  changeCount,
   defaultText,
   differsFromDefault,
   type FieldDef,
   fieldProblem,
   forms,
   testDraft,
+  testIdentity,
   testMissing,
   toForm,
+  withPending,
 } from "./settings.tsx"
 
 const field = (section: string, name: string) => forms[section]?.fields.find((f) => f.name === name) as FieldDef
@@ -43,6 +47,18 @@ describe("Settings fields", () => {
     expect(fieldProblem("access", field("access", "telegramApprovers"), ["@ops_lead", "123"])).toBeNull()
     expect(fieldProblem("telegram", field("telegram", "chatId"), "my chat")).toMatch(/chat's number/)
     expect(fieldProblem("general", field("general", "design"), "compact")).toBeNull()
+  })
+
+  it("count text typed in a list's Add field as a change before it is a chip, and save it (SV-1)", () => {
+    const def = forms.email as { fields: FieldDef[] }
+    const loaded = { recipients: ["ops@example.com"], smtpHost: "mail.example.com", smtpPassword: undefined }
+    expect(changeCount(def, withPending(loaded, {}), loaded)).toBe(0)
+    const typed = withPending(loaded, { recipients: " dev@example.com " })
+    expect(typed.recipients).toEqual(["ops@example.com", "dev@example.com"])
+    expect(changeCount(def, typed, loaded)).toBe(1)
+    // Text that adds nothing, blank or a value already in the list, is no change.
+    expect(changeCount(def, withPending(loaded, { recipients: "  " }), loaded)).toBe(0)
+    expect(changeCount(def, withPending(loaded, { recipients: "OPS@example.com" }), loaded)).toBe(0)
   })
 
   it("are Changed against their default as their type compares, and Reset names it (FS-6)", () => {
@@ -80,6 +96,20 @@ describe("a connection test with the values on screen (FS-19)", () => {
     expect(testDraft("email", { ...values, smtpPassword: "" })).not.toHaveProperty("smtpPassword")
     expect(testDraft("email", { ...values, smtpPassword: "typed" })).toMatchObject({ smtpPassword: "typed" })
     expect(testDraft("telegram", { chatId: " 4242 ", botToken: null })).toEqual({ chatId: "4242", botToken: null })
+  })
+
+  it("keeps no result across a saved secret, though the stored one is not among the values (SV-5)", () => {
+    const runs = createTestRuns()
+    // The stored password is tested, then replaced and saved: the field is empty again, as before.
+    const tested = runs.start(testIdentity("email", values, 0))
+    runs.settle(tested, { ok: true }, 1000)
+    expect(testIdentity("email", values, 0)).toBe(testIdentity("email", { ...values }, 0))
+    expect(runs.view(testIdentity("email", values, 0)).kind).toBe("accepted")
+    expect(runs.view(testIdentity("email", values, 1))).toEqual({ kind: "changed", at: 1000 })
+    // A test still on its way when the secret is saved answers for the one before.
+    const late = runs.start(testIdentity("email", { ...values, smtpSecure: true }, 1))
+    runs.settle(late, { ok: true }, 2000)
+    expect(runs.view(testIdentity("email", { ...values, smtpSecure: true }, 2)).kind).toBe("changed")
   })
 
   it("says what it still needs on screen", () => {

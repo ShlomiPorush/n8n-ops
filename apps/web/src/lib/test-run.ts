@@ -2,7 +2,9 @@
  * The result of a connection test (Telegram, Email) belongs to the values it was run with and to the request
  * that ran it (FS-19, SV-5). Each start is a new generation and remembers the values it sent: an answer to an
  * older start is dropped, and a result shows as Accepted or Failed only while the values on screen are still
- * the ones it tested. A change during the test or after it leaves "not tested with these values".
+ * the ones it tested. A change during the test or after it leaves "not tested with these values". A stored
+ * secret is not among the values sent, so the caller's values text also names the stored secrets of then
+ * (`testIdentity` in pages/settings.tsx): once a new one is saved, the old result no longer counts.
  */
 
 export type TestOutcome = { ok: true; detail?: string } | { ok: false; message: string }

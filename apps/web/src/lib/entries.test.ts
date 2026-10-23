@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { addEntries, finishedEntries } from "./entries"
+import { addEntries, finishedEntries, pasteInto } from "./entries"
 
 describe("values added to a list field (FS-15)", () => {
   it("adds several at once, trimmed, from a paste", () => {
@@ -20,6 +20,18 @@ describe("values added to a list field (FS-15)", () => {
 
   it("keeps a value that is not valid, so the field can name it", () => {
     expect(addEntries([], "bob")).toEqual(["bob"])
+  })
+
+  it("puts a paste in place of the selection, or at the cursor, before it adds the values", () => {
+    // "old" typed and selected whole, then a list pasted over it: the list alone is added.
+    expect(addEntries([], pasteInto("old", "ops@example.com, dev@example.com", 0, 3))).toEqual([
+      "ops@example.com",
+      "dev@example.com",
+    ])
+    // Part of it selected: only that part is replaced.
+    expect(pasteInto("ops@old.example", "new, x@example.com", 4, 7)).toBe("ops@new, x@example.com.example")
+    // The cursor in the middle, nothing selected.
+    expect(pasteInto("ab", "x, y", 1, 1)).toBe("ax, yb")
   })
 
   it("leaves what is still being typed after the last separator", () => {

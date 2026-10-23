@@ -38,6 +38,7 @@ import { Switch } from "@/components/ui/switch"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { ApiError, api, describeError, useApi, useApiMutation } from "@/lib/api"
 import { download } from "@/lib/download"
+import { addEntries } from "@/lib/entries"
 import { loadView } from "@/lib/load-state"
 import { flash, whenDrawn } from "@/lib/reveal"
 import { createTestRuns, type TestOutcome, type TestView } from "@/lib/test-run"
@@ -376,7 +377,8 @@ export function SettingRow({
       {off ? <div className="opacity-50">{head}</div> : head}
       {note && <span className="mt-0.5 block text-small text-muted-foreground">{note}</span>}
       {off && <span className="mt-0.5 block text-small text-muted-foreground">{off}</span>}
-      {action && !off && <span className="mt-1 block">{action}</span>}
+      {/* A switch row draws its action once, outside its label (below). */}
+      {action && !off && !inline && <span className="mt-1 block">{action}</span>}
     </div>
   )
   if (inline)
@@ -488,6 +490,30 @@ export const toForm = (def: { fields: FieldDef[] }, data: Record<string, unknown
 
 const text = (v: unknown) => (v === null || v === undefined ? "" : String(v).trim())
 
+/**
+ * The form's values with what is typed in a list's Add field and not yet a chip, as leaving the field would add
+ * it. The save bar counts, checks and saves these, so typed text alone is a change (SV-1).
+ */
+export function withPending(values: Record<string, unknown>, pending: Record<string, string>) {
+  const out = { ...values }
+  for (const [name, typed] of Object.entries(pending))
+    if (typed.trim()) out[name] = addEntries(Array.isArray(values[name]) ? (values[name] as string[]) : [], typed)
+  return out
+}
+
+/** How many fields differ from how they were loaded (SV-1); a secret counts while it is replaced or removed. */
+export function changeCount(
+  def: { fields: FieldDef[] },
+  values: Record<string, unknown>,
+  initial: Record<string, unknown>,
+) {
+  const plain = def.fields.filter((f) => f.type !== "password").map((f) => f.name)
+  const secrets = def.fields.filter((f) => f.type === "password").map((f) => f.name)
+  return (
+    countChanges(values, initial, plain) + secrets.filter((k) => values[k] !== undefined && values[k] !== "").length
+  )
+}
+
 /** Whether a field differs from how it was loaded, compared as the save bar counts it (SV-2). */
 const fieldChanged = (values: Record<string, unknown>, initial: Record<string, unknown>, name: string) =>
   text(values[name]) !== text(initial[name])
@@ -558,6 +584,10 @@ export function SettingsForm({ section, active = true }: { section: string; acti
   const [values, setValues] = useState<Record<string, unknown>>({})
   // Fields that failed their check, with what is wrong (SV-1); editing a field, Discard or a save clears its mark.
   const [problems, setProblems] = useState<Record<string, string>>({})
+  // What is typed in a list's Add field and not yet a chip, by field: a change of its own (SV-1).
+  const [pending, setPending] = useState<Record<string, string>>({})
+  // Moves on with each save that stored or removed a secret, so a test of the one before no longer counts (SV-5).
+  const [secretsSaved, secretSaved] = useReducer((n: number) => n + 1, 0)
   const shown = useRef(active)
   shown.current = active
   // The save bar says what failed, naming the section (SV-3).
@@ -567,11 +597,9 @@ export function SettingsForm({ section, active = true }: { section: string; acti
   })
   const meta = metaOf(query.data)
   const initial = query.data && def ? toForm(def, query.data) : {}
-  const secrets = def?.fields.filter((f) => f.type === "password").map((f) => f.name) ?? []
-  const plain = def?.fields.filter((f) => f.type !== "password").map((f) => f.name) ?? []
-  const count = query.data
-    ? countChanges(values, initial, plain) + secrets.filter((k) => values[k] !== undefined && values[k] !== "").length
-    : 0
+  // What Save would send: the values with the typed text that is not yet a chip.
+  const current = withPending(values, pending)
+  const count = query.data && def ? changeCount(def, current, initial) : 0
   // A refresh never overwrites what the user is typing (SV-6); after a save the form takes the saved values.
   const reload = useRef(true)
   // biome-ignore lint/correctness/useExhaustiveDependencies: only new data replaces the form
@@ -588,7 +616,7 @@ export function SettingsForm({ section, active = true }: { section: string; acti
   function body() {
     const out: Record<string, unknown> = {}
     for (const f of def?.fields ?? []) {
-      const v = values[f.name]
+      const v = current[f.name]
       if (f.type === "password") {
         // An unchanged secret is never sent again; null removes it.
         if (v === null || (typeof v === "string" && v)) out[f.name] = v
@@ -596,7 +624,7 @@ export function SettingsForm({ section, active = true }: { section: string; acti
       }
       // Only what changed is sent, so a save never writes a value it did not change, such as one that comes
       // from the environment (FS-6).
-      if (!fieldChanged(values, initial, f.name)) continue
+      if (!fieldChanged(current, initial, f.name)) continue
       // A field whose switch is off is not checked; a value it cannot take is left unsent (FS-4).
       if (offOf(f) && fieldProblem(section, f, v, meta.limits)) continue
       if (f.type === "number") out[f.name] = Number(v)
@@ -626,8 +654,8 @@ export function SettingsForm({ section, active = true }: { section: string; acti
     if (!def || !query.data) return []
     const found: Record<string, string> = {}
     for (const f of def.fields) {
-      if (f.type === "password" || offOf(f) || !fieldChanged(values, initial, f.name)) continue
-      const problem = fieldProblem(section, f, values[f.name], meta.limits)
+      if (f.type === "password" || offOf(f) || !fieldChanged(current, initial, f.name)) continue
+      const problem = fieldProblem(section, f, current[f.name], meta.limits)
       if (problem) found[f.name] = problem
     }
     // The stored SMTP password is never sent to another server: a new host, port or user needs it again, unless
@@ -675,11 +703,15 @@ export function SettingsForm({ section, active = true }: { section: string; acti
       // Only a successful save lets the next answer replace the form; a failed one keeps the edits (SV-3).
       reload.current = true
       setProblems({})
+      // The typed text went out with the list it was added to.
+      setPending({})
+      if (def?.fields.some((f) => f.type === "password" && f.name in sent)) secretSaved()
       // A new design shows at once, without a reload.
       if (section === "general") afterGeneralSave(sent)
     },
     discard: () => {
       setProblems({})
+      setPending({})
       if (query.data && def) setValues(toForm(def, query.data))
     },
   })
@@ -809,6 +841,8 @@ export function SettingsForm({ section, active = true }: { section: string; acti
                     id={f.name}
                     value={Array.isArray(values[f.name]) ? (values[f.name] as string[]) : []}
                     onChange={(v) => set(f.name, v)}
+                    pending={pending[f.name] ?? ""}
+                    onPendingChange={(typed) => setPending((p) => ({ ...p, [f.name]: typed }))}
                     problem={(entry) => {
                       const kind = settingKinds[section]?.[f.name]
                       return kind ? valueProblem(kind, [entry]) : null
@@ -836,7 +870,7 @@ export function SettingsForm({ section, active = true }: { section: string; acti
         </fieldset>
       )}
       {query.data && (section === "telegram" || section === "email") && (
-        <TestRow section={section} data={query.data} values={values} />
+        <TestRow section={section} data={query.data} values={values} secretsSaved={secretsSaved} />
       )}
     </Panel>
   )
@@ -879,6 +913,15 @@ export function testDraft(section: keyof typeof tests, values: Record<string, un
   }
 }
 
+/**
+ * What a test result belongs to (SV-5): the values it sends, and how many times a secret was saved since the form
+ * opened. A stored secret is left out of what is sent, so without the count a test of the password before a
+ * replacement would still read Accepted once the new one is saved and the field is empty again.
+ */
+export function testIdentity(section: keyof typeof tests, values: Record<string, unknown>, secretsSaved: number) {
+  return JSON.stringify({ draft: testDraft(section, values), secretsSaved })
+}
+
 /** What a test still needs on screen before it can run, or null (FB-1). */
 export function testMissing(
   section: keyof typeof tests,
@@ -897,16 +940,20 @@ export function testMissing(
 /**
  * A section's connection test. It sends the values on screen without saving them and shows the last result
  * beside the button: Accepted or the failure in words, with the time (SV-5). The result belongs to the values it
- * tested: after a change, or for an answer to an older test, it says so instead (lib/test-run.ts).
+ * tested and to the stored secrets of then: after a change, a saved secret, or for an answer to an older test, it
+ * says so instead (lib/test-run.ts).
  */
 function TestRow({
   section,
   data,
   values,
+  secretsSaved,
 }: {
   section: keyof typeof tests
   data: Record<string, unknown>
   values: Record<string, unknown>
+  /** How many saves stored or removed a secret since the form opened (`testIdentity`). */
+  secretsSaved: number
 }) {
   const t = tests[section]
   const tz = useTimeZone()
@@ -915,11 +962,11 @@ function TestRow({
   // A test still on its way when the form goes is forgotten: its answer has nothing to show.
   useEffect(() => () => runs.drop(), [runs])
   const draft = testDraft(section, values)
-  const snapshot = JSON.stringify(draft)
+  const snapshot = testIdentity(section, values, secretsSaved)
   const missing = testMissing(section, draft, data)
-  // The values on screen when an answer comes, which may differ from those the test sent.
-  const latest = useRef(values)
-  latest.current = values
+  // What is on screen when an answer comes, which may differ from what the test sent or a secret saved meanwhile.
+  const latest = useRef(snapshot)
+  latest.current = snapshot
   async function run() {
     const started = runs.start(snapshot)
     redraw()
@@ -935,7 +982,7 @@ function TestRow({
     const current = runs.settle(started, outcome, Date.now())
     redraw()
     // An answer to an older test, or to values changed meanwhile, says nothing more (SV-5).
-    if (!current || runs.view(JSON.stringify(testDraft(section, latest.current))).kind === "changed") return
+    if (!current || runs.view(latest.current).kind === "changed") return
     if (outcome.ok) toast.success(t.done(recipients))
     else {
       toast.error(`${t.failed}: ${outcome.message}`)

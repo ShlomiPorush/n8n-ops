@@ -9,6 +9,7 @@ import { timeAgo, useTick } from "@/components/status"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
+import { Tip, TipInControl } from "@/components/ui/tooltip"
 import { describeError } from "@/lib/api"
 import { COPIED_MS, DIM_AFTER_MS } from "@/lib/behavior"
 import { type BusyState, busyRun } from "@/lib/busy-run"
@@ -109,11 +110,15 @@ export function PageHead({
   )
 }
 
-/** "Updated 3 min ago", with the exact time on hover; it keeps ticking while the page is open. */
+/** "Updated 3 min ago", with the exact time on hover, keyboard focus or a tap (MO-4); it keeps ticking. */
 function Updated({ at }: { at: number }) {
   useTick()
   const w = useTimeFormat()
-  return <span title={formatTime(at, w)}>Updated {timeAgo(new Date(at))}</span>
+  return (
+    <Tip content={formatTime(at, w)}>
+      <span>Updated {timeAgo(new Date(at))}</span>
+    </Tip>
+  )
 }
 
 /**
@@ -230,7 +235,8 @@ export function Panel({ className, ...props }: React.ComponentProps<"section">) 
   return (
     <section
       className={cn(
-        "min-w-0 overflow-hidden rounded-lg bg-panel regular:shadow-card regular:ring-1 regular:ring-ink/10 [&>:first-child]:border-t-0 [&>.sr-only:first-child+*]:border-t-0",
+        // Clip, not hidden: a hidden panel is a scroll container whose height a page grid may squash (NL-2).
+        "min-w-0 overflow-clip rounded-lg bg-panel regular:shadow-card regular:ring-1 regular:ring-ink/10 [&>:first-child]:border-t-0 [&>.sr-only:first-child+*]:border-t-0",
         className,
       )}
       {...props}
@@ -322,7 +328,7 @@ export function PanelHead({
  * A row that is a link. A drag over it selects its text instead of dragging the link, and a click that ends
  * selecting text goes nowhere, so its values can be copied; a plain click and Enter follow the link (TB-8).
  */
-export function RowLink({ onClick, ...props }: React.ComponentProps<typeof Link>) {
+export function RowLink({ onClick, children, ...props }: React.ComponentProps<typeof Link>) {
   return (
     <Link
       draggable={false}
@@ -331,7 +337,9 @@ export function RowLink({ onClick, ...props }: React.ComponentProps<typeof Link>
         else onClick?.(e)
       }}
       {...props}
-    />
+    >
+      <TipInControl>{children}</TipInControl>
+    </Link>
   )
 }
 
@@ -378,7 +386,7 @@ export function Row({
         className={cn(cls, "w-full text-start")}
         aria-current={current || undefined}
       >
-        {children}
+        <TipInControl>{children}</TipInControl>
       </button>
     )
   return <div className={cls}>{children}</div>
@@ -478,8 +486,9 @@ export function AlertRow({
 
 /**
  * Key figures: a large number with a muted label. Compact draws one outlined block (cell lines are outlines,
- * so a short last row leaves no block); Regular draws a card per figure with its icon. With `row` they stay in one
- * row at any width, for a narrow column such as a list beside its reading pane (FB-17).
+ * so a short last row leaves no block); Regular draws a card per figure with its icon. On a phone they go two to a
+ * line and an odd last figure takes the whole line (MO-8). With `row` they stay in one row at any width, for a
+ * narrow column such as a list beside its reading pane (FB-17).
  */
 export function Kpis({
   className,
@@ -493,8 +502,11 @@ export function Kpis({
   const grid = (
     <div
       className={cn(
-        "grid overflow-hidden rounded-lg border border-line bg-bg",
-        row ? kpiRow : "grid-cols-[repeat(auto-fit,minmax(170px,1fr))]",
+        // Clip, not hidden, so a page grid never squashes the figures (NL-2).
+        "grid overflow-clip rounded-lg border border-line bg-bg",
+        row
+          ? kpiRow
+          : "grid-cols-[repeat(auto-fit,minmax(170px,1fr))] max-md:[&>:last-child:nth-child(odd)]:col-span-full",
         "regular:gap-gap regular:overflow-visible regular:border-0 regular:bg-transparent",
         className,
       )}
@@ -579,7 +591,7 @@ export function Kpi({
   )
   return to ? (
     <Link to={to} data-slot="kpi" className={cn(cls, "hover-row")}>
-      {inner}
+      <TipInControl>{inner}</TipInControl>
     </Link>
   ) : (
     <div data-slot="kpi" className={cls}>
@@ -693,21 +705,25 @@ export function Locked({
 }
 
 /**
- * An ID, address or key in mono that copies on click: a faint background and a copy icon, faint at rest and
- * full on hover, the full value copied (not the truncated one), a check for 1.5s and a toast that says what was
- * copied.
+ * An ID, address or key in mono that copies on a click or a tap (FB-12), its tooltip "Click to copy". With a
+ * pointer, hover tints it and shows a faint copy icon, hidden at rest so values do not carry icons everywhere; the
+ * keyboard focus shows it too. The full value is copied (not the truncated one), with a check for 1.5s and a toast
+ * that says what was copied.
  */
 export function Copyable({
   value,
   children,
   className,
   label,
+  wrap = false,
 }: {
   value: string
   children?: React.ReactNode
   className?: string
   /** What the value is, for the accessible name ("Copy execution ID"). */
   label?: string
+  /** A long value wraps onto more lines instead of being cut, the icon after its last line. */
+  wrap?: boolean
 }) {
   const { done, copy } = useCopy(value)
   const Icon = done ? Check : Copy
@@ -716,21 +732,23 @@ export function Copyable({
       type="button"
       data-copy
       onClick={copy}
-      title={value}
+      title="Click to copy"
       aria-label={`${label ?? "Copy"}: ${value}`}
       className={cn(
-        "group/copy inline-flex max-w-full min-w-0 items-center gap-1 rounded-tag px-1 -mx-1 text-start font-mono text-code transition-colors duration-150 [@media(hover:hover)]:hover:bg-ink/6",
+        "group/copy inline-flex max-w-full min-w-0 gap-1 rounded-tag px-1 -mx-1 text-start font-mono text-code transition-colors duration-150 [@media(hover:hover)]:hover:bg-copy-hover",
+        wrap ? "items-end" : "items-center",
         className,
       )}
     >
-      <span className="min-w-0 truncate" dir="auto">
+      {/* Selectable, for a browser that cannot copy (plain HTTP). */}
+      <span className={cn("min-w-0 select-text", wrap ? "wrap-anywhere" : "truncate")} dir="auto">
         {children ?? value}
       </span>
       <Icon
         aria-hidden
         className={cn(
-          // Faint at rest so the value says it copies without a hover; full on hover and keyboard focus.
-          "size-3.5 shrink-0 text-muted-foreground opacity-50 transition-opacity duration-150 group-hover/copy:opacity-100 group-focus-visible/copy:opacity-100",
+          // Hidden at rest; faint under a pointer that hovers (never after a tap), full on keyboard focus.
+          "size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity duration-150 group-focus-visible/copy:opacity-100 [@media(hover:hover)]:group-hover/copy:opacity-50",
           done && "text-ok opacity-100",
         )}
       />
@@ -744,6 +762,11 @@ function useCopy(value: string) {
   const copy = async (e: React.MouseEvent) => {
     e.stopPropagation()
     e.preventDefault()
+    // Browsers give the clipboard to secure pages only: over plain HTTP there is none to ask (FB-12).
+    if (!window.isSecureContext || !navigator.clipboard) {
+      toast.error("Copying needs HTTPS. Select the text and copy it instead.")
+      return
+    }
     try {
       await navigator.clipboard.writeText(value)
       setDone(true)

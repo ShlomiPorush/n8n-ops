@@ -6,6 +6,10 @@
 export const DIM_AFTER_MS = 200
 /** A copied value shows a check for this long (FB-12). */
 export const COPIED_MS = 1500
+/** A tooltip shown by a tap on a touch screen stays this long (MO-4). */
+export const TIP_TAP_MS = 2500
+/** The click that follows such a tap within this long belongs to the tooltip, not to what is under it (MO-4). */
+export const TIP_TAP_CLICK_MS = 600
 /** A toast stays this long, then fades (FB-2). */
 export const TOAST_MS = 4000
 /** How long a toast takes to fade out (FB-2). */
@@ -43,6 +47,11 @@ export const SCROLL_RESTORE_MS = 1500
 
 /** The phone layout: tab bar, sheets instead of dialogs, stacked tables. */
 export const PHONE_QUERY = "(max-width: 760px)"
+/**
+ * A list with its reading pane beside it, each scrolling on its own (DS-13). Not on a short screen (600px high or
+ * less), where the page scrolls as one and an item opens as a dialog, as it does on a narrower one (NL-1, NL-17).
+ */
+export const SPLIT_QUERY = "(min-width: 1000px) and (min-height: 601px)"
 /** A screen used by touch only, where focusing a field raises the on-screen keyboard (DS-8, MP-4). */
 export const TOUCH_ONLY_QUERY = "(hover: none) and (pointer: coarse)"
 

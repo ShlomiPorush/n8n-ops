@@ -1,7 +1,7 @@
 import { CircleAlert, CircleCheck, CircleDashed, Clock5, type LucideIcon, TriangleAlert } from "lucide-react"
 import { useEffect, useState } from "react"
 import { Badge } from "@/components/ui/badge"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { Tip } from "@/components/ui/tooltip"
 import { AGO_TICK_MS } from "@/lib/behavior"
 import { plural } from "@/lib/numbers"
 import { formatListTime, formatTime, isoTime, useTimeFormat } from "@/lib/time"
@@ -136,7 +136,7 @@ export function Dot({ health, label, className }: { health: HealthState; label?:
     >
       {/* Regular: a down instance pulses, so it is seen at a glance. */}
       {health === "down" && (
-        <span className="absolute inset-0 hidden animate-ping rounded-full bg-fail/60 regular:block motion-reduce:animate-none" />
+        <span className="absolute inset-0 hidden animate-ping rounded-full bg-fail/60 regular:block" />
       )}
     </span>
   )
@@ -215,56 +215,52 @@ export function useTick() {
   }, [])
 }
 
-/** An age ("18 h ago"), with the exact time on hover (FW-1). */
+/** An age ("18 h ago"), with the exact time on hover, keyboard focus or a tap (FW-1, MO-4). */
 export function TimeAgo({ value }: { value: string | Date | null | undefined }) {
   const w = useTimeFormat()
   useTick()
   if (!value) return <span>never</span>
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <time dateTime={isoTime(value)} className="tabular-nums">
-          {timeAgo(value)}
-        </time>
-      </TooltipTrigger>
-      <TooltipContent>{formatTime(value, w)}</TooltipContent>
-    </Tooltip>
+    <Tip content={formatTime(value, w)}>
+      <time dateTime={isoTime(value)} className="tabular-nums">
+        {timeAgo(value)}
+      </time>
+    </Tip>
   )
 }
 
-/** The time left to a deadline ("in 3 h"), with the exact time on hover. */
+/** The time left to a deadline ("in 3 h"), with the exact time on hover, keyboard focus or a tap (MO-4). */
 export function TimeLeft({ value }: { value: string | Date }) {
   const w = useTimeFormat()
   useTick()
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <time dateTime={isoTime(value)} className="tabular-nums">
-          {timeLeft(value)}
-        </time>
-      </TooltipTrigger>
-      <TooltipContent>{formatTime(value, w)}</TooltipContent>
-    </Tooltip>
+    <Tip content={formatTime(value, w)}>
+      <time dateTime={isoTime(value)} className="tabular-nums">
+        {timeLeft(value)}
+      </time>
+    </Tip>
   )
 }
 
 /**
  * A time in a list (FW-1): the clock for today, day and month earlier this year, the whole date before, as the Date
- * and Time format write them; the full time and the age on hover. The cell names its instant, so it sorts by it.
+ * and Time format write them; the full time and the age on hover, keyboard focus or a tap (MO-4). The cell names
+ * its instant, so it sorts by it.
  */
 export function When({ value }: { value: string | Date | null | undefined }) {
   const w = useTimeFormat()
   if (!value) return <span className="text-muted-foreground">never</span>
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <time dateTime={isoTime(value)} className="tabular-nums">
-          {formatListTime(value, w)}
-        </time>
-      </TooltipTrigger>
-      <TooltipContent>
-        {formatTime(value, w)} · {timeAgo(value)}
-      </TooltipContent>
-    </Tooltip>
+    <Tip
+      content={
+        <>
+          {formatTime(value, w)} · {timeAgo(value)}
+        </>
+      }
+    >
+      <time dateTime={isoTime(value)} className="tabular-nums">
+        {formatListTime(value, w)}
+      </time>
+    </Tip>
   )
 }

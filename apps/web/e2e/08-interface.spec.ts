@@ -1242,7 +1242,8 @@ const settle = () =>
   page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))))
 
 test("an instance's tabs stay at the top of its pane, another tab starts under them, and Back scrolls back (DS-14, NL-3)", async () => {
-  await page.setViewportSize({ width: 1440, height: 600 })
+  // Low, but over 600px: a screen 600px high or less has no pane beside the list (NL-1).
+  await page.setViewportSize({ width: 1440, height: 640 })
   try {
     await openInstanceB()
     const region = page.getByRole("region", { name: "Instance", exact: true })
@@ -1281,7 +1282,8 @@ test("an instance's tabs stay at the top of its pane, another tab starts under t
 })
 
 test("Back returns to the top of a tab that was never scrolled (NL-3)", async () => {
-  await page.setViewportSize({ width: 1440, height: 600 })
+  // Low, but over 600px: a screen 600px high or less has no pane beside the list (NL-1).
+  await page.setViewportSize({ width: 1440, height: 640 })
   try {
     await openInstanceB()
     const region = page.getByRole("region", { name: "Instance", exact: true })
@@ -1732,12 +1734,13 @@ test("a new filter starts the list at its first row, and the filter bar stays in
     }
   })
   try {
-    // Beside the reading pane the list scrolls in its own column; narrower, with no pane, in the page itself.
+    // Beside the reading pane the list scrolls in its own column; narrower, with no pane, in the page itself. The
+    // pane needs a screen over 600px high (NL-1).
     for (const [width, scroller] of [
       [1440, "[data-scroll-pane]"],
       [900, "#main"],
     ] as const) {
-      await page.setViewportSize({ width, height: 600 })
+      await page.setViewportSize({ width, height: 640 })
       await page.goto("/problems?status=all")
       const column = page.locator(scroller).first()
       const rows = column.locator("[data-href]")

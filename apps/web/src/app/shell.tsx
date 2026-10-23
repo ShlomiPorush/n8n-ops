@@ -224,11 +224,12 @@ function TopBar({
             })}
           </ol>
         </nav>
+        <GlobalSearch pages={searchPages} variant="bar" onOpenChange={setSearching} />
+        {/* The page's own actions come after the search (NL-6). */}
         <div
           ref={setActionsSlot}
-          className={cn("flex shrink-0 items-center gap-2 pe-3 empty:hidden", searching && "hidden")}
+          className={cn("ms-3 flex shrink-0 items-center gap-2 empty:hidden", searching && "hidden")}
         />
-        <GlobalSearch pages={searchPages} variant="bar" onOpenChange={setSearching} />
         {/* Needs attention from every page (NL-19). */}
         <div className="ms-2.5 me-[22px] flex shrink-0 items-center lg:me-7">
           <AttentionBell />
@@ -507,18 +508,22 @@ function UserMenu({ compact }: { compact?: boolean }) {
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          aria-label="Account menu"
+          // The name holds the words it shows, so a voice command that says them reaches it (AX-11).
+          aria-label={[name, "Account menu"].filter(Boolean).join(" ")}
           className={cn(
             "flex min-w-0 items-center gap-2.5 rounded-sm p-1 text-start aria-expanded:bg-accent side:flex-1 [@media(hover:hover)]:hover:bg-accent",
             compact && "side:flex-none",
           )}
         >
-          <span className="grid size-7 shrink-0 place-items-center rounded-full bg-fill text-meta font-bold">
-            {name.slice(0, 2).toUpperCase()}
-          </span>
+          {/* The initials are a picture of the account, not words of its name: drawn, and hidden from readers. */}
+          <span
+            aria-hidden
+            data-initials={name.slice(0, 2).toUpperCase()}
+            className="grid size-7 shrink-0 place-items-center rounded-full bg-fill text-meta font-bold before:content-[attr(data-initials)]"
+          />
           {!compact && (
             <span className="hidden min-w-0 side:block">
-              <span className="block truncate text-ctl font-semibold">{name}</span>
+              <span className="block truncate text-ctl font-semibold">{name}</span>{" "}
               <span className="block text-meta text-muted-foreground">Account</span>
             </span>
           )}
@@ -777,8 +782,8 @@ const scrollPage = (pathname: string) => {
 
 /**
  * The scrolling areas of a page by name: the page itself ("page"), then each area marked `data-scroll-pane`: the
- * list column ("list") and the open item ("item"). Read from the whole document: below 1000px the item opens as a
- * dialog or a phone sheet, in a portal outside the page.
+ * list column ("list") and the open item ("item"). Read from the whole document: below 1000px, and on a short
+ * screen, the item opens as a dialog or a phone sheet, in a portal outside the page.
  */
 function scrollAreas(main: HTMLElement) {
   const areas = new Map<string, HTMLElement>([["page", main]])

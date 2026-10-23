@@ -96,6 +96,7 @@ import {
 } from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import { Tip } from "@/components/ui/tooltip"
 import { api, describeError, queryClient, useApi, useApiMutation } from "@/lib/api"
 import { loadView } from "@/lib/load-state"
 import { healthCounts, n, plural } from "@/lib/numbers"
@@ -297,9 +298,9 @@ export function InstancesPage() {
                           )}
                           {" · "}
                           {behind(i.version, latest) ? (
-                            <Badge variant="warn" title={`Latest is ${latest}`}>
-                              {i.version}
-                            </Badge>
+                            <Tip content={`Latest is ${latest}`}>
+                              <Badge variant="warn">{i.version}</Badge>
+                            </Tip>
                           ) : (
                             <span className="font-mono">{i.version ?? "version unknown"}</span>
                           )}
@@ -358,9 +359,9 @@ export function InstancesPage() {
                     </TableCell>
                     <TableCell>
                       {behind(i.version, latest) ? (
-                        <Badge variant="warn" title={`Latest is ${latest}`}>
-                          {i.version}
-                        </Badge>
+                        <Tip content={`Latest is ${latest}`}>
+                          <Badge variant="warn">{i.version}</Badge>
+                        </Tip>
                       ) : (
                         <span className="font-mono text-small">{i.version ?? "unknown"}</span>
                       )}

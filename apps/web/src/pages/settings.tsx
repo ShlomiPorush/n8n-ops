@@ -445,6 +445,8 @@ export function SettingRow({
       {text}
       <div
         inert={off ? true : undefined}
+        // Says to tools what inert already does: the field is inactive, so its dimmed label is exempt from contrast.
+        aria-disabled={off ? true : undefined}
         className={cn("flex min-w-0 items-center gap-2", !wide && "md:justify-end", off && "opacity-50")}
       >
         {children}

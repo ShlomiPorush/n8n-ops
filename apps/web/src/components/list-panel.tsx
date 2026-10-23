@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable"
 import { useIsMobile, useMediaQuery } from "@/hooks/use-mobile"
+import { SPLIT_QUERY } from "@/lib/behavior"
 
 /** Below this content width a list draws its rows as items; a little more is needed to go back (no flicker). */
 const ITEMS_BELOW = 560
@@ -24,7 +25,8 @@ export function usePaneNav() {
 /**
  * A list with a reading pane (DS-13). From 1000px an item reads in a pane beside the list, like a mail
  * client: the list marks the open row, and with nothing open the first item opens by itself, so the pane is
- * never empty. Narrower, the list stands alone and an item opens as a dialog over it (a sheet on a phone).
+ * never empty. Narrower, or on a screen 600px high or less (NL-1), the list stands alone, the page scrolls as one
+ * and an item opens as a dialog over it (a sheet on a phone).
  * Either way the open item is in the address, so Back and reload work.
  *
  * Beside the pane, and wherever the list is narrow, its rows are items of a few lines instead of table
@@ -44,7 +46,7 @@ export function ListWithPanel({
   panelTitle: string
   onClose: () => void
 }) {
-  const wide = useMediaQuery("(min-width: 1000px)")
+  const wide = useMediaQuery(SPLIT_QUERY)
   const phone = useIsMobile()
   const [nav, setNav] = useState<HTMLDivElement | null>(null)
   const navigate = useNavigate()

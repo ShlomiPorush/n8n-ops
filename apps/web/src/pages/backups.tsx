@@ -46,6 +46,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, useSort 
 import { Textarea } from "@/components/ui/textarea"
 import { useMediaQuery } from "@/hooks/use-mobile"
 import { api, describeError, useApi, useApiMutation } from "@/lib/api"
+import { SPLIT_QUERY } from "@/lib/behavior"
 import { loadView } from "@/lib/load-state"
 import { formatSize, n, plural } from "@/lib/numbers"
 import { formatClockAt, formatTime, useTimeFormat } from "@/lib/time"
@@ -132,7 +133,7 @@ export function BackupsPage() {
   const navigate = useNavigate()
   const data = useApi<Summary>("/backups", { refetchInterval: 10_000 })
   // Where the list stands beside the reading pane (ListWithPanel).
-  const beside = useMediaQuery("(min-width: 1000px)")
+  const beside = useMediaQuery(SPLIT_QUERY)
   // A failed refresh keeps the rows; the head says so (TB-5, LD-12).
   const view = loadView(data)
   // The daily time is stored as 24-hour HH:MM; only how it is shown follows the Time format (FW-9).

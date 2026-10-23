@@ -54,6 +54,13 @@
   --ui-info: #1f5fbf;
   /* How strongly a status tints the background of its tag or banner. */
   --ui-tint: 14%;
+  /*
+   * How much of the status colour the text on that tint keeps; the rest is ink (darker in light, lighter in dark),
+   * so it stays readable (4.5:1, AX-11) on the tint, also over a selected row.
+   */
+  --ui-tint-ink: 75%;
+  /* A value that copies on click, under the pointer (FB-12): a blue tint. */
+  --ui-copy-hover: rgb(59 130 246 / 0.08);
   /* The dot of the brand mark, on the accent tile: a green that stands out from the tile in each theme. */
   --ui-mark: #3fcf7f;
 
@@ -152,6 +159,8 @@
   --ui-warn: #f0b03f;
   --ui-fail: #ff6b61;
   --ui-info: #7db3ff;
+  --ui-tint-ink: 85%;
+  --ui-copy-hover: rgb(59 130 246 / 0.15);
   --ui-mark: #12803f;
 
   color-scheme: dark;
@@ -171,7 +180,8 @@ html[data-design="regular"] {
   --ui-side: oklch(0.985 0 0);
   --ui-raise: oklch(1 0 0);
   --ui-ink: oklch(0.145 0 0);
-  --ui-muted: oklch(0.556 0 0);
+  /* A shade under #29's 0.556, so muted text keeps 4.5:1 on a selected row too (AX-11). */
+  --ui-muted: oklch(0.54 0 0);
   --ui-line: oklch(0.922 0 0);
   --ui-accent: oklch(0.205 0 0);
   --ui-on-accent: oklch(0.985 0 0);
@@ -183,6 +193,9 @@ html[data-design="regular"] {
   --ui-fail: #be123c;
   --ui-info: #0369a1;
   --ui-tint: 9%;
+  --ui-tint-ink: 80%;
+  /* The ink tint of #29, in both themes. */
+  --ui-copy-hover: color-mix(in oklab, var(--ui-ink) 6%, transparent);
 
   --ui-h1: 24px;
   --ui-h1-lh: 1.33;
@@ -258,6 +271,7 @@ html[data-design="regular"].dark {
   --ui-fail: #fda4af;
   --ui-info: #7dd3fc;
   --ui-tint: 12%;
+  --ui-tint-ink: 100%;
 
   --ui-shadow-card: 0 1px 2px 0 rgb(0 0 0 / 0.3);
 
@@ -290,6 +304,7 @@ html[data-design="regular"].dark {
   --color-fail: var(--ui-fail);
   --color-info: var(--ui-info);
   --color-mark: var(--ui-mark);
+  --color-copy-hover: var(--ui-copy-hover);
 
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -429,9 +444,11 @@ html[data-design="regular"].dark {
   * {
     @apply border-border outline-focus;
   }
+  /* The browser window never scrolls; only the regions of the frame do (NL-1). */
   html,
   body {
     height: 100%;
+    overflow: hidden;
   }
   html {
     font-family: var(--ui-font);
@@ -478,22 +495,12 @@ html[data-design="regular"].dark {
  */
 
 /*
- * Motion explains a state change and nothing else: .12s tooltips and flyouts, .15s switches, chevrons, grips
- * and hover colours, .2s sheets and dialogs, .3s toast fade. Under reduced motion this turns every transition
- * and animation off, the sheet included. That is older than the current AX-8, which keeps motion there.
+ * Motion explains a state change and nothing else (AX-8): .12s tooltips and flyouts; .15s switches, chevrons,
+ * grips, folds, hover colours and the copy icon; .18s the sidebar fold; .2s sheets, dialogs, the More sheet and its
+ * veil; .3s toast fade; 2s the search flash; spinners turn at 1s. Regular also counts its figures up (.9s) and
+ * pulses a down instance's dot. Drags turn transitions off. Animations are part of the design and stay when the
+ * system asks for reduced motion: there is no reduced-motion override.
  */
-/* biome-ignore-start lint/complexity/noImportantStyles: one global rule must beat every utility class */
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    transition: none !important;
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    scroll-behavior: auto !important;
-  }
-}
-/* biome-ignore-end lint/complexity/noImportantStyles: one global rule must beat every utility class */
 
 /* Thin themed scrollbars (OT-4). */
 * {
@@ -682,25 +689,28 @@ html:not([data-design="regular"]) tr[data-state="selected"] > td:has(> [data-slo
   }
 }
 
-/* Status tint for tags, banners and counters: the status colour at --ui-tint over whatever is below. */
+/*
+ * Status tint for tags, banners and counters: the status colour at --ui-tint over whatever is below, and its text
+ * the status colour taken --ui-tint-ink of the way, so it reads on the tint.
+ */
 @utility tint-ok {
-  color: var(--ui-ok);
+  color: color-mix(in srgb, var(--ui-ok) var(--ui-tint-ink), var(--ui-ink));
   background-color: color-mix(in srgb, var(--ui-ok) var(--ui-tint), transparent);
 }
 @utility tint-warn {
-  color: var(--ui-warn);
+  color: color-mix(in srgb, var(--ui-warn) var(--ui-tint-ink), var(--ui-ink));
   background-color: color-mix(in srgb, var(--ui-warn) calc(var(--ui-tint) + 1%), transparent);
 }
 @utility tint-fail {
-  color: var(--ui-fail);
+  color: color-mix(in srgb, var(--ui-fail) var(--ui-tint-ink), var(--ui-ink));
   background-color: color-mix(in srgb, var(--ui-fail) var(--ui-tint), transparent);
 }
 @utility tint-info {
-  color: var(--ui-info);
+  color: color-mix(in srgb, var(--ui-info) var(--ui-tint-ink), var(--ui-ink));
   background-color: color-mix(in srgb, var(--ui-info) var(--ui-tint), transparent);
 }
 @utility tint-muted {
-  color: var(--ui-muted);
+  color: color-mix(in srgb, var(--ui-muted) var(--ui-tint-ink), var(--ui-ink));
   background-color: color-mix(in srgb, var(--ui-muted) var(--ui-tint), transparent);
 }
 

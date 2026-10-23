@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query"
 import { TriangleAlert } from "lucide-react"
 import { useState } from "react"
 import { useParams } from "react-router"
-import { KV, LoadError, Loading, Panel, UserText } from "@/components/kit"
+import { KV, LoadError, Loading, Panel, RefreshNote, UserText } from "@/components/kit"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -69,10 +69,23 @@ export function ConnectApprovePage() {
 
   const r = request.data
   const name = r ? (r.client.builtIn ? (r.client.label ?? "A script") : (r.client.name ?? "An unnamed agent")) : ""
+  const ended = request.error instanceof ApiError && request.error.status === 410
   return (
-    <AuthFrame wide title="Connect an Agent" description={r ? `${name} asks to use n8n-ops.` : undefined}>
+    <AuthFrame
+      wide
+      title="Connect an Agent"
+      description={
+        r ? (
+          <>
+            {name} asks to use n8n-ops.
+            {/* Any other failed refresh keeps the request on screen and says so here (TB-5, LD-12). */}
+            {!ended && <RefreshNote live={request} separator=" " />}
+          </>
+        ) : undefined
+      }
+    >
       {/* An ended request replaces what is shown; any other failed refresh keeps it (TB-5). */}
-      {request.error instanceof ApiError && request.error.status === 410 ? (
+      {ended ? (
         <Alert variant="warn">
           <AlertTitle>This request is no longer open</AlertTitle>
           <AlertDescription>Requests last 10 minutes. Start the connection again in your agent.</AlertDescription>

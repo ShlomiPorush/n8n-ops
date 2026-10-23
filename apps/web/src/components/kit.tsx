@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import { describeError } from "@/lib/api"
 import { COPIED_MS, DIM_AFTER_MS } from "@/lib/behavior"
-import { type Live, refreshFailed } from "@/lib/load-state"
+import { filterFailed, type Live, refreshFailed } from "@/lib/load-state"
 import { rowHeld } from "@/lib/row-held"
 import { formatFull, useTimeZone } from "@/lib/time"
 import { toast } from "@/lib/toast"
@@ -120,21 +120,31 @@ function Updated({ at }: { at: number }) {
  * `updated`). After a refresh that failed, with the data kept on screen (TB-5): "Could not refresh · Updated 4 min
  * ago" in amber with Try again, until the next good answer. "Could not refresh" sits in a polite live region that
  * stays mounted, so the failure is announced and the ticking time is not. `separator` leads it when it shows.
+ *
+ * With `what`, in a list's filter line, it speaks only for new filters that failed to load while the previous
+ * rows stay (`previous` in lib/load-state.ts): "Could not load muted problems; showing the previous list", with
+ * Try again. The page head then keeps saying when those rows were updated.
  */
 export function RefreshNote({
   live,
   updated = false,
   separator = "",
   small = false,
+  textClass = small ? "text-small" : "text-body",
+  what,
 }: {
   live: Live | Live[]
   updated?: boolean
   separator?: string
   /** In a small-text line, so Try again matches it. */
   small?: boolean
+  /** The text size of the line it sits in, when that is neither body nor small text, so Try again matches it. */
+  textClass?: string
+  /** What the new filters would have shown, for a list's filter line. */
+  what?: string
 }) {
   const all = Array.isArray(live) ? live : [live]
-  const failed = all.filter(refreshFailed)
+  const failed = all.filter(what ? filterFailed : refreshFailed)
   // The oldest data on screen is the one the line speaks for.
   const at = failed.length ? Math.min(...failed.map((q) => q.dataUpdatedAt)) : all[0]?.dataUpdatedAt
   const fresh = updated && Boolean(at)
@@ -142,25 +152,23 @@ export function RefreshNote({
     <>
       {(failed.length > 0 || fresh) && separator}
       <span role="status" className="text-warn">
-        {failed.length > 0 && "Could not refresh"}
+        {failed.length > 0 && (what ? `Could not load ${what}; showing the previous list` : "Could not refresh")}
       </span>
       {failed.length > 0 ? (
         <span className="text-warn">
-          {at ? (
+          {at && !what ? (
             <>
               {" · "}
               <Updated at={at} />
             </>
           ) : null}{" "}
-          <Button
-            variant="link"
-            className={small ? "text-small" : "text-body"}
+          <TryAgain
+            className={textClass}
+            busy={failed.some((q) => q.isFetching)}
             onClick={() => {
               for (const q of failed) void q.refetch()
             }}
-          >
-            Try again
-          </Button>
+          />
         </span>
       ) : fresh && at ? (
         <Updated at={at} />
@@ -169,12 +177,55 @@ export function RefreshNote({
   )
 }
 
-/** The base unit: a tinted panel. Rows inside it are split by a 1px top line only. */
+/**
+ * RefreshNote as a line of its own at the top of a panel whose title is outside it, such as a Settings form. It is
+ * out of sight while the data is fresh but stays mounted, so a failure is announced when it comes (TB-5, LD-12).
+ */
+export function RefreshLine({ live }: { live: Live }) {
+  return (
+    <p className={cn("px-pad-x pt-3 text-small", !refreshFailed(live) && "sr-only")}>
+      <RefreshNote live={live} small />
+    </p>
+  )
+}
+
+/**
+ * Try again after a failed load. While the new attempt runs it stays in place, named "Loading…" and marked busy,
+ * so the keyboard focus stays on it, and is still on it when the attempt fails too (AX-6).
+ */
+export function TryAgain({
+  busy = false,
+  onClick,
+  className,
+}: {
+  busy?: boolean
+  onClick: () => void
+  className?: string
+}) {
+  return (
+    <Button
+      variant="link"
+      className={className}
+      aria-busy={busy || undefined}
+      aria-disabled={busy || undefined}
+      onClick={() => {
+        if (!busy) onClick()
+      }}
+    >
+      {busy ? "Loading…" : "Try again"}
+    </Button>
+  )
+}
+
+/**
+ * The base unit: a tinted panel. Rows inside it are split by a 1px top line only. A line kept out of sight at its
+ * top (RefreshLine) does not count as the first row.
+ */
 export function Panel({ className, ...props }: React.ComponentProps<"section">) {
   return (
     <section
       className={cn(
-        "min-w-0 overflow-hidden rounded-lg bg-panel regular:shadow-card regular:ring-1 regular:ring-ink/10 [&>:first-child]:border-t-0",
+        "min-w-0 overflow-hidden rounded-lg bg-panel regular:shadow-card regular:ring-1 regular:ring-ink/10 [&>:first-child]:border-t-0 [&>.sr-only:first-child+*]:border-t-0",
         className,
       )}
       {...props}

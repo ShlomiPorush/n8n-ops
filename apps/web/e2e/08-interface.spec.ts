@@ -968,6 +968,35 @@ test("a list keeps its rows when a refresh fails, says so under the title, and T
   await expect(rows).toHaveCount(shown)
 })
 
+test("new filters whose list fails to load keep the previous rows, and the filter line says so", async () => {
+  await page.goto("/problems?status=all")
+  const rows = page.locator("[data-scroll-pane]").first().locator("[data-href]")
+  await expect(rows.first()).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Where It Broke" })).toBeVisible()
+  const shown = await rows.count()
+  const muted = (url: URL) => url.pathname === "/api/problems" && url.searchParams.get("status") === "muted"
+  await page.route(muted, (route) => route.fulfill({ status: 500, json: { error: "internal_error" } }))
+  const note = page.getByRole("status").filter({ hasText: "Could not load muted problems; showing the previous list" })
+  try {
+    await page.getByRole("radio", { name: "Muted" }).click()
+    await expect(page).toHaveURL(/[?&]status=muted/)
+    // It is asked again twice before it counts as failed, which takes a few seconds.
+    await expect(note).toBeVisible({ timeout: 15_000 })
+    // The rows stay instead of an error, and the line takes the place of a count that would name them muted.
+    await expect(rows).toHaveCount(shown)
+    await expect(page.getByText("Could not load problems")).toHaveCount(0)
+    await expect(page.getByText(/^[\d,]+ muted problems?$/)).toHaveCount(0)
+    await expect(page.getByRole("status").filter({ hasText: "Could not refresh" })).toHaveCount(0)
+  } finally {
+    await page.unroute(muted)
+  }
+  // The next good answer is drawn and clears the line.
+  await page.getByRole("button", { name: "Try again" }).click()
+  await expect(note).toHaveCount(0)
+  await expect(page.getByText("Could not load problems")).toHaveCount(0)
+  await expect(page.getByText(/^[\d,]+ muted problems?$/)).toBeVisible()
+})
+
 test("the audit log keeps its entries when older ones fail to load, and waits for Try again", async () => {
   // A log of 100 stand-in entries, so a second page is due whatever the run recorded; older ones fail at first.
   const entry = (id: number) => ({
@@ -978,13 +1007,21 @@ test("the audit log keeps its entries when older ones fail to load, and waits fo
     target: "",
     via: "ui",
   })
+  let newest = 0
   let older = 0
   let failOlder = true
+  // While set, older entries are answered only once it settles.
+  let hold: Promise<void> | null = null
+  let release = () => {}
   const audit = (url: URL) => url.pathname === "/api/admin/audit"
-  await page.route(audit, (route) => {
-    if (!new URL(route.request().url()).searchParams.has("before"))
+  await page.route(audit, async (route) => {
+    if (!new URL(route.request().url()).searchParams.has("before")) {
+      newest++
       return route.fulfill({ json: Array.from({ length: 100 }, (_, i) => entry(1000 - i)) })
+    }
     older++
+    const wait = hold
+    if (wait) await wait
     if (failOlder) return route.fulfill({ status: 500, json: { error: "internal_error" } })
     return route.fulfill({ json: [entry(900), entry(899), entry(898)] })
   })
@@ -994,19 +1031,63 @@ test("the audit log keeps its entries when older ones fail to load, and waits fo
     await expect(rows).toHaveCount(100)
     // The end of the list comes near, and the older entries are asked for.
     await rows.last().scrollIntoViewIfNeeded()
-    await expect(page.getByText("Could not load older entries.")).toBeVisible()
+    const failed = page.getByText("Could not load older entries.")
+    await expect(failed).toBeVisible()
     // Asked once, not again by itself (TB-6), and every entry loaded stays, with no failed refresh said.
     expect(older).toBe(1)
     await expect(rows).toHaveCount(100)
     await expect(page.getByText("Could not load the audit log")).toHaveCount(0)
     await expect(page.getByRole("status").filter({ hasText: "Could not refresh" })).toHaveCount(0)
 
+    // Coming back to the window refreshes the list, which clears React Query's page error; the failed page still
+    // waits for Try again.
+    const refreshed = async () => {
+      const asked = newest
+      await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")))
+      await expect.poll(() => newest).toBe(asked + 1)
+      // Proving that nothing is asked needs a wait: two frames for the refresh to be drawn, then the moment the
+      // end of the list, still in view, would take to ask by itself.
+      await page.evaluate(
+        () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(null)))),
+      )
+      await page.waitForTimeout(500)
+    }
+    await refreshed()
+    expect(older).toBe(1)
+    await expect(failed).toBeVisible()
+
+    // Try again keeps its place and the focus while it loads, and keeps the focus when it fails again (AX-6).
+    hold = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const again = page.getByRole("button", { name: "Try again" })
+    await again.focus()
+    await page.keyboard.press("Enter")
+    const busy = page.getByRole("button", { name: "Loading…" })
+    await expect(busy).toBeFocused()
+    await expect(busy).toHaveAttribute("aria-busy", "true")
+    hold = null
+    release()
+    await expect(again).toBeFocused()
+    await expect(failed).toBeVisible()
+    expect(older).toBe(2)
+    // A Try again that fails straight after a failed one, with no refresh between them, waits across a refresh too.
+    await page.keyboard.press("Enter")
+    await expect.poll(() => older).toBe(3)
+    await expect(again).toBeFocused()
+    await expect(failed).toBeVisible()
+    await refreshed()
+    expect(older).toBe(3)
+    await expect(failed).toBeVisible()
+    await again.focus()
+
     failOlder = false
-    await page.getByRole("button", { name: "Try again" }).click()
+    await page.keyboard.press("Enter")
     await expect(rows).toHaveCount(103)
     await expect(page.getByText("All 103 entries shown")).toBeVisible()
-    expect(older).toBe(2)
+    expect(older).toBe(4)
   } finally {
+    release()
     await page.unroute(audit)
   }
 })
@@ -1180,6 +1261,76 @@ test("setup that made the account but could not sign in only signs in when tried
     expect(created).toBe(1)
   } finally {
     await context.close()
+  }
+})
+
+test("Back from an instance added on another one asks, Stay keeps it without a reload, and Leave goes back", async () => {
+  const added = await openInstanceB()
+  await page
+    .getByRole("row")
+    .filter({ has: page.getByText("e2e-n8n", { exact: true }) })
+    .click()
+  await expect(page.getByRole("heading", { name: "e2e-n8n", exact: true })).toBeVisible()
+  const first = new URL(page.url()).pathname
+  // An add that is only answered, with e2e-n8n-b as the new instance: nothing is stored.
+  const add = (url: URL) => url.pathname === "/api/instances"
+  await page.route(add, (route) =>
+    route.request().method() === "POST" ? route.fulfill({ json: { id: added } }) : route.continue(),
+  )
+  const unsaved = page.getByRole("region", { name: "Unsaved changes" })
+  const ask = page.getByRole("alertdialog", { name: "Leave without saving?" })
+  // A mark on the window that a reload would wipe.
+  const notReloaded = () => page.evaluate(() => (window as { e2eSamePage?: boolean }).e2eSamePage === true)
+  try {
+    await page.getByRole("button", { name: "Add instance" }).click()
+    const dialog = page.getByRole("dialog", { name: "Add an instance" })
+    await dialog.getByLabel("Name", { exact: true }).fill("e2e-added")
+    await dialog.getByLabel("Base URL", { exact: true }).fill("http://n8n.example.invalid")
+    await dialog.getByLabel("API key", { exact: true }).fill("not-a-real-key")
+    await expect.poll(overlayEntry).not.toBeNull()
+    await dialog.getByRole("button", { name: "Add instance" }).click()
+    await expect(page).toHaveURL((url) => url.pathname === `/instances/${added}`)
+    await expect(dialog).toHaveCount(0)
+    await page.evaluate(() => {
+      ;(window as { e2eSamePage?: boolean }).e2eSamePage = true
+    })
+
+    const settings = page.getByRole("tab", { name: /^Settings/ })
+    const field = page.getByLabel("Auto-resolve after (days)")
+    /** The tab is a Back step on the same page, which does not ask. */
+    const backFromTab = async () => {
+      await page.goBack()
+      await expect(page).toHaveURL((url) => url.pathname === `/instances/${added}` && url.search === "")
+      await expect(ask).toHaveCount(0)
+    }
+    await settings.click()
+    const typed = (await field.inputValue()) === "8" ? "7" : "8"
+    await field.fill(typed)
+    await expect(unsaved).toContainText("1 unsaved change")
+    await backFromTab()
+
+    // Back to the instance the dialog was opened on asks; Stay keeps the page, with no reload, and what was typed.
+    await page.goBack()
+    await expect(ask).toBeVisible()
+    await ask.getByRole("button", { name: "Stay" }).click()
+    await expect(ask).toHaveCount(0)
+    expect(await notReloaded()).toBe(true)
+    await expect(page).toHaveURL((url) => url.pathname === `/instances/${added}`)
+    await expect(unsaved).toContainText("1 unsaved change")
+    await settings.click()
+    await expect(field).toHaveValue(typed)
+    await backFromTab()
+
+    // Back again, and Leave goes to that instance, with no dialog step left on the way.
+    await page.goBack()
+    await ask.getByRole("button", { name: "Leave without saving" }).click()
+    await expect(page).toHaveURL((url) => url.pathname === first)
+    await expect(page.getByRole("heading", { name: "e2e-n8n", exact: true })).toBeVisible()
+    await expect(unsaved).toHaveCount(0)
+    expect(await overlayEntry()).toBeNull()
+    expect(await notReloaded()).toBe(true)
+  } finally {
+    await page.unroute(add)
   }
 })
 

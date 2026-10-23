@@ -8,7 +8,9 @@ import { type NavigateOptions, type To, useNavigate } from "react-router"
  * (DS-9) and is kept open holds its entry again, so the history stays as it was. A navigation from inside an
  * overlay takes the place of its entry (`useNavigateFromOverlay`), so no stale step is left behind. When the
  * Leave question keeps the page instead (SV-1), the overlays were not left: `stayAfterBlock` makes it a plain
- * close again.
+ * close again. The navigation replaces the entry rather than stepping back off it and pushing: the router hears
+ * that step back as a move to the same page, and that move ending would clear a Leave question asked for the
+ * push after it.
  */
 
 type Entry = {
@@ -27,8 +29,15 @@ let ignore = 0
 let seq = 0
 let listening = false
 
+/**
+ * The entry is one step above the page in the router's count (`idx`) too, so a page that later takes its place
+ * (`useNavigateFromOverlay`) is one step above the page before it: when the router undoes a blocked Back from
+ * there, it steps forward by one instead of reloading the page (a step of 0 is a reload).
+ */
 function push(entry: Entry) {
-  window.history.pushState({ ...window.history.state, overlay: entry.id }, "")
+  const state = window.history.state
+  const idx = typeof state?.idx === "number" ? { idx: state.idx + 1 } : {}
+  window.history.pushState({ ...state, ...idx, overlay: entry.id }, "")
   entry.pushed = true
 }
 

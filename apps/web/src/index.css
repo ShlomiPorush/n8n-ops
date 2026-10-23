@@ -720,8 +720,11 @@ html:not([data-design="regular"]) tr[data-state="selected"] > td:has(> [data-slo
   border-radius: var(--ui-r-lg);
 }
 
-/* While the save bar shows, every scrolling page keeps room under its last field (SV-1). */
-html[data-unsaved] :is(#main, [data-scroll-pane]) {
+/*
+ * While the save bar shows, every scrolling page keeps room under its last field (SV-1). Not an item open as a
+ * dialog: its save bar sits in its own footer, under the content.
+ */
+html[data-unsaved] :is(#main, [data-scroll-pane]:not([data-slot="dialog-body"])) {
   padding-bottom: 96px;
 }
 @media (max-width: 760px) {

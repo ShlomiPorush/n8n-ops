@@ -41,6 +41,7 @@ import { SCROLL_RESTORE_MS } from "@/lib/behavior"
 import { useLiveUpdates } from "@/lib/live"
 import { n, plural } from "@/lib/numbers"
 import { useOverlayHistory } from "@/lib/overlay-history"
+import { placeSpot, readSpot, type ScrollSpot } from "@/lib/scroll-spot"
 import { loginPath, sessionClosed, sessionStarted } from "@/lib/session"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
@@ -730,14 +731,24 @@ const scrollPage = (pathname: string) => {
   return first === "settings" ? `settings/${second ?? ""}` : first
 }
 
-/** Where each scrolling area of a page was: the page itself, then its list column and reading pane in order. */
-type ScrollSpot = number[]
-const scrollAreas = (main: HTMLElement) => [main, ...main.querySelectorAll<HTMLElement>("[data-scroll-pane]")]
+/**
+ * The scrolling areas of a page by name: the page itself ("page"), then each area marked `data-scroll-pane`: the
+ * list column ("list") and the open item ("item"). Read from the whole document: below 1000px the item opens as a
+ * dialog or a phone sheet, in a portal outside the page.
+ */
+function scrollAreas(main: HTMLElement) {
+  const areas = new Map<string, HTMLElement>([["page", main]])
+  for (const el of document.querySelectorAll<HTMLElement>("[data-scroll-pane]")) {
+    const name = el.dataset.scrollPane
+    if (name && !areas.has(name)) areas.set(name, el)
+  }
+  return areas
+}
 
 /**
  * Scrolls every area back to `spot`, again on each frame while content that is still loading leaves an area too
- * short, until all are there, SCROLL_RESTORE_MS have passed, or the user scrolls or presses a key. Returns what
- * stops it; `done` runs once it stops.
+ * short or a dialog has not mounted yet, until all are there, SCROLL_RESTORE_MS have passed, or the user scrolls
+ * or presses a key. Returns what stops it; `done` runs once it stops.
  */
 function restoreScroll(main: HTMLElement, spot: ScrollSpot, done: () => void): () => void {
   const until = performance.now() + SCROLL_RESTORE_MS
@@ -752,13 +763,7 @@ function restoreScroll(main: HTMLElement, spot: ScrollSpot, done: () => void): (
     done()
   }
   const apply = () => {
-    let there = true
-    scrollAreas(main).forEach((el, i) => {
-      const to = spot[i]
-      if (to === undefined || Math.abs(el.scrollTop - to) <= 1) return
-      el.scrollTop = to
-      if (Math.abs(el.scrollTop - to) > 1) there = false
-    })
+    const there = placeSpot(scrollAreas(main), spot)
     if (there || performance.now() > until) stop()
     else frame = requestAnimationFrame(apply)
   }
@@ -768,9 +773,10 @@ function restoreScroll(main: HTMLElement, spot: ScrollSpot, done: () => void): (
 }
 
 /**
- * Back and Forward return the page, its list column and its reading pane to where each was scrolled; a new page
- * starts at its top (NL-3). An item opened on the same page leaves the list where it is. Each entry's place is
- * noted when it is entered and again on each scroll.
+ * Back and Forward return the page, its list column and the open item to where each was scrolled, also when the
+ * item opened as a dialog or a phone sheet; a new page starts at its top (NL-3). An item opened on the same page
+ * leaves the list where it is. Each entry's place is noted when it is entered and again on each scroll. A tab
+ * opened by a click starts where the pane's tabs put it (DS-14); Back and Forward put it where it was instead.
  */
 function useScrollMemory(main: HTMLElement | null) {
   const location = useLocation()
@@ -783,17 +789,15 @@ function useScrollMemory(main: HTMLElement | null) {
   const restoring = useRef<(() => void) | null>(null)
   useEffect(() => {
     if (!main) return
-    // Capture: the list column and the pane scroll inside the page, and scroll events do not bubble.
+    // Capture, on the document: the areas scroll inside the page or in a dialog's portal, and scroll events do
+    // not bubble. Other dialogs (Edit instance, Merge) are not marked, so their scrolling is not noted.
     const remember = (e: Event) => {
       if (restoring.current) return
       if (e.target !== main && !(e.target instanceof HTMLElement && e.target.matches("[data-scroll-pane]"))) return
-      saved.current.set(
-        entry.current,
-        scrollAreas(main).map((el) => el.scrollTop),
-      )
+      saved.current.set(entry.current, readSpot(scrollAreas(main)))
     }
-    main.addEventListener("scroll", remember, { capture: true, passive: true })
-    return () => main.removeEventListener("scroll", remember, { capture: true })
+    document.addEventListener("scroll", remember, { capture: true, passive: true })
+    return () => document.removeEventListener("scroll", remember, { capture: true })
   }, [main])
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs once per history entry
   useLayoutEffect(() => {
@@ -806,16 +810,13 @@ function useScrollMemory(main: HTMLElement | null) {
     const spot = type === "POP" ? saved.current.get(location.key) : undefined
     if (spot) {
       const key = location.key
-      // It can be there at once, before restoreScroll returns.
+      // The pane's tabs already placed a newly shown tab (children's effects run first, DS-14); Back and Forward
+      // put the areas where the entry left them instead. It can be there at once, before restoreScroll returns.
       let finished = false
       const stop = restoreScroll(main, spot, () => {
         finished = true
         restoring.current = null
-        if (entry.current === key)
-          saved.current.set(
-            key,
-            scrollAreas(main).map((el) => el.scrollTop),
-          )
+        if (entry.current === key) saved.current.set(key, readSpot(scrollAreas(main)))
       })
       if (!finished) restoring.current = stop
       return
@@ -823,11 +824,9 @@ function useScrollMemory(main: HTMLElement | null) {
     // Opening an item of the same page keeps the list where it was behind it.
     if (type === "PUSH" && newPage) main.scrollTop = 0
     // Where this entry starts, so Back returns to it even when nothing is scrolled here (a tab opened from the top
-    // of a pane may start lower, DS-14). The pane's tabs have already placed it: children's effects run first.
-    saved.current.set(
-      location.key,
-      scrollAreas(main).map((el) => el.scrollTop),
-    )
+    // of a pane may start lower, DS-14). The pane's tabs have already placed it: children's effects run first. An
+    // item that opens as a dialog mounts a render later; until it is scrolled, it is noted as at its top.
+    saved.current.set(location.key, readSpot(scrollAreas(main)))
   }, [main, location.key])
 }
 

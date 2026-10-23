@@ -109,12 +109,14 @@ export const forms: Record<string, { title: string; description: string; fields:
       {
         name: "defaultThreadId",
         label: "Default topic",
+        placeholder: "General",
         hint: "In a group with topics, the topic for alerts no route sends elsewhere. Its number is in a message link: t.me/c/…/12/345 is topic 12. Empty: General.",
         type: "topic",
       },
       {
         name: "accessThreadId",
         label: "Access requests topic",
+        placeholder: "Same as the default topic",
         hint: "The topic for agent access requests. Empty: the default topic.",
         type: "topic",
       },
@@ -480,7 +482,7 @@ export function SettingsForm({ section }: { section: string }) {
                     id={f.name}
                     inputMode="numeric"
                     className="tabular-nums"
-                    placeholder="General"
+                    placeholder={f.placeholder}
                     value={String(values[f.name] ?? "")}
                     onChange={(e) => set(f.name, e.target.value)}
                   />

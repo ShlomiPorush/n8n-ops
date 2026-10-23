@@ -102,7 +102,7 @@ export function TopicRoutes({
             // Index keys: the rows are plain values, so a moved row's fields move with it.
             // biome-ignore lint/suspicious/noArrayIndexKey: see above
             <li key={i} className="grid gap-2 rounded-md border border-line p-3" aria-label={`Route ${n}`}>
-              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_minmax(0,0.8fr)_110px]">
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_minmax(0,0.8fr)_96px_auto]">
                 <div className="grid gap-1 text-small">
                   <label htmlFor={`route-${n}-instance`} className="font-semibold">
                     Instance
@@ -134,7 +134,7 @@ export function TopicRoutes({
                   <Input
                     id={`route-${n}-workflow`}
                     value={r.workflow}
-                    placeholder="orders|invoices"
+                    placeholder="Any workflow"
                     aria-label={`Route ${n} workflow pattern`}
                     onChange={(e) => update(i, { workflow: e.target.value })}
                   />
@@ -146,6 +146,7 @@ export function TopicRoutes({
                   <Input
                     id={`route-${n}-tag`}
                     value={r.tag}
+                    placeholder="Any tag"
                     aria-label={`Route ${n} tag`}
                     onChange={(e) => update(i, { tag: e.target.value })}
                   />
@@ -163,10 +164,7 @@ export function TopicRoutes({
                     onChange={(e) => update(i, { threadId: e.target.value })}
                   />
                 </div>
-              </div>
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="min-w-0 flex-1">{problem && <FieldError>{problem}</FieldError>}</div>
-                <div className="flex items-center gap-1">
+                <div className="flex h-ctl items-center justify-end gap-1 self-end sm:col-span-2 lg:col-span-1">
                   <Button
                     size="icon-sm"
                     variant="ghost"
@@ -195,6 +193,7 @@ export function TopicRoutes({
                   </Button>
                 </div>
               </div>
+              {problem && <FieldError>{problem}</FieldError>}
             </li>
           )
         })}

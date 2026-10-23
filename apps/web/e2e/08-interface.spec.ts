@@ -1380,7 +1380,10 @@ test("Back puts an instance opened as a dialog or a phone sheet back where its t
 
       await page.goBack()
       await expect(overview).toHaveAttribute("aria-selected", "true")
-      await expect.poll(() => body.evaluate((el) => Math.abs(el.scrollTop - scrolled))).toBeLessThanOrEqual(2)
+      // The place is compared here: the function given to evaluate runs in the page, which does not see `scrolled`.
+      await expect
+        .poll(async () => Math.abs((await body.evaluate((el) => el.scrollTop)) - scrolled))
+        .toBeLessThanOrEqual(2)
       if (width === 900) {
         // Put back under the dialog's head, with its tabs stuck there, not in the head's place.
         const head = dialog.locator('[data-slot="dialog-header"]')

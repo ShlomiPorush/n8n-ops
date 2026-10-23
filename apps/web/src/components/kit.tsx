@@ -1,5 +1,5 @@
 import { Check, Copy, Inbox, Loader2, LoaderCircle, Lock, type LucideIcon, X } from "lucide-react"
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useState } from "react"
 import { Link, useLocation } from "react-router"
 import { PageActions, useTopBar } from "@/app/chrome"
 import { pageOf } from "@/app/nav"
@@ -10,7 +10,8 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import { describeError } from "@/lib/api"
-import { COPIED_MS, DIM_AFTER_MS, DONE_MS, FAILED_MS } from "@/lib/behavior"
+import { COPIED_MS, DIM_AFTER_MS } from "@/lib/behavior"
+import { type BusyState, busyRun } from "@/lib/busy-run"
 import { filterFailed, type Live, refreshFailed } from "@/lib/load-state"
 import { rowHeld } from "@/lib/row-held"
 import { formatFull, useTimeZone } from "@/lib/time"
@@ -722,7 +723,7 @@ export function Command({
 
 /**
  * A button that starts a request (FB-7, DS-20). With `run` it owns the request: a click sends one, and clicks
- * are ignored until its label is back (a ref, not the re-render, so a double click cannot send two). It is
+ * are ignored until its label is back (its clock is lib/busy-run.ts, so a double click cannot send two). It is
  * disabled and shows a spinning ring and `busyLabel` ("Checking…") meanwhile; then "Done" for DONE_MS, or
  * "Failed" for FAILED_MS, and its label again. `run` should reject on failure and say why itself (useApiMutation's
  * toast).
@@ -750,30 +751,9 @@ export function BusyButton({
   labelClassName?: string
   children: React.ReactNode
 }) {
-  const [state, setState] = useState<"idle" | "busy" | "done" | "failed">("idle")
-  const sending = useRef(false)
-  const timer = useRef<ReturnType<typeof setTimeout>>(undefined)
-  useEffect(() => () => clearTimeout(timer.current), [])
-  async function start(send: () => Promise<unknown>) {
-    if (sending.current) return
-    sending.current = true
-    setState("busy")
-    let ok = false
-    try {
-      await send()
-      ok = true
-    } catch {
-      // The request said what failed (its toast); the button only shows that it did.
-    }
-    setState(ok ? "done" : "failed")
-    timer.current = setTimeout(
-      () => {
-        sending.current = false
-        setState("idle")
-      },
-      ok ? DONE_MS : FAILED_MS,
-    )
-  }
+  const [state, setState] = useState<BusyState>("idle")
+  const [clock] = useState(() => busyRun(setState))
+  useEffect(() => clock.mount(), [clock])
   const busy = held || state === "busy"
   const Shown = busy ? LoaderCircle : state === "done" ? Check : state === "failed" ? X : Icon
   // A filled button keeps its colours; the others take the result's tone.
@@ -782,8 +762,8 @@ export function BusyButton({
     <Button
       {...props}
       variant={variant}
-      // "Done" stays undimmed but, like "Failed", ignores clicks (`sending`): it is not the action, and a quick
-      // answer cannot turn a double click into two requests.
+      // "Done" stays undimmed but, like "Failed", ignores clicks (`clock.ignore`): it is not the action, and a
+      // quick answer cannot turn a double click into two requests.
       disabled={disabled || busy || state === "failed"}
       className={cn(
         toned && state === "done" && "border-ok/40 text-ok",
@@ -791,10 +771,10 @@ export function BusyButton({
         className,
       )}
       onClick={(e) => {
-        // Until its label is back a click does nothing, and does not open the row the button sits in either.
-        if (sending.current) return e.stopPropagation()
+        // Until its label is back a click does nothing: it neither opens the row the button sits in nor submits.
+        if (clock.ignore(e)) return
         onClick?.(e)
-        if (run && !e.defaultPrevented) void start(run)
+        if (run && !e.defaultPrevented) void clock.start(run)
       }}
     >
       {Shown && <Shown aria-hidden className={cn(busy && "animate-spin")} />}

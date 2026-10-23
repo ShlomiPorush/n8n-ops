@@ -76,6 +76,20 @@ describe("describeError", () => {
     expect(describeError(new ApiError(401, "unauthorized"))).toBe("Your session ended. Sign in again.")
   })
 
+  it("says in words what an answer without an error body means, not its code (FB-3)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("<html>Bad Gateway</html>", { status: 502 })),
+    )
+    const proxied = await api("/x").catch((e: unknown) => e)
+    expect(describeError(proxied)).toBe("n8n-ops did not answer. Try again in a moment.")
+    expect(describeError(new ApiError(504, "http_504"))).toBe("n8n-ops did not answer. Try again in a moment.")
+    expect(describeError(new ApiError(413, "http_413"))).toBe("The server answered with error 413.")
+    expect(failureText("check n8n-1", new ApiError(503, "http_503"))).toBe(
+      "Could not check n8n-1: n8n-ops did not answer. Try again in a moment.",
+    )
+  })
+
   it("lists validation issues", () => {
     const error = new ApiError(400, "invalid", [{ path: ["chatId"], message: "required" }])
     expect(describeError(error)).toBe("chatId: required")

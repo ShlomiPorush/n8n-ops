@@ -171,7 +171,15 @@ export function describeError(error: unknown): string {
       not_found: "Not found.",
       internal_error: "Something went wrong on the server. Check the server logs.",
     }
-    return error.detail ?? known[error.code] ?? error.message
+    const said = error.detail ?? known[error.code]
+    if (said) return said
+    // An answer without our error body came from something in between, such as a proxy whose n8n-ops is down:
+    // say that in words, not "http_502" (FB-3). It follows "Could not …: ", so it does not start that way too.
+    if (error.code === `http_${error.status}` && !error.issues?.length)
+      return [502, 503, 504].includes(error.status)
+        ? "n8n-ops did not answer. Try again in a moment."
+        : `The server answered with error ${error.status}.`
+    return error.message
   }
   return error instanceof Error ? error.message : String(error)
 }

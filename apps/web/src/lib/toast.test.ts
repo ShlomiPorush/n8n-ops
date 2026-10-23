@@ -115,6 +115,35 @@ describe("toast clock (FB-2)", () => {
     expect(currentToast()).toMatchObject({ message: "Second", leaving: true })
   })
 
+  it("keeps the pointer's hold on a toast that replaces one under it, and counts in full once it leaves", async () => {
+    const { toast, currentToast } = await load()
+    toast.success("Checked n8n-1 now")
+    toast.hold(currentToast()?.key ?? 0, "pointer")
+    toast.error("Could not check n8n-2: n8n did not answer.")
+    const key = currentToast()?.key ?? 0
+    await wait(30_000)
+    expect(currentToast()).toMatchObject({ key, leaving: false })
+    toast.release(key, "pointer")
+    await wait(3999)
+    expect(currentToast()?.leaving).toBe(false)
+    await wait(1)
+    expect(currentToast()?.leaving).toBe(true)
+  })
+
+  it("does not carry the keyboard's hold, nor a pointer's hold past a closed toast", async () => {
+    const { toast, currentToast } = await load()
+    toast.success("First")
+    toast.hold(currentToast()?.key ?? 0, "focus")
+    toast.success("Second")
+    await wait(4000)
+    expect(currentToast()).toMatchObject({ message: "Second", leaving: true })
+    toast.hold(currentToast()?.key ?? 0, "pointer")
+    toast.dismiss()
+    toast.success("Third")
+    await wait(4000)
+    expect(currentToast()).toMatchObject({ message: "Third", leaving: true })
+  })
+
   it("keeps a loading toast until it is replaced", async () => {
     const { toast, currentToast } = await load()
     const id = toast.loading("Asking the worker…")
@@ -182,6 +211,42 @@ describe("toast action (FB-2)", () => {
     toast.act(currentToast()?.key ?? 0)
     await wait(0)
     expect(currentToast()).toMatchObject({ message: "Problem reopened: Sync orders", running: false })
+    await wait(4000)
+    expect(currentToast()?.leaving).toBe(true)
+  })
+
+  it("handles a rejection after the action replaced the toast before its first await, and ends its loading toast", async () => {
+    const { toast, currentToast } = await load()
+    toast.success("Problem resolved: Sync orders", {
+      action: {
+        label: "Undo",
+        run: () => {
+          toast.loading("Undoing…")
+          return Promise.reject(new Error("Not found."))
+        },
+      },
+    })
+    // On the old code the rejection was never handled (Vitest fails the run on it) and "Undoing…" stayed for good.
+    toast.act(currentToast()?.key ?? 0)
+    expect(currentToast()?.message).toBe("Undoing…")
+    await wait(0)
+    expect(currentToast()).toBeNull()
+  })
+
+  it("leaves a result its action showed before its first await on its own clock when the promise rejects", async () => {
+    const { toast, currentToast } = await load()
+    toast.success("Problem resolved: Sync orders", {
+      action: {
+        label: "Undo",
+        run: () => {
+          toast.error("Could not undo: Not found.")
+          return Promise.reject(new Error("Not found."))
+        },
+      },
+    })
+    toast.act(currentToast()?.key ?? 0)
+    await wait(0)
+    expect(currentToast()).toMatchObject({ message: "Could not undo: Not found.", running: false, leaving: false })
     await wait(4000)
     expect(currentToast()?.leaving).toBe(true)
   })

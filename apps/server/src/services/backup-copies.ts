@@ -188,7 +188,12 @@ async function writeCopy(ctx: Ctx, copyId: string) {
       .where(eq(backupCopies.id, copyId))
     if (final) {
       ctx.log.warn("backup copy failed", { instance: name, destination: destination.name, error: message })
-      await enqueueAlert(ctx, "backup", backupAlerts.failed(name, message, destination.name), instanceSubject(run.instanceId))
+      await enqueueAlert(
+        ctx,
+        "backup",
+        backupAlerts.failed(name, message, destination.name),
+        instanceSubject(run.instanceId),
+      )
     }
     await settleRun(ctx, run.id)
   }

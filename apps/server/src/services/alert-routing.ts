@@ -38,13 +38,20 @@ function patternMatches(pattern: string, subject: string, onSlow: (pattern: stri
 const same = (a: string, b: string) => a.localeCompare(b, undefined, { sensitivity: "accent" }) === 0
 
 /** Whether every condition the route sets holds. A condition the subject cannot answer does not hold. */
-export function routeMatches(route: TelegramRoute, subject: AlertSubject, onSlow: (pattern: string) => void = () => {}) {
+export function routeMatches(
+  route: TelegramRoute,
+  subject: AlertSubject,
+  onSlow: (pattern: string) => void = () => {},
+) {
   if (route.instanceId && route.instanceId !== subject.instanceId) return false
   if (route.tag) {
     const tag = route.tag
     if (!subject.tags?.some((t) => same(t, tag))) return false
   }
-  if (route.workflow && (subject.workflowName === undefined || !patternMatches(route.workflow, subject.workflowName, onSlow)))
+  if (
+    route.workflow &&
+    (subject.workflowName === undefined || !patternMatches(route.workflow, subject.workflowName, onSlow))
+  )
     return false
   return true
 }

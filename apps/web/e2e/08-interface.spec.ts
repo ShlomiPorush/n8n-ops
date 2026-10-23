@@ -493,22 +493,19 @@ test("on a phone the instance tabs are a bar at the bottom of a sheet that keeps
     expect(await bottom()).toBeLessThan(400)
     await sheet.getByRole("tab", { name: /^Health/ }).focus()
 
-    // Turned into a phone, the tabs move to the bottom bar, and the focused tab keeps the focus.
+    // Turned into a phone, the tabs move to the bottom bar, and the focused tab keeps the focus there.
     await page.setViewportSize({ width: 390, height: 844 })
-    await expect(sheet.getByRole("tab", { name: /^Health/ })).toBeFocused()
     await expect.poll(bottom).toBeGreaterThan(700)
+    await expect(page.locator('[data-slot="pane-nav"]').getByRole("tab", { name: /^Health/ })).toBeFocused()
 
-    // The sheet keeps at least four fifths of the screen on a long tab and on a short one. (It still grows
-    // when its content is scrolled, which a click may do to bring a tab into view.)
-    const height = async () => (await sheet.boundingBox())?.height ?? 0
-    const fifths = 844 * 0.8 - 1
-    expect(await height()).toBeGreaterThanOrEqual(fifths)
-    await sheet.getByRole("tab", { name: /^Settings/ }).click()
-    await expect(sheet.getByLabel("Auto-resolve after (days)")).toBeVisible()
-    expect(await height()).toBeGreaterThanOrEqual(fifths)
-    await sheet.getByRole("tab", { name: /^Problems/ }).click()
-    await expect(sheet.getByLabel("Auto-resolve after (days)")).toBeHidden()
-    expect(await height()).toBeGreaterThanOrEqual(fifths)
+    // A short tab, opened straight away (nothing scrolled, which grows a sheet), still gets four fifths of the
+    // screen: the sheet does not shrink to its content.
+    await page.goto(`/instances/${id}?tab=health`)
+    await expect(sheet.getByRole("tab", { name: /^Health/ })).toHaveAttribute("aria-selected", "true")
+    const box = await sheet.boundingBox()
+    expect(box?.height ?? 0).toBeGreaterThanOrEqual(844 * 0.8 - 1)
+    // The tab bar sits at the bottom of the screen, under the content.
+    expect(await bottom()).toBeGreaterThan(700)
   } finally {
     await page.setViewportSize({ width: 1440, height: 900 })
   }

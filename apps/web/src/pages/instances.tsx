@@ -21,7 +21,7 @@ import {
   Trash2,
   Workflow as WorkflowIcon,
 } from "lucide-react"
-import { useEffect, useLayoutEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { Link, useNavigate, useParams, useSearchParams } from "react-router"
 import { useCrumb } from "@/app/chrome"
@@ -460,7 +460,20 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
   const look = nav ? barTabs : topTabs
   // Tabs that still do not fit scroll sideways; the open one is brought into sight, also when the address opened
   // it. Only the list scrolls: scrollIntoView would also move the pane up to the tabs while a field is edited.
-  const tabList = useRef<HTMLDivElement>(null)
+  const tabList = useRef<HTMLDivElement | null>(null)
+  // Moving between the top and the bottom bar (the screen crossed the phone width) mounts the tabs anew. The
+  // list notes the tab that had the focus as it is taken out (React detaches it before removing it), and that
+  // tab gets the focus back in its new place, so a keyboard user keeps their place. A trigger's id survives.
+  const refocus = useRef<string | null>(null)
+  const listRef = useCallback((el: HTMLDivElement | null) => {
+    tabList.current = el
+    if (!el) return
+    return () => {
+      const had = document.activeElement
+      refocus.current = had instanceof HTMLElement && el.contains(had) ? had.id : null
+      tabList.current = null
+    }
+  }, [])
   const loaded = Boolean(detail.data)
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs when another tab opens or a mark widens a tab
   useEffect(() => {
@@ -474,15 +487,6 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
     if (start < list.scrollLeft) list.scrollLeft = start
     else if (end > list.scrollLeft + list.clientWidth) list.scrollLeft = end - list.clientWidth
   }, [tab, loaded, nav, unsaved.backups, unsaved.access, unsaved.settings])
-  // Moving between the top and the bottom bar (the screen crossed the phone width) mounts the tabs anew: a tab
-  // that had the focus gets it back, so a keyboard user keeps their place. A trigger's id survives the move.
-  const placedAt = useRef(nav)
-  const refocus = useRef<string | null>(null)
-  if (placedAt.current !== nav) {
-    placedAt.current = nav
-    const had = document.activeElement
-    refocus.current = had instanceof HTMLElement && tabList.current?.contains(had) ? had.id : null
-  }
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs once the tabs were mounted in their new place
   useLayoutEffect(() => {
     const was = refocus.current
@@ -527,7 +531,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
       : "Checked from the n8n-ops server"
 
   const tabs = (
-    <TabsList ref={tabList} aria-label="Instance sections" className={look.list}>
+    <TabsList ref={listRef} aria-label="Instance sections" className={look.list}>
       <PaneTabTrigger look={look} value="overview" icon={LayoutDashboardIcon} label="Overview" />
       <PaneTabTrigger
         look={look}

@@ -45,7 +45,8 @@ export function settingsRoutes(ctx: Ctx) {
       return c.json(
         {
           error: "password_needed",
-          message: "The SMTP server changed. Enter the SMTP password again, so the stored one is not sent to it.",
+          message:
+            "The SMTP server or user changed. Enter the SMTP password again, so the stored one is not sent to it.",
           issues: [{ path: ["smtpPassword"], message: "enter it again for the new server" }],
         },
         400,

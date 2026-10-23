@@ -31,7 +31,7 @@ All notable changes to this project are documented here. The format follows [Kee
 ### Fixed
 
 - Clicking a tab (Connected Agents, for example) no longer leaves a focus ring around it, cut off at the top and bottom. The ring still shows, whole, when the tabs are used with the keyboard.
-- **The SMTP password is no longer sent to a new SMTP server.** Changing the SMTP server or port in Settings → Email Reports now needs the password again; before, the stored password was used to sign in to whatever server was entered next.
+- **The SMTP password is no longer sent to a new SMTP server.** Changing the SMTP server, port or user in Settings → Email Reports now needs the password again; before, the stored password was used to sign in to whatever server was entered next.
 - What is typed in Edit instance is no longer replaced by the stored values when the instance refreshes behind the dialog (every 15 seconds, or on coming back to the window).
 - "Leave without saving?" now starts on Stay, so pressing Enter keeps your changes, and it no longer adds a step to the browser's history.
 - Log out with unsaved changes asks first, before the session ends. If signing out fails, it says "Could not sign out. Try again in a moment." and the changes stay.

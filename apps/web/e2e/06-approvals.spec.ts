@@ -223,21 +223,31 @@ test("a decision in n8n-ops updates the Telegram message too", async ({ request 
 
 test("a new SMTP server needs the password again, so the stored one is not sent to it", async () => {
   const put = (body: object) => page.request.put("/api/settings/email", { data: body })
-  expect((await put({ smtpPassword: "e2e-smtp-secret" })).ok()).toBe(true)
-  // A save that keeps the server keeps the stored password.
-  expect((await put({ smtpHost: "mail", smtpPort: 1025 })).ok()).toBe(true)
-  const refused = await put({ smtpHost: "smtp.elsewhere.example" })
-  expect(refused.status()).toBe(400)
-  expect((await refused.json()).error).toBe("password_needed")
+  const stored = async () => (await page.request.get("/api/settings/email")).json()
+  try {
+    expect((await put({ smtpPassword: "e2e-smtp-secret" })).ok()).toBe(true)
+    // A save that keeps the server keeps the stored password.
+    expect((await put({ smtpHost: "mail", smtpPort: 1025 })).ok()).toBe(true)
+    const refused = await put({ smtpHost: "smtp.elsewhere.example" })
+    expect(refused.status()).toBe(400)
+    expect((await refused.json()).error).toBe("password_needed")
 
-  await page.goto("/settings/email")
-  await page.getByLabel("SMTP server").fill("smtp.elsewhere.example")
-  await page.getByRole("button", { name: "Save" }).click()
-  await expect(page.getByText("The SMTP server changed. Enter the SMTP password again")).toBeVisible()
-  // The password field opens for the new value; nothing was saved.
-  await expect(page.getByPlaceholder("New value")).toBeVisible()
-  expect((await (await page.request.get("/api/settings/email")).json()).smtpHost).toBe("mail")
+    await page.goto("/settings/email")
+    await page.getByLabel("SMTP server").fill("smtp.elsewhere.example")
+    await page.getByRole("button", { name: "Save" }).click()
+    await expect(page.getByText("The SMTP server or user changed. Enter the SMTP password again")).toBeVisible()
+    // The password field opens for the new value; nothing was saved.
+    await expect(page.getByPlaceholder("New value")).toBeVisible()
+    expect((await stored()).smtpHost).toBe("mail")
 
-  await page.getByRole("button", { name: "Discard" }).click()
-  expect((await put({ smtpHost: "mail", smtpPassword: null })).ok()).toBe(true)
+    // A new server with the password removed is allowed.
+    await page.getByRole("button", { name: "Keep" }).click()
+    await page.getByRole("button", { name: "Remove" }).click()
+    await page.getByRole("button", { name: "Save" }).click()
+    await expect(page.getByText("Settings saved")).toBeVisible()
+    expect(await stored()).toMatchObject({ smtpHost: "smtp.elsewhere.example", smtpPasswordSet: false })
+  } finally {
+    // Later specs send email through the test stack's mail server.
+    expect((await put({ smtpHost: "mail", smtpPort: 1025, smtpPassword: null })).ok()).toBe(true)
+  }
 })

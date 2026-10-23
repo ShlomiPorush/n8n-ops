@@ -4,9 +4,10 @@ import * as React from "react"
 import { cn } from "@/lib/utils"
 
 /*
- * The shared filter bar of every list (MP-1, MP-3, MP-6, TB-17): a search, named pickers, and under the bar
- * one line with the count and "Clear filters". On a phone the pickers fold behind a Filters button whose
- * badge counts the filters in use.
+ * The shared filter bar of every list (MP-1, MP-3, TB-17): a search, named pickers, and under the bar one line
+ * with the count and "Clear filters". On a phone every picker folds behind a Filters button whose badge counts
+ * the filters in use; on a wider screen all of them show and there is no Filters button. (MP-6 now keeps that
+ * button at every size, for the rarely used filters only.)
  */
 
 export type PickerOption = {

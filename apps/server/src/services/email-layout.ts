@@ -115,7 +115,10 @@ function knownZone(timeZone: string): string {
   }
 }
 
-/** Day/month/year in the console's time zone, like the dates in the console's tables (EM-6). */
+/**
+ * Day/month/year, with the 24-hour time when asked, in the console's time zone (EM-6 writes dates in the app's
+ * zone). Not yet the Date Format and Time Format choice or the zone's short name that EM-6 also asks for.
+ */
 export function formatDate(when: Date, timeZone: string, time = false): string {
   const parts = Object.fromEntries(
     new Intl.DateTimeFormat("en-GB", {

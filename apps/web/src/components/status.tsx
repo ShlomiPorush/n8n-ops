@@ -158,7 +158,10 @@ export function Code({ children, className }: { children: React.ReactNode; class
   return <code className={cn("rounded-tag bg-ink/6 px-1.5 py-0.5 font-mono break-all", className)}>{children}</code>
 }
 
-/** "4 min ago", "30 h ago", "3 d ago" (FW-1), then months. For ages and deadlines, not for list times. */
+/**
+ * "4 min ago", "30 h ago", "3 d ago" as FW-1 steps, then months, which FW-1 does not have; ahead of now, "in 3 h"
+ * for deadlines. For ages and deadlines, not for list times.
+ */
 export function timeAgo(value: string | Date | null | undefined): string {
   if (!value) return "never"
   const ms = Date.now() - new Date(value).getTime()

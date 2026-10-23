@@ -227,7 +227,10 @@ export function WorkflowsPage() {
             </TableHeader>
             <TableBody>
               {sort.rows.map((w) => (
-                <TableRow key={`${w.instanceId}:${w.workflowId}`}>
+                <TableRow
+                  key={`${w.instanceId}:${w.workflowId}`}
+                  data-search-target={`workflow:${w.instanceId}:${w.workflowId}`}
+                >
                   <TableCell className="max-w-80">
                     <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
                       <a

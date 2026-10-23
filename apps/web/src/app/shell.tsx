@@ -541,7 +541,10 @@ function UserMenu({ compact }: { compact?: boolean }) {
   )
 }
 
-/** Phone: a slim top bar with the page name, a problems pill when there are any, and the account menu. */
+/**
+ * Phone: a slim top bar with the page name, a pill with the count of open problems when there are any, the
+ * search and the account menu. (NL-9 and NL-10 now put a Needs attention bell where the pill is.)
+ */
 function PhoneTopBar() {
   const { pathname } = useLocation()
   const counts = useCounts()

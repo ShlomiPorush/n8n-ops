@@ -14,15 +14,32 @@ export class ApiError extends Error {
   }
 }
 
+/** What to say when a request never reached the server: offline, or the server is down (FS-23). */
+export const UNREACHABLE_TEXT = "Could not reach n8n-ops. Check your connection and try again."
+
+/** A request that got no answer at all. Not an ApiError, so reads are still retried. */
+export class NetworkError extends Error {
+  constructor() {
+    super(UNREACHABLE_TEXT)
+  }
+}
+
 /** Calls the n8n-ops API. Sends the session cookie; throws ApiError with the server's error code. */
 export async function api<T>(path: string, init: RequestInit & { json?: unknown } = {}): Promise<T> {
   const { json, headers, ...rest } = init
-  const res = await fetch(`/api${path}`, {
-    credentials: "same-origin",
-    ...rest,
-    headers: { ...(json !== undefined ? { "content-type": "application/json" } : {}), ...headers },
-    body: json !== undefined ? JSON.stringify(json) : rest.body,
-  })
+  let res: Response
+  try {
+    res = await fetch(`/api${path}`, {
+      credentials: "same-origin",
+      ...rest,
+      headers: { ...(json !== undefined ? { "content-type": "application/json" } : {}), ...headers },
+      body: json !== undefined ? JSON.stringify(json) : rest.body,
+    })
+  } catch (e) {
+    // A request the page called off stays an abort; anything else never reached the server.
+    if (rest.signal?.aborted || (e instanceof DOMException && e.name === "AbortError")) throw e
+    throw new NetworkError()
+  }
   const text = await res.text()
   const body = text ? safeJson(text) : null
   // The session ended on an open page: sign in again and come back here (NL-18).

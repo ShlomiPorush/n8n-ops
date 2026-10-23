@@ -103,6 +103,110 @@ test("a row opens from the keyboard, with Enter and with Space, and keeps its fo
   }
 })
 
+/** Two frames, so a click that was going to open something has drawn it by now. */
+const twoFrames = () =>
+  page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(null)))))
+const selected = () => page.evaluate(() => window.getSelection()?.toString() ?? "")
+
+test("selecting text in a row does not open it; a plain click on it and Enter elsewhere do", async () => {
+  await page.goto("/instances")
+  await expect(page.locator('tr[aria-current="true"]')).toHaveCount(1)
+  const names = ["e2e-n8n", "e2e-n8n-b"]
+  const rowOf = (name: string) => page.getByRole("row").filter({ has: page.getByText(name, { exact: true }) })
+  if ((await rowOf(names[0] as string).getAttribute("aria-current")) === "true") names.reverse()
+  const [closed, other] = names as [string, string]
+  const row = rowOf(closed)
+  const name = row.getByText(closed, { exact: true })
+
+  // A drag over the name selects it and opens nothing, so it can be copied.
+  const before = page.url()
+  const box = await name.boundingBox()
+  if (!box) throw new Error("the name has no box")
+  await page.mouse.move(box.x + 1, box.y + box.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(box.x + box.width - 1, box.y + box.height / 2, { steps: 6 })
+  await page.mouse.up()
+  await twoFrames()
+  expect(await selected()).not.toBe("")
+  expect(page.url()).toBe(before)
+  await expect(row).not.toHaveAttribute("aria-current", "true")
+
+  // A plain click on the text still selected opens the row.
+  await name.click()
+  const heading = page.getByRole("heading", { name: closed, exact: true })
+  await expect(heading).toBeVisible()
+  await expect(row).toHaveAttribute("aria-current", "true")
+
+  // Enter opens a row while text elsewhere on the page (the open instance's name) is selected.
+  const next = rowOf(other)
+  await next.focus()
+  await heading.evaluate((el) => window.getSelection()?.selectAllChildren(el))
+  expect(await selected()).not.toBe("")
+  await expect(next).toBeFocused()
+  await page.keyboard.press("Enter")
+  await expect(page.getByRole("heading", { name: other, exact: true })).toBeVisible()
+  await expect(next).toHaveAttribute("aria-current", "true")
+})
+
+test("an empty search narrows again after Escape or Tab, the page's buttons come back, and the next search starts on All", async () => {
+  await page.goto("/instances")
+  const add = page.getByRole("button", { name: "Add instance" })
+  const search = page.getByRole("combobox", { name: "Search" })
+  await expect(add).toBeVisible()
+
+  await page.keyboard.press("/")
+  await expect(search).toBeFocused()
+  await expect(add).toBeHidden()
+  await search.press("Escape")
+  await expect(search).not.toBeFocused()
+  await expect(add).toBeVisible()
+
+  await search.focus()
+  await expect(add).toBeHidden()
+  await search.press("Tab")
+  await expect(search).not.toBeFocused()
+  await expect(add).toBeVisible()
+
+  // A click outside keeps the text and closes the results; the next search starts again on All.
+  await search.fill("e2e")
+  await page.getByRole("tab", { name: /^Instances/ }).click()
+  await expect(page.getByRole("tab", { name: /^Instances/ })).toHaveAttribute("aria-selected", "true")
+  await page.getByRole("region", { name: "Instance", exact: true }).getByRole("heading").first().click()
+  await expect(page.getByRole("listbox", { name: "Results" })).toHaveCount(0)
+  await expect(search).toHaveValue("e2e")
+  await search.click()
+  await expect(page.getByRole("tab", { name: "All", exact: true })).toHaveAttribute("aria-selected", "true")
+  await search.press("Escape")
+  await expect(search).toHaveValue("")
+  await expect(add).toBeVisible()
+})
+
+test("a search result that the Leave question keeps from opening leaves the query in the search", async () => {
+  await page.goto("/settings/general")
+  const field = page.getByLabel("Public URL")
+  const before = await field.inputValue()
+  await field.fill("https://ops.example.test")
+  await expect(page.getByText("1 unsaved change")).toBeVisible()
+  const search = page.getByRole("combobox", { name: "Search" })
+  await search.click()
+  await search.fill("Audit")
+  await expect(page.getByRole("option").first()).toContainText("Audit")
+  await search.press("Enter")
+  const ask = page.getByRole("alertdialog", { name: "Leave without saving?" })
+  await ask.getByRole("button", { name: "Stay" }).click()
+  await dialogClosed(page)
+  await expect(page).toHaveURL(/\/settings\/general/)
+  await expect(search).toHaveValue("Audit")
+  await page.getByRole("button", { name: "Discard" }).click()
+  await expect(field).toHaveValue(before)
+  // With nothing left to lose, the same result opens, and the search is cleared once it has.
+  await search.click()
+  await expect(page.getByRole("option").first()).toContainText("Audit")
+  await search.press("Enter")
+  await expect(page.getByRole("heading", { name: "Audit log" })).toBeVisible()
+  await expect(search).toHaveValue("")
+})
+
 test("the list stays in place while its first item opens by itself, so focus is kept", async () => {
   // Hold the list until a field of the page has focus; then the rows arrive and the first one opens.
   let release = () => {}
@@ -910,6 +1014,40 @@ test("Raw Data says a failed load in words, and a closed window drops its late a
   } finally {
     release()
     await page.unroute(execution)
+  }
+})
+
+// The sign-in request never reaches the server here, so it does not count against the sign-in limit.
+test("sign-in says when n8n-ops cannot be reached, gives the button back and keeps what was typed", async ({
+  browser,
+}) => {
+  const context = await browser.newContext()
+  const login = await context.newPage()
+  let release = () => {}
+  const held = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  try {
+    await login.route("**/api/auth/sign-in/username", async (route) => {
+      await held
+      await route.abort("internetdisconnected")
+    })
+    await login.goto("/login")
+    await login.getByLabel("Username").fill("nobody")
+    await login.getByLabel("Password", { exact: true }).fill("not the password")
+    await login.getByRole("button", { name: "Continue" }).click()
+    const busy = login.getByRole("button", { name: "Signing in…" })
+    await expect(busy).toBeDisabled()
+    // A disabled button shows that it cannot be used (AX-9).
+    expect(await busy.evaluate((el) => getComputedStyle(el).cursor)).toBe("not-allowed")
+    release()
+    await expect(login.getByText("Could not reach n8n-ops. Check your connection and try again.")).toBeVisible()
+    await expect(login.getByRole("button", { name: "Continue" })).toBeEnabled()
+    await expect(login.getByLabel("Username")).toHaveValue("nobody")
+    await expect(login.getByLabel("Password", { exact: true })).toHaveValue("not the password")
+  } finally {
+    release()
+    await context.close()
   }
 })
 

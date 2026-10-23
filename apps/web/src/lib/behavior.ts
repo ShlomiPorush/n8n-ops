@@ -18,9 +18,8 @@ export const SHEET_PULL_CLOSE_PX = 120
 export const SHEET_SLIDE_MS = 200
 /** Freshness labels ("Updated 3 min ago") tick on one shared timer (LD-12). */
 export const AGO_TICK_MS = 30_000
-/** A busy button shows Done or Error for this long before its label comes back (FB-7). */
-export const DONE_MS = 3000
-export const FAILED_MS = 2000
+/** A press that moves more than this before its click was selecting text, so the row holds (TB-8). */
+export const ROW_HOLD_MOVE_PX = 3
 
 /** The phone layout: tab bar, sheets instead of dialogs, stacked tables. */
 export const PHONE_QUERY = "(max-width: 760px)"

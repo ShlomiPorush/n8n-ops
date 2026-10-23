@@ -52,7 +52,7 @@ function TabsTrigger({
     <TabsPrimitive.Trigger
       data-slot="tabs-trigger"
       className={cn(
-        "relative inline-flex shrink-0 items-center gap-1.5 border-b-2 border-transparent pt-1 pb-2 text-ctl font-semibold whitespace-nowrap text-muted-foreground transition-colors duration-150 hover:text-ink focus-visible:-outline-offset-2 disabled:pointer-events-none disabled:opacity-50 data-pointer:outline-none data-[state=active]:border-primary data-[state=active]:text-ink [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+        "relative inline-flex shrink-0 items-center gap-1.5 border-b-2 border-transparent pt-1 pb-2 text-ctl font-semibold whitespace-nowrap text-muted-foreground transition-colors duration-150 hover:text-ink focus-visible:-outline-offset-2 disabled:cursor-not-allowed disabled:opacity-50 data-pointer:outline-none data-[state=active]:border-primary data-[state=active]:text-ink [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         className,
       )}
       onPointerDown={(e) => {

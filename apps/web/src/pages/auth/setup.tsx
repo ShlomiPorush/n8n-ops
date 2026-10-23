@@ -9,7 +9,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { PasswordInput } from "@/components/ui/password-input"
-import { ApiError, api, describeError, useApi } from "@/lib/api"
+import { ApiError, api, describeError, UNREACHABLE_TEXT, useApi } from "@/lib/api"
 import { authClient, authErrorText } from "@/lib/auth-client"
 import { download } from "@/lib/download"
 import { cn } from "@/lib/utils"
@@ -141,7 +141,8 @@ function AccountStep({ onDone }: { onDone: (password: string) => Promise<void> }
     setError("")
     try {
       await api("/setup/account", { method: "POST", json: { username, password } })
-      const { error } = await authClient.signIn.username({ username, password })
+      // A sign-in that never reached the server comes back as an error without a status (FS-23).
+      const { error } = await authClient.signIn.username({ username, password }).catch(() => ({ error: { status: 0 } }))
       if (error) throw new Error(authErrorText(error))
       await onDone(password)
     } catch (e) {
@@ -195,14 +196,20 @@ function TwoFactorStep({ password: known, onDone }: { password: string; onDone: 
   const [error, setError] = useState("")
   const [busy, setBusy] = useState(false)
 
+  // The button always comes back, also when the request never reached the server (FS-23).
   async function start(pw: string) {
     setBusy(true)
     setError("")
-    const { data, error } = await authClient.twoFactor.enable({ password: pw })
-    setBusy(false)
-    if (error || !data) return setError(authErrorText(error))
-    if (!("totpURI" in data)) return setError("The server did not return a TOTP secret.")
-    setUri(data.totpURI)
+    try {
+      const { data, error } = await authClient.twoFactor.enable({ password: pw })
+      if (error || !data) return setError(authErrorText(error))
+      if (!("totpURI" in data)) return setError("The server did not return a TOTP secret.")
+      setUri(data.totpURI)
+    } catch {
+      setError(UNREACHABLE_TEXT)
+    } finally {
+      setBusy(false)
+    }
   }
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: starts once, as soon as the password is known
@@ -217,10 +224,17 @@ function TwoFactorStep({ password: known, onDone }: { password: string; onDone: 
   async function verify(code: string) {
     setBusy(true)
     setError("")
-    const { error } = await authClient.twoFactor.verifyTotp({ code })
-    setBusy(false)
-    if (error) return setError(authErrorText(error))
-    await onDone()
+    let verified = false
+    try {
+      const { error } = await authClient.twoFactor.verifyTotp({ code })
+      if (error) return setError(authErrorText(error))
+      verified = true
+    } catch {
+      setError(UNREACHABLE_TEXT)
+    } finally {
+      setBusy(false)
+    }
+    if (verified) await onDone()
   }
 
   const secret = uri ? (new URL(uri).searchParams.get("secret") ?? "") : ""

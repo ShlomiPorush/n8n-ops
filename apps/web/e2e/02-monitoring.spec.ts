@@ -85,6 +85,35 @@ test("a repeated failure only increases the counter", async () => {
   )
 })
 
+test("Resolve acts at once, and its Undo puts the problem back (FB-16)", async () => {
+  await page.goto("/problems")
+  await page.getByRole("row", { name: /Sync orders to ERP/ }).click()
+  await page.getByRole("button", { name: "Mark resolved" }).click()
+  await expect(page.getByText("Problem resolved: Sync orders to ERP")).toBeVisible()
+  await expect(page.getByRole("button", { name: "Reopen" })).toBeVisible()
+  // The list beside the pane follows: the open list no longer has it.
+  await expect(page.getByRole("row", { name: /Sync orders to ERP/ })).toHaveCount(0)
+
+  await page.getByRole("button", { name: "Undo resolving Sync orders to ERP" }).click()
+  await expect(page.getByText("Resolve undone: Sync orders to ERP")).toBeVisible()
+  await expect(page.getByRole("button", { name: "Mark resolved" })).toBeVisible()
+  await expect(page.getByRole("row", { name: /Sync orders to ERP/ })).toBeVisible()
+
+  await page.goto("/audit")
+  await expect(page.getByRole("row").filter({ hasText: "Problem action undone" }).first()).toBeVisible()
+})
+
+test("a muted problem can be unmuted, with Undo too (FB-11)", async () => {
+  await page.goto("/problems")
+  await page.getByRole("row", { name: /Sync orders to ERP/ }).click()
+  await page.getByRole("button", { name: "Mute 24 h" }).click()
+  await expect(page.getByText("Muted for 24 hours: Sync orders to ERP")).toBeVisible()
+  await page.getByRole("button", { name: "Unmute" }).click()
+  await expect(page.getByText("Problem unmuted: Sync orders to ERP")).toBeVisible()
+  await expect(page.getByRole("button", { name: "Mute 24 h" })).toBeVisible()
+  await expect(page.getByRole("button", { name: "Undo unmuting Sync orders to ERP" })).toBeVisible()
+})
+
 test("a resolved problem that fails again is a regression", async () => {
   await page.goto("/instances")
   await page.goto("/problems")

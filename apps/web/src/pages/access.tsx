@@ -300,7 +300,24 @@ function AccessDetailPanel({ id }: { id: string }) {
               >
                 Approve
               </BusyButton>
-              <BusyButton icon={X} busyLabel="Denying…" disabled={busy} run={() => deny.mutateAsync()}>
+              {/* A denial is final for this request, so it asks first and the request starts after the answer (DS-20). */}
+              <BusyButton
+                icon={X}
+                busy={deny.isPending}
+                busyLabel="Denying…"
+                disabled={busy}
+                onClick={async () => {
+                  if (
+                    await confirm({
+                      title: `Deny Access to ${r.instance}?`,
+                      message: `The agent ${r.token} gets no access to ${r.instance} for this request. This cannot be undone; the agent has to ask again.`,
+                      confirmLabel: "Deny access",
+                      danger: true,
+                    })
+                  )
+                    deny.mutate()
+                }}
+              >
                 Deny
               </BusyButton>
             </>

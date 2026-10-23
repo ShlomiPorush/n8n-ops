@@ -1,5 +1,6 @@
 import {
   Activity as ActivityIcon,
+  Bell,
   BellOff,
   Braces as BracesIcon,
   CalendarPlus as CalendarPlusIcon,
@@ -53,10 +54,12 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, useSort } from "@/components/ui/table"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { api, useApi, useApiMutation } from "@/lib/api"
+import { api, refreshAreas, useApi, useApiMutation } from "@/lib/api"
 import { loadView } from "@/lib/load-state"
 import { useNavigateFromOverlay } from "@/lib/overlay-history"
 import { formatDateTime, n, plural, useTimeZone } from "@/lib/time"
+import { toast } from "@/lib/toast"
+import { offerUndo } from "@/lib/undo"
 import { cn } from "@/lib/utils"
 
 export type ProblemRow = {
@@ -380,6 +383,79 @@ const kpisInPane = cn(
   "compact:@max-[36rem]/pane:**:data-[slot=kpi]:px-3",
 )
 
+type ProblemAction = "resolve" | "mute" | "reopen" | "unmute"
+
+/** A problem action's answer: a receipt for Undo, or `changed: false` when the problem was already there. */
+type ActionAnswer = { ok: true; changed: boolean; status: ProblemRow["status"]; receipt?: { id: string } }
+
+/** The words of each problem action: its result (FB-4), its failure (FB-3), and its Undo (FB-16). */
+const actionWords: Record<
+  ProblemAction,
+  { done: string; already: string; failed: string; undoing: string; undone: string }
+> = {
+  resolve: {
+    done: "Problem resolved",
+    already: "Already resolved",
+    failed: "resolve",
+    undoing: "resolving",
+    undone: "Resolve undone",
+  },
+  mute: {
+    done: "Muted for 24 hours",
+    already: "Already muted",
+    failed: "mute",
+    undoing: "muting",
+    undone: "Mute undone",
+  },
+  reopen: {
+    done: "Problem reopened",
+    already: "Already open",
+    failed: "reopen",
+    undoing: "reopening",
+    undone: "Reopen undone",
+  },
+  unmute: {
+    done: "Problem unmuted",
+    already: "Not muted",
+    failed: "unmute",
+    undoing: "unmuting",
+    undone: "Unmute undone",
+  },
+}
+
+/**
+ * Resolve, Mute 24 h, Reopen and Unmute act at once, without asking, and their toast offers Undo by the receipt the
+ * server answered with (FB-16, DS-20). An action another tab already did says so, with nothing to undo. Lists,
+ * the pane and Overview refresh after the action and after its Undo; when they cannot after an Undo, its message
+ * offers Refresh.
+ */
+function useProblemAction(id: string, action: ProblemAction, named: () => string) {
+  const words = actionWords[action]
+  const mutation = useApiMutation<{ hours: number } | undefined, ActionAnswer>("POST", `/problems/${id}/${action}`, {
+    failed: () => `${words.failed} ${named()}`,
+  })
+  return async () => {
+    const answer = await mutation.mutateAsync(action === "mute" ? { hours: 24 } : undefined)
+    const refresh = () => refreshAreas("/problems", "/overview")
+    // The action's message carries Undo; a list that could not refresh says so itself (TB-5).
+    refresh().catch(() => {})
+    const name = named()
+    const receipt = answer.receipt
+    if (!answer.changed || !receipt) {
+      toast.info(`${words.already}: ${name}`)
+      return
+    }
+    offerUndo({
+      message: `${words.done}: ${name}`,
+      ariaLabel: `Undo ${words.undoing} ${name}`,
+      name,
+      undone: `${words.undone}: ${name}`,
+      undo: () => api(`/problems/${id}/undo/${receipt.id}`, { method: "POST" }),
+      after: refresh,
+    })
+  }
+}
+
 export function ProblemDetail({ id }: { id: string }) {
   const [tab, show] = usePaneTab(problemTab)
   const detail = useApi<ProblemDetailData>(`/problems/${id}`, { refetchInterval: 15_000 })
@@ -412,24 +488,12 @@ export function ProblemDetail({ id }: { id: string }) {
   const [merging, setMerging] = useState(false)
   // Merge is opened from a menu item that is gone once the dialog closes: the focus goes back to the menu's button.
   const more = useRef<HTMLButtonElement>(null)
-  const invalidate = [`/problems/${id}`, "/overview", "/overview/summary"]
   // Toasts name the problem by its workflow (FB-4), read when the request ends.
   const named = () => detail.data?.workflowName ?? "the problem"
-  const resolve = useApiMutation<void>("POST", `/problems/${id}/resolve`, {
-    invalidate,
-    success: () => `Problem resolved: ${named()}`,
-    failed: () => `resolve ${named()}`,
-  })
-  const mute = useApiMutation<{ hours: number }>("POST", `/problems/${id}/mute`, {
-    invalidate,
-    success: () => `Muted for 24 hours: ${named()}`,
-    failed: () => `mute ${named()}`,
-  })
-  const reopen = useApiMutation<void>("POST", `/problems/${id}/reopen`, {
-    invalidate,
-    success: () => `Problem reopened: ${named()}`,
-    failed: () => `reopen ${named()}`,
-  })
+  const resolve = useProblemAction(id, "resolve", named)
+  const mute = useProblemAction(id, "mute", named)
+  const reopen = useProblemAction(id, "reopen", named)
+  const unmute = useProblemAction(id, "unmute", named)
 
   if (detail.isLoading) return <Loading>Loading the problem…</Loading>
   if (detail.error && !detail.data)
@@ -485,14 +549,7 @@ export function ProblemDetail({ id }: { id: string }) {
           </h2>
           <div className="flex flex-wrap gap-2 @min-[40rem]/pane:self-start">
             {p.status === "resolved" ? (
-              <BusyButton
-                key="reopen"
-                size="sm"
-                variant="primary"
-                icon={RotateCcw}
-                busyLabel="Reopening…"
-                run={() => reopen.mutateAsync()}
-              >
+              <BusyButton key="reopen" size="sm" variant="primary" icon={RotateCcw} busyLabel="Reopening…" run={reopen}>
                 Reopen
               </BusyButton>
             ) : (
@@ -502,18 +559,31 @@ export function ProblemDetail({ id }: { id: string }) {
                 variant="primary"
                 icon={CheckCircle2}
                 busyLabel="Resolving…"
-                run={() => resolve.mutateAsync()}
+                run={resolve}
               >
                 Mark resolved
               </BusyButton>
             )}
-            {p.status !== "muted" && (
+            {/* A muted problem has its way back where Mute was (FB-11). */}
+            {p.status === "muted" ? (
               <BusyButton
+                key="unmute"
+                size="sm"
+                icon={Bell}
+                busyLabel="Unmuting…"
+                labelClassName="@max-[34rem]/pane:sr-only"
+                run={unmute}
+              >
+                Unmute
+              </BusyButton>
+            ) : (
+              <BusyButton
+                key="mute"
                 size="sm"
                 icon={BellOff}
                 busyLabel="Muting…"
                 labelClassName="@max-[34rem]/pane:sr-only"
-                run={() => mute.mutateAsync({ hours: 24 })}
+                run={mute}
               >
                 Mute 24 h
               </BusyButton>

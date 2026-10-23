@@ -86,6 +86,44 @@ export function markSaved(path: string) {
   epochs.set(path, (epochs.get(path) ?? 0) + 1)
 }
 
+/** A refresh after a change that left a read on screen with its old data, so the caller can offer Refresh (FB-16). */
+export class RefreshError extends Error {
+  constructor() {
+    super("refresh_failed")
+  }
+}
+
+/**
+ * Refreshes every cached read under the given paths, lists with any filters included ("/problems" covers
+ * "/problems?status=open" and "/problems/3f2a"), and marks them saved so an older answer cannot come back.
+ * Settles once the reads on screen have answered; rejects with RefreshError when one of them failed, since React
+ * Query keeps the old data then and does not reject by itself.
+ */
+export async function refreshAreas(...prefixes: string[]): Promise<void> {
+  const under = (key: unknown): key is string => typeof key === "string" && prefixes.some((p) => key.startsWith(p))
+  for (const query of queryClient.getQueryCache().getAll()) {
+    const key = query.queryKey[0]
+    if (under(key)) markSaved(key)
+  }
+  const predicate = (q: { queryKey: readonly unknown[] }) => under(q.queryKey[0])
+  await queryClient.invalidateQueries({ predicate })
+  // Another invalidation meanwhile (a live update) replaces the request that was awaited; wait for the last one.
+  await new Promise<void>((resolve) => {
+    const cache = queryClient.getQueryCache()
+    const done = () => queryClient.isFetching({ predicate }) === 0
+    if (done()) return resolve()
+    const stop = cache.subscribe(() => {
+      if (!done()) return
+      stop()
+      resolve()
+    })
+  })
+  const failed = queryClient
+    .getQueryCache()
+    .findAll({ predicate: (q) => under(q.queryKey[0]) && q.isActive() && q.state.status === "error" })
+  if (failed.length > 0) throw new RefreshError()
+}
+
 /** Reads a path for the query cache, dropping an answer that a save overtook. */
 export async function readFresh<T>(path: string, client: QueryClient = queryClient): Promise<T> {
   let data: T

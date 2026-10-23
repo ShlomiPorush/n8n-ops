@@ -1,6 +1,17 @@
-import { QueryClient } from "@tanstack/react-query"
+import { QueryClient, QueryObserver } from "@tanstack/react-query"
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { ApiError, api, describeError, failureText, markSaved, NetworkError, readFresh } from "./api.ts"
+import {
+  ApiError,
+  api,
+  describeError,
+  failureText,
+  markSaved,
+  NetworkError,
+  queryClient,
+  RefreshError,
+  readFresh,
+  refreshAreas,
+} from "./api.ts"
 import { sessionStarted } from "./session.ts"
 
 afterEach(() => vi.unstubAllGlobals())
@@ -137,5 +148,63 @@ describe("readFresh", () => {
     const client = new QueryClient()
     markSaved("/settings/general")
     expect(await readFresh("/settings/general", client)).toEqual({ design: "compact" })
+  })
+})
+
+describe("refreshAreas", () => {
+  afterEach(() => queryClient.clear())
+
+  it("settles once the reads on screen answered, and rejects when one of them failed (FB-16)", async () => {
+    let fail = false
+    const observer = new QueryObserver(queryClient, {
+      queryKey: ["/problems?status=open"],
+      queryFn: async () => {
+        if (fail) throw new ApiError(500, "internal_error")
+        return ["Sync orders"]
+      },
+      retry: false,
+    })
+    const stop = observer.subscribe(() => {})
+    await vi.waitFor(() => expect(observer.getCurrentResult().data).toEqual(["Sync orders"]))
+    await expect(refreshAreas("/problems", "/overview")).resolves.toBeUndefined()
+
+    fail = true
+    await expect(refreshAreas("/problems", "/overview")).rejects.toBeInstanceOf(RefreshError)
+    // The old rows stay on screen beside the error (TB-5); another area is not concerned.
+    expect(observer.getCurrentResult().data).toEqual(["Sync orders"])
+    await expect(refreshAreas("/overview")).resolves.toBeUndefined()
+    // A read no longer on screen is not read again, so it cannot fail the refresh.
+    stop()
+    await expect(refreshAreas("/problems")).resolves.toBeUndefined()
+  })
+
+  it("waits for the last request when live updates replace the awaited one, and rejects when that one fails", async () => {
+    let calls = 0
+    let release: () => void = () => {}
+    const observer = new QueryObserver(queryClient, {
+      queryKey: ["/problems?status=open"],
+      queryFn: async () => {
+        calls += 1
+        if (calls === 1) return ["Sync orders"]
+        // The refresh and its replacements are slow; only the last one answers, and it fails.
+        await new Promise<void>((resolve) => (release = resolve))
+        throw new ApiError(500, "internal_error")
+      },
+      retry: false,
+    })
+    const stop = observer.subscribe(() => {})
+    await vi.waitFor(() => expect(observer.getCurrentResult().data).toEqual(["Sync orders"]))
+    const refreshing = refreshAreas("/problems")
+    // Two live updates, each replacing the request on its way.
+    void queryClient.invalidateQueries({ queryKey: ["/problems?status=open"] })
+    await new Promise((r) => setTimeout(r, 1))
+    void queryClient.invalidateQueries({ queryKey: ["/problems?status=open"] })
+    let settled = false
+    void refreshing.catch(() => {}).finally(() => (settled = true))
+    await new Promise((r) => setTimeout(r, 10))
+    expect(settled).toBe(false)
+    release()
+    await expect(refreshing).rejects.toBeInstanceOf(RefreshError)
+    stop()
   })
 })

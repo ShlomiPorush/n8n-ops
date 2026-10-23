@@ -51,6 +51,15 @@ describe("Date format (FW-9)", () => {
     expect(formatDayMonth(at, w("browser", "24h", "UTC", "ar-EG"))).toBe("16/10")
   })
 
+  it("keeps only the numbers of a Browser date, never words the language adds around them", () => {
+    // Bulgarian ends the year with "г.", Japanese and Chinese write 年 and 月 between the numbers.
+    expect(formatDay(at, w("browser", "24h", "UTC", "bg-BG"))).toBe("16.10.2026")
+    expect(formatDay(at, w("browser", "24h", "UTC", "ja-JP"))).toBe("2026/10/16")
+    expect(formatDay(at, w("browser", "24h", "UTC", "zh-CN"))).toBe("2026/10/16")
+    for (const locale of ["bg-BG", "ja-JP", "zh-CN", "ko-KR", "hu-HU"])
+      expect(formatDay(at, w("browser", "24h", "UTC", locale))).toMatch(/^\d+[./-]\d+[./-]\d+$/)
+  })
+
   it("writes the day in the app's time zone", () => {
     // 22:30 UTC is already the next day in Jerusalem.
     expect(formatDay(new Date("2026-10-16T22:30:00Z"), w("DD/MM/YYYY", "24h", "Asia/Jerusalem"))).toBe("17/10/2026")

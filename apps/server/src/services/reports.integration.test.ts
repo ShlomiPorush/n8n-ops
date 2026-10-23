@@ -39,7 +39,8 @@ beforeAll(async () => {
     .values({ name: "report-n8n", baseUrl: "http://n8n:5678", apiKeyEnc: "v1:x:y:z", version: "1.0.0" })
     .returning()
   if (!instance) throw new Error("no instance")
-  const problem = async (workflowName: string, firstSeen: Date) => {
+  // `firstSeen` comes from n8n's clock, `createdAt` is when n8n-ops took the problem in; a report counts by the second.
+  const problem = async (workflowName: string, createdAt: Date, firstSeen = createdAt) => {
     const [row] = await ctx.db
       .insert(problems)
       .values({
@@ -51,13 +52,17 @@ beforeAll(async () => {
         fingerprint: `fp-${workflowName}`,
         firstSeen,
         lastSeen: firstSeen,
+        createdAt,
       })
       .returning()
     if (!row) throw new Error("no problem")
     return row
   }
   const counted = await problem("Sync orders", at(since, -hour))
-  const later = await problem("Made after the report", at(when, 60_000))
+  // Taken in after the end, although n8n says it first failed long before: not open yet in this report.
+  const later = await problem("Made after the report", at(when, 60_000), at(since, -hour))
+  // Taken in before the end, from an n8n whose clock runs ahead: open in this report.
+  await problem("From a clock ahead", at(when, -hour), at(when, hour))
   let execution = 0
   const failure = (problemId: string, workflowId: string, createdAt: Date) => {
     execution += 1
@@ -102,8 +107,8 @@ describe("buildReport", () => {
     // Failures: one inside, one at the end; the one at the start and those after the end are left out.
     expect(report.text).toContain("Sync orders  ·  report-n8n  ·  2 failures")
     expect(report.text).not.toContain("Made after the report")
-    // A problem first seen after the end is not open yet in this report.
-    expect(report.text).toContain("Open problems: 1")
+    // Open problems are those taken in by the end, whatever n8n's clock said.
+    expect(report.text).toContain("Open problems: 2")
 
     expect(report.text).toContain("Disk almost full")
     expect(report.text).toContain("Health check failed at the end")

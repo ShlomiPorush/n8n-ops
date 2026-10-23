@@ -136,9 +136,17 @@ export function writeDate(p: DateParts, w: DateWriting, { year = true } = {}): s
       month: "2-digit",
     }
     if (year) options.year = "numeric"
-    return intl(w.locale, options)
-      .format(new Date(Date.UTC(p.year, p.month - 1, p.day)))
-      .replace(directionMarks, "")
+    const parts = intl(w.locale, options).formatToParts(new Date(Date.UTC(p.year, p.month - 1, p.day)))
+    // Only the numbers are kept, in the language's order, with its separator when that is punctuation: words
+    // the language adds ("г." after a Bulgarian year, "年" in Japanese) never reach the line.
+    const numbers = parts.filter((x) => x.type === "day" || x.type === "month" || x.type === "year")
+    const between = parts
+      .slice(parts.indexOf(numbers[0] as Intl.DateTimeFormatPart) + 1)
+      .find((x) => x.type === "literal")
+      ?.value.replace(directionMarks, "")
+      .trim()
+    const sep = between && /^[./-]$/.test(between) ? between : "/"
+    return numbers.map((x) => x.value).join(sep)
   }
   const { order, sep } = orders[w.date]
   const part = { day: pad2(p.day), month: pad2(p.month), year: String(p.year).padStart(4, "0") }

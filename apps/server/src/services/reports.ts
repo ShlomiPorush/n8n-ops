@@ -178,7 +178,7 @@ export async function buildReport(ctx: Ctx, period: "daily" | "weekly", when = n
   const open = await ctx.db
     .select({ instanceId: problems.instanceId, n: count() })
     .from(problems)
-    .where(and(eq(problems.status, "open"), isNull(problems.mergedInto), lte(problems.firstSeen, when)))
+    .where(and(eq(problems.status, "open"), isNull(problems.mergedInto), lte(problems.createdAt, when)))
     .groupBy(problems.instanceId)
   const top = await ctx.db
     .select({ workflow: problems.workflowName, instanceId: problems.instanceId, n: count() })

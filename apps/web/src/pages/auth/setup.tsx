@@ -136,6 +136,7 @@ function AccountStep({ onDone }: { onDone: (password: string) => Promise<void> }
   /*
    * The account once it exists. Signing in after it can still fail, offline for one; trying again then only
    * signs in, as the account is there already (a second create would be refused), with what it was made with.
+   * The fields are read-only while a request runs and after the account exists, so they always show what is used.
    */
   const [created, setCreated] = useState<{ username: string; password: string } | null>(null)
   async function submit(form: FormData) {
@@ -194,7 +195,7 @@ function AccountStep({ onDone }: { onDone: (password: string) => Promise<void> }
               required
               minLength={3}
               autoFocus
-              readOnly={Boolean(created)}
+              readOnly={busy || Boolean(created)}
             />
           </Field>
           <Field>
@@ -205,7 +206,7 @@ function AccountStep({ onDone }: { onDone: (password: string) => Promise<void> }
               autoComplete="new-password"
               required
               minLength={12}
-              readOnly={Boolean(created)}
+              readOnly={busy || Boolean(created)}
             />
             <FieldDescription>At least 12 characters.</FieldDescription>
           </Field>
@@ -216,7 +217,7 @@ function AccountStep({ onDone }: { onDone: (password: string) => Promise<void> }
               name="confirm"
               autoComplete="new-password"
               required
-              readOnly={Boolean(created)}
+              readOnly={busy || Boolean(created)}
             />
           </Field>
           {created && <FieldDescription>Your account was created. Sign in to continue.</FieldDescription>}

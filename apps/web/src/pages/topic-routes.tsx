@@ -113,7 +113,7 @@ export function TopicRoutes({
                     // Radix Select opens on pointerdown and ignores a disabled fieldset, so it is locked itself.
                     disabled={disabled}
                   >
-                    <SelectTrigger className="w-full" id={`route-${n}-instance`} aria-label={`Route ${n} instance`}>
+                    <SelectTrigger className="w-full min-w-0" id={`route-${n}-instance`} aria-label={`Route ${n} instance`}>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>

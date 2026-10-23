@@ -7,12 +7,23 @@ export type GraphNode = { name: string; type: string; state: "ok" | "failed" | "
 export function FlowGraph({ nodes }: { nodes: GraphNode[] }) {
   const scroller = useRef<HTMLDivElement>(null)
   const failed = useRef<HTMLDivElement>(null)
-  // On a narrow screen the failed node can be past the right edge; bring it into view.
+  // On a narrow screen the failed node can be past the right edge; bring it into view. A graph in a hidden tab
+  // has no width yet, so it is brought into view again when it first shows.
   useEffect(() => {
     const box = scroller.current
-    const node = failed.current
-    if (!box || !node || !nodes.length) return
-    box.scrollLeft = node.offsetLeft - box.clientWidth / 2 + node.offsetWidth / 2
+    if (!box || !nodes.length) return
+    const center = () => {
+      const node = failed.current
+      if (node) box.scrollLeft = node.offsetLeft - box.clientWidth / 2 + node.offsetWidth / 2
+    }
+    center()
+    let width = box.clientWidth
+    const observer = new ResizeObserver(() => {
+      if (width === 0 && box.clientWidth > 0) center()
+      width = box.clientWidth
+    })
+    observer.observe(box)
+    return () => observer.disconnect()
   }, [nodes])
   if (!nodes.length)
     return (

@@ -389,11 +389,13 @@ export function Kpi({
     "regular:rounded-lg regular:bg-panel regular:p-5 regular:shadow-card regular:ring-1 regular:ring-ink/10 regular:outline-0",
   )
   return to ? (
-    <Link to={to} className={cn(cls, "hover-row")}>
+    <Link to={to} data-slot="kpi" className={cn(cls, "hover-row")}>
       {inner}
     </Link>
   ) : (
-    <div className={cls}>{inner}</div>
+    <div data-slot="kpi" className={cls}>
+      {inner}
+    </div>
   )
 }
 

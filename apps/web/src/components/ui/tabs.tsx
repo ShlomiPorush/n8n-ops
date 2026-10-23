@@ -33,14 +33,27 @@ function TabsList({ className, ...props }: React.ComponentProps<typeof TabsPrimi
   )
 }
 
-function TabsTrigger({ className, ...props }: React.ComponentProps<typeof TabsPrimitive.Trigger>) {
+/*
+ * Radix focuses a tab from script on mouse down, which Chrome then rings as if the keyboard had moved there; a tab
+ * that a pointer pressed keeps no ring until it loses focus. The ring is drawn inside the tab: the list clips
+ * anything outside it.
+ */
+function TabsTrigger({ className, onPointerDown, onBlur, ...props }: React.ComponentProps<typeof TabsPrimitive.Trigger>) {
   return (
     <TabsPrimitive.Trigger
       data-slot="tabs-trigger"
       className={cn(
-        "relative inline-flex shrink-0 items-center gap-1.5 border-b-2 border-transparent pt-1 pb-2 text-ctl font-semibold whitespace-nowrap text-muted-foreground transition-colors duration-150 hover:text-ink disabled:pointer-events-none disabled:opacity-50 data-[state=active]:border-primary data-[state=active]:text-ink [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+        "relative inline-flex shrink-0 items-center gap-1.5 border-b-2 border-transparent pt-1 pb-2 text-ctl font-semibold whitespace-nowrap text-muted-foreground transition-colors duration-150 hover:text-ink focus-visible:-outline-offset-2 disabled:pointer-events-none disabled:opacity-50 data-pointer:outline-none data-[state=active]:border-primary data-[state=active]:text-ink [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         className,
       )}
+      onPointerDown={(e) => {
+        e.currentTarget.dataset.pointer = ""
+        onPointerDown?.(e)
+      }}
+      onBlur={(e) => {
+        delete e.currentTarget.dataset.pointer
+        onBlur?.(e)
+      }}
       {...props}
     />
   )

@@ -8,8 +8,10 @@ import {
   Download,
   Ellipsis,
   ExternalLink,
+  HeartPulse as HeartPulseIcon,
   Hourglass as HourglassIcon,
   KeyRound as KeyRoundIcon,
+  LayoutDashboard as LayoutDashboardIcon,
   Loader as LoaderIcon,
   type LucideIcon,
   Pencil,
@@ -381,20 +383,30 @@ type ListBackup =
   | { state: "loading" | "failed" | "missing" }
   | { state: "known"; run: { status: string; at: string } | null }
 
-/** The tabs look like segments in Regular; Compact keeps the underlined tabs. */
-const tabsLook =
-  "regular:w-fit regular:max-w-full regular:gap-1 regular:rounded-lg regular:bg-fill regular:p-1 regular:before:hidden"
-const tabLook =
-  "regular:rounded-sm regular:border-b-0 regular:px-3 regular:py-1.5 regular:data-[state=active]:bg-panel regular:data-[state=active]:shadow-card"
+/*
+ * The tabs share the pane's full width. They look like segments in Regular; Compact keeps the underlined tabs.
+ * In a pane narrower than 40rem (a phone) six labels in a row do not fit, so each tab stacks its icon over a
+ * smaller label, and its mark moves to the icon's corner.
+ */
+const tabsLook = "gap-0 regular:gap-1 regular:rounded-lg regular:bg-fill regular:p-1 regular:before:hidden"
+const tabLook = cn(
+  "flex-1 justify-center px-2",
+  "@max-[40rem]/pane:flex-col @max-[40rem]/pane:gap-0.5 @max-[40rem]/pane:px-1 @max-[40rem]/pane:text-meta",
+  "regular:rounded-sm regular:border-b-0 regular:px-3 regular:py-1.5 regular:@max-[40rem]/pane:px-1",
+  "regular:data-[state=active]:bg-panel regular:data-[state=active]:shadow-card",
+)
+const tabMark = "flex @max-[40rem]/pane:absolute @max-[40rem]/pane:top-0 @max-[40rem]/pane:start-1/2 @max-[40rem]/pane:ms-1.5"
 const tabPanel = "grid min-w-0 gap-gap data-[state=inactive]:hidden"
 /*
  * In a pane narrower than 52rem a Regular card of four is too narrow for a figure beside its icon, so the
- * icon goes (it only illustrates) and the figure is a size smaller; "128,400" then still fits.
+ * icon goes (it only illustrates) and the figure is a size smaller; "128,400" then still fits. On a phone
+ * the cards are two by two and take less padding, so the four do not fill the screen.
  */
 const kpisInPane = cn(
   "grid-cols-2 @min-[36rem]/pane:grid-cols-4",
   "@max-[52rem]/pane:**:data-[slot=kpi-icon]:hidden!",
   "regular:@max-[52rem]/pane:**:data-[slot=kpi-figure]:text-h1",
+  "regular:@max-[36rem]/pane:**:data-[slot=kpi]:p-3.5",
 )
 
 function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
@@ -481,17 +493,23 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
 
   return (
     <div ref={pane} className="@container/pane grid min-w-0 gap-gap">
-      <div className="grid gap-2">
-        <div className="flex flex-wrap items-center gap-x-2.5 gap-y-2">
-          <div className="me-auto flex min-w-0 flex-wrap items-center gap-2.5">
-            <h2 className="text-title">
-              <UserText>{i.name}</UserText>
-            </h2>
-            <StatusTag kind="health" status={health}>
-              {healthLabel(i)}
-            </StatusTag>
-          </div>
-          <div className="flex flex-wrap gap-2">
+      {/* What the instance is comes first; the actions sit beside it, or below it in a narrow pane. */}
+      <div className="grid gap-2 @min-[40rem]/pane:grid-cols-[minmax(0,1fr)_auto] @min-[40rem]/pane:gap-x-2.5">
+        <div className="flex min-w-0 flex-wrap items-center gap-2.5">
+          <h2 className="text-title">
+            <UserText>{i.name}</UserText>
+          </h2>
+          <StatusTag kind="health" status={health}>
+            {healthLabel(i)}
+          </StatusTag>
+        </div>
+        <p className="flex flex-wrap items-center gap-x-1.5 text-muted-foreground @min-[40rem]/pane:col-start-1">
+          <Copyable value={i.baseUrl} label="Copy base URL" />
+          <span>· n8n {i.version ?? "unknown"}</span>
+          {behind(i.version, i.latestVersion) && <Tone tone="warn">latest {i.latestVersion}</Tone>}
+          {i.queueMode && <span>· queue mode</span>}
+        </p>
+        <div className="flex flex-wrap gap-2 @min-[40rem]/pane:col-start-2 @min-[40rem]/pane:row-span-2 @min-[40rem]/pane:row-start-1 @min-[40rem]/pane:self-start">
             <Button size="sm" variant="primary" asChild>
               <a href={i.baseUrl} target="_blank" rel="noreferrer">
                 <ExternalLink /> Open n8n
@@ -526,41 +544,32 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-          </div>
         </div>
-        <p className="flex flex-wrap items-center gap-x-1.5 text-muted-foreground">
-          <Copyable value={i.baseUrl} label="Copy base URL" />
-          <span>· n8n {i.version ?? "unknown"}</span>
-          {behind(i.version, i.latestVersion) && <Tone tone="warn">latest {i.latestVersion}</Tone>}
-          {i.queueMode && <span>· queue mode</span>}
-        </p>
       </div>
 
       <Tabs value={tab} onValueChange={(v) => isPaneTab(v) && show(v)} activationMode="manual">
         <TabsList aria-label="Instance sections" className={tabsLook}>
-          <TabsTrigger value="overview" className={tabLook}>
-            Overview
-          </TabsTrigger>
-          <TabsTrigger value="problems" className={tabLook}>
-            Problems
-            {i.openProblems > 0 && <Badge variant="fail">{n(i.openProblems)}</Badge>}
-          </TabsTrigger>
-          <TabsTrigger value="health" className={tabLook}>
-            Health
-            {(health === "down" || health === "warn") && <Dot health={health} label={healthLabel(i)} />}
-          </TabsTrigger>
-          <TabsTrigger value="backups" className={tabLook}>
-            Backups
-            <UnsavedMark show={unsaved.backups} />
-          </TabsTrigger>
-          <TabsTrigger value="access" className={tabLook}>
-            Access
-            <UnsavedMark show={unsaved.access} />
-          </TabsTrigger>
-          <TabsTrigger value="settings" className={tabLook}>
-            Settings
-            <UnsavedMark show={unsaved.settings} />
-          </TabsTrigger>
+          <PaneTabTrigger value="overview" icon={LayoutDashboardIcon} label="Overview" />
+          <PaneTabTrigger
+            value="problems"
+            icon={BugIcon}
+            label="Problems"
+            mark={i.openProblems > 0 && <Badge variant="fail">{n(i.openProblems)}</Badge>}
+          />
+          <PaneTabTrigger
+            value="health"
+            icon={HeartPulseIcon}
+            label="Health"
+            mark={(health === "down" || health === "warn") && <Dot health={health} label={healthLabel(i)} />}
+          />
+          <PaneTabTrigger value="backups" icon={ArchiveIcon} label="Backups" mark={unsaved.backups && <UnsavedMark />} />
+          <PaneTabTrigger value="access" icon={KeyRoundIcon} label="Access" mark={unsaved.access && <UnsavedMark />} />
+          <PaneTabTrigger
+            value="settings"
+            icon={SlidersHorizontalIcon}
+            label="Settings"
+            mark={unsaved.settings && <UnsavedMark />}
+          />
         </TabsList>
 
         <TabsContent value="overview" forceMount className={tabPanel}>
@@ -766,10 +775,30 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
 }
 
 /** A mark on a tab that holds unsaved changes; the save bar saves them from any tab. */
-function UnsavedMark({ show }: { show: boolean }) {
-  if (!show) return null
+function UnsavedMark() {
   return (
     <span role="img" aria-label="Unsaved changes" title="Unsaved changes" className="size-2 rounded-full bg-info" />
+  )
+}
+
+/** The mark (a count, a health dot, unsaved changes) comes after the label, so a tab's name starts with the label. */
+function PaneTabTrigger({
+  value,
+  icon: Icon,
+  label,
+  mark,
+}: {
+  value: PaneTab
+  icon: LucideIcon
+  label: string
+  mark?: React.ReactNode
+}) {
+  return (
+    <TabsTrigger value={value} className={tabLook}>
+      <Icon aria-hidden />
+      <span>{label}</span>
+      {mark && <span className={tabMark}>{mark}</span>}
+    </TabsTrigger>
   )
 }
 

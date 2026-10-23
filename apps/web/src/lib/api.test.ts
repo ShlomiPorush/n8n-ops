@@ -177,4 +177,34 @@ describe("refreshAreas", () => {
     stop()
     await expect(refreshAreas("/problems")).resolves.toBeUndefined()
   })
+
+  it("waits for the last request when live updates replace the awaited one, and rejects when that one fails", async () => {
+    let calls = 0
+    let release: () => void = () => {}
+    const observer = new QueryObserver(queryClient, {
+      queryKey: ["/problems?status=open"],
+      queryFn: async () => {
+        calls += 1
+        if (calls === 1) return ["Sync orders"]
+        // The refresh and its replacements are slow; only the last one answers, and it fails.
+        await new Promise<void>((resolve) => (release = resolve))
+        throw new ApiError(500, "internal_error")
+      },
+      retry: false,
+    })
+    const stop = observer.subscribe(() => {})
+    await vi.waitFor(() => expect(observer.getCurrentResult().data).toEqual(["Sync orders"]))
+    const refreshing = refreshAreas("/problems")
+    // Two live updates, each replacing the request on its way.
+    void queryClient.invalidateQueries({ queryKey: ["/problems?status=open"] })
+    await new Promise((r) => setTimeout(r, 1))
+    void queryClient.invalidateQueries({ queryKey: ["/problems?status=open"] })
+    let settled = false
+    void refreshing.catch(() => {}).finally(() => (settled = true))
+    await new Promise((r) => setTimeout(r, 10))
+    expect(settled).toBe(false)
+    release()
+    await expect(refreshing).rejects.toBeInstanceOf(RefreshError)
+    stop()
+  })
 })

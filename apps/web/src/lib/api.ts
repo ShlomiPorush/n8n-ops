@@ -105,7 +105,19 @@ export async function refreshAreas(...prefixes: string[]): Promise<void> {
     const key = query.queryKey[0]
     if (under(key)) markSaved(key)
   }
-  await queryClient.invalidateQueries({ predicate: (q) => under(q.queryKey[0]) })
+  const predicate = (q: { queryKey: readonly unknown[] }) => under(q.queryKey[0])
+  await queryClient.invalidateQueries({ predicate })
+  // Another invalidation meanwhile (a live update) replaces the request that was awaited; wait for the last one.
+  await new Promise<void>((resolve) => {
+    const cache = queryClient.getQueryCache()
+    const done = () => queryClient.isFetching({ predicate }) === 0
+    if (done()) return resolve()
+    const stop = cache.subscribe(() => {
+      if (!done()) return
+      stop()
+      resolve()
+    })
+  })
   const failed = queryClient
     .getQueryCache()
     .findAll({ predicate: (q) => under(q.queryKey[0]) && q.isActive() && q.state.status === "error" })

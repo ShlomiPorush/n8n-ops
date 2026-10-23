@@ -49,29 +49,31 @@ const rejectsStartedAfter = (error: unknown) =>
   error instanceof N8nError && error.status === 400 && /startedAfter/.test(error.body ?? "")
 
 /**
- * Executions started at or after `since`, newest first, at most `maxPages` pages of 250. When the instance does not
- * know the `startedAfter` filter, it pages without it, to the end or the page cap, and keeps the executions that
+ * Every execution started at or after `since` that the instance still keeps, newest first, read 250 at a time to
+ * the end. When the instance does not know the `startedAfter` filter, it reads all executions and keeps those that
  * started in the window: n8n orders by ID, not by start, and a run that waited in the queue starts after newer ones,
  * so an older page can still hold one. A run that never started (cancelled while queued) is not counted, as with the
- * filter. n8n prunes executions after 14 days or 10,000 by default, so the end usually comes before the cap.
+ * filter. It stops if n8n hands back a cursor it already gave.
  */
-export async function executionsSince(client: ExecutionLister, since: string, maxPages = 40) {
+export async function executionsSince(client: ExecutionLister, since: string) {
   const sinceMs = Date.parse(since)
   const out: ExecutionPage["data"] = []
+  const seen = new Set<string>()
   let filtered = true
   let cursor: string | undefined
-  for (let page = 0; page < maxPages; page++) {
+  for (;;) {
     let res: ExecutionPage
     try {
       res = await client.listExecutions({ limit: 250, cursor, ...(filtered ? { startedAfter: since } : {}) })
     } catch (error) {
-      if (!filtered || page > 0 || !rejectsStartedAfter(error)) throw error
+      if (!filtered || cursor || !rejectsStartedAfter(error)) throw error
       filtered = false
       res = await client.listExecutions({ limit: 250 })
     }
-    const fresh = filtered ? res.data : res.data.filter((e) => e.startedAt && Date.parse(e.startedAt) >= sinceMs)
-    out.push(...fresh)
-    if (!res.nextCursor) break
+    for (const { workflowId, status, startedAt } of res.data)
+      if (filtered || (startedAt && Date.parse(startedAt) >= sinceMs)) out.push({ workflowId, status, startedAt })
+    if (!res.nextCursor || seen.has(res.nextCursor)) break
+    seen.add(res.nextCursor)
     cursor = res.nextCursor
   }
   return out

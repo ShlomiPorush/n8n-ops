@@ -29,6 +29,7 @@ All notable changes to this project are documented here. The format follows [Kee
 ### Fixed
 
 - The workflow list of an instance on an older n8n (2.30, for example) stayed empty: its executions API refused the 30-day filter that the workflow sync sent. The sync now reads the recent executions without the filter there.
+- The run and error counts of the last 30 days stopped at 10,000 executions per instance. The workflow sync now reads every execution n8n still keeps.
 - Clicking a tab (Connected Agents, for example) no longer leaves a focus ring around it, cut off at the top and bottom. The ring still shows, whole, when the tabs are used with the keyboard.
 - `scripts/verify.sh --changed` (and the CI of pull requests) no longer builds the web app twice at once when a file at the root such as `CHANGELOG.md` changed, which could fail the build at random.
 - Add a Worker accepts any name up to 60 characters, such as "Docker Office". Before, a name with a space was refused with a technical pattern message. A refused value in the dialog is now explained in words.

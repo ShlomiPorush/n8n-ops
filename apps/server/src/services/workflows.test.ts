@@ -121,17 +121,26 @@ describe("executionsSince", () => {
     ])
   })
 
-  it("stops at the page cap", async () => {
-    let calls = 0
+  it("reads every page, with no cap", async () => {
     const client = {
       listExecutions: async (q: Query) => {
-        calls++
-        if (q.startedAfter) throw rejected()
-        return { data: [run("a", "2026-10-02T00:00:00.000Z")], nextCursor: `c${calls}` }
+        const page = Number(q.cursor ?? 0)
+        return { data: [run("a", "2026-10-02T00:00:00.000Z")], nextCursor: page < 99 ? String(page + 1) : null }
       },
     }
-    expect(await executionsSince(client, since, 3)).toHaveLength(3)
-    expect(calls).toBe(4) // the refused first try, then three pages
+    expect(await executionsSince(client, since)).toHaveLength(100)
+  })
+
+  it("stops when n8n hands back a cursor it already gave", async () => {
+    let calls = 0
+    const client = {
+      listExecutions: async () => {
+        calls++
+        return { data: [run("a", "2026-10-02T00:00:00.000Z")], nextCursor: "c1" }
+      },
+    }
+    expect(await executionsSince(client, since)).toHaveLength(2)
+    expect(calls).toBe(2)
   })
 
   it("passes other errors on", async () => {

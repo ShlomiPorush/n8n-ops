@@ -17,7 +17,7 @@ export class ApiError extends Error {
 /** What to say when a request never reached the server: offline, or the server is down (FS-23). */
 export const UNREACHABLE_TEXT = "Could not reach n8n-ops. Check your connection and try again."
 
-/** A request that got no answer at all. Not an ApiError, so reads are still retried. */
+/** A request that got no answer, or lost it on the way. Not an ApiError, so reads are still retried. */
 export class NetworkError extends Error {
   constructor() {
     super(UNREACHABLE_TEXT)
@@ -27,7 +27,13 @@ export class NetworkError extends Error {
 /** Calls the n8n-ops API. Sends the session cookie; throws ApiError with the server's error code. */
 export async function api<T>(path: string, init: RequestInit & { json?: unknown } = {}): Promise<T> {
   const { json, headers, ...rest } = init
+  // A request the page called off stays an abort; anything else got no whole answer from the server.
+  const unreached = (e: unknown) => {
+    if (rest.signal?.aborted || (e instanceof DOMException && e.name === "AbortError")) return e
+    return new NetworkError()
+  }
   let res: Response
+  let text: string
   try {
     res = await fetch(`/api${path}`, {
       credentials: "same-origin",
@@ -35,12 +41,11 @@ export async function api<T>(path: string, init: RequestInit & { json?: unknown 
       headers: { ...(json !== undefined ? { "content-type": "application/json" } : {}), ...headers },
       body: json !== undefined ? JSON.stringify(json) : rest.body,
     })
+    // The connection can also drop after the headers, while the body is read.
+    text = await res.text()
   } catch (e) {
-    // A request the page called off stays an abort; anything else never reached the server.
-    if (rest.signal?.aborted || (e instanceof DOMException && e.name === "AbortError")) throw e
-    throw new NetworkError()
+    throw unreached(e)
   }
-  const text = await res.text()
   const body = text ? safeJson(text) : null
   // The session ended on an open page: sign in again and come back here (NL-18).
   if (res.status === 401) sessionEnded()

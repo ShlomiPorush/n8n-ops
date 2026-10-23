@@ -14,7 +14,7 @@ import { authClient, authErrorText } from "@/lib/auth-client"
 import { download } from "@/lib/download"
 import { cn } from "@/lib/utils"
 import { DestinationFields, type DestinationForm, destinationBody, destinationForm } from "../destinations"
-import { AuthFrame, TotpInput } from "./shared"
+import { AuthFrame, type TotpAnswer, TotpInput, totpAnswer } from "./shared"
 
 type Checklist = { twoFactor: boolean; backupKey: boolean; telegram: boolean; storage: boolean; instance: boolean }
 const steps = ["Account", "Two-Factor", "Backup Key", "Telegram", "Destination"] as const
@@ -133,18 +133,28 @@ function StepFrame({
 function AccountStep({ onDone }: { onDone: (password: string) => Promise<void> }) {
   const [error, setError] = useState("")
   const [busy, setBusy] = useState(false)
+  /*
+   * The account once it exists. Signing in after it can still fail, offline for one; trying again then only
+   * signs in, as the account is there already (a second create would be refused), with what it was made with.
+   */
+  const [created, setCreated] = useState<{ username: string; password: string } | null>(null)
   async function submit(form: FormData) {
-    const username = String(form.get("username"))
-    const password = String(form.get("password"))
-    if (password !== String(form.get("confirm"))) return setError("The passwords do not match.")
+    let account = created
+    if (!account) {
+      account = { username: String(form.get("username")), password: String(form.get("password")) }
+      if (account.password !== String(form.get("confirm"))) return setError("The passwords do not match.")
+    }
     setBusy(true)
     setError("")
     try {
-      await api("/setup/account", { method: "POST", json: { username, password } })
+      if (!created) {
+        await api("/setup/account", { method: "POST", json: account })
+        setCreated(account)
+      }
       // A sign-in that never reached the server comes back as an error without a status (FS-23).
-      const { error } = await authClient.signIn.username({ username, password }).catch(() => ({ error: { status: 0 } }))
+      const { error } = await authClient.signIn.username(account).catch(() => ({ error: { status: 0 } }))
       if (error) throw new Error(authErrorText(error))
-      await onDone(password)
+      await onDone(account.password)
     } catch (e) {
       setError(describeError(e))
     } finally {
@@ -157,7 +167,7 @@ function AccountStep({ onDone }: { onDone: (password: string) => Promise<void> }
       description="n8n-ops has one user. Two-factor authentication is set up next and is required."
       actions={
         <Button type="submit" form="account" variant="primary" disabled={busy}>
-          Create account
+          {created ? "Sign in and continue" : "Create account"}
         </Button>
       }
     >
@@ -171,17 +181,39 @@ function AccountStep({ onDone }: { onDone: (password: string) => Promise<void> }
         <FieldGroup>
           <Field>
             <FieldLabel htmlFor="username">Username</FieldLabel>
-            <Input id="username" name="username" autoComplete="username" required minLength={3} autoFocus />
+            <Input
+              id="username"
+              name="username"
+              autoComplete="username"
+              required
+              minLength={3}
+              autoFocus
+              readOnly={Boolean(created)}
+            />
           </Field>
           <Field>
             <FieldLabel htmlFor="password">Password</FieldLabel>
-            <PasswordInput id="password" name="password" autoComplete="new-password" required minLength={12} />
+            <PasswordInput
+              id="password"
+              name="password"
+              autoComplete="new-password"
+              required
+              minLength={12}
+              readOnly={Boolean(created)}
+            />
             <FieldDescription>At least 12 characters.</FieldDescription>
           </Field>
           <Field>
             <FieldLabel htmlFor="confirm">Repeat password</FieldLabel>
-            <PasswordInput id="confirm" name="confirm" autoComplete="new-password" required />
+            <PasswordInput
+              id="confirm"
+              name="confirm"
+              autoComplete="new-password"
+              required
+              readOnly={Boolean(created)}
+            />
           </Field>
+          {created && <FieldDescription>Your account was created. Sign in to continue.</FieldDescription>}
           {error && <FieldError>{error}</FieldError>}
         </FieldGroup>
       </form>
@@ -221,20 +253,24 @@ function TwoFactorStep({ password: known, onDone }: { password: string; onDone: 
     if (uri) void QRCode.toDataURL(uri, { margin: 1, width: 200 }).then(setQr)
   }, [uri])
 
-  async function verify(code: string) {
+  // A wrong code is cleared; one sent without an answer stays, to be sent again (FS-23).
+  async function verify(code: string): Promise<TotpAnswer> {
     setBusy(true)
     setError("")
-    let verified = false
     try {
       const { error } = await authClient.twoFactor.verifyTotp({ code })
-      if (error) return setError(authErrorText(error))
-      verified = true
+      if (error) {
+        setError(authErrorText(error))
+        return totpAnswer(error)
+      }
     } catch {
       setError(UNREACHABLE_TEXT)
+      return "unreached"
     } finally {
       setBusy(false)
     }
-    if (verified) await onDone()
+    await onDone()
+    return "done"
   }
 
   const secret = uri ? (new URL(uri).searchParams.get("secret") ?? "") : ""
@@ -270,10 +306,10 @@ function TwoFactorStep({ password: known, onDone }: { password: string; onDone: 
             </code>
           </p>
           <p className="font-semibold">Then enter the code it shows:</p>
-          <TotpInput onComplete={(code) => void verify(code)} disabled={busy} />
+          <TotpInput onSubmit={verify} disabled={busy} error={error} />
         </Panel>
       )}
-      {error && <FieldError>{error}</FieldError>}
+      {error && !uri && <FieldError>{error}</FieldError>}
     </StepFrame>
   )
 }

@@ -3,10 +3,11 @@ import { ArrowRight, Bug, FileText, Search, Server, Settings, Workflow } from "l
 import * as React from "react"
 import { createPortal } from "react-dom"
 import { useLocation } from "react-router"
+import { moveTracker } from "@/app/search-move"
 import { settingsGroups } from "@/app/settings-sections"
 import { api } from "@/lib/api"
 import { loadView } from "@/lib/load-state"
-import { useNavigateFromOverlay, useOverlayHistory } from "@/lib/overlay-history"
+import { onMoveKept, useNavigateFromOverlay, useOverlayHistory } from "@/lib/overlay-history"
 import { revealTarget } from "@/lib/reveal"
 import { n } from "@/lib/time"
 import { cn } from "@/lib/utils"
@@ -204,43 +205,49 @@ function useServerSearch(q: string, enabled: boolean) {
 }
 
 type OpenResult = {
-  /** Goes to the result; `landed` runs once the move has happened, not when the Leave question keeps the page. */
+  /** Goes to the result; `landed` runs once the result's page is reached, not when the move is kept or replaced. */
   open: (item: Item, landed?: () => void) => void
   /** Forgets a move that did not happen, so a later move does not count as it. */
   forget: () => void
 }
 
 /**
- * Opens a result (SR-6). The move goes through the unsaved-changes guard; only once it has happened is the
- * search cleared, so when the Leave question keeps the page, the query stays. A result with a target then
- * marks its row for a moment. From the phone sheet the destination takes the sheet's Back entry (DS-10).
+ * Opens a result (SR-6). The move goes through the unsaved-changes guard; only once the result's own address
+ * is reached is the search cleared, so when the Leave question keeps the page, or the page moves elsewhere,
+ * the query stays. A result with a target then marks its row for a moment. From the phone sheet the
+ * destination takes the sheet's Back entry (DS-10).
  */
 function useOpenResult(): OpenResult {
   const navigate = useNavigateFromOverlay()
-  const { key } = useLocation()
-  const at = React.useRef(key)
-  at.current = key
-  const pending = React.useRef<{ from: string; landed?: () => void; target?: string } | null>(null)
+  const location = useLocation()
+  const [tracker] = React.useState(() => moveTracker(revealTarget))
+  React.useEffect(() => tracker.moved(location), [tracker, location])
   React.useEffect(() => {
-    const p = pending.current
-    if (!p || p.from === key) return
-    pending.current = null
-    p.landed?.()
-    // Not called off when the address changes again: a list may still settle its own address as it loads.
-    if (p.target) revealTarget(p.target)
-  }, [key])
+    const off = onMoveKept(() => tracker.forget())
+    return () => {
+      off()
+      tracker.stop()
+    }
+  }, [tracker])
   return React.useMemo(
     () => ({
       open: (item, landed) => {
-        pending.current = { from: at.current, landed, target: item.target }
+        tracker.start({ to: item.to, landed, target: item.target })
         navigate(item.to, { state: item.field ? { focusField: item.field } : undefined })
       },
-      forget: () => {
-        pending.current = null
-      },
+      forget: () => tracker.forget(),
     }),
-    [navigate],
+    [navigate, tracker],
   )
+}
+
+/** What is typed and the kind shown. The phone search keeps it above its sheet, which closes on a choice. */
+type Query = { q: string; setQ: (q: string) => void; kind: Kind | "all"; setKind: (kind: Kind | "all") => void }
+
+function useSearchQuery(): Query {
+  const [q, setQ] = React.useState("")
+  const [kind, setKind] = React.useState<Kind | "all">("all")
+  return { q, setQ, kind, setKind }
 }
 
 /** Whether a "/" press should open the search: not with a modifier, in a field, or while a dialog is open (SR-4). */
@@ -256,6 +263,7 @@ export function GlobalSearch({
   onOpenChange,
   onClose,
   opener,
+  query,
   className,
 }: {
   pages: SearchPage[]
@@ -267,13 +275,15 @@ export function GlobalSearch({
   onClose?: () => void
   /** The phone sheet: its button opens results, as it stays after the sheet has closed. */
   opener?: OpenResult
+  /** The phone sheet: its button keeps the query, so a result the Leave question kept from opening keeps it too. */
+  query?: Query
 }) {
   const own = useOpenResult()
   const result = opener ?? own
+  const ownQuery = useSearchQuery()
+  const { q, setQ, kind, setKind } = query ?? ownQuery
   const sheet = variant === "sheet"
-  const [q, setQ] = React.useState("")
   const [focused, setFocused] = React.useState(sheet)
-  const [kind, setKind] = React.useState<Kind | "all">("all")
   /** The highlighted option; null until the arrows move it, which is the first real result (SR-4). */
   const [active, setActive] = React.useState<number | null>(null)
   const input = React.useRef<HTMLInputElement>(null)
@@ -321,21 +331,25 @@ export function GlobalSearch({
   // The next search starts again from All (SR-2).
   React.useEffect(() => {
     if (!open) setKind("all")
-  }, [open])
+  }, [open, setKind])
   React.useEffect(() => {
     document.getElementById(`${id}-opt-${current}`)?.scrollIntoView({ block: "nearest" })
   }, [current, id])
 
-  const reset = () => {
+  const clear = () => {
     setQ("")
     setKind("all")
+  }
+  const reset = () => {
+    clear()
     setActive(null)
   }
   const choose = (item: Item) => {
-    // The panel closes now; the query goes once the move has happened, and stays if the page is kept (SR-6).
+    // The panel closes now; the query goes once the result's page is reached, and stays if the page is kept
+    // (SR-6). On a phone it outlives the sheet, which closes at once.
     setFocused(false)
     input.current?.blur()
-    result.open(item, sheet ? undefined : reset)
+    result.open(item, clear)
     onClose?.()
   }
   const tabs: (Kind | "all")[] = ["all", ...KINDS.map((k) => k.key)]
@@ -629,21 +643,27 @@ export function GlobalSearch({
     </label>
   )
 
-  if (sheet)
+  if (sheet) {
+    // Cancel and Escape drop the query; only a chosen result keeps it until its page is reached.
+    const cancel = () => {
+      reset()
+      onClose?.()
+    }
     return (
       <search
         className="fixed inset-0 z-90 flex flex-col bg-bg pt-[env(safe-area-inset-top)]"
-        onKeyDown={(e) => e.key === "Escape" && onClose?.()}
+        onKeyDown={(e) => e.key === "Escape" && cancel()}
       >
         <div className="flex items-center gap-2 px-3 pt-2.5 pb-1.5">
           {field}
-          <button type="button" onClick={onClose} className="px-1.5 font-semibold">
+          <button type="button" onClick={cancel} className="px-1.5 font-semibold">
             Cancel
           </button>
         </div>
         {panel}
       </search>
     )
+  }
   return (
     <search
       ref={box}
@@ -661,14 +681,20 @@ export function GlobalSearch({
 
 /**
  * The phone search: a button in the top bar that opens the search over the whole screen, as "/" does on a
- * phone with a keyboard (SR-4); Back closes it.
+ * phone with a keyboard (SR-4); Back closes it. A chosen result closes the sheet at once, so the query and
+ * the move are kept here: when the Leave question keeps the page, the next search opens with the query
+ * (SR-6); Back, Cancel and Escape drop it.
  */
 export function PhoneSearch({ pages }: { pages: SearchPage[] }) {
   const [open, setOpen] = React.useState(false)
   const button = React.useRef<HTMLButtonElement>(null)
-  // Results open from here: the sheet is gone by the time its result has drawn.
   const opener = useOpenResult()
-  useOverlayHistory(open, () => setOpen(false))
+  const query = useSearchQuery()
+  useOverlayHistory(open, () => {
+    setOpen(false)
+    query.setQ("")
+    query.setKind("all")
+  })
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (open || !slashOpensSearch(e) || !button.current?.getClientRects().length) return
@@ -692,7 +718,7 @@ export function PhoneSearch({ pages }: { pages: SearchPage[] }) {
       </button>
       {open &&
         createPortal(
-          <GlobalSearch pages={pages} variant="sheet" opener={opener} onClose={() => setOpen(false)} />,
+          <GlobalSearch pages={pages} variant="sheet" opener={opener} query={query} onClose={() => setOpen(false)} />,
           document.body,
         )}
     </>

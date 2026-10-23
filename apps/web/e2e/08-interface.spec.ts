@@ -171,7 +171,9 @@ test("an empty search narrows again after Escape or Tab, the page's buttons come
   await search.fill("e2e")
   await page.getByRole("tab", { name: /^Instances/ }).click()
   await expect(page.getByRole("tab", { name: /^Instances/ })).toHaveAttribute("aria-selected", "true")
-  await page.getByRole("region", { name: "Instance", exact: true }).getByRole("heading").first().click()
+  // The open results cover the page under the wide search, so the click goes to the trail beside it: plain
+  // text, outside the results in both designs.
+  await page.getByRole("navigation", { name: "You are here" }).locator('[aria-current="page"]').click()
   await expect(page.getByRole("listbox", { name: "Results" })).toHaveCount(0)
   await expect(search).toHaveValue("e2e")
   await search.click()
@@ -197,6 +199,12 @@ test("a search result that the Leave question keeps from opening leaves the quer
   await dialogClosed(page)
   await expect(page).toHaveURL(/\/settings\/general/)
   await expect(search).toHaveValue("Audit")
+  // A later move somewhere else is not the result opening: the query stays.
+  const sections = page.getByRole("navigation", { name: "Settings categories" })
+  await sections.getByRole("link", { name: /^Alerts/ }).click()
+  await expect(page).toHaveURL(/\/settings\/alerts$/)
+  await expect(search).toHaveValue("Audit")
+  await sections.getByRole("link", { name: /^General/ }).click()
   await page.getByRole("button", { name: "Discard" }).click()
   await expect(field).toHaveValue(before)
   // With nothing left to lose, the same result opens, and the search is cleared once it has.
@@ -205,6 +213,55 @@ test("a search result that the Leave question keeps from opening leaves the quer
   await search.press("Enter")
   await expect(page.getByRole("heading", { name: "Audit log" })).toBeVisible()
   await expect(search).toHaveValue("")
+})
+
+test("on a phone a result the Leave question keeps from opening leaves its query for the next search", async () => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  try {
+    await page.goto("/settings/general")
+    const field = page.getByLabel("Public URL")
+    const before = await field.inputValue()
+    await field.fill("https://ops.example.test")
+    const unsaved = page.getByRole("region", { name: "Unsaved changes" })
+    await expect(unsaved).toBeVisible()
+    const opener = page.getByRole("button", { name: "Search", exact: true })
+    const search = page.getByRole("combobox", { name: "Search" })
+    const audit = page.getByRole("option").filter({ hasText: "Audit" }).first()
+
+    // The sheet closes on a choice; after Stay the next search opens with the query.
+    await opener.click()
+    await search.fill("Audit")
+    await audit.click()
+    const ask = page.getByRole("alertdialog", { name: "Leave without saving?" })
+    await ask.getByRole("button", { name: "Stay" }).click()
+    await dialogClosed(page)
+    await expect(page).toHaveURL(/\/settings\/general/)
+    await expect(search).toHaveCount(0)
+    await opener.click()
+    await expect(search).toHaveValue("Audit")
+
+    // Cancel drops the query.
+    await page.getByRole("button", { name: "Cancel" }).click()
+    await dialogClosed(page)
+    await opener.click()
+    await expect(search).toHaveValue("")
+    await page.getByRole("button", { name: "Cancel" }).click()
+    await dialogClosed(page)
+
+    // With nothing left to lose the result opens, and the query is gone once it has.
+    await unsaved.getByRole("button", { name: "Discard" }).click()
+    await expect(field).toHaveValue(before)
+    await opener.click()
+    await search.fill("Audit")
+    await audit.click()
+    await expect(page.getByRole("heading", { name: "Audit log" })).toBeVisible()
+    await opener.click()
+    await expect(search).toHaveValue("")
+    await page.getByRole("button", { name: "Cancel" }).click()
+    await dialogClosed(page)
+  } finally {
+    await page.setViewportSize({ width: 1440, height: 900 })
+  }
 })
 
 test("the list stays in place while its first item opens by itself, so focus is kept", async () => {
@@ -1049,6 +1106,79 @@ test("sign-in says when n8n-ops cannot be reached, gives the button back and kee
     await expect(login.getByLabel("Password", { exact: true })).toHaveValue("not the password")
   } finally {
     release()
+    await context.close()
+  }
+})
+
+// Neither the password nor the code reaches the server here, so nothing counts against the sign-in limit.
+test("a two-factor code is kept when n8n-ops cannot be reached, and cleared when the code is refused", async ({
+  browser,
+}) => {
+  const context = await browser.newContext()
+  const login = await context.newPage()
+  try {
+    await login.route("**/api/auth/sign-in/username", (route) => route.fulfill({ json: { twoFactorRedirect: true } }))
+    let answer: "none" | "refused" = "none"
+    await login.route("**/api/auth/two-factor/verify-totp", (route) =>
+      answer === "none"
+        ? route.abort("internetdisconnected")
+        : route.fulfill({ status: 401, json: { code: "INVALID_CODE", message: "Invalid code" } }),
+    )
+    await login.goto("/login")
+    await login.getByLabel("Username").fill("nobody")
+    await login.getByLabel("Password", { exact: true }).fill("not the password")
+    await login.getByRole("button", { name: "Continue" }).click()
+    await expect(login.getByRole("heading", { name: "Two-Factor Code" })).toBeVisible()
+    const code = login.getByLabel("Two-factor code")
+    await code.fill("123456")
+
+    // Without an answer the code stays, ready to send again.
+    await expect(login.getByText("Could not reach n8n-ops. Check your connection and try again.")).toBeVisible()
+    await expect(code).toHaveValue("123456")
+    await expect(code).toBeFocused()
+
+    // A refused code is cleared for the next one.
+    answer = "refused"
+    await login.getByRole("button", { name: "Try again" }).click()
+    await expect(login.getByText("Invalid code")).toBeVisible()
+    await expect(code).toHaveValue("")
+    await expect(code).toBeFocused()
+    await expect(login.getByRole("button", { name: "Try again" })).toHaveCount(0)
+  } finally {
+    await context.close()
+  }
+})
+
+test("setup that made the account but could not sign in only signs in when tried again", async ({ browser }) => {
+  const context = await browser.newContext()
+  const setup = await context.newPage()
+  let created = 0
+  let signIns = 0
+  try {
+    // The stack has its user already: the first-run account step is shown, and no request reaches the server.
+    await setup.route("**/api/setup/status", (route) => route.fulfill({ json: { hasUser: false } }))
+    await setup.route("**/api/setup/account", (route) => {
+      created += 1
+      return route.fulfill({ status: 201, json: { ok: true } })
+    })
+    await setup.route("**/api/auth/sign-in/username", (route) => {
+      signIns += 1
+      return route.abort("internetdisconnected")
+    })
+    await setup.goto("/setup")
+    await setup.getByLabel("Username").fill("first-run")
+    await setup.getByLabel("Password", { exact: true }).fill("a long enough password")
+    await setup.getByLabel("Repeat password").fill("a long enough password")
+    await setup.getByRole("button", { name: "Create account" }).click()
+    const unreachable = setup.getByText("Could not reach n8n-ops. Check your connection and try again.")
+    await expect(unreachable).toBeVisible()
+    await expect(setup.getByText("Your account was created. Sign in to continue.")).toBeVisible()
+
+    await setup.getByRole("button", { name: "Sign in and continue" }).click()
+    await expect.poll(() => signIns).toBe(2)
+    await expect(unreachable).toBeVisible()
+    expect(created).toBe(1)
+  } finally {
     await context.close()
   }
 })

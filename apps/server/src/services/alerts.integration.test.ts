@@ -11,7 +11,13 @@ import { createDatabase, type Database } from "../db/client.ts"
 import { alertGroups, alertOutbox, instances, problems, workflows } from "../db/schema.ts"
 import { createSecrets } from "../lib/crypto.ts"
 import { createSettings, type TelegramRoute } from "../lib/settings.ts"
-import { dispatchAlerts, enqueueAlert, enqueueProblemAlert, handleTelegramCallback, sendTestTelegram } from "./alerts.ts"
+import {
+  dispatchAlerts,
+  enqueueAlert,
+  enqueueProblemAlert,
+  handleTelegramCallback,
+  sendTestTelegram,
+} from "./alerts.ts"
 import { html } from "./telegram.ts"
 
 // Forum topics end to end against a real PostgreSQL: routing when an alert is queued, grouping and edits per topic,
@@ -62,7 +68,8 @@ function botApi() {
   const goneMessages = new Set<number>()
   let failNext = 0
   let nextId = 100
-  const answer = (body: unknown) => new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } })
+  const answer = (body: unknown) =>
+    new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } })
   const fetchStub = async (url: string | URL, init?: RequestInit) => {
     const method = String(url).split("/").pop() ?? ""
     const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
@@ -201,7 +208,12 @@ describe("Telegram forum topics", () => {
     await enqueueProblemAlert(t.ctx, await t.problem(t.a.id, "Sync orders"), "new")
     await enqueueProblemAlert(t.ctx, await t.problem(t.b.id, "Sync orders"), "new")
     await dispatchAlerts(t.ctx)
-    expect(bot.sends().map((c) => c.body.message_thread_id).sort()).toEqual([12, 13])
+    expect(
+      bot
+        .sends()
+        .map((c) => c.body.message_thread_id)
+        .sort(),
+    ).toEqual([12, 13])
 
     await enqueueProblemAlert(t.ctx, await t.problem(t.a.id, "Import leads"), "new")
     await dispatchAlerts(t.ctx)
@@ -267,7 +279,10 @@ describe("Telegram forum topics", () => {
     expect(again?.body.message_thread_id).toBe(7)
     expect(String(again?.body.text)).toContain("Sync orders")
     expect(String(again?.body.text)).toContain("Import leads")
-    const closed = await t.db.select().from(alertGroups).where(eq(alertGroups.id, group?.id ?? ""))
+    const closed = await t.db
+      .select()
+      .from(alertGroups)
+      .where(eq(alertGroups.id, group?.id ?? ""))
     expect(closed[0]?.closedAt).not.toBeNull()
   })
 

@@ -3,7 +3,7 @@ import { Hono } from "hono"
 import type { Ctx } from "../context.ts"
 import { requireUser } from "../http/middleware.ts"
 import { actorName, type Env } from "../http/types.ts"
-import { mayStoreTimeZone, type SectionName, sections } from "../lib/settings.ts"
+import { mayStoreTimeZone, type SectionName, sections, smtpPasswordNeeded } from "../lib/settings.ts"
 import { syncTelegramWebhook } from "../services/alerts.ts"
 
 /** Secret fields: stored encrypted as <name>Enc, written as plain <name>, read back only as <name>Set. */
@@ -40,6 +40,16 @@ export function settingsRoutes(ctx: Ctx) {
     for (const [k, v] of Object.entries(body)) {
       if (k in sections[section].shape && !k.endsWith("Enc")) next[k] = v
     }
+    // The stored SMTP password is never sent to a server it was not given for (FS-5).
+    if (section === "email" && smtpPasswordNeeded(current, next, body.smtpPassword))
+      return c.json(
+        {
+          error: "password_needed",
+          message: "The SMTP server changed. Enter the SMTP password again, so the stored one is not sent to it.",
+          issues: [{ path: ["smtpPassword"], message: "enter it again for the new server" }],
+        },
+        400,
+      )
     const secretNames = secretFields[section] ?? []
     for (const field of secretNames) {
       const plain = body[field]

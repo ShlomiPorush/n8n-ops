@@ -1,6 +1,36 @@
 import { describe, expect, it, vi } from "vitest"
 import type { Db } from "../db/client.ts"
-import { createSettings, defaults, isTimeZone, mayStoreTimeZone, resolveInstanceSettings } from "./settings.ts"
+import {
+  createSettings,
+  defaults,
+  isTimeZone,
+  mayStoreTimeZone,
+  resolveInstanceSettings,
+  smtpPasswordNeeded,
+} from "./settings.ts"
+
+describe("SMTP password and server", () => {
+  const stored = { smtpHost: "smtp.example.com", smtpPort: 587, smtpPasswordEnc: "enc" }
+
+  it("asks for the password again when the host or the port changes", () => {
+    expect(smtpPasswordNeeded(stored, { smtpHost: "mail.other.example", smtpPort: 587 }, undefined)).toBe(true)
+    expect(smtpPasswordNeeded(stored, { smtpHost: "smtp.example.com", smtpPort: 465 }, "")).toBe(true)
+  })
+
+  it("lets an ordinary save through: same server written differently", () => {
+    expect(smtpPasswordNeeded(stored, { smtpHost: " SMTP.example.com ", smtpPort: "587" }, undefined)).toBe(false)
+  })
+
+  it("takes a new server with a new password, or with the password removed", () => {
+    expect(smtpPasswordNeeded(stored, { smtpHost: "mail.other.example", smtpPort: 587 }, "secret")).toBe(false)
+    expect(smtpPasswordNeeded(stored, { smtpHost: "mail.other.example", smtpPort: 587 }, null)).toBe(false)
+  })
+
+  it("has nothing to protect when no password is stored", () => {
+    const { smtpPasswordEnc: _, ...none } = stored
+    expect(smtpPasswordNeeded(none, { smtpHost: "mail.other.example", smtpPort: 587 }, undefined)).toBe(false)
+  })
+})
 
 describe("instance settings", () => {
   it("uses the global defaults without overrides", () => {

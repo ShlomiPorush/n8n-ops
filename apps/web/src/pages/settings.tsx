@@ -361,6 +361,15 @@ const toForm = (def: { fields: FieldDef[] }, data: Record<string, unknown>) =>
     }),
   ) as Record<string, unknown>
 
+/** Whether the SMTP host or port really differs from the stored one: case, spaces and "587" against 587 do not. */
+export const smtpServerChanged = (stored: Record<string, unknown>, next: Record<string, unknown>) => {
+  const server = (v: Record<string, unknown>) =>
+    `${String(v.smtpHost ?? "")
+      .trim()
+      .toLowerCase()}:${Number(v.smtpPort ?? 0)}`
+  return server(stored) !== server(next)
+}
+
 export function SettingsForm({ section }: { section: string }) {
   const def = forms[section]
   const query = useApi<Record<string, unknown>>(`/settings/${section}`)
@@ -408,6 +417,17 @@ export function SettingsForm({ section }: { section: string }) {
     count,
     save: async () => {
       const sent = body()
+      // The stored SMTP password is never sent to another server: a new host or port needs it again (FS-5).
+      if (
+        section === "email" &&
+        query.data?.smtpPasswordSet &&
+        smtpServerChanged(query.data, sent) &&
+        !sent.smtpPassword
+      ) {
+        toast.error("The SMTP server changed. Enter the SMTP password again, so the stored one is not sent to it.")
+        setValues((v) => ({ ...v, smtpPassword: "" }))
+        throw new Error("password_needed")
+      }
       await save.mutateAsync(sent)
       // Only a successful save lets the next answer replace the form; a failed one keeps the edits (SV-3).
       reload.current = true

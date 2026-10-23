@@ -95,7 +95,7 @@ function ErrorRateCell({ rate, errors, runs }: { rate: number | null; errors: nu
   if (rate === null)
     return (
       <TableCell className="text-end" title="No runs in the last 30 days">
-        <NoValue />
+        <NoValue said="No runs in the last 30 days" />
       </TableCell>
     )
   return (

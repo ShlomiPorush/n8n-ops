@@ -1,6 +1,7 @@
 import { ArrowDownUp } from "lucide-react"
 import { Popover as PopoverPrimitive } from "radix-ui"
 import * as React from "react"
+import { usePopoverRoom } from "@/lib/popover-room"
 import { rowHeld } from "@/lib/row-held"
 import { cn } from "@/lib/utils"
 
@@ -471,6 +472,7 @@ function SortChoice({
  */
 export function SortButton({ control, name, small }: { control: SortControl; name: string; small?: boolean }) {
   const [open, setOpen] = React.useState(false)
+  const room = usePopoverRoom(open)
   const id = React.useId()
   const panel = React.useRef<HTMLDivElement>(null)
   const { state, set, columns, isDefault } = control
@@ -500,7 +502,8 @@ export function SortButton({ control, name, small }: { control: SortControl; nam
           ref={panel}
           align="end"
           sideOffset={6}
-          collisionPadding={8}
+          // Between the phone's top bar and tab bar, measured again while open (MP-5).
+          collisionPadding={room}
           aria-label={`Sort ${name}`}
           onOpenAutoFocus={(e) => {
             // Onto the checked choice of Sort by (TB-28).

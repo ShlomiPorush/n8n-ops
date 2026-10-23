@@ -3,7 +3,7 @@
 import { CheckIcon, ChevronRightIcon } from "lucide-react"
 import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui"
 import * as React from "react"
-import { popoverPadding } from "@/lib/popover-room"
+import { usePopoverRoom } from "@/lib/popover-room"
 import { cn } from "@/lib/utils"
 
 /**
@@ -37,8 +37,15 @@ function DropdownMenu({
     window.addEventListener("scroll", onScroll, { capture: true, passive: true })
     return () => window.removeEventListener("scroll", onScroll, { capture: true })
   }, [open, setOpen])
-  return <DropdownMenuPrimitive.Root data-slot="dropdown-menu" open={open} onOpenChange={setOpen} {...props} />
+  return (
+    <MenuOpen.Provider value={open}>
+      <DropdownMenuPrimitive.Root data-slot="dropdown-menu" open={open} onOpenChange={setOpen} {...props} />
+    </MenuOpen.Provider>
+  )
 }
+
+/** Whether the menu is open, so its content measures its room only then (MP-5). */
+const MenuOpen = React.createContext(false)
 
 function DropdownMenuPortal({ ...props }: React.ComponentProps<typeof DropdownMenuPrimitive.Portal>) {
   return <DropdownMenuPrimitive.Portal data-slot="dropdown-menu-portal" {...props} />
@@ -54,14 +61,15 @@ function DropdownMenuContent({
   sideOffset = 4,
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Content>) {
+  const room = usePopoverRoom(React.useContext(MenuOpen))
   return (
     <DropdownMenuPrimitive.Portal>
       <DropdownMenuPrimitive.Content
         data-slot="dropdown-menu-content"
         sideOffset={sideOffset}
         align={align}
-        // Between the phone's top bar and tab bar (MP-5).
-        collisionPadding={popoverPadding()}
+        // Between the phone's top bar and tab bar, measured again while open (MP-5).
+        collisionPadding={room}
         className={cn(
           "z-50 max-h-(--radix-dropdown-menu-content-available-height) w-(--radix-dropdown-menu-trigger-width) min-w-32 origin-(--radix-dropdown-menu-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-sm bg-popover p-1 text-popover-foreground shadow-float duration-100 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-[state=closed]:overflow-hidden data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
           className,

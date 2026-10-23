@@ -97,8 +97,12 @@ export function PageHead({
   return (
     <div className="mb-1 grid gap-1.5">
       <div className="flex items-start gap-3">
-        <h1 className="min-w-0 flex-1 text-figure font-heavy tracking-tighter break-words regular:text-h1">{title}</h1>
-        {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
+        {/* Compact: the H1 of the type scale, a step smaller at 380px or less. */}
+        <h1 className="min-w-0 flex-1 text-h1 font-heavy break-words regular:tracking-tighter compact:max-[381px]:text-h1-narrow">
+          {title}
+        </h1>
+        {/* Compact: the main action without its icon, so the title keeps its room. */}
+        {actions && <div className="flex shrink-0 items-center gap-2 compact:[&>*>svg]:hidden">{actions}</div>}
       </div>
       {said && (
         <p className="text-muted-foreground">
@@ -506,7 +510,8 @@ export function Kpis({
         "grid overflow-clip rounded-lg border border-line bg-bg",
         row
           ? kpiRow
-          : "grid-cols-[repeat(auto-fit,minmax(170px,1fr))] max-md:[&>:last-child:nth-child(odd)]:col-span-full",
+          : // Compact's cells may be narrower, as in v3.
+            "grid-cols-[repeat(auto-fit,minmax(170px,1fr))] compact:grid-cols-[repeat(auto-fit,minmax(150px,1fr))] max-md:[&>:last-child:nth-child(odd)]:col-span-full",
         "regular:gap-gap regular:overflow-visible regular:border-0 regular:bg-transparent",
         className,
       )}

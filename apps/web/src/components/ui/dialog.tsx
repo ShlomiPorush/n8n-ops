@@ -235,6 +235,8 @@ function DialogContent({
           "md:w-[calc(100%-32px)]",
           // Phone: a bottom sheet; the size, corners and notch rules are in index.css.
           "max-md:max-w-none! max-md:translate-x-0 max-md:translate-y-0 max-md:duration-200 max-md:data-[state=closed]:slide-out-to-bottom max-md:data-[state=open]:slide-in-from-bottom",
+          // Compact's sheet casts its shadow up, over the page above it (DS-2).
+          "compact:max-md:shadow-sheet",
           className,
         )}
         onPointerDownOutside={(e) => {
@@ -347,7 +349,14 @@ function DialogFooter({ className, children, ...props }: React.ComponentProps<"d
 }
 
 function DialogTitle({ className, ...props }: React.ComponentProps<typeof DialogPrimitive.Title>) {
-  return <DialogPrimitive.Title data-slot="dialog-title" className={cn("text-h2", className)} {...props} />
+  // Compact sets dialog and sheet titles a step bolder than other section titles, without tightening.
+  return (
+    <DialogPrimitive.Title
+      data-slot="dialog-title"
+      className={cn("text-h2 compact:font-bold compact:tracking-none", className)}
+      {...props}
+    />
+  )
 }
 
 function DialogDescription({ className, ...props }: React.ComponentProps<typeof DialogPrimitive.Description>) {

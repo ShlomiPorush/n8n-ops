@@ -272,7 +272,15 @@ export async function dispatchAlerts(ctx: Ctx) {
               if (!carried.length) return []
               return tx
                 .insert(alertOutbox)
-                .values(carried.map((problemId) => ({ kind: "problem" as const, groupKey, problemId, threadId, text: "again" })))
+                .values(
+                  carried.map((problemId) => ({
+                    kind: "problem" as const,
+                    groupKey,
+                    problemId,
+                    threadId,
+                    text: "again",
+                  })),
+                )
                 .returning({ id: alertOutbox.id })
             })
             return { merged: false as const, carry: all, queued: queued.map((q) => q.id) }

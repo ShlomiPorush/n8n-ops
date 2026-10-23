@@ -50,6 +50,13 @@
       "when": 1792701737679,
       "tag": "0006_backup_copy_leftovers",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1792763867789,
+      "tag": "0007_telegram_topics",
+      "breakpoints": true
     }
   ]
 }

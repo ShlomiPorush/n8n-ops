@@ -769,7 +769,8 @@ function restoreScroll(main: HTMLElement, spot: ScrollSpot, done: () => void): (
 
 /**
  * Back and Forward return the page, its list column and its reading pane to where each was scrolled; a new page
- * starts at its top (NL-3). An item opened on the same page leaves the list where it is.
+ * starts at its top (NL-3). An item opened on the same page leaves the list where it is. Each entry's place is
+ * noted when it is entered and again on each scroll.
  */
 function useScrollMemory(main: HTMLElement | null) {
   const location = useLocation()
@@ -817,9 +818,16 @@ function useScrollMemory(main: HTMLElement | null) {
           )
       })
       if (!finished) restoring.current = stop
+      return
     }
     // Opening an item of the same page keeps the list where it was behind it.
-    else if (type === "PUSH" && newPage) main.scrollTop = 0
+    if (type === "PUSH" && newPage) main.scrollTop = 0
+    // Where this entry starts, so Back returns to it even when nothing is scrolled here (a tab opened from the top
+    // of a pane may start lower, DS-14). The pane's tabs have already placed it: children's effects run first.
+    saved.current.set(
+      location.key,
+      scrollAreas(main).map((el) => el.scrollTop),
+    )
   }, [main, location.key])
 }
 

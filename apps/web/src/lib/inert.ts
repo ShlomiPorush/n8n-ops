@@ -1,10 +1,11 @@
 /*
  * A layer that is not a Radix dialog (the phone search) makes everything beside it inert while it is open (DS-8):
- * every element off the path from the page to the layer, except the toast, which must stay usable. Elements
- * added later (a toast that shows meanwhile) are left as they are.
+ * every element off the path from the page to the layer, except the toast's wrapper, which must stay usable.
+ * The Toaster draws that wrapper even while no toast shows, so a toast that shows after the layer opened is
+ * inside it and usable too.
  */
 
-/** The toast's own element; it stays usable over every layer. */
+/** The toast's wrapper, always there; it stays usable over every layer. */
 const KEEP = '[data-slot="toaster"]'
 
 /** Makes everything beside `layer` inert, and returns what undoes exactly that. */

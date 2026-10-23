@@ -6,6 +6,7 @@ import { useCrumb } from "@/app/chrome"
 import { usePaneNav } from "@/components/list-panel"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { useOverlaysHeld } from "@/lib/overlay-history"
 import { n } from "@/lib/time"
 import { cn } from "@/lib/utils"
 
@@ -97,8 +98,8 @@ const barTabs: TabsLook = {
 /**
  * The tab list and the tabs' content. `items` are the tabs there are now; a tab the address asks for that is not
  * among them (unknown, or gone since, such as Same error after a merge) opens the first, and the address is
- * corrected in place, without a Back step (NL-3). The open tab, when it is not the first, names the browser tab
- * and ends the trail in the top bar (NL-3, NL-5).
+ * corrected in place, without a Back step (NL-3), once no dialog holds a history entry (DS-10). The open tab,
+ * when it is not the first, names the browser tab and ends the trail in the top bar (NL-3, NL-5).
  */
 export function PaneTabs({
   label,
@@ -121,10 +122,16 @@ export function PaneTabs({
   const list = useRef<HTMLDivElement | null>(null)
   const stuck = useRef<HTMLDivElement | null>(null)
 
-  // The first tab is the plain address; any other the address names but the pane lacks is corrected to it.
+  /*
+   * The first tab is the plain address; any other the address names but the pane lacks is corrected to it. Not
+   * while a dialog or picker holds a history entry (such as Merge, when Same error went away behind it): the
+   * correction would replace the dialog's entry and leave an extra Back step after it closes (DS-10). It is made
+   * once they closed and their entries are gone.
+   */
   const [, setParams] = useSearchParams()
+  const held = useOverlaysHeld()
   useEffect(() => {
-    if (value === null || (value === active && value !== first)) return
+    if (held || value === null || (value === active && value !== first)) return
     setParams(
       (prev) => {
         const p = new URLSearchParams(prev)
@@ -133,7 +140,7 @@ export function PaneTabs({
       },
       { replace: true },
     )
-  }, [value, active, first, setParams])
+  }, [held, value, active, first, setParams])
 
   useCrumb(active !== first ? (items.find((t) => t.value === active)?.label ?? null) : null)
 

@@ -390,12 +390,15 @@ type ListBackup =
  */
 const tabsLook = cn(
   "gap-0 regular:gap-1 regular:rounded-lg regular:bg-fill regular:p-1 regular:before:hidden",
-  "regular:@max-[40rem]/pane:gap-0 regular:@max-[40rem]/pane:p-0.5",
+  "@max-[40rem]/pane:gap-1 regular:@max-[40rem]/pane:p-0.5",
 )
-// The tabs grow to share out the room; their own padding only sets how narrow a pane still fits them in a row.
+/*
+ * In a row the tabs are equal cells; their own padding only sets how narrow a pane still fits them. Stacked, each
+ * keeps its label's width and the room left is shared out on top of it, so long labels never touch.
+ */
 const tabLook = cn(
   "flex-1 justify-center px-2",
-  "@max-[40rem]/pane:flex-col @max-[40rem]/pane:gap-0.5 @max-[40rem]/pane:px-0 @max-[40rem]/pane:text-meta",
+  "@max-[40rem]/pane:flex-auto @max-[40rem]/pane:flex-col @max-[40rem]/pane:gap-0.5 @max-[40rem]/pane:px-0 @max-[40rem]/pane:text-meta",
   "regular:rounded-sm regular:border-b-0 regular:px-2 regular:py-1.5 regular:@max-[40rem]/pane:px-0",
   "regular:data-[state=active]:bg-panel regular:data-[state=active]:shadow-card",
 )

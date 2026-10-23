@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import { describeError } from "@/lib/api"
 import { COPIED_MS, DIM_AFTER_MS } from "@/lib/behavior"
+import { type Live, refreshFailed } from "@/lib/load-state"
 import { formatFull, useTimeZone } from "@/lib/time"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
@@ -25,20 +26,22 @@ export function Page({
   title,
   description,
   actions,
-  updatedAt,
+  live,
+  updated,
   children,
   className,
 }: {
   title?: string
   description?: React.ReactNode
   actions?: React.ReactNode
-  updatedAt?: number
+  live?: Live | Live[]
+  updated?: boolean
   children: React.ReactNode
   className?: string
 }) {
   return (
     <div className={cn("grid min-w-0 content-start gap-gap", className)}>
-      {title && <PageHead title={title} description={description} actions={actions} updatedAt={updatedAt} />}
+      {title && <PageHead title={title} description={description} actions={actions} live={live} updated={updated} />}
       {children}
     </div>
   )
@@ -47,21 +50,24 @@ export function Page({
 /**
  * The page head. From 761px the title is in the top bar and the actions move up beside it (NL-6), so the page
  * starts with its one line description. On a phone the title leads the page with the main action on its line
- * (NL-14). With `updatedAt` a line says how fresh the data is and keeps ticking (LD-12).
+ * (NL-14). With `live` (the page's queries) a line says how fresh the data is and keeps ticking, and says so
+ * when a refresh failed while the rows stay (LD-12, TB-5); `updated={false}` keeps only the failure.
  */
 export function PageHead({
   title,
   description,
   actions,
-  updatedAt,
+  live,
+  updated = true,
 }: {
   title: string
   description?: React.ReactNode
   actions?: React.ReactNode
-  updatedAt?: number
+  live?: Live | Live[]
+  updated?: boolean
 }) {
   const wide = useTopBar()
-  const fresh = updatedAt ? <Updated at={updatedAt} /> : null
+  const fresh = live ? <RefreshNote live={live} updated={updated} separator={description ? " · " : ""} /> : null
   const said = Boolean(description || fresh)
   if (wide)
     return (
@@ -78,7 +84,6 @@ export function PageHead({
             {said && (
               <p className="text-muted-foreground regular:mt-0.5">
                 {description}
-                {description && fresh && " · "}
                 {fresh}
               </p>
             )}
@@ -92,10 +97,9 @@ export function PageHead({
         <h1 className="min-w-0 flex-1 text-figure font-heavy tracking-tighter break-words regular:text-h1">{title}</h1>
         {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
       </div>
-      {(description || fresh) && (
+      {said && (
         <p className="text-muted-foreground">
           {description}
-          {description && fresh && " · "}
           {fresh}
         </p>
       )}
@@ -108,6 +112,60 @@ function Updated({ at }: { at: number }) {
   useTick()
   const tz = useTimeZone()
   return <span title={formatFull(new Date(at), tz)}>Updated {timeAgo(new Date(at))}</span>
+}
+
+/**
+ * How fresh the data on screen is, inside a line of text (LD-12). While it is fresh: "Updated 3 min ago" (only with
+ * `updated`). After a refresh that failed, with the data kept on screen (TB-5): "Could not refresh · Updated 4 min
+ * ago" in amber with Try again, until the next good answer. "Could not refresh" sits in a polite live region that
+ * stays mounted, so the failure is announced and the ticking time is not. `separator` leads it when it shows.
+ */
+export function RefreshNote({
+  live,
+  updated = false,
+  separator = "",
+  small = false,
+}: {
+  live: Live | Live[]
+  updated?: boolean
+  separator?: string
+  /** In a small-text line, so Try again matches it. */
+  small?: boolean
+}) {
+  const all = Array.isArray(live) ? live : [live]
+  const failed = all.filter(refreshFailed)
+  // The oldest data on screen is the one the line speaks for.
+  const at = failed.length ? Math.min(...failed.map((q) => q.dataUpdatedAt)) : all[0]?.dataUpdatedAt
+  const fresh = updated && Boolean(at)
+  return (
+    <>
+      {(failed.length > 0 || fresh) && separator}
+      <span role="status" className="text-warn">
+        {failed.length > 0 && "Could not refresh"}
+      </span>
+      {failed.length > 0 ? (
+        <span className="text-warn">
+          {at ? (
+            <>
+              {" · "}
+              <Updated at={at} />
+            </>
+          ) : null}{" "}
+          <Button
+            variant="link"
+            className={small ? "text-small" : "text-body"}
+            onClick={() => {
+              for (const q of failed) void q.refetch()
+            }}
+          >
+            Try again
+          </Button>
+        </span>
+      ) : fresh && at ? (
+        <Updated at={at} />
+      ) : null}
+    </>
+  )
 }
 
 /** The base unit: a tinted panel. Rows inside it are split by a 1px top line only. */
@@ -613,7 +671,8 @@ export {
 
 /**
  * A list that reloads keeps its rows on screen until the answer replaces them; they dim only when the
- * answer takes longer than 200ms, so a fast reload does not flicker and nothing collapses (TB-5).
+ * answer takes longer than 200ms, so a fast reload does not flicker and nothing collapses (TB-5). A reload that
+ * fails keeps them too (`loadView` in lib/load-state.ts), and the page head says so (RefreshNote).
  */
 export function Reloading({
   busy,

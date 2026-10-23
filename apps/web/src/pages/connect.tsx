@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Field, FieldContent, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { ApiError } from "@/lib/api"
+import { loadView } from "@/lib/load-state"
 import { AuthFrame } from "./auth/shared"
 
 type ConnectRequest = {
@@ -70,17 +71,16 @@ export function ConnectApprovePage() {
   const name = r ? (r.client.builtIn ? (r.client.label ?? "A script") : (r.client.name ?? "An unnamed agent")) : ""
   return (
     <AuthFrame wide title="Connect an Agent" description={r ? `${name} asks to use n8n-ops.` : undefined}>
-      {request.error ? (
-        request.error instanceof ApiError && request.error.status === 410 ? (
-          <Alert variant="warn">
-            <AlertTitle>This request is no longer open</AlertTitle>
-            <AlertDescription>Requests last 10 minutes. Start the connection again in your agent.</AlertDescription>
-          </Alert>
-        ) : (
-          <Panel>
-            <LoadError what="the request" error={request.error} retry={() => request.refetch()} />
-          </Panel>
-        )
+      {/* An ended request replaces what is shown; any other failed refresh keeps it (TB-5). */}
+      {request.error instanceof ApiError && request.error.status === 410 ? (
+        <Alert variant="warn">
+          <AlertTitle>This request is no longer open</AlertTitle>
+          <AlertDescription>Requests last 10 minutes. Start the connection again in your agent.</AlertDescription>
+        </Alert>
+      ) : loadView(request) === "failed" ? (
+        <Panel>
+          <LoadError what="the request" error={request.error} retry={() => request.refetch()} />
+        </Panel>
       ) : !r ? (
         <Panel>
           <Loading />

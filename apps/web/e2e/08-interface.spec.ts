@@ -779,6 +779,140 @@ test("Merge lands on the problem merged into, and Back returns to the problem it
   }
 })
 
+test("a list keeps its rows when a refresh fails, says so under the title, and Try again brings it back", async () => {
+  await page.goto("/problems?status=all")
+  const rows = page.locator("tbody tr")
+  await expect(rows.first()).toBeVisible()
+  const shown = await rows.count()
+  // From now on the list answers as a server that has a problem does; the problem pane is not touched.
+  const list = (url: URL) => url.pathname === "/api/problems" && url.searchParams.get("status") === "all"
+  await page.route(list, (route) => route.fulfill({ status: 500, json: { error: "internal_error" } }))
+  const failed = page.getByRole("status").filter({ hasText: "Could not refresh" })
+  try {
+    // A refresh, as the 15-second poll or coming back to the window brings. It is asked again twice before it
+    // counts as failed, which takes a few seconds.
+    await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")))
+    await expect(failed).toBeVisible({ timeout: 15_000 })
+    await expect(page.locator("p", { has: failed })).toContainText("Could not refresh · Updated ")
+    await expect(rows).toHaveCount(shown)
+    await expect(page.getByText("Could not load problems")).toHaveCount(0)
+  } finally {
+    await page.unroute(list)
+  }
+  // The next good answer clears the line.
+  await page.getByRole("button", { name: "Try again" }).click()
+  await expect(failed).toHaveCount(0)
+  await expect(rows).toHaveCount(shown)
+})
+
+test("the audit log keeps its entries when older ones fail to load, and waits for Try again", async () => {
+  // A log of 100 stand-in entries, so a second page is due whatever the run recorded; older ones fail at first.
+  const entry = (id: number) => ({
+    id,
+    at: new Date(Date.now() - (1000 - id) * 60_000).toISOString(),
+    actor: "operator",
+    action: `E2E entry ${id}`,
+    target: "",
+    via: "ui",
+  })
+  let older = 0
+  let failOlder = true
+  const audit = (url: URL) => url.pathname === "/api/admin/audit"
+  await page.route(audit, (route) => {
+    if (!new URL(route.request().url()).searchParams.has("before"))
+      return route.fulfill({ json: Array.from({ length: 100 }, (_, i) => entry(1000 - i)) })
+    older++
+    if (failOlder) return route.fulfill({ status: 500, json: { error: "internal_error" } })
+    return route.fulfill({ json: [entry(900), entry(899), entry(898)] })
+  })
+  try {
+    await page.goto("/audit")
+    const rows = page.locator("tbody tr")
+    await expect(rows).toHaveCount(100)
+    // The end of the list comes near, and the older entries are asked for.
+    await rows.last().scrollIntoViewIfNeeded()
+    await expect(page.getByText("Could not load older entries.")).toBeVisible()
+    // Asked once, not again by itself (TB-6), and every entry loaded stays, with no failed refresh said.
+    expect(older).toBe(1)
+    await expect(rows).toHaveCount(100)
+    await expect(page.getByText("Could not load the audit log")).toHaveCount(0)
+    await expect(page.getByRole("status").filter({ hasText: "Could not refresh" })).toHaveCount(0)
+
+    failOlder = false
+    await page.getByRole("button", { name: "Try again" }).click()
+    await expect(rows).toHaveCount(103)
+    await expect(page.getByText("All 103 entries shown")).toBeVisible()
+    expect(older).toBe(2)
+  } finally {
+    await page.unroute(audit)
+  }
+})
+
+test("Raw Data says a failed load in words, and a closed window drops its late answer", async () => {
+  await page.goto("/problems?status=all")
+  await page
+    .getByRole("row", { name: /Sync orders to ERP/ })
+    .first()
+    .click()
+  await page.getByRole("tab", { name: /^Input/ }).click()
+  const show = page.getByRole("button", { name: "Show full execution" })
+  const dialog = page.getByRole("dialog", { name: "Raw Data" })
+  const execution = (url: URL) => /^\/api\/problems\/[^/]+\/failures\/[^/]+$/.test(url.pathname)
+
+  // A failure is a message with the server's reason in the same window, not JSON (DS-17).
+  await page.route(execution, (route) =>
+    route.fulfill({ status: 500, json: { error: "internal_error", message: "The execution could not be read." } }),
+  )
+  try {
+    await show.click()
+    await expect(dialog.getByText("Could not load the execution")).toBeVisible()
+    await expect(dialog.getByText("The execution could not be read.")).toBeVisible()
+    await expect(dialog.locator("pre")).toHaveCount(0)
+    await page.keyboard.press("Escape")
+    await expect(dialog).toHaveCount(0)
+    await dialogClosed(page)
+  } finally {
+    await page.unroute(execution)
+  }
+
+  // Closed while it loads, the window gives up its load (DS-6): the answer can no longer open it again.
+  let release = () => {}
+  const held = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  let answered = () => {}
+  const handled = new Promise<void>((resolve) => {
+    answered = resolve
+  })
+  await page.route(execution, async (route) => {
+    await held
+    await route.fulfill({ json: { late: true } }).catch(() => {})
+    answered()
+  })
+  try {
+    // Settled once the request was given up, or once its answer was sent, whichever comes first.
+    const settled = Promise.race([
+      page.waitForEvent("requestfailed", (request) => execution(new URL(request.url()))),
+      handled,
+    ])
+    await show.click()
+    await expect(dialog.getByText("Loading the execution…")).toBeVisible()
+    await page.keyboard.press("Escape")
+    await expect(dialog).toHaveCount(0)
+    await dialogClosed(page)
+    release()
+    await settled
+    // Two frames, so an answer that was still taken in would have drawn the window again by now.
+    await page.evaluate(
+      () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(null)))),
+    )
+    await expect(dialog).toHaveCount(0)
+  } finally {
+    release()
+    await page.unroute(execution)
+  }
+})
+
 // Last: it leaves the page on sign-in.
 test("a session that ends on an open page goes to sign-in, back to that page, without asking", async () => {
   await page.goto("/settings/alerts")

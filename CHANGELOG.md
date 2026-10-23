@@ -39,6 +39,10 @@ All notable changes to this project are documented here. The format follows [Kee
 - When one area of a save fails and another is saved, the message now names what failed and why; before, the success message could replace it. The failed area keeps its changes.
 - After Add instance or Merge, Back goes to the page the dialog was opened on in one step, instead of first returning to an empty step of the closed dialog.
 - The line under a row of tabs that scrolls sideways now runs to its end at any scroll position.
+- **A failed refresh no longer empties the page.** When a list, an open item or a Settings form cannot be refreshed (during a server restart, for example), what was loaded stays on screen and the line under the title reads "Could not refresh · Updated 4 min ago" in amber, with Try again. It clears with the next good answer. Before, the rows or the form were replaced by an error until then.
+- The audit log keeps every entry already loaded when older entries fail to load, and says so at the end of the list with Try again. Before, the whole log was replaced by an error, after asking twice more on its own.
+- Show full execution on a problem says why the execution could not be loaded, instead of showing the error as JSON. Closing the window while it loads no longer opens it again when the answer arrives.
+- The search still finds the instances already loaded when the last refresh of the instance list failed, instead of saying it could not search them.
 - `scripts/verify.sh --changed` (and the CI of pull requests) no longer builds the web app twice at once when a file at the root such as `CHANGELOG.md` changed, which could fail the build at random.
 - Add a Worker accepts any name up to 60 characters, such as "Docker Office". Before, a name with a space was refused with a technical pattern message. A refused value in the dialog is now explained in words.
 - The commands Add a Worker gave wrote `.env` with `cat >`, which replaced any `.env` already in that folder.

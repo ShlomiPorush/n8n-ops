@@ -32,6 +32,7 @@ import { FieldError } from "@/components/ui/field"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, useSort } from "@/components/ui/table"
 import { api, describeError, queryClient, useApi, useApiMutation } from "@/lib/api"
+import { loadView } from "@/lib/load-state"
 import { n, plural } from "@/lib/time"
 import { cn } from "@/lib/utils"
 
@@ -79,6 +80,8 @@ export function WorkflowsPage() {
   }
   const query = new URLSearchParams({ ...(q ? { q } : {}), ...(instance !== "all" ? { instance } : {}) })
   const data = useApi<MapData>(`/workflows?${query}`, { keepRows: true })
+  // A failed refresh keeps the rows; the head says so (TB-5, LD-12).
+  const view = loadView(data)
   const instances = useApi<{ instances: { id: string; name: string }[] }>("/instances")
   const sync = useApiMutation<void>("POST", "/workflows/sync", {
     invalidate: [`/workflows?${query}`],
@@ -104,6 +107,8 @@ export function WorkflowsPage() {
   return (
     <Page
       title="Workflows"
+      live={data}
+      updated={false}
       description={
         ins && !filtered
           ? `${n(rows.length)} workflows · ${n(ins.duplicateGroups.length)} duplicated · ${n(ins.inactive)} inactive. Read from every instance every 30 minutes.`
@@ -186,11 +191,11 @@ export function WorkflowsPage() {
         />
       </FilterBar>
 
-      {data.error ? (
+      {view === "failed" ? (
         <Panel>
           <LoadError what="workflows" error={data.error} retry={() => data.refetch()} />
         </Panel>
-      ) : data.isLoading ? (
+      ) : view === "loading" ? (
         <Panel>
           <Loading>Loading the workflow map…</Loading>
         </Panel>

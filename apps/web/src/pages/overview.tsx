@@ -12,6 +12,7 @@ import { Dot, type HealthState, StatusTag, statusOf, TimeAgo, Tone } from "@/com
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { useApi } from "@/lib/api"
+import { loadView } from "@/lib/load-state"
 import { n, plural } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { behind, type InstanceRow } from "./instances"
@@ -96,7 +97,8 @@ export function OverviewPage() {
   return (
     <Page
       title="Overview"
-      updatedAt={overview.dataUpdatedAt || undefined}
+      // The line speaks for every block that refreshes here; Try again asks again only for those that failed.
+      live={[overview, instances, activity]}
       description={
         o
           ? `${plural(attention.length, "thing needs", "things need")} you · ${plural(o.stats.openProblems, "open problem")} across ${plural(o.stats.instances, "instance")}`
@@ -125,7 +127,7 @@ export function OverviewPage() {
         </Alert>
       )}
 
-      {overview.error ? (
+      {loadView(overview) === "failed" ? (
         <Panel>
           <LoadError what="the overview" error={overview.error} retry={() => overview.refetch()} />
         </Panel>
@@ -194,7 +196,7 @@ export function OverviewPage() {
                   count={instances.data ? n(rows.length) : undefined}
                   more={rows.length ? { to: "/instances", label: "All instances" } : undefined}
                 />
-                {instances.error ? (
+                {loadView(instances) === "failed" ? (
                   <LoadError what="instances" error={instances.error} retry={() => instances.refetch()} />
                 ) : !instances.data ? (
                   <Loading />
@@ -220,7 +222,7 @@ export function OverviewPage() {
                   description="Sign-ins, changes and decisions, newest first."
                   more={{ to: "/audit", label: "Full audit log" }}
                 />
-                {activity.error ? (
+                {loadView(activity) === "failed" ? (
                   <LoadError what="recent activity" error={activity.error} retry={() => activity.refetch()} />
                 ) : !activity.data ? (
                   <Loading />

@@ -78,7 +78,8 @@ export async function readFresh<T>(path: string, client: QueryClient = queryClie
 
 /**
  * Reads an API path. With `keepRows` a list whose filters change keeps showing its last rows until the new
- * answer arrives (`isPlaceholderData` is true meanwhile), instead of dropping to a loading state (TB-5).
+ * answer arrives (`isPlaceholderData` is true meanwhile), instead of dropping to a loading state (TB-5). A refresh
+ * that fails keeps `data` and sets `error` beside it: pages draw it through `loadView` (lib/load-state.ts).
  */
 export function useApi<T>(path: string | null, options: { refetchInterval?: number; keepRows?: boolean } = {}) {
   return useQuery<T>({

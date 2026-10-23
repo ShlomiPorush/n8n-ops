@@ -41,6 +41,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { api, describeError, useApi, useApiMutation } from "@/lib/api"
+import { loadView } from "@/lib/load-state"
 import { n, plural } from "@/lib/time"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
@@ -203,9 +204,10 @@ export function DestinationsSection({ hidden = false }: { hidden?: boolean }) {
             </Button>
           }
         />
-        {list.error ? (
+        {/* A failed refresh keeps what is shown (TB-5). */}
+        {loadView(list) === "failed" ? (
           <LoadError what="the destinations" error={list.error} retry={() => list.refetch()} />
-        ) : list.isLoading ? (
+        ) : loadView(list) === "loading" ? (
           <Loading>Loading the destinations…</Loading>
         ) : data.length === 0 ? (
           <Empty title="No backup destination yet.">
@@ -915,7 +917,7 @@ export function InstanceBackupCard({
     <Panel className="overflow-visible">
       <PanelHead title="Backup Destinations" description="Where this instance's encrypted backups are written." />
       <fieldset disabled={save.isPending} className="border-t border-line p-pad-x">
-        {destinations.error ? (
+        {loadView(destinations) === "failed" ? (
           <LoadError what="the destinations" error={destinations.error} retry={() => destinations.refetch()} />
         ) : !destinations.data || !state.choice ? (
           <Loading />
@@ -980,7 +982,7 @@ function SelfBackupCard({ destinations, hidden }: { destinations: Destination[];
         description="n8n-ops backs up its own database every night, encrypted with the same key."
       />
       <fieldset disabled={save.isPending} className="grid gap-4 border-t border-line p-pad-x">
-        {query.error ? (
+        {loadView(query) === "failed" ? (
           <LoadError what="the backup settings" error={query.error} retry={() => query.refetch()} />
         ) : !state.choice ? (
           <Loading />

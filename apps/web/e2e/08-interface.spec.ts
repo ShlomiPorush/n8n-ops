@@ -384,10 +384,13 @@ test("a clicked tab shows no focus ring until a key is pressed on it", async () 
   const outline = () => health.evaluate((el) => getComputedStyle(el).outlineStyle)
   await health.click()
   await expect(health).toBeFocused()
+  // Hidden because a pointer pressed it, not because the browser chose not to ring it.
+  await expect(health).toHaveAttribute("data-pointer", "")
   expect(await outline()).toBe("none")
   // A key pressed on the same tab, focus not moving, brings the ring back.
   await page.keyboard.press("Enter")
   await expect(health).toBeFocused()
+  await expect(health).not.toHaveAttribute("data-pointer")
   expect(await outline()).toBe("solid")
 })
 

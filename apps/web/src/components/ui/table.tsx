@@ -252,13 +252,13 @@ export type ServerSort = { asked: SortState | null; shown: (answer: SortAnswer) 
  * again the order whose rows failed to come asks for them again.
  */
 export function useSortOrder(id: string, initial?: SortState): ServerSort {
-  const tracker = React.useRef<ReturnType<typeof sortTracker>>(null)
-  tracker.current ??= sortTracker(id, initial)
-  const [asked, setAsked] = React.useState<SortState | null>(() => tracker.current?.initial ?? null)
+  const [tracker] = React.useState(() => sortTracker(id, initial))
+  const [asked, setAsked] = React.useState<SortState | null>(() => tracker.initial)
   return {
     asked,
     shown: (answer) => [
-      tracker.current?.shown(asked, answer) ?? asked,
+      // Null is an order too (the default), so the tracker's answer is taken as it is.
+      tracker.shown(asked, answer),
       (next) => {
         if (!sameOrder(next, asked)) setAsked(next)
         else if (answer.previous === "failed") void answer.refetch?.()

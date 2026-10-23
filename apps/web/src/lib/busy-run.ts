@@ -11,15 +11,28 @@ export type BusyState = "idle" | "busy" | "done" | "failed"
 export function busyRun(show: (state: BusyState) => void) {
   let sending = false
   let mounted = true
+  /** An unmount ended a request or its result, so a later mount shows the label again. */
+  let cut = false
   let timer: ReturnType<typeof setTimeout> | undefined
   return {
-    /** Call from an effect: returns its cleanup. Mounting again (StrictMode) brings it back. */
+    /**
+     * Call from an effect: returns its cleanup. Mounting again (StrictMode, Fast Refresh) brings it back: a result
+     * that was showing ends with the unmount, so the button comes back with its label and takes clicks again.
+     */
     mount() {
       mounted = true
+      if (cut) {
+        cut = false
+        show("idle")
+      }
       return () => {
         mounted = false
-        clearTimeout(timer)
-        timer = undefined
+        if (timer !== undefined) {
+          clearTimeout(timer)
+          timer = undefined
+          sending = false
+          cut = true
+        }
       }
     },
     /**
@@ -43,7 +56,12 @@ export function busyRun(show: (state: BusyState) => void) {
       } catch {
         // The request said what failed (its toast); the button only shows that it did.
       }
-      if (!mounted) return
+      // Settled while the button was gone: no result to show, and the next mount takes clicks again.
+      if (!mounted) {
+        sending = false
+        cut = true
+        return
+      }
       show(ok ? "done" : "failed")
       timer = setTimeout(
         () => {

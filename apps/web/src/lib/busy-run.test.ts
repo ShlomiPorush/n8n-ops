@@ -70,6 +70,29 @@ describe("busy button clock (FB-7)", () => {
     expect(vi.getTimerCount()).toBe(0)
   })
 
+  it("comes back with its label and takes clicks when mounted again during Done", async () => {
+    const { clock, shown, unmount } = setup()
+    await clock.start(async () => {})
+    unmount()
+    clock.mount()
+    expect(shown.at(-1)).toBe("idle")
+    await clock.start(async () => {})
+    expect(shown.slice(-2)).toEqual(["busy", "done"])
+  })
+
+  it("takes clicks again when its request settled while it was gone", async () => {
+    const { clock, shown, unmount } = setup()
+    let answer = () => {}
+    const sent = clock.start(() => new Promise<void>((resolve) => (answer = resolve)))
+    unmount()
+    answer()
+    await sent
+    clock.mount()
+    expect(shown.at(-1)).toBe("idle")
+    await clock.start(async () => {})
+    expect(shown.slice(-2)).toEqual(["busy", "done"])
+  })
+
   it("works again when mounted again, as StrictMode does", async () => {
     const { clock, shown, unmount } = setup()
     unmount()

@@ -41,7 +41,7 @@ export function WorkersPage() {
   const confirm = useConfirm()
   const named = (id: string) => workers.data?.find((w) => w.id === id)?.name ?? "the worker"
   const revoke = useApiMutation<string>("DELETE", (id) => `/workers/${id}`, {
-    invalidate: ["/workers", "/overview/summary"],
+    invalidate: ["/workers", "/overview/summary", "/overview/attention"],
     success: (id) => `Worker ${named(id)} revoked`,
     failed: (id) => `revoke the worker ${named(id)}`,
   })

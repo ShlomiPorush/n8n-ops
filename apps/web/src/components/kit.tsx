@@ -402,57 +402,99 @@ export function KV({
   )
 }
 
-/** An alert row: a 4px status bar (Compact; Regular's tag carries the status), the text, one action. */
+/**
+ * An alert row: a 4px status bar (Compact; Regular's tag carries the status), the text, and its actions (FB-10).
+ * With `to` the text is the link that opens the item, and the actions sit beside it as controls of their own, never
+ * inside it; a click anywhere else on the row opens the item too, except one that ends selecting text (TB-8). In a
+ * list narrower than 32rem (`@container/alerts`: the bell's window, a phone) the actions go under the text.
+ * `onOpen` runs on the link's click, for a list that moves on its own (the bell's window).
+ */
 export function AlertRow({
   tone,
   title,
   children,
-  action,
+  actions,
   to,
+  onOpen,
 }: {
-  tone: "fail" | "warn" | "info"
+  tone: "fail" | "warn" | "info" | "muted"
   title: React.ReactNode
   children?: React.ReactNode
-  action?: React.ReactNode
+  actions?: React.ReactNode
   to?: string
+  onOpen?: React.MouseEventHandler<HTMLAnchorElement>
 }) {
-  const body = (
+  const text = (
     <>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">{title}</div>
+      {children && <div className="mt-0.5 text-small break-words text-muted-foreground">{children}</div>}
+    </>
+  )
+  return (
+    // biome-ignore lint/a11y: the link inside is the row's keyboard and screen reader path; this only widens its pointer target
+    <div
+      data-slot="alert-row"
+      className={cn(
+        "grid grid-cols-[4px_minmax(0,1fr)_auto] items-start gap-x-3.5 border-t border-line pe-pad-x",
+        "regular:grid-cols-[minmax(0,1fr)_auto] regular:ps-pad-x",
+        "@max-[32rem]/alerts:grid-cols-[4px_minmax(0,1fr)] regular:@max-[32rem]/alerts:grid-cols-[minmax(0,1fr)]",
+        to && "hover-row",
+      )}
+      onClick={(e) => {
+        if (!to || rowHeld(e) || (e.target as Element).closest("a, button")) return
+        e.currentTarget.querySelector<HTMLAnchorElement>('[data-slot="alert-link"]')?.click()
+      }}
+    >
       <span
         aria-hidden
         className={cn(
-          "w-1 shrink-0 self-stretch rounded-e-kbd regular:hidden",
+          "w-1 self-stretch rounded-e-kbd regular:hidden @max-[32rem]/alerts:row-span-2",
           tone === "fail" && "bg-fail",
           tone === "warn" && "bg-warn",
           tone === "info" && "bg-info",
+          tone === "muted" && "bg-muted-foreground/40",
         )}
       />
-      <div className="min-w-0 flex-1 py-pad-y">
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">{title}</div>
-        {children && <div className="mt-0.5 text-small break-words text-muted-foreground">{children}</div>}
-      </div>
-      {action && <div className="shrink-0 self-center pe-pad-x">{action}</div>}
-    </>
+      {to ? (
+        <RowLink
+          to={to}
+          data-slot="alert-link"
+          onClick={onOpen}
+          className="block min-w-0 py-pad-y outline-offset-[-2px]"
+        >
+          {text}
+        </RowLink>
+      ) : (
+        <div className="min-w-0 py-pad-y">{text}</div>
+      )}
+      {actions && (
+        <div className="flex flex-wrap items-center gap-2 self-center py-2 @max-[32rem]/alerts:col-start-2 @max-[32rem]/alerts:self-start @max-[32rem]/alerts:pt-0 @max-[32rem]/alerts:pb-pad-y regular:@max-[32rem]/alerts:col-start-1">
+          {actions}
+        </div>
+      )}
+    </div>
   )
-  const cls = "flex items-start gap-3.5 border-t border-line pe-pad-x regular:ps-pad-x"
-  if (to)
-    return (
-      <RowLink to={to} className={cn(cls, "hover-row")}>
-        {body}
-      </RowLink>
-    )
-  return <div className={cls}>{body}</div>
 }
 
 /**
  * Key figures: a large number with a muted label. Compact draws one outlined block (cell lines are outlines,
- * so a short last row leaves no block); Regular draws a card per figure with its icon.
+ * so a short last row leaves no block); Regular draws a card per figure with its icon. With `row` they stay in one
+ * row at any width, for a narrow column such as a list beside its reading pane (FB-17).
  */
-export function Kpis({ className, children }: { className?: string; children: React.ReactNode }) {
-  return (
+export function Kpis({
+  className,
+  row = false,
+  children,
+}: {
+  className?: string
+  row?: boolean
+  children: React.ReactNode
+}) {
+  const grid = (
     <div
       className={cn(
-        "grid grid-cols-[repeat(auto-fit,minmax(170px,1fr))] overflow-hidden rounded-lg border border-line bg-bg",
+        "grid overflow-hidden rounded-lg border border-line bg-bg",
+        row ? kpiRow : "grid-cols-[repeat(auto-fit,minmax(170px,1fr))]",
         "regular:gap-gap regular:overflow-visible regular:border-0 regular:bg-transparent",
         className,
       )}
@@ -460,7 +502,22 @@ export function Kpis({ className, children }: { className?: string; children: Re
       {children}
     </div>
   )
+  return row ? <div className="@container/kpis min-w-0">{grid}</div> : grid
 }
+
+/*
+ * Figures in one row that never stacks, however narrow the column they are in (FB-17): there the icon goes (it
+ * only illustrates), and in a narrower one the figure is a size smaller with less padding, so it still fits.
+ * Regular's own rule for a figure in words is more specific than a plain one: both designs say it.
+ */
+const kpiRow = cn(
+  "grid-flow-col auto-cols-fr",
+  "@max-[40rem]/kpis:**:data-[slot=kpi-icon]:hidden!",
+  "compact:@max-[30rem]/kpis:**:data-[slot=kpi-figure]:text-h2",
+  "regular:@max-[30rem]/kpis:**:data-[slot=kpi-figure]:text-h2",
+  "regular:@max-[30rem]/kpis:gap-2 regular:@max-[30rem]/kpis:**:data-[slot=kpi]:p-3",
+  "compact:@max-[30rem]/kpis:**:data-[slot=kpi]:px-3",
+)
 
 export function Kpi({
   label,

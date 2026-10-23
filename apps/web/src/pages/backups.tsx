@@ -44,6 +44,7 @@ import {
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, useSort } from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
+import { useMediaQuery } from "@/hooks/use-mobile"
 import { api, describeError, useApi, useApiMutation } from "@/lib/api"
 import { loadView } from "@/lib/load-state"
 import { formatSize, n, plural } from "@/lib/numbers"
@@ -130,6 +131,8 @@ export function BackupsPage() {
   const { id } = useParams()
   const navigate = useNavigate()
   const data = useApi<Summary>("/backups", { refetchInterval: 10_000 })
+  // Where the list stands beside the reading pane (ListWithPanel).
+  const beside = useMediaQuery("(min-width: 1000px)")
   // A failed refresh keeps the rows; the head says so (TB-5, LD-12).
   const view = loadView(data)
   // The daily time is stored as 24-hour HH:MM; only how it is shown follows the Time format (FW-9).
@@ -137,7 +140,7 @@ export function BackupsPage() {
   const target = (id: string) =>
     id === "self" ? "the n8n-ops database" : (data.data?.instances.find((i) => i.id === id)?.name ?? "the instance")
   const run = useApiMutation<string>("POST", (id) => `/backups/${id}/run`, {
-    invalidate: ["/backups"],
+    invalidate: ["/backups", "/overview/attention"],
     success: (id) => `Backup of ${target(id)} started`,
     failed: (id) => `start the backup of ${target(id)}`,
   })
@@ -208,7 +211,9 @@ export function BackupsPage() {
         </Locked>
       )}
       {s && (
-        <Kpis>
+        // Beside the reading pane (from 1000px) one row of three that never stacks, so they never push the list
+        // out of sight in its narrow column (FB-17).
+        <Kpis row={beside}>
           <Kpi
             label="Backed up on time"
             icon={ShieldCheckIcon}

@@ -102,15 +102,17 @@ export function TopicRoutes({
             // biome-ignore lint/suspicious/noArrayIndexKey: see above
             <li key={i} className="grid gap-2 rounded-md border border-line p-3" aria-label={`Route ${n}`}>
               <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_minmax(0,0.8fr)_110px]">
-                <label className="grid gap-1 text-small">
-                  <span className="font-semibold">Instance</span>
+                <div className="grid gap-1 text-small">
+                  <label htmlFor={`route-${n}-instance`} className="font-semibold">
+                    Instance
+                  </label>
                   <Select
                     value={r.instanceId || ANY}
                     onValueChange={(v) => update(i, { instanceId: v === ANY ? "" : v })}
                     // Radix Select opens on pointerdown and ignores a disabled fieldset, so it is locked itself.
                     disabled={disabled}
                   >
-                    <SelectTrigger className="w-full" aria-label={`Route ${n} instance`}>
+                    <SelectTrigger className="w-full" id={`route-${n}-instance`} aria-label={`Route ${n} instance`}>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -123,34 +125,43 @@ export function TopicRoutes({
                       {removed && <SelectItem value={r.instanceId}>Removed instance</SelectItem>}
                     </SelectContent>
                   </Select>
-                </label>
-                <label className="grid gap-1 text-small">
-                  <span className="font-semibold">Workflow name matches</span>
+                </div>
+                <div className="grid gap-1 text-small">
+                  <label htmlFor={`route-${n}-workflow`} className="font-semibold">
+                    Workflow name matches
+                  </label>
                   <Input
+                    id={`route-${n}-workflow`}
                     value={r.workflow}
                     placeholder="orders|invoices"
                     aria-label={`Route ${n} workflow pattern`}
                     onChange={(e) => update(i, { workflow: e.target.value })}
                   />
-                </label>
-                <label className="grid gap-1 text-small">
-                  <span className="font-semibold">Workflow tag</span>
+                </div>
+                <div className="grid gap-1 text-small">
+                  <label htmlFor={`route-${n}-tag`} className="font-semibold">
+                    Workflow tag
+                  </label>
                   <Input
+                    id={`route-${n}-tag`}
                     value={r.tag}
                     aria-label={`Route ${n} tag`}
                     onChange={(e) => update(i, { tag: e.target.value })}
                   />
-                </label>
-                <label className="grid gap-1 text-small">
-                  <span className="font-semibold">Topic</span>
+                </div>
+                <div className="grid gap-1 text-small">
+                  <label htmlFor={`route-${n}-topic`} className="font-semibold">
+                    Topic
+                  </label>
                   <Input
+                    id={`route-${n}-topic`}
                     value={r.threadId}
                     inputMode="numeric"
                     className="tabular-nums"
                     aria-label={`Route ${n} topic`}
                     onChange={(e) => update(i, { threadId: e.target.value })}
                   />
-                </label>
+                </div>
               </div>
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="min-w-0 flex-1">{problem && <FieldError>{problem}</FieldError>}</div>

@@ -57,7 +57,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - **Sign-in no longer hangs when n8n-ops cannot be reached.** The button stays on "Signing in…" only while it waits, then says "Could not reach n8n-ops. Check your connection and try again." and keeps what was typed. The same holds for the setup steps and Change password. A two-factor code that got no answer stays, with Try again; a wrong code is cleared. When setup made the account but could not sign in, trying again only signs in. A wrong password says "Invalid username or password." Show password keeps the cursor in the field, and the Caps Lock note is read out with the field.
 - Change password keeps what was typed when the change fails; before, the fields were emptied at once.
 - A button that cannot be used now shows the not-allowed pointer and its tip. A click on a disabled button inside a row no longer opens the row.
-- A message in the corner now also waits while the keyboard is on it, not only the pointer, and then stays for the rest of its time (at least 1.5 seconds) instead of four seconds more. A message caught while it fades comes back.
+- A message in the corner now also waits while the keyboard is on it, not only the pointer, and then stays for the rest of its time (at least 1.5 seconds) instead of four seconds more. A message caught while it fades comes back, and a message that replaces one under the pointer waits too.
+- When a proxy in front of n8n-ops answers instead of it, a failure now says "n8n-ops did not answer. Try again in a moment." (or which error the server answered with) instead of a code such as `http_502`.
 - A double click on Run now starts one backup, not two. The same holds for Check now, Test, Mark resolved, Approve and the other buttons that act on one click.
 
 ## [0.1.0] - 2026-10-22

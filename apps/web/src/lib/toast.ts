@@ -8,7 +8,8 @@ import { TOAST_FADE_MS, TOAST_MS, TOAST_REST_MS } from "@/lib/behavior"
  * The clock lives here, not in the Toaster, so it can be tested without a browser. A toast stays TOAST_MS or its
  * own `duration` (Infinity keeps it until closed: Retry, Refresh), then fades for TOAST_FADE_MS. It waits while
  * the pointer or the keyboard is on it, or while its action runs, and then gives the rest of its time (at least
- * TOAST_REST_MS); a fading toast caught by either comes back for TOAST_REST_MS.
+ * TOAST_REST_MS); a fading toast caught by either comes back for TOAST_REST_MS. A toast that replaces one under the
+ * pointer starts held, since a still pointer sends no new enter.
  */
 
 export type ToastTone = "success" | "error" | "warning" | "info" | "loading"
@@ -114,7 +115,11 @@ function show(tone: ToastTone, message: string, options: ToastOptions = {}) {
   // Read before the new toast is drawn: React removes the old one, and the keyboard with it.
   const takeFocus = focusInToast()
   stop()
+  // The pointer stays where it was, over the toast's place, so its hold carries over. The keyboard's does not:
+  // the new toast takes it back when it takes the keyboard (`takeFocus`).
+  const pointer = holds.has("pointer")
   holds.clear()
+  if (pointer) holds.add("pointer")
   seq += 1
   left = options.duration ?? TOAST_MS
   const id = options.id ?? seq
@@ -153,15 +158,28 @@ export const toast = {
     const item = current
     if (!item || item.key !== key || !item.action || item.running) return
     const result = item.action.run()
-    // The action already showed what comes next.
-    if (current?.key !== key) return
-    if (typeof (result as PromiseLike<unknown> | null | undefined)?.then !== "function") return close()
+    const pending =
+      typeof (result as PromiseLike<unknown> | null | undefined)?.then === "function"
+        ? (result as PromiseLike<unknown>)
+        : undefined
+    if (current?.key !== key) {
+      // The action already showed what comes next, and that toast keeps its own clock. Its promise is still
+      // watched, so a rejection is handled, and a loading toast it showed ("Undoing…") does not stay for good
+      // when the action ends without a result.
+      const shown = current?.key
+      const settle = () => {
+        if (current?.key === shown && current?.tone === "loading") close()
+      }
+      pending?.then(settle, settle)
+      return
+    }
+    if (!pending) return close()
     stop()
     set({ ...item, running: true, leaving: false })
     const settle = () => {
       if (current?.key === key) close()
     }
-    ;(result as PromiseLike<unknown>).then(settle, settle)
+    pending.then(settle, settle)
   },
 }
 

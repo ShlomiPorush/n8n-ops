@@ -328,14 +328,23 @@ const scrollerOf = (el: HTMLElement) => el.closest<HTMLElement>("[data-scroll-pa
  */
 export function firstRowReset(now: () => number = () => performance.now()) {
   let until: number | null = null
+  // Moves on with new filters and with every scroll of the user, so a frame planned before either does nothing.
+  let turn = 0
   return {
     /** New filters, while their rows are `loading` or not; rows already drawn need no second reset. */
     changed(loading: boolean) {
+      turn += 1
       until = loading ? now() + LIST_WAIT_MS : null
     },
-    /** The user scrolled the list: it stays where they put it. */
+    /** The user scrolled the list: it stays where they put it, also against a reset already planned. */
     scrolled() {
+      turn += 1
       until = null
+    },
+    /** A check for a planned reset: true while nothing happened since it was planned. */
+    ticket(): () => boolean {
+      const planned = turn
+      return () => planned === turn
     },
     /** After a render: true once, when the request of the new filters has ended in time. */
     loaded(loading: boolean): boolean {
@@ -347,10 +356,13 @@ export function firstRowReset(now: () => number = () => performance.now()) {
   }
 }
 
-/** Keys that scroll the list when pressed outside a text field. */
+/** Keys that scroll the list when pressed outside a control that uses them itself. */
 const SCROLL_KEYS = new Set(["PageUp", "PageDown", "Home", "End", "ArrowUp", "ArrowDown", " "])
+/** A field, a button, a link or a picker takes these keys for itself (Space presses, arrows open a picker). */
 const typing = (el: EventTarget | null) =>
-  el instanceof HTMLElement && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))
+  el instanceof HTMLElement &&
+  (el.isContentEditable ||
+    el.closest("input, textarea, select, button, a[href], [role=combobox], [role=button], [role=radio]") !== null)
 
 /**
  * Brings a list back to its first row when `key` (its filters and search) changes: at once, in the next frame,
@@ -378,12 +390,14 @@ function useFirstRowOnChange(bar: React.RefObject<HTMLElement | null>, key: stri
     lastKey.current = key
     reset.changed(loading)
     toTop()
-    const frame = requestAnimationFrame(toTop)
+    const valid = reset.ticket()
+    const frame = requestAnimationFrame(() => valid() && toTop())
     return () => cancelAnimationFrame(frame)
   }, [key, toTop, reset])
   React.useEffect(() => {
     if (!reset.loaded(loading)) return
-    const frame = requestAnimationFrame(toTop)
+    const valid = reset.ticket()
+    const frame = requestAnimationFrame(() => valid() && toTop())
     return () => cancelAnimationFrame(frame)
   }, [loading, toTop, reset])
   // A wheel, a touch, the scroll bar or a scrolling key, not the scroll this hook makes itself.

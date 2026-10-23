@@ -121,6 +121,18 @@ describe("a new filter starts the list at its first row (TB-7)", () => {
     expect(reset.loaded(false)).toBe(false)
   })
 
+  it("drops a reset already planned for the next frame when the user scrolls before it runs", () => {
+    const reset = firstRowReset(clock().now)
+    reset.changed(true)
+    expect(reset.loaded(false)).toBe(true)
+    const planned = reset.ticket()
+    reset.scrolled()
+    expect(planned()).toBe(false)
+    // New filters plan a reset of their own.
+    reset.changed(false)
+    expect(reset.ticket()()).toBe(true)
+  })
+
   it("gives up on an answer that came too late", () => {
     const c = clock()
     const reset = firstRowReset(c.now)

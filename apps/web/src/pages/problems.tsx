@@ -214,11 +214,11 @@ export function ProblemsTable({
                 sub={
                   <>
                     <ProblemBadge status={p.status} regression={p.regression} firstSeen={p.firstSeen} />{" "}
-                    <UserText>{p.nodeName}</UserText>
+                    <UserText title={p.nodeName}>{p.nodeName}</UserText>
                     {showInstance && (
                       <>
                         {" · "}
-                        <UserText>{p.instanceName}</UserText>
+                        <UserText title={p.instanceName}>{p.instanceName}</UserText>
                       </>
                     )}
                   </>

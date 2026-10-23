@@ -361,22 +361,31 @@ export function useSort<T>(
      */
     order?: SortOrder
     /**
-     * The column and direction the rows arrive in. While no column is picked, a first click on it turns the list
-     * around instead of asking again for the order already shown (TB-1), and picking it shows no dot (TB-28).
+     * The column and direction the rows arrive in, for a list sorted on the server. While no column is picked, a
+     * first click on it turns the list around instead of asking again for the order already shown (TB-1), and
+     * picking it shows no dot (TB-28).
      */
     arrival?: SortState
-    /** The default order of a list sorted here: a higher rank first, then as the rows came (TB-11). */
-    rank?: (row: T) => number
+    /**
+     * The default order of a list sorted here: a higher rank first, then as the rows came (TB-11). Name the column
+     * that shows the rank (a status) and that column high to low is the default order, which then counts as the
+     * order the rows arrive in, as `arrival` does; a function ranks by a value no column shows.
+     */
+    rank?: string | ((row: T) => number)
   },
 ): Sorting<T> {
   const own = useOwnOrder(id)
   const [state, set] = order ?? own
   const server = order !== undefined
   const list = rows ?? []
+  const rankKey = typeof rank === "string" && columns[rank] ? rank : undefined
+  const rankColumn = rankKey === undefined ? undefined : columns[rankKey]
+  const rankOf = rankColumn ? (row: T) => Number(rankColumn.value(row)) : typeof rank === "function" ? rank : undefined
+  const start = arrival ?? (rankKey === undefined ? undefined : { key: rankKey, dir: "descending" as const })
   const sorted = React.useMemo(() => {
     if (server) return list
     const column = state && columns[state.key]
-    return sortRows(list, state && column ? { value: column.value, dir: state.dir } : null, rank)
+    return sortRows(list, state && column ? { value: column.value, dir: state.dir } : null, rankOf)
     // biome-ignore lint/correctness/useExhaustiveDependencies: columns and rank are declared inline by each page
   }, [list, state, server])
   const first = (column: SortColumn<T>): SortDir => (kindOf(list, column) === "text" ? "ascending" : "descending")
@@ -385,7 +394,7 @@ export function useSort<T>(
     control: {
       state,
       set,
-      isDefault: isDefaultOrder(state, arrival),
+      isDefault: isDefaultOrder(state, start),
       columns: Object.entries(columns).map(([key, column]) => ({
         key,
         label: column.label,
@@ -402,7 +411,7 @@ export function useSort<T>(
           if (!column) return
           const turn = (dir: SortDir) => (dir === "ascending" ? "descending" : "ascending")
           const dir =
-            current !== "none" ? turn(current) : !state && arrival?.key === key ? turn(arrival.dir) : first(column)
+            current !== "none" ? turn(current) : !state && start?.key === key ? turn(start.dir) : first(column)
           set({ key, dir })
         },
       }

@@ -83,10 +83,10 @@ export function AccessPage() {
   const waiting = all.filter((r) => r.status === "pending").length
   const active = all.filter((r) => r.status === "approved").length
   const rank = (r: AccessRow) => (r.status === "pending" ? 2 : r.status === "approved" ? 1 : 0)
-  // Waiting for you first, then active, each newest first as the server sends them (TB-11).
+  // Waiting for you first, then active, each newest first as the server sends them: Status high to low (TB-11).
   const sort = useSort(shown, {
     id: "access",
-    rank,
+    rank: "status",
     columns: {
       status: { label: "Status", kind: "number", words: RANK_WORDS, value: rank },
       instance: { label: "Instance", kind: "text", value: (r) => r.instance },

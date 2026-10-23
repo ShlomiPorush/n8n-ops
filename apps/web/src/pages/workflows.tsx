@@ -203,7 +203,7 @@ export function WorkflowsPage() {
           />
         }
         listKey={`${instance}|${q}`}
-        drawn={data.isPlaceholderData ? null : data.data}
+        loading={data.isFetching || data.isPlaceholderData}
         count={
           data.data ? (
             <>

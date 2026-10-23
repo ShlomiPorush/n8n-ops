@@ -581,27 +581,19 @@ html[data-design="regular"].dark {
 }
 
 /*
- * A list's filter bar stays in sight at the top of where the list scrolls (NL-16): the list column beside a
- * reading pane, and the page on a phone. It sticks flush to the top, on the page's own background, with a
- * little room around it that it takes from the gaps beside it, so nothing moves while it is not stuck.
+ * A list's filter bar stays in sight at the top of where the list scrolls, at every width (NL-16): the list
+ * column beside a reading pane, else the page itself (#main), whose top bar sits above it rather than over it,
+ * so the bar sticks flush to the top. It stands on the page's own background, over the rows and under popovers
+ * and menus (OT-3), with a little room around it that it takes from the gaps beside it, so nothing moves while
+ * it is not stuck.
  */
-[data-scroll-pane] > [data-slot="filter-bar"] {
+:is(#main, [data-scroll-pane]) [data-slot="filter-bar"] {
   position: sticky;
   top: 0;
   z-index: 10;
   margin-block: -8px;
   padding-block: 8px;
   background: var(--ui-bg);
-}
-@media (max-width: 760px) {
-  #main [data-slot="filter-bar"] {
-    position: sticky;
-    top: 0;
-    z-index: 10;
-    margin-block: -8px;
-    padding-block: 8px;
-    background: var(--ui-bg);
-  }
 }
 
 /*

@@ -199,10 +199,10 @@ export function InstancesPage() {
   const [adding, setAdding] = useState(false)
   const rows = data.data?.instances ?? []
   const latest = data.data?.latestVersion ?? null
-  // Down and needing a look first, then by name as the server sends them (TB-11).
+  // Down and needing a look first, then by name as the server sends them: Status high to low (TB-11).
   const sort = useSort(rows, {
     id: "instances",
-    rank: (r) => severity[r.health],
+    rank: "status",
     columns: {
       name: { label: "Instance", kind: "text", value: (r) => r.name },
       status: { label: "Status", kind: "number", words: RANK_WORDS, value: (r) => severity[r.health] },
@@ -1287,11 +1287,15 @@ export function InstanceDialog({
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="none">None</SelectItem>
-                    {(workers.data ?? []).map((w) => (
-                      <SelectItem key={w.id} value={w.id}>
-                        {w.name}
-                      </SelectItem>
-                    ))}
+                    {/* By name: the list says no more than the names, so the Workers page's offline-first order would
+                        look random here. */}
+                    {[...(workers.data ?? [])]
+                      .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base", numeric: true }))
+                      .map((w) => (
+                        <SelectItem key={w.id} value={w.id}>
+                          {w.name}
+                        </SelectItem>
+                      ))}
                   </SelectContent>
                 </Select>
               )}

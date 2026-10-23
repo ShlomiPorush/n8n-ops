@@ -2,15 +2,15 @@ import { ChevronDown, Funnel, Search } from "lucide-react"
 import { Popover as PopoverPrimitive } from "radix-ui"
 import * as React from "react"
 import { SortButton, type SortControl, toolButton } from "@/components/ui/table"
-import { SEARCH_PAUSE_MS } from "@/lib/behavior"
+import { LIST_WAIT_MS, SEARCH_PAUSE_MS } from "@/lib/behavior"
 import { cn } from "@/lib/utils"
 
 /*
  * The shared filter bar of every list (MP-1, MP-3, MP-6, TB-17): a search with the list's Sort button beside
  * it, the common pickers, and the rarely used filters behind a Filters button at every size, whose badge counts
  * those in use. Under the bar one line holds the count, "Clear filters", and the Sort button of a list with no
- * search. The bar stays in sight while its list scrolls (NL-16), and a new filter or search starts the list at
- * its first row (TB-7).
+ * search. The bar stays in sight wherever its list scrolls, at every width (NL-16, index.css), and a new filter
+ * or search starts the list at its first row (TB-7).
  */
 
 export type PickerOption = {
@@ -220,10 +220,52 @@ export function PickerContent({
 }
 
 /**
+ * What a search that waits for a pause holds between keys (SR-9), free of React for the tests: `show` draws the
+ * text in the box, `send` asks for it once typing has paused.
+ */
+export function searchDraft(initial: string, show: (text: string) => void, send: (text: string) => void) {
+  let sent = initial
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const cancel = () => {
+    clearTimeout(timer)
+    timer = undefined
+  }
+  const reset = (value: string) => {
+    cancel()
+    sent = value
+    show(value)
+  }
+  return {
+    /** A key typed: the text shows at once and is asked for once typing pauses. */
+    type(text: string) {
+      show(text)
+      cancel()
+      if (text === sent) return
+      timer = setTimeout(() => {
+        timer = undefined
+        sent = text
+        send(text)
+      }, SEARCH_PAUSE_MS)
+    },
+    /** The value the list holds now: unless it is the one this box sent, it was set from outside and wins. */
+    sync(value: string) {
+      if (value !== sent) reset(value)
+    },
+    /** Clear filters: the value replaces what is typed and a search still on its way is dropped. */
+    reset,
+    cancel,
+  }
+}
+
+/** Counts the clicks on a filter bar's "Clear filters", so its search drops what was typed (SR-9). */
+const ClearsContext = React.createContext(0)
+
+/**
  * A list search: the whole box focuses its field and turns ink while typing (FS-1). With `debounce` (a list
  * searched on the server) what is typed shows at once and `onChange` follows once typing pauses for 300ms, so a
- * word is one request and one address change, not one per key (SR-9). A value set from outside (Clear filters,
- * a link) replaces what the box shows.
+ * word is one request and one address change, not one per key (SR-9). A value set from outside (a link) and
+ * "Clear filters" replace what the box shows and drop a search still on its way, also when the value itself
+ * does not change (nothing was sent yet).
  */
 export function SearchBox({
   value,
@@ -239,23 +281,21 @@ export function SearchBox({
   debounce?: boolean
 }) {
   const [text, setText] = React.useState(value)
-  const sent = React.useRef(value)
   // The latest handler: the one of the render that started the pause may write over filters changed since.
   const send = React.useRef(onChange)
   send.current = onChange
+  const [draft] = React.useState(() => searchDraft(value, setText, (t) => send.current(t)))
+  React.useEffect(() => draft.cancel, [draft])
+  React.useEffect(() => draft.sync(value), [draft, value])
+  const clears = React.useContext(ClearsContext)
+  const seenClears = React.useRef(clears)
+  const latest = React.useRef(value)
+  latest.current = value
   React.useEffect(() => {
-    if (value === sent.current) return
-    sent.current = value
-    setText(value)
-  }, [value])
-  React.useEffect(() => {
-    if (!debounce || text === sent.current) return
-    const timer = setTimeout(() => {
-      sent.current = text
-      send.current(text)
-    }, SEARCH_PAUSE_MS)
-    return () => clearTimeout(timer)
-  }, [debounce, text])
+    if (clears === seenClears.current) return
+    seenClears.current = clears
+    draft.reset(latest.current)
+  }, [draft, clears])
   return (
     <label
       className={cn(
@@ -269,7 +309,7 @@ export function SearchBox({
         aria-label={label}
         placeholder={label}
         value={debounce ? text : value}
-        onChange={(e) => (debounce ? setText(e.target.value) : onChange(e.target.value))}
+        onChange={(e) => (debounce ? draft.type(e.target.value) : onChange(e.target.value))}
         className="h-full min-w-0 flex-1 bg-transparent text-body outline-none placeholder:text-muted-foreground"
       />
     </label>
@@ -280,13 +320,46 @@ export function SearchBox({
 const scrollerOf = (el: HTMLElement) => el.closest<HTMLElement>("[data-scroll-pane]") ?? document.getElementById("main")
 
 /**
- * Brings a list back to its first row when `key` (its filters and search) changes: at once, in the next frame,
- * and again in the frame after the new rows (`drawn`) arrive, as the old content's height can carry the scroll
- * down meanwhile. It scrolls only when the top of the list is above view, and only as far as the filter bar's
- * place, read from what precedes it since the bar itself may be stuck (TB-7).
+ * Whether a list goes to its first row once more when the rows of new filters come (TB-7), free of React for
+ * the tests. It waits for the request of those filters to end, not for rows that look new: a list whose new
+ * filters were cached shows their rows at once, and a refresh that brings the same rows changes nothing. It
+ * gives up once the user scrolls the list, or when no answer came within `LIST_WAIT_MS`, so a later refresh
+ * never moves the list under the user.
  */
-function useFirstRowOnChange(bar: React.RefObject<HTMLElement | null>, key: string | undefined, drawn: unknown) {
-  const pending = React.useRef<{ drawn: unknown } | null>(null)
+export function firstRowReset(now: () => number = () => performance.now()) {
+  let until: number | null = null
+  return {
+    /** New filters, while their rows are `loading` or not; rows already drawn need no second reset. */
+    changed(loading: boolean) {
+      until = loading ? now() + LIST_WAIT_MS : null
+    },
+    /** The user scrolled the list: it stays where they put it. */
+    scrolled() {
+      until = null
+    },
+    /** After a render: true once, when the request of the new filters has ended in time. */
+    loaded(loading: boolean): boolean {
+      if (until === null || loading) return false
+      const due = now() <= until
+      until = null
+      return due
+    },
+  }
+}
+
+/** Keys that scroll the list when pressed outside a text field. */
+const SCROLL_KEYS = new Set(["PageUp", "PageDown", "Home", "End", "ArrowUp", "ArrowDown", " "])
+const typing = (el: EventTarget | null) =>
+  el instanceof HTMLElement && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))
+
+/**
+ * Brings a list back to its first row when `key` (its filters and search) changes: at once, in the next frame,
+ * and, while its rows are `loading`, again in the frame after their request ends, as the old content's height
+ * can carry the scroll down meanwhile (`firstRowReset`). It scrolls only when the top of the list is above view,
+ * and only as far as the filter bar's place, read from what precedes it since the bar itself may be stuck (TB-7).
+ */
+function useFirstRowOnChange(bar: React.RefObject<HTMLElement | null>, key: string | undefined, loading: boolean) {
+  const [reset] = React.useState(() => firstRowReset())
   const lastKey = React.useRef(key)
   const toTop = React.useCallback(() => {
     const el = bar.current
@@ -299,21 +372,40 @@ function useFirstRowOnChange(bar: React.RefObject<HTMLElement | null>, key: stri
     const place = Math.max(0, scroller.scrollTop + edge - scroller.getBoundingClientRect().top)
     if (scroller.scrollTop > place) scroller.scrollTop = place
   }, [bar])
-  // biome-ignore lint/correctness/useExhaustiveDependencies: runs when the filters change, not the rows
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs when the filters change, not when they load
   React.useLayoutEffect(() => {
     if (key === undefined || key === lastKey.current) return
     lastKey.current = key
-    pending.current = { drawn }
+    reset.changed(loading)
     toTop()
     const frame = requestAnimationFrame(toTop)
     return () => cancelAnimationFrame(frame)
-  }, [key, toTop])
+  }, [key, toTop, reset])
   React.useEffect(() => {
-    if (!pending.current || drawn === pending.current.drawn || drawn == null) return
-    pending.current = null
+    if (!reset.loaded(loading)) return
     const frame = requestAnimationFrame(toTop)
     return () => cancelAnimationFrame(frame)
-  }, [drawn, toTop])
+  }, [loading, toTop, reset])
+  // A wheel, a touch, the scroll bar or a scrolling key, not the scroll this hook makes itself.
+  React.useEffect(() => {
+    const scroller = bar.current && scrollerOf(bar.current)
+    if (!scroller) return
+    const onScroll = () => reset.scrolled()
+    // The scroll bar is the scroller itself; a press on a row or a control is not a scroll.
+    const onPress = (e: PointerEvent) => e.target === scroller && reset.scrolled()
+    const onKey = (e: KeyboardEvent) => SCROLL_KEYS.has(e.key) && !typing(e.target) && reset.scrolled()
+    const passive = { passive: true }
+    scroller.addEventListener("wheel", onScroll, passive)
+    scroller.addEventListener("touchmove", onScroll, passive)
+    scroller.addEventListener("pointerdown", onPress, passive)
+    scroller.addEventListener("keydown", onKey, passive)
+    return () => {
+      scroller.removeEventListener("wheel", onScroll)
+      scroller.removeEventListener("touchmove", onScroll)
+      scroller.removeEventListener("pointerdown", onPress)
+      scroller.removeEventListener("keydown", onKey)
+    }
+  }, [bar, reset])
 }
 
 /** The first control a person can use in an element. */
@@ -335,7 +427,7 @@ export function FilterBar({
   count,
   onClear,
   listKey,
-  drawn,
+  loading = false,
 }: {
   views?: React.ReactNode
   search?: React.ReactNode
@@ -352,15 +444,19 @@ export function FilterBar({
   onClear?: () => void
   /** The list's filters and search in one value; a new one starts the list at its first row (TB-7). */
   listKey?: string
-  /** The rows on screen, so the list starts at its first row again once new ones are drawn (TB-7). */
-  drawn?: unknown
+  /**
+   * While the rows of the filters are on their way (the request runs, or older rows stand in for them), so the
+   * list starts at its first row again once that request ends (TB-7).
+   */
+  loading?: boolean
 }) {
   const [open, setOpen] = React.useState(false)
+  const [clears, setClears] = React.useState(0)
   const panelId = React.useId()
   const bar = React.useRef<HTMLDivElement>(null)
   const panel = React.useRef<HTMLDivElement>(null)
   const opened = React.useRef(false)
-  useFirstRowOnChange(bar, listKey, drawn)
+  useFirstRowOnChange(bar, listKey, loading)
   // Opening the rare filters moves the focus to the first of them (MP-6).
   React.useEffect(() => {
     if (!open || !opened.current) return
@@ -376,7 +472,11 @@ export function FilterBar({
         <div className="flex flex-wrap items-center gap-2">
           {views && <div className="max-md:basis-full">{views}</div>}
           {/* On a phone the search keeps its line with Sort and Filters (MP-6). */}
-          {search && <div className="w-64 max-md:min-w-0 max-md:flex-1 max-md:basis-0">{search}</div>}
+          {search && (
+            <div className="w-64 max-md:min-w-0 max-md:flex-1 max-md:basis-0">
+              <ClearsContext.Provider value={clears}>{search}</ClearsContext.Provider>
+            </div>
+          )}
           {search && sortButton}
           {more && (
             <button
@@ -427,7 +527,15 @@ export function FilterBar({
             </span>
           )}
           {onClear && (
-            <button type="button" onClick={onClear} className="font-semibold text-ink underline underline-offset-3">
+            <button
+              type="button"
+              onClick={() => {
+                // The search drops what is typed but not sent yet, which the address does not hold (SR-9).
+                setClears((c) => c + 1)
+                onClear()
+              }}
+              className="font-semibold text-ink underline underline-offset-3"
+            >
               Clear filters
             </button>
           )}

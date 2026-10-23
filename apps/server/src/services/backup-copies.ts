@@ -9,6 +9,7 @@ import {
   type Leftover,
   workerJobs,
 } from "../db/schema.ts"
+import { instanceSubject } from "./alert-routing.ts"
 import { enqueueAlert, setCondition } from "./alerts.ts"
 import { backupAlerts, backupCondition } from "./backup-alerts.ts"
 import { type Destination, openStore } from "./destinations/index.ts"
@@ -187,7 +188,12 @@ async function writeCopy(ctx: Ctx, copyId: string) {
       .where(eq(backupCopies.id, copyId))
     if (final) {
       ctx.log.warn("backup copy failed", { instance: name, destination: destination.name, error: message })
-      await enqueueAlert(ctx, "backup", backupAlerts.failed(name, message, destination.name))
+      await enqueueAlert(
+        ctx,
+        "backup",
+        backupAlerts.failed(name, message, destination.name),
+        instanceSubject(run.instanceId),
+      )
     }
     await settleRun(ctx, run.id)
   }
@@ -280,6 +286,7 @@ async function writeCopy(ctx: Ctx, copyId: string) {
       .where(eq(backupCopies.id, copyId))
     await setCondition(ctx, backupCondition(run.instanceId, destination.id), false, {
       kind: "backup",
+      subject: instanceSubject(run.instanceId),
       start: () => backupAlerts.stale(name, 0, destination.name),
       clear: () => backupAlerts.working(name, destination.name),
     })
@@ -350,7 +357,7 @@ export async function failRun(ctx: Ctx, runId: string, error: string) {
   await removeSpool(spoolDir(ctx), runId)
   const name = await targetName(ctx, run.instanceId)
   ctx.log.warn("backup failed", { instance: name, error })
-  await enqueueAlert(ctx, "backup", backupAlerts.failed(name, error))
+  await enqueueAlert(ctx, "backup", backupAlerts.failed(name, error), instanceSubject(run.instanceId))
   changed(ctx, "backups", "overview", "instances")
 }
 

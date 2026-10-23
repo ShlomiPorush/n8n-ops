@@ -16,6 +16,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import { FieldError } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
@@ -26,6 +27,7 @@ import { formatDateTime, useTimeZone } from "@/lib/time"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
 import { DestinationsSection } from "@/pages/destinations"
+import { routesFromForm, routesToForm, TopicRoutes, topicProblem } from "@/pages/topic-routes"
 
 /** What the two designs are; the same words in both apps. */
 const designHint =
@@ -35,7 +37,18 @@ export type FieldDef = {
   name: string
   label: string
   hint?: string
-  type?: "text" | "number" | "password" | "switch" | "time" | "list" | "weekday" | "design" | "timezone"
+  type?:
+    | "text"
+    | "number"
+    | "password"
+    | "switch"
+    | "time"
+    | "list"
+    | "weekday"
+    | "design"
+    | "timezone"
+    | "topic"
+    | "routes"
   placeholder?: string
 }
 
@@ -93,6 +106,26 @@ export const forms: Record<string, { title: string; description: string; fields:
     fields: [
       { name: "botToken", label: "Bot token", type: "password" },
       { name: "chatId", label: "Chat ID", placeholder: "-100…" },
+      {
+        name: "defaultThreadId",
+        label: "Default topic",
+        placeholder: "General",
+        hint: "In a group with topics, the topic for alerts no route sends elsewhere. Its number is in a message link: t.me/c/…/12/345 is topic 12. Empty: General.",
+        type: "topic",
+      },
+      {
+        name: "accessThreadId",
+        label: "Access requests topic",
+        placeholder: "Same as the default topic",
+        hint: "The topic for agent access requests. Empty: the default topic.",
+        type: "topic",
+      },
+      {
+        name: "routes",
+        label: "Topic routes",
+        hint: "Alerts go to the topic of the first route they match, by instance, workflow name (a pattern, case doesn't matter) or workflow tag. Health and backup alerts match by instance only. Tags are read with the workflow list, every 30 minutes.",
+        type: "routes",
+      },
     ],
   },
   email: {
@@ -357,6 +390,8 @@ const toForm = (def: { fields: FieldDef[] }, data: Record<string, unknown>) =>
       if (f.type === "password") return [f.name, undefined]
       if (f.type === "list") return [f.name, Array.isArray(v) ? v.join(", ") : String(v ?? "")]
       if (f.type === "switch") return [f.name, Boolean(v)]
+      if (f.type === "routes") return [f.name, routesToForm(v)]
+      if (f.type === "topic") return [f.name, v === null || v === undefined ? "" : String(v)]
       return [f.name, v ?? ""]
     }),
   ) as Record<string, unknown>
@@ -393,6 +428,8 @@ export function SettingsForm({ section }: { section: string }) {
         // An unchanged secret is never sent again; null removes it.
         if (v === null || (typeof v === "string" && v)) out[f.name] = v
       } else if (f.type === "number") out[f.name] = Number(v)
+      else if (f.type === "topic") out[f.name] = String(v ?? "").trim() ? Number(v) : null
+      else if (f.type === "routes") out[f.name] = routesFromForm(v)
       else if (f.type === "list")
         out[f.name] = String(v ?? "")
           .split(/[,;\s]+/)
@@ -429,8 +466,31 @@ export function SettingsForm({ section }: { section: string }) {
         // Locked while a save is on its way, so nothing typed meanwhile is lost when the saved values come back.
         <fieldset disabled={save.isPending} className="contents">
           {def.fields.map((f) => (
-            <SettingRow key={f.name} htmlFor={f.name} label={f.label} hint={f.hint} inline={f.type === "switch"}>
-              {f.type === "switch" ? (
+            <SettingRow
+              key={f.name}
+              htmlFor={f.type === "routes" ? undefined : f.name}
+              label={f.label}
+              hint={f.hint}
+              inline={f.type === "switch"}
+              wide={f.type === "routes"}
+            >
+              {f.type === "routes" ? (
+                <TopicRoutes value={values[f.name]} onChange={(v) => set(f.name, v)} disabled={save.isPending} />
+              ) : f.type === "topic" ? (
+                <div className="grid w-full gap-1">
+                  <Input
+                    id={f.name}
+                    inputMode="numeric"
+                    className="tabular-nums"
+                    placeholder={f.placeholder}
+                    value={String(values[f.name] ?? "")}
+                    onChange={(e) => set(f.name, e.target.value)}
+                  />
+                  {topicProblem(String(values[f.name] ?? "")) && (
+                    <FieldError>{topicProblem(String(values[f.name] ?? ""))}</FieldError>
+                  )}
+                </div>
+              ) : f.type === "switch" ? (
                 <Switch id={f.name} checked={Boolean(values[f.name])} onCheckedChange={(v) => set(f.name, v)} />
               ) : f.type === "password" ? (
                 <SecretField
@@ -527,12 +587,19 @@ function TestRow({
   unsaved: boolean
 }) {
   const t = tests[section]
-  const test = useApiMutation<void>("POST", t.path, { success: t.done })
+  const test = useApiMutation<void, { topicNotFound?: boolean }>("POST", t.path)
   const missing = t.needs(data)
+  const send = () =>
+    test.mutate(undefined, {
+      onSuccess: (r) =>
+        r?.topicNotFound
+          ? toast.warning("The default topic was not found, so the test message went to General.")
+          : toast.success(t.done),
+    })
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-line px-pad-x py-3">
       <Button
-        onClick={() => test.mutate()}
+        onClick={send}
         disabled={test.isPending || missing !== null}
         title={missing ? `Save ${missing} first` : undefined}
       >

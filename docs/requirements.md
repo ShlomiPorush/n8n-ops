@@ -150,6 +150,7 @@ The system must not recreate the inbox that is deleted today. This is a hard req
 - Messages are queued in the database and retried every 5 minutes on failure, respecting Telegram's `retry_after`. There is no hourly cap.
 - Messages have buttons "Resolved" and "Mute 24 h". Telegram calls n8n-ops by webhook, verified with the secret-token header, and presses are accepted only from the configured chat. Every press is audited.
 - The chat ID is configuration.
+- Forum topics (added after v1): in a group with topics, an ordered list of routes sends an alert to the topic of the first route it matches, by instance, workflow name pattern or workflow tag (health and backup alerts match by instance only), else to a default topic, else to General. Access requests have a topic of their own. Grouping and edits stay within one topic. When a topic is gone, the message goes to General with a line saying so.
 
 **Email (reports):** daily and weekly report with open problems by instance, top failing workflows, health incidents, backup status, version drift. Schedule configurable.
 

@@ -1,9 +1,32 @@
-import { and, asc, desc, eq, gt, inArray, lte } from "drizzle-orm"
+import { and, asc, desc, eq, gt, inArray, isNull, lte } from "drizzle-orm"
 import { type Ctx, changed } from "../context.ts"
-import { type AlertKind, alertGroups, alertOutbox, alertState, instances, problems } from "../db/schema.ts"
-import { clip, html, type InlineButton, Telegram, TelegramError, TelegramHtml } from "./telegram.ts"
+import { type AlertKind, alertGroups, alertOutbox, alertState, instances, problems, workflows } from "../db/schema.ts"
+import { type AlertSubject, resolveThread, sendRouted, topicGoneNote } from "./alert-routing.ts"
+import { clip, html, type InlineButton, isMessageGone, Telegram, TelegramError, TelegramHtml } from "./telegram.ts"
 
 type ProblemRow = typeof problems.$inferSelect
+type GroupRow = typeof alertGroups.$inferSelect
+
+/**
+ * The forum topic for an alert about `subject`, from Settings > Telegram. Null is the General topic. A workflow's
+ * tags come from the workflow list, which the inventory sync refreshes every 30 minutes.
+ */
+export async function threadFor(ctx: Ctx, subject: AlertSubject): Promise<number | null> {
+  const telegram = await ctx.settings.get("telegram")
+  return resolveThread(telegram, subject, (pattern) =>
+    ctx.log.warn("a Telegram route's workflow pattern took too long and is ignored until restart", { pattern }),
+  )
+}
+
+async function problemSubject(ctx: Ctx, problem: ProblemRow): Promise<AlertSubject> {
+  const { routes } = await ctx.settings.get("telegram")
+  if (!routes.some((r) => r.tag)) return { instanceId: problem.instanceId, workflowName: problem.workflowName }
+  const [row] = await ctx.db
+    .select({ tags: workflows.tags })
+    .from(workflows)
+    .where(and(eq(workflows.instanceId, problem.instanceId), eq(workflows.workflowId, problem.workflowId)))
+  return { instanceId: problem.instanceId, workflowName: problem.workflowName, tags: row?.tags ?? [] }
+}
 
 /** Queues a problem alert. It waits for the grouping window so problems with the same error go out together. */
 export async function enqueueProblemAlert(ctx: Ctx, problem: ProblemRow, reason: "new" | "regression") {
@@ -14,16 +37,22 @@ export async function enqueueProblemAlert(ctx: Ctx, problem: ProblemRow, reason:
     kind: "problem",
     groupKey: problem.errorMessage,
     problemId: problem.id,
+    threadId: await threadFor(ctx, await problemSubject(ctx, problem)),
     text: reason,
     sendAfter: new Date(Date.now() + alerts.groupingWindowSec * 1000),
   })
 }
 
-/** Queues an immediate alert (health, backup, test). */
-export async function enqueueAlert(ctx: Ctx, kind: Exclude<AlertKind, "problem">, text: TelegramHtml) {
+/** Queues an immediate alert (health, backup, test). `subject` picks its forum topic. */
+export async function enqueueAlert(
+  ctx: Ctx,
+  kind: Exclude<AlertKind, "problem">,
+  text: TelegramHtml,
+  subject: AlertSubject = {},
+) {
   const alerts = await ctx.settings.get("alerts")
   if ((kind === "health" && !alerts.health) || (kind === "backup" && !alerts.backup)) return
-  await ctx.db.insert(alertOutbox).values({ kind, text: String(text) })
+  await ctx.db.insert(alertOutbox).values({ kind, text: String(text), threadId: await threadFor(ctx, subject) })
 }
 
 /**
@@ -34,7 +63,12 @@ export async function setCondition(
   ctx: Ctx,
   key: string,
   active: boolean,
-  { kind, start, clear }: { kind: "health" | "backup"; start: () => TelegramHtml; clear?: () => TelegramHtml },
+  {
+    kind,
+    start,
+    clear,
+    subject,
+  }: { kind: "health" | "backup"; start: () => TelegramHtml; clear?: () => TelegramHtml; subject?: AlertSubject },
 ) {
   const [row] = await ctx.db.select().from(alertState).where(eq(alertState.key, key))
   if (active && !row?.active) {
@@ -44,10 +78,10 @@ export async function setCondition(
       .insert(alertState)
       .values({ key, active: true, since: new Date(), detail })
       .onConflictDoUpdate({ target: alertState.key, set: { active: true, since: new Date(), detail } })
-    await enqueueAlert(ctx, kind, text)
+    await enqueueAlert(ctx, kind, text, subject)
   } else if (!active && row?.active) {
     await ctx.db.update(alertState).set({ active: false, since: new Date() }).where(eq(alertState.key, key))
-    if (clear) await enqueueAlert(ctx, kind, clear())
+    if (clear) await enqueueAlert(ctx, kind, clear(), subject)
   }
 }
 
@@ -60,8 +94,34 @@ export type GroupLine = {
   status: string
 }
 
+/** The note a group's message keeps in every edit when it went to General because its topic was gone. */
+const groupNote = (group: Pick<GroupRow, "threadId" | "fellBack">) =>
+  group.fellBack && group.threadId !== null ? topicGoneNote(group.threadId) : undefined
+
+const groupLocks = new Map<string, Promise<unknown>>()
+
+/**
+ * Runs one change of a group's message at a time, so a button press and a dispatch that adds problems never edit
+ * from stale reads (the last edit would drop the other's change). Each reads the group again inside. One server
+ * process, as supported.
+ */
+function withGroup<T>(groupId: string, fn: () => Promise<T>): Promise<T> {
+  const run = (groupLocks.get(groupId) ?? Promise.resolve()).catch(() => undefined).then(fn)
+  const tail = run.catch(() => undefined)
+  groupLocks.set(groupId, tail)
+  void tail.then(() => {
+    if (groupLocks.get(groupId) === tail) groupLocks.delete(groupId)
+  })
+  return run
+}
+
 /** Text of a grouped problem message. */
-export function renderProblemGroup(error: string, lines: GroupLine[], footer?: TelegramHtml): TelegramHtml {
+export function renderProblemGroup(
+  error: string,
+  lines: GroupLine[],
+  footer?: TelegramHtml,
+  note?: TelegramHtml,
+): TelegramHtml {
   const regression = lines.some((l) => l.regression)
   const title =
     lines.length === 1
@@ -79,6 +139,7 @@ export function renderProblemGroup(error: string, lines: GroupLine[], footer?: T
     )
   if (lines.length > 15) body.push(html`…and ${lines.length - 15} more`)
   return TelegramHtml.join([
+    ...(note ? [note] : []),
     html`<b>${title}</b>`,
     html`<code>${clip(error, 500)}</code>`,
     html``,
@@ -90,7 +151,13 @@ export function renderProblemGroup(error: string, lines: GroupLine[], footer?: T
 export async function telegramClient(ctx: Ctx) {
   const tg = await ctx.settings.get("telegram")
   if (!tg.botTokenEnc || !tg.chatId) return null
-  return { api: new Telegram(ctx.secrets.decrypt(tg.botTokenEnc)), chatId: tg.chatId, secret: tg.webhookSecret }
+  return {
+    api: new Telegram(ctx.secrets.decrypt(tg.botTokenEnc)),
+    chatId: tg.chatId,
+    secret: tg.webhookSecret,
+    defaultThreadId: tg.defaultThreadId,
+    accessThreadId: tg.accessThreadId ?? tg.defaultThreadId,
+  }
 }
 
 async function groupLines(ctx: Ctx, problemIds: string[]): Promise<{ lines: GroupLine[]; first?: ProblemRow }> {
@@ -151,55 +218,116 @@ export async function dispatchAlerts(ctx: Ctx) {
     return
   }
 
+  // Problems with the same error go out as one message, but only within one forum topic.
   const groups = new Map<string, typeof due>()
   for (const row of due.filter((d) => d.kind === "problem")) {
-    const key = row.groupKey ?? row.id
+    const key = JSON.stringify([row.threadId, row.groupKey ?? row.id])
     groups.set(key, [...(groups.get(key) ?? []), row])
   }
+  const fellBack = (threadId: number | null) =>
+    ctx.log.warn("Telegram topic not found; the alert went to General", { threadId })
 
-  for (const [groupKey, rows] of groups) {
+  for (const rows of groups.values()) {
     const ids = rows.map((r) => r.id)
+    const groupKey = rows[0]?.groupKey ?? rows[0]?.id ?? ""
+    const threadId = rows[0]?.threadId ?? null
     try {
-      const newIds = rows.map((r) => r.problemId).filter((id): id is string => Boolean(id))
+      let newIds = rows.map((r) => r.problemId).filter((id): id is string => Boolean(id))
       const since = new Date(Date.now() - settings.editWindowMin * 60_000)
+      // A message whose send failed (closed, or never given its ID) never takes later problems.
       const [recent] = await ctx.db
         .select()
         .from(alertGroups)
-        .where(and(eq(alertGroups.groupKey, groupKey), gt(alertGroups.createdAt, since)))
+        .where(
+          and(
+            eq(alertGroups.groupKey, groupKey),
+            threadId === null ? isNull(alertGroups.threadId) : eq(alertGroups.threadId, threadId),
+            gt(alertGroups.createdAt, since),
+            gt(alertGroups.telegramMessageId, 0),
+            isNull(alertGroups.closedAt),
+          ),
+        )
         .orderBy(desc(alertGroups.createdAt))
         .limit(1)
       if (recent && settings.editWindowMin > 0) {
-        const all = [...new Set([...recent.problemIds, ...newIds])]
-        const { lines, first } = await groupLines(ctx, all)
-        await tg.api.edit(
-          tg.chatId,
-          recent.telegramMessageId,
-          renderProblemGroup(groupKey, lines),
-          await groupButtons(ctx, recent.id, first?.id),
-        )
-        await ctx.db.update(alertGroups).set({ problemIds: all }).where(eq(alertGroups.id, recent.id))
-        await ctx.db
-          .update(alertOutbox)
-          .set({ status: "merged", sentAt: new Date(), telegramMessageId: recent.telegramMessageId })
-          .where(inArray(alertOutbox.id, ids))
-      } else {
-        const { lines, first } = await groupLines(ctx, newIds)
-        const [group] = await ctx.db
-          .insert(alertGroups)
-          .values({ groupKey, telegramMessageId: 0, problemIds: newIds })
-          .returning()
-        if (!group) throw new Error("could not record the alert group")
-        const messageId = await tg.api.send(
-          tg.chatId,
-          renderProblemGroup(groupKey, lines),
-          await groupButtons(ctx, group.id, first?.id),
-        )
-        await ctx.db.update(alertGroups).set({ telegramMessageId: messageId }).where(eq(alertGroups.id, group.id))
-        await ctx.db
-          .update(alertOutbox)
-          .set({ status: "sent", sentAt: new Date(), telegramMessageId: messageId })
-          .where(inArray(alertOutbox.id, ids))
+        const outcome = await withGroup(recent.id, async () => {
+          const [current] = await ctx.db.select().from(alertGroups).where(eq(alertGroups.id, recent.id))
+          if (!current || current.closedAt) return { merged: false as const }
+          const all = [...new Set([...current.problemIds, ...newIds])]
+          const { lines, first } = await groupLines(ctx, all)
+          try {
+            await tg.api.edit(
+              tg.chatId,
+              current.telegramMessageId,
+              renderProblemGroup(groupKey, lines, undefined, groupNote(current)),
+              await groupButtons(ctx, current.id, first?.id),
+            )
+          } catch (error) {
+            if (!isMessageGone(error)) throw error
+            // The message is gone (deleted with its topic). Its problems are queued again and the group closed in one
+            // step, so they go out with these in the next message, however late a failed send makes it.
+            const carried = current.problemIds.filter((id) => !newIds.includes(id))
+            const queued = await ctx.db.transaction(async (tx) => {
+              await tx.update(alertGroups).set({ closedAt: new Date() }).where(eq(alertGroups.id, current.id))
+              if (!carried.length) return []
+              return tx
+                .insert(alertOutbox)
+                .values(
+                  carried.map((problemId) => ({
+                    kind: "problem" as const,
+                    groupKey,
+                    problemId,
+                    threadId,
+                    text: "again",
+                  })),
+                )
+                .returning({ id: alertOutbox.id })
+            })
+            return { merged: false as const, carry: all, queued: queued.map((q) => q.id) }
+          }
+          await ctx.db.update(alertGroups).set({ problemIds: all }).where(eq(alertGroups.id, current.id))
+          await ctx.db
+            .update(alertOutbox)
+            .set({ status: "merged", sentAt: new Date(), telegramMessageId: current.telegramMessageId })
+            .where(inArray(alertOutbox.id, ids))
+          return { merged: true as const }
+        })
+        if (outcome.merged) continue
+        if (outcome.carry) {
+          newIds = outcome.carry
+          ids.push(...(outcome.queued ?? []))
+        }
       }
+      const { lines, first } = await groupLines(ctx, newIds)
+      const [group] = await ctx.db
+        .insert(alertGroups)
+        .values({ groupKey, threadId, telegramMessageId: 0, problemIds: newIds })
+        .returning()
+      if (!group) throw new Error("could not record the alert group")
+      const buttons = await groupButtons(ctx, group.id, first?.id)
+      let sent: Awaited<ReturnType<typeof sendRouted>>
+      try {
+        sent = await sendRouted(
+          tg.api,
+          tg.chatId,
+          threadId,
+          (note) => renderProblemGroup(groupKey, lines, undefined, note),
+          buttons,
+        )
+      } catch (error) {
+        // Kept, not deleted: if Telegram did take the message, its buttons point at this group.
+        await ctx.db.update(alertGroups).set({ closedAt: new Date() }).where(eq(alertGroups.id, group.id))
+        throw error
+      }
+      if (sent.fellBack) fellBack(threadId)
+      await ctx.db
+        .update(alertGroups)
+        .set({ telegramMessageId: sent.messageId, fellBack: sent.fellBack })
+        .where(eq(alertGroups.id, group.id))
+      await ctx.db
+        .update(alertOutbox)
+        .set({ status: "sent", sentAt: new Date(), telegramMessageId: sent.messageId })
+        .where(inArray(alertOutbox.id, ids))
     } catch (error) {
       await markRetry(ctx, ids, error, settings.retryMin)
     }
@@ -207,10 +335,14 @@ export async function dispatchAlerts(ctx: Ctx) {
 
   for (const row of due.filter((d) => d.kind !== "problem")) {
     try {
-      const messageId = await tg.api.send(tg.chatId, TelegramHtml.stored(row.text))
+      const stored = TelegramHtml.stored(row.text)
+      const sent = await sendRouted(tg.api, tg.chatId, row.threadId, (note) =>
+        note ? TelegramHtml.join([note, stored]) : stored,
+      )
+      if (sent.fellBack) fellBack(row.threadId)
       await ctx.db
         .update(alertOutbox)
-        .set({ status: "sent", sentAt: new Date(), telegramMessageId: messageId })
+        .set({ status: "sent", sentAt: new Date(), telegramMessageId: sent.messageId })
         .where(eq(alertOutbox.id, row.id))
     } catch (error) {
       await markRetry(ctx, [row.id], error, settings.retryMin)
@@ -254,36 +386,49 @@ export async function handleTelegramCallback(ctx: Ctx, update: CallbackUpdate): 
   if (String(cb.message?.chat?.id) !== tg.chatId) return false
   const [action, groupId] = cb.data.split(":")
   if (!groupId || (action !== "r" && action !== "m")) return false
-  const [group] = await ctx.db.select().from(alertGroups).where(eq(alertGroups.id, groupId))
-  if (!group) {
-    await tg.api.answerCallback(cb.id, "This alert is no longer known.")
-    return true
-  }
-  const who = cb.from?.username ? `@${cb.from.username}` : (cb.from?.first_name ?? "someone")
-  const patch =
-    action === "r"
-      ? { status: "resolved" as const, resolvedAt: new Date(), mutedUntil: null }
-      : { status: "muted" as const, mutedUntil: new Date(Date.now() + 24 * 3600_000) }
-  if (group.problemIds.length) await ctx.db.update(problems).set(patch).where(inArray(problems.id, group.problemIds))
-  changed(ctx, "problems", "overview")
-  await ctx.audit({
-    actor: `telegram:${who}`,
-    action: action === "r" ? "Problem resolved" : "Problem muted for 24 hours",
-    target: `${group.problemIds.length} problem(s): ${clip(group.groupKey, 120)}`,
-    via: "telegram",
-  })
-  const { lines } = await groupLines(ctx, group.problemIds)
-  await tg.api.edit(
-    tg.chatId,
-    group.telegramMessageId,
-    renderProblemGroup(
-      group.groupKey,
-      lines,
-      html`<i>${action === "r" ? "Resolved" : "Muted for 24 hours"} by ${who}</i>`,
-    ),
+  const [known] = await ctx.db.select({ id: alertGroups.id }).from(alertGroups).where(eq(alertGroups.id, groupId))
+  // Answered at once: Telegram shows a spinner until then, and the change may wait for a dispatch editing this group.
+  await tg.api.answerCallback(
+    cb.id,
+    !known ? "This alert is no longer known." : action === "r" ? "Marked as resolved" : "Muted for 24 hours",
   )
-  await tg.api.answerCallback(cb.id, action === "r" ? "Marked as resolved" : "Muted for 24 hours")
-  return true
+  if (!known) return true
+  return withGroup(groupId, async () => {
+    const [group] = await ctx.db.select().from(alertGroups).where(eq(alertGroups.id, groupId))
+    if (!group) return true
+    const who = cb.from?.username ? `@${cb.from.username}` : (cb.from?.first_name ?? "someone")
+    const patch =
+      action === "r"
+        ? { status: "resolved" as const, resolvedAt: new Date(), mutedUntil: null }
+        : { status: "muted" as const, mutedUntil: new Date(Date.now() + 24 * 3600_000) }
+    if (group.problemIds.length) await ctx.db.update(problems).set(patch).where(inArray(problems.id, group.problemIds))
+    changed(ctx, "problems", "overview")
+    await ctx.audit({
+      actor: `telegram:${who}`,
+      action: action === "r" ? "Problem resolved" : "Problem muted for 24 hours",
+      target: `${group.problemIds.length} problem(s): ${clip(group.groupKey, 120)}`,
+      via: "telegram",
+    })
+    const { lines } = await groupLines(ctx, group.problemIds)
+    // The pressed message itself: its group may never have stored the ID (a send that timed out but arrived).
+    const messageId = cb.message?.message_id ?? group.telegramMessageId
+    try {
+      await tg.api.edit(
+        tg.chatId,
+        messageId,
+        renderProblemGroup(
+          group.groupKey,
+          lines,
+          html`<i>${action === "r" ? "Resolved" : "Muted for 24 hours"} by ${who}</i>`,
+          groupNote(group),
+        ),
+      )
+    } catch (error) {
+      // The problems changed already; the person still gets the answer.
+      ctx.log.warn("could not update the alert message", { groupId, error: (error as Error).message })
+    }
+    return true
+  })
 }
 
 let appliedWebhook = ""
@@ -301,8 +446,13 @@ export async function syncTelegramWebhook(ctx: Ctx) {
   ctx.log.info("Telegram webhook set", { url })
 }
 
+/** Sends a test message to the default topic. Says whether the topic was gone, so the message went to General. */
 export async function sendTestTelegram(ctx: Ctx) {
   const tg = await telegramClient(ctx)
   if (!tg) throw new Error("Telegram is not configured: set the bot token and chat ID.")
-  await tg.api.send(tg.chatId, html`<b>n8n-ops test message</b>\nAlerts will arrive here.`)
+  const text = html`<b>n8n-ops test message</b>\nAlerts will arrive here.`
+  const sent = await sendRouted(tg.api, tg.chatId, tg.defaultThreadId, (note) =>
+    note ? TelegramHtml.join([note, text]) : text,
+  )
+  return { topicNotFound: sent.fellBack }
 }

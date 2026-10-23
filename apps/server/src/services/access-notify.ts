@@ -2,6 +2,7 @@ import { and, eq, isNotNull, isNull, ne, type SQL } from "drizzle-orm"
 import type { Ctx } from "../context.ts"
 import { type AccessStatus, accessRequests, apiTokens, instances } from "../db/schema.ts"
 import { AccessError, approveAccess, denyAccess } from "./access.ts"
+import { sendRouted, topicGoneNote } from "./alert-routing.ts"
 import { type CallbackUpdate, telegramClient } from "./alerts.ts"
 import { button, type Email, formatDate, kv, mono, panel, panelText, paragraph, render } from "./email-layout.ts"
 import { sendEmail } from "./reports.ts"
@@ -210,7 +211,17 @@ export async function notifyAccess(ctx: Ctx) {
     const patch: Partial<typeof accessRequests.$inferInsert> = { notifyAttemptAt: new Date() }
     if (needTelegram && tg) {
       try {
-        patch.telegramMessageId = await tg.api.send(tg.chatId, renderAccessTelegram(info), buttons(r.id, link))
+        const text = renderAccessTelegram(info)
+        const sent = await sendRouted(
+          tg.api,
+          tg.chatId,
+          tg.accessThreadId,
+          (note) => (note ? TelegramHtml.join([note, text]) : text),
+          buttons(r.id, link),
+        )
+        if (sent.fellBack) ctx.log.warn("Telegram topic not found; the access request went to General")
+        patch.telegramMessageId = sent.messageId
+        patch.telegramMissingTopic = sent.fellBack ? tg.accessThreadId : null
       } catch (e) {
         errors.push(`Telegram: ${(e as Error).message}`)
       }
@@ -257,7 +268,9 @@ async function closeOutdated(ctx: Ctx) {
   )
   for (const { r, info } of outdated) {
     try {
-      await tg.api.edit(tg.chatId, r.telegramMessageId ?? 0, renderAccessTelegram(info, accessOutcome(r, timeZone)))
+      const text = renderAccessTelegram(info, accessOutcome(r, timeZone))
+      const note = r.telegramMissingTopic ? topicGoneNote(r.telegramMissingTopic) : undefined
+      await tg.api.edit(tg.chatId, r.telegramMessageId ?? 0, note ? TelegramHtml.join([note, text]) : text)
       // Marked as shown only if the status is still the one shown; if it changed meanwhile, the next run edits again.
       await ctx.db
         .update(accessRequests)

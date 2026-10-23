@@ -8,6 +8,8 @@ test.describe.configure({ mode: "serial" })
 
 type Call = { method: string; body: Record<string, unknown>; messageId?: number }
 const calls: Call[] = []
+/** Forum topics the stand-in answers as deleted, the way Telegram does. */
+const goneTopics = new Set<number>()
 let botApi: Server
 let page: Page
 let token = ""
@@ -25,10 +27,16 @@ test.beforeAll(async ({ browser }) => {
     })
     req.on("end", () => {
       const method = (req.url ?? "").split("/").pop() ?? ""
-      const sent = method === "sendMessage" ? ++messageId : undefined
-      calls.push({ method, body: raw ? JSON.parse(raw) : {}, messageId: sent })
-      const result = sent ? { message_id: sent } : true
+      const body = raw ? JSON.parse(raw) : {}
       res.writeHead(200, { "content-type": "application/json" })
+      if (method === "sendMessage" && goneTopics.has(body.message_thread_id)) {
+        calls.push({ method, body })
+        res.end(JSON.stringify({ ok: false, error_code: 400, description: "Bad Request: message thread not found" }))
+        return
+      }
+      const sent = method === "sendMessage" ? ++messageId : undefined
+      calls.push({ method, body, messageId: sent })
+      const result = sent ? { message_id: sent } : true
       res.end(JSON.stringify({ ok: true, result }))
     })
   })
@@ -219,4 +227,104 @@ test("a decision in n8n-ops updates the Telegram message too", async ({ request 
     )
     expect(edit).toBeTruthy()
   }).toPass({ timeout: 20_000 })
+})
+
+test("forum topics are set in Settings > Telegram and keep their order through Discard and Save", async () => {
+  await page.goto("/settings/telegram")
+  await page.getByLabel("Default topic").fill("12")
+  await page.getByLabel("Access requests topic").fill("34")
+  await page.getByRole("button", { name: "Add route" }).click()
+  await page.getByRole("combobox", { name: "Route 1 instance" }).click()
+  await page.getByRole("option", { name: "e2e-n8n", exact: true }).click()
+  await page.getByLabel("Route 1 topic").fill("21")
+  await page.getByRole("button", { name: "Add route" }).click()
+  await expect(page.getByText("Choose an instance, or type a workflow pattern or a tag.")).toBeVisible()
+  await page.getByLabel("Route 2 workflow pattern").fill("orders|leads")
+  await page.getByLabel("Route 2 topic").fill("22")
+  await expect(page.getByText("3 unsaved changes")).toBeVisible()
+  await page.getByRole("button", { name: "Save" }).click()
+  await expect(page.getByText("Settings saved")).toBeVisible()
+
+  await page.reload()
+  await expect(page.getByRole("combobox", { name: "Route 1 instance" })).toHaveText("e2e-n8n")
+  await expect(page.getByLabel("Route 2 workflow pattern")).toHaveValue("orders|leads")
+
+  // A new order is a change; Discard brings the saved order back.
+  await page.getByRole("button", { name: "Move route 2 up" }).click()
+  await expect(page.getByLabel("Route 1 workflow pattern")).toHaveValue("orders|leads")
+  await expect(page.getByText("1 unsaved change")).toBeVisible()
+  await page.getByRole("button", { name: "Discard" }).click()
+  await expect(page.getByRole("combobox", { name: "Route 1 instance" })).toHaveText("e2e-n8n")
+
+  // Editing a saved route is a change too, and a new order is saved.
+  await page.getByLabel("Route 1 topic").fill("23")
+  await expect(page.getByText("1 unsaved change")).toBeVisible()
+  await page.getByRole("button", { name: "Move route 1 down" }).click()
+  await page.getByRole("button", { name: "Save" }).click()
+  await expect(page.getByText("Settings saved")).toBeVisible()
+  await page.reload()
+  await expect(page.getByLabel("Route 1 workflow pattern")).toHaveValue("orders|leads")
+  await expect(page.getByLabel("Route 2 topic")).toHaveValue("23")
+})
+
+test("the test message and access requests go to their topics, and to General when the topic is gone", async ({
+  request,
+}) => {
+  const sends = () => calls.filter((c) => c.method === "sendMessage")
+  const before = sends().length
+  await page.goto("/settings/telegram")
+  await page.getByRole("button", { name: "Send test message" }).click()
+  await expect(page.getByText("Test message sent")).toBeVisible()
+  expect(
+    sends()
+      .slice(before)
+      .map((c) => c.body.message_thread_id),
+  ).toEqual([12])
+
+  const reason = "Read the topic routing of alerts (topics)"
+  await ask(request, reason)
+  expect((await announcement(reason)).body.message_thread_id).toBe(34)
+
+  goneTopics.add(12)
+  const tried = sends().length
+  await page.getByRole("button", { name: "Send test message" }).click()
+  await expect(page.getByText("The default topic was not found, so the test message went to General.")).toBeVisible()
+  const [first, again] = sends().slice(tried)
+  expect(first?.body.message_thread_id).toBe(12)
+  expect(again?.body.message_thread_id).toBeUndefined()
+  expect(String(again?.body.text)).toContain("Topic 12 was not found, so this went to General.")
+
+  // An access request whose topic is gone goes to General, and its note stays when the message shows the decision.
+  goneTopics.add(34)
+  const lost = "Read the topic routing of alerts (topic gone)"
+  const lostId = await ask(request, lost)
+  let fallback: Call | undefined
+  await expect(async () => {
+    // The refused try into topic 34 is recorded too, without a message ID.
+    fallback = calls.find((c) => c.method === "sendMessage" && c.messageId && String(c.body.text).includes(lost))
+    expect(fallback).toBeTruthy()
+  }).toPass({ timeout: 30_000 })
+  const sent = fallback
+  if (!sent) throw new Error("no message")
+  expect(sent.body.message_thread_id).toBeUndefined()
+  expect(String(sent.body.text)).toContain("Topic 34 was not found, so this went to General.")
+  await press(request, `xd:${lostId}`, Number(chatId), sent.messageId ?? 0)
+  await expect(async () => {
+    const edit = calls.find(
+      (c) =>
+        c.method === "editMessageText" &&
+        c.body.message_id === sent.messageId &&
+        String(c.body.text).includes("❌ <b>Denied</b> by "),
+    )
+    expect(String(edit?.body.text)).toContain("Topic 34 was not found, so this went to General.")
+  }).toPass({ timeout: 20_000 })
+  goneTopics.clear()
+
+  // Back to one chat without topics for the specs that follow.
+  for (let n = 2; n >= 1; n--) await page.getByRole("button", { name: `Remove route ${n}` }).click()
+  await page.getByLabel("Default topic").fill("")
+  await page.getByLabel("Access requests topic").fill("")
+  await page.getByRole("button", { name: "Save" }).click()
+  await expect(page.getByText("Settings saved")).toBeVisible()
+  await expect(page.getByText("No routes. Every alert goes to the default topic.")).toBeVisible()
 })

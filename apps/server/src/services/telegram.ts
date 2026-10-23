@@ -5,9 +5,31 @@ export class TelegramError extends Error {
     message: string,
     /** Seconds Telegram asked us to wait (HTTP 429). */
     readonly retryAfter?: number,
+    /** Telegram's `error_code`, when it answered (400, 403, 429...). */
+    readonly code?: number,
+    /** Telegram's own description, such as "Bad Request: message thread not found". */
+    readonly description?: string,
   ) {
     super(message)
   }
+}
+
+/** The forum topic is gone or closed: Telegram refused the message because of its `message_thread_id`. */
+export function isTopicGone(error: unknown) {
+  return (
+    error instanceof TelegramError &&
+    error.code === 400 &&
+    /message thread not found|TOPIC_(DELETED|CLOSED|ID_INVALID)/i.test(error.description ?? "")
+  )
+}
+
+/** The message to edit no longer exists (its topic was deleted, or someone deleted it). */
+export function isMessageGone(error: unknown) {
+  return (
+    error instanceof TelegramError &&
+    error.code === 400 &&
+    /message to edit not found|message can't be edited|MESSAGE_ID_INVALID/i.test(error.description ?? "")
+  )
 }
 
 export type InlineButton = { text: string; callback_data?: string; url?: string }
@@ -35,6 +57,7 @@ export class Telegram {
     const json = (await res.json().catch(() => ({}))) as {
       ok?: boolean
       result?: T
+      error_code?: number
       description?: string
       parameters?: { retry_after?: number }
     }
@@ -42,14 +65,23 @@ export class Telegram {
       throw new TelegramError(
         `Telegram ${method} failed: ${json.description ?? res.status}`,
         json.parameters?.retry_after,
+        json.error_code,
+        json.description,
       )
     }
     return json.result as T
   }
 
-  async send(chatId: string, text: TelegramHtml, buttons: InlineButton[][] = []): Promise<number> {
+  /** Sends a message, into the forum topic `threadId` when one is given (null or none: the chat's General topic). */
+  async send(
+    chatId: string,
+    text: TelegramHtml,
+    buttons: InlineButton[][] = [],
+    threadId?: number | null,
+  ): Promise<number> {
     const result = await this.call<{ message_id: number }>("sendMessage", {
       chat_id: chatId,
+      ...(threadId ? { message_thread_id: threadId } : {}),
       text: String(text),
       parse_mode: "HTML",
       link_preview_options: { is_disabled: true },

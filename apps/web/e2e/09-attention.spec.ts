@@ -272,7 +272,102 @@ test("on a phone the More sheet leaves the tab bar usable and gives the focus ba
     await tabs.getByRole("link", { name: "Instances" }).click()
     await expect(page).toHaveURL(/\/instances/)
     await expect(sheet).toHaveCount(0)
+
+    // Widened past 760px the sheet and the tab bar are gone: the sheet closes and the page is usable again.
+    await more.click()
+    await expect(sheet).toBeVisible()
+    await page.setViewportSize({ width: 1100, height: 844 })
+    await expect(sheet).toHaveCount(0)
+    await expect(page.locator("#main")).not.toHaveAttribute("inert")
   } finally {
+    await page.setViewportSize({ width: 1440, height: 900 })
+  }
+})
+
+test("on a phone a page chosen in More asks about unsaved changes, and Stay keeps the sheet (NL-9, SV-1, DS-10)", async () => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto("/settings/general")
+  const field = page.getByLabel("Public URL")
+  const before = await field.inputValue()
+  await field.fill("https://ops.example.test")
+  try {
+    const more = page.getByRole("navigation", { name: "Main" }).last().getByRole("button", { name: /^More/ })
+    const sheet = page.getByRole("dialog", { name: "All Pages" })
+    const ask = page.getByRole("alertdialog", { name: "Leave without saving?" })
+    await more.click()
+    await sheet.getByRole("link", { name: "Workers" }).click()
+    // The question is not beside the sheet: both stay until it is answered. The question is modal, so it hides
+    // the rest of the page from assistive tech while it is up, the sheet too: the sheet is found hidden, and open.
+    await expect(ask).toBeVisible()
+    const sheetBehind = page.getByRole("dialog", { name: "All Pages", includeHidden: true })
+    await expect(sheetBehind).toBeVisible()
+    await expect(sheetBehind).toHaveAttribute("data-state", "open")
+    await ask.getByRole("button", { name: "Stay" }).click()
+    await expect(ask).toHaveCount(0)
+    // Kept: the page, what was typed, and the sheet with its Back step.
+    await expect(sheet).toBeVisible()
+    await expect(page).toHaveURL(/\/settings\/general/)
+    await page.goBack()
+    await expect(sheet).toHaveCount(0)
+    await expect(page).toHaveURL(/\/settings\/general/)
+    await expect(field).toHaveValue("https://ops.example.test")
+
+    await more.click()
+    await sheet.getByRole("link", { name: "Workers" }).click()
+    await ask.getByRole("button", { name: "Leave without saving" }).click()
+    await expect(page).toHaveURL(/\/workers/)
+    await expect(sheet).toHaveCount(0)
+    // The page took the sheet's Back step: Back returns to Settings in one step, as it was stored.
+    await page.goBack()
+    await expect(page).toHaveURL(/\/settings\/general/)
+    await expect(field).toHaveValue(before)
+  } finally {
+    const discard = page.getByRole("button", { name: "Discard" })
+    if (await discard.isVisible()) await discard.click()
+    await page.setViewportSize({ width: 1440, height: 900 })
+  }
+})
+
+test("on a phone Undo in the toast is in reach from the Needs attention sheet, by Tab too (DS-8, FB-16)", async () => {
+  const id = await syncProblem()
+  await keepOpen(id)
+  await page.setViewportSize({ width: 390, height: 844 })
+  try {
+    await page.goto("/workflows")
+    await expect.poll(count).toBeGreaterThan(0)
+    const before = await count()
+    await bell().click()
+    const sheet = attentionWindow()
+    await expect(sheet).toBeVisible()
+    // The page beside the sheet waits; the toast does not.
+    const pageWaits = () => page.locator("#main").evaluate((el) => el.closest("[inert]") !== null)
+    await expect.poll(pageWaits).toBe(true)
+    const row = sheet
+      .locator('[data-slot="alert-row"]')
+      .filter({ hasText: "Sync orders to ERP" })
+      .filter({ hasText: /e2e-n8n ·/ })
+    await row.getByRole("button", { name: "Resolve Sync orders to ERP" }).click()
+    await expect(page.getByText("Problem resolved: Sync orders to ERP")).toBeVisible()
+    await expect(row).toHaveCount(0)
+
+    // Tab past the sheet's last control reaches Undo, and Undo works with the sheet still open.
+    await sheet.getByRole("button", { name: "Close" }).focus()
+    await page.keyboard.press("Tab")
+    const undo = page.getByRole("button", { name: "Undo resolving Sync orders to ERP" })
+    await expect(undo).toBeFocused()
+    await page.keyboard.press("Enter")
+    await expect(page.getByText("Resolve undone: Sync orders to ERP")).toBeVisible()
+    await expect(sheet).toBeVisible()
+    await expect(row).toBeVisible()
+
+    // Escape closes it, gives the focus back to the bell, and the page is usable again.
+    await page.keyboard.press("Escape")
+    await expect(sheet).toHaveCount(0)
+    await expect(bell()).toBeFocused()
+    await expect.poll(pageWaits).toBe(false)
+    await expect.poll(count).toBe(before)
+  } finally {
+    await keepOpen(id)
     await page.setViewportSize({ width: 1440, height: 900 })
   }
 })

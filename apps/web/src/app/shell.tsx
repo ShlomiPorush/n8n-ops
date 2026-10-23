@@ -35,7 +35,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { useMediaQuery } from "@/hooks/use-mobile"
+import { useIsMobile, useMediaQuery } from "@/hooks/use-mobile"
 import { ApiError, useApi } from "@/lib/api"
 import { authClient } from "@/lib/auth-client"
 import { SCROLL_RESTORE_MS } from "@/lib/behavior"
@@ -604,8 +604,10 @@ function PhoneTopBar() {
 /**
  * Phone: the bottom tab bar. The fifth tab opens every page in a sheet above the bar (NL-9). The sheet is a layer:
  * Escape, Back and a tap beside it close it, the focus moves into it and back to More, and the page behind it is
- * inert while the tab bar stays usable, so a tab goes straight to its page. More carries a pip for the counters of
- * the pages it holds, named and in the worst of their tones (NL-10).
+ * inert while the tab bar stays usable, so a tab goes straight to its page. A page chosen in it opens through the
+ * unsaved-changes guard: the sheet closes once the move is made, and stays when the Leave question keeps the page
+ * (SV-1). It closes when the width crosses 760px. More carries a pip for the counters of the pages it holds, named
+ * and in the worst of their tones (NL-10).
  */
 function TabBar() {
   const { pathname } = useLocation()
@@ -613,9 +615,25 @@ function TabBar() {
   const [more, setMore] = useState(false)
   useOverlayHistory(more, () => setMore(false))
   const navigateFromSheet = useNavigateFromOverlay()
-  // A page chosen in the sheet or in the tab bar closes it.
+  // A page chosen in the sheet or in the tab bar closes it, once the move is made.
   // biome-ignore lint/correctness/useExhaustiveDependencies: closes on every navigation
   useEffect(() => setMore(false), [pathname])
+  // Above 760px the sheet and the tab bar are gone, so the sheet closes and the page is usable again.
+  const phone = useIsMobile()
+  useEffect(() => {
+    if (!phone) setMore(false)
+  }, [phone])
+  /**
+   * Opens a page from the sheet or the tab bar while the sheet is open, and says whether it did; a click with a
+   * modifier is left to the browser (a new tab). The page already open only closes the sheet.
+   */
+  const openFromSheet = (to: string, e: React.MouseEvent<HTMLAnchorElement>) => {
+    if (!more || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return false
+    e.preventDefault()
+    if (to === pathname) setMore(false)
+    else navigateFromSheet(to)
+    return true
+  }
   // The page and its top bar wait behind the sheet; the tab bar does not.
   useEffect(() => {
     if (!more) return
@@ -657,11 +675,9 @@ function TabBar() {
               className={tabClass}
               onClick={(e) => {
                 // With the sheet open the page takes the sheet's Back step, as a move from inside it does, so the
-                // sheet's close does not step back as well (DS-10); a move the Leave question keeps is a plain close.
-                if (!more || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
-                e.preventDefault()
-                navigateFromSheet(t.to)
-                setMore(false)
+                // sheet's close does not step back as well (DS-10). The sheet closes once the move is made (the
+                // pathname effect above), so Stay in the Leave question keeps it open with its Back step.
+                openFromSheet(t.to, e)
               }}
             >
               <t.icon aria-hidden />
@@ -715,9 +731,13 @@ function TabBar() {
             e.preventDefault()
             ;(e.currentTarget as HTMLElement).focus()
           }}
-          // A tab closes the sheet itself once its move starts (above); the toast stays usable over the sheet.
+          // A tab closes the sheet itself once its move starts (above); the toast stays usable over the sheet, and
+          // the Leave question asked for a move from it is not beside it: Stay keeps the sheet (SV-1).
           onInteractOutside={(e) => {
-            if (e.target instanceof Element && e.target.closest('[data-slot="tab-bar"], [data-toast]'))
+            if (
+              e.target instanceof Element &&
+              e.target.closest('[data-slot="tab-bar"], [data-toast], [role="alertdialog"]')
+            )
               e.preventDefault()
           }}
           tabIndex={-1}
@@ -735,8 +755,9 @@ function TabBar() {
                     key={item.to}
                     to={item.to}
                     end={item.to === "/"}
-                    // Replaces the sheet's Back entry, so Back afterwards leaves the new page in one step.
-                    replace
+                    // The page takes the sheet's Back entry, so Back afterwards leaves it in one step (DS-10). The
+                    // sheet closes once the move is made: when the Leave question keeps the page, it stays open.
+                    onClick={(e) => openFromSheet(item.to, e)}
                     aria-current={isActive(item, pathname) ? "page" : undefined}
                     className="flex min-h-touch items-center gap-2.5 rounded-sm px-2.5 aria-[current=page]:bg-primary aria-[current=page]:font-title aria-[current=page]:text-primary-foreground regular:aria-[current=page]:bg-fill regular:aria-[current=page]:font-semibold regular:aria-[current=page]:text-ink"
                   >

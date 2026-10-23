@@ -20,7 +20,8 @@ const badgeTone: Record<Tone, string> = { fail: "bg-fail", warn: "bg-warn", info
  * but a check could not run, a grey dot shows instead; the name says so either way.
  *
  * It opens the list Overview shows, with the same actions: on a wide screen a window under the bell, on a phone
- * (`phone`, the phone top bar's bell) the shared sheet. Escape, Back or a click beside it closes it, and the focus
+ * (`phone`, the phone top bar's bell) the shared sheet; beside either one the toast stays usable (Undo after an
+ * action), and Tab past the sheet's ends reaches it. Escape, Back or a click beside it closes it, and the focus
  * goes back to the bell. A row opens its item through the unsaved-changes guard: the window closes once the move
  * is made, and stays when the Leave question keeps the page. It closes when the width crosses 760px, since its bell
  * is gone. The list is read on every page by one query (`useAttention`).
@@ -32,6 +33,7 @@ export function AttentionBell({ phone = false }: { phone?: boolean }) {
   const badge = badgeText(a?.total ?? 0)
   const name = bellName(a, unchecked)
   const [open, setOpen] = useState(false)
+  const bellRef = useRef<HTMLButtonElement>(null)
   const openNow = useRef(open)
   openNow.current = open
 
@@ -83,6 +85,7 @@ export function AttentionBell({ phone = false }: { phone?: boolean }) {
   )
   const button = (
     <button
+      ref={bellRef}
       type="button"
       aria-label={name}
       title={name}
@@ -124,9 +127,25 @@ export function AttentionBell({ phone = false }: { phone?: boolean }) {
 
   if (phone)
     return (
-      <Dialog open={open} onOpenChange={setOpen}>
+      // Not modal, so the toast stays usable over the sheet: Undo after Resolve or Mute (FB-16). The page beside it
+      // is inert all the same (DS-8, `inertPage`).
+      <Dialog open={open} onOpenChange={setOpen} modal={false}>
         <DialogTrigger asChild>{button}</DialogTrigger>
-        <DialogContent aria-describedby={undefined} onCloseAutoFocus={keepFocusAfterMove}>
+        <DialogContent
+          aria-describedby={undefined}
+          inertPage={open}
+          onCloseAutoFocus={(e) => {
+            keepFocusAfterMove(e)
+            if (e.defaultPrevented) return
+            // Back on the bell also after a tap beside the sheet, which a sheet that is not modal does not do itself.
+            e.preventDefault()
+            bellRef.current?.focus({ preventScroll: true })
+          }}
+          // The Leave question asked for a move from the sheet is not beside it: Stay keeps the sheet (SV-1).
+          onInteractOutside={(e) => {
+            if (e.target instanceof Element && e.target.closest('[role="alertdialog"]')) e.preventDefault()
+          }}
+        >
           <DialogHeader>
             <DialogTitle>{title}</DialogTitle>
           </DialogHeader>

@@ -468,15 +468,17 @@ html[data-design="regular"].dark {
 
 /*
  * Layers, from the top (OT-3). Use only these values:
- * toast 100000 > confirm 99999 (a confirm opened from a dialog) > dialog and its backdrop 50 > popovers, menus
- * and pickers 50 (Radix portals, opened last so they sit above) > save bar 45 > tab bar 40 > More sheet 36 and
- * its veil 35 > phone top bar 30 > sticky heads inside a page 10 > chart tooltips 3.
+ * toast 100000 > phone search sheet 90 > sidebar flyout 60 > dialogs and their backdrop, confirmations,
+ * popovers, menus, pickers and tooltips 50 (Radix portals: the one opened last sits above, so a confirm opened
+ * from a dialog covers it) > save bar and search results 45 > tab bar 40 > More sheet 36 and its veil 35 > phone
+ * top bar 30 > Settings section picker 20 > sticky heads inside a page 10. Inside one component 10 and 20 order
+ * its own parts.
  */
 
 /*
- * Motion explains a state change and nothing else (AX-8): .12s tooltips and flyouts, .15s switches, chevrons,
- * grips and hover colours, .2s sheets and dialogs, .3s toast fade. Under reduced motion every transition and
- * animation is off, the sheet included.
+ * Motion explains a state change and nothing else: .12s tooltips and flyouts, .15s switches, chevrons, grips
+ * and hover colours, .2s sheets and dialogs, .3s toast fade. Under reduced motion this turns every transition
+ * and animation off, the sheet included. That is older than the current AX-8, which keeps motion there.
  */
 /* biome-ignore-start lint/complexity/noImportantStyles: one global rule must beat every utility class */
 @media (prefers-reduced-motion: reduce) {
@@ -576,7 +578,8 @@ html[data-design="regular"].dark {
 /*
  * Tables stack into rows where they have less than 560px, on a phone or beside a reading pane (TB-14): the
  * header row goes, the first cell takes the first line, every other value carries its column name, the
- * actions take the last line and empty cells disappear. A sort control replaces the header row.
+ * actions take the last line and empty cells disappear. A "Sort by" picker above the rows stands in for the
+ * header's sort buttons (not yet the one Sort button of TB-28).
  */
 [data-slot="table-wrap"] {
   container-type: inline-size;

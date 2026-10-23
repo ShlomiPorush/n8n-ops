@@ -4,6 +4,7 @@ import { Command, Page, Panel, PanelHead } from "@/components/kit"
 import { Button } from "@/components/ui/button"
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { PasswordInput } from "@/components/ui/password-input"
+import { UNREACHABLE_TEXT } from "@/lib/api"
 import { authClient, authErrorText } from "@/lib/auth-client"
 import { toast } from "@/lib/toast"
 import { SettingRow } from "@/pages/settings"
@@ -12,16 +13,25 @@ import { SettingRow } from "@/pages/settings"
 export function AccountPage() {
   const session = authClient.useSession()
   const [busy, setBusy] = useState(false)
-  async function changePassword(form: FormData) {
+  // The fields are emptied only once the change worked: a failure keeps what was typed for another try, and the
+  // button comes back also when the request never reached the server (FS-23).
+  async function changePassword(form: HTMLFormElement) {
+    const values = new FormData(form)
     setBusy(true)
-    const { error } = await authClient.changePassword({
-      currentPassword: String(form.get("current")),
-      newPassword: String(form.get("next")),
-      revokeOtherSessions: true,
-    })
-    setBusy(false)
-    if (error) toast.error(`Password not changed: ${authErrorText(error)}`)
-    else toast.success("Password changed. Other sessions were signed out.")
+    try {
+      const { error } = await authClient.changePassword({
+        currentPassword: String(values.get("current")),
+        newPassword: String(values.get("next")),
+        revokeOtherSessions: true,
+      })
+      if (error) return toast.error(`Password not changed: ${authErrorText(error)}`)
+      form.reset()
+      toast.success("Password changed. Other sessions were signed out.")
+    } catch {
+      toast.error(`Password not changed: ${UNREACHABLE_TEXT}`)
+    } finally {
+      setBusy(false)
+    }
   }
   const username = (session.data?.user as { username?: string } | undefined)?.username
   return (
@@ -41,8 +51,7 @@ export function AccountPage() {
           className="grid gap-3 border-t border-line px-pad-x py-3 regular:border-t-0 regular:py-4"
           onSubmit={(e) => {
             e.preventDefault()
-            void changePassword(new FormData(e.currentTarget))
-            e.currentTarget.reset()
+            void changePassword(e.currentTarget)
           }}
         >
           <b className="font-semibold">Change Password</b>

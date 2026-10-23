@@ -199,6 +199,8 @@ export function InstancesPage() {
     "aria-current": id === i.id ? ("true" as const) : undefined,
     className: "hover-row",
     "data-href": `/instances/${i.id}`,
+    // A search result marks this row when it lands here (SR-6).
+    "data-search-target": `instance:${i.id}`,
     onClick: () => navigate(`/instances/${i.id}`),
   })
   const open = rows.find((r) => r.id === id)

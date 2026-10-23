@@ -1,6 +1,7 @@
 import { ArrowDownUp } from "lucide-react"
 import * as React from "react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { rowHeld } from "@/lib/row-held"
 import { cn } from "@/lib/utils"
 
 /*
@@ -9,7 +10,8 @@ import { cn } from "@/lib/utils"
  * a reading pane) it stacks: each row becomes a small card
  * with the first cell on its own line, the others labelled from their column header, and the actions on the
  * last line (TB-14). Pass bare to place it inside a panel, stack={false} to keep the columns on a phone.
- * Pass items when every row is one ItemRow (a list beside a reading pane): the sort control then always shows.
+ * Pass items when every row is one ItemRow (a list beside a reading pane): the "Sort by" picker then always
+ * shows, as there is no header row.
  */
 function Table({
   className,
@@ -71,7 +73,8 @@ function TableBody({ className, ...props }: React.ComponentProps<"tbody">) {
 
 /**
  * A row. With onClick the whole row opens its item and is reachable by keyboard (Enter and Space); buttons,
- * links, fields and copyable values inside keep their own click, and selecting text opens nothing (TB-8).
+ * links, fields and copyable values inside keep their own click, and a click that ends selecting text in the
+ * row opens nothing, while a plain click on selected text and Enter or Space still open it (TB-8).
  */
 function TableRow({ className, onClick, onKeyDown, ...props }: React.ComponentProps<"tr">) {
   const own = (target: EventTarget) =>
@@ -85,7 +88,7 @@ function TableRow({ className, onClick, onKeyDown, ...props }: React.ComponentPr
         onClick &&
         ((e) => {
           if (own(e.target) && e.target !== e.currentTarget) return
-          if (window.getSelection()?.toString()) return
+          if (rowHeld(e)) return
           onClick(e)
         })
       }
@@ -146,9 +149,10 @@ function TableCell({ className, ...props }: React.ComponentProps<"td">) {
   )
 }
 
-/* Sorting (TB-1 to TB-3). Numbers and times sort high to low first, text A to Z first; each further click
- * reverses. Empty values stay last in both directions and equal values keep their order. The chosen order
- * survives refreshes and page switches for this visit (not a reload). */
+/* Sorting by the column headers (TB-1 to TB-3). Numbers and times sort high to low first, text A to Z first;
+ * each further click reverses. Empty values stay last in both directions and equal values keep their order. The
+ * chosen order survives refreshes and page switches for this visit (not a reload). Where the header row is not
+ * drawn, `PhoneSort` sets the same order. */
 
 type SortValue = string | number | Date | null | undefined
 type SortColumn<T> = { label: string; value: (row: T) => SortValue }
@@ -237,7 +241,10 @@ export function useSort<T>(
   }
 }
 
-/** A stacked table has no header row, so the sort gets a control of its own above the rows. */
+/**
+ * A "Sort by" picker above the rows, for a stacked table or a list of items, which draw no header row. It is
+ * not yet the one Sort button at every size of TB-28.
+ */
 function PhoneSort({ control }: { control: SortControl }) {
   const value = control.state ? `${control.state.key}:${control.state.dir}` : ""
   return (

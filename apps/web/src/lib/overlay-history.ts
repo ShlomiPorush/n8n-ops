@@ -117,12 +117,22 @@ export function leaveOverlays(): boolean {
   return onEntry
 }
 
+const keptListeners = new Set<() => void>()
+
+/** Calls `listener` each time the Leave question keeps the page, so a move waited on did not happen (SR-6). */
+export function onMoveKept(listener: () => void): () => void {
+  keptListeners.add(listener)
+  return () => keptListeners.delete(listener)
+}
+
 /**
  * A navigation was blocked by the Leave question and the page stays (SV-1): overlays it was made from were not
  * left after all. One still open holds its entry as before; one that closed meanwhile takes its entry away now,
- * as a plain close does, so no extra Back step is left behind (DS-10).
+ * as a plain close does, so no extra Back step is left behind (DS-10). Whoever waits on the move hears it was
+ * not made (`onMoveKept`).
  */
 export function stayAfterBlock() {
+  for (const listener of [...keptListeners]) listener()
   for (const e of stack) e.left = false
   const closed = waiting
   waiting = []

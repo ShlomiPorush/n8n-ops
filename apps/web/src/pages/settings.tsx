@@ -5,6 +5,7 @@ import { useCrumb } from "@/app/chrome"
 import { afterGeneralSave } from "@/app/design-sync"
 import { settingsGroups, settingsSectionLabel } from "@/app/settings-sections"
 import {
+  BusyButton,
   Command,
   countChanges,
   LoadError,
@@ -571,14 +572,19 @@ const tests = {
     path: "/alerts/test/telegram",
     label: "Send test message",
     busy: "Sending…",
-    done: "Test message sent",
+    done: () => "Test message sent to the Telegram chat",
+    failed: "send the test message",
     needs: (d: Record<string, unknown>) => (d.botTokenSet && d.chatId ? null : "the bot token and the chat ID"),
   },
   email: {
     path: "/alerts/test/email",
     label: "Send test email",
     busy: "Sending…",
-    done: "Test email sent",
+    done: (d: Record<string, unknown>) =>
+      Array.isArray(d.recipients) && d.recipients.length > 0
+        ? `Test email sent to ${d.recipients.join(", ")}`
+        : "Test email sent",
+    failed: "send the test email",
     needs: (d: Record<string, unknown>) =>
       d.smtpHost && Array.isArray(d.recipients) && d.recipients.length > 0 ? null : "the SMTP server and a recipient",
   },
@@ -595,17 +601,18 @@ function TestRow({
   unsaved: boolean
 }) {
   const t = tests[section]
-  const test = useApiMutation<void>("POST", t.path, { success: t.done })
+  const test = useApiMutation<void>("POST", t.path, { success: () => t.done(data), failed: t.failed })
   const missing = t.needs(data)
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-line px-pad-x py-3">
-      <Button
-        onClick={() => test.mutate()}
-        disabled={test.isPending || missing !== null}
+      <BusyButton
+        run={() => test.mutateAsync()}
+        busyLabel={t.busy}
+        disabled={missing !== null}
         title={missing ? `Save ${missing} first` : undefined}
       >
-        {test.isPending ? t.busy : t.label}
-      </Button>
+        {t.label}
+      </BusyButton>
       <span className="text-small text-muted-foreground">
         {missing
           ? `Save ${missing} first.`
@@ -622,6 +629,7 @@ function KeysCard() {
   const keys = useApi<{ backupRecipient: string | null; privateKeySavedAt: string | null }>("/admin/keys")
   const [rotate, setRotate] = useState(false)
   const [privateKey, setPrivateKey] = useState("")
+  // Each says what failed in a toast and rejects, so its button shows that it failed (FB-7).
   async function generate() {
     try {
       const res = await api<{ privateKey: string }>("/admin/keys/backup", { method: "POST" })
@@ -629,6 +637,7 @@ function KeysCard() {
       await keys.refetch()
     } catch (e) {
       toast.error(`Could not generate a key pair: ${describeError(e)}`)
+      throw e
     }
   }
   async function confirm() {
@@ -640,6 +649,7 @@ function KeysCard() {
       toast.success("New backup key in use")
     } catch (e) {
       toast.error(`Could not confirm the key: ${describeError(e)}`)
+      throw e
     }
   }
   async function downloadAppKey() {
@@ -647,6 +657,7 @@ function KeysCard() {
       download("n8n-ops-app.key", await api<string>("/admin/keys/app"))
     } catch (e) {
       toast.error(`Could not download the key: ${describeError(e)}`)
+      throw e
     }
   }
   return (
@@ -685,9 +696,9 @@ function KeysCard() {
             label="App secrets key"
             hint="Encrypts the API keys, tokens and passwords stored by n8n-ops. Kept in the server's data directory. Keep a copy: without it, stored secrets cannot be read after a restore."
           >
-            <Button onClick={() => void downloadAppKey()}>
-              <Download /> Download a copy
-            </Button>
+            <BusyButton icon={Download} busyLabel="Downloading…" run={downloadAppKey}>
+              Download a copy
+            </BusyButton>
           </SettingRow>
         </>
       )}
@@ -720,15 +731,15 @@ function KeysCard() {
           ) : null}
           <DialogFooter>
             {privateKey ? (
-              <Button variant="primary" onClick={() => void confirm()}>
+              <BusyButton key="confirm" variant="primary" busyLabel="Confirming…" run={confirm}>
                 I saved it
-              </Button>
+              </BusyButton>
             ) : (
               <>
                 <Button onClick={() => setRotate(false)}>Cancel</Button>
-                <Button variant="primary" onClick={() => void generate()}>
+                <BusyButton key="generate" variant="primary" busyLabel="Generating…" run={generate}>
                   Generate
-                </Button>
+                </BusyButton>
               </>
             )}
           </DialogFooter>

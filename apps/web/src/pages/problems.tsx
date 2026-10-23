@@ -20,6 +20,7 @@ import { FilterBar, Picker, SearchBox } from "@/components/filter-bar"
 import { FlowGraph, type GraphNode } from "@/components/flow-graph"
 import { ItemRow, ItemsHeader, Said } from "@/components/item-row"
 import {
+  BusyButton,
   Copyable,
   Empty,
   Kpi,
@@ -399,12 +400,23 @@ export function ProblemDetail({ id }: { id: string }) {
   // Merge is opened from a menu item that is gone once the dialog closes: the focus goes back to the menu's button.
   const more = useRef<HTMLButtonElement>(null)
   const invalidate = [`/problems/${id}`, "/overview", "/overview/summary"]
-  const resolve = useApiMutation<void>("POST", `/problems/${id}/resolve`, { invalidate, success: "Marked as resolved" })
+  // Toasts name the problem by its workflow (FB-4), read when the request ends.
+  const named = () => detail.data?.workflowName ?? "the problem"
+  const resolve = useApiMutation<void>("POST", `/problems/${id}/resolve`, {
+    invalidate,
+    success: () => `Problem resolved: ${named()}`,
+    failed: () => `resolve ${named()}`,
+  })
   const mute = useApiMutation<{ hours: number }>("POST", `/problems/${id}/mute`, {
     invalidate,
-    success: "Muted for 24 hours",
+    success: () => `Muted for 24 hours: ${named()}`,
+    failed: () => `mute ${named()}`,
   })
-  const reopen = useApiMutation<void>("POST", `/problems/${id}/reopen`, { invalidate, success: "Reopened" })
+  const reopen = useApiMutation<void>("POST", `/problems/${id}/reopen`, {
+    invalidate,
+    success: () => `Problem reopened: ${named()}`,
+    failed: () => `reopen ${named()}`,
+  })
 
   if (detail.isLoading) return <Loading>Loading the problem…</Loading>
   if (detail.error && !detail.data)
@@ -460,19 +472,38 @@ export function ProblemDetail({ id }: { id: string }) {
           </h2>
           <div className="flex flex-wrap gap-2 @min-[40rem]/pane:self-start">
             {p.status === "resolved" ? (
-              <Button size="sm" variant="primary" onClick={() => reopen.mutate()} disabled={reopen.isPending}>
-                <RotateCcw /> Reopen
-              </Button>
+              <BusyButton
+                key="reopen"
+                size="sm"
+                variant="primary"
+                icon={RotateCcw}
+                busyLabel="Reopening…"
+                run={() => reopen.mutateAsync()}
+              >
+                Reopen
+              </BusyButton>
             ) : (
-              <Button size="sm" variant="primary" onClick={() => resolve.mutate()} disabled={resolve.isPending}>
-                <CheckCircle2 /> Mark resolved
-              </Button>
+              <BusyButton
+                key="resolve"
+                size="sm"
+                variant="primary"
+                icon={CheckCircle2}
+                busyLabel="Resolving…"
+                run={() => resolve.mutateAsync()}
+              >
+                Mark resolved
+              </BusyButton>
             )}
             {p.status !== "muted" && (
-              <Button size="sm" onClick={() => mute.mutate({ hours: 24 })} disabled={mute.isPending}>
-                <BellOff />
-                <span className="@max-[34rem]/pane:sr-only">Mute 24 h</span>
-              </Button>
+              <BusyButton
+                size="sm"
+                icon={BellOff}
+                busyLabel="Muting…"
+                labelClassName="@max-[34rem]/pane:sr-only"
+                run={() => mute.mutateAsync({ hours: 24 })}
+              >
+                Mute 24 h
+              </BusyButton>
             )}
             {latest && (
               <Button size="sm" asChild>
@@ -693,9 +724,11 @@ function MergeDialog({
   const navigateOut = useNavigateFromOverlay()
   const candidates = useApi<ProblemRow[]>(open ? `/problems?status=open&instance=${problem.instanceId}` : null)
   const [into, setInto] = useState("")
+  const target = (into: string) => candidates.data?.find((c) => c.id === into)?.workflowName ?? "the other problem"
   const merge = useApiMutation<{ into: string }>("POST", `/problems/${problem.id}/merge`, {
     invalidate: ["/overview"],
-    success: "Problems merged",
+    success: (b) => `Problem merged into ${target(b.into)}`,
+    failed: (b) => `merge into ${target(b.into)}`,
   })
   const options = (candidates.data ?? []).filter((c) => c.id !== problem.id)
   return (
@@ -735,24 +768,19 @@ function MergeDialog({
         )}
         <DialogFooter>
           <Button onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button
+          <BusyButton
             variant="primary"
-            disabled={!into || merge.isPending}
-            onClick={() =>
-              merge.mutate(
-                { into },
-                {
-                  onSuccess: () => {
-                    // The problem merged into takes the dialog's Back entry, so Back returns to this one (DS-10).
-                    navigateOut(`/problems/${into}`)
-                    onOpenChange(false)
-                  },
-                },
-              )
-            }
+            disabled={!into}
+            busyLabel="Merging…"
+            run={async () => {
+              await merge.mutateAsync({ into })
+              // The problem merged into takes the dialog's Back entry, so Back returns to this one (DS-10).
+              navigateOut(`/problems/${into}`)
+              onOpenChange(false)
+            }}
           >
             Merge
-          </Button>
+          </BusyButton>
         </DialogFooter>
       </DialogContent>
     </Dialog>

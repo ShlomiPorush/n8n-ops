@@ -3,7 +3,7 @@ import { Download } from "lucide-react"
 import QRCode from "qrcode"
 import { useEffect, useState } from "react"
 import { Navigate, useNavigate } from "react-router"
-import { Loading, Panel } from "@/components/kit"
+import { BusyButton, Loading, Panel } from "@/components/kit"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
@@ -156,9 +156,9 @@ function AccountStep({ onDone }: { onDone: (password: string) => Promise<void> }
       title="Create Your Account"
       description="n8n-ops has one user. Two-factor authentication is set up next and is required."
       actions={
-        <Button type="submit" form="account" variant="primary" disabled={busy}>
+        <BusyButton type="submit" form="account" variant="primary" busy={busy} busyLabel="Creating…">
           Create account
-        </Button>
+        </BusyButton>
       }
     >
       <form
@@ -255,9 +255,9 @@ function TwoFactorStep({ password: known, onDone }: { password: string; onDone: 
               <FieldLabel htmlFor="pw">Confirm your password</FieldLabel>
               <PasswordInput id="pw" value={password} onChange={(e) => setPassword(e.target.value)} required />
             </Field>
-            <Button type="submit" variant="primary" className="justify-self-end" disabled={busy}>
+            <BusyButton type="submit" variant="primary" className="justify-self-end" busy={busy} busyLabel="Checking…">
               Continue
-            </Button>
+            </BusyButton>
           </FieldGroup>
         </form>
       ) : (
@@ -283,20 +283,25 @@ function BackupKeyStep({ onDone }: { onDone: () => Promise<void> }) {
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState("")
 
+  // Each says what failed under the step and rejects, so its button shows that it failed (FB-7).
   async function generate() {
+    setError("")
     try {
       const res = await api<{ privateKey: string }>("/admin/keys/backup", { method: "POST" })
       setPrivateKey(res.privateKey)
     } catch (e) {
       setError(describeError(e))
+      throw e
     }
   }
   async function confirm() {
+    setError("")
     try {
       await api("/admin/keys/backup/confirm", { method: "POST" })
       await onDone()
     } catch (e) {
       setError(describeError(e))
+      throw e
     }
   }
 
@@ -305,15 +310,15 @@ function BackupKeyStep({ onDone }: { onDone: () => Promise<void> }) {
       title="Your Backup Key"
       description="Backups are encrypted with a key pair. The server keeps only the public half. Save the private key now: it is shown once, and without it no backup can be restored."
       actions={
-        <Button variant="primary" disabled={!privateKey || !saved} onClick={() => void confirm()}>
+        <BusyButton variant="primary" disabled={!privateKey || !saved} busyLabel="Confirming…" run={confirm}>
           Continue
-        </Button>
+        </BusyButton>
       }
     >
       {!privateKey ? (
-        <Button className="justify-self-start" onClick={() => void generate()}>
+        <BusyButton className="justify-self-start" busyLabel="Generating…" run={generate}>
           Generate key pair
-        </Button>
+        </BusyButton>
       ) : (
         <Panel className="grid gap-3 p-pad-x">
           <pre
@@ -440,9 +445,15 @@ function DestinationStep({ onDone, onSkip }: { onDone: () => Promise<void>; onSk
           <Button variant="ghost" className="me-auto" onClick={onSkip}>
             Skip for now
           </Button>
-          <Button variant="primary" onClick={() => void submit()} disabled={busy || !form.name.trim()}>
-            {busy ? "Testing…" : "Test and continue"}
-          </Button>
+          <BusyButton
+            variant="primary"
+            onClick={() => void submit()}
+            busy={busy}
+            busyLabel="Testing…"
+            disabled={!form.name.trim()}
+          >
+            Test and continue
+          </BusyButton>
         </>
       }
     >

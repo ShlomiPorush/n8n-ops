@@ -1,5 +1,5 @@
-import { Check, Copy, Inbox, Loader2, Lock, type LucideIcon } from "lucide-react"
-import { useEffect, useState } from "react"
+import { Check, Copy, Inbox, Loader2, LoaderCircle, Lock, type LucideIcon, X } from "lucide-react"
+import { useEffect, useRef, useState } from "react"
 import { Link, useLocation } from "react-router"
 import { PageActions, useTopBar } from "@/app/chrome"
 import { pageOf } from "@/app/nav"
@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import { describeError } from "@/lib/api"
-import { COPIED_MS, DIM_AFTER_MS } from "@/lib/behavior"
+import { COPIED_MS, DIM_AFTER_MS, DONE_MS, FAILED_MS } from "@/lib/behavior"
 import { type Live, refreshFailed } from "@/lib/load-state"
 import { rowHeld } from "@/lib/row-held"
 import { formatFull, useTimeZone } from "@/lib/time"
@@ -666,6 +666,91 @@ export function Command({
         {done ? "Copied" : "Copy"}
       </Button>
     </div>
+  )
+}
+
+/**
+ * A button that starts a request (FB-7, DS-20). With `run` it owns the request: a click sends one, and clicks
+ * are ignored until its label is back (a ref, not the re-render, so a double click cannot send two). It is
+ * disabled and shows a spinning ring and `busyLabel` ("Checking…") meanwhile; then "Done" for DONE_MS, or
+ * "Failed" for FAILED_MS, and its label again. `run` should reject on failure and say why itself (useApiMutation's
+ * toast).
+ * With `busy` instead, the caller owns the state (a dialog's submit, whose dialog says the result): the ring and
+ * `busyLabel` show while it is true.
+ */
+export function BusyButton({
+  run,
+  busy: held = false,
+  busyLabel,
+  icon: Icon,
+  labelClassName,
+  children,
+  disabled,
+  variant,
+  className,
+  onClick,
+  ...props
+}: Omit<React.ComponentProps<typeof Button>, "children" | "asChild"> & {
+  run?: () => Promise<unknown>
+  busy?: boolean
+  busyLabel: string
+  icon?: LucideIcon
+  /** For a label that hides in a narrow pane but stays the accessible name (`@max-[34rem]/pane:sr-only`). */
+  labelClassName?: string
+  children: React.ReactNode
+}) {
+  const [state, setState] = useState<"idle" | "busy" | "done" | "failed">("idle")
+  const sending = useRef(false)
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined)
+  useEffect(() => () => clearTimeout(timer.current), [])
+  async function start(send: () => Promise<unknown>) {
+    if (sending.current) return
+    sending.current = true
+    setState("busy")
+    let ok = false
+    try {
+      await send()
+      ok = true
+    } catch {
+      // The request said what failed (its toast); the button only shows that it did.
+    }
+    setState(ok ? "done" : "failed")
+    timer.current = setTimeout(
+      () => {
+        sending.current = false
+        setState("idle")
+      },
+      ok ? DONE_MS : FAILED_MS,
+    )
+  }
+  const busy = held || state === "busy"
+  const Shown = busy ? LoaderCircle : state === "done" ? Check : state === "failed" ? X : Icon
+  // A filled button keeps its colours; the others take the result's tone.
+  const toned = variant !== "primary" && variant !== "danger-solid"
+  return (
+    <Button
+      {...props}
+      variant={variant}
+      // "Done" stays undimmed but, like "Failed", ignores clicks (`sending`): it is not the action, and a quick
+      // answer cannot turn a double click into two requests.
+      disabled={disabled || busy || state === "failed"}
+      className={cn(
+        toned && state === "done" && "border-ok/40 text-ok",
+        toned && state === "failed" && "border-fail/40 text-fail",
+        className,
+      )}
+      onClick={(e) => {
+        // Until its label is back a click does nothing, and does not open the row the button sits in either.
+        if (sending.current) return e.stopPropagation()
+        onClick?.(e)
+        if (run && !e.defaultPrevented) void start(run)
+      }}
+    >
+      {Shown && <Shown aria-hidden className={cn(busy && "animate-spin")} />}
+      <span className={labelClassName}>
+        {busy ? busyLabel : state === "done" ? "Done" : state === "failed" ? "Failed" : children}
+      </span>
+    </Button>
   )
 }
 

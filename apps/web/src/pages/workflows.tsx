@@ -14,7 +14,18 @@ import { useState } from "react"
 import { useSearchParams } from "react-router"
 import { useDiscardGuard } from "@/components/discard-guard"
 import { FilterBar, Picker, SearchBox } from "@/components/filter-bar"
-import { Empty, LoadError, Loading, Page, Panel, PanelHead, Reloading, Row, UserText } from "@/components/kit"
+import {
+  BusyButton,
+  Empty,
+  LoadError,
+  Loading,
+  Page,
+  Panel,
+  PanelHead,
+  Reloading,
+  Row,
+  UserText,
+} from "@/components/kit"
 import { RateBar } from "@/components/skin/marks"
 import { Code, TimeAgo, When } from "@/components/status"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -86,6 +97,7 @@ export function WorkflowsPage() {
   const sync = useApiMutation<void>("POST", "/workflows/sync", {
     invalidate: [`/workflows?${query}`],
     success: "Workflow map refreshed",
+    failed: "refresh the workflow map",
   })
   const [moving, setMoving] = useState<WorkflowRow | null>(null)
   const ins = data.data?.insights
@@ -115,9 +127,9 @@ export function WorkflowsPage() {
           : "Every workflow on every instance, refreshed every 30 minutes. Duplicates and unused instances help consolidate."
       }
       actions={
-        <Button onClick={() => sync.mutate()} disabled={sync.isPending}>
-          <RefreshCw /> {sync.isPending ? "Reading instances…" : "Refresh now"}
-        </Button>
+        <BusyButton icon={RefreshCw} busyLabel="Reading instances…" run={() => sync.mutateAsync()}>
+          Refresh now
+        </BusyButton>
       }
     >
       {ins && (
@@ -439,9 +451,11 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
           ) : !preview ? (
             <>
               <Button onClick={() => void guard.requestClose()}>Cancel</Button>
-              <Button
+              <BusyButton
                 variant="primary"
-                disabled={!target || busy}
+                disabled={!target}
+                busy={busy}
+                busyLabel="Reviewing…"
                 onClick={() =>
                   act(async () =>
                     setPreview(await api<Preview>("/workflows/moves/preview", { method: "POST", json: body() })),
@@ -449,14 +463,16 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
                 }
               >
                 Review
-              </Button>
+              </BusyButton>
             </>
           ) : (
             <>
               <Button onClick={() => setPreview(null)}>Back</Button>
-              <Button
+              <BusyButton
                 variant="primary"
-                disabled={busy || preview.blockers.length > 0}
+                disabled={preview.blockers.length > 0}
+                busy={busy}
+                busyLabel="Moving…"
                 onClick={() =>
                   act(async () => {
                     const res = await api<{ steps: { step: string; ok: boolean; detail?: string }[] }>(
@@ -471,8 +487,8 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
                   })
                 }
               >
-                {busy ? "Moving…" : "Move workflow"}
-              </Button>
+                Move workflow
+              </BusyButton>
             </>
           )}
         </DialogFooter>

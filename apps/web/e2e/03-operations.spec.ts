@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { expect, type Page, test } from "@playwright/test"
+import { expect, type Page, type Request, test } from "@playwright/test"
 import { currentApiKey, dialogClosed, discardChanges, loadPrivateKey, n8nApi, n8nUrl, signIn } from "./helpers.ts"
 
 // Storage, a paired worker, an encrypted backup with credential secrets, a restore, and a move
@@ -138,10 +138,19 @@ test("a backup through the worker includes credential secrets", async () => {
     }),
   })
   await page.goto("/backups")
+  // A double click starts one backup: Run now is locked while its request runs (FB-7).
+  const runs: string[] = []
+  const count = (r: Request) => {
+    if (r.method() === "POST" && /^\/api\/backups\/[^/]+\/run$/.test(new URL(r.url()).pathname)) runs.push(r.url())
+  }
+  page.on("request", count)
   await page
     .getByRole("row", { name: /e2e-n8n/ })
     .getByRole("button", { name: "Run now" })
-    .click()
+    .dblclick()
+  await expect(page.getByText("Backup of e2e-n8n started")).toBeVisible()
+  page.off("request", count)
+  expect(runs).toHaveLength(1)
   await page.getByRole("row", { name: /e2e-n8n/ }).click()
   await expect(page.getByText("OK · with secrets")).toBeVisible({ timeout: 90_000 })
   // One copy on each default destination, both read back and verified.

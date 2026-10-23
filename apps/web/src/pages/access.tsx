@@ -3,7 +3,17 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router"
 import { useCrumb } from "@/app/chrome"
 import { useConfirm } from "@/components/confirm"
 import { ItemRow, ItemsHeader, Said } from "@/components/item-row"
-import { Empty, LoadError, Loading, PageHead, Panel, PanelHead, RefreshNote, UserText } from "@/components/kit"
+import {
+  BusyButton,
+  Empty,
+  LoadError,
+  Loading,
+  PageHead,
+  Panel,
+  PanelHead,
+  RefreshNote,
+  UserText,
+} from "@/components/kit"
 import { ListWithPanel } from "@/components/list-panel"
 import { StatusTag, statusOf, TimeAgo, Tone, When } from "@/components/status"
 import { Badge } from "@/components/ui/badge"
@@ -212,9 +222,24 @@ function AccessDetailPanel({ id }: { id: string }) {
   const detail = useApi<AccessDetail>(`/access/${id}`)
   useCrumb(detail.data?.reason)
   const invalidate = ["/access", `/access/${id}`, "/overview", "/overview/summary"]
-  const approve = useApiMutation<void>("POST", `/access/${id}/approve`, { invalidate, success: "Access approved" })
-  const deny = useApiMutation<void>("POST", `/access/${id}/deny`, { invalidate, success: "Request denied" })
-  const revoke = useApiMutation<void>("POST", `/access/${id}/revoke`, { invalidate, success: "Access revoked" })
+  // Toasts name the agent and the instance (FB-4), read when the request ends.
+  const agent = () => detail.data?.token ?? "the agent"
+  const on = () => (detail.data ? ` on ${detail.data.instance}` : "")
+  const approve = useApiMutation<void>("POST", `/access/${id}/approve`, {
+    invalidate,
+    success: () => `Access approved for ${agent()}${on()}`,
+    failed: () => `approve access for ${agent()}`,
+  })
+  const deny = useApiMutation<void>("POST", `/access/${id}/deny`, {
+    invalidate,
+    success: () => `Access request denied for ${agent()}${on()}`,
+    failed: () => `deny access for ${agent()}`,
+  })
+  const revoke = useApiMutation<void>("POST", `/access/${id}/revoke`, {
+    invalidate,
+    success: () => `Access revoked for ${agent()}${on()}`,
+    failed: () => `revoke access for ${agent()}`,
+  })
   const confirm = useConfirm()
   if (detail.isLoading) return <Loading>Loading the request…</Loading>
   if (detail.error && !detail.data)
@@ -266,17 +291,27 @@ function AccessDetailPanel({ id }: { id: string }) {
         <div className="flex flex-wrap gap-2">
           {r.status === "pending" && (
             <>
-              <Button variant="primary" disabled={busy} onClick={() => approve.mutate()}>
-                <Check /> Approve
-              </Button>
-              <Button disabled={busy} onClick={() => deny.mutate()}>
-                <X /> Deny
-              </Button>
+              <BusyButton
+                variant="primary"
+                icon={Check}
+                busyLabel="Approving…"
+                disabled={busy}
+                run={() => approve.mutateAsync()}
+              >
+                Approve
+              </BusyButton>
+              <BusyButton icon={X} busyLabel="Denying…" disabled={busy} run={() => deny.mutateAsync()}>
+                Deny
+              </BusyButton>
             </>
           )}
           {r.status === "approved" && (
-            <Button
+            // It asks first, so the request starts only after the answer (DS-20).
+            <BusyButton
               variant="danger"
+              icon={Ban}
+              busy={revoke.isPending}
+              busyLabel="Revoking…"
               disabled={busy}
               onClick={async () => {
                 if (
@@ -290,8 +325,8 @@ function AccessDetailPanel({ id }: { id: string }) {
                   revoke.mutate()
               }}
             >
-              <Ban /> Revoke now
-            </Button>
+              Revoke now
+            </BusyButton>
           )}
         </div>
       </div>

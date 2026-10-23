@@ -3,7 +3,7 @@ import { useState } from "react"
 import { Link } from "react-router"
 import { useConfirm } from "@/components/confirm"
 import { useDiscardGuard } from "@/components/discard-guard"
-import { Copyable, Empty, LoadError, Loading, Page, Panel, PanelHead, UserText } from "@/components/kit"
+import { BusyButton, Copyable, Empty, LoadError, Loading, Page, Panel, PanelHead, UserText } from "@/components/kit"
 import { HostMark } from "@/components/skin/marks"
 import { StatusTag, TimeAgo, When } from "@/components/status"
 import { Button } from "@/components/ui/button"
@@ -21,7 +21,6 @@ import { Input } from "@/components/ui/input"
 import { useApi, useApiMutation } from "@/lib/api"
 import { loadView } from "@/lib/load-state"
 import { n, plural } from "@/lib/time"
-import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
 
 export type Worker = {
@@ -40,8 +39,11 @@ export function WorkersPage() {
   const view = loadView(workers)
   const [open, setOpen] = useState(false)
   const confirm = useConfirm()
+  const named = (id: string) => workers.data?.find((w) => w.id === id)?.name ?? "the worker"
   const revoke = useApiMutation<string>("DELETE", (id) => `/workers/${id}`, {
     invalidate: ["/workers", "/overview/summary"],
+    success: (id) => `Worker ${named(id)} revoked`,
+    failed: (id) => `revoke the worker ${named(id)}`,
   })
   async function askRevoke(w: Worker) {
     const ok = await confirm({
@@ -50,7 +52,7 @@ export function WorkersPage() {
       confirmLabel: "Revoke worker",
       danger: true,
     })
-    if (ok) revoke.mutate(w.id, { onSuccess: () => toast.success(`Worker ${w.name} revoked`) })
+    if (ok) revoke.mutate(w.id)
   }
   const list = workers.data ?? []
   const online = list.filter((w) => w.online).length
@@ -165,6 +167,7 @@ function AddWorkerDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
   const create = useApiMutation<{ name: string; socketProxy: boolean; containers: string[] }, Pairing>(
     "POST",
     "/workers/pairing",
+    { failed: (b) => `create a pairing token for ${b.name}` },
   )
   const containerList = containers.split(/[\s,]+/).filter(Boolean)
   // Until the pairing token is made, anything typed or changed is asked about before it is dropped (DS-9).
@@ -242,18 +245,18 @@ function AddWorkerDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
           ) : (
             <>
               <Button onClick={() => void guard.requestClose()}>Cancel</Button>
-              <Button
+              <BusyButton
                 variant="primary"
-                disabled={!name.trim() || (socketProxy && containerList.length === 0) || create.isPending}
-                onClick={() =>
-                  create.mutate(
-                    { name, socketProxy, containers: socketProxy ? containerList : [] },
-                    { onSuccess: setResult },
+                disabled={!name.trim() || (socketProxy && containerList.length === 0)}
+                busyLabel="Creating…"
+                run={async () =>
+                  setResult(
+                    await create.mutateAsync({ name, socketProxy, containers: socketProxy ? containerList : [] }),
                   )
                 }
               >
                 Create pairing token
-              </Button>
+              </BusyButton>
             </>
           )}
         </DialogFooter>

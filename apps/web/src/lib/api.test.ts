@@ -1,6 +1,6 @@
 import { QueryClient } from "@tanstack/react-query"
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { ApiError, api, describeError, markSaved, readFresh } from "./api.ts"
+import { ApiError, api, describeError, failureText, markSaved, readFresh } from "./api.ts"
 import { sessionStarted } from "./session.ts"
 
 afterEach(() => vi.unstubAllGlobals())
@@ -52,6 +52,22 @@ describe("describeError", () => {
   it("lists validation issues", () => {
     const error = new ApiError(400, "invalid", [{ path: ["chatId"], message: "required" }])
     expect(describeError(error)).toBe("chatId: required")
+  })
+})
+
+describe("failureText", () => {
+  it("says what failed, then the server's reason (FB-3)", () => {
+    expect(failureText("resolve Sync orders", new ApiError(404, "not_found"))).toBe(
+      "Could not resolve Sync orders: Not found.",
+    )
+    const detail = new ApiError(409, "conflict", undefined, "A backup of n8n-1 is already running.")
+    expect(failureText("start the backup of n8n-1", detail)).toBe(
+      "Could not start the backup of n8n-1: A backup of n8n-1 is already running.",
+    )
+  })
+
+  it("is only the reason when the caller names nothing", () => {
+    expect(failureText(undefined, new ApiError(404, "not_found"))).toBe("Not found.")
   })
 })
 

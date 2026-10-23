@@ -503,6 +503,39 @@ test("an instance opens in n8n in a new tab", async () => {
   await expect(open).toHaveAttribute("href", /^https?:\/\//)
 })
 
+test("a failed Check now says what failed and why, and its toast waits while the keyboard is on it", async () => {
+  await page.goto("/instances")
+  await page
+    .getByRole("row")
+    .filter({ has: page.getByText("e2e-n8n-b", { exact: true }) })
+    .click()
+  await expect(page.getByRole("heading", { name: "e2e-n8n-b" })).toBeVisible()
+  const refresh = (url: URL) => /^\/api\/instances\/[^/]+\/refresh$/.test(url.pathname)
+  await page.route(refresh, (route) =>
+    route.fulfill({ status: 502, json: { error: "bad_gateway", message: "n8n did not answer." } }),
+  )
+  const toast = page.locator("[data-toast]")
+  const close = toast.getByRole("button", { name: "Close" })
+  try {
+    await page.getByRole("button", { name: "Check now" }).click()
+    // The toast names the instance and the server's reason (FB-3, FB-4).
+    await expect(toast).toHaveText("Could not check e2e-n8n-b: n8n did not answer.")
+    // The keyboard goes into it at once: it then holds past its four seconds (FB-2).
+    await close.focus()
+    // The button shows the result for a moment, then its label again (FB-7).
+    await expect(page.getByRole("button", { name: "Failed" })).toBeDisabled()
+    await expect(page.getByRole("button", { name: "Check now" })).toBeEnabled()
+  } finally {
+    await page.unroute(refresh)
+  }
+  await page.waitForTimeout(5_000)
+  await expect(toast).toBeVisible()
+  // Once the keyboard leaves it goes, after the rest of its time (at least 1.5 seconds).
+  await close.blur()
+  await expect(toast).toBeVisible()
+  await expect(toast).toHaveCount(0, { timeout: 8_000 })
+})
+
 test("backups that are not set up link to the destinations and the backup key", async () => {
   await page.route("**/api/backups", async (route) => {
     const res = await route.fetch()

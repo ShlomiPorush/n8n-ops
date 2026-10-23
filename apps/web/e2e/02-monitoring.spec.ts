@@ -60,7 +60,7 @@ test("the first sync imports existing failures as a problem", async () => {
   await page.goto("/instances")
   await page.getByRole("row", { name: /e2e-n8n/ }).click()
   await page.getByRole("button", { name: "Check now" }).click()
-  await expect(page.getByText("Checked now").last()).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByText("Checked e2e-n8n now").last()).toBeVisible({ timeout: 30_000 })
   await expect(page.getByText("Healthy").first()).toBeVisible({ timeout: 20_000 })
 
   await page.goto("/problems")
@@ -77,7 +77,7 @@ test("a repeated failure only increases the counter", async () => {
   await page.goto("/instances")
   await page.getByRole("row", { name: /e2e-n8n/ }).click()
   await page.getByRole("button", { name: "Check now" }).click()
-  await expect(page.getByText("Checked now").last()).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByText("Checked e2e-n8n now").last()).toBeVisible({ timeout: 30_000 })
   await page.goto("/problems")
   // Beside the reading pane the row is an item whose count reads "2 failures".
   await expect(page.getByRole("row", { name: /Sync orders to ERP/ }).locator('[data-part="end"]')).toHaveText(
@@ -96,7 +96,7 @@ test("a resolved problem that fails again is a regression", async () => {
   await page.goto("/instances")
   await page.getByRole("row", { name: /e2e-n8n/ }).click()
   await page.getByRole("button", { name: "Check now" }).click()
-  await expect(page.getByText("Checked now").last()).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByText("Checked e2e-n8n now").last()).toBeVisible({ timeout: 30_000 })
   await page.goto("/problems?status=open")
   await expect(page.getByRole("row", { name: /Sync orders to ERP/ }).getByText("Regression")).toBeVisible()
 

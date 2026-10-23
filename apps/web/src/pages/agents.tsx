@@ -3,6 +3,7 @@ import { useId, useState } from "react"
 import { useConfirm } from "@/components/confirm"
 import { useDiscardGuard } from "@/components/discard-guard"
 import {
+  BusyButton,
   Command,
   Copyable,
   Empty,
@@ -151,6 +152,10 @@ function AgentsCard() {
   const confirm = useConfirm()
   const revoke = useApiMutation<string>("DELETE", (id) => `/admin/tokens/${id}`, {
     invalidate: ["/admin/tokens"],
+    failed: (id) => {
+      const t = tokens.data?.find((x) => x.id === id)
+      return t?.kind === "agent" ? `disconnect ${t.name}` : `revoke the token ${t?.name ?? ""}`.trim()
+    },
   })
   async function askRevoke(t: Token) {
     const agent = t.kind === "agent"
@@ -264,7 +269,7 @@ function HandMadeToken() {
   const create = useApiMutation<{ name: string; kind: string; canRequestAccess: boolean }, { token: string }>(
     "POST",
     "/admin/tokens",
-    { invalidate: ["/admin/tokens"] },
+    { invalidate: ["/admin/tokens"], failed: (b) => `create the token ${b.name}` },
   )
   return (
     <Panel>
@@ -375,9 +380,9 @@ function HandMadeToken() {
             ) : (
               <>
                 <Button onClick={() => void guard.requestClose()}>Cancel</Button>
-                <Button variant="primary" type="submit" form="token" disabled={create.isPending}>
+                <BusyButton variant="primary" type="submit" form="token" busy={create.isPending} busyLabel="Creating…">
                   Create
-                </Button>
+                </BusyButton>
               </>
             )}
           </DialogFooter>

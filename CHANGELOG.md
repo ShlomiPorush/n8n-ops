@@ -27,6 +27,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - When the server cannot sign in to PostgreSQL or reach it at startup, it says why in one line and what to do, instead of a stack trace. A refused password explains that changing it in `.env` does not change it in an existing database, and how to set it.
 - The production `docker-compose.yml` shows the server's health check, so tools that read the compose file show it too. The check itself is unchanged.
 - Adding a worker is one file: Add a Worker gives a `docker-compose.yml` with the server address and the pairing token in it, to save in an empty folder on the n8n host and start with `docker compose up -d`. There are no commands to run and no `.env` or Docker group to fill in: the worker image hands `./data` to its user and, without the socket proxy, joins the Docker socket's group by itself, and the socket proxy runs as root with no capabilities to open the socket. The worker image is pinned to the server's version instead of `latest`.
+- **Messages name what they are about.** "Problem resolved: Sync orders", "Access approved for claude on n8n-1", "Checked n8n-1 now", "Backup of n8n-1 started". When something fails, the message says what and why: "Could not resolve Sync orders: Not found." instead of only "Not found.".
+- Buttons that send a request show a spinning ring with what they are doing ("Checking…"). The buttons that act on one click (Run now, Check now, Test, Approve, Mark resolved, Mute, Reopen, Refresh now) then show "Done" or "Failed" for a moment before their label comes back.
 
 ### Fixed
 
@@ -52,6 +54,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - **Sign-in no longer hangs when n8n-ops cannot be reached.** The button stays on "Signing in…" only while it waits, then says "Could not reach n8n-ops. Check your connection and try again." and keeps what was typed. The same holds for the two-factor code, the setup steps and Change password. A wrong password says "Invalid username or password." Show password keeps the cursor in the field, and the Caps Lock note is read out with the field.
 - Change password keeps what was typed when the change fails; before, the fields were emptied at once.
 - A button that cannot be used now shows the not-allowed pointer and its tip. A click on a disabled button inside a row no longer opens the row.
+- A message in the corner now also waits while the keyboard is on it, not only the pointer, and then stays for the rest of its time (at least 1.5 seconds) instead of four seconds more. A message caught while it fades comes back.
+- A double click on Run now starts one backup, not two. The same holds for Check now, Test, Mark resolved, Approve and the other buttons that act on one click.
 
 ## [0.1.0] - 2026-10-22
 

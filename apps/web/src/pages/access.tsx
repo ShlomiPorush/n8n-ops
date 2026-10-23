@@ -33,7 +33,7 @@ import {
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useApi, useApiMutation } from "@/lib/api"
 import { loadView } from "@/lib/load-state"
-import { n, plural } from "@/lib/numbers"
+import { counts, n, plural } from "@/lib/numbers"
 import { formatDateTime, useTimeZone } from "@/lib/time"
 
 export type AccessStatus = "pending" | "approved" | "denied" | "expired" | "released" | "revoked"
@@ -118,7 +118,15 @@ export function AccessPage() {
         }
         description={
           rows.data
-            ? `${n(waiting)} waiting for you · ${n(active)} active. Nothing is granted until you approve, and access ends on its own.`
+            ? `${
+                counts(
+                  [
+                    [waiting, "waiting for you"],
+                    [active, "active"],
+                  ],
+                  " · ",
+                ) || "Nothing waiting or active"
+              }. Nothing is granted until you approve, and access ends on its own.`
             : "Agents ask for temporary access to an n8n instance for a task. Nothing is granted until you approve, and access ends on its own."
         }
       />

@@ -444,7 +444,10 @@ function BackupHistory({ id, name }: { id: string; name: string }) {
         </h2>
         {runs.data && (
           <p className="mt-1 text-muted-foreground">
-            {plural(list.length, "run")} · {n(list.filter((r) => r.status === "failed").length)} failed
+            {plural(list.length, "run")}
+            {/* Only failures that happened are counted (FW-3). */}
+            {list.some((r) => r.status === "failed") &&
+              ` · ${n(list.filter((r) => r.status === "failed").length)} failed`}
             {/* A failed refresh keeps the history on screen and says so here (TB-5, LD-12). */}
             <RefreshNote live={runs} separator=" · " />
           </p>

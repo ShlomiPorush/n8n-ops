@@ -111,6 +111,54 @@ describe("one app, two looks", () => {
   })
 })
 
+// Every date and time on screen is written by the helpers in lib/time.ts, which follow the Date format, the Time
+// format and the app's time zone (FW-9, FW-2). A page or component that formats a date itself would bypass all
+// three, so none may: no locale or ISO strings of a date, no Intl.DateTimeFormat or clock options of its own, no
+// getHours() and the like (the browser's zone), no date library.
+describe("dates and times", () => {
+  const formatting =
+    /\.(?:toLocaleDateString|toLocaleTimeString|toLocaleString|toISOString|toUTCString|toDateString|toTimeString|toGMTString)\s*\(|\bIntl\.DateTimeFormat\b|\b(?:hour12|hourCycle|dateStyle|timeStyle)\b|\.get(?:UTC)?(?:FullYear|Month|Date|Day|Hours|Minutes|Seconds)\s*\(|from\s+["'](?:date-fns|dayjs|moment|luxon)(?:[/"'])/
+  // The places allowed to, by file, with what they may use and why.
+  const allowed = [
+    // formatTime, formatDay, formatListTime, isoTime and the rest: the helpers themselves.
+    { file: "src/lib/time.ts", what: formatting },
+    // zoneOffset: reads a zone's offset for the Time zone list (MP-4); it writes no date.
+    { file: "src/components/time-zone-picker.tsx", what: /\bIntl\.DateTimeFormat\b/ },
+    // count and formatSize: numbers with thousands separators (FW-3, FW-4), not dates.
+    { file: "src/lib/numbers.ts", what: /\.toLocaleString\s*\(/ },
+  ]
+  const rel = (path: string) => path.replaceAll("\\", "/")
+
+  it("formats dates only through lib/time.ts (FW-9)", () => {
+    const found = sources.flatMap(({ path, text }) =>
+      text.split("\n").flatMap((line, i) => {
+        if (!formatting.test(line)) return []
+        const here = allowed.filter((a) => a.file === rel(path))
+        // A line passes only when what it uses is what its file is allowed.
+        const rest = here.reduce((l, a) => l.replace(new RegExp(a.what.source, "g"), ""), line)
+        return here.length && !formatting.test(rest) ? [] : [`${rel(path)}:${i + 1}: ${line.trim()}`]
+      }),
+    )
+    expect(found).toEqual([])
+  })
+
+  it("catches each way a page could format a date itself", () => {
+    for (const line of [
+      "new Date(x).toLocaleDateString()",
+      "d.toLocaleTimeString([], { hour: '2-digit' })",
+      "when.toLocaleString('en-GB')",
+      "<time dateTime={d.toISOString()}>",
+      "new Intl.DateTimeFormat(undefined, { timeZone })",
+      "{ hour12: false }",
+      "d.getHours()",
+      'import { format } from "date-fns"',
+    ])
+      expect(line).toMatch(formatting)
+    for (const line of ["d.getTime()", "Date.now()", "new Date(value)", "formatTime(value, w)"])
+      expect(line).not.toMatch(formatting)
+  })
+})
+
 describe("assets", () => {
   it("loads no script, stylesheet or font from another server", () => {
     const html = readFileSync(join(web, "index.html"), "utf8")

@@ -950,6 +950,37 @@ test("the time zone is chosen from a list with a search, and Back closes the lis
   }
 })
 
+test("a Date format chosen in Settings writes the dates in a list that way, and Browser is the default (FW-9)", async () => {
+  const before = (await (await page.request.get("/api/settings/general")).json()) as { dateFormat: string }
+  const unsaved = page.getByRole("region", { name: "Unsaved changes" })
+  const firstDate = page.locator("table time").first()
+  const iso = /^\d{4}-\d{2}-\d{2}, /
+  try {
+    await page.goto("/settings/general")
+    const field = page.getByRole("button", { name: /^Date format:/ })
+    await expect(field).toHaveAccessibleName(
+      `Date format: ${before.dateFormat === "browser" ? "Browser" : before.dateFormat}`,
+    )
+    await field.click()
+    await page.getByRole("option", { name: "YYYY-MM-DD" }).click()
+    // The example shows the choice before it is saved, and the row says it differs from the default.
+    await expect(page.getByText(/^Example: \d{4}-\d{2}-\d{2}$/)).toBeVisible()
+    await expect(page.getByRole("button", { name: "Reset to default (Browser)" })).toBeVisible()
+    await unsaved.getByRole("button", { name: "Save changes" }).click()
+    await expect(unsaved).toHaveCount(0)
+    expect((await (await page.request.get("/api/settings/general")).json()).dateFormat).toBe("YYYY-MM-DD")
+
+    await page.goto("/audit")
+    await expect(firstDate).toHaveText(iso)
+  } finally {
+    await page.request.put("/api/settings/general", { data: { dateFormat: before.dateFormat } })
+  }
+  // Back to how it was: the same list no longer writes the year first.
+  await page.goto("/audit")
+  await expect(firstDate).toBeVisible()
+  await expect(firstDate).not.toHaveText(iso)
+})
+
 /** Opens the second test instance and returns its id. */
 async function openInstanceB() {
   await page.goto("/instances")

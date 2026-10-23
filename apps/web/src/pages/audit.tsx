@@ -8,12 +8,12 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { api } from "@/lib/api"
 import { loadView } from "@/lib/load-state"
 import { n, plural } from "@/lib/numbers"
-import { formatDateTime, formatFull, useTimeZone } from "@/lib/time"
+import { formatTime, useTimeFormat } from "@/lib/time"
 
 type Entry = { id: number; at: string; actor: string; action: string; target: string; via: string }
 
 export function AuditPage() {
-  const tz = useTimeZone()
+  const w = useTimeFormat()
   const query = useInfiniteQuery({
     queryKey: ["/admin/audit", "pages"],
     // A page asks for the entries before the last one it has (a cursor). A newer load cancels an older one, whose
@@ -126,9 +126,9 @@ export function AuditPage() {
                 <TableCell className="text-muted-foreground tabular-nums">
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <time dateTime={a.at}>{formatDateTime(a.at, tz)}</time>
+                      <time dateTime={a.at}>{formatTime(a.at, w, { seconds: false })}</time>
                     </TooltipTrigger>
-                    <TooltipContent>{formatFull(a.at, tz)}</TooltipContent>
+                    <TooltipContent>{formatTime(a.at, w)}</TooltipContent>
                   </Tooltip>
                 </TableCell>
                 <TableCell>

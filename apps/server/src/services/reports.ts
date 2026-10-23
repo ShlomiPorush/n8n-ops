@@ -1,3 +1,4 @@
+import { type DateWriting, formatWindow, messageWriting } from "@n8n-ops/shared"
 import { and, count, desc, eq, gt, isNull } from "drizzle-orm"
 import nodemailer from "nodemailer"
 import type { Ctx } from "../context.ts"
@@ -9,6 +10,9 @@ import { telegramPlainText } from "./telegram.ts"
 
 const n = (value: number) => value.toLocaleString("en-US")
 
+/** How far back each report counts. */
+const periodMs = { daily: 86_400_000, weekly: 7 * 86_400_000 } as const
+
 export type Report = Email
 
 type ReportData = {
@@ -19,9 +23,12 @@ type ReportData = {
   backups: { name: string; status: string; at: Date | null }[]
   versions: { name: string; version: string | null }[]
   latest: string | null
-  /** The time zone set in Settings → General; dates read day/month/year in it. */
-  timeZone?: string
+  /** How dates are written: the zone and formats of Settings → General (`messageWriting`, EM-6). */
+  dates?: DateWriting
+  /** When the report is made: the end of the window it counts. */
   when?: Date
+  /** The start of that window; a day or a week before `when` when left out. */
+  since?: Date
 }
 
 const backupWords: Record<string, [string, Tone]> = {
@@ -34,8 +41,11 @@ const backupWords: Record<string, [string, Tone]> = {
 
 /** The daily or weekly summary: what needs a look first, then the details, in the console's layout. */
 export function renderReport(d: ReportData): Report {
-  const timeZone = d.timeZone || "UTC"
+  const dates = d.dates ?? messageWriting(undefined)
   const when = d.when ?? new Date()
+  const since = d.since ?? new Date(when.getTime() - periodMs[d.period])
+  // The exact window the failures and incidents are counted in, with its zone (EM-6).
+  const span = formatWindow(since, when, dates)
   const title = `n8n-ops ${d.period} report`
   const totalOpen = d.openByInstance.reduce((n, i) => n + i.open, 0)
   const instancesWithOpen = d.openByInstance.filter((i) => i.open > 0)
@@ -43,7 +53,7 @@ export function renderReport(d: ReportData): Report {
     ? d.versions.filter((v) => v.version && compareVersions(v.version, d.latest as string) < 0)
     : []
   const badBackups = d.backups.filter((b) => b.status === "failed" || b.status === "partial" || b.status === "none")
-  const stamp = (at: Date | null) => (at ? formatDate(at, timeZone, true) : "never")
+  const stamp = (at: Date | null) => (at ? formatDate(at, dates, true) : "never")
   const sections: { title: string; rows: string[][] }[] = [
     { title: `Open problems: ${totalOpen}`, rows: instancesWithOpen.map((i) => [i.name, String(i.open)]) },
     {
@@ -59,6 +69,7 @@ export function renderReport(d: ReportData): Report {
   ]
   const text = [
     title,
+    span,
     "",
     ...sections.flatMap((s) => [
       s.title,
@@ -75,9 +86,9 @@ export function renderReport(d: ReportData): Report {
         : "No open problems",
     topic: d.period === "daily" ? "Daily report" : "Weekly report",
     tone: totalOpen > 0 || badBackups.length ? "fail" : d.incidents.length || behind.length ? "warn" : "ok",
-    intro: `${d.period === "daily" ? "The last 24 hours" : "The last 7 days"} on every n8n instance.${needsLook ? "" : " Nothing needs a look."}`,
+    intro: `${span}, on every n8n instance.${needsLook ? "" : " Nothing needs a look."}`,
     when,
-    timeZone,
+    dates,
     blocks: [
       stats([
         { label: "Open problems", value: n(totalOpen), tone: totalOpen ? "fail" : undefined },
@@ -156,7 +167,8 @@ export function renderReport(d: ReportData): Report {
 }
 
 export async function buildReport(ctx: Ctx, period: "daily" | "weekly"): Promise<Report> {
-  const since = new Date(Date.now() - (period === "daily" ? 1 : 7) * 86_400_000)
+  const when = new Date()
+  const since = new Date(when.getTime() - periodMs[period])
   const allInstances = await ctx.db.select().from(instances)
   const name = new Map(allInstances.map((i) => [i.id, i.name]))
   const open = await ctx.db
@@ -197,7 +209,9 @@ export async function buildReport(ctx: Ctx, period: "daily" | "weekly"): Promise
     backups,
     versions: allInstances.map((i) => ({ name: i.name, version: i.version })),
     latest: await latestN8nVersion(),
-    timeZone: (await ctx.settings.get("general")).timezone || "UTC",
+    dates: messageWriting(await ctx.settings.get("general")),
+    when,
+    since,
   })
 }
 

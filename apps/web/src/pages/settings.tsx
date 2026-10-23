@@ -1,4 +1,16 @@
-import { type NumberLimits, numberProblem, settingKinds, valueProblem } from "@n8n-ops/shared"
+import {
+  dateFormatLabels,
+  dateFormats,
+  isDateFormat,
+  isTimeFormat,
+  type NumberLimits,
+  numberProblem,
+  settingKinds,
+  timeFormatLabels,
+  timeFormats,
+  valueProblem,
+  writingOf,
+} from "@n8n-ops/shared"
 import { ChevronDown, Download, KeyRound, ShieldCheck } from "lucide-react"
 import { useEffect, useReducer, useRef, useState } from "react"
 import { Navigate, NavLink, useLocation, useNavigate, useParams } from "react-router"
@@ -42,7 +54,7 @@ import { addEntries } from "@/lib/entries"
 import { loadView } from "@/lib/load-state"
 import { flash, whenDrawn } from "@/lib/reveal"
 import { createTestRuns, type TestOutcome, type TestView } from "@/lib/test-run"
-import { formatDateTime, formatWhen, useTimeZone } from "@/lib/time"
+import { type DateWriting, formatClock, formatDay, formatListTime, formatTime, useTimeFormat } from "@/lib/time"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
 import { DestinationsSection } from "@/pages/destinations"
@@ -55,7 +67,18 @@ export type FieldDef = {
   name: string
   label: string
   hint?: string
-  type?: "text" | "number" | "password" | "switch" | "time" | "list" | "weekday" | "design" | "timezone"
+  type?:
+    | "text"
+    | "number"
+    | "password"
+    | "switch"
+    | "time"
+    | "list"
+    | "weekday"
+    | "design"
+    | "timezone"
+    | "date-format"
+    | "time-format"
   placeholder?: string
   /** The switch this field only matters with: while it is off, the field stays in place, greyed out (FS-4). */
   needs?: string
@@ -80,6 +103,19 @@ export const forms: Record<string, { title: string; description: string; fields:
         label: "Time zone",
         hint: "For report and backup schedules and every time shown here. Search by city, region or offset.",
         type: "timezone",
+      },
+      // How every date and time is written, here and in emails (FW-9, EM-6); numbers only, never month names.
+      {
+        name: "dateFormat",
+        label: "Date format",
+        hint: "Select your date format. Default: Browser.",
+        type: "date-format",
+      },
+      {
+        name: "timeFormat",
+        label: "Time format",
+        hint: "Select your time format. Default: 24-hour.",
+        type: "time-format",
       },
       {
         name: "design",
@@ -538,12 +574,34 @@ export function differsFromDefault(f: FieldDef, value: unknown, fallback: unknow
   return text(value) !== text(fallback)
 }
 
-/** The default as Reset names it: "60", "On", "Sunday", "Regular" (FS-6). */
+/** The default as Reset names it: "60", "On", "Sunday", "Regular", "24-hour" (FS-6). */
 export function defaultText(f: FieldDef, fallback: unknown) {
   if (f.type === "switch") return fallback ? "On" : "Off"
   if (f.type === "weekday") return weekdays[Number(fallback)] ?? String(fallback)
   if (f.type === "design") return text(fallback).charAt(0).toUpperCase() + text(fallback).slice(1)
+  if (f.type === "date-format" && isDateFormat(fallback)) return dateFormatLabels[fallback]
+  if (f.type === "time-format" && isTimeFormat(fallback)) return timeFormatLabels[fallback]
   return text(fallback) || "(empty)"
+}
+
+/**
+ * Under Date format and Time format: now, written as the form's choices and time zone write it, before they are
+ * saved (FW-9). Polite, so a screen reader hears the new example after a change; it is not redrawn on a timer,
+ * which would announce it again and again.
+ */
+export function formatExample(f: FieldDef, values: Record<string, unknown>): React.ReactNode {
+  if (f.type !== "date-format" && f.type !== "time-format") return undefined
+  const draft = writingOf({
+    timezone: text(values.timezone),
+    dateFormat: text(values.dateFormat),
+    timeFormat: text(values.timeFormat),
+  })
+  const now = new Date()
+  return (
+    <span aria-live="polite" className="tabular-nums">
+      Example: {f.type === "date-format" ? formatDay(now, draft) : formatClock(now, draft)}
+    </span>
+  )
 }
 
 /** Settings with a default worth naming get Changed and Reset; secrets, lists and addresses do not (FS-6). */
@@ -789,6 +847,7 @@ export function SettingsForm({ section, active = true }: { section: string; acti
                 wide={f.type === "list"}
                 problem={problem}
                 off={needs ? `Used when ${def.fields.find((s) => s.name === needs)?.label ?? needs} is on.` : undefined}
+                note={formatExample(f, values)}
                 {...source(f)}
               >
                 {f.type === "switch" ? (
@@ -813,6 +872,31 @@ export function SettingsForm({ section, active = true }: { section: string; acti
                     <ToggleGroupItem value="regular">Regular</ToggleGroupItem>
                     <ToggleGroupItem value="compact">Compact</ToggleGroupItem>
                   </ToggleGroup>
+                ) : f.type === "time-format" ? (
+                  // Three short choices are a segmented control (FS-14).
+                  <ToggleGroup
+                    type="single"
+                    segmented
+                    id={f.name}
+                    aria-label={f.label}
+                    value={String(values[f.name] || "24h")}
+                    onValueChange={(v) => v && set(f.name, v)}
+                  >
+                    {timeFormats.map((t) => (
+                      <ToggleGroupItem key={t} value={t}>
+                        {timeFormatLabels[t]}
+                      </ToggleGroupItem>
+                    ))}
+                  </ToggleGroup>
+                ) : f.type === "date-format" ? (
+                  <FieldPicker
+                    id={f.name}
+                    label={f.label}
+                    value={String(values[f.name] || "browser")}
+                    onChange={(v) => set(f.name, v)}
+                    disabled={save.isPending}
+                    options={dateFormats.map((d) => ({ value: d, label: dateFormatLabels[d] }))}
+                  />
                 ) : f.type === "timezone" ? (
                   <TimeZonePicker
                     id={f.name}
@@ -949,7 +1033,7 @@ function TestRow({
   secretsSaved: number
 }) {
   const t = tests[section]
-  const tz = useTimeZone()
+  const w = useTimeFormat()
   const [runs] = useState(createTestRuns)
   const [, redraw] = useReducer((n: number) => n + 1, 0)
   // A test still on its way when the form goes is forgotten: its answer has nothing to show.
@@ -996,7 +1080,7 @@ function TestRow({
         {missing ? (
           <span className="text-muted-foreground">Add {missing} first.</span>
         ) : (
-          <TestResult view={runs.view(snapshot)} zone={tz} />
+          <TestResult view={runs.view(snapshot)} dates={w} />
         )}
       </div>
     </div>
@@ -1004,7 +1088,7 @@ function TestRow({
 }
 
 /** The last test's result for the values on screen (SV-5). */
-function TestResult({ view, zone }: { view: TestView; zone: string }) {
+function TestResult({ view, dates }: { view: TestView; dates: DateWriting }) {
   if (view.kind === "accepted" || view.kind === "failed")
     return (
       <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -1012,7 +1096,7 @@ function TestResult({ view, zone }: { view: TestView; zone: string }) {
           {view.kind === "accepted" ? "Accepted" : "Failed"}
         </Badge>
         {view.kind === "accepted" ? view.detail && <span>{view.detail}</span> : <span>{view.message}</span>}
-        <span className="text-muted-foreground">Checked {formatWhen(new Date(view.at), zone)}</span>
+        <span className="text-muted-foreground">Checked {formatListTime(view.at, dates)}</span>
       </span>
     )
   return (
@@ -1027,7 +1111,7 @@ function TestResult({ view, zone }: { view: TestView; zone: string }) {
 }
 
 function KeysCard() {
-  const tz = useTimeZone()
+  const w = useTimeFormat()
   const keys = useApi<{ backupRecipient: string | null; privateKeySavedAt: string | null }>("/admin/keys")
   const [rotate, setRotate] = useState(false)
   const [privateKey, setPrivateKey] = useState("")
@@ -1085,7 +1169,7 @@ function KeysCard() {
             {keys.data?.privateKeySavedAt ? (
               <span className="flex items-center gap-2 font-semibold text-ok">
                 <ShieldCheck className="size-4" />
-                Saved, {formatDateTime(keys.data.privateKeySavedAt, tz)}
+                Saved, {formatTime(keys.data.privateKeySavedAt, w, { seconds: false })}
               </span>
             ) : (
               <span className="font-semibold text-warn">Not confirmed</span>

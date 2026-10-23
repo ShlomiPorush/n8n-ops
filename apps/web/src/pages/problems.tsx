@@ -71,7 +71,7 @@ import { api, refreshAreas, useApi, useApiMutation } from "@/lib/api"
 import { loadView } from "@/lib/load-state"
 import { countOf, n, plural, word } from "@/lib/numbers"
 import { useNavigateFromOverlay } from "@/lib/overlay-history"
-import { formatDateTime, useTimeZone } from "@/lib/time"
+import { formatTime, useTimeFormat } from "@/lib/time"
 import { toast } from "@/lib/toast"
 import { offerUndo } from "@/lib/undo"
 import { cn } from "@/lib/utils"
@@ -531,7 +531,7 @@ export function ProblemDetail({ id }: { id: string }) {
   const [tab, show] = usePaneTab(problemTab)
   const detail = useApi<ProblemDetailData>(`/problems/${id}`, { refetchInterval: 15_000 })
   useCrumb(detail.data?.workflowName)
-  const tz = useTimeZone()
+  const w = useTimeFormat()
   const [raw, setRaw] = useState<RawView | null>(null)
   /*
    * Each opening of the raw data window owns the load it started: a new opening or a close aborts it, and its
@@ -701,7 +701,9 @@ export function ProblemDetail({ id }: { id: string }) {
               icon={HistoryIcon}
               value={<TimeAgo value={p.lastSeen} />}
               hint={
-                p.status === "muted" && p.mutedUntil ? `Muted until ${formatDateTime(p.mutedUntil, tz)}` : undefined
+                p.status === "muted" && p.mutedUntil
+                  ? `Muted until ${formatTime(p.mutedUntil, w, { seconds: false })}`
+                  : undefined
               }
             />
           </Kpis>

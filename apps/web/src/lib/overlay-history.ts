@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react"
+import { useCallback, useEffect, useRef, useSyncExternalStore } from "react"
 import { type NavigateOptions, type To, useNavigate } from "react-router"
 
 /*
@@ -29,6 +29,44 @@ let ignore = 0
 let seq = 0
 let listening = false
 
+/*
+ * Whether overlays hold the history now: one is open, a step back that takes an entry away has not landed yet,
+ * or one closed while a navigation from it waits on the Leave question and its entry is still the current one.
+ * Meanwhile the current entry may be an overlay's, and an address corrected in place through the router would
+ * drop its `overlay` mark, so the close could no longer take it away (DS-10). Such a correction waits. The last
+ * case ends without an event of ours when the navigation is made and replaces the entry, so it is read live.
+ */
+const heldListeners = new Set<() => void>()
+/** The value last read or announced, so a change is announced once. */
+let held = false
+function holding(): boolean {
+  const current = window.history.state?.overlay
+  return stack.length > 0 || ignore > 0 || waiting.some((e) => e.id === current)
+}
+function heldChanged() {
+  const now = holding()
+  if (now === held) return
+  held = now
+  for (const listener of [...heldListeners]) listener()
+}
+
+/** Whether an overlay holds a history entry now, or one being taken away (see `useOverlaysHeld`). */
+export function overlaysHeld(): boolean {
+  held = holding()
+  return held
+}
+
+/** Calls `listener` each time `overlaysHeld()` changes. */
+export function onOverlaysHeld(listener: () => void): () => void {
+  heldListeners.add(listener)
+  return () => heldListeners.delete(listener)
+}
+
+/** `overlaysHeld()`, as state: an address that is only corrected waits while it is true (NL-3, DS-10). */
+export function useOverlaysHeld(): boolean {
+  return useSyncExternalStore(onOverlaysHeld, overlaysHeld, overlaysHeld)
+}
+
 /**
  * The entry is one step above the page in the router's count (`idx`) too, so a page that later takes its place
  * (`useNavigateFromOverlay`) is one step above the page before it: when the router undoes a blocked Back from
@@ -44,6 +82,7 @@ function push(entry: Entry) {
 function onPopState() {
   if (ignore > 0) {
     ignore -= 1
+    heldChanged()
     return
   }
   const top = stack.at(-1)
@@ -70,6 +109,7 @@ export function holdOverlayEntry(close: () => void, isOpen?: () => boolean): () 
   }
   const entry: Entry = { id: ++seq, close, isOpen, pushed: false, left: false }
   stack.push(entry)
+  heldChanged()
   // Pushed on the next task, so a mount that is undone at once (React strict mode) leaves no entry.
   const timer = setTimeout(() => {
     if (!entry.left) push(entry)
@@ -78,15 +118,17 @@ export function holdOverlayEntry(close: () => void, isOpen?: () => boolean): () 
     clearTimeout(timer)
     stack.splice(stack.indexOf(entry), 1)
     // Never pushed, or no longer on our entry (a navigation from inside the overlay replaced it): nothing to undo.
-    if (!entry.pushed || window.history.state?.overlay !== entry.id) return
-    // A navigation from inside the overlay is on its way, or waits on the Leave question: the navigation takes
-    // the entry, or `stayAfterBlock` takes it away when the page stays.
-    if (entry.left) waiting.push(entry)
-    else {
-      // Closed by hand: take the entry away, so the next Back really leaves the page.
-      ignore += 1
-      window.history.back()
+    if (entry.pushed && window.history.state?.overlay === entry.id) {
+      // A navigation from inside the overlay is on its way, or waits on the Leave question: the navigation takes
+      // the entry, or `stayAfterBlock` takes it away when the page stays.
+      if (entry.left) waiting.push(entry)
+      else {
+        // Closed by hand: take the entry away, so the next Back really leaves the page.
+        ignore += 1
+        window.history.back()
+      }
     }
+    heldChanged()
   }
 }
 
@@ -114,6 +156,7 @@ export function leaveOverlays(): boolean {
   const onEntry = stack.some((e) => e.pushed && e.id === current)
   for (const e of stack) e.left = true
   waiting = []
+  heldChanged()
   return onEntry
 }
 
@@ -142,6 +185,7 @@ export function stayAfterBlock() {
     ignore += 1
     window.history.go(-closed.length)
   }
+  heldChanged()
 }
 
 /**

@@ -1,9 +1,6 @@
-import { ChevronDown } from "lucide-react"
-import { Popover as PopoverPrimitive } from "radix-ui"
-import { useMemo } from "react"
-import { PickerContent, type PickerOption, usePicker } from "@/components/filter-bar"
-import { useOverlayHistory } from "@/lib/overlay-history"
-import { cn } from "@/lib/utils"
+import { useCallback } from "react"
+import { FieldPicker } from "@/components/field-picker"
+import type { PickerOption } from "@/components/filter-bar"
 
 /** A zone's offset from UTC right now, such as UTC+03:00; null when the browser does not know the zone. */
 export function zoneOffset(zone: string, at: Date): string | null {
@@ -29,8 +26,8 @@ function zoneOptions(current: string): PickerOption[] {
 }
 
 /**
- * The time zone of the installation, chosen from a list with a search (by city, region or offset). An empty
- * value is UTC. Back, Escape or a click beside the list closes it before anything leaves the page.
+ * The time zone of the installation, chosen from a list with a search (by city, region or offset) (MP-4). An
+ * empty value is UTC. The field shows the zone's offset now, muted, after its name.
  */
 export function TimeZonePicker({
   id,
@@ -43,55 +40,30 @@ export function TimeZonePicker({
   onChange: (zone: string) => void
   disabled?: boolean
 }) {
-  const picker = usePicker()
-  useOverlayHistory(picker.open, () => picker.setOpen(false))
   const zone = value || "UTC"
   // Built once the list opens: offsets change with daylight saving, and some 400 zones take a moment.
-  const options = useMemo(() => (picker.open ? zoneOptions(zone) : []), [picker.open, zone])
+  const options = useCallback(() => zoneOptions(zone), [zone])
   // UTC needs no offset beside its name.
   const offset = zone === "UTC" ? null : zoneOffset(zone, new Date())
-  const shown = `${zone.replaceAll("_", " ")}${offset ? ` (${offset})` : ""}`
+  const name = zone.replaceAll("_", " ")
   return (
-    // Modal, like a dialog: a click beside the list only closes it. Going through to a link behind it would
-    // leave the page while the list still holds its Back entry, and cost a second Back later.
-    <PopoverPrimitive.Root modal open={picker.open} onOpenChange={picker.setOpen}>
-      <PopoverPrimitive.Trigger asChild>
-        <button
-          id={id}
-          type="button"
-          disabled={disabled}
-          aria-haspopup="listbox"
-          aria-controls={picker.open ? picker.id : undefined}
-          aria-label={`Time zone: ${shown}`}
-          onKeyDown={(e) => {
-            if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-              e.preventDefault()
-              picker.setOpen(true)
-            }
-          }}
-          className="flex h-ctl w-full min-w-0 items-center gap-2 rounded-sm border border-input bg-bg ps-3 pe-2.5 text-start text-body outline-none focus-visible:border-primary disabled:cursor-not-allowed disabled:opacity-50 aria-expanded:border-primary"
-        >
-          <span className="min-w-0 flex-1 truncate">
-            {zone.replaceAll("_", " ")}
+    <FieldPicker
+      id={id}
+      label="Time zone"
+      listLabel="Time zones"
+      value={zone}
+      options={options}
+      onChange={onChange}
+      disabled={disabled}
+      display={{
+        text: `${name}${offset ? ` (${offset})` : ""}`,
+        node: (
+          <>
+            {name}
             {offset && <span className="text-muted-foreground tabular-nums"> {offset}</span>}
-          </span>
-          <ChevronDown
-            aria-hidden
-            className={cn(
-              "size-4 shrink-0 text-muted-foreground transition-transform duration-150",
-              picker.open && "rotate-180",
-            )}
-          />
-        </button>
-      </PopoverPrimitive.Trigger>
-      <PickerContent
-        picker={picker}
-        label="Time zones"
-        value={zone}
-        options={options}
-        onChange={onChange}
-        className="w-[min(360px,calc(100vw-16px))]"
-      />
-    </PopoverPrimitive.Root>
+          </>
+        ),
+      }}
+    />
   )
 }

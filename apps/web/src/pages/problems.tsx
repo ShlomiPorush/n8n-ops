@@ -17,6 +17,7 @@ import {
 import { useEffect, useRef, useState } from "react"
 import { Link, useNavigate, useParams, useSearchParams } from "react-router"
 import { useCrumb } from "@/app/chrome"
+import { FieldPicker } from "@/components/field-picker"
 import { FilterBar, Picker, SearchBox } from "@/components/filter-bar"
 import { FlowGraph, type GraphNode } from "@/components/flow-graph"
 import { ItemRow, ItemsHeader, Said } from "@/components/item-row"
@@ -38,7 +39,7 @@ import {
   UserText,
 } from "@/components/kit"
 import { ListWithPanel } from "@/components/list-panel"
-import { type PaneTabItem, PaneTabPanel, PaneTabs, usePaneTab } from "@/components/pane-tabs"
+import { type PaneTabItem, PaneTabPanel, PaneTabs, usePaneTab, withoutTab } from "@/components/pane-tabs"
 import { ProblemBadge, problemStatus, TimeAgo, When } from "@/components/status"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -51,7 +52,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
   RANK_WORDS,
   type Sorting,
@@ -314,7 +314,9 @@ export function ProblemsPage() {
     else next.delete(k)
     setParams(next, { replace: true })
   }
-  const open = (pid: string) => navigate(`/problems/${pid}?${params}`)
+  // The list's filters go with an opened problem, its open tab does not: each opening starts on Overview.
+  const listSearch = withoutTab(params)
+  const open = (pid: string) => navigate(`/problems/${pid}${listSearch}`)
   const shown = rows.data?.items.length
   const total = rows.data?.total ?? 0
   const filtered = instance !== "all" || q !== ""
@@ -391,7 +393,7 @@ export function ProblemsPage() {
             sort={sort}
             selected={id}
             onOpen={open}
-            href={(pid) => `/problems/${pid}?${params}`}
+            href={(pid) => `/problems/${pid}${listSearch}`}
             items={items}
             empty={
               rows.previous === "failed"
@@ -417,7 +419,7 @@ export function ProblemsPage() {
       list={list}
       panelTitle="Problem"
       panel={id ? <ProblemDetail id={id} /> : null}
-      onClose={() => navigate(`/problems?${params}`)}
+      onClose={() => navigate(`/problems${listSearch}`)}
     />
   )
 }
@@ -908,18 +910,18 @@ function MergeDialog({
             Only problems on the same instance can be merged.
           </Empty>
         ) : (
-          <Select value={into} onValueChange={setInto}>
-            <SelectTrigger className="w-full" aria-label="Problem to merge into">
-              <SelectValue placeholder="Choose a problem on the same instance" />
-            </SelectTrigger>
-            <SelectContent>
-              {options.map((c) => (
-                <SelectItem key={c.id} value={c.id}>
-                  {c.workflowName} · {c.errorMessage.slice(0, 60)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <FieldPicker
+            label="Problem to merge into"
+            listLabel="Problems"
+            placeholder="Choose a problem on the same instance"
+            value={into}
+            onChange={setInto}
+            options={options.map((c) => ({
+              value: c.id,
+              label: `${c.workflowName} · ${c.errorMessage.slice(0, 60)}`,
+              search: c.errorMessage,
+            }))}
+          />
         )}
         <DialogFooter>
           <Button onClick={() => onOpenChange(false)}>Cancel</Button>

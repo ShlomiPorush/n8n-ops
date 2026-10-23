@@ -21,7 +21,7 @@ for (const kind of ["rest", "mcp"] as const) {
     await openNewToken(page)
     await page.getByLabel("Name").fill(`e2e-${kind}`)
     if (kind === "rest") {
-      await page.getByRole("combobox").last().click()
+      await page.getByRole("button", { name: /^Kind:/ }).click()
       await page.getByRole("option", { name: "REST (scripts)" }).click()
     }
     await page.getByRole("button", { name: "Create" }).click()

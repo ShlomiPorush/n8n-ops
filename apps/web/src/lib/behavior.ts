@@ -33,5 +33,13 @@ export const LIST_WAIT_MS = 8000
 /** A press that moves more than this before its click was selecting text, so the row holds (TB-8). */
 export const ROW_HOLD_MOVE_PX = 3
 
+/** Back and Forward bring a page's scrolling areas back for at most this long while its content loads (NL-3). */
+export const SCROLL_RESTORE_MS = 1500
+
 /** The phone layout: tab bar, sheets instead of dialogs, stacked tables. */
 export const PHONE_QUERY = "(max-width: 760px)"
+/** A screen used by touch only, where focusing a field raises the on-screen keyboard (DS-8, MP-4). */
+export const TOUCH_ONLY_QUERY = "(hover: none) and (pointer: coarse)"
+
+/** Whether this is a touch-only screen; false where there is no window (tests, server rendering). */
+export const touchOnly = () => typeof window !== "undefined" && window.matchMedia?.(TOUCH_ONLY_QUERY).matches === true

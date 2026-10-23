@@ -26,6 +26,7 @@ import { useCrumb } from "@/app/chrome"
 import { AgentAccessCard } from "@/components/agent-access-card"
 import { useConfirm } from "@/components/confirm"
 import { useDiscardGuard } from "@/components/discard-guard"
+import { FieldPicker } from "@/components/field-picker"
 import { FilterBar } from "@/components/filter-bar"
 import { ItemRow, ItemsHeader } from "@/components/item-row"
 import {
@@ -80,7 +81,6 @@ import {
   FieldSet,
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
   RANK_WORDS,
   SortButton,
@@ -1246,15 +1246,15 @@ export function InstanceDialog({
             </FieldLegend>
             <Field>
               <FieldLabel>Check health and metrics</FieldLabel>
-              <Select value={form.collection} onValueChange={(v) => set("collection", v)}>
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="direct">Directly from the n8n-ops server</SelectItem>
-                  <SelectItem value="worker">Through the worker on the n8n host</SelectItem>
-                </SelectContent>
-              </Select>
+              <FieldPicker
+                label="Check health and metrics"
+                value={form.collection}
+                onChange={(v) => set("collection", v)}
+                options={[
+                  { value: "direct", label: "Directly from the n8n-ops server" },
+                  { value: "worker", label: "Through the worker on the n8n host" },
+                ]}
+              />
               <FieldDescription>
                 Use the worker when /healthz and /metrics are not reachable from outside the host.
               </FieldDescription>
@@ -1281,23 +1281,19 @@ export function InstanceDialog({
                   to back up credential secrets and move credentials.
                 </p>
               ) : (
-                <Select value={form.workerId || "none"} onValueChange={(v) => set("workerId", v === "none" ? "" : v)}>
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">None</SelectItem>
-                    {/* By name: the list says no more than the names, so the Workers page's offline-first order would
-                        look random here. */}
-                    {[...(workers.data ?? [])]
+                <FieldPicker
+                  label="Worker on this instance's Docker host"
+                  value={form.workerId || "none"}
+                  onChange={(v) => set("workerId", v === "none" ? "" : v)}
+                  options={[
+                    { value: "none", label: "None" },
+                    // By name: the list says no more than the names, so the Workers page's offline-first order
+                    // would look random here.
+                    ...[...(workers.data ?? [])]
                       .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base", numeric: true }))
-                      .map((w) => (
-                        <SelectItem key={w.id} value={w.id}>
-                          {w.name}
-                        </SelectItem>
-                      ))}
-                  </SelectContent>
-                </Select>
+                      .map((w) => ({ value: w.id, label: w.name })),
+                  ]}
+                />
               )}
               <FieldDescription>Needed to back up credential secrets and to move credentials.</FieldDescription>
             </Field>

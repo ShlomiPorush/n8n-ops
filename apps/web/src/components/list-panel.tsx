@@ -85,14 +85,17 @@ export function ListWithPanel({
         {panel && (
           <Dialog open onOpenChange={(o) => !o && onClose()}>
             <DialogContent
-              className="md:max-w-[1100px]"
-              // On a phone the sheet keeps four fifths of the screen whatever is open in it (index.css).
+              // A fixed height, so it does not grow and shrink with each tab (DS-16). On a phone the sheet keeps
+              // four fifths of the screen whatever is open in it (index.css).
+              className="md:h-[90dvh] md:max-w-[1100px]"
               data-pane-sheet=""
               aria-describedby={undefined}
               showCloseButton={false}
               pullToClose
               // The open item is in the address: Back already closes it.
               history={false}
+              // The same area as the pane beside the list, so Back puts each tab where it was scrolled (NL-3).
+              scrollPane="item"
               // Focus the dialog, not its Back button, so no focus ring shows before the keyboard is used.
               onOpenAutoFocus={(e) => {
                 e.preventDefault()
@@ -136,7 +139,7 @@ export function ListWithPanel({
         <ResizablePanel defaultSize="40%" minSize="360px">
           <div
             ref={measure}
-            data-scroll-pane
+            data-scroll-pane="list"
             // Rows keep their full height (auto-rows-max): in a grid of fixed height a scrolling table would
             // otherwise shrink to nothing once the column is taller than the screen.
             className="grid h-full min-w-0 auto-rows-max content-start gap-gap overflow-y-auto overscroll-contain py-[22px] ps-[22px] pe-4 [scrollbar-gutter:stable] lg:ps-7"
@@ -150,11 +153,14 @@ export function ListWithPanel({
             <div
               // A new item starts at its top (DS-6).
               key={pathname}
-              data-scroll-pane
-              className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 pt-[22px] pb-15"
+              data-scroll-pane="item"
+              className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
             >
-              {/* Only an empty, failed or filtered-out list leaves nothing to open. */}
-              {panel ?? <Empty title="Nothing is open." />}
+              {/* The padding is on the content, not on the scroller, so the item's tabs stick at its very top (DS-14). */}
+              <div className="px-6 pt-[22px] pb-15">
+                {/* Only an empty, failed or filtered-out list leaves nothing to open. */}
+                {panel ?? <Empty title="Nothing is open." />}
+              </div>
             </div>
           </section>
         </ResizablePanel>

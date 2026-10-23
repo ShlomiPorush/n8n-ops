@@ -597,6 +597,25 @@ html[data-design="regular"].dark {
 }
 
 /*
+ * The tabs of an instance or a problem stick to the top of where its pane scrolls (DS-14): the docked pane, or
+ * right under the sticky head of the dialog it opens in (--dialog-head-h, measured in dialog.tsx). Like the
+ * filter bar they take a little room from the gaps beside them, so nothing moves while they are not stuck. The
+ * pane's scroller has no top padding of its own, or they would stick below it with content showing above.
+ */
+[data-slot="pane-tabs"] {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  margin-block: -8px;
+  padding-block: 8px;
+  background: var(--ui-bg);
+}
+[data-slot="dialog-body"] [data-slot="pane-tabs"] {
+  top: var(--dialog-head-h, 0px);
+  background: var(--popover);
+}
+
+/*
  * Tables stack into rows where they have less than 560px, on a phone or beside a reading pane (TB-14): the
  * header row goes, the first cell takes the first line, every other value carries its column name, the
  * actions take the last line and empty cells disappear. The list's Sort button (TB-28) sorts it then.
@@ -701,8 +720,11 @@ html:not([data-design="regular"]) tr[data-state="selected"] > td:has(> [data-slo
   border-radius: var(--ui-r-lg);
 }
 
-/* While the save bar shows, every scrolling page keeps room under its last field (SV-1). */
-html[data-unsaved] :is(#main, [data-scroll-pane]) {
+/*
+ * While the save bar shows, every scrolling page keeps room under its last field (SV-1). Not an item open as a
+ * dialog: its save bar sits in its own footer, under the content.
+ */
+html[data-unsaved] :is(#main, [data-scroll-pane]:not([data-slot="dialog-body"])) {
   padding-bottom: 96px;
 }
 @media (max-width: 760px) {

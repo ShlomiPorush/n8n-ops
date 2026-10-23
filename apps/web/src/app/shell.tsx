@@ -13,7 +13,7 @@ import {
 } from "lucide-react"
 import { useTheme } from "next-themes"
 import { Popover as PopoverPrimitive, Dialog as SheetPrimitive } from "radix-ui"
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
+import { cloneElement, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { Link, Navigate, NavLink, Outlet, useLocation, useNavigate, useNavigationType } from "react-router"
 import { ChromeContext } from "@/app/chrome"
 import { DesignSync } from "@/app/design-sync"
@@ -37,8 +37,10 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useMediaQuery } from "@/hooks/use-mobile"
 import { ApiError, useApi } from "@/lib/api"
 import { authClient } from "@/lib/auth-client"
+import { SCROLL_RESTORE_MS } from "@/lib/behavior"
 import { useLiveUpdates } from "@/lib/live"
 import { useOverlayHistory } from "@/lib/overlay-history"
+import { placeSpot, readSpot, type ScrollSpot, shownEntry } from "@/lib/scroll-spot"
 import { loginPath, sessionClosed, sessionStarted } from "@/lib/session"
 import { n, plural } from "@/lib/time"
 import { toast } from "@/lib/toast"
@@ -147,15 +149,15 @@ function NavToggle({ folded, toggle, className }: { folded: boolean; toggle: () 
 }
 
 /**
- * The top bar from 761px (NL-6): the brand above the sidebar, then the trail "Group › Page › opened item"
- * with the page title, and the page's own actions at the far end. The trail also names the browser tab.
+ * The top bar from 761px (NL-6): the brand above the sidebar, then the trail "Group › Page › opened item › its
+ * tab" with the page title, and the page's own actions at the far end. The trail also names the browser tab.
  */
 function TopBar({
-  crumb,
+  trail,
   nav,
   setActionsSlot,
 }: {
-  crumb: string | null
+  trail: string[]
   nav: ReturnType<typeof useNavFolded>
   setActionsSlot: (el: HTMLDivElement | null) => void
 }) {
@@ -194,23 +196,31 @@ function TopBar({
             )}
             <li className="min-w-0 shrink-0">
               <h1 className="truncate text-title font-heavy tracking-tighter regular:text-body regular:font-medium regular:tracking-normal">
-                {page && !atRoot && crumb ? (
+                {page && !atRoot && trail.length > 0 ? (
                   <Link to={page.item.to} className="underline-offset-3 [@media(hover:hover)]:hover:underline">
                     {page.item.label}
                   </Link>
                 ) : (
-                  <span aria-current={crumb ? undefined : "page"}>{page?.item.label ?? "n8n-ops"}</span>
+                  <span aria-current={trail.length > 0 ? undefined : "page"}>{page?.item.label ?? "n8n-ops"}</span>
                 )}
               </h1>
             </li>
-            {crumb && (
-              <li className="flex min-w-0 items-center gap-2">
-                <ChevronRight aria-hidden className="size-4 shrink-0 text-muted-foreground" />
-                <span aria-current="page" className="truncate text-body font-semibold" dir="auto">
-                  <bdi>{crumb}</bdi>
-                </span>
-              </li>
-            )}
+            {trail.map((crumb, i) => {
+              const last = i === trail.length - 1
+              return (
+                // biome-ignore lint/suspicious/noArrayIndexKey: a crumb's place is its level in the trail
+                <li key={i} className={cn("flex min-w-0 items-center gap-2", last ? "shrink" : "shrink-[2]")}>
+                  <ChevronRight aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+                  <span
+                    aria-current={last ? "page" : undefined}
+                    className={cn("truncate text-body", last && "font-semibold")}
+                    dir="auto"
+                  >
+                    <bdi>{crumb}</bdi>
+                  </span>
+                </li>
+              )
+            })}
           </ol>
         </nav>
         <div
@@ -224,10 +234,11 @@ function TopBar({
 }
 
 /**
- * The pages of Settings beside its sidebar item, on hover or with the right arrow key (NL-8). Only where
- * there is a pointer; touch screens use the page's own section list.
+ * The pages of Settings beside its sidebar item, on hover or with the right arrow key (NL-8): a menu of links,
+ * which closes when the window is resized, as it is placed beside the item. Only where there is a pointer;
+ * touch screens use the page's own section list.
  */
-function SectionsFlyout({ children, label }: { children: React.ReactElement; label: string }) {
+function SectionsFlyout({ children, label }: { children: React.ReactElement<React.AriaAttributes>; label: string }) {
   const [open, setOpen] = useState(false)
   const byKey = useRef(false)
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined)
@@ -235,6 +246,12 @@ function SectionsFlyout({ children, label }: { children: React.ReactElement; lab
   const { pathname } = useLocation()
   // biome-ignore lint/correctness/useExhaustiveDependencies: a chosen section closes the menu
   useEffect(() => setOpen(false), [pathname])
+  useEffect(() => {
+    if (!open) return
+    const close = () => setOpen(false)
+    window.addEventListener("resize", close)
+    return () => window.removeEventListener("resize", close)
+  }, [open])
   if (!pointer) return children
   const show = () => {
     clearTimeout(timer.current)
@@ -259,7 +276,7 @@ function SectionsFlyout({ children, label }: { children: React.ReactElement; lab
             }
           }}
         >
-          {children}
+          {cloneElement(children, { "aria-haspopup": "menu", "aria-expanded": open })}
         </div>
       </PopoverPrimitive.Anchor>
       <PopoverPrimitive.Portal>
@@ -268,6 +285,7 @@ function SectionsFlyout({ children, label }: { children: React.ReactElement; lab
           align="start"
           sideOffset={8}
           collisionPadding={8}
+          role="menu"
           aria-label={`${label} sections`}
           onPointerEnter={show}
           onPointerLeave={hide}
@@ -290,11 +308,15 @@ function SectionsFlyout({ children, label }: { children: React.ReactElement; lab
           }}
           className="relative z-60 grid w-[210px] gap-0.5 rounded-lg bg-popover p-1.5 text-popover-foreground shadow-float outline-none before:absolute before:inset-y-0 before:-start-3 before:w-3 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:slide-in-from-left-1"
         >
-          <b className="px-2.5 pt-1 pb-0.5 text-small text-muted-foreground">{label}</b>
+          {/* The menu is named by its label already; a menu holds only its items. */}
+          <b aria-hidden className="px-2.5 pt-1 pb-0.5 text-small text-muted-foreground">
+            {label}
+          </b>
           {settingsGroups.flatMap((g) =>
             g.items.map(([key, name]) => (
               <NavLink
                 key={key}
+                role="menuitem"
                 to={`/settings/${key}`}
                 className="flex min-h-8 items-center gap-2 rounded-sm px-2.5 text-body outline-none focus-visible:outline-offset-[-2px] aria-[current=page]:font-bold [@media(hover:hover)]:hover:bg-accent"
               >
@@ -343,7 +365,9 @@ function SideNav({ nav }: { nav: ReturnType<typeof useNavFolded> }) {
             const count = counts.of(item)
             const link = (
               <NavLink
-                to={item.to}
+                // Settings clicked again on one of its sections shows that section without a new Back step: the
+                // same address is replaced, where /settings would add a step and then turn into it (NL-4).
+                to={item.to === "/settings" && pathname.startsWith("/settings/") ? pathname : item.to}
                 end={item.to === "/"}
                 title={count ? `${item.label}: ${count.says}` : item.label}
                 aria-current={active ? "page" : undefined}
@@ -550,7 +574,10 @@ function PhoneTopBar() {
   const counts = useCounts()
   const open = counts.summary?.openProblems ?? 0
   return (
-    <header className="sticky top-0 z-30 flex h-topbar shrink-0 items-center gap-2.5 border-b border-line bg-bg/94 ps-3.5 pe-2 backdrop-blur-md md:hidden">
+    <header
+      data-slot="phone-top-bar"
+      className="sticky top-0 z-30 flex h-topbar shrink-0 items-center gap-2.5 border-b border-line bg-bg/94 ps-3.5 pe-2 backdrop-blur-md md:hidden"
+    >
       <Link to="/" aria-label="n8n-ops, Overview" className="flex shrink-0 rounded-sm">
         <BrandMark className="size-7" />
       </Link>
@@ -591,6 +618,7 @@ function TabBar() {
     <>
       <nav
         aria-label="Main"
+        data-slot="tab-bar"
         className="fixed inset-x-0 bottom-0 z-40 flex h-[calc(var(--spacing-tabbar)+env(safe-area-inset-bottom))] border-t border-line bg-panel pb-[env(safe-area-inset-bottom)] md:hidden"
       >
         {tabs.map((t) => {
@@ -703,28 +731,106 @@ const scrollPage = (pathname: string) => {
   return first === "settings" ? `settings/${second ?? ""}` : first
 }
 
-/** Back and Forward return to where the page was scrolled; a new page starts at its top (NL-3). An item opened
- * on the same page leaves the list where it is. */
+/**
+ * The scrolling areas of a page by name: the page itself ("page"), then each area marked `data-scroll-pane`: the
+ * list column ("list") and the open item ("item"). Read from the whole document: below 1000px the item opens as a
+ * dialog or a phone sheet, in a portal outside the page.
+ */
+function scrollAreas(main: HTMLElement) {
+  const areas = new Map<string, HTMLElement>([["page", main]])
+  for (const el of document.querySelectorAll<HTMLElement>("[data-scroll-pane]")) {
+    const name = el.dataset.scrollPane
+    if (name && !areas.has(name)) areas.set(name, el)
+  }
+  return areas
+}
+
+/**
+ * Scrolls every area back to `spot`, again on each frame while content that is still loading leaves an area too
+ * short or a dialog has not mounted yet, until all are there, SCROLL_RESTORE_MS have passed, or the user scrolls
+ * or presses a key. Returns what stops it; `done` runs once it stops.
+ */
+function restoreScroll(main: HTMLElement, spot: ScrollSpot, done: () => void): () => void {
+  const until = performance.now() + SCROLL_RESTORE_MS
+  const user = ["wheel", "touchstart", "pointerdown", "keydown"] as const
+  let frame = 0
+  let stopped = false
+  const stop = () => {
+    if (stopped) return
+    stopped = true
+    cancelAnimationFrame(frame)
+    for (const type of user) window.removeEventListener(type, stop, true)
+    done()
+  }
+  const apply = () => {
+    const there = placeSpot(scrollAreas(main), spot)
+    if (there || performance.now() > until) stop()
+    else frame = requestAnimationFrame(apply)
+  }
+  for (const type of user) window.addEventListener(type, stop, { capture: true, passive: true })
+  apply()
+  return stop
+}
+
+/**
+ * Back and Forward return the page, its list column and the open item to where each was scrolled, also when the
+ * item opened as a dialog or a phone sheet; a new page starts at its top (NL-3). An item opened on the same page
+ * leaves the list where it is. Each entry's place is noted when it is entered and again on each scroll. A tab
+ * opened by a click starts where the pane's tabs put it (DS-14); Back and Forward put it where it was instead.
+ */
 function useScrollMemory(main: HTMLElement | null) {
   const location = useLocation()
   const type = useNavigationType()
-  const saved = useRef(new Map<string, number>())
+  const saved = useRef(new Map<string, ScrollSpot>())
   const lastPage = useRef(scrollPage(location.pathname))
+  // The entry a scroll belongs to; set before anything this entry scrolls by script is heard.
+  const entry = useRef(location.key)
+  // While areas are scrolled back, what they pass through on the way is not remembered.
+  const restoring = useRef<(() => void) | null>(null)
   useEffect(() => {
     if (!main) return
-    const remember = () => saved.current.set(location.key, main.scrollTop)
-    main.addEventListener("scroll", remember, { passive: true })
-    return () => main.removeEventListener("scroll", remember)
-  }, [main, location.key])
+    // Capture, on the document: the areas scroll inside the page or in a dialog's portal, and scroll events do
+    // not bubble. Other dialogs (Edit instance, Merge) are not marked, so their scrolling is not noted.
+    // The address moves first: the router pushes or pops the history entry at once and shows it a render later. A
+    // scroll heard in between (a tab cut short as it hides) is not noted, or it would overwrite the place of the
+    // entry left; the entry shown next notes its own start. Dialogs' history entries keep the router's key.
+    const remember = (e: Event) => {
+      if (restoring.current) return
+      if (e.target !== main && !(e.target instanceof HTMLElement && e.target.matches("[data-scroll-pane]"))) return
+      if (shownEntry(window.history.state) !== entry.current) return
+      saved.current.set(entry.current, readSpot(scrollAreas(main)))
+    }
+    document.addEventListener("scroll", remember, { capture: true, passive: true })
+    return () => document.removeEventListener("scroll", remember, { capture: true })
+  }, [main])
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs once per history entry
   useLayoutEffect(() => {
     if (!main) return
+    entry.current = location.key
+    restoring.current?.()
     const page = scrollPage(location.pathname)
     const newPage = page !== lastPage.current
     lastPage.current = page
-    if (type === "POP") main.scrollTop = saved.current.get(location.key) ?? main.scrollTop
+    const spot = type === "POP" ? saved.current.get(location.key) : undefined
+    if (spot) {
+      const key = location.key
+      // The pane's tabs already placed a newly shown tab (children's effects run first, DS-14); Back and Forward
+      // put the areas where the entry left them instead. It can be there at once, before restoreScroll returns.
+      let finished = false
+      const stop = restoreScroll(main, spot, () => {
+        finished = true
+        restoring.current = null
+        if (entry.current === key) saved.current.set(key, readSpot(scrollAreas(main)))
+      })
+      if (!finished) restoring.current = stop
+      return
+    }
     // Opening an item of the same page keeps the list where it was behind it.
-    else if (type === "PUSH" && newPage) main.scrollTop = 0
+    if (type === "PUSH" && newPage) main.scrollTop = 0
+    // Where this entry starts, so Back returns to it even when nothing is scrolled here (a tab opened from the top
+    // of a pane may start lower, DS-14). The pane's tabs have already placed it: children's effects run first. An
+    // item that opens as a dialog mounts a render later; until it is scrolled, it is noted as at its top.
+    saved.current.set(location.key, readSpot(scrollAreas(main)))
   }, [main, location.key])
 }
 
@@ -768,17 +874,22 @@ export function AppShell() {
   const setCrumb = useCallback((id: number, label: string | null) => {
     setCrumbs((prev) => {
       const rest = prev.filter(([i]) => i !== id)
-      return label ? [...rest, [id, label]] : rest.length === prev.length ? prev : rest
+      if (!label) return rest.length === prev.length ? prev : rest
+      return [...rest, [id, label] as [number, string]].sort((a, b) => a[0] - b[0])
     })
   }, [])
-  const crumb = crumbs.at(-1)?.[1] ?? null
+  const trail = crumbs.map(([, label]) => label)
   useScrollMemory(main)
 
-  // The browser tab names the opened item and the page (NL-3).
+  // The browser tab names the open tab, the opened item and the page, the nearest first (NL-3).
   const page = pageOf(pathname)?.item.label
+  const title = [...trail]
+    .reverse()
+    .concat(page ?? [], "n8n-ops")
+    .join(" · ")
   useEffect(() => {
-    document.title = [crumb, page, "n8n-ops"].filter(Boolean).join(" · ")
-  }, [crumb, page])
+    document.title = title
+  }, [title])
 
   return (
     <ChromeContext.Provider value={{ actionsSlot, setCrumb }}>
@@ -798,7 +909,7 @@ export function AppShell() {
             data-slot="page-frame"
             className="pointer-events-none hidden rounded-lg bg-bg shadow-card ring-1 ring-ink/10 md:col-start-2 md:row-span-2 md:row-start-1 md:m-2 md:ms-0 regular:md:block"
           />
-          <TopBar crumb={crumb} nav={nav} setActionsSlot={setActionsSlot} />
+          <TopBar trail={trail} nav={nav} setActionsSlot={setActionsSlot} />
           <PhoneTopBar />
           <SideNav nav={nav} />
           <main

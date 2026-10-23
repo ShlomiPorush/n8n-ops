@@ -12,6 +12,7 @@ import { useState } from "react"
 import { Link, useNavigate, useParams } from "react-router"
 import { useCrumb } from "@/app/chrome"
 import { useDiscardGuard } from "@/components/discard-guard"
+import { FieldPicker } from "@/components/field-picker"
 import { FilterBar } from "@/components/filter-bar"
 import { ItemRow, ItemsHeader, Said } from "@/components/item-row"
 import {
@@ -40,7 +41,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, useSort } from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
 import { api, describeError, useApi, useApiMutation } from "@/lib/api"
@@ -622,18 +622,14 @@ function RestoreDialog({ run, instanceId, onClose }: { run: Run | null; instance
           <FieldGroup>
             <Field>
               <FieldLabel>Workflow</FieldLabel>
-              <Select value={workflowId} onValueChange={setWorkflowId}>
-                <SelectTrigger className="w-full" aria-label="Workflow">
-                  <SelectValue placeholder="Choose a workflow" />
-                </SelectTrigger>
-                <SelectContent>
-                  {inspection.workflows.map((w) => (
-                    <SelectItem key={w.id} value={w.id}>
-                      {w.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <FieldPicker
+                label="Workflow"
+                listLabel="Workflows"
+                placeholder="Choose a workflow"
+                value={workflowId}
+                onChange={setWorkflowId}
+                options={inspection.workflows.map((w) => ({ value: w.id, label: w.name }))}
+              />
               {!inspection.manifest?.includesSecrets && (
                 <FieldDescription>
                   This archive has no credential secrets; credentials must be set in n8n after restoring.
@@ -642,19 +638,17 @@ function RestoreDialog({ run, instanceId, onClose }: { run: Run | null; instance
             </Field>
             <Field>
               <FieldLabel>Restore into</FieldLabel>
-              <Select value={target} onValueChange={setTarget}>
-                <SelectTrigger className="w-full" aria-label="Restore into">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {(instances.data?.instances ?? []).map((i) => (
-                    <SelectItem key={i.id} value={i.id}>
-                      {i.name}
-                      {i.id === instanceId ? " (same instance)" : ""}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <FieldPicker
+                label="Restore into"
+                listLabel="Instances"
+                value={target}
+                onChange={setTarget}
+                options={(instances.data?.instances ?? []).map((i) => ({
+                  value: i.id,
+                  label: i.name,
+                  hint: i.id === instanceId ? "same instance" : undefined,
+                }))}
+              />
             </Field>
           </FieldGroup>
         )}

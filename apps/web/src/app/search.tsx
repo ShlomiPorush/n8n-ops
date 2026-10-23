@@ -6,6 +6,7 @@ import { useLocation } from "react-router"
 import { moveTracker } from "@/app/search-move"
 import { settingsGroups } from "@/app/settings-sections"
 import { api } from "@/lib/api"
+import { inertBeside } from "@/lib/inert"
 import { loadView } from "@/lib/load-state"
 import { onMoveKept, useNavigateFromOverlay, useOverlayHistory } from "@/lib/overlay-history"
 import { revealTarget } from "@/lib/reveal"
@@ -258,11 +259,24 @@ function slashOpensSearch(e: KeyboardEvent) {
   return !document.querySelector('[role="dialog"], [role="alertdialog"]')
 }
 
+/** Tab from the last control of a layer goes to its first, and Shift+Tab from the first to its last (DS-8). */
+function tabAround(e: React.KeyboardEvent<HTMLElement>) {
+  const controls = [
+    ...e.currentTarget.querySelectorAll<HTMLElement>("input, button, a[href], [tabindex]:not([tabindex='-1'])"),
+  ].filter((el) => el.tabIndex >= 0 && !el.matches(":disabled") && el.getClientRects().length > 0)
+  const first = controls[0]
+  const last = controls.at(-1)
+  if (e.shiftKey ? document.activeElement !== first : document.activeElement !== last) return
+  e.preventDefault()
+  ;(e.shiftKey ? last : first)?.focus()
+}
+
 export function GlobalSearch({
   pages,
   variant,
   onOpenChange,
   onClose,
+  sheetRef,
   opener,
   query,
   className,
@@ -274,6 +288,8 @@ export function GlobalSearch({
   onOpenChange?: (open: boolean) => void
   /** The phone sheet: closes it. */
   onClose?: () => void
+  /** The phone sheet: its layer, which the page behind is made inert for. */
+  sheetRef?: React.Ref<HTMLDivElement>
   /** The phone sheet: its button opens results, as it stays after the sheet has closed. */
   opener?: OpenResult
   /** The phone sheet: its button keeps the query, so a result the Leave question kept from opening keeps it too. */
@@ -651,18 +667,29 @@ export function GlobalSearch({
       onClose?.()
     }
     return (
-      <search
+      // A layer of its own (DS-8): a modal dialog over the whole screen. The page behind it is inert (PhoneSearch)
+      // and Tab goes round inside it; the input's own Tab, which steps the kinds, comes first.
+      <div
+        ref={sheetRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Search"
         className="fixed inset-0 z-90 flex flex-col bg-bg pt-[env(safe-area-inset-top)]"
-        onKeyDown={(e) => e.key === "Escape" && cancel()}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") cancel()
+          else if (e.key === "Tab" && !e.nativeEvent.defaultPrevented) tabAround(e)
+        }}
       >
-        <div className="flex items-center gap-2 px-3 pt-2.5 pb-1.5">
-          {field}
-          <button type="button" onClick={cancel} className="px-1.5 font-semibold">
-            Cancel
-          </button>
-        </div>
-        {panel}
-      </search>
+        <search className="flex min-h-0 flex-1 flex-col">
+          <div className="flex items-center gap-2 px-3 pt-2.5 pb-1.5">
+            {field}
+            <button type="button" onClick={cancel} className="px-1.5 font-semibold">
+              Cancel
+            </button>
+          </div>
+          {panel}
+        </search>
+      </div>
     )
   }
   return (
@@ -684,11 +711,24 @@ export function GlobalSearch({
  * The phone search: a button in the top bar that opens the search over the whole screen, as "/" does on a
  * phone with a keyboard (SR-4); Back closes it. A chosen result closes the sheet at once, so the query and
  * the move are kept here: when the Leave question keeps the page, the next search opens with the query
- * (SR-6); Back, Cancel and Escape drop it.
+ * (SR-6); Back, Cancel and Escape drop it. The sheet is a layer (DS-8): the page behind it is inert while it
+ * is open, and the focus comes back to the Search button when it closes, unless a result's page took it.
  */
 export function PhoneSearch({ pages }: { pages: SearchPage[] }) {
   const [open, setOpen] = React.useState(false)
   const button = React.useRef<HTMLButtonElement>(null)
+  const [layer, setLayer] = React.useState<HTMLDivElement | null>(null)
+  React.useEffect(() => {
+    if (!layer) return
+    const undo = inertBeside(layer)
+    return () => {
+      undo()
+      // Still on the page: the effect only ran again (strict mode), the layer did not close.
+      if (layer.isConnected) return
+      const at = document.activeElement
+      if (!at || at === document.body) button.current?.focus({ preventScroll: true })
+    }
+  }, [layer])
   const opener = useOpenResult()
   const query = useSearchQuery()
   useOverlayHistory(open, () => {
@@ -719,7 +759,14 @@ export function PhoneSearch({ pages }: { pages: SearchPage[] }) {
       </button>
       {open &&
         createPortal(
-          <GlobalSearch pages={pages} variant="sheet" opener={opener} query={query} onClose={() => setOpen(false)} />,
+          <GlobalSearch
+            pages={pages}
+            variant="sheet"
+            sheetRef={setLayer}
+            opener={opener}
+            query={query}
+            onClose={() => setOpen(false)}
+          />,
           document.body,
         )}
     </>

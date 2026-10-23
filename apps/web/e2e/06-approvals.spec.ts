@@ -304,15 +304,16 @@ test("the test message and access requests go to their topics, and to General wh
     fallback = calls.find((c) => c.method === "sendMessage" && c.messageId && String(c.body.text).includes(lost))
     expect(fallback).toBeTruthy()
   }).toPass({ timeout: 30_000 })
-  if (!fallback) throw new Error("no message")
-  expect(fallback.body.message_thread_id).toBeUndefined()
-  expect(String(fallback.body.text)).toContain("Topic 34 was not found, so this went to General.")
-  await press(request, `xd:${lostId}`, Number(chatId), fallback.messageId ?? 0)
+  const sent = fallback
+  if (!sent) throw new Error("no message")
+  expect(sent.body.message_thread_id).toBeUndefined()
+  expect(String(sent.body.text)).toContain("Topic 34 was not found, so this went to General.")
+  await press(request, `xd:${lostId}`, Number(chatId), sent.messageId ?? 0)
   await expect(async () => {
     const edit = calls.find(
       (c) =>
         c.method === "editMessageText" &&
-        c.body.message_id === fallback.messageId &&
+        c.body.message_id === sent.messageId &&
         String(c.body.text).includes("❌ <b>Denied</b> by "),
     )
     expect(String(edit?.body.text)).toContain("Topic 34 was not found, so this went to General.")

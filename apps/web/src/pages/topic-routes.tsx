@@ -53,7 +53,8 @@ export const topicProblem = (value: string) => {
 }
 
 function rowProblem(r: RouteRow) {
-  if (!r.instanceId && !r.workflow.trim() && !r.tag.trim()) return "Choose an instance, or type a workflow pattern or a tag."
+  if (!r.instanceId && !r.workflow.trim() && !r.tag.trim())
+    return "Choose an instance, or type a workflow pattern or a tag."
   if (r.workflow.trim()) {
     try {
       new RegExp(r.workflow.trim(), "iu")

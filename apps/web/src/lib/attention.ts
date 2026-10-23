@@ -140,7 +140,8 @@ export function attentionTarget(item: AttentionItem): string {
 /**
  * Needs attention for the bell on every page and for Overview: one query, read again every ATTENTION_POLL_MS. React
  * Query skips a timed refetch while the browser tab is hidden (`refetchIntervalInBackground` is false by default)
- * and reads again when it is shown (`refetchOnWindowFocus`). A read without an answer in ATTENTION_TIMEOUT_MS fails,
+ * and reads again when it is shown (`refetchOnWindowFocus`); a change the server reports meanwhile only marks it
+ * stale (`invalidateTopics` in lib/live.ts). A read without an answer in ATTENTION_TIMEOUT_MS fails,
  * and is tried once more, so a hung request never holds the next one. An answer read before an action on it is
  * dropped: the actions refresh "/overview" through `refreshAreas` or `invalidate`, which mark the path saved
  * (`readFresh`). A source the server could not read keeps what it showed (`keepFailed`).

@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest"
-import { type AttentionItem, combine, worstTone } from "./overview.ts"
+import { describe, expect, it, vi } from "vitest"
+import type { Ctx } from "../context.ts"
+import { type AttentionItem, attention, combine, worstTone } from "./overview.ts"
 
 const worker = (name: string, at: number): AttentionItem => ({
   kind: "worker",
@@ -67,5 +68,50 @@ describe("Needs attention put together", () => {
 
   it("has no tone when nothing needs a look", () => {
     expect(combine([["workers", { items: [], total: 0, tone: null }]])).toMatchObject({ total: 0, tone: null })
+  })
+
+  it("never says fewer than no problems are left out", () => {
+    // A count that fell behind its rows (they were read apart before) must not make another source's count smaller.
+    const a = combine([
+      ["problems", { items: [problem("p1", 1), problem("p2", 2)], total: 1, tone: "fail" }],
+      ["workers", { items: [worker("w1", 5)], total: 1, tone: "warn" }],
+    ])
+    expect(a.moreProblems).toBe(0)
+  })
+})
+
+describe("Needs attention read from its sources", () => {
+  const ctx = (errors: unknown[]) => ({ log: { error: (...args: unknown[]) => errors.push(args) } }) as unknown as Ctx
+  const none = async () => ({ items: [], total: 0, tone: null })
+  const read = {
+    access: none,
+    problems: none,
+    instances: none,
+    backups: none,
+    workers: async () => ({ items: [worker("w1", 5)], total: 1, tone: "warn" as const }),
+  }
+
+  it("names a source that has no answer in time as not read, and the others still answer", async () => {
+    vi.useFakeTimers()
+    try {
+      const errors: unknown[] = []
+      const hung = new Promise<never>(() => {})
+      const answer = attention(ctx(errors), { read: { ...read, backups: () => hung }, timeout: 8_000 })
+      await vi.advanceTimersByTimeAsync(8_000)
+      const a = await answer
+      expect(a.failed).toEqual(["backups"])
+      expect(a.items.map((i) => i.id)).toEqual(["w1"])
+      expect(errors).toHaveLength(1)
+      // Every clock was stopped: nothing is left to run.
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("names a source that failed as not read", async () => {
+    const a = await attention(ctx([]), { read: { ...read, access: () => Promise.reject(new Error("boom")) } })
+    expect(a.failed).toEqual(["access"])
+    expect(a.total).toBe(1)
   })
 })

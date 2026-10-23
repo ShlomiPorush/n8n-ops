@@ -505,6 +505,12 @@ html[data-design="regular"].dark {
     border-radius: 16px 16px 0 0;
     transition: border-radius 0.2s ease;
   }
+  /* An item opened from a list keeps that size whatever its content, so switching its tabs does not resize it. */
+  [data-slot="dialog-content"][data-pane-sheet] {
+    min-height: 80vh;
+    /* biome-ignore lint/suspicious/noDuplicateProperties: 80vh above is the fallback where dvh is unknown */
+    min-height: 80dvh;
+  }
   [data-slot="dialog-content"][data-full] {
     border-radius: 0;
     padding-top: env(safe-area-inset-top);

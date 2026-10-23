@@ -370,6 +370,7 @@ export function Kpi({
       {Icon && (
         <span
           aria-hidden
+          data-slot="kpi-icon"
           className={cn(
             "hidden size-9 shrink-0 place-items-center rounded-sm regular:md:grid",
             !tone && "bg-fill text-muted-foreground",
@@ -388,11 +389,13 @@ export function Kpi({
     "regular:rounded-lg regular:bg-panel regular:p-5 regular:shadow-card regular:ring-1 regular:ring-ink/10 regular:outline-0",
   )
   return to ? (
-    <Link to={to} className={cn(cls, "hover-row")}>
+    <Link to={to} data-slot="kpi" className={cn(cls, "hover-row")}>
       {inner}
     </Link>
   ) : (
-    <div className={cls}>{inner}</div>
+    <div data-slot="kpi" className={cls}>
+      {inner}
+    </div>
   )
 }
 
@@ -598,7 +601,7 @@ export function UserText({ children, className }: { children: React.ReactNode; c
   )
 }
 
-export { countChanges, SaveScope, useSaveSource } from "@/components/save-bar"
+export { countChanges, SaveBarHost, SaveScope, useSaveSource, useUnsaved } from "@/components/save-bar"
 
 /**
  * A list that reloads keeps its rows on screen until the answer replaces them; they dim only when the

@@ -94,6 +94,7 @@ export function ProblemsTable({
   empty = "No problems here.",
   bare,
   items,
+  preview,
 }: {
   rows: ProblemRow[]
   selected?: string
@@ -106,6 +107,8 @@ export function ProblemsTable({
   bare?: boolean
   /** Each row as an item of a few lines, for a list beside a reading pane. */
   items?: boolean
+  /** A few rows picked by the caller: shown in their order, without a sort control. */
+  preview?: boolean
 }) {
   const sort = useSort(rows, {
     id: showInstance ? "problems" : "instance-problems",
@@ -134,10 +137,10 @@ export function ProblemsTable({
   })
   if (items) {
     return (
-      <Table bare={bare} sort={sort} items>
+      <Table bare={bare} sort={preview ? undefined : sort} items>
         <ItemsHeader label="Problem" />
         <TableBody>
-          {sort.rows.map((p) => (
+          {(preview ? rows : sort.rows).map((p) => (
             <TableRow key={p.id} {...rowProps(p)}>
               <ItemRow
                 title={<UserText>{p.workflowName}</UserText>}

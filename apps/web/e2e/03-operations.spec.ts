@@ -118,8 +118,11 @@ test("the worker is assigned to the instance", async () => {
   await page.getByRole("option", { name: "E2E Host" }).click()
   await page.getByLabel("Container name").fill(container)
   await page.getByRole("button", { name: "Save" }).click()
-  await expect(page.getByRole("button", { name: "Export credentials" })).toBeVisible()
   await dialogClosed(page)
+  // Export is a rare action, so it waits in the instance's menu.
+  await page.getByRole("button", { name: "More actions" }).click()
+  await expect(page.getByRole("menuitem", { name: "Export credentials" })).toBeVisible()
+  await page.keyboard.press("Escape")
 })
 
 test("a backup through the worker includes credential secrets", async () => {
@@ -158,6 +161,7 @@ test("a backup through the worker includes credential secrets", async () => {
 test("an instance can choose its destinations instead of the defaults", async () => {
   await page.goto("/instances")
   await page.getByRole("row", { name: /e2e-n8n/ }).click()
+  await page.getByRole("tab", { name: "Backups" }).click()
   const card = page.locator("section").filter({ has: page.getByRole("heading", { name: "Backup Destinations" }) })
   await expect(card.getByText("Now: Offsite S3, This server.")).toBeVisible()
   await card.getByRole("radio", { name: "Choose" }).click()
@@ -171,6 +175,7 @@ test("an instance can choose its destinations instead of the defaults", async ()
   // Back to the defaults, which the next tests use.
   await page.goto("/instances")
   await page.getByRole("row", { name: /e2e-n8n/ }).click()
+  await page.getByRole("tab", { name: "Backups" }).click()
   await card.getByRole("radio", { name: "Default destinations" }).click()
   await page.getByRole("button", { name: "Save" }).click()
   await expect(page.getByText("Backup destinations saved")).toBeVisible()

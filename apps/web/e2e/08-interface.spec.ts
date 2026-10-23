@@ -335,3 +335,178 @@ test("the time zone is chosen from a list with a search, and Back closes the lis
     await page.request.put("/api/settings/general", { data: { timezone: before.timezone } })
   }
 })
+
+/** Opens the second test instance and returns its id. */
+async function openInstanceB() {
+  await page.goto("/instances")
+  await page
+    .getByRole("row")
+    .filter({ has: page.getByText("e2e-n8n-b", { exact: true }) })
+    .click()
+  await expect(page.getByRole("heading", { name: "e2e-n8n-b", exact: true })).toBeVisible()
+  return new URL(page.url()).pathname.split("/").pop() ?? ""
+}
+
+test("an instance tab has its own address, which reload and Back follow", async () => {
+  const id = await openInstanceB()
+  const tab = (name: string | RegExp) => page.getByRole("tab", { name })
+  await expect(tab("Overview")).toHaveAttribute("aria-selected", "true")
+
+  /** The pane's address: the instance, and the tab when it is not the overview. */
+  const at = (search: string) => (url: URL) => url.pathname === `/instances/${id}` && url.search === search
+  await tab(/^Health/).click()
+  await expect(page).toHaveURL(at("?tab=health"))
+  await expect(page.getByRole("heading", { name: "Health", exact: true })).toBeVisible()
+  await page.reload()
+  await expect(tab(/^Health/)).toHaveAttribute("aria-selected", "true")
+  await page.goBack()
+  await expect(page).toHaveURL(at(""))
+  await expect(tab("Overview")).toHaveAttribute("aria-selected", "true")
+
+  // An unknown tab shows the overview.
+  await page.goto(`/instances/${id}?tab=nothing`)
+  await expect(tab("Overview")).toHaveAttribute("aria-selected", "true")
+
+  // The arrow keys move between tabs without opening them; Enter opens one.
+  await page.goto(`/instances/${id}`)
+  await tab("Overview").focus()
+  await page.keyboard.press("ArrowRight")
+  await expect(tab(/^Problems/)).toBeFocused()
+  await expect(page).toHaveURL(at(""))
+  await page.keyboard.press("Enter")
+  await expect(page).toHaveURL(at("?tab=problems"))
+  await expect(tab(/^Problems/)).toHaveAttribute("aria-selected", "true")
+})
+
+test("a clicked tab shows no focus ring until a key is pressed on it", async () => {
+  await openInstanceB()
+  const health = page.getByRole("tab", { name: /^Health/ })
+  const outline = () => health.evaluate((el) => getComputedStyle(el).outlineStyle)
+  await health.click()
+  await expect(health).toBeFocused()
+  // Hidden because a pointer pressed it, not because the browser chose not to ring it.
+  await expect(health).toHaveAttribute("data-pointer", "")
+  expect(await outline()).toBe("none")
+  // A key pressed on the same tab, focus not moving, brings the ring back.
+  await page.keyboard.press("Enter")
+  await expect(health).toBeFocused()
+  await expect(health).not.toHaveAttribute("data-pointer")
+  expect(await outline()).toBe("solid")
+})
+
+test("edits on several instance tabs survive a switch, and one save bar saves or discards them all", async () => {
+  await openInstanceB()
+  const tab = (name: string) => page.getByRole("tab", { name: new RegExp(`^${name}`) })
+  const mark = (name: string) => tab(name).getByRole("img", { name: "Unsaved changes" })
+  const unsaved = page.getByRole("region", { name: "Unsaved changes" })
+  const field = page.getByLabel("Auto-resolve after (days)")
+  const allowed = page.getByLabel("Agents may request access")
+  const choose = page.getByRole("radio", { name: "Choose" })
+
+  await tab("Settings").click()
+  const before = await field.inputValue()
+  await field.fill("9")
+  await expect(unsaved).toContainText("1 unsaved change")
+  await expect(mark("Settings")).toBeVisible()
+  await tab("Access").click()
+  const wasAllowed = await allowed.isChecked()
+  await allowed.click()
+  await expect(unsaved).toContainText("2 unsaved changes")
+  await expect(mark("Access")).toBeVisible()
+  await tab("Backups").click()
+  await choose.click()
+  await expect(mark("Backups")).toBeVisible()
+
+  // Switching tabs neither asks nor loses anything.
+  await tab("Settings").click()
+  await expect(page.getByRole("alertdialog")).toHaveCount(0)
+  await expect(field).toHaveValue("9")
+
+  // Opening another instance still asks first.
+  await page
+    .getByRole("row")
+    .filter({ has: page.getByText("e2e-n8n", { exact: true }) })
+    .click()
+  const ask = page.getByRole("alertdialog", { name: "Leave without saving?" })
+  await expect(ask).toBeVisible()
+  await ask.getByRole("button", { name: "Stay" }).click()
+  await dialogClosed(page)
+  await expect(field).toHaveValue("9")
+
+  await unsaved.getByRole("button", { name: "Discard" }).click()
+  await expect(unsaved).toHaveCount(0)
+  await expect(field).toHaveValue(before)
+  for (const name of ["Settings", "Access", "Backups"]) await expect(mark(name)).toHaveCount(0)
+  await tab("Access").click()
+  expect(await allowed.isChecked()).toBe(wasAllowed)
+
+  // Save writes every changed tab; the edits then show as stored.
+  await allowed.click()
+  await tab("Settings").click()
+  await field.fill("9")
+  await expect(unsaved).toContainText("2 unsaved changes")
+  await unsaved.getByRole("button", { name: "Save changes" }).click()
+  await expect(page.getByText(/^Saved (the overrides and agent access|agent access and the overrides)$/)).toBeVisible()
+  await expect(unsaved).toHaveCount(0)
+  await page.reload()
+  await expect(field).toHaveValue("9")
+
+  // Back to what it was.
+  await field.fill(before)
+  await tab("Access").click()
+  await allowed.click()
+  await unsaved.getByRole("button", { name: "Save changes" }).click()
+  await expect(unsaved).toHaveCount(0)
+  expect(await allowed.isChecked()).toBe(wasAllowed)
+})
+
+test("on a phone the save bar of an instance shows inside its sheet", async () => {
+  const id = await openInstanceB()
+  await page.setViewportSize({ width: 390, height: 844 })
+  try {
+    await page.goto(`/instances/${id}?tab=settings`)
+    const sheet = page.getByRole("dialog")
+    await expect(sheet).toBeVisible()
+    const field = sheet.getByLabel("Auto-resolve after (days)")
+    const before = await field.inputValue()
+    await field.fill("9")
+    // Inside the sheet, so the focus trap and the backdrop leave it in reach.
+    const bar = sheet.getByRole("region", { name: "Unsaved changes" })
+    await expect(bar).toBeVisible()
+    await bar.getByRole("button", { name: "Discard" }).click()
+    await expect(bar).toHaveCount(0)
+    await expect(field).toHaveValue(before)
+  } finally {
+    await page.setViewportSize({ width: 1440, height: 900 })
+  }
+})
+
+test("on a phone the instance tabs are a bar at the bottom of a sheet that keeps its size", async () => {
+  const id = await openInstanceB()
+  // A small tablet: the instance opens as a centered dialog, with its tabs at the top.
+  await page.setViewportSize({ width: 800, height: 844 })
+  try {
+    await page.goto(`/instances/${id}`)
+    const sheet = page.getByRole("dialog")
+    const tabs = sheet.getByRole("tablist", { name: "Instance sections" })
+    const bottom = async () => (await tabs.boundingBox())?.y ?? 0
+    expect(await bottom()).toBeLessThan(400)
+    await sheet.getByRole("tab", { name: /^Health/ }).focus()
+
+    // Turned into a phone, the tabs move to the bottom bar, and the focused tab keeps the focus there.
+    await page.setViewportSize({ width: 390, height: 844 })
+    await expect.poll(bottom).toBeGreaterThan(700)
+    await expect(page.locator('[data-slot="pane-nav"]').getByRole("tab", { name: /^Health/ })).toBeFocused()
+
+    // A short tab, opened straight away (nothing scrolled, which grows a sheet), still gets four fifths of the
+    // screen: the sheet does not shrink to its content.
+    await page.goto(`/instances/${id}?tab=health`)
+    await expect(sheet.getByRole("tab", { name: /^Health/ })).toHaveAttribute("aria-selected", "true")
+    const box = await sheet.boundingBox()
+    expect(box?.height ?? 0).toBeGreaterThanOrEqual(844 * 0.8 - 1)
+    // The tab bar sits at the bottom of the screen, under the content.
+    expect(await bottom()).toBeGreaterThan(700)
+  } finally {
+    await page.setViewportSize({ width: 1440, height: 900 })
+  }
+})

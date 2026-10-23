@@ -5,6 +5,7 @@ import { useConfirm } from "@/components/confirm"
 import { Button } from "@/components/ui/button"
 import { plural } from "@/lib/time"
 import { toast } from "@/lib/toast"
+import { cn } from "@/lib/utils"
 
 /**
  * How many fields differ from what was loaded (SV-2). Values compare as trimmed text, so typing 5 into a
@@ -37,6 +38,10 @@ export type SaveSource = {
 type Entry = { label: string; count: number; get: () => SaveSource }
 type Register = (id: string, entry: Entry | null) => void
 const SaveContext = React.createContext<Register | null>(null)
+/** The ids of the areas that have unsaved changes, read only. */
+const UnsavedContext = React.createContext<ReadonlySet<string>>(new Set())
+/** Sets the element the bar shows in instead of the page, such as a sheet that traps the focus. */
+const HostContext = React.createContext<((host: HTMLElement | null) => void) | null>(null)
 
 /** Registers an editable area with the page's save bar while it has unsaved changes. */
 export function useSaveSource(id: string, source: SaveSource) {
@@ -50,9 +55,38 @@ export function useSaveSource(id: string, source: SaveSource) {
   React.useEffect(() => () => register?.(id, null), [register, id])
 }
 
+/** Whether the area registered under this id has unsaved changes, for a mark on the tab that holds it. */
+export function useUnsaved(id: string) {
+  return React.useContext(UnsavedContext).has(id)
+}
+
+/**
+ * Where the save bar shows inside a dialog: a sheet traps the focus and covers the page, so the bar would be
+ * out of reach under it. Put it in a footer that sticks to the bottom of the dialog's body (list-panel.tsx);
+ * below it there may be the pane's own tabs, which then keep the clearance for the phone's home bar.
+ */
+export function SaveBarHost() {
+  const setHost = React.useContext(HostContext)
+  const [el, setEl] = React.useState<HTMLDivElement | null>(null)
+  React.useEffect(() => {
+    if (!el) return
+    setHost?.(el)
+    return () => setHost?.(null)
+  }, [el, setHost])
+  return (
+    <div
+      ref={setEl}
+      data-slot="save-bar-host"
+      className="px-2.5 pb-2.5 empty:hidden max-md:pb-[calc(10px+env(safe-area-inset-bottom))] max-md:has-[+[data-slot=pane-nav]:not(:empty)]:pb-2.5"
+    />
+  )
+}
+
 export function SaveScope({ children }: { children: React.ReactNode }) {
   const [entries, setEntries] = React.useState<Record<string, Entry>>({})
   const [saving, setSaving] = React.useState(false)
+  const [host, setHost] = React.useState<HTMLElement | null>(null)
+  const unsaved = React.useMemo(() => new Set(Object.keys(entries)), [entries])
   const register = React.useCallback<Register>((id, entry) => {
     setEntries((prev) => {
       if (!entry && !(id in prev)) return prev
@@ -84,15 +118,20 @@ export function SaveScope({ children }: { children: React.ReactNode }) {
 
   return (
     <SaveContext.Provider value={register}>
-      {children}
-      <SaveBar
-        count={count}
-        saving={saving}
-        onSave={() => void save()}
-        onDiscard={() => {
-          for (const entry of list) entry.get().discard()
-        }}
-      />
+      <UnsavedContext.Provider value={unsaved}>
+        <HostContext.Provider value={setHost}>
+          {children}
+          <SaveBar
+            count={count}
+            saving={saving}
+            host={host}
+            onSave={() => void save()}
+            onDiscard={() => {
+              for (const entry of list) entry.get().discard()
+            }}
+          />
+        </HostContext.Provider>
+      </UnsavedContext.Provider>
     </SaveContext.Provider>
   )
 }
@@ -105,11 +144,14 @@ function joinWords(words: string[]) {
 function SaveBar({
   count,
   saving,
+  host,
   onSave,
   onDiscard,
 }: {
   count: number
   saving: boolean
+  /** A dialog's place for the bar; without one it floats over the page. */
+  host: HTMLElement | null
   onSave: () => void
   onDiscard: () => void
 }) {
@@ -122,7 +164,12 @@ function SaveBar({
   return createPortal(
     <section
       aria-label="Unsaved changes"
-      className="fixed inset-x-0 bottom-[18px] z-45 mx-auto flex w-fit max-w-[calc(100vw-36px)] items-center gap-2 rounded-lg bg-ink py-2 ps-[18px] pe-2 text-bg shadow-modal md:start-rail side:start-side max-md:inset-x-2.5 max-md:bottom-[calc(var(--spacing-tabbar)+12px+env(safe-area-inset-bottom))] max-md:w-auto"
+      className={cn(
+        "flex items-center gap-2 rounded-lg bg-ink py-2 ps-[18px] pe-2 text-bg shadow-modal",
+        host
+          ? "w-full"
+          : "fixed inset-x-0 bottom-[18px] z-45 mx-auto w-fit max-w-[calc(100vw-36px)] md:start-rail side:start-side max-md:inset-x-2.5 max-md:bottom-[calc(var(--spacing-tabbar)+12px+env(safe-area-inset-bottom))] max-md:w-auto",
+      )}
     >
       <span aria-live="polite" className="min-w-0 flex-1 pe-1 font-semibold whitespace-nowrap tabular-nums">
         {plural(count, "unsaved change")}
@@ -143,7 +190,7 @@ function SaveBar({
         {saving ? "Saving…" : "Save changes"}
       </Button>
     </section>,
-    document.body,
+    host ?? document.body,
   )
 }
 

@@ -105,7 +105,14 @@ function useSheetGestures(
       if (dy > 0 && canPullClose && dy > Math.min(SHEET_PULL_CLOSE_PX, panel.offsetHeight / 4)) {
         panel.style.transform = "translateY(100%)"
         // Close through the dialog's own Close, so its owner's cleanup and its Back entry run.
-        setTimeout(() => closeRef.current?.click(), SHEET_SLIDE_MS)
+        setTimeout(() => {
+          closeRef.current?.click()
+          // A close that was refused (unsaved changes, and the user chose Stay) leaves the sheet open: bring
+          // it back up instead of leaving it out of sight.
+          setTimeout(() => {
+            if (panel.isConnected && panel.dataset.state === "open") panel.style.transform = ""
+          }, SHEET_SLIDE_MS)
+        }, SHEET_SLIDE_MS)
       } else {
         panel.style.transform = ""
       }
@@ -193,8 +200,9 @@ function DialogContent({
         </div>
         <div
           data-slot="dialog-body"
-          // A footer ends the body itself: padding under it would show below the buttons in a scroll container.
-          className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain px-pad-x pb-pad-x has-[>[data-slot=dialog-footer]:last-child]:pb-0 max-md:pb-[calc(var(--spacing-pad-x)+env(safe-area-inset-bottom))] max-md:has-[>[data-slot=dialog-footer]:last-child]:pb-0"
+          // A footer, or a pane's footer while it holds the save bar or tabs, ends the body itself: padding under
+          // it would show below the buttons in a scroll container.
+          className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain px-pad-x pb-pad-x has-[>[data-slot=dialog-footer]:last-child]:pb-0 has-[>[data-slot=pane-footer]:last-child>:not(:empty)]:pb-0 max-md:pb-[calc(var(--spacing-pad-x)+env(safe-area-inset-bottom))] max-md:has-[>[data-slot=dialog-footer]:last-child]:pb-0 max-md:has-[>[data-slot=pane-footer]:last-child>:not(:empty)]:pb-0"
         >
           {children}
         </div>

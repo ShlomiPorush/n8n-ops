@@ -1,24 +1,29 @@
 import {
   Activity as ActivityIcon,
+  Archive as ArchiveIcon,
   Bug as BugIcon,
   CircleCheck as CircleCheckIcon,
   CircleX as CircleXIcon,
   Download,
+  Ellipsis,
   ExternalLink,
   HeartPulse as HeartPulseIcon,
-  History as HistoryIcon,
   Hourglass as HourglassIcon,
+  KeyRound as KeyRoundIcon,
+  LayoutDashboard as LayoutDashboardIcon,
   Loader as LoaderIcon,
-  Network as NetworkIcon,
+  type LucideIcon,
   Pencil,
   Plus,
   RefreshCw,
   Server as ServerIcon,
+  SlidersHorizontal as SlidersHorizontalIcon,
   Trash2,
   Workflow as WorkflowIcon,
 } from "lucide-react"
-import { useEffect, useState } from "react"
-import { Link, useNavigate, useParams } from "react-router"
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
+import { createPortal } from "react-dom"
+import { Link, useNavigate, useParams, useSearchParams } from "react-router"
 import { useCrumb } from "@/app/chrome"
 import { AgentAccessCard } from "@/components/agent-access-card"
 import { useConfirm } from "@/components/confirm"
@@ -38,9 +43,10 @@ import {
   SwitchRow,
   UserText,
   useSaveSource,
+  useUnsaved,
 } from "@/components/kit"
-import { ListWithPanel } from "@/components/list-panel"
-import { Dot, type HealthState, StatusTag, TimeAgo, Tone, When } from "@/components/status"
+import { ListWithPanel, usePaneNav } from "@/components/list-panel"
+import { Dot, type HealthState, StatusTag, statusOf, type statusTable, TimeAgo, Tone, When } from "@/components/status"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -53,6 +59,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import {
   Field,
   FieldDescription,
   FieldError,
@@ -64,6 +77,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, useSort } from "@/components/ui/table"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { api, describeError, queryClient, useApi, useApiMutation } from "@/lib/api"
@@ -144,6 +158,9 @@ const healthLabel = (i: Pick<InstanceRow, "health" | "healthDetail">) =>
         ? "Healthy"
         : "Not checked yet"
 
+/** Whether the API key may change anything in n8n: any scope beyond listing and reading. */
+const canWrite = (i: Pick<InstanceRow, "effectiveScopes">) => i.effectiveScopes.some((s) => !/:(list|read)$/.test(s))
+
 /** Whether a version is older than the latest n8n release. */
 export const behind = (version: string | null, latest: string | null) => {
   if (!version || !latest) return false
@@ -179,6 +196,14 @@ export function InstancesPage() {
     "data-href": `/instances/${i.id}`,
     onClick: () => navigate(`/instances/${i.id}`),
   })
+  const open = rows.find((r) => r.id === id)
+  const backup: ListBackup = data.data
+    ? open
+      ? { state: "known", run: open.lastBackup ?? null }
+      : { state: "missing" }
+    : data.error
+      ? { state: "failed" }
+      : { state: "loading" }
   const down = rows.filter((r) => r.health === "down").length
   const warn = rows.filter((r) => r.health === "warn").length
 
@@ -247,7 +272,7 @@ export function InstancesPage() {
                         <span className="font-mono">{i.version ?? "version unknown"}</span>
                       )}
                       {" · "}
-                      {i.capabilities.find((c) => c.key === "move")?.available ? "read + write" : "read only"}
+                      {canWrite(i) ? "read + write" : "read only"}
                     </>
                   }
                   subEnd={
@@ -309,9 +334,7 @@ export function InstancesPage() {
                   )}
                 </TableCell>
                 <TableCell>
-                  <Badge variant="line">
-                    {i.capabilities.find((c) => c.key === "move")?.available ? "read + write" : "read only"}
-                  </Badge>
+                  <Badge variant="line">{canWrite(i) ? "read + write" : "read only"}</Badge>
                 </TableCell>
                 <TableCell className={cn("text-end tabular-nums", i.openProblems > 0 && "font-semibold text-fail")}>
                   {n(i.openProblems)}
@@ -338,15 +361,86 @@ export function InstancesPage() {
     <ListWithPanel
       list={list}
       panelTitle="Instance"
-      panel={id ? <InstanceDetail id={id} /> : null}
+      panel={id ? <InstanceDetail id={id} backup={backup} /> : null}
       onClose={() => navigate("/instances")}
     />
   )
 }
 
-function InstanceDetail({ id }: { id: string }) {
+/*
+ * The instance pane is split into tabs, so the state of an instance reads on one screen (Overview) and the
+ * settings that change once a month sit one click away. The tab is in the address (?tab=health) and not in
+ * the path: a new path would remount the pane and ask before leaving unsaved changes. Every tab stays
+ * mounted and only the open one shows, so edits on several tabs survive a switch and one save bar saves
+ * them all. Layout follows the width of the pane (container queries), not of the window.
+ */
+const paneTabs = ["overview", "problems", "health", "backups", "access", "settings"] as const
+type PaneTab = (typeof paneTabs)[number]
+const isPaneTab = (v: string | null): v is PaneTab => paneTabs.includes(v as PaneTab)
+
+/** The last backup run comes from the list; the detail does not carry it. */
+type ListBackup =
+  | { state: "loading" | "failed" | "missing" }
+  | { state: "known"; run: { status: string; at: string } | null }
+
+/*
+ * The tabs share the pane's full width. They look like segments in Regular; Compact keeps the underlined tabs.
+ * In a pane narrower than 40rem (a phone) six labels in a row do not fit, so each tab stacks its icon over a
+ * smaller label, and its mark moves to the icon's corner.
+ */
+type TabsLook = { list: string; tab: string; icon?: string; mark: string; shortCount: boolean }
+const topTabs: TabsLook = {
+  list: cn(
+    "gap-0 regular:gap-1 regular:rounded-lg regular:bg-fill regular:p-1 regular:before:hidden",
+    "@max-[40rem]/pane:gap-1 regular:@max-[40rem]/pane:p-0.5",
+  ),
+  /*
+   * In a row the tabs are equal cells; their own padding only sets how narrow a pane still fits them. Stacked,
+   * each keeps its label's width and the room left is shared out on top of it, so long labels never touch.
+   */
+  tab: cn(
+    "flex-1 justify-center px-2",
+    "@max-[40rem]/pane:flex-auto @max-[40rem]/pane:flex-col @max-[40rem]/pane:gap-0.5 @max-[40rem]/pane:px-0 @max-[40rem]/pane:text-meta",
+    "regular:rounded-sm regular:border-b-0 regular:px-2 regular:py-1.5 regular:@max-[40rem]/pane:px-0",
+    "regular:data-[state=active]:bg-panel regular:data-[state=active]:shadow-card",
+  ),
+  mark: "flex @max-[40rem]/pane:absolute @max-[40rem]/pane:top-0 @max-[40rem]/pane:start-1/2 @max-[40rem]/pane:ms-0.5",
+  shortCount: false,
+}
+/** At the bottom of a phone sheet the tabs are a bar like the app's own tab bar, the same in both designs. */
+const barTabs: TabsLook = {
+  list: "h-tabbar gap-0 before:hidden",
+  tab: "flex-1 flex-col justify-center gap-[3px] border-b-0 px-0 py-0 text-meta",
+  icon: "size-[22px]",
+  mark: "absolute top-1 start-1/2 ms-1",
+  shortCount: true,
+}
+const tabPanel = "grid min-w-0 gap-gap data-[state=inactive]:hidden"
+/*
+ * In a pane narrower than 52rem a Regular card of four is too narrow for a figure beside its icon, so the
+ * icon goes (it only illustrates) and the figure is a size smaller; "128,400" then still fits. On a phone
+ * the cards are two by two and take less padding, so the four do not fill the screen.
+ */
+const kpisInPane = cn(
+  "grid-cols-2 @min-[36rem]/pane:grid-cols-4",
+  "@max-[52rem]/pane:**:data-[slot=kpi-icon]:hidden!",
+  "regular:@max-[52rem]/pane:**:data-[slot=kpi-figure]:text-h1",
+  "regular:@max-[36rem]/pane:**:data-[slot=kpi]:p-3.5",
+)
+
+function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
   const navigate = useNavigate()
   const tz = useTimeZone()
+  const [params, setParams] = useSearchParams()
+  const raw = params.get("tab")
+  const tab: PaneTab = isPaneTab(raw) ? raw : "overview"
+  const show = (next: PaneTab) =>
+    setParams((prev) => {
+      const p = new URLSearchParams(prev)
+      if (next === "overview") p.delete("tab")
+      else p.set("tab", next)
+      return p
+    })
   const detail = useApi<InstanceDetailData>(`/instances/${id}`, { refetchInterval: 15_000 })
   useCrumb(detail.data?.name)
   const problems = useApi<ProblemRow[]>(`/problems?status=open&instance=${id}`)
@@ -356,6 +450,49 @@ function InstanceDetail({ id }: { id: string }) {
   const refresh = useApiMutation<void>("POST", `/instances/${id}/refresh`, { invalidate, success: "Checked now" })
   const remove = useApiMutation<void>("DELETE", `/instances/${id}`, { invalidate: ["/instances", "/overview"] })
   const declare = useApiMutation<{ declaredAccess: "read" | "write" }>("PATCH", `/instances/${id}`, { invalidate })
+  const unsaved = {
+    backups: useUnsaved(`backup-destinations-${id}`),
+    access: useUnsaved(`agent-access-${id}`),
+    settings: useUnsaved(`overrides-${id}`),
+  }
+  // On a phone the tabs are a bar at the bottom of the sheet, outside this pane.
+  const nav = usePaneNav()
+  const look = nav ? barTabs : topTabs
+  // Tabs that still do not fit scroll sideways; the open one is brought into sight, also when the address opened
+  // it. Only the list scrolls: scrollIntoView would also move the pane up to the tabs while a field is edited.
+  const tabList = useRef<HTMLDivElement | null>(null)
+  // Moving between the top and the bottom bar (the screen crossed the phone width) mounts the tabs anew. The
+  // list notes the tab that had the focus as it is taken out (React detaches it before removing it), and that
+  // tab gets the focus back in its new place, so a keyboard user keeps their place. A trigger's id survives.
+  const refocus = useRef<string | null>(null)
+  const listRef = useCallback((el: HTMLDivElement | null) => {
+    tabList.current = el
+    if (!el) return
+    return () => {
+      const had = document.activeElement
+      refocus.current = had instanceof HTMLElement && el.contains(had) ? had.id : null
+      tabList.current = null
+    }
+  }, [])
+  const loaded = Boolean(detail.data)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs when another tab opens or a mark widens a tab
+  useEffect(() => {
+    if (!loaded) return
+    const list = tabList.current
+    // The list is positioned, so a tab's offsetLeft is measured from the list's own start.
+    const open = list?.querySelector<HTMLElement>('[role="tab"][data-state="active"]')
+    if (!list || !open) return
+    const start = open.offsetLeft
+    const end = start + open.offsetWidth
+    if (start < list.scrollLeft) list.scrollLeft = start
+    else if (end > list.scrollLeft + list.clientWidth) list.scrollLeft = end - list.clientWidth
+  }, [tab, loaded, nav, unsaved.backups, unsaved.access, unsaved.settings])
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs once the tabs were mounted in their new place
+  useLayoutEffect(() => {
+    const was = refocus.current
+    refocus.current = null
+    if (was) document.getElementById(was)?.focus({ preventScroll: true })
+  }, [nav])
 
   if (detail.isLoading) return <Loading>Loading the instance…</Loading>
   if (detail.error && !detail.data)
@@ -365,6 +502,7 @@ function InstanceDetail({ id }: { id: string }) {
   const hd = i.healthDetail
   const health = i.health
   const name = i.name
+  const canExport = Boolean(i.worker && i.containerName)
   async function askRemove() {
     const ok = await confirm({
       title: `Remove ${name}?`,
@@ -381,10 +519,63 @@ function InstanceDetail({ id }: { id: string }) {
     })
   }
 
+  const pollError = i.lastPollError && (
+    <Alert variant="fail">
+      <AlertTitle>Reading failures failed</AlertTitle>
+      <AlertDescription className="font-mono text-small break-words">{i.lastPollError}</AlertDescription>
+    </Alert>
+  )
+  const collected =
+    i.collection === "worker"
+      ? `Collected on the host by ${i.worker?.name ?? "the assigned worker"}`
+      : "Checked from the n8n-ops server"
+
+  const tabs = (
+    <TabsList ref={listRef} aria-label="Instance sections" className={look.list}>
+      <PaneTabTrigger look={look} value="overview" icon={LayoutDashboardIcon} label="Overview" />
+      <PaneTabTrigger
+        look={look}
+        value="problems"
+        icon={BugIcon}
+        label="Problems"
+        mark={i.openProblems > 0 && <TabCount count={i.openProblems} short={look.shortCount} />}
+      />
+      <PaneTabTrigger
+        look={look}
+        value="health"
+        icon={HeartPulseIcon}
+        label="Health"
+        mark={(health === "down" || health === "warn") && <Dot health={health} label={healthLabel(i)} />}
+      />
+      <PaneTabTrigger
+        look={look}
+        value="backups"
+        icon={ArchiveIcon}
+        label="Backups"
+        mark={unsaved.backups && <UnsavedMark />}
+      />
+      <PaneTabTrigger
+        look={look}
+        value="access"
+        icon={KeyRoundIcon}
+        label="Access"
+        mark={unsaved.access && <UnsavedMark />}
+      />
+      <PaneTabTrigger
+        look={look}
+        value="settings"
+        icon={SlidersHorizontalIcon}
+        label="Settings"
+        mark={unsaved.settings && <UnsavedMark />}
+      />
+    </TabsList>
+  )
+
   return (
-    <div className="grid min-w-0 gap-gap">
-      <div className="grid gap-2">
-        <div className="flex flex-wrap items-center gap-2.5">
+    <div className="@container/pane grid min-w-0 gap-gap">
+      {/* What the instance is comes first; the actions sit beside it, or below it in a narrow pane. */}
+      <div className="grid gap-2 @min-[40rem]/pane:grid-cols-[minmax(0,1fr)_auto] @min-[40rem]/pane:gap-x-2.5">
+        <div className="flex min-w-0 flex-wrap items-center gap-2.5">
           <h2 className="text-title">
             <UserText>{i.name}</UserText>
           </h2>
@@ -392,206 +583,434 @@ function InstanceDetail({ id }: { id: string }) {
             {healthLabel(i)}
           </StatusTag>
         </div>
-        <p className="flex flex-wrap items-center gap-x-1.5 text-muted-foreground">
+        <p className="flex flex-wrap items-center gap-x-1.5 text-muted-foreground @min-[40rem]/pane:col-span-2">
           <Copyable value={i.baseUrl} label="Copy base URL" />
           <span>· n8n {i.version ?? "unknown"}</span>
           {behind(i.version, i.latestVersion) && <Tone tone="warn">latest {i.latestVersion}</Tone>}
           {i.queueMode && <span>· queue mode</span>}
         </p>
-        <div className="flex flex-wrap gap-2 pt-1.5">
-          <Button size="sm" asChild>
+        <div className="flex flex-wrap gap-2 @min-[40rem]/pane:col-start-2 @min-[40rem]/pane:row-start-1">
+          <Button size="sm" variant="primary" asChild>
             <a href={i.baseUrl} target="_blank" rel="noreferrer">
               <ExternalLink /> Open n8n
             </a>
           </Button>
           <Button size="sm" onClick={() => refresh.mutate()} disabled={refresh.isPending}>
-            <RefreshCw /> {refresh.isPending ? "Checking…" : "Check now"}
+            <RefreshCw />
+            <span className="@max-[34rem]/pane:sr-only">{refresh.isPending ? "Checking…" : "Check now"}</span>
           </Button>
           <Button size="sm" onClick={() => setEditing(true)}>
-            <Pencil /> Edit
+            <Pencil />
+            <span className="@max-[34rem]/pane:sr-only">Edit</span>
           </Button>
-          {i.worker && i.containerName && (
-            <Button size="sm" onClick={() => void exportCredentials(i.id, i.name)}>
-              <Download /> Export credentials
-            </Button>
-          )}
-          <Button size="sm" variant="danger" onClick={() => void askRemove()}>
-            <Trash2 /> Remove
-          </Button>
+          {/* Not modal: the confirm that Remove opens would otherwise find the page still locked. */}
+          <DropdownMenu modal={false}>
+            <DropdownMenuTrigger asChild>
+              <Button size="sm" aria-label="More actions">
+                <Ellipsis />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              {canExport && (
+                <>
+                  <DropdownMenuItem onSelect={() => void exportCredentials(i.id, i.name)}>
+                    <Download /> Export credentials
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                </>
+              )}
+              <DropdownMenuItem variant="destructive" onSelect={() => void askRemove()}>
+                <Trash2 /> Remove instance
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 
-      <Kpis>
-        <Kpi
-          label="Open problems"
-          icon={BugIcon}
-          value={i.openProblems}
-          tone={i.openProblems ? "fail" : undefined}
-          to={`/problems?status=open&instance=${i.id}`}
-        />
-        <Kpi
-          label="Active / total workflows"
-          icon={WorkflowIcon}
-          value={`${n(i.workflowCounts.active)}/${n(i.workflowCounts.total)}`}
-          to={`/workflows?instance=${i.id}`}
-        />
-        <Kpi label="Executions, 30 days" icon={ActivityIcon} value={i.workflowCounts.runs30d} />
-        <Kpi label="Failures checked" icon={HistoryIcon} value={<TimeAgo value={i.lastPollAt} />} />
-        <Kpi label="Health checked" icon={HeartPulseIcon} value={<TimeAgo value={i.healthCheckedAt} />} />
-        <Kpi label="Collection" icon={NetworkIcon} value={i.collection === "worker" ? "Worker" : "Direct"} />
-      </Kpis>
-      {i.lastPollError && (
-        <Alert variant="fail">
-          <AlertTitle>Reading failures failed</AlertTitle>
-          <AlertDescription className="font-mono text-small break-words">{i.lastPollError}</AlertDescription>
-        </Alert>
-      )}
+      <Tabs value={tab} onValueChange={(v) => isPaneTab(v) && show(v)} activationMode="manual">
+        {/* A portal keeps the tabs in the Tabs above, so the keyboard and the open tab work the same. */}
+        {nav ? createPortal(tabs, nav) : tabs}
 
-      <Panel>
-        <PanelHead
-          title="Health"
-          description={
-            i.collection === "worker"
-              ? `Collected on the host by ${i.worker?.name ?? "the assigned worker"}.`
-              : "Checked from the n8n-ops server."
-          }
-        />
-        <HealthRow label="Main process (/healthz)" ok={hd?.main?.ok} detail={hd?.main?.error} />
-        <HealthRow label="Ready (/healthz/readiness)" ok={hd?.readiness?.ok} />
-        {(hd?.workers ?? []).map((w) => (
-          <HealthRow key={w.url} label={`Worker ${w.url}`} ok={w.ok} detail={w.error} />
-        ))}
-        {hd?.queue && (
-          <div className="border-t border-line p-pad-x">
-            <Kpis>
-              <Kpi
-                label="Waiting"
-                icon={HourglassIcon}
-                value={hd.queue.waiting}
-                tone={hd.backlogActive ? "fail" : undefined}
-              />
-              <Kpi label="Active" icon={LoaderIcon} value={hd.queue.active} />
-              <Kpi label="Completed" icon={CircleCheckIcon} value={hd.queue.completed} />
-              <Kpi label="Failed" icon={CircleXIcon} value={hd.queue.failed} />
-            </Kpis>
-          </div>
-        )}
-        {hd?.metricsError && (
-          <div className="border-t border-line px-pad-x py-pad-y text-warn">Queue metrics: {hd.metricsError}</div>
-        )}
-        {i.queueMode && (!i.metricsUrl || i.workerHealthUrls.length === 0) && (
-          <div className="border-t border-line p-pad-x">
-            <Alert variant="info">
-              <AlertTitle>
-                {!i.metricsUrl && i.workerHealthUrls.length === 0
-                  ? "Queue mode is on, but n8n-ops has nothing to read about the queue or its workers"
-                  : !i.metricsUrl
-                    ? "The queue backlog is not checked"
-                    : "The queue workers are not checked"}
-              </AlertTitle>
-              <AlertDescription>
-                <ul className="list-disc space-y-1 ps-4">
-                  {!i.metricsUrl && (
-                    <li>
-                      Queue backlog: add the metrics URL, and set <code>N8N_METRICS=true</code> and{" "}
-                      <code>N8N_METRICS_INCLUDE_QUEUE_METRICS=true</code> on the main process.
-                    </li>
-                  )}
-                  {i.workerHealthUrls.length === 0 && (
-                    <li>
-                      Workers: add their health URLs, and set <code>QUEUE_HEALTH_CHECK_ACTIVE=true</code> on them.
-                      Workers are usually reachable only on their host, so this often needs an n8n-ops worker there.
-                    </li>
-                  )}
-                </ul>
-                <Button size="sm" className="mt-3" onClick={() => setEditing(true)}>
-                  <Pencil /> Edit instance
-                </Button>
-              </AlertDescription>
-            </Alert>
-          </div>
-        )}
-      </Panel>
+        <TabsContent value="overview" forceMount className={tabPanel}>
+          <StatusStrip instance={i} footer={collected} />
+          {/* Four figures in one row wherever the pane has room for them, two by two below that. */}
+          <Kpis className={kpisInPane}>
+            <Kpi
+              label="Open problems"
+              icon={BugIcon}
+              value={i.openProblems}
+              tone={i.openProblems ? "fail" : undefined}
+              to={`/instances/${i.id}?tab=problems`}
+            />
+            <Kpi
+              label="Active / total workflows"
+              icon={WorkflowIcon}
+              value={`${n(i.workflowCounts.active)}/${n(i.workflowCounts.total)}`}
+              to={`/workflows?instance=${i.id}`}
+            />
+            <Kpi label="Executions, 30 days" icon={ActivityIcon} value={i.workflowCounts.runs30d} />
+            <LastBackupKpi id={i.id} backup={backup} />
+          </Kpis>
+          <Panel>
+            <PanelHead
+              title="Open Problems"
+              count={n(i.openProblems)}
+              more={i.openProblems > 0 ? { to: `/instances/${i.id}?tab=problems`, label: "All" } : undefined}
+            />
+            <InstanceProblems query={problems} limit={3} onOpen={(pid) => navigate(`/problems/${pid}`)} />
+          </Panel>
+        </TabsContent>
 
-      <InstanceBackupCard
-        key={`backup-destinations-${i.id}`}
-        instanceId={i.id}
-        mode={i.backupDestinations}
-        destinationIds={i.backupDestinationIds}
-      />
+        <TabsContent value="problems" forceMount className={tabPanel}>
+          <Panel>
+            <PanelHead
+              title="Open Problems"
+              count={n(i.openProblems)}
+              more={{ to: `/problems?status=open&instance=${i.id}`, label: "Open in Problems" }}
+            />
+            <InstanceProblems query={problems} total={i.openProblems} onOpen={(pid) => navigate(`/problems/${pid}`)} />
+          </Panel>
+        </TabsContent>
 
-      <Panel>
-        <PanelHead
-          title="Open Problems"
-          count={problems.data ? n(problems.data.length) : undefined}
-          more={problems.data?.length ? { to: `/problems?status=open&instance=${i.id}`, label: "All" } : undefined}
-        />
-        {problems.isLoading ? (
-          <Loading />
-        ) : (
-          <ProblemsTable
-            bare
-            rows={problems.data ?? []}
-            showInstance={false}
-            empty="No open problems on this instance."
-            onOpen={(pid) => navigate(`/problems/${pid}`)}
+        <TabsContent value="health" forceMount className={tabPanel}>
+          {pollError}
+          <Panel>
+            <PanelHead
+              title="Health"
+              description={
+                <>
+                  {collected}. Health checked <TimeAgo value={i.healthCheckedAt} />, failures checked{" "}
+                  <TimeAgo value={i.lastPollAt} />.
+                </>
+              }
+            />
+            <HealthRow label="Main process (/healthz)" ok={hd?.main?.ok} detail={hd?.main?.error} />
+            <HealthRow label="Ready (/healthz/readiness)" ok={hd?.readiness?.ok} />
+            {(hd?.workers ?? []).map((w) => (
+              <HealthRow key={w.url} label={`Worker ${w.url}`} ok={w.ok} detail={w.error} />
+            ))}
+            {hd?.queue && (
+              <div className="border-t border-line p-pad-x">
+                <Kpis>
+                  <Kpi
+                    label="Waiting"
+                    icon={HourglassIcon}
+                    value={hd.queue.waiting}
+                    tone={hd.backlogActive ? "fail" : undefined}
+                  />
+                  <Kpi label="Active" icon={LoaderIcon} value={hd.queue.active} />
+                  <Kpi label="Completed" icon={CircleCheckIcon} value={hd.queue.completed} />
+                  <Kpi label="Failed" icon={CircleXIcon} value={hd.queue.failed} />
+                </Kpis>
+              </div>
+            )}
+            {hd?.metricsError && (
+              <div className="border-t border-line px-pad-x py-pad-y text-warn">Queue metrics: {hd.metricsError}</div>
+            )}
+            {i.queueMode && (!i.metricsUrl || i.workerHealthUrls.length === 0) && (
+              <div className="border-t border-line p-pad-x">
+                <Alert variant="info">
+                  <AlertTitle>
+                    {!i.metricsUrl && i.workerHealthUrls.length === 0
+                      ? "Queue mode is on, but n8n-ops has nothing to read about the queue or its workers"
+                      : !i.metricsUrl
+                        ? "The queue backlog is not checked"
+                        : "The queue workers are not checked"}
+                  </AlertTitle>
+                  <AlertDescription>
+                    <ul className="list-disc space-y-1 ps-4">
+                      {!i.metricsUrl && (
+                        <li>
+                          Queue backlog: add the metrics URL, and set <code>N8N_METRICS=true</code> and{" "}
+                          <code>N8N_METRICS_INCLUDE_QUEUE_METRICS=true</code> on the main process.
+                        </li>
+                      )}
+                      {i.workerHealthUrls.length === 0 && (
+                        <li>
+                          Workers: add their health URLs, and set <code>QUEUE_HEALTH_CHECK_ACTIVE=true</code> on them.
+                          Workers are usually reachable only on their host, so this often needs an n8n-ops worker there.
+                        </li>
+                      )}
+                    </ul>
+                    <Button size="sm" className="mt-3" onClick={() => setEditing(true)}>
+                      <Pencil /> Edit instance
+                    </Button>
+                  </AlertDescription>
+                </Alert>
+              </div>
+            )}
+          </Panel>
+        </TabsContent>
+
+        <TabsContent value="backups" forceMount className={tabPanel}>
+          <LastBackupPanel id={i.id} backup={backup} />
+          <InstanceBackupCard
+            key={`backup-destinations-${i.id}`}
+            instanceId={i.id}
+            mode={i.backupDestinations}
+            destinationIds={i.backupDestinationIds}
           />
-        )}
-      </Panel>
+        </TabsContent>
 
-      <Panel>
-        <PanelHead
-          title="API Key and What It Allows"
-          description={
-            i.scopesSource === "discovered"
-              ? `Read from GET /api/v1/discover · checked ${i.scopesCheckedAt ? formatFull(i.scopesCheckedAt, tz) : "never"}`
-              : `n8n ${i.version ?? ""} has no /discover endpoint (added in 2.14.0). Tell n8n-ops what the key can do.`
-          }
-          action={
-            i.scopesSource === "declared" && (
-              <ToggleGroup
-                type="single"
-                aria-label="What the API key can do"
-                value={i.declaredAccess ?? "read"}
-                onValueChange={(v) => v && declare.mutate({ declaredAccess: v as "read" | "write" })}
-              >
-                <ToggleGroupItem value="read">Read only</ToggleGroupItem>
-                <ToggleGroupItem value="write">Read + write</ToggleGroupItem>
-              </ToggleGroup>
-            )
-          }
-        />
-        {i.capabilities.map((c) => (
-          <div
-            key={c.key}
-            className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-0.5 border-t border-line px-pad-x py-pad-y"
-          >
-            <span className={cn(!c.available && "text-muted-foreground")}>{c.label}</span>
-            {c.available ? <Tone tone="ok">Allowed</Tone> : <Tone tone="muted">Not allowed</Tone>}
-            <span className="col-span-2 font-mono text-meta break-words text-muted-foreground">
-              {c.available
-                ? c.scopes.join(", ") || "worker"
-                : [c.missing.length ? `missing: ${c.missing.join(", ")}` : "", c.missingWorker ? "needs a worker" : ""]
-                    .filter(Boolean)
-                    .join("; ")}
-            </span>
-          </div>
-        ))}
-      </Panel>
+        <TabsContent value="access" forceMount className={tabPanel}>
+          <Panel>
+            <PanelHead
+              title="API Key and What It Allows"
+              description={
+                i.scopesSource === "discovered"
+                  ? `Read from GET /api/v1/discover · checked ${i.scopesCheckedAt ? formatFull(i.scopesCheckedAt, tz) : "never"}`
+                  : `n8n ${i.version ?? ""} has no /discover endpoint (added in 2.14.0). Tell n8n-ops what the key can do.`
+              }
+              action={
+                i.scopesSource === "declared" && (
+                  <ToggleGroup
+                    type="single"
+                    aria-label="What the API key can do"
+                    value={i.declaredAccess ?? "read"}
+                    onValueChange={(v) => v && declare.mutate({ declaredAccess: v as "read" | "write" })}
+                  >
+                    <ToggleGroupItem value="read">Read only</ToggleGroupItem>
+                    <ToggleGroupItem value="write">Read + write</ToggleGroupItem>
+                  </ToggleGroup>
+                )
+              }
+            />
+            <div className="grid @min-[40rem]/pane:grid-cols-2">
+              {i.capabilities.map((c) => (
+                <div
+                  key={c.key}
+                  className="grid grid-cols-[minmax(0,1fr)_auto] content-start items-center gap-x-3 gap-y-0.5 border-t border-line px-pad-x py-pad-y @min-[40rem]/pane:odd:border-e"
+                >
+                  <span className={cn(!c.available && "text-muted-foreground")}>{c.label}</span>
+                  {c.available ? <Tone tone="ok">Allowed</Tone> : <Tone tone="muted">Not allowed</Tone>}
+                  <span className="col-span-2 font-mono text-meta break-words text-muted-foreground">
+                    {c.available
+                      ? c.scopes.join(", ") || "worker"
+                      : [
+                          c.missing.length ? `missing: ${c.missing.join(", ")}` : "",
+                          c.missingWorker ? "needs a worker" : "",
+                        ]
+                          .filter(Boolean)
+                          .join("; ")}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </Panel>
+          <AgentAccessCard
+            key={`access-${i.id}`}
+            id={i.id}
+            name={i.name}
+            scopesSource={i.scopesSource}
+            keyScopes={i.effectiveScopes}
+            agentAccess={i.agentAccess}
+          />
+        </TabsContent>
 
-      <AgentAccessCard
-        key={`access-${i.id}`}
-        id={i.id}
-        name={i.name}
-        scopesSource={i.scopesSource}
-        keyScopes={i.effectiveScopes}
-        agentAccess={i.agentAccess}
-      />
-
-      <OverridesCard key={`overrides-${i.id}`} instance={i} />
+        <TabsContent value="settings" forceMount className={tabPanel}>
+          <OverridesCard key={`overrides-${i.id}`} instance={i} />
+        </TabsContent>
+      </Tabs>
 
       <InstanceDialog open={editing} onOpenChange={setEditing} instance={i} />
     </div>
+  )
+}
+
+/** A mark on a tab that holds unsaved changes; the save bar saves them from any tab. */
+function UnsavedMark() {
+  return (
+    <span role="img" aria-label="Unsaved changes" title="Unsaved changes" className="size-2 rounded-full bg-info" />
+  )
+}
+
+/**
+ * On the icon's corner of a stacked tab there is room for two digits (`short` in the bottom bar, by the pane's
+ * width at the top); a reader still hears the whole count.
+ */
+function TabCount({ count, short }: { count: number; short: boolean }) {
+  return (
+    <Badge variant="fail" className={short ? "px-1" : "@max-[40rem]/pane:px-1"}>
+      <span className={short ? "sr-only" : "@max-[40rem]/pane:sr-only"}>{n(count)}</span>
+      <span aria-hidden className={short ? undefined : "hidden @max-[40rem]/pane:inline"}>
+        {count > 99 ? "99+" : count}
+      </span>
+    </Badge>
+  )
+}
+
+/** The mark (a count, a health dot, unsaved changes) comes after the label, so a tab's name starts with the label. */
+function PaneTabTrigger({
+  look,
+  value,
+  icon: Icon,
+  label,
+  mark,
+}: {
+  look: TabsLook
+  value: PaneTab
+  icon: LucideIcon
+  label: string
+  mark?: React.ReactNode
+}) {
+  return (
+    <TabsTrigger value={value} className={look.tab}>
+      <Icon aria-hidden className={look.icon} />
+      <span>{label}</span>
+      {mark && <span className={look.mark}>{mark}</span>}
+    </TabsTrigger>
+  )
+}
+
+/** The state of the instance in one line of cells: what a health check found, worst in colour. */
+function StatusStrip({ instance: i, footer }: { instance: InstanceDetailData; footer: string }) {
+  const hd = i.healthDetail
+  const check = (ok: boolean | undefined): HealthState => (ok === undefined ? "unknown" : ok ? "ok" : "down")
+  const cells: { label: string; health: HealthState; value: React.ReactNode }[] = [
+    {
+      label: "Main process",
+      health: check(hd?.main?.ok),
+      value: hd?.main ? (hd.main.ok ? "ok" : "not responding") : "not checked",
+    },
+    {
+      label: "Ready",
+      health: check(hd?.readiness?.ok),
+      value: hd?.readiness ? (hd.readiness.ok ? "ok" : "not ready") : "not checked",
+    },
+  ]
+  if (i.workerHealthUrls.length > 0) {
+    const up = (hd?.workers ?? []).filter((w) => w.ok).length
+    cells.push({
+      label: "Workers",
+      health: hd?.workers ? (up === hd.workers.length ? "ok" : "down") : "unknown",
+      value: hd?.workers ? `${n(up)} of ${n(hd.workers.length)} up` : "not checked",
+    })
+  }
+  if (i.queueMode && i.metricsUrl) {
+    cells.push({
+      label: "Queue",
+      health: hd?.queue ? (hd.backlogActive ? "warn" : "ok") : hd?.metricsError ? "warn" : "unknown",
+      value: hd?.queue ? `${n(hd.queue.waiting)} waiting` : hd?.metricsError ? "not read" : "not checked",
+    })
+  }
+  const cols =
+    cells.length === 4
+      ? "grid-cols-2 @min-[36rem]/pane:grid-cols-4"
+      : cells.length === 3
+        ? "grid-cols-1 @min-[28rem]/pane:grid-cols-3"
+        : "grid-cols-2"
+  return (
+    <Panel>
+      <div className={cn("grid gap-px bg-line", cols)}>
+        {cells.map((c) => (
+          <div key={c.label} className="flex min-w-0 items-baseline gap-2.5 bg-panel px-pad-x py-pad-y">
+            <Dot health={c.health} />
+            <div className="min-w-0">
+              <div className="text-small text-muted-foreground">{c.label}</div>
+              <div
+                className={cn(
+                  "truncate font-semibold",
+                  c.health === "down" && "text-fail",
+                  c.health === "warn" && "text-warn",
+                  c.health === "unknown" && "font-normal text-muted-foreground",
+                )}
+              >
+                {c.value}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+      <p className="border-t border-line px-pad-x py-1.5 text-small break-words text-muted-foreground">
+        Health checked <TimeAgo value={i.healthCheckedAt} /> ·{" "}
+        {i.lastPollError ? (
+          // The whole error is in the Health tab; here it takes the place of the time failures were read.
+          <span className="text-fail">
+            <b className="font-semibold">Reading failures failed:</b>{" "}
+            <span className="font-mono">{i.lastPollError}</span>
+          </span>
+        ) : (
+          <>
+            Failures checked <TimeAgo value={i.lastPollAt} />
+          </>
+        )}{" "}
+        · {footer}
+      </p>
+    </Panel>
+  )
+}
+
+/** The words for the last backup run; the list may still load, or may have failed. */
+function backupWords(backup: ListBackup) {
+  if (backup.state === "loading") return { value: "…", tone: undefined, hint: undefined }
+  if (backup.state !== "known") return { value: "Unknown", tone: undefined, hint: "Could not be read" }
+  if (!backup.run) return { value: "Never", tone: "fail" as const, hint: "Not backed up" }
+  const s = statusOf("backup", backup.run.status as keyof typeof statusTable.backup)
+  const tone = s.tone === "fail" ? ("fail" as const) : s.tone === "warn" ? ("warn" as const) : undefined
+  return { value: <When value={backup.run.at} />, tone, hint: s.label }
+}
+
+function LastBackupKpi({ id, backup }: { id: string; backup: ListBackup }) {
+  const w = backupWords(backup)
+  return (
+    <Kpi label="Last backup run" icon={ArchiveIcon} value={w.value} tone={w.tone} hint={w.hint} to={`/backups/${id}`} />
+  )
+}
+
+function LastBackupPanel({ id, backup }: { id: string; backup: ListBackup }) {
+  const w = backupWords(backup)
+  return (
+    <Panel>
+      <PanelHead
+        title="Last Backup Run"
+        description={
+          <span className={cn(w.tone === "fail" && "font-semibold text-fail", w.tone === "warn" && "text-warn")}>
+            {w.value}
+            {w.hint && ` · ${w.hint}`}
+          </span>
+        }
+        more={{ to: `/backups/${id}`, label: "History" }}
+      />
+    </Panel>
+  )
+}
+
+/**
+ * The open problems of the instance, most recently seen first. The list is limited to 200 problems; a
+ * preview shows the first few in that order.
+ */
+function InstanceProblems({
+  query,
+  limit,
+  total,
+  onOpen,
+}: {
+  query: { data?: ProblemRow[]; isLoading: boolean; error: unknown; refetch: () => unknown }
+  limit?: number
+  total?: number
+  onOpen: (id: string) => void
+}) {
+  if (query.isLoading) return <Loading />
+  if (query.error && !query.data)
+    return <LoadError what="the open problems" error={query.error} retry={() => void query.refetch()} />
+  const rows = query.data ?? []
+  return (
+    <>
+      <ProblemsTable
+        items
+        bare
+        preview={limit !== undefined}
+        rows={limit === undefined ? rows : rows.slice(0, limit)}
+        showInstance={false}
+        empty="No open problems on this instance."
+        onOpen={onOpen}
+      />
+      {total !== undefined && rows.length < total && (
+        <p className="border-t border-line px-pad-x py-pad-y text-small text-muted-foreground">
+          Showing the {n(rows.length)} most recently seen. Search and filter them in Problems.
+        </p>
+      )}
+    </>
   )
 }
 

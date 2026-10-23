@@ -8,6 +8,15 @@ type Area = { scrollTop: number }
  */
 export type ScrollSpot = Record<string, number>
 
+/**
+ * The router's key of the history entry the address is on (`history.state`), as React Router reads it: "default"
+ * for the entry a page load starts on. A dialog's own entry spreads the state it covers, so it keeps that key.
+ */
+export function shownEntry(state: unknown): string {
+  const key = (state as { key?: unknown } | null)?.key
+  return typeof key === "string" && key ? key : "default"
+}
+
 /** Notes where each area is now. */
 export function readSpot(areas: Map<string, Area>): ScrollSpot {
   const spot: ScrollSpot = {}

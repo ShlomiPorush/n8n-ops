@@ -285,9 +285,9 @@ export async function dispatchAlerts(ctx: Ctx) {
           return { merged: true as const }
         })
         if (outcome.merged) continue
-        if ("carry" in outcome) {
+        if (outcome.carry) {
           newIds = outcome.carry
-          ids.push(...outcome.queued)
+          ids.push(...(outcome.queued ?? []))
         }
       }
       const { lines, first } = await groupLines(ctx, newIds)

@@ -29,6 +29,8 @@ All notable changes to this project are documented here. The format follows [Kee
 ### Fixed
 
 - Clicking a tab (Connected Agents, for example) no longer leaves a focus ring around it, cut off at the top and bottom. The ring still shows, whole, when the tabs are used with the keyboard.
+- What is typed in Edit instance is no longer replaced by the stored values when the instance refreshes behind the dialog (every 15 seconds, or on coming back to the window).
+- The line under a row of tabs that scrolls sideways now runs to its end at any scroll position.
 - `scripts/verify.sh --changed` (and the CI of pull requests) no longer builds the web app twice at once when a file at the root such as `CHANGELOG.md` changed, which could fail the build at random.
 - Add a Worker accepts any name up to 60 characters, such as "Docker Office". Before, a name with a space was refused with a technical pattern message. A refused value in the dialog is now explained in words.
 - The commands Add a Worker gave wrote `.env` with `cat >`, which replaced any `.env` already in that folder.

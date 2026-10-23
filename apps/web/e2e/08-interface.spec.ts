@@ -394,6 +394,32 @@ test("a clicked tab shows no focus ring until a key is pressed on it", async () 
   expect(await outline()).toBe("solid")
 })
 
+test("the Edit dialog keeps what is typed when the instance refreshes behind it", async () => {
+  const id = await openInstanceB()
+  // From now on the instance answers with another n8n version, as after an upgrade.
+  const detail = `**/api/instances/${id}`
+  await page.route(detail, async (route) => {
+    if (route.request().method() !== "GET") return route.continue()
+    const res = await route.fetch()
+    await route.fulfill({ response: res, json: { ...(await res.json()), version: "9.9.9" } })
+  })
+  try {
+    await page.getByRole("button", { name: "Edit", exact: true }).click()
+    const dialog = page.getByRole("dialog", { name: "Edit e2e-n8n-b" })
+    const name = dialog.getByLabel("Name", { exact: true })
+    await name.fill("e2e-n8n-b renamed")
+    // A refresh, as the 15-second poll or coming back to the window brings; the pane behind the dialog shows the
+    // new version once the new answer has reached it.
+    await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")))
+    await expect(page.getByText("· n8n 9.9.9")).toBeAttached()
+    await expect(name).toHaveValue("e2e-n8n-b renamed")
+    await dialog.getByRole("button", { name: "Cancel" }).click()
+    await dialogClosed(page)
+  } finally {
+    await page.unroute(detail)
+  }
+})
+
 test("edits on several instance tabs survive a switch, and one save bar saves or discards them all", async () => {
   await openInstanceB()
   const tab = (name: string) => page.getByRole("tab", { name: new RegExp(`^${name}`) })

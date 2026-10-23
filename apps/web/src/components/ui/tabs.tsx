@@ -38,7 +38,12 @@ function TabsList({ className, ...props }: React.ComponentProps<typeof TabsPrimi
  * that a pointer pressed keeps no ring until it loses focus. The ring is drawn inside the tab: the list clips
  * anything outside it.
  */
-function TabsTrigger({ className, onPointerDown, onBlur, ...props }: React.ComponentProps<typeof TabsPrimitive.Trigger>) {
+function TabsTrigger({
+  className,
+  onPointerDown,
+  onBlur,
+  ...props
+}: React.ComponentProps<typeof TabsPrimitive.Trigger>) {
   return (
     <TabsPrimitive.Trigger
       data-slot="tabs-trigger"

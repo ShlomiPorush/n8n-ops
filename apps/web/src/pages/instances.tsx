@@ -395,7 +395,8 @@ const tabLook = cn(
   "regular:rounded-sm regular:border-b-0 regular:px-3 regular:py-1.5 regular:@max-[40rem]/pane:px-1",
   "regular:data-[state=active]:bg-panel regular:data-[state=active]:shadow-card",
 )
-const tabMark = "flex @max-[40rem]/pane:absolute @max-[40rem]/pane:top-0 @max-[40rem]/pane:start-1/2 @max-[40rem]/pane:ms-1.5"
+const tabMark =
+  "flex @max-[40rem]/pane:absolute @max-[40rem]/pane:top-0 @max-[40rem]/pane:start-1/2 @max-[40rem]/pane:ms-1.5"
 const tabPanel = "grid min-w-0 gap-gap data-[state=inactive]:hidden"
 /*
  * In a pane narrower than 52rem a Regular card of four is too narrow for a figure beside its icon, so the
@@ -510,40 +511,40 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
           {i.queueMode && <span>· queue mode</span>}
         </p>
         <div className="flex flex-wrap gap-2 @min-[40rem]/pane:col-start-2 @min-[40rem]/pane:row-span-2 @min-[40rem]/pane:row-start-1 @min-[40rem]/pane:self-start">
-            <Button size="sm" variant="primary" asChild>
-              <a href={i.baseUrl} target="_blank" rel="noreferrer">
-                <ExternalLink /> Open n8n
-              </a>
-            </Button>
-            <Button size="sm" onClick={() => refresh.mutate()} disabled={refresh.isPending}>
-              <RefreshCw />
-              <span className="@max-[34rem]/pane:sr-only">{refresh.isPending ? "Checking…" : "Check now"}</span>
-            </Button>
-            <Button size="sm" onClick={() => setEditing(true)}>
-              <Pencil />
-              <span className="@max-[34rem]/pane:sr-only">Edit</span>
-            </Button>
-            {/* Not modal: the confirm that Remove opens would otherwise find the page still locked. */}
-            <DropdownMenu modal={false}>
-              <DropdownMenuTrigger asChild>
-                <Button size="sm" aria-label="More actions">
-                  <Ellipsis />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56">
-                {canExport && (
-                  <>
-                    <DropdownMenuItem onSelect={() => void exportCredentials(i.id, i.name)}>
-                      <Download /> Export credentials
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                  </>
-                )}
-                <DropdownMenuItem variant="destructive" onSelect={() => void askRemove()}>
-                  <Trash2 /> Remove instance
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+          <Button size="sm" variant="primary" asChild>
+            <a href={i.baseUrl} target="_blank" rel="noreferrer">
+              <ExternalLink /> Open n8n
+            </a>
+          </Button>
+          <Button size="sm" onClick={() => refresh.mutate()} disabled={refresh.isPending}>
+            <RefreshCw />
+            <span className="@max-[34rem]/pane:sr-only">{refresh.isPending ? "Checking…" : "Check now"}</span>
+          </Button>
+          <Button size="sm" onClick={() => setEditing(true)}>
+            <Pencil />
+            <span className="@max-[34rem]/pane:sr-only">Edit</span>
+          </Button>
+          {/* Not modal: the confirm that Remove opens would otherwise find the page still locked. */}
+          <DropdownMenu modal={false}>
+            <DropdownMenuTrigger asChild>
+              <Button size="sm" aria-label="More actions">
+                <Ellipsis />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              {canExport && (
+                <>
+                  <DropdownMenuItem onSelect={() => void exportCredentials(i.id, i.name)}>
+                    <Download /> Export credentials
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                </>
+              )}
+              <DropdownMenuItem variant="destructive" onSelect={() => void askRemove()}>
+                <Trash2 /> Remove instance
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 
@@ -562,7 +563,12 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
             label="Health"
             mark={(health === "down" || health === "warn") && <Dot health={health} label={healthLabel(i)} />}
           />
-          <PaneTabTrigger value="backups" icon={ArchiveIcon} label="Backups" mark={unsaved.backups && <UnsavedMark />} />
+          <PaneTabTrigger
+            value="backups"
+            icon={ArchiveIcon}
+            label="Backups"
+            mark={unsaved.backups && <UnsavedMark />}
+          />
           <PaneTabTrigger value="access" icon={KeyRoundIcon} label="Access" mark={unsaved.access && <UnsavedMark />} />
           <PaneTabTrigger
             value="settings"

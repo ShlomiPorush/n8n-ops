@@ -296,9 +296,12 @@ test("on a phone a page chosen in More asks about unsaved changes, and Stay keep
     const ask = page.getByRole("alertdialog", { name: "Leave without saving?" })
     await more.click()
     await sheet.getByRole("link", { name: "Workers" }).click()
-    // The question is not beside the sheet: both stay until it is answered.
+    // The question is not beside the sheet: both stay until it is answered. The question is modal, so it hides
+    // the rest of the page from assistive tech while it is up, the sheet too: the sheet is found hidden, and open.
     await expect(ask).toBeVisible()
-    await expect(sheet).toBeVisible()
+    const sheetBehind = page.getByRole("dialog", { name: "All Pages", includeHidden: true })
+    await expect(sheetBehind).toBeVisible()
+    await expect(sheetBehind).toHaveAttribute("data-state", "open")
     await ask.getByRole("button", { name: "Stay" }).click()
     await expect(ask).toHaveCount(0)
     // Kept: the page, what was typed, and the sheet with its Back step.

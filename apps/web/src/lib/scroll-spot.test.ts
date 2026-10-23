@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { placeSpot, readSpot } from "./scroll-spot"
+import { placeSpot, readSpot, shownEntry } from "./scroll-spot"
 
 /** An area that scrolls no further than its content allows, as the browser clamps it. */
 function area(scrollTop: number, max = 5000) {
@@ -74,5 +74,14 @@ describe("scroll spot", () => {
     item.max = 2000
     expect(placeSpot(areas, { page: 40, item: 900 })).toBe(true)
     expect(item.scrollTop).toBe(900)
+  })
+})
+
+describe("shownEntry", () => {
+  it("reads the router key, also under a dialog own entry, and default where a page load starts", () => {
+    expect(shownEntry({ usr: null, key: "as5rkcmn", idx: 2 })).toBe("as5rkcmn")
+    expect(shownEntry({ usr: null, key: "as5rkcmn", idx: 2, overlay: 7 })).toBe("as5rkcmn")
+    expect(shownEntry(null)).toBe("default")
+    expect(shownEntry({ key: "" })).toBe("default")
   })
 })

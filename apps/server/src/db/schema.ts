@@ -326,6 +326,8 @@ export const alertOutbox = pgTable(
     attempts: integer("attempts").notNull().default(0),
     lastError: text("last_error"),
     telegramMessageId: integer("telegram_message_id"),
+    /** Forum topic chosen by the routes when the alert was queued. Null is the chat's General topic. */
+    threadId: integer("thread_id"),
     createdAt: created(),
     sentAt: ts("sent_at"),
   },
@@ -337,6 +339,12 @@ export const alertGroups = pgTable("alert_groups", {
   id: uuid("id").primaryKey().defaultRandom(),
   groupKey: text("group_key").notNull(),
   telegramMessageId: integer("telegram_message_id").notNull(),
+  /** The topic its alerts were routed to; problems group and edit only within it. Null is General. */
+  threadId: integer("thread_id"),
+  /** Where the message is: null with a `threadId` means the topic was gone and it went to General. */
+  sentThreadId: integer("sent_thread_id"),
+  /** Set when the message cannot take later problems: its send failed, or it was deleted with its topic. */
+  closedAt: ts("closed_at"),
   problemIds: jsonb("problem_ids").$type<string[]>().notNull().default([]),
   createdAt: created(),
 })

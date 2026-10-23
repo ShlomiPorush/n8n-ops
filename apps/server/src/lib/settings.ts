@@ -47,6 +47,40 @@ export const isTimeZone = (value: unknown): value is string =>
 /** Whether General may be saved with this time zone: a zone name, empty (UTC), or the one already stored. */
 export const mayStoreTimeZone = (stored: unknown, next: unknown) => next === stored || next === "" || isTimeZone(next)
 
+/** A Telegram forum topic: the `message_thread_id`, a PostgreSQL integer. */
+export const topicIdSchema = z.number().int().min(1).max(2_147_483_647)
+
+/** Whether a route's workflow pattern compiles the way it is matched: case-insensitive, Unicode. */
+export function isRoutePattern(pattern: string) {
+  try {
+    new RegExp(pattern, "iu")
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Trimmed text, with an empty value read as not set, so an empty field never becomes a condition. */
+const condition = (max: number) =>
+  z.preprocess((v) => (typeof v === "string" ? v.trim() || undefined : v), z.string().max(max).optional())
+
+/**
+ * Sends the alerts that match it to a forum topic. Every condition it sets must hold; workflow and tag never match
+ * an alert about an instance alone (health, backups).
+ */
+export const telegramRouteSchema = z
+  .object({
+    /** The instance's ID. A route of a removed instance stays, matching nothing, until it is deleted. */
+    instanceId: condition(64),
+    /** Regular expression for the workflow name, case-insensitive. */
+    workflow: condition(200).refine((p) => p === undefined || isRoutePattern(p), "not a valid regular expression"),
+    /** A workflow tag, case-insensitive. */
+    tag: condition(100),
+    threadId: topicIdSchema,
+  })
+  .refine((r) => Boolean(r.instanceId || r.workflow || r.tag), "set an instance, a workflow pattern or a tag")
+export type TelegramRoute = z.infer<typeof telegramRouteSchema>
+
 export const sections = {
   general: z.object({
     /** Public URL of this n8n-ops installation, used in links sent by Telegram and email. */
@@ -70,6 +104,11 @@ export const sections = {
     botTokenEnc: z.string().optional(),
     chatId: z.string(),
     webhookSecret: z.string(),
+    /** Forum topics: the first matching route wins, then `defaultThreadId`, then the chat's General topic. */
+    routes: z.array(telegramRouteSchema).max(50),
+    defaultThreadId: topicIdSchema.nullable(),
+    /** Topic for agent access requests; null follows `defaultThreadId`. */
+    accessThreadId: topicIdSchema.nullable(),
   }),
   email: z.object({
     dailyEnabled: z.boolean(),
@@ -146,7 +185,7 @@ export const defaults: { [K in SectionName]: Section<K> } = {
     editWindowMin: 60,
     retryMin: 5,
   },
-  telegram: { chatId: "", webhookSecret: "" },
+  telegram: { chatId: "", webhookSecret: "", routes: [], defaultThreadId: null, accessThreadId: null },
   email: {
     dailyEnabled: false,
     dailyTime: "07:30",
@@ -202,6 +241,9 @@ export function createSettings(db: Db, env: { publicUrl?: string } = {}): Settin
     // So does a time zone Intl does not know, saved before time zones were checked: it reads as UTC.
     if (key === "general" && "timezone" in stored && stored.timezone !== "" && !isKnownZone(stored.timezone))
       delete stored.timezone
+    // A route that no longer passes is left out alone; the bot token and chat must not fall back with it.
+    if (key === "telegram" && Array.isArray(stored.routes))
+      stored.routes = stored.routes.filter((r) => telegramRouteSchema.safeParse(r).success).slice(0, 50)
     const merged = { ...defaults[key], ...stored }
     const parsed = sections[key].safeParse(merged)
     const value = (parsed.success ? parsed.data : defaults[key]) as Section<K>

@@ -40,8 +40,10 @@ function TooltipContent({
 }
 
 /**
- * Inside a link or a button, which already takes the keyboard and the tap, a Tip is a plain hover tooltip: a
- * control of its own there would nest one control in another.
+ * Inside a link or a button, which already takes the keyboard and the tap, a Tip is not a control of its own (that
+ * would nest one control in another): it shows on hover and while that control has the keyboard focus, and its
+ * value is part of the control's name as hidden text, so a screen reader reads it. A tap follows the link; the
+ * value is in its name there too.
  */
 const InControl = React.createContext(false)
 
@@ -53,7 +55,8 @@ function TipInControl({ children }: { children: React.ReactNode }) {
  * A value that only a tooltip shows (MO-4, AX-5): the exact time behind "3 min ago", the latest version beside an
  * old one. Hover shows it with a pointer; its trigger also takes the keyboard focus and shows it there, and a tap
  * on a touch screen shows it for 2.5 s, whose click does nothing else (lib/tap-tip.ts), so a tap on a time in a
- * row does not open the row. `children` is one element that takes a ref, such as a <time> or a Badge.
+ * row does not open the row (inside a link or a button, see InControl). `children` is one element that takes a ref,
+ * such as a <time> or a Badge.
  */
 function Tip({
   content,
@@ -68,11 +71,31 @@ function Tip({
   const [open, setOpen] = React.useState(false)
   const [tap] = React.useState(() => tapTip(setOpen))
   React.useEffect(() => tap.stop, [tap])
+  const [trigger, setTrigger] = React.useState<HTMLElement | null>(null)
+
+  // In a link or a button: its keyboard focus shows the tip, as the tip's own focus does elsewhere (MO-4).
+  React.useEffect(() => {
+    const control = inControl ? trigger?.closest<HTMLElement>("a, button") : null
+    if (!control) return
+    const focus = () => control.matches(":focus-visible") && setOpen(true)
+    const blur = () => setOpen(false)
+    control.addEventListener("focus", focus)
+    control.addEventListener("blur", blur)
+    return () => {
+      control.removeEventListener("focus", focus)
+      control.removeEventListener("blur", blur)
+    }
+  }, [inControl, trigger])
 
   return (
     <Tooltip open={open} onOpenChange={(next) => (next || !tap.held()) && setOpen(next)}>
       {inControl ? (
-        <TooltipTrigger asChild>{children}</TooltipTrigger>
+        <>
+          <TooltipTrigger asChild ref={setTrigger}>
+            {children}
+          </TooltipTrigger>
+          <span className="sr-only">, {content}</span>
+        </>
       ) : (
         <TooltipTrigger
           asChild

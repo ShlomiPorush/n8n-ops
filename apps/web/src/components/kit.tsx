@@ -510,8 +510,9 @@ export function Kpis({
         "grid overflow-clip rounded-lg border border-line bg-bg",
         row
           ? kpiRow
-          : // Compact's cells may be narrower, as in v3.
-            "grid-cols-[repeat(auto-fit,minmax(170px,1fr))] compact:grid-cols-[repeat(auto-fit,minmax(150px,1fr))] max-md:[&>:last-child:nth-child(odd)]:col-span-full",
+          : // Compact's cells may be narrower, as in v3; a phone always shows two per row (MO-8), in both designs (the
+            // Compact width rule outranks a plain phone rule, so the phone rule is repeated for Compact).
+            "grid-cols-[repeat(auto-fit,minmax(170px,1fr))] compact:grid-cols-[repeat(auto-fit,minmax(150px,1fr))] max-md:grid-cols-2 compact:max-md:grid-cols-2 max-md:[&>:last-child:nth-child(odd)]:col-span-full",
         "regular:gap-gap regular:overflow-visible regular:border-0 regular:bg-transparent",
         className,
       )}

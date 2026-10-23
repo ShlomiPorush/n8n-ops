@@ -7,16 +7,20 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <!--
       Applies the theme before the page draws (OT-4), so a dark theme never flashes white: the one chosen in this
-      browser (next-themes keeps it under the key set in main.tsx), else the system's.
+      browser (next-themes keeps it under the key set in main.tsx), else the system's. Storage that cannot be read
+      (blocked by the browser) counts as no choice, so the system's theme still applies.
     -->
     <script>
-      try {
-        let theme = localStorage.getItem("n8n-ops-theme")
+      {
+        let theme = null
+        try {
+          theme = localStorage.getItem("n8n-ops-theme")
+        } catch {}
         if (theme !== "light" && theme !== "dark")
           theme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
         document.documentElement.classList.add(theme)
         document.documentElement.style.colorScheme = theme
-      } catch {}
+      }
     </script>
     <!-- Applies a folded sidebar before the page draws, so it never flashes open. -->
     <script>

@@ -1,5 +1,5 @@
 import AxeBuilder from "@axe-core/playwright"
-import { type BrowserContext, expect, type Page, type Request, test } from "@playwright/test"
+import { type BrowserContext, expect, type Locator, type Page, type Request, test } from "@playwright/test"
 import { signIn } from "./helpers.ts"
 
 // Accessibility is tested, not assumed (AX-11): every main page, with an item open where the page has a reading
@@ -43,7 +43,11 @@ const exclusions: { rule: string; target: RegExp; why: string }[] = []
 
 const excluded = (rule: string, target: string) => exclusions.some((e) => e.rule === rule && e.target.test(target))
 
-/** Waits until the page has its data and nothing on it still moves, so the scan sees what a person sees. */
+/**
+ * Waits until the page has its data and nothing on it still moves, so the scan sees what a person sees. What the
+ * page is for is checked by the caller first (its `ready` content): a page that is still loading, or that failed
+ * and so asks for nothing more, would pass any check of "nothing loads".
+ */
 async function settled() {
   // No request on its way for half a second.
   const left = () => [...pending].map((r) => r.url())
@@ -58,7 +62,8 @@ async function settled() {
     )
     .toEqual([])
   await expect(page.locator('[aria-busy="true"]')).toHaveCount(0, { timeout: 15_000 })
-  await expect(page.getByText(/^Loading/)).toHaveCount(0, { timeout: 15_000 })
+  // Nothing failed to load (LoadError, or a list's next page).
+  await expect(page.getByText(/^Could not load /)).toHaveCount(0)
   // Finite animations only: a spinner or a pulse never ends.
   await page.evaluate(() =>
     Promise.all(
@@ -95,18 +100,28 @@ async function scan(where: string) {
   expect.soft(found, `${where}\n${found.join("\n")}`).toEqual([])
 }
 
-/** Opens a page at each width and theme and scans it; `open` gets it to the state to scan after each load. */
-async function scanAll(name: string, path: string, open?: (width: number) => Promise<void>) {
+/**
+ * Opens a page at each width and theme and scans it once `ready` (what the page shows once loaded) is visible;
+ * `open` then opens the list's first item. At a phone width that item is a modal sheet, which hides the list from
+ * the scan, so the list is scanned before it opens; wider, it opens beside the list and one scan sees both.
+ */
+async function scanAll(name: string, path: string, ready: () => Locator, open?: () => Promise<void>) {
   try {
     for (const width of widths) {
       await page.setViewportSize({ width, height: width === 390 ? 844 : 900 })
       for (const scheme of schemes) {
+        const where = `${name} at ${width}px, ${scheme}`
         await page.emulateMedia({ colorScheme: scheme })
         await page.goto(path)
         await expect(page.locator("html")).toHaveClass(scheme === "dark" ? /\bdark\b/ : /^(?!.*\bdark\b)/)
-        await open?.(width)
+        await expect(ready().first(), `${where}: its content`).toBeVisible({ timeout: 15_000 })
+        if (open && width === 390) {
+          await settled()
+          await scan(`${where}, the list`)
+        }
+        await open?.()
         await settled()
-        await scan(`${name} at ${width}px, ${scheme}`)
+        await scan(open ? `${where}, an item open` : where)
       }
     }
   } finally {
@@ -121,45 +136,66 @@ async function scanAll(name: string, path: string, open?: (width: number) => Pro
  */
 const firstItemOpen = (tabs: string) => async () => {
   const opened = page.getByRole("tablist", { name: tabs })
-  await expect(page.locator("[data-href]").first()).toBeVisible()
   if (!(await opened.isVisible())) await page.locator("[data-href]").first().click()
   await expect(opened).toBeVisible()
 }
 
+// What each page shows once it has loaded: its rows, or its own empty state where the earlier specs may leave the
+// list empty, a figure, or the first field of a form. A page still loading, or one that failed, shows none of these.
+const rows = () => page.locator("#main tbody tr, #main [data-href]")
+const text = (t: string | RegExp) => page.getByText(t, { exact: true })
+const field = (label: string) => page.locator("#main").getByText(label, { exact: true })
+
 test("Overview has no serious accessibility findings (AX-11)", async () => {
   test.setTimeout(120_000)
-  await scanAll("Overview", "/")
+  await scanAll("Overview", "/", () =>
+    page.locator('[data-slot="kpi"]', { hasText: "Instances healthy" }).locator('[data-slot="kpi-figure"]', {
+      hasText: /\d/,
+    }),
+  )
 })
 
 test("Problems with a problem open has no serious accessibility findings (AX-11)", async () => {
-  test.setTimeout(120_000)
-  await scanAll("Problems", "/problems", firstItemOpen("Problem sections"))
+  test.setTimeout(150_000)
+  await scanAll("Problems", "/problems", rows, firstItemOpen("Problem sections"))
 })
 
 test("Instances with an instance open has no serious accessibility findings (AX-11)", async () => {
-  test.setTimeout(120_000)
-  await scanAll("Instances", "/instances", firstItemOpen("Instance sections"))
+  test.setTimeout(150_000)
+  await scanAll("Instances", "/instances", rows, firstItemOpen("Instance sections"))
 })
 
-for (const [name, path] of [
-  ["Workflows", "/workflows"],
-  ["Backups", "/backups"],
-  ["Access", "/access"],
-  ["Agents", "/agents"],
-  ["Workers", "/workers"],
-  ["Audit", "/audit"],
-  ["Account", "/account"],
-  ["Settings, General", "/settings/general"],
-  ["Settings, Instance Defaults", "/settings/defaults"],
-  ["Settings, Alerts", "/settings/alerts"],
-  ["Settings, Telegram", "/settings/telegram"],
-  ["Settings, Email Reports", "/settings/email"],
-  ["Settings, Backup Destinations", "/settings/destinations"],
-  ["Settings, Encryption Keys", "/settings/keys"],
-  ["Settings, Agent Access", "/settings/access"],
+for (const [name, path, ready] of [
+  ["Workflows", "/workflows", () => rows().or(text(/^No workflows? /))],
+  ["Backups", "/backups", rows],
+  ["Access", "/access", () => rows().or(text("Nothing is waiting or active."))],
+  ["Agents", "/agents", () => rows().or(text("No agent is connected."))],
+  [
+    "Workers",
+    "/workers",
+    () =>
+      page
+        .locator("#main")
+        .getByText(/^Last seen/)
+        .or(text("No workers yet.")),
+  ],
+  ["Audit", "/audit", () => rows().or(text("Nothing recorded yet."))],
+  ["Account", "/account", () => page.getByRole("heading", { name: "Sign-In" })],
+  ["Settings, General", "/settings/general", () => field("Public URL")],
+  ["Settings, Instance Defaults", "/settings/defaults", () => field("Check for failures every (seconds)")],
+  ["Settings, Alerts", "/settings/alerts", () => field("New problem")],
+  ["Settings, Telegram", "/settings/telegram", () => field("Bot token")],
+  ["Settings, Email Reports", "/settings/email", () => field("Daily report")],
+  [
+    "Settings, Backup Destinations",
+    "/settings/destinations",
+    () => page.locator('[data-testid^="destination-"]').or(text("No backup destination yet.")),
+  ],
+  ["Settings, Encryption Keys", "/settings/keys", () => page.getByRole("button", { name: /^Copy the public key/ })],
+  ["Settings, Agent Access", "/settings/access", () => field("Longest access (minutes)")],
 ] as const) {
   test(`${name} has no serious accessibility findings (AX-11)`, async () => {
     test.setTimeout(120_000)
-    await scanAll(name, path)
+    await scanAll(name, path, ready)
   })
 }

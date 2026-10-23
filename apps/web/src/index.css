@@ -84,6 +84,8 @@
     }
   }
 }
+/* A short screen, 600px high or less, where regions stop scrolling on their own and the page scrolls as one (NL-1). */
+@custom-variant short (@media (max-height: 600px));
 
 /*
  * Design tokens. Every visual value lives here; components use the Tailwind names below and never raw

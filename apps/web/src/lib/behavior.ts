@@ -48,10 +48,11 @@ export const SCROLL_RESTORE_MS = 1500
 /** The phone layout: tab bar, sheets instead of dialogs, stacked tables. */
 export const PHONE_QUERY = "(max-width: 760px)"
 /**
- * A list with its reading pane beside it, each scrolling on its own (DS-13). Not on a short screen (600px high or
- * less), where the page scrolls as one and an item opens as a dialog, as it does on a narrower one (NL-1, NL-17).
+ * A list with its reading pane beside it (DS-13). By width only: a change of height (an on-screen keyboard, a
+ * resized window) must not swap the layout, which would drop the open item and what is typed in it. On a short
+ * screen the two stay side by side and scroll with the page as one (the `short` variant, NL-1).
  */
-export const SPLIT_QUERY = "(min-width: 1000px) and (min-height: 601px)"
+export const SPLIT_QUERY = "(min-width: 1000px)"
 /** A screen used by touch only, where focusing a field raises the on-screen keyboard (DS-8, MP-4). */
 export const TOUCH_ONLY_QUERY = "(hover: none) and (pointer: coarse)"
 

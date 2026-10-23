@@ -1360,6 +1360,9 @@ test("Back puts an instance opened as a dialog or a phone sheet back where its t
       const body = dialog.locator('[data-slot="dialog-body"]')
       const overview = dialog.getByRole("tab", { name: "Overview" })
       await expect(overview).toHaveAttribute("aria-selected", "true")
+      // The tab's own parts (its open problems) load after the instance. One that arrives after the place below is
+      // read grows the tab above it, and the browser keeps the view by scrolling on: the place left is then lower.
+      await expect(dialog.getByRole("status").filter({ hasText: /^Loading/ })).toHaveCount(0)
       await lengthenOpenTab(dialog)
       await body.evaluate((el) => {
         el.scrollTop = 1200

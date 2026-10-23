@@ -1,9 +1,8 @@
 import { useInfiniteQuery } from "@tanstack/react-query"
-import { useEffect, useRef } from "react"
-import { Empty, LoadError, Loading, Page, Panel, UserText } from "@/components/kit"
+import { useEffect, useRef, useState } from "react"
+import { Empty, LoadError, Loading, Page, Panel, TryAgain, UserText } from "@/components/kit"
 import { Initial, ViaIcon } from "@/components/skin/marks"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { api } from "@/lib/api"
@@ -26,26 +25,55 @@ export function AuditPage() {
     retry: false,
   })
   const rows = query.data?.pages.flat() ?? []
-  const { hasNextPage, isFetchingNextPage, fetchNextPage, error, errorUpdatedAt } = query
+  const { hasNextPage, isFetching, isFetchingNextPage, isFetchNextPageError, fetchNextPage, error, errorUpdatedAt } =
+    query
   // A failed page keeps its error on the query while a refresh runs, when the query no longer marks it as a page
-  // error, so the failure is remembered by its time: it stays at the end of the list and is not a failed refresh.
+  // error, so the failure is remembered by its time: it is not a failed refresh of the list.
   const pageError = useRef(0)
-  if (query.isFetchNextPageError) pageError.current = errorUpdatedAt
-  const pageFailed = Boolean(error) && errorUpdatedAt === pageError.current
-  // Older entries load as the end of the list comes into view, before the reader reaches it (TB-6). After any
-  // failure they wait for Try again or the next good answer.
+  if (isFetchNextPageError) pageError.current = errorUpdatedAt
+  const pageErrorShown = Boolean(error) && errorUpdatedAt === pageError.current
+  /*
+   * A failed page waits for Try again and never asks again by itself (TB-6). React Query forgets the failure as
+   * soon as the list refreshes (on coming back to the window, for example), so the page remembers the cursor that
+   * failed until Try again. A refresh can move the cursor (new entries on top), and the page still waits: asking
+   * for the moved one by itself would be the automatic retry the rule forbids.
+   */
+  const lastPage = query.data?.pages.at(-1)
+  const cursor = lastPage?.at(-1)?.id ?? 0
+  const [failedCursor, setFailedCursor] = useState<number | null>(null)
+  // On every failure, not only the first: a Try again that fails right after one leaves `isFetchNextPageError` on
+  // throughout, and only the error's time moves.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: errorUpdatedAt marks each new failure
+  useEffect(() => {
+    if (isFetchNextPageError) setFailedCursor(cursor)
+  }, [isFetchNextPageError, errorUpdatedAt, cursor])
+  const [retrying, setRetrying] = useState(false)
+  const blocked = Boolean(hasNextPage) && (failedCursor !== null || isFetchNextPageError)
+  async function tryAgain() {
+    setFailedCursor(null)
+    setRetrying(true)
+    // Never cancels a refresh of the whole list that is on its way: the newer list wins, and the page is asked for
+    // after it, as its end comes into view (SV-10).
+    await fetchNextPage({ cancelRefetch: false })
+    setRetrying(false)
+  }
+  /*
+   * Older entries load as the end of the list comes into view, before the reader reaches it (TB-6). Nothing is
+   * asked while any load runs, so a next page never cancels a refresh of the whole list and continues from its old
+   * pages; after a failed page, or a failed refresh, they wait for Try again or the next good answer.
+   */
   const end = useRef<HTMLParagraphElement>(null)
   // biome-ignore lint/correctness/useExhaustiveDependencies: observe again once new rows are drawn
   useEffect(() => {
     const el = end.current
-    if (!el || !hasNextPage || isFetchingNextPage || error) return
-    const io = new IntersectionObserver((entries) => entries[0]?.isIntersecting && void fetchNextPage(), {
-      root: document.getElementById("main"),
-      rootMargin: "0px 0px 400px 0px",
-    })
+    if (!el || !hasNextPage || isFetching || blocked || error) return
+    const io = new IntersectionObserver(
+      (entries) => entries[0]?.isIntersecting && void fetchNextPage({ cancelRefetch: false }),
+      { root: document.getElementById("main"), rootMargin: "0px 0px 400px 0px" },
+    )
     io.observe(el)
     return () => io.disconnect()
-  }, [hasNextPage, isFetchingNextPage, error, fetchNextPage, rows.length])
+  }, [hasNextPage, isFetching, blocked, error, fetchNextPage, rows.length])
   const view = loadView(query)
   return (
     <Page
@@ -55,9 +83,10 @@ export function AuditPage() {
         data: query.data,
         error,
         isLoading: query.isLoading,
-        isFetchNextPageError: pageFailed,
+        isFetchNextPageError: pageErrorShown,
         dataUpdatedAt: query.dataUpdatedAt,
         refetch: query.refetch,
+        isFetching: isFetching && !isFetchingNextPage,
       }}
       updated={false}
       description={
@@ -129,15 +158,14 @@ export function AuditPage() {
       )}
       {rows.length > 0 && (
         <p ref={end} aria-live="polite" className="text-center text-small text-muted-foreground">
-          {isFetchingNextPage ? (
-            "Loading older entries…"
-          ) : pageFailed ? (
+          {/* Try again stays in place while it loads, so the focus stays on it (AX-6). */}
+          {retrying || blocked ? (
             <>
-              Could not load older entries.{" "}
-              <Button variant="link" onClick={() => void fetchNextPage()}>
-                Try again
-              </Button>
+              {retrying ? null : "Could not load older entries. "}
+              <TryAgain busy={retrying} onClick={() => void tryAgain()} />
             </>
+          ) : isFetchingNextPage ? (
+            "Loading older entries…"
           ) : hasNextPage ? (
             // After a failed refresh the head says so, and nothing loads here until the next good answer.
             error ? null : (

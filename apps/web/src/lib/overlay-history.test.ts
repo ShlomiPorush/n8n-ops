@@ -100,4 +100,15 @@ describe("overlay history", () => {
     vi.runAllTimers()
     expect(win.history.position).toBe(1)
   })
+
+  it("tells those waiting on a move that the page stayed, until they stop listening (SR-6)", async () => {
+    const { onMoveKept, stayAfterBlock } = await load()
+    const kept = vi.fn()
+    const off = onMoveKept(kept)
+    stayAfterBlock()
+    expect(kept).toHaveBeenCalledOnce()
+    off()
+    stayAfterBlock()
+    expect(kept).toHaveBeenCalledOnce()
+  })
 })

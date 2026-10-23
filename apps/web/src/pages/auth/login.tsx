@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input"
 import { PasswordInput } from "@/components/ui/password-input"
 import { UNREACHABLE_TEXT, useApi } from "@/lib/api"
 import { authClient, authErrorText, signInErrorText } from "@/lib/auth-client"
-import { AuthFrame, TotpInput } from "./shared"
+import { AuthFrame, type TotpAnswer, TotpInput, totpAnswer } from "./shared"
 
 /** Where to go after signing in: the page that was asked for, if it is a page of this app (NL-18). */
 function safeNext(next: string | null): string {
@@ -62,15 +62,21 @@ export function LoginPage() {
     }
   }
 
-  async function verify(code: string) {
+  // A wrong code is cleared; one sent without an answer stays, to be sent again (FS-23).
+  async function verify(code: string): Promise<TotpAnswer> {
     setBusy(true)
     setError("")
     try {
       const { error } = await authClient.twoFactor.verifyTotp({ code })
-      if (error) return setError(authErrorText(error))
+      if (error) {
+        setError(authErrorText(error))
+        return totpAnswer(error)
+      }
       navigate(next, { replace: true })
+      return "done"
     } catch {
       setError(UNREACHABLE_TEXT)
+      return "unreached"
     } finally {
       setBusy(false)
     }
@@ -80,8 +86,7 @@ export function LoginPage() {
     return (
       <AuthFrame title="Two-Factor Code" description="Enter the 6-digit code from your authenticator app.">
         <div className="grid justify-items-start gap-4">
-          <TotpInput onComplete={(code) => void verify(code)} disabled={busy} />
-          {error && <FieldError>{error}</FieldError>}
+          <TotpInput onSubmit={verify} disabled={busy} error={error} />
           <Button variant="link" onClick={() => setStep("password")}>
             Back
           </Button>

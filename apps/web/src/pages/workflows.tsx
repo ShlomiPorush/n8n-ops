@@ -22,6 +22,7 @@ import {
   Page,
   Panel,
   PanelHead,
+  RefreshNote,
   Reloading,
   Row,
   UserText,
@@ -91,7 +92,8 @@ export function WorkflowsPage() {
   }
   const query = new URLSearchParams({ ...(q ? { q } : {}), ...(instance !== "all" ? { instance } : {}) })
   const data = useApi<MapData>(`/workflows?${query}`, { keepRows: true })
-  // A failed refresh keeps the rows; the head says so (TB-5, LD-12).
+  // A failed refresh keeps the rows and the head says so; new filters that failed keep the previous rows and the
+  // filter line says so (TB-5, LD-12).
   const view = loadView(data)
   const instances = useApi<{ instances: { id: string; name: string }[] }>("/instances")
   const sync = useApiMutation<void>("POST", "/workflows/sync", {
@@ -188,7 +190,15 @@ export function WorkflowsPage() {
       <FilterBar
         search={<SearchBox label="Search all instances" value={q} onChange={(v) => setParam("q", v)} />}
         active={Number(instance !== "all")}
-        count={data.data ? plural(rows.length, "workflow") : undefined}
+        count={
+          data.data ? (
+            <>
+              {/* New filters that failed keep the previous rows, and this line says so instead of a count (TB-5). */}
+              {data.previous !== "failed" && plural(rows.length, "workflow")}
+              <RefreshNote live={data} what="these workflows" small />
+            </>
+          ) : undefined
+        }
         onClear={filtered ? () => setParams(new URLSearchParams(), { replace: true }) : undefined}
       >
         <Picker
@@ -213,12 +223,16 @@ export function WorkflowsPage() {
         </Panel>
       ) : rows.length === 0 ? (
         <Panel>
-          <Empty title={filtered ? "No workflow matches." : "No workflows yet."}>
-            {filtered ? "Try another search or instance." : 'Use "Refresh now" after adding instances.'}
-          </Empty>
+          {data.previous === "failed" ? (
+            <Empty title="The previous list was empty." />
+          ) : (
+            <Empty title={filtered ? "No workflow matches." : "No workflows yet."}>
+              {filtered ? "Try another search or instance." : 'Use "Refresh now" after adding instances.'}
+            </Empty>
+          )}
         </Panel>
       ) : (
-        <Reloading busy={data.isPlaceholderData}>
+        <Reloading busy={data.isPlaceholderData || (data.previous === "failed" && data.isFetching)}>
           <Table sort={sort}>
             <TableHeader>
               <TableRow>

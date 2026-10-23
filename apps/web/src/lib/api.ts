@@ -1,4 +1,5 @@
 import { keepPreviousData, QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useKeptRows } from "@/lib/load-state"
 import { sessionEnded, sessionEnding } from "@/lib/session"
 import { toast } from "@/lib/toast"
 
@@ -17,7 +18,7 @@ export class ApiError extends Error {
 /** What to say when a request never reached the server: offline, or the server is down (FS-23). */
 export const UNREACHABLE_TEXT = "Could not reach n8n-ops. Check your connection and try again."
 
-/** A request that got no answer at all. Not an ApiError, so reads are still retried. */
+/** A request that got no answer, or lost it on the way. Not an ApiError, so reads are still retried. */
 export class NetworkError extends Error {
   constructor() {
     super(UNREACHABLE_TEXT)
@@ -27,7 +28,13 @@ export class NetworkError extends Error {
 /** Calls the n8n-ops API. Sends the session cookie; throws ApiError with the server's error code. */
 export async function api<T>(path: string, init: RequestInit & { json?: unknown } = {}): Promise<T> {
   const { json, headers, ...rest } = init
+  // A request the page called off stays an abort; anything else got no whole answer from the server.
+  const unreached = (e: unknown) => {
+    if (rest.signal?.aborted || (e instanceof DOMException && e.name === "AbortError")) return e
+    return new NetworkError()
+  }
   let res: Response
+  let text: string
   try {
     res = await fetch(`/api${path}`, {
       credentials: "same-origin",
@@ -35,12 +42,11 @@ export async function api<T>(path: string, init: RequestInit & { json?: unknown 
       headers: { ...(json !== undefined ? { "content-type": "application/json" } : {}), ...headers },
       body: json !== undefined ? JSON.stringify(json) : rest.body,
     })
+    // The connection can also drop after the headers, while the body is read.
+    text = await res.text()
   } catch (e) {
-    // A request the page called off stays an abort; anything else never reached the server.
-    if (rest.signal?.aborted || (e instanceof DOMException && e.name === "AbortError")) throw e
-    throw new NetworkError()
+    throw unreached(e)
   }
-  const text = await res.text()
   const body = text ? safeJson(text) : null
   // The session ended on an open page: sign in again and come back here (NL-18).
   if (res.status === 401) sessionEnded()
@@ -95,17 +101,19 @@ export async function readFresh<T>(path: string, client: QueryClient = queryClie
 
 /**
  * Reads an API path. With `keepRows` a list whose filters change keeps showing its last rows until the new
- * answer arrives (`isPlaceholderData` is true meanwhile), instead of dropping to a loading state (TB-5). A refresh
- * that fails keeps `data` and sets `error` beside it: pages draw it through `loadView` (lib/load-state.ts).
+ * answer arrives (`isPlaceholderData` is true meanwhile), instead of dropping to a loading state (TB-5), and keeps
+ * them when that answer fails (`previous` says so, `keepShown` in lib/load-state.ts). A refresh that fails keeps
+ * `data` and sets `error` beside it: pages draw it through `loadView`.
  */
 export function useApi<T>(path: string | null, options: { refetchInterval?: number; keepRows?: boolean } = {}) {
-  return useQuery<T>({
+  const query = useQuery<T>({
     queryKey: [path],
     queryFn: () => readFresh<T>(path as string),
     enabled: path !== null,
     refetchInterval: options.refetchInterval,
     placeholderData: options.keepRows ? keepPreviousData : undefined,
   })
+  return useKeptRows(path, query, Boolean(options.keepRows))
 }
 
 /** A toast text, or one built from the request body when it names the object ("Checked n8n-1 now"). */

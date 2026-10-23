@@ -1,6 +1,6 @@
 import { QueryClient } from "@tanstack/react-query"
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { ApiError, api, describeError, failureText, markSaved, readFresh } from "./api.ts"
+import { ApiError, api, describeError, failureText, markSaved, NetworkError, readFresh } from "./api.ts"
 import { sessionStarted } from "./session.ts"
 
 afterEach(() => vi.unstubAllGlobals())
@@ -29,6 +29,33 @@ describe("api", () => {
       vi.fn(async () => new Response(JSON.stringify({ error: "totp_required" }), { status: 403 })),
     )
     await expect(api("/x")).rejects.toMatchObject({ status: 403, code: "totp_required" })
+  })
+
+  it("says the server could not be reached when there is no answer, or it breaks off while read (FS-23)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("Failed to fetch")
+      }),
+    )
+    await expect(api("/x")).rejects.toBeInstanceOf(NetworkError)
+    const broken = { status: 200, ok: true, text: () => Promise.reject(new TypeError("network error")) }
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => broken),
+    )
+    await expect(api("/x")).rejects.toBeInstanceOf(NetworkError)
+  })
+
+  it("keeps a request the page called off an abort, also while its answer is read", async () => {
+    const abort = new AbortController()
+    const read = { status: 200, ok: true, text: () => Promise.reject(new DOMException("aborted", "AbortError")) }
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => read),
+    )
+    abort.abort()
+    await expect(api("/x", { signal: abort.signal })).rejects.toMatchObject({ name: "AbortError" })
   })
 })
 

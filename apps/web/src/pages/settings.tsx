@@ -12,6 +12,7 @@ import {
   Loading,
   Page,
   Panel,
+  RefreshLine,
   SecretField,
   useSaveSource,
   useUnsavedIds,
@@ -489,7 +490,8 @@ export function SettingsForm({ section, active = true }: { section: string; acti
 
   return (
     <Panel hidden={!active}>
-      {/* A failed refresh keeps the form and what is typed in it (TB-5, SV-1). */}
+      {/* A failed refresh keeps the form and what is typed in it, and says so above it (TB-5, LD-12, SV-1). */}
+      <RefreshLine live={query} />
       {loadView(query) === "failed" ? (
         <LoadError what={def.title} error={query.error} retry={() => query.refetch()} />
       ) : loadView(query) === "loading" ? (
@@ -662,6 +664,8 @@ function KeysCard() {
   }
   return (
     <Panel>
+      {/* A failed refresh keeps what is shown and says so above it (TB-5, LD-12). */}
+      <RefreshLine live={keys} />
       {loadView(keys) === "failed" ? (
         <LoadError what="the keys" error={keys.error} retry={() => keys.refetch()} />
       ) : (

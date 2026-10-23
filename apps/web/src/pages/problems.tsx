@@ -4,13 +4,16 @@ import {
   Braces as BracesIcon,
   CalendarPlus as CalendarPlusIcon,
   CheckCircle2,
+  Copy as CopyIcon,
+  Ellipsis,
   ExternalLink,
   GitMerge,
   GitMerge as GitMergeIcon,
   History as HistoryIcon,
+  LayoutDashboard as LayoutDashboardIcon,
   RotateCcw,
 } from "lucide-react"
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { Link, useNavigate, useParams, useSearchParams } from "react-router"
 import { useCrumb } from "@/app/chrome"
 import { FilterBar, Picker, SearchBox } from "@/components/filter-bar"
@@ -31,6 +34,7 @@ import {
   UserText,
 } from "@/components/kit"
 import { ListWithPanel } from "@/components/list-panel"
+import { PaneTabPanel, type PaneTabItem, PaneTabs, usePaneTab } from "@/components/pane-tabs"
 import { ProblemBadge, TimeAgo, When } from "@/components/status"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -42,11 +46,18 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, useSort } from "@/components/ui/table"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { api, describeError, useApi, useApiMutation } from "@/lib/api"
 import { formatDateTime, n, plural, useTimeZone } from "@/lib/time"
+import { cn } from "@/lib/utils"
 
 export type ProblemRow = {
   id: string
@@ -337,12 +348,34 @@ function flatten(value: unknown): [string, string][] {
   ])
 }
 
+/*
+ * The problem pane is split into tabs (components/pane-tabs.tsx): what broke and where reads on one screen
+ * (Overview), and the input, the runs and the same error elsewhere sit one click away.
+ */
+const problemTab = "overview"
+/*
+ * Three figures share the pane's width, so in a narrow pane a card has no room for an icon beside its figure (the
+ * icon only illustrates) and the figure is a size smaller; on a phone smaller again, with less padding, so
+ * "11 mo ago" still fits a third of the screen.
+ */
+const kpisInPane = cn(
+  "grid-cols-3",
+  "@max-[52rem]/pane:**:data-[slot=kpi-icon]:hidden!",
+  "regular:@min-[36rem]/pane:@max-[52rem]/pane:**:data-[slot=kpi-figure]:text-h1",
+  "@max-[36rem]/pane:**:data-[slot=kpi-figure]:text-h2",
+  "regular:@max-[36rem]/pane:**:data-[slot=kpi]:p-3.5",
+  "compact:@max-[36rem]/pane:**:data-[slot=kpi]:px-3",
+)
+
 export function ProblemDetail({ id }: { id: string }) {
+  const [tab, show] = usePaneTab(problemTab)
   const detail = useApi<ProblemDetailData>(`/problems/${id}`, { refetchInterval: 15_000 })
   useCrumb(detail.data?.workflowName)
   const tz = useTimeZone()
   const [raw, setRaw] = useState<unknown>(null)
   const [merging, setMerging] = useState(false)
+  // Merge is opened from a menu item that is gone once the dialog closes: the focus goes back to the menu's button.
+  const more = useRef<HTMLButtonElement>(null)
   const invalidate = [`/problems/${id}`, "/overview", "/overview/summary"]
   const resolve = useApiMutation<void>("POST", `/problems/${id}/resolve`, { invalidate, success: "Marked as resolved" })
   const mute = useApiMutation<{ hours: number }>("POST", `/problems/${id}/mute`, {
@@ -360,8 +393,18 @@ export function ProblemDetail({ id }: { id: string }) {
   const first = p.nodeInput[0]
   const latest = p.occurrences[0]
 
+  const tabs: PaneTabItem[] = [
+    { value: "overview", icon: LayoutDashboardIcon, label: "Overview" },
+    { value: "input", icon: BracesIcon, label: "Input" },
+    { value: "occurrences", icon: HistoryIcon, label: "Occurrences", count: { value: p.count, tone: "plain" } },
+    // Only when the error shows up in other workflows too.
+    ...(p.sameError.length > 0
+      ? [{ value: "same", icon: CopyIcon, label: "Same error", count: { value: p.sameError.length, tone: "plain" } }]
+      : []),
+  ] satisfies PaneTabItem[]
+
   return (
-    <div className="grid min-w-0 gap-gap">
+    <div className="@container/pane grid min-w-0 gap-gap">
       <div className="grid gap-2.5">
         <div className="flex flex-wrap items-center gap-2">
           <ProblemBadge status={p.status} regression={p.regression} firstSeen={p.firstSeen} />
@@ -372,146 +415,194 @@ export function ProblemDetail({ id }: { id: string }) {
             <UserText>{p.instanceName}</UserText>
           </Link>
         </div>
-        <h2 className="text-title">
-          <UserText>{p.workflowName}</UserText>
-        </h2>
-        <p className="rounded-sm bg-fill px-3 py-2 font-mono text-small break-words">{p.errorMessage}</p>
-        {p.error?.description && <p className="text-muted-foreground">{p.error.description}</p>}
-        <div className="flex flex-wrap gap-2 pt-1">
-          {p.status === "resolved" ? (
-            <Button variant="primary" onClick={() => reopen.mutate()} disabled={reopen.isPending}>
-              <RotateCcw /> Reopen
-            </Button>
-          ) : (
-            <Button variant="primary" onClick={() => resolve.mutate()} disabled={resolve.isPending}>
-              <CheckCircle2 /> Mark resolved
-            </Button>
-          )}
-          {p.status !== "muted" && (
-            <Button onClick={() => mute.mutate({ hours: 24 })} disabled={mute.isPending}>
-              <BellOff /> Mute 24 h
-            </Button>
-          )}
-          {latest && (
-            <Button asChild>
-              <a href={latest.url} target="_blank" rel="noreferrer">
-                <ExternalLink /> Open in n8n
-              </a>
-            </Button>
-          )}
-          <Button variant="ghost" onClick={() => setMerging(true)}>
-            <GitMerge /> Merge into…
-          </Button>
-        </div>
-      </div>
-
-      <Kpis>
-        <Kpi
-          label={p.count === 1 ? "Failure" : "Failures"}
-          icon={ActivityIcon}
-          value={p.count}
-          tone={p.status === "open" ? "fail" : undefined}
-        />
-        <Kpi label="First seen" icon={CalendarPlusIcon} value={<TimeAgo value={p.firstSeen} />} />
-        <Kpi
-          label="Last seen"
-          icon={HistoryIcon}
-          value={<TimeAgo value={p.lastSeen} />}
-          hint={p.status === "muted" && p.mutedUntil ? `Muted until ${formatDateTime(p.mutedUntil, tz)}` : undefined}
-        />
-      </Kpis>
-
-      <Panel>
-        <PanelHead
-          title="Where It Broke"
-          description="Drawn from the workflow and the run data of the latest failure."
-        />
-        <FlowGraph nodes={p.graph} />
-      </Panel>
-
-      <div className="grid items-start gap-gap 2xl:grid-cols-2">
-        <Panel>
-          <PanelHead
-            title="Input of the Failed Node"
-            description={
-              p.nodeInput.length
-                ? `${n(p.nodeInput.length)} item${p.nodeInput.length === 1 ? "" : "s"}; the first is shown.`
-                : "No input was recorded."
-            }
-          />
-          {first !== undefined &&
-            flatten(first).map(([k, v]) => (
-              <KV key={k} label={k}>
-                <span className="block max-w-96 truncate font-mono text-small font-normal" title={v}>
-                  {v}
-                </span>
-              </KV>
-            ))}
-          <div className="flex flex-wrap gap-x-4 border-t border-line px-pad-x py-2.5">
-            <Button variant="link" onClick={() => setRaw({ input: p.nodeInput, error: p.error })}>
-              Show input and stack as JSON
-            </Button>
-            {p.latestFailureId && (
-              <Button
-                variant="link"
-                onClick={async () => {
-                  // The window opens at once and fills in when the execution arrives (DS-17).
-                  setRaw(loadingRaw)
-                  try {
-                    setRaw(await api(`/problems/${id}/failures/${p.latestFailureId}`))
-                  } catch (e) {
-                    setRaw({ error: `Could not load the execution: ${describeError(e)}` })
-                  }
-                }}
-              >
-                Show full execution
+        {/* The workflow comes first; the actions sit beside it, or below it in a narrow pane. */}
+        <div className="grid gap-2 @min-[40rem]/pane:grid-cols-[minmax(0,1fr)_auto] @min-[40rem]/pane:gap-x-2.5">
+          <h2 className="text-title">
+            <UserText>{p.workflowName}</UserText>
+          </h2>
+          <div className="flex flex-wrap gap-2 @min-[40rem]/pane:self-start">
+            {p.status === "resolved" ? (
+              <Button size="sm" variant="primary" onClick={() => reopen.mutate()} disabled={reopen.isPending}>
+                <RotateCcw /> Reopen
+              </Button>
+            ) : (
+              <Button size="sm" variant="primary" onClick={() => resolve.mutate()} disabled={resolve.isPending}>
+                <CheckCircle2 /> Mark resolved
               </Button>
             )}
+            {p.status !== "muted" && (
+              <Button size="sm" onClick={() => mute.mutate({ hours: 24 })} disabled={mute.isPending}>
+                <BellOff />
+                <span className="@max-[34rem]/pane:sr-only">Mute 24 h</span>
+              </Button>
+            )}
+            {latest && (
+              <Button size="sm" asChild>
+                <a href={latest.url} target="_blank" rel="noreferrer">
+                  <ExternalLink />
+                  <span className="@max-[34rem]/pane:sr-only">Open in n8n</span>
+                </a>
+              </Button>
+            )}
+            {/* Not modal: the dialog that Merge opens would otherwise find the page still locked. */}
+            <DropdownMenu modal={false}>
+              <DropdownMenuTrigger asChild>
+                <Button ref={more} size="sm" aria-label="More actions">
+                  <Ellipsis />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuItem onSelect={() => setMerging(true)}>
+                  <GitMerge /> Merge into…
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
-        </Panel>
-        <div className="grid gap-gap">
+        </div>
+        <p className="rounded-sm bg-fill px-3 py-2 font-mono text-small break-words">{p.errorMessage}</p>
+        {p.error?.description && <p className="text-muted-foreground">{p.error.description}</p>}
+      </div>
+
+      <PaneTabs label="Problem sections" items={tabs} value={tab} onValueChange={show}>
+        <PaneTabPanel value="overview">
+          <Kpis className={kpisInPane}>
+            <Kpi
+              label={p.count === 1 ? "Failure" : "Failures"}
+              icon={ActivityIcon}
+              value={p.count}
+              tone={p.status === "open" ? "fail" : undefined}
+            />
+            <Kpi label="First seen" icon={CalendarPlusIcon} value={<TimeAgo value={p.firstSeen} />} />
+            <Kpi
+              label="Last seen"
+              icon={HistoryIcon}
+              value={<TimeAgo value={p.lastSeen} />}
+              hint={p.status === "muted" && p.mutedUntil ? `Muted until ${formatDateTime(p.mutedUntil, tz)}` : undefined}
+            />
+          </Kpis>
           <Panel>
-            <PanelHead title="Recent Occurrences" count={n(p.occurrences.length)} />
-            <Table bare className="min-w-0">
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Execution</TableHead>
-                  <TableHead>Mode</TableHead>
-                  <TableHead className="text-end">When</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {p.occurrences.map((o) => (
-                  <TableRow key={o.id}>
-                    <TableCell>
-                      <span className="flex items-center gap-2">
-                        <Copyable value={o.executionId} label="Copy execution ID">
-                          #{o.executionId}
-                        </Copyable>
-                        <a
-                          href={o.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          aria-label={`Open execution ${o.executionId} in n8n`}
-                          className="text-muted-foreground hover:text-ink"
-                        >
-                          <ExternalLink className="size-3.5" />
-                        </a>
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">{o.mode ?? ""}</TableCell>
-                    <TableCell className="text-end text-muted-foreground">
-                      <When value={o.stoppedAt ?? o.createdAt} />
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <PanelHead
+              title="Where It Broke"
+              description="Drawn from the workflow and the run data of the latest failure."
+            />
+            <FlowGraph nodes={p.graph} />
           </Panel>
-          {p.sameError.length > 0 && (
+          {latest && (
+            // The run itself opens from the header (Open in n8n); this line says which one that is.
+            <Panel>
+              <p className="flex flex-wrap items-center gap-x-2 gap-y-1 px-pad-x py-pad-y">
+                <HistoryIcon aria-hidden className="size-4 text-muted-foreground" />
+                <b className="font-semibold">Latest failure</b>
+                <Copyable value={latest.executionId} label="Copy execution ID">
+                  #{latest.executionId}
+                </Copyable>
+                <span className="text-muted-foreground">
+                  {latest.mode && `${latest.mode} · `}
+                  <When value={latest.stoppedAt ?? latest.createdAt} />
+                </span>
+              </p>
+            </Panel>
+          )}
+        </PaneTabPanel>
+
+        <PaneTabPanel value="input">
+          <Panel>
+            <PanelHead
+              title="Input of the Failed Node"
+              description={
+                p.nodeInput.length
+                  ? `${n(p.nodeInput.length)} item${p.nodeInput.length === 1 ? "" : "s"}; the first is shown.`
+                  : "No input was recorded."
+              }
+            />
+            {first !== undefined &&
+              flatten(first).map(([k, v]) => (
+                <KV key={k} label={k}>
+                  <span className="block max-w-96 truncate font-mono text-small font-normal" title={v}>
+                    {v}
+                  </span>
+                </KV>
+              ))}
+            <div className="flex flex-wrap gap-x-4 border-t border-line px-pad-x py-2.5">
+              <Button variant="link" onClick={() => setRaw({ input: p.nodeInput, error: p.error })}>
+                Show input and stack as JSON
+              </Button>
+              {p.latestFailureId && (
+                <Button
+                  variant="link"
+                  onClick={async () => {
+                    // The window opens at once and fills in when the execution arrives (DS-17).
+                    setRaw(loadingRaw)
+                    try {
+                      setRaw(await api(`/problems/${id}/failures/${p.latestFailureId}`))
+                    } catch (e) {
+                      setRaw({ error: `Could not load the execution: ${describeError(e)}` })
+                    }
+                  }}
+                >
+                  Show full execution
+                </Button>
+              )}
+            </div>
+          </Panel>
+        </PaneTabPanel>
+
+        <PaneTabPanel value="occurrences">
+          <Panel>
+            <PanelHead
+              title="Recent Occurrences"
+              count={n(p.occurrences.length)}
+              description={
+                p.occurrences.length < p.count ? `The latest ${n(p.occurrences.length)} of ${plural(p.count, "failure")}.` : undefined
+              }
+            />
+            {p.occurrences.length === 0 ? (
+              <Empty title="No runs are stored for this problem.">
+                Failures older than the retention were removed; the count still includes them.
+              </Empty>
+            ) : (
+              <Table bare items>
+                <ItemsHeader label="Execution" />
+                <TableBody>
+                  {p.occurrences.map((o) => (
+                    <TableRow key={o.id}>
+                      <ItemRow
+                        title={
+                          <span className="flex items-center gap-2">
+                            <Copyable value={o.executionId} label="Copy execution ID">
+                              #{o.executionId}
+                            </Copyable>
+                            <a
+                              href={o.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              aria-label={`Open execution ${o.executionId} in n8n`}
+                              className="text-muted-foreground hover:text-ink"
+                            >
+                              <ExternalLink className="size-3.5" />
+                            </a>
+                          </span>
+                        }
+                        end={
+                          <span className="font-normal text-muted-foreground">
+                            <When value={o.stoppedAt ?? o.createdAt} />
+                          </span>
+                        }
+                        sub={o.mode ?? undefined}
+                      />
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </Panel>
+        </PaneTabPanel>
+
+        {p.sameError.length > 0 && (
+          <PaneTabPanel value="same">
             <Panel>
               <PanelHead
-                title={`Same error in ${n(p.sameError.length)} other ${p.sameError.length === 1 ? "workflow" : "workflows"}`}
+                title={`Same Error in ${n(p.sameError.length)} Other ${p.sameError.length === 1 ? "Workflow" : "Workflows"}`}
                 description="Grouped into one Telegram message."
               />
               {p.sameError.map((s) => (
@@ -525,9 +616,9 @@ export function ProblemDetail({ id }: { id: string }) {
                 </Link>
               ))}
             </Panel>
-          )}
-        </div>
-      </div>
+          </PaneTabPanel>
+        )}
+      </PaneTabs>
 
       <Dialog open={raw !== null} onOpenChange={(o) => !o && setRaw(null)}>
         <DialogContent className="md:max-w-4xl" aria-describedby={undefined}>
@@ -543,7 +634,7 @@ export function ProblemDetail({ id }: { id: string }) {
           )}
         </DialogContent>
       </Dialog>
-      <MergeDialog problem={p} open={merging} onOpenChange={setMerging} />
+      <MergeDialog problem={p} open={merging} onOpenChange={setMerging} returnFocus={more} />
     </div>
   )
 }
@@ -552,10 +643,13 @@ function MergeDialog({
   problem,
   open,
   onOpenChange,
+  returnFocus,
 }: {
   problem: ProblemDetailData
   open: boolean
   onOpenChange: (o: boolean) => void
+  /** Where the focus goes when the dialog closes: what opened it may be gone (a menu item). */
+  returnFocus: React.RefObject<HTMLElement | null>
 }) {
   const navigate = useNavigate()
   const candidates = useApi<ProblemRow[]>(open ? `/problems?status=open&instance=${problem.instanceId}` : null)
@@ -567,7 +661,12 @@ function MergeDialog({
   const options = (candidates.data ?? []).filter((c) => c.id !== problem.id)
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent
+        onCloseAutoFocus={(e) => {
+          e.preventDefault()
+          returnFocus.current?.focus()
+        }}
+      >
         <DialogHeader icon={GitMergeIcon}>
           <DialogTitle>Merge into Another Problem</DialogTitle>
           <DialogDescription>

@@ -21,8 +21,7 @@ import {
   Trash2,
   Workflow as WorkflowIcon,
 } from "lucide-react"
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
-import { createPortal } from "react-dom"
+import { useState } from "react"
 import { Link, useNavigate, useParams, useSearchParams } from "react-router"
 import { useCrumb } from "@/app/chrome"
 import { AgentAccessCard } from "@/components/agent-access-card"
@@ -45,7 +44,8 @@ import {
   useSaveSource,
   useUnsaved,
 } from "@/components/kit"
-import { ListWithPanel, usePaneNav } from "@/components/list-panel"
+import { ListWithPanel } from "@/components/list-panel"
+import { PaneTabPanel, type PaneTabItem, PaneTabs, usePaneTab } from "@/components/pane-tabs"
 import { Dot, type HealthState, StatusTag, statusOf, type statusTable, TimeAgo, Tone, When } from "@/components/status"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -77,7 +77,6 @@ import {
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, useSort } from "@/components/ui/table"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { api, describeError, queryClient, useApi, useApiMutation } from "@/lib/api"
@@ -368,54 +367,15 @@ export function InstancesPage() {
 }
 
 /*
- * The instance pane is split into tabs, so the state of an instance reads on one screen (Overview) and the
- * settings that change once a month sit one click away. The tab is in the address (?tab=health) and not in
- * the path: a new path would remount the pane and ask before leaving unsaved changes. Every tab stays
- * mounted and only the open one shows, so edits on several tabs survive a switch and one save bar saves
- * them all. Layout follows the width of the pane (container queries), not of the window.
+ * The instance pane is split into tabs (components/pane-tabs.tsx), so the state of an instance reads on one
+ * screen (Overview) and the settings that change once a month sit one click away. Every tab stays mounted, so
+ * edits on several tabs survive a switch and one save bar saves them all.
  */
-const paneTabs = ["overview", "problems", "health", "backups", "access", "settings"] as const
-type PaneTab = (typeof paneTabs)[number]
-const isPaneTab = (v: string | null): v is PaneTab => paneTabs.includes(v as PaneTab)
-
 /** The last backup run comes from the list; the detail does not carry it. */
 type ListBackup =
   | { state: "loading" | "failed" | "missing" }
   | { state: "known"; run: { status: string; at: string } | null }
 
-/*
- * The tabs share the pane's full width. They look like segments in Regular; Compact keeps the underlined tabs.
- * In a pane narrower than 40rem (a phone) six labels in a row do not fit, so each tab stacks its icon over a
- * smaller label, and its mark moves to the icon's corner.
- */
-type TabsLook = { list: string; tab: string; icon?: string; mark: string; shortCount: boolean }
-const topTabs: TabsLook = {
-  list: cn(
-    "gap-0 regular:gap-1 regular:rounded-lg regular:bg-fill regular:p-1 regular:before:hidden",
-    "@max-[40rem]/pane:gap-1 regular:@max-[40rem]/pane:p-0.5",
-  ),
-  /*
-   * In a row the tabs are equal cells; their own padding only sets how narrow a pane still fits them. Stacked,
-   * each keeps its label's width and the room left is shared out on top of it, so long labels never touch.
-   */
-  tab: cn(
-    "flex-1 justify-center px-2",
-    "@max-[40rem]/pane:flex-auto @max-[40rem]/pane:flex-col @max-[40rem]/pane:gap-0.5 @max-[40rem]/pane:px-0 @max-[40rem]/pane:text-meta",
-    "regular:rounded-sm regular:border-b-0 regular:px-2 regular:py-1.5 regular:@max-[40rem]/pane:px-0",
-    "regular:data-[state=active]:bg-panel regular:data-[state=active]:shadow-card",
-  ),
-  mark: "flex @max-[40rem]/pane:absolute @max-[40rem]/pane:top-0 @max-[40rem]/pane:start-1/2 @max-[40rem]/pane:ms-0.5",
-  shortCount: false,
-}
-/** At the bottom of a phone sheet the tabs are a bar like the app's own tab bar, the same in both designs. */
-const barTabs: TabsLook = {
-  list: "h-tabbar gap-0 before:hidden",
-  tab: "flex-1 flex-col justify-center gap-[3px] border-b-0 px-0 py-0 text-meta",
-  icon: "size-[22px]",
-  mark: "absolute top-1 start-1/2 ms-1",
-  shortCount: true,
-}
-const tabPanel = "grid min-w-0 gap-gap data-[state=inactive]:hidden"
 /*
  * In a pane narrower than 52rem a Regular card of four is too narrow for a figure beside its icon, so the
  * icon goes (it only illustrates) and the figure is a size smaller; "128,400" then still fits. On a phone
@@ -431,16 +391,7 @@ const kpisInPane = cn(
 function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
   const navigate = useNavigate()
   const tz = useTimeZone()
-  const [params, setParams] = useSearchParams()
-  const raw = params.get("tab")
-  const tab: PaneTab = isPaneTab(raw) ? raw : "overview"
-  const show = (next: PaneTab) =>
-    setParams((prev) => {
-      const p = new URLSearchParams(prev)
-      if (next === "overview") p.delete("tab")
-      else p.set("tab", next)
-      return p
-    })
+  const [tab, show] = usePaneTab("overview")
   const detail = useApi<InstanceDetailData>(`/instances/${id}`, { refetchInterval: 15_000 })
   useCrumb(detail.data?.name)
   const problems = useApi<ProblemRow[]>(`/problems?status=open&instance=${id}`)
@@ -455,45 +406,6 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
     access: useUnsaved(`agent-access-${id}`),
     settings: useUnsaved(`overrides-${id}`),
   }
-  // On a phone the tabs are a bar at the bottom of the sheet, outside this pane.
-  const nav = usePaneNav()
-  const look = nav ? barTabs : topTabs
-  // Tabs that still do not fit scroll sideways; the open one is brought into sight, also when the address opened
-  // it. Only the list scrolls: scrollIntoView would also move the pane up to the tabs while a field is edited.
-  const tabList = useRef<HTMLDivElement | null>(null)
-  // Moving between the top and the bottom bar (the screen crossed the phone width) mounts the tabs anew. The
-  // list notes the tab that had the focus as it is taken out (React detaches it before removing it), and that
-  // tab gets the focus back in its new place, so a keyboard user keeps their place. A trigger's id survives.
-  const refocus = useRef<string | null>(null)
-  const listRef = useCallback((el: HTMLDivElement | null) => {
-    tabList.current = el
-    if (!el) return
-    return () => {
-      const had = document.activeElement
-      refocus.current = had instanceof HTMLElement && el.contains(had) ? had.id : null
-      tabList.current = null
-    }
-  }, [])
-  const loaded = Boolean(detail.data)
-  // biome-ignore lint/correctness/useExhaustiveDependencies: runs when another tab opens or a mark widens a tab
-  useEffect(() => {
-    if (!loaded) return
-    const list = tabList.current
-    // The list is positioned, so a tab's offsetLeft is measured from the list's own start.
-    const open = list?.querySelector<HTMLElement>('[role="tab"][data-state="active"]')
-    if (!list || !open) return
-    const start = open.offsetLeft
-    const end = start + open.offsetWidth
-    if (start < list.scrollLeft) list.scrollLeft = start
-    else if (end > list.scrollLeft + list.clientWidth) list.scrollLeft = end - list.clientWidth
-  }, [tab, loaded, nav, unsaved.backups, unsaved.access, unsaved.settings])
-  // biome-ignore lint/correctness/useExhaustiveDependencies: runs once the tabs were mounted in their new place
-  useLayoutEffect(() => {
-    const was = refocus.current
-    refocus.current = null
-    if (was) document.getElementById(was)?.focus({ preventScroll: true })
-  }, [nav])
-
   if (detail.isLoading) return <Loading>Loading the instance…</Loading>
   if (detail.error && !detail.data)
     return <LoadError what="this instance" error={detail.error} retry={() => detail.refetch()} />
@@ -530,46 +442,24 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
       ? `Collected on the host by ${i.worker?.name ?? "the assigned worker"}`
       : "Checked from the n8n-ops server"
 
-  const tabs = (
-    <TabsList ref={listRef} aria-label="Instance sections" className={look.list}>
-      <PaneTabTrigger look={look} value="overview" icon={LayoutDashboardIcon} label="Overview" />
-      <PaneTabTrigger
-        look={look}
-        value="problems"
-        icon={BugIcon}
-        label="Problems"
-        mark={i.openProblems > 0 && <TabCount count={i.openProblems} short={look.shortCount} />}
-      />
-      <PaneTabTrigger
-        look={look}
-        value="health"
-        icon={HeartPulseIcon}
-        label="Health"
-        mark={(health === "down" || health === "warn") && <Dot health={health} label={healthLabel(i)} />}
-      />
-      <PaneTabTrigger
-        look={look}
-        value="backups"
-        icon={ArchiveIcon}
-        label="Backups"
-        mark={unsaved.backups && <UnsavedMark />}
-      />
-      <PaneTabTrigger
-        look={look}
-        value="access"
-        icon={KeyRoundIcon}
-        label="Access"
-        mark={unsaved.access && <UnsavedMark />}
-      />
-      <PaneTabTrigger
-        look={look}
-        value="settings"
-        icon={SlidersHorizontalIcon}
-        label="Settings"
-        mark={unsaved.settings && <UnsavedMark />}
-      />
-    </TabsList>
-  )
+  const tabs: PaneTabItem[] = [
+    { value: "overview", icon: LayoutDashboardIcon, label: "Overview" },
+    {
+      value: "problems",
+      icon: BugIcon,
+      label: "Problems",
+      count: i.openProblems > 0 ? { value: i.openProblems, tone: "fail" } : undefined,
+    },
+    {
+      value: "health",
+      icon: HeartPulseIcon,
+      label: "Health",
+      mark: (health === "down" || health === "warn") && <Dot health={health} label={healthLabel(i)} />,
+    },
+    { value: "backups", icon: ArchiveIcon, label: "Backups", mark: unsaved.backups && <UnsavedMark /> },
+    { value: "access", icon: KeyRoundIcon, label: "Access", mark: unsaved.access && <UnsavedMark /> },
+    { value: "settings", icon: SlidersHorizontalIcon, label: "Settings", mark: unsaved.settings && <UnsavedMark /> },
+  ]
 
   return (
     <div className="@container/pane grid min-w-0 gap-gap">
@@ -627,11 +517,9 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
         </div>
       </div>
 
-      <Tabs value={tab} onValueChange={(v) => isPaneTab(v) && show(v)} activationMode="manual">
-        {/* A portal keeps the tabs in the Tabs above, so the keyboard and the open tab work the same. */}
-        {nav ? createPortal(tabs, nav) : tabs}
+      <PaneTabs label="Instance sections" items={tabs} value={tab} onValueChange={show}>
 
-        <TabsContent value="overview" forceMount className={tabPanel}>
+        <PaneTabPanel value="overview">
           <StatusStrip instance={i} footer={collected} />
           {/* Four figures in one row wherever the pane has room for them, two by two below that. */}
           <Kpis className={kpisInPane}>
@@ -659,9 +547,9 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
             />
             <InstanceProblems query={problems} limit={3} onOpen={(pid) => navigate(`/problems/${pid}`)} />
           </Panel>
-        </TabsContent>
+        </PaneTabPanel>
 
-        <TabsContent value="problems" forceMount className={tabPanel}>
+        <PaneTabPanel value="problems">
           <Panel>
             <PanelHead
               title="Open Problems"
@@ -670,9 +558,9 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
             />
             <InstanceProblems query={problems} total={i.openProblems} onOpen={(pid) => navigate(`/problems/${pid}`)} />
           </Panel>
-        </TabsContent>
+        </PaneTabPanel>
 
-        <TabsContent value="health" forceMount className={tabPanel}>
+        <PaneTabPanel value="health">
           {pollError}
           <Panel>
             <PanelHead
@@ -740,9 +628,9 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
               </div>
             )}
           </Panel>
-        </TabsContent>
+        </PaneTabPanel>
 
-        <TabsContent value="backups" forceMount className={tabPanel}>
+        <PaneTabPanel value="backups">
           <LastBackupPanel id={i.id} backup={backup} />
           <InstanceBackupCard
             key={`backup-destinations-${i.id}`}
@@ -750,9 +638,9 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
             mode={i.backupDestinations}
             destinationIds={i.backupDestinationIds}
           />
-        </TabsContent>
+        </PaneTabPanel>
 
-        <TabsContent value="access" forceMount className={tabPanel}>
+        <PaneTabPanel value="access">
           <Panel>
             <PanelHead
               title="API Key and What It Allows"
@@ -805,12 +693,12 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
             keyScopes={i.effectiveScopes}
             agentAccess={i.agentAccess}
           />
-        </TabsContent>
+        </PaneTabPanel>
 
-        <TabsContent value="settings" forceMount className={tabPanel}>
+        <PaneTabPanel value="settings">
           <OverridesCard key={`overrides-${i.id}`} instance={i} />
-        </TabsContent>
-      </Tabs>
+        </PaneTabPanel>
+      </PaneTabs>
 
       <InstanceDialog open={editing} onOpenChange={setEditing} instance={i} />
     </div>
@@ -821,44 +709,6 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
 function UnsavedMark() {
   return (
     <span role="img" aria-label="Unsaved changes" title="Unsaved changes" className="size-2 rounded-full bg-info" />
-  )
-}
-
-/**
- * On the icon's corner of a stacked tab there is room for two digits (`short` in the bottom bar, by the pane's
- * width at the top); a reader still hears the whole count.
- */
-function TabCount({ count, short }: { count: number; short: boolean }) {
-  return (
-    <Badge variant="fail" className={short ? "px-1" : "@max-[40rem]/pane:px-1"}>
-      <span className={short ? "sr-only" : "@max-[40rem]/pane:sr-only"}>{n(count)}</span>
-      <span aria-hidden className={short ? undefined : "hidden @max-[40rem]/pane:inline"}>
-        {count > 99 ? "99+" : count}
-      </span>
-    </Badge>
-  )
-}
-
-/** The mark (a count, a health dot, unsaved changes) comes after the label, so a tab's name starts with the label. */
-function PaneTabTrigger({
-  look,
-  value,
-  icon: Icon,
-  label,
-  mark,
-}: {
-  look: TabsLook
-  value: PaneTab
-  icon: LucideIcon
-  label: string
-  mark?: React.ReactNode
-}) {
-  return (
-    <TabsTrigger value={value} className={look.tab}>
-      <Icon aria-hidden className={look.icon} />
-      <span>{label}</span>
-      {mark && <span className={look.mark}>{mark}</span>}
-    </TabsTrigger>
   )
 }
 

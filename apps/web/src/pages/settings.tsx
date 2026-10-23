@@ -424,12 +424,14 @@ export function SettingsForm({ section }: { section: string }) {
     count,
     save: async () => {
       const sent = body()
-      // The stored SMTP password is never sent to another server: a new host or port needs it again (FS-5).
+      // The stored SMTP password is never sent to another server: a new host, port or user needs it again, unless
+      // it is being removed (FS-5).
       if (
         section === "email" &&
         query.data?.smtpPasswordSet &&
         smtpServerChanged(query.data, sent) &&
-        !sent.smtpPassword
+        !sent.smtpPassword &&
+        sent.smtpPassword !== null
       ) {
         toast.error(
           "The SMTP server or user changed. Enter the SMTP password again, so the stored one is not sent to it.",

@@ -97,8 +97,14 @@ export function PageHead({
   return (
     <div className="mb-1 grid gap-1.5">
       <div className="flex items-start gap-3">
-        <h1 className="min-w-0 flex-1 text-figure font-heavy tracking-tighter break-words regular:text-h1">{title}</h1>
-        {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
+        {/* Compact: the H1 of the type scale, a step smaller at 380px or less. */}
+        <h1 className="min-w-0 flex-1 text-h1 font-heavy break-words regular:tracking-tighter compact:max-[381px]:text-h1-narrow">
+          {title}
+        </h1>
+        {/* Compact: the main action without its icon, so the title keeps its room; a busy ring or result stays. */}
+        {actions && (
+          <div className="flex shrink-0 items-center gap-2 compact:[&>*>svg:not([data-status])]:hidden">{actions}</div>
+        )}
       </div>
       {said && (
         <p className="text-muted-foreground">
@@ -506,7 +512,9 @@ export function Kpis({
         "grid overflow-clip rounded-lg border border-line bg-bg",
         row
           ? kpiRow
-          : "grid-cols-[repeat(auto-fit,minmax(170px,1fr))] max-md:grid-cols-2 max-md:[&>:last-child:nth-child(odd)]:col-span-full",
+          : // Compact's cells may be narrower, as in v3; a phone always shows two per row (MO-8), in both designs (the
+            // Compact width rule outranks a plain phone rule, so the phone rule is repeated for Compact).
+            "grid-cols-[repeat(auto-fit,minmax(170px,1fr))] compact:grid-cols-[repeat(auto-fit,minmax(150px,1fr))] max-md:grid-cols-2 compact:max-md:grid-cols-2 max-md:[&>:last-child:nth-child(odd)]:col-span-full",
         "regular:gap-gap regular:overflow-visible regular:border-0 regular:bg-transparent",
         className,
       )}
@@ -861,7 +869,14 @@ export function BusyButton({
         if (run && !e.defaultPrevented) void clock.start(run)
       }}
     >
-      {Shown && <Shown aria-hidden className={cn(busy && "animate-spin")} />}
+      {Shown && (
+        <Shown
+          aria-hidden
+          // The ring and the result mark say how the request goes (FB-7), so no design hides them with the icon.
+          data-status={Shown === Icon ? undefined : ""}
+          className={cn(busy && "animate-spin")}
+        />
+      )}
       <span className={labelClassName}>
         {busy ? busyLabel : state === "done" ? "Done" : state === "failed" ? "Failed" : children}
       </span>

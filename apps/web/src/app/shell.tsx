@@ -197,7 +197,7 @@ function TopBar({
               </li>
             )}
             <li className="min-w-0 shrink-0">
-              <h1 className="truncate text-title font-heavy tracking-tighter regular:text-body regular:font-medium regular:tracking-normal">
+              <h1 className="truncate text-bar font-heavy regular:text-body regular:font-medium regular:tracking-tighter regular:tracking-normal">
                 {page && !atRoot && trail.length > 0 ? (
                   <Link to={page.item.to} className="underline-offset-3 [@media(hover:hover)]:hover:underline">
                     {page.item.label}

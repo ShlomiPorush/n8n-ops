@@ -1,6 +1,7 @@
-import { and, eq, isNull, lt, sql } from "drizzle-orm"
+import { and, eq, inArray, isNull, lt, sql } from "drizzle-orm"
 import { type Ctx, changed } from "../context.ts"
 import { failures, instances, type ProblemAction, type ProblemState, problemReceipts, problems } from "../db/schema.ts"
+import type { AuditEntry } from "../lib/audit.ts"
 import { sha256 } from "../lib/crypto.ts"
 import type { N8nExecution } from "../n8n/client.ts"
 import { extractFailure } from "../n8n/execution.ts"
@@ -255,15 +256,26 @@ export function receiptRefusal(
   return null
 }
 
+/** Who acted and what the audit log calls it; the problem is named as its target. */
+export type ProblemAudit = Omit<AuditEntry, "target">
+
+const auditTarget = (p: Problem) => `${p.workflowName} · ${p.nodeName}`
+
+/*
+ * Lock order, the same everywhere: the problem row first, then receipts. Clearing expired receipts never waits for
+ * a receipt another transaction holds (SKIP LOCKED); it is cleared by a later action instead.
+ */
+
 /**
- * Applies a problem action. Null when the problem does not exist; `receipt` is null when the action changed nothing
- * because the problem was already in that state (another tab did it).
+ * Applies a problem action, with its receipt and its audit row in the same transaction: an action is saved with
+ * both or not at all. Null when the problem does not exist; `receipt` is null when the action changed nothing
+ * because the problem was already in that state (another tab did it), and then nothing is audited.
  */
 export async function applyProblemAction(
-  ctx: Pick<Ctx, "db">,
+  ctx: Pick<Ctx, "db" | "audit">,
   id: string,
   action: ProblemAction,
-  { muteHours = 24, now = new Date() }: { muteHours?: number; now?: Date } = {},
+  { muteHours = 24, now = new Date(), audit }: { muteHours?: number; now?: Date; audit?: ProblemAudit } = {},
 ): Promise<{ problem: Problem; receipt: ProblemReceipt | null } | null> {
   return ctx.db.transaction(async (tx) => {
     const [before] = await tx.select().from(problems).where(eq(problems.id, id)).for("update")
@@ -273,7 +285,13 @@ export async function applyProblemAction(
     const [after] = await tx.update(problems).set(change).where(eq(problems.id, id)).returning()
     if (!after) return null
     // Old receipts go when new ones are made; nothing else needs them.
-    await tx.delete(problemReceipts).where(lt(problemReceipts.expiresAt, now))
+    const expired = tx
+      .select({ id: problemReceipts.id })
+      .from(problemReceipts)
+      .where(lt(problemReceipts.expiresAt, now))
+      .for("update", { skipLocked: true })
+    await tx.delete(problemReceipts).where(inArray(problemReceipts.id, expired))
+    if (audit) await ctx.audit({ ...audit, target: auditTarget(after) }, tx)
     const [receipt] = await tx
       .insert(problemReceipts)
       .values({
@@ -290,16 +308,20 @@ export async function applyProblemAction(
 
 /**
  * Undoes the action of a receipt: one update, only while the problem is still at the version the action left, in
- * the transaction that uses the receipt up. The receipt row is locked first, so of two Undos at once (two tabs) the
- * second waits and then finds it used. A refusal changes nothing.
+ * the transaction that uses the receipt up and writes its audit row. The problem row is locked first, then the
+ * receipt (the lock order above), so of two Undos at once (two tabs) the second waits and then finds it used. A
+ * refusal changes nothing and is not audited.
  */
 export async function undoProblemAction(
-  ctx: Pick<Ctx, "db">,
+  ctx: Pick<Ctx, "db" | "audit">,
   id: string,
   receiptId: string,
-  now = new Date(),
+  { now = new Date(), audit }: { now?: Date; audit?: ProblemAudit } = {},
 ): Promise<{ ok: true; problem: Problem; receipt: ProblemReceipt } | { ok: false; error: UndoRefusal }> {
   return ctx.db.transaction(async (tx) => {
+    // A receipt of a problem that is gone went with it (cascade): not found either way.
+    const [locked] = await tx.select({ id: problems.id }).from(problems).where(eq(problems.id, id)).for("update")
+    if (!locked) return { ok: false as const, error: "receipt_not_found" as const }
     const [receipt] = await tx.select().from(problemReceipts).where(eq(problemReceipts.id, receiptId)).for("update")
     const refusal = receiptRefusal(receipt, id, now)
     if (refusal || !receipt) return { ok: false as const, error: refusal ?? "receipt_not_found" }
@@ -310,6 +332,15 @@ export async function undoProblemAction(
       .returning()
     if (!problem) return { ok: false as const, error: "already_changed" as const }
     await tx.update(problemReceipts).set({ usedAt: now }).where(eq(problemReceipts.id, receipt.id))
+    if (audit)
+      await ctx.audit(
+        {
+          ...audit,
+          target: auditTarget(problem),
+          details: { ...audit.details, action: receipt.action, status: problem.status },
+        },
+        tx,
+      )
     return { ok: true as const, problem, receipt }
   })
 }

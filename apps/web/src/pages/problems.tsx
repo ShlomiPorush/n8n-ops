@@ -426,7 +426,8 @@ const actionWords: Record<
 /**
  * Resolve, Mute 24 h, Reopen and Unmute act at once, without asking, and their toast offers Undo by the receipt the
  * server answered with (FB-16, DS-20). An action another tab already did says so, with nothing to undo. Lists,
- * the pane and Overview refresh after the action and after its Undo.
+ * the pane and Overview refresh after the action and after its Undo; when they cannot after an Undo, its message
+ * offers Refresh.
  */
 function useProblemAction(id: string, action: ProblemAction, named: () => string) {
   const words = actionWords[action]
@@ -436,7 +437,8 @@ function useProblemAction(id: string, action: ProblemAction, named: () => string
   return async () => {
     const answer = await mutation.mutateAsync(action === "mute" ? { hours: 24 } : undefined)
     const refresh = () => refreshAreas("/problems", "/overview")
-    refresh()
+    // The action's message carries Undo; a list that could not refresh says so itself (TB-5).
+    refresh().catch(() => {})
     const name = named()
     const receipt = answer.receipt
     if (!answer.changed || !receipt) {

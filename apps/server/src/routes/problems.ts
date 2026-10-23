@@ -144,16 +144,14 @@ export function problemRoutes(ctx: Ctx) {
     const id = c.req.param("id") ?? ""
     if (!uuid.safeParse(id).success) return c.json({ error: "not_found" }, 404)
     const body = action === "mute" ? await c.req.json().catch(() => ({})) : {}
-    const result = await applyProblemAction(ctx, id, action, { muteHours: Number(body?.hours ?? 24) })
+    // The audit row is written in the action's transaction: a failed write saves neither.
+    const result = await applyProblemAction(ctx, id, action, {
+      muteHours: Number(body?.hours ?? 24),
+      audit: { actor: actorName(c.get("actor")), action: audited, via: "web" },
+    })
     if (!result) return c.json({ error: "not_found" }, 404)
     const { problem, receipt } = result
     if (!receipt) return c.json({ ok: true, changed: false, status: problem.status })
-    await ctx.audit({
-      actor: actorName(c.get("actor")),
-      action: audited,
-      target: `${problem.workflowName} · ${problem.nodeName}`,
-      via: "web",
-    })
     changed(ctx, "problems", "overview")
     const { id: receiptId, problemId, version, prior, expiresAt } = receipt
     return c.json({
@@ -177,18 +175,12 @@ export function problemRoutes(ctx: Ctx) {
     const receiptId = c.req.param("receipt")
     if (!uuid.safeParse(id).success || !uuid.safeParse(receiptId).success)
       return c.json({ error: "receipt_not_found" }, 404)
-    const result = await undoProblemAction(ctx, id, receiptId)
-    if (!result.ok) return c.json({ error: result.error }, result.error === "receipt_not_found" ? 404 : 409)
-    const { problem, receipt } = result
-    await ctx.audit({
-      actor: actorName(c.get("actor")),
-      action: "Problem action undone",
-      target: `${problem.workflowName} · ${problem.nodeName}`,
-      via: "web",
-      details: { action: receipt.action, status: problem.status },
+    const result = await undoProblemAction(ctx, id, receiptId, {
+      audit: { actor: actorName(c.get("actor")), action: "Problem action undone", via: "web" },
     })
+    if (!result.ok) return c.json({ error: result.error }, result.error === "receipt_not_found" ? 404 : 409)
     changed(ctx, "problems", "overview")
-    return c.json({ ok: true, status: problem.status })
+    return c.json({ ok: true, status: result.problem.status })
   })
 
   app.post("/:id/merge", async (c) => {

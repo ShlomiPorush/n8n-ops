@@ -53,7 +53,7 @@ export type PaneTabItem = {
 type TabsLook = { list: string; tab: string; icon?: string; mark: string; shortCount: boolean }
 const topTabs: TabsLook = {
   list: cn(
-    "gap-0 regular:gap-1 regular:rounded-lg regular:bg-fill regular:p-1 regular:before:hidden",
+    "gap-0 regular:gap-1 regular:rounded-lg regular:bg-fill regular:p-1 regular:shadow-none",
     "@max-[40rem]/pane:gap-1 regular:@max-[40rem]/pane:p-0.5",
   ),
   /*
@@ -74,7 +74,7 @@ const topTabs: TabsLook = {
  * outside the pane's container, so it uses no container queries.
  */
 const barTabs: TabsLook = {
-  list: "h-tabbar gap-0 before:hidden",
+  list: "h-tabbar gap-0 shadow-none",
   tab: "flex-1 flex-col justify-center gap-[3px] border-b-0 px-0 py-0 text-meta",
   icon: "size-[22px]",
   mark: "absolute top-1 start-1/2 ms-1",

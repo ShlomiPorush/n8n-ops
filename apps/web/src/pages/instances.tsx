@@ -987,6 +987,9 @@ export function InstanceDialog({
   })
   const [error, setError] = useState("")
   const [busy, setBusy] = useState(false)
+  // Filled when the dialog opens or another instance is chosen, not when the 15-second refresh brings the same
+  // instance again: that would replace what is being typed.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the stored values are read when it opens, not followed
   useEffect(() => {
     if (!open) return
     setError("")
@@ -1001,7 +1004,7 @@ export function InstanceDialog({
       collection: instance?.collection ?? "direct",
       workerId: instance?.workerId ?? "",
     })
-  }, [open, instance])
+  }, [open, instance?.id])
   const set = (k: keyof typeof form, v: string | boolean | undefined) => setForm((f) => ({ ...f, [k]: v }))
   // A stored API key is never sent to a different server: a changed base URL needs the key again (FS-5).
   const urlChanged = Boolean(instance) && normalUrl(form.baseUrl) !== normalUrl(instance?.baseUrl ?? "")

@@ -394,6 +394,38 @@ test("a clicked tab shows no focus ring until a key is pressed on it", async () 
   expect(await outline()).toBe("solid")
 })
 
+test("the Edit dialog keeps what is typed when the instance refreshes behind it", async () => {
+  const id = await openInstanceB()
+  // Each answer for the instance differs from the one before, as after a new health check.
+  const detail = `**/api/instances/${id}`
+  let tick = 0
+  await page.route(detail, async (route) => {
+    if (route.request().method() !== "GET") return route.continue()
+    const res = await route.fetch()
+    tick += 1
+    await route.fulfill({ response: res, json: { ...(await res.json()), e2eTick: tick } })
+  })
+  try {
+    await page.getByRole("button", { name: "Edit", exact: true }).click()
+    const dialog = page.getByRole("dialog", { name: "Edit e2e-n8n-b" })
+    const name = dialog.getByLabel("Name", { exact: true })
+    await name.fill("e2e-n8n-b renamed")
+    // A refresh, as the 15-second poll or coming back to the window brings.
+    const refreshed = page.waitForResponse(
+      (r) => new URL(r.url()).pathname === `/api/instances/${id}` && r.request().method() === "GET",
+    )
+    await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")))
+    await refreshed
+    // Give the page a moment to render the new answer before the field is checked.
+    await page.waitForTimeout(300)
+    await expect(name).toHaveValue("e2e-n8n-b renamed")
+    await dialog.getByRole("button", { name: "Cancel" }).click()
+    await dialogClosed(page)
+  } finally {
+    await page.unroute(detail)
+  }
+})
+
 test("edits on several instance tabs survive a switch, and one save bar saves or discards them all", async () => {
   await openInstanceB()
   const tab = (name: string) => page.getByRole("tab", { name: new RegExp(`^${name}`) })

@@ -1,8 +1,10 @@
 /*
  * How dates and times are written, the same in the console, the emails and Telegram (FW-9, FW-2, EM-6). Settings
  * → General chooses a Date format and a Time format; every date is written in the app's time zone, as numbers,
- * never with a month name. "browser" leaves the order of the date, or the clock, to the browser's language; every
- * other choice reads the same everywhere. Only Intl is used, so the server and the UI run the same code.
+ * never with a month name. "browser" takes only the order of the date, or the choice of the 12- or 24-hour clock,
+ * from the browser's language: the calendar is always the Gregorian one and the digits always 0-9, whatever the
+ * language asks for. Every other choice reads the same everywhere. Only Intl is used, so the server and the UI run
+ * the same code.
  */
 
 /** The Date format choices, Browser first: it is the default. */
@@ -117,13 +119,34 @@ const orders: Record<Exclude<DateFormat, "browser">, { order: ("day" | "month" |
   "DD.MM.YYYY": { order: ["day", "month", "year"], sep: "." },
 }
 const pad2 = (n: number) => String(n).padStart(2, "0")
+// Direction marks some languages put between the numbers (Arabic writes U+200F after the day and the month); in
+// an LTR line they would reorder the date.
+const directionMarks = new RegExp(`[${String.fromCharCode(0x200e, 0x200f, 0x061c)}]`, "g")
 
 /** A calendar day as the Date format writes it: "16/10/2026", or without the year "16/10". */
 export function writeDate(p: DateParts, w: DateWriting, { year = true } = {}): string {
   if (w.date === "browser" || !(w.date in orders)) {
-    const options: Intl.DateTimeFormatOptions = { timeZone: "UTC", day: "2-digit", month: "2-digit" }
+    // Only the order and separators come from the language: a Hebrew or Buddhist calendar would write another
+    // year (or a month name), Arabic or Persian digits other numbers.
+    const options: Intl.DateTimeFormatOptions = {
+      timeZone: "UTC",
+      calendar: "gregory",
+      numberingSystem: "latn",
+      day: "2-digit",
+      month: "2-digit",
+    }
     if (year) options.year = "numeric"
-    return intl(w.locale, options).format(new Date(Date.UTC(p.year, p.month - 1, p.day)))
+    const parts = intl(w.locale, options).formatToParts(new Date(Date.UTC(p.year, p.month - 1, p.day)))
+    // Only the numbers are kept, in the language's order, with its separator when that is punctuation: words
+    // the language adds ("г." after a Bulgarian year, "年" in Japanese) never reach the line.
+    const numbers = parts.filter((x) => x.type === "day" || x.type === "month" || x.type === "year")
+    const between = parts
+      .slice(parts.indexOf(numbers[0] as Intl.DateTimeFormatPart) + 1)
+      .find((x) => x.type === "literal")
+      ?.value.replace(directionMarks, "")
+      .trim()
+    const sep = between && /^[./-]$/.test(between) ? between : "/"
+    return numbers.map((x) => x.value).join(sep)
   }
   const { order, sep } = orders[w.date]
   const part = { day: pad2(p.day), month: pad2(p.month), year: String(p.year).padStart(4, "0") }
@@ -134,23 +157,23 @@ export function writeDate(p: DateParts, w: DateWriting, { year = true } = {}): s
 }
 
 /**
- * A clock time as the Time format writes it: "14:05", "2:05 PM", or as the browser's language does. `compact`
- * writes a whole hour on the 12-hour clock as "3 PM", for an axis.
+ * The clock Browser stands for: the 12- or 24-hour clock of the language. Only that choice is taken from it, so
+ * the time is still written with 0-9 and AM or PM, never with the language's own digits or words for them.
+ */
+function clockOf(w: DateWriting): Exclude<TimeFormat, "browser"> {
+  if (w.time !== "browser") return w.time
+  const cycle = intl(w.locale, { hour: "numeric" }).resolvedOptions().hourCycle
+  return cycle === "h11" || cycle === "h12" ? "12h" : "24h"
+}
+
+/**
+ * A clock time as the Time format writes it: "14:05", or "2:05 PM"; Browser picks one of the two by the
+ * browser's language. `compact` writes a whole hour on the 12-hour clock as "3 PM", for an axis.
  */
 export function writeClock(p: DateParts, w: DateWriting, { seconds = false, compact = false } = {}): string {
   const whole = compact && !seconds && p.minute === 0
-  if (w.time === "browser") {
-    const rest: Intl.DateTimeFormatOptions = { minute: "2-digit", ...(seconds ? { second: "2-digit" } : {}) }
-    const cycle = intl(w.locale, { timeZone: "UTC", hour: "numeric", ...rest }).resolvedOptions().hourCycle
-    const twelve = cycle === "h11" || cycle === "h12"
-    const options: Intl.DateTimeFormatOptions =
-      twelve && whole ? { hour: "numeric" } : { hour: twelve ? "numeric" : "2-digit", ...rest }
-    return intl(w.locale, { timeZone: "UTC", ...options }).format(
-      new Date(Date.UTC(2000, 0, 1, p.hour, p.minute, p.second)),
-    )
-  }
   const tail = `${pad2(p.minute)}${seconds ? `:${pad2(p.second)}` : ""}`
-  if (w.time === "12h") return `${p.hour % 12 || 12}${whole ? "" : `:${tail}`} ${p.hour < 12 ? "AM" : "PM"}`
+  if (clockOf(w) === "12h") return `${p.hour % 12 || 12}${whole ? "" : `:${tail}`} ${p.hour < 12 ? "AM" : "PM"}`
   return `${pad2(p.hour)}:${tail}`
 }
 

@@ -94,6 +94,8 @@ export function ListWithPanel({
               pullToClose
               // The open item is in the address: Back already closes it.
               history={false}
+              // The same area as the pane beside the list, so Back puts each tab where it was scrolled (NL-3).
+              scrollPane="item"
               // Focus the dialog, not its Back button, so no focus ring shows before the keyboard is used.
               onOpenAutoFocus={(e) => {
                 e.preventDefault()
@@ -137,7 +139,7 @@ export function ListWithPanel({
         <ResizablePanel defaultSize="40%" minSize="360px">
           <div
             ref={measure}
-            data-scroll-pane
+            data-scroll-pane="list"
             // Rows keep their full height (auto-rows-max): in a grid of fixed height a scrolling table would
             // otherwise shrink to nothing once the column is taller than the screen.
             className="grid h-full min-w-0 auto-rows-max content-start gap-gap overflow-y-auto overscroll-contain py-[22px] ps-[22px] pe-4 [scrollbar-gutter:stable] lg:ps-7"
@@ -151,7 +153,7 @@ export function ListWithPanel({
             <div
               // A new item starts at its top (DS-6).
               key={pathname}
-              data-scroll-pane
+              data-scroll-pane="item"
               className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
             >
               {/* The padding is on the content, not on the scroller, so the item's tabs stick at its very top (DS-14). */}

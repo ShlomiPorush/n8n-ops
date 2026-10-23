@@ -124,6 +124,40 @@ describe("overlay history", () => {
     expect(heard.mock.calls).toEqual([[true], [false]])
   })
 
+  it("holds the history while a dialog closed during the Leave question still has its entry, until the page stays (DS-10)", async () => {
+    const { holdOverlayEntry, leaveOverlays, stayAfterBlock, overlaysHeld, onOverlaysHeld } = await load()
+    const heard = vi.fn()
+    onOverlaysHeld(() => heard(overlaysHeld()))
+    const merge = holdOverlayEntry(() => {})
+    vi.runAllTimers()
+    leaveOverlays()
+    // The navigation from it waits on the Leave question, and the dialog closes meanwhile: its entry stays.
+    merge()
+    vi.runAllTimers()
+    expect(win.history.state?.overlay).toBeDefined()
+    expect(overlaysHeld()).toBe(true)
+    // Stay: the entry is taken away, and only then may a tab address be corrected.
+    stayAfterBlock()
+    expect(overlaysHeld()).toBe(true)
+    vi.runAllTimers()
+    expect(win.history.state).toEqual({ page: "/instances" })
+    expect(overlaysHeld()).toBe(false)
+    expect(heard.mock.calls).toEqual([[true], [false]])
+  })
+
+  it("lets go once the navigation the Leave question waited on is made and takes the closed dialog's entry", async () => {
+    const { holdOverlayEntry, leaveOverlays, overlaysHeld } = await load()
+    const merge = holdOverlayEntry(() => {})
+    vi.runAllTimers()
+    leaveOverlays()
+    merge()
+    vi.runAllTimers()
+    expect(overlaysHeld()).toBe(true)
+    // Leave: the router replaces the dialog's entry with the new page, without a popstate.
+    win.history.replaceState({ page: "/problems/b" })
+    expect(overlaysHeld()).toBe(false)
+  })
+
   it("tells those waiting on a move that the page stayed, until they stop listening (SR-6)", async () => {
     const { onMoveKept, stayAfterBlock } = await load()
     const kept = vi.fn()

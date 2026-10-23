@@ -483,6 +483,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
     const had = document.activeElement
     refocus.current = had instanceof HTMLElement && tabList.current?.contains(had) ? had.id : null
   }
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs once the tabs were mounted in their new place
   useLayoutEffect(() => {
     const was = refocus.current
     refocus.current = null

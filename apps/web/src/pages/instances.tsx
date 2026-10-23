@@ -12,7 +12,6 @@ import {
   KeyRound as KeyRoundIcon,
   LayoutDashboard as LayoutDashboardIcon,
   Loader as LoaderIcon,
-  type LucideIcon,
   Pencil,
   Plus,
   RefreshCw,
@@ -21,8 +20,8 @@ import {
   Trash2,
   Workflow as WorkflowIcon,
 } from "lucide-react"
-import { useState } from "react"
-import { Link, useNavigate, useParams, useSearchParams } from "react-router"
+import { useEffect, useState } from "react"
+import { Link, useNavigate, useParams } from "react-router"
 import { useCrumb } from "@/app/chrome"
 import { AgentAccessCard } from "@/components/agent-access-card"
 import { useConfirm } from "@/components/confirm"

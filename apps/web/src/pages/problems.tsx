@@ -396,10 +396,10 @@ export function ProblemDetail({ id }: { id: string }) {
   const tabs: PaneTabItem[] = [
     { value: "overview", icon: LayoutDashboardIcon, label: "Overview" },
     { value: "input", icon: BracesIcon, label: "Input" },
-    { value: "occurrences", icon: HistoryIcon, label: "Occurrences", count: { value: p.count, tone: "plain" } },
+    { value: "occurrences", icon: HistoryIcon, label: "Occurrences", count: { value: p.count, tone: "plain" as const } },
     // Only when the error shows up in other workflows too.
     ...(p.sameError.length > 0
-      ? [{ value: "same", icon: CopyIcon, label: "Same error", count: { value: p.sameError.length, tone: "plain" } }]
+      ? [{ value: "same", icon: CopyIcon, label: "Same error", count: { value: p.sameError.length, tone: "plain" as const } }]
       : []),
   ] satisfies PaneTabItem[]
 

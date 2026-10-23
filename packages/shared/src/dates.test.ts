@@ -42,6 +42,15 @@ describe("Date format (FW-9)", () => {
     expect(formatDay(at, w("browser", "24h", "UTC", "en-US"))).not.toMatch(/[A-Za-z]/)
   })
 
+  it("writes Browser in the Gregorian calendar with 0-9, whatever calendar or digits the language uses", () => {
+    // Hebrew calendar: "05 Heshvan 5787" before; Buddhist: "16/10/2569"; Arabic: Arabic digits with direction marks.
+    expect(formatDay(at, w("browser", "24h", "UTC", "en-US-u-ca-hebrew"))).toBe("10/16/2026")
+    expect(formatDay(at, w("browser", "24h", "UTC", "th-TH"))).toBe("16/10/2026")
+    expect(formatDay(at, w("browser", "24h", "UTC", "ar-EG"))).toBe("16/10/2026")
+    expect(formatDay(at, w("browser", "24h", "UTC", "fa-IR"))).toBe("2026/10/16")
+    expect(formatDayMonth(at, w("browser", "24h", "UTC", "ar-EG"))).toBe("16/10")
+  })
+
   it("writes the day in the app's time zone", () => {
     // 22:30 UTC is already the next day in Jerusalem.
     expect(formatDay(new Date("2026-10-16T22:30:00Z"), w("DD/MM/YYYY", "24h", "Asia/Jerusalem"))).toBe("17/10/2026")
@@ -71,6 +80,16 @@ describe("Time format (FW-9)", () => {
     expect(formatClock(at, w("DD/MM/YYYY", "browser", "UTC", "en-US"))).toMatch(/^1:05\sPM$/)
     expect(formatClock(at, w("DD/MM/YYYY", "browser", "UTC", "en-GB"))).toBe("13:05")
     expect(formatClock(new Date("2026-10-16T02:05:00Z"), w("DD/MM/YYYY", "browser", "UTC", "de-DE"))).toBe("02:05")
+  })
+
+  it("takes only the 12- or 24-hour choice from the language for Browser, and writes it with 0-9 and AM or PM", () => {
+    // Before, these came out with the language's own words for PM, or its own digits.
+    expect(formatClock(at, w("DD/MM/YYYY", "browser", "UTC", "ar-EG"))).toBe("1:05 PM")
+    expect(formatClock(at, w("DD/MM/YYYY", "browser", "UTC", "ko-KR"))).toBe("1:05 PM")
+    expect(formatClock(at, w("DD/MM/YYYY", "browser", "UTC", "fa-IR"))).toBe("13:05")
+    expect(formatClock(at, w("DD/MM/YYYY", "browser", "UTC", "en-US-u-hc-h23"))).toBe("13:05")
+    expect(formatClockAt("02:00", w("DD/MM/YYYY", "browser", "UTC", "ar-EG"))).toBe("2:00 AM")
+    expect(formatTime(at, w("browser", "browser", "UTC", "ar-EG"))).toBe("16/10/2026, 1:05:09 PM")
   })
 
   it("writes a stored HH:MM schedule in the chosen clock, and leaves anything else as it is", () => {

@@ -39,3 +39,15 @@ export function isoTime(value: string | number | Date): string | undefined {
   const d = new Date(value)
   return Number.isNaN(d.getTime()) ? undefined : d.toISOString()
 }
+
+/** A zone's offset from UTC at an instant, such as UTC+03:00, for the Time zone list (MP-4); null when unknown. */
+export function zoneOffset(zone: string, at: Date): string | null {
+  try {
+    const name = new Intl.DateTimeFormat("en-US", { timeZone: zone, timeZoneName: "longOffset" })
+      .formatToParts(at)
+      .find((p) => p.type === "timeZoneName")?.value
+    return !name || name === "GMT" ? "UTC+00:00" : name.replace("GMT", "UTC")
+  } catch {
+    return null
+  }
+}

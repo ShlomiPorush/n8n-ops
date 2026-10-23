@@ -1,5 +1,5 @@
 import { type DateWriting, formatWindow, messageWriting } from "@n8n-ops/shared"
-import { and, count, desc, eq, gt, isNull } from "drizzle-orm"
+import { and, count, desc, eq, gt, isNull, lte } from "drizzle-orm"
 import nodemailer from "nodemailer"
 import type { Ctx } from "../context.ts"
 import { alertOutbox, alertState, backupRuns, failures, instances, problems } from "../db/schema.ts"
@@ -166,28 +166,32 @@ export function renderReport(d: ReportData): Report {
   return { subject: `${title}: ${plural(totalOpen, "open problem")}`, text, html }
 }
 
-export async function buildReport(ctx: Ctx, period: "daily" | "weekly"): Promise<Report> {
-  const when = new Date()
+/**
+ * The report of the day or week that ends at `when`. Every query counts what happened after `since` up to and
+ * including `when`, the window the report prints (EM-6): what arrives while the report is being made waits for
+ * the next one.
+ */
+export async function buildReport(ctx: Ctx, period: "daily" | "weekly", when = new Date()): Promise<Report> {
   const since = new Date(when.getTime() - periodMs[period])
   const allInstances = await ctx.db.select().from(instances)
   const name = new Map(allInstances.map((i) => [i.id, i.name]))
   const open = await ctx.db
     .select({ instanceId: problems.instanceId, n: count() })
     .from(problems)
-    .where(and(eq(problems.status, "open"), isNull(problems.mergedInto)))
+    .where(and(eq(problems.status, "open"), isNull(problems.mergedInto), lte(problems.firstSeen, when)))
     .groupBy(problems.instanceId)
   const top = await ctx.db
     .select({ workflow: problems.workflowName, instanceId: problems.instanceId, n: count() })
     .from(failures)
     .innerJoin(problems, eq(failures.problemId, problems.id))
-    .where(gt(failures.createdAt, since))
+    .where(and(gt(failures.createdAt, since), lte(failures.createdAt, when)))
     .groupBy(problems.workflowName, problems.instanceId)
     .orderBy(desc(count()))
     .limit(10)
   const incidents = await ctx.db
     .select({ at: alertOutbox.createdAt, text: alertOutbox.text })
     .from(alertOutbox)
-    .where(and(eq(alertOutbox.kind, "health"), gt(alertOutbox.createdAt, since)))
+    .where(and(eq(alertOutbox.kind, "health"), gt(alertOutbox.createdAt, since), lte(alertOutbox.createdAt, when)))
     .orderBy(desc(alertOutbox.createdAt))
     .limit(30)
   const backups = await Promise.all(
@@ -195,7 +199,7 @@ export async function buildReport(ctx: Ctx, period: "daily" | "weekly"): Promise
       const [last] = await ctx.db
         .select()
         .from(backupRuns)
-        .where(eq(backupRuns.instanceId, i.id))
+        .where(and(eq(backupRuns.instanceId, i.id), lte(backupRuns.startedAt, when)))
         .orderBy(desc(backupRuns.startedAt))
         .limit(1)
       return { name: i.name, status: last?.status ?? "none", at: last?.startedAt ?? null }
@@ -276,7 +280,7 @@ export async function maybeSendReports(ctx: Ctx, now = new Date()) {
     if (sent) continue
     await ctx.db.insert(alertState).values({ key, active: false, detail: "sent" }).onConflictDoNothing()
     try {
-      await sendEmail(ctx, await buildReport(ctx, period))
+      await sendEmail(ctx, await buildReport(ctx, period, now))
       ctx.log.info("report sent", { period })
     } catch (error) {
       ctx.log.error("report failed", { period, error: (error as Error).message })

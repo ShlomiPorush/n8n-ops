@@ -113,31 +113,38 @@ describe("one app, two looks", () => {
 
 // Every date and time on screen is written by the helpers in lib/time.ts, which follow the Date format, the Time
 // format and the app's time zone (FW-9, FW-2). A page or component that formats a date itself would bypass all
-// three, so none may: no locale or ISO strings of a date, no Intl.DateTimeFormat or clock options of its own, no
-// getHours() and the like (the browser's zone), no date library.
+// three, so none may: no locale or ISO strings of a date (called, passed on or looked up by name), no Intl at all
+// (so no DateTimeFormat under another name, no formatToParts), no clock options of its own, no getHours() and
+// the like (the browser's zone), no date library.
 describe("dates and times", () => {
   const formatting =
-    /\.(?:toLocaleDateString|toLocaleTimeString|toLocaleString|toISOString|toUTCString|toDateString|toTimeString|toGMTString)\s*\(|\bIntl\.DateTimeFormat\b|\b(?:hour12|hourCycle|dateStyle|timeStyle)\b|\.get(?:UTC)?(?:FullYear|Month|Date|Day|Hours|Minutes|Seconds)\s*\(|from\s+["'](?:date-fns|dayjs|moment|luxon)(?:[/"'])/
+    /\btoLocale\w*String\b|\b(?:toISOString|toUTCString|toDateString|toTimeString|toGMTString)\b|\bIntl\b|\bDateTimeFormat\b|\bformatToParts\b|\b(?:hour12|hourCycle|dateStyle|timeStyle)\b|\.get(?:UTC)?(?:FullYear|Month|Date|Day|Hours|Minutes|Seconds)\s*\(|from\s+["'](?:date-fns|dayjs|moment|luxon)(?:[/"'])/
   // The places allowed to, by file, with what they may use and why.
   const allowed = [
-    // formatTime, formatDay, formatListTime, isoTime and the rest: the helpers themselves.
+    // formatTime, formatDay, formatListTime, isoTime, zoneOffset and the rest: the helpers themselves.
     { file: "src/lib/time.ts", what: formatting },
-    // zoneOffset: reads a zone's offset for the Time zone list (MP-4); it writes no date.
-    { file: "src/components/time-zone-picker.tsx", what: /\bIntl\.DateTimeFormat\b/ },
+    // The names of the zones this browser knows, for the Time zone list (MP-4); it writes no date.
+    { file: "src/components/time-zone-picker.tsx", what: /\bIntl\.supportedValuesOf\b/ },
     // count and formatSize: numbers with thousands separators (FW-3, FW-4), not dates.
     { file: "src/lib/numbers.ts", what: /\.toLocaleString\s*\(/ },
   ]
   const rel = (path: string) => path.replaceAll("\\", "/")
 
+  /** Whether a line of a file formats a date in a way its file is not allowed to. */
+  const offends = (file: string, line: string) => {
+    if (!formatting.test(line)) return false
+    // A line passes only when what it uses is what its file is allowed.
+    const rest = allowed
+      .filter((a) => a.file === file)
+      .reduce((l, a) => l.replace(new RegExp(a.what.source, "g"), ""), line)
+    return formatting.test(rest)
+  }
+
   it("formats dates only through lib/time.ts (FW-9)", () => {
     const found = sources.flatMap(({ path, text }) =>
-      text.split("\n").flatMap((line, i) => {
-        if (!formatting.test(line)) return []
-        const here = allowed.filter((a) => a.file === rel(path))
-        // A line passes only when what it uses is what its file is allowed.
-        const rest = here.reduce((l, a) => l.replace(new RegExp(a.what.source, "g"), ""), line)
-        return here.length && !formatting.test(rest) ? [] : [`${rel(path)}:${i + 1}: ${line.trim()}`]
-      }),
+      text
+        .split("\n")
+        .flatMap((line, i) => (offends(rel(path), line) ? [`${rel(path)}:${i + 1}: ${line.trim()}`] : [])),
     )
     expect(found).toEqual([])
   })
@@ -147,15 +154,38 @@ describe("dates and times", () => {
       "new Date(x).toLocaleDateString()",
       "d.toLocaleTimeString([], { hour: '2-digit' })",
       "when.toLocaleString('en-GB')",
+      "Date.prototype.toLocaleString.call(d)",
+      'd["toLocaleDateString"]()',
       "<time dateTime={d.toISOString()}>",
       "new Intl.DateTimeFormat(undefined, { timeZone })",
+      "const { DateTimeFormat: DTF } = Intl; new DTF()",
+      "const I = Intl",
+      'const DTF = globalThis["DateTimeFormat"]',
+      "f.formatToParts(d)",
       "{ hour12: false }",
       "d.getHours()",
       'import { format } from "date-fns"',
     ])
       expect(line).toMatch(formatting)
-    for (const line of ["d.getTime()", "Date.now()", "new Date(value)", "formatTime(value, w)"])
+    for (const line of [
+      "d.getTime()",
+      "Date.now()",
+      "new Date(value)",
+      "formatTime(value, w)",
+      "zoneOffset(zone, now)",
+      "s.toLocaleLowerCase()",
+    ])
       expect(line).not.toMatch(formatting)
+  })
+
+  it("lets a file use only what it is allowed, not the rest of the formatting", () => {
+    const picker = "src/components/time-zone-picker.tsx"
+    expect(offends(picker, 'const names = ["UTC", ...Intl.supportedValuesOf("timeZone")]')).toBe(false)
+    expect(offends(picker, 'new Intl.DateTimeFormat("en-US", { timeZone: zone })')).toBe(true)
+    expect(offends(picker, "const { supportedValuesOf, DateTimeFormat } = Intl")).toBe(true)
+    expect(offends("src/lib/numbers.ts", 'return value.toLocaleString("en-US")')).toBe(false)
+    expect(offends("src/lib/numbers.ts", "return value.toLocaleDateString()")).toBe(true)
+    expect(offends("src/pages/backups.tsx", "when.toLocaleString()")).toBe(true)
   })
 })
 

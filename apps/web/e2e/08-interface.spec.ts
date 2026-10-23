@@ -986,6 +986,35 @@ test("a Date format chosen in Settings writes the dates in a list that way, and 
   await expect(firstDate).not.toHaveText(iso)
 })
 
+test("the 12-hour Time format writes the daily backup time that way as soon as it is saved (FW-9)", async () => {
+  const before = (await (await page.request.get("/api/settings/general")).json()) as { timeFormat: string }
+  const { backupTime } = (await (await page.request.get("/api/backups")).json()) as { backupTime: string }
+  const [hour = 0, minute = 0] = backupTime.split(":").map(Number)
+  const twelve = `${hour % 12 || 12}:${String(minute).padStart(2, "0")} ${hour < 12 ? "AM" : "PM"}`
+  const figure = page
+    .locator('[data-slot="kpi"]')
+    .filter({ hasText: "Daily backup time" })
+    .locator('[data-slot="kpi-figure"]')
+  const unsaved = page.getByRole("region", { name: "Unsaved changes" })
+  try {
+    // From the 24-hour clock, whatever was stored: Browser in an English (US) browser would show 12 hours already.
+    await page.request.put("/api/settings/general", { data: { timeFormat: "24h" } })
+    await page.goto("/backups")
+    await expect(figure).toHaveText(backupTime)
+
+    await page.goto("/settings/general")
+    await page.getByRole("radio", { name: "12-hour" }).click()
+    await unsaved.getByRole("button", { name: "Save changes" }).click()
+    await expect(unsaved).toHaveCount(0)
+    // Back to Backups inside the app, with no reload: the saved choice shows at once.
+    await page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Backups", exact: true }).click()
+    await expect(page).toHaveURL(/\/backups$/)
+    await expect(figure).toHaveText(twelve)
+  } finally {
+    await page.request.put("/api/settings/general", { data: { timeFormat: before.timeFormat } })
+  }
+})
+
 /** Opens the second test instance and returns its id. */
 async function openInstanceB() {
   await page.goto("/instances")

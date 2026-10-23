@@ -158,6 +158,8 @@ describe("web design", () => {
     expect(await settings.get("general")).toEqual({
       publicUrl: "https://ops.example.com",
       timezone: "Asia/Jerusalem",
+      dateFormat: "browser",
+      timeFormat: "24h",
       design: "regular",
     })
   })
@@ -175,7 +177,7 @@ describe("web design", () => {
   it("refuses to store an unknown design", async () => {
     const settings = createSettings(fakeDb().db)
     await expect(
-      settings.set("general", { publicUrl: "", timezone: "UTC", design: "wide" as "regular" }),
+      settings.set("general", { ...defaults.general, publicUrl: "", timezone: "UTC", design: "wide" as "regular" }),
     ).rejects.toThrow()
     expect(settings.design()).toBe("regular")
   })
@@ -195,7 +197,9 @@ describe("web design", () => {
   it("refuses to store a time zone no clock knows", async () => {
     const settings = createSettings(fakeDb().db)
     for (const timezone of ["Mars/Base", "Asia/Jerusalem; drop"])
-      await expect(settings.set("general", { publicUrl: "", timezone, design: "regular" })).rejects.toThrow()
+      await expect(
+        settings.set("general", { ...defaults.general, publicUrl: "", timezone, design: "regular" }),
+      ).rejects.toThrow()
   })
 
   it("keeps a fixed offset stored before, and reads an unknown time zone as UTC without resetting General", async () => {
@@ -207,13 +211,43 @@ describe("web design", () => {
     expect(await unknown.get("general")).toEqual({
       publicUrl: "https://ops.example.com",
       timezone: "UTC",
+      dateFormat: "browser",
+      timeFormat: "24h",
       design: "compact",
     })
   })
 
+  it("reads an unknown stored date or time format as its default without resetting General (FW-9)", async () => {
+    const settings = createSettings(
+      fakeDb({
+        publicUrl: "https://ops.example.com",
+        timezone: "Asia/Jerusalem",
+        dateFormat: "D MMM Y",
+        timeFormat: "36h",
+        design: "compact",
+      }).db,
+    )
+    expect(await settings.get("general")).toEqual({
+      publicUrl: "https://ops.example.com",
+      timezone: "Asia/Jerusalem",
+      dateFormat: "browser",
+      timeFormat: "24h",
+      design: "compact",
+    })
+  })
+
+  it("stores a known date and time format and refuses an unknown one (FW-9)", async () => {
+    const store = fakeDb()
+    const settings = createSettings(store.db)
+    await settings.set("general", { ...defaults.general, dateFormat: "YYYY-MM-DD", timeFormat: "12h" })
+    expect(await settings.get("general")).toMatchObject({ dateFormat: "YYYY-MM-DD", timeFormat: "12h" })
+    await expect(settings.set("general", { ...defaults.general, dateFormat: "D MMM Y" as "browser" })).rejects.toThrow()
+    await expect(settings.set("general", { ...defaults.general, timeFormat: "36h" as "24h" })).rejects.toThrow()
+  })
+
   it("follows a saved General at once", async () => {
     const settings = createSettings(fakeDb().db)
-    await settings.set("general", { publicUrl: "", timezone: "UTC", design: "compact" })
+    await settings.set("general", { ...defaults.general, publicUrl: "", timezone: "UTC", design: "compact" })
     expect(settings.design()).toBe("compact")
   })
 
@@ -221,8 +255,8 @@ describe("web design", () => {
     const store = fakeDb(undefined, { slowFirstWrite: true })
     const settings = createSettings(store.db)
     await Promise.all([
-      settings.set("general", { publicUrl: "", timezone: "UTC", design: "compact" }),
-      settings.set("general", { publicUrl: "", timezone: "UTC", design: "regular" }),
+      settings.set("general", { ...defaults.general, publicUrl: "", timezone: "UTC", design: "compact" }),
+      settings.set("general", { ...defaults.general, publicUrl: "", timezone: "UTC", design: "regular" }),
     ])
     expect(settings.design()).toBe("regular")
     expect((store.stored() as { design: string }).design).toBe("regular")
@@ -268,7 +302,7 @@ describe("web design, a startup read racing a save", () => {
     } as unknown as Db
     const settings = createSettings(db)
     const loading = settings.loadDesign({ info() {}, warn() {} })
-    await settings.set("general", { publicUrl: "", timezone: "UTC", design: "compact" })
+    await settings.set("general", { ...defaults.general, publicUrl: "", timezone: "UTC", design: "compact" })
     release([{ value: { design: "regular" } }]) // the read started before the save
     await loading
     expect(settings.design()).toBe("compact")

@@ -17,7 +17,7 @@ import {
   UserText,
 } from "@/components/kit"
 import { ListWithPanel } from "@/components/list-panel"
-import { StatusTag, statusOf, TimeAgo, Tone, When } from "@/components/status"
+import { StatusTag, statusOf, TimeAgo, TimeLeft, Tone, When } from "@/components/status"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -34,7 +34,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useApi, useApiMutation } from "@/lib/api"
 import { loadView } from "@/lib/load-state"
 import { counts, n, plural } from "@/lib/numbers"
-import { formatDateTime, useTimeZone } from "@/lib/time"
+import { formatTime, useTimeFormat } from "@/lib/time"
 
 export type AccessStatus = "pending" | "approved" | "denied" | "expired" | "released" | "revoked"
 
@@ -246,7 +246,7 @@ export function AccessPage() {
 }
 
 function AccessDetailPanel({ id }: { id: string }) {
-  const tz = useTimeZone()
+  const w = useTimeFormat()
   const detail = useApi<AccessDetail>(`/access/${id}`)
   useCrumb(detail.data?.reason)
   const invalidate = ["/access", `/access/${id}`, "/overview", "/overview/summary"]
@@ -298,20 +298,21 @@ function AccessDetailPanel({ id }: { id: string }) {
           {r.status === "pending" && (
             <>
               Asked <TimeAgo value={r.requestedAt} /> for {formatDuration(r.minutes)}. Expires without a decision{" "}
-              <TimeAgo value={r.decideBy} />.
+              <TimeLeft value={r.decideBy} />.
             </>
           )}
           {r.status === "approved" && r.expiresAt && (
             <>
-              Approved by {r.decidedBy} ({r.decidedVia}). Ends {formatDateTime(r.expiresAt, tz)}.{" "}
-              {r.keyCollected ? "The agent has collected the key." : "The agent has not collected the key yet."}
+              Approved by {r.decidedBy} ({r.decidedVia}). Ends {formatTime(r.expiresAt, w, { seconds: false })} (
+              <TimeLeft value={r.expiresAt} />
+              ). {r.keyCollected ? "The agent has collected the key." : "The agent has not collected the key yet."}
             </>
           )}
           {r.status !== "pending" && r.status !== "approved" && (
             <>
               {statusOf("access", r.status).label}
               {r.decidedBy ? ` · decided by ${r.decidedBy} (${r.decidedVia})` : ""}
-              {r.endedAt ? ` · ended ${formatDateTime(r.endedAt, tz)}` : ""}
+              {r.endedAt ? ` · ended ${formatTime(r.endedAt, w, { seconds: false })}` : ""}
             </>
           )}
         </p>

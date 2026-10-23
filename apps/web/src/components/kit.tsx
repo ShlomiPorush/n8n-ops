@@ -14,7 +14,7 @@ import { COPIED_MS, DIM_AFTER_MS } from "@/lib/behavior"
 import { type BusyState, busyRun } from "@/lib/busy-run"
 import { filterFailed, type Live, refreshFailed } from "@/lib/load-state"
 import { rowHeld } from "@/lib/row-held"
-import { formatFull, useTimeZone } from "@/lib/time"
+import { formatTime, useTimeFormat } from "@/lib/time"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
 
@@ -112,8 +112,8 @@ export function PageHead({
 /** "Updated 3 min ago", with the exact time on hover; it keeps ticking while the page is open. */
 function Updated({ at }: { at: number }) {
   useTick()
-  const tz = useTimeZone()
-  return <span title={formatFull(new Date(at), tz)}>Updated {timeAgo(new Date(at))}</span>
+  const w = useTimeFormat()
+  return <span title={formatTime(at, w)}>Updated {timeAgo(new Date(at))}</span>
 }
 
 /**

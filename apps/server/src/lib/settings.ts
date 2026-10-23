@@ -1,4 +1,14 @@
-import { type NumberLimits, numberProblem, settingKinds, settingLabel, valueProblem } from "@n8n-ops/shared"
+import {
+  dateFormats,
+  isDateFormat,
+  isTimeFormat,
+  type NumberLimits,
+  numberProblem,
+  settingKinds,
+  settingLabel,
+  timeFormats,
+  valueProblem,
+} from "@n8n-ops/shared"
 import { eq } from "drizzle-orm"
 import { z } from "zod"
 import type { Db } from "../db/client.ts"
@@ -80,6 +90,9 @@ export const sections = {
     publicUrl: z.string(),
     /** Empty means UTC. A new value must also pass isTimeZone (checked where it is saved). */
     timezone: z.string().refine((v) => v === "" || isKnownZone(v), "choose a time zone from the list"),
+    /** How the console, the emails and Telegram write a date and a time (FW-9, EM-6). */
+    dateFormat: z.enum(dateFormats),
+    timeFormat: z.enum(timeFormats),
     /** Which of the two web designs the whole installation uses. */
     design: z.enum(designs),
   }),
@@ -153,7 +166,7 @@ export type SectionName = keyof typeof sections
 export type Section<K extends SectionName> = z.infer<(typeof sections)[K]>
 
 export const defaults: { [K in SectionName]: Section<K> } = {
-  general: { publicUrl: "", timezone: "UTC", design: "regular" },
+  general: { publicUrl: "", timezone: "UTC", dateFormat: "browser", timeFormat: "24h", design: "regular" },
   defaults: {
     pollIntervalSec: 60,
     healthIntervalSec: 30,
@@ -312,6 +325,9 @@ export function createSettings(db: Db, env: { publicUrl?: string } = {}): Settin
     // So does a time zone Intl does not know, saved before time zones were checked: it reads as UTC.
     if (key === "general" && "timezone" in stored && stored.timezone !== "" && !isKnownZone(stored.timezone))
       delete stored.timezone
+    // And a date or time format this release does not know: it reads as its default (FW-9).
+    if (key === "general" && "dateFormat" in stored && !isDateFormat(stored.dateFormat)) delete stored.dateFormat
+    if (key === "general" && "timeFormat" in stored && !isTimeFormat(stored.timeFormat)) delete stored.timeFormat
     const merged = { ...defaults[key], ...stored }
     const parsed = sections[key].safeParse(merged)
     return (parsed.success ? parsed.data : defaults[key]) as Section<K>

@@ -955,6 +955,66 @@ test("the time zone is chosen from a list with a search, and Back closes the lis
   }
 })
 
+test("a Date format chosen in Settings writes the dates in a list that way, and Browser is the default (FW-9)", async () => {
+  const before = (await (await page.request.get("/api/settings/general")).json()) as { dateFormat: string }
+  const unsaved = page.getByRole("region", { name: "Unsaved changes" })
+  const firstDate = page.locator("table time").first()
+  const iso = /^\d{4}-\d{2}-\d{2}, /
+  try {
+    await page.goto("/settings/general")
+    const field = page.getByRole("button", { name: /^Date format:/ })
+    await expect(field).toHaveAccessibleName(
+      `Date format: ${before.dateFormat === "browser" ? "Browser" : before.dateFormat}`,
+    )
+    await field.click()
+    await page.getByRole("option", { name: "YYYY-MM-DD" }).click()
+    // The example shows the choice before it is saved, and the row says it differs from the default.
+    await expect(page.getByText(/^Example: \d{4}-\d{2}-\d{2}$/)).toBeVisible()
+    await expect(page.getByRole("button", { name: "Reset to default (Browser)" })).toBeVisible()
+    await unsaved.getByRole("button", { name: "Save changes" }).click()
+    await expect(unsaved).toHaveCount(0)
+    expect((await (await page.request.get("/api/settings/general")).json()).dateFormat).toBe("YYYY-MM-DD")
+
+    await page.goto("/audit")
+    await expect(firstDate).toHaveText(iso)
+  } finally {
+    await page.request.put("/api/settings/general", { data: { dateFormat: before.dateFormat } })
+  }
+  // Back to how it was: the same list no longer writes the year first.
+  await page.goto("/audit")
+  await expect(firstDate).toBeVisible()
+  await expect(firstDate).not.toHaveText(iso)
+})
+
+test("the 12-hour Time format writes the daily backup time that way as soon as it is saved (FW-9)", async () => {
+  const before = (await (await page.request.get("/api/settings/general")).json()) as { timeFormat: string }
+  const { backupTime } = (await (await page.request.get("/api/backups")).json()) as { backupTime: string }
+  const [hour = 0, minute = 0] = backupTime.split(":").map(Number)
+  const twelve = `${hour % 12 || 12}:${String(minute).padStart(2, "0")} ${hour < 12 ? "AM" : "PM"}`
+  const figure = page
+    .locator('[data-slot="kpi"]')
+    .filter({ hasText: "Daily backup time" })
+    .locator('[data-slot="kpi-figure"]')
+  const unsaved = page.getByRole("region", { name: "Unsaved changes" })
+  try {
+    // From the 24-hour clock, whatever was stored: Browser in an English (US) browser would show 12 hours already.
+    await page.request.put("/api/settings/general", { data: { timeFormat: "24h" } })
+    await page.goto("/backups")
+    await expect(figure).toHaveText(backupTime)
+
+    await page.goto("/settings/general")
+    await page.getByRole("radio", { name: "12-hour" }).click()
+    await unsaved.getByRole("button", { name: "Save changes" }).click()
+    await expect(unsaved).toHaveCount(0)
+    // Back to Backups inside the app, with no reload: the saved choice shows at once.
+    await page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Backups", exact: true }).click()
+    await expect(page).toHaveURL(/\/backups$/)
+    await expect(figure).toHaveText(twelve)
+  } finally {
+    await page.request.put("/api/settings/general", { data: { timeFormat: before.timeFormat } })
+  }
+})
+
 /** Opens the second test instance and returns its id. */
 async function openInstanceB() {
   await page.goto("/instances")

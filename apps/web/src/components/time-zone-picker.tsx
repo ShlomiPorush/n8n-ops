@@ -1,18 +1,7 @@
 import { useCallback } from "react"
 import { FieldPicker } from "@/components/field-picker"
 import type { PickerOption } from "@/components/filter-bar"
-
-/** A zone's offset from UTC right now, such as UTC+03:00; null when the browser does not know the zone. */
-export function zoneOffset(zone: string, at: Date): string | null {
-  try {
-    const name = new Intl.DateTimeFormat("en-US", { timeZone: zone, timeZoneName: "longOffset" })
-      .formatToParts(at)
-      .find((p) => p.type === "timeZoneName")?.value
-    return !name || name === "GMT" ? "UTC+00:00" : name.replace("GMT", "UTC")
-  } catch {
-    return null
-  }
-}
+import { zoneOffset } from "@/lib/time"
 
 /** Every zone the browser knows, UTC first; a stored zone the list lacks is kept at the top. */
 function zoneOptions(current: string): PickerOption[] {

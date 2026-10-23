@@ -233,7 +233,7 @@ test("a new SMTP server needs the password again, so the stored one is not sent 
   await page.goto("/settings/email")
   await page.getByLabel("SMTP server").fill("smtp.elsewhere.example")
   await page.getByRole("button", { name: "Save" }).click()
-  await expect(page.getByText("The SMTP server changed. Enter the SMTP password again")).toBeVisible()
+  await expect(page.getByText("The SMTP server or user changed. Enter the SMTP password again")).toBeVisible()
   // The password field opens for the new value; nothing was saved.
   await expect(page.getByPlaceholder("New value")).toBeVisible()
   expect((await (await page.request.get("/api/settings/email")).json()).smtpHost).toBe("mail")

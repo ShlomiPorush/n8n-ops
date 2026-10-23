@@ -17,6 +17,12 @@ describe("SMTP password and server", () => {
     expect(smtpPasswordNeeded(stored, { smtpHost: "smtp.example.com", smtpPort: 465 }, "")).toBe(true)
   })
 
+  it("asks for it again when the user changes", () => {
+    const withUser = { ...stored, smtpUser: "reports" }
+    expect(smtpPasswordNeeded(withUser, { ...withUser, smtpUser: "someone-else" }, undefined)).toBe(true)
+    expect(smtpPasswordNeeded(withUser, { ...withUser, smtpUser: " reports " }, undefined)).toBe(false)
+  })
+
   it("lets an ordinary save through: same server written differently", () => {
     expect(smtpPasswordNeeded(stored, { smtpHost: " SMTP.example.com ", smtpPort: "587" }, undefined)).toBe(false)
   })

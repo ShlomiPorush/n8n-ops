@@ -361,13 +361,20 @@ const toForm = (def: { fields: FieldDef[] }, data: Record<string, unknown>) =>
     }),
   ) as Record<string, unknown>
 
-/** Whether the SMTP host or port really differs from the stored one: case, spaces and "587" against 587 do not. */
+/**
+ * Whether the SMTP host, port or user really differs from the stored one: case and spaces in the host, spaces
+ * in the user and "587" against 587 do not count. The server checks the same.
+ */
 export const smtpServerChanged = (stored: Record<string, unknown>, next: Record<string, unknown>) => {
-  const server = (v: Record<string, unknown>) =>
-    `${String(v.smtpHost ?? "")
-      .trim()
-      .toLowerCase()}:${Number(v.smtpPort ?? 0)}`
-  return server(stored) !== server(next)
+  const account = (v: Record<string, unknown>) =>
+    JSON.stringify([
+      String(v.smtpHost ?? "")
+        .trim()
+        .toLowerCase(),
+      Number(v.smtpPort ?? 0),
+      String(v.smtpUser ?? "").trim(),
+    ])
+  return account(stored) !== account(next)
 }
 
 export function SettingsForm({ section }: { section: string }) {
@@ -424,7 +431,9 @@ export function SettingsForm({ section }: { section: string }) {
         smtpServerChanged(query.data, sent) &&
         !sent.smtpPassword
       ) {
-        toast.error("The SMTP server changed. Enter the SMTP password again, so the stored one is not sent to it.")
+        toast.error(
+          "The SMTP server or user changed. Enter the SMTP password again, so the stored one is not sent to it.",
+        )
         setValues((v) => ({ ...v, smtpPassword: "" }))
         throw new Error("password_needed")
       }

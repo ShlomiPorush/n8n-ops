@@ -29,7 +29,7 @@ All notable changes to this project are documented here. The format follows [Kee
 ### Fixed
 
 - Clicking a tab (Connected Agents, for example) no longer leaves a focus ring around it, cut off at the top and bottom. The ring still shows, whole, when the tabs are used with the keyboard.
-- **The SMTP password is no longer sent to a new SMTP server.** Changing the SMTP server or port in Settings → Email Reports now needs the password again; before, the stored password was used to sign in to whatever server was entered next.
+- **The SMTP password is no longer sent to a new SMTP server.** Changing the SMTP server, port or user in Settings → Email Reports now needs the password again; before, the stored password was used to sign in to whatever server was entered next.
 - What is typed in Edit instance is no longer replaced by the stored values when the instance refreshes behind the dialog (every 15 seconds, or on coming back to the window).
 - The line under a row of tabs that scrolls sideways now runs to its end at any scroll position.
 - `scripts/verify.sh --changed` (and the CI of pull requests) no longer builds the web app twice at once when a file at the root such as `CHANGELOG.md` changed, which could fail the build at random.

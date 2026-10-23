@@ -4,6 +4,7 @@ import { Cloud, FolderOpen, Globe, HardDrive, type LucideIcon, Plus, Server, Tra
 import { useEffect, useRef, useState } from "react"
 import { Link, useNavigate } from "react-router"
 import { useDiscardGuard } from "@/components/discard-guard"
+import { FieldPicker } from "@/components/field-picker"
 import {
   BusyButton,
   Empty,
@@ -40,7 +41,6 @@ import {
   FieldSet,
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { api, describeError, useApi, useApiMutation } from "@/lib/api"
@@ -698,18 +698,15 @@ export function DestinationFields({
             <div className="grid gap-3 min-[480px]:grid-cols-2">
               <Field>
                 <FieldLabel>Lock mode</FieldLabel>
-                <Select
+                <FieldPicker
+                  label="Lock mode"
                   value={form.lockMode}
-                  onValueChange={(v) => setForm((f) => ({ ...f, lockMode: v as Lock["mode"] }))}
-                >
-                  <SelectTrigger className="w-full" aria-label="Lock mode">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="COMPLIANCE">Compliance: nobody can remove it early</SelectItem>
-                    <SelectItem value="GOVERNANCE">Governance: users with a bypass right can</SelectItem>
-                  </SelectContent>
-                </Select>
+                  onChange={(v) => setForm((f) => ({ ...f, lockMode: v as Lock["mode"] }))}
+                  options={[
+                    { value: "COMPLIANCE", label: "Compliance: nobody can remove it early" },
+                    { value: "GOVERNANCE", label: "Governance: users with a bypass right can" },
+                  ]}
+                />
               </Field>
               <Field>
                 <FieldLabel htmlFor="d-lock-days">Lock for (days)</FieldLabel>

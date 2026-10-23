@@ -1,6 +1,7 @@
 import { CheckIcon, ChevronDownIcon, ChevronUpIcon } from "lucide-react"
 import { Select as SelectPrimitive } from "radix-ui"
 import type * as React from "react"
+import { popoverPadding } from "@/lib/popover-room"
 import { cn } from "@/lib/utils"
 
 function Select({ ...props }: React.ComponentProps<typeof SelectPrimitive.Root>) {
@@ -61,6 +62,8 @@ function SelectContent({
         )}
         position={position}
         align={align}
+        // Between the phone's top bar and tab bar (MP-5); Radix applies it in the popper position.
+        collisionPadding={popoverPadding()}
         {...props}
       >
         <SelectScrollUpButton />

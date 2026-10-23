@@ -2,6 +2,7 @@ import { ChevronRight, KeySquare as KeySquareIcon, Plus, Trash2 } from "lucide-r
 import { useId, useState } from "react"
 import { useConfirm } from "@/components/confirm"
 import { useDiscardGuard } from "@/components/discard-guard"
+import { FieldPicker } from "@/components/field-picker"
 import {
   BusyButton,
   Command,
@@ -29,7 +30,6 @@ import {
 } from "@/components/ui/dialog"
 import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useApi, useApiMutation } from "@/lib/api"
@@ -346,15 +346,15 @@ function HandMadeToken() {
                 </Field>
                 <Field>
                   <FieldLabel>Kind</FieldLabel>
-                  <Select value={kind} onValueChange={(v) => setKind(v as "mcp" | "rest")}>
-                    <SelectTrigger className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="mcp">MCP (agents)</SelectItem>
-                      <SelectItem value="rest">REST (scripts)</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <FieldPicker
+                    label="Kind"
+                    value={kind}
+                    onChange={(v) => setKind(v as "mcp" | "rest")}
+                    options={[
+                      { value: "mcp", label: "MCP (agents)" },
+                      { value: "rest", label: "REST (scripts)" },
+                    ]}
+                  />
                 </Field>
                 <Field orientation="horizontal">
                   <Checkbox

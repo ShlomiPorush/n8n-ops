@@ -2,6 +2,7 @@ import type { LucideIcon } from "lucide-react"
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react"
 import { createPortal } from "react-dom"
 import { useSearchParams } from "react-router"
+import { useCrumb } from "@/app/chrome"
 import { usePaneNav } from "@/components/list-panel"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -14,7 +15,19 @@ import { cn } from "@/lib/utils"
  * ask before leaving unsaved changes. Every tab stays mounted and only the open one shows, so edits on several
  * tabs survive a switch. Layout follows the width of the pane, so the caller's outer element is the container
  * `@container/pane`.
+ *
+ * An item opened from its list starts on its first tab, so the list's links never carry a tab (`withoutTab`); an
+ * address that names a tab (a link, a reload, Back and Forward) opens that tab (DS-6, NL-3). The tabs stay in
+ * sight at the top of the pane while it scrolls (DS-14).
  */
+
+/** The search part of a list's address without the open item's tab ("" or "?status=all"), for its row links. */
+export function withoutTab(params: URLSearchParams): string {
+  const p = new URLSearchParams(params)
+  p.delete("tab")
+  const s = p.toString()
+  return s ? `?${s}` : ""
+}
 
 /**
  * The tab the address asks for (null for the first), and a way to open one; opening adds a history entry, so Back
@@ -83,7 +96,9 @@ const barTabs: TabsLook = {
 
 /**
  * The tab list and the tabs' content. `items` are the tabs there are now; a tab the address asks for that is not
- * among them (unknown, or gone since, such as Same error after a merge) opens the first.
+ * among them (unknown, or gone since, such as Same error after a merge) opens the first, and the address is
+ * corrected in place, without a Back step (NL-3). The open tab, when it is not the first, names the browser tab
+ * and ends the trail in the top bar (NL-3, NL-5).
  */
 export function PaneTabs({
   label,
@@ -99,10 +114,50 @@ export function PaneTabs({
   children: React.ReactNode
 }) {
   const active = items.find((t) => t.value === value)?.value ?? items[0]?.value ?? ""
+  const first = items[0]?.value
   // On a phone the tabs are a bar at the bottom of the sheet, outside the pane.
   const nav = usePaneNav()
   const look = nav ? barTabs : topTabs
   const list = useRef<HTMLDivElement | null>(null)
+  const stuck = useRef<HTMLDivElement | null>(null)
+
+  // The first tab is the plain address; any other the address names but the pane lacks is corrected to it.
+  const [, setParams] = useSearchParams()
+  useEffect(() => {
+    if (value === null || (value === active && value !== first)) return
+    setParams(
+      (prev) => {
+        const p = new URLSearchParams(prev)
+        p.delete("tab")
+        return p
+      },
+      { replace: true },
+    )
+  }, [value, active, first, setParams])
+
+  useCrumb(active !== first ? (items.find((t) => t.value === active)?.label ?? null) : null)
+
+  /*
+   * A tab opened while the pane is scrolled past the tabs starts right under them, not at the old offset
+   * (DS-14). The stuck tabs' place in the content is read from the tabs' parent, which does not stick.
+   */
+  const shown = useRef(active)
+  useLayoutEffect(() => {
+    if (shown.current === active) return
+    shown.current = active
+    const el = stuck.current
+    const parent = el?.parentElement
+    const scroller = el?.closest<HTMLElement>('[data-scroll-pane], [data-slot="dialog-body"]')
+    if (!el || !parent || !scroller) return
+    const style = getComputedStyle(el)
+    const place =
+      scroller.scrollTop +
+      parent.getBoundingClientRect().top -
+      scroller.getBoundingClientRect().top +
+      (Number.parseFloat(style.marginTop) || 0) -
+      (Number.parseFloat(style.top) || 0)
+    if (scroller.scrollTop > place) scroller.scrollTop = Math.max(0, place)
+  }, [active])
   /*
    * Where the focus goes back after the tabs changed under it: the id of the tab that had it when the list moved
    * between the top and the bottom bar (the screen crossed the phone width), or the open tab when the focused one
@@ -168,7 +223,14 @@ export function PaneTabs({
   return (
     <Tabs value={active} onValueChange={onValueChange} activationMode="manual">
       {/* A portal keeps the tabs in the Tabs above, so the keyboard and the open tab work the same. */}
-      {nav ? createPortal(tabs, nav) : tabs}
+      {nav ? (
+        createPortal(tabs, nav)
+      ) : (
+        // Sticks in the pane (index.css); the list inside keeps its own sideways scroll and its line.
+        <div ref={stuck} data-slot="pane-tabs">
+          {tabs}
+        </div>
+      )}
       {children}
     </Tabs>
   )

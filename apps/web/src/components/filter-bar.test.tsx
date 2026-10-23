@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server"
 import { describe, expect, it } from "vitest"
-import { FilterBar } from "./filter-bar.tsx"
+import { FilterBar, filterOptions } from "./filter-bar.tsx"
 
 // No list has a rarely used filter yet, so the Filters button is checked here, not on a page (MP-6).
 describe("the Filters button of a filter bar (MP-6)", () => {
@@ -30,5 +30,26 @@ describe("the Filters button of a filter bar (MP-6)", () => {
     const html = renderToStaticMarkup(<FilterBar more={rare} active={2} />)
     expect(html).toContain('aria-label="Filters, 2 in use"')
     expect(html).toMatch(/<span aria-hidden="true"[^>]*>2<\/span>/)
+  })
+})
+
+describe("a picker's search (MP-4)", () => {
+  const zones = [
+    { value: "America/New_York", label: "America/New York", search: "America/New_York UTC-04:00" },
+    { value: "Asia/Jerusalem", label: "Asia/Jerusalem", search: "Asia/Jerusalem UTC+03:00" },
+    { value: "error", label: "Sync orders · ETIMEDOUT", search: "connect_timeout on the ERP" },
+  ]
+  const found = (q: string) => filterOptions(zones, q).map((o) => o.value)
+
+  it("matches a part of the label or the extra text, whatever the case", () => {
+    expect(found("jeru")).toEqual(["Asia/Jerusalem"])
+    expect(found("utc+03")).toEqual(["Asia/Jerusalem"])
+    expect(found("  ")).toEqual(["America/New_York", "Asia/Jerusalem", "error"])
+  })
+
+  it("reads an underscore as a space, on either side", () => {
+    expect(found("new york")).toEqual(["America/New_York"])
+    expect(found("new_york")).toEqual(["America/New_York"])
+    expect(found("connect timeout")).toEqual(["error"])
   })
 })

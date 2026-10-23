@@ -1,5 +1,5 @@
-import { expect, type Page, type Request, test } from "@playwright/test"
-import { dialogClosed, discardChanges, signIn } from "./helpers.ts"
+import { expect, type Locator, type Page, type Request, test } from "@playwright/test"
+import { design, dialogClosed, discardChanges, signIn } from "./helpers.ts"
 
 // The shared ways of moving around: search, sorting, filters in the address, the keyboard, Back, unsaved
 // changes, the sidebar and the links out to n8n.
@@ -289,6 +289,47 @@ test("on a phone a result the Leave question keeps from opening leaves its query
     await expect(search).toHaveValue("")
     await page.getByRole("button", { name: "Cancel" }).click()
     await dialogClosed(page)
+  } finally {
+    await page.setViewportSize({ width: 1440, height: 900 })
+  }
+})
+
+test("on a phone the search is a layer: the page behind waits, Tab stays inside, and Escape and Back give the focus back (DS-8)", async () => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  try {
+    await page.goto("/instances")
+    const opener = page.getByRole("button", { name: "Search", exact: true })
+    const layer = page.getByRole("dialog", { name: "Search" })
+    const behindInert = () => page.locator("#main").evaluate((el) => el.closest("[inert]") !== null)
+    const focusInside = () => layer.evaluate((el) => el.contains(document.activeElement))
+
+    await opener.click()
+    await expect(layer).toBeVisible()
+    await expect(layer).toHaveAttribute("aria-modal", "true")
+    await expect(layer.getByRole("combobox", { name: "Search" })).toBeFocused()
+    expect(await behindInert()).toBe(true)
+    // Tab and Shift+Tab go round the layer's controls and never reach the page behind it.
+    for (const key of ["Tab", "Tab", "Tab", "Tab", "Shift+Tab", "Shift+Tab", "Shift+Tab", "Shift+Tab"]) {
+      await page.keyboard.press(key)
+      expect(await focusInside()).toBe(true)
+    }
+
+    // Escape closes it, the page is usable again, and the focus is back on the Search button.
+    await page.keyboard.press("Escape")
+    await expect(layer).toHaveCount(0)
+    await expect(opener).toBeFocused()
+    expect(await behindInert()).toBe(false)
+    await dialogClosed(page)
+
+    // Back closes it too, on the same page.
+    await opener.click()
+    await expect(layer).toBeVisible()
+    await expect.poll(overlayEntry).not.toBeNull()
+    await page.goBack()
+    await expect(layer).toHaveCount(0)
+    await expect(opener).toBeFocused()
+    await expect(page).toHaveURL(/\/instances$/)
+    expect(await behindInert()).toBe(false)
   } finally {
     await page.setViewportSize({ width: 1440, height: 900 })
   }
@@ -714,6 +755,27 @@ test("Ctrl+B folds the sidebar into the rail and back", async () => {
   await expect(html).not.toHaveAttribute("data-nav", "rail")
 })
 
+test("the Settings flyout is a menu that closes on resize, and Settings clicked again adds no Back step (NL-8, NL-4)", async () => {
+  await page.goto("/instances")
+  await page.goto("/settings/alerts")
+  const settings = page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Settings", exact: true })
+  await expect(settings).toHaveAttribute("aria-haspopup", "menu")
+  await settings.hover()
+  const menu = page.getByRole("menu", { name: "Settings sections" })
+  await expect(menu).toBeVisible()
+  await expect(settings).toHaveAttribute("aria-expanded", "true")
+  await expect(menu.getByRole("menuitem", { name: "Alerts" })).toBeVisible()
+  await page.setViewportSize({ width: 1400, height: 900 })
+  await expect(menu).toHaveCount(0)
+  await page.setViewportSize({ width: 1440, height: 900 })
+
+  // Clicked again on one of its sections, Settings stays there without a step of its own: Back leaves it.
+  await settings.click()
+  await expect(page).toHaveURL(/\/settings\/alerts$/)
+  await page.goBack()
+  await expect(page).toHaveURL(/\/instances$/)
+})
+
 test("an instance opens in n8n in a new tab", async () => {
   await page.goto("/instances")
   await page
@@ -878,9 +940,10 @@ test("an instance tab has its own address, which reload and Back follow", async 
   await expect(page).toHaveURL(at(""))
   await expect(tab("Overview")).toHaveAttribute("aria-selected", "true")
 
-  // An unknown tab shows the overview.
+  // An unknown tab shows the overview, and the address says so.
   await page.goto(`/instances/${id}?tab=nothing`)
   await expect(tab("Overview")).toHaveAttribute("aria-selected", "true")
+  await expect(page).toHaveURL(at(""))
 
   // The arrow keys move between tabs without opening them; Enter opens one.
   await page.goto(`/instances/${id}`)
@@ -1056,6 +1119,156 @@ test("on a phone the instance tabs are a bar at the bottom of a sheet that keeps
   }
 })
 
+/** Where an element starts and ends on the screen. */
+const top = async (el: Locator) => (await el.boundingBox())?.y ?? Number.NaN
+const bottom = async (el: Locator) => {
+  const box = await el.boundingBox()
+  return (box?.y ?? Number.NaN) + (box?.height ?? 0)
+}
+/** Makes the open tab long enough to scroll far, whatever the test data holds. */
+const lengthenOpenTab = (scope: Locator) =>
+  scope.locator('[role="tabpanel"][data-state="active"]').evaluate((el) => {
+    const spacer = document.createElement("div")
+    spacer.style.height = "2000px"
+    el.append(spacer)
+  })
+/** Lets the browser draw and deliver the scroll events of what a test just scrolled. */
+const settle = () =>
+  page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))))
+
+test("an instance's tabs stay at the top of its pane, another tab starts under them, and Back scrolls back (DS-14, NL-3)", async () => {
+  await page.setViewportSize({ width: 1440, height: 600 })
+  try {
+    await openInstanceB()
+    const region = page.getByRole("region", { name: "Instance", exact: true })
+    const pane = region.locator("[data-scroll-pane]")
+    const tabs = region.getByRole("tablist", { name: "Instance sections" })
+    await lengthenOpenTab(region)
+    await pane.evaluate((el) => {
+      el.scrollTop = 1200
+    })
+    await settle()
+
+    // Stuck at the very top of the pane: the pane has no padding above them for content to show through.
+    const gap = async () => (await top(tabs)) - (await top(pane))
+    await expect.poll(gap).toBeGreaterThanOrEqual(0)
+    expect(await gap()).toBeLessThanOrEqual(10)
+    // Still a row that scrolls sideways, with its line under it (#92); Regular draws segments instead.
+    expect(await tabs.evaluate((el) => getComputedStyle(el).overflowX)).toBe("auto")
+    if (design === "compact") expect(await tabs.evaluate((el) => getComputedStyle(el).boxShadow)).not.toBe("none")
+
+    // Another tab starts right under the tabs, not at the old offset.
+    await region.getByRole("tab", { name: /^Health/ }).click()
+    const panel = region.locator('[role="tabpanel"][data-state="active"]')
+    const under = async () => (await top(panel)) - (await bottom(tabs))
+    await expect.poll(under).toBeGreaterThanOrEqual(0)
+    expect(await under()).toBeLessThanOrEqual(30)
+    expect(await pane.evaluate((el) => el.scrollTop)).toBeLessThan(1200)
+    await settle()
+
+    // Back opens the overview again where it was scrolled.
+    await page.goBack()
+    await expect(region.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true")
+    await expect.poll(() => pane.evaluate((el) => el.scrollTop)).toBeGreaterThan(1190)
+  } finally {
+    await page.setViewportSize({ width: 1440, height: 900 })
+  }
+})
+
+test("at 900px an instance opens 16px from the screen's edges, keeps its height on every tab, and its tabs stick under its head (DS-16, DS-14)", async () => {
+  const id = await openInstanceB()
+  await page.setViewportSize({ width: 900, height: 700 })
+  try {
+    await page.goto(`/instances/${id}`)
+    const dialog = page.getByRole("dialog")
+    const tabs = dialog.getByRole("tablist", { name: "Instance sections" })
+    await expect(dialog.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true")
+    const box = await dialog.boundingBox()
+    expect(box?.x ?? 0).toBeGreaterThanOrEqual(15.5)
+    expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(900 - 15.5)
+    // 90% of the screen, whatever the tab holds.
+    expect(Math.abs((box?.height ?? 0) - 630)).toBeLessThan(2)
+
+    await lengthenOpenTab(dialog)
+    await dialog.locator('[data-slot="dialog-body"]').evaluate((el) => {
+      el.scrollTop = 1200
+    })
+    await settle()
+    const head = dialog.locator('[data-slot="dialog-header"]')
+    const gap = async () => (await top(tabs)) - (await bottom(head))
+    await expect.poll(gap).toBeGreaterThanOrEqual(0)
+    expect(await gap()).toBeLessThanOrEqual(10)
+
+    await dialog.getByRole("tab", { name: /^Health/ }).click()
+    const panel = dialog.locator('[role="tabpanel"][data-state="active"]')
+    const under = async () => (await top(panel)) - (await bottom(tabs))
+    await expect.poll(under).toBeGreaterThanOrEqual(0)
+    expect(await under()).toBeLessThanOrEqual(30)
+    expect(Math.abs(((await dialog.boundingBox())?.height ?? 0) - 630)).toBeLessThan(2)
+  } finally {
+    await page.setViewportSize({ width: 1440, height: 900 })
+  }
+})
+
+test("an opened tab names the browser tab and ends the trail, and an unknown tab is corrected in place (NL-3, NL-5)", async () => {
+  const id = await openInstanceB()
+  const trail = page.getByRole("navigation", { name: "You are here" })
+  await expect(page).toHaveTitle("e2e-n8n-b · Instances · n8n-ops")
+  await page.getByRole("tab", { name: /^Health/ }).click()
+  await expect(page).toHaveTitle("Health · e2e-n8n-b · Instances · n8n-ops")
+  await expect(trail.locator('[aria-current="page"]')).toHaveText("Health")
+  await expect(trail).toContainText("e2e-n8n-b")
+
+  // The address is corrected without a step of its own: Back goes to the tab before it.
+  await page.goto(`/instances/${id}?tab=nothing`)
+  await expect(page).toHaveURL((url) => url.pathname === `/instances/${id}` && url.search === "")
+  await expect(page.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true")
+  await expect(page).toHaveTitle("e2e-n8n-b · Instances · n8n-ops")
+  await page.goBack()
+  await expect(page).toHaveURL((url) => url.pathname === `/instances/${id}` && url.search === "?tab=health")
+})
+
+test("an item opened from its list starts on its first tab, and an address with a tab opens that tab (NL-4)", async () => {
+  // A link to an instance's tab opens it; the next instance opened from the list starts on Overview.
+  const id = await openInstanceB()
+  await page.goto(`/instances/${id}?tab=health`)
+  await expect(page.getByRole("tab", { name: /^Health/ })).toHaveAttribute("aria-selected", "true")
+  await page
+    .getByRole("row")
+    .filter({ has: page.getByText("e2e-n8n", { exact: true }) })
+    .click()
+  await expect(page).toHaveURL((url) => url.pathname !== `/instances/${id}` && url.search === "")
+  await expect(page.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true")
+
+  // A problem's tab stays its own: the list's links keep its filters but not the open tab.
+  await page.goto("/problems?status=all")
+  await page
+    .getByRole("row", { name: /Sync orders to ERP/ })
+    .first()
+    .click()
+  await page.getByRole("tab", { name: /^Occurrences/ }).click()
+  await expect(page).toHaveURL((url) => url.searchParams.get("tab") === "occurrences")
+  const problem = new URL(page.url()).pathname
+  const links = await page
+    .locator("[data-href]")
+    .evaluateAll((els) => els.map((el) => (el as HTMLElement).dataset.href))
+  expect(links.length).toBeGreaterThan(0)
+  for (const link of links) expect(link).toMatch(/^\/problems\/[^?]+\?status=all$/)
+
+  // A smaller screen opens it as a dialog; closing it leaves the list's address without the tab.
+  await page.setViewportSize({ width: 900, height: 800 })
+  try {
+    await page.goto(`${problem}?status=all&tab=input`)
+    const dialog = page.getByRole("dialog")
+    await expect(dialog.getByRole("tab", { name: /^Input/ })).toHaveAttribute("aria-selected", "true")
+    await dialog.getByRole("button", { name: "Back" }).click()
+    await expect(dialog).toHaveCount(0)
+    await expect(page).toHaveURL((url) => url.pathname === "/problems" && url.search === "?status=all")
+  } finally {
+    await page.setViewportSize({ width: 1440, height: 900 })
+  }
+})
+
 test("a problem's tabs have their own address, and Merge opens from its menu and gives the focus back", async () => {
   await page.goto("/problems?status=all")
   await page
@@ -1086,6 +1299,7 @@ test("a problem's tabs have their own address, and Merge opens from its menu and
   // A tab that is not there (unknown, or no other workflow has the same error) opens the overview.
   await page.goto(`${new URL(page.url()).pathname}?tab=nothing`)
   await expect(tab(/^Overview/)).toHaveAttribute("aria-selected", "true")
+  await expect(page).toHaveURL((url) => url.pathname === problem.pathname && url.search === "")
 
   // Merge is in the menu; closing its dialog puts the focus back on the menu's button.
   const more = page.getByRole("button", { name: "More actions" })
@@ -1123,7 +1337,7 @@ test("Merge lands on the problem merged into, and Back returns to the problem it
     await page.getByRole("button", { name: "More actions" }).click()
     await page.getByRole("menuitem", { name: "Merge into…" }).click()
     const dialog = page.getByRole("dialog", { name: "Merge into Another Problem" })
-    await dialog.getByRole("combobox", { name: "Problem to merge into" }).click()
+    await dialog.getByRole("button", { name: /^Problem to merge into:/ }).click()
     await page.getByRole("option", { name: "Merge target · Stand-in problem" }).click()
     await expect.poll(overlayEntry).not.toBeNull()
     await dialog.getByRole("button", { name: "Merge", exact: true }).click()
@@ -1139,6 +1353,51 @@ test("Merge lands on the problem merged into, and Back returns to the problem it
   } finally {
     await page.unroute(candidates)
     await page.unroute(merge)
+  }
+})
+
+test("a long choice in a form has a search that reads an underscore as a space, and no option scrolls sideways (MP-1, MP-4)", async () => {
+  await page.goto("/problems?status=all")
+  await page
+    .getByRole("row", { name: /Sync orders to ERP/ })
+    .first()
+    .click()
+  await expect(page.getByRole("heading", { name: "Where It Broke" })).toBeVisible()
+  // Thirteen stand-in problems to merge into, one of them with a name far wider than the list.
+  const candidates = (url: URL) =>
+    url.pathname === "/api/problems" && url.searchParams.get("status") === "open" && url.searchParams.has("instance")
+  const items = [
+    ...Array.from({ length: 12 }, (_, i) => ({
+      id: `e2e-candidate-${i}`,
+      workflowName: `Nightly_sync_${i}`,
+      errorMessage: "Stand-in problem",
+    })),
+    { id: "e2e-candidate-wide", workflowName: "W".repeat(300), errorMessage: "Stand-in problem" },
+  ]
+  await page.route(candidates, (route) => route.fulfill({ json: { items, total: items.length } }))
+  try {
+    await page.getByRole("button", { name: "More actions" }).click()
+    await page.getByRole("menuitem", { name: "Merge into…" }).click()
+    const dialog = page.getByRole("dialog", { name: "Merge into Another Problem" })
+    const field = dialog.getByRole("button", { name: /^Problem to merge into:/ })
+    await field.click()
+    const search = page.getByRole("searchbox", { name: "Search problems" })
+    await expect(search).toBeFocused()
+    const list = page.getByRole("listbox", { name: "Problems" })
+    await expect(list.getByRole("option")).toHaveCount(13)
+    expect(await list.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true)
+
+    await search.fill("nightly sync 7")
+    await expect(list.getByRole("option")).toHaveCount(1)
+    await search.press("Enter")
+    await expect(search).toHaveCount(0)
+    await expect(field).toHaveAccessibleName("Problem to merge into: Nightly_sync_7 · Stand-in problem")
+    await expect(field).toBeFocused()
+    await page.keyboard.press("Escape")
+    await expect(dialog).toHaveCount(0)
+    await dialogClosed(page)
+  } finally {
+    await page.unroute(candidates)
   }
 })
 

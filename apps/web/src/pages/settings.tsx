@@ -6,6 +6,7 @@ import { useCrumb } from "@/app/chrome"
 import { afterGeneralSave } from "@/app/design-sync"
 import { settingsGroups, settingsSectionLabel } from "@/app/settings-sections"
 import { ChipsInput } from "@/components/chips-input"
+import { FieldPicker } from "@/components/field-picker"
 import {
   BusyButton,
   Command,
@@ -33,7 +34,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { ApiError, api, describeError, useApi, useApiMutation } from "@/lib/api"
@@ -821,23 +821,14 @@ export function SettingsForm({ section, active = true }: { section: string; acti
                     disabled={save.isPending}
                   />
                 ) : f.type === "weekday" ? (
-                  <Select
+                  <FieldPicker
+                    id={f.name}
+                    label={f.label}
                     value={String(values[f.name] ?? 0)}
-                    onValueChange={(v) => set(f.name, Number(v))}
-                    // Radix Select opens on pointerdown and ignores a disabled fieldset, so it is locked itself.
+                    onChange={(v) => set(f.name, Number(v))}
                     disabled={save.isPending}
-                  >
-                    <SelectTrigger id={f.name} className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {weekdays.map((d, i) => (
-                        <SelectItem key={d} value={String(i)}>
-                          {d}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    options={weekdays.map((d, i) => ({ value: String(i), label: d }))}
+                  />
                 ) : f.type === "list" ? (
                   <ChipsInput
                     id={f.name}

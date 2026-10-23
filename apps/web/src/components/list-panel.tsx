@@ -85,8 +85,9 @@ export function ListWithPanel({
         {panel && (
           <Dialog open onOpenChange={(o) => !o && onClose()}>
             <DialogContent
-              className="md:max-w-[1100px]"
-              // On a phone the sheet keeps four fifths of the screen whatever is open in it (index.css).
+              // A fixed height, so it does not grow and shrink with each tab (DS-16). On a phone the sheet keeps
+              // four fifths of the screen whatever is open in it (index.css).
+              className="md:h-[90dvh] md:max-w-[1100px]"
               data-pane-sheet=""
               aria-describedby={undefined}
               showCloseButton={false}
@@ -151,10 +152,13 @@ export function ListWithPanel({
               // A new item starts at its top (DS-6).
               key={pathname}
               data-scroll-pane
-              className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 pt-[22px] pb-15"
+              className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
             >
-              {/* Only an empty, failed or filtered-out list leaves nothing to open. */}
-              {panel ?? <Empty title="Nothing is open." />}
+              {/* The padding is on the content, not on the scroller, so the item's tabs stick at its very top (DS-14). */}
+              <div className="px-6 pt-[22px] pb-15">
+                {/* Only an empty, failed or filtered-out list leaves nothing to open. */}
+                {panel ?? <Empty title="Nothing is open." />}
+              </div>
             </div>
           </section>
         </ResizablePanel>

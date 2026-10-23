@@ -13,6 +13,7 @@ import {
 import { useState } from "react"
 import { useSearchParams } from "react-router"
 import { useDiscardGuard } from "@/components/discard-guard"
+import { FieldPicker } from "@/components/field-picker"
 import { FilterBar, Picker, SearchBox } from "@/components/filter-bar"
 import {
   BusyButton,
@@ -41,7 +42,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { FieldError } from "@/components/ui/field"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, useSort } from "@/components/ui/table"
 import { api, describeError, queryClient, useApi, useApiMutation } from "@/lib/api"
 import { loadView } from "@/lib/load-state"
@@ -384,26 +384,19 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
             ))}
           </ul>
         ) : !preview ? (
-          <Select
+          <FieldPicker
+            label="Target instance"
+            listLabel="Instances"
+            placeholder="Move to…"
             value={target}
-            onValueChange={(v) => {
+            onChange={(v) => {
               setTarget(v)
               setPreview(null)
             }}
-          >
-            <SelectTrigger className="w-full" aria-label="Target instance">
-              <SelectValue placeholder="Move to…" />
-            </SelectTrigger>
-            <SelectContent>
-              {(instances.data?.instances ?? [])
-                .filter((i) => i.id !== workflow?.instanceId)
-                .map((i) => (
-                  <SelectItem key={i.id} value={i.id}>
-                    {i.name}
-                  </SelectItem>
-                ))}
-            </SelectContent>
-          </Select>
+            options={(instances.data?.instances ?? [])
+              .filter((i) => i.id !== workflow?.instanceId)
+              .map((i) => ({ value: i.id, label: i.name }))}
+          />
         ) : (
           <div className="grid gap-2.5">
             <h3 className="font-semibold">

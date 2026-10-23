@@ -44,6 +44,8 @@ export function Toaster() {
   }
   return (
     <div
+      // Stays usable while a layer makes the page behind it inert (lib/inert.ts).
+      data-slot="toaster"
       onPointerEnter={() => pointer(true)}
       onPointerLeave={() => pointer(false)}
       className={cn(

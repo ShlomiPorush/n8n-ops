@@ -30,14 +30,21 @@ let seq = 0
 let listening = false
 
 /*
- * Whether overlays hold the history now: one is open, or a step back that takes an entry away has not landed
- * yet. Meanwhile the current entry may be an overlay's, and an address corrected in place through the router
- * would drop its `overlay` mark, so the close could no longer take it away (DS-10). Such a correction waits.
+ * Whether overlays hold the history now: one is open, a step back that takes an entry away has not landed yet,
+ * or one closed while a navigation from it waits on the Leave question and its entry is still the current one.
+ * Meanwhile the current entry may be an overlay's, and an address corrected in place through the router would
+ * drop its `overlay` mark, so the close could no longer take it away (DS-10). Such a correction waits. The last
+ * case ends without an event of ours when the navigation is made and replaces the entry, so it is read live.
  */
 const heldListeners = new Set<() => void>()
+/** The value last read or announced, so a change is announced once. */
 let held = false
+function holding(): boolean {
+  const current = window.history.state?.overlay
+  return stack.length > 0 || ignore > 0 || waiting.some((e) => e.id === current)
+}
 function heldChanged() {
-  const now = stack.length > 0 || ignore > 0
+  const now = holding()
   if (now === held) return
   held = now
   for (const listener of [...heldListeners]) listener()
@@ -45,6 +52,7 @@ function heldChanged() {
 
 /** Whether an overlay holds a history entry now, or one being taken away (see `useOverlaysHeld`). */
 export function overlaysHeld(): boolean {
+  held = holding()
   return held
 }
 
@@ -148,6 +156,7 @@ export function leaveOverlays(): boolean {
   const onEntry = stack.some((e) => e.pushed && e.id === current)
   for (const e of stack) e.left = true
   waiting = []
+  heldChanged()
   return onEntry
 }
 
@@ -174,9 +183,9 @@ export function stayAfterBlock() {
   // Still on the newest one's entry: nothing moved meanwhile, and their entries are the top ones.
   if (closed.some((e) => e.id === window.history.state?.overlay)) {
     ignore += 1
-    heldChanged()
     window.history.go(-closed.length)
   }
+  heldChanged()
 }
 
 /**

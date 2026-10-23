@@ -1123,6 +1123,9 @@ test("on a phone the save bar of an instance shows inside its sheet", async () =
     // Inside the sheet, so the focus trap and the backdrop leave it in reach.
     const bar = sheet.getByRole("region", { name: "Unsaved changes" })
     await expect(bar).toBeVisible()
+    // The bar ends the sheet's content: no room is kept under it, as a page keeps under its last field.
+    const body = sheet.locator('[data-slot="dialog-body"]')
+    expect(await body.evaluate((el) => getComputedStyle(el).paddingBottom)).toBe("0px")
     await bar.getByRole("button", { name: "Discard" }).click()
     await expect(bar).toHaveCount(0)
     await expect(field).toHaveValue(before)
@@ -1276,6 +1279,57 @@ test("at 900px an instance opens 16px from the screen's edges, keeps its height 
     await expect.poll(under).toBeGreaterThanOrEqual(0)
     expect(await under()).toBeLessThanOrEqual(30)
     expect(Math.abs(((await dialog.boundingBox())?.height ?? 0) - 630)).toBeLessThan(2)
+  } finally {
+    await page.setViewportSize({ width: 1440, height: 900 })
+  }
+})
+
+test("Back puts an instance opened as a dialog or a phone sheet back where its tab was scrolled (NL-3, DS-14)", async () => {
+  const id = await openInstanceB()
+  try {
+    // A small tablet opens it as a dialog, a phone as a sheet; either scrolls in its own body, outside the page.
+    for (const [width, height] of [
+      [900, 700],
+      [390, 844],
+    ] as const) {
+      await page.setViewportSize({ width, height })
+      await page.goto(`/instances/${id}`)
+      const dialog = page.getByRole("dialog")
+      const body = dialog.locator('[data-slot="dialog-body"]')
+      const overview = dialog.getByRole("tab", { name: "Overview" })
+      await expect(overview).toHaveAttribute("aria-selected", "true")
+      await lengthenOpenTab(dialog)
+      await body.evaluate((el) => {
+        el.scrollTop = 1200
+      })
+      // A phone sheet first grows to the full screen by part of that scroll.
+      await settle()
+      await settle()
+      const scrolled = await body.evaluate((el) => el.scrollTop)
+      expect(scrolled).toBeGreaterThan(800)
+
+      // Another tab, here at its very top, so a place left over from it cannot pass for the overview's.
+      const health = dialog.getByRole("tab", { name: /^Health/ })
+      await health.click()
+      await expect(health).toHaveAttribute("aria-selected", "true")
+      await expect(page).toHaveURL((url) => url.searchParams.get("tab") === "health")
+      await body.evaluate((el) => {
+        el.scrollTop = 0
+      })
+      await settle()
+
+      await page.goBack()
+      await expect(overview).toHaveAttribute("aria-selected", "true")
+      await expect.poll(() => body.evaluate((el) => Math.abs(el.scrollTop - scrolled))).toBeLessThanOrEqual(2)
+      if (width === 900) {
+        // Put back under the dialog's head, with its tabs stuck there, not in the head's place.
+        const head = dialog.locator('[data-slot="dialog-header"]')
+        const tabs = dialog.getByRole("tablist", { name: "Instance sections" })
+        const gap = async () => (await top(tabs)) - (await bottom(head))
+        await expect.poll(gap).toBeGreaterThanOrEqual(0)
+        expect(await gap()).toBeLessThanOrEqual(10)
+      }
+    }
   } finally {
     await page.setViewportSize({ width: 1440, height: 900 })
   }

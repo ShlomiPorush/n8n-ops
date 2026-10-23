@@ -350,7 +350,10 @@ export function SearchBox({
   )
 }
 
-/** The element a list scrolls in: the list column beside a reading pane, else the page. */
+/**
+ * The element a list scrolls in: the list column beside a reading pane, the open item for a list inside it (also
+ * when the item opened as a dialog or a phone sheet), else the page.
+ */
 const scrollerOf = (el: HTMLElement) => el.closest<HTMLElement>("[data-scroll-pane]") ?? document.getElementById("main")
 
 /**

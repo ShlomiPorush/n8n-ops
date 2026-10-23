@@ -41,6 +41,7 @@ import {
   PageHead,
   Panel,
   PanelHead,
+  RefreshLine,
   RefreshNote,
   SecretField,
   SwitchRow,
@@ -83,6 +84,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import {
   RANK_WORDS,
   SortButton,
+  type SortOrder,
   Table,
   TableBody,
   TableCell,
@@ -882,6 +884,9 @@ function LastBackupPanel({ id, backup }: { id: string; backup: ListBackup }) {
   )
 }
 
+/** The order of a preview, which has no Sort button: the default, never changed. */
+const noOrder: SortOrder = [null, () => {}]
+
 /**
  * The open problems of the instance, what needs a look first unless another order is picked. The server sends
  * the first 200 and how many there are in all; a preview shows the first few. The full list has its Sort
@@ -906,12 +911,15 @@ function InstanceProblems({
   // The full list sorts on the server, so the order covers every open problem of the instance (TB-4); a new order
   // keeps the rows on screen until its answer comes. Keyed by the instance, so no rows of another one stay.
   const order = useSortOrder("instance-problems")
-  const query = useApi<ProblemList>(problemsPath({ status: "open", instance: instanceId }, preview ? null : order[0]), {
-    keepRows: !preview,
-  })
+  const query = useApi<ProblemList>(
+    problemsPath({ status: "open", instance: instanceId }, preview ? null : order.asked),
+    { keepRows: !preview },
+  )
   const rows = query.data?.items ?? []
   const total = query.data?.total ?? 0
-  const sort = useProblemsSort(rows, order, false)
+  // The headers and the Sort button show the order the rows are in (TB-4). The preview's rows come in the default
+  // order, so its answer must not count as the order picked being applied.
+  const sort = useProblemsSort(rows, preview ? noOrder : order.shown(query), false)
   const head = (
     <PanelHead
       title="Open Problems"
@@ -939,6 +947,9 @@ function InstanceProblems({
   return (
     <>
       {head}
+      {/* A refresh or a new order that failed keeps the rows on screen, and this line says so with Try again
+          (TB-5, LD-12); the headers and the Sort button stay in the order the rows are in (TB-4). */}
+      {!preview && <RefreshLine live={query} what="open problems" />}
       <ProblemsTable
         items
         bare

@@ -112,10 +112,10 @@ const statusRank = { resolved: 0, muted: 1, open: 2, new: 3, regression: 4 } as 
 const arrival: SortState = { key: "status", dir: "descending" }
 
 /**
- * The order of a Problems list, shared by its rows and its Sort button. The order is asked of the server
- * (`useSortOrder`, sent through `problemsPath`), which sorts every problem before it sends the first 200, so the
- * rows are drawn as they came, never sorted again here (TB-4). The keys are the server's sort columns
- * (`problemSortKeys` in routes/problems.ts).
+ * The order of a Problems list, shared by its headers and its Sort button: `shown` of `useSortOrder`, the order
+ * the rows are in, while `asked` of the same `useSortOrder` is sent through `problemsPath`. The server sorts every
+ * problem before it sends the first 200, so the rows are drawn as they came, never sorted again here (TB-4). The
+ * keys are the server's sort columns (`problemSortKeys` in routes/problems.ts).
  */
 export function useProblemsSort(rows: ProblemRow[], order: SortOrder, showInstance = true): Sorting<ProblemRow> {
   return useSort(rows, {
@@ -179,8 +179,8 @@ export function ProblemsTable({
   /** Each row as an item of a few lines, for a list beside a reading pane. */
   items?: boolean
   /**
-   * The list's order (`useProblemsSort`), which its Sort button shares. Without it the rows are a few picked by
-   * the caller, shown in their order with no sort.
+   * The list's order (`useProblemsSort`), the order the rows are in, which its Sort button shares. Without it the
+   * rows are a few picked by the caller, shown in their order with no sort.
    */
   sort?: Sorting<ProblemRow>
 }) {
@@ -293,14 +293,16 @@ export function ProblemsPage() {
   const status = params.get("status") ?? "open"
   const instance = params.get("instance") ?? "all"
   const q = params.get("q") ?? ""
-  // The order is asked of the server, so it covers every problem and not only the 200 sent (TB-4).
+  // The order is asked of the server, so it covers every problem and not only the 200 sent (TB-4). An order whose
+  // rows failed to come leaves the rows, the headers and the Sort button in the order before it, and the filter
+  // line says so.
   const order = useSortOrder("problems")
   const filters = { status, ...(instance !== "all" ? { instance } : {}), ...(q ? { q } : {}) }
-  const rows = useApi<ProblemList>(problemsPath(filters, order[0]), { refetchInterval: 15_000, keepRows: true })
+  const rows = useApi<ProblemList>(problemsPath(filters, order.asked), { refetchInterval: 15_000, keepRows: true })
   // A failed refresh keeps the rows and the head says so; new filters that failed keep the previous rows and the
   // filter line says so (TB-5, LD-12).
   const view = loadView(rows)
-  const sort = useProblemsSort(rows.data?.items ?? [], order)
+  const sort = useProblemsSort(rows.data?.items ?? [], order.shown(rows))
   const instances = useApi<{ instances: { id: string; name: string }[] }>("/instances")
   const setParam = (k: string, v: string) => {
     const next = new URLSearchParams(params)

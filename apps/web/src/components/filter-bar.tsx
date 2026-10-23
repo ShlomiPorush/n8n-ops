@@ -421,7 +421,11 @@ export function FilterBar({
       )}
       {(count !== undefined || onClear || (sortButton && !search)) && (
         <p className="flex flex-wrap items-center gap-x-3 text-small text-muted-foreground">
-          {count !== undefined && <span className="font-semibold text-ink tabular-nums">{count}</span>}
+          {count !== undefined && (
+            <span data-slot="list-count" className="font-semibold text-ink tabular-nums">
+              {count}
+            </span>
+          )}
           {onClear && (
             <button type="button" onClick={onClear} className="font-semibold text-ink underline underline-offset-3">
               Clear filters

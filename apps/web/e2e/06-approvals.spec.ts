@@ -245,8 +245,9 @@ test("a new SMTP server needs the password again, so the stored one is not sent 
     expect((await stored()).smtpHost).toBe("mail")
 
     // A new server with the password removed is allowed.
-    await page.getByRole("button", { name: "Keep" }).click()
-    await page.getByRole("button", { name: "Remove" }).click()
+    // Exact names: each recipient chip has a "Remove <address>" button of its own.
+    await page.getByRole("button", { name: "Keep", exact: true }).click()
+    await page.getByRole("button", { name: "Remove", exact: true }).click()
     await page.getByRole("button", { name: "Save" }).click()
     await expect(page.getByText("Settings saved")).toBeVisible()
     expect(await stored()).toMatchObject({ smtpHost: "smtp.elsewhere.example", smtpPasswordSet: false })

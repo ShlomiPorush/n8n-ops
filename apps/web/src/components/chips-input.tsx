@@ -1,20 +1,24 @@
 import { X } from "lucide-react"
-import { useRef, useState } from "react"
-import { addEntries, finishedEntries } from "@/lib/entries"
+import { useRef } from "react"
+import { addEntries, finishedEntries, pasteInto } from "@/lib/entries"
 import { cn } from "@/lib/utils"
 
 /**
  * A field that holds several values as chips (FS-15): email recipients, Telegram approvers. Enter, a comma or a
- * semicolon adds what is typed; a paste may add several at once; leaving the field adds what is left in it, so a
- * value typed before Save is never lost. × removes one (`Remove <value>`), and Backspace in the empty field
- * removes the last. No value is added twice. Each value is checked on its own: one that `problem` refuses is
- * drawn as failed and says why, and stays until it is fixed or removed (SV-12).
+ * semicolon adds what is typed; a paste may add several at once, in place of the selection; leaving the field
+ * adds what is left in it, so a value typed before Save is never lost. The text not yet added belongs to the
+ * form (`pending`), so it counts as a change for the save bar and the leave question before it is a chip (SV-1).
+ * × removes one (`Remove <value>`), and Backspace in the empty field removes the last. No value is added twice.
+ * Each value is checked on its own: one that `problem` refuses is drawn as failed and says why, and stays until
+ * it is fixed or removed (SV-12).
  * Compact draws the chips as v3 does (mono, 6px corners); Regular as its own rounded tags.
  */
 export function ChipsInput({
   id,
   value,
   onChange,
+  pending,
+  onPendingChange,
   problem,
   placeholder,
   invalid,
@@ -23,6 +27,9 @@ export function ChipsInput({
   id: string
   value: string[]
   onChange: (value: string[]) => void
+  /** What is typed in the Add field and not yet a chip. */
+  pending: string
+  onPendingChange: (text: string) => void
   /** What is wrong with one value, or null when it is fine. */
   problem?: (entry: string) => string | null
   placeholder?: string
@@ -30,7 +37,8 @@ export function ChipsInput({
   invalid?: boolean
   describedBy?: string
 }) {
-  const [text, setText] = useState("")
+  const text = pending
+  const setText = onPendingChange
   const input = useRef<HTMLInputElement>(null)
   const add = (typed: string) => {
     const next = addEntries(value, typed)
@@ -104,7 +112,10 @@ export function ChipsInput({
           const pasted = e.clipboardData.getData("text")
           if (!/[,;\s]/.test(pasted.trim())) return
           e.preventDefault()
-          add(text + pasted)
+          // The list takes the place of what is selected, or goes in at the cursor, as a plain paste would.
+          const field = e.currentTarget
+          const start = field.selectionStart ?? text.length
+          add(pasteInto(text, pasted, start, field.selectionEnd ?? start))
           setText("")
         }}
         onBlur={() => {

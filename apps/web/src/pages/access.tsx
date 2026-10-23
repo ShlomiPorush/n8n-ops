@@ -1,3 +1,4 @@
+import { formatDuration } from "@n8n-ops/shared"
 import { Ban, Check, KeyRound, Plug, X } from "lucide-react"
 import { Link, useNavigate, useParams, useSearchParams } from "react-router"
 import { useCrumb } from "@/app/chrome"
@@ -32,7 +33,8 @@ import {
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useApi, useApiMutation } from "@/lib/api"
 import { loadView } from "@/lib/load-state"
-import { formatDateTime, n, plural, useTimeZone } from "@/lib/time"
+import { counts, n, plural } from "@/lib/numbers"
+import { formatDateTime, useTimeZone } from "@/lib/time"
 
 export type AccessStatus = "pending" | "approved" | "denied" | "expired" | "released" | "revoked"
 
@@ -61,13 +63,6 @@ export type AccessRow = {
 
 type AccessDetail = AccessRow & {
   calls: { id: string; at: string; method: string; path: string; status: number; refused: string | null }[]
-}
-
-export function duration(minutes: number) {
-  if (minutes < 60) return `${minutes} min`
-  const h = Math.floor(minutes / 60)
-  const m = minutes % 60
-  return m ? `${h} h ${m} min` : `${h} h`
 }
 
 export function AccessPage() {
@@ -123,7 +118,15 @@ export function AccessPage() {
         }
         description={
           rows.data
-            ? `${n(waiting)} waiting for you · ${n(active)} active. Nothing is granted until you approve, and access ends on its own.`
+            ? `${
+                counts(
+                  [
+                    [waiting, "waiting for you"],
+                    [active, "active"],
+                  ],
+                  " · ",
+                ) || "Nothing waiting or active"
+              }. Nothing is granted until you approve, and access ends on its own.`
             : "Agents ask for temporary access to an n8n instance for a task. Nothing is granted until you approve, and access ends on its own."
         }
       />
@@ -177,7 +180,7 @@ export function AccessPage() {
                       {" · "}
                       <UserText>{r.token}</UserText>
                       {" · "}
-                      <span className="tabular-nums">{duration(r.minutes)}</span>
+                      <span className="tabular-nums">{formatDuration(r.minutes)}</span>
                     </>
                   }
                   subEnd={
@@ -220,7 +223,7 @@ export function AccessPage() {
                 <TableCell className="max-w-80 truncate font-semibold" title={r.reason} data-primary>
                   <UserText>{r.reason}</UserText>
                 </TableCell>
-                <TableCell className="tabular-nums">{duration(r.minutes)}</TableCell>
+                <TableCell className="tabular-nums">{formatDuration(r.minutes)}</TableCell>
                 <TableCell className="text-end text-muted-foreground">
                   <When value={r.requestedAt} />
                 </TableCell>
@@ -294,7 +297,7 @@ function AccessDetailPanel({ id }: { id: string }) {
         <p className="text-muted-foreground">
           {r.status === "pending" && (
             <>
-              Asked <TimeAgo value={r.requestedAt} /> for {duration(r.minutes)}. Expires without a decision{" "}
+              Asked <TimeAgo value={r.requestedAt} /> for {formatDuration(r.minutes)}. Expires without a decision{" "}
               <TimeAgo value={r.decideBy} />.
             </>
           )}

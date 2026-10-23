@@ -4,7 +4,7 @@ import { Panel, PanelHead, SwitchRow, useSaveSource } from "@/components/kit"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { useApiMutation } from "@/lib/api"
-import { n } from "@/lib/time"
+import { n } from "@/lib/numbers"
 
 type Props = {
   id: string

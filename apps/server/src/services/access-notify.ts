@@ -1,3 +1,4 @@
+import { formatDuration } from "@n8n-ops/shared"
 import { and, eq, isNotNull, isNull, ne, type SQL } from "drizzle-orm"
 import type { Ctx } from "../context.ts"
 import { type AccessStatus, accessRequests, apiTokens, instances } from "../db/schema.ts"
@@ -22,13 +23,6 @@ type RequestInfo = {
   workflowIds: string[]
   minutes: number
   decideBy: Date
-}
-
-export function duration(minutes: number) {
-  if (minutes < 60) return `${minutes} min`
-  const h = Math.floor(minutes / 60)
-  const m = minutes % 60
-  return m ? `${h} h ${m} min` : `${h} h`
 }
 
 /** How a request ended up: decided, then perhaps ended. */
@@ -109,7 +103,7 @@ export function renderAccessTelegram(r: RequestInfo, outcome?: { icon: string; l
     r.workflowIds.length
       ? html`Workflows: <code>${workflows.text}</code>${workflows.more}`
       : html`Workflows: the whole instance`,
-    html`For ${duration(r.minutes)}`,
+    html`For ${formatDuration(r.minutes)}`,
     ...(outcome?.lines.length ? [html``, ...outcome.lines] : []),
   ])
 }
@@ -127,7 +121,7 @@ export function renderAccessEmail(r: RequestInfo, link: string | null, timeZone 
     `Reason: ${r.reason}`,
     `Scopes: ${r.scopes.join(", ")}`,
     `Workflows: ${workflows}`,
-    `For: ${duration(r.minutes)}`,
+    `For: ${formatDuration(r.minutes)}`,
     `Decide by: ${decideBy}; then the request expires.`,
     "",
     link
@@ -148,7 +142,7 @@ export function renderAccessEmail(r: RequestInfo, link: string | null, timeZone 
           ["Instance", r.instance],
           ["Scopes", mono(r.scopes.join(", "))],
           ["Workflows", r.workflowIds.length ? mono(r.workflowIds.join(", ")) : "the whole instance"],
-          ["For", duration(r.minutes)],
+          ["For", formatDuration(r.minutes)],
           ["Decide by", decideBy],
         ]),
       ]),

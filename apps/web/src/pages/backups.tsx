@@ -24,6 +24,7 @@ import {
   LoadError,
   Loading,
   Locked,
+  NoValue,
   PageHead,
   Panel,
   RefreshNote,
@@ -45,7 +46,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, useSort 
 import { Textarea } from "@/components/ui/textarea"
 import { api, describeError, useApi, useApiMutation } from "@/lib/api"
 import { loadView } from "@/lib/load-state"
-import { formatDateTime, n, plural, useTimeZone } from "@/lib/time"
+import { formatSize, n, plural } from "@/lib/numbers"
+import { formatDateTime, useTimeZone } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { type DestinationKind, KindIcon } from "./destinations"
 
@@ -98,17 +100,6 @@ type Summary = {
   instances: BackupRow[]
   self: { lastRun: Run | null; lastOk: Run | null; destinations: Target[]; staleBackupHours: number }
 }
-
-export const formatSize = (bytes: number | null) =>
-  bytes === null
-    ? "–"
-    : bytes < 1024
-      ? `${n(bytes)} B`
-      : bytes < 1048576
-        ? `${(bytes / 1024).toFixed(1)} KB`
-        : bytes < 1073741824
-          ? `${(bytes / 1048576).toFixed(1)} MB`
-          : `${(bytes / 1073741824).toFixed(2)} GB`
 
 const stale = (row: BackupRow) =>
   !row.lastOk || Date.now() - new Date(row.lastOk.startedAt).getTime() > row.staleBackupHours * 3600_000
@@ -196,7 +187,7 @@ export function BackupsPage() {
         live={data}
         description={
           s?.configured
-            ? `${n(okCount)} of ${n(s.instances.length)} instances backed up on time${late ? `, ${n(late)} late` : ""}${none ? `, ${n(none)} not backed up` : ""}. Encrypted with your backup public key before they are written.`
+            ? `${n(okCount)} of ${plural(s.instances.length, "instance")} backed up on time${late ? `, ${n(late)} late` : ""}${none ? `, ${n(none)} not backed up` : ""}. Encrypted with your backup public key before they are written.`
             : "Encrypted with your backup public key before they are written. Click an instance for its history and restore."
         }
       />
@@ -453,7 +444,10 @@ function BackupHistory({ id, name }: { id: string; name: string }) {
         </h2>
         {runs.data && (
           <p className="mt-1 text-muted-foreground">
-            {plural(list.length, "run")} · {n(list.filter((r) => r.status === "failed").length)} failed
+            {plural(list.length, "run")}
+            {/* Only failures that happened are counted (FW-3). */}
+            {list.some((r) => r.status === "failed") &&
+              ` · ${n(list.filter((r) => r.status === "failed").length)} failed`}
             {/* A failed refresh keeps the history on screen and says so here (TB-5, LD-12). */}
             <RefreshNote live={runs} separator=" · " />
           </p>
@@ -512,12 +506,14 @@ function BackupHistory({ id, name }: { id: string; name: string }) {
                   <Copies copies={r.copies ?? []} />
                 </TableCell>
                 <TableCell className="text-end align-top tabular-nums">
-                  {r.workflows === null ? "–" : n(r.workflows)}
+                  {r.workflows === null ? <NoValue /> : n(r.workflows)}
                 </TableCell>
                 <TableCell className="text-end align-top tabular-nums">
-                  {r.credentials === null ? "–" : n(r.credentials)}
+                  {r.credentials === null ? <NoValue /> : n(r.credentials)}
                 </TableCell>
-                <TableCell className="text-end align-top tabular-nums">{formatSize(r.sizeBytes)}</TableCell>
+                <TableCell className="text-end align-top tabular-nums">
+                  {r.sizeBytes === null ? <NoValue /> : formatSize(r.sizeBytes)}
+                </TableCell>
                 <TableCell className="text-end align-top">
                   {restorable(r) && id !== "self" && (
                     <Button size="sm" onClick={() => setRestoring(r)}>

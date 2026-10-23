@@ -98,8 +98,9 @@ import { Textarea } from "@/components/ui/textarea"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { api, describeError, queryClient, useApi, useApiMutation } from "@/lib/api"
 import { loadView } from "@/lib/load-state"
+import { healthCounts, n, plural } from "@/lib/numbers"
 import { useNavigateFromOverlay } from "@/lib/overlay-history"
-import { formatFull, n, plural, useTimeZone } from "@/lib/time"
+import { formatFull, useTimeZone } from "@/lib/time"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
 import { InstanceBackupCard } from "./destinations"
@@ -242,7 +243,7 @@ export function InstancesPage() {
         live={data}
         description={
           data.data
-            ? `${n(rows.length)} registered${down || warn ? ` · ${n(down)} down, ${n(warn)} need a look` : ""}${latest ? ` · latest n8n ${latest}` : ""}`
+            ? `${n(rows.length)} registered${down || warn ? ` · ${healthCounts(down, warn)}` : ""}${latest ? ` · latest n8n ${latest}` : ""}`
             : "Every n8n instance n8n-ops watches, and what its API key allows."
         }
         actions={

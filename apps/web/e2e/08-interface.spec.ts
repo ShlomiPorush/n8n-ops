@@ -885,8 +885,10 @@ test("Merge lands on the problem merged into, and Back returns to the problem it
 
 test("a list keeps its rows when a refresh fails, says so under the title, and Try again brings it back", async () => {
   await page.goto("/problems?status=all")
-  const rows = page.locator("tbody tr")
+  // The rows of the list column only: the problem that opens beside it has tables of its own.
+  const rows = page.locator("[data-scroll-pane]").first().locator("[data-href]")
   await expect(rows.first()).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Where It Broke" })).toBeVisible()
   const shown = await rows.count()
   // From now on the list answers as a server that has a problem does; the problem pane is not touched.
   const list = (url: URL) => url.pathname === "/api/problems" && url.searchParams.get("status") === "all"

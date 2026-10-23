@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router"
 import { useCrumb } from "@/app/chrome"
 import { useConfirm } from "@/components/confirm"
 import { ItemRow, ItemsHeader, Said } from "@/components/item-row"
-import { Empty, LoadError, Loading, PageHead, Panel, PanelHead, UserText } from "@/components/kit"
+import { Empty, LoadError, Loading, PageHead, Panel, PanelHead, RefreshNote, UserText } from "@/components/kit"
 import { ListWithPanel } from "@/components/list-panel"
 import { StatusTag, statusOf, TimeAgo, Tone, When } from "@/components/status"
 import { Badge } from "@/components/ui/badge"
@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, useSort } from "@/components/ui/table"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useApi, useApiMutation } from "@/lib/api"
+import { loadView } from "@/lib/load-state"
 import { formatDateTime, n, useTimeZone } from "@/lib/time"
 
 export type AccessStatus = "pending" | "approved" | "denied" | "expired" | "released" | "revoked"
@@ -55,6 +56,8 @@ export function AccessPage() {
   const [params, setParams] = useSearchParams()
   const view = params.get("view") === "all" ? "all" : "open"
   const rows = useApi<AccessRow[]>("/access", { refetchInterval: 30_000 })
+  // A failed refresh keeps the rows; the head says so (TB-5, LD-12).
+  const load = loadView(rows)
   const all = rows.data ?? []
   const shown = all.filter((r) => view === "all" || r.status === "pending" || r.status === "approved")
   const waiting = all.filter((r) => r.status === "pending").length
@@ -82,7 +85,7 @@ export function AccessPage() {
     <>
       <PageHead
         title="Agent Access"
-        updatedAt={rows.dataUpdatedAt || undefined}
+        live={rows}
         actions={
           <Button asChild>
             <Link to="/agents">
@@ -109,11 +112,11 @@ export function AccessPage() {
           All <small>{n(all.length)}</small>
         </ToggleGroupItem>
       </ToggleGroup>
-      {rows.error ? (
+      {load === "failed" ? (
         <Panel>
           <LoadError what="access requests" error={rows.error} retry={() => rows.refetch()} />
         </Panel>
-      ) : rows.isLoading ? (
+      ) : load === "loading" ? (
         <Panel>
           <Loading>Loading access requests…</Loading>
         </Panel>
@@ -230,6 +233,10 @@ function AccessDetailPanel({ id }: { id: string }) {
           <Badge variant="line">
             token: <UserText>{r.token}</UserText>
           </Badge>
+          {/* A failed refresh keeps the request on screen and says so here (TB-5, LD-12). */}
+          <span className="ms-auto text-small">
+            <RefreshNote live={detail} small />
+          </span>
         </div>
         <h2 className="text-title">
           <UserText>{r.reason}</UserText>

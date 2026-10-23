@@ -13,7 +13,7 @@ import {
   LayoutDashboard as LayoutDashboardIcon,
   RotateCcw,
 } from "lucide-react"
-import { useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Link, useNavigate, useParams, useSearchParams } from "react-router"
 import { useCrumb } from "@/app/chrome"
 import { FilterBar, Picker, SearchBox } from "@/components/filter-bar"
@@ -30,6 +30,7 @@ import {
   PageHead,
   Panel,
   PanelHead,
+  RefreshNote,
   Reloading,
   UserText,
 } from "@/components/kit"
@@ -50,7 +51,8 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, useSort } from "@/components/ui/table"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { api, describeError, useApi, useApiMutation } from "@/lib/api"
+import { api, useApi, useApiMutation } from "@/lib/api"
+import { loadView } from "@/lib/load-state"
 import { useNavigateFromOverlay } from "@/lib/overlay-history"
 import { formatDateTime, n, plural, useTimeZone } from "@/lib/time"
 import { cn } from "@/lib/utils"
@@ -87,8 +89,8 @@ type ProblemDetailData = ProblemRow & {
   sameError: { id: string; workflowName: string; instanceName: string; status: string }[]
 }
 
-/** Marks the raw data window while its content loads. */
-const loadingRaw = { loading: true }
+/** What the raw data window shows: JSON, Loading while the execution is on its way, or why it could not load. */
+type RawView = { json: unknown } | { loading: true } | { failed: unknown }
 
 const statusWords: Record<string, string> = { open: "open", muted: "muted", resolved: "resolved" }
 
@@ -242,6 +244,9 @@ export function ProblemsPage() {
   const q = params.get("q") ?? ""
   const query = new URLSearchParams({ status, ...(instance !== "all" ? { instance } : {}), ...(q ? { q } : {}) })
   const rows = useApi<ProblemRow[]>(`/problems?${query}`, { refetchInterval: 15_000, keepRows: true })
+  // A failed refresh keeps the rows and the head says so; new filters that failed keep the previous rows and the
+  // filter line says so (TB-5, LD-12).
+  const view = loadView(rows)
   const instances = useApi<{ instances: { id: string; name: string }[] }>("/instances")
   const setParam = (k: string, v: string) => {
     const next = new URLSearchParams(params)
@@ -257,11 +262,7 @@ export function ProblemsPage() {
 
   const list = (items: boolean) => (
     <>
-      <PageHead
-        title="Problems"
-        description="One row per workflow, node and error; each alerts once."
-        updatedAt={rows.dataUpdatedAt || undefined}
-      />
+      <PageHead title="Problems" description="One row per workflow, node and error; each alerts once." live={rows} />
       <FilterBar
         views={
           <ToggleGroup
@@ -279,7 +280,13 @@ export function ProblemsPage() {
         search={<SearchBox label="Search workflow or error" value={q} onChange={(v) => setParam("q", v)} />}
         active={Number(instance !== "all")}
         count={
-          count === undefined ? undefined : plural(count, [statusWords[status], "problem"].filter(Boolean).join(" "))
+          count === undefined ? undefined : (
+            <>
+              {/* New filters that failed keep the previous rows, and this line says so instead of a count (TB-5). */}
+              {rows.previous !== "failed" && plural(count, [statusWords[status], "problem"].filter(Boolean).join(" "))}
+              <RefreshNote live={rows} what={noun} small />
+            </>
+          )
         }
         onClear={
           filtered
@@ -303,23 +310,29 @@ export function ProblemsPage() {
           ]}
         />
       </FilterBar>
-      {rows.error ? (
+      {view === "failed" ? (
         <Panel>
           <LoadError what="problems" error={rows.error} retry={() => rows.refetch()} />
         </Panel>
-      ) : rows.isLoading ? (
+      ) : view === "loading" ? (
         <Panel>
           <Loading>Loading problems…</Loading>
         </Panel>
       ) : (
-        <Reloading busy={rows.isPlaceholderData}>
+        <Reloading busy={rows.isPlaceholderData || (rows.previous === "failed" && rows.isFetching)}>
           <ProblemsTable
             rows={rows.data ?? []}
             selected={id}
             onOpen={open}
             href={(pid) => `/problems/${pid}?${params}`}
             items={items}
-            empty={q ? `No ${noun} match "${q}".` : `No ${noun}.`}
+            empty={
+              rows.previous === "failed"
+                ? "The previous list was empty."
+                : q
+                  ? `No ${noun} match "${q}".`
+                  : `No ${noun}.`
+            }
           />
         </Reloading>
       )}
@@ -370,7 +383,30 @@ export function ProblemDetail({ id }: { id: string }) {
   const detail = useApi<ProblemDetailData>(`/problems/${id}`, { refetchInterval: 15_000 })
   useCrumb(detail.data?.workflowName)
   const tz = useTimeZone()
-  const [raw, setRaw] = useState<unknown>(null)
+  const [raw, setRaw] = useState<RawView | null>(null)
+  /*
+   * Each opening of the raw data window owns the load it started: a new opening or a close aborts it, and its
+   * answer or failure is dropped once aborted, so a late answer never reopens a closed window or fills a newer
+   * one (DS-6).
+   */
+  const rawLoad = useRef<AbortController | null>(null)
+  const showRaw = (view: RawView | null) => {
+    rawLoad.current?.abort()
+    rawLoad.current = null
+    setRaw(view)
+  }
+  const loadExecution = async (failureId: string) => {
+    const load = new AbortController()
+    showRaw({ loading: true })
+    rawLoad.current = load
+    try {
+      const json = await api(`/problems/${id}/failures/${failureId}`, { signal: load.signal })
+      if (!load.signal.aborted) setRaw({ json })
+    } catch (e) {
+      if (!load.signal.aborted) setRaw({ failed: e })
+    }
+  }
+  useEffect(() => () => rawLoad.current?.abort(), [])
   const [merging, setMerging] = useState(false)
   // Merge is opened from a menu item that is gone once the dialog closes: the focus goes back to the menu's button.
   const more = useRef<HTMLButtonElement>(null)
@@ -424,6 +460,10 @@ export function ProblemDetail({ id }: { id: string }) {
           <Link to={`/instances/${p.instanceId}`} className="text-small font-semibold underline">
             <UserText>{p.instanceName}</UserText>
           </Link>
+          {/* A failed refresh keeps the problem on screen and says so here (TB-5, LD-12). */}
+          <span className="ms-auto text-small">
+            <RefreshNote live={detail} small />
+          </span>
         </div>
         {/* The workflow comes first; the actions sit beside it, or below it in a narrow pane. */}
         <div className="grid gap-2 @min-[40rem]/pane:grid-cols-[minmax(0,1fr)_auto] @min-[40rem]/pane:gap-x-2.5">
@@ -536,22 +576,12 @@ export function ProblemDetail({ id }: { id: string }) {
                 </KV>
               ))}
             <div className="flex flex-wrap gap-x-4 border-t border-line px-pad-x py-2.5">
-              <Button variant="link" onClick={() => setRaw({ input: p.nodeInput, error: p.error })}>
+              <Button variant="link" onClick={() => showRaw({ json: { input: p.nodeInput, error: p.error } })}>
                 Show input and stack as JSON
               </Button>
               {p.latestFailureId && (
-                <Button
-                  variant="link"
-                  onClick={async () => {
-                    // The window opens at once and fills in when the execution arrives (DS-17).
-                    setRaw(loadingRaw)
-                    try {
-                      setRaw(await api(`/problems/${id}/failures/${p.latestFailureId}`))
-                    } catch (e) {
-                      setRaw({ error: `Could not load the execution: ${describeError(e)}` })
-                    }
-                  }}
-                >
+                // The window opens at once and fills in when the execution arrives (DS-17).
+                <Button variant="link" onClick={() => p.latestFailureId && void loadExecution(p.latestFailureId)}>
                   Show full execution
                 </Button>
               )}
@@ -634,18 +664,25 @@ export function ProblemDetail({ id }: { id: string }) {
         )}
       </PaneTabs>
 
-      <Dialog open={raw !== null} onOpenChange={(o) => !o && setRaw(null)}>
+      <Dialog open={raw !== null} onOpenChange={(o) => !o && showRaw(null)}>
         <DialogContent className="md:max-w-4xl" aria-describedby={undefined}>
           <DialogHeader icon={BracesIcon}>
             <DialogTitle>Raw Data</DialogTitle>
           </DialogHeader>
-          {raw === loadingRaw ? (
+          {raw && "loading" in raw ? (
             <Loading>Loading the execution…</Loading>
-          ) : (
+          ) : raw && "failed" in raw ? (
+            // A failure is said in words in the same window, with the server's reason (DS-17, FB-3).
+            <LoadError
+              what="the execution"
+              error={raw.failed}
+              retry={p.latestFailureId ? () => p.latestFailureId && void loadExecution(p.latestFailureId) : undefined}
+            />
+          ) : raw ? (
             <pre className="min-w-0 overflow-auto rounded-sm bg-fill p-3 font-mono text-meta whitespace-pre-wrap break-words">
-              {JSON.stringify(raw, null, 2)}
+              {JSON.stringify(raw.json, null, 2)}
             </pre>
-          )}
+          ) : null}
         </DialogContent>
       </Dialog>
       <MergeDialog problem={p} open={merging} onOpenChange={setMerging} returnFocus={more} />

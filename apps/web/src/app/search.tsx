@@ -5,6 +5,7 @@ import { createPortal } from "react-dom"
 import { useNavigate } from "react-router"
 import { settingsGroups } from "@/app/settings-sections"
 import { api } from "@/lib/api"
+import { loadView } from "@/lib/load-state"
 import { useOverlayHistory } from "@/lib/overlay-history"
 import { n } from "@/lib/time"
 import { cn } from "@/lib/utils"
@@ -175,7 +176,8 @@ function useServerSearch(q: string, enabled: boolean) {
   const t = lower(q.trim())
   const instanceItems: Found | undefined =
     t.length >= SERVER_FROM
-      ? instances.isError
+      ? // The instances on hand are searched even when their last refresh failed (TB-5).
+        loadView(instances) === "failed"
         ? { items: [], state: "failed", total: 0 }
         : !instances.data
           ? { items: [], state: "loading", total: 0 }

@@ -19,6 +19,7 @@ import {
 import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { useApi, useApiMutation } from "@/lib/api"
+import { loadView } from "@/lib/load-state"
 import { n, plural } from "@/lib/time"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
@@ -35,6 +36,8 @@ export type Worker = {
 
 export function WorkersPage() {
   const workers = useApi<Worker[]>("/workers", { refetchInterval: 10_000 })
+  // A failed refresh keeps the workers; the head says so (TB-5, LD-12).
+  const view = loadView(workers)
   const [open, setOpen] = useState(false)
   const confirm = useConfirm()
   const revoke = useApiMutation<string>("DELETE", (id) => `/workers/${id}`, {
@@ -54,7 +57,7 @@ export function WorkersPage() {
   return (
     <Page
       title="Workers"
-      updatedAt={workers.dataUpdatedAt || undefined}
+      live={workers}
       description={
         workers.data && list.length
           ? `${n(online)} of ${n(list.length)} online. Agents on n8n Docker hosts: they back up credential secrets, move credentials and check endpoints only reachable on the host, over outbound HTTPS only.`
@@ -73,9 +76,9 @@ export function WorkersPage() {
           count={workers.data ? n(list.length) : undefined}
           className="regular:px-0 regular:pt-0 regular:pb-0"
         />
-        {workers.error ? (
+        {view === "failed" ? (
           <LoadError what="workers" error={workers.error} retry={() => workers.refetch()} />
-        ) : workers.isLoading ? (
+        ) : view === "loading" ? (
           <Loading>Loading workers…</Loading>
         ) : list.length === 0 ? (
           <Empty title="No workers yet.">

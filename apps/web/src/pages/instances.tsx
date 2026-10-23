@@ -39,6 +39,7 @@ import {
   PageHead,
   Panel,
   PanelHead,
+  RefreshNote,
   SecretField,
   SwitchRow,
   UserText,
@@ -81,6 +82,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, useSort 
 import { Textarea } from "@/components/ui/textarea"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { api, describeError, queryClient, useApi, useApiMutation } from "@/lib/api"
+import { loadView } from "@/lib/load-state"
 import { useNavigateFromOverlay } from "@/lib/overlay-history"
 import { formatFull, n, plural, useTimeZone } from "@/lib/time"
 import { toast } from "@/lib/toast"
@@ -177,6 +179,8 @@ export function InstancesPage() {
   const data = useApi<{ latestVersion: string | null; instances: InstanceRow[] }>("/instances", {
     refetchInterval: 15_000,
   })
+  // A failed refresh keeps the rows; the head says so (TB-5, LD-12).
+  const view = loadView(data)
   const [adding, setAdding] = useState(false)
   const rows = data.data?.instances ?? []
   const latest = data.data?.latestVersion ?? null
@@ -212,7 +216,7 @@ export function InstancesPage() {
     <>
       <PageHead
         title="Instances"
-        updatedAt={data.dataUpdatedAt || undefined}
+        live={data}
         description={
           data.data
             ? `${n(rows.length)} registered${down || warn ? ` · ${n(down)} down, ${n(warn)} need a look` : ""}${latest ? ` · latest n8n ${latest}` : ""}`
@@ -224,11 +228,11 @@ export function InstancesPage() {
           </Button>
         }
       />
-      {data.error ? (
+      {view === "failed" ? (
         <Panel>
           <LoadError what="instances" error={data.error} retry={() => data.refetch()} />
         </Panel>
-      ) : data.isLoading ? (
+      ) : view === "loading" ? (
         <Panel>
           <Loading>Loading instances…</Loading>
         </Panel>
@@ -480,6 +484,10 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
           <span>· n8n {i.version ?? "unknown"}</span>
           {behind(i.version, i.latestVersion) && <Tone tone="warn">latest {i.latestVersion}</Tone>}
           {i.queueMode && <span>· queue mode</span>}
+          {/* A failed refresh keeps the instance on screen and says so here (TB-5, LD-12). */}
+          <span>
+            <RefreshNote live={detail} separator="· " />
+          </span>
         </p>
         <div className="flex flex-wrap gap-2 @min-[40rem]/pane:col-start-2 @min-[40rem]/pane:row-start-1">
           <Button size="sm" variant="primary" asChild>

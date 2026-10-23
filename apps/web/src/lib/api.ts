@@ -1,4 +1,5 @@
 import { keepPreviousData, QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useKeptRows } from "@/lib/load-state"
 import { sessionEnded, sessionEnding } from "@/lib/session"
 import { toast } from "@/lib/toast"
 
@@ -78,16 +79,19 @@ export async function readFresh<T>(path: string, client: QueryClient = queryClie
 
 /**
  * Reads an API path. With `keepRows` a list whose filters change keeps showing its last rows until the new
- * answer arrives (`isPlaceholderData` is true meanwhile), instead of dropping to a loading state (TB-5).
+ * answer arrives (`isPlaceholderData` is true meanwhile), instead of dropping to a loading state (TB-5), and keeps
+ * them when that answer fails (`previous` says so, `keepShown` in lib/load-state.ts). A refresh that fails keeps
+ * `data` and sets `error` beside it: pages draw it through `loadView`.
  */
 export function useApi<T>(path: string | null, options: { refetchInterval?: number; keepRows?: boolean } = {}) {
-  return useQuery<T>({
+  const query = useQuery<T>({
     queryKey: [path],
     queryFn: () => readFresh<T>(path as string),
     enabled: path !== null,
     refetchInterval: options.refetchInterval,
     placeholderData: options.keepRows ? keepPreviousData : undefined,
   })
+  return useKeptRows(path, query, Boolean(options.keepRows))
 }
 
 /**

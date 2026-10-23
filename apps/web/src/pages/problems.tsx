@@ -51,6 +51,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, useSort } from "@/components/ui/table"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { api, describeError, useApi, useApiMutation } from "@/lib/api"
+import { useNavigateFromOverlay } from "@/lib/overlay-history"
 import { formatDateTime, n, plural, useTimeZone } from "@/lib/time"
 import { cn } from "@/lib/utils"
 
@@ -664,7 +665,7 @@ function MergeDialog({
   /** Where the focus goes when the dialog closes: what opened it may be gone (a menu item). */
   returnFocus: React.RefObject<HTMLElement | null>
 }) {
-  const navigate = useNavigate()
+  const navigateOut = useNavigateFromOverlay()
   const candidates = useApi<ProblemRow[]>(open ? `/problems?status=open&instance=${problem.instanceId}` : null)
   const [into, setInto] = useState("")
   const merge = useApiMutation<{ into: string }>("POST", `/problems/${problem.id}/merge`, {
@@ -717,8 +718,9 @@ function MergeDialog({
                 { into },
                 {
                   onSuccess: () => {
+                    // The problem merged into takes the dialog's Back entry, so Back returns to this one (DS-10).
+                    navigateOut(`/problems/${into}`)
                     onOpenChange(false)
-                    navigate(`/problems/${into}`)
                   },
                 },
               )

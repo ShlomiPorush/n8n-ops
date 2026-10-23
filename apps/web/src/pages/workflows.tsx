@@ -12,6 +12,7 @@ import {
 } from "lucide-react"
 import { useState } from "react"
 import { useSearchParams } from "react-router"
+import { useDiscardGuard } from "@/components/discard-guard"
 import { FilterBar, Picker, SearchBox } from "@/components/filter-bar"
 import { Empty, LoadError, Loading, Page, Panel, PanelHead, Reloading, Row, UserText } from "@/components/kit"
 import { RateBar } from "@/components/skin/marks"
@@ -299,13 +300,14 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
   const [steps, setSteps] = useState<{ step: string; ok: boolean; detail?: string }[] | null>(null)
   const [error, setError] = useState("")
   const [busy, setBusy] = useState(false)
-  const reset = () => {
+  // A chosen target is asked about before it is dropped, until the move has run (DS-9).
+  const guard = useDiscardGuard(!steps && target !== "", () => {
     setTarget("")
     setPreview(null)
     setSteps(null)
     setError("")
     onClose()
-  }
+  })
   const body = () => ({ sourceId: workflow?.instanceId, targetId: target, workflowId: workflow?.workflowId })
   async function act(fn: () => Promise<void>) {
     setBusy(true)
@@ -319,7 +321,7 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
     }
   }
   return (
-    <Dialog open={workflow !== null} onOpenChange={(o) => !o && reset()}>
+    <Dialog open={workflow !== null} onOpenChange={guard.onOpenChange}>
       <DialogContent className="md:max-w-2xl" keepOnBackdrop>
         <DialogHeader icon={ArrowRightLeftIcon}>
           <DialogTitle>Move {workflow?.name}</DialogTitle>
@@ -423,12 +425,12 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
         {error && <FieldError>{error}</FieldError>}
         <DialogFooter>
           {steps ? (
-            <Button variant="primary" onClick={reset}>
+            <Button variant="primary" onClick={() => void guard.requestClose("finished")}>
               Done
             </Button>
           ) : !preview ? (
             <>
-              <Button onClick={reset}>Cancel</Button>
+              <Button onClick={() => void guard.requestClose()}>Cancel</Button>
               <Button
                 variant="primary"
                 disabled={!target || busy}

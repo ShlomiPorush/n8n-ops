@@ -1,5 +1,5 @@
 import { expect, type Page, test } from "@playwright/test"
-import { dialogClosed, signIn } from "./helpers.ts"
+import { dialogClosed, discardChanges, signIn } from "./helpers.ts"
 
 // The shared ways of moving around: search, sorting, filters in the address, the keyboard, Back, unsaved
 // changes, the sidebar and the links out to n8n.
@@ -204,6 +204,74 @@ test("Back closes a dialog and stays on the page", async () => {
   await expect(page).toHaveURL(/\/instances/)
 })
 
+/** The overlay Back entry the page is on, if any. */
+const overlayEntry = () => page.evaluate(() => (window.history.state as { overlay?: number } | null)?.overlay ?? null)
+
+test("a typed dialog asks before Cancel, Escape or Close drops what was typed, starting on Keep editing", async () => {
+  await page.goto("/instances")
+  await page.getByRole("button", { name: "Add instance" }).click()
+  const dialog = page.getByRole("dialog", { name: "Add an instance" })
+  const name = dialog.getByLabel("Name", { exact: true })
+  const ask = page.getByRole("alertdialog", { name: "Discard your changes?" })
+  const keep = ask.getByRole("button", { name: "Keep editing" })
+  await name.fill("typed, not saved")
+
+  // Cancel asks; the focus starts on Keep editing, so Enter keeps the work.
+  await dialog.getByRole("button", { name: "Cancel" }).click()
+  await expect(ask).toBeVisible()
+  await expect(keep).toBeFocused()
+  await page.keyboard.press("Enter")
+  await expect(ask).toHaveCount(0)
+  await expect(name).toHaveValue("typed, not saved")
+
+  // Escape asks too, and Keep editing keeps the dialog as it was.
+  await page.keyboard.press("Escape")
+  await expect(ask).toBeVisible()
+  await keep.click()
+  await expect(ask).toHaveCount(0)
+  await expect(dialog).toBeVisible()
+  await expect(name).toHaveValue("typed, not saved")
+
+  // Discard closes it and drops what was typed.
+  await dialog.getByRole("button", { name: "Close", exact: true }).click()
+  await ask.getByRole("button", { name: "Discard" }).click()
+  await expect(dialog).toHaveCount(0)
+  await dialogClosed(page)
+
+  // With nothing typed, Cancel closes at once.
+  await page.getByRole("button", { name: "Add instance" }).click()
+  await expect(name).toHaveValue("")
+  await dialog.getByRole("button", { name: "Cancel" }).click()
+  await expect(dialog).toHaveCount(0)
+  await expect(ask).toHaveCount(0)
+  await dialogClosed(page)
+})
+
+test("Back on a typed dialog asks first, and Keep editing keeps the dialog and its Back step", async () => {
+  await page.goto("/instances")
+  await page.getByRole("button", { name: "Add instance" }).click()
+  const dialog = page.getByRole("dialog", { name: "Add an instance" })
+  const name = dialog.getByLabel("Name", { exact: true })
+  const ask = page.getByRole("alertdialog", { name: "Discard your changes?" })
+  await name.fill("typed, not saved")
+  await expect.poll(overlayEntry).not.toBeNull()
+
+  await page.goBack()
+  await expect(ask).toBeVisible()
+  await ask.getByRole("button", { name: "Keep editing" }).click()
+  await expect(dialog).toBeVisible()
+  await expect(name).toHaveValue("typed, not saved")
+  // The dialog holds its Back step again, so the next Back asks again instead of leaving the page.
+  await expect.poll(overlayEntry).not.toBeNull()
+
+  await page.goBack()
+  await expect(ask).toBeVisible()
+  await ask.getByRole("button", { name: "Discard" }).click()
+  await expect(dialog).toHaveCount(0)
+  await dialogClosed(page)
+  await expect(page).toHaveURL(/\/instances/)
+})
+
 test("leaving with unsaved changes asks first", async () => {
   await page.goto("/settings/general")
   const field = page.getByLabel("Public URL")
@@ -213,12 +281,99 @@ test("leaving with unsaved changes asks first", async () => {
   await page.getByRole("link", { name: "Overview", exact: true }).first().click()
   const ask = page.getByRole("alertdialog", { name: "Leave without saving?" })
   await expect(ask).toBeVisible()
+  // The question starts on Stay, so Enter keeps the work, and it adds no Back step of its own.
+  await expect(ask.getByRole("button", { name: "Stay" })).toBeFocused()
+  expect(await overlayEntry()).toBeNull()
   await ask.getByRole("button", { name: "Stay" }).click()
   await dialogClosed(page)
   await expect(page).toHaveURL(/\/settings\/general/)
   await expect(field).toHaveValue("https://ops.example.test")
   await page.getByRole("button", { name: "Discard" }).click()
   await expect(field).toHaveValue(before)
+})
+
+/** Settings as stored, for the tests that change them and put them back. */
+const readSettings = async (section: string) =>
+  (await (await page.request.get(`/api/settings/${section}`)).json()) as Record<string, number>
+const settingsLink = (name: string) =>
+  page.getByRole("navigation", { name: "Settings categories" }).getByRole("link", { name: new RegExp(`^${name}`) })
+const sectionDot = (name: string) => settingsLink(name).getByRole("img", { name: "Unsaved changes" })
+
+test("Settings keeps changes across its sections, with one save bar and a dot on each changed section", async () => {
+  const before = { alerts: await readSettings("alerts"), defaults: await readSettings("defaults") }
+  const grouping = page.getByLabel("Grouping window (seconds)")
+  const stale = page.getByLabel("Backup is stale after (hours)")
+  const unsaved = page.getByRole("region", { name: "Unsaved changes" })
+  const nextGrouping = String((before.alerts.groupingWindowSec ?? 0) + 1)
+  const nextStale = String((before.defaults.staleBackupHours ?? 0) + 1)
+  try {
+    await page.goto("/settings/alerts")
+    await grouping.fill(nextGrouping)
+    await expect(unsaved).toContainText("1 unsaved change")
+    await expect(sectionDot("Alerts")).toBeVisible()
+
+    // Another section opens without a question, and the first one's change stays.
+    await settingsLink("Instance Defaults").click()
+    await expect(page).toHaveURL(/\/settings\/defaults$/)
+    await expect(page.getByRole("alertdialog")).toHaveCount(0)
+    await stale.fill(nextStale)
+    await expect(unsaved).toContainText("2 unsaved changes")
+    await expect(sectionDot("Instance Defaults")).toBeVisible()
+    await expect(sectionDot("Alerts")).toBeVisible()
+    await expect(sectionDot("General")).toHaveCount(0)
+    await settingsLink("Alerts").click()
+    await expect(grouping).toHaveValue(nextGrouping)
+
+    // One Save writes every changed section.
+    await unsaved.getByRole("button", { name: "Save changes" }).click()
+    await expect(
+      page.getByText(/^Saved the (Alerts|Instance defaults) settings and the (Alerts|Instance defaults) settings$/),
+    ).toBeVisible()
+    await expect(unsaved).toHaveCount(0)
+    await expect(sectionDot("Alerts")).toHaveCount(0)
+    await expect(sectionDot("Instance Defaults")).toHaveCount(0)
+    expect((await readSettings("alerts")).groupingWindowSec).toBe(Number(nextGrouping))
+    expect((await readSettings("defaults")).staleBackupHours).toBe(Number(nextStale))
+  } finally {
+    await page.request.put("/api/settings/alerts", { data: { groupingWindowSec: before.alerts.groupingWindowSec } })
+    await page.request.put("/api/settings/defaults", { data: { staleBackupHours: before.defaults.staleBackupHours } })
+  }
+})
+
+test("a section that fails to save keeps its changes and its dot, and the toast names it", async () => {
+  const before = { alerts: await readSettings("alerts"), defaults: await readSettings("defaults") }
+  const retry = page.getByLabel("Retry failed sends every (minutes)")
+  const stale = page.getByLabel("Backup is stale after (hours)")
+  const unsaved = page.getByRole("region", { name: "Unsaved changes" })
+  const nextStale = String((before.defaults.staleBackupHours ?? 0) + 1)
+  try {
+    await page.goto("/settings/alerts")
+    // The server takes 1 to 60 minutes.
+    await retry.fill("99")
+    await settingsLink("Instance Defaults").click()
+    await stale.fill(nextStale)
+    await expect(unsaved).toContainText("2 unsaved changes")
+    await unsaved.getByRole("button", { name: "Save changes" }).click()
+
+    // The saved section is saved; the failure is not covered by a success and names its section (SV-3).
+    await expect(
+      page.getByText(/^Saved the Instance defaults settings\. Could not save the Alerts settings: .+/),
+    ).toBeVisible()
+    await expect(unsaved).toContainText("1 unsaved change")
+    await expect(sectionDot("Alerts")).toBeVisible()
+    await expect(sectionDot("Instance Defaults")).toHaveCount(0)
+    expect((await readSettings("defaults")).staleBackupHours).toBe(Number(nextStale))
+    expect((await readSettings("alerts")).retryMin).toBe(before.alerts.retryMin)
+    await settingsLink("Alerts").click()
+    await expect(retry).toHaveValue("99")
+
+    await unsaved.getByRole("button", { name: "Discard" }).click()
+    await expect(unsaved).toHaveCount(0)
+    await expect(retry).toHaveValue(String(before.alerts.retryMin))
+    await expect(sectionDot("Alerts")).toHaveCount(0)
+  } finally {
+    await page.request.put("/api/settings/defaults", { data: { staleBackupHours: before.defaults.staleBackupHours } })
+  }
 })
 
 test("Ctrl+B folds the sidebar into the rail and back", async () => {
@@ -413,8 +568,12 @@ test("the Edit dialog keeps what is typed when the instance refreshes behind it"
     await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")))
     await expect(page.getByText("· n8n 9.9.9")).toBeAttached()
     await expect(name).toHaveValue("e2e-n8n-b renamed")
+    // Closing with the typed name asks first, and Discard keeps the stored name.
     await dialog.getByRole("button", { name: "Cancel" }).click()
+    await discardChanges(page)
+    await expect(dialog).toHaveCount(0)
     await dialogClosed(page)
+    await expect(page.getByRole("heading", { name: "e2e-n8n-b", exact: true })).toBeVisible()
   } finally {
     await page.unroute(detail)
   }
@@ -577,4 +736,135 @@ test("a problem's tabs have their own address, and Merge opens from its menu and
   await page.keyboard.press("Escape")
   await expect(dialog).toHaveCount(0)
   await expect(more).toBeFocused()
+})
+
+test("Merge lands on the problem merged into, and Back returns to the problem it was opened on", async () => {
+  await page.goto("/problems?status=all")
+  await page
+    .getByRole("row", { name: /Sync orders to ERP/ })
+    .first()
+    .click()
+  await expect(page.getByRole("heading", { name: "Where It Broke" })).toBeVisible()
+  const problem = new URL(page.url()).pathname
+  // A stand-in problem to merge into, and a merge that is only answered: the stored problems stay as they are.
+  const candidates = (url: URL) =>
+    url.pathname === "/api/problems" && url.searchParams.get("status") === "open" && url.searchParams.has("instance")
+  const merge = (url: URL) => /^\/api\/problems\/[^/]+\/merge$/.test(url.pathname)
+  await page.route(candidates, (route) =>
+    route.fulfill({
+      json: [{ id: "e2e-merge-target", workflowName: "Merge target", errorMessage: "Stand-in problem" }],
+    }),
+  )
+  await page.route(merge, (route) => route.fulfill({ json: { ok: true } }))
+  try {
+    await page.getByRole("button", { name: "More actions" }).click()
+    await page.getByRole("menuitem", { name: "Merge into…" }).click()
+    const dialog = page.getByRole("dialog", { name: "Merge into Another Problem" })
+    await dialog.getByRole("combobox", { name: "Problem to merge into" }).click()
+    await page.getByRole("option", { name: "Merge target · Stand-in problem" }).click()
+    await expect.poll(overlayEntry).not.toBeNull()
+    await dialog.getByRole("button", { name: "Merge", exact: true }).click()
+    await expect(page).toHaveURL((url) => url.pathname === "/problems/e2e-merge-target")
+    await expect(dialog).toHaveCount(0)
+
+    // The new page took the dialog's Back step (DS-10): one Back returns to the problem, with no dialog step
+    // left on the way.
+    await page.goBack()
+    await expect(page).toHaveURL((url) => url.pathname === problem)
+    await expect.poll(overlayEntry).toBeNull()
+    await expect(page.getByRole("heading", { name: "Where It Broke" })).toBeVisible()
+  } finally {
+    await page.unroute(candidates)
+    await page.unroute(merge)
+  }
+})
+
+test("Back from an instance added on another one asks, Stay keeps it without a reload, and Leave goes back", async () => {
+  const added = await openInstanceB()
+  await page
+    .getByRole("row")
+    .filter({ has: page.getByText("e2e-n8n", { exact: true }) })
+    .click()
+  await expect(page.getByRole("heading", { name: "e2e-n8n", exact: true })).toBeVisible()
+  const first = new URL(page.url()).pathname
+  // An add that is only answered, with e2e-n8n-b as the new instance: nothing is stored.
+  const add = (url: URL) => url.pathname === "/api/instances"
+  await page.route(add, (route) =>
+    route.request().method() === "POST" ? route.fulfill({ json: { id: added } }) : route.continue(),
+  )
+  const unsaved = page.getByRole("region", { name: "Unsaved changes" })
+  const ask = page.getByRole("alertdialog", { name: "Leave without saving?" })
+  // A mark on the window that a reload would wipe.
+  const notReloaded = () => page.evaluate(() => (window as { e2eSamePage?: boolean }).e2eSamePage === true)
+  try {
+    await page.getByRole("button", { name: "Add instance" }).click()
+    const dialog = page.getByRole("dialog", { name: "Add an instance" })
+    await dialog.getByLabel("Name", { exact: true }).fill("e2e-added")
+    await dialog.getByLabel("Base URL", { exact: true }).fill("http://n8n.example.invalid")
+    await dialog.getByLabel("API key", { exact: true }).fill("not-a-real-key")
+    await expect.poll(overlayEntry).not.toBeNull()
+    await dialog.getByRole("button", { name: "Add instance" }).click()
+    await expect(page).toHaveURL((url) => url.pathname === `/instances/${added}`)
+    await expect(dialog).toHaveCount(0)
+    await page.evaluate(() => {
+      ;(window as { e2eSamePage?: boolean }).e2eSamePage = true
+    })
+
+    const settings = page.getByRole("tab", { name: /^Settings/ })
+    const field = page.getByLabel("Auto-resolve after (days)")
+    /** The tab is a Back step on the same page, which does not ask. */
+    const backFromTab = async () => {
+      await page.goBack()
+      await expect(page).toHaveURL((url) => url.pathname === `/instances/${added}` && url.search === "")
+      await expect(ask).toHaveCount(0)
+    }
+    await settings.click()
+    const typed = (await field.inputValue()) === "8" ? "7" : "8"
+    await field.fill(typed)
+    await expect(unsaved).toContainText("1 unsaved change")
+    await backFromTab()
+
+    // Back to the instance the dialog was opened on asks; Stay keeps the page, with no reload, and what was typed.
+    await page.goBack()
+    await expect(ask).toBeVisible()
+    await ask.getByRole("button", { name: "Stay" }).click()
+    await expect(ask).toHaveCount(0)
+    expect(await notReloaded()).toBe(true)
+    await expect(page).toHaveURL((url) => url.pathname === `/instances/${added}`)
+    await expect(unsaved).toContainText("1 unsaved change")
+    await settings.click()
+    await expect(field).toHaveValue(typed)
+    await backFromTab()
+
+    // Back again, and Leave goes to that instance, with no dialog step left on the way.
+    await page.goBack()
+    await ask.getByRole("button", { name: "Leave without saving" }).click()
+    await expect(page).toHaveURL((url) => url.pathname === first)
+    await expect(page.getByRole("heading", { name: "e2e-n8n", exact: true })).toBeVisible()
+    await expect(unsaved).toHaveCount(0)
+    expect(await overlayEntry()).toBeNull()
+    expect(await notReloaded()).toBe(true)
+  } finally {
+    await page.unroute(add)
+  }
+})
+
+// Last: it leaves the page on sign-in.
+test("a session that ends on an open page goes to sign-in, back to that page, without asking", async () => {
+  await page.goto("/settings/alerts")
+  const field = page.getByLabel("Grouping window (seconds)")
+  await field.fill(String(Number(await field.inputValue()) + 1))
+  await expect(page.getByRole("region", { name: "Unsaved changes" })).toBeVisible()
+  // From now on the server answers this section as it does once the session has ended.
+  const section = "**/api/settings/alerts"
+  await page.route(section, (route) => route.fulfill({ status: 401, json: { error: "unauthorized" } }))
+  try {
+    // A refresh, as coming back to the window brings.
+    await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")))
+    // The unsaved-changes guard is off first, so leaving does not ask (NL-18).
+    await expect(page).toHaveURL(/\/login\?next=%2Fsettings%2Falerts$/)
+    await expect(page.getByRole("alertdialog")).toHaveCount(0)
+  } finally {
+    await page.unroute(section)
+  }
 })

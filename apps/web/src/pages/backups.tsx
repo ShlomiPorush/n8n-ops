@@ -11,6 +11,7 @@ import {
 import { useState } from "react"
 import { Link, useNavigate, useParams } from "react-router"
 import { useCrumb } from "@/app/chrome"
+import { useDiscardGuard } from "@/components/discard-guard"
 import { ItemRow, ItemsHeader, Said } from "@/components/item-row"
 import { Copyable, Empty, Kpi, Kpis, LoadError, Loading, Locked, PageHead, Panel, UserText } from "@/components/kit"
 import { ListWithPanel } from "@/components/list-panel"
@@ -495,7 +496,8 @@ function RestoreDialog({ run, instanceId, onClose }: { run: Run | null; instance
   const [error, setError] = useState("")
   const [busy, setBusy] = useState(false)
 
-  const reset = () => {
+  // Clearing the fields is part of the close, so a typed key is asked about before it is dropped (DS-9).
+  const guard = useDiscardGuard(!result && key.trim() !== "", () => {
     setKey("")
     setInspection(null)
     setWorkflowId("")
@@ -503,7 +505,7 @@ function RestoreDialog({ run, instanceId, onClose }: { run: Run | null; instance
     setResult(null)
     setError("")
     onClose()
-  }
+  })
   async function step(fn: () => Promise<void>) {
     setBusy(true)
     setError("")
@@ -516,7 +518,7 @@ function RestoreDialog({ run, instanceId, onClose }: { run: Run | null; instance
     }
   }
   return (
-    <Dialog open={run !== null} onOpenChange={(o) => !o && reset()}>
+    <Dialog open={run !== null} onOpenChange={guard.onOpenChange}>
       <DialogContent className="md:max-w-lg" keepOnBackdrop>
         <DialogHeader icon={ArchiveRestoreIcon}>
           <DialogTitle>Restore from {run ? formatDateTime(run.startedAt, tz) : ""}</DialogTitle>
@@ -597,12 +599,12 @@ function RestoreDialog({ run, instanceId, onClose }: { run: Run | null; instance
         {error && <FieldError>{error}</FieldError>}
         <DialogFooter>
           {result ? (
-            <Button variant="primary" onClick={reset}>
+            <Button variant="primary" onClick={() => void guard.requestClose("finished")}>
               Done
             </Button>
           ) : !inspection ? (
             <>
-              <Button onClick={reset}>Cancel</Button>
+              <Button onClick={() => void guard.requestClose()}>Cancel</Button>
               <Button
                 variant="primary"
                 disabled={!key.trim() || busy}
@@ -622,7 +624,7 @@ function RestoreDialog({ run, instanceId, onClose }: { run: Run | null; instance
             </>
           ) : (
             <>
-              <Button onClick={reset}>Cancel</Button>
+              <Button onClick={() => void guard.requestClose()}>Cancel</Button>
               <Button
                 variant="primary"
                 disabled={!workflowId || busy}

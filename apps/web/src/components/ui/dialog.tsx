@@ -141,8 +141,10 @@ function useSheetGestures(
  * the scroll and squares its corners at full height; pulled down it closes (DS-1 to DS-4).
  *
  * Escape and Back close only the top layer (DS-8, DS-10). An information window closes on a backdrop click;
- * a dialog with typed input sets `keepOnBackdrop` and closes only by Cancel or X (DS-9). A dialog whose state
- * is in the address already gets Back from the router and sets `history={false}`.
+ * a dialog with typed input sets `keepOnBackdrop`, and its owner routes every close through `useDiscardGuard`,
+ * which asks before dropping what was typed (DS-9): X, Escape, Back and the pull-down all reach the owner's
+ * `onOpenChange`. A dialog whose state is in the address already gets Back from the router and sets
+ * `history={false}`.
  */
 function DialogContent({
   className,
@@ -165,8 +167,13 @@ function DialogContent({
   const [panel, setPanel] = React.useState<HTMLDivElement | null>(null)
   const closeRef = React.useRef<HTMLButtonElement>(null)
   useSheetGestures(panel, closeRef, pullToClose ?? showCloseButton)
-  // This component renders also while its dialog is closed; only a mounted panel holds a Back entry.
-  useOverlayHistory(history && panel !== null, () => closeRef.current?.click())
+  // This component renders also while its dialog is closed; only a mounted panel holds a Back entry. A close
+  // that asks first keeps the panel open, and then the entry is held again.
+  useOverlayHistory(
+    history && panel !== null,
+    () => closeRef.current?.click(),
+    () => panel?.isConnected === true && panel.dataset.state === "open",
+  )
 
   // A click on the toast is not a click on the backdrop.
   const outside = (e: { target: EventTarget | null; preventDefault(): void }) => {

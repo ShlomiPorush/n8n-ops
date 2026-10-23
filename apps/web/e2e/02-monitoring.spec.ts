@@ -27,6 +27,9 @@ test("n8n is prepared with an API key and a failing workflow", async () => {
 })
 
 test("an instance is registered after its connection is tested", async () => {
+  // From Overview, so the way back after the add can be followed.
+  await page.goto("/")
+  await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible()
   await page.goto("/instances")
   await page.getByRole("button", { name: "Add instance" }).click()
   await page.getByLabel("Name", { exact: true }).fill("e2e-n8n")
@@ -41,6 +44,16 @@ test("an instance is registered after its connection is tested", async () => {
   await expect(page.getByRole("heading", { name: "e2e-n8n" })).toBeVisible()
   await page.getByRole("tab", { name: "Access" }).click()
   await expect(page.getByText("Read from GET /api/v1/discover")).toBeVisible()
+
+  // The new instance took the dialog's Back step instead of adding one after it (DS-10): Back leaves the tab,
+  // then the instance for the list (a wide screen opens its first instance in place), then the list for Overview.
+  await page.goBack()
+  await expect(page).not.toHaveURL(/tab=access/)
+  await page.goBack()
+  await expect(page).toHaveURL(/\/instances/)
+  await expect(page.getByRole("dialog")).toHaveCount(0)
+  await page.goBack()
+  await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible()
 })
 
 test("the first sync imports existing failures as a problem", async () => {

@@ -39,6 +39,7 @@ export function AgentAccessCard({ id, name, scopesSource, keyScopes, agentAccess
   }
   const save = useApiMutation<{ agentAccess: Props["agentAccess"] }>("PATCH", `/instances/${id}`, {
     invalidate: ["/instances", `/instances/${id}`],
+    quiet: true,
   })
   // The stored access as it was when a save finished, until the refetch after it brings the saved value.
   const savedOver = useRef<{ agentAccess: Props["agentAccess"]; keyScopes: string[] } | null>(null)

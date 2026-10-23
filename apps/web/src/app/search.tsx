@@ -128,15 +128,16 @@ function useServerSearch(q: string, enabled: boolean) {
     const abort = new AbortController()
     const timer = setTimeout(() => {
       const query = encodeURIComponent(t)
-      api<ProblemHit[]>(`/problems?status=all&q=${query}`, { signal: abort.signal })
-        .then((rows) =>
+      // The total counts every match, not only the 200 the list sends (TB-18).
+      api<{ items: ProblemHit[]; total: number }>(`/problems?status=all&q=${query}`, { signal: abort.signal })
+        .then((data) =>
           setFound((f) => ({
             ...f,
             problems: {
               state: "ready",
-              total: rows.length,
+              total: data.total,
               all: `/problems?status=all&q=${query}`,
-              items: rows.map((p) => ({
+              items: data.items.map((p) => ({
                 id: `problem:${p.id}`,
                 title: p.workflowName,
                 subtitle: `${p.instanceName} · ${p.errorMessage}`,

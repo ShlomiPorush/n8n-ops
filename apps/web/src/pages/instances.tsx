@@ -388,11 +388,12 @@ type ListBackup =
  * In a pane narrower than 40rem (a phone) six labels in a row do not fit, so each tab stacks its icon over a
  * smaller label, and its mark moves to the icon's corner.
  */
-const tabsLook = "gap-0 regular:gap-1 regular:rounded-lg regular:bg-fill regular:p-1 regular:before:hidden"
+const tabsLook =
+  "gap-0 regular:gap-1 regular:rounded-lg regular:bg-fill regular:p-1 regular:before:hidden regular:@max-[40rem]/pane:gap-0"
 const tabLook = cn(
   "flex-1 justify-center px-2",
-  "@max-[40rem]/pane:flex-col @max-[40rem]/pane:gap-0.5 @max-[40rem]/pane:px-1 @max-[40rem]/pane:text-meta",
-  "regular:rounded-sm regular:border-b-0 regular:px-3 regular:py-1.5 regular:@max-[40rem]/pane:px-1",
+  "@max-[40rem]/pane:flex-col @max-[40rem]/pane:gap-0.5 @max-[40rem]/pane:px-0.5 @max-[40rem]/pane:text-meta",
+  "regular:rounded-sm regular:border-b-0 regular:px-3 regular:py-1.5 regular:@max-[40rem]/pane:px-0.5",
   "regular:data-[state=active]:bg-panel regular:data-[state=active]:shadow-card",
 )
 const tabMark =
@@ -504,13 +505,13 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
             {healthLabel(i)}
           </StatusTag>
         </div>
-        <p className="flex flex-wrap items-center gap-x-1.5 text-muted-foreground @min-[40rem]/pane:col-start-1">
+        <p className="flex flex-wrap items-center gap-x-1.5 text-muted-foreground @min-[40rem]/pane:col-span-2">
           <Copyable value={i.baseUrl} label="Copy base URL" />
           <span>· n8n {i.version ?? "unknown"}</span>
           {behind(i.version, i.latestVersion) && <Tone tone="warn">latest {i.latestVersion}</Tone>}
           {i.queueMode && <span>· queue mode</span>}
         </p>
-        <div className="flex flex-wrap gap-2 @min-[40rem]/pane:col-start-2 @min-[40rem]/pane:row-span-2 @min-[40rem]/pane:row-start-1 @min-[40rem]/pane:self-start">
+        <div className="flex flex-wrap gap-2 @min-[40rem]/pane:col-start-2 @min-[40rem]/pane:row-start-1">
           <Button size="sm" variant="primary" asChild>
             <a href={i.baseUrl} target="_blank" rel="noreferrer">
               <ExternalLink /> Open n8n

@@ -554,7 +554,7 @@ html[data-design="regular"].dark {
   background: var(--ui-ink);
 }
 
-/* Sortable headers (TB-1): a small triangle, hidden until sorted, a faint preview on hover. */
+/* Sortable headers (TB-1): a small triangle, hidden until sorted, a faint preview on hover or keyboard focus. */
 [data-sort-head]::after {
   content: "";
   margin-inline-start: 5px;
@@ -576,31 +576,47 @@ html[data-design="regular"].dark {
     opacity: 0.35;
   }
 }
+[aria-sort="none"] > [data-sort-head]:focus-visible::after {
+  opacity: 0.35;
+}
+
+/*
+ * A list's filter bar stays in sight at the top of where the list scrolls (NL-16): the list column beside a
+ * reading pane, and the page on a phone. It sticks flush to the top, on the page's own background, with a
+ * little room around it that it takes from the gaps beside it, so nothing moves while it is not stuck.
+ */
+[data-scroll-pane] > [data-slot="filter-bar"] {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  margin-block: -8px;
+  padding-block: 8px;
+  background: var(--ui-bg);
+}
+@media (max-width: 760px) {
+  #main [data-slot="filter-bar"] {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    margin-block: -8px;
+    padding-block: 8px;
+    background: var(--ui-bg);
+  }
+}
 
 /*
  * Tables stack into rows where they have less than 560px, on a phone or beside a reading pane (TB-14): the
  * header row goes, the first cell takes the first line, every other value carries its column name, the
- * actions take the last line and empty cells disappear. A "Sort by" picker above the rows stands in for the
- * header's sort buttons (not yet the one Sort button of TB-28).
+ * actions take the last line and empty cells disappear. The list's Sort button (TB-28) sorts it then.
  */
 [data-slot="table-wrap"] {
   container-type: inline-size;
-}
-[data-slot="table-sort"] {
-  display: none;
-}
-/* A list of items has no header row either, at any width. */
-[data-slot="table-wrap"][data-items] > [data-slot="table-sort"] {
-  display: flex;
 }
 /* Compact marks the open item with an edge at its start as well; Regular draws no status edges (#29). */
 html:not([data-design="regular"]) tr[data-state="selected"] > td:has(> [data-slot="item-row"]) {
   box-shadow: inset 3px 0 0 var(--ui-ink);
 }
 @container (max-width: 559px) {
-  [data-slot="table-sort"] {
-    display: flex;
-  }
   [data-stack],
   [data-stack] > tbody {
     display: block;

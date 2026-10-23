@@ -53,6 +53,8 @@ import {
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
+  RANK_WORDS,
+  type Sorting,
   type SortOrder,
   type SortState,
   Table,
@@ -109,6 +111,30 @@ export function problemsPath(filters: Record<string, string>, order: SortState |
 const statusRank = { resolved: 0, muted: 1, open: 2, new: 3, regression: 4 } as const
 const arrival: SortState = { key: "status", dir: "descending" }
 
+/**
+ * The order of a Problems list, shared by its rows and its Sort button. The order is asked of the server
+ * (`useSortOrder`, sent through `problemsPath`), which sorts every problem before it sends the first 200, so the
+ * rows are drawn as they came, never sorted again here (TB-4). The keys are the server's sort columns
+ * (`problemSortKeys` in routes/problems.ts).
+ */
+export function useProblemsSort(rows: ProblemRow[], order: SortOrder, showInstance = true): Sorting<ProblemRow> {
+  return useSort(rows, {
+    id: showInstance ? "problems" : "instance-problems",
+    order,
+    arrival,
+    columns: {
+      status: { label: "Status", kind: "number", words: RANK_WORDS, value: (p) => statusRank[problemStatus(p)] },
+      workflow: { label: "Workflow", kind: "text", value: (p) => p.workflowName },
+      error: { label: "Error", kind: "text", value: (p) => p.errorMessage },
+      ...(showInstance
+        ? { instance: { label: "Instance", kind: "text" as const, value: (p: ProblemRow) => p.instanceName } }
+        : {}),
+      failures: { label: "Failures", kind: "number", value: (p) => p.count },
+      lastSeen: { label: "Last seen", kind: "date", value: (p) => new Date(p.lastSeen) },
+    },
+  })
+}
+
 type ProblemDetailData = ProblemRow & {
   error: { message?: string; description?: string | null; stack?: string | null; nodeType?: string | null } | null
   nodeInput: unknown[]
@@ -139,8 +165,7 @@ export function ProblemsTable({
   empty = "No problems here.",
   bare,
   items,
-  preview,
-  order,
+  sort,
 }: {
   rows: ProblemRow[]
   selected?: string
@@ -153,30 +178,12 @@ export function ProblemsTable({
   bare?: boolean
   /** Each row as an item of a few lines, for a list beside a reading pane. */
   items?: boolean
-  /** A few rows picked by the caller: shown in their order, without a sort control. */
-  preview?: boolean
   /**
-   * The order the rows were asked for (`useSortOrder`, sent through `problemsPath`). The server sorts every
-   * problem before it sends the first 200, so the rows are drawn as they came, never sorted again here (TB-4).
+   * The list's order (`useProblemsSort`), which its Sort button shares. Without it the rows are a few picked by
+   * the caller, shown in their order with no sort.
    */
-  order?: SortOrder
+  sort?: Sorting<ProblemRow>
 }) {
-  // The keys are the server's sort columns (`problemSortKeys` in routes/problems.ts).
-  const sort = useSort(rows, {
-    id: showInstance ? "problems" : "instance-problems",
-    order,
-    arrival,
-    columns: {
-      status: { label: "Status", kind: "number", value: (p) => statusRank[problemStatus(p)] },
-      workflow: { label: "Workflow", kind: "text", value: (p) => p.workflowName },
-      error: { label: "Error", kind: "text", value: (p) => p.errorMessage },
-      ...(showInstance
-        ? { instance: { label: "Instance", kind: "text" as const, value: (p: ProblemRow) => p.instanceName } }
-        : {}),
-      failures: { label: "Failures", kind: "number", value: (p) => p.count },
-      lastSeen: { label: "Last seen", kind: "date", value: (p) => new Date(p.lastSeen) },
-    },
-  })
   if (rows.length === 0) {
     const empt = <Empty title={empty}>A failure that n8n reports shows up here once, however often it repeats.</Empty>
     return bare ? empt : <Panel>{empt}</Panel>
@@ -190,10 +197,10 @@ export function ProblemsTable({
   })
   if (items) {
     return (
-      <Table bare={bare} sort={preview ? undefined : sort} items>
+      <Table bare={bare} items>
         <ItemsHeader label="Problem" />
         <TableBody>
-          {(preview ? rows : sort.rows).map((p) => (
+          {(sort?.rows ?? rows).map((p) => (
             <TableRow key={p.id} {...rowProps(p)}>
               <ItemRow
                 title={<UserText>{p.workflowName}</UserText>}
@@ -235,23 +242,23 @@ export function ProblemsTable({
     )
   }
   return (
-    <Table bare={bare} sort={sort}>
+    <Table bare={bare}>
       <TableHeader>
         <TableRow>
-          <TableHead sort={sort.head("status")}>Status</TableHead>
-          <TableHead sort={sort.head("workflow")}>Workflow</TableHead>
-          <TableHead sort={sort.head("error")}>Error</TableHead>
-          {showInstance && <TableHead sort={sort.head("instance")}>Instance</TableHead>}
-          <TableHead className="text-end" sort={sort.head("failures")}>
+          <TableHead sort={sort?.head("status")}>Status</TableHead>
+          <TableHead sort={sort?.head("workflow")}>Workflow</TableHead>
+          <TableHead sort={sort?.head("error")}>Error</TableHead>
+          {showInstance && <TableHead sort={sort?.head("instance")}>Instance</TableHead>}
+          <TableHead className="text-end" sort={sort?.head("failures")}>
             Failures
           </TableHead>
-          <TableHead className="text-end" sort={sort.head("lastSeen")}>
+          <TableHead className="text-end" sort={sort?.head("lastSeen")}>
             Last seen
           </TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
-        {sort.rows.map((p) => (
+        {(sort?.rows ?? rows).map((p) => (
           <TableRow key={p.id} {...rowProps(p)}>
             <TableCell data-nolabel>
               <ProblemBadge status={p.status} regression={p.regression} firstSeen={p.firstSeen} />
@@ -293,6 +300,7 @@ export function ProblemsPage() {
   // A failed refresh keeps the rows and the head says so; new filters that failed keep the previous rows and the
   // filter line says so (TB-5, LD-12).
   const view = loadView(rows)
+  const sort = useProblemsSort(rows.data?.items ?? [], order)
   const instances = useApi<{ instances: { id: string; name: string }[] }>("/instances")
   const setParam = (k: string, v: string) => {
     const next = new URLSearchParams(params)
@@ -324,8 +332,22 @@ export function ProblemsPage() {
             <ToggleGroupItem value="all">All</ToggleGroupItem>
           </ToggleGroup>
         }
-        search={<SearchBox label="Search workflow or error" value={q} onChange={(v) => setParam("q", v)} />}
-        active={Number(instance !== "all")}
+        search={<SearchBox label="Search workflow or error" value={q} onChange={(v) => setParam("q", v)} debounce />}
+        sort={{ control: sort.control, name: "problems" }}
+        pickers={
+          <Picker
+            label="Instance"
+            value={instance}
+            defaultValue="all"
+            onChange={(v) => setParam("instance", v)}
+            options={[
+              { value: "all", label: "All" },
+              ...(instances.data?.instances ?? []).map((i) => ({ value: i.id, label: i.name })),
+            ]}
+          />
+        }
+        listKey={`${status}|${instance}|${q}`}
+        drawn={rows.isPlaceholderData ? null : rows.data}
         count={
           shown === undefined ? undefined : (
             <>
@@ -347,18 +369,7 @@ export function ProblemsPage() {
               }
             : undefined
         }
-      >
-        <Picker
-          label="Instance"
-          value={instance}
-          defaultValue="all"
-          onChange={(v) => setParam("instance", v)}
-          options={[
-            { value: "all", label: "All" },
-            ...(instances.data?.instances ?? []).map((i) => ({ value: i.id, label: i.name })),
-          ]}
-        />
-      </FilterBar>
+      />
       {view === "failed" ? (
         <Panel>
           <LoadError what="problems" error={rows.error} retry={() => rows.refetch()} />
@@ -371,7 +382,7 @@ export function ProblemsPage() {
         <Reloading busy={rows.isPlaceholderData || (rows.previous === "failed" && rows.isFetching)}>
           <ProblemsTable
             rows={rows.data?.items ?? []}
-            order={order}
+            sort={sort}
             selected={id}
             onOpen={open}
             href={(pid) => `/problems/${pid}?${params}`}
@@ -758,6 +769,7 @@ export function ProblemDetail({ id }: { id: string }) {
                 Failures older than the retention were removed; the count still includes them.
               </Empty>
             ) : (
+              // No Sort button (TB-28): the latest runs, newest first, are all this list is for.
               <Table bare items>
                 <ItemsHeader label="Execution" />
                 <TableBody>

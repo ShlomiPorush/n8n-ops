@@ -12,6 +12,7 @@ import { useState } from "react"
 import { Link, useNavigate, useParams } from "react-router"
 import { useCrumb } from "@/app/chrome"
 import { useDiscardGuard } from "@/components/discard-guard"
+import { FilterBar } from "@/components/filter-bar"
 import { ItemRow, ItemsHeader, Said } from "@/components/item-row"
 import {
   BusyButton,
@@ -112,6 +113,12 @@ export const formatSize = (bytes: number | null) =>
 const stale = (row: BackupRow) =>
   !row.lastOk || Date.now() - new Date(row.lastOk.startedAt).getTime() > row.staleBackupHours * 3600_000
 
+/** What needs a look first (TB-11): backed up nowhere or the last run failed, then late or partly failed. */
+const backupRank = (row: BackupRow) => {
+  if (row.destinations.length === 0 || row.lastRun?.status === "failed") return 2
+  return stale(row) || row.lastRun?.status === "partial" ? 1 : 0
+}
+
 /**
  * Why a failed run failed, when its copies do not already say it: a failure before the archive was ready (the
  * export, the upload, space or size) leaves every copy with the same general message, and the cause is here.
@@ -162,12 +169,23 @@ export function BackupsPage() {
   const late = backedUp.length - okCount
   const none = s ? s.instances.length - backedUp.length : 0
   const enabled = s?.destinations.filter((d) => d.enabled) ?? []
+  // Failed and late first, then by name as the server sends them, the n8n-ops database last (TB-11).
   const sort = useSort(rows, {
     id: "backups",
+    rank: backupRank,
     columns: {
-      name: { label: "Instance", value: (r) => r.name },
-      lastOk: { label: "Last success", value: (r) => (r.lastOk ? new Date(r.lastOk.startedAt) : null) },
-      time: { label: "Daily at", value: (r) => r.backupTime },
+      name: { label: "Instance", kind: "text", value: (r) => r.name },
+      lastOk: {
+        label: "Last success",
+        kind: "date",
+        value: (r) => (r.lastOk ? new Date(r.lastOk.startedAt) : null),
+      },
+      time: {
+        label: "Daily at",
+        kind: "text",
+        words: { ascending: "Earliest first", descending: "Latest first" },
+        value: (r) => r.backupTime,
+      },
     },
   })
 
@@ -229,147 +247,153 @@ export function BackupsPage() {
           <Loading>Loading backups…</Loading>
         </Panel>
       ) : (
-        <Table sort={sort} items={items}>
-          {items ? (
-            <ItemsHeader label="Backup" />
-          ) : (
-            <TableHeader>
-              <TableRow>
-                <TableHead sort={sort.head("name")}>Instance</TableHead>
-                <TableHead sort={sort.head("lastOk")}>Last success</TableHead>
-                <TableHead>Includes</TableHead>
-                <TableHead>To</TableHead>
-                <TableHead sort={sort.head("time")}>Daily at</TableHead>
-                {s?.configured && <TableHead />}
-              </TableRow>
-            </TableHeader>
-          )}
-          <TableBody>
-            {sort.rows.map((r) => {
-              const nowhere = r.destinations.length === 0
-              const failed = r.lastRun?.status === "failed"
-              const partial = r.lastRun?.status === "partial"
-              const late = stale(r)
-              const dot = (
-                <Dot
-                  health={nowhere || failed ? "down" : late || partial ? "warn" : "ok"}
-                  label={
-                    nowhere
-                      ? "Not backed up"
-                      : failed
-                        ? "Last backup failed"
-                        : partial
-                          ? "Some copies of the last backup failed"
-                          : late
-                            ? "Backup is late"
-                            : "Backed up on time"
-                  }
-                />
-              )
-              const lastOkTime = (
-                <span className={cn(late && !nowhere && "font-semibold text-warn")}>
-                  <When value={r.lastOk?.startedAt} />
-                </span>
-              )
-              const tag = nowhere ? (
-                <StatusTag kind="backup" status="none" />
-              ) : failed ? (
-                <StatusTag kind="backup" status="failed" />
-              ) : partial ? (
-                <StatusTag kind="backup" status="partial" />
-              ) : (
-                late && <StatusTag kind="backup" status="stale" />
-              )
-              const includes =
-                r.id === "self"
-                  ? "database dump"
-                  : r.withSecrets
-                    ? "workflows + credential secrets"
-                    : "workflows, credentials without secrets"
-              const to = nowhere ? "no destination" : r.destinations.map((d) => d.name).join(", ")
-              // One click starts one run: the button is locked until the request ends (FB-7).
-              const button = (
-                <BusyButton
-                  size="sm"
-                  icon={Play}
-                  busyLabel="Starting…"
-                  disabled={r.lastRun?.status === "running" || nowhere}
-                  aria-describedby={nowhere ? `run-reason-${r.id}` : undefined}
-                  onClick={(e) => e.stopPropagation()}
-                  run={() => run.mutateAsync(r.id)}
-                >
-                  {r.lastRun?.status === "running" ? "Running…" : "Run now"}
-                </BusyButton>
-              )
-              // A button that cannot run says why in words beside it, not in a tip (AX-9, FB-1).
-              const runNow =
-                s?.configured &&
-                (nowhere ? (
-                  <span className="inline-flex flex-wrap items-center gap-x-2.5 gap-y-1">
-                    {button}
-                    <span id={`run-reason-${r.id}`} className="text-small text-muted-foreground">
-                      Choose a destination first
-                    </span>
-                  </span>
-                ) : (
-                  button
-                ))
-              return (
-                <TableRow
-                  key={r.id}
-                  data-state={id === r.id ? "selected" : undefined}
-                  aria-current={id === r.id ? "true" : undefined}
-                  className="hover-row"
-                  data-href={`/backups/${r.id}`}
-                  onClick={() => navigate(`/backups/${r.id}`)}
-                >
-                  {items ? (
-                    <ItemRow
-                      lead={dot}
-                      title={<UserText>{r.name}</UserText>}
-                      titleText={r.name}
-                      end={
-                        <>
-                          <Said>Last success</Said>
-                          {lastOkTime}
-                        </>
-                      }
-                      sub={
-                        <>
-                          {tag && <>{tag} </>}
-                          {includes} · to {to}
-                        </>
-                      }
-                      subEnd={<span className="tabular-nums">daily at {r.backupTime}</span>}
-                      action={runNow || undefined}
-                    />
-                  ) : (
-                    <>
-                      <TableCell className="max-w-56 font-semibold">
-                        <span className="flex items-center gap-2">
-                          {dot}
-                          <UserText className="truncate">{r.name}</UserText>
-                        </span>
-                      </TableCell>
-                      <TableCell>
-                        <span className="flex items-center gap-2">
-                          {lastOkTime}
-                          {tag}
-                        </span>
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">{includes}</TableCell>
-                      <TableCell className={cn("max-w-56 truncate", nowhere ? "text-fail" : "text-muted-foreground")}>
-                        {to}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground tabular-nums">{r.backupTime}</TableCell>
-                      {runNow && <TableCell className="text-end">{runNow}</TableCell>}
-                    </>
-                  )}
+        <>
+          <FilterBar
+            count={s ? `${plural(s.instances.length, "instance")} and the n8n-ops database` : undefined}
+            sort={{ control: sort.control, name: "backups" }}
+          />
+          <Table items={items}>
+            {items ? (
+              <ItemsHeader label="Backup" />
+            ) : (
+              <TableHeader>
+                <TableRow>
+                  <TableHead sort={sort.head("name")}>Instance</TableHead>
+                  <TableHead sort={sort.head("lastOk")}>Last success</TableHead>
+                  <TableHead>Includes</TableHead>
+                  <TableHead>To</TableHead>
+                  <TableHead sort={sort.head("time")}>Daily at</TableHead>
+                  {s?.configured && <TableHead />}
                 </TableRow>
-              )
-            })}
-          </TableBody>
-        </Table>
+              </TableHeader>
+            )}
+            <TableBody>
+              {sort.rows.map((r) => {
+                const nowhere = r.destinations.length === 0
+                const failed = r.lastRun?.status === "failed"
+                const partial = r.lastRun?.status === "partial"
+                const late = stale(r)
+                const dot = (
+                  <Dot
+                    health={nowhere || failed ? "down" : late || partial ? "warn" : "ok"}
+                    label={
+                      nowhere
+                        ? "Not backed up"
+                        : failed
+                          ? "Last backup failed"
+                          : partial
+                            ? "Some copies of the last backup failed"
+                            : late
+                              ? "Backup is late"
+                              : "Backed up on time"
+                    }
+                  />
+                )
+                const lastOkTime = (
+                  <span className={cn(late && !nowhere && "font-semibold text-warn")}>
+                    <When value={r.lastOk?.startedAt} />
+                  </span>
+                )
+                const tag = nowhere ? (
+                  <StatusTag kind="backup" status="none" />
+                ) : failed ? (
+                  <StatusTag kind="backup" status="failed" />
+                ) : partial ? (
+                  <StatusTag kind="backup" status="partial" />
+                ) : (
+                  late && <StatusTag kind="backup" status="stale" />
+                )
+                const includes =
+                  r.id === "self"
+                    ? "database dump"
+                    : r.withSecrets
+                      ? "workflows + credential secrets"
+                      : "workflows, credentials without secrets"
+                const to = nowhere ? "no destination" : r.destinations.map((d) => d.name).join(", ")
+                // One click starts one run: the button is locked until the request ends (FB-7).
+                const button = (
+                  <BusyButton
+                    size="sm"
+                    icon={Play}
+                    busyLabel="Starting…"
+                    disabled={r.lastRun?.status === "running" || nowhere}
+                    aria-describedby={nowhere ? `run-reason-${r.id}` : undefined}
+                    onClick={(e) => e.stopPropagation()}
+                    run={() => run.mutateAsync(r.id)}
+                  >
+                    {r.lastRun?.status === "running" ? "Running…" : "Run now"}
+                  </BusyButton>
+                )
+                // A button that cannot run says why in words beside it, not in a tip (AX-9, FB-1).
+                const runNow =
+                  s?.configured &&
+                  (nowhere ? (
+                    <span className="inline-flex flex-wrap items-center gap-x-2.5 gap-y-1">
+                      {button}
+                      <span id={`run-reason-${r.id}`} className="text-small text-muted-foreground">
+                        Choose a destination first
+                      </span>
+                    </span>
+                  ) : (
+                    button
+                  ))
+                return (
+                  <TableRow
+                    key={r.id}
+                    data-state={id === r.id ? "selected" : undefined}
+                    aria-current={id === r.id ? "true" : undefined}
+                    className="hover-row"
+                    data-href={`/backups/${r.id}`}
+                    onClick={() => navigate(`/backups/${r.id}`)}
+                  >
+                    {items ? (
+                      <ItemRow
+                        lead={dot}
+                        title={<UserText>{r.name}</UserText>}
+                        titleText={r.name}
+                        end={
+                          <>
+                            <Said>Last success</Said>
+                            {lastOkTime}
+                          </>
+                        }
+                        sub={
+                          <>
+                            {tag && <>{tag} </>}
+                            {includes} · to {to}
+                          </>
+                        }
+                        subEnd={<span className="tabular-nums">daily at {r.backupTime}</span>}
+                        action={runNow || undefined}
+                      />
+                    ) : (
+                      <>
+                        <TableCell className="max-w-56 font-semibold" truncate title={r.name}>
+                          <span className="flex items-center gap-2">
+                            {dot}
+                            <UserText className="truncate">{r.name}</UserText>
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          <span className="flex items-center gap-2">
+                            {lastOkTime}
+                            {tag}
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">{includes}</TableCell>
+                        <TableCell className={cn("max-w-56", nowhere ? "text-fail" : "text-muted-foreground")} truncate>
+                          {to}
+                        </TableCell>
+                        <TableCell className="text-muted-foreground tabular-nums">{r.backupTime}</TableCell>
+                        {runNow && <TableCell className="text-end">{runNow}</TableCell>}
+                      </>
+                    )}
+                  </TableRow>
+                )
+              })}
+            </TableBody>
+          </Table>
+        </>
       )}
     </>
   )
@@ -444,6 +468,7 @@ function BackupHistory({ id, name }: { id: string; name: string }) {
           <Empty title="No backups yet.">The first one runs at the daily backup time, or use Run now.</Empty>
         </Panel>
       ) : (
+        // No Sort button (TB-28): the runs of one backup, newest first, read in that order.
         <Table>
           <TableHeader>
             <TableRow>

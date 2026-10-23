@@ -1,13 +1,16 @@
-import { ChevronDown, Search, SlidersHorizontal } from "lucide-react"
+import { ChevronDown, Funnel, Search } from "lucide-react"
 import { Popover as PopoverPrimitive } from "radix-ui"
 import * as React from "react"
+import { SortButton, type SortControl, toolButton } from "@/components/ui/table"
+import { SEARCH_PAUSE_MS } from "@/lib/behavior"
 import { cn } from "@/lib/utils"
 
 /*
- * The shared filter bar of every list (MP-1, MP-3, TB-17): a search, named pickers, and under the bar one line
- * with the count and "Clear filters". On a phone every picker folds behind a Filters button whose badge counts
- * the filters in use; on a wider screen all of them show and there is no Filters button. (MP-6 now keeps that
- * button at every size, for the rarely used filters only.)
+ * The shared filter bar of every list (MP-1, MP-3, MP-6, TB-17): a search with the list's Sort button beside
+ * it, the common pickers, and the rarely used filters behind a Filters button at every size, whose badge counts
+ * those in use. Under the bar one line holds the count, "Clear filters", and the Sort button of a list with no
+ * search. The bar stays in sight while its list scrolls (NL-16), and a new filter or search starts the list at
+ * its first row (TB-7).
  */
 
 export type PickerOption = {
@@ -216,18 +219,43 @@ export function PickerContent({
   )
 }
 
-/** A list search: the whole box focuses its field and turns ink while typing (FS-1). */
+/**
+ * A list search: the whole box focuses its field and turns ink while typing (FS-1). With `debounce` (a list
+ * searched on the server) what is typed shows at once and `onChange` follows once typing pauses for 300ms, so a
+ * word is one request and one address change, not one per key (SR-9). A value set from outside (Clear filters,
+ * a link) replaces what the box shows.
+ */
 export function SearchBox({
   value,
   onChange,
   label,
   className,
+  debounce,
 }: {
   value: string
   onChange: (value: string) => void
   label: string
   className?: string
+  debounce?: boolean
 }) {
+  const [text, setText] = React.useState(value)
+  const sent = React.useRef(value)
+  // The latest handler: the one of the render that started the pause may write over filters changed since.
+  const send = React.useRef(onChange)
+  send.current = onChange
+  React.useEffect(() => {
+    if (value === sent.current) return
+    sent.current = value
+    setText(value)
+  }, [value])
+  React.useEffect(() => {
+    if (!debounce || text === sent.current) return
+    const timer = setTimeout(() => {
+      sent.current = text
+      send.current(text)
+    }, SEARCH_PAUSE_MS)
+    return () => clearTimeout(timer)
+  }, [debounce, text])
   return (
     <label
       className={cn(
@@ -240,74 +268,158 @@ export function SearchBox({
         type="search"
         aria-label={label}
         placeholder={label}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
+        value={debounce ? text : value}
+        onChange={(e) => (debounce ? setText(e.target.value) : onChange(e.target.value))}
         className="h-full min-w-0 flex-1 bg-transparent text-body outline-none placeholder:text-muted-foreground"
       />
     </label>
   )
 }
 
+/** The element a list scrolls in: the list column beside a reading pane, else the page. */
+const scrollerOf = (el: HTMLElement) => el.closest<HTMLElement>("[data-scroll-pane]") ?? document.getElementById("main")
+
 /**
- * The bar: an optional view switch that always shows (Open, Muted, Resolved), the search, and the pickers.
- * Under it one line holds the count and, while any filter differs from its start value, "Clear filters".
+ * Brings a list back to its first row when `key` (its filters and search) changes: at once, in the next frame,
+ * and again in the frame after the new rows (`drawn`) arrive, as the old content's height can carry the scroll
+ * down meanwhile. It scrolls only when the top of the list is above view, and only as far as the filter bar's
+ * place, read from what precedes it since the bar itself may be stuck (TB-7).
+ */
+function useFirstRowOnChange(bar: React.RefObject<HTMLElement | null>, key: string | undefined, drawn: unknown) {
+  const pending = React.useRef<{ drawn: unknown } | null>(null)
+  const lastKey = React.useRef(key)
+  const toTop = React.useCallback(() => {
+    const el = bar.current
+    const scroller = el && scrollerOf(el)
+    if (!el || !scroller) return
+    const before = el.previousElementSibling ?? el.parentElement
+    if (!before) return
+    const edge =
+      before === el.parentElement ? before.getBoundingClientRect().top : before.getBoundingClientRect().bottom
+    const place = Math.max(0, scroller.scrollTop + edge - scroller.getBoundingClientRect().top)
+    if (scroller.scrollTop > place) scroller.scrollTop = place
+  }, [bar])
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs when the filters change, not the rows
+  React.useLayoutEffect(() => {
+    if (key === undefined || key === lastKey.current) return
+    lastKey.current = key
+    pending.current = { drawn }
+    toTop()
+    const frame = requestAnimationFrame(toTop)
+    return () => cancelAnimationFrame(frame)
+  }, [key, toTop])
+  React.useEffect(() => {
+    if (!pending.current || drawn === pending.current.drawn || drawn == null) return
+    pending.current = null
+    const frame = requestAnimationFrame(toTop)
+    return () => cancelAnimationFrame(frame)
+  }, [drawn, toTop])
+}
+
+/** The first control a person can use in an element. */
+const firstControl = (el: HTMLElement | null) =>
+  el?.querySelector<HTMLElement>("button, input, select, textarea, [tabindex]:not([tabindex='-1'])")
+
+/**
+ * The bar: an optional view switch that always shows (Open, Muted, Resolved), the search and the list's Sort
+ * button, the common pickers, and a Filters button for the rare ones. Under it one line holds the count and,
+ * while any filter differs from its start value, "Clear filters".
  */
 export function FilterBar({
   views,
   search,
-  children,
+  sort,
+  pickers,
+  more,
   active = 0,
   count,
   onClear,
+  listKey,
+  drawn,
 }: {
   views?: React.ReactNode
   search?: React.ReactNode
-  /** The pickers; folded behind Filters on a phone. */
-  children?: React.ReactNode
-  /** How many pickers are not at their default, for the Filters badge. */
+  /** The list's Sort button (TB-28): beside the search, else at the end of the count line. */
+  sort?: { control: SortControl; name: string }
+  /** The filters most people use, shown at every size. */
+  pickers?: React.ReactNode
+  /** The rarely used filters, behind a Filters button at every size (MP-6). */
+  more?: React.ReactNode
+  /** How many of the `more` filters are not at their default, for the Filters badge. */
   active?: number
   count?: React.ReactNode
   /** Shown as "Clear filters" while something differs from its start value. */
   onClear?: () => void
+  /** The list's filters and search in one value; a new one starts the list at its first row (TB-7). */
+  listKey?: string
+  /** The rows on screen, so the list starts at its first row again once new ones are drawn (TB-7). */
+  drawn?: unknown
 }) {
   const [open, setOpen] = React.useState(false)
   const panelId = React.useId()
+  const bar = React.useRef<HTMLDivElement>(null)
+  const panel = React.useRef<HTMLDivElement>(null)
+  const opened = React.useRef(false)
+  useFirstRowOnChange(bar, listKey, drawn)
+  // Opening the rare filters moves the focus to the first of them (MP-6).
+  React.useEffect(() => {
+    if (!open || !opened.current) return
+    opened.current = false
+    firstControl(panel.current)?.focus()
+  }, [open])
+  const filtersLabel = active > 0 ? `Filters, ${active} in use` : "Filters"
+  const sortButton = sort && <SortButton control={sort.control} name={sort.name} small={!search} />
+  const top = views || search || pickers || more
   return (
-    <div className="grid gap-2">
-      <div className="flex flex-wrap items-center gap-2">
-        {views && <div className="max-md:basis-full">{views}</div>}
-        {search && <div className="w-64 max-md:min-w-0 max-md:flex-1 max-md:basis-0">{search}</div>}
-        {children && (
-          <>
+    <div ref={bar} data-slot="filter-bar" className="grid gap-2">
+      {top && (
+        <div className="flex flex-wrap items-center gap-2">
+          {views && <div className="max-md:basis-full">{views}</div>}
+          {/* On a phone the search keeps its line with Sort and Filters (MP-6). */}
+          {search && <div className="w-64 max-md:min-w-0 max-md:flex-1 max-md:basis-0">{search}</div>}
+          {search && sortButton}
+          {more && (
             <button
               type="button"
               aria-expanded={open}
               aria-controls={panelId}
-              onClick={() => setOpen((o) => !o)}
-              className="relative inline-flex h-ctl shrink-0 items-center gap-1.5 rounded-sm border border-line bg-raise px-3 text-ctl font-semibold aria-expanded:border-primary md:hidden"
+              aria-label={filtersLabel}
+              title={filtersLabel}
+              onClick={() => {
+                opened.current = !open
+                setOpen(!open)
+              }}
+              className={toolButton()}
             >
-              <SlidersHorizontal aria-hidden className="size-4" />
-              Filters
+              <Funnel aria-hidden className="size-4" />
               {active > 0 && (
-                <span className="absolute -end-1.5 -top-1.5 grid h-[18px] min-w-[18px] place-items-center rounded-full bg-primary px-1 text-meta font-bold text-primary-foreground tabular-nums">
+                <span
+                  aria-hidden
+                  className="absolute -end-1.5 -top-1.5 grid h-[18px] min-w-[18px] place-items-center rounded-full bg-primary px-1 text-meta font-bold text-primary-foreground tabular-nums"
+                >
                   {active}
-                  <span className="sr-only"> in use</span>
                 </span>
               )}
             </button>
-            <div
-              id={panelId}
-              className={cn(
-                "flex flex-wrap items-center gap-2 max-md:basis-full max-md:[&>*]:min-w-0 max-md:[&>*]:flex-1 max-md:[&>*]:basis-[calc(50%-4px)]",
-                !open && "max-md:hidden",
-              )}
-            >
-              {children}
+          )}
+          {pickers && (
+            <div className="flex flex-wrap items-center gap-2 max-md:basis-full max-md:[&>*]:min-w-0 max-md:[&>*]:flex-1 max-md:[&>*]:basis-[calc(50%-4px)]">
+              {pickers}
             </div>
-          </>
-        )}
-      </div>
-      {(count !== undefined || onClear) && (
+          )}
+          {more && (
+            <div
+              ref={panel}
+              id={panelId}
+              hidden={!open}
+              className="grid basis-full grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-2"
+            >
+              {more}
+            </div>
+          )}
+        </div>
+      )}
+      {(count !== undefined || onClear || (sortButton && !search)) && (
         <p className="flex flex-wrap items-center gap-x-3 text-small text-muted-foreground">
           {count !== undefined && <span className="font-semibold text-ink tabular-nums">{count}</span>}
           {onClear && (
@@ -315,6 +427,7 @@ export function FilterBar({
               Clear filters
             </button>
           )}
+          {!search && sortButton && <span className="ms-auto">{sortButton}</span>}
         </p>
       )}
     </div>

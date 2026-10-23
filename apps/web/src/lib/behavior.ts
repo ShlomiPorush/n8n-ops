@@ -26,6 +26,8 @@ export const SHEET_PULL_CLOSE_PX = 120
 export const SHEET_SLIDE_MS = 200
 /** Freshness labels ("Updated 3 min ago") tick on one shared timer (LD-12). */
 export const AGO_TICK_MS = 30_000
+/** A list searched on the server asks once typing has paused this long (SR-9). */
+export const SEARCH_PAUSE_MS = 300
 /** A press that moves more than this before its click was selecting text, so the row holds (TB-8). */
 export const ROW_HOLD_MOVE_PX = 3
 

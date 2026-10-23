@@ -109,12 +109,12 @@ export function WorkflowsPage() {
   const sort = useSort(rows, {
     id: "workflows",
     columns: {
-      name: { label: "Workflow", value: (w) => w.name },
-      instance: { label: "Instance", value: (w) => w.instanceName },
-      trigger: { label: "Trigger", value: (w) => w.triggerType },
-      lastRun: { label: "Last run", value: (w) => (w.lastRunAt ? new Date(w.lastRunAt) : null) },
-      runs: { label: "Runs 30d", value: (w) => w.runs30d },
-      errors: { label: "Errors", value: (w) => (w.runs30d ? rate(w) : null) },
+      name: { label: "Workflow", kind: "text", value: (w) => w.name },
+      instance: { label: "Instance", kind: "text", value: (w) => w.instanceName },
+      trigger: { label: "Trigger", kind: "text", value: (w) => w.triggerType },
+      lastRun: { label: "Last run", kind: "date", value: (w) => (w.lastRunAt ? new Date(w.lastRunAt) : null) },
+      runs: { label: "Runs 30d", kind: "number", value: (w) => w.runs30d },
+      errors: { label: "Errors", kind: "number", value: (w) => (w.runs30d ? rate(w) : null) },
     },
   })
 
@@ -188,8 +188,22 @@ export function WorkflowsPage() {
       )}
 
       <FilterBar
-        search={<SearchBox label="Search all instances" value={q} onChange={(v) => setParam("q", v)} />}
-        active={Number(instance !== "all")}
+        search={<SearchBox label="Search all instances" value={q} onChange={(v) => setParam("q", v)} debounce />}
+        sort={{ control: sort.control, name: "workflows" }}
+        pickers={
+          <Picker
+            label="Instance"
+            value={instance}
+            defaultValue="all"
+            onChange={(v) => setParam("instance", v)}
+            options={[
+              { value: "all", label: "All" },
+              ...(instances.data?.instances ?? []).map((i) => ({ value: i.id, label: i.name })),
+            ]}
+          />
+        }
+        listKey={`${instance}|${q}`}
+        drawn={data.isPlaceholderData ? null : data.data}
         count={
           data.data ? (
             <>
@@ -200,18 +214,7 @@ export function WorkflowsPage() {
           ) : undefined
         }
         onClear={filtered ? () => setParams(new URLSearchParams(), { replace: true }) : undefined}
-      >
-        <Picker
-          label="Instance"
-          value={instance}
-          defaultValue="all"
-          onChange={(v) => setParam("instance", v)}
-          options={[
-            { value: "all", label: "All" },
-            ...(instances.data?.instances ?? []).map((i) => ({ value: i.id, label: i.name })),
-          ]}
-        />
-      </FilterBar>
+      />
 
       {view === "failed" ? (
         <Panel>
@@ -233,7 +236,7 @@ export function WorkflowsPage() {
         </Panel>
       ) : (
         <Reloading busy={data.isPlaceholderData || (data.previous === "failed" && data.isFetching)}>
-          <Table sort={sort}>
+          <Table>
             <TableHeader>
               <TableRow>
                 <TableHead sort={sort.head("name")}>Workflow</TableHead>
@@ -257,7 +260,7 @@ export function WorkflowsPage() {
                   key={`${w.instanceId}:${w.workflowId}`}
                   data-search-target={`workflow:${w.instanceId}:${w.workflowId}`}
                 >
-                  <TableCell className="max-w-80">
+                  <TableCell className="max-w-80" truncate title={w.name}>
                     <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
                       <a
                         href={w.url}
@@ -278,7 +281,7 @@ export function WorkflowsPage() {
                   <TableCell>
                     <UserText>{w.instanceName}</UserText>
                   </TableCell>
-                  <TableCell className="max-w-56">
+                  <TableCell className="max-w-56" truncate>
                     <div className="truncate">{w.triggerType}</div>
                     {w.triggerDetail && (
                       <div className="truncate font-mono text-meta text-muted-foreground" title={w.triggerDetail}>

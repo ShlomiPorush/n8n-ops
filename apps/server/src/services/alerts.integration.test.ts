@@ -291,7 +291,7 @@ describe("Telegram forum topics", () => {
     expect(handled).toBe(true)
     const pressed = bot.edits().at(-1)
     expect(String(pressed?.body.text)).toMatch(/^<i>Topic 42 was not found[\s\S]*Resolved by @ops/)
-    expect(bot.calls.at(-1)?.method).toBe("answerCallbackQuery")
+    expect(bot.calls.filter((c) => c.method === "answerCallbackQuery")).toHaveLength(1)
   })
 
   it("sends a new message with every problem when the message to edit is gone", async () => {
@@ -344,7 +344,7 @@ describe("Telegram forum topics", () => {
     expect(row?.status).toBe("pending")
   })
 
-  it("keeps the problems of a gone message when the new message fails, until one goes out", async () => {
+  it("keeps the problems of a gone message when the new message fails, even past the edit window", async () => {
     const t = await setup({ defaultThreadId: 7 })
     await enqueueProblemAlert(t.ctx, await t.problem(t.a.id, "Sync orders"), "new")
     await t.dispatch()
@@ -354,21 +354,46 @@ describe("Telegram forum topics", () => {
     await enqueueProblemAlert(t.ctx, await t.problem(t.a.id, "Import leads"), "new")
     bot.failNextSends(1)
     await t.dispatch()
-    const still = await t.db
-      .select()
-      .from(alertGroups)
-      .where(eq(alertGroups.id, gone?.id ?? ""))
-    expect(still[0]?.closedAt).toBeNull()
+    // Its problem waits in the queue again, with the new one.
+    const pending = await t.db.select().from(alertOutbox).where(eq(alertOutbox.status, "pending"))
+    expect(pending).toHaveLength(2)
+    expect(pending.map((r) => r.problemId)).toEqual(expect.arrayContaining(gone?.problemIds ?? []))
 
+    // The retry comes after the edit window, when the old message's group is no longer looked up.
+    await t.db.update(alertGroups).set({ createdAt: new Date(Date.now() - 3 * 3600_000) })
     await t.dispatch()
     const last = bot.sends().at(-1)
     expect(String(last?.body.text)).toContain("Sync orders")
     expect(String(last?.body.text)).toContain("Import leads")
-    const closed = await t.db
-      .select()
-      .from(alertGroups)
-      .where(eq(alertGroups.id, gone?.id ?? ""))
-    expect(closed[0]?.closedAt).not.toBeNull()
+    const left = await t.db.select().from(alertOutbox).where(eq(alertOutbox.status, "pending"))
+    expect(left).toHaveLength(0)
+  })
+
+  it("answers a button press at once, even while a dispatch is editing the same message", async () => {
+    const t = await setup({ defaultThreadId: 7 })
+    await enqueueProblemAlert(t.ctx, await t.problem(t.a.id, "Sync orders"), "new")
+    await t.dispatch()
+    const [group] = await t.db.select().from(alertGroups)
+    await enqueueProblemAlert(t.ctx, await t.problem(t.a.id, "Import leads"), "new")
+
+    const release = bot.holdNextEdit()
+    const dispatching = t.dispatch()
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    const press = handleTelegramCallback(t.ctx, {
+      callback_query: {
+        id: "cb2",
+        data: `r:${group?.id}`,
+        from: { id: 1, username: "ops" },
+        message: { message_id: group?.telegramMessageId ?? 0, chat: { id: "-100" } },
+      },
+    })
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    expect(bot.calls.some((c) => c.method === "answerCallbackQuery")).toBe(true)
+    release()
+    await Promise.all([press, dispatching])
+    const shown = String(bot.applied.at(-1)?.body.text)
+    expect(shown).toContain("Import leads")
+    expect(shown).toContain("Resolved by @ops")
   })
 
   it("never lets a button press and a new problem overwrite each other's edit", async () => {

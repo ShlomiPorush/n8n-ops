@@ -249,9 +249,6 @@ export async function dispatchAlerts(ctx: Ctx) {
         )
         .orderBy(desc(alertGroups.createdAt))
         .limit(1)
-      // A group whose message is gone (deleted with its topic): the new message takes its problems too. The group is
-      // closed only once that message is out, so a failed attempt finds it again and loses none of them.
-      let retire: string | undefined
       if (recent && settings.editWindowMin > 0) {
         const outcome = await withGroup(recent.id, async () => {
           const [current] = await ctx.db.select().from(alertGroups).where(eq(alertGroups.id, recent.id))
@@ -267,7 +264,18 @@ export async function dispatchAlerts(ctx: Ctx) {
             )
           } catch (error) {
             if (!isMessageGone(error)) throw error
-            return { merged: false as const, carry: all }
+            // The message is gone (deleted with its topic). Its problems are queued again and the group closed in one
+            // step, so they go out with these in the next message, however late a failed send makes it.
+            const carried = current.problemIds.filter((id) => !newIds.includes(id))
+            const queued = await ctx.db.transaction(async (tx) => {
+              await tx.update(alertGroups).set({ closedAt: new Date() }).where(eq(alertGroups.id, current.id))
+              if (!carried.length) return []
+              return tx
+                .insert(alertOutbox)
+                .values(carried.map((problemId) => ({ kind: "problem" as const, groupKey, problemId, threadId, text: "again" })))
+                .returning({ id: alertOutbox.id })
+            })
+            return { merged: false as const, carry: all, queued: queued.map((q) => q.id) }
           }
           await ctx.db.update(alertGroups).set({ problemIds: all }).where(eq(alertGroups.id, current.id))
           await ctx.db
@@ -277,9 +285,9 @@ export async function dispatchAlerts(ctx: Ctx) {
           return { merged: true as const }
         })
         if (outcome.merged) continue
-        if (outcome.carry) {
+        if ("carry" in outcome) {
           newIds = outcome.carry
-          retire = recent.id
+          ids.push(...outcome.queued)
         }
       }
       const { lines, first } = await groupLines(ctx, newIds)
@@ -308,7 +316,6 @@ export async function dispatchAlerts(ctx: Ctx) {
         .update(alertGroups)
         .set({ telegramMessageId: sent.messageId, fellBack: sent.fellBack })
         .where(eq(alertGroups.id, group.id))
-      if (retire) await ctx.db.update(alertGroups).set({ closedAt: new Date() }).where(eq(alertGroups.id, retire))
       await ctx.db
         .update(alertOutbox)
         .set({ status: "sent", sentAt: new Date(), telegramMessageId: sent.messageId })
@@ -371,12 +378,16 @@ export async function handleTelegramCallback(ctx: Ctx, update: CallbackUpdate): 
   if (String(cb.message?.chat?.id) !== tg.chatId) return false
   const [action, groupId] = cb.data.split(":")
   if (!groupId || (action !== "r" && action !== "m")) return false
+  const [known] = await ctx.db.select({ id: alertGroups.id }).from(alertGroups).where(eq(alertGroups.id, groupId))
+  // Answered at once: Telegram shows a spinner until then, and the change may wait for a dispatch editing this group.
+  await tg.api.answerCallback(
+    cb.id,
+    !known ? "This alert is no longer known." : action === "r" ? "Marked as resolved" : "Muted for 24 hours",
+  )
+  if (!known) return true
   return withGroup(groupId, async () => {
     const [group] = await ctx.db.select().from(alertGroups).where(eq(alertGroups.id, groupId))
-    if (!group) {
-      await tg.api.answerCallback(cb.id, "This alert is no longer known.")
-      return true
-    }
+    if (!group) return true
     const who = cb.from?.username ? `@${cb.from.username}` : (cb.from?.first_name ?? "someone")
     const patch =
       action === "r"
@@ -408,7 +419,6 @@ export async function handleTelegramCallback(ctx: Ctx, update: CallbackUpdate): 
       // The problems changed already; the person still gets the answer.
       ctx.log.warn("could not update the alert message", { groupId, error: (error as Error).message })
     }
-    await tg.api.answerCallback(cb.id, action === "r" ? "Marked as resolved" : "Muted for 24 hours")
     return true
   })
 }

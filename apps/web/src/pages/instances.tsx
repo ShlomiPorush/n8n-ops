@@ -21,7 +21,7 @@ import {
   Trash2,
   Workflow as WorkflowIcon,
 } from "lucide-react"
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { Link, useNavigate, useParams, useSearchParams } from "react-router"
 import { useCrumb } from "@/app/chrome"
@@ -474,6 +474,20 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
     if (start < list.scrollLeft) list.scrollLeft = start
     else if (end > list.scrollLeft + list.clientWidth) list.scrollLeft = end - list.clientWidth
   }, [tab, loaded, nav, unsaved.backups, unsaved.access, unsaved.settings])
+  // Moving between the top and the bottom bar (the screen crossed the phone width) mounts the tabs anew: a tab
+  // that had the focus gets it back, so a keyboard user keeps their place. A trigger's id survives the move.
+  const placedAt = useRef(nav)
+  const refocus = useRef<string | null>(null)
+  if (placedAt.current !== nav) {
+    placedAt.current = nav
+    const had = document.activeElement
+    refocus.current = had instanceof HTMLElement && tabList.current?.contains(had) ? had.id : null
+  }
+  useLayoutEffect(() => {
+    const was = refocus.current
+    refocus.current = null
+    if (was) document.getElementById(was)?.focus({ preventScroll: true })
+  }, [nav])
 
   if (detail.isLoading) return <Loading>Loading the instance…</Loading>
   if (detail.error && !detail.data)

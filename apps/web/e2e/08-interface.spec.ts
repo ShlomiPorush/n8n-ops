@@ -480,3 +480,32 @@ test("on a phone the save bar of an instance shows inside its sheet", async () =
     await page.setViewportSize({ width: 1440, height: 900 })
   }
 })
+
+test("on a phone the instance tabs are a bar at the bottom of a sheet that keeps its size", async () => {
+  const id = await openInstanceB()
+  // A small tablet: the instance opens as a centered dialog, with its tabs at the top.
+  await page.setViewportSize({ width: 800, height: 844 })
+  try {
+    await page.goto(`/instances/${id}`)
+    const sheet = page.getByRole("dialog")
+    const tabs = sheet.getByRole("tablist", { name: "Instance sections" })
+    const bottom = async () => (await tabs.boundingBox())?.y ?? 0
+    expect(await bottom()).toBeLessThan(400)
+    await sheet.getByRole("tab", { name: /^Health/ }).focus()
+
+    // Turned into a phone, the tabs move to the bottom bar, and the focused tab keeps the focus.
+    await page.setViewportSize({ width: 390, height: 844 })
+    await expect(sheet.getByRole("tab", { name: /^Health/ })).toBeFocused()
+    await expect.poll(bottom).toBeGreaterThan(700)
+
+    // The sheet keeps four fifths of the screen on a long tab and on a short one.
+    const height = async () => (await sheet.boundingBox())?.height ?? 0
+    await sheet.getByRole("tab", { name: /^Settings/ }).click()
+    const tall = await height()
+    expect(tall).toBeGreaterThanOrEqual(844 * 0.8 - 1)
+    await sheet.getByRole("tab", { name: /^Problems/ }).click()
+    expect(await height()).toBe(tall)
+  } finally {
+    await page.setViewportSize({ width: 1440, height: 900 })
+  }
+})

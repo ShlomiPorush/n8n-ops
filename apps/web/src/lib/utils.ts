@@ -14,7 +14,7 @@ export const cn = createCn({
       ],
       "font-weight": [{ font: ["title", "figure", "heavy"] }],
       tracking: [{ tracking: ["caps"] }],
-      shadow: [{ shadow: ["card", "float", "modal", "knob", "selected", "tab", "halo"] }],
+      shadow: [{ shadow: ["card", "float", "modal", "knob", "selected", "tab", "halo", "rule"] }],
       rounded: [{ rounded: ["kbd", "mark", "tag", "option", "sheet", "pop", "drawer"] }],
     },
   },

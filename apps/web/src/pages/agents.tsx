@@ -32,6 +32,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useApi, useApiMutation } from "@/lib/api"
+import { loadView } from "@/lib/load-state"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
 
@@ -50,9 +51,13 @@ type Token = {
 
 /** The agents and scripts that use n8n-ops: how to connect one, the ones connected, and tokens made by hand. */
 export function AgentsPage() {
+  // The same query as the list below (one cache entry): a failed refresh is said under the title (LD-12).
+  const tokens = useApi<Token[]>("/admin/tokens")
   return (
     <Page
       title="Connected Agents"
+      live={tokens}
+      updated={false}
       description="Agents and scripts that read n8n-ops. Each one connects only once you approve it, and you can disconnect it here at any time."
       className="max-w-5xl"
     >
@@ -171,9 +176,9 @@ function AgentsCard() {
           count={tokens.data ? list.length : undefined}
           description="Each can read n8n-ops; some may also ask for temporary access to an n8n instance, which a person approves each time."
         />
-        {tokens.error ? (
+        {loadView(tokens) === "failed" ? (
           <LoadError what="tokens" error={tokens.error} retry={() => tokens.refetch()} />
-        ) : tokens.isLoading ? (
+        ) : loadView(tokens) === "loading" ? (
           <Loading />
         ) : list.length === 0 ? (
           <Empty title="No agent is connected.">Connect one above; it appears here once you approve it.</Empty>

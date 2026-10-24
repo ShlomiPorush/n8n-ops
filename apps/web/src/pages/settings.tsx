@@ -11,6 +11,7 @@ import {
   Loading,
   Page,
   Panel,
+  RefreshLine,
   SecretField,
   useSaveSource,
   useUnsavedIds,
@@ -32,6 +33,7 @@ import { Switch } from "@/components/ui/switch"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { api, describeError, useApi, useApiMutation } from "@/lib/api"
 import { download } from "@/lib/download"
+import { loadView } from "@/lib/load-state"
 import { formatDateTime, useTimeZone } from "@/lib/time"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
@@ -492,9 +494,11 @@ export function SettingsForm({ section, active = true }: { section: string; acti
 
   return (
     <Panel hidden={!active}>
-      {query.error ? (
+      {/* A failed refresh keeps the form and what is typed in it, and says so above it (TB-5, LD-12, SV-1). */}
+      <RefreshLine live={query} />
+      {loadView(query) === "failed" ? (
         <LoadError what={def.title} error={query.error} retry={() => query.refetch()} />
-      ) : query.isLoading ? (
+      ) : loadView(query) === "loading" ? (
         <Loading>Loading the {def.title} settings…</Loading>
       ) : (
         // Locked while a save is on its way, so nothing typed meanwhile is lost when the saved values come back.
@@ -654,7 +658,9 @@ function KeysCard() {
   }
   return (
     <Panel>
-      {keys.error ? (
+      {/* A failed refresh keeps what is shown and says so above it (TB-5, LD-12). */}
+      <RefreshLine live={keys} />
+      {loadView(keys) === "failed" ? (
         <LoadError what="the keys" error={keys.error} retry={() => keys.refetch()} />
       ) : (
         <>

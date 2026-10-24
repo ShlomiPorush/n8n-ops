@@ -13,7 +13,19 @@ import { Link, useNavigate, useParams } from "react-router"
 import { useCrumb } from "@/app/chrome"
 import { useDiscardGuard } from "@/components/discard-guard"
 import { ItemRow, ItemsHeader, Said } from "@/components/item-row"
-import { Copyable, Empty, Kpi, Kpis, LoadError, Loading, Locked, PageHead, Panel, UserText } from "@/components/kit"
+import {
+  Copyable,
+  Empty,
+  Kpi,
+  Kpis,
+  LoadError,
+  Loading,
+  Locked,
+  PageHead,
+  Panel,
+  RefreshNote,
+  UserText,
+} from "@/components/kit"
 import { ListWithPanel } from "@/components/list-panel"
 import { Dot, StatusTag, When } from "@/components/status"
 import { Button } from "@/components/ui/button"
@@ -30,6 +42,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, useSort } from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
 import { api, describeError, useApi, useApiMutation } from "@/lib/api"
+import { loadView } from "@/lib/load-state"
 import { formatDateTime, n, plural, useTimeZone } from "@/lib/time"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
@@ -119,6 +132,8 @@ export function BackupsPage() {
   const { id } = useParams()
   const navigate = useNavigate()
   const data = useApi<Summary>("/backups", { refetchInterval: 10_000 })
+  // A failed refresh keeps the rows; the head says so (TB-5, LD-12).
+  const view = loadView(data)
   const run = useApiMutation<string>("POST", (target) => `/backups/${target}/run`, { invalidate: ["/backups"] })
   const s = data.data
   const backedUp = s?.instances.filter((i) => i.destinations.length) ?? []
@@ -154,7 +169,7 @@ export function BackupsPage() {
     <>
       <PageHead
         title="Backups"
-        updatedAt={data.dataUpdatedAt || undefined}
+        live={data}
         description={
           s?.configured
             ? `${n(okCount)} of ${n(s.instances.length)} instances backed up on time${late ? `, ${n(late)} late` : ""}${none ? `, ${n(none)} not backed up` : ""}. Encrypted with your backup public key before they are written.`
@@ -199,11 +214,11 @@ export function BackupsPage() {
           />
         </Kpis>
       )}
-      {data.error ? (
+      {view === "failed" ? (
         <Panel>
           <LoadError what="backups" error={data.error} retry={() => data.refetch()} />
         </Panel>
-      ) : data.isLoading ? (
+      ) : view === "loading" ? (
         <Panel>
           <Loading>Loading backups…</Loading>
         </Panel>
@@ -395,12 +410,14 @@ function BackupHistory({ id, name }: { id: string; name: string }) {
         {runs.data && (
           <p className="mt-1 text-muted-foreground">
             {plural(list.length, "run")} · {n(list.filter((r) => r.status === "failed").length)} failed
+            {/* A failed refresh keeps the history on screen and says so here (TB-5, LD-12). */}
+            <RefreshNote live={runs} separator=" · " />
           </p>
         )}
       </div>
-      {runs.error ? (
+      {loadView(runs) === "failed" ? (
         <LoadError what="the backup history" error={runs.error} retry={() => runs.refetch()} />
-      ) : runs.isLoading ? (
+      ) : loadView(runs) === "loading" ? (
         <Loading>Loading the backup history…</Loading>
       ) : list.length === 0 ? (
         <Panel>

@@ -10,6 +10,7 @@ import {
   Loading,
   Panel,
   PanelHead,
+  RefreshNote,
   SecretField,
   SwitchRow,
   UserText,
@@ -41,6 +42,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { api, describeError, useApi, useApiMutation } from "@/lib/api"
+import { loadView } from "@/lib/load-state"
 import { n, plural } from "@/lib/time"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
@@ -196,16 +198,24 @@ export function DestinationsSection({ hidden = false }: { hidden?: boolean }) {
       <Panel hidden={hidden}>
         <PanelHead
           title="Destinations"
-          count={list.data ? n(data.length) : undefined}
+          count={
+            list.data ? (
+              <>
+                {n(data.length)}
+                {/* A failed refresh keeps what is shown and says so beside the title (TB-5, LD-12). */}
+                <RefreshNote live={list} separator=" · " />
+              </>
+            ) : undefined
+          }
           action={
             <Button variant="primary" size="sm" onClick={() => setEditing("new")}>
               <Plus /> Add destination
             </Button>
           }
         />
-        {list.error ? (
+        {loadView(list) === "failed" ? (
           <LoadError what="the destinations" error={list.error} retry={() => list.refetch()} />
-        ) : list.isLoading ? (
+        ) : loadView(list) === "loading" ? (
           <Loading>Loading the destinations…</Loading>
         ) : data.length === 0 ? (
           <Empty title="No backup destination yet.">
@@ -883,6 +893,9 @@ const changes = (a: Choice, b: Choice) =>
     ? a.ids.filter((x) => !b.ids.includes(x)).length + b.ids.filter((x) => !a.ids.includes(x)).length
     : 0)
 
+/** A panel's description is small text in Compact and body text in Regular (PanelHead); Try again in it matches. */
+const descriptionText = "text-small regular:text-body"
+
 /** On an instance: where its backups go. */
 export function InstanceBackupCard({
   instanceId,
@@ -913,9 +926,18 @@ export function InstanceBackupCard({
   })
   return (
     <Panel className="overflow-visible">
-      <PanelHead title="Backup Destinations" description="Where this instance's encrypted backups are written." />
+      <PanelHead
+        title="Backup Destinations"
+        description={
+          <>
+            Where this instance's encrypted backups are written.
+            {/* A failed refresh keeps what is shown and says so here (TB-5, LD-12). */}
+            <RefreshNote live={destinations} separator=" " textClass={descriptionText} />
+          </>
+        }
+      />
       <fieldset disabled={save.isPending} className="border-t border-line p-pad-x">
-        {destinations.error ? (
+        {loadView(destinations) === "failed" ? (
           <LoadError what="the destinations" error={destinations.error} retry={() => destinations.refetch()} />
         ) : !destinations.data || !state.choice ? (
           <Loading />
@@ -977,10 +999,16 @@ function SelfBackupCard({ destinations, hidden }: { destinations: Destination[];
     <Panel className="overflow-visible" hidden={hidden}>
       <PanelHead
         title="n8n-ops Database"
-        description="n8n-ops backs up its own database every night, encrypted with the same key."
+        description={
+          <>
+            n8n-ops backs up its own database every night, encrypted with the same key.
+            {/* A failed refresh keeps what is shown and says so here (TB-5, LD-12). */}
+            <RefreshNote live={query} separator=" " textClass={descriptionText} />
+          </>
+        }
       />
       <fieldset disabled={save.isPending} className="grid gap-4 border-t border-line p-pad-x">
-        {query.error ? (
+        {loadView(query) === "failed" ? (
           <LoadError what="the backup settings" error={query.error} retry={() => query.refetch()} />
         ) : !state.choice ? (
           <Loading />

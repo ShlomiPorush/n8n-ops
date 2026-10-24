@@ -100,7 +100,7 @@ import { api, describeError, queryClient, useApi, useApiMutation } from "@/lib/a
 import { loadView } from "@/lib/load-state"
 import { healthCounts, n, plural } from "@/lib/numbers"
 import { useNavigateFromOverlay } from "@/lib/overlay-history"
-import { formatFull, useTimeZone } from "@/lib/time"
+import { formatTime, useTimeFormat } from "@/lib/time"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
 import { InstanceBackupCard } from "./destinations"
@@ -425,7 +425,7 @@ const kpisInPane = cn(
 
 function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
   const navigate = useNavigate()
-  const tz = useTimeZone()
+  const w = useTimeFormat()
   const [tab, show] = usePaneTab("overview")
   const detail = useApi<InstanceDetailData>(`/instances/${id}`, { refetchInterval: 15_000 })
   useCrumb(detail.data?.name)
@@ -705,7 +705,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
               title="API Key and What It Allows"
               description={
                 i.scopesSource === "discovered"
-                  ? `Read from GET /api/v1/discover · checked ${i.scopesCheckedAt ? formatFull(i.scopesCheckedAt, tz) : "never"}`
+                  ? `Read from GET /api/v1/discover · checked ${i.scopesCheckedAt ? formatTime(i.scopesCheckedAt, w) : "never"}`
                   : `n8n ${i.version ?? ""} has no /discover endpoint (added in 2.14.0). Tell n8n-ops what the key can do.`
               }
               action={

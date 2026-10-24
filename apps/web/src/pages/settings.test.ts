@@ -1,4 +1,5 @@
 import { settingLabel } from "@n8n-ops/shared"
+import { renderToStaticMarkup } from "react-dom/server"
 import { describe, expect, it } from "vitest"
 import { createTestRuns } from "@/lib/test-run"
 import {
@@ -7,6 +8,7 @@ import {
   differsFromDefault,
   type FieldDef,
   fieldProblem,
+  formatExample,
   forms,
   testDraft,
   testIdentity,
@@ -70,6 +72,42 @@ describe("Settings fields", () => {
     expect(defaultText(field("email", "weeklyDay"), 0)).toBe("Sunday")
     expect(defaultText(field("general", "design"), "regular")).toBe("Regular")
     expect(defaultText(field("alerts", "retryMin"), 5)).toBe("5")
+  })
+
+  it("name the Date and Time format defaults by their labels, and are Changed when they differ (FW-9, FS-6)", () => {
+    expect(defaultText(field("general", "dateFormat"), "browser")).toBe("Browser")
+    expect(defaultText(field("general", "timeFormat"), "24h")).toBe("24-hour")
+    expect(differsFromDefault(field("general", "dateFormat"), "YYYY-MM-DD", "browser")).toBe(true)
+    expect(differsFromDefault(field("general", "timeFormat"), "24h", "24h")).toBe(false)
+    expect(settingLabel("general", "dateFormat")).toBe(field("general", "dateFormat").label)
+    expect(settingLabel("general", "timeFormat")).toBe(field("general", "timeFormat").label)
+  })
+})
+
+describe("the example under Date format and Time format (FW-9)", () => {
+  const values = { timezone: "UTC", dateFormat: "YYYY-MM-DD", timeFormat: "12h" }
+  // The text a reader sees, collected from the element tree.
+  const textOf = (node: unknown): string => {
+    if (node == null || typeof node === "boolean") return ""
+    if (typeof node === "string" || typeof node === "number") return String(node)
+    if (Array.isArray(node)) return node.map(textOf).join("")
+    return textOf((node as React.ReactElement<{ children?: unknown }>).props.children)
+  }
+
+  it("shows now in the formats on screen, before they are saved", () => {
+    expect(textOf(formatExample(field("general", "dateFormat"), values))).toMatch(/^Example: \d{4}-\d{2}-\d{2}$/)
+    expect(textOf(formatExample(field("general", "timeFormat"), values))).toMatch(/^Example: \d{1,2}:\d{2} [AP]M$/)
+    expect(textOf(formatExample(field("general", "timeFormat"), { ...values, timeFormat: "24h" }))).toMatch(
+      /^Example: \d{2}:\d{2}$/,
+    )
+  })
+
+  it("is said politely when it changes, and only under those two fields", () => {
+    expect(renderToStaticMarkup(formatExample(field("general", "dateFormat"), values) as React.ReactElement)).toContain(
+      'aria-live="polite"',
+    )
+    expect(formatExample(field("general", "timezone"), values)).toBeUndefined()
+    expect(formatExample(field("general", "design"), values)).toBeUndefined()
   })
 })
 

@@ -6,7 +6,13 @@
 
 /** The label of each setting, as Settings shows it; the server names a refused field with it. */
 export const settingLabels = {
-  general: { publicUrl: "Public URL", timezone: "Time zone", design: "Design" },
+  general: {
+    publicUrl: "Public URL",
+    timezone: "Time zone",
+    dateFormat: "Date format",
+    timeFormat: "Time format",
+    design: "Design",
+  },
   alerts: {
     newProblem: "New problem",
     regression: "Regression",

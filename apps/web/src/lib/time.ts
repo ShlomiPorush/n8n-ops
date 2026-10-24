@@ -1,71 +1,53 @@
+import { type DateWriting, writingOf } from "@n8n-ops/shared"
 import { useQuery } from "@tanstack/react-query"
 import { readFresh } from "./api"
 
-/**
- * The time zone set in Settings → General, used for every time on screen so the console, reports and
- * schedules agree. The server falls back to UTC when it is empty, and so does the UI.
+/*
+ * Every date and time on screen is written here (FW-9, FW-2): in the time zone set in Settings → General (UTC
+ * when it is empty or this browser does not know it), in its Date format and Time format, as numbers. The writing
+ * itself is shared with the emails and Telegram (`@n8n-ops/shared` dates.ts), so they read alike. design.test.ts
+ * fails on a page that formats a date in another way.
  */
-export function useTimeZone(): string {
+
+export {
+  type DateWriting,
+  formatClock,
+  formatClockAt,
+  formatDay,
+  formatDayMonth,
+  formatListTime,
+  formatTime,
+} from "@n8n-ops/shared"
+
+type General = { timezone?: string; dateFormat?: string; timeFormat?: string }
+
+/**
+ * How this installation writes dates: its time zone and the two formats of Settings → General. Browser follows
+ * this browser's language. A saved change shows at once: the save puts it in the cache this reads.
+ */
+export function useTimeFormat(): DateWriting {
   const general = useQuery({
     queryKey: ["/settings/general"],
-    queryFn: () => readFresh<{ timezone?: string }>("/settings/general"),
+    queryFn: () => readFresh<General>("/settings/general"),
     staleTime: 5 * 60_000,
   })
-  return validZone(general.data?.timezone)
+  return writingOf(general.data)
 }
 
-const valid = new Map<string, boolean>()
-function validZone(zone: string | undefined): string {
-  if (!zone) return "UTC"
-  if (!valid.has(zone)) {
-    try {
-      new Intl.DateTimeFormat("en-GB", { timeZone: zone })
-      valid.set(zone, true)
-    } catch {
-      valid.set(zone, false)
-    }
-  }
-  return valid.get(zone) ? zone : "UTC"
-}
-
-const formats = new Map<string, Intl.DateTimeFormat>()
-function format(zone: string, options: Intl.DateTimeFormatOptions) {
-  const key = `${zone}|${JSON.stringify(options)}`
-  let f = formats.get(key)
-  if (!f) {
-    f = new Intl.DateTimeFormat("en-GB", { ...options, timeZone: zone, hourCycle: "h23" })
-    formats.set(key, f)
-  }
-  return f
-}
-
-const dayKey = (d: Date, zone: string) => format(zone, { year: "numeric", month: "2-digit", day: "2-digit" }).format(d)
-
-/** For lists: "14:05" today, "12 Oct" earlier this year, "12 Oct 2025" before that. */
-export function formatWhen(value: string | Date, zone: string): string {
+/** The instant a `<time dateTime>` names, so a list sorts by it and not by its text (TB-2); none when invalid. */
+export function isoTime(value: string | number | Date): string | undefined {
   const d = new Date(value)
-  const now = new Date()
-  if (dayKey(d, zone) === dayKey(now, zone)) return format(zone, { hour: "2-digit", minute: "2-digit" }).format(d)
-  const sameYear = format(zone, { year: "numeric" }).format(d) === format(zone, { year: "numeric" }).format(now)
-  return format(
-    zone,
-    sameYear ? { day: "numeric", month: "short" } : { day: "numeric", month: "short", year: "numeric" },
-  ).format(d)
+  return Number.isNaN(d.getTime()) ? undefined : d.toISOString()
 }
 
-/** "15 Oct 2026, 14:05:09" in the app's time zone. */
-export function formatFull(value: string | Date, zone: string): string {
-  return format(zone, {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  }).format(new Date(value))
-}
-
-/** "15 Oct, 14:05" in the app's time zone, for deadlines and schedules in sentences. */
-export function formatDateTime(value: string | Date, zone: string): string {
-  return format(zone, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(value))
+/** A zone's offset from UTC at an instant, such as UTC+03:00, for the Time zone list (MP-4); null when unknown. */
+export function zoneOffset(zone: string, at: Date): string | null {
+  try {
+    const name = new Intl.DateTimeFormat("en-US", { timeZone: zone, timeZoneName: "longOffset" })
+      .formatToParts(at)
+      .find((p) => p.type === "timeZoneName")?.value
+    return !name || name === "GMT" ? "UTC+00:00" : name.replace("GMT", "UTC")
+  } catch {
+    return null
+  }
 }

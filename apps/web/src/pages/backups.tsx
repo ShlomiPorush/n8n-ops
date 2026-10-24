@@ -47,7 +47,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { api, describeError, useApi, useApiMutation } from "@/lib/api"
 import { loadView } from "@/lib/load-state"
 import { formatSize, n, plural } from "@/lib/numbers"
-import { formatDateTime, useTimeZone } from "@/lib/time"
+import { formatClockAt, formatTime, useTimeFormat } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { type DestinationKind, KindIcon } from "./destinations"
 
@@ -132,6 +132,8 @@ export function BackupsPage() {
   const data = useApi<Summary>("/backups", { refetchInterval: 10_000 })
   // A failed refresh keeps the rows; the head says so (TB-5, LD-12).
   const view = loadView(data)
+  // The daily time is stored as 24-hour HH:MM; only how it is shown follows the Time format (FW-9).
+  const w = useTimeFormat()
   const target = (id: string) =>
     id === "self" ? "the n8n-ops database" : (data.data?.instances.find((i) => i.id === id)?.name ?? "the instance")
   const run = useApiMutation<string>("POST", (id) => `/backups/${id}/run`, {
@@ -175,6 +177,7 @@ export function BackupsPage() {
         label: "Daily at",
         kind: "text",
         words: { ascending: "Earliest first", descending: "Latest first" },
+        // The stored 24-hour HH:MM, which orders by the time of day whatever the Time format shows.
         value: (r) => r.backupTime,
       },
     },
@@ -212,7 +215,7 @@ export function BackupsPage() {
             value={`${n(okCount)}/${n(s.instances.length)}`}
             tone={late || none ? "warn" : undefined}
           />
-          <Kpi label="Daily backup time" icon={ClockIcon} value={s.backupTime} />
+          <Kpi label="Daily backup time" icon={ClockIcon} value={formatClockAt(s.backupTime, w)} />
           <Kpi
             label="Destinations"
             icon={HardDriveIcon}
@@ -354,7 +357,7 @@ export function BackupsPage() {
                             {includes} · to {to}
                           </>
                         }
-                        subEnd={<span className="tabular-nums">daily at {r.backupTime}</span>}
+                        subEnd={<span className="tabular-nums">daily at {formatClockAt(r.backupTime, w)}</span>}
                         action={runNow || undefined}
                       />
                     ) : (
@@ -375,7 +378,9 @@ export function BackupsPage() {
                         <TableCell className={cn("max-w-56", nowhere ? "text-fail" : "text-muted-foreground")} truncate>
                           {to}
                         </TableCell>
-                        <TableCell className="text-muted-foreground tabular-nums">{r.backupTime}</TableCell>
+                        <TableCell className="text-muted-foreground tabular-nums">
+                          {formatClockAt(r.backupTime, w)}
+                        </TableCell>
                         {runNow && <TableCell className="text-end">{runNow}</TableCell>}
                       </>
                     )}
@@ -402,7 +407,7 @@ export function BackupsPage() {
 
 /** Where each copy of a run is, and how it went. */
 function Copies({ copies }: { copies: Copy[] }) {
-  const tz = useTimeZone()
+  const w = useTimeFormat()
   if (!copies.length) return null
   return (
     <ul className="mt-1.5 grid gap-1">
@@ -416,7 +421,9 @@ function Copies({ copies }: { copies: Copy[] }) {
             </span>
             <StatusTag kind="copy" status={status} />
             {c.status === "ok" && !c.deletedAt && c.retainUntil && new Date(c.retainUntil) > new Date() && (
-              <span className="text-muted-foreground">locked until {formatDateTime(c.retainUntil, tz)}</span>
+              <span className="text-muted-foreground">
+                locked until {formatTime(c.retainUntil, w, { seconds: false })}
+              </span>
             )}
             {c.status === "pending" && c.attempts > 0 && (
               <span className="text-muted-foreground">tried {plural(c.attempts, "time")}, trying again</span>
@@ -544,7 +551,7 @@ type Inspection = {
 }
 
 function RestoreDialog({ run, instanceId, onClose }: { run: Run | null; instanceId: string; onClose: () => void }) {
-  const tz = useTimeZone()
+  const w = useTimeFormat()
   const instances = useApi<{ instances: { id: string; name: string }[] }>(run ? "/instances" : null)
   const [key, setKey] = useState("")
   const [inspection, setInspection] = useState<Inspection | null>(null)
@@ -579,7 +586,7 @@ function RestoreDialog({ run, instanceId, onClose }: { run: Run | null; instance
     <Dialog open={run !== null} onOpenChange={guard.onOpenChange}>
       <DialogContent className="md:max-w-lg" keepOnBackdrop>
         <DialogHeader icon={ArchiveRestoreIcon}>
-          <DialogTitle>Restore from {run ? formatDateTime(run.startedAt, tz) : ""}</DialogTitle>
+          <DialogTitle>Restore from {run ? formatTime(run.startedAt, w, { seconds: false }) : ""}</DialogTitle>
           <DialogDescription>
             Restores one workflow with its credentials as an inactive copy. Your private key is used in memory and never
             stored.

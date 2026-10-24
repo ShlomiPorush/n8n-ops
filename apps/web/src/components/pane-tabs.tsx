@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { n } from "@/lib/numbers"
 import { useOverlaysHeld } from "@/lib/overlay-history"
+import { scrollerFor } from "@/lib/scroller"
 import { cn } from "@/lib/utils"
 
 /*
@@ -146,7 +147,10 @@ export function PaneTabs({
 
   /*
    * A tab opened while the pane is scrolled past the tabs starts right under them, not at the old offset
-   * (DS-14). The stuck tabs' place in the content is read from the tabs' parent, which does not stick.
+   * (DS-14). That is where the pane scrolls now: the pane, its dialog, or on a short screen the page that scrolls
+   * the pane and its list as one (NL-1). The stuck tabs' place in the content is read from the tabs' parent,
+   * which does not stick. They stick below the scroller's top padding: the page has some, the pane and a dialog's
+   * body have none.
    */
   const shown = useRef(active)
   useLayoutEffect(() => {
@@ -154,7 +158,7 @@ export function PaneTabs({
     shown.current = active
     const el = stuck.current
     const parent = el?.parentElement
-    const scroller = el?.closest<HTMLElement>('[data-scroll-pane], [data-slot="dialog-body"]')
+    const scroller = parent && scrollerFor(parent)
     if (!el || !parent || !scroller) return
     const style = getComputedStyle(el)
     const place =
@@ -162,7 +166,8 @@ export function PaneTabs({
       parent.getBoundingClientRect().top -
       scroller.getBoundingClientRect().top +
       (Number.parseFloat(style.marginTop) || 0) -
-      (Number.parseFloat(style.top) || 0)
+      (Number.parseFloat(style.top) || 0) -
+      (Number.parseFloat(getComputedStyle(scroller).paddingTop) || 0)
     if (scroller.scrollTop > place) scroller.scrollTop = Math.max(0, place)
   }, [active])
   /*

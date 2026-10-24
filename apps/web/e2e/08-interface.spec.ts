@@ -1242,7 +1242,8 @@ const settle = () =>
   page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))))
 
 test("an instance's tabs stay at the top of its pane, another tab starts under them, and Back scrolls back (DS-14, NL-3)", async () => {
-  await page.setViewportSize({ width: 1440, height: 600 })
+  // Low, but over 600px: on a screen 600px high or less the pane does not scroll on its own (NL-1, below).
+  await page.setViewportSize({ width: 1440, height: 640 })
   try {
     await openInstanceB()
     const region = page.getByRole("region", { name: "Instance", exact: true })
@@ -1280,8 +1281,81 @@ test("an instance's tabs stay at the top of its pane, another tab starts under t
   }
 })
 
+/** Where an element is scrolled. */
+const scrollTopOf = (el: Locator) => el.evaluate((e) => e.scrollTop)
+
+test("on a short screen, where the page scrolls an instance with its list, another tab starts under its tabs (NL-1, DS-14)", async () => {
+  await page.setViewportSize({ width: 1440, height: 560 })
+  try {
+    await openInstanceB()
+    const region = page.getByRole("region", { name: "Instance", exact: true })
+    const pane = region.locator("[data-scroll-pane]")
+    const main = page.locator("#main")
+    const tabs = region.getByRole("tablist", { name: "Instance sections" })
+    await expect.poll(() => pane.evaluate((el) => getComputedStyle(el).overflowY)).toBe("visible")
+    // Both tabs long, so the page keeps its offset on a switch unless the tabs move it: a short tab would let the
+    // browser cut the scroll back by itself.
+    const health = region.getByRole("tab", { name: /^Health/ })
+    const overview = region.getByRole("tab", { name: "Overview" })
+    await health.click()
+    await expect(health).toHaveAttribute("aria-selected", "true")
+    await lengthenOpenTab(region)
+    await overview.click()
+    await expect(overview).toHaveAttribute("aria-selected", "true")
+    await lengthenOpenTab(region)
+    await main.evaluate((el) => {
+      el.scrollTop = 1200
+    })
+    await settle()
+    expect(await scrollTopOf(main)).toBeGreaterThan(1190)
+
+    // Scrolled past the tabs, another tab starts right under them, not at the old offset.
+    await health.click()
+    const panel = region.locator('[role="tabpanel"][data-state="active"]')
+    const under = async () => (await top(panel)) - (await bottom(tabs))
+    await expect.poll(under).toBeGreaterThanOrEqual(0)
+    expect(await under()).toBeLessThanOrEqual(30)
+    expect(await scrollTopOf(main)).toBeLessThan(1200)
+  } finally {
+    await page.setViewportSize({ width: 1440, height: 900 })
+  }
+})
+
+test("Back on a short screen puts an instance where it was read on a taller one, through the page (NL-1, NL-3)", async () => {
+  await page.setViewportSize({ width: 1440, height: 640 })
+  try {
+    await openInstanceB()
+    const region = page.getByRole("region", { name: "Instance", exact: true })
+    const pane = region.locator("[data-scroll-pane]")
+    const main = page.locator("#main")
+    await lengthenOpenTab(region)
+
+    // Scrolled where the pane scrolls on its own; another tab, then a short screen.
+    await pane.evaluate((el) => {
+      el.scrollTop = 1200
+    })
+    await settle()
+    const health = region.getByRole("tab", { name: /^Health/ })
+    await health.click()
+    await expect(health).toHaveAttribute("aria-selected", "true")
+    await page.setViewportSize({ width: 1440, height: 560 })
+    await expect.poll(() => pane.evaluate((el) => getComputedStyle(el).overflowY)).toBe("visible")
+
+    // Back opens the overview where it was read, now by scrolling the page; once there, it stays.
+    await page.goBack()
+    await expect(region.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true")
+    await expect.poll(() => scrollTopOf(main)).toBeGreaterThan(1190)
+    const back = await scrollTopOf(main)
+    await page.waitForTimeout(500)
+    expect(Math.abs((await scrollTopOf(main)) - back)).toBeLessThanOrEqual(1)
+  } finally {
+    await page.setViewportSize({ width: 1440, height: 900 })
+  }
+})
+
 test("Back returns to the top of a tab that was never scrolled (NL-3)", async () => {
-  await page.setViewportSize({ width: 1440, height: 600 })
+  // Low, but over 600px, where the pane scrolls on its own (NL-1).
+  await page.setViewportSize({ width: 1440, height: 640 })
   try {
     await openInstanceB()
     const region = page.getByRole("region", { name: "Instance", exact: true })
@@ -1735,16 +1809,21 @@ test("a new filter starts the list at its first row, and the filter bar stays in
     }
   })
   try {
-    // Beside the reading pane the list scrolls in its own column; narrower, with no pane, in the page itself.
-    for (const [width, scroller] of [
-      [1440, "[data-scroll-pane]"],
-      [900, "#main"],
+    // Beside the reading pane the list scrolls in its own column; narrower, with no pane, in the page itself. On a
+    // screen 600px high or less the pane stays beside the list, but the page scrolls the two as one (NL-1).
+    for (const [width, height, scroller, holder] of [
+      [1440, 640, "[data-scroll-pane]", "[data-scroll-pane]"],
+      [900, 640, "#main", "#main"],
+      // The rows are in the list column, beside the open problem, which the page also holds.
+      [1440, 560, "#main", '[data-scroll-pane="list"]'],
     ] as const) {
-      await page.setViewportSize({ width, height: 600 })
+      await page.setViewportSize({ width, height })
       await page.goto("/problems?status=all")
       const column = page.locator(scroller).first()
-      const rows = column.locator("[data-href]")
+      const rows = page.locator(holder).first().locator("[data-href]")
       await expect(rows).toHaveCount(60)
+      if (height < 600)
+        await expect.poll(() => page.locator(holder).evaluate((el) => getComputedStyle(el).overflowY)).toBe("visible")
       await column.evaluate((el) => {
         el.scrollTop = el.scrollHeight
       })

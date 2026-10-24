@@ -42,7 +42,8 @@ import { SCROLL_RESTORE_MS } from "@/lib/behavior"
 import { useLiveUpdates } from "@/lib/live"
 import { n, plural } from "@/lib/numbers"
 import { useNavigateFromOverlay, useOverlayHistory } from "@/lib/overlay-history"
-import { placeSpot, readSpot, type ScrollSpot, shownEntry } from "@/lib/scroll-spot"
+import { type Area, placeSpot, readSpot, type ScrollSpot, shownEntry } from "@/lib/scroll-spot"
+import { heldBy } from "@/lib/scroller"
 import { loginPath, sessionClosed, sessionStarted } from "@/lib/session"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
@@ -224,11 +225,12 @@ function TopBar({
             })}
           </ol>
         </nav>
+        <GlobalSearch pages={searchPages} variant="bar" onOpenChange={setSearching} />
+        {/* The page's own actions come after the search (NL-6). */}
         <div
           ref={setActionsSlot}
-          className={cn("flex shrink-0 items-center gap-2 pe-3 empty:hidden", searching && "hidden")}
+          className={cn("ms-3 flex shrink-0 items-center gap-2 empty:hidden", searching && "hidden")}
         />
-        <GlobalSearch pages={searchPages} variant="bar" onOpenChange={setSearching} />
         {/* Needs attention from every page (NL-19). */}
         <div className="ms-2.5 me-[22px] flex shrink-0 items-center lg:me-7">
           <AttentionBell />
@@ -507,18 +509,22 @@ function UserMenu({ compact }: { compact?: boolean }) {
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          aria-label="Account menu"
+          // The name holds the words it shows, so a voice command that says them reaches it (AX-11).
+          aria-label={[name, "Account menu"].filter(Boolean).join(" ")}
           className={cn(
             "flex min-w-0 items-center gap-2.5 rounded-sm p-1 text-start aria-expanded:bg-accent side:flex-1 [@media(hover:hover)]:hover:bg-accent",
             compact && "side:flex-none",
           )}
         >
-          <span className="grid size-7 shrink-0 place-items-center rounded-full bg-fill text-meta font-bold">
-            {name.slice(0, 2).toUpperCase()}
-          </span>
+          {/* The initials are a picture of the account, not words of its name: drawn, and hidden from readers. */}
+          <span
+            aria-hidden
+            data-initials={name.slice(0, 2).toUpperCase()}
+            className="grid size-7 shrink-0 place-items-center rounded-full bg-fill text-meta font-bold before:content-[attr(data-initials)]"
+          />
           {!compact && (
             <span className="hidden min-w-0 side:block">
-              <span className="block truncate text-ctl font-semibold">{name}</span>
+              <span className="block truncate text-ctl font-semibold">{name}</span>{" "}
               <span className="block text-meta text-muted-foreground">Account</span>
             </span>
           )}
@@ -799,13 +805,17 @@ const scrollPage = (pathname: string) => {
 /**
  * The scrolling areas of a page by name: the page itself ("page"), then each area marked `data-scroll-pane`: the
  * list column ("list") and the open item ("item"). Read from the whole document: below 1000px the item opens as a
- * dialog or a phone sheet, in a portal outside the page.
+ * dialog or a phone sheet, in a portal outside the page. On a short screen the list and the item do not scroll on
+ * their own (NL-1): each is then noted with what holds it, the page, so a place noted on a taller screen is put
+ * back through the page (`placeSpot`).
  */
 function scrollAreas(main: HTMLElement) {
-  const areas = new Map<string, HTMLElement>([["page", main]])
+  const areas = new Map<string, Area>([["page", main]])
   for (const el of document.querySelectorAll<HTMLElement>("[data-scroll-pane]")) {
     const name = el.dataset.scrollPane
-    if (name && !areas.has(name)) areas.set(name, el)
+    if (!name || areas.has(name)) continue
+    const held = heldBy(el)
+    areas.set(name, held ? { scrollTop: el.scrollTop, heldBy: held } : el)
   }
   return areas
 }
@@ -813,28 +823,29 @@ function scrollAreas(main: HTMLElement) {
 /**
  * Scrolls every area back to `spot`, again on each frame while content that is still loading leaves an area too
  * short or a dialog has not mounted yet, until all are there, SCROLL_RESTORE_MS have passed, or the user scrolls
- * or presses a key. Returns what stops it; `done` runs once it stops.
+ * or presses a key. Returns what stops it; `done` runs once it stops, told whether all got there.
  */
-function restoreScroll(main: HTMLElement, spot: ScrollSpot, done: () => void): () => void {
+function restoreScroll(main: HTMLElement, spot: ScrollSpot, done: (there: boolean) => void): () => void {
   const until = performance.now() + SCROLL_RESTORE_MS
   const user = ["wheel", "touchstart", "pointerdown", "keydown"] as const
   let frame = 0
   let stopped = false
-  const stop = () => {
+  const stop = (there = false) => {
     if (stopped) return
     stopped = true
     cancelAnimationFrame(frame)
-    for (const type of user) window.removeEventListener(type, stop, true)
-    done()
+    for (const type of user) window.removeEventListener(type, onUser, true)
+    done(there)
   }
+  const onUser = () => stop()
   const apply = () => {
     const there = placeSpot(scrollAreas(main), spot)
-    if (there || performance.now() > until) stop()
+    if (there || performance.now() > until) stop(there)
     else frame = requestAnimationFrame(apply)
   }
-  for (const type of user) window.addEventListener(type, stop, { capture: true, passive: true })
+  for (const type of user) window.addEventListener(type, onUser, { capture: true, passive: true })
   apply()
-  return stop
+  return onUser
 }
 
 /**
@@ -881,11 +892,13 @@ function useScrollMemory(main: HTMLElement | null) {
       const key = location.key
       // The pane's tabs already placed a newly shown tab (children's effects run first, DS-14); Back and Forward
       // put the areas where the entry left them instead. It can be there at once, before restoreScroll returns.
+      // What it did not get to (the user stopped it, or the time ran out on a layout where an area cannot go
+      // there) leaves the entry's place as it was, for the next visit; a scroll of the user's own notes it anew.
       let finished = false
-      const stop = restoreScroll(main, spot, () => {
+      const stop = restoreScroll(main, spot, (there) => {
         finished = true
         restoring.current = null
-        if (entry.current === key) saved.current.set(key, readSpot(scrollAreas(main)))
+        if (there && entry.current === key) saved.current.set(key, readSpot(scrollAreas(main)))
       })
       if (!finished) restoring.current = stop
       return

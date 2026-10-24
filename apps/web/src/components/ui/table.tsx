@@ -423,11 +423,12 @@ export function useSort<T>(
 /**
  * The frame the Sort and Filters buttons share (TB-28, MP-6): a square as tall as the search, a 1px line and no
  * fill, with line and icon ink while open or while set. `small` is the 30px square at the end of a count line or
- * a panel head. Regular keeps its own raised button, as tall as its search.
+ * a panel head. Regular keeps its own raised button, as tall as its search. Toggles clicked again and again
+ * select no text (AX-10).
  */
 export function toolButton(small?: boolean) {
   return cn(
-    "relative inline-grid shrink-0 place-items-center rounded-sm border border-line text-muted-foreground transition-colors duration-150",
+    "relative inline-grid shrink-0 place-items-center rounded-sm border border-line text-muted-foreground transition-colors duration-150 select-none",
     "[@media(hover:hover)]:hover:border-muted-foreground [@media(hover:hover)]:hover:text-ink aria-expanded:border-ink aria-expanded:text-ink data-set:text-ink",
     small ? "size-chip" : "size-ctl regular:size-9 regular:shadow-card",
     "regular:bg-raise",

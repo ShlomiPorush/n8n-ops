@@ -12,6 +12,7 @@ import { StepArrow } from "@/components/skin/marks"
 import { Dot, type HealthState, StatusTag, statusOf, TimeAgo } from "@/components/status"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
+import { Tip } from "@/components/ui/tooltip"
 import { useApi } from "@/lib/api"
 import { useAttention } from "@/lib/attention"
 import { type Loadable, loadView } from "@/lib/load-state"
@@ -245,14 +246,14 @@ function InstanceLine({ i, latest }: { i: InstanceRow; latest: string | null }) 
       </Link>
       <div className="flex items-center gap-1.5">
         {health !== "ok" && <StatusTag kind="health" status={health} />}
-        {i.version && (
-          <Badge
-            variant={behind(i.version, latest) ? "warn" : "line"}
-            title={latest ? `Latest is ${latest}` : undefined}
-          >
-            v{i.version}
-          </Badge>
-        )}
+        {i.version &&
+          (latest ? (
+            <Tip content={`Latest is ${latest}`}>
+              <Badge variant={behind(i.version, latest) ? "warn" : "line"}>v{i.version}</Badge>
+            </Tip>
+          ) : (
+            <Badge variant="line">v{i.version}</Badge>
+          ))}
       </div>
       <div className="col-span-2 flex flex-wrap gap-x-3 text-small text-muted-foreground">
         <Link

@@ -4,7 +4,7 @@ import { Empty, LoadError, Loading, Page, Panel, TryAgain, UserText } from "@/co
 import { Initial, ViaIcon } from "@/components/skin/marks"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { Tip } from "@/components/ui/tooltip"
 import { api } from "@/lib/api"
 import { loadView } from "@/lib/load-state"
 import { n, plural } from "@/lib/numbers"
@@ -124,12 +124,9 @@ export function AuditPage() {
             {rows.map((a) => (
               <TableRow key={a.id}>
                 <TableCell className="text-muted-foreground tabular-nums">
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <time dateTime={a.at}>{formatTime(a.at, w, { seconds: false })}</time>
-                    </TooltipTrigger>
-                    <TooltipContent>{formatTime(a.at, w)}</TooltipContent>
-                  </Tooltip>
+                  <Tip content={formatTime(a.at, w)}>
+                    <time dateTime={a.at}>{formatTime(a.at, w, { seconds: false })}</time>
+                  </Tip>
                 </TableCell>
                 <TableCell>
                   {a.actor.startsWith("token:") ? (

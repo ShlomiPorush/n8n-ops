@@ -4,6 +4,7 @@ import * as React from "react"
 import { SortButton, type SortControl, toolButton } from "@/components/ui/table"
 import { LIST_WAIT_MS, SEARCH_PAUSE_MS, touchOnly } from "@/lib/behavior"
 import { usePopoverRoom } from "@/lib/popover-room"
+import { scrollerFor } from "@/lib/scroller"
 import { cn } from "@/lib/utils"
 
 /*
@@ -351,12 +352,6 @@ export function SearchBox({
 }
 
 /**
- * The element a list scrolls in: the list column beside a reading pane, the open item for a list inside it (also
- * when the item opened as a dialog or a phone sheet), else the page.
- */
-const scrollerOf = (el: HTMLElement) => el.closest<HTMLElement>("[data-scroll-pane]") ?? document.getElementById("main")
-
-/**
  * Whether a list goes to its first row once more when the rows of new filters come (TB-7), free of React for
  * the tests. It waits for the request of those filters to end, not for rows that look new: a list whose new
  * filters were cached shows their rows at once, and a refresh that brings the same rows changes nothing. It
@@ -406,13 +401,17 @@ const typing = (el: EventTarget | null) =>
  * and, while its rows are `loading`, again in the frame after their request ends, as the old content's height
  * can carry the scroll down meanwhile (`firstRowReset`). It scrolls only when the top of the list is above view,
  * and only as far as the filter bar's place, read from what precedes it since the bar itself may be stuck (TB-7).
+ *
+ * The list scrolls where `scrollerFor` finds now: the list column beside a reading pane, the open item for a list
+ * inside it (also when the item opened as a dialog or a phone sheet), else the page, which on a short screen
+ * scrolls the list column and the pane as one (NL-1).
  */
 function useFirstRowOnChange(bar: React.RefObject<HTMLElement | null>, key: string | undefined, loading: boolean) {
   const [reset] = React.useState(() => firstRowReset())
   const lastKey = React.useRef(key)
   const toTop = React.useCallback(() => {
     const el = bar.current
-    const scroller = el && scrollerOf(el)
+    const scroller = el && scrollerFor(el)
     if (!el || !scroller) return
     const before = el.previousElementSibling ?? el.parentElement
     if (!before) return
@@ -437,24 +436,26 @@ function useFirstRowOnChange(bar: React.RefObject<HTMLElement | null>, key: stri
     const frame = requestAnimationFrame(() => valid() && toTop())
     return () => cancelAnimationFrame(frame)
   }, [loading, toTop, reset])
-  // A wheel, a touch, the scroll bar or a scrolling key, not the scroll this hook makes itself.
+  // A wheel, a touch, the scroll bar or a scrolling key, not the scroll this hook makes itself. Heard on the
+  // document and matched to where the list scrolls at that moment: a change of height moves that between the
+  // list column and the page (NL-1) without a new render.
   React.useEffect(() => {
-    const scroller = bar.current && scrollerOf(bar.current)
-    if (!scroller) return
-    const onScroll = () => reset.scrolled()
+    const scroller = () => (bar.current ? scrollerFor(bar.current) : null)
+    const inside = (e: Event) => e.target instanceof Node && scroller()?.contains(e.target) === true
+    const onScroll = (e: Event) => inside(e) && reset.scrolled()
     // The scroll bar is the scroller itself; a press on a row or a control is not a scroll.
-    const onPress = (e: PointerEvent) => e.target === scroller && reset.scrolled()
-    const onKey = (e: KeyboardEvent) => SCROLL_KEYS.has(e.key) && !typing(e.target) && reset.scrolled()
+    const onPress = (e: PointerEvent) => e.target === scroller() && reset.scrolled()
+    const onKey = (e: KeyboardEvent) => SCROLL_KEYS.has(e.key) && !typing(e.target) && inside(e) && reset.scrolled()
     const passive = { passive: true }
-    scroller.addEventListener("wheel", onScroll, passive)
-    scroller.addEventListener("touchmove", onScroll, passive)
-    scroller.addEventListener("pointerdown", onPress, passive)
-    scroller.addEventListener("keydown", onKey, passive)
+    document.addEventListener("wheel", onScroll, passive)
+    document.addEventListener("touchmove", onScroll, passive)
+    document.addEventListener("pointerdown", onPress, passive)
+    document.addEventListener("keydown", onKey, passive)
     return () => {
-      scroller.removeEventListener("wheel", onScroll)
-      scroller.removeEventListener("touchmove", onScroll)
-      scroller.removeEventListener("pointerdown", onPress)
-      scroller.removeEventListener("keydown", onKey)
+      document.removeEventListener("wheel", onScroll)
+      document.removeEventListener("touchmove", onScroll)
+      document.removeEventListener("pointerdown", onPress)
+      document.removeEventListener("keydown", onKey)
     }
   }, [bar, reset])
 }

@@ -17,15 +17,16 @@ function Tabs({ className, orientation = "horizontal", ...props }: React.Compone
 
 /*
  * Tabs scroll sideways instead of wrapping, without a scroll bar (important: the global thin scroll bar rule
- * would win otherwise); the active one has a 2px ink underline. The line under them is drawn inside the list,
- * so nothing sticks out of it to scroll up and down.
+ * would win otherwise); the active one has a 2px ink underline. The line under them is a shadow of the list
+ * itself (shadow-rule), so it runs under the tabs at any scroll position, and nothing sticks out of the list
+ * to scroll up and down. The list is positioned, so a tab's offsetLeft is measured from its start.
  */
 function TabsList({ className, ...props }: React.ComponentProps<typeof TabsPrimitive.List>) {
   return (
     <TabsPrimitive.List
       data-slot="tabs-list"
       className={cn(
-        "relative flex w-full min-w-0 items-stretch gap-5 overflow-x-auto overflow-y-hidden [scrollbar-width:none]! before:absolute before:inset-x-0 before:bottom-0 before:h-px before:bg-line",
+        "relative flex w-full min-w-0 items-stretch gap-5 overflow-x-auto overflow-y-hidden shadow-rule [scrollbar-width:none]!",
         className,
       )}
       {...props}

@@ -74,6 +74,8 @@ function ToastBody({ item, panel }: { item: ToastItem; panel: React.Ref<HTMLDivE
       }}
       className={cn(
         "flex items-start gap-2.5 rounded-lg border-s-4 bg-popover py-2.5 ps-3 pe-1.5 text-body text-popover-foreground shadow-float transition-opacity duration-300 animate-in fade-in-0 slide-in-from-bottom-2",
+        // Compact: smaller corners and text, and a hairline round the other three sides.
+        "compact:rounded-sm compact:border-y compact:border-e compact:text-small",
         tone === "ok" && "border-s-ok",
         tone === "fail" && "border-s-fail",
         tone === "warn" && "border-s-warn",

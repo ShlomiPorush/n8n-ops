@@ -65,6 +65,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - On a screen 600px high or less, a list and its open item stay side by side, but the page scrolls them as one instead of each on its own. A change of height, such as an on-screen keyboard opening, keeps the open item and what is typed in it. There too, another tab of the item starts right under its tabs, a new filter starts the list at its first row, and Back returns to where you were reading, also when you had scrolled on a taller window.
 - On a phone, figures go two to a line, however wide the phone, and an odd last one takes the whole line, also the three of a problem.
 - Status tags and grey text are a little darker in light themes, so they stay readable on a selected row.
+- **The Compact design is closer to its type scale.** Dialog and sheet titles are bold, the page title in the top bar is a little larger, and on a phone the page title is larger, a step smaller on screens 380px wide or less, with the page's main button beside it shown without its icon. A message at the bottom of the screen has a thin border, smaller corners and smaller text. On a phone a sheet casts its shadow up over the page. Figures fit more to a row, scrollbars are grey, and the dot of the n8n-ops mark is no longer green, since colour stands for status. IDs and other values in bold use the code font's own bold letters.
 
 ### Fixed
 

@@ -152,11 +152,18 @@ function TableCell({ className, ...props }: React.ComponentProps<"td">) {
 /* Sorting by the column headers (TB-1 to TB-3). Numbers and times sort high to low first, text A to Z first;
  * each further click reverses. Empty values stay last in both directions and equal values keep their order. The
  * chosen order survives refreshes and page switches for this visit (not a reload). Where the header row is not
- * drawn, `PhoneSort` sets the same order. */
+ * drawn, `PhoneSort` sets the same order. A list sorted on the server (TB-4) asks for its rows in the order
+ * `useSortOrder` holds and hands the order of its answer to `useSort` as `order`: the rows are then drawn in the
+ * order they came, and the headers and the sort control share the order the rows are in. */
 
 type SortValue = string | number | Date | null | undefined
-type SortColumn<T> = { label: string; value: (row: T) => SortValue }
-type SortState = { key: string; dir: "ascending" | "descending" }
+/**
+ * `kind` says what the column holds, so its first direction is known without rows to look at, as a list sorted
+ * on the server needs: `text` A to Z, `number` and `date` high to low (TB-1).
+ */
+type SortColumn<T> = { label: string; value: (row: T) => SortValue; kind?: "text" | "number" | "date" }
+export type SortState = { key: string; dir: "ascending" | "descending" }
+export type SortOrder = [state: SortState | null, set: (state: SortState) => void]
 export type SortHead = { state: "ascending" | "descending" | "none"; toggle: () => void }
 /** What the phone sort control needs: the columns, which of them hold numbers, and the current order. */
 export type SortControl = {
@@ -179,6 +186,7 @@ const comparable = (v: SortValue): string | number | null => {
 }
 
 function firstDirection<T>(rows: T[], column: SortColumn<T>): SortState["dir"] {
+  if (column.kind) return column.kind === "text" ? "ascending" : "descending"
   return rows.some((r) => {
     const v = column.value(r)
     return typeof v === "number" || v instanceof Date
@@ -187,19 +195,109 @@ function firstDirection<T>(rows: T[], column: SortColumn<T>): SortState["dir"] {
     : "ascending"
 }
 
+/** The order picked for a list sorted in the page, remembered by its id for this visit (TB-3). */
+function useOwnOrder(id: string, initial?: SortState): SortOrder {
+  const [state, setState] = React.useState<SortState | null>(() => remembered.get(id) ?? initial ?? null)
+  const set = React.useCallback(
+    (next: SortState) => {
+      remembered.set(id, next)
+      setState(next)
+    },
+    [id],
+  )
+  return [state, set]
+}
+
+/** What the order of a list sorted on the server reads from its answer, as `useApi(path, { keepRows: true })` gives it. */
+export type SortAnswer = {
+  data: unknown
+  isPlaceholderData?: boolean
+  /** "failed" while the rows on screen are an older answer kept after the asked one failed (lib/load-state.ts). */
+  previous?: "loading" | "failed"
+  refetch?: () => unknown
+}
+
+const sameOrder = (a: SortState | null, b: SortState | null) => a?.key === b?.key && a?.dir === b?.dir
+
+/**
+ * Which order a list sorted on the server shows (TB-4). The order asked for is the latest choice; the order applied
+ * is the one the rows on screen came in. The headers and the sort control show a new choice at once, while its rows
+ * are on their way. When they fail to come, the rows stay in the applied order and so do the headers, also after
+ * several choices in a row (an answer to an older one was dropped as it came). Only an applied order is
+ * remembered for this visit (TB-3). Free of React, for the tests.
+ */
+export function sortTracker(id: string, initial: SortState | null = null) {
+  let applied = remembered.get(id) ?? initial
+  return {
+    /** The order to ask for first: the one remembered. */
+    initial: applied,
+    shown(asked: SortState | null, answer: SortAnswer): SortState | null {
+      if (answer.data !== undefined && !answer.isPlaceholderData && answer.previous === undefined) {
+        // The rows of this answer came in the order asked for.
+        applied = asked
+        if (asked) remembered.set(id, asked)
+        else remembered.delete(id)
+      }
+      return answer.previous === "failed" ? applied : asked
+    },
+  }
+}
+
+/** The order of a list sorted on the server: `asked` builds its address, `shown` the headers for its answer (TB-4). */
+export type ServerSort = { asked: SortState | null; shown: (answer: SortAnswer) => SortOrder }
+
+/**
+ * The order of a list sorted on the server. Ask for the rows with `asked`, then hand `shown(answer)` to `useSort`
+ * as its `order`: the headers and the sort control then show the order the rows are in (`sortTracker`). Picking
+ * again the order whose rows failed to come asks for them again.
+ */
+export function useSortOrder(id: string, initial?: SortState): ServerSort {
+  const [tracker] = React.useState(() => sortTracker(id, initial))
+  const [asked, setAsked] = React.useState<SortState | null>(() => tracker.initial)
+  return {
+    asked,
+    shown: (answer) => [
+      // Null is an order too (the default), so the tracker's answer is taken as it is.
+      tracker.shown(asked, answer),
+      (next) => {
+        if (!sameOrder(next, asked)) setAsked(next)
+        else if (answer.previous === "failed") void answer.refetch?.()
+      },
+    ],
+  }
+}
+
 export function useSort<T>(
   rows: T[] | undefined,
-  { id, columns, initial }: { id: string; columns: Record<string, SortColumn<T>>; initial?: SortState },
+  {
+    id,
+    columns,
+    initial,
+    order,
+    arrival,
+  }: {
+    id: string
+    columns: Record<string, SortColumn<T>>
+    initial?: SortState
+    /**
+     * The order of a list sorted on the server, `shown(answer)` of `useSortOrder`: the order its rows are in, which
+     * the headers show; the rows are not sorted again here (TB-4).
+     */
+    order?: SortOrder
+    /**
+     * The column and direction the rows arrive in. While no column is picked, a first click on it turns the list
+     * around instead of asking again for the order already shown (TB-1).
+     */
+    arrival?: SortState
+  },
 ): Sorting<T> {
-  const [state, setState] = React.useState<SortState | null>(() => remembered.get(id) ?? initial ?? null)
-  const set = (next: SortState) => {
-    remembered.set(id, next)
-    setState(next)
-  }
+  const own = useOwnOrder(id, initial)
+  const [state, set] = order ?? own
+  const server = order !== undefined
   const list = rows ?? []
   const sorted = React.useMemo(() => {
     const column = state && columns[state.key]
-    if (!state || !column) return list
+    if (server || !state || !column) return list
     const sign = state.dir === "ascending" ? 1 : -1
     return list
       .map((row, i) => ({ row, i, v: comparable(column.value(row)) }))
@@ -213,7 +311,7 @@ export function useSort<T>(
       })
       .map((x) => x.row)
     // biome-ignore lint/correctness/useExhaustiveDependencies: columns are declared inline by each page
-  }, [list, state])
+  }, [list, state, server])
   return {
     rows: sorted,
     control: {
@@ -232,8 +330,13 @@ export function useSort<T>(
         state: current,
         toggle: () => {
           if (!column) return
+          const turn = (dir: SortState["dir"]) => (dir === "ascending" ? "descending" : "ascending")
           const dir =
-            current === "none" ? firstDirection(list, column) : current === "ascending" ? "descending" : "ascending"
+            current !== "none"
+              ? turn(current)
+              : !state && arrival?.key === key
+                ? turn(arrival.dir)
+                : firstDirection(list, column)
           set({ key, dir })
         },
       }

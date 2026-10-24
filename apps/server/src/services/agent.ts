@@ -25,6 +25,8 @@ export async function agentProblems(
     instanceId,
     q: opts.q,
     limit: Math.min(opts.limit ?? 50, 200),
+    // The agents' API keeps its shape and order: a bare list, most recently seen first.
+    order: "recent",
   })
 }
 

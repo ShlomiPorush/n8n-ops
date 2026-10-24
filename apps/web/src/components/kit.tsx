@@ -181,11 +181,15 @@ export function RefreshNote({
 /**
  * RefreshNote as a line of its own at the top of a panel whose title is outside it, such as a Settings form. It is
  * out of sight while the data is fresh but stays mounted, so a failure is announced when it comes (TB-5, LD-12).
+ * With `what`, for a list with no filter line of its own, it also says when a new order or new filters failed to
+ * load and the previous rows stay: "Could not load open problems; showing the previous list".
  */
-export function RefreshLine({ live }: { live: Live }) {
+export function RefreshLine({ live, what }: { live: Live; what?: string }) {
+  const failed = refreshFailed(live) || (what !== undefined && filterFailed(live))
   return (
-    <p className={cn("px-pad-x pt-3 text-small", !refreshFailed(live) && "sr-only")}>
+    <p className={cn("px-pad-x pt-3 text-small", !failed && "sr-only")}>
       <RefreshNote live={live} small />
+      {what !== undefined && <RefreshNote live={live} what={what} small />}
     </p>
   )
 }

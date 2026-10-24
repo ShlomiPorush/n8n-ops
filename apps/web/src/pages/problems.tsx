@@ -39,7 +39,7 @@ import {
 } from "@/components/kit"
 import { ListWithPanel } from "@/components/list-panel"
 import { type PaneTabItem, PaneTabPanel, PaneTabs, usePaneTab } from "@/components/pane-tabs"
-import { ProblemBadge, TimeAgo, When } from "@/components/status"
+import { ProblemBadge, problemStatus, TimeAgo, When } from "@/components/status"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -52,12 +52,23 @@ import {
 } from "@/components/ui/dialog"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, useSort } from "@/components/ui/table"
+import {
+  type SortOrder,
+  type SortState,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+  useSort,
+  useSortOrder,
+} from "@/components/ui/table"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { api, refreshAreas, useApi, useApiMutation } from "@/lib/api"
 import { loadView } from "@/lib/load-state"
 import { useNavigateFromOverlay } from "@/lib/overlay-history"
-import { formatDateTime, n, plural, useTimeZone } from "@/lib/time"
+import { countOf, formatDateTime, n, plural, useTimeZone } from "@/lib/time"
 import { toast } from "@/lib/toast"
 import { offerUndo } from "@/lib/undo"
 import { cn } from "@/lib/utils"
@@ -77,6 +88,26 @@ export type ProblemRow = {
   instanceId: string
   instanceName: string
 }
+
+/** A Problems list as the server sends it: the first 200 in the order asked for, and how many match in all (TB-18). */
+export type ProblemList = { items: ProblemRow[]; total: number }
+
+/**
+ * The address of a Problems list: its filters and the order picked. The server sorts before it cuts the list at
+ * 200, so the order covers every problem (TB-4); with no order picked it sends what needs a look first.
+ */
+export function problemsPath(filters: Record<string, string>, order: SortState | null = null): string {
+  const query = new URLSearchParams(filters)
+  if (order) {
+    query.set("sort", order.key)
+    query.set("order", order.dir === "ascending" ? "asc" : "desc")
+  }
+  return `/problems?${query}`
+}
+
+/** The Status column high to low is the order the server sends by default: regressions, new, open, muted, resolved. */
+const statusRank = { resolved: 0, muted: 1, open: 2, new: 3, regression: 4 } as const
+const arrival: SortState = { key: "status", dir: "descending" }
 
 type ProblemDetailData = ProblemRow & {
   error: { message?: string; description?: string | null; stack?: string | null; nodeType?: string | null } | null
@@ -109,6 +140,7 @@ export function ProblemsTable({
   bare,
   items,
   preview,
+  order,
 }: {
   rows: ProblemRow[]
   selected?: string
@@ -123,19 +155,27 @@ export function ProblemsTable({
   items?: boolean
   /** A few rows picked by the caller: shown in their order, without a sort control. */
   preview?: boolean
+  /**
+   * The order the rows are in (`shown` of `useSortOrder`, whose order is sent through `problemsPath`). The server
+   * sorts every problem before it sends the first 200, so the rows are drawn as they came, never sorted again here
+   * (TB-4).
+   */
+  order?: SortOrder
 }) {
+  // The keys are the server's sort columns (`problemSortKeys` in routes/problems.ts).
   const sort = useSort(rows, {
     id: showInstance ? "problems" : "instance-problems",
+    order,
+    arrival,
     columns: {
-      status: {
-        label: "Status",
-        value: (p) => (p.regression ? 3 : p.status === "open" ? 2 : p.status === "muted" ? 1 : 0),
-      },
-      workflow: { label: "Workflow", value: (p) => p.workflowName },
-      error: { label: "Error", value: (p) => p.errorMessage },
-      ...(showInstance ? { instance: { label: "Instance", value: (p: ProblemRow) => p.instanceName } } : {}),
-      failures: { label: "Failures", value: (p) => p.count },
-      lastSeen: { label: "Last seen", value: (p) => new Date(p.lastSeen) },
+      status: { label: "Status", kind: "number", value: (p) => statusRank[problemStatus(p)] },
+      workflow: { label: "Workflow", kind: "text", value: (p) => p.workflowName },
+      error: { label: "Error", kind: "text", value: (p) => p.errorMessage },
+      ...(showInstance
+        ? { instance: { label: "Instance", kind: "text" as const, value: (p: ProblemRow) => p.instanceName } }
+        : {}),
+      failures: { label: "Failures", kind: "number", value: (p) => p.count },
+      lastSeen: { label: "Last seen", kind: "date", value: (p) => new Date(p.lastSeen) },
     },
   })
   if (rows.length === 0) {
@@ -247,8 +287,11 @@ export function ProblemsPage() {
   const status = params.get("status") ?? "open"
   const instance = params.get("instance") ?? "all"
   const q = params.get("q") ?? ""
-  const query = new URLSearchParams({ status, ...(instance !== "all" ? { instance } : {}), ...(q ? { q } : {}) })
-  const rows = useApi<ProblemRow[]>(`/problems?${query}`, { refetchInterval: 15_000, keepRows: true })
+  // The order is asked of the server, so it covers every problem and not only the 200 sent (TB-4). An order whose
+  // rows failed to come leaves the rows and the headers in the order before it, and the filter line says so.
+  const sort = useSortOrder("problems")
+  const filters = { status, ...(instance !== "all" ? { instance } : {}), ...(q ? { q } : {}) }
+  const rows = useApi<ProblemList>(problemsPath(filters, sort.asked), { refetchInterval: 15_000, keepRows: true })
   // A failed refresh keeps the rows and the head says so; new filters that failed keep the previous rows and the
   // filter line says so (TB-5, LD-12).
   const view = loadView(rows)
@@ -260,7 +303,8 @@ export function ProblemsPage() {
     setParams(next, { replace: true })
   }
   const open = (pid: string) => navigate(`/problems/${pid}?${params}`)
-  const count = rows.data?.length
+  const shown = rows.data?.items.length
+  const total = rows.data?.total ?? 0
   const filtered = instance !== "all" || q !== ""
   // "All" shows every status; the words then name no status.
   const noun = [statusWords[status], "problems"].filter(Boolean).join(" ")
@@ -285,10 +329,12 @@ export function ProblemsPage() {
         search={<SearchBox label="Search workflow or error" value={q} onChange={(v) => setParam("q", v)} />}
         active={Number(instance !== "all")}
         count={
-          count === undefined ? undefined : (
+          shown === undefined ? undefined : (
             <>
-              {/* New filters that failed keep the previous rows, and this line says so instead of a count (TB-5). */}
-              {rows.previous !== "failed" && plural(count, [statusWords[status], "problem"].filter(Boolean).join(" "))}
+              {/* New filters that failed keep the previous rows, and this line says so instead of a count (TB-5).
+                  Above 200 it counts them all: "200 of 1,240 open problems" (TB-18). */}
+              {rows.previous !== "failed" &&
+                countOf(shown, total, [statusWords[status], "problem"].filter(Boolean).join(" "))}
               <RefreshNote live={rows} what={noun} small />
             </>
           )
@@ -326,7 +372,8 @@ export function ProblemsPage() {
       ) : (
         <Reloading busy={rows.isPlaceholderData || (rows.previous === "failed" && rows.isFetching)}>
           <ProblemsTable
-            rows={rows.data ?? []}
+            rows={rows.data?.items ?? []}
+            order={sort.shown(rows)}
             selected={id}
             onOpen={open}
             href={(pid) => `/problems/${pid}?${params}`}
@@ -339,6 +386,12 @@ export function ProblemsPage() {
                   : `No ${noun}.`
             }
           />
+          {/* The list holds the first 200 in its order; the count line counts them all (TB-18). */}
+          {shown !== undefined && shown < total && rows.previous !== "failed" && (
+            <p className="px-pad-x pt-2 text-small text-muted-foreground">
+              Showing the first {n(shown)} in this order. Search or filter to find the others.
+            </p>
+          )}
         </Reloading>
       )}
     </>
@@ -805,15 +858,16 @@ function MergeDialog({
   returnFocus: React.RefObject<HTMLElement | null>
 }) {
   const navigateOut = useNavigateFromOverlay()
-  const candidates = useApi<ProblemRow[]>(open ? `/problems?status=open&instance=${problem.instanceId}` : null)
+  const candidates = useApi<ProblemList>(open ? problemsPath({ status: "open", instance: problem.instanceId }) : null)
   const [into, setInto] = useState("")
-  const target = (into: string) => candidates.data?.find((c) => c.id === into)?.workflowName ?? "the other problem"
+  const target = (into: string) =>
+    candidates.data?.items.find((c) => c.id === into)?.workflowName ?? "the other problem"
   const merge = useApiMutation<{ into: string }>("POST", `/problems/${problem.id}/merge`, {
     invalidate: ["/overview"],
     success: (b) => `Problem merged into ${target(b.into)}`,
     failed: (b) => `merge into ${target(b.into)}`,
   })
-  const options = (candidates.data ?? []).filter((c) => c.id !== problem.id)
+  const options = (candidates.data?.items ?? []).filter((c) => c.id !== problem.id)
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent

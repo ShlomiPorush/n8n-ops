@@ -30,6 +30,9 @@ export async function api<T>(path: string, init: RequestInit & { json?: unknown 
   const { json, headers, ...rest } = init
   // A request the page called off stays an abort; anything else got no whole answer from the server.
   const unreached = (e: unknown) => {
+    // A read that got no answer in its time (`readFresh` with `timeout`) got no answer at all.
+    if (rest.signal?.reason instanceof DOMException && rest.signal.reason.name === "TimeoutError")
+      return new NetworkError()
     if (rest.signal?.aborted || (e instanceof DOMException && e.name === "AbortError")) return e
     return new NetworkError()
   }
@@ -124,13 +127,44 @@ export async function refreshAreas(...prefixes: string[]): Promise<void> {
   if (failed.length > 0) throw new RefreshError()
 }
 
-/** Reads a path for the query cache, dropping an answer that a save overtook. */
-export async function readFresh<T>(path: string, client: QueryClient = queryClient): Promise<T> {
+/**
+ * A signal that aborts with `signal`, or with a TimeoutError after `ms`, so a request that hangs fails in time and
+ * never holds the next refresh (NL-19). `done` stops the clock once the answer is in.
+ */
+export function deadline(signal: AbortSignal | undefined, ms: number): { signal: AbortSignal; done: () => void } {
+  const control = new AbortController()
+  const follow = () => control.abort(signal?.reason)
+  if (signal?.aborted) follow()
+  else signal?.addEventListener("abort", follow, { once: true })
+  const timer = setTimeout(() => control.abort(new DOMException("No answer in time", "TimeoutError")), ms)
+  return {
+    signal: control.signal,
+    done: () => {
+      clearTimeout(timer)
+      signal?.removeEventListener("abort", follow)
+    },
+  }
+}
+
+/**
+ * Reads a path for the query cache, dropping an answer that a save overtook. With `timeout` (ms) a read without an
+ * answer by then fails as unreached; `signal` is the query's own, which aborts it when it is called off.
+ */
+export async function readFresh<T>(
+  path: string,
+  client: QueryClient = queryClient,
+  { signal, timeout }: { signal?: AbortSignal; timeout?: number } = {},
+): Promise<T> {
   let data: T
   // A few tries at most: an overtaken answer is replaced by the cache, or, with nothing cached yet, read again.
   for (let attempt = 0; ; attempt++) {
     const started = epochs.get(path) ?? 0
-    data = await api<T>(path)
+    const ask = timeout ? deadline(signal, timeout) : { signal, done: () => {} }
+    try {
+      data = await api<T>(path, { signal: ask.signal })
+    } finally {
+      ask.done()
+    }
     if ((epochs.get(path) ?? 0) === started || attempt === 2) return data
     const cached = client.getQueryData<T>([path])
     if (cached !== undefined) return cached

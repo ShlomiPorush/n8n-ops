@@ -249,7 +249,7 @@ function AccessDetailPanel({ id }: { id: string }) {
   const w = useTimeFormat()
   const detail = useApi<AccessDetail>(`/access/${id}`)
   useCrumb(detail.data?.reason)
-  const invalidate = ["/access", `/access/${id}`, "/overview", "/overview/summary"]
+  const invalidate = ["/access", `/access/${id}`, "/overview", "/overview/summary", "/overview/attention"]
   // Toasts name the agent and the instance (FB-4), read when the request ends.
   const agent = () => detail.data?.token ?? "the agent"
   const on = () => (detail.data ? ` on ${detail.data.instance}` : "")

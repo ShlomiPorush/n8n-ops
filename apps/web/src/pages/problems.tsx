@@ -67,13 +67,12 @@ import {
   useSortOrder,
 } from "@/components/ui/table"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { api, refreshAreas, useApi, useApiMutation } from "@/lib/api"
+import { api, useApi, useApiMutation } from "@/lib/api"
 import { loadView } from "@/lib/load-state"
 import { countOf, n, plural, word } from "@/lib/numbers"
 import { useNavigateFromOverlay } from "@/lib/overlay-history"
+import { useProblemAction } from "@/lib/problem-actions"
 import { formatTime, useTimeFormat } from "@/lib/time"
-import { toast } from "@/lib/toast"
-import { offerUndo } from "@/lib/undo"
 import { cn } from "@/lib/utils"
 
 export type ProblemRow = {
@@ -454,79 +453,6 @@ const kpisInPane = cn(
   "compact:@max-[36rem]/pane:**:data-[slot=kpi]:px-3",
 )
 
-type ProblemAction = "resolve" | "mute" | "reopen" | "unmute"
-
-/** A problem action's answer: a receipt for Undo, or `changed: false` when the problem was already there. */
-type ActionAnswer = { ok: true; changed: boolean; status: ProblemRow["status"]; receipt?: { id: string } }
-
-/** The words of each problem action: its result (FB-4), its failure (FB-3), and its Undo (FB-16). */
-const actionWords: Record<
-  ProblemAction,
-  { done: string; already: string; failed: string; undoing: string; undone: string }
-> = {
-  resolve: {
-    done: "Problem resolved",
-    already: "Already resolved",
-    failed: "resolve",
-    undoing: "resolving",
-    undone: "Resolve undone",
-  },
-  mute: {
-    done: "Muted for 24 hours",
-    already: "Already muted",
-    failed: "mute",
-    undoing: "muting",
-    undone: "Mute undone",
-  },
-  reopen: {
-    done: "Problem reopened",
-    already: "Already open",
-    failed: "reopen",
-    undoing: "reopening",
-    undone: "Reopen undone",
-  },
-  unmute: {
-    done: "Problem unmuted",
-    already: "Not muted",
-    failed: "unmute",
-    undoing: "unmuting",
-    undone: "Unmute undone",
-  },
-}
-
-/**
- * Resolve, Mute 24 h, Reopen and Unmute act at once, without asking, and their toast offers Undo by the receipt the
- * server answered with (FB-16, DS-20). An action another tab already did says so, with nothing to undo. Lists,
- * the pane and Overview refresh after the action and after its Undo; when they cannot after an Undo, its message
- * offers Refresh.
- */
-function useProblemAction(id: string, action: ProblemAction, named: () => string) {
-  const words = actionWords[action]
-  const mutation = useApiMutation<{ hours: number } | undefined, ActionAnswer>("POST", `/problems/${id}/${action}`, {
-    failed: () => `${words.failed} ${named()}`,
-  })
-  return async () => {
-    const answer = await mutation.mutateAsync(action === "mute" ? { hours: 24 } : undefined)
-    const refresh = () => refreshAreas("/problems", "/overview")
-    // The action's message carries Undo; a list that could not refresh says so itself (TB-5).
-    refresh().catch(() => {})
-    const name = named()
-    const receipt = answer.receipt
-    if (!answer.changed || !receipt) {
-      toast.info(`${words.already}: ${name}`)
-      return
-    }
-    offerUndo({
-      message: `${words.done}: ${name}`,
-      ariaLabel: `Undo ${words.undoing} ${name}`,
-      name,
-      undone: `${words.undone}: ${name}`,
-      undo: () => api(`/problems/${id}/undo/${receipt.id}`, { method: "POST" }),
-      after: refresh,
-    })
-  }
-}
-
 export function ProblemDetail({ id }: { id: string }) {
   const [tab, show] = usePaneTab(problemTab)
   const detail = useApi<ProblemDetailData>(`/problems/${id}`, { refetchInterval: 15_000 })
@@ -886,7 +812,7 @@ function MergeDialog({
   const target = (into: string) =>
     candidates.data?.items.find((c) => c.id === into)?.workflowName ?? "the other problem"
   const merge = useApiMutation<{ into: string }>("POST", `/problems/${problem.id}/merge`, {
-    invalidate: ["/overview"],
+    invalidate: ["/overview", "/overview/attention"],
     success: (b) => `Problem merged into ${target(b.into)}`,
     failed: (b) => `merge into ${target(b.into)}`,
   })

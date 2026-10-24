@@ -3,6 +3,7 @@ import { Dialog as DialogPrimitive } from "radix-ui"
 import * as React from "react"
 import { Button } from "@/components/ui/button"
 import { PHONE_QUERY, SHEET_PULL_CLOSE_PX, SHEET_SLIDE_MS, touchOnly } from "@/lib/behavior"
+import { inertBeside } from "@/lib/inert"
 import { useOverlayHistory } from "@/lib/overlay-history"
 import { cn } from "@/lib/utils"
 
@@ -22,17 +23,28 @@ function DialogClose({ ...props }: React.ComponentProps<typeof DialogPrimitive.C
   return <DialogPrimitive.Close data-slot="dialog-close" {...props} />
 }
 
+const overlayClass =
+  "fixed inset-0 isolate z-50 bg-black/45 duration-150 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0"
+
 function DialogOverlay({ className, ...props }: React.ComponentProps<typeof DialogPrimitive.Overlay>) {
-  return (
-    <DialogPrimitive.Overlay
-      data-slot="dialog-overlay"
-      className={cn(
-        "fixed inset-0 isolate z-50 bg-black/45 duration-150 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0",
-        className,
-      )}
-      {...props}
-    />
-  )
+  return <DialogPrimitive.Overlay data-slot="dialog-overlay" className={cn(overlayClass, className)} {...props} />
+}
+
+/**
+ * Tab past either end of a layer goes to the toast's buttons when a toast shows (Undo, Retry), since the toast stays
+ * usable beside the layer (DS-8, FB-16); from there Tab comes back into the layer, which follows it in the page.
+ */
+function tabToToast(e: React.KeyboardEvent<HTMLElement>) {
+  if (e.key !== "Tab" || e.altKey || e.ctrlKey || e.metaKey) return
+  const toast = [...document.querySelectorAll<HTMLElement>("[data-toast] button")]
+  if (toast.length === 0) return
+  const tabbable = [
+    ...e.currentTarget.querySelectorAll<HTMLElement>("a[href], button, input, select, textarea, [tabindex]"),
+  ].filter((el) => el.tabIndex >= 0 && !el.matches(":disabled") && el.getClientRects().length > 0)
+  const edge = e.shiftKey ? tabbable[0] : tabbable.at(-1)
+  if (edge && document.activeElement !== edge) return
+  e.preventDefault()
+  ;(e.shiftKey ? toast.at(-1) : toast[0])?.focus()
 }
 
 /**
@@ -184,6 +196,12 @@ function useSheetGestures(
  * `onOpenChange`. A dialog whose state is in the address already gets Back from the router and sets
  * `history={false}`, and `scrollPane` when Back and Forward should also return its body to where it was
  * scrolled (NL-3).
+ *
+ * A modal dialog hides everything beside it, the toast too. One whose actions offer Undo (the Needs attention sheet)
+ * has a root with `modal={false}` and passes `inertPage` while open: it draws the veil itself, makes everything
+ * beside it inert except the toast, which stays usable (DS-8, lib/inert.ts), and Tab past its ends reaches the
+ * toast's buttons. It sets no `aria-modal`, which would hide the toast from screen readers again. Being not modal,
+ * it gives the focus back to its opener only when it was not closed from outside: its owner does that.
  */
 function DialogContent({
   className,
@@ -193,9 +211,11 @@ function DialogContent({
   pullToClose,
   history = true,
   scrollPane,
+  inertPage,
   onPointerDownOutside,
   onInteractOutside,
   onOpenAutoFocus,
+  onKeyDown,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean
@@ -205,9 +225,16 @@ function DialogContent({
   history?: boolean
   /** Names the body as a scrolling area of the page, whose place each history entry keeps (`data-scroll-pane`). */
   scrollPane?: string
+  /** For a root with `modal={false}`: true while open, the page beside it is inert except the toast (see above). */
+  inertPage?: boolean
 }) {
   // The panel mounts after this component (the portal waits a render), so it is tracked as state.
   const [panel, setPanel] = React.useState<HTMLDivElement | null>(null)
+  // Undone as soon as it closes, before its closing slide ends, so the focus can go back to its opener.
+  React.useEffect(() => {
+    if (!inertPage || !panel) return
+    return inertBeside(panel)
+  }, [inertPage, panel])
   const closeRef = React.useRef<HTMLButtonElement>(null)
   useSheetGestures(panel, closeRef, pullToClose ?? showCloseButton)
   // This component renders also while its dialog is closed; only a mounted panel holds a Back entry. A close
@@ -225,7 +252,17 @@ function DialogContent({
 
   return (
     <DialogPortal>
-      <DialogOverlay />
+      {/* A dialog that is not modal draws no overlay of its own; the same veil, which a click beside it passes. */}
+      {inertPage !== undefined ? (
+        <div
+          aria-hidden
+          data-slot="dialog-overlay"
+          data-state={inertPage ? "open" : "closed"}
+          className={overlayClass}
+        />
+      ) : (
+        <DialogOverlay />
+      )}
       <DialogPrimitive.Content
         ref={setPanel}
         data-slot="dialog-content"
@@ -253,6 +290,10 @@ function DialogContent({
             ;(e.currentTarget as HTMLElement).focus({ preventScroll: true })
           })
         }
+        onKeyDown={(e) => {
+          onKeyDown?.(e)
+          if (inertPage && !e.defaultPrevented) tabToToast(e)
+        }}
         {...props}
       >
         <div data-slot="dialog-grip" aria-hidden className="hidden max-md:grid">

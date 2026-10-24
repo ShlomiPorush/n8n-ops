@@ -33,6 +33,11 @@ export const LIST_WAIT_MS = 8000
 /** A press that moves more than this before its click was selecting text, so the row holds (TB-8). */
 export const ROW_HOLD_MOVE_PX = 3
 
+/** Needs attention is read again this often on every page, while the browser tab is shown (NL-19). */
+export const ATTENTION_POLL_MS = 30_000
+/** A read of Needs attention without an answer by then fails, so it never holds the next refresh (NL-19). */
+export const ATTENTION_TIMEOUT_MS = 20_000
+
 /** Back and Forward bring a page's scrolling areas back for at most this long while its content loads (NL-3). */
 export const SCROLL_RESTORE_MS = 1500
 

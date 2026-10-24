@@ -21,7 +21,7 @@ import { groups, isActive, type NavItem, operate, pageGroups, pageOf } from "@/a
 import { GlobalSearch, PhoneSearch, type SearchPage } from "@/app/search"
 import { settingsGroups } from "@/app/settings-sections"
 import { BrandMark } from "@/components/brand-mark"
-import { SaveScope } from "@/components/save-bar"
+import { SaveScope, useConfirmLeave } from "@/components/save-bar"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -39,7 +39,9 @@ import { ApiError, useApi } from "@/lib/api"
 import { authClient } from "@/lib/auth-client"
 import { useLiveUpdates } from "@/lib/live"
 import { useOverlayHistory } from "@/lib/overlay-history"
+import { loginPath, sessionClosed, sessionStarted } from "@/lib/session"
 import { n, plural } from "@/lib/time"
+import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
 
 /** The phone tab bar: the four pages used most; every page is in the More sheet. */
@@ -56,12 +58,14 @@ type Me = { twoFactor: boolean }
 export function RequireAuth() {
   const me = useApi<Me>("/setup/checklist")
   const { pathname, search } = useLocation()
+  // From here on a 401 means the session ended on an open page (NL-18).
+  useEffect(() => {
+    if (me.data) sessionStarted()
+  }, [me.data])
   if (me.isLoading) return null
+  // Back to this page after signing in (NL-18).
   if (me.error instanceof ApiError && me.error.status === 401)
-    // Back to this page after signing in (NL-18).
-    return (
-      <Navigate to={pathname === "/" ? "/login" : `/login?next=${encodeURIComponent(pathname + search)}`} replace />
-    )
+    return <Navigate to={loginPath(pathname, search)} replace />
   if (me.data && !me.data.twoFactor) return <Navigate to="/setup" replace />
   return <Outlet />
 }
@@ -465,6 +469,7 @@ function ThemeButton() {
 function UserMenu({ compact }: { compact?: boolean }) {
   const navigate = useNavigate()
   const client = useQueryClient()
+  const confirmLeave = useConfirmLeave()
   const session = authClient.useSession()
   const { theme, setTheme } = useTheme()
   const name = (session.data?.user as { username?: string } | undefined)?.username ?? session.data?.user.name ?? ""
@@ -517,7 +522,14 @@ function UserMenu({ compact }: { compact?: boolean }) {
         </DropdownMenuItem>
         <DropdownMenuItem
           onClick={async () => {
-            await authClient.signOut()
+            // Unsaved changes are asked about before the session ends, and stay guarded if it does not (SV-1).
+            if (!(await confirmLeave())) return
+            const { error } = await authClient.signOut().catch((e: unknown) => ({ error: e }))
+            if (error) {
+              toast.error("Could not sign out. Try again in a moment.")
+              return
+            }
+            sessionClosed()
             client.clear()
             navigate("/login", { replace: true })
           }}
@@ -760,30 +772,33 @@ export function AppShell() {
     <ChromeContext.Provider value={{ actionsSlot, setCrumb }}>
       <DesignSync />
       {/*
-       * Two columns from 761px: the brand and the sidebar, then the bar and the page. Compact splits them with
-       * lines; Regular sets the sidebar on a grey canvas and the bar and page in one floating card (#29). The
-       * card is drawn behind them, so the order of the page for the keyboard and screen readers stays as is.
+       * One save bar for the signed-in app; the account menu asks through it before signing out (SV-1).
        */}
-      <div className="grid h-dvh grid-cols-[minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-bg transition-[grid-template-columns] duration-200 md:grid-cols-[var(--spacing-rail)_minmax(0,1fr)] side:grid-cols-[var(--spacing-side)_minmax(0,1fr)] regular:md:bg-canvas">
-        <div
-          aria-hidden
-          data-slot="page-frame"
-          className="pointer-events-none hidden rounded-lg bg-bg shadow-card ring-1 ring-ink/10 md:col-start-2 md:row-span-2 md:row-start-1 md:m-2 md:ms-0 regular:md:block"
-        />
-        <TopBar crumb={crumb} nav={nav} setActionsSlot={setActionsSlot} />
-        <PhoneTopBar />
-        <SideNav nav={nav} />
-        <main
-          ref={setMain}
-          id="main"
-          className="relative col-start-1 row-start-2 min-h-0 overflow-y-auto overscroll-contain px-3 pt-4 pb-[calc(var(--spacing-tabbar)+16px+env(safe-area-inset-bottom))] md:col-start-2 md:p-[22px] md:pb-15 lg:px-7 regular:md:me-2 regular:md:mb-2 regular:md:rounded-b-lg"
-        >
-          <SaveScope>
+      <SaveScope>
+        {/*
+         * Two columns from 761px: the brand and the sidebar, then the bar and the page. Compact splits them with
+         * lines; Regular sets the sidebar on a grey canvas and the bar and page in one floating card (#29). The
+         * card is drawn behind them, so the order of the page for the keyboard and screen readers stays as is.
+         */}
+        <div className="grid h-dvh grid-cols-[minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-bg transition-[grid-template-columns] duration-200 md:grid-cols-[var(--spacing-rail)_minmax(0,1fr)] side:grid-cols-[var(--spacing-side)_minmax(0,1fr)] regular:md:bg-canvas">
+          <div
+            aria-hidden
+            data-slot="page-frame"
+            className="pointer-events-none hidden rounded-lg bg-bg shadow-card ring-1 ring-ink/10 md:col-start-2 md:row-span-2 md:row-start-1 md:m-2 md:ms-0 regular:md:block"
+          />
+          <TopBar crumb={crumb} nav={nav} setActionsSlot={setActionsSlot} />
+          <PhoneTopBar />
+          <SideNav nav={nav} />
+          <main
+            ref={setMain}
+            id="main"
+            className="relative col-start-1 row-start-2 min-h-0 overflow-y-auto overscroll-contain px-3 pt-4 pb-[calc(var(--spacing-tabbar)+16px+env(safe-area-inset-bottom))] md:col-start-2 md:p-[22px] md:pb-15 lg:px-7 regular:md:me-2 regular:md:mb-2 regular:md:rounded-b-lg"
+          >
             <Outlet />
-          </SaveScope>
-        </main>
-        <TabBar />
-      </div>
+          </main>
+          <TabBar />
+        </div>
+      </SaveScope>
     </ChromeContext.Provider>
   )
 }

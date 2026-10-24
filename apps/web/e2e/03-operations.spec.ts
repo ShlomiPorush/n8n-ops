@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { expect, type Page, test } from "@playwright/test"
-import { currentApiKey, dialogClosed, loadPrivateKey, n8nApi, n8nUrl, signIn } from "./helpers.ts"
+import { currentApiKey, dialogClosed, discardChanges, loadPrivateKey, n8nApi, n8nUrl, signIn } from "./helpers.ts"
 
 // Storage, a paired worker, an encrypted backup with credential secrets, a restore, and a move
 // with credentials, all against the real n8n and S3Mock in the test stack.
@@ -54,7 +54,9 @@ test("an S3 bucket and the mapped folder are added as destinations, each tested 
   await page.getByLabel("Name", { exact: true }).fill("Everything")
   await page.getByRole("button", { name: "Test and add" }).click()
   await expect(page.getByText(/already used by the destination "This server"/)).toBeVisible()
+  // What was typed is asked about before it is dropped.
   await page.keyboard.press("Escape")
+  await discardChanges(page)
   await dialogClosed(page)
 
   // The saved destination tests again on demand.
@@ -74,6 +76,7 @@ test("a wrong secret is refused before a destination is stored", async () => {
   await page.getByRole("button", { name: "Test and add" }).click()
   await expect(page.getByText(/The destination test failed/)).toBeVisible({ timeout: 70_000 })
   await page.keyboard.press("Escape")
+  await discardChanges(page)
   await dialogClosed(page)
   await expect(page.getByTestId("destination-Broken S3")).toHaveCount(0)
 })
@@ -223,6 +226,7 @@ test("a wrong private key is refused", async () => {
   await page.getByRole("button", { name: "Open archive" }).click()
   await expect(page.getByText(/Cannot open the archive/)).toBeVisible()
   await page.keyboard.press("Escape")
+  await discardChanges(page)
   await dialogClosed(page)
 })
 

@@ -1,4 +1,5 @@
 import { keepPreviousData, QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { sessionEnded, sessionEnding } from "@/lib/session"
 import { toast } from "@/lib/toast"
 
 export class ApiError extends Error {
@@ -24,6 +25,8 @@ export async function api<T>(path: string, init: RequestInit & { json?: unknown 
   })
   const text = await res.text()
   const body = text ? safeJson(text) : null
+  // The session ended on an open page: sign in again and come back here (NL-18).
+  if (res.status === 401) sessionEnded()
   if (!res.ok) {
     const b = body as { error?: string; issues?: ApiError["issues"]; message?: string } | null
     throw new ApiError(res.status, b?.error ?? `http_${res.status}`, b?.issues, b?.message)
@@ -87,11 +90,14 @@ export function useApi<T>(path: string | null, options: { refetchInterval?: numb
   })
 }
 
-/** A mutation that shows a toast on error and invalidates the given query paths on success. */
+/**
+ * A mutation that shows a toast on error and invalidates the given query paths on success. With `quiet` the
+ * caller says what failed itself, such as the save bar naming each area (SV-3).
+ */
 export function useApiMutation<TBody, TResult = unknown>(
   method: "POST" | "PUT" | "PATCH" | "DELETE",
   path: string | ((body: TBody) => string),
-  { invalidate = [], success }: { invalidate?: string[]; success?: string } = {},
+  { invalidate = [], success, quiet = false }: { invalidate?: string[]; success?: string; quiet?: boolean } = {},
 ) {
   const client = useQueryClient()
   return useMutation<TResult, Error, TBody>({
@@ -107,7 +113,10 @@ export function useApiMutation<TBody, TResult = unknown>(
       }
       if (success) toast.success(success)
     },
-    onError: (error) => toast.error(describeError(error)),
+    // On the way to sign-in after the session ended, no error toast is shown (NL-18).
+    onError: (error) => {
+      if (!quiet && !sessionEnding()) toast.error(describeError(error))
+    },
   })
 }
 

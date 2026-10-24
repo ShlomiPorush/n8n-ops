@@ -21,6 +21,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - On a phone or a small tablet, the save bar of a page opened as a sheet (an instance, for example) shows inside the sheet, where it can be reached.
 - **The page of a problem has tabs too:** Overview, Input, Occurrences and Same error (only when other workflows have the same error). The Overview shows the failures, when it was first and last seen, where in the workflow it broke and which run failed last. The runs are listed as items, and Merge into… moved into the menu beside Open in n8n.
 - On a phone, an item opened from a list (an instance, a problem, a backup) opens in a sheet of four fifths of the screen whatever it holds, so it no longer changes size as you switch tabs.
+- **Typed work is not dropped without asking.** A dialog you typed in (Add or Edit instance, a backup destination, Add a Worker, New Token, Restore, Move) asks "Discard your changes?" before Cancel, Close, Escape, Back or pulling the phone sheet down throws them away. Keep editing is the first choice, so Enter keeps the work; after a save the dialog closes without asking.
+- **Settings keeps your changes across its sections.** Moving to another section no longer asks: each section with unsaved changes gets a dot in the list (and "(unsaved)" in the picker on narrow screens), one save bar counts every change, Save changes saves every changed section and Discard drops them all. Leaving Settings still asks.
 
 - When the server cannot sign in to PostgreSQL or reach it at startup, it says why in one line and what to do, instead of a stack trace. A refused password explains that changing it in `.env` does not change it in an existing database, and how to set it.
 - The production `docker-compose.yml` shows the server's health check, so tools that read the compose file show it too. The check itself is unchanged.
@@ -31,6 +33,11 @@ All notable changes to this project are documented here. The format follows [Kee
 - Clicking a tab (Connected Agents, for example) no longer leaves a focus ring around it, cut off at the top and bottom. The ring still shows, whole, when the tabs are used with the keyboard.
 - **The SMTP password is no longer sent to a new SMTP server.** Changing the SMTP server, port or user in Settings → Email Reports now needs the password again; before, the stored password was used to sign in to whatever server was entered next.
 - What is typed in Edit instance is no longer replaced by the stored values when the instance refreshes behind the dialog (every 15 seconds, or on coming back to the window).
+- "Leave without saving?" now starts on Stay, so pressing Enter keeps your changes, and it no longer adds a step to the browser's history.
+- Log out with unsaved changes asks first, before the session ends. If signing out fails, it says "Could not sign out. Try again in a moment." and the changes stay.
+- When your session ends on an open page, the page now goes to sign-in and brings you back to it afterwards, instead of showing errors.
+- When one area of a save fails and another is saved, the message now names what failed and why; before, the success message could replace it. The failed area keeps its changes.
+- After Add instance or Merge, Back goes to the page the dialog was opened on in one step, instead of first returning to an empty step of the closed dialog.
 - The line under a row of tabs that scrolls sideways now runs to its end at any scroll position.
 - `scripts/verify.sh --changed` (and the CI of pull requests) no longer builds the web app twice at once when a file at the root such as `CHANGELOG.md` changed, which could fail the build at random.
 - Add a Worker accepts any name up to 60 characters, such as "Docker Office". Before, a name with a space was refused with a technical pattern message. A refused value in the dialog is now explained in words.

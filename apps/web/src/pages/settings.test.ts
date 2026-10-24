@@ -86,7 +86,13 @@ describe("Settings fields", () => {
 
 describe("the example under Date format and Time format (FW-9)", () => {
   const values = { timezone: "UTC", dateFormat: "YYYY-MM-DD", timeFormat: "12h" }
-  const textOf = (node: unknown) => renderToStaticMarkup(node as React.ReactElement).replace(/<[^>]+>/g, "")
+  // The text a reader sees, collected from the element tree.
+  const textOf = (node: unknown): string => {
+    if (node == null || typeof node === "boolean") return ""
+    if (typeof node === "string" || typeof node === "number") return String(node)
+    if (Array.isArray(node)) return node.map(textOf).join("")
+    return textOf((node as React.ReactElement<{ children?: unknown }>).props.children)
+  }
 
   it("shows now in the formats on screen, before they are saved", () => {
     expect(textOf(formatExample(field("general", "dateFormat"), values))).toMatch(/^Example: \d{4}-\d{2}-\d{2}$/)

@@ -85,7 +85,8 @@ export function telegramTarget(
   if (!("defaultThreadId" in draft)) return { token, chatId, threadId: stored.defaultThreadId }
   const topic = String(draft.defaultThreadId ?? "").trim()
   const problem = topicProblem(topic)
-  if (problem) throw new TestRefused(invalidAnswer("telegram", [{ path: ["defaultThreadId"], message: problem }]).message)
+  if (problem)
+    throw new TestRefused(invalidAnswer("telegram", [{ path: ["defaultThreadId"], message: problem }]).message)
   return { token, chatId, threadId: topic ? Number(topic) : null }
 }
 

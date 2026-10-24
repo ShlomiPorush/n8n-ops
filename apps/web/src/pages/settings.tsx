@@ -1111,11 +1111,7 @@ function TestRow({
       topicGone = Boolean(res?.topicNotFound)
       outcome = {
         ok: true,
-        detail: topicGone
-          ? topicGoneText
-          : recipients.length
-            ? `Sent to ${recipients.join(", ")}`
-            : undefined,
+        detail: topicGone ? topicGoneText : recipients.length ? `Sent to ${recipients.join(", ")}` : undefined,
       }
     } catch (e) {
       outcome = { ok: false, message: describeError(e) }

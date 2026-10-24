@@ -244,9 +244,9 @@ test("forum topics are set in Settings > Telegram and keep their order through D
   // A route without a condition is refused before anything is sent: it is marked and its field takes the focus.
   await page.getByRole("button", { name: "Save" }).click()
   await expect(
-    page.getByRole("listitem", { name: "Route 2" }).getByText(
-      "route 2: choose an instance, or type a workflow pattern or a tag",
-    ),
+    page
+      .getByRole("listitem", { name: "Route 2" })
+      .getByText("route 2: choose an instance, or type a workflow pattern or a tag"),
   ).toBeVisible()
   await expect(page.getByRole("button", { name: /^Route 2 instance:/ })).toBeFocused()
   expect((await (await page.request.get("/api/settings/telegram")).json()).routes).toEqual([])

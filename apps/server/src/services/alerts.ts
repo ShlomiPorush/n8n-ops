@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, gt, inArray, lte } from "drizzle-orm"
 import { type Ctx, changed } from "../context.ts"
 import { type AlertKind, alertGroups, alertOutbox, alertState, instances, problems } from "../db/schema.ts"
+import { telegramTarget } from "./draft-tests.ts"
 import { clip, html, type InlineButton, Telegram, TelegramError, TelegramHtml } from "./telegram.ts"
 
 type ProblemRow = typeof problems.$inferSelect
@@ -301,8 +302,8 @@ export async function syncTelegramWebhook(ctx: Ctx) {
   ctx.log.info("Telegram webhook set", { url })
 }
 
-export async function sendTestTelegram(ctx: Ctx) {
-  const tg = await telegramClient(ctx)
-  if (!tg) throw new Error("Telegram is not configured: set the bot token and chat ID.")
-  await tg.api.send(tg.chatId, html`<b>n8n-ops test message</b>\nAlerts will arrive here.`)
+/** Sends a test message with the stored settings, or with the values on screen over them (`draft`, FS-19). */
+export async function sendTestTelegram(ctx: Ctx, draft: Record<string, unknown> = {}) {
+  const { token, chatId } = telegramTarget(await ctx.settings.get("telegram"), draft, (enc) => ctx.secrets.decrypt(enc))
+  await new Telegram(token).send(chatId, html`<b>n8n-ops test message</b>\nAlerts will arrive here.`)
 }

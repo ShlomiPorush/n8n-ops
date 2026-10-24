@@ -684,6 +684,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
                 i.scopesSource === "declared" && (
                   <ToggleGroup
                     type="single"
+                    segmented
                     aria-label="What the API key can do"
                     value={i.declaredAccess ?? "read"}
                     onValueChange={(v) => v && declare.mutate({ declaredAccess: v as "read" | "write" })}

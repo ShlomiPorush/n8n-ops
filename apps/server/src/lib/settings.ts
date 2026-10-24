@@ -1,3 +1,4 @@
+import { type NumberLimits, numberProblem, settingKinds, settingLabel, valueProblem } from "@n8n-ops/shared"
 import { eq } from "drizzle-orm"
 import { z } from "zod"
 import type { Db } from "../db/client.ts"
@@ -191,8 +192,82 @@ export const defaults: { [K in SectionName]: Section<K> } = {
   keys: {},
 }
 
+/** The range of each number setting of a section, read from its schema, so the UI checks the same (SV-1). */
+export function numberLimits(section: SectionName): Record<string, NumberLimits> {
+  const out: Record<string, NumberLimits> = {}
+  for (const [name, schema] of Object.entries(sections[section].shape)) {
+    if (!(schema instanceof z.ZodNumber)) continue
+    // .int() alone bounds a number by the safe integers; only a limit set on purpose is one.
+    const set = (v: number | null) => v !== null && Math.abs(v) < Number.MAX_SAFE_INTEGER
+    const { minValue, maxValue } = schema
+    out[name] = {
+      ...(set(minValue) ? { min: minValue as number } : {}),
+      ...(set(maxValue) ? { max: maxValue as number } : {}),
+    }
+  }
+  return out
+}
+
+export type Issue = { path: (string | number)[]; message: string }
+
+/**
+ * Checks the fields a save changes beyond their type, as the UI does before it sends them: list entries, the chat,
+ * addresses (SV-12). Only changed fields: an entry stored before these checks stays until its field is edited.
+ */
+export function changedValueIssues(
+  section: SectionName,
+  stored: Record<string, unknown>,
+  next: Record<string, unknown>,
+): Issue[] {
+  const kinds = settingKinds[section] ?? {}
+  return Object.entries(kinds).flatMap(([field, kind]) => {
+    if (JSON.stringify(stored[field]) === JSON.stringify(next[field])) return []
+    const problem = valueProblem(kind, next[field])
+    return problem ? [{ path: [field], message: problem }] : []
+  })
+}
+
+/** Schema issues in words that follow the field's label, instead of the schema's own ("Too small: expected…"). */
+export function wordedIssues(section: SectionName, issues: readonly z.core.$ZodIssue[]): Issue[] {
+  const limits = numberLimits(section)
+  const kinds = settingKinds[section] ?? {}
+  return issues.map((issue) => {
+    const field = String(issue.path[0] ?? "")
+    const kind = kinds[field]
+    const message =
+      field in limits
+        ? numberProblem(undefined, limits[field] ?? {})
+        : kind
+          ? valueProblem(kind, undefined)
+          : issue.code === "invalid_value"
+            ? `choose one of ${issue.values.map(String).join(", ")}`
+            : issue.message
+    return { path: field ? [field] : [], message: message ?? issue.message }
+  })
+}
+
+/** The answer to a save the checks refused: each field named by its label, as "<Label>: <problem>" (SV-1). */
+export function invalidAnswer(section: SectionName, issues: Issue[]) {
+  return {
+    error: "invalid",
+    issues,
+    message: issues.map((i) => `${settingLabel(section, String(i.path[0] ?? section))}: ${i.message}`).join(" "),
+  }
+}
+
 export type SettingsStore = {
+  /**
+   * The settings in effect: stored values over the defaults, and the public URL from N8N_OPS_PUBLIC_URL while
+   * none is stored.
+   */
   get<K extends SectionName>(key: K): Promise<Section<K>>
+  /**
+   * What is stored, over the defaults, without anything taken from the environment. A save starts from this, so
+   * a value from the environment is never written by a save that did not change it (FS-6).
+   */
+  stored<K extends SectionName>(key: K): Promise<Section<K>>
+  /** Values the environment provides when none is stored: N8N_OPS_PUBLIC_URL. */
+  fromEnv(): { publicUrl?: string }
   set<K extends SectionName>(key: K, value: Section<K>): Promise<void>
   /** Effective settings for one instance: global defaults with its overrides applied. */
   forInstance(overrides: Record<string, unknown>): Promise<InstanceSettings>
@@ -221,6 +296,15 @@ export function createSettings(db: Db, env: { publicUrl?: string } = {}): Settin
   let generalVersion = 0
 
   async function get<K extends SectionName>(key: K): Promise<Section<K>> {
+    const value = await stored(key)
+    if (key === "general" && env.publicUrl) {
+      const general = value as Section<"general">
+      if (!general.publicUrl) return { ...general, publicUrl: env.publicUrl } as Section<K>
+    }
+    return value
+  }
+
+  async function stored<K extends SectionName>(key: K): Promise<Section<K>> {
     const [row] = await db.select().from(settingsTable).where(eq(settingsTable.key, key))
     const stored = { ...((row?.value as Record<string, unknown>) ?? {}) }
     // An unknown stored design falls back on its own; it must not reset the rest of General.
@@ -230,12 +314,7 @@ export function createSettings(db: Db, env: { publicUrl?: string } = {}): Settin
       delete stored.timezone
     const merged = { ...defaults[key], ...stored }
     const parsed = sections[key].safeParse(merged)
-    const value = (parsed.success ? parsed.data : defaults[key]) as Section<K>
-    if (key === "general" && env.publicUrl) {
-      const general = value as Section<"general">
-      if (!general.publicUrl) return { ...general, publicUrl: env.publicUrl } as Section<K>
-    }
-    return value
+    return (parsed.success ? parsed.data : defaults[key]) as Section<K>
   }
 
   async function write<K extends SectionName>(key: K, parsed: Section<K>) {
@@ -247,6 +326,8 @@ export function createSettings(db: Db, env: { publicUrl?: string } = {}): Settin
 
   return {
     get,
+    stored,
+    fromEnv: () => (env.publicUrl ? { publicUrl: env.publicUrl } : {}),
     async set(key, value) {
       const parsed = sections[key].parse(value) as typeof value
       if (key !== "general") return write(key, parsed)

@@ -6,12 +6,13 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Added
 
-- **Backup destinations.** Backups can go to several places at once: S3-compatible storage, a folder on the host (mapped to `/backups` in the server container), SFTP and WebDAV (HTTPS). Every copy is read back, or checked by the service, against the archive's size and SHA-256 before it counts. Each destination is tested before it is saved, has its own daily, weekly and monthly retention, can be the default and can be turned off. Settings → Backup Destinations.
+- **Backup destinations.** Backups can go to several places at once: S3-compatible storage, a folder on the host (mapped to `/backups` in the server container), SFTP and WebDAV (HTTPS). Every copy is read back, or checked by the service, against the archive's size and SHA-256 before it counts. Each destination is tested before it is saved, has its own daily, weekly and monthly retention, can be the default and can be turned off. A stored password or SSH key reads Stored, with Replace and Remove, and "Removed when you save" until the removal is saved. Settings → Backup Destinations.
 - **Destinations per instance.** Each instance backs up to the default destinations, following them as they change, or to the ones chosen on its page. The nightly backup of the n8n-ops database has its own choice. An instance left with no destination says "Choose a destination first" beside its Run now button.
 - **Object Lock for S3.** An S3 destination can lock every archive it writes for a number of days (Compliance or Governance mode), so nobody can delete it early, not even with its keys. Retention removes an archive only after its lock ends.
 - Alerts and the Overview now say which destination a failed or overdue backup is about. The history of each backup shows every copy: where it is, whether it was written, and why not.
 - **Undo for problem actions.** Mark resolved, Mute 24 h, Reopen and Unmute still act at once, and their message now offers Undo for ten seconds, longer while the pointer or the keyboard is on it. Undo puts back exactly what the action changed, the regression mark and the mute end included. When the problem changed after the action (from another tab, a new failure, a problem merged into it or a mute that ended), it says "Already changed" and changes nothing. If Undo cannot reach the server, the message says why and offers Retry; if the list cannot refresh after it, the message offers Refresh. Each action and each Undo is in the audit log, saved together with the change.
 - **Unmute.** A muted problem has an Unmute button where Mute was. It ends the mute and keeps the regression mark.
+- **Changed and Reset in Settings.** A setting that differs from its default is marked Changed and offers "Reset to default (60)" under its description. Addresses and server names offer Clear instead. The Public URL says when it comes from `N8N_OPS_PUBLIC_URL`, and Reset to the environment value hands it back to the variable.
 
 ### Changed
 
@@ -32,6 +33,11 @@ All notable changes to this project are documented here. The format follows [Kee
 - **Messages name what they are about.** "Problem resolved: Sync orders", "Access approved for claude on n8n-1", "Checked n8n-1 now", "Backup of n8n-1 started". When something fails, the message says what and why: "Could not resolve Sync orders: Not found." instead of only "Not found.".
 - **Deny on an access request asks first**, since the decision is final: the question names the agent and the instance, and Cancel leaves the request waiting.
 - Buttons that send a request show a spinning ring with what they are doing ("Checking…"). The buttons that act on one click (Run now, Check now, Test, Approve, Mark resolved, Mute, Reopen, Refresh now) then show "Done" or "Failed" for a moment before their label comes back.
+- **Settings checks what you typed before it saves.** Every changed field is checked first, and nothing is sent while one fails: the first one opens its section, takes the focus and says under it what is wrong, and the message names it ("Recipients: "bob" is not an email address", or "2 fields need a valid value, starting with Recipients"). The server checks the same and names a refused field in words, instead of "dailyTime: use HH:MM".
+- **Recipients and Telegram approvers are lists of chips.** Enter, a comma or a pasted list adds them (a paste replaces the selected text), × or Backspace removes one, and a value is never added twice. Text typed but not yet added already counts as an unsaved change, and Save adds it. A value that is not an email address, or not a Telegram user ID or @username, is shown in red with the reason.
+- **Send test message and Send test email use the values on screen,** saved or not, and show the result beside the button: Accepted (with who received the email) or what failed and what to check, with the time. After a change, including a password or bot token replaced or removed and saved, the line says the values changed since the test. A test saves nothing, and the stored SMTP password is used only for the server and user it was stored for; for another one, type the password to test.
+- Daily report time, Weekly report day and time, and Who may approve in Telegram stay in place but greyed out, with the reason, while the switch they depend on is off.
+- In the Compact design, setting choices (Design, the kind of a backup destination, what an API key can do) are a segmented control instead of filter chips.
 
 ### Fixed
 
@@ -60,6 +66,9 @@ All notable changes to this project are documented here. The format follows [Kee
 - A message in the corner now also waits while the keyboard is on it, not only the pointer, and then stays for the rest of its time (at least 1.5 seconds) instead of four seconds more. A message caught while it fades comes back, and a message that replaces one under the pointer waits too.
 - When a proxy in front of n8n-ops answers instead of it, a failure now says "n8n-ops did not answer. Try again in a moment." (or which error the server answered with) instead of a code such as `http_502`.
 - A double click on Run now starts one backup, not two. The same holds for Check now, Test, Mark resolved, Approve and the other buttons that act on one click.
+- **A Public URL from `N8N_OPS_PUBLIC_URL` is no longer written to the database by an unrelated save.** Before, saving General (only the design, for example) stored it, and a later change of the variable had no effect. An address stored that way before shows "Replaces …, set by N8N_OPS_PUBLIC_URL" with Reset to the environment value.
+- Email recipients and Telegram approvers are checked when saved: "bob" or "bob@exmaple" is refused, by name, instead of being saved without a word.
+- A Settings section opened from another one starts at its top, instead of at the scroll position of the one before.
 
 ## [0.1.0] - 2026-10-22
 

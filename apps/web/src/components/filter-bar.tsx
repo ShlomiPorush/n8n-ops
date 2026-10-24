@@ -2,7 +2,8 @@ import { ChevronDown, Funnel, Search } from "lucide-react"
 import { Popover as PopoverPrimitive } from "radix-ui"
 import * as React from "react"
 import { SortButton, type SortControl, toolButton } from "@/components/ui/table"
-import { LIST_WAIT_MS, SEARCH_PAUSE_MS } from "@/lib/behavior"
+import { LIST_WAIT_MS, SEARCH_PAUSE_MS, touchOnly } from "@/lib/behavior"
+import { usePopoverRoom } from "@/lib/popover-room"
 import { cn } from "@/lib/utils"
 
 /*
@@ -92,7 +93,22 @@ export function Picker({
   )
 }
 
-/** The open picker: a search field when there are more than ten choices, and the listbox under it. */
+/** Search text compared loosely: case and underscores do not count ("new york" finds America/New_York) (MP-4). */
+const loose = (s: string) => s.replaceAll("_", " ").toLowerCase()
+
+/** The options a picker's search leaves: by label and extra search text, as a substring. */
+export function filterOptions(options: PickerOption[], query: string): PickerOption[] {
+  const q = loose(query.trim())
+  return q ? options.filter((o) => loose(`${o.label} ${o.search ?? ""}`).includes(q)) : options
+}
+
+/**
+ * The open picker: a search field when there are more than ten choices, and the listbox under it. It opens on
+ * the search field, or the chosen option without one; on a touch-only screen always on the chosen option, so the
+ * keyboard does not come up over the list (a tap on the field still searches) (MP-1, MP-4). The options never
+ * scroll sideways: a long label is cut and its hint stays whole. On a phone the panel stays between the top bar
+ * and the tab bar (MP-5).
+ */
 export function PickerContent({
   picker,
   label,
@@ -109,11 +125,12 @@ export function PickerContent({
   className?: string
 }) {
   const { id, query, setQuery, setOpen } = picker
+  // Between the phone's top bar and tab bar, measured again while open (MP-5).
+  const room = usePopoverRoom(picker.open)
   const listRef = React.useRef<HTMLDivElement>(null)
   const searchRef = React.useRef<HTMLInputElement>(null)
   const searchable = options.length > 10
-  const q = query.trim().toLowerCase()
-  const shown = q ? options.filter((o) => `${o.label} ${o.search ?? ""}`.toLowerCase().includes(q)) : options
+  const shown = filterOptions(options, query)
 
   const optionEls = () => [...(listRef.current?.querySelectorAll<HTMLElement>('[role="option"]') ?? [])]
   const pick = (v: string) => {
@@ -139,13 +156,21 @@ export function PickerContent({
       <PopoverPrimitive.Content
         align="start"
         sideOffset={6}
-        collisionPadding={8}
+        collisionPadding={room}
         aria-label={label}
         onOpenAutoFocus={(e) => {
           e.preventDefault()
-          // Into the search field if there is one, else onto the chosen option.
-          if (searchable) searchRef.current?.focus()
-          else (optionEls().find((el) => el.getAttribute("aria-selected") === "true") ?? optionEls()[0])?.focus()
+          if (searchable && !touchOnly()) {
+            searchRef.current?.focus()
+            return
+          }
+          const list = listRef.current
+          const el = optionEls().find((o) => o.getAttribute("aria-selected") === "true") ?? optionEls()[0]
+          if (!list || !el) return
+          // Only the list scrolls to show it; the page stays where it is.
+          el.focus({ preventScroll: true })
+          if (el.offsetTop < list.scrollTop || el.offsetTop + el.offsetHeight > list.scrollTop + list.clientHeight)
+            list.scrollTop = el.offsetTop - (list.clientHeight - el.offsetHeight) / 2
         }}
         className={cn(
           // The list shrinks to the room left on screen, for example above a phone's keyboard.
@@ -183,7 +208,12 @@ export function PickerContent({
           role="listbox"
           aria-label={label}
           onKeyDown={onListKey}
-          className="grid max-h-[min(320px,45vh)] min-h-0 overflow-y-auto"
+          // A short list gets more height; a long one leaves room for its search (MP-1, MP-4). Positioned, so an
+          // option's offsetTop is measured in the list.
+          className={cn(
+            "relative grid min-h-0 grid-cols-[minmax(0,1fr)] overflow-x-hidden overflow-y-auto",
+            searchable ? "max-h-[min(320px,45vh)]" : "max-h-[min(420px,60vh)]",
+          )}
         >
           {shown.map((o) => (
             <div
@@ -205,7 +235,11 @@ export function PickerContent({
                 className={cn("size-1.5 shrink-0 rounded-full", o.value === value ? "bg-ink" : "bg-transparent")}
               />
               <span className="min-w-0 flex-1 truncate">{o.label}</span>
-              {o.hint !== undefined && <span className="text-meta text-muted-foreground tabular-nums">{o.hint}</span>}
+              {o.hint !== undefined && (
+                <span className="shrink-0 text-meta whitespace-nowrap text-muted-foreground tabular-nums">
+                  {o.hint}
+                </span>
+              )}
             </div>
           ))}
           {shown.length === 0 && (
@@ -316,7 +350,10 @@ export function SearchBox({
   )
 }
 
-/** The element a list scrolls in: the list column beside a reading pane, else the page. */
+/**
+ * The element a list scrolls in: the list column beside a reading pane, the open item for a list inside it (also
+ * when the item opened as a dialog or a phone sheet), else the page.
+ */
 const scrollerOf = (el: HTMLElement) => el.closest<HTMLElement>("[data-scroll-pane]") ?? document.getElementById("main")
 
 /**

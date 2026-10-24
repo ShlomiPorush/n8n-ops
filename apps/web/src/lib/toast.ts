@@ -195,5 +195,6 @@ export function useCurrentToast(): ToastItem | null {
       return () => listeners.delete(l)
     },
     () => current,
+    () => current,
   )
 }

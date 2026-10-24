@@ -46,26 +46,60 @@ test("the search finds instances, workflows and pages, and opens them", async ()
   await expect(page.getByRole("heading", { name: "Audit log" })).toBeVisible()
 })
 
-test("a table sorts by its column headers, and on a phone from its sort control", async () => {
+test("a table sorts by its column headers and by its Sort button, in one order, at every size (TB-28)", async () => {
   await page.goto("/workflows")
   const rows = page.locator("tbody tr")
   await expect(rows.first()).toBeVisible()
   const head = page.getByRole("columnheader", { name: "Instance" })
+  const button = page.getByRole("button", { name: /^Sort:/ })
+  await expect(button).toHaveAccessibleName("Sort: Default order")
+  await expect(button).not.toHaveAttribute("data-set")
   await head.getByRole("button").click()
   await expect(head).toHaveAttribute("aria-sort", "ascending")
   await expect(rows.first()).not.toContainText("e2e-n8n-b")
-  await head.getByRole("button").click()
+  // The button says the order the header set, and its dot marks an order that is not the default.
+  await expect(button).toHaveAccessibleName("Sort: Instance, A to Z")
+  await expect(button).toHaveAttribute("data-set", "")
+
+  // The menu opens on the order in use, turns it around at once and stays open; the header follows.
+  await button.click()
+  const menu = page.getByRole("dialog", { name: "Sort workflows" })
+  const column = menu.getByRole("radio", { name: "Instance", exact: true })
+  await expect(column).toBeChecked()
+  await expect(column).toBeFocused()
+  await menu.getByRole("radio", { name: "Z to A" }).check()
   await expect(head).toHaveAttribute("aria-sort", "descending")
   await expect(rows.first()).toContainText("e2e-n8n-b")
+  await expect(button).toHaveAccessibleName("Sort: Instance, Z to A")
+  // Default order puts the list back as it came, with no column sorted and nothing to turn around.
+  await menu.getByRole("radio", { name: "Default order" }).check()
+  await expect(head).toHaveAttribute("aria-sort", "none")
+  // With no column there is no kind to word the order by: Order says Ascending and Descending, and is off (TB-28).
+  for (const name of ["Ascending", "Descending"]) {
+    await expect(menu.getByRole("radio", { name, exact: true })).toBeDisabled()
+    await expect(menu.getByRole("radio", { name, exact: true })).not.toBeChecked()
+  }
+  await expect(button).not.toHaveAttribute("data-set")
+  await page.keyboard.press("Escape")
+  await expect(menu).toBeHidden()
+  await expect(button).toBeFocused()
 
+  // A phone hides the header row; the same button sorts the same list.
   await page.setViewportSize({ width: 390, height: 844 })
   try {
-    await page.getByRole("combobox", { name: "Sort by" }).click()
-    await page.getByRole("option", { name: "Instance, A to Z" }).click()
+    await expect(head).toBeHidden()
+    await button.click()
+    await menu.getByRole("radio", { name: "Instance", exact: true }).check()
     await expect(rows.first()).not.toContainText("e2e-n8n-b")
+    await menu.getByRole("radio", { name: "Z to A" }).check()
+    await expect(rows.first()).toContainText("e2e-n8n-b")
+    await page.keyboard.press("Escape")
+    await expect(button).toHaveAccessibleName("Sort: Instance, Z to A")
   } finally {
     await page.setViewportSize({ width: 1440, height: 900 })
   }
+  // Back on a wide screen the header shows the order the phone picked.
+  await expect(head).toHaveAttribute("aria-sort", "descending")
 })
 
 test("list filters live in the address, survive a reload and clear in one step", async () => {
@@ -79,6 +113,39 @@ test("list filters live in the address, survive a reload and clear in one step",
   await page.getByRole("button", { name: "Clear filters" }).click()
   await expect(page).not.toHaveURL(/[?&]q=/)
   await expect(page.getByLabel("Search all instances")).toHaveValue("")
+})
+
+test("Clear filters drops a search typed but not sent yet, so it does not come back (SR-9)", async () => {
+  await page.goto("/workflows")
+  // An instance picked shows Clear filters while the search is still empty in the address.
+  await page.getByRole("button", { name: /^Instance:/ }).click()
+  await page.getByRole("option", { name: "e2e-n8n", exact: true }).click()
+  await expect(page).toHaveURL(/[?&]instance=/)
+  const box = page.getByLabel("Search all instances")
+  const searched: string[] = []
+  let cleared = false
+  const watch = (r: Request) => {
+    const url = new URL(r.url())
+    if (cleared && url.pathname === "/api/workflows" && (url.searchParams.get("q") ?? "") !== "") {
+      searched.push(url.search)
+    }
+  }
+  page.on("request", watch)
+  try {
+    // Typed and cleared within the pause of 300ms before a search is sent.
+    await box.fill("Sync orders")
+    await page.getByRole("button", { name: "Clear filters" }).click()
+    cleared = true
+    await expect(page).not.toHaveURL(/[?&]instance=/)
+    await expect(box).toHaveValue("")
+    // Well past the pause: a search still on its way would have been asked for by now, and put q back.
+    await page.waitForTimeout(1000)
+    expect(searched).toEqual([])
+    await expect(page).not.toHaveURL(/[?&]q=/)
+    await expect(box).toHaveValue("")
+  } finally {
+    page.off("request", watch)
+  }
 })
 
 test("a row opens from the keyboard, with Enter and with Space, and keeps its focus", async () => {
@@ -343,17 +410,27 @@ test("beside the reading pane every row shows all its values, at any width of th
   }
 })
 
-test("a list beside the reading pane sorts from its sort control", async () => {
+test("a list beside the reading pane sorts from its Sort button, and Default order puts it back", async () => {
   await page.goto("/instances")
-  const first = page.locator("tbody tr").first()
+  const column = page.locator("[data-scroll-pane]").first()
+  const first = column.locator("tbody tr").first()
   await expect(first).toBeVisible()
-  const sort = page.getByRole("combobox", { name: "Sort by" })
-  await sort.click()
-  await page.getByRole("option", { name: "Instance, Z to A" }).click()
-  await expect(first).toContainText("e2e-n8n-b")
-  await sort.click()
-  await page.getByRole("option", { name: "Instance, A to Z" }).click()
+  const button = column.getByRole("button", { name: /^Sort:/ })
+  await expect(button).toHaveAccessibleName("Sort: Default order")
+  await button.click()
+  const menu = page.getByRole("dialog", { name: "Sort instances" })
+  // A column starts in its own first order, A to Z for names.
+  await menu.getByRole("radio", { name: "Instance", exact: true }).check()
+  await expect(menu.getByRole("radio", { name: "A to Z" })).toBeChecked()
   await expect(first).not.toContainText("e2e-n8n-b")
+  await menu.getByRole("radio", { name: "Z to A" }).check()
+  await expect(first).toContainText("e2e-n8n-b")
+  await expect(button).toHaveAttribute("data-set", "")
+  await menu.getByRole("radio", { name: "Default order" }).check()
+  await expect(button).toHaveAccessibleName("Sort: Default order")
+  await expect(button).not.toHaveAttribute("data-set")
+  await page.keyboard.press("Escape")
+  await expect(menu).toBeHidden()
 })
 
 test("Back closes a dialog and stays on the page", async () => {
@@ -1195,19 +1272,23 @@ test("the Problems list asks the server for its order and draws the rows as they
   const rows = column.locator("[data-href]")
   await expect(rows.first()).toBeVisible()
   await expect(page.getByRole("heading", { name: "Where It Broke" })).toBeVisible()
-  // Beside the reading pane the list has no header row; its sort control sets the same order.
+  // Beside the reading pane the list has no header row; its Sort button sets the same order. Failures start with
+  // the most.
   const sorted = (url: URL) =>
     url.pathname === "/api/problems" &&
     url.searchParams.get("status") === "all" &&
     url.searchParams.get("sort") === "failures" &&
     url.searchParams.get("order") === "desc"
+  const menu = page.getByRole("dialog", { name: "Sort problems" })
   const [asked] = await Promise.all([
     page.waitForResponse((res) => sorted(new URL(res.url())) && res.ok()),
     (async () => {
-      await column.getByRole("combobox", { name: "Sort by" }).click()
-      await page.getByRole("option", { name: "Failures, high to low" }).click()
+      await column.getByRole("button", { name: /^Sort:/ }).click()
+      await menu.getByRole("radio", { name: "Failures" }).check()
     })(),
   ])
+  await expect(menu.getByRole("radio", { name: "Most first" })).toBeChecked()
+  await page.keyboard.press("Escape")
   const answer = (await asked.json()) as { items: { id: string; count: number }[]; total: number }
   expect(answer.items.length).toBeGreaterThan(0)
   expect(answer.total).toBeGreaterThanOrEqual(answer.items.length)
@@ -1222,34 +1303,86 @@ test("the Problems list asks the server for its order and draws the rows as they
   await expect.poll(ids).toEqual(answer.items.map((p) => p.id))
 })
 
-test("an order whose list fails to load leaves the rows and the sort control in the order the rows are in (TB-4)", async () => {
+test("a new filter starts the list at its first row, and the filter bar stays in sight (TB-7, NL-16)", async () => {
+  // A short screen and sixty rows for every filter, so the list scrolls whatever the run recorded: the first
+  // problem of all and copies of it under ids of their own.
+  const list = (url: URL) => url.pathname === "/api/problems"
+  let seed: { id: string } | undefined
+  await page.route(list, async (route) => {
+    try {
+      const res = await route.fetch()
+      seed ??= ((await res.json()) as { items: { id: string }[] }).items[0]
+      const first = seed
+      const items = first
+        ? [first, ...Array.from({ length: 59 }, (_, i) => ({ ...first, id: `${first.id}-copy-${i}` }))]
+        : []
+      await route.fulfill({ response: res, json: { items, total: items.length } })
+    } catch {
+      // The page moved on (a new filter or the next width's page load) and dropped this request meanwhile.
+    }
+  })
+  try {
+    // Beside the reading pane the list scrolls in its own column; narrower, with no pane, in the page itself.
+    for (const [width, scroller] of [
+      [1440, "[data-scroll-pane]"],
+      [900, "#main"],
+    ] as const) {
+      await page.setViewportSize({ width, height: 600 })
+      await page.goto("/problems?status=all")
+      const column = page.locator(scroller).first()
+      const rows = column.locator("[data-href]")
+      await expect(rows).toHaveCount(60)
+      await column.evaluate((el) => {
+        el.scrollTop = el.scrollHeight
+      })
+      await expect(rows.first()).not.toBeInViewport()
+      // The filters stuck at the top of where the list scrolls.
+      await expect(page.getByRole("radio", { name: "Open", exact: true })).toBeInViewport()
+      await page.getByRole("radio", { name: "Open", exact: true }).click()
+      await expect(page).not.toHaveURL(/status=all/)
+      await expect(rows.first()).toBeInViewport()
+    }
+  } finally {
+    await page.unroute(list)
+    await page.setViewportSize({ width: 1440, height: 900 })
+  }
+})
+
+test("an order whose list fails to load leaves the rows and the Sort button in the order the rows are in (TB-4)", async () => {
   await page.goto("/problems?status=all")
   const column = page.locator("[data-scroll-pane]").first()
   const rows = column.locator("[data-href]")
   await expect(rows.first()).toBeVisible()
   await expect(page.getByRole("heading", { name: "Where It Broke" })).toBeVisible()
   const before = await rows.evaluateAll((els) => els.map((el) => el.getAttribute("data-href")))
-  const sortBy = column.getByRole("combobox", { name: "Sort by" })
-  await expect(sortBy).toHaveText("Sort by")
+  const button = column.getByRole("button", { name: /^Sort:/ })
+  const menu = page.getByRole("dialog", { name: "Sort problems" })
+  await expect(button).toHaveAccessibleName("Sort: Default order")
+  await expect(button).not.toHaveAttribute("data-set")
   const sorted = (url: URL) =>
     url.pathname === "/api/problems" && url.searchParams.get("status") === "all" && url.searchParams.has("sort")
   await page.route(sorted, (route) => route.fulfill({ status: 500, json: { error: "internal_error" } }))
   const note = page.getByRole("status").filter({ hasText: "Could not load problems; showing the previous list" })
   try {
-    await sortBy.click()
-    await page.getByRole("option", { name: "Failures, high to low" }).click()
+    await button.click()
+    await menu.getByRole("radio", { name: "Failures" }).check()
+    // The new order shows at once, while its rows are on their way.
+    await expect(menu.getByRole("radio", { name: "Most first" })).toBeChecked()
+    await page.keyboard.press("Escape")
     // It is asked again twice before it counts as failed, which takes a few seconds.
     await expect(note).toBeVisible({ timeout: 15_000 })
-    // The rows stay in the order they came in, and so does the control: no order is picked yet.
-    await expect(sortBy).toHaveText("Sort by")
+    // The rows stay in the order they came in, and so does the Sort button: the default order, with no dot.
+    await expect(button).toHaveAccessibleName("Sort: Default order")
+    await expect(button).not.toHaveAttribute("data-set")
     expect(await rows.evaluateAll((els) => els.map((el) => el.getAttribute("data-href")))).toEqual(before)
   } finally {
     await page.unroute(sorted)
   }
-  // Try again asks for the order picked; once its rows come, the control shows it.
+  // Try again asks for the order picked; once its rows come, the Sort button shows it.
   await page.locator('[data-slot="list-count"]').getByRole("button", { name: "Try again" }).click()
   await expect(note).toHaveCount(0)
-  await expect(sortBy).toHaveText("Failures, high to low")
+  await expect(button).toHaveAccessibleName("Sort: Failures, Most first")
+  await expect(button).toHaveAttribute("data-set", "")
 })
 
 test("the open problems of an instance say when a new order or a refresh failed, and keep the rows (TB-4, TB-5)", async () => {
@@ -1283,23 +1416,28 @@ test("the open problems of an instance say when a new order or a refresh failed,
     await page.goto(`/instances/${id}?tab=problems`)
     const panel = page.getByRole("tabpanel")
     const rows = panel.locator("tbody tr")
-    const sortBy = panel.getByRole("combobox", { name: "Sort by" })
+    const button = panel.getByRole("button", { name: /^Sort:/ })
+    const menu = page.getByRole("dialog", { name: "Sort open problems" })
     await expect(rows.first()).toContainText("E2E stand-in 1")
+    await expect(button).toHaveAccessibleName("Sort: Default order")
 
-    // A new order whose list fails: the rows and the sort control stay as they are, and a line says so.
-    await sortBy.click()
-    await page.getByRole("option", { name: "Failures, high to low" }).click()
+    // A new order whose list fails: the rows and the Sort button stay as they are, and a line says so.
+    await button.click()
+    await menu.getByRole("radio", { name: "Failures" }).check()
+    await page.keyboard.press("Escape")
     const note = panel
       .getByRole("status")
       .filter({ hasText: "Could not load open problems; showing the previous list" })
     await expect(note).toBeVisible({ timeout: 15_000 })
-    await expect(sortBy).toHaveText("Sort by")
+    await expect(button).toHaveAccessibleName("Sort: Default order")
+    await expect(button).not.toHaveAttribute("data-set")
     await expect(rows.first()).toContainText("E2E stand-in 1")
     // Try again brings the order once the server answers.
     sortFails = false
     await panel.getByRole("button", { name: "Try again" }).click()
     await expect(note).toHaveCount(0)
-    await expect(sortBy).toHaveText("Failures, high to low")
+    await expect(button).toHaveAccessibleName("Sort: Failures, Most first")
+    await expect(button).toHaveAttribute("data-set", "")
     await expect(rows.first()).toContainText("E2E stand-in 2")
 
     // A refresh that fails, as coming back to the window brings, keeps the rows and says so.
@@ -1308,11 +1446,19 @@ test("the open problems of an instance say when a new order or a refresh failed,
     const failed = panel.getByRole("status").filter({ hasText: "Could not refresh" })
     await expect(failed).toBeVisible({ timeout: 15_000 })
     await expect(rows).toHaveCount(2)
-    await expect(sortBy).toHaveText("Failures, high to low")
+    await expect(button).toHaveAccessibleName("Sort: Failures, Most first")
     fails = false
     await panel.getByRole("button", { name: "Try again" }).click()
     await expect(failed).toHaveCount(0)
     await expect(rows.first()).toContainText("E2E stand-in 2")
+
+    // Default order asks the server for its own order again: no sort in the address, here the fewer failures first.
+    await button.click()
+    await menu.getByRole("radio", { name: "Default order" }).check()
+    await page.keyboard.press("Escape")
+    await expect(rows.first()).toContainText("E2E stand-in 1")
+    await expect(button).toHaveAccessibleName("Sort: Default order")
+    await expect(button).not.toHaveAttribute("data-set")
   } finally {
     await page.unroute(list)
   }

@@ -9,6 +9,9 @@ import { CONTAINER_PATTERN, workerInstall } from "../lib/worker-install.ts"
 import { createPairingToken, PAIRING_TTL_MS } from "../services/workers.ts"
 import { WORKER_ONLINE_MS } from "./overview.ts"
 
+/** The Workers list puts offline workers first, each group in the order it came (by name) (TB-11). */
+export const offlineFirst = (a: { online: boolean }, b: { online: boolean }) => Number(a.online) - Number(b.online)
+
 export function workerRoutes(ctx: Ctx) {
   const app = new Hono<Env>()
   app.use("*", requireUser(ctx))
@@ -25,7 +28,8 @@ export function workerRoutes(ctx: Ctx) {
           ...w,
           online: Boolean(w.lastSeenAt && Date.now() - w.lastSeenAt.getTime() < WORKER_ONLINE_MS),
           instances: assigned.filter((i) => i.workerId === w.id).map((i) => ({ id: i.id, name: i.name })),
-        })),
+        }))
+        .sort(offlineFirst),
     )
   })
 

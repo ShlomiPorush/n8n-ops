@@ -790,9 +790,18 @@ export function BusyButton({
 }
 
 /** User-entered text (workflow, instance and token names) keeps its own direction. */
-export function UserText({ children, className }: { children: React.ReactNode; className?: string }) {
+export function UserText({
+  children,
+  className,
+  title,
+}: {
+  children: React.ReactNode
+  className?: string
+  /** The full text on hover, where `className` cuts it to one line (TB-15). */
+  title?: string
+}) {
   return (
-    <span dir="auto" className={className}>
+    <span dir="auto" className={className} title={title}>
       <bdi>{children}</bdi>
     </span>
   )

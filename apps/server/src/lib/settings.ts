@@ -47,6 +47,32 @@ export const isTimeZone = (value: unknown): value is string =>
 /** Whether General may be saved with this time zone: a zone name, empty (UTC), or the one already stored. */
 export const mayStoreTimeZone = (stored: unknown, next: unknown) => next === stored || next === "" || isTimeZone(next)
 
+type SmtpAccount = { smtpHost?: unknown; smtpPort?: unknown; smtpUser?: unknown }
+
+/** The SMTP account as a comparable text: host without case or spaces, the port as a number, the user trimmed. */
+const smtpAccount = (v: SmtpAccount) =>
+  JSON.stringify([
+    String(v.smtpHost ?? "")
+      .trim()
+      .toLowerCase(),
+    Number(v.smtpPort ?? 0),
+    String(v.smtpUser ?? "").trim(),
+  ])
+
+/**
+ * Whether an Email save would send the stored SMTP password where it was not given: the host, port or user
+ * really changed (case, spaces and "587" against 587 do not count) and the save brings no new password (FS-5).
+ */
+export const smtpPasswordNeeded = (
+  current: SmtpAccount & { smtpPasswordEnc?: unknown },
+  next: SmtpAccount,
+  newPassword: unknown,
+) =>
+  Boolean(current.smtpPasswordEnc) &&
+  !(typeof newPassword === "string" && newPassword.length > 0) &&
+  newPassword !== null &&
+  smtpAccount(current) !== smtpAccount(next)
+
 export const sections = {
   general: z.object({
     /** Public URL of this n8n-ops installation, used in links sent by Telegram and email. */

@@ -2,6 +2,7 @@ import { and, asc, desc, eq, gt, inArray, isNull, lte } from "drizzle-orm"
 import { type Ctx, changed } from "../context.ts"
 import { type AlertKind, alertGroups, alertOutbox, alertState, instances, problems, workflows } from "../db/schema.ts"
 import { type AlertSubject, resolveThread, sendRouted, topicGoneNote } from "./alert-routing.ts"
+import { telegramTarget } from "./draft-tests.ts"
 import { clip, html, type InlineButton, isMessageGone, Telegram, TelegramError, TelegramHtml } from "./telegram.ts"
 
 type ProblemRow = typeof problems.$inferSelect
@@ -446,12 +447,16 @@ export async function syncTelegramWebhook(ctx: Ctx) {
   ctx.log.info("Telegram webhook set", { url })
 }
 
-/** Sends a test message to the default topic. Says whether the topic was gone, so the message went to General. */
-export async function sendTestTelegram(ctx: Ctx) {
-  const tg = await telegramClient(ctx)
-  if (!tg) throw new Error("Telegram is not configured: set the bot token and chat ID.")
+/**
+ * Sends a test message to the default topic, with the stored settings or the values on screen over them (`draft`,
+ * FS-19). Says whether the topic was gone, so the message went to General.
+ */
+export async function sendTestTelegram(ctx: Ctx, draft: Record<string, unknown> = {}) {
+  const { token, chatId, threadId } = telegramTarget(await ctx.settings.get("telegram"), draft, (enc) =>
+    ctx.secrets.decrypt(enc),
+  )
   const text = html`<b>n8n-ops test message</b>\nAlerts will arrive here.`
-  const sent = await sendRouted(tg.api, tg.chatId, tg.defaultThreadId, (note) =>
+  const sent = await sendRouted(new Telegram(token), chatId, threadId, (note) =>
     note ? TelegramHtml.join([note, text]) : text,
   )
   return { topicNotFound: sent.fellBack }

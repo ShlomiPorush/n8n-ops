@@ -1,12 +1,17 @@
+import { isRoutePattern, routeWords, topicProblem, topicWords } from "@n8n-ops/shared"
 import { ArrowDown, ArrowUp, Plus, Trash2 } from "lucide-react"
+import { FieldPicker } from "@/components/field-picker"
 import { Button } from "@/components/ui/button"
 import { FieldError } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useApi } from "@/lib/api"
+import { cn } from "@/lib/utils"
 
 /** One route as the form holds it: every field as typed. */
 export type RouteRow = { instanceId: string; workflow: string; tag: string; threadId: string }
+
+/** The first route Save refuses: the field to mark and focus, and what is wrong, as "route 2: …". */
+export type RouteIssue = { id: string; message: string }
 
 const ANY = "any"
 const blank: RouteRow = { instanceId: "", workflow: "", tag: "", threadId: "" }
@@ -45,36 +50,43 @@ export const routesFromForm = (text: unknown) =>
     threadId: Number(r.threadId),
   }))
 
-/** A topic as typed: empty is none, otherwise a whole number from 1 that fits the database. */
-export const topicProblem = (value: string) => {
-  const v = value.trim()
-  if (!v) return null
-  return /^\d+$/.test(v) && Number(v) >= 1 && Number(v) <= 2_147_483_647 ? null : "A topic is a whole number from 1."
+/** What Save refuses in one route, in the server's words; null when it can be saved. */
+function rowIssue(r: RouteRow, n: number): RouteIssue | null {
+  const at = (field: string, message: string) => ({ id: `route-${n}-${field}`, message: `route ${n}: ${message}` })
+  if (!r.instanceId && !r.workflow.trim() && !r.tag.trim()) return at("instance", routeWords.condition)
+  if (r.workflow.trim() && !isRoutePattern(r.workflow.trim())) return at("workflow", routeWords.pattern)
+  if (!r.threadId.trim()) return at("topic", topicWords)
+  const topic = topicProblem(r.threadId)
+  return topic ? at("topic", topic) : null
 }
 
-function rowProblem(r: RouteRow) {
-  if (!r.instanceId && !r.workflow.trim() && !r.tag.trim())
-    return "Choose an instance, or type a workflow pattern or a tag."
-  if (r.workflow.trim()) {
-    try {
-      new RegExp(r.workflow.trim(), "iu")
-    } catch {
-      return "The workflow pattern is not a valid regular expression."
-    }
+/** The first route Save refuses, or null (SV-1). */
+export const routesProblem = (text: unknown): RouteIssue | null => {
+  const rows = parse(text)
+  for (const [i, r] of rows.entries()) {
+    const issue = rowIssue(r, i + 1)
+    if (issue) return issue
   }
-  if (!r.threadId.trim()) return "Type the topic these alerts go to."
-  return topicProblem(r.threadId)
+  return null
 }
 
-/** The ordered list of topic routes in Settings > Telegram: the first route that matches an alert wins. */
+/**
+ * The ordered list of topic routes in Settings > Telegram: the first route that matches an alert wins. A route
+ * Save refused is marked, with what is wrong under it, until the routes are edited.
+ */
 export function TopicRoutes({
+  id,
   value,
   onChange,
   disabled,
+  issue,
 }: {
+  /** The id of Add route, where the search brings the focus. */
+  id: string
   value: unknown
   onChange: (text: string) => void
   disabled?: boolean
+  issue?: RouteIssue | null
 }) {
   const rows = parse(value)
   const instances = useApi<{ instances: { id: string; name: string }[] }>("/instances")
@@ -95,60 +107,61 @@ export function TopicRoutes({
       )}
       <ol className="grid gap-3">
         {rows.map((r, i) => {
-          const problem = rowProblem(r)
-          const removed = r.instanceId && !known.some((x) => x.id === r.instanceId) && instances.data
           const n = i + 1
+          const field = (name: string) => `route-${n}-${name}`
+          const problemId = `route-${n}-problem`
+          const marked = issue?.id.startsWith(`route-${n}-`) ? issue : null
+          const marks = (name: string) =>
+            marked?.id === field(name) ? { "aria-invalid": true, "aria-describedby": problemId } : {}
+          const removed = r.instanceId && !known.some((x) => x.id === r.instanceId) && instances.data
+          const options = [
+            { value: ANY, label: "Any instance" },
+            ...known.map((x) => ({ value: x.id, label: x.name })),
+            ...(removed ? [{ value: r.instanceId, label: "Removed instance" }] : []),
+          ]
           return (
             // Index keys: the rows are plain values, so a moved row's fields move with it.
             // biome-ignore lint/suspicious/noArrayIndexKey: see above
-            <li key={i} className="grid gap-2 rounded-md border border-line p-3" aria-label={`Route ${n}`}>
+            <li
+              key={i}
+              className={cn("grid gap-2 rounded-md border p-3", marked ? "border-fail" : "border-line")}
+              aria-label={`Route ${n}`}
+            >
               <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_minmax(0,0.8fr)_96px_auto]">
                 <div className="grid gap-1 text-small">
-                  <label htmlFor={`route-${n}-instance`} className="font-semibold">
+                  <label htmlFor={field("instance")} className="font-semibold">
                     Instance
                   </label>
-                  <Select
+                  <FieldPicker
+                    id={field("instance")}
+                    label={`Route ${n} instance`}
+                    listLabel="Instances"
                     value={r.instanceId || ANY}
-                    onValueChange={(v) => update(i, { instanceId: v === ANY ? "" : v })}
-                    // Radix Select opens on pointerdown and ignores a disabled fieldset, so it is locked itself.
+                    options={options}
+                    onChange={(v) => update(i, { instanceId: v === ANY ? "" : v })}
                     disabled={disabled}
-                  >
-                    <SelectTrigger
-                      className="w-full min-w-0"
-                      id={`route-${n}-instance`}
-                      aria-label={`Route ${n} instance`}
-                    >
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={ANY}>Any instance</SelectItem>
-                      {known.map((x) => (
-                        <SelectItem key={x.id} value={x.id}>
-                          {x.name}
-                        </SelectItem>
-                      ))}
-                      {removed && <SelectItem value={r.instanceId}>Removed instance</SelectItem>}
-                    </SelectContent>
-                  </Select>
+                    className={cn(marked?.id === field("instance") && "border-fail")}
+                  />
                 </div>
                 <div className="grid gap-1 text-small">
-                  <label htmlFor={`route-${n}-workflow`} className="font-semibold">
+                  <label htmlFor={field("workflow")} className="font-semibold">
                     Workflow name matches
                   </label>
                   <Input
-                    id={`route-${n}-workflow`}
+                    id={field("workflow")}
                     value={r.workflow}
                     placeholder="Any workflow"
                     aria-label={`Route ${n} workflow pattern`}
                     onChange={(e) => update(i, { workflow: e.target.value })}
+                    {...marks("workflow")}
                   />
                 </div>
                 <div className="grid gap-1 text-small">
-                  <label htmlFor={`route-${n}-tag`} className="font-semibold">
+                  <label htmlFor={field("tag")} className="font-semibold">
                     Workflow tag
                   </label>
                   <Input
-                    id={`route-${n}-tag`}
+                    id={field("tag")}
                     value={r.tag}
                     placeholder="Any tag"
                     aria-label={`Route ${n} tag`}
@@ -156,16 +169,17 @@ export function TopicRoutes({
                   />
                 </div>
                 <div className="grid gap-1 text-small">
-                  <label htmlFor={`route-${n}-topic`} className="font-semibold">
+                  <label htmlFor={field("topic")} className="font-semibold">
                     Topic
                   </label>
                   <Input
-                    id={`route-${n}-topic`}
+                    id={field("topic")}
                     value={r.threadId}
                     inputMode="numeric"
                     className="tabular-nums"
                     aria-label={`Route ${n} topic`}
                     onChange={(e) => update(i, { threadId: e.target.value })}
+                    {...marks("topic")}
                   />
                 </div>
                 <div className="flex h-ctl items-center justify-end gap-1 self-end sm:col-span-2 lg:col-span-1">
@@ -197,13 +211,13 @@ export function TopicRoutes({
                   </Button>
                 </div>
               </div>
-              {problem && <FieldError>{problem}</FieldError>}
+              {marked && <FieldError id={problemId}>{marked.message}</FieldError>}
             </li>
           )
         })}
       </ol>
       <div>
-        <Button onClick={() => write([...rows, blank])} disabled={rows.length >= 50}>
+        <Button id={id} onClick={() => write([...rows, blank])} disabled={rows.length >= 50}>
           <Plus />
           Add route
         </Button>

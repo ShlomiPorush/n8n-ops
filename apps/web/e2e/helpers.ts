@@ -66,10 +66,17 @@ export async function dialogClosed(page: Page) {
     .toBeNull()
 }
 
-/** Opens the New token dialog on Connected agents, where the token made by hand is folded away. */
+/** Answers Discard to "Discard your changes?", which a typed dialog asks before it drops what was typed (DS-9). */
+export async function discardChanges(page: Page) {
+  const ask = page.getByRole("alertdialog", { name: "Discard your changes?" })
+  await ask.getByRole("button", { name: "Discard" }).click()
+  await expect(ask).toHaveCount(0)
+}
+
+/** Opens the New token dialog on Connected agents, where the token made by hand is folded away (a native fold). */
 export async function openNewToken(page: Page) {
   await page.goto("/agents")
-  await page.getByRole("button", { name: "Advanced: a token made by hand" }).click()
+  await page.locator("summary", { hasText: "Advanced: a token made by hand" }).click()
   await page.getByRole("button", { name: "New token" }).click()
 }
 

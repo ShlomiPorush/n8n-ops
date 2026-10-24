@@ -25,11 +25,16 @@ import { Link, useNavigate, useParams } from "react-router"
 import { useCrumb } from "@/app/chrome"
 import { AgentAccessCard } from "@/components/agent-access-card"
 import { useConfirm } from "@/components/confirm"
+import { useDiscardGuard } from "@/components/discard-guard"
+import { FieldPicker } from "@/components/field-picker"
+import { FilterBar } from "@/components/filter-bar"
 import { ItemRow, ItemsHeader } from "@/components/item-row"
 import {
+  BusyButton,
   Copyable,
   countChanges,
   Empty,
+  formChanged,
   Kpi,
   Kpis,
   LoadError,
@@ -37,6 +42,8 @@ import {
   PageHead,
   Panel,
   PanelHead,
+  RefreshLine,
+  RefreshNote,
   SecretField,
   SwitchRow,
   UserText,
@@ -74,16 +81,31 @@ import {
   FieldSet,
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, useSort } from "@/components/ui/table"
+import {
+  RANK_WORDS,
+  SortButton,
+  type SortOrder,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+  useSort,
+  useSortOrder,
+} from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import { Tip } from "@/components/ui/tooltip"
 import { api, describeError, queryClient, useApi, useApiMutation } from "@/lib/api"
-import { formatFull, n, plural, useTimeZone } from "@/lib/time"
+import { loadView } from "@/lib/load-state"
+import { healthCounts, n, plural } from "@/lib/numbers"
+import { useNavigateFromOverlay } from "@/lib/overlay-history"
+import { formatTime, useTimeFormat } from "@/lib/time"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
 import { InstanceBackupCard } from "./destinations"
-import { type ProblemRow, ProblemsTable } from "./problems"
+import { type ProblemList, ProblemsTable, problemsPath, useProblemsSort } from "./problems"
 
 type Capability = {
   key: string
@@ -174,17 +196,25 @@ export function InstancesPage() {
   const data = useApi<{ latestVersion: string | null; instances: InstanceRow[] }>("/instances", {
     refetchInterval: 15_000,
   })
+  // A failed refresh keeps the rows; the head says so (TB-5, LD-12).
+  const view = loadView(data)
   const [adding, setAdding] = useState(false)
   const rows = data.data?.instances ?? []
   const latest = data.data?.latestVersion ?? null
+  // Down and needing a look first, then by name as the server sends them: Status high to low (TB-11).
   const sort = useSort(rows, {
     id: "instances",
+    rank: "status",
     columns: {
-      name: { label: "Instance", value: (r) => r.name },
-      status: { label: "Status", value: (r) => severity[r.health] },
-      version: { label: "Version", value: (r) => r.version },
-      open: { label: "Open problems", value: (r) => r.openProblems },
-      backup: { label: "Last backup", value: (r) => (r.lastBackup ? new Date(r.lastBackup.at) : null) },
+      name: { label: "Instance", kind: "text", value: (r) => r.name },
+      status: { label: "Status", kind: "number", words: RANK_WORDS, value: (r) => severity[r.health] },
+      version: { label: "Version", kind: "text", value: (r) => r.version },
+      open: { label: "Open problems", kind: "number", value: (r) => r.openProblems },
+      backup: {
+        label: "Last backup",
+        kind: "date",
+        value: (r) => (r.lastBackup ? new Date(r.lastBackup.at) : null),
+      },
     },
   })
   const rowProps = (i: InstanceRow) => ({
@@ -192,6 +222,8 @@ export function InstancesPage() {
     "aria-current": id === i.id ? ("true" as const) : undefined,
     className: "hover-row",
     "data-href": `/instances/${i.id}`,
+    // A search result marks this row when it lands here (SR-6).
+    "data-search-target": `instance:${i.id}`,
     onClick: () => navigate(`/instances/${i.id}`),
   })
   const open = rows.find((r) => r.id === id)
@@ -209,10 +241,10 @@ export function InstancesPage() {
     <>
       <PageHead
         title="Instances"
-        updatedAt={data.dataUpdatedAt || undefined}
+        live={data}
         description={
           data.data
-            ? `${n(rows.length)} registered${down || warn ? ` · ${n(down)} down, ${n(warn)} need a look` : ""}${latest ? ` · latest n8n ${latest}` : ""}`
+            ? `${n(rows.length)} registered${down || warn ? ` · ${healthCounts(down, warn)}` : ""}${latest ? ` · latest n8n ${latest}` : ""}`
             : "Every n8n instance n8n-ops watches, and what its API key allows."
         }
         actions={
@@ -221,11 +253,11 @@ export function InstancesPage() {
           </Button>
         }
       />
-      {data.error ? (
+      {view === "failed" ? (
         <Panel>
           <LoadError what="instances" error={data.error} retry={() => data.refetch()} />
         </Panel>
-      ) : data.isLoading ? (
+      ) : view === "loading" ? (
         <Panel>
           <Loading>Loading instances…</Loading>
         </Panel>
@@ -235,123 +267,128 @@ export function InstancesPage() {
             Add an n8n instance with its URL and an API key. Read-only is enough for monitoring.
           </Empty>
         </Panel>
-      ) : items ? (
-        <Table sort={sort} items>
-          <ItemsHeader label="Instance" />
-          <TableBody>
-            {sort.rows.map((i) => (
-              <TableRow key={i.id} {...rowProps(i)}>
-                <ItemRow
-                  lead={<Dot health={i.health} />}
-                  title={<UserText>{i.name}</UserText>}
-                  titleText={i.name}
-                  end={
-                    i.openProblems > 0 ? (
-                      <span className="font-semibold text-fail">{plural(i.openProblems, "open problem")}</span>
-                    ) : (
-                      <span className="text-small text-muted-foreground">No open problems</span>
-                    )
-                  }
-                  sub={
-                    <>
+      ) : (
+        <>
+          <FilterBar count={plural(rows.length, "instance")} sort={{ control: sort.control, name: "instances" }} />
+          {items ? (
+            <Table items>
+              <ItemsHeader label="Instance" />
+              <TableBody>
+                {sort.rows.map((i) => (
+                  <TableRow key={i.id} {...rowProps(i)}>
+                    <ItemRow
+                      lead={<Dot health={i.health} />}
+                      title={<UserText>{i.name}</UserText>}
+                      titleText={i.name}
+                      end={
+                        i.openProblems > 0 ? (
+                          <span className="font-semibold text-fail">{plural(i.openProblems, "open problem")}</span>
+                        ) : (
+                          <span className="text-small text-muted-foreground">No open problems</span>
+                        )
+                      }
+                      sub={
+                        <>
+                          {i.health === "ok" ? (
+                            healthLabel(i)
+                          ) : (
+                            <StatusTag kind="health" status={i.health}>
+                              {healthLabel(i)}
+                            </StatusTag>
+                          )}
+                          {" · "}
+                          {behind(i.version, latest) ? (
+                            <Tip content={`Latest is ${latest}`}>
+                              <Badge variant="warn">{i.version}</Badge>
+                            </Tip>
+                          ) : (
+                            <span className="font-mono">{i.version ?? "version unknown"}</span>
+                          )}
+                          {" · "}
+                          {canWrite(i) ? "read + write" : "read only"}
+                        </>
+                      }
+                      subEnd={
+                        i.lastBackup ? (
+                          <span className={cn(i.lastBackup.status === "failed" && "font-semibold text-fail")}>
+                            {i.lastBackup.status === "failed" ? "Backup failed " : "Backup "}
+                            <When value={i.lastBackup.at} />
+                          </span>
+                        ) : (
+                          "No backup yet"
+                        )
+                      }
+                    />
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead sort={sort.head("name")}>Instance</TableHead>
+                  <TableHead sort={sort.head("status")}>Status</TableHead>
+                  <TableHead sort={sort.head("version")}>Version</TableHead>
+                  <TableHead>API key</TableHead>
+                  <TableHead className="text-end" sort={sort.head("open")}>
+                    Open
+                  </TableHead>
+                  <TableHead className="text-end" sort={sort.head("backup")}>
+                    Last backup
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {sort.rows.map((i) => (
+                  <TableRow key={i.id} {...rowProps(i)}>
+                    <TableCell className="max-w-56 font-semibold" truncate title={i.name}>
+                      <span className="flex items-center gap-2">
+                        <Dot health={i.health} />
+                        <UserText className="truncate">{i.name}</UserText>
+                      </span>
+                    </TableCell>
+                    <TableCell>
                       {i.health === "ok" ? (
-                        healthLabel(i)
+                        <span className="text-muted-foreground">{healthLabel(i)}</span>
                       ) : (
                         <StatusTag kind="health" status={i.health}>
                           {healthLabel(i)}
                         </StatusTag>
                       )}
-                      {" · "}
+                    </TableCell>
+                    <TableCell>
                       {behind(i.version, latest) ? (
-                        <Badge variant="warn" title={`Latest is ${latest}`}>
-                          {i.version}
-                        </Badge>
+                        <Tip content={`Latest is ${latest}`}>
+                          <Badge variant="warn">{i.version}</Badge>
+                        </Tip>
                       ) : (
-                        <span className="font-mono">{i.version ?? "version unknown"}</span>
+                        <span className="font-mono text-small">{i.version ?? "unknown"}</span>
                       )}
-                      {" · "}
-                      {canWrite(i) ? "read + write" : "read only"}
-                    </>
-                  }
-                  subEnd={
-                    i.lastBackup ? (
-                      <span className={cn(i.lastBackup.status === "failed" && "font-semibold text-fail")}>
-                        {i.lastBackup.status === "failed" ? "Backup failed " : "Backup "}
-                        <When value={i.lastBackup.at} />
-                      </span>
-                    ) : (
-                      "No backup yet"
-                    )
-                  }
-                />
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      ) : (
-        <Table sort={sort}>
-          <TableHeader>
-            <TableRow>
-              <TableHead sort={sort.head("name")}>Instance</TableHead>
-              <TableHead sort={sort.head("status")}>Status</TableHead>
-              <TableHead sort={sort.head("version")}>Version</TableHead>
-              <TableHead>API key</TableHead>
-              <TableHead className="text-end" sort={sort.head("open")}>
-                Open
-              </TableHead>
-              <TableHead className="text-end" sort={sort.head("backup")}>
-                Last backup
-              </TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {sort.rows.map((i) => (
-              <TableRow key={i.id} {...rowProps(i)}>
-                <TableCell className="max-w-56 font-semibold">
-                  <span className="flex items-center gap-2">
-                    <Dot health={i.health} />
-                    <UserText className="truncate">{i.name}</UserText>
-                  </span>
-                </TableCell>
-                <TableCell>
-                  {i.health === "ok" ? (
-                    <span className="text-muted-foreground">{healthLabel(i)}</span>
-                  ) : (
-                    <StatusTag kind="health" status={i.health}>
-                      {healthLabel(i)}
-                    </StatusTag>
-                  )}
-                </TableCell>
-                <TableCell>
-                  {behind(i.version, latest) ? (
-                    <Badge variant="warn" title={`Latest is ${latest}`}>
-                      {i.version}
-                    </Badge>
-                  ) : (
-                    <span className="font-mono text-small">{i.version ?? "unknown"}</span>
-                  )}
-                </TableCell>
-                <TableCell>
-                  <Badge variant="line">{canWrite(i) ? "read + write" : "read only"}</Badge>
-                </TableCell>
-                <TableCell className={cn("text-end tabular-nums", i.openProblems > 0 && "font-semibold text-fail")}>
-                  {n(i.openProblems)}
-                </TableCell>
-                <TableCell className="text-end text-muted-foreground">
-                  {i.lastBackup ? (
-                    <span className={cn(i.lastBackup.status === "failed" && "font-semibold text-fail")}>
-                      <When value={i.lastBackup.at} />
-                    </span>
-                  ) : (
-                    "never"
-                  )}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="line">{canWrite(i) ? "read + write" : "read only"}</Badge>
+                    </TableCell>
+                    <TableCell className={cn("text-end tabular-nums", i.openProblems > 0 && "font-semibold text-fail")}>
+                      {n(i.openProblems)}
+                    </TableCell>
+                    <TableCell className="text-end text-muted-foreground">
+                      {i.lastBackup ? (
+                        <span className={cn(i.lastBackup.status === "failed" && "font-semibold text-fail")}>
+                          <When value={i.lastBackup.at} />
+                        </span>
+                      ) : (
+                        "never"
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </>
       )}
-      <InstanceDialog open={adding} onOpenChange={setAdding} onSaved={(newId) => navigate(`/instances/${newId}`)} />
+      <InstanceDialog open={adding} onOpenChange={setAdding} afterAdd={(newId) => `/instances/${newId}`} />
     </>
   )
 
@@ -378,10 +415,10 @@ type ListBackup =
 /*
  * In a pane narrower than 52rem a Regular card of four is too narrow for a figure beside its icon, so the
  * icon goes (it only illustrates) and the figure is a size smaller; "128,400" then still fits. On a phone
- * the cards are two by two and take less padding, so the four do not fill the screen.
+ * the cards are two by two however wide the sheet (MO-8) and take less padding, so the four do not fill the screen.
  */
 const kpisInPane = cn(
-  "grid-cols-2 @min-[36rem]/pane:grid-cols-4",
+  "grid-cols-2 md:@min-[36rem]/pane:grid-cols-4",
   "@max-[52rem]/pane:**:data-[slot=kpi-icon]:hidden!",
   "regular:@max-[52rem]/pane:**:data-[slot=kpi-figure]:text-h1",
   "regular:@max-[36rem]/pane:**:data-[slot=kpi]:p-3.5",
@@ -389,17 +426,30 @@ const kpisInPane = cn(
 
 function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
   const navigate = useNavigate()
-  const tz = useTimeZone()
+  const w = useTimeFormat()
   const [tab, show] = usePaneTab("overview")
   const detail = useApi<InstanceDetailData>(`/instances/${id}`, { refetchInterval: 15_000 })
   useCrumb(detail.data?.name)
-  const problems = useApi<ProblemRow[]>(`/problems?status=open&instance=${id}`)
   const [editing, setEditing] = useState(false)
   const confirm = useConfirm()
-  const invalidate = [`/instances/${id}`, "/instances", "/overview"]
-  const refresh = useApiMutation<void>("POST", `/instances/${id}/refresh`, { invalidate, success: "Checked now" })
-  const remove = useApiMutation<void>("DELETE", `/instances/${id}`, { invalidate: ["/instances", "/overview"] })
-  const declare = useApiMutation<{ declaredAccess: "read" | "write" }>("PATCH", `/instances/${id}`, { invalidate })
+  const invalidate = [`/instances/${id}`, "/instances", "/overview", "/overview/attention"]
+  // Toasts name the instance (FB-4), read when the request ends.
+  const named = () => detail.data?.name ?? "the instance"
+  const refresh = useApiMutation<void>("POST", `/instances/${id}/refresh`, {
+    invalidate,
+    success: () => `Checked ${named()} now`,
+    failed: () => `check ${named()}`,
+  })
+  const remove = useApiMutation<void>("DELETE", `/instances/${id}`, {
+    invalidate: ["/instances", "/overview", "/overview/attention"],
+    failed: () => `remove ${named()}`,
+  })
+  const declare = useApiMutation<{ declaredAccess: "read" | "write" }>("PATCH", `/instances/${id}`, {
+    invalidate,
+    success: (b) =>
+      `The API key of ${named()} ${b.declaredAccess === "write" ? "can read and write" : "can only read"}`,
+    failed: () => `change what the API key of ${named()} can do`,
+  })
   const unsaved = {
     backups: useUnsaved(`backup-destinations-${id}`),
     access: useUnsaved(`agent-access-${id}`),
@@ -477,6 +527,10 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
           <span>· n8n {i.version ?? "unknown"}</span>
           {behind(i.version, i.latestVersion) && <Tone tone="warn">latest {i.latestVersion}</Tone>}
           {i.queueMode && <span>· queue mode</span>}
+          {/* A failed refresh keeps the instance on screen and says so here (TB-5, LD-12). */}
+          <span>
+            <RefreshNote live={detail} separator="· " />
+          </span>
         </p>
         <div className="flex flex-wrap gap-2 @min-[40rem]/pane:col-start-2 @min-[40rem]/pane:row-start-1">
           <Button size="sm" variant="primary" asChild>
@@ -484,10 +538,15 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
               <ExternalLink /> Open n8n
             </a>
           </Button>
-          <Button size="sm" onClick={() => refresh.mutate()} disabled={refresh.isPending}>
-            <RefreshCw />
-            <span className="@max-[34rem]/pane:sr-only">{refresh.isPending ? "Checking…" : "Check now"}</span>
-          </Button>
+          <BusyButton
+            size="sm"
+            icon={RefreshCw}
+            busyLabel="Checking…"
+            labelClassName="@max-[34rem]/pane:sr-only"
+            run={() => refresh.mutateAsync()}
+          >
+            Check now
+          </BusyButton>
           <Button size="sm" onClick={() => setEditing(true)}>
             <Pencil />
             <span className="@max-[34rem]/pane:sr-only">Edit</span>
@@ -538,23 +597,26 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
             <LastBackupKpi id={i.id} backup={backup} />
           </Kpis>
           <Panel>
-            <PanelHead
-              title="Open Problems"
-              count={n(i.openProblems)}
+            <InstanceProblems
+              key={i.id}
+              instanceId={i.id}
+              count={i.openProblems}
               more={i.openProblems > 0 ? { to: `/instances/${i.id}?tab=problems`, label: "All" } : undefined}
+              limit={3}
+              onOpen={(pid) => navigate(`/problems/${pid}`)}
             />
-            <InstanceProblems query={problems} limit={3} onOpen={(pid) => navigate(`/problems/${pid}`)} />
           </Panel>
         </PaneTabPanel>
 
         <PaneTabPanel value="problems">
           <Panel>
-            <PanelHead
-              title="Open Problems"
-              count={n(i.openProblems)}
+            <InstanceProblems
+              key={i.id}
+              instanceId={i.id}
+              count={i.openProblems}
               more={{ to: `/problems?status=open&instance=${i.id}`, label: "Open in Problems" }}
+              onOpen={(pid) => navigate(`/problems/${pid}`)}
             />
-            <InstanceProblems query={problems} total={i.openProblems} onOpen={(pid) => navigate(`/problems/${pid}`)} />
           </Panel>
         </PaneTabPanel>
 
@@ -644,13 +706,14 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
               title="API Key and What It Allows"
               description={
                 i.scopesSource === "discovered"
-                  ? `Read from GET /api/v1/discover · checked ${i.scopesCheckedAt ? formatFull(i.scopesCheckedAt, tz) : "never"}`
+                  ? `Read from GET /api/v1/discover · checked ${i.scopesCheckedAt ? formatTime(i.scopesCheckedAt, w) : "never"}`
                   : `n8n ${i.version ?? ""} has no /discover endpoint (added in 2.14.0). Tell n8n-ops what the key can do.`
               }
               action={
                 i.scopesSource === "declared" && (
                   <ToggleGroup
                     type="single"
+                    segmented
                     aria-label="What the API key can do"
                     value={i.declaredAccess ?? "read"}
                     onValueChange={(v) => v && declare.mutate({ declaredAccess: v as "read" | "write" })}
@@ -823,39 +886,84 @@ function LastBackupPanel({ id, backup }: { id: string; backup: ListBackup }) {
   )
 }
 
+/** The order of a preview, which has no Sort button: the default, never changed. */
+const noOrder: SortOrder = [null, () => {}]
+
 /**
- * The open problems of the instance, most recently seen first. The list is limited to 200 problems; a
- * preview shows the first few in that order.
+ * The open problems of the instance, what needs a look first unless another order is picked. The server sends
+ * the first 200 and how many there are in all; a preview shows the first few. The full list has its Sort
+ * button in its panel head, before the link to Problems (TB-28).
  */
 function InstanceProblems({
-  query,
+  instanceId,
+  count,
+  more,
   limit,
-  total,
   onOpen,
 }: {
-  query: { data?: ProblemRow[]; isLoading: boolean; error: unknown; refetch: () => unknown }
+  instanceId: string
+  /** The instance's open problems, for the panel head. */
+  count: number
+  more?: { to: string; label: string }
+  /** A preview of the first few, in the order the server sends by default, with no Sort button. */
   limit?: number
-  total?: number
   onOpen: (id: string) => void
 }) {
-  if (query.isLoading) return <Loading />
+  const preview = limit !== undefined
+  // The full list sorts on the server, so the order covers every open problem of the instance (TB-4); a new order
+  // keeps the rows on screen until its answer comes. Keyed by the instance, so no rows of another one stay.
+  const order = useSortOrder("instance-problems")
+  const query = useApi<ProblemList>(
+    problemsPath({ status: "open", instance: instanceId }, preview ? null : order.asked),
+    { keepRows: !preview },
+  )
+  const rows = query.data?.items ?? []
+  const total = query.data?.total ?? 0
+  // The headers and the Sort button show the order the rows are in (TB-4). The preview's rows come in the default
+  // order, so its answer must not count as the order picked being applied.
+  const sort = useProblemsSort(rows, preview ? noOrder : order.shown(query), false)
+  const head = (
+    <PanelHead
+      title="Open Problems"
+      count={n(count)}
+      more={more}
+      action={
+        !preview && rows.length > 0 ? <SortButton control={sort.control} name="open problems" small /> : undefined
+      }
+    />
+  )
+  if (query.isLoading)
+    return (
+      <>
+        {head}
+        <Loading />
+      </>
+    )
   if (query.error && !query.data)
-    return <LoadError what="the open problems" error={query.error} retry={() => void query.refetch()} />
-  const rows = query.data ?? []
+    return (
+      <>
+        {head}
+        <LoadError what="the open problems" error={query.error} retry={() => void query.refetch()} />
+      </>
+    )
   return (
     <>
+      {head}
+      {/* A refresh or a new order that failed keeps the rows on screen, and this line says so with Try again
+          (TB-5, LD-12); the headers and the Sort button stay in the order the rows are in (TB-4). */}
+      {!preview && <RefreshLine live={query} what="open problems" />}
       <ProblemsTable
         items
         bare
-        preview={limit !== undefined}
-        rows={limit === undefined ? rows : rows.slice(0, limit)}
+        sort={preview ? undefined : sort}
+        rows={preview ? rows.slice(0, limit) : rows}
         showInstance={false}
         empty="No open problems on this instance."
         onOpen={onOpen}
       />
-      {total !== undefined && rows.length < total && (
+      {!preview && rows.length < total && (
         <p className="border-t border-line px-pad-x py-pad-y text-small text-muted-foreground">
-          Showing the {n(rows.length)} most recently seen. Search and filter them in Problems.
+          Showing {n(rows.length)} of {n(total)}. Search and filter them all in Problems.
         </p>
       )}
     </>
@@ -875,9 +983,9 @@ async function exportCredentials(id: string, name: string) {
     a.download = `${name}-credentials.json.age`
     a.click()
     URL.revokeObjectURL(url)
-    toast.success("Downloaded. Decrypt with: age -d -i backup-key.txt", { id: loading })
+    toast.success(`Credentials of ${name} downloaded. Decrypt with: age -d -i backup-key.txt`, { id: loading })
   } catch (error) {
-    toast.error(`Export failed: ${(error as Error).message}`, { id: loading })
+    toast.error(`Could not export the credentials of ${name}: ${(error as Error).message}`, { id: loading })
   }
 }
 
@@ -909,6 +1017,7 @@ function OverridesCard({ instance }: { instance: InstanceDetailData }) {
   const [values, setValues] = useState<Record<string, string>>(stored)
   const save = useApiMutation<{ overrides: Record<string, number | string> }>("PATCH", `/instances/${instance.id}`, {
     invalidate: [`/instances/${instance.id}`],
+    quiet: true,
   })
   const initial = stored()
   const count = countChanges(
@@ -966,14 +1075,16 @@ export function InstanceDialog({
   open,
   onOpenChange,
   instance,
-  onSaved,
+  afterAdd,
 }: {
   open: boolean
   onOpenChange: (o: boolean) => void
   instance?: InstanceRow
-  onSaved?: (id: string) => void
+  /** Where to go once a new instance is added. */
+  afterAdd?: (id: string) => string
 }) {
   const workers = useApi<Worker[]>(open ? "/workers" : null)
+  const navigateOut = useNavigateFromOverlay()
   const [form, setForm] = useState({
     name: "",
     baseUrl: "",
@@ -985,12 +1096,16 @@ export function InstanceDialog({
     collection: "direct" as "direct" | "worker",
     workerId: "",
   })
+  const [opened, setOpened] = useState(form)
   const [error, setError] = useState("")
   const [busy, setBusy] = useState(false)
+  // Filled when the dialog opens or another instance is chosen, not when the 15-second refresh brings the same
+  // instance again: that would replace what is being typed.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the stored values are read when it opens, not followed
   useEffect(() => {
     if (!open) return
     setError("")
-    setForm({
+    const start = {
       name: instance?.name ?? "",
       baseUrl: instance?.baseUrl ?? "",
       apiKey: undefined,
@@ -1000,9 +1115,13 @@ export function InstanceDialog({
       workerHealthUrls: (instance?.workerHealthUrls ?? []).join("\n"),
       collection: instance?.collection ?? "direct",
       workerId: instance?.workerId ?? "",
-    })
-  }, [open, instance])
+    }
+    setForm(start)
+    setOpened(start)
+  }, [open, instance?.id])
   const set = (k: keyof typeof form, v: string | boolean | undefined) => setForm((f) => ({ ...f, [k]: v }))
+  // Every close asks first while the form differs from how it opened (DS-9).
+  const guard = useDiscardGuard(formChanged(form, opened), () => onOpenChange(false))
   // A stored API key is never sent to a different server: a changed base URL needs the key again (FS-5).
   const urlChanged = Boolean(instance) && normalUrl(form.baseUrl) !== normalUrl(instance?.baseUrl ?? "")
 
@@ -1028,11 +1147,12 @@ export function InstanceDialog({
     try {
       if (instance) {
         await api(`/instances/${instance.id}`, { method: "PATCH", json: body })
-        onOpenChange(false)
+        void guard.requestClose("saved")
       } else {
         const res = await api<{ id: string }>("/instances", { method: "POST", json: body })
-        onOpenChange(false)
-        onSaved?.(res.id)
+        // The new instance's page takes the dialog's Back entry, so Back goes to the list (DS-10).
+        if (afterAdd) navigateOut(afterAdd(res.id))
+        void guard.requestClose("saved")
       }
       await queryClient.invalidateQueries()
     } catch (e) {
@@ -1043,7 +1163,7 @@ export function InstanceDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={guard.onOpenChange}>
       <DialogContent className="md:max-w-xl" keepOnBackdrop>
         <DialogHeader icon={ServerIcon}>
           <DialogTitle>{instance ? `Edit ${instance.name}` : "Add an Instance"}</DialogTitle>
@@ -1128,15 +1248,15 @@ export function InstanceDialog({
             </FieldLegend>
             <Field>
               <FieldLabel>Check health and metrics</FieldLabel>
-              <Select value={form.collection} onValueChange={(v) => set("collection", v)}>
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="direct">Directly from the n8n-ops server</SelectItem>
-                  <SelectItem value="worker">Through the worker on the n8n host</SelectItem>
-                </SelectContent>
-              </Select>
+              <FieldPicker
+                label="Check health and metrics"
+                value={form.collection}
+                onChange={(v) => set("collection", v)}
+                options={[
+                  { value: "direct", label: "Directly from the n8n-ops server" },
+                  { value: "worker", label: "Through the worker on the n8n host" },
+                ]}
+              />
               <FieldDescription>
                 Use the worker when /healthz and /metrics are not reachable from outside the host.
               </FieldDescription>
@@ -1146,25 +1266,36 @@ export function InstanceDialog({
               {workers.data && workers.data.length === 0 ? (
                 <p className="rounded-sm border border-dashed border-muted-foreground/55 px-3 py-2 text-small text-muted-foreground">
                   No worker is paired yet. Pair one in{" "}
-                  <Link to="/workers" className="font-semibold text-ink underline" onClick={() => onOpenChange(false)}>
+                  <Link
+                    to="/workers"
+                    className="font-semibold text-ink underline"
+                    onClick={async (e) => {
+                      // Leaving asks first like any close. Workers then takes the dialog's Back entry, before the
+                      // dialog closes, so its close does not step back as well (DS-10).
+                      e.preventDefault()
+                      if (!(await guard.confirmDiscard())) return
+                      navigateOut("/workers")
+                      void guard.requestClose("finished")
+                    }}
+                  >
                     Workers
                   </Link>{" "}
                   to back up credential secrets and move credentials.
                 </p>
               ) : (
-                <Select value={form.workerId || "none"} onValueChange={(v) => set("workerId", v === "none" ? "" : v)}>
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">None</SelectItem>
-                    {(workers.data ?? []).map((w) => (
-                      <SelectItem key={w.id} value={w.id}>
-                        {w.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <FieldPicker
+                  label="Worker on this instance's Docker host"
+                  value={form.workerId || "none"}
+                  onChange={(v) => set("workerId", v === "none" ? "" : v)}
+                  options={[
+                    { value: "none", label: "None" },
+                    // By name: the list says no more than the names, so the Workers page's offline-first order
+                    // would look random here.
+                    ...[...(workers.data ?? [])]
+                      .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base", numeric: true }))
+                      .map((w) => ({ value: w.id, label: w.name })),
+                  ]}
+                />
               )}
               <FieldDescription>Needed to back up credential secrets and to move credentials.</FieldDescription>
             </Field>
@@ -1182,14 +1313,16 @@ export function InstanceDialog({
           {error && <FieldError>{error}</FieldError>}
         </FieldGroup>
         <DialogFooter>
-          <Button onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button
+          <Button onClick={() => void guard.requestClose()}>Cancel</Button>
+          <BusyButton
             variant="primary"
             onClick={() => void submit()}
-            disabled={busy || !form.name || !form.baseUrl || (!instance && !form.apiKey)}
+            busy={busy}
+            busyLabel="Testing connection…"
+            disabled={!form.name || !form.baseUrl || (!instance && !form.apiKey)}
           >
-            {busy ? "Testing connection…" : instance ? "Save" : "Add instance"}
-          </Button>
+            {instance ? "Save" : "Add instance"}
+          </BusyButton>
         </DialogFooter>
       </DialogContent>
     </Dialog>

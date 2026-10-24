@@ -2,7 +2,8 @@ import { Cpu as CpuIcon, Plus, Trash2 } from "lucide-react"
 import { useState } from "react"
 import { Link } from "react-router"
 import { useConfirm } from "@/components/confirm"
-import { Copyable, Empty, LoadError, Loading, Page, Panel, PanelHead, UserText } from "@/components/kit"
+import { useDiscardGuard } from "@/components/discard-guard"
+import { BusyButton, Copyable, Empty, LoadError, Loading, Page, Panel, PanelHead, UserText } from "@/components/kit"
 import { HostMark } from "@/components/skin/marks"
 import { StatusTag, TimeAgo, When } from "@/components/status"
 import { Button } from "@/components/ui/button"
@@ -18,8 +19,8 @@ import {
 import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { useApi, useApiMutation } from "@/lib/api"
-import { n, plural } from "@/lib/time"
-import { toast } from "@/lib/toast"
+import { loadView } from "@/lib/load-state"
+import { n, plural } from "@/lib/numbers"
 import { cn } from "@/lib/utils"
 
 export type Worker = {
@@ -34,10 +35,15 @@ export type Worker = {
 
 export function WorkersPage() {
   const workers = useApi<Worker[]>("/workers", { refetchInterval: 10_000 })
+  // A failed refresh keeps the workers; the head says so (TB-5, LD-12).
+  const view = loadView(workers)
   const [open, setOpen] = useState(false)
   const confirm = useConfirm()
+  const named = (id: string) => workers.data?.find((w) => w.id === id)?.name ?? "the worker"
   const revoke = useApiMutation<string>("DELETE", (id) => `/workers/${id}`, {
-    invalidate: ["/workers", "/overview/summary"],
+    invalidate: ["/workers", "/overview/summary", "/overview/attention"],
+    success: (id) => `Worker ${named(id)} revoked`,
+    failed: (id) => `revoke the worker ${named(id)}`,
   })
   async function askRevoke(w: Worker) {
     const ok = await confirm({
@@ -46,14 +52,14 @@ export function WorkersPage() {
       confirmLabel: "Revoke worker",
       danger: true,
     })
-    if (ok) revoke.mutate(w.id, { onSuccess: () => toast.success(`Worker ${w.name} revoked`) })
+    if (ok) revoke.mutate(w.id)
   }
   const list = workers.data ?? []
   const online = list.filter((w) => w.online).length
   return (
     <Page
       title="Workers"
-      updatedAt={workers.dataUpdatedAt || undefined}
+      live={workers}
       description={
         workers.data && list.length
           ? `${n(online)} of ${n(list.length)} online. Agents on n8n Docker hosts: they back up credential secrets, move credentials and check endpoints only reachable on the host, over outbound HTTPS only.`
@@ -72,9 +78,9 @@ export function WorkersPage() {
           count={workers.data ? n(list.length) : undefined}
           className="regular:px-0 regular:pt-0 regular:pb-0"
         />
-        {workers.error ? (
+        {view === "failed" ? (
           <LoadError what="workers" error={workers.error} retry={() => workers.refetch()} />
-        ) : workers.isLoading ? (
+        ) : view === "loading" ? (
           <Loading>Loading workers…</Loading>
         ) : list.length === 0 ? (
           <Empty title="No workers yet.">
@@ -161,19 +167,20 @@ function AddWorkerDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
   const create = useApiMutation<{ name: string; socketProxy: boolean; containers: string[] }, Pairing>(
     "POST",
     "/workers/pairing",
+    { failed: (b) => `create a pairing token for ${b.name}` },
   )
   const containerList = containers.split(/[\s,]+/).filter(Boolean)
-  const close = (o: boolean) => {
-    onOpenChange(o)
-    if (!o) {
-      setResult(null)
-      setName("")
-      setContainers("")
-      setSocketProxy(true)
-    }
-  }
+  // Until the pairing token is made, anything typed or changed is asked about before it is dropped (DS-9).
+  const dirty = !result && (name.trim() !== "" || containers.trim() !== "" || !socketProxy)
+  const guard = useDiscardGuard(dirty, () => {
+    onOpenChange(false)
+    setResult(null)
+    setName("")
+    setContainers("")
+    setSocketProxy(true)
+  })
   return (
-    <Dialog open={open} onOpenChange={close}>
+    <Dialog open={open} onOpenChange={guard.onOpenChange}>
       <DialogContent className="md:max-w-2xl" keepOnBackdrop>
         <DialogHeader icon={CpuIcon}>
           <DialogTitle>Add a Worker</DialogTitle>
@@ -232,24 +239,24 @@ function AddWorkerDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
         )}
         <DialogFooter>
           {result ? (
-            <Button variant="primary" onClick={() => close(false)}>
+            <Button variant="primary" onClick={() => void guard.requestClose("finished")}>
               Done
             </Button>
           ) : (
             <>
-              <Button onClick={() => close(false)}>Cancel</Button>
-              <Button
+              <Button onClick={() => void guard.requestClose()}>Cancel</Button>
+              <BusyButton
                 variant="primary"
-                disabled={!name.trim() || (socketProxy && containerList.length === 0) || create.isPending}
-                onClick={() =>
-                  create.mutate(
-                    { name, socketProxy, containers: socketProxy ? containerList : [] },
-                    { onSuccess: setResult },
+                disabled={!name.trim() || (socketProxy && containerList.length === 0)}
+                busyLabel="Creating…"
+                run={async () =>
+                  setResult(
+                    await create.mutateAsync({ name, socketProxy, containers: socketProxy ? containerList : [] }),
                   )
                 }
               >
                 Create pairing token
-              </Button>
+              </BusyButton>
             </>
           )}
         </DialogFooter>

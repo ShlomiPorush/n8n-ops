@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { expect, type Page, test } from "@playwright/test"
-import { currentApiKey, dialogClosed, loadPrivateKey, n8nApi, n8nUrl, signIn } from "./helpers.ts"
+import { expect, type Page, type Request, test } from "@playwright/test"
+import { currentApiKey, dialogClosed, discardChanges, loadPrivateKey, n8nApi, n8nUrl, signIn } from "./helpers.ts"
 
 // Storage, a paired worker, an encrypted backup with credential secrets, a restore, and a move
 // with credentials, all against the real n8n and S3Mock in the test stack.
@@ -54,7 +54,9 @@ test("an S3 bucket and the mapped folder are added as destinations, each tested 
   await page.getByLabel("Name", { exact: true }).fill("Everything")
   await page.getByRole("button", { name: "Test and add" }).click()
   await expect(page.getByText(/already used by the destination "This server"/)).toBeVisible()
+  // What was typed is asked about before it is dropped.
   await page.keyboard.press("Escape")
+  await discardChanges(page)
   await dialogClosed(page)
 
   // The saved destination tests again on demand.
@@ -74,6 +76,7 @@ test("a wrong secret is refused before a destination is stored", async () => {
   await page.getByRole("button", { name: "Test and add" }).click()
   await expect(page.getByText(/The destination test failed/)).toBeVisible({ timeout: 70_000 })
   await page.keyboard.press("Escape")
+  await discardChanges(page)
   await dialogClosed(page)
   await expect(page.getByTestId("destination-Broken S3")).toHaveCount(0)
 })
@@ -114,7 +117,7 @@ test("the worker is assigned to the instance", async () => {
   await page.goto("/instances")
   await page.getByRole("row", { name: /e2e-n8n/ }).click()
   await page.getByRole("button", { name: "Edit" }).click()
-  await page.getByRole("combobox").filter({ hasText: "None" }).click()
+  await page.getByRole("button", { name: /^Worker on this instance.s Docker host: None$/ }).click()
   await page.getByRole("option", { name: "E2E Host" }).click()
   await page.getByLabel("Container name").fill(container)
   await page.getByRole("button", { name: "Save" }).click()
@@ -135,10 +138,19 @@ test("a backup through the worker includes credential secrets", async () => {
     }),
   })
   await page.goto("/backups")
+  // A double click starts one backup: Run now is locked while its request runs (FB-7).
+  const runs: string[] = []
+  const count = (r: Request) => {
+    if (r.method() === "POST" && /^\/api\/backups\/[^/]+\/run$/.test(new URL(r.url()).pathname)) runs.push(r.url())
+  }
+  page.on("request", count)
   await page
     .getByRole("row", { name: /e2e-n8n/ })
     .getByRole("button", { name: "Run now" })
-    .click()
+    .dblclick()
+  await expect(page.getByText("Backup of e2e-n8n started")).toBeVisible()
+  page.off("request", count)
+  expect(runs).toHaveLength(1)
   await page.getByRole("row", { name: /e2e-n8n/ }).click()
   await expect(page.getByText("OK · with secrets")).toBeVisible({ timeout: 90_000 })
   // One copy on each default destination, both read back and verified.
@@ -188,7 +200,7 @@ test("n8n-ops backs up its own database to the destinations", async () => {
     .getByRole("button", { name: "Run now" })
     .click()
   await page.getByRole("row", { name: /n8n-ops database/ }).click()
-  // The pane of the instance opened before is replaced by the database's own history.
+  // The pane shows the database's own history, whichever backup opened by itself first.
   const history = page.getByRole("region", { name: "Backups · n8n-ops database" })
   await expect(history.getByText("OK · with secrets")).toBeVisible({ timeout: 90_000 })
   await expect(history.getByText("Written")).toHaveCount(2)
@@ -205,7 +217,7 @@ test("a workflow is restored from the backup with the private key", async () => 
   await page.getByRole("button", { name: "Restore" }).first().click()
   await page.getByLabel("Private backup key").fill(loadPrivateKey())
   await page.getByRole("button", { name: "Open archive" }).click()
-  await page.getByRole("combobox", { name: "Workflow" }).click()
+  await page.getByRole("button", { name: /^Workflow:/ }).click()
   await page.getByRole("option", { name: "Sync orders to ERP" }).click()
   await page.getByRole("button", { name: "Restore", exact: true }).click()
   await expect(page.getByText("Workflow created inactive")).toBeVisible({ timeout: 30_000 })
@@ -223,6 +235,7 @@ test("a wrong private key is refused", async () => {
   await page.getByRole("button", { name: "Open archive" }).click()
   await expect(page.getByText(/Cannot open the archive/)).toBeVisible()
   await page.keyboard.press("Escape")
+  await discardChanges(page)
   await dialogClosed(page)
 })
 
@@ -272,7 +285,7 @@ test("a workflow moves to another instance with its credentials", async () => {
     .first()
     .getByRole("button", { name: "Move" })
     .click()
-  await page.getByRole("combobox", { name: "Target instance" }).click()
+  await page.getByRole("button", { name: /^Target instance:/ }).click()
   await page.getByRole("option", { name: "e2e-n8n-b" }).click()
   await page.getByRole("button", { name: "Review" }).click()
   await expect(page.getByText(/Mover login will be created on e2e-n8n-b/)).toBeVisible()

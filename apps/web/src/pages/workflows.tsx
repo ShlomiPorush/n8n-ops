@@ -12,8 +12,23 @@ import {
 } from "lucide-react"
 import { useState } from "react"
 import { useSearchParams } from "react-router"
+import { useDiscardGuard } from "@/components/discard-guard"
+import { FieldPicker } from "@/components/field-picker"
 import { FilterBar, Picker, SearchBox } from "@/components/filter-bar"
-import { Empty, LoadError, Loading, Page, Panel, PanelHead, Reloading, Row, UserText } from "@/components/kit"
+import {
+  BusyButton,
+  Empty,
+  LoadError,
+  Loading,
+  NoValue,
+  Page,
+  Panel,
+  PanelHead,
+  RefreshNote,
+  Reloading,
+  Row,
+  UserText,
+} from "@/components/kit"
 import { RateBar } from "@/components/skin/marks"
 import { Code, TimeAgo, When } from "@/components/status"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -28,10 +43,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { FieldError } from "@/components/ui/field"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, useSort } from "@/components/ui/table"
+import { Tip } from "@/components/ui/tooltip"
 import { api, describeError, queryClient, useApi, useApiMutation } from "@/lib/api"
-import { n, plural } from "@/lib/time"
+import { loadView } from "@/lib/load-state"
+import { counts, errorRate, n, plural } from "@/lib/numbers"
 import { cn } from "@/lib/utils"
 
 type WorkflowRow = {
@@ -63,6 +79,41 @@ type MapData = {
 /** Error rate above which a workflow's failures stand out (percent of its runs in 30 days). */
 const ERROR_RATE_FAIL = 3
 
+/** "12 workflows · 2 duplicated · 3 inactive", without a kind that has none (FW-3). */
+export function mapSummary(workflows: number, duplicated: number, inactive: number): string {
+  const kinds = counts(
+    [
+      [duplicated, "duplicated"],
+      [inactive, "inactive"],
+    ],
+    " · ",
+  )
+  return kinds ? `${plural(workflows, "workflow")} · ${kinds}` : plural(workflows, "workflow")
+}
+
+/** The share of runs that failed in 30 days; without runs a muted "-", not 0% (FB-8). */
+function ErrorRateCell({ rate, errors, runs }: { rate: number | null; errors: number; runs: number }) {
+  if (rate === null)
+    return (
+      <TableCell className="text-end" title="No runs in the last 30 days">
+        <NoValue said="No runs in the last 30 days" />
+      </TableCell>
+    )
+  return (
+    <TableCell
+      className={cn(
+        "text-end tabular-nums",
+        rate > ERROR_RATE_FAIL ? "font-semibold text-fail" : "text-muted-foreground",
+      )}
+    >
+      <Tip content={`${n(errors)} of ${plural(runs, "run")} failed`}>
+        <span>{rate}%</span>
+      </Tip>
+      <RateBar rate={rate} tone={rate > ERROR_RATE_FAIL ? "fail" : rate > 0 ? "warn" : "ok"} />
+    </TableCell>
+  )
+}
+
 /** Regular: the insight panels are summary cards whose lines run without rules (#29). */
 const summary = "regular:pb-3 regular:[&>:not(header)]:border-t-0 regular:[&>:not(header)]:py-2"
 
@@ -78,40 +129,46 @@ export function WorkflowsPage() {
   }
   const query = new URLSearchParams({ ...(q ? { q } : {}), ...(instance !== "all" ? { instance } : {}) })
   const data = useApi<MapData>(`/workflows?${query}`, { keepRows: true })
+  // A failed refresh keeps the rows and the head says so; new filters that failed keep the previous rows and the
+  // filter line says so (TB-5, LD-12).
+  const view = loadView(data)
   const instances = useApi<{ instances: { id: string; name: string }[] }>("/instances")
   const sync = useApiMutation<void>("POST", "/workflows/sync", {
     invalidate: [`/workflows?${query}`],
     success: "Workflow map refreshed",
+    failed: "refresh the workflow map",
   })
   const [moving, setMoving] = useState<WorkflowRow | null>(null)
   const ins = data.data?.insights
   const rows = data.data?.workflows ?? []
   const filtered = Boolean(q) || instance !== "all"
-  const rate = (w: WorkflowRow) => (w.runs30d ? Math.round((w.errors30d / w.runs30d) * 1000) / 10 : 0)
+  const rate = (w: WorkflowRow) => errorRate(w.errors30d, w.runs30d)
   const sort = useSort(rows, {
     id: "workflows",
     columns: {
-      name: { label: "Workflow", value: (w) => w.name },
-      instance: { label: "Instance", value: (w) => w.instanceName },
-      trigger: { label: "Trigger", value: (w) => w.triggerType },
-      lastRun: { label: "Last run", value: (w) => (w.lastRunAt ? new Date(w.lastRunAt) : null) },
-      runs: { label: "Runs 30d", value: (w) => w.runs30d },
-      errors: { label: "Errors", value: (w) => (w.runs30d ? rate(w) : null) },
+      name: { label: "Workflow", kind: "text", value: (w) => w.name },
+      instance: { label: "Instance", kind: "text", value: (w) => w.instanceName },
+      trigger: { label: "Trigger", kind: "text", value: (w) => w.triggerType },
+      lastRun: { label: "Last run", kind: "date", value: (w) => (w.lastRunAt ? new Date(w.lastRunAt) : null) },
+      runs: { label: "Runs 30d", kind: "number", value: (w) => w.runs30d },
+      errors: { label: "Errors", kind: "number", value: rate },
     },
   })
 
   return (
     <Page
       title="Workflows"
+      live={data}
+      updated={false}
       description={
         ins && !filtered
-          ? `${n(rows.length)} workflows · ${n(ins.duplicateGroups.length)} duplicated · ${n(ins.inactive)} inactive. Read from every instance every 30 minutes.`
+          ? `${mapSummary(rows.length, ins.duplicateGroups.length, ins.inactive)}. Read from every instance every 30 minutes.`
           : "Every workflow on every instance, refreshed every 30 minutes. Duplicates and unused instances help consolidate."
       }
       actions={
-        <Button onClick={() => sync.mutate()} disabled={sync.isPending}>
-          <RefreshCw /> {sync.isPending ? "Reading instances…" : "Refresh now"}
-        </Button>
+        <BusyButton icon={RefreshCw} busyLabel="Reading instances…" run={() => sync.mutateAsync()}>
+          Refresh now
+        </BusyButton>
       }
     >
       {ins && (
@@ -168,40 +225,55 @@ export function WorkflowsPage() {
       )}
 
       <FilterBar
-        search={<SearchBox label="Search all instances" value={q} onChange={(v) => setParam("q", v)} />}
-        active={Number(instance !== "all")}
-        count={data.data ? plural(rows.length, "workflow") : undefined}
+        search={<SearchBox label="Search all instances" value={q} onChange={(v) => setParam("q", v)} debounce />}
+        sort={{ control: sort.control, name: "workflows" }}
+        pickers={
+          <Picker
+            label="Instance"
+            value={instance}
+            defaultValue="all"
+            onChange={(v) => setParam("instance", v)}
+            options={[
+              { value: "all", label: "All" },
+              ...(instances.data?.instances ?? []).map((i) => ({ value: i.id, label: i.name })),
+            ]}
+          />
+        }
+        listKey={`${instance}|${q}`}
+        loading={data.isFetching || data.isPlaceholderData}
+        count={
+          data.data ? (
+            <>
+              {/* New filters that failed keep the previous rows, and this line says so instead of a count (TB-5). */}
+              {data.previous !== "failed" && plural(rows.length, "workflow")}
+              <RefreshNote live={data} what="these workflows" small />
+            </>
+          ) : undefined
+        }
         onClear={filtered ? () => setParams(new URLSearchParams(), { replace: true }) : undefined}
-      >
-        <Picker
-          label="Instance"
-          value={instance}
-          defaultValue="all"
-          onChange={(v) => setParam("instance", v)}
-          options={[
-            { value: "all", label: "All" },
-            ...(instances.data?.instances ?? []).map((i) => ({ value: i.id, label: i.name })),
-          ]}
-        />
-      </FilterBar>
+      />
 
-      {data.error ? (
+      {view === "failed" ? (
         <Panel>
           <LoadError what="workflows" error={data.error} retry={() => data.refetch()} />
         </Panel>
-      ) : data.isLoading ? (
+      ) : view === "loading" ? (
         <Panel>
           <Loading>Loading the workflow map…</Loading>
         </Panel>
       ) : rows.length === 0 ? (
         <Panel>
-          <Empty title={filtered ? "No workflow matches." : "No workflows yet."}>
-            {filtered ? "Try another search or instance." : 'Use "Refresh now" after adding instances.'}
-          </Empty>
+          {data.previous === "failed" ? (
+            <Empty title="The previous list was empty." />
+          ) : (
+            <Empty title={filtered ? "No workflow matches." : "No workflows yet."}>
+              {filtered ? "Try another search or instance." : 'Use "Refresh now" after adding instances.'}
+            </Empty>
+          )}
         </Panel>
       ) : (
-        <Reloading busy={data.isPlaceholderData}>
-          <Table sort={sort}>
+        <Reloading busy={data.isPlaceholderData || (data.previous === "failed" && data.isFetching)}>
+          <Table>
             <TableHeader>
               <TableRow>
                 <TableHead sort={sort.head("name")}>Workflow</TableHead>
@@ -221,8 +293,11 @@ export function WorkflowsPage() {
             </TableHeader>
             <TableBody>
               {sort.rows.map((w) => (
-                <TableRow key={`${w.instanceId}:${w.workflowId}`}>
-                  <TableCell className="max-w-80">
+                <TableRow
+                  key={`${w.instanceId}:${w.workflowId}`}
+                  data-search-target={`workflow:${w.instanceId}:${w.workflowId}`}
+                >
+                  <TableCell className="max-w-80" truncate title={w.name}>
                     <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
                       <a
                         href={w.url}
@@ -234,16 +309,16 @@ export function WorkflowsPage() {
                       </a>
                       {!w.active && <Badge variant="muted">inactive</Badge>}
                       {w.duplicates.length > 0 && (
-                        <Badge variant="warn" title={`Also on ${w.duplicates.map((d) => d.instanceName).join(", ")}`}>
-                          duplicate
-                        </Badge>
+                        <Tip content={`Also on ${w.duplicates.map((d) => d.instanceName).join(", ")}`}>
+                          <Badge variant="warn">duplicate</Badge>
+                        </Tip>
                       )}
                     </div>
                   </TableCell>
                   <TableCell>
                     <UserText>{w.instanceName}</UserText>
                   </TableCell>
-                  <TableCell className="max-w-56">
+                  <TableCell className="max-w-56" truncate>
                     <div className="truncate">{w.triggerType}</div>
                     {w.triggerDetail && (
                       <div className="truncate font-mono text-meta text-muted-foreground" title={w.triggerDetail}>
@@ -255,16 +330,7 @@ export function WorkflowsPage() {
                     <When value={w.lastRunAt} />
                   </TableCell>
                   <TableCell className="text-end tabular-nums">{n(w.runs30d)}</TableCell>
-                  <TableCell
-                    className={cn(
-                      "text-end tabular-nums",
-                      rate(w) > ERROR_RATE_FAIL ? "font-semibold text-fail" : "text-muted-foreground",
-                    )}
-                    title={`${n(w.errors30d)} of ${n(w.runs30d)} runs failed`}
-                  >
-                    {rate(w)}%
-                    <RateBar rate={rate(w)} tone={rate(w) > ERROR_RATE_FAIL ? "fail" : rate(w) > 0 ? "warn" : "ok"} />
-                  </TableCell>
+                  <ErrorRateCell rate={rate(w)} errors={w.errors30d} runs={w.runs30d} />
                   <TableCell className="text-end">
                     <Button size="sm" onClick={() => setMoving(w)}>
                       Move <ArrowRight />
@@ -299,13 +365,14 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
   const [steps, setSteps] = useState<{ step: string; ok: boolean; detail?: string }[] | null>(null)
   const [error, setError] = useState("")
   const [busy, setBusy] = useState(false)
-  const reset = () => {
+  // A chosen target is asked about before it is dropped, until the move has run (DS-9).
+  const guard = useDiscardGuard(!steps && target !== "", () => {
     setTarget("")
     setPreview(null)
     setSteps(null)
     setError("")
     onClose()
-  }
+  })
   const body = () => ({ sourceId: workflow?.instanceId, targetId: target, workflowId: workflow?.workflowId })
   async function act(fn: () => Promise<void>) {
     setBusy(true)
@@ -319,7 +386,7 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
     }
   }
   return (
-    <Dialog open={workflow !== null} onOpenChange={(o) => !o && reset()}>
+    <Dialog open={workflow !== null} onOpenChange={guard.onOpenChange}>
       <DialogContent className="md:max-w-2xl" keepOnBackdrop>
         <DialogHeader icon={ArrowRightLeftIcon}>
           <DialogTitle>Move {workflow?.name}</DialogTitle>
@@ -345,26 +412,19 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
             ))}
           </ul>
         ) : !preview ? (
-          <Select
+          <FieldPicker
+            label="Target instance"
+            listLabel="Instances"
+            placeholder="Move to…"
             value={target}
-            onValueChange={(v) => {
+            onChange={(v) => {
               setTarget(v)
               setPreview(null)
             }}
-          >
-            <SelectTrigger className="w-full" aria-label="Target instance">
-              <SelectValue placeholder="Move to…" />
-            </SelectTrigger>
-            <SelectContent>
-              {(instances.data?.instances ?? [])
-                .filter((i) => i.id !== workflow?.instanceId)
-                .map((i) => (
-                  <SelectItem key={i.id} value={i.id}>
-                    {i.name}
-                  </SelectItem>
-                ))}
-            </SelectContent>
-          </Select>
+            options={(instances.data?.instances ?? [])
+              .filter((i) => i.id !== workflow?.instanceId)
+              .map((i) => ({ value: i.id, label: i.name }))}
+          />
         ) : (
           <div className="grid gap-2.5">
             <h3 className="font-semibold">
@@ -423,15 +483,17 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
         {error && <FieldError>{error}</FieldError>}
         <DialogFooter>
           {steps ? (
-            <Button variant="primary" onClick={reset}>
+            <Button variant="primary" onClick={() => void guard.requestClose("finished")}>
               Done
             </Button>
           ) : !preview ? (
             <>
-              <Button onClick={reset}>Cancel</Button>
-              <Button
+              <Button onClick={() => void guard.requestClose()}>Cancel</Button>
+              <BusyButton
                 variant="primary"
-                disabled={!target || busy}
+                disabled={!target}
+                busy={busy}
+                busyLabel="Reviewing…"
                 onClick={() =>
                   act(async () =>
                     setPreview(await api<Preview>("/workflows/moves/preview", { method: "POST", json: body() })),
@@ -439,14 +501,16 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
                 }
               >
                 Review
-              </Button>
+              </BusyButton>
             </>
           ) : (
             <>
               <Button onClick={() => setPreview(null)}>Back</Button>
-              <Button
+              <BusyButton
                 variant="primary"
-                disabled={busy || preview.blockers.length > 0}
+                disabled={preview.blockers.length > 0}
+                busy={busy}
+                busyLabel="Moving…"
                 onClick={() =>
                   act(async () => {
                     const res = await api<{ steps: { step: string; ok: boolean; detail?: string }[] }>(
@@ -461,8 +525,8 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
                   })
                 }
               >
-                {busy ? "Moving…" : "Move workflow"}
-              </Button>
+                Move workflow
+              </BusyButton>
             </>
           )}
         </DialogFooter>

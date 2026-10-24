@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from "react"
 import { useDesign } from "@/lib/design"
-import { n } from "@/lib/time"
+import { n } from "@/lib/numbers"
 
 const ROLL_MS = 900
 
 /**
- * A key figure. Regular counts it up when it first shows and when it changes, as #29 did; Compact shows it
- * still. Both end on the same text, and nothing moves under reduced motion.
+ * A key figure. Regular counts it up when it first shows and when it changes, as #29 did, also under reduced
+ * motion (AX-8); Compact shows it still. Both end on the same text.
  */
 export function Figure({ value }: { value: number }) {
   const design = useDesign()
@@ -14,8 +14,7 @@ export function Figure({ value }: { value: number }) {
   const from = useRef(design === "regular" ? 0 : value)
 
   useEffect(() => {
-    const still = design !== "regular" || window.matchMedia("(prefers-reduced-motion: reduce)").matches
-    if (still || from.current === value) {
+    if (design !== "regular" || from.current === value) {
       from.current = value
       setShown(value)
       return

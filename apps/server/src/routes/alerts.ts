@@ -5,6 +5,7 @@ import type { Env } from "../http/types.ts"
 import { safeEqual } from "../lib/crypto.ts"
 import { handleAccessCallback } from "../services/access-notify.ts"
 import { type CallbackUpdate, handleTelegramCallback, sendTestTelegram, telegramClient } from "../services/alerts.ts"
+import { emailFailureText, telegramFailureText } from "../services/draft-tests.ts"
 import { buildReport, sendEmail } from "../services/reports.ts"
 
 /** Telegram calls this for button presses. Verified with the secret token header (no session). */
@@ -33,19 +34,25 @@ export function telegramWebhookRoutes(ctx: Ctx) {
 export function alertTestRoutes(ctx: Ctx) {
   const app = new Hono<Env>()
   app.use("*", requireUser(ctx))
+  // A test takes the values on screen in its body and stores nothing; without a body it tests the stored ones
+  // (FS-19). A failure says what to check, in words (SV-5).
+  const draftOf = async (c: { req: { json(): Promise<unknown> } }) => {
+    const body = await c.req.json().catch(() => null)
+    return body && typeof body === "object" && !Array.isArray(body) ? (body as Record<string, unknown>) : {}
+  }
   app.post("/test/telegram", async (c) => {
     try {
-      return c.json({ ok: true, ...(await sendTestTelegram(ctx)) })
+      return c.json({ ok: true, ...(await sendTestTelegram(ctx, await draftOf(c))) })
     } catch (error) {
-      return c.json({ error: "invalid", issues: [{ path: ["telegram"], message: (error as Error).message }] }, 400)
+      return c.json({ error: "test_failed", message: telegramFailureText(error) }, 400)
     }
   })
   app.post("/test/email", async (c) => {
     try {
-      await sendEmail(ctx, await buildReport(ctx, "daily"))
-      return c.json({ ok: true })
+      const recipients = await sendEmail(ctx, await buildReport(ctx, "daily"), await draftOf(c))
+      return c.json({ ok: true, recipients })
     } catch (error) {
-      return c.json({ error: "invalid", issues: [{ path: ["email"], message: (error as Error).message }] }, 400)
+      return c.json({ error: "test_failed", message: emailFailureText(error) }, 400)
     }
   })
   app.get("/report-preview", async (c) =>

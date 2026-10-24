@@ -1,5 +1,5 @@
 {
-  "id": "493111f5-fb7b-4fd4-b483-6ce5e13e1116",
+  "id": "675bd962-2eff-4895-b541-b8193ad5c13c",
   "prevId": "ea668306-d9ec-475f-86bc-e1956c42fef7",
   "version": "7",
   "dialect": "postgresql",
@@ -225,12 +225,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "telegram_missing_topic": {
-          "name": "telegram_missing_topic",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
         "telegram_closed_at": {
           "name": "telegram_closed_at",
           "type": "timestamp with time zone",
@@ -445,25 +439,6 @@
           "primaryKey": false,
           "notNull": true
         },
-        "thread_id": {
-          "name": "thread_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "fell_back": {
-          "name": "fell_back",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
-        "closed_at": {
-          "name": "closed_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
         "problem_ids": {
           "name": "problem_ids",
           "type": "jsonb",
@@ -551,12 +526,6 @@
         },
         "telegram_message_id": {
           "name": "telegram_message_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "thread_id": {
-          "name": "thread_id",
           "type": "integer",
           "primaryKey": false,
           "notNull": false
@@ -1958,6 +1927,83 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.problem_receipts": {
+      "name": "problem_receipts",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "problem_id": {
+          "name": "problem_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "action": {
+          "name": "action",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "prior": {
+          "name": "prior",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "used_at": {
+          "name": "used_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "problem_receipts_problem_id_problems_id_fk": {
+          "name": "problem_receipts_problem_id_problems_id_fk",
+          "tableFrom": "problem_receipts",
+          "tableTo": "problems",
+          "columnsFrom": [
+            "problem_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.problems": {
       "name": "problems",
       "schema": "",
@@ -2055,6 +2101,13 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": false
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
         },
         "created_at": {
           "name": "created_at",

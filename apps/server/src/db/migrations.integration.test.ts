@@ -2,10 +2,12 @@ import { randomBytes } from "node:crypto"
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { eq } from "drizzle-orm"
 import { drizzle } from "drizzle-orm/postgres-js"
 import { migrate } from "drizzle-orm/postgres-js/migrator"
 import postgres from "postgres"
 import { afterAll, describe, expect, it } from "vitest"
+import { instances, problems } from "./schema.ts"
 
 // The upgrade to backup destinations (0004, 0005) on databases as earlier releases left them, against a real
 // PostgreSQL. MIGRATION_DATABASE_URL is a role that may create databases; each case gets its own.
@@ -211,6 +213,52 @@ describe("the upgrade to backup destinations", () => {
       // Fixed, the same upgrade then goes through.
       await migrate(db, { migrationsFolder: folder })
       expect(await sql`select 1 from backup_copies`).toHaveLength(5)
+    } finally {
+      await close()
+    }
+  })
+})
+
+// The version of a problem is moved by a trigger (0007), which the drizzle snapshot does not hold: the schema check
+// would not notice it dropped, and Undo would then overwrite later changes (FB-16).
+describe("the problem version trigger", () => {
+  it("is installed and moves the version on a change of state or a new occurrence, not on a rename", async () => {
+    const { sql, db, close } = await freshDatabase()
+    try {
+      await migrate(db, { migrationsFolder: folder })
+      const triggers =
+        await sql`select tgname from pg_trigger where tgrelid = 'problems'::regclass and not tgisinternal`
+      expect(triggers.map((t) => t.tgname)).toContain("problems_bump_version")
+
+      const [instance] = await db
+        .insert(instances)
+        .values({ name: "n8n-1", baseUrl: "http://n8n:5678", apiKeyEnc: "v1:x:y:z" })
+        .returning()
+      if (!instance) throw new Error("no instance")
+      const seen = new Date("2026-10-20T08:00:00Z")
+      const [p] = await db
+        .insert(problems)
+        .values({
+          instanceId: instance.id,
+          workflowId: "wf-1",
+          workflowName: "Sync orders",
+          nodeName: "Call ERP",
+          errorMessage: "ERP refused",
+          fingerprint: "fp-1",
+          firstSeen: seen,
+          lastSeen: seen,
+        })
+        .returning()
+      if (!p) throw new Error("no problem")
+      expect(p.version).toBe(0)
+      const version = async () => (await db.select().from(problems).where(eq(problems.id, p.id)))[0]?.version
+
+      await db.update(problems).set({ workflowName: "Sync all orders" }).where(eq(problems.id, p.id))
+      expect(await version()).toBe(0)
+      await db.update(problems).set({ status: "resolved", resolvedAt: new Date() }).where(eq(problems.id, p.id))
+      expect(await version()).toBe(1)
+      await db.update(problems).set({ count: 1, lastSeen: new Date() }).where(eq(problems.id, p.id))
+      expect(await version()).toBe(2)
     } finally {
       await close()
     }

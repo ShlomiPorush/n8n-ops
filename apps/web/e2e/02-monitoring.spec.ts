@@ -27,6 +27,9 @@ test("n8n is prepared with an API key and a failing workflow", async () => {
 })
 
 test("an instance is registered after its connection is tested", async () => {
+  // From Overview, so the way back after the add can be followed.
+  await page.goto("/")
+  await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible()
   await page.goto("/instances")
   await page.getByRole("button", { name: "Add instance" }).click()
   await page.getByLabel("Name", { exact: true }).fill("e2e-n8n")
@@ -41,13 +44,23 @@ test("an instance is registered after its connection is tested", async () => {
   await expect(page.getByRole("heading", { name: "e2e-n8n" })).toBeVisible()
   await page.getByRole("tab", { name: "Access" }).click()
   await expect(page.getByText("Read from GET /api/v1/discover")).toBeVisible()
+
+  // The new instance took the dialog's Back step instead of adding one after it (DS-10): Back leaves the tab,
+  // then the instance for the list (a wide screen opens its first instance in place), then the list for Overview.
+  await page.goBack()
+  await expect(page).not.toHaveURL(/tab=access/)
+  await page.goBack()
+  await expect(page).toHaveURL(/\/instances/)
+  await expect(page.getByRole("dialog")).toHaveCount(0)
+  await page.goBack()
+  await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible()
 })
 
 test("the first sync imports existing failures as a problem", async () => {
   await page.goto("/instances")
   await page.getByRole("row", { name: /e2e-n8n/ }).click()
   await page.getByRole("button", { name: "Check now" }).click()
-  await expect(page.getByText("Checked now").last()).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByText("Checked e2e-n8n now").last()).toBeVisible({ timeout: 30_000 })
   await expect(page.getByText("Healthy").first()).toBeVisible({ timeout: 20_000 })
 
   await page.goto("/problems")
@@ -64,12 +77,41 @@ test("a repeated failure only increases the counter", async () => {
   await page.goto("/instances")
   await page.getByRole("row", { name: /e2e-n8n/ }).click()
   await page.getByRole("button", { name: "Check now" }).click()
-  await expect(page.getByText("Checked now").last()).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByText("Checked e2e-n8n now").last()).toBeVisible({ timeout: 30_000 })
   await page.goto("/problems")
   // Beside the reading pane the row is an item whose count reads "2 failures".
   await expect(page.getByRole("row", { name: /Sync orders to ERP/ }).locator('[data-part="end"]')).toHaveText(
     "2 failures",
   )
+})
+
+test("Resolve acts at once, and its Undo puts the problem back (FB-16)", async () => {
+  await page.goto("/problems")
+  await page.getByRole("row", { name: /Sync orders to ERP/ }).click()
+  await page.getByRole("button", { name: "Mark resolved" }).click()
+  await expect(page.getByText("Problem resolved: Sync orders to ERP")).toBeVisible()
+  await expect(page.getByRole("button", { name: "Reopen" })).toBeVisible()
+  // The list beside the pane follows: the open list no longer has it.
+  await expect(page.getByRole("row", { name: /Sync orders to ERP/ })).toHaveCount(0)
+
+  await page.getByRole("button", { name: "Undo resolving Sync orders to ERP" }).click()
+  await expect(page.getByText("Resolve undone: Sync orders to ERP")).toBeVisible()
+  await expect(page.getByRole("button", { name: "Mark resolved" })).toBeVisible()
+  await expect(page.getByRole("row", { name: /Sync orders to ERP/ })).toBeVisible()
+
+  await page.goto("/audit")
+  await expect(page.getByRole("row").filter({ hasText: "Problem action undone" }).first()).toBeVisible()
+})
+
+test("a muted problem can be unmuted, with Undo too (FB-11)", async () => {
+  await page.goto("/problems")
+  await page.getByRole("row", { name: /Sync orders to ERP/ }).click()
+  await page.getByRole("button", { name: "Mute 24 h" }).click()
+  await expect(page.getByText("Muted for 24 hours: Sync orders to ERP")).toBeVisible()
+  await page.getByRole("button", { name: "Unmute" }).click()
+  await expect(page.getByText("Problem unmuted: Sync orders to ERP")).toBeVisible()
+  await expect(page.getByRole("button", { name: "Mute 24 h" })).toBeVisible()
+  await expect(page.getByRole("button", { name: "Undo unmuting Sync orders to ERP" })).toBeVisible()
 })
 
 test("a resolved problem that fails again is a regression", async () => {
@@ -83,7 +125,7 @@ test("a resolved problem that fails again is a regression", async () => {
   await page.goto("/instances")
   await page.getByRole("row", { name: /e2e-n8n/ }).click()
   await page.getByRole("button", { name: "Check now" }).click()
-  await expect(page.getByText("Checked now").last()).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByText("Checked e2e-n8n now").last()).toBeVisible({ timeout: 30_000 })
   await page.goto("/problems?status=open")
   await expect(page.getByRole("row", { name: /Sync orders to ERP/ }).getByText("Regression")).toBeVisible()
 

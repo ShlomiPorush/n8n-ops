@@ -1,9 +1,10 @@
 import { CircleAlert, CircleCheck, CircleDashed, Clock5, type LucideIcon, TriangleAlert } from "lucide-react"
 import { useEffect, useState } from "react"
 import { Badge } from "@/components/ui/badge"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { Tip } from "@/components/ui/tooltip"
 import { AGO_TICK_MS } from "@/lib/behavior"
-import { formatFull, formatWhen, useTimeZone } from "@/lib/time"
+import { plural } from "@/lib/numbers"
+import { formatListTime, formatTime, isoTime, useTimeFormat } from "@/lib/time"
 import { cn } from "@/lib/utils"
 
 /**
@@ -135,7 +136,7 @@ export function Dot({ health, label, className }: { health: HealthState; label?:
     >
       {/* Regular: a down instance pulses, so it is seen at a glance. */}
       {health === "down" && (
-        <span className="absolute inset-0 hidden animate-ping rounded-full bg-fail/60 regular:block motion-reduce:animate-none" />
+        <span className="absolute inset-0 hidden animate-ping rounded-full bg-fail/60 regular:block" />
       )}
     </span>
   )
@@ -158,32 +159,39 @@ export function Code({ children, className }: { children: React.ReactNode; class
   return <code className={cn("rounded-tag bg-ink/6 px-1.5 py-0.5 font-mono break-all", className)}>{children}</code>
 }
 
-/** "4 min ago", "30 h ago", "3 d ago" (FW-1), then months. For ages and deadlines, not for list times. */
+/**
+ * How long ago something happened: "just now", "4 min ago", "30 h ago", "3 d ago", each step rounded (FW-1). A time
+ * ahead of now, such as a clock a little ahead of the server's, clamps to "just now"; a deadline is `timeLeft`.
+ * Beyond FW-1, which ends at days, an age of a month or more reads "2 months ago", "1 year ago".
+ */
 export function timeAgo(value: string | Date | null | undefined): string {
   if (!value) return "never"
   const ms = Date.now() - new Date(value).getTime()
-  // A deadline ahead; a few seconds of clock difference still reads as now.
-  if (ms < -60_000) {
-    const m = Math.round(-ms / 60_000)
-    if (m < 60) return `in ${m} min`
-    const h = Math.round(m / 60)
-    if (h < 24) return `in ${h} h`
-    const d = Math.round(h / 24)
-    return `in ${d} day${d === 1 ? "" : "s"}`
-  }
-  if (ms < 0) return "just now"
-  const s = Math.floor(ms / 1000)
-  if (s < 60) return "just now"
-  const m = Math.floor(s / 60)
+  if (ms < 60_000) return "just now"
+  // Each step rounds from the exact age, so 59 min 40 s reads "1 h ago", not "60 min ago".
+  const m = Math.round(ms / 60_000)
   if (m < 60) return `${m} min ago`
-  const h = Math.floor(m / 60)
+  const h = Math.round(ms / 3600_000)
   if (h < 48) return `${h} h ago`
-  const d = Math.floor(h / 24)
+  const d = Math.round(ms / 86400_000)
   if (d < 30) return `${d} d ago`
   const mo = Math.floor(d / 30)
-  if (mo < 12) return `${mo} month${mo === 1 ? "" : "s"} ago`
-  const y = Math.floor(d / 365)
-  return `${y} year${y === 1 ? "" : "s"} ago`
+  if (mo < 12) return `${plural(mo, "month")} ago`
+  return `${plural(Math.floor(mo / 12), "year")} ago`
+}
+
+/**
+ * How long until a deadline: "in 5 min", "in 3 h", "in 2 d", in the steps of `timeAgo`, rounded, never less than a
+ * minute while it is ahead. A deadline that has passed reads "now": what it ends has ended or is about to.
+ */
+export function timeLeft(value: string | Date): string {
+  const ms = new Date(value).getTime() - Date.now()
+  if (!(ms > 0)) return "now"
+  const m = Math.max(1, Math.round(ms / 60_000))
+  if (m < 60) return `in ${m} min`
+  const h = Math.round(ms / 3600_000)
+  if (h < 48) return `in ${h} h`
+  return `in ${Math.round(ms / 86400_000)} d`
 }
 
 /** Re-renders on one shared timer, so every "3 min ago" on screen keeps ticking while the page is open (LD-12). */
@@ -207,37 +215,52 @@ export function useTick() {
   }, [])
 }
 
-/** An age ("18 h ago"), with the exact time in the app's time zone on hover. */
+/** An age ("18 h ago"), with the exact time on hover, keyboard focus or a tap (FW-1, MO-4). */
 export function TimeAgo({ value }: { value: string | Date | null | undefined }) {
-  const tz = useTimeZone()
+  const w = useTimeFormat()
   useTick()
   if (!value) return <span>never</span>
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <time dateTime={new Date(value).toISOString()} className="tabular-nums">
-          {timeAgo(value)}
-        </time>
-      </TooltipTrigger>
-      <TooltipContent>{formatFull(value, tz)}</TooltipContent>
-    </Tooltip>
+    <Tip content={formatTime(value, w)}>
+      <time dateTime={isoTime(value)} className="tabular-nums">
+        {timeAgo(value)}
+      </time>
+    </Tip>
   )
 }
 
-/** A time in a list: the time only for today, the date for earlier days; the full time and age on hover. */
+/** The time left to a deadline ("in 3 h"), with the exact time on hover, keyboard focus or a tap (MO-4). */
+export function TimeLeft({ value }: { value: string | Date }) {
+  const w = useTimeFormat()
+  useTick()
+  return (
+    <Tip content={formatTime(value, w)}>
+      <time dateTime={isoTime(value)} className="tabular-nums">
+        {timeLeft(value)}
+      </time>
+    </Tip>
+  )
+}
+
+/**
+ * A time in a list (FW-1): the clock for today, day and month earlier this year, the whole date before, as the Date
+ * and Time format write them; the full time and the age on hover, keyboard focus or a tap (MO-4). The cell names
+ * its instant, so it sorts by it.
+ */
 export function When({ value }: { value: string | Date | null | undefined }) {
-  const tz = useTimeZone()
+  const w = useTimeFormat()
   if (!value) return <span className="text-muted-foreground">never</span>
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <time dateTime={new Date(value).toISOString()} className="tabular-nums">
-          {formatWhen(value, tz)}
-        </time>
-      </TooltipTrigger>
-      <TooltipContent>
-        {formatFull(value, tz)} · {timeAgo(value)}
-      </TooltipContent>
-    </Tooltip>
+    <Tip
+      content={
+        <>
+          {formatTime(value, w)} · {timeAgo(value)}
+        </>
+      }
+    >
+      <time dateTime={isoTime(value)} className="tabular-nums">
+        {formatListTime(value, w)}
+      </time>
+    </Tip>
   )
 }

@@ -11,8 +11,25 @@ import {
 import { useState } from "react"
 import { Link, useNavigate, useParams } from "react-router"
 import { useCrumb } from "@/app/chrome"
+import { useDiscardGuard } from "@/components/discard-guard"
+import { FieldPicker } from "@/components/field-picker"
+import { FilterBar } from "@/components/filter-bar"
 import { ItemRow, ItemsHeader, Said } from "@/components/item-row"
-import { Copyable, Empty, Kpi, Kpis, LoadError, Loading, Locked, PageHead, Panel, UserText } from "@/components/kit"
+import {
+  BusyButton,
+  Copyable,
+  Empty,
+  Kpi,
+  Kpis,
+  LoadError,
+  Loading,
+  Locked,
+  NoValue,
+  PageHead,
+  Panel,
+  RefreshNote,
+  UserText,
+} from "@/components/kit"
 import { ListWithPanel } from "@/components/list-panel"
 import { Dot, StatusTag, When } from "@/components/status"
 import { Button } from "@/components/ui/button"
@@ -25,12 +42,14 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, useSort } from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
+import { useMediaQuery } from "@/hooks/use-mobile"
 import { api, describeError, useApi, useApiMutation } from "@/lib/api"
-import { formatDateTime, n, plural, useTimeZone } from "@/lib/time"
-import { toast } from "@/lib/toast"
+import { SPLIT_QUERY } from "@/lib/behavior"
+import { loadView } from "@/lib/load-state"
+import { formatSize, n, plural } from "@/lib/numbers"
+import { formatClockAt, formatTime, useTimeFormat } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { type DestinationKind, KindIcon } from "./destinations"
 
@@ -84,19 +103,14 @@ type Summary = {
   self: { lastRun: Run | null; lastOk: Run | null; destinations: Target[]; staleBackupHours: number }
 }
 
-export const formatSize = (bytes: number | null) =>
-  bytes === null
-    ? "–"
-    : bytes < 1024
-      ? `${n(bytes)} B`
-      : bytes < 1048576
-        ? `${(bytes / 1024).toFixed(1)} KB`
-        : bytes < 1073741824
-          ? `${(bytes / 1048576).toFixed(1)} MB`
-          : `${(bytes / 1073741824).toFixed(2)} GB`
-
 const stale = (row: BackupRow) =>
   !row.lastOk || Date.now() - new Date(row.lastOk.startedAt).getTime() > row.staleBackupHours * 3600_000
+
+/** What needs a look first (TB-11): backed up nowhere or the last run failed, then late or partly failed. */
+const backupRank = (row: BackupRow) => {
+  if (row.destinations.length === 0 || row.lastRun?.status === "failed") return 2
+  return stale(row) || row.lastRun?.status === "partial" ? 1 : 0
+}
 
 /**
  * Why a failed run failed, when its copies do not already say it: a failure before the archive was ready (the
@@ -118,7 +132,19 @@ export function BackupsPage() {
   const { id } = useParams()
   const navigate = useNavigate()
   const data = useApi<Summary>("/backups", { refetchInterval: 10_000 })
-  const run = useApiMutation<string>("POST", (target) => `/backups/${target}/run`, { invalidate: ["/backups"] })
+  // Where the list stands beside the reading pane (ListWithPanel).
+  const beside = useMediaQuery(SPLIT_QUERY)
+  // A failed refresh keeps the rows; the head says so (TB-5, LD-12).
+  const view = loadView(data)
+  // The daily time is stored as 24-hour HH:MM; only how it is shown follows the Time format (FW-9).
+  const w = useTimeFormat()
+  const target = (id: string) =>
+    id === "self" ? "the n8n-ops database" : (data.data?.instances.find((i) => i.id === id)?.name ?? "the instance")
+  const run = useApiMutation<string>("POST", (id) => `/backups/${id}/run`, {
+    invalidate: ["/backups", "/overview/attention"],
+    success: (id) => `Backup of ${target(id)} started`,
+    failed: (id) => `start the backup of ${target(id)}`,
+  })
   const s = data.data
   const backedUp = s?.instances.filter((i) => i.destinations.length) ?? []
   const okCount = backedUp.filter((i) => !stale(i)).length
@@ -140,12 +166,24 @@ export function BackupsPage() {
   const late = backedUp.length - okCount
   const none = s ? s.instances.length - backedUp.length : 0
   const enabled = s?.destinations.filter((d) => d.enabled) ?? []
+  // Failed and late first, then by name as the server sends them, the n8n-ops database last (TB-11).
   const sort = useSort(rows, {
     id: "backups",
+    rank: backupRank,
     columns: {
-      name: { label: "Instance", value: (r) => r.name },
-      lastOk: { label: "Last success", value: (r) => (r.lastOk ? new Date(r.lastOk.startedAt) : null) },
-      time: { label: "Daily at", value: (r) => r.backupTime },
+      name: { label: "Instance", kind: "text", value: (r) => r.name },
+      lastOk: {
+        label: "Last success",
+        kind: "date",
+        value: (r) => (r.lastOk ? new Date(r.lastOk.startedAt) : null),
+      },
+      time: {
+        label: "Daily at",
+        kind: "text",
+        words: { ascending: "Earliest first", descending: "Latest first" },
+        // The stored 24-hour HH:MM, which orders by the time of day whatever the Time format shows.
+        value: (r) => r.backupTime,
+      },
     },
   })
 
@@ -153,10 +191,10 @@ export function BackupsPage() {
     <>
       <PageHead
         title="Backups"
-        updatedAt={data.dataUpdatedAt || undefined}
+        live={data}
         description={
           s?.configured
-            ? `${n(okCount)} of ${n(s.instances.length)} instances backed up on time${late ? `, ${n(late)} late` : ""}${none ? `, ${n(none)} not backed up` : ""}. Encrypted with your backup public key before they are written.`
+            ? `${n(okCount)} of ${plural(s.instances.length, "instance")} backed up on time${late ? `, ${n(late)} late` : ""}${none ? `, ${n(none)} not backed up` : ""}. Encrypted with your backup public key before they are written.`
             : "Encrypted with your backup public key before they are written. Click an instance for its history and restore."
         }
       />
@@ -174,14 +212,16 @@ export function BackupsPage() {
         </Locked>
       )}
       {s && (
-        <Kpis>
+        // Beside the reading pane (from 1000px) one row of three that never stacks, so they never push the list
+        // out of sight in its narrow column (FB-17).
+        <Kpis row={beside}>
           <Kpi
             label="Backed up on time"
             icon={ShieldCheckIcon}
             value={`${n(okCount)}/${n(s.instances.length)}`}
             tone={late || none ? "warn" : undefined}
           />
-          <Kpi label="Daily backup time" icon={ClockIcon} value={s.backupTime} />
+          <Kpi label="Daily backup time" icon={ClockIcon} value={formatClockAt(s.backupTime, w)} />
           <Kpi
             label="Destinations"
             icon={HardDriveIcon}
@@ -198,142 +238,164 @@ export function BackupsPage() {
           />
         </Kpis>
       )}
-      {data.error ? (
+      {view === "failed" ? (
         <Panel>
           <LoadError what="backups" error={data.error} retry={() => data.refetch()} />
         </Panel>
-      ) : data.isLoading ? (
+      ) : view === "loading" ? (
         <Panel>
           <Loading>Loading backups…</Loading>
         </Panel>
       ) : (
-        <Table sort={sort} items={items}>
-          {items ? (
-            <ItemsHeader label="Backup" />
-          ) : (
-            <TableHeader>
-              <TableRow>
-                <TableHead sort={sort.head("name")}>Instance</TableHead>
-                <TableHead sort={sort.head("lastOk")}>Last success</TableHead>
-                <TableHead>Includes</TableHead>
-                <TableHead>To</TableHead>
-                <TableHead sort={sort.head("time")}>Daily at</TableHead>
-                {s?.configured && <TableHead />}
-              </TableRow>
-            </TableHeader>
-          )}
-          <TableBody>
-            {sort.rows.map((r) => {
-              const nowhere = r.destinations.length === 0
-              const failed = r.lastRun?.status === "failed"
-              const partial = r.lastRun?.status === "partial"
-              const late = stale(r)
-              const dot = (
-                <Dot
-                  health={nowhere || failed ? "down" : late || partial ? "warn" : "ok"}
-                  label={
-                    nowhere
-                      ? "Not backed up"
-                      : failed
-                        ? "Last backup failed"
-                        : partial
-                          ? "Some copies of the last backup failed"
-                          : late
-                            ? "Backup is late"
-                            : "Backed up on time"
-                  }
-                />
-              )
-              const lastOkTime = (
-                <span className={cn(late && !nowhere && "font-semibold text-warn")}>
-                  <When value={r.lastOk?.startedAt} />
-                </span>
-              )
-              const tag = nowhere ? (
-                <StatusTag kind="backup" status="none" />
-              ) : failed ? (
-                <StatusTag kind="backup" status="failed" />
-              ) : partial ? (
-                <StatusTag kind="backup" status="partial" />
-              ) : (
-                late && <StatusTag kind="backup" status="stale" />
-              )
-              const includes =
-                r.id === "self"
-                  ? "database dump"
-                  : r.withSecrets
-                    ? "workflows + credential secrets"
-                    : "workflows, credentials without secrets"
-              const to = nowhere ? "no destination" : r.destinations.map((d) => d.name).join(", ")
-              const runNow = s?.configured && (
-                <Button
-                  size="sm"
-                  disabled={r.lastRun?.status === "running" || nowhere}
-                  title={nowhere ? "Choose a backup destination first" : undefined}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    run.mutate(r.id, { onSuccess: () => toast.success(`Backup of ${r.name} started`) })
-                  }}
-                >
-                  <Play /> {r.lastRun?.status === "running" ? "Running…" : "Run now"}
-                </Button>
-              )
-              return (
-                <TableRow
-                  key={r.id}
-                  data-state={id === r.id ? "selected" : undefined}
-                  aria-current={id === r.id ? "true" : undefined}
-                  className="hover-row"
-                  data-href={`/backups/${r.id}`}
-                  onClick={() => navigate(`/backups/${r.id}`)}
-                >
-                  {items ? (
-                    <ItemRow
-                      lead={dot}
-                      title={<UserText>{r.name}</UserText>}
-                      titleText={r.name}
-                      end={
-                        <>
-                          <Said>Last success</Said>
-                          {lastOkTime}
-                        </>
-                      }
-                      sub={
-                        <>
-                          {tag && <>{tag} </>}
-                          {includes} · to {to}
-                        </>
-                      }
-                      subEnd={<span className="tabular-nums">daily at {r.backupTime}</span>}
-                      action={runNow || undefined}
-                    />
-                  ) : (
-                    <>
-                      <TableCell className="max-w-56 font-semibold">
-                        <span className="flex items-center gap-2">
-                          {dot}
-                          <UserText className="truncate">{r.name}</UserText>
-                        </span>
-                      </TableCell>
-                      <TableCell>
-                        <span className="flex items-center gap-2">
-                          {lastOkTime}
-                          {tag}
-                        </span>
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">{includes}</TableCell>
-                      <TableCell className={cn("max-w-56 truncate", nowhere ? "text-fail" : "text-muted-foreground")}>
-                        {to}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground tabular-nums">{r.backupTime}</TableCell>
-                      {runNow && <TableCell className="text-end">{runNow}</TableCell>}
-                    </>
-                  )}
+        <>
+          <FilterBar
+            count={s ? `${plural(s.instances.length, "instance")} and the n8n-ops database` : undefined}
+            sort={{ control: sort.control, name: "backups" }}
+          />
+          <Table items={items}>
+            {items ? (
+              <ItemsHeader label="Backup" />
+            ) : (
+              <TableHeader>
+                <TableRow>
+                  <TableHead sort={sort.head("name")}>Instance</TableHead>
+                  <TableHead sort={sort.head("lastOk")}>Last success</TableHead>
+                  <TableHead>Includes</TableHead>
+                  <TableHead>To</TableHead>
+                  <TableHead sort={sort.head("time")}>Daily at</TableHead>
+                  {s?.configured && <TableHead />}
                 </TableRow>
-              )
-            })}
-          </TableBody>
-        </Table>
+              </TableHeader>
+            )}
+            <TableBody>
+              {sort.rows.map((r) => {
+                const nowhere = r.destinations.length === 0
+                const failed = r.lastRun?.status === "failed"
+                const partial = r.lastRun?.status === "partial"
+                const late = stale(r)
+                const dot = (
+                  <Dot
+                    health={nowhere || failed ? "down" : late || partial ? "warn" : "ok"}
+                    label={
+                      nowhere
+                        ? "Not backed up"
+                        : failed
+                          ? "Last backup failed"
+                          : partial
+                            ? "Some copies of the last backup failed"
+                            : late
+                              ? "Backup is late"
+                              : "Backed up on time"
+                    }
+                  />
+                )
+                const lastOkTime = (
+                  <span className={cn(late && !nowhere && "font-semibold text-warn")}>
+                    <When value={r.lastOk?.startedAt} />
+                  </span>
+                )
+                const tag = nowhere ? (
+                  <StatusTag kind="backup" status="none" />
+                ) : failed ? (
+                  <StatusTag kind="backup" status="failed" />
+                ) : partial ? (
+                  <StatusTag kind="backup" status="partial" />
+                ) : (
+                  late && <StatusTag kind="backup" status="stale" />
+                )
+                const includes =
+                  r.id === "self"
+                    ? "database dump"
+                    : r.withSecrets
+                      ? "workflows + credential secrets"
+                      : "workflows, credentials without secrets"
+                const to = nowhere ? "no destination" : r.destinations.map((d) => d.name).join(", ")
+                // One click starts one run: the button is locked until the request ends (FB-7).
+                const button = (
+                  <BusyButton
+                    size="sm"
+                    icon={Play}
+                    busyLabel="Starting…"
+                    disabled={r.lastRun?.status === "running" || nowhere}
+                    aria-describedby={nowhere ? `run-reason-${r.id}` : undefined}
+                    onClick={(e) => e.stopPropagation()}
+                    run={() => run.mutateAsync(r.id)}
+                  >
+                    {r.lastRun?.status === "running" ? "Running…" : "Run now"}
+                  </BusyButton>
+                )
+                // A button that cannot run says why in words beside it, not in a tip (AX-9, FB-1).
+                const runNow =
+                  s?.configured &&
+                  (nowhere ? (
+                    <span className="inline-flex flex-wrap items-center gap-x-2.5 gap-y-1">
+                      {button}
+                      <span id={`run-reason-${r.id}`} className="text-small text-muted-foreground">
+                        Choose a destination first
+                      </span>
+                    </span>
+                  ) : (
+                    button
+                  ))
+                return (
+                  <TableRow
+                    key={r.id}
+                    data-state={id === r.id ? "selected" : undefined}
+                    aria-current={id === r.id ? "true" : undefined}
+                    className="hover-row"
+                    data-href={`/backups/${r.id}`}
+                    onClick={() => navigate(`/backups/${r.id}`)}
+                  >
+                    {items ? (
+                      <ItemRow
+                        lead={dot}
+                        title={<UserText>{r.name}</UserText>}
+                        titleText={r.name}
+                        end={
+                          <>
+                            <Said>Last success</Said>
+                            {lastOkTime}
+                          </>
+                        }
+                        sub={
+                          <>
+                            {tag && <>{tag} </>}
+                            {includes} · to {to}
+                          </>
+                        }
+                        subEnd={<span className="tabular-nums">daily at {formatClockAt(r.backupTime, w)}</span>}
+                        action={runNow || undefined}
+                      />
+                    ) : (
+                      <>
+                        <TableCell className="max-w-56 font-semibold" truncate title={r.name}>
+                          <span className="flex items-center gap-2">
+                            {dot}
+                            <UserText className="truncate">{r.name}</UserText>
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          <span className="flex items-center gap-2">
+                            {lastOkTime}
+                            {tag}
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">{includes}</TableCell>
+                        <TableCell className={cn("max-w-56", nowhere ? "text-fail" : "text-muted-foreground")} truncate>
+                          {to}
+                        </TableCell>
+                        <TableCell className="text-muted-foreground tabular-nums">
+                          {formatClockAt(r.backupTime, w)}
+                        </TableCell>
+                        {runNow && <TableCell className="text-end">{runNow}</TableCell>}
+                      </>
+                    )}
+                  </TableRow>
+                )
+              })}
+            </TableBody>
+          </Table>
+        </>
       )}
     </>
   )
@@ -351,7 +413,7 @@ export function BackupsPage() {
 
 /** Where each copy of a run is, and how it went. */
 function Copies({ copies }: { copies: Copy[] }) {
-  const tz = useTimeZone()
+  const w = useTimeFormat()
   if (!copies.length) return null
   return (
     <ul className="mt-1.5 grid gap-1">
@@ -365,7 +427,9 @@ function Copies({ copies }: { copies: Copy[] }) {
             </span>
             <StatusTag kind="copy" status={status} />
             {c.status === "ok" && !c.deletedAt && c.retainUntil && new Date(c.retainUntil) > new Date() && (
-              <span className="text-muted-foreground">locked until {formatDateTime(c.retainUntil, tz)}</span>
+              <span className="text-muted-foreground">
+                locked until {formatTime(c.retainUntil, w, { seconds: false })}
+              </span>
             )}
             {c.status === "pending" && c.attempts > 0 && (
               <span className="text-muted-foreground">tried {plural(c.attempts, "time")}, trying again</span>
@@ -393,19 +457,25 @@ function BackupHistory({ id, name }: { id: string; name: string }) {
         </h2>
         {runs.data && (
           <p className="mt-1 text-muted-foreground">
-            {plural(list.length, "run")} · {n(list.filter((r) => r.status === "failed").length)} failed
+            {plural(list.length, "run")}
+            {/* Only failures that happened are counted (FW-3). */}
+            {list.some((r) => r.status === "failed") &&
+              ` · ${n(list.filter((r) => r.status === "failed").length)} failed`}
+            {/* A failed refresh keeps the history on screen and says so here (TB-5, LD-12). */}
+            <RefreshNote live={runs} separator=" · " />
           </p>
         )}
       </div>
-      {runs.error ? (
+      {loadView(runs) === "failed" ? (
         <LoadError what="the backup history" error={runs.error} retry={() => runs.refetch()} />
-      ) : runs.isLoading ? (
+      ) : loadView(runs) === "loading" ? (
         <Loading>Loading the backup history…</Loading>
       ) : list.length === 0 ? (
         <Panel>
           <Empty title="No backups yet.">The first one runs at the daily backup time, or use Run now.</Empty>
         </Panel>
       ) : (
+        // No Sort button (TB-28): the runs of one backup, newest first, read in that order.
         <Table>
           <TableHeader>
             <TableRow>
@@ -449,12 +519,14 @@ function BackupHistory({ id, name }: { id: string; name: string }) {
                   <Copies copies={r.copies ?? []} />
                 </TableCell>
                 <TableCell className="text-end align-top tabular-nums">
-                  {r.workflows === null ? "–" : n(r.workflows)}
+                  {r.workflows === null ? <NoValue /> : n(r.workflows)}
                 </TableCell>
                 <TableCell className="text-end align-top tabular-nums">
-                  {r.credentials === null ? "–" : n(r.credentials)}
+                  {r.credentials === null ? <NoValue /> : n(r.credentials)}
                 </TableCell>
-                <TableCell className="text-end align-top tabular-nums">{formatSize(r.sizeBytes)}</TableCell>
+                <TableCell className="text-end align-top tabular-nums">
+                  {r.sizeBytes === null ? <NoValue /> : formatSize(r.sizeBytes)}
+                </TableCell>
                 <TableCell className="text-end align-top">
                   {restorable(r) && id !== "self" && (
                     <Button size="sm" onClick={() => setRestoring(r)}>
@@ -485,7 +557,7 @@ type Inspection = {
 }
 
 function RestoreDialog({ run, instanceId, onClose }: { run: Run | null; instanceId: string; onClose: () => void }) {
-  const tz = useTimeZone()
+  const w = useTimeFormat()
   const instances = useApi<{ instances: { id: string; name: string }[] }>(run ? "/instances" : null)
   const [key, setKey] = useState("")
   const [inspection, setInspection] = useState<Inspection | null>(null)
@@ -495,7 +567,8 @@ function RestoreDialog({ run, instanceId, onClose }: { run: Run | null; instance
   const [error, setError] = useState("")
   const [busy, setBusy] = useState(false)
 
-  const reset = () => {
+  // Clearing the fields is part of the close, so a typed key is asked about before it is dropped (DS-9).
+  const guard = useDiscardGuard(!result && key.trim() !== "", () => {
     setKey("")
     setInspection(null)
     setWorkflowId("")
@@ -503,7 +576,7 @@ function RestoreDialog({ run, instanceId, onClose }: { run: Run | null; instance
     setResult(null)
     setError("")
     onClose()
-  }
+  })
   async function step(fn: () => Promise<void>) {
     setBusy(true)
     setError("")
@@ -516,10 +589,10 @@ function RestoreDialog({ run, instanceId, onClose }: { run: Run | null; instance
     }
   }
   return (
-    <Dialog open={run !== null} onOpenChange={(o) => !o && reset()}>
+    <Dialog open={run !== null} onOpenChange={guard.onOpenChange}>
       <DialogContent className="md:max-w-lg" keepOnBackdrop>
         <DialogHeader icon={ArchiveRestoreIcon}>
-          <DialogTitle>Restore from {run ? formatDateTime(run.startedAt, tz) : ""}</DialogTitle>
+          <DialogTitle>Restore from {run ? formatTime(run.startedAt, w, { seconds: false }) : ""}</DialogTitle>
           <DialogDescription>
             Restores one workflow with its credentials as an inactive copy. Your private key is used in memory and never
             stored.
@@ -558,18 +631,14 @@ function RestoreDialog({ run, instanceId, onClose }: { run: Run | null; instance
           <FieldGroup>
             <Field>
               <FieldLabel>Workflow</FieldLabel>
-              <Select value={workflowId} onValueChange={setWorkflowId}>
-                <SelectTrigger className="w-full" aria-label="Workflow">
-                  <SelectValue placeholder="Choose a workflow" />
-                </SelectTrigger>
-                <SelectContent>
-                  {inspection.workflows.map((w) => (
-                    <SelectItem key={w.id} value={w.id}>
-                      {w.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <FieldPicker
+                label="Workflow"
+                listLabel="Workflows"
+                placeholder="Choose a workflow"
+                value={workflowId}
+                onChange={setWorkflowId}
+                options={inspection.workflows.map((w) => ({ value: w.id, label: w.name }))}
+              />
               {!inspection.manifest?.includesSecrets && (
                 <FieldDescription>
                   This archive has no credential secrets; credentials must be set in n8n after restoring.
@@ -578,34 +647,34 @@ function RestoreDialog({ run, instanceId, onClose }: { run: Run | null; instance
             </Field>
             <Field>
               <FieldLabel>Restore into</FieldLabel>
-              <Select value={target} onValueChange={setTarget}>
-                <SelectTrigger className="w-full" aria-label="Restore into">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {(instances.data?.instances ?? []).map((i) => (
-                    <SelectItem key={i.id} value={i.id}>
-                      {i.name}
-                      {i.id === instanceId ? " (same instance)" : ""}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <FieldPicker
+                label="Restore into"
+                listLabel="Instances"
+                value={target}
+                onChange={setTarget}
+                options={(instances.data?.instances ?? []).map((i) => ({
+                  value: i.id,
+                  label: i.name,
+                  hint: i.id === instanceId ? "same instance" : undefined,
+                }))}
+              />
             </Field>
           </FieldGroup>
         )}
         {error && <FieldError>{error}</FieldError>}
         <DialogFooter>
           {result ? (
-            <Button variant="primary" onClick={reset}>
+            <Button variant="primary" onClick={() => void guard.requestClose("finished")}>
               Done
             </Button>
           ) : !inspection ? (
             <>
-              <Button onClick={reset}>Cancel</Button>
-              <Button
+              <Button onClick={() => void guard.requestClose()}>Cancel</Button>
+              <BusyButton
                 variant="primary"
-                disabled={!key.trim() || busy}
+                disabled={!key.trim()}
+                busy={busy}
+                busyLabel="Opening…"
                 onClick={() =>
                   step(async () =>
                     setInspection(
@@ -617,15 +686,17 @@ function RestoreDialog({ run, instanceId, onClose }: { run: Run | null; instance
                   )
                 }
               >
-                {busy ? "Opening…" : "Open archive"}
-              </Button>
+                Open archive
+              </BusyButton>
             </>
           ) : (
             <>
-              <Button onClick={reset}>Cancel</Button>
-              <Button
+              <Button onClick={() => void guard.requestClose()}>Cancel</Button>
+              <BusyButton
                 variant="primary"
-                disabled={!workflowId || busy}
+                disabled={!workflowId}
+                busy={busy}
+                busyLabel="Restoring…"
                 onClick={() =>
                   step(async () =>
                     setResult(
@@ -637,8 +708,8 @@ function RestoreDialog({ run, instanceId, onClose }: { run: Run | null; instance
                   )
                 }
               >
-                {busy ? "Restoring…" : "Restore"}
-              </Button>
+                Restore
+              </BusyButton>
             </>
           )}
         </DialogFooter>

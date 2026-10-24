@@ -234,19 +234,31 @@ test("forum topics are set in Settings > Telegram and keep their order through D
   await page.getByLabel("Default topic").fill("12")
   await page.getByLabel("Access requests topic").fill("34")
   await page.getByRole("button", { name: "Add route" }).click()
-  await page.getByRole("combobox", { name: "Route 1 instance" }).click()
+  await page.getByRole("button", { name: /^Route 1 instance:/ }).click()
   await page.getByRole("option", { name: "e2e-n8n", exact: true }).click()
   await page.getByLabel("Route 1 topic").fill("21")
   await page.getByRole("button", { name: "Add route" }).click()
-  await expect(page.getByText("Choose an instance, or type a workflow pattern or a tag.")).toBeVisible()
-  await page.getByLabel("Route 2 workflow pattern").fill("orders|leads")
   await page.getByLabel("Route 2 topic").fill("22")
   await expect(page.getByText("3 unsaved changes")).toBeVisible()
+
+  // A route without a condition is refused before anything is sent: it is marked and its field takes the focus.
+  await page.getByRole("button", { name: "Save" }).click()
+  await expect(
+    page.getByRole("listitem", { name: "Route 2" }).getByText(
+      "route 2: choose an instance, or type a workflow pattern or a tag",
+    ),
+  ).toBeVisible()
+  await expect(page.getByRole("button", { name: /^Route 2 instance:/ })).toBeFocused()
+  expect((await (await page.request.get("/api/settings/telegram")).json()).routes).toEqual([])
+
+  await page.getByLabel("Route 2 workflow pattern").fill("orders|leads")
   await page.getByRole("button", { name: "Save" }).click()
   await expect(page.getByText("Settings saved")).toBeVisible()
 
   await page.reload()
-  await expect(page.getByRole("combobox", { name: "Route 1 instance" })).toHaveText("e2e-n8n")
+  await expect(page.getByRole("button", { name: /^Route 1 instance:/ })).toHaveAccessibleName(
+    "Route 1 instance: e2e-n8n",
+  )
   await expect(page.getByLabel("Route 2 workflow pattern")).toHaveValue("orders|leads")
 
   // A new order is a change; Discard brings the saved order back.
@@ -254,7 +266,9 @@ test("forum topics are set in Settings > Telegram and keep their order through D
   await expect(page.getByLabel("Route 1 workflow pattern")).toHaveValue("orders|leads")
   await expect(page.getByText("1 unsaved change")).toBeVisible()
   await page.getByRole("button", { name: "Discard" }).click()
-  await expect(page.getByRole("combobox", { name: "Route 1 instance" })).toHaveText("e2e-n8n")
+  await expect(page.getByRole("button", { name: /^Route 1 instance:/ })).toHaveAccessibleName(
+    "Route 1 instance: e2e-n8n",
+  )
 
   // Editing a saved route is a change too, and a new order is saved.
   await page.getByLabel("Route 1 topic").fill("23")
@@ -280,6 +294,15 @@ test("the test message and access requests go to their topics, and to General wh
       .slice(before)
       .map((c) => c.body.message_thread_id),
   ).toEqual([12])
+
+  // The test takes the topic on screen, before it is saved.
+  await page.getByLabel("Default topic").fill("13")
+  const typed = sends().length
+  await page.getByRole("button", { name: "Send test message" }).click()
+  await expect.poll(() => sends().slice(typed)[0]?.body.message_thread_id).toBe(13)
+  await expect(page.getByRole("status").getByText("Accepted")).toBeVisible()
+  await page.getByRole("button", { name: "Discard" }).click()
+  await expect(page.getByLabel("Default topic")).toHaveValue("12")
 
   const reason = "Read the topic routing of alerts (topics)"
   await ask(request, reason)
@@ -327,4 +350,40 @@ test("the test message and access requests go to their topics, and to General wh
   await page.getByRole("button", { name: "Save" }).click()
   await expect(page.getByText("Settings saved")).toBeVisible()
   await expect(page.getByText("No routes. Every alert goes to the default topic.")).toBeVisible()
+})
+
+test("a new SMTP server needs the password again, so the stored one is not sent to it", async () => {
+  const put = (body: object) => page.request.put("/api/settings/email", { data: body })
+  const stored = async () => (await page.request.get("/api/settings/email")).json()
+  try {
+    expect((await put({ smtpPassword: "e2e-smtp-secret" })).ok()).toBe(true)
+    // A save that keeps the server keeps the stored password.
+    expect((await put({ smtpHost: "mail", smtpPort: 1025 })).ok()).toBe(true)
+    const refused = await put({ smtpHost: "smtp.elsewhere.example" })
+    expect(refused.status()).toBe(400)
+    expect((await refused.json()).error).toBe("password_needed")
+
+    await page.goto("/settings/email")
+    await page.getByLabel("SMTP server").fill("smtp.elsewhere.example")
+    await page.getByRole("button", { name: "Save" }).click()
+    // Found before anything is sent: the password field opens for the new value, is marked and takes the focus.
+    await expect(
+      page.getByText(/^SMTP password: the SMTP server or user changed\. Enter the SMTP password again/),
+    ).toBeVisible()
+    const password = page.getByPlaceholder("New value")
+    await expect(password).toBeFocused()
+    await expect(password).toHaveAttribute("aria-invalid", "true")
+    expect((await stored()).smtpHost).toBe("mail")
+
+    // A new server with the password removed is allowed.
+    // Exact names: each recipient chip has a "Remove <address>" button of its own.
+    await page.getByRole("button", { name: "Keep", exact: true }).click()
+    await page.getByRole("button", { name: "Remove", exact: true }).click()
+    await page.getByRole("button", { name: "Save" }).click()
+    await expect(page.getByText("Settings saved")).toBeVisible()
+    expect(await stored()).toMatchObject({ smtpHost: "smtp.elsewhere.example", smtpPasswordSet: false })
+  } finally {
+    // Later specs send email through the test stack's mail server.
+    expect((await put({ smtpHost: "mail", smtpPort: 1025, smtpPassword: null })).ok()).toBe(true)
+  }
 })

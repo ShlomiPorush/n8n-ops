@@ -1,3 +1,18 @@
+import {
+  dateFormats,
+  isDateFormat,
+  isRoutePattern,
+  isTimeFormat,
+  maxTopicId,
+  type NumberLimits,
+  numberProblem,
+  routeWords,
+  settingKinds,
+  settingLabel,
+  timeFormats,
+  topicWords,
+  valueProblem,
+} from "@n8n-ops/shared"
 import { eq } from "drizzle-orm"
 import { z } from "zod"
 import type { Db } from "../db/client.ts"
@@ -47,18 +62,12 @@ export const isTimeZone = (value: unknown): value is string =>
 /** Whether General may be saved with this time zone: a zone name, empty (UTC), or the one already stored. */
 export const mayStoreTimeZone = (stored: unknown, next: unknown) => next === stored || next === "" || isTimeZone(next)
 
-/** A Telegram forum topic: the `message_thread_id`, a PostgreSQL integer. */
-export const topicIdSchema = z.number().int().min(1).max(2_147_483_647)
-
-/** Whether a route's workflow pattern compiles the way it is matched: case-insensitive, Unicode. */
-export function isRoutePattern(pattern: string) {
-  try {
-    new RegExp(pattern, "iu")
-    return true
-  } catch {
-    return false
-  }
-}
+/** A Telegram forum topic: the `message_thread_id`, a PostgreSQL integer. Refused in the words the UI uses. */
+export const topicIdSchema = z
+  .number({ error: topicWords })
+  .int({ error: topicWords })
+  .min(1, { error: topicWords })
+  .max(maxTopicId, { error: topicWords })
 
 /** Trimmed text, with an empty value read as not set, so an empty field never becomes a condition. */
 const condition = (max: number) =>
@@ -73,13 +82,39 @@ export const telegramRouteSchema = z
     /** The instance's ID. A route of a removed instance stays, matching nothing, until it is deleted. */
     instanceId: condition(64),
     /** Regular expression for the workflow name, case-insensitive. */
-    workflow: condition(200).refine((p) => p === undefined || isRoutePattern(p), "not a valid regular expression"),
+    workflow: condition(200).refine((p) => p === undefined || isRoutePattern(p), routeWords.pattern),
     /** A workflow tag, case-insensitive. */
     tag: condition(100),
     threadId: topicIdSchema,
   })
-  .refine((r) => Boolean(r.instanceId || r.workflow || r.tag), "set an instance, a workflow pattern or a tag")
+  .refine((r) => Boolean(r.instanceId || r.workflow || r.tag), routeWords.condition)
 export type TelegramRoute = z.infer<typeof telegramRouteSchema>
+
+type SmtpAccount = { smtpHost?: unknown; smtpPort?: unknown; smtpUser?: unknown }
+
+/** The SMTP account as a comparable text: host without case or spaces, the port as a number, the user trimmed. */
+const smtpAccount = (v: SmtpAccount) =>
+  JSON.stringify([
+    String(v.smtpHost ?? "")
+      .trim()
+      .toLowerCase(),
+    Number(v.smtpPort ?? 0),
+    String(v.smtpUser ?? "").trim(),
+  ])
+
+/**
+ * Whether an Email save would send the stored SMTP password where it was not given: the host, port or user
+ * really changed (case, spaces and "587" against 587 do not count) and the save brings no new password (FS-5).
+ */
+export const smtpPasswordNeeded = (
+  current: SmtpAccount & { smtpPasswordEnc?: unknown },
+  next: SmtpAccount,
+  newPassword: unknown,
+) =>
+  Boolean(current.smtpPasswordEnc) &&
+  !(typeof newPassword === "string" && newPassword.length > 0) &&
+  newPassword !== null &&
+  smtpAccount(current) !== smtpAccount(next)
 
 export const sections = {
   general: z.object({
@@ -87,6 +122,9 @@ export const sections = {
     publicUrl: z.string(),
     /** Empty means UTC. A new value must also pass isTimeZone (checked where it is saved). */
     timezone: z.string().refine((v) => v === "" || isKnownZone(v), "choose a time zone from the list"),
+    /** How the console, the emails and Telegram write a date and a time (FW-9, EM-6). */
+    dateFormat: z.enum(dateFormats),
+    timeFormat: z.enum(timeFormats),
     /** Which of the two web designs the whole installation uses. */
     design: z.enum(designs),
   }),
@@ -165,7 +203,7 @@ export type SectionName = keyof typeof sections
 export type Section<K extends SectionName> = z.infer<(typeof sections)[K]>
 
 export const defaults: { [K in SectionName]: Section<K> } = {
-  general: { publicUrl: "", timezone: "UTC", design: "regular" },
+  general: { publicUrl: "", timezone: "UTC", dateFormat: "browser", timeFormat: "24h", design: "regular" },
   defaults: {
     pollIntervalSec: 60,
     healthIntervalSec: 30,
@@ -204,8 +242,84 @@ export const defaults: { [K in SectionName]: Section<K> } = {
   keys: {},
 }
 
+/** The range of each number setting of a section, read from its schema, so the UI checks the same (SV-1). */
+export function numberLimits(section: SectionName): Record<string, NumberLimits> {
+  const out: Record<string, NumberLimits> = {}
+  for (const [name, schema] of Object.entries(sections[section].shape)) {
+    if (!(schema instanceof z.ZodNumber)) continue
+    // .int() alone bounds a number by the safe integers; only a limit set on purpose is one.
+    const set = (v: number | null) => v !== null && Math.abs(v) < Number.MAX_SAFE_INTEGER
+    const { minValue, maxValue } = schema
+    out[name] = {
+      ...(set(minValue) ? { min: minValue as number } : {}),
+      ...(set(maxValue) ? { max: maxValue as number } : {}),
+    }
+  }
+  return out
+}
+
+export type Issue = { path: (string | number)[]; message: string }
+
+/**
+ * Checks the fields a save changes beyond their type, as the UI does before it sends them: list entries, the chat,
+ * addresses (SV-12). Only changed fields: an entry stored before these checks stays until its field is edited.
+ */
+export function changedValueIssues(
+  section: SectionName,
+  stored: Record<string, unknown>,
+  next: Record<string, unknown>,
+): Issue[] {
+  const kinds = settingKinds[section] ?? {}
+  return Object.entries(kinds).flatMap(([field, kind]) => {
+    if (JSON.stringify(stored[field]) === JSON.stringify(next[field])) return []
+    const problem = valueProblem(kind, next[field])
+    return problem ? [{ path: [field], message: problem }] : []
+  })
+}
+
+/** Schema issues in words that follow the field's label, instead of the schema's own ("Too small: expected…"). */
+export function wordedIssues(section: SectionName, issues: readonly z.core.$ZodIssue[]): Issue[] {
+  const limits = numberLimits(section)
+  const kinds = settingKinds[section] ?? {}
+  return issues.map((issue) => {
+    const field = String(issue.path[0] ?? "")
+    const kind = kinds[field]
+    const message =
+      field in limits
+        ? numberProblem(undefined, limits[field] ?? {})
+        : kind
+          ? valueProblem(kind, undefined)
+          : issue.code === "invalid_value"
+            ? `choose one of ${issue.values.map(String).join(", ")}`
+            : issue.message
+    // A refused topic route is named by its place in the list: "Topic routes: route 2: …".
+    const route = field === "routes" && typeof issue.path[1] === "number" ? `route ${issue.path[1] + 1}: ` : ""
+    return { path: field ? [field] : [], message: route + (message ?? issue.message) }
+  })
+}
+
+/** The answer to a save the checks refused: each field named by its label, as "<Label>: <problem>" (SV-1). */
+export function invalidAnswer(section: SectionName, issues: Issue[]) {
+  return {
+    error: "invalid",
+    issues,
+    message: issues.map((i) => `${settingLabel(section, String(i.path[0] ?? section))}: ${i.message}`).join(" "),
+  }
+}
+
 export type SettingsStore = {
+  /**
+   * The settings in effect: stored values over the defaults, and the public URL from N8N_OPS_PUBLIC_URL while
+   * none is stored.
+   */
   get<K extends SectionName>(key: K): Promise<Section<K>>
+  /**
+   * What is stored, over the defaults, without anything taken from the environment. A save starts from this, so
+   * a value from the environment is never written by a save that did not change it (FS-6).
+   */
+  stored<K extends SectionName>(key: K): Promise<Section<K>>
+  /** Values the environment provides when none is stored: N8N_OPS_PUBLIC_URL. */
+  fromEnv(): { publicUrl?: string }
   set<K extends SectionName>(key: K, value: Section<K>): Promise<void>
   /** Effective settings for one instance: global defaults with its overrides applied. */
   forInstance(overrides: Record<string, unknown>): Promise<InstanceSettings>
@@ -234,6 +348,15 @@ export function createSettings(db: Db, env: { publicUrl?: string } = {}): Settin
   let generalVersion = 0
 
   async function get<K extends SectionName>(key: K): Promise<Section<K>> {
+    const value = await stored(key)
+    if (key === "general" && env.publicUrl) {
+      const general = value as Section<"general">
+      if (!general.publicUrl) return { ...general, publicUrl: env.publicUrl } as Section<K>
+    }
+    return value
+  }
+
+  async function stored<K extends SectionName>(key: K): Promise<Section<K>> {
     const [row] = await db.select().from(settingsTable).where(eq(settingsTable.key, key))
     const stored = { ...((row?.value as Record<string, unknown>) ?? {}) }
     // An unknown stored design falls back on its own; it must not reset the rest of General.
@@ -241,17 +364,15 @@ export function createSettings(db: Db, env: { publicUrl?: string } = {}): Settin
     // So does a time zone Intl does not know, saved before time zones were checked: it reads as UTC.
     if (key === "general" && "timezone" in stored && stored.timezone !== "" && !isKnownZone(stored.timezone))
       delete stored.timezone
+    // And a date or time format this release does not know: it reads as its default (FW-9).
+    if (key === "general" && "dateFormat" in stored && !isDateFormat(stored.dateFormat)) delete stored.dateFormat
+    if (key === "general" && "timeFormat" in stored && !isTimeFormat(stored.timeFormat)) delete stored.timeFormat
     // A route that no longer passes is left out alone; the bot token and chat must not fall back with it.
     if (key === "telegram" && Array.isArray(stored.routes))
       stored.routes = stored.routes.filter((r) => telegramRouteSchema.safeParse(r).success).slice(0, 50)
     const merged = { ...defaults[key], ...stored }
     const parsed = sections[key].safeParse(merged)
-    const value = (parsed.success ? parsed.data : defaults[key]) as Section<K>
-    if (key === "general" && env.publicUrl) {
-      const general = value as Section<"general">
-      if (!general.publicUrl) return { ...general, publicUrl: env.publicUrl } as Section<K>
-    }
-    return value
+    return (parsed.success ? parsed.data : defaults[key]) as Section<K>
   }
 
   async function write<K extends SectionName>(key: K, parsed: Section<K>) {
@@ -263,6 +384,8 @@ export function createSettings(db: Db, env: { publicUrl?: string } = {}): Settin
 
   return {
     get,
+    stored,
+    fromEnv: () => (env.publicUrl ? { publicUrl: env.publicUrl } : {}),
     async set(key, value) {
       const parsed = sections[key].parse(value) as typeof value
       if (key !== "general") return write(key, parsed)

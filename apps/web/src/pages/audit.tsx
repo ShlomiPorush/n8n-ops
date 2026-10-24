@@ -7,7 +7,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { api } from "@/lib/api"
 import { loadView } from "@/lib/load-state"
-import { formatDateTime, formatFull, n, plural, useTimeZone } from "@/lib/time"
+import { n, plural } from "@/lib/numbers"
+import { formatDateTime, formatFull, useTimeZone } from "@/lib/time"
 
 type Entry = { id: number; at: string; actor: string; action: string; target: string; via: string }
 
@@ -91,7 +92,7 @@ export function AuditPage() {
       updated={false}
       description={
         query.data
-          ? `${n(rows.length)}${query.hasNextPage ? "+" : ""} entries. Logins, settings, keys, tokens, restores, moves and exports.`
+          ? `${query.hasNextPage ? `${n(rows.length)}+ entries` : plural(rows.length, "entry", "entries")}. Logins, settings, keys, tokens, restores, moves and exports.`
           : "Logins, settings, keys, tokens, restores, moves and exports."
       }
     >

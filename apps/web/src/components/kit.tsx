@@ -807,6 +807,19 @@ export function UserText({
   )
 }
 
+/**
+ * A muted "-" where there is nothing to measure or nothing was recorded, never a made-up 0 (FB-8). A screen reader
+ * hears `said` instead of the dash.
+ */
+export function NoValue({ said = "Not recorded" }: { said?: string }) {
+  return (
+    <span className="text-muted-foreground">
+      <span aria-hidden="true">-</span>
+      <span className="sr-only">{said}</span>
+    </span>
+  )
+}
+
 export {
   countChanges,
   type FieldProblem,

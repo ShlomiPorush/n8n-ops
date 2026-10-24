@@ -11,9 +11,9 @@ import {
 import { useConfirm } from "@/components/confirm"
 import { Button } from "@/components/ui/button"
 import { describeError } from "@/lib/api"
+import { plural } from "@/lib/numbers"
 import { stayAfterBlock } from "@/lib/overlay-history"
 import { unsavedGuardOn } from "@/lib/session"
-import { plural } from "@/lib/time"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
 

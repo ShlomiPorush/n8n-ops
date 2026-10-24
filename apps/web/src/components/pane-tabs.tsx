@@ -6,8 +6,8 @@ import { useCrumb } from "@/app/chrome"
 import { usePaneNav } from "@/components/list-panel"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { n } from "@/lib/numbers"
 import { useOverlaysHeld } from "@/lib/overlay-history"
-import { n } from "@/lib/time"
 import { cn } from "@/lib/utils"
 
 /*

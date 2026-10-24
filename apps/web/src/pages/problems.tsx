@@ -69,8 +69,9 @@ import {
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { api, refreshAreas, useApi, useApiMutation } from "@/lib/api"
 import { loadView } from "@/lib/load-state"
+import { countOf, n, plural, word } from "@/lib/numbers"
 import { useNavigateFromOverlay } from "@/lib/overlay-history"
-import { countOf, formatDateTime, n, plural, useTimeZone } from "@/lib/time"
+import { formatDateTime, useTimeZone } from "@/lib/time"
 import { toast } from "@/lib/toast"
 import { offerUndo } from "@/lib/undo"
 import { cn } from "@/lib/utils"
@@ -208,7 +209,7 @@ export function ProblemsTable({
                 end={
                   <>
                     <b className="font-semibold">{n(p.count)}</b>{" "}
-                    <span className="text-small text-muted-foreground">{p.count === 1 ? "failure" : "failures"}</span>
+                    <span className="text-small text-muted-foreground">{word(p.count, "failure")}</span>
                   </>
                 }
                 sub={
@@ -689,7 +690,7 @@ export function ProblemDetail({ id }: { id: string }) {
         <PaneTabPanel value="overview">
           <Kpis className={kpisInPane}>
             <Kpi
-              label={p.count === 1 ? "Failure" : "Failures"}
+              label={word(p.count, "Failure")}
               icon={ActivityIcon}
               value={p.count}
               tone={p.status === "open" ? "fail" : undefined}
@@ -735,7 +736,7 @@ export function ProblemDetail({ id }: { id: string }) {
               title="Input of the Failed Node"
               description={
                 p.nodeInput.length
-                  ? `${n(p.nodeInput.length)} item${p.nodeInput.length === 1 ? "" : "s"}; the first is shown.`
+                  ? `${plural(p.nodeInput.length, "item")}; the first is shown.`
                   : "No input was recorded."
               }
             />
@@ -819,7 +820,7 @@ export function ProblemDetail({ id }: { id: string }) {
           <PaneTabPanel value="same">
             <Panel>
               <PanelHead
-                title={`Same Error in ${n(p.sameError.length)} Other ${p.sameError.length === 1 ? "Workflow" : "Workflows"}`}
+                title={`Same Error in ${plural(p.sameError.length, "Other Workflow")}`}
                 description="Grouped into one Telegram message."
               />
               {p.sameError.map((s) => (
@@ -899,8 +900,8 @@ function MergeDialog({
         <DialogHeader icon={GitMergeIcon}>
           <DialogTitle>Merge into Another Problem</DialogTitle>
           <DialogDescription>
-            Its {n(problem.count)} {problem.count === 1 ? "failure moves" : "failures move"} to the chosen problem, and
-            future failures with this error count there too.
+            Its {plural(problem.count, "failure moves", "failures move")} to the chosen problem, and future failures
+            with this error count there too.
           </DialogDescription>
         </DialogHeader>
         {candidates.isLoading ? (

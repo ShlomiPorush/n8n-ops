@@ -20,6 +20,7 @@ import {
   Empty,
   LoadError,
   Loading,
+  NoValue,
   Page,
   Panel,
   PanelHead,
@@ -45,7 +46,7 @@ import { FieldError } from "@/components/ui/field"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, useSort } from "@/components/ui/table"
 import { api, describeError, queryClient, useApi, useApiMutation } from "@/lib/api"
 import { loadView } from "@/lib/load-state"
-import { n, plural } from "@/lib/time"
+import { counts, errorRate, n, plural } from "@/lib/numbers"
 import { cn } from "@/lib/utils"
 
 type WorkflowRow = {
@@ -77,6 +78,40 @@ type MapData = {
 /** Error rate above which a workflow's failures stand out (percent of its runs in 30 days). */
 const ERROR_RATE_FAIL = 3
 
+/** "12 workflows · 2 duplicated · 3 inactive", without a kind that has none (FW-3). */
+export function mapSummary(workflows: number, duplicated: number, inactive: number): string {
+  const kinds = counts(
+    [
+      [duplicated, "duplicated"],
+      [inactive, "inactive"],
+    ],
+    " · ",
+  )
+  return kinds ? `${plural(workflows, "workflow")} · ${kinds}` : plural(workflows, "workflow")
+}
+
+/** The share of runs that failed in 30 days; without runs a muted "-", not 0% (FB-8). */
+function ErrorRateCell({ rate, errors, runs }: { rate: number | null; errors: number; runs: number }) {
+  if (rate === null)
+    return (
+      <TableCell className="text-end" title="No runs in the last 30 days">
+        <NoValue said="No runs in the last 30 days" />
+      </TableCell>
+    )
+  return (
+    <TableCell
+      className={cn(
+        "text-end tabular-nums",
+        rate > ERROR_RATE_FAIL ? "font-semibold text-fail" : "text-muted-foreground",
+      )}
+      title={`${n(errors)} of ${plural(runs, "run")} failed`}
+    >
+      {rate}%
+      <RateBar rate={rate} tone={rate > ERROR_RATE_FAIL ? "fail" : rate > 0 ? "warn" : "ok"} />
+    </TableCell>
+  )
+}
+
 /** Regular: the insight panels are summary cards whose lines run without rules (#29). */
 const summary = "regular:pb-3 regular:[&>:not(header)]:border-t-0 regular:[&>:not(header)]:py-2"
 
@@ -105,7 +140,7 @@ export function WorkflowsPage() {
   const ins = data.data?.insights
   const rows = data.data?.workflows ?? []
   const filtered = Boolean(q) || instance !== "all"
-  const rate = (w: WorkflowRow) => (w.runs30d ? Math.round((w.errors30d / w.runs30d) * 1000) / 10 : 0)
+  const rate = (w: WorkflowRow) => errorRate(w.errors30d, w.runs30d)
   const sort = useSort(rows, {
     id: "workflows",
     columns: {
@@ -114,7 +149,7 @@ export function WorkflowsPage() {
       trigger: { label: "Trigger", kind: "text", value: (w) => w.triggerType },
       lastRun: { label: "Last run", kind: "date", value: (w) => (w.lastRunAt ? new Date(w.lastRunAt) : null) },
       runs: { label: "Runs 30d", kind: "number", value: (w) => w.runs30d },
-      errors: { label: "Errors", kind: "number", value: (w) => (w.runs30d ? rate(w) : null) },
+      errors: { label: "Errors", kind: "number", value: rate },
     },
   })
 
@@ -125,7 +160,7 @@ export function WorkflowsPage() {
       updated={false}
       description={
         ins && !filtered
-          ? `${n(rows.length)} workflows · ${n(ins.duplicateGroups.length)} duplicated · ${n(ins.inactive)} inactive. Read from every instance every 30 minutes.`
+          ? `${mapSummary(rows.length, ins.duplicateGroups.length, ins.inactive)}. Read from every instance every 30 minutes.`
           : "Every workflow on every instance, refreshed every 30 minutes. Duplicates and unused instances help consolidate."
       }
       actions={
@@ -293,16 +328,7 @@ export function WorkflowsPage() {
                     <When value={w.lastRunAt} />
                   </TableCell>
                   <TableCell className="text-end tabular-nums">{n(w.runs30d)}</TableCell>
-                  <TableCell
-                    className={cn(
-                      "text-end tabular-nums",
-                      rate(w) > ERROR_RATE_FAIL ? "font-semibold text-fail" : "text-muted-foreground",
-                    )}
-                    title={`${n(w.errors30d)} of ${n(w.runs30d)} runs failed`}
-                  >
-                    {rate(w)}%
-                    <RateBar rate={rate(w)} tone={rate(w) > ERROR_RATE_FAIL ? "fail" : rate(w) > 0 ? "warn" : "ok"} />
-                  </TableCell>
+                  <ErrorRateCell rate={rate(w)} errors={w.errors30d} runs={w.runs30d} />
                   <TableCell className="text-end">
                     <Button size="sm" onClick={() => setMoving(w)}>
                       Move <ArrowRight />

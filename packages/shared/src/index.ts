@@ -6,6 +6,7 @@ export {
   readScopes,
   writeScopes,
 } from "./capabilities.ts"
+export { formatDuration } from "./format.ts"
 export { type Health, healthSchema } from "./health.ts"
 export {
   isClockTime,

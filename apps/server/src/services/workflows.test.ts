@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
-import type { N8nWorkflow } from "../n8n/client.ts"
-import { calledWorkflowIds, credentialIds, structureHash } from "./workflows.ts"
+import { N8nError, type N8nWorkflow } from "../n8n/client.ts"
+import { calledWorkflowIds, credentialIds, executionsSince, structureHash } from "./workflows.ts"
 
 const base: N8nWorkflow = {
   id: "1",
@@ -65,5 +65,95 @@ describe("references", () => {
       ],
     }
     expect(calledWorkflowIds(caller)).toEqual(["w9", "w10"])
+  })
+})
+
+describe("executionsSince", () => {
+  const since = "2026-10-01T00:00:00.000Z"
+  const run = (workflowId: string, startedAt: string | null) => ({ workflowId, status: "success", startedAt })
+  type Query = { limit?: number; cursor?: string; startedAfter?: string }
+  const rejected = () =>
+    new N8nError("n8n answered 400 for GET /executions", 400, `{"message":"Unknown query parameter 'startedAfter'"}`)
+
+  it("filters with startedAfter where n8n knows it", async () => {
+    const queries: Query[] = []
+    const client = {
+      listExecutions: async (q: Query) => {
+        queries.push(q)
+        return q.cursor
+          ? { data: [run("b", "2026-10-02T00:00:00.000Z")], nextCursor: null }
+          : { data: [run("a", "2026-10-03T00:00:00.000Z")], nextCursor: "c1" }
+      },
+    }
+    expect((await executionsSince(client, since)).map((e) => e.workflowId)).toEqual(["a", "b"])
+    expect(queries.map((q) => q.startedAfter)).toEqual([since, since])
+  })
+
+  it("pages without the filter where n8n rejects it, to the end, keeping what started in the window", async () => {
+    const queries: Query[] = []
+    // Newest ID first, as n8n lists them. "queued" has a lower ID than the whole page before it but waited in the
+    // queue and started inside the window.
+    const pages: Record<string, { data: ReturnType<typeof run>[]; nextCursor: string | null }> = {
+      first: { data: [run("cancelled", null), run("b", "2026-10-05T00:00:00.000Z")], nextCursor: "c1" },
+      c1: { data: [run("c", "2026-10-01T00:00:00.000Z"), run("old", "2026-09-30T23:59:00.000Z")], nextCursor: "c2" },
+      c2: { data: [run("older", "2026-09-20T00:00:00.000Z")], nextCursor: "c3" },
+      c3: {
+        data: [run("queued", "2026-10-01T00:01:00.000Z"), run("oldest", "2026-09-10T00:00:00.000Z")],
+        nextCursor: null,
+      },
+    }
+    const client = {
+      listExecutions: async (q: Query) => {
+        queries.push(q)
+        if (q.startedAfter) throw rejected()
+        const page = pages[q.cursor ?? "first"]
+        if (!page) throw new Error("read past the end")
+        return page
+      },
+    }
+    expect((await executionsSince(client, since)).map((e) => e.workflowId)).toEqual(["b", "c", "queued"])
+    expect(queries).toEqual([
+      { limit: 250, cursor: undefined, startedAfter: since },
+      { limit: 250 },
+      { limit: 250, cursor: "c1" },
+      { limit: 250, cursor: "c2" },
+      { limit: 250, cursor: "c3" },
+    ])
+  })
+
+  it("reads every page, with no cap", async () => {
+    const client = {
+      listExecutions: async (q: Query) => {
+        const page = Number(q.cursor ?? 0)
+        return { data: [run("a", "2026-10-02T00:00:00.000Z")], nextCursor: page < 99 ? String(page + 1) : null }
+      },
+    }
+    expect(await executionsSince(client, since)).toHaveLength(100)
+  })
+
+  it("stops when n8n hands back a cursor it already gave", async () => {
+    let calls = 0
+    const client = {
+      listExecutions: async () => {
+        calls++
+        return { data: [run("a", "2026-10-02T00:00:00.000Z")], nextCursor: "c1" }
+      },
+    }
+    expect(await executionsSince(client, since)).toHaveLength(2)
+    expect(calls).toBe(2)
+  })
+
+  it("passes other errors on", async () => {
+    const bad = new N8nError("n8n answered 400 for GET /executions", 400, `{"message":"bad cursor"}`)
+    const client = {
+      listExecutions: async () => {
+        throw bad
+      },
+    }
+    await expect(executionsSince(client, since)).rejects.toBe(bad)
+    // A rejection after the first page is not the missing filter: n8n accepted it a page before.
+    const first = { data: [run("a", "2026-10-03T00:00:00.000Z")], nextCursor: "c1" }
+    const later = { listExecutions: async (q: Query) => (q.cursor ? Promise.reject(rejected()) : first) }
+    await expect(executionsSince(later, since)).rejects.toThrow("400")
   })
 })

@@ -75,7 +75,10 @@ export const topicIdSchema = z
 const condition = (max: number, tooLong?: string) =>
   z.preprocess(
     (v) => (typeof v === "string" ? v.trim() || undefined : v),
-    z.string().max(max, tooLong ? { error: tooLong } : undefined).optional(),
+    z
+      .string()
+      .max(max, tooLong ? { error: tooLong } : undefined)
+      .optional(),
   )
 
 /**

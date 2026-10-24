@@ -1,6 +1,45 @@
 import { describe, expect, it, vi } from "vitest"
 import type { Db } from "../db/client.ts"
-import { createSettings, defaults, isTimeZone, mayStoreTimeZone, resolveInstanceSettings } from "./settings.ts"
+import {
+  changedValueIssues,
+  createSettings,
+  defaults,
+  invalidAnswer,
+  isTimeZone,
+  mayStoreTimeZone,
+  numberLimits,
+  resolveInstanceSettings,
+  smtpPasswordNeeded,
+} from "./settings.ts"
+
+describe("SMTP password and server", () => {
+  const stored = { smtpHost: "smtp.example.com", smtpPort: 587, smtpPasswordEnc: "enc" }
+
+  it("asks for the password again when the host or the port changes", () => {
+    expect(smtpPasswordNeeded(stored, { smtpHost: "mail.other.example", smtpPort: 587 }, undefined)).toBe(true)
+    expect(smtpPasswordNeeded(stored, { smtpHost: "smtp.example.com", smtpPort: 465 }, "")).toBe(true)
+  })
+
+  it("asks for it again when the user changes", () => {
+    const withUser = { ...stored, smtpUser: "reports" }
+    expect(smtpPasswordNeeded(withUser, { ...withUser, smtpUser: "someone-else" }, undefined)).toBe(true)
+    expect(smtpPasswordNeeded(withUser, { ...withUser, smtpUser: " reports " }, undefined)).toBe(false)
+  })
+
+  it("lets an ordinary save through: same server written differently", () => {
+    expect(smtpPasswordNeeded(stored, { smtpHost: " SMTP.example.com ", smtpPort: "587" }, undefined)).toBe(false)
+  })
+
+  it("takes a new server with a new password, or with the password removed", () => {
+    expect(smtpPasswordNeeded(stored, { smtpHost: "mail.other.example", smtpPort: 587 }, "secret")).toBe(false)
+    expect(smtpPasswordNeeded(stored, { smtpHost: "mail.other.example", smtpPort: 587 }, null)).toBe(false)
+  })
+
+  it("has nothing to protect when no password is stored", () => {
+    const { smtpPasswordEnc: _, ...none } = stored
+    expect(smtpPasswordNeeded(none, { smtpHost: "mail.other.example", smtpPort: 587 }, undefined)).toBe(false)
+  })
+})
 
 describe("instance settings", () => {
   it("uses the global defaults without overrides", () => {
@@ -39,6 +78,42 @@ describe("public URL", () => {
 
   it("stays empty when neither is set", async () => {
     expect((await createSettings(dbWith()).get("general")).publicUrl).toBe("")
+  })
+
+  it("is not part of what is stored, which a save starts from (FS-6)", async () => {
+    const settings = createSettings(dbWith({ design: "compact" }), { publicUrl: "https://ops.example.com" })
+    expect((await settings.stored("general")).publicUrl).toBe("")
+    expect((await settings.get("general")).publicUrl).toBe("https://ops.example.com")
+    expect(settings.fromEnv()).toEqual({ publicUrl: "https://ops.example.com" })
+    expect(createSettings(dbWith()).fromEnv()).toEqual({})
+  })
+})
+
+describe("checks before a value is stored", () => {
+  it("reads the range of each number from the schema", () => {
+    expect(numberLimits("alerts")).toMatchObject({
+      retryMin: { min: 1, max: 60 },
+      groupingWindowSec: { min: 0, max: 3600 },
+    })
+    expect(numberLimits("defaults").backlogThreshold).toEqual({ min: 1 })
+    expect(numberLimits("general")).toEqual({})
+  })
+
+  it("checks only the fields a save changes", () => {
+    const stored = { ...defaults.email, recipients: ["bob"] }
+    expect(changedValueIssues("email", stored, { ...stored, from: "ops@example.com" })).toEqual([])
+    expect(changedValueIssues("email", stored, { ...stored, recipients: ["bob", "ops@example.com"] })).toEqual([
+      { path: ["recipients"], message: '"bob" is not an email address' },
+    ])
+  })
+
+  it("names each refused field by its label", () => {
+    expect(
+      invalidAnswer("email", [
+        { path: ["dailyTime"], message: "use HH:MM" },
+        { path: ["smtpPort"], message: "use a whole number from 1 to 65535" },
+      ]).message,
+    ).toBe("Daily report time: use HH:MM SMTP port: use a whole number from 1 to 65535")
   })
 })
 
@@ -83,6 +158,8 @@ describe("web design", () => {
     expect(await settings.get("general")).toEqual({
       publicUrl: "https://ops.example.com",
       timezone: "Asia/Jerusalem",
+      dateFormat: "browser",
+      timeFormat: "24h",
       design: "regular",
     })
   })
@@ -100,7 +177,7 @@ describe("web design", () => {
   it("refuses to store an unknown design", async () => {
     const settings = createSettings(fakeDb().db)
     await expect(
-      settings.set("general", { publicUrl: "", timezone: "UTC", design: "wide" as "regular" }),
+      settings.set("general", { ...defaults.general, publicUrl: "", timezone: "UTC", design: "wide" as "regular" }),
     ).rejects.toThrow()
     expect(settings.design()).toBe("regular")
   })
@@ -120,7 +197,9 @@ describe("web design", () => {
   it("refuses to store a time zone no clock knows", async () => {
     const settings = createSettings(fakeDb().db)
     for (const timezone of ["Mars/Base", "Asia/Jerusalem; drop"])
-      await expect(settings.set("general", { publicUrl: "", timezone, design: "regular" })).rejects.toThrow()
+      await expect(
+        settings.set("general", { ...defaults.general, publicUrl: "", timezone, design: "regular" }),
+      ).rejects.toThrow()
   })
 
   it("keeps a fixed offset stored before, and reads an unknown time zone as UTC without resetting General", async () => {
@@ -132,13 +211,43 @@ describe("web design", () => {
     expect(await unknown.get("general")).toEqual({
       publicUrl: "https://ops.example.com",
       timezone: "UTC",
+      dateFormat: "browser",
+      timeFormat: "24h",
       design: "compact",
     })
   })
 
+  it("reads an unknown stored date or time format as its default without resetting General (FW-9)", async () => {
+    const settings = createSettings(
+      fakeDb({
+        publicUrl: "https://ops.example.com",
+        timezone: "Asia/Jerusalem",
+        dateFormat: "D MMM Y",
+        timeFormat: "36h",
+        design: "compact",
+      }).db,
+    )
+    expect(await settings.get("general")).toEqual({
+      publicUrl: "https://ops.example.com",
+      timezone: "Asia/Jerusalem",
+      dateFormat: "browser",
+      timeFormat: "24h",
+      design: "compact",
+    })
+  })
+
+  it("stores a known date and time format and refuses an unknown one (FW-9)", async () => {
+    const store = fakeDb()
+    const settings = createSettings(store.db)
+    await settings.set("general", { ...defaults.general, dateFormat: "YYYY-MM-DD", timeFormat: "12h" })
+    expect(await settings.get("general")).toMatchObject({ dateFormat: "YYYY-MM-DD", timeFormat: "12h" })
+    await expect(settings.set("general", { ...defaults.general, dateFormat: "D MMM Y" as "browser" })).rejects.toThrow()
+    await expect(settings.set("general", { ...defaults.general, timeFormat: "36h" as "24h" })).rejects.toThrow()
+  })
+
   it("follows a saved General at once", async () => {
     const settings = createSettings(fakeDb().db)
-    await settings.set("general", { publicUrl: "", timezone: "UTC", design: "compact" })
+    await settings.set("general", { ...defaults.general, publicUrl: "", timezone: "UTC", design: "compact" })
     expect(settings.design()).toBe("compact")
   })
 
@@ -146,8 +255,8 @@ describe("web design", () => {
     const store = fakeDb(undefined, { slowFirstWrite: true })
     const settings = createSettings(store.db)
     await Promise.all([
-      settings.set("general", { publicUrl: "", timezone: "UTC", design: "compact" }),
-      settings.set("general", { publicUrl: "", timezone: "UTC", design: "regular" }),
+      settings.set("general", { ...defaults.general, publicUrl: "", timezone: "UTC", design: "compact" }),
+      settings.set("general", { ...defaults.general, publicUrl: "", timezone: "UTC", design: "regular" }),
     ])
     expect(settings.design()).toBe("regular")
     expect((store.stored() as { design: string }).design).toBe("regular")
@@ -193,7 +302,7 @@ describe("web design, a startup read racing a save", () => {
     } as unknown as Db
     const settings = createSettings(db)
     const loading = settings.loadDesign({ info() {}, warn() {} })
-    await settings.set("general", { publicUrl: "", timezone: "UTC", design: "compact" })
+    await settings.set("general", { ...defaults.general, publicUrl: "", timezone: "UTC", design: "compact" })
     release([{ value: { design: "regular" } }]) // the read started before the save
     await loading
     expect(settings.design()).toBe("compact")

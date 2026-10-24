@@ -4,8 +4,9 @@ import { useMediaQuery } from "@/hooks/use-mobile"
 
 /*
  * What a page hands to the shell around it (NL-5, NL-6): on wide screens its actions move up into the top bar,
- * beside the page title, and an opened item adds its name to the trail ("Problems › Sync orders"), which
- * also names the browser tab (NL-3).
+ * beside the page title, and an opened item adds its name to the trail ("Problems › Sync orders"), its open tab
+ * after it ("› Occurrences"), which also name the browser tab (NL-3). Crumbs keep the order of the components
+ * that add them, outer first, whenever each one's label arrives.
  */
 
 type Chrome = {
@@ -17,7 +18,10 @@ export const ChromeContext = React.createContext<Chrome>({ actionsSlot: null, se
 
 let crumbSeq = 0
 
-/** Adds the opened item's name to the trail while the calling component shows it. */
+/**
+ * Adds a crumb (an opened item's name, its open tab) to the trail while the calling component shows it. Its id is
+ * taken on the first render, and a parent renders before its children, so a sort by id puts outer levels first.
+ */
 export function useCrumb(label: string | null | undefined) {
   const { setCrumb } = React.useContext(ChromeContext)
   const id = React.useMemo(() => ++crumbSeq, [])

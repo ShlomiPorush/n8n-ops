@@ -2,12 +2,12 @@ import { useQuery } from "@tanstack/react-query"
 import { TriangleAlert } from "lucide-react"
 import { useState } from "react"
 import { useParams } from "react-router"
-import { KV, LoadError, Loading, Panel, UserText } from "@/components/kit"
+import { BusyButton, KV, LoadError, Loading, Panel, RefreshNote, UserText } from "@/components/kit"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Field, FieldContent, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { ApiError } from "@/lib/api"
+import { loadView } from "@/lib/load-state"
 import { AuthFrame } from "./auth/shared"
 
 type ConnectRequest = {
@@ -45,8 +45,11 @@ export function ConnectApprovePage() {
   const [access, setAccess] = useState(true)
   const [state, setState] = useState<"open" | "busy" | "approved" | "denied">("open")
   const [error, setError] = useState("")
+  // Which answer is being sent, so only its button shows that it is busy (FB-7).
+  const [sending, setSending] = useState(true)
 
   async function decide(approve: boolean) {
+    setSending(approve)
     setState("busy")
     setError("")
     try {
@@ -68,19 +71,31 @@ export function ConnectApprovePage() {
 
   const r = request.data
   const name = r ? (r.client.builtIn ? (r.client.label ?? "A script") : (r.client.name ?? "An unnamed agent")) : ""
+  const ended = request.error instanceof ApiError && request.error.status === 410
   return (
-    <AuthFrame wide title="Connect an Agent" description={r ? `${name} asks to use n8n-ops.` : undefined}>
-      {request.error ? (
-        request.error instanceof ApiError && request.error.status === 410 ? (
-          <Alert variant="warn">
-            <AlertTitle>This request is no longer open</AlertTitle>
-            <AlertDescription>Requests last 10 minutes. Start the connection again in your agent.</AlertDescription>
-          </Alert>
-        ) : (
-          <Panel>
-            <LoadError what="the request" error={request.error} retry={() => request.refetch()} />
-          </Panel>
-        )
+    <AuthFrame
+      wide
+      title="Connect an Agent"
+      description={
+        r ? (
+          <>
+            {name} asks to use n8n-ops.
+            {/* Any other failed refresh keeps the request on screen and says so here (TB-5, LD-12). */}
+            {!ended && <RefreshNote live={request} separator=" " />}
+          </>
+        ) : undefined
+      }
+    >
+      {/* An ended request replaces what is shown; any other failed refresh keeps it (TB-5). */}
+      {ended ? (
+        <Alert variant="warn">
+          <AlertTitle>This request is no longer open</AlertTitle>
+          <AlertDescription>Requests last 10 minutes. Start the connection again in your agent.</AlertDescription>
+        </Alert>
+      ) : loadView(request) === "failed" ? (
+        <Panel>
+          <LoadError what="the request" error={request.error} retry={() => request.refetch()} />
+        </Panel>
       ) : !r ? (
         <Panel>
           <Loading />
@@ -157,12 +172,23 @@ export function ConnectApprovePage() {
             </p>
           )}
           <div className="flex flex-wrap gap-2">
-            <Button variant="primary" disabled={state === "busy"} onClick={() => void decide(true)}>
+            <BusyButton
+              variant="primary"
+              busy={state === "busy" && sending}
+              busyLabel="Approving…"
+              disabled={state === "busy"}
+              onClick={() => void decide(true)}
+            >
               Approve
-            </Button>
-            <Button disabled={state === "busy"} onClick={() => void decide(false)}>
+            </BusyButton>
+            <BusyButton
+              busy={state === "busy" && !sending}
+              busyLabel="Denying…"
+              disabled={state === "busy"}
+              onClick={() => void decide(false)}
+            >
               Deny
-            </Button>
+            </BusyButton>
           </div>
         </>
       )}

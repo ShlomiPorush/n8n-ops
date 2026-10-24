@@ -4,7 +4,7 @@ import { Panel, PanelHead, SwitchRow, useSaveSource } from "@/components/kit"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { useApiMutation } from "@/lib/api"
-import { n } from "@/lib/time"
+import { n } from "@/lib/numbers"
 
 type Props = {
   id: string
@@ -39,6 +39,7 @@ export function AgentAccessCard({ id, name, scopesSource, keyScopes, agentAccess
   }
   const save = useApiMutation<{ agentAccess: Props["agentAccess"] }>("PATCH", `/instances/${id}`, {
     invalidate: ["/instances", `/instances/${id}`],
+    quiet: true,
   })
   // The stored access as it was when a save finished, until the refetch after it brings the saved value.
   const savedOver = useRef<{ agentAccess: Props["agentAccess"]; keyScopes: string[] } | null>(null)

@@ -1,7 +1,10 @@
 import { ChevronRight, KeySquare as KeySquareIcon, Plus, Trash2 } from "lucide-react"
-import { useId, useState } from "react"
+import { useState } from "react"
 import { useConfirm } from "@/components/confirm"
+import { useDiscardGuard } from "@/components/discard-guard"
+import { FieldPicker } from "@/components/field-picker"
 import {
+  BusyButton,
   Command,
   Copyable,
   Empty,
@@ -27,12 +30,11 @@ import {
 } from "@/components/ui/dialog"
 import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useApi, useApiMutation } from "@/lib/api"
+import { loadView } from "@/lib/load-state"
 import { toast } from "@/lib/toast"
-import { cn } from "@/lib/utils"
 
 type Token = {
   id: string
@@ -49,9 +51,13 @@ type Token = {
 
 /** The agents and scripts that use n8n-ops: how to connect one, the ones connected, and tokens made by hand. */
 export function AgentsPage() {
+  // The same query as the list below (one cache entry): a failed refresh is said under the title (LD-12).
+  const tokens = useApi<Token[]>("/admin/tokens")
   return (
     <Page
       title="Connected Agents"
+      live={tokens}
+      updated={false}
       description="Agents and scripts that read n8n-ops. Each one connects only once you approve it, and you can disconnect it here at any time."
       className="max-w-5xl"
     >
@@ -145,6 +151,10 @@ function AgentsCard() {
   const confirm = useConfirm()
   const revoke = useApiMutation<string>("DELETE", (id) => `/admin/tokens/${id}`, {
     invalidate: ["/admin/tokens"],
+    failed: (id) => {
+      const t = tokens.data?.find((x) => x.id === id)
+      return t?.kind === "agent" ? `disconnect ${t.name}` : `revoke the token ${t?.name ?? ""}`.trim()
+    },
   })
   async function askRevoke(t: Token) {
     const agent = t.kind === "agent"
@@ -170,13 +180,14 @@ function AgentsCard() {
           count={tokens.data ? list.length : undefined}
           description="Each can read n8n-ops; some may also ask for temporary access to an n8n instance, which a person approves each time."
         />
-        {tokens.error ? (
+        {loadView(tokens) === "failed" ? (
           <LoadError what="tokens" error={tokens.error} retry={() => tokens.refetch()} />
-        ) : tokens.isLoading ? (
+        ) : loadView(tokens) === "loading" ? (
           <Loading />
         ) : list.length === 0 ? (
           <Empty title="No agent is connected.">Connect one above; it appears here once you approve it.</Empty>
         ) : (
+          // No Sort button (TB-28): a short list of tokens, in the order they were made.
           <Table bare>
             <TableHeader>
               <TableRow>
@@ -198,7 +209,13 @@ function AgentsCard() {
                         {t.redirectHost ? ` · ${t.redirectHost}` : ""}
                       </span>
                     ) : (
-                      <span className="font-mono text-meta font-normal text-muted-foreground">{t.prefix}…</span>
+                      <Copyable
+                        value={t.prefix}
+                        label="Copy token prefix"
+                        className="text-meta font-normal text-muted-foreground"
+                      >
+                        {t.prefix}…
+                      </Copyable>
                     )}
                   </TableCell>
                   <TableCell>
@@ -243,34 +260,33 @@ function AgentsCard() {
 
 /** Advanced, and folded away: a long-lived token made by hand, for a program that cannot connect by approval. */
 function HandMadeToken() {
-  const [shown, setShown] = useState(false)
   const [open, setOpen] = useState(false)
+  const [name, setName] = useState("")
   const [kind, setKind] = useState<"mcp" | "rest">("mcp")
+  // The kind the dialog opened with: it starts on the kind chosen last time.
+  const [openedKind, setOpenedKind] = useState(kind)
   const [canRequestAccess, setCanRequestAccess] = useState(false)
   const [created, setCreated] = useState("")
-  const id = useId()
+  // Until the token is made, anything typed or changed is asked about before it is dropped (DS-9).
+  const dirty = !created && (name.trim() !== "" || kind !== openedKind || canRequestAccess)
+  const guard = useDiscardGuard(dirty, () => setOpen(false))
   const create = useApiMutation<{ name: string; kind: string; canRequestAccess: boolean }, { token: string }>(
     "POST",
     "/admin/tokens",
-    { invalidate: ["/admin/tokens"] },
+    { invalidate: ["/admin/tokens"], failed: (b) => `create the token ${b.name}` },
   )
   return (
     <Panel>
-      <button
-        type="button"
-        aria-expanded={shown}
-        aria-controls={id}
-        onClick={() => setShown((s) => !s)}
-        className="flex w-full items-center gap-2 px-pad-x py-3 text-start font-semibold outline-none focus-visible:outline-offset-[-2px] [@media(hover:hover)]:hover:bg-accent"
-      >
-        <ChevronRight
-          aria-hidden
-          className={cn("size-4 shrink-0 transition-transform duration-150", shown && "rotate-90")}
-        />
-        Advanced: a token made by hand
-      </button>
-      {shown && (
-        <div id={id} className="grid justify-items-start gap-3 border-t border-line px-pad-x py-3">
+      {/* A native fold (AX-12): the browser gives it its keys and its state; no text is selected on a double click (AX-10). */}
+      <details className="group/fold">
+        <summary className="flex w-full cursor-pointer list-none items-center gap-2 px-pad-x py-3 text-start font-semibold select-none focus-visible:outline-offset-[-2px] [@media(hover:hover)]:hover:bg-accent [&::-webkit-details-marker]:hidden">
+          <ChevronRight
+            aria-hidden
+            className="size-4 shrink-0 transition-transform duration-150 group-open/fold:rotate-90"
+          />
+          Advanced: a token made by hand
+        </summary>
+        <div className="grid justify-items-start gap-3 border-t border-line px-pad-x py-3">
           <p className="max-w-[75ch] text-muted-foreground">
             For a program that cannot open the approval link. The token lasts until you revoke it; store it like a
             password.
@@ -278,6 +294,8 @@ function HandMadeToken() {
           <Button
             onClick={() => {
               setCreated("")
+              setName("")
+              setOpenedKind(kind)
               setCanRequestAccess(false)
               setOpen(true)
             }}
@@ -285,8 +303,8 @@ function HandMadeToken() {
             <Plus /> New token
           </Button>
         </div>
-      )}
-      <Dialog open={open} onOpenChange={setOpen}>
+      </details>
+      <Dialog open={open} onOpenChange={guard.onOpenChange}>
         <DialogContent keepOnBackdrop>
           <DialogHeader icon={KeySquareIcon}>
             <DialogTitle>New Token</DialogTitle>
@@ -309,26 +327,32 @@ function HandMadeToken() {
               id="token"
               onSubmit={(e) => {
                 e.preventDefault()
-                const name = String(new FormData(e.currentTarget).get("name"))
                 create.mutate({ name, kind, canRequestAccess }, { onSuccess: (r) => setCreated(r.token) })
               }}
             >
               <FieldGroup>
                 <Field>
                   <FieldLabel htmlFor="token-name">Name</FieldLabel>
-                  <Input id="token-name" name="name" placeholder="claude-desktop" required />
+                  <Input
+                    id="token-name"
+                    name="name"
+                    placeholder="claude-desktop"
+                    required
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                  />
                 </Field>
                 <Field>
                   <FieldLabel>Kind</FieldLabel>
-                  <Select value={kind} onValueChange={(v) => setKind(v as "mcp" | "rest")}>
-                    <SelectTrigger className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="mcp">MCP (agents)</SelectItem>
-                      <SelectItem value="rest">REST (scripts)</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <FieldPicker
+                    label="Kind"
+                    value={kind}
+                    onChange={(v) => setKind(v as "mcp" | "rest")}
+                    options={[
+                      { value: "mcp", label: "MCP (agents)" },
+                      { value: "rest", label: "REST (scripts)" },
+                    ]}
+                  />
                 </Field>
                 <Field orientation="horizontal">
                   <Checkbox
@@ -349,15 +373,15 @@ function HandMadeToken() {
           )}
           <DialogFooter>
             {created ? (
-              <Button variant="primary" onClick={() => setOpen(false)}>
+              <Button variant="primary" onClick={() => void guard.requestClose("finished")}>
                 Done
               </Button>
             ) : (
               <>
-                <Button onClick={() => setOpen(false)}>Cancel</Button>
-                <Button variant="primary" type="submit" form="token" disabled={create.isPending}>
+                <Button onClick={() => void guard.requestClose()}>Cancel</Button>
+                <BusyButton variant="primary" type="submit" form="token" busy={create.isPending} busyLabel="Creating…">
                   Create
-                </Button>
+                </BusyButton>
               </>
             )}
           </DialogFooter>

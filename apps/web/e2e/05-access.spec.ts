@@ -196,6 +196,32 @@ test("a person approves in the UI, and the agent collects the key once", async (
   expect(shortKey).toMatch(/^nops_n8n_/)
 })
 
+test("Deny asks first, since it is final, and Cancel keeps the request pending", async ({ request }) => {
+  const asked = await mcp(request, "request_instance_access", {
+    instance: "e2e-n8n",
+    reason: "List the workflows once more (to be denied)",
+    scopes: ["workflow:list"],
+    minutes: 30,
+  })
+  expect(asked.value.status).toBe("pending")
+  const id = asked.value.id
+
+  await page.goto(`/access/${id}`)
+  await page.getByRole("button", { name: "Deny" }).click()
+  const question = page.getByRole("alertdialog", { name: "Deny Access to e2e-n8n?" })
+  await expect(question).toContainText("The agent e2e-access-agent gets no access to e2e-n8n")
+  await expect(question).toContainText("This cannot be undone")
+  await question.getByRole("button", { name: "Cancel" }).click()
+  await dialogClosed(page)
+  expect((await mcp(request, "get_access_request", { requestId: id })).value.status).toBe("pending")
+  await expect(page.getByRole("button", { name: "Approve" })).toBeVisible()
+
+  await page.getByRole("button", { name: "Deny" }).click()
+  await page.getByRole("alertdialog").getByRole("button", { name: "Deny access" }).click()
+  await expect(page.getByText("Access request denied for e2e-access-agent on e2e-n8n")).toBeVisible()
+  expect((await mcp(request, "get_access_request", { requestId: id })).value.status).toBe("denied")
+})
+
 test("the proxy lets through only what was approved", async () => {
   const read = await proxy(`/workflows/${workflowId}`, key)
   expect(read.status).toBe(200)

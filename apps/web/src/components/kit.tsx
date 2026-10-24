@@ -1,4 +1,4 @@
-import { Check, Copy, Inbox, Loader2, Lock, type LucideIcon } from "lucide-react"
+import { Check, Copy, Inbox, Loader2, LoaderCircle, Lock, type LucideIcon, X } from "lucide-react"
 import { useEffect, useState } from "react"
 import { Link, useLocation } from "react-router"
 import { PageActions, useTopBar } from "@/app/chrome"
@@ -9,9 +9,13 @@ import { timeAgo, useTick } from "@/components/status"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
+import { Tip, TipInControl } from "@/components/ui/tooltip"
 import { describeError } from "@/lib/api"
 import { COPIED_MS, DIM_AFTER_MS } from "@/lib/behavior"
-import { formatFull, useTimeZone } from "@/lib/time"
+import { type BusyState, busyRun } from "@/lib/busy-run"
+import { filterFailed, type Live, refreshFailed } from "@/lib/load-state"
+import { rowHeld } from "@/lib/row-held"
+import { formatTime, useTimeFormat } from "@/lib/time"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
 
@@ -25,20 +29,22 @@ export function Page({
   title,
   description,
   actions,
-  updatedAt,
+  live,
+  updated,
   children,
   className,
 }: {
   title?: string
   description?: React.ReactNode
   actions?: React.ReactNode
-  updatedAt?: number
+  live?: Live | Live[]
+  updated?: boolean
   children: React.ReactNode
   className?: string
 }) {
   return (
     <div className={cn("grid min-w-0 content-start gap-gap", className)}>
-      {title && <PageHead title={title} description={description} actions={actions} updatedAt={updatedAt} />}
+      {title && <PageHead title={title} description={description} actions={actions} live={live} updated={updated} />}
       {children}
     </div>
   )
@@ -47,21 +53,24 @@ export function Page({
 /**
  * The page head. From 761px the title is in the top bar and the actions move up beside it (NL-6), so the page
  * starts with its one line description. On a phone the title leads the page with the main action on its line
- * (NL-14). With `updatedAt` a line says how fresh the data is and keeps ticking (LD-12).
+ * (NL-14). With `live` (the page's queries) a line says how fresh the data is and keeps ticking, and says so
+ * when a refresh failed while the rows stay (LD-12, TB-5); `updated={false}` keeps only the failure.
  */
 export function PageHead({
   title,
   description,
   actions,
-  updatedAt,
+  live,
+  updated = true,
 }: {
   title: string
   description?: React.ReactNode
   actions?: React.ReactNode
-  updatedAt?: number
+  live?: Live | Live[]
+  updated?: boolean
 }) {
   const wide = useTopBar()
-  const fresh = updatedAt ? <Updated at={updatedAt} /> : null
+  const fresh = live ? <RefreshNote live={live} updated={updated} separator={description ? " · " : ""} /> : null
   const said = Boolean(description || fresh)
   if (wide)
     return (
@@ -78,7 +87,6 @@ export function PageHead({
             {said && (
               <p className="text-muted-foreground regular:mt-0.5">
                 {description}
-                {description && fresh && " · "}
                 {fresh}
               </p>
             )}
@@ -89,13 +97,18 @@ export function PageHead({
   return (
     <div className="mb-1 grid gap-1.5">
       <div className="flex items-start gap-3">
-        <h1 className="min-w-0 flex-1 text-figure font-heavy tracking-tighter break-words regular:text-h1">{title}</h1>
-        {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
+        {/* Compact: the H1 of the type scale, a step smaller at 380px or less. */}
+        <h1 className="min-w-0 flex-1 text-h1 font-heavy break-words regular:tracking-tighter compact:max-[381px]:text-h1-narrow">
+          {title}
+        </h1>
+        {/* Compact: the main action without its icon, so the title keeps its room; a busy ring or result stays. */}
+        {actions && (
+          <div className="flex shrink-0 items-center gap-2 compact:[&>*>svg:not([data-status])]:hidden">{actions}</div>
+        )}
       </div>
-      {(description || fresh) && (
+      {said && (
         <p className="text-muted-foreground">
           {description}
-          {description && fresh && " · "}
           {fresh}
         </p>
       )}
@@ -103,19 +116,133 @@ export function PageHead({
   )
 }
 
-/** "Updated 3 min ago", with the exact time on hover; it keeps ticking while the page is open. */
+/** "Updated 3 min ago", with the exact time on hover, keyboard focus or a tap (MO-4); it keeps ticking. */
 function Updated({ at }: { at: number }) {
   useTick()
-  const tz = useTimeZone()
-  return <span title={formatFull(new Date(at), tz)}>Updated {timeAgo(new Date(at))}</span>
+  const w = useTimeFormat()
+  return (
+    <Tip content={formatTime(at, w)}>
+      <span>Updated {timeAgo(new Date(at))}</span>
+    </Tip>
+  )
 }
 
-/** The base unit: a tinted panel. Rows inside it are split by a 1px top line only. */
+/**
+ * How fresh the data on screen is, inside a line of text (LD-12). While it is fresh: "Updated 3 min ago" (only with
+ * `updated`). After a refresh that failed, with the data kept on screen (TB-5): "Could not refresh · Updated 4 min
+ * ago" in amber with Try again, until the next good answer. "Could not refresh" sits in a polite live region that
+ * stays mounted, so the failure is announced and the ticking time is not. `separator` leads it when it shows.
+ *
+ * With `what`, in a list's filter line, it speaks only for new filters that failed to load while the previous
+ * rows stay (`previous` in lib/load-state.ts): "Could not load muted problems; showing the previous list", with
+ * Try again. The page head then keeps saying when those rows were updated.
+ */
+export function RefreshNote({
+  live,
+  updated = false,
+  separator = "",
+  small = false,
+  textClass = small ? "text-small" : "text-body",
+  what,
+}: {
+  live: Live | Live[]
+  updated?: boolean
+  separator?: string
+  /** In a small-text line, so Try again matches it. */
+  small?: boolean
+  /** The text size of the line it sits in, when that is neither body nor small text, so Try again matches it. */
+  textClass?: string
+  /** What the new filters would have shown, for a list's filter line. */
+  what?: string
+}) {
+  const all = Array.isArray(live) ? live : [live]
+  const failed = all.filter(what ? filterFailed : refreshFailed)
+  // The oldest data on screen is the one the line speaks for.
+  const at = failed.length ? Math.min(...failed.map((q) => q.dataUpdatedAt)) : all[0]?.dataUpdatedAt
+  const fresh = updated && Boolean(at)
+  return (
+    <>
+      {(failed.length > 0 || fresh) && separator}
+      <span role="status" className="text-warn">
+        {failed.length > 0 && (what ? `Could not load ${what}; showing the previous list` : "Could not refresh")}
+      </span>
+      {failed.length > 0 ? (
+        <span className="text-warn">
+          {at && !what ? (
+            <>
+              {" · "}
+              <Updated at={at} />
+            </>
+          ) : null}{" "}
+          <TryAgain
+            className={textClass}
+            busy={failed.some((q) => q.isFetching)}
+            onClick={() => {
+              for (const q of failed) void q.refetch()
+            }}
+          />
+        </span>
+      ) : fresh && at ? (
+        <Updated at={at} />
+      ) : null}
+    </>
+  )
+}
+
+/**
+ * RefreshNote as a line of its own at the top of a panel whose title is outside it, such as a Settings form. It is
+ * out of sight while the data is fresh but stays mounted, so a failure is announced when it comes (TB-5, LD-12).
+ * With `what`, for a list with no filter line of its own, it also says when a new order or new filters failed to
+ * load and the previous rows stay: "Could not load open problems; showing the previous list".
+ */
+export function RefreshLine({ live, what }: { live: Live; what?: string }) {
+  const failed = refreshFailed(live) || (what !== undefined && filterFailed(live))
+  return (
+    <p className={cn("px-pad-x pt-3 text-small", !failed && "sr-only")}>
+      <RefreshNote live={live} small />
+      {what !== undefined && <RefreshNote live={live} what={what} small />}
+    </p>
+  )
+}
+
+/**
+ * Try again after a failed load. While the new attempt runs it stays in place, named "Loading…" and marked busy,
+ * so the keyboard focus stays on it, and is still on it when the attempt fails too (AX-6).
+ */
+export function TryAgain({
+  busy = false,
+  onClick,
+  className,
+}: {
+  busy?: boolean
+  onClick: () => void
+  className?: string
+}) {
+  return (
+    <Button
+      variant="link"
+      className={className}
+      aria-busy={busy || undefined}
+      aria-disabled={busy || undefined}
+      onClick={() => {
+        if (!busy) onClick()
+      }}
+    >
+      {busy ? "Loading…" : "Try again"}
+    </Button>
+  )
+}
+
+/**
+ * The base unit: a tinted panel. Rows inside it are split by a 1px top line only. A line kept out of sight at its
+ * top (RefreshLine) does not count as the first row.
+ */
 export function Panel({ className, ...props }: React.ComponentProps<"section">) {
   return (
     <section
       className={cn(
-        "min-w-0 overflow-hidden rounded-lg bg-panel regular:shadow-card regular:ring-1 regular:ring-ink/10 [&>:first-child]:border-t-0",
+        // Clip, not hidden: a hidden panel is a scroll container whose height a page grid may squash (NL-2).
+        "min-w-0 overflow-clip rounded-lg bg-panel regular:shadow-card regular:ring-1 regular:ring-ink/10 [&>:first-child]:border-t-0 [&>.sr-only:first-child+*]:border-t-0",
         className,
       )}
       {...props}
@@ -203,6 +330,25 @@ export function PanelHead({
   )
 }
 
+/**
+ * A row that is a link. A drag over it selects its text instead of dragging the link, and a click that ends
+ * selecting text goes nowhere, so its values can be copied; a plain click and Enter follow the link (TB-8).
+ */
+export function RowLink({ onClick, children, ...props }: React.ComponentProps<typeof Link>) {
+  return (
+    <Link
+      draggable={false}
+      onClick={(e) => {
+        if (rowHeld(e)) e.preventDefault()
+        else onClick?.(e)
+      }}
+      {...props}
+    >
+      <TipInControl>{children}</TipInControl>
+    </Link>
+  )
+}
+
 /** A row in a panel. Pass onClick or asChild-like Link via `to` for a clickable row. */
 export function Row({
   className,
@@ -234,19 +380,19 @@ export function Row({
   )
   if (to)
     return (
-      <Link to={to} className={cls} aria-current={current ? "page" : undefined}>
+      <RowLink to={to} className={cls} aria-current={current ? "page" : undefined}>
         {children}
-      </Link>
+      </RowLink>
     )
   if (onClick)
     return (
       <button
         type="button"
-        onClick={onClick}
+        onClick={(e) => !rowHeld(e) && onClick()}
         className={cn(cls, "w-full text-start")}
         aria-current={current || undefined}
       >
-        {children}
+        <TipInControl>{children}</TipInControl>
       </button>
     )
   return <div className={cls}>{children}</div>
@@ -270,57 +416,105 @@ export function KV({
   )
 }
 
-/** An alert row: a 4px status bar (Compact; Regular's tag carries the status), the text, one action. */
+/**
+ * An alert row: a 4px status bar (Compact; Regular's tag carries the status), the text, and its actions (FB-10).
+ * With `to` the text is the link that opens the item, and the actions sit beside it as controls of their own, never
+ * inside it; a click anywhere else on the row opens the item too, except one that ends selecting text (TB-8). In a
+ * list narrower than 32rem (`@container/alerts`: the bell's window, a phone) the actions go under the text.
+ * `onOpen` runs on the link's click, for a list that moves on its own (the bell's window).
+ */
 export function AlertRow({
   tone,
   title,
   children,
-  action,
+  actions,
   to,
+  onOpen,
 }: {
-  tone: "fail" | "warn" | "info"
+  tone: "fail" | "warn" | "info" | "muted"
   title: React.ReactNode
   children?: React.ReactNode
-  action?: React.ReactNode
+  actions?: React.ReactNode
   to?: string
+  onOpen?: React.MouseEventHandler<HTMLAnchorElement>
 }) {
-  const body = (
+  const text = (
     <>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">{title}</div>
+      {children && <div className="mt-0.5 text-small break-words text-muted-foreground">{children}</div>}
+    </>
+  )
+  return (
+    // biome-ignore lint/a11y: the link inside is the row's keyboard and screen reader path; this only widens its pointer target
+    <div
+      data-slot="alert-row"
+      className={cn(
+        "grid grid-cols-[4px_minmax(0,1fr)_auto] items-start gap-x-3.5 border-t border-line pe-pad-x",
+        "regular:grid-cols-[minmax(0,1fr)_auto] regular:ps-pad-x",
+        "@max-[32rem]/alerts:grid-cols-[4px_minmax(0,1fr)] regular:@max-[32rem]/alerts:grid-cols-[minmax(0,1fr)]",
+        to && "hover-row",
+      )}
+      onClick={(e) => {
+        if (!to || rowHeld(e) || (e.target as Element).closest("a, button")) return
+        e.currentTarget.querySelector<HTMLAnchorElement>('[data-slot="alert-link"]')?.click()
+      }}
+    >
       <span
         aria-hidden
         className={cn(
-          "w-1 shrink-0 self-stretch rounded-e-kbd regular:hidden",
+          "w-1 self-stretch rounded-e-kbd regular:hidden @max-[32rem]/alerts:row-span-2",
           tone === "fail" && "bg-fail",
           tone === "warn" && "bg-warn",
           tone === "info" && "bg-info",
+          tone === "muted" && "bg-muted-foreground/40",
         )}
       />
-      <div className="min-w-0 flex-1 py-pad-y">
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">{title}</div>
-        {children && <div className="mt-0.5 text-small break-words text-muted-foreground">{children}</div>}
-      </div>
-      {action && <div className="shrink-0 self-center pe-pad-x">{action}</div>}
-    </>
+      {to ? (
+        <RowLink
+          to={to}
+          data-slot="alert-link"
+          onClick={onOpen}
+          className="block min-w-0 py-pad-y outline-offset-[-2px]"
+        >
+          {text}
+        </RowLink>
+      ) : (
+        <div className="min-w-0 py-pad-y">{text}</div>
+      )}
+      {actions && (
+        <div className="flex flex-wrap items-center gap-2 self-center py-2 @max-[32rem]/alerts:col-start-2 @max-[32rem]/alerts:self-start @max-[32rem]/alerts:pt-0 @max-[32rem]/alerts:pb-pad-y regular:@max-[32rem]/alerts:col-start-1">
+          {actions}
+        </div>
+      )}
+    </div>
   )
-  const cls = "flex items-start gap-3.5 border-t border-line pe-pad-x regular:ps-pad-x"
-  if (to)
-    return (
-      <Link to={to} className={cn(cls, "hover-row")}>
-        {body}
-      </Link>
-    )
-  return <div className={cls}>{body}</div>
 }
 
 /**
  * Key figures: a large number with a muted label. Compact draws one outlined block (cell lines are outlines,
- * so a short last row leaves no block); Regular draws a card per figure with its icon.
+ * so a short last row leaves no block); Regular draws a card per figure with its icon. On a phone they go two to a
+ * line and an odd last figure takes the whole line (MO-8). With `row` they stay in one row at any width, for a
+ * narrow column such as a list beside its reading pane (FB-17).
  */
-export function Kpis({ className, children }: { className?: string; children: React.ReactNode }) {
-  return (
+export function Kpis({
+  className,
+  row = false,
+  children,
+}: {
+  className?: string
+  row?: boolean
+  children: React.ReactNode
+}) {
+  const grid = (
     <div
       className={cn(
-        "grid grid-cols-[repeat(auto-fit,minmax(170px,1fr))] overflow-hidden rounded-lg border border-line bg-bg",
+        // Clip, not hidden, so a page grid never squashes the figures (NL-2).
+        "grid overflow-clip rounded-lg border border-line bg-bg",
+        row
+          ? kpiRow
+          : // Compact's cells may be narrower, as in v3; a phone always shows two per row (MO-8), in both designs (the
+            // Compact width rule outranks a plain phone rule, so the phone rule is repeated for Compact).
+            "grid-cols-[repeat(auto-fit,minmax(170px,1fr))] compact:grid-cols-[repeat(auto-fit,minmax(150px,1fr))] max-md:grid-cols-2 compact:max-md:grid-cols-2 max-md:[&>:last-child:nth-child(odd)]:col-span-full",
         "regular:gap-gap regular:overflow-visible regular:border-0 regular:bg-transparent",
         className,
       )}
@@ -328,7 +522,22 @@ export function Kpis({ className, children }: { className?: string; children: Re
       {children}
     </div>
   )
+  return row ? <div className="@container/kpis min-w-0">{grid}</div> : grid
 }
+
+/*
+ * Figures in one row that never stacks, however narrow the column they are in (FB-17): there the icon goes (it
+ * only illustrates), and in a narrower one the figure is a size smaller with less padding, so it still fits.
+ * Regular's own rule for a figure in words is more specific than a plain one: both designs say it.
+ */
+const kpiRow = cn(
+  "grid-flow-col auto-cols-fr",
+  "@max-[40rem]/kpis:**:data-[slot=kpi-icon]:hidden!",
+  "compact:@max-[30rem]/kpis:**:data-[slot=kpi-figure]:text-h2",
+  "regular:@max-[30rem]/kpis:**:data-[slot=kpi-figure]:text-h2",
+  "regular:@max-[30rem]/kpis:gap-2 regular:@max-[30rem]/kpis:**:data-[slot=kpi]:p-3",
+  "compact:@max-[30rem]/kpis:**:data-[slot=kpi]:px-3",
+)
 
 export function Kpi({
   label,
@@ -390,7 +599,7 @@ export function Kpi({
   )
   return to ? (
     <Link to={to} data-slot="kpi" className={cn(cls, "hover-row")}>
-      {inner}
+      <TipInControl>{inner}</TipInControl>
     </Link>
   ) : (
     <div data-slot="kpi" className={cls}>
@@ -504,20 +713,25 @@ export function Locked({
 }
 
 /**
- * An ID, address or key in mono that copies on click: a faint background and a copy icon on hover, the
- * full value copied (not the truncated one), a check for 1.5s and a toast that says what was copied.
+ * An ID, address or key in mono that copies on a click or a tap (FB-12), its tooltip "Click to copy". With a
+ * pointer, hover tints it and shows a faint copy icon, hidden at rest so values do not carry icons everywhere; the
+ * keyboard focus shows it too. The full value is copied (not the truncated one), with a check for 1.5s and a toast
+ * that says what was copied.
  */
 export function Copyable({
   value,
   children,
   className,
   label,
+  wrap = false,
 }: {
   value: string
   children?: React.ReactNode
   className?: string
   /** What the value is, for the accessible name ("Copy execution ID"). */
   label?: string
+  /** A long value wraps onto more lines instead of being cut, the icon after its last line. */
+  wrap?: boolean
 }) {
   const { done, copy } = useCopy(value)
   const Icon = done ? Check : Copy
@@ -526,21 +740,23 @@ export function Copyable({
       type="button"
       data-copy
       onClick={copy}
-      title={value}
+      title="Click to copy"
       aria-label={`${label ?? "Copy"}: ${value}`}
       className={cn(
-        "group/copy inline-flex max-w-full min-w-0 items-center gap-1 rounded-tag px-1 -mx-1 text-start font-mono text-code transition-colors duration-150 [@media(hover:hover)]:hover:bg-ink/6",
+        "group/copy inline-flex max-w-full min-w-0 gap-1 rounded-tag px-1 -mx-1 text-start font-mono text-code transition-colors duration-150 [@media(hover:hover)]:hover:bg-copy-hover",
+        wrap ? "items-end" : "items-center",
         className,
       )}
     >
-      <span className="min-w-0 truncate" dir="auto">
+      {/* Selectable, for a browser that cannot copy (plain HTTP). */}
+      <span className={cn("min-w-0 select-text", wrap ? "wrap-anywhere" : "truncate")} dir="auto">
         {children ?? value}
       </span>
       <Icon
         aria-hidden
         className={cn(
-          // Faint at rest so the value says it copies without a hover; full on hover and keyboard focus.
-          "size-3.5 shrink-0 text-muted-foreground opacity-50 transition-opacity duration-150 group-hover/copy:opacity-100 group-focus-visible/copy:opacity-100",
+          // Hidden at rest; faint under a pointer that hovers (never after a tap), full on keyboard focus.
+          "size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity duration-150 group-focus-visible/copy:opacity-100 [@media(hover:hover)]:group-hover/copy:opacity-50",
           done && "text-ok opacity-100",
         )}
       />
@@ -554,6 +770,11 @@ function useCopy(value: string) {
   const copy = async (e: React.MouseEvent) => {
     e.stopPropagation()
     e.preventDefault()
+    // Browsers give the clipboard to secure pages only: over plain HTTP there is none to ask (FB-12).
+    if (!window.isSecureContext || !navigator.clipboard) {
+      toast.error("Copying needs HTTPS. Select the text and copy it instead.")
+      return
+    }
     try {
       await navigator.clipboard.writeText(value)
       setDone(true)
@@ -592,20 +813,123 @@ export function Command({
   )
 }
 
-/** User-entered text (workflow, instance and token names) keeps its own direction. */
-export function UserText({ children, className }: { children: React.ReactNode; className?: string }) {
+/**
+ * A button that starts a request (FB-7, DS-20). With `run` it owns the request: a click sends one, and clicks
+ * are ignored until its label is back (its clock is lib/busy-run.ts, so a double click cannot send two). It is
+ * disabled and shows a spinning ring and `busyLabel` ("Checking…") meanwhile; then "Done" for DONE_MS, or
+ * "Failed" for FAILED_MS, and its label again. `run` should reject on failure and say why itself (useApiMutation's
+ * toast).
+ * With `busy` instead, the caller owns the state (a dialog's submit, whose dialog says the result): the ring and
+ * `busyLabel` show while it is true.
+ */
+export function BusyButton({
+  run,
+  busy: held = false,
+  busyLabel,
+  icon: Icon,
+  labelClassName,
+  children,
+  disabled,
+  variant,
+  className,
+  onClick,
+  ...props
+}: Omit<React.ComponentProps<typeof Button>, "children" | "asChild"> & {
+  run?: () => Promise<unknown>
+  busy?: boolean
+  busyLabel: string
+  icon?: LucideIcon
+  /** For a label that hides in a narrow pane but stays the accessible name (`@max-[34rem]/pane:sr-only`). */
+  labelClassName?: string
+  children: React.ReactNode
+}) {
+  const [state, setState] = useState<BusyState>("idle")
+  const [clock] = useState(() => busyRun(setState))
+  useEffect(() => clock.mount(), [clock])
+  const busy = held || state === "busy"
+  const Shown = busy ? LoaderCircle : state === "done" ? Check : state === "failed" ? X : Icon
+  // A filled button keeps its colours; the others take the result's tone.
+  const toned = variant !== "primary" && variant !== "danger-solid"
   return (
-    <span dir="auto" className={className}>
+    <Button
+      {...props}
+      variant={variant}
+      // "Done" stays undimmed but, like "Failed", ignores clicks (`clock.ignore`): it is not the action, and a
+      // quick answer cannot turn a double click into two requests.
+      disabled={disabled || busy || state === "failed"}
+      className={cn(
+        toned && state === "done" && "border-ok/40 text-ok",
+        toned && state === "failed" && "border-fail/40 text-fail",
+        className,
+      )}
+      onClick={(e) => {
+        // Until its label is back a click does nothing: it neither opens the row the button sits in nor submits.
+        if (clock.ignore(e)) return
+        onClick?.(e)
+        if (run && !e.defaultPrevented) void clock.start(run)
+      }}
+    >
+      {Shown && (
+        <Shown
+          aria-hidden
+          // The ring and the result mark say how the request goes (FB-7), so no design hides them with the icon.
+          data-status={Shown === Icon ? undefined : ""}
+          className={cn(busy && "animate-spin")}
+        />
+      )}
+      <span className={labelClassName}>
+        {busy ? busyLabel : state === "done" ? "Done" : state === "failed" ? "Failed" : children}
+      </span>
+    </Button>
+  )
+}
+
+/** User-entered text (workflow, instance and token names) keeps its own direction. */
+export function UserText({
+  children,
+  className,
+  title,
+}: {
+  children: React.ReactNode
+  className?: string
+  /** The full text on hover, where `className` cuts it to one line (TB-15). */
+  title?: string
+}) {
+  return (
+    <span dir="auto" className={className} title={title}>
       <bdi>{children}</bdi>
     </span>
   )
 }
 
-export { countChanges, SaveBarHost, SaveScope, useSaveSource, useUnsaved } from "@/components/save-bar"
+/**
+ * A muted "-" where there is nothing to measure or nothing was recorded, never a made-up 0 (FB-8). A screen reader
+ * hears `said` instead of the dash.
+ */
+export function NoValue({ said = "Not recorded" }: { said?: string }) {
+  return (
+    <span className="text-muted-foreground">
+      <span aria-hidden="true">-</span>
+      <span className="sr-only">{said}</span>
+    </span>
+  )
+}
+
+export {
+  countChanges,
+  type FieldProblem,
+  formChanged,
+  SaveBarHost,
+  SaveScope,
+  useSaveSource,
+  useUnsaved,
+  useUnsavedIds,
+} from "@/components/save-bar"
 
 /**
  * A list that reloads keeps its rows on screen until the answer replaces them; they dim only when the
- * answer takes longer than 200ms, so a fast reload does not flicker and nothing collapses (TB-5).
+ * answer takes longer than 200ms, so a fast reload does not flicker and nothing collapses (TB-5). A reload that
+ * fails keeps them too (`loadView` in lib/load-state.ts), and the page head says so (RefreshNote).
  */
 export function Reloading({
   busy,
@@ -637,7 +961,8 @@ export function Reloading({
 
 /**
  * An on/off setting: the whole row, title and description included, is the label of its switch, so a click
- * anywhere on it flips the switch (FS-1). A switch that cannot be used says why in `reason`.
+ * anywhere on it flips the switch (FS-1). A switch that cannot be used says why in `reason`, shown under the
+ * description, as a tip alone never shows by touch or keyboard (AX-9).
  */
 export function SwitchRow({
   id,
@@ -661,12 +986,12 @@ export function SwitchRow({
   return (
     <label
       htmlFor={id}
-      title={disabled ? reason : undefined}
       className={cn("flex min-w-0 items-center gap-4", disabled ? "cursor-not-allowed" : "cursor-pointer", className)}
     >
       <span className="min-w-0 flex-1">
         <span className="block font-semibold">{title}</span>
         {description && <span className="mt-0.5 block text-small text-muted-foreground">{description}</span>}
+        {disabled && reason && <span className="mt-0.5 block text-small text-muted-foreground">{reason}</span>}
       </span>
       <Switch id={id} checked={checked} onCheckedChange={onCheckedChange} disabled={disabled} />
     </label>
@@ -685,6 +1010,8 @@ export function SecretField({
   onChange,
   removable = true,
   placeholder = "Not set",
+  invalid,
+  describedBy,
 }: {
   id: string
   stored: boolean
@@ -692,6 +1019,9 @@ export function SecretField({
   onChange: (value: string | null | undefined) => void
   removable?: boolean
   placeholder?: string
+  /** The field failed its check before a save, and the note that says why (SV-1). */
+  invalid?: boolean
+  describedBy?: string
 }) {
   if (!stored || typeof value === "string")
     return (
@@ -700,6 +1030,8 @@ export function SecretField({
           id={id}
           type="password"
           autoComplete="new-password"
+          aria-invalid={invalid || undefined}
+          aria-describedby={describedBy}
           // Focus moves into the field the moment Replace is chosen.
           autoFocus={stored}
           placeholder={stored ? "New value" : placeholder}

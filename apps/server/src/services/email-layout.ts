@@ -1,3 +1,5 @@
+import { type DateWriting, formatDay, formatStamp, messageWriting } from "@n8n-ops/shared"
+
 /*
  * The HTML layout of every email n8n-ops sends, in the v3 design language of the console (EM-1, EM-2).
  *
@@ -105,33 +107,14 @@ function lines(value: Text, cls = "m-ink"): string {
 export const plural = (count: number, one: string, many = `${one}s`) =>
   `${count.toLocaleString("en-US")} ${count === 1 ? one : many}`
 
-/** A time zone the runtime knows; an unknown one falls back to UTC, like the server. */
-function knownZone(timeZone: string): string {
-  try {
-    new Intl.DateTimeFormat("en-GB", { timeZone })
-    return timeZone
-  } catch {
-    return "UTC"
-  }
-}
-
-/** Day/month/year in the console's time zone, like the dates in the console's tables (EM-6). */
-export function formatDate(when: Date, timeZone: string, time = false): string {
-  const parts = Object.fromEntries(
-    new Intl.DateTimeFormat("en-GB", {
-      timeZone: knownZone(timeZone),
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      hourCycle: "h23",
-    })
-      .formatToParts(when)
-      .map((p) => [p.type, p.value]),
-  )
-  const date = `${parts.day}/${parts.month}/${parts.year}`
-  return time ? `${date} ${parts.hour}:${parts.minute}` : date
+/**
+ * A date in an email, written by the same code as the console's (`@n8n-ops/shared` dates.ts), so both read alike
+ * (EM-6): in the app's time zone (an unknown one is UTC), in the Date format and Time format chosen in Settings →
+ * General, where Browser, which an email cannot ask, is day/month/year and the 24-hour clock (`messageWriting`).
+ * A time carries the zone's short name after it: "20/10/2026 13:00 CEST".
+ */
+export function formatDate(when: Date, dates: DateWriting, time = false): string {
+  return time ? formatStamp(when, dates) : formatDay(when, dates)
 }
 
 const DARK_CSS = `
@@ -401,7 +384,7 @@ export function render({
   footer,
   preheader,
   when = new Date(),
-  timeZone = "UTC",
+  dates = messageWriting(undefined),
 }: {
   title: string
   topic: string
@@ -411,9 +394,10 @@ export function render({
   footer?: string
   preheader?: string
   when?: Date
-  timeZone?: string
+  /** How dates are written: `messageWriting` of General; UTC, day/month/year and 24-hour when left out. */
+  dates?: DateWriting
 }): string {
-  const date = formatDate(when, timeZone, true)
+  const date = formatDate(when, dates, true)
   const pre = preheader ?? intro
   const preHtml = pre
     ? `<div style="display:none;max-height:0;overflow:hidden;opacity:0;mso-hide:all;">${attr(pre)}${"&nbsp;&zwnj;".repeat(40)}</div>`

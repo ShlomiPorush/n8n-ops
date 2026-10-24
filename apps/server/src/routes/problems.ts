@@ -1,20 +1,22 @@
-import { and, desc, eq, ilike, isNull, ne, or, type SQL } from "drizzle-orm"
+import { type AnyColumn, and, asc, desc, eq, ilike, isNull, ne, or, type SQL, sql } from "drizzle-orm"
 import { Hono } from "hono"
 import { z } from "zod"
-import type { Ctx } from "../context.ts"
-import { failures, instances, problems } from "../db/schema.ts"
+import { type Ctx, changed } from "../context.ts"
+import { failures, instances, type ProblemAction, problems } from "../db/schema.ts"
 import { requireUser } from "../http/middleware.ts"
 import { actorName, type Env } from "../http/types.ts"
 import { likeContains } from "../lib/like.ts"
 import type { N8nWorkflow } from "../n8n/client.ts"
 import { workflowGraph } from "../n8n/execution.ts"
 import { executionUrl } from "../services/instances.ts"
-import { mergeProblems } from "../services/problems.ts"
+import { applyProblemAction, mergeProblems, undoProblemAction } from "../services/problems.ts"
 
-export async function listProblems(
-  ctx: Ctx,
-  { status, instanceId, q, limit = 200 }: { status?: string; instanceId?: string; q?: string; limit?: number },
-) {
+const uuid = z.string().uuid()
+
+/** The list's filters. The rows and their total are read through one `where`, so the two always agree (TB-18). */
+export type ProblemFilter = { status?: string; instanceId?: string; q?: string }
+
+function problemWhere({ status, instanceId, q }: ProblemFilter) {
   const where: (SQL | undefined)[] = [isNull(problems.mergedInto)]
   if (status === "open" || status === "muted" || status === "resolved") where.push(eq(problems.status, status))
   if (instanceId) where.push(eq(problems.instanceId, instanceId))
@@ -24,27 +26,116 @@ export async function listProblems(
       or(ilike(problems.workflowName, like), ilike(problems.errorMessage, like), ilike(problems.nodeName, like)),
     )
   }
+  return and(...where)
+}
+
+/*
+ * What needs a look comes first (TB-11), the way the Status column reads a problem (`problemStatus` in the UI):
+ * a regression, then a problem first seen in the last 24 hours, then open, muted and resolved.
+ */
+const problemRank = sql<number>`case
+  when ${problems.status} = 'resolved' then 0
+  when ${problems.status} = 'muted' then 1
+  when ${problems.regression} then 4
+  when ${problems.firstSeen} > now() - interval '24 hours' then 3
+  else 2 end`
+
+/** A column the list sorts by; `blank` is true for a row without a value, which stays last in both directions. */
+type SortColumn = { value: SQL | AnyColumn; blank?: SQL }
+
+/*
+ * Text compares without case, as the table's own sort does, and blank text comes last (TB-2). The table's sort
+ * also reads digits as numbers ("Sync 2" before "Sync 10"); PostgreSQL does that only with an ICU collation made
+ * for it (`und-u-kn-true`), which no migration creates yet, so here "Sync 10" comes before "Sync 2".
+ */
+const text = (column: AnyColumn): SortColumn => ({
+  value: sql`lower(${column})`,
+  blank: sql`(nullif(btrim(${column}), '') is null)`,
+})
+
+/** The columns the list sorts by, the ones the Problems table shows. */
+const problemSorts = {
+  status: { value: problemRank },
+  workflow: text(problems.workflowName),
+  error: text(problems.errorMessage),
+  instance: text(instances.name),
+  failures: { value: problems.count },
+  lastSeen: { value: problems.lastSeen },
+} satisfies Record<string, SortColumn>
+export const problemSortKeys = Object.keys(problemSorts) as [ProblemSortKey, ...ProblemSortKey[]]
+export type ProblemSortKey = keyof typeof problemSorts
+export type ProblemOrder = { sort: ProblemSortKey; order: "asc" | "desc" }
+
+/**
+ * The order of a list, sorted on the server before the limit so it covers every problem, not only the rows sent
+ * (TB-4). With no order asked for, what needs a look first, then the most recently seen. A chosen column keeps
+ * that order among equal values, in both directions, as the table's own sort keeps the order rows came in; the
+ * id settles the rest, so a refresh never shuffles equal rows.
+ */
+function problemOrderBy(order: ProblemOrder | null | "recent") {
+  const settle = [desc(problems.lastSeen), asc(problems.id)]
+  // The agents' order (requirements E1): most recently seen first, as it always was.
+  if (order === "recent") return settle
+  const ranked = [desc(problemRank), ...settle]
+  if (!order) return ranked
+  const column: SortColumn = problemSorts[order.sort]
+  const by = order.order === "asc" ? asc(column.value) : desc(column.value)
+  return [...(column.blank ? [asc(column.blank)] : []), by, ...ranked]
+}
+
+const sortQuery = z.object({ sort: z.enum(problemSortKeys), order: z.enum(["asc", "desc"]) })
+
+/**
+ * The order asked for in `?sort=<column>&order=asc|desc`. Anything else, an unknown column or direction or
+ * only one of the two, is the default order.
+ */
+export function parseProblemOrder(sort: string | undefined, order: string | undefined): ProblemOrder | null {
+  const parsed = sortQuery.safeParse({ sort, order })
+  return parsed.success ? parsed.data : null
+}
+
+const problemColumns = {
+  id: problems.id,
+  status: problems.status,
+  regression: problems.regression,
+  workflowId: problems.workflowId,
+  workflowName: problems.workflowName,
+  nodeName: problems.nodeName,
+  errorMessage: problems.errorMessage,
+  count: problems.count,
+  firstSeen: problems.firstSeen,
+  lastSeen: problems.lastSeen,
+  mutedUntil: problems.mutedUntil,
+  instanceId: problems.instanceId,
+  instanceName: instances.name,
+}
+
+type ListOptions = ProblemFilter & { order?: ProblemOrder | null | "recent"; limit?: number }
+
+export async function listProblems(ctx: Ctx, { order = null, limit = 200, ...filter }: ListOptions) {
   return ctx.db
-    .select({
-      id: problems.id,
-      status: problems.status,
-      regression: problems.regression,
-      workflowId: problems.workflowId,
-      workflowName: problems.workflowName,
-      nodeName: problems.nodeName,
-      errorMessage: problems.errorMessage,
-      count: problems.count,
-      firstSeen: problems.firstSeen,
-      lastSeen: problems.lastSeen,
-      mutedUntil: problems.mutedUntil,
-      instanceId: problems.instanceId,
-      instanceName: instances.name,
-    })
+    .select(problemColumns)
     .from(problems)
     .innerJoin(instances, eq(problems.instanceId, instances.id))
-    .where(and(...where))
-    .orderBy(desc(problems.lastSeen))
+    .where(problemWhere(filter))
+    .orderBy(...problemOrderBy(order))
     .limit(limit)
+}
+
+/**
+ * The rows of a list and how many problems match its filters in all, not only the rows sent (TB-18). One query
+ * counts them over the same rows it sorts, before the limit, so the two always agree, also while problems come in.
+ */
+export async function problemPage(ctx: Ctx, { order = null, limit = 200, ...filter }: ListOptions) {
+  const rows = await ctx.db
+    .select({ ...problemColumns, total: sql<number>`count(*) over()`.mapWith(Number) })
+    .from(problems)
+    .innerJoin(instances, eq(problems.instanceId, instances.id))
+    .where(problemWhere(filter))
+    .orderBy(...problemOrderBy(order))
+    .limit(limit)
+  // No rows means nothing matched: the count rides on each row.
+  return { items: rows.map(({ total: _, ...row }) => row), total: rows[0]?.total ?? 0 }
 }
 
 export async function problemDetail(ctx: Ctx, id: string) {
@@ -110,15 +201,15 @@ export function problemRoutes(ctx: Ctx) {
   const app = new Hono<Env>()
   app.use("*", requireUser(ctx))
 
-  app.get("/", async (c) =>
-    c.json(
-      await listProblems(ctx, {
-        status: c.req.query("status") ?? "open",
-        instanceId: c.req.query("instance"),
-        q: c.req.query("q"),
-      }),
-    ),
-  )
+  /*
+   * `{ items, total }`: the first 200 problems in the order asked for (`?sort=<column>&order=asc|desc`, else what
+   * needs a look first) and how many match the filters in all, so the list can say "200 of 1,240" (TB-4, TB-18).
+   */
+  app.get("/", async (c) => {
+    const filter = { status: c.req.query("status") ?? "open", instanceId: c.req.query("instance"), q: c.req.query("q") }
+    const order = parseProblemOrder(c.req.query("sort"), c.req.query("order"))
+    return c.json(await problemPage(ctx, { ...filter, order }))
+  })
 
   app.get("/:id", async (c) => {
     const detail = await problemDetail(ctx, c.req.param("id"))
@@ -133,32 +224,53 @@ export function problemRoutes(ctx: Ctx) {
     return row ? c.json(row) : c.json({ error: "not_found" }, 404)
   })
 
-  const setStatus =
-    (status: "open" | "resolved" | "muted", action: string) => async (c: import("hono").Context<Env>) => {
-      const hours = status === "muted" ? Number((await c.req.json().catch(() => ({})))?.hours ?? 24) : 0
-      const [row] = await ctx.db
-        .update(problems)
-        .set({
-          status,
-          resolvedAt: status === "resolved" ? new Date() : null,
-          mutedUntil:
-            status === "muted" ? new Date(Date.now() + Math.min(Math.max(hours, 1), 24 * 30) * 3600_000) : null,
-          ...(status === "open" ? { regression: false } : {}),
-        })
-        .where(eq(problems.id, c.req.param("id") ?? ""))
-        .returning()
-      if (!row) return c.json({ error: "not_found" }, 404)
-      await ctx.audit({
-        actor: actorName(c.get("actor")),
-        action,
-        target: `${row.workflowName} · ${row.nodeName}`,
-        via: "web",
-      })
-      return c.json({ ok: true })
-    }
-  app.post("/:id/resolve", setStatus("resolved", "Problem resolved"))
-  app.post("/:id/mute", setStatus("muted", "Problem muted"))
-  app.post("/:id/reopen", setStatus("open", "Problem reopened"))
+  /*
+   * Resolve, Mute, Reopen and Unmute act at once and answer with a receipt for Undo (FB-16, FB-11):
+   * `{ ok, changed, receipt: { id, problemId, action, version, prior, expiresAt } }`. An action that found the
+   * problem already in that state changes nothing and answers `changed: false` without a receipt.
+   */
+  const act = (action: ProblemAction, audited: string) => async (c: import("hono").Context<Env>) => {
+    const id = c.req.param("id") ?? ""
+    if (!uuid.safeParse(id).success) return c.json({ error: "not_found" }, 404)
+    const body = action === "mute" ? await c.req.json().catch(() => ({})) : {}
+    // The audit row is written in the action's transaction: a failed write saves neither.
+    const result = await applyProblemAction(ctx, id, action, {
+      muteHours: Number(body?.hours ?? 24),
+      audit: { actor: actorName(c.get("actor")), action: audited, via: "web" },
+    })
+    if (!result) return c.json({ error: "not_found" }, 404)
+    const { problem, receipt } = result
+    if (!receipt) return c.json({ ok: true, changed: false, status: problem.status })
+    changed(ctx, "problems", "overview")
+    const { id: receiptId, problemId, version, prior, expiresAt } = receipt
+    return c.json({
+      ok: true,
+      changed: true,
+      status: problem.status,
+      receipt: { id: receiptId, problemId, action, version, prior, expiresAt },
+    })
+  }
+  app.post("/:id/resolve", act("resolve", "Problem resolved"))
+  app.post("/:id/mute", act("mute", "Problem muted"))
+  app.post("/:id/reopen", act("reopen", "Problem reopened"))
+  app.post("/:id/unmute", act("unmute", "Problem unmuted"))
+
+  /*
+   * Undo by receipt: 404 receipt_not_found (unknown, cleaned up, or another problem's), 409 receipt_used,
+   * receipt_expired, or already_changed when the problem changed after the action. A refusal changes nothing.
+   */
+  app.post("/:id/undo/:receipt", async (c) => {
+    const id = c.req.param("id")
+    const receiptId = c.req.param("receipt")
+    if (!uuid.safeParse(id).success || !uuid.safeParse(receiptId).success)
+      return c.json({ error: "receipt_not_found" }, 404)
+    const result = await undoProblemAction(ctx, id, receiptId, {
+      audit: { actor: actorName(c.get("actor")), action: "Problem action undone", via: "web" },
+    })
+    if (!result.ok) return c.json({ error: result.error }, result.error === "receipt_not_found" ? 404 : 409)
+    changed(ctx, "problems", "overview")
+    return c.json({ ok: true, status: result.problem.status })
+  })
 
   app.post("/:id/merge", async (c) => {
     const parsed = z.object({ into: z.string().uuid() }).safeParse(await c.req.json().catch(() => ({})))

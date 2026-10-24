@@ -1,3 +1,4 @@
+import { type DateWriting, formatDuration, formatStamp, messageWriting } from "@n8n-ops/shared"
 import { and, eq, isNotNull, isNull, ne, type SQL } from "drizzle-orm"
 import type { Ctx } from "../context.ts"
 import { type AccessStatus, accessRequests, apiTokens, instances } from "../db/schema.ts"
@@ -24,13 +25,6 @@ type RequestInfo = {
   decideBy: Date
 }
 
-export function duration(minutes: number) {
-  if (minutes < 60) return `${minutes} min`
-  const h = Math.floor(minutes / 60)
-  const m = minutes % 60
-  return m ? `${h} h ${m} min` : `${h} h`
-}
-
 /** How a request ended up: decided, then perhaps ended. */
 type Outcome = {
   status: AccessStatus
@@ -50,25 +44,13 @@ function decider(r: Outcome) {
   return clip(channel ? `${who} via ${channel}` : who, 200)
 }
 
-/** Hours and minutes in the console's time zone; an unknown zone falls back to UTC. */
-function clock(when: Date, timeZone: string) {
-  const format = (zone: string) =>
-    new Intl.DateTimeFormat("en-GB", { timeZone: zone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(
-      when,
-    )
-  try {
-    return format(timeZone)
-  } catch {
-    return format("UTC")
-  }
-}
-
 /**
  * What a decided or ended request's message shows: an icon for its first line, so the outcome is clear at a glance,
- * and lines under the request saying who decided where, and then how the access ended.
+ * and lines under the request saying who decided where, and then how the access ended. Times are the date and time
+ * with the zone, as the emails write them (EM-6): access can last days, and the message stays in the chat.
  */
-export function accessOutcome(r: Outcome, timeZone: string): { icon: string; lines: TelegramHtml[] } {
-  const at = (when: Date | null) => (when ? ` at ${clock(when, timeZone)}` : "")
+export function accessOutcome(r: Outcome, dates: DateWriting): { icon: string; lines: TelegramHtml[] } {
+  const at = (when: Date | null) => (when ? ` at ${formatStamp(when, dates)}` : "")
   if (r.status === "pending") return { icon: "🔐", lines: [] }
   if (!r.decidedAt) {
     if (r.status === "expired") return { icon: "⌛", lines: [html`⌛ <b>Expired</b> without a decision`] }
@@ -77,7 +59,7 @@ export function accessOutcome(r: Outcome, timeZone: string): { icon: string; lin
   }
   if (r.status === "denied") return { icon: "❌", lines: [html`❌ <b>Denied</b> by ${decider(r)}`] }
   const lines = [html`✅ <b>Approved</b> by ${decider(r)}`]
-  if (r.status === "approved") lines.push(html`Access until ${r.expiresAt ? clock(r.expiresAt, timeZone) : "?"}`)
+  if (r.status === "approved") lines.push(html`Access until ${r.expiresAt ? formatStamp(r.expiresAt, dates) : "?"}`)
   else if (r.status === "released") lines.push(html`⏹ <b>Released</b> by the agent${at(r.endedAt)}`)
   else if (r.status === "expired") lines.push(html`⌛ <b>Access ended</b>${at(r.endedAt)}`)
   else lines.push(html`⛔ <b>Revoked</b>${at(r.endedAt)}`)
@@ -109,17 +91,21 @@ export function renderAccessTelegram(r: RequestInfo, outcome?: { icon: string; l
     r.workflowIds.length
       ? html`Workflows: <code>${workflows.text}</code>${workflows.more}`
       : html`Workflows: the whole instance`,
-    html`For ${duration(r.minutes)}`,
+    html`For ${formatDuration(r.minutes)}`,
     ...(outcome?.lines.length ? [html``, ...outcome.lines] : []),
   ])
 }
 
 /**
  * The email for a waiting request: who asks, for what and how long, and one button to decide in n8n-ops.
- * Times are in the time zone set in Settings → General.
+ * Times follow Settings → General, with the zone's short name (EM-6).
  */
-export function renderAccessEmail(r: RequestInfo, link: string | null, timeZone = "UTC"): Email {
-  const decideBy = `${formatDate(r.decideBy, timeZone, true)} (${timeZone})`
+export function renderAccessEmail(
+  r: RequestInfo,
+  link: string | null,
+  dates: DateWriting = messageWriting(undefined),
+): Email {
+  const decideBy = formatDate(r.decideBy, dates, true)
   const workflows = r.workflowIds.length ? r.workflowIds.join(", ") : "the whole instance"
   const lines = [
     `${r.token} asks for temporary access to ${r.instance}.`,
@@ -127,7 +113,7 @@ export function renderAccessEmail(r: RequestInfo, link: string | null, timeZone 
     `Reason: ${r.reason}`,
     `Scopes: ${r.scopes.join(", ")}`,
     `Workflows: ${workflows}`,
-    `For: ${duration(r.minutes)}`,
+    `For: ${formatDuration(r.minutes)}`,
     `Decide by: ${decideBy}; then the request expires.`,
     "",
     link
@@ -139,7 +125,7 @@ export function renderAccessEmail(r: RequestInfo, link: string | null, timeZone 
     topic: "Access request",
     tone: "warn",
     intro: `Nothing is granted until someone approves it. Without a decision the request expires on ${decideBy}.`,
-    timeZone,
+    dates,
     blocks: [
       panel("Why", [panelText(r.reason)]),
       panel("What it asks for", [
@@ -148,7 +134,7 @@ export function renderAccessEmail(r: RequestInfo, link: string | null, timeZone 
           ["Instance", r.instance],
           ["Scopes", mono(r.scopes.join(", "))],
           ["Workflows", r.workflowIds.length ? mono(r.workflowIds.join(", ")) : "the whole instance"],
-          ["For", duration(r.minutes)],
+          ["For", formatDuration(r.minutes)],
           ["Decide by", decideBy],
         ]),
       ]),
@@ -193,7 +179,7 @@ export async function notifyAccess(ctx: Ctx) {
   const settings = await ctx.settings.get("access")
   const { retryMin } = await ctx.settings.get("alerts")
   const email = await ctx.settings.get("email")
-  const timeZone = (await ctx.settings.get("general")).timezone || "UTC"
+  const dates = messageWriting(await ctx.settings.get("general"))
   const tg = settings.notifyTelegram ? await telegramClient(ctx) : null
   const mail = settings.notifyEmail && Boolean(email.smtpHost && email.recipients.length)
   const now = Date.now()
@@ -217,7 +203,7 @@ export async function notifyAccess(ctx: Ctx) {
     }
     if (needEmail) {
       try {
-        await sendEmail(ctx, renderAccessEmail(info, link, timeZone))
+        await sendEmail(ctx, renderAccessEmail(info, link, dates))
         patch.emailSentAt = new Date()
       } catch (e) {
         errors.push(`Email: ${(e as Error).message}`)
@@ -244,7 +230,7 @@ let closing: Promise<void> = Promise.resolve()
 async function closeOutdated(ctx: Ctx) {
   const tg = await telegramClient(ctx)
   if (!tg) return
-  const timeZone = (await ctx.settings.get("general")).timezone || "UTC"
+  const dates = messageWriting(await ctx.settings.get("general"))
   // Every change of status clears telegramClosedAt in the same update (access.ts), so these are the messages
   // that do not show their request's status yet.
   const outdated = await requestsWith(
@@ -257,7 +243,7 @@ async function closeOutdated(ctx: Ctx) {
   )
   for (const { r, info } of outdated) {
     try {
-      await tg.api.edit(tg.chatId, r.telegramMessageId ?? 0, renderAccessTelegram(info, accessOutcome(r, timeZone)))
+      await tg.api.edit(tg.chatId, r.telegramMessageId ?? 0, renderAccessTelegram(info, accessOutcome(r, dates)))
       // Marked as shown only if the status is still the one shown; if it changed meanwhile, the next run edits again.
       await ctx.db
         .update(accessRequests)

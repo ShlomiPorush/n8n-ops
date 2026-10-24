@@ -1,3 +1,4 @@
+import { messageWriting } from "@n8n-ops/shared"
 import nodemailer from "nodemailer"
 import { describe, expect, it } from "vitest"
 import { renderAccessEmail } from "./access-notify.ts"
@@ -89,12 +90,23 @@ describe("email layout", () => {
     expect(html.match(/v:roundrect/g)).toHaveLength(2) // the opening and closing tag of one shape
   })
 
-  it("writes dates as day/month/year in the console's time zone", () => {
+  it("writes dates in the console's time zone with the zone's short name, day/month/year for Browser (EM-6)", () => {
     const when = new Date("2026-10-16T22:30:00Z")
-    expect(formatDate(when, "Asia/Jerusalem", true)).toBe("17/10/2026 01:30")
-    expect(formatDate(when, "UTC")).toBe("16/10/2026")
-    expect(formatDate(when, "Not/AZone", true)).toBe("16/10/2026 22:30")
-    expect(render({ title: "t", topic: "Test", when, timeZone: "Asia/Jerusalem" })).toContain("17/10/2026 01:30")
+    const zone = (timezone: string) => messageWriting({ timezone })
+    expect(formatDate(when, zone("Asia/Jerusalem"), true)).toBe("17/10/2026 01:30 GMT+3")
+    expect(formatDate(when, zone("UTC"))).toBe("16/10/2026")
+    expect(formatDate(when, zone("Not/AZone"), true)).toBe("16/10/2026 22:30 UTC")
+    expect(render({ title: "t", topic: "Test", when, dates: zone("Asia/Jerusalem") })).toContain(
+      "17/10/2026 01:30 GMT+3",
+    )
+  })
+
+  it("follows the Date and Time format chosen in Settings (EM-6, FW-9)", () => {
+    const when = new Date("2026-10-16T22:30:00Z")
+    const dates = messageWriting({ timezone: "Europe/Berlin", dateFormat: "MM/DD/YYYY", timeFormat: "12h" })
+    expect(formatDate(when, dates, true)).toBe("10/17/2026 12:30 AM CEST")
+    expect(formatDate(when, messageWriting({ timezone: "UTC", dateFormat: "DD.MM.YYYY" }))).toBe("16.10.2026")
+    expect(render({ title: "t", topic: "Test", when, dates })).toContain("10/17/2026 12:30 AM CEST")
   })
 })
 
@@ -114,7 +126,7 @@ describe("emails", () => {
       ],
       versions: [{ name: "n8n-7", version: "2.41.2" }],
       latest: "2.44.0",
-      timeZone: "Asia/Jerusalem",
+      dates: messageWriting({ timezone: "Asia/Jerusalem" }),
       when: new Date("2026-10-16T05:00:00Z"),
     })
 
@@ -124,8 +136,29 @@ describe("emails", () => {
     expect(r.html).toContain("3 open problems on 1 instance")
     expect(r.html).toContain("Weekly report")
     expect(r.html).toContain("1,204")
-    expect(r.html).toContain("15/10/2026 11:00")
-    expect(r.text).toContain("15/10/2026 11:00")
+    expect(r.html).toContain("15/10/2026 11:00 GMT+3")
+    expect(r.text).toContain("15/10/2026 11:00 GMT+3")
+  })
+
+  it("gives the exact window it counts, with the zone (EM-6)", () => {
+    const r = report()
+    expect(r.html).toContain("From 09/10/2026 08:00 to 16/10/2026 08:00 GMT+3, on every n8n instance.")
+    expect(r.text).toContain("From 09/10/2026 08:00 to 16/10/2026 08:00 GMT+3")
+  })
+
+  it("names the zone at both ends of a window that daylight saving changed", () => {
+    const r = renderReport({
+      period: "daily",
+      openByInstance: [],
+      topWorkflows: [],
+      incidents: [],
+      backups: [],
+      versions: [],
+      latest: null,
+      dates: messageWriting({ timezone: "Europe/Berlin", dateFormat: "DD.MM.YYYY" }),
+      when: new Date("2026-10-25T07:00:00Z"),
+    })
+    expect(r.text).toContain("From 24.10.2026 09:00 CEST to 25.10.2026 08:00 CET")
   })
 
   it("says plainly when there is nothing to report", () => {
@@ -155,10 +188,10 @@ describe("emails", () => {
         decideBy: new Date("2026-10-16T10:00:00Z"),
       },
       "https://ops.example.com/access/1",
-      "Asia/Jerusalem",
+      messageWriting({ timezone: "Asia/Jerusalem" }),
     )
     for (const subject of [report().subject, access.subject]) expect(subject).not.toMatch(/\p{Extended_Pictographic}/u)
-    expect(access.html).toContain("16/10/2026 13:00 (Asia/Jerusalem)")
+    expect(access.html).toContain("16/10/2026 13:00 GMT+3")
   })
 
   it("keeps every line of the sent message under the SMTP limit of 998 characters", async () => {

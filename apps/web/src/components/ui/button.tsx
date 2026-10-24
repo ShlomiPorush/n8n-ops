@@ -4,8 +4,10 @@ import type * as React from "react"
 import { cn } from "@/lib/utils"
 
 // Default is a quiet bordered button; at most one primary (the ink) per area; danger is red text, never a fill.
+// A disabled button still takes the pointer, so it shows not-allowed and its title (AX-9); `disabled` itself
+// keeps clicks away, and an `aria-disabled` one ignores them in `Button`.
 const buttonVariants = cva(
-  "group/button inline-flex shrink-0 items-center justify-center gap-[7px] rounded-sm border border-transparent text-ctl font-semibold whitespace-nowrap transition-colors duration-150 select-none disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+  "group/button inline-flex shrink-0 items-center justify-center gap-[7px] rounded-sm border border-transparent text-ctl font-semibold whitespace-nowrap transition-colors duration-150 select-none disabled:cursor-not-allowed disabled:opacity-50 aria-disabled:cursor-not-allowed aria-disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
   {
     variants: {
       variant: {
@@ -40,12 +42,14 @@ function Button({
   variant = "default",
   size = "default",
   asChild = false,
+  onClick,
   ...props
 }: React.ComponentProps<"button"> &
   VariantProps<typeof buttonVariants> & {
     asChild?: boolean
   }) {
   const Comp = asChild ? Slot.Root : "button"
+  const off = props["aria-disabled"] === true || props["aria-disabled"] === "true"
 
   return (
     <Comp
@@ -53,6 +57,10 @@ function Button({
       data-variant={variant}
       data-size={size}
       className={cn(buttonVariants({ variant, size, className }))}
+      onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
+        if (off) e.preventDefault()
+        else onClick?.(e)
+      }}
       {...props}
     />
   )

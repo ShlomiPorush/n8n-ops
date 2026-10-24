@@ -1,12 +1,17 @@
-import { and, count, desc, eq, gt, isNull } from "drizzle-orm"
+import { type DateWriting, formatWindow, messageWriting } from "@n8n-ops/shared"
+import { and, count, desc, eq, gt, isNull, lte } from "drizzle-orm"
 import nodemailer from "nodemailer"
 import type { Ctx } from "../context.ts"
 import { alertOutbox, alertState, backupRuns, failures, instances, problems } from "../db/schema.ts"
+import { emailAccount } from "./draft-tests.ts"
 import { type Email, formatDate, panel, plural, render, stats, type Tone, table, tag } from "./email-layout.ts"
 import { compareVersions, latestN8nVersion } from "./instances.ts"
 import { telegramPlainText } from "./telegram.ts"
 
 const n = (value: number) => value.toLocaleString("en-US")
+
+/** How far back each report counts. */
+const periodMs = { daily: 86_400_000, weekly: 7 * 86_400_000 } as const
 
 export type Report = Email
 
@@ -18,9 +23,12 @@ type ReportData = {
   backups: { name: string; status: string; at: Date | null }[]
   versions: { name: string; version: string | null }[]
   latest: string | null
-  /** The time zone set in Settings → General; dates read day/month/year in it. */
-  timeZone?: string
+  /** How dates are written: the zone and formats of Settings → General (`messageWriting`, EM-6). */
+  dates?: DateWriting
+  /** When the report is made: the end of the window it counts. */
   when?: Date
+  /** The start of that window; a day or a week before `when` when left out. */
+  since?: Date
 }
 
 const backupWords: Record<string, [string, Tone]> = {
@@ -33,8 +41,11 @@ const backupWords: Record<string, [string, Tone]> = {
 
 /** The daily or weekly summary: what needs a look first, then the details, in the console's layout. */
 export function renderReport(d: ReportData): Report {
-  const timeZone = d.timeZone || "UTC"
+  const dates = d.dates ?? messageWriting(undefined)
   const when = d.when ?? new Date()
+  const since = d.since ?? new Date(when.getTime() - periodMs[d.period])
+  // The exact window the failures and incidents are counted in, with its zone (EM-6).
+  const span = formatWindow(since, when, dates)
   const title = `n8n-ops ${d.period} report`
   const totalOpen = d.openByInstance.reduce((n, i) => n + i.open, 0)
   const instancesWithOpen = d.openByInstance.filter((i) => i.open > 0)
@@ -42,7 +53,7 @@ export function renderReport(d: ReportData): Report {
     ? d.versions.filter((v) => v.version && compareVersions(v.version, d.latest as string) < 0)
     : []
   const badBackups = d.backups.filter((b) => b.status === "failed" || b.status === "partial" || b.status === "none")
-  const stamp = (at: Date | null) => (at ? formatDate(at, timeZone, true) : "never")
+  const stamp = (at: Date | null) => (at ? formatDate(at, dates, true) : "never")
   const sections: { title: string; rows: string[][] }[] = [
     { title: `Open problems: ${totalOpen}`, rows: instancesWithOpen.map((i) => [i.name, String(i.open)]) },
     {
@@ -58,6 +69,7 @@ export function renderReport(d: ReportData): Report {
   ]
   const text = [
     title,
+    span,
     "",
     ...sections.flatMap((s) => [
       s.title,
@@ -74,9 +86,9 @@ export function renderReport(d: ReportData): Report {
         : "No open problems",
     topic: d.period === "daily" ? "Daily report" : "Weekly report",
     tone: totalOpen > 0 || badBackups.length ? "fail" : d.incidents.length || behind.length ? "warn" : "ok",
-    intro: `${d.period === "daily" ? "The last 24 hours" : "The last 7 days"} on every n8n instance.${needsLook ? "" : " Nothing needs a look."}`,
+    intro: `${span}, on every n8n instance.${needsLook ? "" : " Nothing needs a look."}`,
     when,
-    timeZone,
+    dates,
     blocks: [
       stats([
         { label: "Open problems", value: n(totalOpen), tone: totalOpen ? "fail" : undefined },
@@ -154,27 +166,32 @@ export function renderReport(d: ReportData): Report {
   return { subject: `${title}: ${plural(totalOpen, "open problem")}`, text, html }
 }
 
-export async function buildReport(ctx: Ctx, period: "daily" | "weekly"): Promise<Report> {
-  const since = new Date(Date.now() - (period === "daily" ? 1 : 7) * 86_400_000)
+/**
+ * The report of the day or week that ends at `when`. Every query counts what happened after `since` up to and
+ * including `when`, the window the report prints (EM-6): what arrives while the report is being made waits for
+ * the next one.
+ */
+export async function buildReport(ctx: Ctx, period: "daily" | "weekly", when = new Date()): Promise<Report> {
+  const since = new Date(when.getTime() - periodMs[period])
   const allInstances = await ctx.db.select().from(instances)
   const name = new Map(allInstances.map((i) => [i.id, i.name]))
   const open = await ctx.db
     .select({ instanceId: problems.instanceId, n: count() })
     .from(problems)
-    .where(and(eq(problems.status, "open"), isNull(problems.mergedInto)))
+    .where(and(eq(problems.status, "open"), isNull(problems.mergedInto), lte(problems.createdAt, when)))
     .groupBy(problems.instanceId)
   const top = await ctx.db
     .select({ workflow: problems.workflowName, instanceId: problems.instanceId, n: count() })
     .from(failures)
     .innerJoin(problems, eq(failures.problemId, problems.id))
-    .where(gt(failures.createdAt, since))
+    .where(and(gt(failures.createdAt, since), lte(failures.createdAt, when)))
     .groupBy(problems.workflowName, problems.instanceId)
     .orderBy(desc(count()))
     .limit(10)
   const incidents = await ctx.db
     .select({ at: alertOutbox.createdAt, text: alertOutbox.text })
     .from(alertOutbox)
-    .where(and(eq(alertOutbox.kind, "health"), gt(alertOutbox.createdAt, since)))
+    .where(and(eq(alertOutbox.kind, "health"), gt(alertOutbox.createdAt, since), lte(alertOutbox.createdAt, when)))
     .orderBy(desc(alertOutbox.createdAt))
     .limit(30)
   const backups = await Promise.all(
@@ -182,7 +199,7 @@ export async function buildReport(ctx: Ctx, period: "daily" | "weekly"): Promise
       const [last] = await ctx.db
         .select()
         .from(backupRuns)
-        .where(eq(backupRuns.instanceId, i.id))
+        .where(and(eq(backupRuns.instanceId, i.id), lte(backupRuns.startedAt, when)))
         .orderBy(desc(backupRuns.startedAt))
         .limit(1)
       return { name: i.name, status: last?.status ?? "none", at: last?.startedAt ?? null }
@@ -196,23 +213,22 @@ export async function buildReport(ctx: Ctx, period: "daily" | "weekly"): Promise
     backups,
     versions: allInstances.map((i) => ({ name: i.name, version: i.version })),
     latest: await latestN8nVersion(),
-    timeZone: (await ctx.settings.get("general")).timezone || "UTC",
+    dates: messageWriting(await ctx.settings.get("general")),
+    when,
+    since,
   })
 }
 
-export async function sendEmail(ctx: Ctx, report: Report) {
-  const email = await ctx.settings.get("email")
-  if (!email.smtpHost || !email.recipients.length)
-    throw new Error("Email is not configured: set the SMTP server and recipients.")
-  const transport = nodemailer.createTransport({
-    host: email.smtpHost,
-    port: email.smtpPort,
-    secure: email.smtpSecure,
-    auth: email.smtpUser
-      ? { user: email.smtpUser, pass: email.smtpPasswordEnc ? ctx.secrets.decrypt(email.smtpPasswordEnc) : "" }
-      : undefined,
-  })
-  await transport.sendMail(mailOptions(report, email.from || email.smtpUser, email.recipients))
+/**
+ * Sends an email with the stored Email settings, or for a test with the values on screen over them (`draft`,
+ * FS-19; see emailAccount for which password goes where). Returns who it was sent to.
+ */
+export async function sendEmail(ctx: Ctx, report: Report, draft: Record<string, unknown> = {}) {
+  const account = emailAccount(await ctx.settings.get("email"), draft, (enc) => ctx.secrets.decrypt(enc))
+  const { from, recipients, ...server } = account
+  const transport = nodemailer.createTransport(server)
+  await transport.sendMail(mailOptions(report, from, recipients))
+  return recipients
 }
 
 /** One message to every recipient, with a plain text part beside the HTML (EM-1, EM-6). */
@@ -264,7 +280,7 @@ export async function maybeSendReports(ctx: Ctx, now = new Date()) {
     if (sent) continue
     await ctx.db.insert(alertState).values({ key, active: false, detail: "sent" }).onConflictDoNothing()
     try {
-      await sendEmail(ctx, await buildReport(ctx, period))
+      await sendEmail(ctx, await buildReport(ctx, period, now))
       ctx.log.info("report sent", { period })
     } catch (error) {
       ctx.log.error("report failed", { period, error: (error as Error).message })

@@ -1,12 +1,18 @@
-import { ChevronDown, Search, SlidersHorizontal } from "lucide-react"
+import { ChevronDown, Funnel, Search } from "lucide-react"
 import { Popover as PopoverPrimitive } from "radix-ui"
 import * as React from "react"
+import { SortButton, type SortControl, toolButton } from "@/components/ui/table"
+import { LIST_WAIT_MS, SEARCH_PAUSE_MS, touchOnly } from "@/lib/behavior"
+import { usePopoverRoom } from "@/lib/popover-room"
+import { scrollerFor } from "@/lib/scroller"
 import { cn } from "@/lib/utils"
 
 /*
- * The shared filter bar of every list (MP-1, MP-3, MP-6, TB-17): a search, named pickers, and under the bar
- * one line with the count and "Clear filters". On a phone the pickers fold behind a Filters button whose
- * badge counts the filters in use.
+ * The shared filter bar of every list (MP-1, MP-3, MP-6, TB-17): a search with the list's Sort button beside
+ * it, the common pickers, and the rarely used filters behind a Filters button at every size, whose badge counts
+ * those in use. Under the bar one line holds the count, "Clear filters", and the Sort button of a list with no
+ * search. The bar stays in sight wherever its list scrolls, at every width (NL-16, index.css), and a new filter
+ * or search starts the list at its first row (TB-7).
  */
 
 export type PickerOption = {
@@ -88,7 +94,22 @@ export function Picker({
   )
 }
 
-/** The open picker: a search field when there are more than ten choices, and the listbox under it. */
+/** Search text compared loosely: case and underscores do not count ("new york" finds America/New_York) (MP-4). */
+const loose = (s: string) => s.replaceAll("_", " ").toLowerCase()
+
+/** The options a picker's search leaves: by label and extra search text, as a substring. */
+export function filterOptions(options: PickerOption[], query: string): PickerOption[] {
+  const q = loose(query.trim())
+  return q ? options.filter((o) => loose(`${o.label} ${o.search ?? ""}`).includes(q)) : options
+}
+
+/**
+ * The open picker: a search field when there are more than ten choices, and the listbox under it. It opens on
+ * the search field, or the chosen option without one; on a touch-only screen always on the chosen option, so the
+ * keyboard does not come up over the list (a tap on the field still searches) (MP-1, MP-4). The options never
+ * scroll sideways: a long label is cut and its hint stays whole. On a phone the panel stays between the top bar
+ * and the tab bar (MP-5).
+ */
 export function PickerContent({
   picker,
   label,
@@ -105,11 +126,12 @@ export function PickerContent({
   className?: string
 }) {
   const { id, query, setQuery, setOpen } = picker
+  // Between the phone's top bar and tab bar, measured again while open (MP-5).
+  const room = usePopoverRoom(picker.open)
   const listRef = React.useRef<HTMLDivElement>(null)
   const searchRef = React.useRef<HTMLInputElement>(null)
   const searchable = options.length > 10
-  const q = query.trim().toLowerCase()
-  const shown = q ? options.filter((o) => `${o.label} ${o.search ?? ""}`.toLowerCase().includes(q)) : options
+  const shown = filterOptions(options, query)
 
   const optionEls = () => [...(listRef.current?.querySelectorAll<HTMLElement>('[role="option"]') ?? [])]
   const pick = (v: string) => {
@@ -135,13 +157,21 @@ export function PickerContent({
       <PopoverPrimitive.Content
         align="start"
         sideOffset={6}
-        collisionPadding={8}
+        collisionPadding={room}
         aria-label={label}
         onOpenAutoFocus={(e) => {
           e.preventDefault()
-          // Into the search field if there is one, else onto the chosen option.
-          if (searchable) searchRef.current?.focus()
-          else (optionEls().find((el) => el.getAttribute("aria-selected") === "true") ?? optionEls()[0])?.focus()
+          if (searchable && !touchOnly()) {
+            searchRef.current?.focus()
+            return
+          }
+          const list = listRef.current
+          const el = optionEls().find((o) => o.getAttribute("aria-selected") === "true") ?? optionEls()[0]
+          if (!list || !el) return
+          // Only the list scrolls to show it; the page stays where it is.
+          el.focus({ preventScroll: true })
+          if (el.offsetTop < list.scrollTop || el.offsetTop + el.offsetHeight > list.scrollTop + list.clientHeight)
+            list.scrollTop = el.offsetTop - (list.clientHeight - el.offsetHeight) / 2
         }}
         className={cn(
           // The list shrinks to the room left on screen, for example above a phone's keyboard.
@@ -179,7 +209,12 @@ export function PickerContent({
           role="listbox"
           aria-label={label}
           onKeyDown={onListKey}
-          className="grid max-h-[min(320px,45vh)] min-h-0 overflow-y-auto"
+          // A short list gets more height; a long one leaves room for its search (MP-1, MP-4). Positioned, so an
+          // option's offsetTop is measured in the list.
+          className={cn(
+            "relative grid min-h-0 grid-cols-[minmax(0,1fr)] overflow-x-hidden overflow-y-auto",
+            searchable ? "max-h-[min(320px,45vh)]" : "max-h-[min(420px,60vh)]",
+          )}
         >
           {shown.map((o) => (
             <div
@@ -201,7 +236,11 @@ export function PickerContent({
                 className={cn("size-1.5 shrink-0 rounded-full", o.value === value ? "bg-ink" : "bg-transparent")}
               />
               <span className="min-w-0 flex-1 truncate">{o.label}</span>
-              {o.hint !== undefined && <span className="text-meta text-muted-foreground tabular-nums">{o.hint}</span>}
+              {o.hint !== undefined && (
+                <span className="shrink-0 text-meta whitespace-nowrap text-muted-foreground tabular-nums">
+                  {o.hint}
+                </span>
+              )}
             </div>
           ))}
           {shown.length === 0 && (
@@ -215,18 +254,83 @@ export function PickerContent({
   )
 }
 
-/** A list search: the whole box focuses its field and turns ink while typing (FS-1). */
+/**
+ * What a search that waits for a pause holds between keys (SR-9), free of React for the tests: `show` draws the
+ * text in the box, `send` asks for it once typing has paused.
+ */
+export function searchDraft(initial: string, show: (text: string) => void, send: (text: string) => void) {
+  let sent = initial
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const cancel = () => {
+    clearTimeout(timer)
+    timer = undefined
+  }
+  const reset = (value: string) => {
+    cancel()
+    sent = value
+    show(value)
+  }
+  return {
+    /** A key typed: the text shows at once and is asked for once typing pauses. */
+    type(text: string) {
+      show(text)
+      cancel()
+      if (text === sent) return
+      timer = setTimeout(() => {
+        timer = undefined
+        sent = text
+        send(text)
+      }, SEARCH_PAUSE_MS)
+    },
+    /** The value the list holds now: unless it is the one this box sent, it was set from outside and wins. */
+    sync(value: string) {
+      if (value !== sent) reset(value)
+    },
+    /** Clear filters: the value replaces what is typed and a search still on its way is dropped. */
+    reset,
+    cancel,
+  }
+}
+
+/** Counts the clicks on a filter bar's "Clear filters", so its search drops what was typed (SR-9). */
+const ClearsContext = React.createContext(0)
+
+/**
+ * A list search: the whole box focuses its field and turns ink while typing (FS-1). With `debounce` (a list
+ * searched on the server) what is typed shows at once and `onChange` follows once typing pauses for 300ms, so a
+ * word is one request and one address change, not one per key (SR-9). A value set from outside (a link) and
+ * "Clear filters" replace what the box shows and drop a search still on its way, also when the value itself
+ * does not change (nothing was sent yet).
+ */
 export function SearchBox({
   value,
   onChange,
   label,
   className,
+  debounce,
 }: {
   value: string
   onChange: (value: string) => void
   label: string
   className?: string
+  debounce?: boolean
 }) {
+  const [text, setText] = React.useState(value)
+  // The latest handler: the one of the render that started the pause may write over filters changed since.
+  const send = React.useRef(onChange)
+  send.current = onChange
+  const [draft] = React.useState(() => searchDraft(value, setText, (t) => send.current(t)))
+  React.useEffect(() => draft.cancel, [draft])
+  React.useEffect(() => draft.sync(value), [draft, value])
+  const clears = React.useContext(ClearsContext)
+  const seenClears = React.useRef(clears)
+  const latest = React.useRef(value)
+  latest.current = value
+  React.useEffect(() => {
+    if (clears === seenClears.current) return
+    seenClears.current = clears
+    draft.reset(latest.current)
+  }, [draft, clears])
   return (
     <label
       className={cn(
@@ -239,8 +343,8 @@ export function SearchBox({
         type="search"
         aria-label={label}
         placeholder={label}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
+        value={debounce ? text : value}
+        onChange={(e) => (debounce ? draft.type(e.target.value) : onChange(e.target.value))}
         className="h-full min-w-0 flex-1 bg-transparent text-body outline-none placeholder:text-muted-foreground"
       />
     </label>
@@ -248,72 +352,246 @@ export function SearchBox({
 }
 
 /**
- * The bar: an optional view switch that always shows (Open, Muted, Resolved), the search, and the pickers.
- * Under it one line holds the count and, while any filter differs from its start value, "Clear filters".
+ * Whether a list goes to its first row once more when the rows of new filters come (TB-7), free of React for
+ * the tests. It waits for the request of those filters to end, not for rows that look new: a list whose new
+ * filters were cached shows their rows at once, and a refresh that brings the same rows changes nothing. It
+ * gives up once the user scrolls the list, or when no answer came within `LIST_WAIT_MS`, so a later refresh
+ * never moves the list under the user.
+ */
+export function firstRowReset(now: () => number = () => performance.now()) {
+  let until: number | null = null
+  // Moves on with new filters and with every scroll of the user, so a frame planned before either does nothing.
+  let turn = 0
+  return {
+    /** New filters, while their rows are `loading` or not; rows already drawn need no second reset. */
+    changed(loading: boolean) {
+      turn += 1
+      until = loading ? now() + LIST_WAIT_MS : null
+    },
+    /** The user scrolled the list: it stays where they put it, also against a reset already planned. */
+    scrolled() {
+      turn += 1
+      until = null
+    },
+    /** A check for a planned reset: true while nothing happened since it was planned. */
+    ticket(): () => boolean {
+      const planned = turn
+      return () => planned === turn
+    },
+    /** After a render: true once, when the request of the new filters has ended in time. */
+    loaded(loading: boolean): boolean {
+      if (until === null || loading) return false
+      const due = now() <= until
+      until = null
+      return due
+    },
+  }
+}
+
+/** Keys that scroll the list when pressed outside a control that uses them itself. */
+const SCROLL_KEYS = new Set(["PageUp", "PageDown", "Home", "End", "ArrowUp", "ArrowDown", " "])
+/** A field, a button, a link or a picker takes these keys for itself (Space presses, arrows open a picker). */
+const typing = (el: EventTarget | null) =>
+  el instanceof HTMLElement &&
+  (el.isContentEditable ||
+    el.closest("input, textarea, select, button, a[href], [role=combobox], [role=button], [role=radio]") !== null)
+
+/**
+ * Brings a list back to its first row when `key` (its filters and search) changes: at once, in the next frame,
+ * and, while its rows are `loading`, again in the frame after their request ends, as the old content's height
+ * can carry the scroll down meanwhile (`firstRowReset`). It scrolls only when the top of the list is above view,
+ * and only as far as the filter bar's place, read from what precedes it since the bar itself may be stuck (TB-7).
+ *
+ * The list scrolls where `scrollerFor` finds now: the list column beside a reading pane, the open item for a list
+ * inside it (also when the item opened as a dialog or a phone sheet), else the page, which on a short screen
+ * scrolls the list column and the pane as one (NL-1).
+ */
+function useFirstRowOnChange(bar: React.RefObject<HTMLElement | null>, key: string | undefined, loading: boolean) {
+  const [reset] = React.useState(() => firstRowReset())
+  const lastKey = React.useRef(key)
+  const toTop = React.useCallback(() => {
+    const el = bar.current
+    const scroller = el && scrollerFor(el)
+    if (!el || !scroller) return
+    const before = el.previousElementSibling ?? el.parentElement
+    if (!before) return
+    const edge =
+      before === el.parentElement ? before.getBoundingClientRect().top : before.getBoundingClientRect().bottom
+    const place = Math.max(0, scroller.scrollTop + edge - scroller.getBoundingClientRect().top)
+    if (scroller.scrollTop > place) scroller.scrollTop = place
+  }, [bar])
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs when the filters change, not when they load
+  React.useLayoutEffect(() => {
+    if (key === undefined || key === lastKey.current) return
+    lastKey.current = key
+    reset.changed(loading)
+    toTop()
+    const valid = reset.ticket()
+    const frame = requestAnimationFrame(() => valid() && toTop())
+    return () => cancelAnimationFrame(frame)
+  }, [key, toTop, reset])
+  React.useEffect(() => {
+    if (!reset.loaded(loading)) return
+    const valid = reset.ticket()
+    const frame = requestAnimationFrame(() => valid() && toTop())
+    return () => cancelAnimationFrame(frame)
+  }, [loading, toTop, reset])
+  // A wheel, a touch, the scroll bar or a scrolling key, not the scroll this hook makes itself. Heard on the
+  // document and matched to where the list scrolls at that moment: a change of height moves that between the
+  // list column and the page (NL-1) without a new render.
+  React.useEffect(() => {
+    const scroller = () => (bar.current ? scrollerFor(bar.current) : null)
+    const inside = (e: Event) => e.target instanceof Node && scroller()?.contains(e.target) === true
+    const onScroll = (e: Event) => inside(e) && reset.scrolled()
+    // The scroll bar is the scroller itself; a press on a row or a control is not a scroll.
+    const onPress = (e: PointerEvent) => e.target === scroller() && reset.scrolled()
+    const onKey = (e: KeyboardEvent) => SCROLL_KEYS.has(e.key) && !typing(e.target) && inside(e) && reset.scrolled()
+    const passive = { passive: true }
+    document.addEventListener("wheel", onScroll, passive)
+    document.addEventListener("touchmove", onScroll, passive)
+    document.addEventListener("pointerdown", onPress, passive)
+    document.addEventListener("keydown", onKey, passive)
+    return () => {
+      document.removeEventListener("wheel", onScroll)
+      document.removeEventListener("touchmove", onScroll)
+      document.removeEventListener("pointerdown", onPress)
+      document.removeEventListener("keydown", onKey)
+    }
+  }, [bar, reset])
+}
+
+/** The first control a person can use in an element. */
+const firstControl = (el: HTMLElement | null) =>
+  el?.querySelector<HTMLElement>("button, input, select, textarea, [tabindex]:not([tabindex='-1'])")
+
+/**
+ * The bar: an optional view switch that always shows (Open, Muted, Resolved), the search and the list's Sort
+ * button, the common pickers, and a Filters button for the rare ones. Under it one line holds the count and,
+ * while any filter differs from its start value, "Clear filters".
  */
 export function FilterBar({
   views,
   search,
-  children,
+  sort,
+  pickers,
+  more,
   active = 0,
   count,
   onClear,
+  listKey,
+  loading = false,
 }: {
   views?: React.ReactNode
   search?: React.ReactNode
-  /** The pickers; folded behind Filters on a phone. */
-  children?: React.ReactNode
-  /** How many pickers are not at their default, for the Filters badge. */
+  /** The list's Sort button (TB-28): beside the search, else at the end of the count line. */
+  sort?: { control: SortControl; name: string }
+  /** The filters most people use, shown at every size. */
+  pickers?: React.ReactNode
+  /** The rarely used filters, behind a Filters button at every size (MP-6). */
+  more?: React.ReactNode
+  /** How many of the `more` filters are not at their default, for the Filters badge. */
   active?: number
   count?: React.ReactNode
   /** Shown as "Clear filters" while something differs from its start value. */
   onClear?: () => void
+  /** The list's filters and search in one value; a new one starts the list at its first row (TB-7). */
+  listKey?: string
+  /**
+   * While the rows of the filters are on their way (the request runs, or older rows stand in for them), so the
+   * list starts at its first row again once that request ends (TB-7).
+   */
+  loading?: boolean
 }) {
   const [open, setOpen] = React.useState(false)
+  const [clears, setClears] = React.useState(0)
   const panelId = React.useId()
+  const bar = React.useRef<HTMLDivElement>(null)
+  const panel = React.useRef<HTMLDivElement>(null)
+  const opened = React.useRef(false)
+  useFirstRowOnChange(bar, listKey, loading)
+  // Opening the rare filters moves the focus to the first of them (MP-6).
+  React.useEffect(() => {
+    if (!open || !opened.current) return
+    opened.current = false
+    firstControl(panel.current)?.focus()
+  }, [open])
+  const filtersLabel = active > 0 ? `Filters, ${active} in use` : "Filters"
+  const sortButton = sort && <SortButton control={sort.control} name={sort.name} small={!search} />
+  const top = views || search || pickers || more
   return (
-    <div className="grid gap-2">
-      <div className="flex flex-wrap items-center gap-2">
-        {views && <div className="max-md:basis-full">{views}</div>}
-        {search && <div className="w-64 max-md:min-w-0 max-md:flex-1 max-md:basis-0">{search}</div>}
-        {children && (
-          <>
+    <div ref={bar} data-slot="filter-bar" className="grid gap-2">
+      {top && (
+        <div className="flex flex-wrap items-center gap-2">
+          {views && <div className="max-md:basis-full">{views}</div>}
+          {/* On a phone the search keeps its line with Sort and Filters (MP-6). */}
+          {search && (
+            <div className="w-64 max-md:min-w-0 max-md:flex-1 max-md:basis-0">
+              <ClearsContext.Provider value={clears}>{search}</ClearsContext.Provider>
+            </div>
+          )}
+          {search && sortButton}
+          {more && (
             <button
               type="button"
               aria-expanded={open}
               aria-controls={panelId}
-              onClick={() => setOpen((o) => !o)}
-              className="relative inline-flex h-ctl shrink-0 items-center gap-1.5 rounded-sm border border-line bg-raise px-3 text-ctl font-semibold aria-expanded:border-primary md:hidden"
+              aria-label={filtersLabel}
+              title={filtersLabel}
+              onClick={() => {
+                opened.current = !open
+                setOpen(!open)
+              }}
+              className={toolButton()}
             >
-              <SlidersHorizontal aria-hidden className="size-4" />
-              Filters
+              <Funnel aria-hidden className="size-4" />
               {active > 0 && (
-                <span className="absolute -end-1.5 -top-1.5 grid h-[18px] min-w-[18px] place-items-center rounded-full bg-primary px-1 text-meta font-bold text-primary-foreground tabular-nums">
+                <span
+                  aria-hidden
+                  className="absolute -end-1.5 -top-1.5 grid h-[18px] min-w-[18px] place-items-center rounded-full bg-primary px-1 text-meta font-bold text-primary-foreground tabular-nums"
+                >
                   {active}
-                  <span className="sr-only"> in use</span>
                 </span>
               )}
             </button>
-            <div
-              id={panelId}
-              className={cn(
-                "flex flex-wrap items-center gap-2 max-md:basis-full max-md:[&>*]:min-w-0 max-md:[&>*]:flex-1 max-md:[&>*]:basis-[calc(50%-4px)]",
-                !open && "max-md:hidden",
-              )}
-            >
-              {children}
+          )}
+          {pickers && (
+            <div className="flex flex-wrap items-center gap-2 max-md:basis-full max-md:[&>*]:min-w-0 max-md:[&>*]:flex-1 max-md:[&>*]:basis-[calc(50%-4px)]">
+              {pickers}
             </div>
-          </>
-        )}
-      </div>
-      {(count !== undefined || onClear) && (
+          )}
+          {more && (
+            <div
+              ref={panel}
+              id={panelId}
+              hidden={!open}
+              className="grid basis-full grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-2"
+            >
+              {more}
+            </div>
+          )}
+        </div>
+      )}
+      {(count !== undefined || onClear || (sortButton && !search)) && (
         <p className="flex flex-wrap items-center gap-x-3 text-small text-muted-foreground">
-          {count !== undefined && <span className="font-semibold text-ink tabular-nums">{count}</span>}
+          {count !== undefined && (
+            <span data-slot="list-count" className="font-semibold text-ink tabular-nums">
+              {count}
+            </span>
+          )}
           {onClear && (
-            <button type="button" onClick={onClear} className="font-semibold text-ink underline underline-offset-3">
+            <button
+              type="button"
+              onClick={() => {
+                // The search drops what is typed but not sent yet, which the address does not hold (SR-9).
+                setClears((c) => c + 1)
+                onClear()
+              }}
+              className="font-semibold text-ink underline underline-offset-3"
+            >
               Clear filters
             </button>
           )}
+          {!search && sortButton && <span className="ms-auto">{sortButton}</span>}
         </p>
       )}
     </div>

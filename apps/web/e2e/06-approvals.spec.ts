@@ -220,3 +220,39 @@ test("a decision in n8n-ops updates the Telegram message too", async ({ request 
     expect(edit).toBeTruthy()
   }).toPass({ timeout: 20_000 })
 })
+
+test("a new SMTP server needs the password again, so the stored one is not sent to it", async () => {
+  const put = (body: object) => page.request.put("/api/settings/email", { data: body })
+  const stored = async () => (await page.request.get("/api/settings/email")).json()
+  try {
+    expect((await put({ smtpPassword: "e2e-smtp-secret" })).ok()).toBe(true)
+    // A save that keeps the server keeps the stored password.
+    expect((await put({ smtpHost: "mail", smtpPort: 1025 })).ok()).toBe(true)
+    const refused = await put({ smtpHost: "smtp.elsewhere.example" })
+    expect(refused.status()).toBe(400)
+    expect((await refused.json()).error).toBe("password_needed")
+
+    await page.goto("/settings/email")
+    await page.getByLabel("SMTP server").fill("smtp.elsewhere.example")
+    await page.getByRole("button", { name: "Save" }).click()
+    // Found before anything is sent: the password field opens for the new value, is marked and takes the focus.
+    await expect(
+      page.getByText(/^SMTP password: the SMTP server or user changed\. Enter the SMTP password again/),
+    ).toBeVisible()
+    const password = page.getByPlaceholder("New value")
+    await expect(password).toBeFocused()
+    await expect(password).toHaveAttribute("aria-invalid", "true")
+    expect((await stored()).smtpHost).toBe("mail")
+
+    // A new server with the password removed is allowed.
+    // Exact names: each recipient chip has a "Remove <address>" button of its own.
+    await page.getByRole("button", { name: "Keep", exact: true }).click()
+    await page.getByRole("button", { name: "Remove", exact: true }).click()
+    await page.getByRole("button", { name: "Save" }).click()
+    await expect(page.getByText("Settings saved")).toBeVisible()
+    expect(await stored()).toMatchObject({ smtpHost: "smtp.elsewhere.example", smtpPasswordSet: false })
+  } finally {
+    // Later specs send email through the test stack's mail server.
+    expect((await put({ smtpHost: "mail", smtpPort: 1025, smtpPassword: null })).ok()).toBe(true)
+  }
+})

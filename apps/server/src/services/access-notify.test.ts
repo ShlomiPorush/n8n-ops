@@ -1,3 +1,4 @@
+import { messageWriting } from "@n8n-ops/shared"
 import { describe, expect, it } from "vitest"
 import { accessOutcome, isApprover, renderAccessEmail, renderAccessTelegram } from "./access-notify.ts"
 import { telegramPlainText } from "./telegram.ts"
@@ -61,7 +62,7 @@ describe("request messages", () => {
       expiresAt: new Date(),
       endedAt: new Date(),
     }
-    const text = String(renderAccessTelegram(long, accessOutcome(approved, "UTC")))
+    const text = String(renderAccessTelegram(long, accessOutcome(approved, messageWriting(undefined))))
     expect([...telegramPlainText(text)].length).toBeLessThan(4096)
     expect(text).toMatch(/<\/code> and \d+ more\nWorkflows: <code>0w+, 1w+, .*<\/code> and \d+ more\n/)
   })
@@ -75,23 +76,25 @@ describe("request messages", () => {
       expiresAt: new Date("2026-10-21T10:32:43Z"),
       endedAt: null,
     }
-    const zone = "Asia/Jerusalem"
+    const zone = messageWriting({ timezone: "Asia/Jerusalem" })
     const text = String(renderAccessTelegram(request, accessOutcome(approved, zone)))
     expect(text.startsWith("✅ <b>Access request</b>")).toBe(true)
-    expect(text.endsWith("For 1 h 30 min\n\n✅ <b>Approved</b> by @ShlomiMe via Telegram\nAccess until 13:32")).toBe(
-      true,
-    )
+    expect(
+      text.endsWith(
+        "For 1 h 30 min\n\n✅ <b>Approved</b> by @ShlomiMe via Telegram\nAccess until 21/10/2026 13:32 GMT+3",
+      ),
+    ).toBe(true)
 
     const ended = new Date("2026-10-21T10:18:07Z")
     expect(outcome({ ...approved, status: "released", endedAt: ended }, zone).lines).toEqual([
       "✅ <b>Approved</b> by @ShlomiMe via Telegram",
-      "⏹ <b>Released</b> by the agent at 13:18",
+      "⏹ <b>Released</b> by the agent at 21/10/2026 13:18 GMT+3",
     ])
     expect(outcome({ ...approved, status: "expired", endedAt: ended }, zone).lines[1]).toBe(
-      "⌛ <b>Access ended</b> at 13:18",
+      "⌛ <b>Access ended</b> at 21/10/2026 13:18 GMT+3",
     )
     expect(outcome({ ...approved, status: "revoked", endedAt: ended }, zone).lines[1]).toBe(
-      "⛔ <b>Revoked</b> at 13:18",
+      "⛔ <b>Revoked</b> at 21/10/2026 13:18 GMT+3",
     )
     expect(outcome({ ...approved, status: "denied", decidedBy: "shlomi", decidedVia: "web" }, zone)).toEqual({
       icon: "❌",
@@ -103,12 +106,25 @@ describe("request messages", () => {
       lines: ["⌛ <b>Expired</b> without a decision"],
     })
     expect(outcome({ ...undecided, status: "released", endedAt: ended }, zone).lines).toEqual([
-      "↩️ <b>Withdrawn</b> by the agent at 13:18",
+      "↩️ <b>Withdrawn</b> by the agent at 21/10/2026 13:18 GMT+3",
     ])
     // A name that looks like markup stays text.
-    expect(outcome({ ...approved, decidedBy: "<b>x</b>", decidedVia: "web" }, "UTC").lines[0]).toBe(
+    expect(outcome({ ...approved, decidedBy: "<b>x</b>", decidedVia: "web" }, messageWriting(undefined)).lines[0]).toBe(
       "✅ <b>Approved</b> by &lt;b&gt;x&lt;/b&gt; via n8n-ops",
     )
+  })
+
+  it("write times in the Date and Time format of Settings, with the zone (EM-6)", () => {
+    const dates = messageWriting({ timezone: "Europe/Berlin", dateFormat: "YYYY-MM-DD", timeFormat: "12h" })
+    const approved = {
+      status: "approved" as const,
+      decidedAt: new Date("2026-10-21T10:17:43Z"),
+      decidedBy: "shlomi",
+      decidedVia: "web",
+      expiresAt: new Date("2026-10-21T10:32:43Z"),
+      endedAt: null,
+    }
+    expect(outcome(approved, dates).lines[1]).toBe("Access until 2026-10-21 12:32 PM CEST")
   })
 
   it("link to the request in email when the public URL is known", () => {

@@ -132,6 +132,12 @@ describe("checks before a value is stored", () => {
       "Topic routes: route 1: the workflow pattern is not a valid regular expression",
     )
     expect(refused({ routes: [{ tag: "billing" }] })).toBe("Topic routes: route 1: use the topic's number, such as 12")
+    expect(refused({ routes: [{ workflow: "a".repeat(201), threadId: 7 }] })).toBe(
+      "Topic routes: route 1: keep the workflow pattern to 200 characters",
+    )
+    expect(refused({ routes: [{ tag: "t".repeat(101), threadId: 7 }] })).toBe(
+      "Topic routes: route 1: keep the tag to 100 characters",
+    )
     expect(refused({ defaultThreadId: 12, routes: [{ instanceId: "a", threadId: 2_147_483_647 }] })).toBe("")
   })
 })

@@ -3,9 +3,11 @@ import {
   isDateFormat,
   isRoutePattern,
   isTimeFormat,
+  maxRoutes,
   maxTopicId,
   type NumberLimits,
   numberProblem,
+  routeLimits,
   routeWords,
   settingKinds,
   settingLabel,
@@ -70,8 +72,11 @@ export const topicIdSchema = z
   .max(maxTopicId, { error: topicWords })
 
 /** Trimmed text, with an empty value read as not set, so an empty field never becomes a condition. */
-const condition = (max: number) =>
-  z.preprocess((v) => (typeof v === "string" ? v.trim() || undefined : v), z.string().max(max).optional())
+const condition = (max: number, tooLong?: string) =>
+  z.preprocess(
+    (v) => (typeof v === "string" ? v.trim() || undefined : v),
+    z.string().max(max, tooLong ? { error: tooLong } : undefined).optional(),
+  )
 
 /**
  * Sends the alerts that match it to a forum topic. Every condition it sets must hold; workflow and tag never match
@@ -82,9 +87,12 @@ export const telegramRouteSchema = z
     /** The instance's ID. A route of a removed instance stays, matching nothing, until it is deleted. */
     instanceId: condition(64),
     /** Regular expression for the workflow name, case-insensitive. */
-    workflow: condition(200).refine((p) => p === undefined || isRoutePattern(p), routeWords.pattern),
+    workflow: condition(routeLimits.workflow, routeWords.patternLength).refine(
+      (p) => p === undefined || isRoutePattern(p),
+      routeWords.pattern,
+    ),
     /** A workflow tag, case-insensitive. */
-    tag: condition(100),
+    tag: condition(routeLimits.tag, routeWords.tagLength),
     threadId: topicIdSchema,
   })
   .refine((r) => Boolean(r.instanceId || r.workflow || r.tag), routeWords.condition)
@@ -143,7 +151,7 @@ export const sections = {
     chatId: z.string(),
     webhookSecret: z.string(),
     /** Forum topics: the first matching route wins, then `defaultThreadId`, then the chat's General topic. */
-    routes: z.array(telegramRouteSchema).max(50),
+    routes: z.array(telegramRouteSchema).max(maxRoutes),
     defaultThreadId: topicIdSchema.nullable(),
     /** Topic for agent access requests; null follows `defaultThreadId`. */
     accessThreadId: topicIdSchema.nullable(),
@@ -369,7 +377,7 @@ export function createSettings(db: Db, env: { publicUrl?: string } = {}): Settin
     if (key === "general" && "timeFormat" in stored && !isTimeFormat(stored.timeFormat)) delete stored.timeFormat
     // A route that no longer passes is left out alone; the bot token and chat must not fall back with it.
     if (key === "telegram" && Array.isArray(stored.routes))
-      stored.routes = stored.routes.filter((r) => telegramRouteSchema.safeParse(r).success).slice(0, 50)
+      stored.routes = stored.routes.filter((r) => telegramRouteSchema.safeParse(r).success).slice(0, maxRoutes)
     const merged = { ...defaults[key], ...stored }
     const parsed = sections[key].safeParse(merged)
     return (parsed.success ? parsed.data : defaults[key]) as Section<K>

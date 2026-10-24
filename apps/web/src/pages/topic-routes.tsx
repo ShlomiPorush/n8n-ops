@@ -1,4 +1,4 @@
-import { isRoutePattern, routeWords, topicProblem, topicWords } from "@n8n-ops/shared"
+import { isRoutePattern, maxRoutes, routeLimits, routeWords, topicProblem, topicWords } from "@n8n-ops/shared"
 import { ArrowDown, ArrowUp, Plus, Trash2 } from "lucide-react"
 import { FieldPicker } from "@/components/field-picker"
 import { Button } from "@/components/ui/button"
@@ -54,7 +54,9 @@ export const routesFromForm = (text: unknown) =>
 function rowIssue(r: RouteRow, n: number): RouteIssue | null {
   const at = (field: string, message: string) => ({ id: `route-${n}-${field}`, message: `route ${n}: ${message}` })
   if (!r.instanceId && !r.workflow.trim() && !r.tag.trim()) return at("instance", routeWords.condition)
+  if (r.workflow.trim().length > routeLimits.workflow) return at("workflow", routeWords.patternLength)
   if (r.workflow.trim() && !isRoutePattern(r.workflow.trim())) return at("workflow", routeWords.pattern)
+  if (r.tag.trim().length > routeLimits.tag) return at("tag", routeWords.tagLength)
   if (!r.threadId.trim()) return at("topic", topicWords)
   const topic = topicProblem(r.threadId)
   return topic ? at("topic", topic) : null
@@ -140,7 +142,8 @@ export function TopicRoutes({
                     options={options}
                     onChange={(v) => update(i, { instanceId: v === ANY ? "" : v })}
                     disabled={disabled}
-                    className={cn(marked?.id === field("instance") && "border-fail")}
+                    invalid={marked?.id === field("instance")}
+                    describedBy={marked?.id === field("instance") ? problemId : undefined}
                   />
                 </div>
                 <div className="grid gap-1 text-small">
@@ -166,6 +169,7 @@ export function TopicRoutes({
                     placeholder="Any tag"
                     aria-label={`Route ${n} tag`}
                     onChange={(e) => update(i, { tag: e.target.value })}
+                    {...marks("tag")}
                   />
                 </div>
                 <div className="grid gap-1 text-small">
@@ -217,7 +221,13 @@ export function TopicRoutes({
         })}
       </ol>
       <div>
-        <Button id={id} onClick={() => write([...rows, blank])} disabled={rows.length >= 50}>
+        {/* aria-disabled, not disabled, so the search can still bring the focus here when the list is full. */}
+        <Button
+          id={id}
+          onClick={() => write([...rows, blank])}
+          aria-disabled={rows.length >= maxRoutes || undefined}
+          title={rows.length >= maxRoutes ? `Up to ${maxRoutes} routes` : undefined}
+        >
           <Plus />
           Add route
         </Button>

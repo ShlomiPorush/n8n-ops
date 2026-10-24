@@ -248,7 +248,10 @@ test("forum topics are set in Settings > Telegram and keep their order through D
       .getByRole("listitem", { name: "Route 2" })
       .getByText("route 2: choose an instance, or type a workflow pattern or a tag"),
   ).toBeVisible()
-  await expect(page.getByRole("button", { name: /^Route 2 instance:/ })).toBeFocused()
+  const refusedPicker = page.getByRole("button", { name: /^Route 2 instance:/ })
+  await expect(refusedPicker).toBeFocused()
+  await expect(refusedPicker).toHaveAttribute("aria-invalid", "true")
+  await expect(refusedPicker).toHaveAccessibleDescription(/^route 2: choose an instance/)
   expect((await (await page.request.get("/api/settings/telegram")).json()).routes).toEqual([])
 
   await page.getByLabel("Route 2 workflow pattern").fill("orders|leads")

@@ -178,10 +178,16 @@ export function isRoutePattern(pattern: string): boolean {
   }
 }
 
+/** How many topic routes Settings keeps, and the longest workflow pattern and tag a route takes. */
+export const maxRoutes = 50
+export const routeLimits = { workflow: 200, tag: 100 } as const
+
 /** What a topic route needs, in words that follow "route 2: ". */
 export const routeWords = {
   condition: "choose an instance, or type a workflow pattern or a tag",
   pattern: "the workflow pattern is not a valid regular expression",
+  patternLength: `keep the workflow pattern to ${routeLimits.workflow} characters`,
+  tagLength: `keep the tag to ${routeLimits.tag} characters`,
 } as const
 
 /** The range a number setting takes, as the server's schema sets it. */

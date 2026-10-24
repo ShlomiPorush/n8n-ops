@@ -164,6 +164,13 @@ describe("a connection test with the values on screen (FS-19)", () => {
       message: "route 1: the workflow pattern is not a valid regular expression",
     })
     expect(routesProblem(form([{ tag: "billing" }]))?.id).toBe("route-1-topic")
+    // The server's length limits are checked here too, so a long value is marked before it is sent.
+    expect(routesProblem(form([{ workflow: "a".repeat(201), threadId: "7" }]))).toEqual({
+      id: "route-1-workflow",
+      message: "route 1: keep the workflow pattern to 200 characters",
+    })
+    expect(routesProblem(form([{ tag: "t".repeat(101), threadId: "7" }]))?.id).toBe("route-1-tag")
+    expect(routesProblem(form([{ workflow: "a".repeat(200), tag: "t".repeat(100), threadId: "7" }]))).toBeNull()
   })
 
   it("keeps no result across a saved secret, though the stored one is not among the values (SV-5)", () => {

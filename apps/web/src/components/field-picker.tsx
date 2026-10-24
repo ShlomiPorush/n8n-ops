@@ -22,6 +22,8 @@ export function FieldPicker({
   placeholder = "Choose…",
   display,
   disabled,
+  invalid,
+  describedBy,
   className,
 }: {
   id?: string
@@ -38,6 +40,9 @@ export function FieldPicker({
   /** The chosen value as drawn in the field, when it is more than the option's label, and what is said for it. */
   display?: { node: ReactNode; text: string }
   disabled?: boolean
+  /** A save refused the value: the field is marked, and `describedBy` names the note that says why (SV-1). */
+  invalid?: boolean
+  describedBy?: string
   className?: string
 }) {
   const picker = usePicker()
@@ -58,6 +63,8 @@ export function FieldPicker({
           aria-haspopup="listbox"
           aria-controls={picker.open ? picker.id : undefined}
           aria-label={`${label}: ${text ?? placeholder}`}
+          aria-invalid={invalid || undefined}
+          aria-describedby={describedBy}
           onKeyDown={(e) => {
             if (e.key === "ArrowDown" || e.key === "ArrowUp") {
               e.preventDefault()
@@ -66,7 +73,7 @@ export function FieldPicker({
           }}
           className={cn(
             // The look of the select it replaced, so a form looks the same.
-            "flex h-ctl w-full min-w-0 items-center gap-1.5 rounded-sm border border-input bg-bg ps-3 pe-2 text-start text-body text-ink transition-colors duration-150 outline-none hover:border-muted-foreground focus:border-primary disabled:cursor-not-allowed disabled:opacity-60 aria-expanded:border-primary",
+            "flex h-ctl w-full min-w-0 items-center gap-1.5 rounded-sm border border-input bg-bg ps-3 pe-2 text-start text-body text-ink transition-colors duration-150 outline-none hover:border-muted-foreground focus:border-primary disabled:cursor-not-allowed disabled:opacity-60 aria-expanded:border-primary aria-invalid:border-fail",
             className,
           )}
         >

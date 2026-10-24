@@ -120,9 +120,9 @@ export function TopicRoutes({
             ...(removed ? [{ value: r.instanceId, label: "Removed instance" }] : []),
           ]
           return (
-            // Index keys: the rows are plain values, so a moved row's fields move with it.
-            // biome-ignore lint/suspicious/noArrayIndexKey: see above
             <li
+              // Index keys: the rows are plain values, so a moved row's fields move with it.
+              // biome-ignore lint/suspicious/noArrayIndexKey: see above
               key={i}
               className={cn("grid gap-2 rounded-md border p-3", marked ? "border-fail" : "border-line")}
               aria-label={`Route ${n}`}

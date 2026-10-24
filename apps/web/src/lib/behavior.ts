@@ -12,6 +12,8 @@ export const TOAST_MS = 4000
 export const TOAST_FADE_MS = 300
 /** A toast let go by the pointer or the keyboard stays at least this long, and a fading one caught comes back for it (FB-2). */
 export const TOAST_REST_MS = 1500
+/** A toast that offers Undo stays this long, longer while the pointer or the keyboard is on it (FB-16). */
+export const UNDO_MS = 10_000
 /** A busy button shows "Done" this long after its request succeeded (FB-7). */
 export const DONE_MS = 3000
 /** A busy button shows "Failed" this long after its request failed (FB-7). */

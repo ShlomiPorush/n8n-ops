@@ -7,7 +7,7 @@ All notable changes to this project are documented here. The format follows [Kee
 ### Added
 
 - **Backup destinations.** Backups can go to several places at once: S3-compatible storage, a folder on the host (mapped to `/backups` in the server container), SFTP and WebDAV (HTTPS). Every copy is read back, or checked by the service, against the archive's size and SHA-256 before it counts. Each destination is tested before it is saved, has its own daily, weekly and monthly retention, can be the default and can be turned off. Settings → Backup Destinations.
-- **Destinations per instance.** Each instance backs up to the default destinations, following them as they change, or to the ones chosen on its page. The nightly backup of the n8n-ops database has its own choice.
+- **Destinations per instance.** Each instance backs up to the default destinations, following them as they change, or to the ones chosen on its page. The nightly backup of the n8n-ops database has its own choice. An instance left with no destination says "Choose a destination first" beside its Run now button.
 - **Object Lock for S3.** An S3 destination can lock every archive it writes for a number of days (Compliance or Governance mode), so nobody can delete it early, not even with its keys. Retention removes an archive only after its lock ends.
 - Alerts and the Overview now say which destination a failed or overdue backup is about. The history of each backup shows every copy: where it is, whether it was written, and why not.
 
@@ -46,6 +46,12 @@ All notable changes to this project are documented here. The format follows [Kee
 - `scripts/verify.sh --changed` (and the CI of pull requests) no longer builds the web app twice at once when a file at the root such as `CHANGELOG.md` changed, which could fail the build at random.
 - Add a Worker accepts any name up to 60 characters, such as "Docker Office". Before, a name with a space was refused with a technical pattern message. A refused value in the dialog is now explained in words.
 - The commands Add a Worker gave wrote `.env` with `cat >`, which replaced any `.env` already in that folder.
+- **Selecting text in a list row works as expected.** Dragging over a row, double-clicking a word or Shift-clicking selects its text without opening the row, also on rows that are links (the Overview, Same Error). A plain click opens the row even while text is still selected, and Enter or Space on a row opens it while text is selected elsewhere on the page; before, both did nothing.
+- The search returns to its narrow size, and the page's buttons come back, after Escape or Tab out of an empty search; before, it stayed wide until a click elsewhere. The next search starts on All again. When "Leave without saving?" keeps the page after a result was chosen, the search keeps what was typed, also on a phone, where the next search opens with it; it is cleared only once the result's page has opened. A workflow or an instance chosen in the search is ringed for a moment in its list, as a setting is.
+- The search can be used without a mouse: "N found · Open in …" on a result type is reached with the arrow keys like the results (a type still starts on its first result), Left and Right move between the result types, and "/" opens the search on a phone with a keyboard.
+- **Sign-in no longer hangs when n8n-ops cannot be reached.** The button stays on "Signing in…" only while it waits, then says "Could not reach n8n-ops. Check your connection and try again." and keeps what was typed. The same holds for the setup steps and Change password. A two-factor code that got no answer stays, with Try again; a wrong code is cleared. When setup made the account but could not sign in, trying again only signs in. A wrong password says "Invalid username or password." Show password keeps the cursor in the field, and the Caps Lock note is read out with the field.
+- Change password keeps what was typed when the change fails; before, the fields were emptied at once.
+- A button that cannot be used now shows the not-allowed pointer and its tip. A click on a disabled button inside a row no longer opens the row.
 
 ## [0.1.0] - 2026-10-22
 

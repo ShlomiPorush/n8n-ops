@@ -12,6 +12,7 @@ import { Switch } from "@/components/ui/switch"
 import { describeError } from "@/lib/api"
 import { COPIED_MS, DIM_AFTER_MS } from "@/lib/behavior"
 import { filterFailed, type Live, refreshFailed } from "@/lib/load-state"
+import { rowHeld } from "@/lib/row-held"
 import { formatFull, useTimeZone } from "@/lib/time"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
@@ -312,6 +313,23 @@ export function PanelHead({
   )
 }
 
+/**
+ * A row that is a link. A drag over it selects its text instead of dragging the link, and a click that ends
+ * selecting text goes nowhere, so its values can be copied; a plain click and Enter follow the link (TB-8).
+ */
+export function RowLink({ onClick, ...props }: React.ComponentProps<typeof Link>) {
+  return (
+    <Link
+      draggable={false}
+      onClick={(e) => {
+        if (rowHeld(e)) e.preventDefault()
+        else onClick?.(e)
+      }}
+      {...props}
+    />
+  )
+}
+
 /** A row in a panel. Pass onClick or asChild-like Link via `to` for a clickable row. */
 export function Row({
   className,
@@ -343,15 +361,15 @@ export function Row({
   )
   if (to)
     return (
-      <Link to={to} className={cls} aria-current={current ? "page" : undefined}>
+      <RowLink to={to} className={cls} aria-current={current ? "page" : undefined}>
         {children}
-      </Link>
+      </RowLink>
     )
   if (onClick)
     return (
       <button
         type="button"
-        onClick={onClick}
+        onClick={(e) => !rowHeld(e) && onClick()}
         className={cn(cls, "w-full text-start")}
         aria-current={current || undefined}
       >
@@ -414,9 +432,9 @@ export function AlertRow({
   const cls = "flex items-start gap-3.5 border-t border-line pe-pad-x regular:ps-pad-x"
   if (to)
     return (
-      <Link to={to} className={cn(cls, "hover-row")}>
+      <RowLink to={to} className={cn(cls, "hover-row")}>
         {body}
-      </Link>
+      </RowLink>
     )
   return <div className={cls}>{body}</div>
 }
@@ -613,8 +631,9 @@ export function Locked({
 }
 
 /**
- * An ID, address or key in mono that copies on click: a faint background and a copy icon on hover, the
- * full value copied (not the truncated one), a check for 1.5s and a toast that says what was copied.
+ * An ID, address or key in mono that copies on click: a faint background and a copy icon, faint at rest and
+ * full on hover, the full value copied (not the truncated one), a check for 1.5s and a toast that says what was
+ * copied.
  */
 export function Copyable({
   value,
@@ -755,7 +774,8 @@ export function Reloading({
 
 /**
  * An on/off setting: the whole row, title and description included, is the label of its switch, so a click
- * anywhere on it flips the switch (FS-1). A switch that cannot be used says why in `reason`.
+ * anywhere on it flips the switch (FS-1). A switch that cannot be used says why in `reason`, shown under the
+ * description, as a tip alone never shows by touch or keyboard (AX-9).
  */
 export function SwitchRow({
   id,
@@ -779,12 +799,12 @@ export function SwitchRow({
   return (
     <label
       htmlFor={id}
-      title={disabled ? reason : undefined}
       className={cn("flex min-w-0 items-center gap-4", disabled ? "cursor-not-allowed" : "cursor-pointer", className)}
     >
       <span className="min-w-0 flex-1">
         <span className="block font-semibold">{title}</span>
         {description && <span className="mt-0.5 block text-small text-muted-foreground">{description}</span>}
+        {disabled && reason && <span className="mt-0.5 block text-small text-muted-foreground">{reason}</span>}
       </span>
       <Switch id={id} checked={checked} onCheckedChange={onCheckedChange} disabled={disabled} />
     </label>

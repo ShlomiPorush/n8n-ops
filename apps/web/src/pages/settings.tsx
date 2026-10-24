@@ -34,6 +34,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { api, describeError, useApi, useApiMutation } from "@/lib/api"
 import { download } from "@/lib/download"
 import { loadView } from "@/lib/load-state"
+import { flash, whenDrawn } from "@/lib/reveal"
 import { formatDateTime, useTimeZone } from "@/lib/time"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
@@ -366,22 +367,16 @@ function useRevealField(ready: boolean) {
   const field = (location.state as { focusField?: string } | null)?.focusField
   useEffect(() => {
     if (!field || !ready) return
-    let tries = 0
-    const timer = setInterval(() => {
-      const el = document.getElementById(field)
-      tries += 1
-      if (!el && tries < 80) return
-      clearInterval(timer)
-      if (!el) return
-      const row = el.closest<HTMLElement>("[data-setting-row]") ?? el
-      row.scrollIntoView({ block: "center" })
-      el.focus({ preventScroll: true })
-      row.classList.remove("search-flash")
-      void row.offsetWidth
-      row.classList.add("search-flash")
-      navigate(".", { replace: true, state: null })
-    }, 100)
-    return () => clearInterval(timer)
+    return whenDrawn(
+      () => document.getElementById(field),
+      (el) => {
+        const row = el.closest<HTMLElement>("[data-setting-row]") ?? el
+        row.scrollIntoView({ block: "center" })
+        el.focus({ preventScroll: true })
+        flash(row)
+        navigate(".", { replace: true, state: null })
+      },
+    )
   }, [field, ready, navigate])
 }
 

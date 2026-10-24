@@ -1,6 +1,8 @@
 import { REGEXP_ONLY_DIGITS } from "input-otp"
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { BrandMark } from "@/components/brand-mark"
+import { Button } from "@/components/ui/button"
+import { FieldError } from "@/components/ui/field"
 import { InputOTP, InputOTPGroup, InputOTPSeparator, InputOTPSlot } from "@/components/ui/input-otp"
 import { cn } from "@/lib/utils"
 
@@ -46,34 +48,83 @@ export function AuthFrame({
   )
 }
 
-/** Six-digit code input that submits on the sixth digit and clears itself after. */
-export function TotpInput({ onComplete, disabled }: { onComplete: (code: string) => void; disabled?: boolean }) {
+/** What became of a sent code: accepted, refused by the server, or sent without an answer. */
+export type TotpAnswer = "done" | "refused" | "unreached"
+
+/** The answer to a code from Better Auth's error: one without a status never reached the server (FS-23). */
+export const totpAnswer = (error: { status?: number }): TotpAnswer => (error.status ? "refused" : "unreached")
+
+/**
+ * Six-digit code input that sends the code on the sixth digit. A code the server refused is cleared for the
+ * next try; one that got no answer is kept and can be sent again with Try again or Enter (FS-23). Its parts
+ * sit in the parent's layout.
+ */
+export function TotpInput({
+  onSubmit,
+  disabled,
+  error,
+}: {
+  onSubmit: (code: string) => Promise<TotpAnswer>
+  disabled?: boolean
+  error?: string
+}) {
   const [value, setValue] = useState("")
+  const [kept, setKept] = useState(false)
+  const [refocus, setRefocus] = useState(false)
+  const input = useRef<HTMLInputElement>(null)
+  // The field is disabled while the code is sent, which takes the focus away; it comes back once enabled.
+  useEffect(() => {
+    if (!refocus || disabled) return
+    setRefocus(false)
+    input.current?.focus()
+  }, [refocus, disabled])
+
+  async function send(code: string) {
+    setKept(false)
+    const answer = await onSubmit(code)
+    if (answer === "done") return
+    if (answer === "refused") setValue("")
+    else setKept(true)
+    setRefocus(true)
+  }
+
   return (
-    <InputOTP
-      maxLength={6}
-      pattern={REGEXP_ONLY_DIGITS}
-      value={value}
-      onChange={setValue}
-      disabled={disabled}
-      autoFocus
-      aria-label="Two-factor code"
-      onComplete={(code: string) => {
-        onComplete(code)
-        setValue("")
+    <form
+      className="contents"
+      onSubmit={(e) => {
+        e.preventDefault()
+        if (value.length === 6 && !disabled) void send(value)
       }}
     >
-      <InputOTPGroup>
-        <InputOTPSlot index={0} />
-        <InputOTPSlot index={1} />
-        <InputOTPSlot index={2} />
-      </InputOTPGroup>
-      <InputOTPSeparator />
-      <InputOTPGroup>
-        <InputOTPSlot index={3} />
-        <InputOTPSlot index={4} />
-        <InputOTPSlot index={5} />
-      </InputOTPGroup>
-    </InputOTP>
+      <InputOTP
+        ref={input}
+        maxLength={6}
+        pattern={REGEXP_ONLY_DIGITS}
+        value={value}
+        onChange={setValue}
+        disabled={disabled}
+        autoFocus
+        aria-label="Two-factor code"
+        onComplete={(code: string) => void send(code)}
+      >
+        <InputOTPGroup>
+          <InputOTPSlot index={0} />
+          <InputOTPSlot index={1} />
+          <InputOTPSlot index={2} />
+        </InputOTPGroup>
+        <InputOTPSeparator />
+        <InputOTPGroup>
+          <InputOTPSlot index={3} />
+          <InputOTPSlot index={4} />
+          <InputOTPSlot index={5} />
+        </InputOTPGroup>
+      </InputOTP>
+      {error && <FieldError>{error}</FieldError>}
+      {kept && value.length === 6 && !disabled && (
+        <Button type="submit" variant="primary">
+          Try again
+        </Button>
+      )}
+    </form>
   )
 }

@@ -32,6 +32,7 @@ import {
   PanelHead,
   RefreshNote,
   Reloading,
+  RowLink,
   UserText,
 } from "@/components/kit"
 import { ListWithPanel } from "@/components/list-panel"
@@ -650,14 +651,14 @@ export function ProblemDetail({ id }: { id: string }) {
                 description="Grouped into one Telegram message."
               />
               {p.sameError.map((s) => (
-                <Link
+                <RowLink
                   key={s.id}
                   to={`/problems/${s.id}`}
                   className="hover-row flex items-center gap-2.5 border-t border-line px-pad-x py-pad-y"
                 >
                   <UserText className="min-w-0 truncate font-semibold">{s.workflowName}</UserText>
                   <UserText className="ms-auto text-small text-muted-foreground">{s.instanceName}</UserText>
-                </Link>
+                </RowLink>
               ))}
             </Panel>
           </PaneTabPanel>

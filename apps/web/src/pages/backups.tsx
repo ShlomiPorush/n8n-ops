@@ -281,11 +281,11 @@ export function BackupsPage() {
                     ? "workflows + credential secrets"
                     : "workflows, credentials without secrets"
               const to = nowhere ? "no destination" : r.destinations.map((d) => d.name).join(", ")
-              const runNow = s?.configured && (
+              const button = (
                 <Button
                   size="sm"
                   disabled={r.lastRun?.status === "running" || nowhere}
-                  title={nowhere ? "Choose a backup destination first" : undefined}
+                  aria-describedby={nowhere ? `run-reason-${r.id}` : undefined}
                   onClick={(e) => {
                     e.stopPropagation()
                     run.mutate(r.id, { onSuccess: () => toast.success(`Backup of ${r.name} started`) })
@@ -294,6 +294,19 @@ export function BackupsPage() {
                   <Play /> {r.lastRun?.status === "running" ? "Running…" : "Run now"}
                 </Button>
               )
+              // A button that cannot run says why in words beside it, not in a tip (AX-9, FB-1).
+              const runNow =
+                s?.configured &&
+                (nowhere ? (
+                  <span className="inline-flex flex-wrap items-center gap-x-2.5 gap-y-1">
+                    {button}
+                    <span id={`run-reason-${r.id}`} className="text-small text-muted-foreground">
+                      Choose a destination first
+                    </span>
+                  </span>
+                ) : (
+                  button
+                ))
               return (
                 <TableRow
                   key={r.id}

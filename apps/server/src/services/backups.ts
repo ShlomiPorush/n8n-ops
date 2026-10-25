@@ -15,6 +15,7 @@ import {
   workers,
 } from "../db/schema.ts"
 import type { N8nWorkflow } from "../n8n/client.ts"
+import { instanceSubject } from "./alert-routing.ts"
 import { setCondition } from "./alerts.ts"
 import { backupAlerts, backupCondition } from "./backup-alerts.ts"
 import { ARCHIVE_WAIT_MS, dropConditions, failRun, kickCopies } from "./backup-copies.ts"
@@ -288,6 +289,7 @@ async function checkStale(ctx: Ctx, instance: Instance | null, hours: number, no
       now.getTime() - reference.getTime() > hours * 3600_000,
       {
         kind: "backup",
+        subject: instanceSubject(instance?.id ?? null),
         start: () => backupAlerts.stale(name, hours, d.name),
       },
     )

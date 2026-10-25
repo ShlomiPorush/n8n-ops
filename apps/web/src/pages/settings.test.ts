@@ -16,6 +16,7 @@ import {
   toForm,
   withPending,
 } from "./settings.tsx"
+import { routesProblem } from "./topic-routes.tsx"
 
 const field = (section: string, name: string) => forms[section]?.fields.find((f) => f.name === name) as FieldDef
 
@@ -133,7 +134,43 @@ describe("a connection test with the values on screen (FS-19)", () => {
     })
     expect(testDraft("email", { ...values, smtpPassword: "" })).not.toHaveProperty("smtpPassword")
     expect(testDraft("email", { ...values, smtpPassword: "typed" })).toMatchObject({ smtpPassword: "typed" })
-    expect(testDraft("telegram", { chatId: " 4242 ", botToken: null })).toEqual({ chatId: "4242", botToken: null })
+    expect(testDraft("telegram", { chatId: " 4242 ", botToken: null })).toEqual({
+      chatId: "4242",
+      defaultThreadId: "",
+      botToken: null,
+    })
+    // The default topic on screen goes too, so a test checks it and a new topic asks for a new test.
+    expect(testDraft("telegram", { chatId: "4242", defaultThreadId: 12 })).toMatchObject({ defaultThreadId: "12" })
+    expect(testIdentity("telegram", { chatId: "4242", defaultThreadId: "12" }, 0)).not.toBe(
+      testIdentity("telegram", { chatId: "4242", defaultThreadId: "13" }, 0),
+    )
+  })
+
+  it("checks the topics and routes before a save, naming the route and the field to fix (SV-1)", () => {
+    const topic = field("telegram", "defaultThreadId")
+    expect(fieldProblem("telegram", topic, "")).toBeNull()
+    expect(fieldProblem("telegram", topic, 12)).toBeNull()
+    expect(fieldProblem("telegram", topic, "12a")).toBe("use the topic's number, such as 12")
+    expect(fieldProblem("telegram", topic, "0")).toBe("use the topic's number, such as 12")
+    const routes = field("telegram", "routes")
+    const form = (rows: object[]) =>
+      JSON.stringify(rows.map((r) => ({ instanceId: "", workflow: "", tag: "", threadId: "", ...r })))
+    expect(fieldProblem("telegram", routes, form([{ tag: "billing", threadId: "7" }]))).toBeNull()
+    expect(fieldProblem("telegram", routes, form([{ tag: "billing", threadId: "7" }, { threadId: "8" }]))).toBe(
+      "route 2: choose an instance, or type a workflow pattern or a tag",
+    )
+    expect(routesProblem(form([{ workflow: "(", threadId: "7" }]))).toEqual({
+      id: "route-1-workflow",
+      message: "route 1: the workflow pattern is not a valid regular expression",
+    })
+    expect(routesProblem(form([{ tag: "billing" }]))?.id).toBe("route-1-topic")
+    // The server's length limits are checked here too, so a long value is marked before it is sent.
+    expect(routesProblem(form([{ workflow: "a".repeat(201), threadId: "7" }]))).toEqual({
+      id: "route-1-workflow",
+      message: "route 1: keep the workflow pattern to 200 characters",
+    })
+    expect(routesProblem(form([{ tag: "t".repeat(101), threadId: "7" }]))?.id).toBe("route-1-tag")
+    expect(routesProblem(form([{ workflow: "a".repeat(200), tag: "t".repeat(100), threadId: "7" }]))).toBeNull()
   })
 
   it("keeps no result across a saved secret, though the stored one is not among the values (SV-5)", () => {

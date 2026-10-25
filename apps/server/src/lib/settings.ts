@@ -1,12 +1,18 @@
 import {
   dateFormats,
   isDateFormat,
+  isRoutePattern,
   isTimeFormat,
+  maxRoutes,
+  maxTopicId,
   type NumberLimits,
   numberProblem,
+  routeLimits,
+  routeWords,
   settingKinds,
   settingLabel,
   timeFormats,
+  topicWords,
   valueProblem,
 } from "@n8n-ops/shared"
 import { eq } from "drizzle-orm"
@@ -57,6 +63,43 @@ export const isTimeZone = (value: unknown): value is string =>
 
 /** Whether General may be saved with this time zone: a zone name, empty (UTC), or the one already stored. */
 export const mayStoreTimeZone = (stored: unknown, next: unknown) => next === stored || next === "" || isTimeZone(next)
+
+/** A Telegram forum topic: the `message_thread_id`, a PostgreSQL integer. Refused in the words the UI uses. */
+export const topicIdSchema = z
+  .number({ error: topicWords })
+  .int({ error: topicWords })
+  .min(1, { error: topicWords })
+  .max(maxTopicId, { error: topicWords })
+
+/** Trimmed text, with an empty value read as not set, so an empty field never becomes a condition. */
+const condition = (max: number, tooLong?: string) =>
+  z.preprocess(
+    (v) => (typeof v === "string" ? v.trim() || undefined : v),
+    z
+      .string()
+      .max(max, tooLong ? { error: tooLong } : undefined)
+      .optional(),
+  )
+
+/**
+ * Sends the alerts that match it to a forum topic. Every condition it sets must hold; workflow and tag never match
+ * an alert about an instance alone (health, backups).
+ */
+export const telegramRouteSchema = z
+  .object({
+    /** The instance's ID. A route of a removed instance stays, matching nothing, until it is deleted. */
+    instanceId: condition(64),
+    /** Regular expression for the workflow name, case-insensitive. */
+    workflow: condition(routeLimits.workflow, routeWords.patternLength).refine(
+      (p) => p === undefined || isRoutePattern(p),
+      routeWords.pattern,
+    ),
+    /** A workflow tag, case-insensitive. */
+    tag: condition(routeLimits.tag, routeWords.tagLength),
+    threadId: topicIdSchema,
+  })
+  .refine((r) => Boolean(r.instanceId || r.workflow || r.tag), routeWords.condition)
+export type TelegramRoute = z.infer<typeof telegramRouteSchema>
 
 type SmtpAccount = { smtpHost?: unknown; smtpPort?: unknown; smtpUser?: unknown }
 
@@ -110,6 +153,11 @@ export const sections = {
     botTokenEnc: z.string().optional(),
     chatId: z.string(),
     webhookSecret: z.string(),
+    /** Forum topics: the first matching route wins, then `defaultThreadId`, then the chat's General topic. */
+    routes: z.array(telegramRouteSchema).max(maxRoutes),
+    defaultThreadId: topicIdSchema.nullable(),
+    /** Topic for agent access requests; null follows `defaultThreadId`. */
+    accessThreadId: topicIdSchema.nullable(),
   }),
   email: z.object({
     dailyEnabled: z.boolean(),
@@ -186,7 +234,7 @@ export const defaults: { [K in SectionName]: Section<K> } = {
     editWindowMin: 60,
     retryMin: 5,
   },
-  telegram: { chatId: "", webhookSecret: "" },
+  telegram: { chatId: "", webhookSecret: "", routes: [], defaultThreadId: null, accessThreadId: null },
   email: {
     dailyEnabled: false,
     dailyTime: "07:30",
@@ -255,7 +303,9 @@ export function wordedIssues(section: SectionName, issues: readonly z.core.$ZodI
           : issue.code === "invalid_value"
             ? `choose one of ${issue.values.map(String).join(", ")}`
             : issue.message
-    return { path: field ? [field] : [], message: message ?? issue.message }
+    // A refused topic route is named by its place in the list: "Topic routes: route 2: …".
+    const route = field === "routes" && typeof issue.path[1] === "number" ? `route ${issue.path[1] + 1}: ` : ""
+    return { path: field ? [field] : [], message: route + (message ?? issue.message) }
   })
 }
 
@@ -328,6 +378,9 @@ export function createSettings(db: Db, env: { publicUrl?: string } = {}): Settin
     // And a date or time format this release does not know: it reads as its default (FW-9).
     if (key === "general" && "dateFormat" in stored && !isDateFormat(stored.dateFormat)) delete stored.dateFormat
     if (key === "general" && "timeFormat" in stored && !isTimeFormat(stored.timeFormat)) delete stored.timeFormat
+    // A route that no longer passes is left out alone; the bot token and chat must not fall back with it.
+    if (key === "telegram" && Array.isArray(stored.routes))
+      stored.routes = stored.routes.filter((r) => telegramRouteSchema.safeParse(r).success).slice(0, maxRoutes)
     const merged = { ...defaults[key], ...stored }
     const parsed = sections[key].safeParse(merged)
     return (parsed.success ? parsed.data : defaults[key]) as Section<K>

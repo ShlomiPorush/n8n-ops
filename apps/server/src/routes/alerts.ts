@@ -42,8 +42,7 @@ export function alertTestRoutes(ctx: Ctx) {
   }
   app.post("/test/telegram", async (c) => {
     try {
-      await sendTestTelegram(ctx, await draftOf(c))
-      return c.json({ ok: true })
+      return c.json({ ok: true, ...(await sendTestTelegram(ctx, await draftOf(c))) })
     } catch (error) {
       return c.json({ error: "test_failed", message: telegramFailureText(error) }, 400)
     }

@@ -8,6 +8,7 @@ import {
   settingKinds,
   timeFormatLabels,
   timeFormats,
+  topicProblem,
   valueProblem,
   writingOf,
 } from "@n8n-ops/shared"
@@ -58,6 +59,7 @@ import { type DateWriting, formatClock, formatDay, formatListTime, formatTime, u
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
 import { DestinationsSection } from "@/pages/destinations"
+import { routesFromForm, routesProblem, routesToForm, TopicRoutes } from "@/pages/topic-routes"
 
 /** What the two designs are; the same words in both apps. */
 const designHint =
@@ -79,6 +81,8 @@ export type FieldDef = {
     | "timezone"
     | "date-format"
     | "time-format"
+    | "topic"
+    | "routes"
   placeholder?: string
   /** The switch this field only matters with: while it is off, the field stays in place, greyed out (FS-4). */
   needs?: string
@@ -154,6 +158,28 @@ export const forms: Record<string, { title: string; description: string; fields:
     fields: [
       { name: "botToken", label: "Bot token", type: "password" },
       { name: "chatId", label: "Chat ID", placeholder: "-100…", clear: true },
+      {
+        name: "defaultThreadId",
+        label: "Default topic",
+        placeholder: "General",
+        hint: "In a group with topics, the topic for alerts no route sends elsewhere. Its number is in a message link: t.me/c/…/12/345 is topic 12. Empty: General.",
+        type: "topic",
+        clear: true,
+      },
+      {
+        name: "accessThreadId",
+        label: "Access requests topic",
+        placeholder: "Same as the default topic",
+        hint: "The topic for agent access requests. Empty: the default topic.",
+        type: "topic",
+        clear: true,
+      },
+      {
+        name: "routes",
+        label: "Topic routes",
+        hint: "Alerts go to the topic of the first route they match, by instance, workflow name (a pattern, case doesn't matter) or workflow tag. Health and backup alerts match by instance only. A tag changed in n8n counts after the next workflow sync.",
+        type: "routes",
+      },
     ],
   },
   email: {
@@ -521,6 +547,7 @@ export const toForm = (def: { fields: FieldDef[] }, data: Record<string, unknown
       if (f.type === "password") return [f.name, undefined]
       if (f.type === "list") return [f.name, Array.isArray(v) ? v.map(String) : []]
       if (f.type === "switch") return [f.name, Boolean(v)]
+      if (f.type === "routes") return [f.name, routesToForm(v)]
       if (metaOf(data).env?.[f.name]?.inUse) return [f.name, ""]
       return [f.name, v ?? ""]
     }),
@@ -564,6 +591,8 @@ export function fieldProblem(
   limits: Record<string, NumberLimits> = {},
 ): string | null {
   if (f.type === "number") return numberProblem(value, limits[f.name] ?? {})
+  if (f.type === "topic") return topicProblem(value)
+  if (f.type === "routes") return routesProblem(value)?.message ?? null
   const kind = settingKinds[section]?.[f.name]
   return kind ? valueProblem(kind, value) : null
 }
@@ -688,6 +717,8 @@ export function SettingsForm({ section, active = true }: { section: string; acti
       // A field whose switch is off is not checked; a value it cannot take is left unsent (FS-4).
       if (offOf(f) && fieldProblem(section, f, v, meta.limits)) continue
       if (f.type === "number") out[f.name] = Number(v)
+      else if (f.type === "topic") out[f.name] = text(v) ? Number(text(v)) : null
+      else if (f.type === "routes") out[f.name] = routesFromForm(v)
       else if (f.type === "list") out[f.name] = Array.isArray(v) ? v.map((s) => String(s).trim()).filter(Boolean) : []
       else out[f.name] = typeof v === "string" ? v.trim() : v
     }
@@ -735,7 +766,11 @@ export function SettingsForm({ section, active = true }: { section: string; acti
     setProblems(found)
     return def.fields
       .filter((f) => f.name in found)
-      .map((f) => ({ label: f.label, problem: found[f.name] ?? "", id: f.name, reveal: () => reveal(f.name) }))
+      .map((f) => {
+        // A refused route takes the focus to its own field.
+        const at = f.type === "routes" ? (routesProblem(current[f.name])?.id ?? f.name) : f.name
+        return { label: f.label, problem: found[f.name] ?? "", id: f.name, reveal: () => reveal(at) }
+      })
   }
 
   useSaveSource(`settings-${section}`, {
@@ -839,20 +874,31 @@ export function SettingsForm({ section, active = true }: { section: string; acti
             }
             const needs = offOf(f)
             const env = meta.env?.[f.name]
+            // A refused route is marked in the list, with its problem under it.
+            const routeIssue = f.type === "routes" && problem ? routesProblem(values[f.name]) : null
             return (
               <SettingRow
                 key={f.name}
-                htmlFor={f.name}
+                // The routes are several fields; their label names the list, not one of them.
+                htmlFor={f.type === "routes" ? undefined : f.name}
                 label={f.label}
                 hint={f.hint}
                 inline={f.type === "switch"}
-                wide={f.type === "list"}
-                problem={problem}
+                wide={f.type === "list" || f.type === "routes"}
+                problem={routeIssue ? undefined : problem}
                 off={needs ? `Used when ${def.fields.find((s) => s.name === needs)?.label ?? needs} is on.` : undefined}
                 note={formatExample(f, values)}
                 {...source(f)}
               >
-                {f.type === "switch" ? (
+                {f.type === "routes" ? (
+                  <TopicRoutes
+                    id={f.name}
+                    value={values[f.name]}
+                    onChange={(v) => set(f.name, v)}
+                    disabled={save.isPending}
+                    issue={routeIssue}
+                  />
+                ) : f.type === "switch" ? (
                   <Switch id={f.name} checked={Boolean(values[f.name])} onCheckedChange={(v) => set(f.name, v)} />
                 ) : f.type === "password" ? (
                   <SecretField
@@ -935,8 +981,8 @@ export function SettingsForm({ section, active = true }: { section: string; acti
                     id={f.name}
                     // Times are typed as 24-hour HH:MM; a native time field would follow the browser's 12-hour clock.
                     type={f.type === "number" ? "number" : "text"}
-                    inputMode={f.type === "time" ? "numeric" : undefined}
-                    className={f.type === "time" ? "tabular-nums" : undefined}
+                    inputMode={f.type === "time" || f.type === "topic" ? "numeric" : undefined}
+                    className={f.type === "time" || f.type === "topic" ? "tabular-nums" : undefined}
                     placeholder={f.type === "time" ? "HH:MM" : (env?.value ?? f.placeholder)}
                     value={String(values[f.name] ?? "")}
                     onChange={(e) => set(f.name, e.target.value)}
@@ -971,6 +1017,9 @@ const tests = {
   },
 } as const
 
+/** A Telegram test that Telegram took, but in General: the default topic on screen is deleted or closed. */
+const topicGoneText = "The default topic was not found, so the test message went to General"
+
 /**
  * What a test sends: the values on screen, saved or not (FS-19). A secret goes only when it is typed, or as null
  * while it is being removed; otherwise the server uses the stored one, and only for the server it was stored for.
@@ -980,7 +1029,8 @@ export function testDraft(section: keyof typeof tests, values: Record<string, un
     const v = values[name]
     return v === null ? { [name]: null } : typeof v === "string" && v ? { [name]: v } : {}
   }
-  if (section === "telegram") return { chatId: text(values.chatId), ...secret("botToken") }
+  if (section === "telegram")
+    return { chatId: text(values.chatId), defaultThreadId: text(values.defaultThreadId), ...secret("botToken") }
   return {
     recipients: Array.isArray(values.recipients) ? values.recipients : [],
     from: text(values.from),
@@ -1051,10 +1101,18 @@ function TestRow({
     redraw()
     let outcome: TestOutcome
     let recipients: string[] = []
+    let topicGone = false
     try {
-      const res = await api<{ recipients?: string[] } | null>(t.path, { method: "POST", json: draft })
+      const res = await api<{ recipients?: string[]; topicNotFound?: boolean } | null>(t.path, {
+        method: "POST",
+        json: draft,
+      })
       recipients = res?.recipients ?? []
-      outcome = { ok: true, detail: recipients.length ? `Sent to ${recipients.join(", ")}` : undefined }
+      topicGone = Boolean(res?.topicNotFound)
+      outcome = {
+        ok: true,
+        detail: topicGone ? topicGoneText : recipients.length ? `Sent to ${recipients.join(", ")}` : undefined,
+      }
     } catch (e) {
       outcome = { ok: false, message: describeError(e) }
     }
@@ -1062,8 +1120,10 @@ function TestRow({
     redraw()
     // An answer to an older test, or to values changed meanwhile, says nothing more (SV-5).
     if (!current || runs.view(latest.current).kind === "changed") return
-    if (outcome.ok) toast.success(t.done(recipients))
-    else {
+    if (outcome.ok) {
+      if (topicGone) toast.warning(`${topicGoneText}.`)
+      else toast.success(t.done(recipients))
+    } else {
       toast.error(`${t.failed}: ${outcome.message}`)
       throw new Error(outcome.message)
     }

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 import type { Db } from "../db/client.ts"
+import { TestRefused, telegramTarget } from "../services/draft-tests.ts"
 import {
   changedValueIssues,
   createSettings,
@@ -9,7 +10,9 @@ import {
   mayStoreTimeZone,
   numberLimits,
   resolveInstanceSettings,
+  sections,
   smtpPasswordNeeded,
+  wordedIssues,
 } from "./settings.ts"
 
 describe("SMTP password and server", () => {
@@ -114,6 +117,45 @@ describe("checks before a value is stored", () => {
         { path: ["smtpPort"], message: "use a whole number from 1 to 65535" },
       ]).message,
     ).toBe("Daily report time: use HH:MM SMTP port: use a whole number from 1 to 65535")
+  })
+
+  it("refuses a topic or a route in the words the UI uses, naming the route", () => {
+    const refused = (value: object) => {
+      const parsed = sections.telegram.safeParse({ ...defaults.telegram, ...value })
+      return parsed.success ? "" : invalidAnswer("telegram", wordedIssues("telegram", parsed.error.issues)).message
+    }
+    expect(refused({ defaultThreadId: 0 })).toBe("Default topic: use the topic's number, such as 12")
+    expect(refused({ routes: [{ tag: "billing", threadId: 7 }, { threadId: 8 }] })).toBe(
+      "Topic routes: route 2: choose an instance, or type a workflow pattern or a tag",
+    )
+    expect(refused({ routes: [{ workflow: "(", threadId: 7 }] })).toBe(
+      "Topic routes: route 1: the workflow pattern is not a valid regular expression",
+    )
+    expect(refused({ routes: [{ tag: "billing" }] })).toBe("Topic routes: route 1: use the topic's number, such as 12")
+    expect(refused({ routes: [{ workflow: "a".repeat(201), threadId: 7 }] })).toBe(
+      "Topic routes: route 1: keep the workflow pattern to 200 characters",
+    )
+    expect(refused({ routes: [{ tag: "t".repeat(101), threadId: 7 }] })).toBe(
+      "Topic routes: route 1: keep the tag to 100 characters",
+    )
+    expect(refused({ defaultThreadId: 12, routes: [{ instanceId: "a", threadId: 2_147_483_647 }] })).toBe("")
+  })
+})
+
+describe("a Telegram test with the values on screen", () => {
+  const stored = { ...defaults.telegram, botTokenEnc: "enc", chatId: "-100200", defaultThreadId: 12 }
+  const target = (draft: Record<string, unknown>) => telegramTarget(stored, draft, () => "token")
+
+  it("goes to the stored default topic, or to the one on screen, empty being General", () => {
+    expect(target({}).threadId).toBe(12)
+    expect(target({ defaultThreadId: " 34 " }).threadId).toBe(34)
+    expect(target({ defaultThreadId: "" }).threadId).toBeNull()
+  })
+
+  it("is refused for a topic that is not a topic number, before anything is sent", () => {
+    expect(() => target({ defaultThreadId: "general" })).toThrow(
+      new TestRefused("Default topic: use the topic's number, such as 12"),
+    )
   })
 })
 

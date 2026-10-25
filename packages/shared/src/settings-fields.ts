@@ -22,7 +22,13 @@ export const settingLabels = {
     editWindowMin: "Edit instead of resend (minutes)",
     retryMin: "Retry failed sends every (minutes)",
   },
-  telegram: { botToken: "Bot token", chatId: "Chat ID" },
+  telegram: {
+    botToken: "Bot token",
+    chatId: "Chat ID",
+    defaultThreadId: "Default topic",
+    accessThreadId: "Access requests topic",
+    routes: "Topic routes",
+  },
   email: {
     dailyEnabled: "Daily report",
     dailyTime: "Daily report time",
@@ -148,6 +154,41 @@ export function valueProblem(kind: ValueKind, value: unknown): string | null {
     return isWebAddress(text) ? null : "use a full address that starts with https://, such as https://ops.example.com"
   return isFromAddress(text) ? null : "use an email address, such as n8n-ops@example.com, or Name <n8n-ops@example.com>"
 }
+
+/** The largest Telegram forum topic the database holds: a PostgreSQL integer. */
+export const maxTopicId = 2_147_483_647
+
+/** What a forum topic must be. Its number is in a message link: t.me/c/…/12/345 is topic 12. */
+export const topicWords = "use the topic's number, such as 12"
+
+/** What is wrong with a forum topic as typed; null for a topic number, or for empty, which means none. */
+export function topicProblem(value: unknown): string | null {
+  const text = String(value ?? "").trim()
+  if (text === "") return null
+  return /^\d{1,10}$/.test(text) && Number(text) >= 1 && Number(text) <= maxTopicId ? null : topicWords
+}
+
+/** Whether a route's workflow pattern compiles the way it is matched: case-insensitive, Unicode. */
+export function isRoutePattern(pattern: string): boolean {
+  try {
+    new RegExp(pattern, "iu")
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** How many topic routes Settings keeps, and the longest workflow pattern and tag a route takes. */
+export const maxRoutes = 50
+export const routeLimits = { workflow: 200, tag: 100 } as const
+
+/** What a topic route needs, in words that follow "route 2: ". */
+export const routeWords = {
+  condition: "choose an instance, or type a workflow pattern or a tag",
+  pattern: "the workflow pattern is not a valid regular expression",
+  patternLength: `keep the workflow pattern to ${routeLimits.workflow} characters`,
+  tagLength: `keep the tag to ${routeLimits.tag} characters`,
+} as const
 
 /** The range a number setting takes, as the server's schema sets it. */
 export type NumberLimits = { min?: number; max?: number }

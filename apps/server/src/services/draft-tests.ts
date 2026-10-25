@@ -1,3 +1,4 @@
+import { topicProblem } from "@n8n-ops/shared"
 import {
   changedValueIssues,
   invalidAnswer,
@@ -65,12 +66,15 @@ export function emailAccount(stored: Section<"email">, draft: Record<string, unk
   }
 }
 
-/** The bot and chat a Telegram message goes to: a typed token and chat ID over the stored ones. */
+/**
+ * The bot, chat and default topic a Telegram test goes to: a typed token, chat ID and topic over the stored ones.
+ * An empty topic is the chat's General.
+ */
 export function telegramTarget(
   stored: Section<"telegram">,
   draft: Record<string, unknown>,
   decrypt: Decrypt,
-): { token: string; chatId: string } {
+): { token: string; chatId: string; threadId: number | null } {
   const typed = draft.botToken
   const token =
     typeof typed === "string" && typed ? typed : typed !== null && stored.botTokenEnc ? decrypt(stored.botTokenEnc) : ""
@@ -78,7 +82,12 @@ export function telegramTarget(
   if (!token || !chatId) throw new TestRefused("Telegram is not configured: set the bot token and chat ID.")
   const issues = changedValueIssues("telegram", stored, { ...stored, chatId })
   if (issues.length) throw new TestRefused(invalidAnswer("telegram", issues).message)
-  return { token, chatId }
+  if (!("defaultThreadId" in draft)) return { token, chatId, threadId: stored.defaultThreadId }
+  const topic = String(draft.defaultThreadId ?? "").trim()
+  const problem = topicProblem(topic)
+  if (problem)
+    throw new TestRefused(invalidAnswer("telegram", [{ path: ["defaultThreadId"], message: problem }]).message)
+  return { token, chatId, threadId: topic ? Number(topic) : null }
 }
 
 /** Why a test email was not sent, and what to check (SV-5). */

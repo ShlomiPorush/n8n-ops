@@ -230,6 +230,7 @@ test("a decision in n8n-ops updates the Telegram message too", async ({ request 
 })
 
 test("forum topics are set in Settings > Telegram and keep their order through Discard and Save", async () => {
+  const unsaved = page.getByRole("region", { name: "Unsaved changes" })
   await page.goto("/settings/telegram")
   await page.getByLabel("Default topic").fill("12")
   await page.getByLabel("Access requests topic").fill("34")
@@ -254,9 +255,13 @@ test("forum topics are set in Settings > Telegram and keep their order through D
   await expect(refusedPicker).toHaveAccessibleDescription(/^route 2: choose an instance/)
   expect((await (await page.request.get("/api/settings/telegram")).json()).routes).toEqual([])
 
+  // Clicked as a person would to fix it, which also takes the pointer off the refusal's toast over the save bar.
+  await page.getByLabel("Route 2 workflow pattern").click()
   await page.getByLabel("Route 2 workflow pattern").fill("orders|leads")
   await page.getByRole("button", { name: "Save" }).click()
   await expect(page.getByText("Settings saved")).toBeVisible()
+  // Nothing left unsaved, so the reload is not held by "Leave without saving?".
+  await expect(unsaved).toHaveCount(0)
 
   await page.reload()
   await expect(page.getByRole("button", { name: /^Route 1 instance:/ })).toHaveAccessibleName(
@@ -279,6 +284,7 @@ test("forum topics are set in Settings > Telegram and keep their order through D
   await page.getByRole("button", { name: "Move route 1 down" }).click()
   await page.getByRole("button", { name: "Save" }).click()
   await expect(page.getByText("Settings saved")).toBeVisible()
+  await expect(unsaved).toHaveCount(0)
   await page.reload()
   await expect(page.getByLabel("Route 1 workflow pattern")).toHaveValue("orders|leads")
   await expect(page.getByLabel("Route 2 topic")).toHaveValue("23")
@@ -353,6 +359,7 @@ test("the test message and access requests go to their topics, and to General wh
   await page.getByRole("button", { name: "Save" }).click()
   await expect(page.getByText("Settings saved")).toBeVisible()
   await expect(page.getByText("No routes. Every alert goes to the default topic.")).toBeVisible()
+  await expect(page.getByRole("region", { name: "Unsaved changes" })).toHaveCount(0)
 })
 
 test("a new SMTP server needs the password again, so the stored one is not sent to it", async () => {

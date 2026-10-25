@@ -19,7 +19,7 @@
     "better-auth": "1.7.10",
     "drizzle-orm": "0.45.4",
     "hono": "4.13.13",
-    "nodemailer": "10.1.2",
+    "nodemailer": "10.2.1",
     "oidc-provider": "9.12.2",
     "postgres": "3.4.9",
     "ssh2": "1.17.0",

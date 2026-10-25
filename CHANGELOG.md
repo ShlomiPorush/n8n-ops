@@ -114,6 +114,10 @@ All notable changes to this project are documented here. The format follows [Kee
 - Double-clicking the Filters or Sort button, or Advanced on Connected Agents, no longer selects its text. Advanced opens and closes with the keyboard as a standard fold.
 - The account button's name for screen readers now includes the user name it shows.
 
+### Security
+
+- Nodemailer is updated to 10.2.1, which fixes three ways its address parser could misread an unusual sender or recipient address (GHSA-85x2-q946-cp5h, GHSA-m943-m63m-w62w, GHSA-8c8m-p3m8-cjg8). In n8n-ops these addresses come only from Settings → Email, which only a signed-in user can change; agents and API tokens cannot.
+
 ## [0.1.0] - 2026-10-22
 
 ### Added

@@ -174,6 +174,7 @@ for (const [name, path, ready] of [
     () => page.locator('[data-testid^="destination-"]').or(text("No backup destination yet.")),
   ],
   ["Settings, Encryption Keys", "/settings/keys", () => page.getByRole("button", { name: /^Copy the public key/ })],
+  ["Settings, Sign-in Security", "/settings/security", () => field("Longest session (hours)")],
   ["Settings, Agent Access", "/settings/access", () => field("Longest access (minutes)")],
 ] as const) {
   test(`${name} has no serious accessibility findings (AX-11)`, async () => {

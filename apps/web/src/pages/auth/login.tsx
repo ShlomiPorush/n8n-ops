@@ -1,12 +1,14 @@
-import { LoaderCircle } from "lucide-react"
+import { Clock, LoaderCircle } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { Navigate, useNavigate, useSearchParams } from "react-router"
+import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { PasswordInput } from "@/components/ui/password-input"
 import { UNREACHABLE_TEXT, useApi } from "@/lib/api"
 import { authClient, authErrorText, signInErrorText } from "@/lib/auth-client"
+import { endedTexts } from "@/lib/session-clock"
 import { AuthFrame, type TotpAnswer, TotpInput, totpAnswer } from "./shared"
 
 /** Where to go after signing in: the page that was asked for, if it is a page of this app (NL-18). */
@@ -20,6 +22,9 @@ export function LoginPage() {
   const navigate = useNavigate()
   const [params] = useSearchParams()
   const next = safeNext(params.get("next"))
+  // Why the server ended the last session (Settings > Sign-in security), when it did.
+  const reason = params.get("ended") ?? ""
+  const ended = Object.hasOwn(endedTexts, reason) ? endedTexts[reason] : undefined
   const passwordRef = useRef<HTMLInputElement>(null)
   const status = useApi<{ hasUser: boolean }>("/setup/status")
   const [step, setStep] = useState<"password" | "totp">("password")
@@ -103,6 +108,12 @@ export function LoginPage() {
         }}
       >
         <FieldGroup>
+          {ended && (
+            <Alert variant="info">
+              <Clock />
+              <AlertDescription>{ended}</AlertDescription>
+            </Alert>
+          )}
           <Field>
             <FieldLabel htmlFor="username">Username</FieldLabel>
             <Input id="username" name="username" autoComplete="username" required autoFocus />

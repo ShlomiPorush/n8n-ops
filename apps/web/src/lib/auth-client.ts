@@ -1,10 +1,19 @@
 import { twoFactorClient, usernameClient } from "better-auth/client/plugins"
 import { createAuthClient } from "better-auth/react"
 import { UNREACHABLE_TEXT } from "@/lib/api"
+import { sessionEnded } from "@/lib/session"
 
 export const authClient = createAuthClient({
   basePath: "/api/auth",
   plugins: [usernameClient(), twoFactorClient()],
+  fetchOptions: {
+    // A session the clocks ended goes to sign-in, as with the app's own API. Only this answer: a wrong password
+    // or code is a 401 too, and stays on its form.
+    onError: ({ error }) => {
+      const e = error as { code?: string; reason?: string }
+      if (e.code === "SESSION_ENDED") sessionEnded(e.reason)
+    },
+  },
 })
 
 type AuthError = { message?: string; status?: number } | null | undefined

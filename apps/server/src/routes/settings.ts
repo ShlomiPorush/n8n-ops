@@ -22,7 +22,7 @@ const secretFields: Partial<Record<SectionName, string[]>> = {
   email: ["smtpPassword"],
 }
 
-const editable: SectionName[] = ["general", "defaults", "alerts", "telegram", "email", "backups", "access"]
+const editable: SectionName[] = ["general", "defaults", "alerts", "telegram", "email", "backups", "access", "security"]
 
 /** The variable each value from the environment comes from, for the note under its field (FS-6). */
 const envVariables = { publicUrl: "N8N_OPS_PUBLIC_URL" } as const

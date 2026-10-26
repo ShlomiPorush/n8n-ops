@@ -10,6 +10,8 @@ export class ApiError extends Error {
     readonly issues?: { path: (string | number)[]; message: string }[],
     /** Human explanation sent by the server, when it has one. */
     readonly detail?: string,
+    /** Why the server ended the session, on a 401 `session_ended` (idle, max, lifetime). */
+    readonly reason?: string,
   ) {
     super(detail ?? (issues?.length ? issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") : code))
   }
@@ -51,12 +53,10 @@ export async function api<T>(path: string, init: RequestInit & { json?: unknown 
     throw unreached(e)
   }
   const body = text ? safeJson(text) : null
-  // The session ended on an open page: sign in again and come back here (NL-18).
-  if (res.status === 401) sessionEnded()
-  if (!res.ok) {
-    const b = body as { error?: string; issues?: ApiError["issues"]; message?: string } | null
-    throw new ApiError(res.status, b?.error ?? `http_${res.status}`, b?.issues, b?.message)
-  }
+  const b = body as { error?: string; issues?: ApiError["issues"]; message?: string; reason?: string } | null
+  // The session ended on an open page: sign in again and come back here (NL-18), told why when the server says.
+  if (res.status === 401) sessionEnded(b?.reason)
+  if (!res.ok) throw new ApiError(res.status, b?.error ?? `http_${res.status}`, b?.issues, b?.message, b?.reason)
   return body as T
 }
 

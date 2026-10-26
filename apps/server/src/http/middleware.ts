@@ -3,20 +3,37 @@ import { createMiddleware } from "hono/factory"
 import type { Ctx } from "../context.ts"
 import { apiTokens } from "../db/schema.ts"
 import { sha256 } from "../lib/crypto.ts"
+import { type CheckMode, checkSession } from "../services/session-policy.ts"
 import type { Env } from "./types.ts"
 
-/** Requires a signed-in user. Unless allowWithoutTotp is set, the user must also have TOTP enabled. */
-export function requireUser(ctx: Ctx, options: { allowWithoutTotp?: boolean } = {}) {
+/**
+ * Requires a signed-in user whose session the clocks under Sign-in security still allow; a session that ended is
+ * answered with `session_ended` and the reason, so the page can say why. Unless allowWithoutTotp is set, the user
+ * must also have TOTP enabled. `mode` is what the request counts as (services/session-policy.ts).
+ */
+export function requireUser(ctx: Ctx, options: { allowWithoutTotp?: boolean; mode?: CheckMode } = {}) {
   return createMiddleware<Env>(async (c, next) => {
     const result = await ctx.auth.api.getSession({ headers: c.req.raw.headers })
     if (!result) return c.json({ error: "unauthorized" }, 401)
     const u = result.user as typeof result.user & { username?: string | null; twoFactorEnabled?: boolean | null }
+    const username = u.username ?? u.name
+    const check = await checkSession(ctx, result.session.id, { mode: options.mode ?? "request", actor: username })
+    if (!check.ok) return c.json(sessionEndedAnswer(check.reason), 401)
     const twoFactorEnabled = Boolean(u.twoFactorEnabled)
     if (!twoFactorEnabled && !options.allowWithoutTotp) return c.json({ error: "totp_required" }, 403)
-    c.set("actor", { kind: "user", id: u.id, username: u.username ?? u.name, twoFactorEnabled })
+    c.set("actor", { kind: "user", id: u.id, username, twoFactorEnabled, sessionId: result.session.id })
+    c.set("session", check.status)
     await next()
   })
 }
+
+/** The answer to a request from a session that ended; `code` and `message` are what the Better Auth client reads. */
+export const sessionEndedAnswer = (reason: string) => ({
+  error: "session_ended",
+  code: "SESSION_ENDED",
+  reason,
+  message: "Your session ended. Sign in again.",
+})
 
 /**
  * Requires a bearer token for /mcp (kind "mcp") or /api/v1 (kind "rest"): a token made by hand of that kind, or

@@ -60,6 +60,12 @@ export const settingLabels = {
     notifyEmail: "Email requests",
     telegramApprovers: "Who may approve in Telegram",
   },
+  security: {
+    lifetimeHours: "Sign out an unused session after (hours)",
+    idleTimeout: "Sign out after inactivity",
+    idleMinutes: "Inactivity limit (minutes)",
+    maxHours: "Longest session (hours)",
+  },
   backups: {
     selfDestinations: "Where the n8n-ops database goes",
     selfDestinationIds: "Destinations",

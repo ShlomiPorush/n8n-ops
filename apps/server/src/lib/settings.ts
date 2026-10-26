@@ -22,6 +22,12 @@ import { settings as settingsTable } from "../db/schema.ts"
 
 const time = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "use HH:MM")
 
+/**
+ * The longest a browser session may be set to last (30 days). Better Auth is told to keep every session a day
+ * longer, so its own expiry never comes before the clocks set under Sign-in security.
+ */
+export const maxSessionHours = 720
+
 /** Settings an instance can override. Everything else is global. */
 export const instanceSettingsSchema = z.object({
   pollIntervalSec: z.number().int().min(15).max(3600),
@@ -203,6 +209,16 @@ export const sections = {
      */
     telegramApprovers: z.array(z.string()),
   }),
+  /** How long a browser session lasts (services/session-policy.ts). Applies to sessions already open. */
+  security: z.object({
+    /** A session nothing uses, not even an open page, ends this long after its last request. */
+    lifetimeHours: z.number().int().min(1).max(maxSessionHours),
+    /** Sign out after a time without real input. Off keeps an open page signed in while the other clocks allow. */
+    idleTimeout: z.boolean(),
+    idleMinutes: z.number().int().min(5).max(1440),
+    /** No session lasts longer than this from sign-in, whatever its activity. */
+    maxHours: z.number().int().min(1).max(maxSessionHours),
+  }),
   keys: z.object({
     /** age public key used to encrypt every backup archive. */
     backupRecipient: z.string().optional(),
@@ -250,6 +266,7 @@ export const defaults: { [K in SectionName]: Section<K> } = {
   },
   backups: { selfDestinations: "default", selfDestinationIds: [], maxArchiveMb: 2048 },
   access: { maxMinutes: 240, pendingMinutes: 30, notifyTelegram: true, notifyEmail: true, telegramApprovers: [] },
+  security: { lifetimeHours: 24, idleTimeout: true, idleMinutes: 60, maxHours: 12 },
   keys: {},
 }
 

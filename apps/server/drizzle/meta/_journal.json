@@ -64,6 +64,13 @@
       "when": 1792884002992,
       "tag": "0008_telegram_topics",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1793036811975,
+      "tag": "0009_session_clocks",
+      "breakpoints": true
     }
   ]
 }

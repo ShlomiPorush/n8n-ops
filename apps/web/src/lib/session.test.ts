@@ -15,6 +15,12 @@ describe("loginPath", () => {
     expect(loginPath("/problems")).toBe("/login?next=%2Fproblems")
     expect(loginPath("/")).toBe("/login")
   })
+
+  it("carries why the server ended the session, for the sign-in page to say", async () => {
+    const { loginPath } = await load()
+    expect(loginPath("/problems", "", "idle")).toBe("/login?ended=idle&next=%2Fproblems")
+    expect(loginPath("/", "", "max")).toBe("/login?ended=max")
+  })
 })
 
 describe("sessionEnded", () => {

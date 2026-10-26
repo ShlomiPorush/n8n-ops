@@ -299,10 +299,12 @@ run_e2e_round() {
   [ "$design" = regular ] || seed_design "$design"
   run_checks_on_stack
   run_server_integration
-  # The alias lets the server reach the stand-in Telegram Bot API that the tests run (TELEGRAM_API_URL).
+  # The alias lets the server reach the stand-in Telegram Bot API that the tests run (TELEGRAM_API_URL). The
+  # session spec moves its session's clocks in the database, since the server's clock cannot be moved.
   docker run --rm --network "${PROJECT}_default" --network-alias e2e-runner \
     --user "$(id -u):$(id -g)" -e HOME=/tmp -e CI="${CI:-}" -e E2E_DESIGN="$design" \
     -e E2E_BASE_URL=http://server:8080 -e E2E_N8N_CONTAINER="${PROJECT}-n8n-1" \
+    -e E2E_DATABASE_URL=postgres://n8n_ops:dev-only-password@postgres:5432/n8n_ops \
     -v "$N8N_OPS_DATA_DIR/pairing:/worker-data" -v "$N8N_OPS_DATA_DIR/backups:/backups-data:ro" \
     -v "$REPO_ROOT:/repo" -w "/repo/$app" \
     "$PLAYWRIGHT_IMAGE" node node_modules/@playwright/test/cli.js test || {

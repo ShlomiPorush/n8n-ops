@@ -264,3 +264,30 @@ describe("the problem version trigger", () => {
     }
   })
 })
+
+describe("the session clocks (0009)", () => {
+  it("counts an open session's maximum length from its creation and starts its other clocks at the upgrade", async () => {
+    const { sql, db, close } = await freshDatabase()
+    try {
+      await migrate(db, { migrationsFolder: migrationsUpTo("0008_telegram_topics") })
+      const created = new Date("2026-10-20T08:00:00Z")
+      await sql`insert into auth_user (id, name, email) values ('u1', 'operator', 'operator@n8n-ops.local')`
+      await sql`insert into auth_session (id, expires_at, token, user_id, created_at, updated_at)
+        values ('s1', now() + interval '7 days', 'token-1', 'u1', ${created.toISOString()}::timestamptz,
+          ${created.toISOString()}::timestamptz)`
+      await migrate(db, { migrationsFolder: migrationsUpTo(null) })
+      // Compared in the database: the connection is drizzle's, which reads timestamps as text.
+      const [row] = await sql<{ kept: boolean; seen: number; active: number; ended: string | null }[]>`
+        select authenticated_at = ${created.toISOString()}::timestamptz as kept,
+          extract(epoch from now() - seen_at)::float as seen, extract(epoch from now() - active_at)::float as active,
+          ended_reason as ended
+        from auth_session where id = 's1'`
+      expect(row?.kept).toBe(true)
+      expect(row?.seen).toBeLessThan(60)
+      expect(row?.active).toBeLessThan(60)
+      expect(row?.ended).toBeNull()
+    } finally {
+      await close()
+    }
+  })
+})

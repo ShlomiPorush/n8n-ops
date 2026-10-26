@@ -45,6 +45,18 @@ export const session = pgTable("auth_session", {
     .references(() => user.id, { onDelete: "cascade" }),
   createdAt: created(),
   updatedAt: updated(),
+  // The session clocks (services/session-policy.ts). Better Auth does not know these columns and never returns
+  // them; the policy reads and writes them by session id. A session that replaces another one (a password
+  // change, two-factor enrolment) takes over its sign-in and activity times.
+  /** When the person signed in: the maximum length counts from here. */
+  authenticatedAt: ts("authenticated_at").notNull().defaultNow(),
+  /** The last request of any kind, polling included, kept to the minute: the lifetime counts from here. */
+  seenAt: ts("seen_at").notNull().defaultNow(),
+  /** The last real input (keys, pointer, wheel, touch) the page reported: the idle timeout counts from here. */
+  activeAt: ts("active_at").notNull().defaultNow(),
+  /** Why the session ended (lifetime, idle, max); it then answers every request with this until it is removed. */
+  endedReason: text("ended_reason"),
+  endedAt: ts("ended_at"),
 })
 
 export const account = pgTable("auth_account", {

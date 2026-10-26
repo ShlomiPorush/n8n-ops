@@ -6,6 +6,8 @@ import { twoFactor, username } from "better-auth/plugins"
 import type { Db } from "../db/client.ts"
 import { account, session, twoFactor as twoFactorTable, user, verification } from "../db/schema.ts"
 import { createAudit } from "../lib/audit.ts"
+import { maxSessionHours } from "../lib/settings.ts"
+import { inheritClocks } from "../services/session-policy.ts"
 
 export const LOGIN_DOMAIN = "n8n-ops.local"
 
@@ -25,7 +27,11 @@ export function createAuth(db: Db, appKey: Buffer, publicUrl?: string) {
       schema: { user, session, account, verification, twoFactor: twoFactorTable },
     }),
     emailAndPassword: { enabled: true, minPasswordLength: 12 },
-    session: { expiresIn: 60 * 60 * 24 * 7, updateAge: 60 * 60 * 24 },
+    // The session clocks under Settings > Sign-in security decide when a session ends (services/session-policy.ts).
+    // Better Auth keeps each one, and its cookie, a day longer than the longest maximum length allows, and never
+    // extends it: the maximum length (counted from a sign-in no later than the session's creation) always ends a
+    // session first, with its reason, and polling never keeps a session alive.
+    session: { expiresIn: (maxSessionHours + 24) * 3600, disableSessionRefresh: true },
     rateLimit: {
       enabled: true,
       window: 60,
@@ -45,6 +51,8 @@ export function createAuth(db: Db, appKey: Buffer, publicUrl?: string) {
       after: createAuthMiddleware(async (ctx) => {
         const created = ctx.context.newSession
         if (!created) return
+        // A session that replaces a live one (password change, two-factor enrolment) keeps its sign-in time.
+        if (!ctx.path.startsWith("/sign-in")) await inheritClocks({ db }, created.session.id)
         const u = created.user as { username?: string | null; name?: string; twoFactorEnabled?: boolean | null }
         // verify-totp with a session already open is enrolment (setup), not a sign-in.
         const completed = ctx.path.startsWith("/sign-in")

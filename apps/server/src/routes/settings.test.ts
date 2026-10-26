@@ -19,6 +19,12 @@ vi.mock("../services/reports.ts", async (importOriginal) => ({
   buildReport: async () => ({ subject: "n8n-ops test", text: "Test", html: "<p>Test</p>" }),
 }))
 
+// The session clocks have their own tests; here every session is live.
+vi.mock("../services/session-policy.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../services/session-policy.ts")>()),
+  checkSession: async () => ({ ok: true, clocks: {}, status: {} }),
+}))
+
 type Stored = Partial<Record<SectionName, Record<string, unknown>>>
 
 /**
@@ -40,7 +46,14 @@ function fakeCtx(data: Stored, env: { publicUrl?: string } = {}) {
   }
   return {
     settings,
-    auth: { api: { getSession: async () => ({ user: { id: "u1", username: "operator", twoFactorEnabled: true } }) } },
+    auth: {
+      api: {
+        getSession: async () => ({
+          session: { id: "s1" },
+          user: { id: "u1", username: "operator", twoFactorEnabled: true },
+        }),
+      },
+    },
     secrets: { encrypt: (s: string) => `enc:${s}`, decrypt: (s: string) => s.replace(/^enc:/, "") },
     audit: async () => {},
     log: { info() {}, warn() {}, error() {} },

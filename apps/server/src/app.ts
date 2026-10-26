@@ -1,10 +1,12 @@
 import type { Health } from "@n8n-ops/shared"
 import { Hono } from "hono"
 import type { Ctx } from "./context.ts"
+import { authRoute } from "./http/auth-guard.ts"
 import type { Env } from "./http/types.ts"
 import { serveWeb } from "./http/web.ts"
 import { adminRoutes } from "./routes/admin.ts"
 import { overviewRoutes } from "./routes/overview.ts"
+import { sessionRoutes } from "./routes/session.ts"
 import { settingsRoutes } from "./routes/settings.ts"
 import { setupRoutes } from "./routes/setup.ts"
 
@@ -28,9 +30,10 @@ export function createApp(ctx: Ctx, { webDir, mounts = [] }: AppOptions = {}) {
 
   // Self sign-up is closed: the single account is created by the setup endpoint.
   app.all("/api/auth/sign-up/*", (c) => c.json({ error: "sign_up_disabled" }, 403))
-  app.on(["GET", "POST"], "/api/auth/*", (c) => ctx.auth.handler(c.req.raw))
+  app.on(["GET", "POST"], "/api/auth/*", (c) => authRoute(ctx, c))
 
   app.route("/api/setup", setupRoutes(ctx))
+  app.route("/api/session", sessionRoutes(ctx))
   app.route("/api/settings", settingsRoutes(ctx))
   app.route("/api/admin", adminRoutes(ctx))
   app.route("/api/overview", overviewRoutes(ctx))

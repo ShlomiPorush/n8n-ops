@@ -8,6 +8,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Field, FieldContent, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { ApiError } from "@/lib/api"
 import { loadView } from "@/lib/load-state"
+import { sessionEnded } from "@/lib/session"
 import { AuthFrame } from "./auth/shared"
 
 type ConnectRequest = {
@@ -27,6 +28,8 @@ async function call<T>(uid: string, path: string, body?: unknown): Promise<T> {
     body: body === undefined ? undefined : JSON.stringify(body),
   })
   const data = await res.json().catch(() => ({}))
+  // The session ended while the page was open: sign in again and come back here.
+  if (res.status === 401) sessionEnded(data.reason)
   if (!res.ok) throw new ApiError(res.status, data.error ?? `http_${res.status}`, undefined, data.message)
   return data as T
 }

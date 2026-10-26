@@ -58,3 +58,16 @@ export const TOUCH_ONLY_QUERY = "(hover: none) and (pointer: coarse)"
 
 /** Whether this is a touch-only screen; false where there is no window (tests, server rendering). */
 export const touchOnly = () => typeof window !== "undefined" && window.matchMedia?.(TOUCH_ONLY_QUERY).matches === true
+
+/** The open page reads its session clocks this often, and every few seconds while it warns (services/session-policy.ts). */
+export const SESSION_POLL_MS = 30_000
+export const SESSION_WARN_POLL_MS = 5_000
+/** A clock that reached zero is asked about at most this often; a session read that takes longer is given up. */
+export const SESSION_ASK_GAP_MS = 2_000
+export const SESSION_TIMEOUT_MS = 10_000
+/** Real input is reported to the server at most this often; the last input in a quiet spell is still sent. */
+export const ACTIVITY_REPORT_MS = 30_000
+/** Asks whether the person is still there this long before the idle timeout signs them out. */
+export const IDLE_WARN_MS = 60_000
+/** Says the session is about to reach its maximum length this long before. */
+export const MAX_WARN_MS = 5 * 60_000

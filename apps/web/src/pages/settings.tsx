@@ -221,6 +221,37 @@ export const forms: Record<string, { title: string; description: string; fields:
       { name: "backlogMinutes", label: "for longer than (minutes)", type: "number" },
     ],
   },
+  security: {
+    title: "Sign-in security",
+    description:
+      "When a browser session ends and you sign in again. Each limit applies to sessions already open. Agents and API tokens are not affected.",
+    fields: [
+      {
+        name: "idleTimeout",
+        label: "Sign out after inactivity",
+        hint: "Typing, clicking, scrolling with the wheel and touching count as activity; pages that refresh by themselves do not. A minute before, the page asks whether you are still there.",
+        type: "switch",
+      },
+      {
+        name: "idleMinutes",
+        label: "Inactivity limit (minutes)",
+        type: "number",
+        needs: "idleTimeout",
+      },
+      {
+        name: "maxHours",
+        label: "Longest session (hours)",
+        hint: "Counted from sign-in, whatever the activity. Five minutes before, the page says so.",
+        type: "number",
+      },
+      {
+        name: "lifetimeHours",
+        label: "Sign out an unused session after (hours)",
+        hint: "A session no page has used for this long ends, such as after the browser was closed.",
+        type: "number",
+      },
+    ],
+  },
   access: {
     title: "Agent access",
     description:

@@ -20,6 +20,7 @@ import { ChromeContext } from "@/app/chrome"
 import { DesignSync } from "@/app/design-sync"
 import { groups, isActive, type NavItem, operate, pageGroups, pageOf } from "@/app/nav"
 import { GlobalSearch, PhoneSearch, type SearchPage } from "@/app/search"
+import { SessionGuard } from "@/app/session-guard"
 import { settingsGroups } from "@/app/settings-sections"
 import { BrandMark } from "@/components/brand-mark"
 import { SaveScope, useConfirmLeave } from "@/components/save-bar"
@@ -69,9 +70,14 @@ export function RequireAuth() {
   if (me.isLoading) return null
   // Back to this page after signing in (NL-18).
   if (me.error instanceof ApiError && me.error.status === 401)
-    return <Navigate to={loginPath(pathname, search)} replace />
+    return <Navigate to={loginPath(pathname, search, me.error.reason)} replace />
   if (me.data && !me.data.twoFactor) return <Navigate to="/setup" replace />
-  return <Outlet />
+  return (
+    <>
+      {me.data && <SessionGuard />}
+      <Outlet />
+    </>
+  )
 }
 
 /** How many things on this page wait for action, and how urgent they are. Nothing when there is nothing to do. */

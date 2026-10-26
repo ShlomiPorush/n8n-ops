@@ -9,7 +9,7 @@ function fakeCtx(databaseUp: boolean): Ctx {
     version: "test",
     checkDatabase: async () => databaseUp,
     log: { info() {}, warn() {}, error() {} },
-    auth: { handler: async () => new Response("auth") },
+    auth: { handler: async () => new Response("auth"), api: { getSession: async () => null } },
     events: { emit() {}, on() {}, off() {} },
   } as unknown as Ctx
 }

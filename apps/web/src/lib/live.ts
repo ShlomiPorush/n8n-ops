@@ -1,6 +1,6 @@
 import type { QueryClient } from "@tanstack/react-query"
 import { useEffect } from "react"
-import { queryClient } from "./api"
+import { api, queryClient } from "./api"
 import { ATTENTION_PATH } from "./attention"
 
 const changed = (topics: string[]) => (key: unknown) =>
@@ -37,6 +37,9 @@ export function useLiveUpdates() {
       })
       source.onerror = () => {
         source?.close()
+        // The stream ends when the session does, and EventSource does not show why: a plain request does, and
+        // goes to sign-in if it ended.
+        void api("/session").catch(() => {})
         retry = setTimeout(connect, 5_000)
       }
     }

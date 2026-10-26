@@ -20,6 +20,7 @@ import { notifyAccess } from "./services/access-notify.ts"
 import { kickCopies, sweepRetention } from "./services/backup-copies.ts"
 import { enqueueProbes, scheduleBackups } from "./services/backups.ts"
 import { type Job, startScheduler } from "./services/scheduler.ts"
+import { sweepSessions } from "./services/session-policy.ts"
 import { syncWorkflows } from "./services/workflows.ts"
 
 type Mount = { path: string; router: Hono<Env> }
@@ -55,6 +56,8 @@ export function features(ctx: Ctx, extra: { mounts?: Mount[]; jobs?: Job[] } = {
     { name: "access-expiry", everyMs: 15_000, run: expireAccess },
     { name: "access-notify", everyMs: 5_000, run: notifyAccess },
     { name: "agent-connections", everyMs: 15 * 60_000, run: async (c) => c.agents?.sweep() },
+    // Sessions that ended, or that Better Auth let expire, leave the database.
+    { name: "sessions", everyMs: 60 * 60_000, run: sweepSessions },
     {
       name: "workflow-map",
       everyMs: 30 * 60_000,

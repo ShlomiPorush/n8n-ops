@@ -3,6 +3,7 @@ import { Download } from "lucide-react"
 import QRCode from "qrcode"
 import { useEffect, useState } from "react"
 import { Navigate, useNavigate } from "react-router"
+import { SessionGuard } from "@/app/session-guard"
 import { BusyButton, Loading, Panel } from "@/components/kit"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -12,6 +13,7 @@ import { PasswordInput } from "@/components/ui/password-input"
 import { ApiError, api, describeError, UNREACHABLE_TEXT, useApi } from "@/lib/api"
 import { authClient, authErrorText } from "@/lib/auth-client"
 import { download } from "@/lib/download"
+import { loginPath, sessionStarted } from "@/lib/session"
 import { cn } from "@/lib/utils"
 import { DestinationFields, type DestinationForm, destinationBody, destinationForm } from "../destinations"
 import { AuthFrame, type TotpAnswer, TotpInput, totpAnswer } from "./shared"
@@ -27,6 +29,11 @@ export function SetupPage() {
   const [skipped, setSkipped] = useState<Step[]>([])
   const navigate = useNavigate()
   const client = useQueryClient()
+  // Signed in before two-factor is set up: the session clocks apply here too, and a session that ends goes to
+  // sign-in with the reason.
+  useEffect(() => {
+    if (checklist.data) sessionStarted()
+  }, [checklist.data])
 
   if (status.isLoading || checklist.isLoading)
     return (
@@ -35,7 +42,8 @@ export function SetupPage() {
       </AuthFrame>
     )
   const notSignedIn = checklist.error instanceof ApiError && checklist.error.status === 401
-  if (status.data?.hasUser && notSignedIn) return <Navigate to="/login" replace />
+  if (status.data?.hasUser && notSignedIn)
+    return <Navigate to={loginPath("/", "", (checklist.error as ApiError).reason)} replace />
 
   const c = checklist.data
   let step: Step | "done" = "done"
@@ -55,6 +63,7 @@ export function SetupPage() {
 
   return (
     <AuthFrame wide>
+      {c && <SessionGuard />}
       <ol aria-label="Setup steps" className="mt-4 flex flex-wrap gap-x-4 gap-y-1.5">
         {steps.map((s, i) => (
           <li

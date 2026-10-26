@@ -253,6 +253,19 @@ run_checks_on_stack() {
     echo "    $name: groups$groups (socket group $gid: $got)"
     [ "$got" = "$expect" ] || die "the worker entrypoint gives the wrong groups for $name"
   done
+
+  info "Integration: the worker takes a data folder that Docker made for root"
+  # docker compose up makes a missing ./data as root. With the limits of the generated compose, the
+  # entrypoint hands it to node, and the worker can then save its identity there.
+  local data="$N8N_OPS_DATA_DIR/worker-root-data" owner
+  mkdir -p "$data"
+  docker run --rm -u 0 --entrypoint chown -v "$data:/data" n8n-ops-worker:verify 0:0 /data
+  [ "$(stat -c %u "$data")" = 0 ] || die "could not make a data folder that belongs to root"
+  owner="$(docker run --rm -v "$data:/data" --cap-drop ALL --cap-add CHOWN --cap-add DAC_READ_SEARCH \
+    --cap-add SETUID --cap-add SETGID --security-opt no-new-privileges:true n8n-ops-worker:verify \
+    sh -c 'touch /data/identity.json && stat -c "%u %U" /data /data/identity.json | tr "\n" " "')"
+  echo "    /data and a new file in it: $owner"
+  [ "$owner" = "1000 node 1000 node " ] || die "the worker entrypoint does not hand a root-owned /data to node"
 }
 
 # The database upgrades on earlier releases' data, and each backup destination store against a real server

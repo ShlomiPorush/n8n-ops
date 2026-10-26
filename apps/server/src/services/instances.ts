@@ -10,6 +10,15 @@ export function clientFor(ctx: Ctx, instance: Instance): N8nClient {
   return new N8nClient(instance.baseUrl, ctx.secrets.decrypt(instance.apiKeyEnc))
 }
 
+/**
+ * Where the queue metrics of an instance are read: the URL set on it, otherwise /metrics of its base URL in queue
+ * mode, which is where n8n serves them. Null when there is nothing to read.
+ */
+export function metricsUrlOf(instance: Pick<Instance, "metricsUrl" | "queueMode" | "baseUrl">): string | null {
+  if (instance.metricsUrl) return instance.metricsUrl
+  return instance.queueMode ? `${instance.baseUrl.replace(/\/+$/, "")}/metrics` : null
+}
+
 /** The scopes n8n-ops may rely on: discovered from n8n, or declared by the operator on older versions. */
 export function effectiveScopes(instance: Pick<Instance, "scopes" | "scopesSource" | "declaredAccess">): string[] {
   if (instance.scopesSource === "declared") return instance.declaredAccess === "write" ? writeScopes : readScopes

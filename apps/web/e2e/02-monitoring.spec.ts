@@ -133,8 +133,13 @@ test("a resolved problem that fails again is a regression", async () => {
   await expect(page.getByRole("link", { name: /Regression.*Sync orders to ERP/ })).toBeVisible()
 })
 
-test("a queue-mode instance without metrics or worker URLs says what is missing", async () => {
-  const alert = page.getByRole("alert").filter({ hasText: "Queue mode is on" })
+test("a queue-mode instance reads /metrics of its base URL by itself and says what is missing", async () => {
+  const alert = page.getByRole("alert").filter({ hasText: "The queue workers are not checked" })
+  // No metrics URL is set: the check reads /metrics of the base URL. This n8n serves metrics (docker/n8n-dev.env)
+  // but runs no queue, so the check finds metrics without queue figures.
+  const noQueue = page.getByText("Queue metrics: no queue metrics; set N8N_METRICS_INCLUDE_QUEUE_METRICS=true")
+  // Check now reads the version and scopes first, whose requests may take up to 20 seconds each.
+  const checked = { timeout: 45_000 }
   const toggleQueueMode = async () => {
     await page.getByRole("button", { name: "Edit", exact: true }).click()
     await page.getByLabel("Queue mode").click()
@@ -149,9 +154,12 @@ test("a queue-mode instance without metrics or worker URLs says what is missing"
 
   await toggleQueueMode()
   await expect(alert).toBeVisible()
-  await expect(alert).toContainText("N8N_METRICS_INCLUDE_QUEUE_METRICS=true")
   await expect(alert).toContainText("QUEUE_HEALTH_CHECK_ACTIVE=true")
+  await page.getByRole("button", { name: "Check now" }).click()
+  await expect(noQueue).toBeVisible(checked)
 
   await toggleQueueMode()
   await expect(alert).toHaveCount(0)
+  await page.getByRole("button", { name: "Check now" }).click()
+  await expect(noQueue).toHaveCount(0, checked)
 })

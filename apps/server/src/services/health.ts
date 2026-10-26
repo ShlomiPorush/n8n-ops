@@ -4,7 +4,7 @@ import { type Ctx, changed } from "../context.ts"
 import { type Health, instances } from "../db/schema.ts"
 import { parseQueueMetrics, probe, type QueueMetrics } from "../n8n/client.ts"
 import { setCondition } from "./alerts.ts"
-import type { Instance } from "./instances.ts"
+import { type Instance, metricsUrlOf } from "./instances.ts"
 import { clip, html } from "./telegram.ts"
 
 const probeResult = z.object({ ok: z.boolean(), status: z.number(), ms: z.number(), error: z.string().optional() })
@@ -25,6 +25,13 @@ export type ProbeResult = z.infer<typeof probeResult>
 
 export type HealthReport = z.infer<typeof probeReport> & { via: "direct" | "worker" }
 
+/** What a metrics endpoint that did not answer 2xx means. n8n answers 404 there while N8N_METRICS is off. */
+export function metricsAnswer(status: number) {
+  return status === 404
+    ? "metrics are off (404); set N8N_METRICS=true and N8N_METRICS_INCLUDE_QUEUE_METRICS=true on the main process"
+    : `metrics answered ${status}`
+}
+
 /** Checks an instance from the server (collection mode "direct"). */
 export async function collectDirect(instance: Instance): Promise<HealthReport> {
   const base = instance.baseUrl.replace(/\/+$/, "")
@@ -35,11 +42,12 @@ export async function collectDirect(instance: Instance): Promise<HealthReport> {
   ])
   let queue: QueueMetrics | null = null
   let metricsError: string | undefined
-  if (instance.metricsUrl) {
+  const metricsUrl = metricsUrlOf(instance)
+  if (metricsUrl) {
     try {
-      const res = await fetch(instance.metricsUrl, { signal: AbortSignal.timeout(10_000) })
+      const res = await fetch(metricsUrl, { signal: AbortSignal.timeout(10_000) })
       queue = res.ok ? parseQueueMetrics(await res.text()) : null
-      if (!res.ok) metricsError = `metrics answered ${res.status}`
+      if (!res.ok) metricsError = metricsAnswer(res.status)
       else if (!queue) metricsError = "no queue metrics; set N8N_METRICS_INCLUDE_QUEUE_METRICS=true"
     } catch (error) {
       metricsError = (error as Error).message

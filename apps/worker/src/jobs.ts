@@ -41,7 +41,15 @@ export async function probeJob(payload: Record<string, unknown>): Promise<JobRes
   let metricsError: string | undefined
   if (payload.metrics) {
     try {
-      const text = await (await fetch(String(payload.metrics), { signal: AbortSignal.timeout(10_000) })).text()
+      const res = await fetch(String(payload.metrics), { signal: AbortSignal.timeout(10_000) })
+      // n8n answers 404 there while N8N_METRICS is off; the server words it the same (services/health.ts).
+      if (!res.ok)
+        throw new Error(
+          res.status === 404
+            ? "metrics are off (404); set N8N_METRICS=true and N8N_METRICS_INCLUDE_QUEUE_METRICS=true on the main process"
+            : `metrics answered ${res.status}`,
+        )
+      const text = await res.text()
       const read = (name: string) => {
         const m = text.match(
           new RegExp(`^[a-zA-Z0-9_]*scaling_mode_queue_jobs_${name}(?:_total)?(?:\\{[^}]*\\})?\\s+([0-9.eE+-]+)$`, "m"),

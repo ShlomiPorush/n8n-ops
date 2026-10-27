@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+
+- **Socket proxy lines with a pattern for queue workers added later.** Beside the exact lines, the fix and a worker's settings offer the same lines with a pattern such as `qworker*`, so adding another n8n queue worker does not need a new line. It is offered only when the worker found, at its last check, that no other container on the host has a name starting the same way, and never when it would reach a main or another instance's queue workers; the text says what the pattern allows, also later. Record this pattern adds it to the containers recorded for the worker (audited) in place of the names it covers, so the lines keep it; a suggestion that is no longer current is not recorded and the lines are read again. Workers of earlier releases send no such check, so they get no pattern until they are updated.
+
 ## [0.4.0] - 2026-10-27
 
 ### Added

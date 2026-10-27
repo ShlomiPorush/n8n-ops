@@ -1,4 +1,4 @@
-import { ALLOWED_LIMITS } from "@n8n-ops/shared"
+import { MAX_SUGGESTED } from "@n8n-ops/shared"
 import { and, asc, eq, isNull } from "drizzle-orm"
 import { Hono } from "hono"
 import { z } from "zod"
@@ -8,22 +8,20 @@ import { requireUser } from "../http/middleware.ts"
 import { actorName, type Env } from "../http/types.ts"
 import { CONTAINER_PATTERN, workerInstall } from "../lib/worker-install.ts"
 import { detachWorker } from "../services/instance-update.ts"
-import { currentDetail, refusalsOf, refusalWords, workerRule, workerUpdate } from "../services/proxy-fix.ts"
+import {
+  allowedContainers,
+  currentDetail,
+  recordPatterns,
+  refusalsOf,
+  refusalWords,
+  workerRule,
+  workerUpdate,
+} from "../services/proxy-fix.ts"
 import { createPairingToken, PAIRING_TTL_MS } from "../services/workers.ts"
 import { WORKER_ONLINE_MS } from "./overview.ts"
 
 /** The containers a worker's socket proxy allows now, as the owner records them: the Add worker rules. */
-export const allowedBody = z.object({
-  containers: z
-    .array(
-      z
-        .string()
-        .max(ALLOWED_LIMITS.length, `Keep each container name to ${ALLOWED_LIMITS.length} characters`)
-        .regex(CONTAINER_PATTERN, "Container names use letters, digits, dot, dash, underscore and *"),
-    )
-    .min(1, "List the containers the socket proxy allows")
-    .max(ALLOWED_LIMITS.entries, `List at most ${ALLOWED_LIMITS.entries} containers; use a pattern with *`),
-})
+export const allowedBody = z.object({ containers: allowedContainers })
 
 /** The Workers list puts offline workers first, each group in the order it came (by name) (TB-11). */
 export const offlineFirst = (a: { online: boolean }, b: { online: boolean }) => Number(a.online) - Number(b.online)
@@ -93,6 +91,24 @@ export function workerRoutes(ctx: Ctx) {
       return before
     })
     if (!saved) return c.json({ error: "not_found" }, 404)
+    return c.json({ ok: true })
+  })
+
+  /**
+   * Records patterns n8n-ops suggested for queue workers added later. Each must still be suggested by the lines as
+   * they are now; they are added to what is recorded (or, when nothing is, to what the lines allow), and the exact
+   * names they cover are dropped. Nothing is saved when the result breaks the limits of what may be recorded.
+   */
+  app.post("/:id/allowed/patterns", async (c) => {
+    const body = z
+      .object({ patterns: z.array(z.string().regex(CONTAINER_PATTERN)).min(1).max(MAX_SUGGESTED) })
+      .safeParse(await c.req.json().catch(() => ({})))
+    if (!body.success) return c.json({ error: "invalid", message: "Give the patterns to record." }, 400)
+    const outcome = await recordPatterns(ctx, c.req.param("id"), body.data.patterns, actorName(c.get("actor")))
+    if (outcome.status === 404) return c.json({ error: "not_found" }, 404)
+    if (outcome.status === 409)
+      return c.json({ error: "stale", message: "The suggestion is out of date; the lines were read again." }, 409)
+    if (outcome.status === 400) return c.json({ error: "invalid", message: outcome.message }, 400)
     return c.json({ ok: true })
   })
 

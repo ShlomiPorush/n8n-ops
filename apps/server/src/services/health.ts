@@ -63,7 +63,17 @@ export const probeReport = z.object({
   /** What the socket proxy refused in this probe. Absent from workers of earlier releases. */
   access: z.object({ refused: z.array(refusal).max(60) }).optional(),
   /** The queue worker names the worker listed next to the main, when it told them apart. */
-  listed: z.object({ names: z.array(z.string().max(128)).max(500), complete: z.boolean() }).optional(),
+  listed: z
+    .object({
+      names: z.array(z.string().max(128)).max(500),
+      complete: z.boolean(),
+      /** Patterns for queue workers added later, and whether no other container on the host starts the same way. */
+      patterns: z
+        .array(z.object({ pattern: z.string().max(130), clean: z.boolean() }))
+        .max(20)
+        .optional(),
+    })
+    .optional(),
 })
 
 export type ProbeResult = z.infer<typeof probeResult>

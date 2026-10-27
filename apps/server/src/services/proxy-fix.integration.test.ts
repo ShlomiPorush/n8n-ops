@@ -12,7 +12,7 @@ import { recentRuns } from "./backups.ts"
 import { applyHealth, type HealthReport, startCheck } from "./health.ts"
 import { updateInstance } from "./instance-update.ts"
 import { exportCredentials, ProxyRefusedError } from "./moves.ts"
-import { instanceProxyFix, workerRule } from "./proxy-fix.ts"
+import { instanceProxyFix, recordPatterns, workerRule } from "./proxy-fix.ts"
 import { createPairingToken, deliverToWaiter, pairWorker } from "./workers.ts"
 
 // The socket proxy fix against a real PostgreSQL: what Add worker entered is kept for the worker it pairs, the
@@ -26,6 +26,7 @@ const admin = postgres(adminUrl, { max: 1, onnotice: () => {} })
 const name = `n8n_ops_proxy_fix_${randomBytes(4).toString("hex")}`
 let database: Database
 let ctx: Ctx
+const audited: unknown[] = []
 
 const ok = { ok: true, status: 200, ms: 5 }
 const report = (patch: Partial<HealthReport> = {}): HealthReport => ({
@@ -71,7 +72,9 @@ beforeAll(async () => {
     events: new EventEmitter(),
     log: { info: () => {}, warn: () => {}, error: () => {} },
     settings: createSettings(database.db),
-    audit: async () => {},
+    audit: async (entry: unknown) => {
+      audited.push(entry)
+    },
     version: "0.4.0",
   } as unknown as Ctx
 })
@@ -312,5 +315,53 @@ describe("the fix for a failed backup or credential export", () => {
     const error = await exporting
     expect(error).toBeInstanceOf(Error)
     expect(error).not.toBeInstanceOf(ProxyRefusedError)
+  })
+})
+
+describe("recording a pattern for queue workers added later", () => {
+  const withPattern = (clean: boolean) =>
+    report({
+      source: "inside",
+      mode: "queue",
+      discovery: { status: "ok", found: 2 },
+      access: { refused: [] },
+      listed: { names: ["qworker1", "qworker2"], complete: true, patterns: [{ pattern: "qworker*", clean }] },
+    })
+  const allowedNow = async () => (await workerRow(workerId)).allowed?.containers ?? null
+
+  it("offers it only when the worker found it clean, and records it in place of the names it covers", async () => {
+    await applyHealth(ctx, instanceId, withPattern(false), await ticket(instanceId))
+    expect((await workerRule(ctx, await workerRow(workerId))).rule.widened).toBeNull()
+    expect((await recordPatterns(ctx, workerId, ["qworker*"], "e2e")).status).toBe(409)
+
+    await applyHealth(ctx, instanceId, withPattern(true), await ticket(instanceId))
+    const { rule } = await workerRule(ctx, await workerRow(workerId))
+    expect(rule.widened?.patterns.map((p) => p.pattern)).toEqual(["qworker*"])
+    audited.length = 0
+    expect((await recordPatterns(ctx, workerId, ["qworker*"], "e2e")).status).toBe(200)
+    expect(await allowedNow()).toEqual(["acme", "qworker*"])
+    expect(audited).toEqual([
+      expect.objectContaining({
+        action: "Worker allowed containers recorded",
+        details: { before: null, after: ["acme", "qworker*"] },
+      }),
+    ])
+  })
+
+  it("keeps what was recorded meanwhile, and refuses a suggestion the lines no longer make", async () => {
+    await ctx.db.update(workers).set({ allowed: { containers: ["keep-*", "qworker1"] } })
+    await applyHealth(ctx, instanceId, withPattern(true), await ticket(instanceId))
+    expect((await recordPatterns(ctx, workerId, ["other*"], "e2e")).status).toBe(409)
+    expect(await allowedNow()).toEqual(["keep-*", "qworker1"])
+    expect((await recordPatterns(ctx, workerId, ["qworker*"], "e2e")).status).toBe(200)
+    expect(await allowedNow()).toEqual(["keep-*", "qworker*"])
+  })
+
+  it("saves nothing when the result would go past 500 entries", async () => {
+    const full = Array.from({ length: 500 }, (_, i) => `x-${i}`)
+    await ctx.db.update(workers).set({ allowed: { containers: full } })
+    await applyHealth(ctx, instanceId, withPattern(true), await ticket(instanceId))
+    expect((await recordPatterns(ctx, workerId, ["qworker*"], "e2e")).status).toBe(400)
+    expect(await allowedNow()).toEqual(full)
   })
 })

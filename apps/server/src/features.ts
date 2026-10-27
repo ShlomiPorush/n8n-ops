@@ -19,6 +19,7 @@ import { expireAccess } from "./services/access.ts"
 import { notifyAccess } from "./services/access-notify.ts"
 import { kickCopies, sweepRetention } from "./services/backup-copies.ts"
 import { enqueueProbes, scheduleBackups } from "./services/backups.ts"
+import { watchCollectors } from "./services/collection.ts"
 import { type Job, startScheduler } from "./services/scheduler.ts"
 import { sweepSessions } from "./services/session-policy.ts"
 import { syncWorkflows } from "./services/workflows.ts"
@@ -53,6 +54,8 @@ export function features(ctx: Ctx, extra: { mounts?: Mount[]; jobs?: Job[] } = {
     // Expired archives also go where nothing new is written, such as a destination turned off.
     { name: "backup-retention", everyMs: 6 * 3600_000, run: sweepRetention },
     { name: "probes", everyMs: 10_000, run: enqueueProbes },
+    // Workers that stop reporting leave the health of their instances unknown.
+    { name: "collectors", everyMs: 15_000, run: (c) => watchCollectors(c) },
     { name: "access-expiry", everyMs: 15_000, run: expireAccess },
     { name: "access-notify", everyMs: 5_000, run: notifyAccess },
     { name: "agent-connections", everyMs: 15 * 60_000, run: async (c) => c.agents?.sweep() },

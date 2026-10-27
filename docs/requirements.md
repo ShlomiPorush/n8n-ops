@@ -65,7 +65,7 @@ v1 includes all of A to G except the items listed under "Not in v1". Build order
 
 ### A. Instances
 
-- **A1** Register an instance: name, base URL, API key (encrypted at rest), mode (regular or queue), main and worker endpoints, assigned worker (optional).
+- **A1** Register an instance: name, base URL, API key (encrypted at rest), mode (regular or queue), main and queue worker endpoints, assigned worker (optional).
 - **A3** Instance card: n8n version, active and total workflows, executions in 30 days, open problems, last backup, queue metrics (queue instance), overrides.
 - **A4** Periodic API key check. On registration and on every check, read the key's scopes from `GET /api/v1/discover` and turn features on or off to match. Changes in scopes are shown in the UI and written to the audit log. On n8n older than 2.14.0 the user declares the key as "read only" or "read + write".
 - **A5** For each feature, the UI and the docs list the exact scopes it needs (table built from the n8n source, not from memory). Features whose scopes are missing are shown as unavailable with the missing scopes.
@@ -83,8 +83,8 @@ v1 includes all of A to G except the items listed under "Not in v1". Build order
 ### C. Health and queue
 
 - **C1** Health of every main and every queue worker (`/healthz`, `/healthz/readiness`). Endpoints are polled directly when `server` can reach them; when they are only reachable on the n8n host, the n8n-ops `worker` on that host collects them and reports to `server`. Both paths are supported; the choice is per instance.
-- **C2** Queue metrics from the queue instance `/metrics`: jobs waiting, active, completed, failed; which workers are alive. Same direct-or-worker collection as C1.
-- **C3** Alerts: instance not responding, worker down, queue backlog above threshold for longer than N minutes.
+- **C2** Queue metrics from the queue instance `/metrics`: jobs waiting, active, completed, failed; which queue workers are alive. Same direct-or-worker collection as C1.
+- **C3** Alerts: instance not responding, queue worker down, queue backlog above threshold for longer than N minutes.
 - **C4** Version of each instance compared with the latest n8n release, including which instances are below 2.14.0.
 
 ### D. Backups
@@ -139,7 +139,7 @@ The system must not recreate the inbox that is deleted today. This is a hard req
 
 1. A new problem.
 2. A regression.
-3. Instance not responding, worker down, queue backlog (C3).
+3. Instance not responding, queue worker down, queue backlog (C3).
 4. Backup failed or stale (D7).
 
 **Rules:**

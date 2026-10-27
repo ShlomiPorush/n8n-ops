@@ -78,6 +78,13 @@
       "when": 1793058502579,
       "tag": "0010_inside_collection",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1793070265438,
+      "tag": "0011_last_known_health",
+      "breakpoints": true
     }
   ]
 }

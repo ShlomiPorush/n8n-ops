@@ -18,7 +18,7 @@ import { useAttention } from "@/lib/attention"
 import { type Loadable, loadView } from "@/lib/load-state"
 import { healthCounts, n, plural } from "@/lib/numbers"
 import { cn } from "@/lib/utils"
-import { behind, type InstanceRow } from "./instances"
+import { behind, healthLabel, type InstanceRow, LastKnown } from "./instances"
 
 type Overview = {
   stats: {
@@ -239,13 +239,17 @@ function InstanceLine({ i, latest }: { i: InstanceRow; latest: string | null }) 
       )}
     >
       <Link to={`/instances/${i.id}`} className="flex min-w-0 items-center gap-2 font-semibold hover:underline">
-        <Dot health={health} />
+        <Dot health={health} label={healthLabel(i)} />
         <UserText className="truncate" title={i.name}>
           {i.name}
         </UserText>
       </Link>
       <div className="flex items-center gap-1.5">
-        {health !== "ok" && <StatusTag kind="health" status={health} />}
+        {health !== "ok" && (
+          <StatusTag kind="health" status={health}>
+            {i.unknownReason ? "Unknown" : undefined}
+          </StatusTag>
+        )}
         {i.version &&
           (latest ? (
             <Tip content={`Latest is ${latest}`}>
@@ -272,6 +276,7 @@ function InstanceLine({ i, latest }: { i: InstanceRow; latest: string | null }) 
             "never"
           )}
         </span>
+        <LastKnown instance={i} />
       </div>
     </div>
   )

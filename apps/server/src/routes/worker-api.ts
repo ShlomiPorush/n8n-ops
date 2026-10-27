@@ -8,6 +8,7 @@ import type { Ctx } from "../context.ts"
 import { backupRuns, instances, workerJobs, workers } from "../db/schema.ts"
 import { failRun } from "../services/backup-copies.ts"
 import { archiveReady, maxArchiveBytes, workerBackupResult } from "../services/backups.ts"
+import { reportsSince, workerSeen } from "../services/collection.ts"
 import { applyWorkerReport } from "../services/health.ts"
 import { removeSpool, reserve, SpoolError, spoolDir, writeSpool } from "../services/spool.ts"
 import { readUpload, signUpload } from "../services/upload-token.ts"
@@ -40,6 +41,7 @@ export function workerApiRoutes(ctx: Ctx) {
     const header = c.req.header("authorization") ?? ""
     const worker = header.startsWith("Bearer ") ? await workerByIdentity(ctx, header.slice(7).trim()) : null
     if (!worker) return c.json({ error: "unauthorized" }, 401)
+    workerSeen(worker)
     await ctx.db
       .update(workers)
       .set({ lastSeenAt: new Date(), version: c.req.header("x-worker-version") ?? worker.version })
@@ -172,9 +174,12 @@ export function workerApiRoutes(ctx: Ctx) {
         : job.kind === "probe"
           ? {}
           : result
-    if (job.kind === "probe" && job.instanceId && ok) {
+    // A check claimed before the worker was last offline, or before this server started, is not current.
+    const worker = c.get("worker")
+    const current = Boolean(job.startedAt && job.startedAt >= reportsSince(worker.id))
+    if (job.kind === "probe" && job.instanceId && ok && current) {
       const [instance] = await ctx.db.select().from(instances).where(eq(instances.id, job.instanceId))
-      if (instance) stored = await applyWorkerReport(ctx, instance, job.payload, result, c.get("worker").name)
+      if (instance) stored = await applyWorkerReport(ctx, instance, job.payload, result, worker.name)
     }
     await ctx.db
       .update(workerJobs)

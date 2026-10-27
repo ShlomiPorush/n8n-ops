@@ -234,10 +234,10 @@ describe("applyHealth", () => {
     await applyHealth(ctx, id, found([], "failed"), await ticket())
     expect(await active()).toEqual([key])
     expect((await row())?.health).toBe("warn")
-    // Ready ends it with "Worker back"; gone from a full list ends it without a message.
+    // Ready ends it with "Queue worker back"; gone from a full list ends it without a message.
     await applyHealth(ctx, id, found([w("ready", true)]), await ticket())
     expect(await active()).toEqual([])
-    expect((await sent()).at(-1)).toContain("Worker back")
+    expect((await sent()).at(-1)).toContain("Queue worker back")
     await applyHealth(ctx, id, found([w("down")]), await ticket())
     const before = (await sent()).length
     await applyHealth(ctx, id, found([]), await ticket())

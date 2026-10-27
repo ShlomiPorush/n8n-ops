@@ -17,8 +17,15 @@ import { actorName, type Env } from "../http/types.ts"
 import { instanceOverridesSchema } from "../lib/settings.ts"
 import { N8nClient, N8nError } from "../n8n/client.ts"
 import { applyHealth, collectDirect } from "../services/health.ts"
-import { effectiveScopes, type Instance, latestN8nVersion, refreshInstanceMeta } from "../services/instances.ts"
+import {
+  effectiveScopes,
+  type Instance,
+  latestN8nVersion,
+  metricsUrlOf,
+  refreshInstanceMeta,
+} from "../services/instances.ts"
 import { pollInstance } from "../services/problems.ts"
+import { WORKER_ONLINE_MS } from "./overview.ts"
 
 const url = z
   .string()
@@ -71,8 +78,21 @@ export function instanceView(instance: Instance, extra: { openProblems?: number;
   return {
     ...rest,
     effectiveScopes: scopes,
+    effectiveMetricsUrl: metricsUrlOf(instance),
     capabilities: capabilityStatus(scopes, extra.hasWorker),
     openProblems: extra.openProblems ?? 0,
+  }
+}
+
+/** The worker assigned to an instance as the pages show it. In collection mode "worker", only one online checks. */
+function workerSummary(worker: typeof workers.$inferSelect | undefined) {
+  if (!worker) return null
+  const { id, name, lastSeenAt, revokedAt } = worker
+  return {
+    id,
+    name,
+    lastSeenAt,
+    online: Boolean(!revokedAt && lastSeenAt && Date.now() - lastSeenAt.getTime() < WORKER_ONLINE_MS),
   }
 }
 
@@ -98,6 +118,7 @@ export function instanceRoutes(ctx: Ctx) {
         return b ?? null
       }),
     )
+    const assigned = await ctx.db.select().from(workers)
     return c.json({
       latestVersion: await latestN8nVersion(),
       instances: rows.map((r, i) => ({
@@ -105,6 +126,7 @@ export function instanceRoutes(ctx: Ctx) {
           openProblems: open.find((o) => o.instanceId === r.id)?.n ?? 0,
           hasWorker: Boolean(r.workerId),
         }),
+        worker: workerSummary(assigned.find((w) => w.id === r.workerId)),
         lastBackup: lastBackups[i],
       })),
     })
@@ -153,7 +175,7 @@ export function instanceRoutes(ctx: Ctx) {
       .where(eq(workflows.instanceId, row.id))
     return c.json({
       ...instanceView(row, { openProblems: open?.n ?? 0, hasWorker: Boolean(worker && !worker.revokedAt) }),
-      worker: worker ? { id: worker.id, name: worker.name, lastSeenAt: worker.lastSeenAt } : null,
+      worker: workerSummary(worker),
       workflowCounts: {
         total: wfs.length,
         active: wfs.filter((w) => w.active).length,

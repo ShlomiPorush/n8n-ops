@@ -21,7 +21,7 @@ import { backupAlerts, backupCondition } from "./backup-alerts.ts"
 import { ARCHIVE_WAIT_MS, dropConditions, failRun, kickCopies } from "./backup-copies.ts"
 import { type Destination, destinationsFor, keyFor, openStore } from "./destinations/index.ts"
 import { withDeadline } from "./destinations/store.ts"
-import { clientFor, type Instance } from "./instances.ts"
+import { clientFor, type Instance, metricsUrlOf } from "./instances.ts"
 import { zonedParts } from "./reports.ts"
 import { removeSpool, reserve, spoolDir, writeSpool } from "./spool.ts"
 import { enqueueJob, pendingJobs } from "./workers.ts"
@@ -490,6 +490,9 @@ export async function enqueueProbes(ctx: Ctx) {
     .select()
     .from(instances)
     .where(and(eq(instances.collection, "worker"), isNotNull(instances.workerId)))
+  // Only a probe its own worker has yet to answer holds an instance back. One left to a worker that was
+  // revoked, or to the worker it had before, is never answered and would stop its health for good.
+  const workerOf = new Map(all.map((i) => [i.id, i.workerId]))
   const busy = new Set(
     (
       await pendingJobs(
@@ -497,7 +500,9 @@ export async function enqueueProbes(ctx: Ctx) {
         "probe",
         all.map((i) => i.id),
       )
-    ).map((j) => j.instanceId),
+    )
+      .filter((j) => j.instanceId && j.workerId === workerOf.get(j.instanceId))
+      .map((j) => j.instanceId),
   )
   for (const instance of all) {
     if (busy.has(instance.id) || !instance.workerId) continue
@@ -513,7 +518,7 @@ export async function enqueueProbes(ctx: Ctx) {
         main: `${base}/healthz`,
         readiness: `${base}/healthz/readiness`,
         workers: instance.workerHealthUrls,
-        metrics: instance.metricsUrl,
+        metrics: metricsUrlOf(instance),
       },
       instance.id,
     )

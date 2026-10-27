@@ -2,7 +2,7 @@ import { eq, sql } from "drizzle-orm"
 import type { Ctx } from "../context.ts"
 import { instances } from "../db/schema.ts"
 import { oneAtATime } from "../lib/one-at-a-time.ts"
-import { closeQueueAlerts } from "./health.ts"
+import { closeQueueAlerts, closeWorkerConditions } from "./health.ts"
 import { collectionUpdate, healthTurn } from "./instances.ts"
 
 export type InstanceChange = Partial<typeof instances.$inferInsert>
@@ -32,6 +32,8 @@ export function updateInstance(ctx: Ctx, id: string, data: InstanceChange) {
         .where(eq(instances.id, id))
         .returning()
       if (saved && current.queueMode && !saved.queueMode) await closeQueueAlerts(tx, saved.id)
+      // Another worker, container or collection mode: the worker conditions of the old target end.
+      else if (saved && change.queueModeSource) await closeWorkerConditions(tx, saved.id)
       return saved
     }),
   )

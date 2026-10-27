@@ -62,7 +62,7 @@ export function WorkersPage() {
       live={workers}
       description={
         workers.data && list.length
-          ? `${n(online)} of ${n(list.length)} online. Agents on n8n Docker hosts: they back up credential secrets, move credentials and check endpoints only reachable on the host, over outbound HTTPS only.`
+          ? `${n(online)} of ${n(list.length)} online. Agents on n8n Docker hosts: they back up credential secrets, move credentials and check n8n from inside its containers, over outbound HTTPS only. To find n8n queue workers, a worker needs containers/json in -allowGET of its docker-compose.yml; Add worker includes it, and an installed worker gets it by adding that line.`
           : "Agents on n8n Docker hosts. They back up credential secrets, move credentials and check endpoints that are only reachable on the host. Outbound HTTPS only; no open ports."
       }
       actions={
@@ -215,7 +215,10 @@ function AddWorkerDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
                 <FieldLabel htmlFor="worker-proxy">Limit Docker access with a socket proxy</FieldLabel>
                 <FieldDescription>
                   Recommended. The worker gets no Docker socket; a proxy lets it run commands only in the n8n containers
-                  you list. Without it, the worker has full control of Docker on the host.
+                  you list, and read the list of containers to find n8n queue workers. That list shows every container's
+                  name, image, command, labels, networks and mounted folders, but not its environment; only the names
+                  and states of n8n queue workers leave the host. Without the proxy, the worker has full control of
+                  Docker on the host.
                 </FieldDescription>
               </FieldContent>
             </Field>
@@ -229,9 +232,9 @@ function AddWorkerDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
                   placeholder="n8n1, n8n2, flow"
                 />
                 <FieldDescription>
-                  Container names on this host, separated by commas. Use * to also cover containers added later, for
-                  example <code>n8n*</code>; a plain list is tighter, but a new container then needs to be added to
-                  docker-compose.yml.
+                  Container names on this host, separated by commas: the n8n mains, and their queue workers to have them
+                  checked. Use * to also cover containers added later, for example <code>n8n*</code>; a plain list is
+                  tighter, but a new container then needs to be added to docker-compose.yml.
                 </FieldDescription>
               </Field>
             )}

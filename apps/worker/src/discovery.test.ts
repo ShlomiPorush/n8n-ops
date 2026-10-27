@@ -77,6 +77,16 @@ describe("discover", () => {
       [[...project, c("acme-shell-1", "/bin/sh -c 'n8n worker'")], "acme-n8n-1", /command n8n-ops does not recognise/],
       [[c("solo", ENTRY, null)], "solo", /not part of a Compose project/],
       [project, "missing", /not in its Compose project/],
+      [
+        [
+          ...project,
+          c("acme-run-1", ENTRY, "acme", {
+            Labels: { "com.docker.compose.project": "acme", "com.docker.compose.oneoff": "True" },
+          }),
+        ],
+        "acme-run-1",
+        /one-off container/,
+      ],
     ]
     for (const [list, main, reason] of cases) {
       const found = discover(list, main)

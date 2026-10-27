@@ -2,7 +2,7 @@ import { readTar, textEntry } from "@n8n-ops/shared"
 import { type Manifest, sealArchive } from "@n8n-ops/shared/archive"
 import type { Docker } from "./docker.ts"
 import { checkInside } from "./inside.ts"
-import { discoverWorkers } from "./queue-workers.ts"
+import { discoverWorkers, LIMITS, mainStateOf } from "./queue-workers.ts"
 
 export type Job = { id: string; kind: string; payload: Record<string, unknown> }
 export type JobResult = { ok: boolean; result?: Record<string, unknown>; error?: string }
@@ -37,9 +37,12 @@ async function requestUrl(url: string): Promise<Reading> {
 }
 
 /** Reads the queue figures from a metrics URL over the network. */
-async function metricsOver(url: string): Promise<{ queue: Record<string, number> | null; metricsError?: string }> {
+async function metricsOver(
+  url: string,
+  signal: AbortSignal = AbortSignal.timeout(10_000),
+): Promise<{ queue: Record<string, number> | null; metricsError?: string }> {
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(10_000) })
+    const res = await fetch(url, { signal })
     // n8n answers 404 there while N8N_METRICS is off; the server words it the same (services/health.ts).
     if (!res.ok)
       throw new Error(
@@ -84,29 +87,35 @@ export async function probeJob(payload: Record<string, unknown>, docker?: Docker
   const checkedAt = () => new Date().toISOString()
   let fallback: string | undefined
   if (docker && typeof inside?.container === "string" && inside.container) {
-    const outcome = await checkInside(docker, inside.container, {
-      skipMetrics: Boolean(typedMetrics),
-      signal: AbortSignal.timeout(10_000),
-    })
+    const container = inside.container
+    // One budget for the whole probe, from its start; each call has its own shorter one inside it.
+    const deadline = AbortSignal.timeout(LIMITS.probeMs)
+    const within = () => AbortSignal.any([deadline, AbortSignal.timeout(LIMITS.callMs)])
+    const outcome = await checkInside(docker, container, { skipMetrics: Boolean(typedMetrics), signal: within() })
     if (outcome.kind === "report") {
       let report = outcome.report
-      const metrics = typedMetrics && !report.notCollected ? await metricsOver(typedMetrics) : {}
-      if (payload.discover === true) {
-        // Queue mode with no worker URLs typed: find the queue workers next to the main and check them.
-        const check = payload.check as { seq?: unknown } | undefined
-        const found = await discoverWorkers(docker, inside.container, {
-          rotation: typeof check?.seq === "number" ? check.seq : 0,
-        })
-        // The list shows a main that is restarting or stopped as such, even when a check got through in between.
-        if (found.mainState && found.mainState !== "running" && report.mainState === "running") {
-          const down = { ok: false, status: 0, ms: 0, error: `container ${found.mainState}` }
-          report = { ...report, main: down, readiness: down, mainState: "not-running" }
-        }
+      const metrics = typedMetrics && !report.notCollected ? await metricsOver(typedMetrics, within()) : {}
+      const check = payload.check as { seq?: unknown } | undefined
+      // Queue mode with no worker URLs typed: find the queue workers next to the main and check them.
+      const found =
+        payload.discover === true
+          ? await discoverWorkers(docker, container, {
+              rotation: typeof check?.seq === "number" ? check.seq : 0,
+              deadline,
+            })
+          : undefined
+      // The state of the main in the container list, read with the workers or on its own. A main the list shows
+      // restarting or stopped is down, even when a check got through in between or could not finish.
+      const listed = found ? found.mainState : await mainStateOf(docker, container, within())
+      if (listed && listed !== "running" && report.mainState !== "not-running" && report.mainState !== "paused") {
+        const down = { ok: false, status: 0, ms: 0, error: `container ${listed}` }
+        report = { ...report, main: down, readiness: down, mainState: "not-running", notCollected: undefined }
+      }
+      if (found)
         return {
           ok: true,
           result: { ...report, ...metrics, workers: found.workers, discovery: found.discovery, checkedAt: checkedAt() },
         }
-      }
       const workers = await Promise.all(
         strings(overrides.workerHealthUrls).map(async (url) => ({ url, ...(await requestUrl(url)) })),
       )

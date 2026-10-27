@@ -90,6 +90,26 @@ export async function checkWorker(docker: Docker, name: string, signal: AbortSig
 }
 
 /**
+ * The state of the main in the container list, or nothing when the list cannot be read (the socket proxy of an
+ * earlier install does not allow it): then only the check inside the main says how it is.
+ */
+export async function mainStateOf(
+  docker: Docker,
+  main: string,
+  signal: AbortSignal,
+): Promise<ContainerState | undefined> {
+  try {
+    const own = (await docker.listContainers(
+      { name: [main] },
+      { signal, maxBytes: LIMITS.listBytes },
+    )) as ListedContainer[]
+    return projectOf(own, main).state
+  } catch {
+    return undefined
+  }
+}
+
+/**
  * Finds the queue workers of the main `main` and checks them: from the container list, then one check inside each
  * running worker. At most `LIMITS.together` at a time, starting at a place that moves with `rotation` so a deadline
  * never leaves the same workers unchecked every time; at the probe's deadline the checks under way are aborted and
@@ -112,12 +132,15 @@ export async function discoverWorkers(
     const { project, state } = projectOf(own, main)
     mainState = state
     if (!state)
-      return { discovery: { status: "ambiguous", reason: `container "${main}" was not found`, found: 0 }, workers: [] }
+      return {
+        discovery: { status: "ambiguous", reason: clip(`container "${main}" was not found`, 200), found: 0 },
+        workers: [],
+      }
     if (!project)
       return {
         discovery: {
           status: "ambiguous",
-          reason: `"${main}" is not part of a Compose project, so its queue workers cannot be told apart`,
+          reason: clip(`"${main}" is not part of a Compose project, so its queue workers cannot be told apart`, 200),
           found: 0,
         },
         workers: [],

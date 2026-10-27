@@ -333,21 +333,25 @@ run_queue_checks() {
     stack exec -T -u node worker node -e '
       const r = JSON.parse(process.argv[1]); const w = (r.workers || [])[0] || {};
       console.log("    main " + r.source + " " + r.mode + ", list " + (r.discovery || {}).status + ", worker " + w.name + ": " + w.state);
+      // When the worker is ready the whole instance is: the main up and ready, and the queue figures read.
+      const whole = process.argv[2] !== "ready" || (r.main.ok && r.readiness.ok && r.queue !== null);
       process.exit(r.source === "inside" && r.mode === "queue" && r.discovery && r.discovery.status === "ok" &&
-        r.discovery.found === 1 && w.state === process.argv[2] ? 0 : 1)' "$report" "$want" ||
+        r.discovery.found === 1 && w.state === process.argv[2] && whole ? 0 : 1)' "$report" "$want" ||
       {
         echo "$report"
         queue down -v >/dev/null 2>&1
         die "the queue worker was not seen as $want"
       }
   }
-  # Waits until the worker's own readiness endpoint answers the status given, so the check is not raced.
+  # Waits, at most a minute, until the worker's own readiness endpoint answers the status given, so the check is not
+  # raced. Each request gives up after two seconds.
   readiness_is() {
-    local want="$1" _
-    for _ in $(seq 1 60); do
-      [ "$(docker exec "$q-n8n-worker-1" node -e "fetch('http://127.0.0.1:5678/healthz/readiness').then(r => console.log(r.status)).catch(() => console.log(0))")" = "$want" ] && return 0
+    local want="$1" until=$((SECONDS + 60))
+    while [ "$SECONDS" -lt "$until" ]; do
+      [ "$(timeout 5 docker exec "$q-n8n-worker-1" node -e "fetch('http://127.0.0.1:5678/healthz/readiness', { signal: AbortSignal.timeout(2000) }).then(r => console.log(r.status)).catch(() => console.log(0))")" = "$want" ] && return 0
       sleep 1
     done
+    queue down -v >/dev/null 2>&1
     die "the queue worker's readiness did not answer $want"
   }
   expect_worker ready

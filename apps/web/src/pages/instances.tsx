@@ -875,9 +875,18 @@ function StatusStrip({ instance: i, footer }: { instance: InstanceDetailData; fo
     const workers = hd?.workers ?? []
     const up = workers.filter((w) => w.ok).length
     const lost = hd?.discovery && hd.discovery.status !== "ok"
+    // Down only for a worker seen down; one not checked, running without its health check, or none found warns.
+    const states = workers.map((w) => workerHealth(w.state, w.ok))
+    const health: HealthState = !hd?.workers
+      ? "unknown"
+      : states.includes("down")
+        ? "down"
+        : lost || workers.length === 0 || states.includes("warn")
+          ? "warn"
+          : "ok"
     cells.push({
       label: "Workers",
-      health: lost ? "warn" : hd?.workers ? (workers.length > 0 && up === workers.length ? "ok" : "down") : "unknown",
+      health,
       value: lost ? "not all checked" : hd?.workers ? `${n(up)} of ${n(workers.length)} ready` : "not checked",
     })
   }

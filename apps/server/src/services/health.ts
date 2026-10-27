@@ -168,6 +168,17 @@ export async function closeQueueAlerts(db: Pick<Ctx["db"], "update">, instanceId
   }
 }
 
+/**
+ * Ends every worker condition of an instance without a message: its collection target changed (another worker or
+ * host, another container, another collection mode), so a condition of the old one says nothing about the new.
+ */
+export async function closeWorkerConditions(db: Pick<Ctx["db"], "update">, instanceId: string) {
+  await db
+    .update(alertState)
+    .set({ active: false, since: new Date(), detail: "Closed: the instance is now checked from somewhere else" })
+    .where(and(like(alertState.key, `worker:${instanceId}:%`), eq(alertState.active, true)))
+}
+
 /** Ends worker conditions of an instance that `ends` picks, without a message, saying why. */
 async function closeWorkerAlerts(ctx: Ctx, instanceId: string, ends: (key: string) => boolean, why: string) {
   const prefix = `worker:${instanceId}:`
@@ -191,13 +202,17 @@ async function closeWorkerAlerts(ctx: Ctx, instanceId: string, ends: (key: strin
 async function settleWorkerSources(ctx: Ctx, instanceId: string, report: HealthReport) {
   const found = `worker:${instanceId}:docker://`
   const d = report.discovery
-  if (!d)
+  if (!d) {
+    // Only typed worker URLs end the conditions of found workers. A report without discovery for another reason
+    // (a fallback to the network, a worker of an earlier release) says nothing about them: they stay.
+    if (!report.workers.some((w) => !w.url.startsWith("docker://"))) return
     return closeWorkerAlerts(
       ctx,
       instanceId,
       (key) => key.startsWith(found),
       "Closed: the workers are checked another way",
     )
+  }
   await closeWorkerAlerts(
     ctx,
     instanceId,
@@ -290,15 +305,16 @@ async function applyHealthNow(ctx: Ctx, instanceId: string, given: HealthReport,
   if (health !== current.health) changed(ctx, "instances", "overview")
   const name = current.name
   const subject = { instanceId: current.id }
-  // Not collected says nothing about the main: its conditions stay as they were.
-  if (report.notCollected) return health
-  await setCondition(ctx, `down:${current.id}`, !report.main.ok, {
-    kind: "health",
-    subject,
-    start: () => healthAlerts.down(name, report.main),
-    clear: () => healthAlerts.up(name),
-  })
-  if (!queueMode) return health
+  // Not collected says nothing about the main: its conditions stay as they were. Queue workers checked in the same
+  // probe were verified on their own, so their results still apply.
+  if (!report.notCollected)
+    await setCondition(ctx, `down:${current.id}`, !report.main.ok, {
+      kind: "health",
+      subject,
+      start: () => healthAlerts.down(name, report.main),
+      clear: () => healthAlerts.up(name),
+    })
+  if (!queueMode || (report.notCollected && !report.discovery)) return health
   await settleWorkerSources(ctx, current.id, report)
   for (const w of report.workers) {
     // Only a verified state moves an alert: a worker not checked, or running without its health check, keeps it.

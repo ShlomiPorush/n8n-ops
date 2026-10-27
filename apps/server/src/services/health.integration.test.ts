@@ -269,6 +269,49 @@ describe("applyHealth", () => {
     ])
   })
 
+  it("keeps the alerts of found workers through a fallback to the network, and ends them when the worker changes", async () => {
+    await ctx.db.update(instances).set({ queueMode: true }).where(eq(instances.id, id))
+    const down = { url: "docker://acme-w-1", name: "acme-w-1", state: "down", ok: false, status: 0, ms: 1 }
+    await applyHealth(
+      ctx,
+      id,
+      report({ source: "inside", workers: [down], discovery: { status: "ok", found: 1 } } as Partial<HealthReport>),
+      await ticket(),
+    )
+    const open = async () => (await conditions()).filter((c) => c.active).map((c) => c.key)
+    expect(await open()).toEqual([`worker:${id}:docker://acme-w-1`])
+    // The proxy refused exec in the main this time: the worker checked over the network, without discovery.
+    await applyHealth(
+      ctx,
+      id,
+      report({ source: "network", fallback: "the socket proxy does not allow commands" }),
+      await ticket(),
+    )
+    expect(await open()).toEqual([`worker:${id}:docker://acme-w-1`])
+    // Another worker on another host: the alerts of the old host's workers end.
+    await updateInstance(ctx, id, { collection: "worker", workerId: null, containerName: "acme-n8n-2" })
+    expect(await open()).toEqual([])
+  })
+
+  it("applies the found workers' verified states when the main itself could not be collected", async () => {
+    await ctx.db.update(instances).set({ queueMode: true }).where(eq(instances.id, id))
+    const down = { url: "docker://acme-w-1", name: "acme-w-1", state: "down", ok: false, status: 0, ms: 1 }
+    await applyHealth(
+      ctx,
+      id,
+      report({
+        source: "inside",
+        notCollected: "the check in the main did not finish within 8 s",
+        workers: [down],
+        discovery: { status: "ok", found: 1 },
+      } as Partial<HealthReport>),
+      await ticket(),
+    )
+    const keys = (await conditions()).filter((c) => c.active).map((c) => c.key)
+    expect(keys).toEqual([`worker:${id}:docker://acme-w-1`])
+    expect((await row())?.health).toBe("unknown")
+  })
+
   it("says not collected when the check itself failed, and leaves the main's alerts as they were", async () => {
     await applyHealth(ctx, id, report({ main: { ok: false, status: 0, ms: 1, error: "refused" } }), await ticket())
     expect((await conditions()).find((c) => c.key === `down:${id}`)?.active).toBe(true)

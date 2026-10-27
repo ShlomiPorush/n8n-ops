@@ -32,7 +32,7 @@ const listed = (name: string, command: string, state = "running") => ({
   Image: "n8nio/n8n:2.44.3",
   Command: command,
   State: state,
-  Labels: { "com.docker.compose.project": "acme", "com.docker.compose.oneoff": "False" },
+  Labels: { "com.docker.compose.project": "acme", "com.docker.compose.oneoff": "False" } as Record<string, string>,
 })
 
 type Answer = { output?: string; refuse?: number; hang?: boolean }
@@ -108,6 +108,27 @@ describe("discoverWorkers", () => {
       reason: "the socket proxy does not allow listing containers; add containers/json to -allowGET",
       found: 0,
     })
+  })
+
+  it("keeps every reason within what the server accepts, even for the longest container name", async () => {
+    const long = "m".repeat(128)
+    const { docker } = await engine([{ ...listed(long, ENTRY), Labels: {} }], {})
+    const result = await discoverWorkers(docker, long, { rotation: 0 })
+    expect(result.discovery.status).toBe("ambiguous")
+    expect(result.discovery.reason?.length).toBeLessThanOrEqual(200)
+  })
+
+  it("lets no label, command or image of the list into what it reports", async () => {
+    const secret = "s3cret-in-a-label"
+    const withSecrets = [listed("acme-n8n-1", ENTRY), listed("acme-w-1", `${ENTRY} worker --token ${secret}`)].map(
+      (x) => ({
+        ...x,
+        Image: `n8nio/n8n:2.44.3`,
+        Labels: { ...x.Labels, "traefik.http.middlewares.auth.basicauth.users": secret },
+      }),
+    )
+    const { docker } = await engine(withSecrets, { "acme-w-1": { output: ready } })
+    expect(JSON.stringify(await discoverWorkers(docker, "acme-n8n-1", { rotation: 0 }))).not.toContain(secret)
   })
 
   it("assigns nothing when the project is ambiguous", async () => {

@@ -149,6 +149,49 @@ describe("checkInside", () => {
   })
 })
 
+describe("probeJob and the container list", () => {
+  /** A stand-in Docker whose list shows the main in the state given, and whose exec answers as given. */
+  async function withList(state: string, start: (res: ServerResponse) => void) {
+    const server = createServer((req, res) => {
+      req.resume()
+      const url = new URL(req.url ?? "/", "http://docker")
+      if (url.pathname.endsWith("/containers/json"))
+        return res
+          .writeHead(200)
+          .end(
+            JSON.stringify([{ Names: ["/n8n"], Command: "tini -- /docker-entrypoint.sh", State: state, Labels: {} }]),
+          )
+      if (url.pathname.includes("/containers/")) return res.writeHead(201).end('{"Id":"abc"}')
+      if (url.pathname.endsWith("/start")) return start(res)
+      return res.writeHead(200).end('{"ExitCode":0}')
+    })
+    servers.push(server)
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r))
+    return new Docker(`tcp://127.0.0.1:${(server.address() as AddressInfo).port}`)
+  }
+  const healthy = (res: ServerResponse) =>
+    res.writeHead(200).end(frame('{"health":{"status":200},"readiness":{"status":200},"mode":"regular"}'))
+
+  it("reads the state of the main from the list also without discovery, and takes restarting for down", async () => {
+    const docker = await withList("restarting", healthy)
+    const job = await probeJob({ inside: { container: "n8n" } }, docker)
+    expect(job.result).toMatchObject({ main: { ok: false, error: "container restarting" }, mainState: "not-running" })
+  })
+
+  it("takes a main the list shows stopped for down, even when the check in it was not collected", async () => {
+    const docker = await withList("exited", (res) => res.writeHead(200).end(frame("not json")))
+    const job = await probeJob({ inside: { container: "n8n" } }, docker)
+    expect(job.result).toMatchObject({ main: { ok: false, error: "container exited" } })
+    // As sent to the server.
+    expect(JSON.parse(JSON.stringify(job.result))).not.toHaveProperty("notCollected")
+  })
+
+  it("keeps a running main as the check found it", async () => {
+    const docker = await withList("running", healthy)
+    expect((await probeJob({ inside: { container: "n8n" } }, docker)).result).toMatchObject({ main: { ok: true } })
+  })
+})
+
 describe("probeJob", () => {
   async function n8nOverNetwork(metrics?: string) {
     const hits: string[] = []

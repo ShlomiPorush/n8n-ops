@@ -88,6 +88,13 @@ export function discover(projectList: ListedContainer[], main: string): Discover
       main: mainState,
     }
   const members = projectList.filter((c) => c.Labels?.[PROJECT] === project && c.Labels?.[ONE_OFF] !== "True")
+  // A one-off container (docker compose run) is not the main of its project, even when it runs n8n.
+  if (self.Labels?.[ONE_OFF] === "True")
+    return {
+      status: "ambiguous",
+      reason: `"${main}" is a one-off container, not the main of its project`,
+      main: mainState,
+    }
   if (roleOf(self) !== "main")
     return { status: "ambiguous", reason: `"${main}" does not run n8n's main process`, main: mainState }
   const mains = members.filter((c) => roleOf(c) === "main")

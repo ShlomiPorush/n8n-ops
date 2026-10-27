@@ -10,6 +10,14 @@ import { clip, html } from "./telegram.ts"
 
 const probeResult = z.object({ ok: z.boolean(), status: z.number(), ms: z.number(), error: z.string().optional() })
 
+/** What the socket proxy refused: the Docker call, and the container for a command. */
+export const refusal = z.object({
+  call: z.enum(["exec-create", "exec-start", "exec-inspect", "list"]),
+  container: z.string().max(128).optional(),
+})
+
+export type Refusal = z.infer<typeof refusal>
+
 /**
  * A health report as a worker sends it (collection mode "worker"); the server checks it before using it and stores
  * only what it parsed. The fields after checkedAt come from workers that read the main from inside its container;
@@ -52,6 +60,10 @@ export const probeReport = z.object({
     .optional(),
   /** The check itself failed (not the main): health is unknown, not the last good state. */
   notCollected: z.string().max(300).optional(),
+  /** What the socket proxy refused in this probe. Absent from workers of earlier releases. */
+  access: z.object({ refused: z.array(refusal).max(60) }).optional(),
+  /** The queue worker names the worker listed next to the main, when it told them apart. */
+  listed: z.object({ names: z.array(z.string().max(128)).max(500), complete: z.boolean() }).optional(),
 })
 
 export type ProbeResult = z.infer<typeof probeResult>
@@ -270,6 +282,7 @@ async function applyHealthNow(ctx: Ctx, instanceId: string, given: HealthReport,
     const report: HealthReport = queueMode
       ? given
       : { ...given, workers: [], queue: null, metricsError: undefined, discovery: undefined }
+    // What the proxy refused and the names it listed are kept in any mode: they say what the proxy must allow.
 
     const measured = queueMode && !report.notCollected && report.queue !== null
     const now = new Date()
@@ -289,7 +302,8 @@ async function applyHealthNow(ctx: Ctx, instanceId: string, given: HealthReport,
       .update(instances)
       .set({
         health,
-        healthDetail: { ...report, backlogActive },
+        // The revision says which collection target this report is about (services/proxy-fix.ts).
+        healthDetail: { ...report, backlogActive, revision: ticket.revision },
         healthCheckedAt: now,
         // Only a check that read the instance is its last known health; one not collected leaves it.
         ...(health !== "unknown" ? { lastKnownHealth: health, lastKnownAt: now } : {}),

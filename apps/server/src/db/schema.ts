@@ -188,6 +188,9 @@ export const oauthStore = pgTable(
 // Workers
 // ---------------------------------------------------------------------------
 
+/** What the owner entered in Add worker: the socket proxy or the whole Docker socket, and the containers. */
+export type WorkerInstall = { socketProxy: boolean; containers: string[] }
+
 export const workers = pgTable("workers", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
@@ -196,6 +199,10 @@ export const workers = pgTable("workers", {
   lastSeenAt: ts("last_seen_at"),
   createdAt: created(),
   revokedAt: ts("revoked_at"),
+  /** As entered in Add worker, copied from the pairing token; never changed. Null for workers added earlier. */
+  install: jsonb("install").$type<WorkerInstall>(),
+  /** The containers the socket proxy allows now, as the owner recorded them; null until recorded. */
+  allowed: jsonb("allowed").$type<{ containers: string[] }>(),
 })
 
 export const pairingTokens = pgTable("worker_pairing_tokens", {
@@ -205,6 +212,7 @@ export const pairingTokens = pgTable("worker_pairing_tokens", {
   expiresAt: ts("expires_at").notNull(),
   usedAt: ts("used_at"),
   createdAt: created(),
+  install: jsonb("install").$type<WorkerInstall>(),
 })
 
 // ---------------------------------------------------------------------------
@@ -505,6 +513,8 @@ export const backupRuns = pgTable(
     sizeBytes: bigint("size_bytes", { mode: "number" }),
     sha256: text("sha256"),
     error: text("error"),
+    /** What the socket proxy refused when that made the backup fail: the call and the container. */
+    refusal: jsonb("refusal").$type<{ call: string; container?: string }>(),
     /** Set when the worker starts its one upload of the archive; a second upload is refused. */
     uploadStartedAt: ts("upload_started_at"),
     /** The encrypted archive is in the spool with the declared size and checksum; copies can be written. */

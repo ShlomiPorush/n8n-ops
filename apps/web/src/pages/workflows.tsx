@@ -29,6 +29,7 @@ import {
   Row,
   UserText,
 } from "@/components/kit"
+import { type ProxyFix, ProxyFixBlock, proxyFixOf } from "@/components/proxy-fix"
 import { RateBar } from "@/components/skin/marks"
 import { Code, TimeAgo, When } from "@/components/status"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -364,6 +365,8 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
   const [preview, setPreview] = useState<Preview | null>(null)
   const [steps, setSteps] = useState<{ step: string; ok: boolean; detail?: string }[] | null>(null)
   const [error, setError] = useState("")
+  // The socket proxy refused what the worker had to do: the lines that allow it, shown in the dialog.
+  const [fix, setFix] = useState<ProxyFix | null>(null)
   const [busy, setBusy] = useState(false)
   // A chosen target is asked about before it is dropped, until the move has run (DS-9).
   const guard = useDiscardGuard(!steps && target !== "", () => {
@@ -377,10 +380,12 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
   async function act(fn: () => Promise<void>) {
     setBusy(true)
     setError("")
+    setFix(null)
     try {
       await fn()
     } catch (e) {
       setError(describeError(e))
+      setFix(proxyFixOf(e))
     } finally {
       setBusy(false)
     }
@@ -481,6 +486,7 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
           </div>
         )}
         {error && <FieldError>{error}</FieldError>}
+        {fix && <ProxyFixBlock fix={fix} held />}
         <DialogFooter>
           {steps ? (
             <Button variant="primary" onClick={() => void guard.requestClose("finished")}>

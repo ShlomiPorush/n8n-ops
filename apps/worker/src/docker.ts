@@ -23,31 +23,54 @@ export function parseDockerEndpoint(value: string): DockerEndpoint {
 /** Limits of one Docker call: an absolute deadline that cancels it, and the most bytes its answer may have. */
 export type CallLimits = { signal?: AbortSignal; maxBytes?: number }
 
+/** The Docker call that failed: creating, starting or reading the result of a command, or listing containers. */
+export type DockerCall = "exec-create" | "exec-start" | "exec-inspect" | "list"
+
 /**
  * Why Docker did not run a command: the socket proxy refused the call (403), the container does not exist (404),
- * or it is stopped or paused (409). Anything else is "other".
+ * or it is stopped or paused (409). Anything else is "other". `call` says which call it was, so a refusal shows the
+ * rule that is missing.
  */
 export class DockerError extends Error {
   constructor(
     message: string,
     readonly kind: "refused" | "missing" | "not-running" | "paused" | "other",
     readonly status: number,
+    readonly call?: DockerCall,
   ) {
     super(message)
   }
 }
 
+/** A refusal of the socket proxy, as a report carries it. */
+export type Refusal = { call: DockerCall; container?: string }
+
+/** The refusal in an error, when the socket proxy refused the call. */
+export function refusalOf(error: unknown, container?: string): Refusal | undefined {
+  if (!(error instanceof DockerError) || error.kind !== "refused" || !error.call) return undefined
+  // A name longer than the server takes is left out; the refusal still counts.
+  const named = container && container.length <= 128 ? { container } : {}
+  return error.call === "list" ? { call: "list" } : { call: error.call, ...named }
+}
+
 /** Reads a refused exec without keeping the answer, which may carry details of the container. */
-function execRefusal(container: string, status: number, data: Buffer): DockerError {
+function execRefusal(container: string, status: number, data: Buffer, call: DockerCall): DockerError {
   if (status === 403)
-    return new DockerError(`the socket proxy does not allow commands in "${container}"`, "refused", 403)
+    return call === "exec-create"
+      ? new DockerError(`the socket proxy does not allow commands in "${container}"`, "refused", 403, call)
+      : new DockerError(
+          `the socket proxy does not allow ${call === "exec-start" ? "starting" : "reading the result of"} a command`,
+          "refused",
+          403,
+          call,
+        )
   if (status === 404) return new DockerError(`container "${container}" was not found on this host`, "missing", 404)
   if (status === 409) {
     return /is paused/i.test(data.toString().slice(0, 300))
       ? new DockerError(`container "${container}" is paused`, "paused", 409)
       : new DockerError(`container "${container}" is not running`, "not-running", 409)
   }
-  return new DockerError(`Docker refused the command (${status})`, "other", status)
+  return new DockerError(`Docker refused the command (${status})`, "other", status, call)
 }
 
 function call(
@@ -146,13 +169,13 @@ export class Docker {
       { AttachStdout: true, AttachStderr: true, Tty: false, Cmd: cmd },
       small,
     )
-    if (created.status >= 300) throw execRefusal(container, created.status, created.data)
+    if (created.status >= 300) throw execRefusal(container, created.status, created.data, "exec-create")
     const { Id } = answer<{ Id: string }>(created.data, "exec create")
     const started = await call(this.endpoint, "POST", `/exec/${Id}/start`, { Detach: false, Tty: false }, limits)
-    if (started.status >= 300) throw execRefusal(container, started.status, started.data)
+    if (started.status >= 300) throw execRefusal(container, started.status, started.data, "exec-start")
     const { stdout, stderr } = demux(started.data)
     const inspect = await call(this.endpoint, "GET", `/exec/${Id}/json`, undefined, small)
-    if (inspect.status >= 300) throw execRefusal(container, inspect.status, inspect.data)
+    if (inspect.status >= 300) throw execRefusal(container, inspect.status, inspect.data, "exec-inspect")
     const { ExitCode } = answer<{ ExitCode: number }>(inspect.data, "exec inspect")
     return { exitCode: ExitCode ?? -1, stdout, stderr: stderr.toString() }
   }
@@ -164,7 +187,8 @@ export class Docker {
   async listContainers(filters: Record<string, string[]>, limits: CallLimits = {}): Promise<unknown[]> {
     const query = `all=1&filters=${encodeURIComponent(JSON.stringify(filters))}`
     const res = await call(this.endpoint, "GET", `/containers/json?${query}`, undefined, limits)
-    if (res.status === 403) throw new DockerError("the socket proxy does not allow listing containers", "refused", 403)
+    if (res.status === 403)
+      throw new DockerError("the socket proxy does not allow listing containers", "refused", 403, "list")
     if (res.status >= 300)
       throw new DockerError(`Docker refused to list containers (${res.status})`, "other", res.status)
     const list = answer<unknown>(res.data, "the container list")

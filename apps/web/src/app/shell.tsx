@@ -56,7 +56,13 @@ const searchPages: SearchPage[] = pageGroups.flatMap((g) =>
   g.items.map((i) => ({ to: i.to, label: i.label, group: g.label })),
 )
 
-type Summary = { openProblems: number; pendingAccess: number; workers: { online: number; total: number } }
+type Summary = {
+  openProblems: number
+  pendingAccess: number
+  workers: { online: number; total: number }
+  /** The release of n8n-ops that runs. */
+  version: string
+}
 type Me = { twoFactor: boolean }
 
 /** Signed-in area: redirects to login or to two-factor setup when needed. */
@@ -449,6 +455,11 @@ function SideNav({ nav }: { nav: ReturnType<typeof useNavFolded> }) {
         <UserMenu />
         <ThemeButton />
       </div>
+      {counts.summary?.version && (
+        <p data-testid="app-version" className="hidden px-3 pt-2 text-meta text-muted-foreground side:block">
+          n8n-ops <span className="font-mono">{counts.summary.version}</span>
+        </p>
+      )}
     </nav>
   )
 }

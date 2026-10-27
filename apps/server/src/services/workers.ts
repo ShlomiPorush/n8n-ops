@@ -1,17 +1,19 @@
 import { and, asc, eq, gt, inArray, isNull, lt } from "drizzle-orm"
 import type { Ctx } from "../context.ts"
-import { type JobKind, pairingTokens, workerJobs, workers } from "../db/schema.ts"
+import { type JobKind, pairingTokens, type WorkerInstall, workerJobs, workers } from "../db/schema.ts"
 import { newToken, sha256 } from "../lib/crypto.ts"
 
 export const PAIRING_TTL_MS = 15 * 60_000
 export const JOB_TIMEOUT_MS = 15 * 60_000
 
-export async function createPairingToken(ctx: Ctx, name: string) {
+/** A pairing token for a worker named `name`, with what was entered in Add worker, kept for the worker it pairs. */
+export async function createPairingToken(ctx: Ctx, name: string, install?: WorkerInstall) {
   const token = newToken("nops_pair")
   await ctx.db.insert(pairingTokens).values({
     name,
     tokenHash: sha256(token),
     expiresAt: new Date(Date.now() + PAIRING_TTL_MS),
+    install: install ?? null,
   })
   return token
 }
@@ -33,7 +35,14 @@ export async function pairWorker(ctx: Ctx, token: string, version: string | unde
   const identity = newToken("nops_worker")
   const [worker] = await ctx.db
     .insert(workers)
-    .values({ name: pairing.name, tokenHash: sha256(identity), version: version ?? null, lastSeenAt: new Date() })
+    .values({
+      name: pairing.name,
+      tokenHash: sha256(identity),
+      version: version ?? null,
+      lastSeenAt: new Date(),
+      // As entered in Add worker; a token made before this was recorded gives none.
+      install: pairing.install ?? null,
+    })
     .returning()
   if (!worker) return null
   await ctx.audit({ actor: `worker:${worker.name}`, action: "Worker paired", target: worker.name, via: "worker" })
@@ -90,7 +99,13 @@ export async function claimJob(ctx: Ctx, workerId: string) {
   return claimed ?? null
 }
 
-export type JobOutcome = { ok: boolean; result?: Record<string, unknown>; error?: string }
+/** A job's outcome; `refused` says what the socket proxy refused when that made it fail. */
+export type JobOutcome = {
+  ok: boolean
+  result?: Record<string, unknown>
+  error?: string
+  refused?: { call: "exec-create" | "exec-start" | "exec-inspect" | "list"; container?: string }
+}
 
 /**
  * Callers that need a job's result in memory (credential exports) wait here. The result never reaches

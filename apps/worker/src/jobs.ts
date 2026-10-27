@@ -1,11 +1,12 @@
 import { readTar, textEntry } from "@n8n-ops/shared"
 import { type Manifest, sealArchive } from "@n8n-ops/shared/archive"
-import type { Docker } from "./docker.ts"
+import { type Docker, type Refusal, refusalOf } from "./docker.ts"
 import { checkInside } from "./inside.ts"
-import { discoverWorkers, LIMITS, mainStateOf } from "./queue-workers.ts"
+import { type DiscoveryResult, discoverWorkers, LIMITS, listWorkers, mainStateOf } from "./queue-workers.ts"
 
 export type Job = { id: string; kind: string; payload: Record<string, unknown> }
-export type JobResult = { ok: boolean; result?: Record<string, unknown>; error?: string }
+/** A job's result. `refused` says what the socket proxy refused when that made the job fail. */
+export type JobResult = { ok: boolean; result?: Record<string, unknown>; error?: string; refused?: Refusal }
 export type Uploader = (size: number, sha256: string) => Promise<{ url: string; headers: Record<string, string> }>
 
 const WORK = "/tmp/n8n-ops-export"
@@ -76,11 +77,23 @@ async function metricsOver(
 const strings = (value: unknown) =>
   Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : []
 
+/** What the socket proxy refused in a probe, and the queue worker names it listed, as the report carries them. */
+function accessOf(refused: Refusal[], found?: DiscoveryResult) {
+  return {
+    access: { refused: [...refused, ...(found?.refused ?? [])].slice(0, 60) },
+    ...(found?.listed ? { listed: found.listed } : {}),
+  }
+}
+
 /**
  * Checks an instance from its host (collection mode "worker"). With `inside`, the main is read from inside its
  * container; when the worker cannot do that here (the socket proxy refuses, the container is missing), it checks
  * the URL fields over the network instead and says why. `overrides` holds only what the owner typed: worker health
  * URLs, and a metrics URL read over the network instead of the metrics inside the main.
+ *
+ * When the socket proxy refuses commands in the main, the worker still lists the main's queue workers if the server
+ * asks (`discover` or `list`), after the network checks and within what is left of the budget: their names tell
+ * the owner what the proxy must allow.
  */
 export async function probeJob(payload: Record<string, unknown>, docker?: Docker): Promise<JobResult> {
   const inside = payload.inside as { container?: unknown } | undefined
@@ -88,6 +101,7 @@ export async function probeJob(payload: Record<string, unknown>, docker?: Docker
   const typedMetrics = typeof overrides.metricsUrl === "string" ? overrides.metricsUrl : undefined
   const checkedAt = () => new Date().toISOString()
   let fallback: string | undefined
+  let refusal: Refusal | undefined
   // One budget for the whole probe, from its start, the network fallback included; each call has a shorter one.
   const deadline = AbortSignal.timeout(LIMITS.probeMs)
   const within = () => AbortSignal.any([deadline, AbortSignal.timeout(LIMITS.callMs)])
@@ -108,7 +122,9 @@ export async function probeJob(payload: Record<string, unknown>, docker?: Docker
           : undefined
       // The state of the main in the container list, read with the workers or on its own. A main the list shows
       // restarting or stopped is down, even when a check got through in between or could not finish.
-      const listed = found ? found.mainState : await mainStateOf(docker, container, within())
+      const own = found ? undefined : await mainStateOf(docker, container, within())
+      const listed = found ? found.mainState : own?.state
+      const listRefused = own?.refused ? [own.refused] : []
       if (listed && listed !== "running" && report.mainState !== "not-running" && report.mainState !== "paused") {
         const down = { ok: false, status: 0, ms: 0, error: `container ${listed}` }
         report = { ...report, main: down, readiness: down, mainState: "not-running", notCollected: undefined }
@@ -116,14 +132,22 @@ export async function probeJob(payload: Record<string, unknown>, docker?: Docker
       if (found)
         return {
           ok: true,
-          result: { ...report, ...metrics, workers: found.workers, discovery: found.discovery, checkedAt: checkedAt() },
+          result: {
+            ...report,
+            ...metrics,
+            workers: found.workers,
+            discovery: found.discovery,
+            ...accessOf([], found),
+            checkedAt: checkedAt(),
+          },
         }
       const workers = await Promise.all(
         strings(overrides.workerHealthUrls).map(async (url) => ({ url, ...(await requestUrl(url, within())) })),
       )
-      return { ok: true, result: { ...report, ...metrics, workers, checkedAt: checkedAt() } }
+      return { ok: true, result: { ...report, ...metrics, workers, ...accessOf(listRefused), checkedAt: checkedAt() } }
     }
     fallback = outcome.reason
+    refusal = outcome.refusal
   }
   // Over the network: the URL fields, as workers of earlier releases do.
   const [main, readiness] = await Promise.all([
@@ -135,14 +159,22 @@ export async function probeJob(payload: Record<string, unknown>, docker?: Docker
   )
   const metrics =
     typeof payload.metrics === "string" && payload.metrics ? await metricsOver(payload.metrics, within()) : {}
+  // A main the proxy refuses: list its queue workers (no command), when the server needs their names.
+  const container = typeof inside?.container === "string" ? inside.container : ""
+  const listed =
+    docker && refusal && container && (payload.discover === true || payload.list === true)
+      ? await listWorkers(docker, container, { check: payload.discover === true, deadline })
+      : undefined
   return {
     ok: true,
     result: {
       main,
       readiness,
-      workers,
+      workers: listed && payload.discover === true ? listed.workers : workers,
       queue: null,
       ...metrics,
+      ...(listed && payload.discover === true ? { discovery: listed.discovery } : {}),
+      ...(refusal || listed ? accessOf(refusal ? [refusal] : [], listed) : {}),
       checkedAt: checkedAt(),
       source: "network",
       ...(fallback ? { fallback } : {}),
@@ -203,7 +235,8 @@ tar -cf ${WORK}.tar -C ${WORK} .`,
   } catch (error) {
     // The code (ECONNRESET and the like) tells a cut connection from other failures.
     const { message, code } = error as NodeJS.ErrnoException
-    return { ok: false, error: code ? `${message} (${code})` : message }
+    const refused = refusalOf(error, container)
+    return { ok: false, error: code ? `${message} (${code})` : message, ...(refused ? { refused } : {}) }
   } finally {
     await cleanup(docker, container)
   }
@@ -223,7 +256,12 @@ export async function exportCredentialsJob(docker: Docker, payload: Record<strin
     if (ids?.length) credentials = credentials.filter((c) => ids.includes(c.id))
     return { ok: true, result: { credentials } }
   } catch (error) {
-    return { ok: false, error: `credential export failed: ${(error as Error).message}` }
+    const refused = refusalOf(error, container)
+    return {
+      ok: false,
+      error: `credential export failed: ${(error as Error).message}`,
+      ...(refused ? { refused } : {}),
+    }
   } finally {
     await cleanup(docker, container)
   }

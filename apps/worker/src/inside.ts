@@ -1,5 +1,5 @@
 import { type MainCheckOutput, mainCheckOutput } from "@n8n-ops/shared"
-import { type Docker, DockerError } from "./docker.ts"
+import { type Docker, DockerError, type Refusal, refusalOf } from "./docker.ts"
 
 /**
  * The check the worker runs in the n8n main container with `node -e`, as the container's own user. It reads n8n's
@@ -176,7 +176,7 @@ export type InsideOutcome =
   /** The check ran (or Docker said the main is down): a report to send. */
   | { kind: "report"; report: Record<string, unknown> }
   /** Reading inside is not possible here: check over the network instead, and say why. */
-  | { kind: "fallback"; reason: string }
+  | { kind: "fallback"; reason: string; refusal?: Refusal }
 
 /** What a metrics state means for the owner, worded as the server words it (services/health.ts). */
 export function metricsText(metrics: MainCheckOutput["metrics"]): string | undefined {
@@ -261,10 +261,7 @@ export async function checkInside(
   } catch (error) {
     if (error instanceof DockerError) {
       if (error.kind === "refused")
-        return {
-          kind: "fallback",
-          reason: `the socket proxy does not allow commands in "${container}"; add it to -allowPOST`,
-        }
+        return { kind: "fallback", reason: error.message, refusal: refusalOf(error, container) }
       if (error.kind === "missing")
         return { kind: "fallback", reason: `container "${container}" was not found on this host` }
       if (error.kind === "not-running" || error.kind === "paused") {

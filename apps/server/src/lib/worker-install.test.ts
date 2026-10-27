@@ -1,4 +1,6 @@
+import { neededRule } from "@n8n-ops/shared"
 import { describe, expect, it } from "vitest"
+import { parse } from "yaml"
 import { CONTAINER_PATTERN, proxyRules, workerInstall, workerTag } from "./worker-install.ts"
 
 // The proxy anchors every pattern (^...$), as the tests do here.
@@ -92,5 +94,17 @@ describe("worker install", () => {
     expect(compose).not.toContain("socket-proxy")
     expect(compose).not.toContain("group_add")
     expect(compose).toContain("- /var/run/docker.sock:/var/run/docker.sock")
+  })
+})
+
+describe("the lines shown to paste", () => {
+  it("are YAML that gives the proxy exactly the rules, even for names with dots and patterns", () => {
+    const rule = neededRule({
+      entered: ["acme-worker-*"],
+      mains: [{ instance: "acme", container: "acme.prod" }],
+      queueWorkers: [{ instance: "acme", name: "acme_q-1" }],
+    })
+    const parsed = parse(`command:\n${rule.lines}\n`) as { command: string[] }
+    expect(parsed.command).toEqual([`-allowGET=${rule.get}`, `-allowPOST=${rule.post}`])
   })
 })

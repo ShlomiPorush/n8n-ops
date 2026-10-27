@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+
+- **The exact socket proxy lines, where the proxy refused.** When a worker's socket proxy refuses something (commands in a container, reading a command's result, listing containers), the instance's Health tab shows the two lines to paste into the worker's `docker-compose.yml` (`-allowGET` and `-allowPOST`), with Copy, then `docker compose up -d`. The lines allow every n8n main assigned to the worker (backups and credential exports included) and the queue workers it found, and say what each entry is there for and what is not known yet. A main the proxy refuses no longer hides its queue workers: the worker still lists them, so the line has their names. Names are taken literally; a pattern with `*` is in the line only when you recorded it. A failed backup and a failed credential export or move show the same lines in place, for the worker and container they ran on. A worker of an earlier release is recognised from its words and gets the image line to update to.
+- **A worker's settings on the Workers page.** Each worker has Settings: how it was added (socket proxy and containers, or the whole Docker socket), the containers its proxy allows now as you recorded them, what the proxy refused, and the lines it needs now. Allowed containers can be recorded and changed there or from the lines (for a worker added before this release, which has none recorded); saving is in the audit log with the list before and after. What was entered in Add worker is kept as it was.
+- **The running release.** The sidebar shows the n8n-ops version that runs.
+
+### Changed
+
+- A main the socket proxy refuses now reports its queue workers as Not checked, so the instance's health is a warning until the proxy allows them, instead of Healthy with no queue workers.
+
 ## [0.3.0] - 2026-10-27
 
 ### Added

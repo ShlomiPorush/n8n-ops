@@ -37,6 +37,20 @@ export { formatDuration } from "./format.ts"
 export { type Health, healthSchema } from "./health.ts"
 export { type MainCheckOutput, mainCheckOutput, type WorkerCheckOutput, workerCheckOutput } from "./main-check.ts"
 export {
+  ALLOWED_LIMITS,
+  CONTAINER_PATTERN,
+  DOCKER_NAME,
+  type NeededRule,
+  neededRule,
+  PROXY_GET,
+  patternRegex,
+  proxyLines,
+  proxyPost,
+  proxyRules,
+  type RuleEntry,
+  type RuleSource,
+} from "./proxy-rules.ts"
+export {
   isClockTime,
   isEmailAddress,
   isFromAddress,

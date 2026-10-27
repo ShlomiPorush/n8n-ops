@@ -29,6 +29,32 @@ describe("queueWorkersNote", () => {
     expect(note?.text).toContain("add containers/json to -allowGET")
   })
 
+  it("points to the lines shown, never elsewhere, when the socket proxy refused", () => {
+    const fix = { refused: ["commands in acme-n8n-1"] }
+    const network = queueWorkersNote({
+      ...base,
+      detail: { source: "network", fallback: 'the socket proxy does not allow commands in "acme-n8n-1"' },
+      proxyFix: fix,
+    })
+    expect(network?.text).toBe(
+      "The worker checks them from inside the main container, and the socket proxy refuses commands there. The lines above also allow the queue workers it found.",
+    )
+    expect(network?.edit).toBe(false)
+    expect(network?.text).not.toContain("See why")
+    const missing = queueWorkersNote({
+      ...base,
+      detail: { source: "network", fallback: 'container "acme-n8n-1" was not found on this host' },
+    })
+    expect(missing?.text).toContain('it cannot do that now: container "acme-n8n-1" was not found on this host')
+    expect(missing?.edit).toBe(true)
+    const listing = queueWorkersNote({
+      ...base,
+      detail: { source: "inside", discovery: { status: "refused", found: 0 } },
+      proxyFix: { refused: ["listing containers"] },
+    })
+    expect(listing?.text).toBe("The socket proxy does not allow listing containers. The lines above allow it.")
+  })
+
   it("passes on why the project could not be told apart, and when none was found", () => {
     const ambiguous = queueWorkersNote({
       ...base,

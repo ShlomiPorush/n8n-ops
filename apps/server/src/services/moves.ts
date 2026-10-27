@@ -4,8 +4,19 @@ import type { Ctx } from "../context.ts"
 import { instances, moves, workerJobs } from "../db/schema.ts"
 import { usableWorker } from "./backups.ts"
 import { clientFor, effectiveScopes, type Instance } from "./instances.ts"
+import { jobProxyFix, type ProxyFix } from "./proxy-fix.ts"
 import { enqueueJob, waitForJob } from "./workers.ts"
 import { calledWorkflowIds, credentialIds } from "./workflows.ts"
+
+/** The socket proxy refused what a worker had to do; `proxyFix` has the exact lines that allow it. */
+export class ProxyRefusedError extends Error {
+  constructor(
+    message: string,
+    readonly proxyFix: ProxyFix,
+  ) {
+    super(message)
+  }
+}
 
 export type ExportedCredential = { id: string; name: string; type: string; data: Record<string, unknown> }
 
@@ -22,7 +33,20 @@ export async function exportCredentials(ctx: Ctx, instance: Instance, ids?: stri
     instance.id,
   )
   const outcome = await waitForJob(job.id)
-  if (!outcome.ok) throw new Error(outcome.error ?? "The worker could not export the credentials.")
+  if (!outcome.ok) {
+    const message = outcome.error ?? "The worker could not export the credentials."
+    // The instance as it is now: if it moved to another worker or container meanwhile, no fix is shown.
+    const [now] = await ctx.db.select().from(instances).where(eq(instances.id, instance.id))
+    const proxyFix = now
+      ? await jobProxyFix(ctx, now, {
+          workerId: worker.id,
+          container: instance.containerName,
+          refused: outcome.refused,
+          error: outcome.error,
+        })
+      : null
+    throw proxyFix ? new ProxyRefusedError(message, proxyFix) : new Error(message)
+  }
   const credentials = (outcome.result?.credentials ?? []) as ExportedCredential[]
   await ctx.db
     .update(workerJobs)
@@ -173,6 +197,8 @@ export async function runMove(
       via: "web",
       details: { steps },
     })
-    throw Object.assign(new Error((error as Error).message), { steps })
+    // What the socket proxy refused stays with the error, so the dialog shows the lines that allow it.
+    const proxyFix = error instanceof ProxyRefusedError ? { proxyFix: error.proxyFix } : {}
+    throw Object.assign(new Error((error as Error).message), { steps, ...proxyFix })
   }
 }

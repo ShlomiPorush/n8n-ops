@@ -13,7 +13,7 @@ describe("a setting row's Reset (FS-6)", () => {
 
   it("shows once on a switch row, outside its label, so it is one button and one Tab stop", () => {
     const html = renderToStaticMarkup(
-      <SettingRow htmlFor="health" label="Instance or worker down" inline changed action={reset}>
+      <SettingRow htmlFor="health" label="Instance or queue worker down" inline changed action={reset}>
         <input id="health" type="checkbox" />
       </SettingRow>,
     )

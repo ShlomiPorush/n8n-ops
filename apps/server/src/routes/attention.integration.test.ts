@@ -57,6 +57,7 @@ beforeAll(async () => {
     audit: createAudit(database.db),
     events: new EventEmitter(),
     log: { info: () => {}, error: () => {} },
+    settings: { forInstance: async () => ({ healthIntervalSec: 60 }) },
   } as unknown as Ctx
   const inserted = await database.db
     .insert(instances)
@@ -119,11 +120,24 @@ beforeAll(async () => {
   ])
 
   // A worker that stopped reporting, one that reports, and one revoked.
-  await database.db.insert(workers).values([
-    { name: "host-a", tokenHash: "h-a", lastSeenAt: ago(hour) },
-    { name: "host-b", tokenHash: "h-b", lastSeenAt: new Date() },
-    { name: "host-c", tokenHash: "h-c", lastSeenAt: ago(day), revokedAt: ago(hour) },
-  ])
+  const [hostA] = await database.db
+    .insert(workers)
+    .values([
+      { name: "host-a", tokenHash: "h-a", lastSeenAt: ago(hour) },
+      { name: "host-b", tokenHash: "h-b", lastSeenAt: new Date() },
+      { name: "host-c", tokenHash: "h-c", lastSeenAt: ago(day), revokedAt: ago(hour) },
+    ])
+    .returning()
+  // Collected by host-a, which stopped reporting: its health is unknown, and down is only its last known health.
+  await database.db.insert(instances).values({
+    name: "far-n8n",
+    baseUrl: "http://far:5678",
+    apiKeyEnc: "v1:x:y:z",
+    health: "down",
+    healthCheckedAt: ago(hour),
+    collection: "worker",
+    workerId: hostA?.id,
+  })
 
   const [token] = await database.db
     .insert(apiTokens)
@@ -223,9 +237,10 @@ describe("Needs attention", () => {
       expect.arrayContaining([
         ["health", "new-n8n", "Health not checked yet"],
         ["failures", "poll-n8n", "Could not read failures: 401 Unauthorized"],
+        ["health", "far-n8n", "Health unknown: host-a is offline"],
       ]),
     )
-    expect(a.unchecked).toHaveLength(2)
+    expect(a.unchecked).toHaveLength(3)
   })
 
   it("counts every new problem in the total and the tone, also those past the list", async () => {

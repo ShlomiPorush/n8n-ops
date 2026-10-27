@@ -16,6 +16,7 @@ import { requireUser } from "../http/middleware.ts"
 import { actorName, type Env } from "../http/types.ts"
 import { instanceOverridesSchema } from "../lib/settings.ts"
 import { N8nClient, N8nError } from "../n8n/client.ts"
+import { currentHealth, healthNow } from "../services/collection.ts"
 import { applyHealth, collectDirect } from "../services/health.ts"
 import {
   effectiveScopes,
@@ -119,6 +120,7 @@ export function instanceRoutes(ctx: Ctx) {
       }),
     )
     const assigned = await ctx.db.select().from(workers)
+    const now = await currentHealth(ctx, rows)
     return c.json({
       latestVersion: await latestN8nVersion(),
       instances: rows.map((r, i) => ({
@@ -126,6 +128,7 @@ export function instanceRoutes(ctx: Ctx) {
           openProblems: open.find((o) => o.instanceId === r.id)?.n ?? 0,
           hasWorker: Boolean(r.workerId),
         }),
+        ...now.get(r.id),
         worker: workerSummary(assigned.find((w) => w.id === r.workerId)),
         lastBackup: lastBackups[i],
       })),
@@ -173,15 +176,18 @@ export function instanceRoutes(ctx: Ctx) {
       .select({ active: workflows.active, runs: workflows.runs30d })
       .from(workflows)
       .where(eq(workflows.instanceId, row.id))
+    const effectiveSettings = await ctx.settings.forInstance(row.overrides)
     return c.json({
       ...instanceView(row, { openProblems: open?.n ?? 0, hasWorker: Boolean(worker && !worker.revokedAt) }),
+      // The health now, beside the stored one it may only be the last known of.
+      ...healthNow(row, worker, effectiveSettings.healthIntervalSec),
       worker: workerSummary(worker),
       workflowCounts: {
         total: wfs.length,
         active: wfs.filter((w) => w.active).length,
         runs30d: wfs.reduce((n, w) => n + w.runs, 0),
       },
-      effectiveSettings: await ctx.settings.forInstance(row.overrides),
+      effectiveSettings,
       latestVersion: await latestN8nVersion(),
       backupDestinationIds: (
         await ctx.db

@@ -1,9 +1,10 @@
 import { and, asc, desc, eq, ilike, inArray, isNotNull, or, type SQL, sql } from "drizzle-orm"
 import type { Ctx } from "../context.ts"
-import { backupRuns, failures, instances, workflows } from "../db/schema.ts"
+import { backupRuns, failures, type Health, instances, workflows } from "../db/schema.ts"
 import { likeContains } from "../lib/like.ts"
 import { listProblems, problemDetail } from "../routes/problems.ts"
 import { grantableScopes } from "./access.ts"
+import { currentHealth, type HealthNow } from "./collection.ts"
 import { effectiveScopes, executionUrl, latestN8nVersion } from "./instances.ts"
 
 /**
@@ -54,16 +55,27 @@ export async function agentFailure(ctx: Ctx, problemId: string, failureId?: stri
   }
 }
 
+const healthFields = (i: { id: string; health: Health }, now: Map<string, HealthNow>) => {
+  const h = now.get(i.id)
+  return {
+    health: h?.health ?? i.health,
+    lastKnownHealth: h?.lastKnownHealth ?? null,
+    unknownReason: h?.unknownReason ?? null,
+  }
+}
+
 export async function agentInstances(ctx: Ctx) {
   const latest = await latestN8nVersion()
   const rows = await ctx.db.select().from(instances).orderBy(asc(instances.name))
+  const now = await currentHealth(ctx, rows)
   return rows.map((i) => ({
     id: i.id,
     name: i.name,
     baseUrl: i.baseUrl,
     version: i.version,
     latestVersion: latest,
-    health: i.health,
+    // "unknown" when nothing collects it now; healthDetail and healthCheckedAt are then the last known reading.
+    ...healthFields(i, now),
     healthDetail: i.healthDetail,
     healthCheckedAt: i.healthCheckedAt,
     queueMode: i.queueMode,
@@ -75,11 +87,13 @@ export async function agentInstances(ctx: Ctx) {
 
 export async function agentQueues(ctx: Ctx) {
   const rows = await ctx.db.select().from(instances).where(eq(instances.queueMode, true))
+  const now = await currentHealth(ctx, rows)
   return rows.map((i) => {
     const d = i.healthDetail as { queue?: unknown; workers?: unknown; backlogActive?: boolean } | null
     return {
       name: i.name,
-      health: i.health,
+      // "unknown" when nothing collects it now; the queue figures and checkedAt are then the last known reading.
+      ...healthFields(i, now),
       queue: d?.queue ?? null,
       workers: d?.workers ?? [],
       backlogActive: Boolean(d?.backlogActive),

@@ -31,7 +31,7 @@ export function collectionView({ collection, worker, via }: CollectionInput): Co
           ? {
               tone: "warn",
               tag: "Worker offline",
-              sentence: `Checked on the host by ${worker.name}, which is offline, so the health shown is not updated`,
+              sentence: `Checked on the host by ${worker.name}, which is offline, so its health is unknown`,
             }
           : { tone: "ok", tag: `Via ${worker.name}`, sentence: `Checked on the host by ${worker.name}` }
   // After the mode changes, the stored result still comes from the other path until the next check.

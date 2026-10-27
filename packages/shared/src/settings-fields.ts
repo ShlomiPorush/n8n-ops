@@ -16,7 +16,7 @@ export const settingLabels = {
   alerts: {
     newProblem: "New problem",
     regression: "Regression",
-    health: "Instance or worker down, queue backlog",
+    health: "Instance or queue worker down, queue backlog",
     backup: "Backup failed or stale",
     groupingWindowSec: "Grouping window (seconds)",
     editWindowMin: "Edit instead of resend (minutes)",

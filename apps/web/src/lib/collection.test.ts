@@ -19,7 +19,7 @@ describe("collectionView", () => {
     const view = collectionView({ collection: "worker", worker: { name: "host-a", online: false } })
     expect(view.tone).toBe("warn")
     expect(view.tag).toBe("Worker offline")
-    expect(view.sentence).toContain("not updated")
+    expect(view.sentence).toContain("its health is unknown")
   })
 
   it("fails when the worker mode has no worker", () => {

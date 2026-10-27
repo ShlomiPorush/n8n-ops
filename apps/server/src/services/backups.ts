@@ -19,6 +19,7 @@ import { instanceSubject } from "./alert-routing.ts"
 import { setCondition } from "./alerts.ts"
 import { backupAlerts, backupCondition } from "./backup-alerts.ts"
 import { ARCHIVE_WAIT_MS, dropConditions, failRun, kickCopies } from "./backup-copies.ts"
+import { reportsSince } from "./collection.ts"
 import { type Destination, destinationsFor, keyFor, openStore } from "./destinations/index.ts"
 import { withDeadline } from "./destinations/store.ts"
 import { clientFor, type Instance, metricsUrlOf } from "./instances.ts"
@@ -491,7 +492,8 @@ export async function enqueueProbes(ctx: Ctx) {
     .from(instances)
     .where(and(eq(instances.collection, "worker"), isNotNull(instances.workerId)))
   // Only a probe its own worker has yet to answer holds an instance back. One left to a worker that was
-  // revoked, or to the worker it had before, is never answered and would stop its health for good.
+  // revoked, or to the worker it had before, is never answered and would stop its health for good. Nor does one
+  // claimed before the worker was last offline or this server started: its answer no longer counts.
   const workerOf = new Map(all.map((i) => [i.id, i.workerId]))
   const busy = new Set(
     (
@@ -501,13 +503,24 @@ export async function enqueueProbes(ctx: Ctx) {
         all.map((i) => i.id),
       )
     )
-      .filter((j) => j.instanceId && j.workerId === workerOf.get(j.instanceId))
+      .filter(
+        (j) =>
+          j.instanceId &&
+          j.workerId === workerOf.get(j.instanceId) &&
+          !(j.startedAt && j.startedAt < reportsSince(j.workerId)),
+      )
       .map((j) => j.instanceId),
   )
   for (const instance of all) {
     if (busy.has(instance.id) || !instance.workerId) continue
     const s = await ctx.settings.forInstance(instance.overrides)
-    if (instance.healthCheckedAt && Date.now() - instance.healthCheckedAt.getTime() < s.healthIntervalSec * 1000)
+    const checked = instance.healthCheckedAt
+    // After the worker came back, or this server started, the first check is due at once.
+    if (
+      checked &&
+      checked >= reportsSince(instance.workerId) &&
+      Date.now() - checked.getTime() < s.healthIntervalSec * 1000
+    )
       continue
     const base = instance.baseUrl.replace(/\/+$/, "")
     await enqueueJob(

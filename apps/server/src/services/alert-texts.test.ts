@@ -19,10 +19,10 @@ describe("health alert texts", () => {
     )
     expect(text(healthAlerts.up("prod"))).toBe("<b>prod is responding again</b>")
     expect(text(healthAlerts.workerDown("prod", { ...failed(), url: "http://w1:5678/healthz" }))).toBe(
-      "<b>Worker down on prod</b>\nhttp://w1:5678/healthz: HTTP 503",
+      "<b>Queue worker down on prod</b>\nhttp://w1:5678/healthz: HTTP 503",
     )
     expect(text(healthAlerts.workerUp("prod", "http://w1:5678/healthz"))).toBe(
-      "<b>Worker back on prod</b>\nhttp://w1:5678/healthz",
+      "<b>Queue worker back on prod</b>\nhttp://w1:5678/healthz",
     )
     expect(text(healthAlerts.backlog("prod", 42, 10))).toBe(
       "<b>Queue backlog on prod</b>\n42 jobs waiting for more than 10 minutes",
@@ -35,10 +35,10 @@ describe("health alert texts", () => {
       `<b>R&amp;D &lt;prod&gt; is not responding</b>\n${escapedLink}`,
     )
     expect(text(healthAlerts.workerDown("prod", { ...failed(link), url: "http://w1/?a=1&b=<2>" }))).toBe(
-      `<b>Worker down on prod</b>\nhttp://w1/?a=1&amp;b=&lt;2&gt;: ${escapedLink}`,
+      `<b>Queue worker down on prod</b>\nhttp://w1/?a=1&amp;b=&lt;2&gt;: ${escapedLink}`,
     )
     expect(text(healthAlerts.workerUp("<i>x</i>", "http://w1/<b>"))).toBe(
-      "<b>Worker back on &lt;i&gt;x&lt;/i&gt;</b>\nhttp://w1/&lt;b&gt;",
+      "<b>Queue worker back on &lt;i&gt;x&lt;/i&gt;</b>\nhttp://w1/&lt;b&gt;",
     )
     expect(text(healthAlerts.up("a&b"))).toBe("<b>a&amp;b is responding again</b>")
     expect(text(healthAlerts.backlog("a&b", 1, 1))).toContain("on a&amp;b</b>")
@@ -204,14 +204,14 @@ describe("a worker's health report", () => {
 
   it("reaches the health alerts when it fits", async () => {
     const { ctx, warn } = fakeCtx()
-    await expect(applyWorkerReport(ctx, instance, report, "w")).rejects.toBe(reached)
+    await expect(applyWorkerReport(ctx, instance, report, { id: "w1", name: "w" })).rejects.toBe(reached)
     expect(warn).not.toHaveBeenCalled()
   })
 
   it("is logged and skipped when it does not fit", async () => {
     const { ctx, warn, forInstance } = fakeCtx()
     const broken = { ...report, main: { ok: false, status: 0, ms: 1, error: { code: 1 } } }
-    await expect(applyWorkerReport(ctx, instance, broken, "w")).resolves.toBeUndefined()
+    await expect(applyWorkerReport(ctx, instance, broken, { id: "w1", name: "w" })).resolves.toBeUndefined()
     expect(forInstance).not.toHaveBeenCalled()
     expect(warn).toHaveBeenCalledWith("worker sent an invalid health report", {
       instance: "prod",

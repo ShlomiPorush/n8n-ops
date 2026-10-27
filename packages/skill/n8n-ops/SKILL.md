@@ -50,8 +50,8 @@ spaces and other characters in query values.
 | `problems?status=open&instance=<name>&q=<text>&limit=50` | Open problems on all instances: one per workflow, node and exact error, with failure counts. `status` is open, muted or resolved. |
 | `problems/<id>` | One problem: error, stack, the failed node's input, the workflow graph with the failed node, recent executions, the same error elsewhere. |
 | `problems/<id>/execution?failure=<failureId>` | The full stored failed execution (latest by default), with a link to it in n8n. |
-| `instances` | Health, version and last check of every instance. |
-| `queues` | Queue metrics and worker health of instances in queue mode. |
+| `instances` | Health, version and last check of every instance. `health` is `unknown` when nothing checks it now (`unknownReason` says why); then `lastKnownHealth` and `healthCheckedAt` are the last check, not the present. |
+| `queues` | Queue metrics and queue worker health of instances in queue mode. With `health` `unknown`, the figures are from `checkedAt`, the last check. |
 | `backups` | Last backup and last successful backup of every instance. |
 | `workflows?q=<text>&instance=<name>` | Workflows by name, ID, webhook path or tag; each says its instance and whether access to it can be requested, with which scopes. |
 

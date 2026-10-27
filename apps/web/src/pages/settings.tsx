@@ -135,7 +135,7 @@ export const forms: Record<string, { title: string; description: string; fields:
     fields: [
       { name: "newProblem", label: "New problem", type: "switch" },
       { name: "regression", label: "Regression", hint: "A resolved problem fails again.", type: "switch" },
-      { name: "health", label: "Instance or worker down, queue backlog", type: "switch" },
+      { name: "health", label: "Instance or queue worker down, queue backlog", type: "switch" },
       { name: "backup", label: "Backup failed or stale", type: "switch" },
       {
         name: "groupingWindowSec",

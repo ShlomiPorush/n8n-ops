@@ -4,9 +4,10 @@ import type { Ctx } from "../context.ts"
 import { accessRequests, alertState, apiTokens, backupRuns, instances, problems, workers } from "../db/schema.ts"
 import { requireUser } from "../http/middleware.ts"
 import type { Env } from "../http/types.ts"
+import { currentHealth, WORKER_ONLINE_MS } from "../services/collection.ts"
 import { telegramPlainText } from "../services/telegram.ts"
 
-export const WORKER_ONLINE_MS = 90_000
+export { WORKER_ONLINE_MS }
 /** The most new problems and regressions the list carries; the total and the tone still count every one. */
 export const PROBLEMS_SHOWN = 50
 /**
@@ -45,7 +46,7 @@ export type AttentionItem = { tone: Tone } & (
 
 /** A check that could not run, so the list must not say that all is well (NL-19, FB-10). */
 export type UncheckedItem = {
-  /** The instance's health was never read, or reading its failures failed. */
+  /** The instance's health was never read or is unknown now, or reading its failures failed. */
   kind: "health" | "failures"
   id: string
   name: string
@@ -187,14 +188,26 @@ async function problemsPart(ctx: Ctx): Promise<Part> {
 }
 
 /**
- * Unhealthy instances (down red, warn amber), and the checks that could not run: health never read, or reading
- * the failures failed. A down instance already says it cannot be reached, so its failed read is not listed too.
+ * Unhealthy instances (down red, warn amber), and the checks that could not run: health never read, unknown
+ * because nothing collects it, or reading the failures failed. A down instance already says it cannot be reached,
+ * so its failed read is not listed too. The last known health of an instance whose health is unknown is not.
  */
 async function instancesPart(ctx: Ctx): Promise<Part> {
   const all = await ctx.db.select().from(instances)
+  const now = await currentHealth(ctx, all)
   const items: AttentionItem[] = []
   const unchecked: UncheckedItem[] = []
-  for (const i of all) {
+  for (const row of all) {
+    const known = now.get(row.id)
+    const i = { ...row, health: known?.health ?? row.health }
+    if (known?.unknownReason)
+      unchecked.push({
+        kind: "health",
+        id: i.id,
+        name: i.name,
+        detail: `Health unknown: ${known.unknownReason}`,
+        at: i.healthCheckedAt,
+      })
     if (i.health === "down" || i.health === "warn") {
       const d = i.healthDetail as {
         main?: { error?: string }
@@ -219,7 +232,7 @@ async function instancesPart(ctx: Ctx): Promise<Part> {
         at: i.healthCheckedAt,
       })
     }
-    if (i.health === "unknown")
+    if (i.health === "unknown" && !known?.unknownReason)
       unchecked.push({ kind: "health", id: i.id, name: i.name, detail: "Health not checked yet", at: null })
     if (i.lastPollError && i.health !== "down")
       unchecked.push({
@@ -394,7 +407,9 @@ export function overviewRoutes(ctx: Ctx) {
   app.get("/attention", async (c) => c.json(await attention(ctx)))
 
   app.get("/", async (c) => {
-    const all = await ctx.db.select().from(instances)
+    const rows = await ctx.db.select().from(instances)
+    const now = await currentHealth(ctx, rows)
+    const all = rows.map((r) => ({ health: now.get(r.id)?.health ?? r.health }))
     const [open] = await ctx.db
       .select({ n: count() })
       .from(problems)

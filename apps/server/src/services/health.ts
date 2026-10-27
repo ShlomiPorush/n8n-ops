@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm"
+import { and, eq, sql } from "drizzle-orm"
 import { z } from "zod"
 import { type Ctx, changed } from "../context.ts"
 import { type Health, instances } from "../db/schema.ts"
@@ -71,30 +71,42 @@ export const healthAlerts = {
   down: (name: string, main: ProbeResult) => html`<b>${clip(name, 200)} is not responding</b>\n${failure(main)}`,
   up: (name: string) => html`<b>${clip(name, 200)} is responding again</b>`,
   workerDown: (name: string, worker: ProbeResult & { url: string }) =>
-    html`<b>Worker down on ${clip(name, 200)}</b>\n${clip(worker.url, 200)}: ${failure(worker)}`,
-  workerUp: (name: string, url: string) => html`<b>Worker back on ${clip(name, 200)}</b>\n${clip(url, 200)}`,
+    html`<b>Queue worker down on ${clip(name, 200)}</b>\n${clip(worker.url, 200)}: ${failure(worker)}`,
+  workerUp: (name: string, url: string) => html`<b>Queue worker back on ${clip(name, 200)}</b>\n${clip(url, 200)}`,
   backlog: (name: string, waiting: number, minutes: number) =>
     html`<b>Queue backlog on ${clip(name, 200)}</b>\n${waiting} jobs waiting for more than ${minutes} minutes`,
   backlogCleared: (name: string) => html`<b>Queue backlog cleared on ${clip(name, 200)}</b>`,
 }
 
-/** Stores a health report and raises or clears health alerts (requirement C3). */
-export async function applyHealth(ctx: Ctx, instance: Instance, report: HealthReport) {
+/**
+ * Stores a health report and raises or clears health alerts (requirement C3). Only while the instance is still
+ * collected the way the report was (directly, or by the worker `workerId`): one read before the collection mode or
+ * the worker changed is dropped and leaves the alerts as they are.
+ */
+export async function applyHealth(ctx: Ctx, instance: Instance, report: HealthReport, workerId?: string) {
   const s = await ctx.settings.forInstance(instance.overrides)
   const waiting = report.queue?.waiting ?? 0
-  if (report.queue && waiting > s.backlogThreshold) {
-    if (!backlogSince.has(instance.id)) backlogSince.set(instance.id, Date.now())
-  } else {
-    backlogSince.delete(instance.id)
-  }
-  const since = backlogSince.get(instance.id)
+  const since = report.queue && waiting > s.backlogThreshold ? (backlogSince.get(instance.id) ?? Date.now()) : undefined
   const backlogActive = since !== undefined && Date.now() - since >= s.backlogMinutes * 60_000
   const health = healthOf(report, backlogActive)
 
-  await ctx.db
+  const [stored] = await ctx.db
     .update(instances)
     .set({ health, healthDetail: { ...report, backlogActive }, healthCheckedAt: new Date() })
-    .where(eq(instances.id, instance.id))
+    .where(
+      and(
+        eq(instances.id, instance.id),
+        report.via === "direct"
+          ? eq(instances.collection, "direct")
+          : workerId
+            ? and(eq(instances.collection, "worker"), eq(instances.workerId, workerId))
+            : sql`false`,
+      ),
+    )
+    .returning({ id: instances.id })
+  if (!stored) return
+  if (since === undefined) backlogSince.delete(instance.id)
+  else backlogSince.set(instance.id, since)
 
   if (health !== instance.health) changed(ctx, "instances", "overview")
   const name = instance.name
@@ -123,12 +135,17 @@ export async function applyHealth(ctx: Ctx, instance: Instance, report: HealthRe
 }
 
 /** Applies a health report a worker sent. One that does not fit is logged and leaves the last known health. */
-export async function applyWorkerReport(ctx: Ctx, instance: Instance, result: unknown, worker: string) {
+export async function applyWorkerReport(
+  ctx: Ctx,
+  instance: Instance,
+  result: unknown,
+  worker: { id: string; name: string },
+) {
   const report = probeReport.safeParse(result)
-  if (report.success) return applyHealth(ctx, instance, { ...report.data, via: "worker" })
+  if (report.success) return applyHealth(ctx, instance, { ...report.data, via: "worker" }, worker.id)
   ctx.log.warn("worker sent an invalid health report", {
     instance: instance.name,
-    worker,
+    worker: worker.name,
     issues: report.error.issues.slice(0, 5).map((i) => `${i.path.join(".")}: ${i.message}`),
   })
 }

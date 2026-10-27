@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-27
+
 ### Added
 
 - **Backup destinations.** Backups can go to several places at once: S3-compatible storage, a folder on the host (mapped to `/backups` in the server container), SFTP and WebDAV (HTTPS). Every copy is read back, or checked by the service, against the archive's size and SHA-256 before it counts. Each destination is tested before it is saved, has its own daily, weekly and monthly retention, can be the default and can be turned off. A stored password or SSH key reads Stored, with Replace and Remove, and "Removed when you save" until the removal is saved. Settings → Backup Destinations.

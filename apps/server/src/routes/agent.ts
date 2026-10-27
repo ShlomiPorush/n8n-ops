@@ -72,7 +72,10 @@ export function restRoutes(ctx: Ctx) {
   // Temporary access to n8n instances, for tokens allowed to ask for it.
   const allowedToken = (who: Env["Variables"]["actor"]) =>
     who.kind === "token" && who.canRequestAccess ? who.id : null
-  const refused = { error: "not_allowed", message: "This token may not request access to n8n instances." }
+  const refused = {
+    error: "not_allowed",
+    message: "This agent may not request access to n8n instances. Ask a person to allow it in n8n-ops.",
+  }
   // An agent connected without ops:access learns which scope it lacks (RFC 6750); it connects again to get it.
   const refuse = (c: Context) => {
     c.header("WWW-Authenticate", `Bearer error="insufficient_scope", scope="ops:read ops:access"`)
@@ -192,7 +195,7 @@ export function buildMcpServer(
   )
   tool(
     "get_instance_health",
-    "Health, version and last check of every n8n instance. health is unknown when nothing checks it now (unknownReason says why); then lastKnownHealth and lastKnownAt are the last check that read it.",
+    "Health, version and last check of every n8n instance. health is unknown when the last collection could not read it or no collection runs now (unknownReason or healthDetail.notCollected says why); then lastKnownHealth and lastKnownAt are the last check that read it.",
     {},
     () => agentInstances(ctx),
   )
@@ -202,7 +205,12 @@ export function buildMcpServer(
     {},
     () => agentQueues(ctx),
   )
-  tool("get_backup_status", "Last backup and last successful backup of every instance.", {}, () => agentBackups(ctx))
+  tool(
+    "get_backup_status",
+    "The last backup run of every instance, and the last one that ended ok or partial.",
+    {},
+    () => agentBackups(ctx),
+  )
   tool(
     "search_workflows",
     "Find workflows across all instances by name, workflow ID, webhook path or tag. Each result says which instance it is on, and whether access to that instance can be requested and with which scopes.",
@@ -247,7 +255,7 @@ export function buildMcpServer(
   )
   accessTool(
     "get_access_request",
-    "Status of an access request. Once approved it returns, one time only, the key and the base URL: call the n8n public API there with the key in the X-N8N-API-KEY header, exactly as with n8n.",
+    "Status of an access request. Once approved it returns the base URL, and the key one time only: call the n8n public API there with the key in the X-N8N-API-KEY header, exactly as with n8n.",
     { requestId: z.string().uuid() },
     { readOnlyHint: true, openWorldHint: false },
     (a) => collectAccess(ctx, access.tokenId, a.requestId, access.publicUrl),

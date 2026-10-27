@@ -7,7 +7,7 @@ description: Read n8n-ops, the operations console of self-hosted n8n instances a
 
 n8n-ops (__N8N_OPS_URL__) watches self-hosted n8n instances. This skill reads it through its REST API with the
 `n8n-ops` command in `scripts/`. A person approves this agent once; after that the command keeps the connection by
-itself. Tokens stay inside the command: never open, print or copy the files it keeps.
+itself. Its secrets stay inside the command: never open, print or copy the files it keeps.
 
 ## Running the command
 
@@ -26,7 +26,7 @@ person the message as it is.
 2. Show the person the link and the code exactly as printed in the reply that ends your turn, with the code on its
    own line: text written between commands is often folded away and never seen. Ask them to open the link, sign in,
    check that the page shows the same code, approve, and then reply to you. They decide whether this agent may also
-   ask for instance access.
+   request access to n8n instances.
 3. When the person replies, run `n8n-ops connect --wait`. While it answers `still_waiting`, run it again.
    `connected` means done; `denied` or `expired` means start again only if the person wants to. If the person says
    the link or the code did not work, `n8n-ops connect --replace` gives a new one.
@@ -50,23 +50,24 @@ spaces and other characters in query values.
 | `problems?status=open&instance=<name>&q=<text>&limit=50` | Open problems on all instances: one per exact error, with failure counts and the workflows it hit (`affectedWorkflows`: instance, workflow, node, state, failures; `affectedTotal` counts them all). A problem is open while any of its workflows is. `status` is open, muted or resolved; with `instance`, the state is the state on that instance. |
 | `problems/<id>?workflow=<affectedWorkflowId>` | One problem with every workflow it hit, and for one of them (`selected`: the most recently failed, or the one asked for) the error, stack, the failed node's input, the workflow graph with the failed node and recent executions; `sameError` lists problems split off with the same text. The id may also be an affected workflow's, which is then the one selected. |
 | `problems/<id>/execution?workflow=<affectedWorkflowId>&failure=<failureId>` | A full stored failed execution, with a link to it in n8n: the latest of the workflow asked for (or named by an affected workflow id), else of the whole problem. |
-| `instances` | Health, version and last check of every instance. `health` is `unknown` when nothing checks it now (`unknownReason` says why); then `lastKnownHealth` and `lastKnownAt` are the last check that read it, not the present. |
+| `instances` | Health, version and last check of every instance. `health` is `unknown` when the last collection could not read it or no collection runs now (`unknownReason` or `healthDetail.notCollected` says why); then `lastKnownHealth` and `lastKnownAt` are the last check that read it, not the present. |
 | `queues` | Queue metrics and queue worker health of instances in queue mode. With `health` `unknown`, the figures are from `checkedAt`, the last check. |
-| `backups` | Last backup and last successful backup of every instance. |
+| `backups` | The last backup run of every instance, and the last one that ended ok or partial. |
 | `workflows?q=<text>&instance=<name>` | Workflows by name, ID, webhook path or tag; each says its instance and whether access to it can be requested, with which scopes. |
 
 ## Temporary access to an n8n instance
 
-Only when the task needs to change or read n8n itself, and only if the person allowed instance access when they
-approved this agent (otherwise the command answers `insufficient_scope`: ask the person, then `connect --replace`).
+Only when the task needs to change or read n8n itself, and only if the person allowed this agent to request access
+to n8n instances when they approved it (otherwise the command answers `insufficient_scope`: ask the person, then
+`connect --replace`).
 
 1. Find the instance with `workflows` if you do not know it.
 2. Ask: `n8n-ops post access-requests --json-file <file>` with a JSON body
    `{"instance": "<name>", "reason": "<what you will do and why, 10-500 characters>", "scopes": ["workflow:read"], "workflowIds": ["<id>"], "minutes": 15}`.
    Ask for the fewest scopes, workflows and minutes the task needs; a person reads the reason and decides. Writing
    the body to a file avoids quoting trouble; `--json '<body>'` also works in a POSIX shell.
-3. Poll `n8n-ops get access-requests/<requestId>` every few seconds until it is approved or denied. Once approved it
-   returns, one time only, a key and a base URL: call the n8n public API there with the key in the
+3. Poll `n8n-ops get access-requests/<requestId>` every few seconds while its status is pending. Once approved it
+   returns the base URL, and the key one time only: call the n8n public API there with the key in the
    `X-N8N-API-KEY` header, exactly as with n8n.
 4. As soon as the task is done: `n8n-ops post access-requests/<requestId>/release`. The key stops working at once.
 
@@ -74,6 +75,6 @@ approved this agent (otherwise the command answers `insufficient_scope`: ask the
 
 - `missing_curl`, `node_too_old`, or PowerShell blocked by policy: tell the person what is missing (curl, or Node 20+).
 - `cannot_save` or `unreachable`: something (often a sandbox) blocks writing the connection's folder or reaching
-  n8n-ops. Tell the person which, and do not keep tokens anywhere else.
+  n8n-ops. Tell the person which, and do not keep its secrets anywhere else.
 - `insecure_credentials`: the connection's folder or file can be read by others; tell the person the fix it gives.
 - `busy`: another n8n-ops command is using the connection. Nothing was sent; run it again.

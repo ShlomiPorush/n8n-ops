@@ -137,7 +137,7 @@ test("an MCP client connects through the browser, with only the rights the perso
   await expect(page.getByText("127.0.0.1:33418")).toBeVisible()
   await expect(page.getByText("Any program can give itself this name.")).toBeVisible()
   // The agent asked to request instance access; the person does not give it.
-  await page.getByLabel("May ask for access to n8n instances").uncheck()
+  await page.getByLabel("May request access to n8n instances").uncheck()
   await page.getByRole("button", { name: "Approve" }).click()
   await page.waitForURL(`${redirect}**`)
   const back = new URL(page.url())
@@ -194,7 +194,7 @@ test("a script connects with a code that the person compares, then reads the RES
   await expect(page.getByText(device.body.user_code ?? "")).toBeVisible()
   await page.getByRole("button", { name: "Yes, continue", exact: true }).click()
   await expect(page.getByText("A script asks to use n8n-ops.")).toBeVisible()
-  await expect(page.getByLabel("May ask for access to n8n instances")).toBeChecked()
+  await expect(page.getByLabel("May request access to n8n instances")).toBeChecked()
   await page.getByRole("button", { name: "Approve" }).click()
   await expect(page.getByRole("heading", { name: "Agent connected" })).toBeVisible()
 

@@ -173,6 +173,38 @@ describe("emails", () => {
     })
     expect(r.html).toContain("No open problems")
     expect(r.html).toContain("Nothing needs a look.")
+    expect(r.html).toContain("No health alerts.")
+  })
+
+  it("says why it was sent: on the schedule, or as a test", () => {
+    const base = { openByInstance: [], topWorkflows: [], incidents: [], backups: [], versions: [], latest: null }
+    expect(renderReport({ ...base, period: "daily" }).html).toContain(
+      "You get this because the daily report is on in Settings → Email Reports.",
+    )
+    const scheduled = renderReport({ ...base, period: "daily" })
+    expect(scheduled.subject).not.toMatch(/^Test: /)
+    expect(scheduled.text).not.toContain("This is a test")
+    const test = renderReport({ ...base, period: "daily", test: true })
+    expect(test.html).toContain("This is a test sent from Settings → Email Reports.")
+    expect(test.html).not.toContain("You get this because")
+    expect(test.text).toContain("This is a test sent from Settings → Email Reports.")
+    expect(test.subject).toMatch(/^Test: /)
+  })
+
+  it("speaks only for instances whose version is known", () => {
+    const r = renderReport({
+      period: "daily",
+      openByInstance: [],
+      topWorkflows: [],
+      incidents: [],
+      backups: [],
+      versions: [
+        { name: "n8n-7", version: "2.44.0" },
+        { name: "flow", version: null },
+      ],
+      latest: "2.44.0",
+    })
+    expect(r.html).toContain("Every instance with a known version runs n8n 2.44.0 or later.")
   })
 
   it("has no emoji in subjects", () => {

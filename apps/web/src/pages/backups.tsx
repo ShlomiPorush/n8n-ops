@@ -194,21 +194,45 @@ export function BackupsPage() {
         live={data}
         description={
           s?.configured
-            ? `${n(okCount)} of ${plural(s.instances.length, "instance")} backed up on time${late ? `, ${n(late)} late` : ""}${none ? `, ${n(none)} not backed up` : ""}. Encrypted with your backup public key before they are written.`
-            : "Encrypted with your backup public key before they are written. Click an instance for its history and restore."
+            ? `${n(okCount)} of ${plural(s.instances.length, "instance")} backed up on time${late ? `, ${n(late)} late` : ""}${none ? `, ${n(none)} not backed up` : ""}. Every backup is encrypted with your backup public key before it is written.`
+            : "Every backup is encrypted with your backup public key before it is written. Click an instance for its history and restore."
         }
       />
       {s && !s.configured && (
-        <Locked title="Backups are not set up" to="/settings/destinations" action="Add a backup destination">
-          Backups need a{" "}
-          <Link to="/settings/destinations" className="underline">
-            backup destination
-          </Link>{" "}
-          and a{" "}
-          <Link to="/settings/keys" className="underline">
-            backup key
-          </Link>
-          . Until both are set, no backup is written, and never an unencrypted one.
+        // The action and the text name what is missing: a destination that is on, the backup key, or both.
+        <Locked
+          title="Backups are not set up"
+          to={enabled.length ? "/settings/keys" : "/settings/destinations"}
+          action={
+            enabled.length
+              ? "Generate a backup key"
+              : s.destinations.length
+                ? "Turn on a backup destination"
+                : "Add a backup destination"
+          }
+        >
+          Backups need{" "}
+          {!enabled.length && (
+            <>
+              a{" "}
+              <Link to="/settings/destinations" className="underline">
+                backup destination
+              </Link>{" "}
+              that is on{!s.backupKey && " and "}
+            </>
+          )}
+          {!s.backupKey && (
+            <>
+              a{" "}
+              <Link to="/settings/keys" className="underline">
+                backup key
+              </Link>
+            </>
+          )}
+          .{" "}
+          {enabled.length || s.backupKey
+            ? "Until then, no backup is written, and never an unencrypted one."
+            : "Until both are set, no backup is written, and never an unencrypted one."}
         </Locked>
       )}
       {s && (
@@ -231,7 +255,7 @@ export function BackupsPage() {
                   {enabled.map((d) => d.name).join(", ")}
                 </span>
               ) : (
-                <span className="text-body font-normal text-muted-foreground">none yet</span>
+                <span className="text-body font-normal text-muted-foreground">none on</span>
               )
             }
             to="/settings/destinations"
@@ -497,7 +521,7 @@ function BackupHistory({ id, name }: { id: string; name: string }) {
                   {r.status === "ok" || r.status === "partial" ? (
                     <StatusTag kind="backup" status={restorable(r) ? r.status : "expired"}>
                       {!restorable(r)
-                        ? "Expired"
+                        ? "No copy to restore"
                         : r.status === "partial"
                           ? "Some copies failed"
                           : r.includesSecrets

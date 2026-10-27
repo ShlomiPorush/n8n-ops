@@ -97,7 +97,13 @@ beforeAll(async () => {
         // Down already says it cannot be reached: its failed read is not a check of its own.
         lastPollError: "fetch failed",
       },
-      { name: "warn-n8n", baseUrl: "http://warn:5678", apiKeyEnc: "v1:x:y:z", health: "warn" },
+      {
+        name: "warn-n8n",
+        baseUrl: "http://warn:5678",
+        apiKeyEnc: "v1:x:y:z",
+        health: "warn",
+        healthDetail: { readiness: { ok: true }, workers: [], discovery: { status: "ok", found: 0 } },
+      },
       { name: "new-n8n", baseUrl: "http://new:5678", apiKeyEnc: "v1:x:y:z", health: "unknown" },
       {
         name: "poll-n8n",
@@ -137,9 +143,9 @@ beforeAll(async () => {
     { instanceId: null, status: "running", startedAt: ago(minute) },
   ])
   await database.db.insert(alertState).values([
-    { key: "backup:self:d1", active: true, since: ago(day), detail: "<b>Backup is stale on n8n-ops database</b>" },
+    { key: "backup:self:d1", active: true, since: ago(day), detail: "<b>No recent backup of n8n-ops database</b>" },
     // Late too, but the failure says more: one item for alpha, red.
-    { key: `backup:${alpha}:d1`, active: true, since: ago(day), detail: "<b>Backup is stale on alpha-n8n</b>" },
+    { key: `backup:${alpha}:d1`, active: true, since: ago(day), detail: "<b>No recent backup of alpha-n8n</b>" },
     { key: "backup:gone:d1", active: false, since: ago(day), detail: "cleared" },
   ])
 
@@ -208,13 +214,14 @@ describe("Needs attention", () => {
         kind: i.kind,
         tone: i.tone,
         name: i.name,
+        ...(i.kind === "instance" ? { detail: i.detail } : {}),
         ...(i.kind === "backup" ? { id: i.id, running: i.running, detail: i.detail } : {}),
         ...(i.kind === "access" ? { id: i.id, agent: i.agent } : {}),
       }))
     expect(brief).toEqual(
       expect.arrayContaining([
-        { kind: "instance", tone: "fail", name: "down-n8n" },
-        { kind: "instance", tone: "warn", name: "warn-n8n" },
+        { kind: "instance", tone: "fail", name: "down-n8n", detail: "Down: ECONNREFUSED" },
+        { kind: "instance", tone: "warn", name: "warn-n8n", detail: "No queue worker found" },
         {
           kind: "backup",
           tone: "fail",
@@ -237,7 +244,7 @@ describe("Needs attention", () => {
           name: "n8n-ops database",
           id: "self",
           running: true,
-          detail: "Backup is stale on n8n-ops database",
+          detail: "No recent backup of n8n-ops database",
         },
         { kind: "worker", tone: "warn", name: "host-a" },
         { kind: "access", tone: "warn", name: "alpha-n8n", id: ids.request, agent: "ops-bot" },
@@ -259,7 +266,7 @@ describe("Needs attention", () => {
     const a = await attention(ctx)
     expect(a.unchecked.map((u) => [u.kind, u.name, u.detail])).toEqual(
       expect.arrayContaining([
-        ["health", "new-n8n", "Health not checked yet"],
+        ["health", "new-n8n", "Health unknown"],
         ["failures", "poll-n8n", "Could not read failures: 401 Unauthorized"],
         ["health", "far-n8n", "Health unknown: host-a is offline"],
       ]),

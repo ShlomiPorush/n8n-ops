@@ -58,7 +58,7 @@ export function AgentsPage() {
       title="Connected Agents"
       live={tokens}
       updated={false}
-      description="Agents and scripts that read n8n-ops. Each one connects only once you approve it, and you can disconnect it here at any time."
+      description="Agents and scripts that use n8n-ops: the ones you approved, and tokens made by hand. You can disconnect or revoke any of them here."
       className="max-w-5xl"
     >
       <ConnectCard />
@@ -161,7 +161,7 @@ function AgentsCard() {
     const ok = await confirm({
       title: agent ? `Disconnect ${t.name}?` : `Revoke the Token ${t.name}?`,
       message: agent
-        ? "It loses access at once, with any n8n instance access it holds. It can connect again only with a new approval."
+        ? "It loses access at once, along with any temporary access it holds. It can connect again only with a new approval."
         : "The agent or script using it loses access at once. This cannot be undone; create a new token to give access again.",
       confirmLabel: agent ? "Disconnect" : "Revoke token",
       danger: true,
@@ -181,7 +181,7 @@ function AgentsCard() {
           description="Each can read n8n-ops; some may also ask for temporary access to an n8n instance, which a person approves each time."
         />
         {loadView(tokens) === "failed" ? (
-          <LoadError what="tokens" error={tokens.error} retry={() => tokens.refetch()} />
+          <LoadError what="agents and tokens" error={tokens.error} retry={() => tokens.refetch()} />
         ) : loadView(tokens) === "loading" ? (
           <Loading />
         ) : list.length === 0 ? (

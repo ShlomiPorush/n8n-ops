@@ -121,6 +121,33 @@ export function combine(parts: [AttentionSource, Part | null][]): Attention {
   }
 }
 
+/** The parts of a stored health reading that say what is wrong. */
+type Reading = {
+  main?: { error?: string }
+  readiness?: { ok: boolean }
+  backlogActive?: boolean
+  workers?: { ok: boolean; state?: string }[]
+  discovery?: { status: string; found: number }
+} | null
+
+/**
+ * What is wrong with an instance that is down or needs a look, in the words and order of the Instances page: the
+ * main, the backlog, the queue workers, readiness, then finding the queue workers.
+ */
+export function instanceDetail(health: "down" | "warn", d: Reading): string {
+  if (health === "down") return `Down${d?.main?.error ? `: ${d.main.error}` : ""}`
+  if (d?.backlogActive) return "Queue backlog"
+  const wrong = d?.workers?.filter((w) => !w.ok) ?? []
+  if (wrong.some((w) => w.state === "down" || w.state === "unreachable")) return "Queue worker down"
+  if (wrong.length) return "Queue worker needs a look"
+  if (d?.readiness?.ok === false) return "Not ready"
+  const found = d?.discovery
+  if (found?.status === "ok" && found.found === 0) return "No queue worker found"
+  if (found?.status === "partial") return "Queue workers not all checked"
+  if (found && found.status !== "ok") return "Queue workers could not be listed"
+  return "Needs a look"
+}
+
 /** A backup alert that is still active, with the alert's text as written (names and errors not escaped). */
 export function backupItem(
   instance: Pick<typeof instances.$inferSelect, "id" | "name">,
@@ -250,19 +277,7 @@ async function instancesPart(ctx: Ctx): Promise<Part> {
         at: i.healthCheckedAt,
       })
     if (i.health === "down" || i.health === "warn") {
-      const d = i.healthDetail as {
-        main?: { error?: string }
-        backlogActive?: boolean
-        workers?: { ok: boolean }[]
-      } | null
-      const detail =
-        i.health === "down"
-          ? `Not responding${d?.main?.error ? `: ${d.main.error}` : ""}`
-          : d?.backlogActive
-            ? "Queue backlog"
-            : d?.workers?.some((w) => !w.ok)
-              ? "A queue worker is down"
-              : "Not ready"
+      const detail = instanceDetail(i.health, i.healthDetail as Reading)
       items.push({
         kind: "instance",
         tone: i.health === "down" ? "fail" : "warn",
@@ -274,7 +289,7 @@ async function instancesPart(ctx: Ctx): Promise<Part> {
       })
     }
     if (i.health === "unknown" && !known?.unknownReason)
-      unchecked.push({ kind: "health", id: i.id, name: i.name, detail: "Health not checked yet", at: null })
+      unchecked.push({ kind: "health", id: i.id, name: i.name, detail: "Health unknown", at: null })
     if (i.lastPollError && i.health !== "down")
       unchecked.push({
         kind: "failures",

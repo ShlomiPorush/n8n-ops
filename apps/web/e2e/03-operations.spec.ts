@@ -109,7 +109,7 @@ test("a worker pairs with a one-time token", async () => {
   // The worker reads the token file within a few seconds, then reports in.
   await expect(async () => {
     await page.reload()
-    await expect(page.getByText("online", { exact: true }).first()).toBeVisible({ timeout: 3_000 })
+    await expect(page.getByText("Online", { exact: true }).first()).toBeVisible({ timeout: 3_000 })
   }).toPass({ timeout: 60_000 })
 })
 
@@ -351,7 +351,7 @@ test("another instance of the same n8n joins its failures to the Problem they sh
     .filter({ has: page.getByText("e2e-n8n-b", { exact: true }) })
     .click()
   await page.getByRole("button", { name: "Check now" }).click()
-  await expect(page.getByText("Checked e2e-n8n-b now").last()).toBeVisible({ timeout: 45_000 })
+  await expect(page.getByText("Checked e2e-n8n-b").last()).toBeVisible({ timeout: 45_000 })
   await page.goto("/problems?status=open")
   // The list column: a wide screen also opens the first problem beside it, whose rows name workflows too.
   const list = page.locator(`[data-scroll-pane="list"]`)

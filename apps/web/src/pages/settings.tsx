@@ -98,7 +98,7 @@ export const forms: Record<string, { title: string; description: string; fields:
       {
         name: "publicUrl",
         label: "Public URL",
-        hint: "Used in links sent by Telegram and email, for example https://ops.example.com.",
+        hint: "Used in links sent by Telegram and email, for example https://ops.example.com. Changing it ends every agent connection; those agents must connect again.",
         placeholder: "https://ops.example.com",
         clear: true,
       },
@@ -136,7 +136,7 @@ export const forms: Record<string, { title: string; description: string; fields:
       { name: "newProblem", label: "New problem", type: "switch" },
       { name: "regression", label: "Regression", hint: "A resolved problem fails again.", type: "switch" },
       { name: "health", label: "Instance or queue worker down, queue backlog", type: "switch" },
-      { name: "backup", label: "Backup failed or stale", type: "switch" },
+      { name: "backup", label: "Backup failed or late", type: "switch" },
       {
         name: "groupingWindowSec",
         label: "Grouping window (seconds)",
@@ -183,9 +183,8 @@ export const forms: Record<string, { title: string; description: string; fields:
     ],
   },
   email: {
-    title: "Email reports",
-    description:
-      "Daily and weekly summaries: open problems, top failing workflows, health incidents, backups, versions.",
+    title: "Email Reports",
+    description: "Daily and weekly summaries: open problems, top failing workflows, health alerts, backups, versions.",
     fields: [
       { name: "dailyEnabled", label: "Daily report", type: "switch" },
       { name: "dailyTime", label: "Daily report time", type: "time", needs: "dailyEnabled" },
@@ -208,23 +207,23 @@ export const forms: Record<string, { title: string; description: string; fields:
     ],
   },
   defaults: {
-    title: "Instance defaults",
+    title: "Instance Defaults",
     description: "Used by every instance unless it has an override.",
     fields: [
       { name: "pollIntervalSec", label: "Check for failures every (seconds)", type: "number" },
-      { name: "healthIntervalSec", label: "Health check every (seconds)", type: "number" },
+      { name: "healthIntervalSec", label: "Collect health every (seconds)", type: "number" },
       { name: "backupTime", label: "Daily backup time", type: "time" },
-      { name: "staleBackupHours", label: "Backup is stale after (hours)", type: "number" },
+      { name: "staleBackupHours", label: "Backup is late after (hours)", type: "number" },
       { name: "executionRetentionDays", label: "Keep failed executions (days)", type: "number" },
       { name: "autoResolveDays", label: "Auto-resolve after days without failures", type: "number" },
       { name: "backlogThreshold", label: "Queue backlog alert (waiting jobs)", type: "number" },
-      { name: "backlogMinutes", label: "for longer than (minutes)", type: "number" },
+      { name: "backlogMinutes", label: "Queue backlog alert after (minutes)", type: "number" },
     ],
   },
   security: {
-    title: "Sign-in security",
+    title: "Sign-in Security",
     description:
-      "When a browser session ends and you sign in again. Each limit applies to sessions already open. Agents and API tokens are not affected.",
+      "When a browser session ends and you sign in again. Each limit applies to sessions already open. Agents and tokens are not affected.",
     fields: [
       {
         name: "idleTimeout",
@@ -253,9 +252,9 @@ export const forms: Record<string, { title: string; description: string; fields:
     ],
   },
   access: {
-    title: "Agent access",
+    title: "Agent Access",
     description:
-      "Agents with a token that may request access ask for an instance, scopes and time; a person approves each request. Which instances and scopes are open is set on each instance.",
+      "Agents allowed to request access ask for an instance, scopes and time; a person approves each request. Which instances and scopes are open is set on each instance.",
     fields: [
       {
         name: "maxMinutes",
@@ -1294,7 +1293,9 @@ function KeysCard() {
           <DialogHeader icon={KeyRound}>
             <DialogTitle>New Backup Key Pair</DialogTitle>
             <DialogDescription>
-              New backups use the new key. Archives made before keep needing the old private key, so keep it too.
+              {privateKey
+                ? "The new key is in use now. Save its private key: it is shown only once. Archives made before still need the old private key, so keep that too."
+                : "The new key replaces the current one as soon as it is generated, and its private key is shown only once. Archives made before still need the old private key, so keep that too."}
             </DialogDescription>
           </DialogHeader>
           {privateKey ? (

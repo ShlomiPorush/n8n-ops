@@ -72,6 +72,21 @@ function mergeCredentials(
   return next
 }
 
+/** The name of each location field in "Check the destination's …", as the destination form calls it. */
+const locationLabels: Record<string, string> = {
+  endpoint: "endpoint",
+  region: "region",
+  bucket: "bucket name",
+  prefix: "folder",
+  forcePathStyle: "path style",
+  folder: "folder",
+  host: "host",
+  port: "port",
+  username: "user name",
+  path: "folder",
+  url: "URL",
+}
+
 /** Runs the destination's test on settings that may not be stored yet. */
 async function testDestination(ctx: Ctx, d: Pick<Destination, "kind" | "location" | "credentials" | "objectLock">) {
   const store = openStore(ctx, d)
@@ -136,17 +151,19 @@ export function destinationRoutes(ctx: Ctx) {
       if (body.location && !sameFields(body.location, lockedLocation)) {
         const asNew = locationSchemas[kind].safeParse(body.location)
         if (!asNew.success || !sameFields(asNew.data, lockedLocation))
-          return fail(400, "Where archives go cannot change once set; add a new destination for a new place.")
+          return fail(400, "Where archives go cannot change once set; add a new destination for a new location.")
       }
       location = lockedLocation
     } else {
       const parsedLocation = locationSchemas[kind].safeParse(body.location ?? current?.location ?? {})
-      if (!parsedLocation.success)
+      if (!parsedLocation.success) {
+        const field = String(parsedLocation.error.issues[0]?.path[0])
         return fail(
           400,
-          "Check the destination's settings.",
+          `Check the destination's ${locationLabels[field] ?? "settings"}.`,
           parsedLocation.error.issues.map((i) => ({ ...i, path: ["location", ...i.path] })),
         )
+      }
       location = parsedLocation.data as Record<string, unknown>
     }
     const objectLock = body.objectLock !== undefined ? body.objectLock : (current?.objectLock ?? null)
@@ -171,7 +188,7 @@ export function destinationRoutes(ctx: Ctx) {
       if (clash)
         return fail(
           400,
-          `This place is already used by the destination "${clash.name}", or one holds the other. Each destination needs a place of its own, so retention never removes another one's archives.`,
+          `This location is already used by the destination "${clash.name}", or one is inside the other. Each destination needs a location of its own, so retention never removes another one's archives.`,
         )
     }
 
@@ -310,7 +327,7 @@ export function destinationRoutes(ctx: Ctx) {
         return c.json(
           {
             error: "conflict",
-            message: `${locked.length} archives are under Object Lock until ${until?.toISOString().slice(0, 10)} and cannot be deleted. Turn the destination off, or keep its archives.`,
+            message: `${locked.length === 1 ? "1 archive is" : `${locked.length} archives are`} under Object Lock until ${until?.toISOString().slice(0, 10)} and cannot be deleted. Turn the destination off, or keep its archives.`,
           },
           409,
         )
@@ -328,7 +345,7 @@ export function destinationRoutes(ctx: Ctx) {
         return c.json(
           {
             error: "invalid",
-            message: `Could not delete the archives: ${(error as Error).message}. Nothing was removed from n8n-ops.`,
+            message: `Could not delete every archive: ${(error as Error).message}. Some may be deleted already; the destination stays in n8n-ops.`,
           },
           400,
         )

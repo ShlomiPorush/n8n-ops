@@ -49,7 +49,7 @@ const stillThere = () => page.getByRole("dialog", { name: "Are You Still There?"
 
 test("Sign-in security shows the three limits with their defaults and refuses an inactivity limit under five minutes", async () => {
   await page.goto("/settings/security")
-  await expect(page.getByRole("heading", { name: "Sign-in security" })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Sign-in Security" })).toBeVisible()
   await expect(page.getByRole("switch", { name: "Sign out after inactivity" })).toBeChecked()
   const idle = page.getByLabel("Inactivity limit (minutes)")
   await expect(idle).toHaveValue("60")

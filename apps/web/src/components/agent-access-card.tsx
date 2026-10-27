@@ -90,10 +90,10 @@ export function AgentAccessCard({ id, name, scopesSource, keyScopes, agentAccess
         title="Agent Access"
         description={
           <>
-            Agents with a token that may request access can ask for temporary access to {name}, within what you allow
-            here. You approve every request in{" "}
+            Agents allowed to request access can ask for temporary access to {name}, within what you allow here. You
+            approve every request in{" "}
             <Link to="/access" className="font-semibold text-ink underline">
-              Agent access
+              Agent Access
             </Link>
             , and it ends on its own.
           </>

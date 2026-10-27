@@ -143,15 +143,15 @@ const failure = (p: ProbeResult) => clip(p.error ?? `HTTP ${p.status}`, 500)
 
 /** Telegram texts of the health alerts. Names, URLs and errors come from outside and are shortened. */
 export const healthAlerts = {
-  down: (name: string, main: ProbeResult) => html`<b>${clip(name, 200)} is not responding</b>\n${failure(main)}`,
-  up: (name: string) => html`<b>${clip(name, 200)} is responding again</b>`,
+  down: (name: string, main: ProbeResult) => html`<b>${clip(name, 200)} is down</b>\n${failure(main)}`,
+  up: (name: string) => html`<b>${clip(name, 200)} is up again</b>`,
   workerDown: (name: string, worker: ProbeResult & { url: string; name?: string }) =>
     html`<b>Queue worker down on ${clip(name, 200)}</b>
 ${clip(worker.name ?? worker.url, 200)}: ${failure(worker)}`,
   workerUp: (name: string, url: string) => html`<b>Queue worker back on ${clip(name, 200)}</b>
 ${clip(url, 200)}`,
   backlog: (name: string, waiting: number, minutes: number) =>
-    html`<b>Queue backlog on ${clip(name, 200)}</b>\n${waiting} jobs waiting for more than ${minutes} minutes`,
+    html`<b>Queue backlog on ${clip(name, 200)}</b>\nBacklog of ${waiting} waiting jobs for more than ${minutes} minutes`,
   backlogCleared: (name: string) => html`<b>Queue backlog cleared on ${clip(name, 200)}</b>`,
 }
 

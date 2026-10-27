@@ -80,7 +80,10 @@ export type AccessRequestInput = {
 export async function requestAccess(ctx: Ctx, tokenId: string, input: AccessRequestInput) {
   const [token] = await ctx.db.select().from(apiTokens).where(eq(apiTokens.id, tokenId))
   if (!token?.canRequestAccess || token.revokedAt)
-    throw new AccessError("not_allowed", "This token may not request access to n8n instances.")
+    throw new AccessError(
+      "not_allowed",
+      "This agent may not request access to n8n instances. Ask a person to allow it in n8n-ops.",
+    )
   const instance = await findInstance(ctx, input.instance)
   if (!instance) throw new AccessError("unknown_instance", `There is no instance named "${input.instance}".`)
   if (!instance.agentAccess.enabled)
@@ -102,7 +105,10 @@ export async function requestAccess(ctx: Ctx, tokenId: string, input: AccessRequ
     .from(accessRequests)
     .where(and(eq(accessRequests.tokenId, tokenId), eq(accessRequests.status, "pending")))
   if (pending.length >= MAX_PENDING_PER_TOKEN)
-    throw new AccessError("too_many_pending", "This token already has requests waiting for a decision.")
+    throw new AccessError(
+      "too_many_pending",
+      "This agent has too many access requests waiting for a decision. Wait for one to be decided, or release one.",
+    )
 
   const [row] = await ctx.db
     .insert(accessRequests)
@@ -230,7 +236,7 @@ export async function collectAccess(ctx: Ctx, tokenId: string, id: string, publi
     .from(accessRequests)
     .innerJoin(instances, eq(accessRequests.instanceId, instances.id))
     .where(and(eq(accessRequests.id, id), eq(accessRequests.tokenId, tokenId)))
-  if (!row) throw new AccessError("not_found", "There is no such request for this token.")
+  if (!row) throw new AccessError("not_found", "This agent has no such access request.")
   const { r } = row
   const status: AccessStatus = r.status === "pending" && r.decideBy < new Date() ? "expired" : r.status
   const base = {
@@ -264,7 +270,7 @@ export async function releaseAccess(ctx: Ctx, tokenId: string, id: string) {
     .from(accessRequests)
     .innerJoin(apiTokens, eq(accessRequests.tokenId, apiTokens.id))
     .where(and(eq(accessRequests.id, id), eq(accessRequests.tokenId, tokenId)))
-  if (!row) throw new AccessError("not_found", "There is no such request for this token.")
+  if (!row) throw new AccessError("not_found", "This agent has no such access request.")
   const [updated] = await ctx.db
     .update(accessRequests)
     .set({ status: "released", endedAt: new Date(), keyEnc: null, ...messageOutdated })
@@ -331,7 +337,7 @@ export function checkCall(
       : { allowed: false, reason: `Workflow ${workflowId} is outside this access.` }
   if (match.op.template === "/workflows" && method === "GET") return { allowed: true, workflowFilter: true }
   if (match.op.template === "/workflows" && method === "POST")
-    return { allowed: false, reason: "This access is limited to existing workflows; it cannot create new ones." }
+    return { allowed: false, reason: "This access is limited to its workflows; it cannot create new ones." }
   if (match.op.template === "/executions" && method === "GET") {
     const w = query.get("workflowId")
     return w && allowed.has(w)

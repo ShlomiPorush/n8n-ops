@@ -18,7 +18,7 @@ export const statusTable = {
     ok: { label: "Healthy", tone: "ok" },
     warn: { label: "Needs a look", tone: "warn" },
     down: { label: "Down", tone: "fail" },
-    unknown: { label: "Not checked yet", tone: "muted" },
+    unknown: { label: "Unknown", tone: "muted" },
   },
   problem: {
     new: { label: "New", tone: "fail" },
@@ -36,16 +36,16 @@ export const statusTable = {
     revoked: { label: "Revoked", tone: "fail" },
   },
   worker: {
-    online: { label: "online", tone: "ok" },
-    offline: { label: "offline", tone: "fail" },
+    online: { label: "Online", tone: "ok" },
+    offline: { label: "Offline", tone: "fail" },
   },
   backup: {
     ok: { label: "OK", tone: "ok" },
     running: { label: "Running", tone: "info" },
     partial: { label: "Some copies failed", tone: "warn" },
     failed: { label: "Failed", tone: "fail" },
-    stale: { label: "Stale", tone: "warn" },
-    expired: { label: "Expired", tone: "muted" },
+    stale: { label: "Late", tone: "warn" },
+    expired: { label: "No copy to restore", tone: "muted" },
     none: { label: "Not backed up", tone: "fail" },
   },
   /** One archive on one destination. */

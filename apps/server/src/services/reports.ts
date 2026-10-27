@@ -33,6 +33,9 @@ type ReportData = {
   test?: boolean
 }
 
+/** What the report the test button sends says about itself. */
+const TEST_NOTE = "This is a test sent from Settings → Email Reports."
+
 const backupWords: Record<string, [string, Tone]> = {
   ok: ["OK", "ok"],
   partial: ["Some copies failed", "warn"],
@@ -78,6 +81,7 @@ export function renderReport(d: ReportData): Report {
       ...(s.rows.length ? s.rows.map((r) => `  ${r.join("  ·  ")}`) : ["  none"]),
       "",
     ]),
+    ...(d.test ? [TEST_NOTE] : []),
   ].join("\n")
 
   const needsLook = totalOpen > 0 || badBackups.length > 0 || d.incidents.length > 0
@@ -164,10 +168,10 @@ export function renderReport(d: ReportData): Report {
       ),
     ],
     footer: d.test
-      ? "This is a test sent from Settings → Email Reports."
+      ? TEST_NOTE
       : `You get this because the ${d.period} report is on in Settings → Email Reports.`,
   })
-  return { subject: `${title}: ${plural(totalOpen, "open problem")}`, text, html }
+  return { subject: `${d.test ? "Test: " : ""}${title}: ${plural(totalOpen, "open problem")}`, text, html }
 }
 
 /**

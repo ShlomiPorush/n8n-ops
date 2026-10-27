@@ -181,9 +181,14 @@ describe("emails", () => {
     expect(renderReport({ ...base, period: "daily" }).html).toContain(
       "You get this because the daily report is on in Settings → Email Reports.",
     )
-    const test = renderReport({ ...base, period: "daily", test: true }).html
-    expect(test).toContain("This is a test sent from Settings → Email Reports.")
-    expect(test).not.toContain("You get this because")
+    const scheduled = renderReport({ ...base, period: "daily" })
+    expect(scheduled.subject).not.toMatch(/^Test: /)
+    expect(scheduled.text).not.toContain("This is a test")
+    const test = renderReport({ ...base, period: "daily", test: true })
+    expect(test.html).toContain("This is a test sent from Settings → Email Reports.")
+    expect(test.html).not.toContain("You get this because")
+    expect(test.text).toContain("This is a test sent from Settings → Email Reports.")
+    expect(test.subject).toMatch(/^Test: /)
   })
 
   it("speaks only for instances whose version is known", () => {

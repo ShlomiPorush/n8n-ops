@@ -19,5 +19,5 @@ export function auditAction(action: string): string {
 
 /** A token's target ends with what it may do, in the words it was stored with. */
 export function auditTarget(target: string): string {
-  return target.replace(", may request instance access)", ", may request access to n8n instances)")
+  return target.replace(/, may request instance access\)$/, ", may request access to n8n instances)")
 }

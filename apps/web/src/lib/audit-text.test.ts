@@ -24,6 +24,7 @@ describe("audit entries in today's words", () => {
     expect(auditTarget("claude (through the browser, may request instance access)")).toBe(
       "claude (through the browser, may request access to n8n instances)",
     )
+    expect(auditTarget("x, may request instance access) (agent)")).toBe("x, may request instance access) (agent)")
     expect(auditTarget("ci (agent)")).toBe("ci (agent)")
     expect(auditTarget("n8n-1")).toBe("n8n-1")
   })

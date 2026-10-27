@@ -510,8 +510,12 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
   })
   const checkNow = async () => {
     const { poll } = await refresh.mutateAsync()
-    if (poll.error) toast.error(`Could not read the failures of ${named()}: ${poll.error}`)
-    else if (detail.data?.collection === "direct") toast.success(`Checked ${named()}`)
+    if (poll.error) {
+      toast.error(`Could not read the failures of ${named()}: ${poll.error}`)
+      // The button shows that it failed too; the toast has said why.
+      throw new Error(poll.error)
+    }
+    if (detail.data?.collection === "direct") toast.success(`Checked ${named()}`)
     else toast.success(`Read the failures of ${named()}.`)
   }
   const remove = useApiMutation<void>("DELETE", `/instances/${id}`, {

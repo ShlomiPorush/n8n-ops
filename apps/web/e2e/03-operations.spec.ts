@@ -140,16 +140,18 @@ test("through the worker, health is read inside the main container", async () =>
   await page.getByRole("row", { name: /e2e-n8n/ }).click()
   await collect(/^Check health and metrics: Directly from the n8n-ops server$/, "Through the worker on the n8n host")
   await page.getByRole("tab", { name: /^Health/ }).click()
+  // The sentence also stands under the Overview tab's status line; this reads the Health tab's.
+  const health = page.getByRole("tabpanel", { name: "Health" })
   // The worker asks for a probe within the health interval, reads the main from inside and reports.
   await expect(async () => {
     await page.reload()
-    await expect(page.getByText(/^Checked inside the container by E2E Host\./)).toBeVisible({ timeout: 3_000 })
+    await expect(health.getByText(/^Checked inside the container by E2E Host\./)).toBeVisible({ timeout: 3_000 })
   }).toPass({ timeout: 90_000 })
-  await expect(page.getByText("Main process (/healthz)")).toBeVisible()
+  await expect(health.getByText("Main process (/healthz)")).toBeVisible()
   // The e2e n8n runs in regular mode: nothing about a queue.
   await expect(page.getByText("· queue mode")).toHaveCount(0)
   await collect(/^Check health and metrics: Through the worker on the n8n host$/, "Directly from the n8n-ops server")
-  await expect(page.getByText(/^Checked directly from the n8n-ops server/)).toBeVisible()
+  await expect(health.getByText(/^Checked directly from the n8n-ops server/)).toBeVisible()
 })
 
 test("a backup through the worker includes credential secrets", async () => {

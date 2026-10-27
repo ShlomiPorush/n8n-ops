@@ -154,7 +154,8 @@ test("through the worker, health is read inside the main container", async () =>
   await expect(page.getByText("· queue mode")).toHaveCount(0)
   await expect(health.getByText("regular, read in the main container")).toBeVisible()
 
-  // A container the socket proxy does not allow: the worker checks over the network and says what to add.
+  // A container the socket proxy does not allow: the worker checks over the network, and the tab gives the lines
+  // that allow it, with nothing else to look up.
   const containerName = async (name: string) => {
     await page.getByRole("button", { name: "Edit" }).click()
     await page.getByLabel("Container name").fill(name)
@@ -165,11 +166,12 @@ test("through the worker, health is read inside the main container", async () =>
   await expect(async () => {
     await page.reload()
     await expect(
-      health.getByText(
-        'Checked over the network because the socket proxy does not allow commands in "not-allowed-e2e"',
-      ),
+      health.getByTestId("proxy-fix").getByText("The socket proxy on E2E Host refuses commands in not-allowed-e2e"),
     ).toBeVisible({ timeout: 3_000 })
   }).toPass({ timeout: 90_000 })
+  await expect(health.getByTestId("proxy-fix").locator("code").first()).toContainText(
+    /containers\/\([^)]*not-allowed-e2e\)\/exec/,
+  )
   await containerName(container)
 
   await collect(/^Check health and metrics: Through the worker on the n8n host$/, "Directly from the n8n-ops server")

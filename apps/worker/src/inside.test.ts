@@ -89,6 +89,19 @@ describe("the Docker client in a probe", () => {
     await expect(docker.exec("n8n", ["true"], { maxBytes: 8 * 1024 })).rejects.toThrow(/longer than 8192 bytes/)
   })
 
+  it("says which call the socket proxy refused: creating, starting or reading a command", async () => {
+    const cases: [Engine, string][] = [
+      [{ create: refuse(403) }, "exec-create"],
+      [{ start: refuse(403) }, "exec-start"],
+      [{ inspect: refuse(403) }, "exec-inspect"],
+    ]
+    for (const [spec, call] of cases) {
+      const { docker } = await engine(spec)
+      const error = await docker.exec("n8n", ["true"]).catch((e) => e)
+      expect([error.kind, error.call]).toEqual(["refused", call])
+    }
+  })
+
   it("classifies a refused exec inspection, and keeps no piece of a broken answer", async () => {
     const refused = await engine({ inspect: refuse(403, "Forbidden") })
     expect((await refused.docker.exec("n8n", ["true"]).catch((e) => e)).kind).toBe("refused")
@@ -116,11 +129,18 @@ describe("checkInside", () => {
     })
   })
 
-  it("checks over the network when the socket proxy refuses, and says what to add", async () => {
+  it("checks over the network when the socket proxy refuses, and says what it refused", async () => {
     const { docker } = await engine({ create: refuse(403) })
     expect(await checkInside(docker, "n8n-main", options())).toEqual({
       kind: "fallback",
-      reason: 'the socket proxy does not allow commands in "n8n-main"; add it to -allowPOST',
+      reason: 'the socket proxy does not allow commands in "n8n-main"',
+      refusal: { call: "exec-create", container: "n8n-main" },
+    })
+    const inspect = await engine({ inspect: refuse(403) })
+    expect(await checkInside(inspect.docker, "n8n-main", options())).toEqual({
+      kind: "fallback",
+      reason: "the socket proxy does not allow reading the result of a command",
+      refusal: { call: "exec-inspect", container: "n8n-main" },
     })
   })
 
@@ -258,7 +278,11 @@ describe("probeJob", () => {
       },
       docker,
     )
-    expect(job.result).toMatchObject({ source: "network", fallback: expect.stringContaining("-allowPOST") })
+    expect(job.result).toMatchObject({
+      source: "network",
+      fallback: 'the socket proxy does not allow commands in "n8n"',
+      access: { refused: [{ call: "exec-create", container: "n8n" }] },
+    })
     expect(hits.sort()).toEqual(["/healthz", "/healthz/readiness"])
   })
 

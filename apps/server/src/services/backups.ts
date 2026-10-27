@@ -3,7 +3,7 @@ import { createHash } from "node:crypto"
 import { promisify } from "node:util"
 import { entryText, textEntry } from "@n8n-ops/shared"
 import { type Manifest, openArchive, sealArchive, sealBytes } from "@n8n-ops/shared/archive"
-import { and, desc, eq, inArray, isNotNull, isNull, like } from "drizzle-orm"
+import { and, desc, eq, inArray, isNotNull, isNull, like, sql } from "drizzle-orm"
 import type { Ctx } from "../context.ts"
 import {
   alertState,
@@ -12,6 +12,7 @@ import {
   backupRuns,
   instanceBackupDestinations,
   instances,
+  workerJobs,
   workers,
 } from "../db/schema.ts"
 import type { N8nWorkflow } from "../n8n/client.ts"
@@ -22,8 +23,9 @@ import { ARCHIVE_WAIT_MS, dropConditions, failRun, kickCopies } from "./backup-c
 import { reportsSince } from "./collection.ts"
 import { type Destination, destinationsFor, keyFor, openStore } from "./destinations/index.ts"
 import { withDeadline } from "./destinations/store.ts"
-import { type CheckTicket, startCheck } from "./health.ts"
-import { clientFor, type Instance, metricsUrlOf, readsInside } from "./instances.ts"
+import { type CheckTicket, type Refusal, startCheck } from "./health.ts"
+import { clientFor, type Instance, metricsUrlOf, needsQueueWorkers, readsInside } from "./instances.ts"
+import { jobProxyFix, refusalInError } from "./proxy-fix.ts"
 import { zonedParts } from "./reports.ts"
 import { removeSpool, reserve, spoolDir, writeSpool } from "./spool.ts"
 import { enqueueJob, pendingJobs } from "./workers.ts"
@@ -212,7 +214,7 @@ async function apiBackup(ctx: Ctx, instance: Instance, runId: string, recipient:
 export async function workerBackupResult(
   ctx: Ctx,
   runId: string,
-  outcome: { ok: boolean; result: Record<string, unknown>; error?: string },
+  outcome: { ok: boolean; result: Record<string, unknown>; error?: string; refused?: Refusal },
 ) {
   const [run] = await ctx.db.select().from(backupRuns).where(eq(backupRuns.id, runId))
   if (!run) return
@@ -226,7 +228,7 @@ export async function workerBackupResult(
     return
   }
   // A failure after the archive arrived (a later step on the worker) does not undo the copies.
-  if (!run.spooledAt) await failRun(ctx, runId, outcome.error ?? "The worker reported a failure.")
+  if (!run.spooledAt) await failRun(ctx, runId, outcome.error ?? "The worker reported a failure.", outcome.refused)
 }
 
 /** Starts scheduled backups and raises stale-backup alerts per destination (D1, D7). Checked every few minutes. */
@@ -503,6 +505,8 @@ export function probePayload(instance: Instance, check: CheckTicket) {
     ...(readsInside(instance) ? { inside: { container: instance.containerName } } : {}),
     // Queue mode with no worker URLs typed: the worker finds the queue workers next to the main and checks them.
     ...(readsInside(instance) && queue && !typedWorkers ? { discover: true } : {}),
+    // A main the socket proxy refuses: the worker lists its queue workers anyway, for what the proxy must allow.
+    ...(needsQueueWorkers(instance) ? { list: true } : {}),
     overrides: {
       ...(queue && instance.metricsUrl ? { metricsUrl: instance.metricsUrl } : {}),
       ...(typedWorkers ? { workerHealthUrls: typedWorkers } : {}),
@@ -589,8 +593,32 @@ export async function recentRuns(ctx: Ctx, instanceId: string | null, limit = 30
           ),
         )
     : []
-  return runs.map(({ uploadStartedAt: _u, ...r }) => ({
+  const fixes = await Promise.all(runs.map((r) => runFix(ctx, r)))
+  return runs.map(({ uploadStartedAt: _u, ...r }, i) => ({
     ...r,
+    ...fixes[i],
     copies: copies.filter((c) => c.runId === r.id).sort((a, b) => a.destination.localeCompare(b.destination)),
   }))
+}
+
+/**
+ * For a backup the socket proxy made fail: the exact lines that allow it, computed for the worker and container the
+ * backup ran on, while the instance still uses them. When it has moved since, where the backup ran instead.
+ */
+async function runFix(ctx: Ctx, run: typeof backupRuns.$inferSelect) {
+  if (run.status !== "failed" || !run.instanceId) return {}
+  const refused = (run.refusal as Refusal | null) ?? refusalInError(run.error)
+  if (!refused) return {}
+  const [job] = await ctx.db
+    .select({ workerId: workerJobs.workerId, payload: workerJobs.payload })
+    .from(workerJobs)
+    .where(and(eq(workerJobs.kind, "backup"), sql`${workerJobs.payload}->>'runId' = ${run.id}`))
+    .limit(1)
+  const [instance] = await ctx.db.select().from(instances).where(eq(instances.id, run.instanceId))
+  if (!job || !instance) return {}
+  const container = typeof job.payload.container === "string" ? job.payload.container : null
+  const proxyFix = await jobProxyFix(ctx, instance, { workerId: job.workerId, container, refused })
+  if (proxyFix) return { proxyFix }
+  const [ranOn] = await ctx.db.select({ name: workers.name }).from(workers).where(eq(workers.id, job.workerId))
+  return { ranOn: { worker: ranOn?.name ?? null, container } }
 }

@@ -27,6 +27,7 @@ import {
 } from "../services/instances.ts"
 import { openProblemCount, openProblemsByInstance } from "../services/problem-view.ts"
 import { deleteInstance, pollInstance } from "../services/problems.ts"
+import { instanceProxyFix } from "../services/proxy-fix.ts"
 import { WORKER_ONLINE_MS } from "./overview.ts"
 
 const url = z
@@ -185,6 +186,8 @@ export function instanceRoutes(ctx: Ctx) {
       // The health now, beside the stored one it may only be the last known of.
       ...healthNow(row, worker, effectiveSettings.healthIntervalSec),
       worker: workerSummary(worker),
+      // What the socket proxy refused in the current report, with the exact lines that allow it.
+      proxyFix: await instanceProxyFix(ctx, row, worker),
       workflowCounts: {
         total: wfs.length,
         active: wfs.filter((w) => w.active).length,

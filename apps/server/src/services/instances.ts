@@ -28,6 +28,24 @@ export function readsInside(instance: Pick<Instance, "collection" | "workerId" |
 }
 
 /**
+ * Whether n8n-ops finds this instance's queue workers through Docker, so the socket proxy must allow them: read
+ * from inside, no worker URLs typed, and queue mode, or a mode not found yet (a main in queue mode the proxy
+ * refuses never tells its mode).
+ */
+export function needsQueueWorkers(
+  instance: Pick<
+    Instance,
+    "collection" | "workerId" | "containerName" | "queueMode" | "queueModeSource" | "workerHealthUrls"
+  >,
+) {
+  return (
+    readsInside(instance) &&
+    instance.workerHealthUrls.length === 0 &&
+    (instance.queueMode || instance.queueModeSource !== "found")
+  )
+}
+
+/**
  * Where the queue metrics of an instance are read over the network: the URL set on it, otherwise /metrics of its
  * base URL, where n8n serves them. Only in queue mode: outside it there is no queue to read, so nothing is asked.
  */

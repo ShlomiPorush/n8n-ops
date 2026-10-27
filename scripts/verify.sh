@@ -319,7 +319,9 @@ run_queue_checks() {
   info "Integration: queue workers found next to the main and checked through the socket proxy"
   local q="${PROJECT}-queue" started=$SECONDS
   queue() { docker compose -p "$q" -f "$REPO_ROOT/docker/verify-queue.yml" "$@"; }
-  queue up -d --wait --wait-timeout 240 >/dev/null 2>&1 || {
+  # The proxy and the probe of run_proxy_checks start there, on their own.
+  queue up -d --wait --wait-timeout 240 postgres redis n8n n8n-worker >/dev/null 2>&1 || {
+    queue ps -a
     queue logs --tail 40 n8n n8n-worker
     queue down -v >/dev/null 2>&1
     die "the queue-mode n8n did not start"
@@ -363,8 +365,69 @@ run_queue_checks() {
   expect_worker ready
   queue stop n8n-worker >/dev/null 2>&1
   expect_worker down
+  queue start n8n-worker >/dev/null 2>&1
+  readiness_is 200
+  run_proxy_checks "$q"
   queue down -v >/dev/null 2>&1
   echo "    queue checks took $((SECONDS - started)) s"
+}
+
+# What the socket proxy refuses and the lines n8n-ops computes for it, against the queue project's own proxy
+# (queue-proxy, used by queue-probe), never the stack's: a probe names the queue workers of a main the proxy refuses;
+# the computed lines let the next probe read inside, and still refuse inspecting a container and commands in one
+# they do not list; a proxy that refuses reading a command's result is reported as that, and the lines fix it too.
+run_proxy_checks() {
+  local q="$1" override="$N8N_OPS_DATA_DIR/queue-proxy.yml" narrow="$N8N_OPS_DATA_DIR/queue-proxy-narrow.yml" report
+  local payload="{\"inside\":{\"container\":\"$q-n8n-1\"},\"discover\":true,\"check\":{\"seq\":1,\"revision\":0}}"
+  fail_queue() {
+    [ -z "${report:-}" ] || echo "$report"
+    queue ps -a
+    queue logs --tail 20 queue-proxy queue-probe
+    queue down -v >/dev/null 2>&1
+    die "$1"
+  }
+  probe() { report="$(queue exec -T queue-probe node dist/probe-cli.js "$payload")"; }
+  # Checks the last report with a test given as a JavaScript expression over r (the report).
+  expect_report() {
+    # shellcheck disable=SC2016 # expands inside the container
+    queue exec -T queue-probe node -e 'const r = JSON.parse(process.argv[1]); process.exit(eval(process.argv[2]) ? 0 : 1)' \
+      "$report" "$2" || fail_queue "$1"
+  }
+  proxy_with() {
+    queue -f "$1" up -d --wait --wait-timeout 60 --force-recreate queue-proxy >/dev/null 2>&1 ||
+      fail_queue "the queue socket proxy did not start with $1"
+  }
+  # The proxy as it starts refuses commands everywhere.
+  queue up -d --wait --wait-timeout 60 queue-proxy queue-probe 2>&1 | tail -5 || true
+  if [ -z "$(queue ps -q --status running queue-probe)" ] || [ -z "$(queue ps -q --status running queue-proxy)" ]; then
+    fail_queue "the queue socket proxy or its probe did not start"
+  fi
+  probe
+  expect_report "a main the proxy refuses was not reported with its queue workers" \
+    "r.source === 'network' && r.access.refused.some(x => x.call === 'exec-create' && x.container === '$q-n8n-1') && JSON.stringify(r.listed) === JSON.stringify({ names: ['$q-n8n-worker-1'], complete: true })"
+  TOOLCHAIN_EXTRA_ARGS=(-e "PROBE_REPORT=$report" -e "PROBE_MAIN=$q-n8n-1")
+  in_toolchain "node scripts/lib/queue-proxy-override.mjs" >"$override" || fail_queue "the proxy lines could not be computed"
+  TOOLCHAIN_EXTRA_ARGS=()
+  proxy_with "$override"
+  probe
+  expect_report "the computed lines did not let the probe read inside" \
+    "r.source === 'inside' && r.mode === 'queue' && r.workers[0]?.state === 'ready' && r.access.refused.length === 0"
+  # shellcheck disable=SC2016 # expands inside the container
+  queue exec -T queue-probe node -e '
+    const ask = (method, path) => fetch("http://queue-proxy:2375/v1.43" + path, { method, headers: { "content-type": "application/json" }, body: method === "POST" ? JSON.stringify({ Cmd: ["true"] }) : undefined }).then((r) => r.status)
+    Promise.all([ask("GET", "/containers/" + process.argv[1] + "-postgres-1/json"), ask("POST", "/containers/" + process.argv[1] + "-postgres-1/exec")])
+      .then((s) => process.exit(s.every((x) => x === 403) ? 0 : 1))' "$q" ||
+    fail_queue "the computed lines allow inspecting a container or commands in one they do not list"
+  # A proxy that refuses reading a command's result.
+  sed 's#exec/\[0-9a-f\]+/json|##' "$override" >"$narrow"
+  proxy_with "$narrow"
+  probe
+  expect_report "a refused exec inspection was not reported as that" \
+    "r.source === 'network' && r.access.refused.some(x => x.call === 'exec-inspect' && x.container === '$q-n8n-1')"
+  proxy_with "$override"
+  probe
+  expect_report "the computed lines did not fix a refused exec inspection" "r.source === 'inside'"
+  echo "    socket proxy lines checked against a proxy of their own"
 }
 
 # One end-to-end round per design, each on a fresh stack. Both designs are one app with the same functions,

@@ -343,10 +343,10 @@ export async function settleRun(ctx: Ctx, runId: string) {
  * The run failed before its archive was ready (export, encryption or upload). Its copies end with it, and one
  * alert says why.
  */
-export async function failRun(ctx: Ctx, runId: string, error: string) {
+export async function failRun(ctx: Ctx, runId: string, error: string, refusal?: { call: string; container?: string }) {
   const [run] = await ctx.db
     .update(backupRuns)
-    .set({ status: "failed", error, finishedAt: new Date() })
+    .set({ status: "failed", error, finishedAt: new Date(), ...(refusal ? { refusal } : {}) })
     .where(and(eq(backupRuns.id, runId), eq(backupRuns.status, "running")))
     .returning()
   if (!run) return

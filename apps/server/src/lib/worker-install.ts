@@ -10,32 +10,12 @@
  * the socket itself (full Docker access).
  */
 
+import { proxyRules } from "@n8n-ops/shared"
+
 export const SOCKET_PROXY_IMAGE = "wollomatic/socket-proxy:1.13.1"
 export const WORKER_IMAGE = "ghcr.io/shlomiporush/n8n-ops-worker"
 
-/** A container name, or a pattern with * for names added later (for example n8n*). */
-export const CONTAINER_PATTERN = /^[a-zA-Z0-9*][a-zA-Z0-9_.*-]*$/
-
-/** Turns container names and * patterns into one regular expression alternative group. */
-export function containerRegex(containers: string[]): string {
-  const parts = containers.map((name) =>
-    name
-      .split("*")
-      .map((piece) => piece.replace(/[.\\+?^${}()|[\]]/g, "\\$&"))
-      .join("[^/]*"),
-  )
-  return `(${parts.join("|")})`
-}
-
-/** The proxy's allowlist. Paths may carry an API version prefix; the proxy anchors each pattern. */
-export function proxyRules(containers: string[]) {
-  const version = String.raw`(/v1\.[0-9]+)?`
-  return {
-    // Listing containers finds the n8n queue workers next to a main; inspecting one (its environment) stays refused.
-    get: `${version}/(_ping|exec/[0-9a-f]+/json|containers/json)`,
-    post: `${version}/(containers/${containerRegex(containers)}/exec|exec/[0-9a-f]+/start)`,
-  }
-}
+export { CONTAINER_PATTERN, proxyRules } from "@n8n-ops/shared"
 
 /** The worker image tag for this server: its own release, or latest for a development build. */
 export function workerTag(serverVersion: string): string {

@@ -12,6 +12,8 @@ export class ApiError extends Error {
     readonly detail?: string,
     /** Why the server ended the session, on a 401 `session_ended` (idle, max, lifetime). */
     readonly reason?: string,
+    /** The whole answer, for fields a page reads itself (the socket proxy fix of a failed export). */
+    readonly body?: Record<string, unknown>,
   ) {
     super(detail ?? (issues?.length ? issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") : code))
   }
@@ -56,7 +58,15 @@ export async function api<T>(path: string, init: RequestInit & { json?: unknown 
   const b = body as { error?: string; issues?: ApiError["issues"]; message?: string; reason?: string } | null
   // The session ended on an open page: sign in again and come back here (NL-18), told why when the server says.
   if (res.status === 401) sessionEnded(b?.reason)
-  if (!res.ok) throw new ApiError(res.status, b?.error ?? `http_${res.status}`, b?.issues, b?.message, b?.reason)
+  if (!res.ok)
+    throw new ApiError(
+      res.status,
+      b?.error ?? `http_${res.status}`,
+      b?.issues,
+      b?.message,
+      b?.reason,
+      b && typeof b === "object" ? (b as Record<string, unknown>) : undefined,
+    )
   return body as T
 }
 

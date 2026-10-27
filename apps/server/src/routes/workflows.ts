@@ -8,7 +8,7 @@ import { requireUser } from "../http/middleware.ts"
 import { actorName, type Env } from "../http/types.ts"
 import { likeContains } from "../lib/like.ts"
 import { workflowUrl } from "../services/instances.ts"
-import { exportCredentials, previewMove, runMove } from "../services/moves.ts"
+import { exportCredentials, ProxyRefusedError, previewMove, runMove } from "../services/moves.ts"
 import { syncWorkflows } from "../services/workflows.ts"
 
 const moveSchema = z.object({ sourceId: z.string().uuid(), targetId: z.string().uuid(), workflowId: z.string().min(1) })
@@ -111,8 +111,11 @@ export function workflowRoutes(ctx: Ctx) {
       if (target) void syncWorkflows(ctx, target).catch(() => {})
       return c.json(result)
     } catch (error) {
-      const steps = (error as { steps?: unknown }).steps ?? []
-      return c.json({ error: "move_failed", message: (error as Error).message, steps }, 400)
+      const { steps = [], proxyFix } = error as { steps?: unknown; proxyFix?: unknown }
+      return c.json(
+        { error: "move_failed", message: (error as Error).message, steps, ...(proxyFix ? { proxyFix } : {}) },
+        400,
+      )
     }
   })
 
@@ -145,7 +148,8 @@ export function credentialExportRoutes(ctx: Ctx) {
       c.header("content-disposition", `attachment; filename="${instance.name}-credentials.json.age"`)
       return c.body(new Uint8Array(sealed.bytes))
     } catch (error) {
-      return c.json({ error: "invalid", message: (error as Error).message }, 400)
+      const proxyFix = error instanceof ProxyRefusedError ? { proxyFix: error.proxyFix } : {}
+      return c.json({ error: "invalid", message: (error as Error).message, ...proxyFix }, 400)
     }
   })
   return app

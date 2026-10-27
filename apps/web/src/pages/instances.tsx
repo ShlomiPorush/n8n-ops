@@ -54,6 +54,7 @@ import {
 } from "@/components/kit"
 import { ListWithPanel } from "@/components/list-panel"
 import { type PaneTabItem, PaneTabPanel, PaneTabs, usePaneTab } from "@/components/pane-tabs"
+import { type ProxyFix, ProxyFixBlock } from "@/components/proxy-fix"
 import { Dot, type HealthState, StatusTag, statusOf, type statusTable, TimeAgo, Tone, When } from "@/components/status"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -181,6 +182,8 @@ type InstanceDetailData = InstanceRow & {
   latestVersion: string | null
   backupDestinations: "default" | "custom"
   backupDestinationIds: string[]
+  /** What the socket proxy refused in the current report, with the lines that allow it; null when nothing. */
+  proxyFix: ProxyFix | null
 }
 
 /** Worse first when sorted high to low: down, needs a look, unknown, healthy. */
@@ -500,6 +503,8 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
   const detail = useApi<InstanceDetailData>(`/instances/${id}`, { refetchInterval: 15_000 })
   useCrumb(detail.data?.name)
   const [editing, setEditing] = useState(false)
+  // A credential export the socket proxy refused: the lines that allow it, in a dialog.
+  const [exportFix, setExportFix] = useState<ProxyFix | null>(null)
   const confirm = useConfirm()
   const invalidate = [`/instances/${id}`, "/instances", "/overview", "/overview/attention"]
   // Toasts name the instance (FB-4), read when the request ends.
@@ -566,7 +571,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
     </Alert>
   )
   const collected = collectionView({ collection: i.collection, worker: i.worker, detail: hd })
-  const workersNote = queueWorkersNote({ ...i, detail: hd })
+  const workersNote = queueWorkersNote({ ...i, detail: hd, proxyFix: i.proxyFix })
   // Nothing collects the health now: the checks shown are only the last known health (unless it was not collected).
   const past = Boolean(i.unknownReason && i.lastKnownHealth && !hd?.notCollected)
 
@@ -641,7 +646,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
             <DropdownMenuContent align="end" className="w-56">
               {canExport && (
                 <>
-                  <DropdownMenuItem onSelect={() => void exportCredentials(i.id, i.name)}>
+                  <DropdownMenuItem onSelect={() => void exportCredentials(i.id, i.name, setExportFix)}>
                     <Download /> Export credentials
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
@@ -812,9 +817,14 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
                 with nothing reachable from outside the host. Until then the worker checks over the network.
               </div>
             )}
-            {hd?.source === "network" && hd.fallback && (
+            {hd?.source === "network" && hd.fallback && !i.proxyFix && (
               <div className="border-t border-line px-pad-x py-pad-y text-warn">
                 Checked over the network because {hd.fallback}.
+              </div>
+            )}
+            {i.proxyFix && (
+              <div className="border-t border-line p-pad-x" data-testid="proxy-fix">
+                <ProxyFixBlock fix={i.proxyFix} refresh={[`/instances/${i.id}`]} />
               </div>
             )}
             {workersNote && (
@@ -823,9 +833,11 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
                   <AlertTitle>{workersNote.title}</AlertTitle>
                   <AlertDescription>
                     <p>{workersNote.text}</p>
-                    <Button size="sm" className="mt-3" onClick={() => setEditing(true)}>
-                      <Pencil /> Edit instance
-                    </Button>
+                    {workersNote.edit && (
+                      <Button size="sm" className="mt-3" onClick={() => setEditing(true)}>
+                        <Pencil /> Edit instance
+                      </Button>
+                    )}
                   </AlertDescription>
                 </Alert>
               </div>
@@ -905,6 +917,22 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
       </PaneTabs>
 
       <InstanceDialog open={editing} onOpenChange={setEditing} instance={i} />
+      <Dialog open={exportFix !== null} onOpenChange={(o) => !o && setExportFix(null)}>
+        <DialogContent className="md:max-w-2xl">
+          <DialogHeader icon={Download}>
+            <DialogTitle>The credentials of {name} were not exported</DialogTitle>
+            <DialogDescription>
+              The worker could not run n8n's export in the container, because the socket proxy refused it.
+            </DialogDescription>
+          </DialogHeader>
+          {exportFix && <ProxyFixBlock fix={exportFix} held />}
+          <DialogFooter>
+            <Button variant="primary" onClick={() => setExportFix(null)}>
+              Done
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
@@ -1175,13 +1203,19 @@ function InstanceProblems({
   )
 }
 
-/** Decrypted credentials, encrypted to the backup key, for moving them to another system. */
-async function exportCredentials(id: string, name: string) {
+/**
+ * Decrypted credentials, encrypted to the backup key, for moving them to another system. When the socket proxy
+ * refused the export, `onRefused` gets the lines that allow it.
+ */
+async function exportCredentials(id: string, name: string, onRefused: (fix: ProxyFix) => void) {
   const loading = toast.loading("Asking the worker to export the credentials…")
   try {
     const res = await fetch(`/api/instances/${id}/export-credentials`, { method: "POST", credentials: "same-origin" })
-    if (!res.ok)
-      throw new Error(((await res.json().catch(() => ({}))) as { message?: string }).message ?? `HTTP ${res.status}`)
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { message?: string; proxyFix?: ProxyFix }
+      if (body.proxyFix) onRefused(body.proxyFix)
+      throw new Error(body.message ?? `HTTP ${res.status}`)
+    }
     const url = URL.createObjectURL(await res.blob())
     const a = document.createElement("a")
     a.href = url

@@ -1,6 +1,6 @@
 import { workerCheckOutput } from "@n8n-ops/shared"
 import { type ContainerState, discover, type ListedContainer, projectOf } from "./discovery.ts"
-import { type Docker, DockerError } from "./docker.ts"
+import { type Docker, DockerError, type Refusal, refusalOf } from "./docker.ts"
 import { WORKER_CHECK } from "./inside.ts"
 
 /** How a queue worker is, as the health report says it. Only Ready counts as up. */
@@ -14,17 +14,36 @@ export type CheckedWorker = {
   status: number
   ms: number
   error?: string
+  /** Set when the socket proxy refused the check; moved to the report's `access` before it is sent. */
+  refusal?: Refusal
+}
+
+export type Discovery = {
+  status: "ok" | "ambiguous" | "refused" | "failed" | "partial"
+  reason?: string
+  found: number
 }
 
 export type DiscoveryResult = {
-  discovery: { status: "ok" | "ambiguous" | "refused" | "failed" | "partial"; reason?: string; found: number }
+  discovery: Discovery
   workers: CheckedWorker[]
   /** The main's state in the container list, when it was read. */
   mainState?: ContainerState
+  /** Every queue worker name of the main, when the list told them apart: the socket proxy must allow them all. */
+  listed?: { names: string[]; complete: boolean }
+  /** What the socket proxy refused while finding and checking the workers. */
+  refused: Refusal[]
 }
 
 /** Limits of one probe: Docker's answers, how many workers, how many at once, and how long in all. */
-export const LIMITS = { listBytes: 2 * 1024 * 1024, workers: 50, together: 4, callMs: 10_000, probeMs: 30_000 }
+export const LIMITS = {
+  listBytes: 2 * 1024 * 1024,
+  workers: 50,
+  names: 500,
+  together: 4,
+  callMs: 10_000,
+  probeMs: 30_000,
+}
 
 const clip = (text: string, length: number) => text.slice(0, length)
 
@@ -74,12 +93,7 @@ export async function checkWorker(docker: Docker, name: string, signal: AbortSig
   } catch (error) {
     if (error instanceof DockerError) {
       if (error.kind === "refused")
-        return entry(
-          name,
-          "not-checked",
-          ms(),
-          `the socket proxy does not allow commands in "${name}"; add it to -allowPOST`,
-        )
+        return { ...entry(name, "not-checked", ms(), error.message), refusal: refusalOf(error, name) }
       if (error.kind === "not-running" || error.kind === "paused")
         return entry(name, "down", ms(), `container ${error.kind === "paused" ? "paused" : "not running"}`)
       if (error.kind === "missing")
@@ -90,22 +104,118 @@ export async function checkWorker(docker: Docker, name: string, signal: AbortSig
 }
 
 /**
- * The state of the main in the container list, or nothing when the list cannot be read (the socket proxy of an
- * earlier install does not allow it): then only the check inside the main says how it is.
+ * The state of the main in the container list, or none when the list cannot be read: then only the check inside
+ * the main says how it is. A list the socket proxy refuses (an earlier install) is said, so the fix shows.
  */
 export async function mainStateOf(
   docker: Docker,
   main: string,
   signal: AbortSignal,
-): Promise<ContainerState | undefined> {
+): Promise<{ state?: ContainerState; refused?: Refusal }> {
   try {
     const own = (await docker.listContainers(
       { name: [main] },
       { signal, maxBytes: LIMITS.listBytes },
     )) as ListedContainer[]
-    return projectOf(own, main).state
-  } catch {
-    return undefined
+    return { state: projectOf(own, main).state }
+  } catch (error) {
+    const refused = refusalOf(error)
+    return refused ? { refused } : {}
+  }
+}
+
+type Found =
+  | { ok: true; workers: { name: string; state: ContainerState }[]; mainState?: ContainerState }
+  | { ok: false; result: DiscoveryResult }
+
+/** Lists the containers of the main's Compose project and tells its queue workers apart. Runs no command. */
+async function findWorkers(docker: Docker, main: string, deadline: AbortSignal): Promise<Found> {
+  const call = () => ({
+    signal: AbortSignal.any([deadline, AbortSignal.timeout(LIMITS.callMs)]),
+    maxBytes: LIMITS.listBytes,
+  })
+  const failed = (discovery: Discovery, mainState?: ContainerState, refused: Refusal[] = []): Found => ({
+    ok: false,
+    result: { discovery, workers: [], refused, ...(mainState ? { mainState } : {}) },
+  })
+  let projectList: ListedContainer[]
+  let mainState: ContainerState | undefined
+  try {
+    const own = (await docker.listContainers({ name: [main] }, call())) as ListedContainer[]
+    const { project, state } = projectOf(own, main)
+    mainState = state
+    if (!state) return failed({ status: "ambiguous", reason: clip(`container "${main}" was not found`, 200), found: 0 })
+    if (!project)
+      return failed(
+        {
+          status: "ambiguous",
+          reason: clip(`"${main}" is not part of a Compose project, so its queue workers cannot be told apart`, 200),
+          found: 0,
+        },
+        mainState,
+      )
+    projectList = (await docker.listContainers(
+      { label: [`com.docker.compose.project=${project}`] },
+      call(),
+    )) as ListedContainer[]
+  } catch (error) {
+    const refusal = refusalOf(error)
+    const tooLarge = (error as Error).message.includes("longer than")
+    return failed(
+      refusal
+        ? { status: "refused", reason: "the socket proxy does not allow listing containers", found: 0 }
+        : tooLarge
+          ? { status: "partial", reason: "the container list is larger than 2 MiB", found: 0 }
+          : {
+              status: "failed",
+              reason: clip(`the container list could not be read: ${(error as Error).message}`, 200),
+              found: 0,
+            },
+      mainState,
+      refusal ? [refusal] : [],
+    )
+  }
+  const found = discover(projectList, main)
+  if (found.status === "ambiguous")
+    return failed({ status: "ambiguous", reason: clip(found.reason, 200), found: 0 }, found.main)
+  return { ok: true, workers: found.workers, mainState: found.main }
+}
+
+/** The names for the proxy's line: at most 500, none longer than the 128 characters the server takes. */
+const listedOf = (workers: { name: string }[]) => {
+  const fit = workers.filter((w) => w.name.length <= 128)
+  return {
+    names: fit.slice(0, LIMITS.names).map((w) => w.name),
+    complete: fit.length === workers.length && fit.length <= LIMITS.names,
+  }
+}
+
+/**
+ * Finds the queue workers of a main the socket proxy refuses commands in, without checking them: their names tell
+ * the owner what the proxy must allow. With `check`, they are reported Not checked, and why.
+ */
+export async function listWorkers(
+  docker: Docker,
+  main: string,
+  options: { check: boolean; deadline: AbortSignal },
+): Promise<DiscoveryResult> {
+  const found = await findWorkers(docker, main, options.deadline)
+  if (!found.ok) return found.result
+  const why = `not checked: the socket proxy does not allow commands in "${main}"`
+  return {
+    discovery: { status: "ok", found: found.workers.length },
+    workers: options.check
+      ? found.workers
+          .slice(0, LIMITS.workers)
+          .map((w) =>
+            DOWN_STATES.has(w.state)
+              ? entry(w.name, "down", 0, `container ${w.state}`)
+              : entry(w.name, "not-checked", 0, why),
+          )
+      : [],
+    mainState: found.mainState,
+    listed: listedOf(found.workers),
+    refused: [],
   }
 }
 
@@ -121,63 +231,8 @@ export async function discoverWorkers(
   options: { rotation: number; deadline?: AbortSignal },
 ): Promise<DiscoveryResult> {
   const deadline = options.deadline ?? AbortSignal.timeout(LIMITS.probeMs)
-  const call = () => ({
-    signal: AbortSignal.any([deadline, AbortSignal.timeout(LIMITS.callMs)]),
-    maxBytes: LIMITS.listBytes,
-  })
-  let projectList: ListedContainer[]
-  let mainState: ContainerState | undefined
-  try {
-    const own = (await docker.listContainers({ name: [main] }, call())) as ListedContainer[]
-    const { project, state } = projectOf(own, main)
-    mainState = state
-    if (!state)
-      return {
-        discovery: { status: "ambiguous", reason: clip(`container "${main}" was not found`, 200), found: 0 },
-        workers: [],
-      }
-    if (!project)
-      return {
-        discovery: {
-          status: "ambiguous",
-          reason: clip(`"${main}" is not part of a Compose project, so its queue workers cannot be told apart`, 200),
-          found: 0,
-        },
-        workers: [],
-        mainState,
-      }
-    projectList = (await docker.listContainers(
-      { label: [`com.docker.compose.project=${project}`] },
-      call(),
-    )) as ListedContainer[]
-  } catch (error) {
-    const refused = error instanceof DockerError && error.kind === "refused"
-    const tooLarge = (error as Error).message.includes("longer than")
-    return {
-      discovery: refused
-        ? {
-            status: "refused",
-            reason: "the socket proxy does not allow listing containers; add containers/json to -allowGET",
-            found: 0,
-          }
-        : tooLarge
-          ? { status: "partial", reason: "the container list is larger than 2 MiB", found: 0 }
-          : {
-              status: "failed",
-              reason: clip(`the container list could not be read: ${(error as Error).message}`, 200),
-              found: 0,
-            },
-      workers: [],
-      ...(mainState ? { mainState } : {}),
-    }
-  }
-  const found = discover(projectList, main)
-  if (found.status === "ambiguous")
-    return {
-      discovery: { status: "ambiguous", reason: clip(found.reason, 200), found: 0 },
-      workers: [],
-      mainState: found.main,
-    }
+  const found = await findWorkers(docker, main, deadline)
+  if (!found.ok) return found.result
 
   const all = found.workers
   const partial = all.length > LIMITS.workers
@@ -196,7 +251,7 @@ export async function discoverWorkers(
     }
   }
   await Promise.all(Array.from({ length: Math.min(LIMITS.together, queue.length) }, run))
-  const workers = order.map(
+  const checked = order.map(
     (w) => results.get(w.name) ?? entry(w.name, "not-checked", 0, "the probe reached its deadline before this worker"),
   )
   return {
@@ -207,7 +262,9 @@ export async function discoverWorkers(
           found: all.length,
         }
       : { status: "ok", found: all.length },
-    workers,
-    mainState: found.main,
+    workers: checked.map(({ refusal: _r, ...w }) => w),
+    mainState: found.mainState,
+    listed: listedOf(all),
+    refused: checked.flatMap((w) => (w.refusal ? [w.refusal] : [])),
   }
 }

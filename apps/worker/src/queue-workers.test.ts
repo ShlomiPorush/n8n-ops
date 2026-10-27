@@ -5,7 +5,8 @@ import { workerCheckOutput } from "@n8n-ops/shared"
 import { afterEach, describe, expect, it } from "vitest"
 import { Docker } from "./docker.ts"
 import { WORKER_CHECK } from "./inside.ts"
-import { discoverWorkers } from "./queue-workers.ts"
+import { probeJob } from "./jobs.ts"
+import { discoverWorkers, listWorkers } from "./queue-workers.ts"
 
 // Finding and checking queue workers against a stand-in Docker Engine API, and the check that runs in a worker
 // against a stand-in n8n worker server.
@@ -97,17 +98,96 @@ describe("discoverWorkers", () => {
       ["acme-w-4", "not-checked", false],
       ["acme-w-5", "down", false],
     ])
-    expect(result.workers[3]?.error).toContain("-allowPOST")
+    expect(result.workers[3]?.error).toBe('the socket proxy does not allow commands in "acme-w-4"')
+    expect(result.workers[3]).not.toHaveProperty("refusal")
+    expect(result.refused).toEqual([{ call: "exec-create", container: "acme-w-4" }])
+    expect(result.listed).toEqual({
+      names: ["acme-w-1", "acme-w-2", "acme-w-3", "acme-w-4", "acme-w-5"],
+      complete: true,
+    })
     expect(result.workers[0]?.url).toBe("docker://acme-w-1")
   })
 
-  it("says what to add when the socket proxy does not allow listing containers", async () => {
+  it("says when the socket proxy does not allow listing containers", async () => {
     const { docker } = await engine([], {}, 403)
-    expect((await discoverWorkers(docker, "acme-n8n-1", { rotation: 0 })).discovery).toEqual({
+    const result = await discoverWorkers(docker, "acme-n8n-1", { rotation: 0 })
+    expect(result.discovery).toEqual({
       status: "refused",
-      reason: "the socket proxy does not allow listing containers; add containers/json to -allowGET",
+      reason: "the socket proxy does not allow listing containers",
       found: 0,
     })
+    expect(result.refused).toEqual([{ call: "list" }])
+    expect(result).not.toHaveProperty("listed")
+  })
+
+  it("leaves out a name longer than the server takes, and says the list is not complete", async () => {
+    const long = `acme-${"w".repeat(130)}`
+    const { docker } = await engine(
+      [listed("acme-n8n-1", ENTRY), listed(long, `${ENTRY} worker`), listed("acme-w-1", `${ENTRY} worker`)],
+      {},
+    )
+    const result = await listWorkers(docker, "acme-n8n-1", { check: false, deadline: AbortSignal.timeout(10_000) })
+    expect(result.listed).toEqual({ names: ["acme-w-1"], complete: false })
+  })
+
+  it("says a refused list even when it only reads the main's state", async () => {
+    const { docker } = await engine(
+      [],
+      { "acme-n8n-1": { output: '{"health":{"status":200},"readiness":{"status":200},"mode":"regular"}' } },
+      403,
+    )
+    const job = await probeJob({ inside: { container: "acme-n8n-1" }, overrides: {} }, docker)
+    expect(job.result).toMatchObject({ source: "inside", access: { refused: [{ call: "list" }] } })
+  })
+
+  it("lists every worker name, beyond the ones it checks, and says when there are too many", async () => {
+    const many = Array.from({ length: 501 }, (_, i) =>
+      listed(`acme-w-${String(i).padStart(3, "0")}`, `${ENTRY} worker`),
+    )
+    const { docker, checked } = await engine([listed("acme-n8n-1", ENTRY), ...many], {})
+    const result = await listWorkers(docker, "acme-n8n-1", { check: false, deadline: AbortSignal.timeout(10_000) })
+    expect(result.listed?.names).toHaveLength(500)
+    expect(result.listed?.complete).toBe(false)
+    expect(result.workers).toEqual([])
+    expect(checked).toEqual([])
+  })
+
+  it("names the queue workers of a main the proxy refuses, without running anything in them", async () => {
+    const { docker, checked } = await engine([listed("acme-n8n-1", ENTRY), listed("acme-w-1", `${ENTRY} worker`)], {
+      "acme-n8n-1": { refuse: 403 },
+    })
+    const job = await probeJob(
+      {
+        main: "http://127.0.0.1:9/healthz",
+        readiness: "http://127.0.0.1:9/healthz/readiness",
+        workers: [],
+        inside: { container: "acme-n8n-1" },
+        discover: true,
+        check: { seq: 1, revision: 1 },
+      },
+      docker,
+    )
+    expect(checked).toEqual([])
+    expect(job.result).toMatchObject({
+      source: "network",
+      discovery: { status: "ok", found: 1 },
+      workers: [{ name: "acme-w-1", state: "not-checked" }],
+      access: { refused: [{ call: "exec-create", container: "acme-n8n-1" }] },
+      listed: { names: ["acme-w-1"], complete: true },
+    })
+    // Asked only for the names (the server's `list`), it reports no workers to check.
+    const namesOnly = await probeJob(
+      {
+        main: "http://127.0.0.1:9/healthz",
+        readiness: "http://127.0.0.1:9/healthz/readiness",
+        workers: [],
+        inside: { container: "acme-n8n-1" },
+        list: true,
+      },
+      docker,
+    )
+    expect(namesOnly.result).toMatchObject({ workers: [], listed: { names: ["acme-w-1"] } })
+    expect(namesOnly.result).not.toHaveProperty("discovery")
   })
 
   it("keeps every reason within what the server accepts, even for the longest container name", async () => {

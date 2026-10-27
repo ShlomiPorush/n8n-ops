@@ -453,6 +453,7 @@ export function overviewRoutes(ctx: Ctx) {
       openProblems: open,
       pendingAccess: pendingAccess?.n ?? 0,
       workers: { online: online?.n ?? 0, total: total?.n ?? 0 },
+      version: ctx.version,
     })
   })
 

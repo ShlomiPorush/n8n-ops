@@ -31,6 +31,7 @@ import {
   UserText,
 } from "@/components/kit"
 import { ListWithPanel } from "@/components/list-panel"
+import { type ProxyFix, ProxyFixBlock } from "@/components/proxy-fix"
 import { Dot, StatusTag, When } from "@/components/status"
 import { Button } from "@/components/ui/button"
 import {
@@ -79,6 +80,10 @@ type Run = {
   startedAt: string
   finishedAt: string | null
   copies?: Copy[]
+  /** The socket proxy made it fail: the lines that allow it, for the worker and container it ran on. */
+  proxyFix?: ProxyFix
+  /** The socket proxy made it fail, and the instance has moved since: where it ran. */
+  ranOn?: { worker: string | null; container: string | null }
 }
 
 type Target = { id: string; name: string; kind: DestinationKind }
@@ -512,7 +517,7 @@ function BackupHistory({ id, name }: { id: string; name: string }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {list.map((r) => (
+            {list.map((r) => [
               <TableRow key={r.id}>
                 <TableCell className="align-top text-muted-foreground">
                   <When value={r.startedAt} />
@@ -540,6 +545,13 @@ function BackupHistory({ id, name }: { id: string; name: string }) {
                       {runFailure(r)}
                     </div>
                   )}
+                  {r.ranOn && (
+                    <div className="mt-1 max-w-80 text-meta text-muted-foreground">
+                      This backup ran on {r.ranOn.worker ?? "a worker that was removed"} in{" "}
+                      {r.ranOn.container ?? "its container"}; the instance uses another worker or container now. The
+                      next backup shows any fix needed.
+                    </div>
+                  )}
                   <Copies copies={r.copies ?? []} />
                 </TableCell>
                 <TableCell className="text-end align-top tabular-nums">
@@ -558,8 +570,15 @@ function BackupHistory({ id, name }: { id: string; name: string }) {
                     </Button>
                   )}
                 </TableCell>
-              </TableRow>
-            ))}
+              </TableRow>,
+              r.proxyFix && (
+                <TableRow key={`${r.id}-fix`}>
+                  <TableCell colSpan={6} className="whitespace-normal">
+                    <ProxyFixBlock fix={r.proxyFix} refresh={[`/backups/${id}/runs`]} />
+                  </TableCell>
+                </TableRow>
+              ),
+            ])}
           </TableBody>
         </Table>
       )}

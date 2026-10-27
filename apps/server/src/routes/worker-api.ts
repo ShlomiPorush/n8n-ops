@@ -9,7 +9,7 @@ import { backupRuns, instances, workerJobs, workers } from "../db/schema.ts"
 import { failRun } from "../services/backup-copies.ts"
 import { archiveReady, maxArchiveBytes, workerBackupResult } from "../services/backups.ts"
 import { reportsSince, workerSeen } from "../services/collection.ts"
-import { applyWorkerReport } from "../services/health.ts"
+import { applyWorkerReport, refusal } from "../services/health.ts"
 import { removeSpool, reserve, SpoolError, spoolDir, writeSpool } from "../services/spool.ts"
 import { readUpload, signUpload } from "../services/upload-token.ts"
 import { claimJob, deliverToWaiter, pairWorker, workerByIdentity } from "../services/workers.ts"
@@ -161,10 +161,16 @@ export function workerApiRoutes(ctx: Ctx) {
     const job = await ownJob(c.get("worker").id, c.req.param("id"))
     if (!job) return c.json({ error: "not_found" }, 404)
     const body = z
-      .object({ ok: z.boolean(), result: z.record(z.string(), z.unknown()).optional(), error: z.string().optional() })
+      .object({
+        ok: z.boolean(),
+        result: z.record(z.string(), z.unknown()).optional(),
+        error: z.string().optional(),
+        // What the socket proxy refused, when that made the job fail. Workers of earlier releases leave it out.
+        refused: refusal.optional().catch(undefined),
+      })
       .safeParse(await c.req.json().catch(() => ({})))
     if (!body.success) return c.json({ error: "invalid" }, 400)
-    const { ok, result = {}, error } = body.data
+    const { ok, result = {}, error, refused } = body.data
 
     // Secrets (exported credentials) go straight to the waiting request and are never stored. A health report is
     // stored only as parsed, so nothing else a worker put in it (container details, by mistake) is kept.
@@ -191,8 +197,8 @@ export function workerApiRoutes(ctx: Ctx) {
       })
       .where(eq(workerJobs.id, job.id))
 
-    if (job.kind === "export-credentials") deliverToWaiter(job.id, { ok, result, error })
-    if (job.kind === "backup") await workerBackupResult(ctx, String(job.payload.runId), { ok, result, error })
+    if (job.kind === "export-credentials") deliverToWaiter(job.id, { ok, result, error, refused })
+    if (job.kind === "backup") await workerBackupResult(ctx, String(job.payload.runId), { ok, result, error, refused })
     return c.json({ ok: true })
   })
 

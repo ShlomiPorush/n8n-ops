@@ -63,3 +63,38 @@ services:
       interval: 3s
       timeout: 5s
       retries: 60
+
+  # A socket proxy of its own for the checks of what it refuses, so the stack's proxy is never changed. It starts by
+  # refusing commands everywhere; scripts/verify.sh recreates it with the lines n8n-ops computes (an override file).
+  queue-proxy:
+    image: wollomatic/socket-proxy:1.13.1
+    user: "0:0"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    command:
+      - -listenip=0.0.0.0
+      - -allowfrom=queue-probe
+      - -allowhealthcheck
+      - '-allowGET=(/v1\.[0-9]+)?/(_ping|exec/[0-9a-f]+/json|containers/json)'
+      - '-allowPOST=(/v1\.[0-9]+)?/(containers/(none)/exec|exec/[0-9a-f]+/start)'
+    healthcheck:
+      test: ["CMD", "./healthcheck"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  # The worker image without its agent: only probe-cli runs in it, against queue-proxy. No server, no identity, so
+  # the image's heartbeat check would never pass and is turned off.
+  queue-probe:
+    image: n8n-ops-worker:${N8N_OPS_IMAGE_TAG:-verify}
+    user: node
+    entrypoint: ["sleep", "infinity"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      DOCKER_HOST: tcp://queue-proxy:2375
+    healthcheck:
+      disable: true

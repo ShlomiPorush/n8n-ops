@@ -1,9 +1,21 @@
-import { Cpu as CpuIcon, Plus, Trash2 } from "lucide-react"
+import { ChevronDown, Cpu as CpuIcon, Plus, Trash2 } from "lucide-react"
 import { useState } from "react"
 import { Link } from "react-router"
 import { useConfirm } from "@/components/confirm"
 import { useDiscardGuard } from "@/components/discard-guard"
-import { BusyButton, Copyable, Empty, LoadError, Loading, Page, Panel, PanelHead, UserText } from "@/components/kit"
+import {
+  BusyButton,
+  Command,
+  Copyable,
+  Empty,
+  LoadError,
+  Loading,
+  Page,
+  Panel,
+  PanelHead,
+  UserText,
+} from "@/components/kit"
+import { RuleLines, type WorkerRule } from "@/components/proxy-fix"
 import { HostMark } from "@/components/skin/marks"
 import { StatusTag, TimeAgo, When } from "@/components/status"
 import { Button } from "@/components/ui/button"
@@ -31,6 +43,11 @@ export type Worker = {
   createdAt: string
   online: boolean
   instances: { id: string; name: string }[]
+  /** As entered in Add worker; null for a worker added before n8n-ops recorded it. */
+  install: { socketProxy: boolean; containers: string[] } | null
+  /** The containers its socket proxy allows now, as the owner recorded them. */
+  allowed: { containers: string[] } | null
+  proxy: WorkerRule & { refused: { instance: string; refused: string[] }[]; update: string | null }
 }
 
 export function WorkersPage() {
@@ -57,7 +74,7 @@ export function WorkersPage() {
   const list = workers.data ?? []
   const online = list.filter((w) => w.online).length
   const about =
-    "A worker runs on an n8n Docker host. It backs up credential secrets, moves credentials and checks n8n from inside its containers. It connects out to n8n-ops; no inbound port is needed."
+    "A worker runs on an n8n Docker host. It backs up credential secrets, moves credentials and checks n8n from inside its containers. It connects out to n8n-ops; no inbound port is needed. Its settings show what its socket proxy must allow, with the lines to paste."
   return (
     <Page
       title="Workers"
@@ -132,12 +149,63 @@ export function WorkersPage() {
                   </span>
                 </p>
               </div>
+              <WorkerSettings worker={w} />
             </div>
           ))
         )}
       </Panel>
       <AddWorkerDialog open={open} onOpenChange={setOpen} />
     </Page>
+  )
+}
+
+/** A worker's settings: as entered, as recorded now, and the lines its socket proxy needs, behind one toggle. */
+function WorkerSettings({ worker: w }: { worker: Worker }) {
+  const refused = w.proxy.refused.length > 0
+  const [open, setOpen] = useState(refused)
+  const entered = w.install
+    ? w.install.socketProxy
+      ? `Socket proxy, commands allowed in: ${w.install.containers.join(", ")}`
+      : "The whole Docker socket, no socket proxy"
+    : "Not recorded: this worker was added before n8n-ops recorded its settings"
+  return (
+    <div className="min-w-0 md:col-span-2">
+      <Button size="sm" variant="ghost" aria-expanded={open} onClick={() => setOpen((o) => !o)} className="-ms-2">
+        <ChevronDown className={cn("transition-transform", open && "rotate-180")} /> Settings
+        {refused && <span className="text-warn">(the socket proxy refuses something)</span>}
+      </Button>
+      {open && (
+        <div className="mt-2 grid min-w-0 gap-4" data-testid={`worker-settings-${w.id}`}>
+          <dl className="grid min-w-0 gap-x-4 gap-y-1.5 md:grid-cols-[max-content_minmax(0,1fr)]">
+            <dt className="font-semibold">As entered</dt>
+            <dd className="min-w-0 break-words">{entered}</dd>
+            <dt className="font-semibold">Allowed now</dt>
+            <dd className="min-w-0 break-words">
+              {w.allowed ? `${w.allowed.containers.join(", ")}, as you recorded` : "Not recorded"}
+            </dd>
+          </dl>
+          {w.proxy.refused.map((r) => (
+            <p key={r.instance} className="text-warn">
+              The socket proxy refuses {r.refused.join(", ")} for <UserText>{r.instance}</UserText>.
+            </p>
+          ))}
+          {w.proxy.socketProxy === false ? (
+            <p className="text-muted-foreground">Without a socket proxy there are no lines to keep up to date.</p>
+          ) : (
+            <div className="grid min-w-0 gap-2">
+              <p className="font-semibold">What its socket proxy needs now</p>
+              <RuleLines rule={w.proxy.rule} workerId={w.id} recorded={w.proxy.recorded} />
+            </div>
+          )}
+          {w.proxy.update && (
+            <div className="grid min-w-0 gap-1.5">
+              <p>This worker runs an earlier release than the server. Its image line in docker-compose.yml:</p>
+              <Command value={w.proxy.update} label="Copy the image line" />
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
 

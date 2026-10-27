@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-27
+
 ### Added
 
 - **Queue workers found by themselves.** An instance in queue mode, checked through the worker on its host, has its n8n queue workers found in the main's Compose project and checked inside their containers: ready, not ready (the database or Redis is not there), no answer, down, or running with the health check off (a warning; set `QUEUE_HEALTH_CHECK_ACTIVE=true`). The Health tab lists them by name, and their alerts name them. When they cannot be found for sure (two n8n mains in one project, no Compose project), the Health tab says why and asks for their health URLs, which still work as before. Installed workers need one more line: add `containers/json` to `-allowGET` in the worker's `docker-compose.yml` and run `docker compose up -d` there; the worker keeps its pairing. To check the queue workers, their containers must be allowed in `-allowPOST` too. `docker compose exec worker node dist/probe-cli.js` shows what the worker sees on its host.

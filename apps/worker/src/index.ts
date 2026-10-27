@@ -1,7 +1,8 @@
-import { readFile, rm, writeFile } from "node:fs/promises"
+import { readFile, rm } from "node:fs/promises"
 import { Docker } from "./docker.ts"
 import { DEFAULT_HEARTBEAT_FILE, recordContact } from "./heartbeat.ts"
 import { backupJob, exportCredentialsJob, type Job, type JobResult, probeJob } from "./jobs.ts"
+import { Pairing } from "./pairing.ts"
 
 // Outbound-only agent for an n8n Docker host. It pairs once with a one-time token, then polls the
 // server for jobs. It opens no ports.
@@ -54,24 +55,18 @@ async function pairingToken(): Promise<string | null> {
   }
 }
 
-async function pair(token: string): Promise<string | null> {
-  const res = await fetch(url("/api/worker/pair"), {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ token, version }),
-    signal: AbortSignal.timeout(30_000),
-  })
-  if (!res.ok) {
-    log("pairing failed", { status: res.status, body: (await res.text()).slice(0, 200) })
-    return null
-  }
-  const { identity, workerId, name } = (await res.json()) as { identity: string; workerId: string; name: string }
-  await writeFile(identityFile, JSON.stringify({ identity, workerId, name }), { mode: 0o600 })
-  // The token is spent now; a file that cannot be removed (a read-only mount) does no harm.
-  await rm(pairingFile, { force: true }).catch(() => {})
-  log("paired", { workerId, name })
-  return identity
-}
+const pairing = new Pairing({
+  dataDir,
+  identityFile,
+  request: (token) =>
+    fetch(url("/api/worker/pair"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token, version }),
+      signal: AbortSignal.timeout(30_000),
+    }),
+  log,
+})
 
 async function handle(identity: string, job: Job): Promise<JobResult> {
   switch (job.kind) {
@@ -99,7 +94,9 @@ async function main() {
         const live = await fetch(url("/healthz/live"), { signal: AbortSignal.timeout(10_000) })
         if (live.ok) await recordContact(heartbeatFile)
         const token = await pairingToken()
-        if (token) identity = await pair(token)
+        identity = await pairing.attempt(token)
+        // The token is spent now; a file that cannot be removed (a read-only mount) does no harm.
+        if (identity) await rm(pairingFile, { force: true }).catch(() => {})
         await sleep(5_000)
         continue
       }

@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from "vitest"
 import { Docker, DockerError } from "./docker.ts"
 import { checkInside } from "./inside.ts"
 import { probeJob } from "./jobs.ts"
+import { LIMITS } from "./queue-workers.ts"
 
 // The worker's side of reading the main from inside, against a stand-in Docker Engine API: what Docker's answers
 // mean, the limits of a probe's calls, and when the worker checks over the network instead.
@@ -189,6 +190,27 @@ describe("probeJob and the container list", () => {
   it("keeps a running main as the check found it", async () => {
     const docker = await withList("running", healthy)
     expect((await probeJob({ inside: { container: "n8n" } }, docker)).result).toMatchObject({ main: { ok: true } })
+  })
+})
+
+describe("probeJob's budget", () => {
+  it("holds the network fallback and typed URLs to the probe's deadline", async () => {
+    const port = await new Promise<number>((resolve) => {
+      const server = createServer(() => {})
+      servers.push(server)
+      server.listen(0, "127.0.0.1", () => resolve((server.address() as AddressInfo).port))
+    })
+    const hang = `http://127.0.0.1:${port}`
+    const before = LIMITS.probeMs
+    LIMITS.probeMs = 300
+    try {
+      const started = Date.now()
+      const job = await probeJob({ main: `${hang}/healthz`, readiness: `${hang}/r`, workers: [`${hang}/w`] })
+      expect(Date.now() - started).toBeLessThan(3000)
+      expect(job.result).toMatchObject({ main: { ok: false }, workers: [{ ok: false }] })
+    } finally {
+      LIMITS.probeMs = before
+    }
   })
 })
 

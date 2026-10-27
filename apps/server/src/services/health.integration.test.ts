@@ -6,10 +6,10 @@ import postgres from "postgres"
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest"
 import type { Ctx } from "../context.ts"
 import { createDatabase, type Database } from "../db/client.ts"
-import { alertOutbox, alertState, instances } from "../db/schema.ts"
+import { alertOutbox, alertState, instances, workers } from "../db/schema.ts"
 import { createSettings } from "../lib/settings.ts"
 import { applyHealth, type HealthReport, startCheck } from "./health.ts"
-import { updateInstance } from "./instance-update.ts"
+import { detachWorker, updateInstance } from "./instance-update.ts"
 
 // Applying health reports against a real PostgreSQL: a check that started earlier never overwrites a later one,
 // a change of how health is collected drops checks that started before it, the mode read inside the main becomes
@@ -310,6 +310,52 @@ describe("applyHealth", () => {
     const keys = (await conditions()).filter((c) => c.active).map((c) => c.key)
     expect(keys).toEqual([`worker:${id}:docker://acme-w-1`])
     expect((await row())?.health).toBe("unknown")
+  })
+
+  it("applies typed worker URLs when the main could not be collected, and ends found-worker alerts for them", async () => {
+    await ctx.db.update(instances).set({ queueMode: true }).where(eq(instances.id, id))
+    const found = { url: "docker://acme-w-1", name: "acme-w-1", state: "down", ok: false, status: 0, ms: 1 }
+    await applyHealth(
+      ctx,
+      id,
+      report({ source: "inside", workers: [found], discovery: { status: "ok", found: 1 } } as Partial<HealthReport>),
+      await ticket(),
+    )
+    const typed = { url: "http://w:5678/healthz", ok: false, status: 0, ms: 1, error: "refused" }
+    await applyHealth(
+      ctx,
+      id,
+      report({ source: "inside", notCollected: "no answer", workers: [typed] }),
+      await ticket(),
+    )
+    expect((await conditions()).filter((c) => c.active).map((c) => c.key)).toEqual([
+      `worker:${id}:http://w:5678/healthz`,
+    ])
+  })
+
+  it("takes a revoked worker off in the instance's turn, so a report in flight cannot reopen its alerts", async () => {
+    const [w] = await ctx.db
+      .insert(workers)
+      .values({ name: "old-host", tokenHash: "h-old", lastSeenAt: new Date() })
+      .returning()
+    if (!w) throw new Error("no worker")
+    await ctx.db
+      .update(instances)
+      .set({ queueMode: true, collection: "worker", workerId: w.id })
+      .where(eq(instances.id, id))
+    const found = { url: "docker://acme-w-1", name: "acme-w-1", state: "down", ok: false, status: 0, ms: 1 }
+    const inFlight = await ticket()
+    await Promise.all([
+      applyHealth(
+        ctx,
+        id,
+        report({ source: "inside", workers: [found], discovery: { status: "ok", found: 1 } } as Partial<HealthReport>),
+        inFlight,
+      ),
+      detachWorker(ctx, w.id),
+    ])
+    expect((await conditions()).filter((c) => c.active)).toEqual([])
+    expect((await row())?.workerId).toBeNull()
   })
 
   it("says not collected when the check itself failed, and leaves the main's alerts as they were", async () => {

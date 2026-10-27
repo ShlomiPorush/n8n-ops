@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm"
+import { and, eq, sql } from "drizzle-orm"
 import type { Ctx } from "../context.ts"
 import { instances } from "../db/schema.ts"
 import { oneAtATime } from "../lib/one-at-a-time.ts"
@@ -37,4 +37,28 @@ export function updateInstance(ctx: Ctx, id: string, data: InstanceChange) {
       return saved
     }),
   )
+}
+
+/**
+ * Takes a revoked worker off its instances, each in its turn with its health reports: checks under way are dropped,
+ * a found mode no longer holds, and the worker conditions of the old host end, with no report reopening them after.
+ */
+export async function detachWorker(ctx: Ctx, workerId: string) {
+  const attached = await ctx.db.select({ id: instances.id }).from(instances).where(eq(instances.workerId, workerId))
+  for (const { id } of attached) {
+    await oneAtATime(healthTurn(id), () =>
+      ctx.db.transaction(async (tx) => {
+        const [saved] = await tx
+          .update(instances)
+          .set({
+            workerId: null,
+            queueModeSource: "manual",
+            collectionRevision: sql`${instances.collectionRevision} + 1`,
+          })
+          .where(and(eq(instances.id, id), eq(instances.workerId, workerId)))
+          .returning({ id: instances.id })
+        if (saved) await closeWorkerConditions(tx, saved.id)
+      }),
+    )
+  }
 }

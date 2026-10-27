@@ -314,7 +314,7 @@ async function applyHealthNow(ctx: Ctx, instanceId: string, given: HealthReport,
       start: () => healthAlerts.down(name, report.main),
       clear: () => healthAlerts.up(name),
     })
-  if (!queueMode || (report.notCollected && !report.discovery)) return health
+  if (!queueMode) return health
   await settleWorkerSources(ctx, current.id, report)
   for (const w of report.workers) {
     // Only a verified state moves an alert: a worker not checked, or running without its health check, keeps it.

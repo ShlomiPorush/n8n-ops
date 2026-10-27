@@ -26,10 +26,12 @@ async function cleanup(docker: Docker, container: string) {
 
 type Reading = { ok: boolean; status: number; ms: number; error?: string }
 
-async function requestUrl(url: string): Promise<Reading> {
+async function requestUrl(url: string, signal: AbortSignal = AbortSignal.timeout(10_000)): Promise<Reading> {
   const started = Date.now()
+  // Past the probe's deadline nothing more is asked.
+  if (signal.aborted) return { ok: false, status: 0, ms: 0, error: "the probe reached its deadline before this check" }
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(10_000) })
+    const res = await fetch(url, { signal })
     return { ok: res.ok, status: res.status, ms: Date.now() - started }
   } catch (error) {
     return { ok: false, status: 0, ms: Date.now() - started, error: (error as Error).message }
@@ -86,11 +88,11 @@ export async function probeJob(payload: Record<string, unknown>, docker?: Docker
   const typedMetrics = typeof overrides.metricsUrl === "string" ? overrides.metricsUrl : undefined
   const checkedAt = () => new Date().toISOString()
   let fallback: string | undefined
+  // One budget for the whole probe, from its start, the network fallback included; each call has a shorter one.
+  const deadline = AbortSignal.timeout(LIMITS.probeMs)
+  const within = () => AbortSignal.any([deadline, AbortSignal.timeout(LIMITS.callMs)])
   if (docker && typeof inside?.container === "string" && inside.container) {
     const container = inside.container
-    // One budget for the whole probe, from its start; each call has its own shorter one inside it.
-    const deadline = AbortSignal.timeout(LIMITS.probeMs)
-    const within = () => AbortSignal.any([deadline, AbortSignal.timeout(LIMITS.callMs)])
     const outcome = await checkInside(docker, container, { skipMetrics: Boolean(typedMetrics), signal: within() })
     if (outcome.kind === "report") {
       let report = outcome.report
@@ -117,16 +119,22 @@ export async function probeJob(payload: Record<string, unknown>, docker?: Docker
           result: { ...report, ...metrics, workers: found.workers, discovery: found.discovery, checkedAt: checkedAt() },
         }
       const workers = await Promise.all(
-        strings(overrides.workerHealthUrls).map(async (url) => ({ url, ...(await requestUrl(url)) })),
+        strings(overrides.workerHealthUrls).map(async (url) => ({ url, ...(await requestUrl(url, within())) })),
       )
       return { ok: true, result: { ...report, ...metrics, workers, checkedAt: checkedAt() } }
     }
     fallback = outcome.reason
   }
   // Over the network: the URL fields, as workers of earlier releases do.
-  const [main, readiness] = await Promise.all([requestUrl(String(payload.main)), requestUrl(String(payload.readiness))])
-  const workers = await Promise.all(strings(payload.workers).map(async (url) => ({ url, ...(await requestUrl(url)) })))
-  const metrics = typeof payload.metrics === "string" && payload.metrics ? await metricsOver(payload.metrics) : {}
+  const [main, readiness] = await Promise.all([
+    requestUrl(String(payload.main), within()),
+    requestUrl(String(payload.readiness), within()),
+  ])
+  const workers = await Promise.all(
+    strings(payload.workers).map(async (url) => ({ url, ...(await requestUrl(url, within())) })),
+  )
+  const metrics =
+    typeof payload.metrics === "string" && payload.metrics ? await metricsOver(payload.metrics, within()) : {}
   return {
     ok: true,
     result: {

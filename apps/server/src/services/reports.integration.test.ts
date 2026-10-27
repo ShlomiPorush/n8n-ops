@@ -4,7 +4,7 @@ import postgres from "postgres"
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest"
 import type { Ctx } from "../context.ts"
 import { createDatabase, type Database } from "../db/client.ts"
-import { alertOutbox, backupRuns, failures, instances, problems } from "../db/schema.ts"
+import { affectedWorkflows, alertOutbox, backupRuns, failures, instances, problems } from "../db/schema.ts"
 import { buildReport } from "./reports.ts"
 
 // The daily report against a real PostgreSQL: it counts exactly the window it prints, after its start up to and
@@ -40,16 +40,32 @@ beforeAll(async () => {
     .returning()
   if (!instance) throw new Error("no instance")
   // `firstSeen` comes from n8n's clock, `createdAt` is when n8n-ops took the problem in; a report counts by the second.
-  const problem = async (workflowName: string, createdAt: Date, firstSeen = createdAt) => {
+  const problem = async (
+    workflowName: string,
+    createdAt: Date,
+    firstSeen = createdAt,
+    problemId?: string,
+    on = instance,
+  ) => {
+    const pid =
+      problemId ??
+      (
+        await ctx.db
+          .insert(problems)
+          .values({ errorMessage: `ERP refused (${workflowName})` })
+          .returning()
+      )[0]?.id
+    if (!pid) throw new Error("no problem")
     const [row] = await ctx.db
-      .insert(problems)
+      .insert(affectedWorkflows)
       .values({
-        instanceId: instance.id,
+        problemId: pid,
+        instanceId: on.id,
         workflowId: workflowName,
         workflowName,
         nodeName: "Call ERP",
         errorMessage: "ERP refused",
-        fingerprint: `fp-${workflowName}`,
+        fingerprint: `fp-${on.name}-${workflowName}`,
         firstSeen,
         lastSeen: firstSeen,
         createdAt,
@@ -63,10 +79,23 @@ beforeAll(async () => {
   const later = await problem("Made after the report", at(when, 60_000), at(since, -hour))
   // Taken in before the end, from an n8n whose clock runs ahead: open in this report.
   await problem("From a clock ahead", at(when, -hour), at(when, hour))
+  // The counted Problem hit another instance too: open on both, once in the total.
+  const [other] = await ctx.db
+    .insert(instances)
+    .values({ name: "other-n8n", baseUrl: "http://other:5678", apiKeyEnc: "v1:x:y:z", version: "1.0.0" })
+    .returning()
+  if (!other) throw new Error("no instance")
+  await problem("Sync orders", at(since, -hour), at(since, -hour), counted.problemId, other)
   let execution = 0
   const failure = (problemId: string, workflowId: string, createdAt: Date) => {
     execution += 1
-    return { problemId, instanceId: instance.id, executionId: `e-${execution}`, workflowId, createdAt }
+    return {
+      affectedWorkflowId: problemId,
+      instanceId: instance.id,
+      executionId: `e-${execution}`,
+      workflowId,
+      createdAt,
+    }
   }
   await ctx.db.insert(failures).values([
     // The start of the window is the end of the one before: not counted again.
@@ -109,6 +138,7 @@ describe("buildReport", () => {
     expect(report.text).not.toContain("Made after the report")
     // Open problems are those taken in by the end, whatever n8n's clock said.
     expect(report.text).toContain("Open problems: 2")
+    expect(report.text).toContain("other-n8n  ·  1")
 
     expect(report.text).toContain("Disk almost full")
     expect(report.text).toContain("Health check failed at the end")

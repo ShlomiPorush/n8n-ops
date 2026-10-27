@@ -1,11 +1,12 @@
 import { type DateWriting, formatWindow, messageWriting } from "@n8n-ops/shared"
-import { and, count, desc, eq, gt, isNull, lte } from "drizzle-orm"
+import { and, count, desc, eq, gt, lte } from "drizzle-orm"
 import nodemailer from "nodemailer"
 import type { Ctx } from "../context.ts"
-import { alertOutbox, alertState, backupRuns, failures, instances, problems } from "../db/schema.ts"
+import { affectedWorkflows, alertOutbox, alertState, backupRuns, failures, instances } from "../db/schema.ts"
 import { emailAccount } from "./draft-tests.ts"
 import { type Email, formatDate, panel, plural, render, stats, type Tone, table, tag } from "./email-layout.ts"
 import { compareVersions, latestN8nVersion } from "./instances.ts"
+import { openProblemCount, openProblemsByInstance } from "./problem-view.ts"
 import { telegramPlainText } from "./telegram.ts"
 
 const n = (value: number) => value.toLocaleString("en-US")
@@ -18,6 +19,8 @@ export type Report = Email
 type ReportData = {
   period: "daily" | "weekly"
   openByInstance: { name: string; open: number }[]
+  /** Open Problems in all; a Problem on several instances counts once. The sum of `openByInstance` when left out. */
+  totalOpen?: number
   topWorkflows: { workflow: string; instance: string; failures: number }[]
   incidents: { at: Date; text: string }[]
   backups: { name: string; status: string; at: Date | null }[]
@@ -47,7 +50,7 @@ export function renderReport(d: ReportData): Report {
   // The exact window the failures and incidents are counted in, with its zone (EM-6).
   const span = formatWindow(since, when, dates)
   const title = `n8n-ops ${d.period} report`
-  const totalOpen = d.openByInstance.reduce((n, i) => n + i.open, 0)
+  const totalOpen = d.totalOpen ?? d.openByInstance.reduce((n, i) => n + i.open, 0)
   const instancesWithOpen = d.openByInstance.filter((i) => i.open > 0)
   const behind = d.latest
     ? d.versions.filter((v) => v.version && compareVersions(v.version, d.latest as string) < 0)
@@ -175,17 +178,15 @@ export async function buildReport(ctx: Ctx, period: "daily" | "weekly", when = n
   const since = new Date(when.getTime() - periodMs[period])
   const allInstances = await ctx.db.select().from(instances)
   const name = new Map(allInstances.map((i) => [i.id, i.name]))
-  const open = await ctx.db
-    .select({ instanceId: problems.instanceId, n: count() })
-    .from(problems)
-    .where(and(eq(problems.status, "open"), isNull(problems.mergedInto), lte(problems.createdAt, when)))
-    .groupBy(problems.instanceId)
+  // A Problem on two instances counts on each of them, and once in the total.
+  const open = await openProblemsByInstance(ctx, when)
+  const totalOpen = await openProblemCount(ctx, { before: when })
   const top = await ctx.db
-    .select({ workflow: problems.workflowName, instanceId: problems.instanceId, n: count() })
+    .select({ workflow: affectedWorkflows.workflowName, instanceId: affectedWorkflows.instanceId, n: count() })
     .from(failures)
-    .innerJoin(problems, eq(failures.problemId, problems.id))
+    .innerJoin(affectedWorkflows, eq(failures.affectedWorkflowId, affectedWorkflows.id))
     .where(and(gt(failures.createdAt, since), lte(failures.createdAt, when)))
-    .groupBy(problems.workflowName, problems.instanceId)
+    .groupBy(affectedWorkflows.workflowName, affectedWorkflows.instanceId)
     .orderBy(desc(count()))
     .limit(10)
   const incidents = await ctx.db
@@ -207,6 +208,7 @@ export async function buildReport(ctx: Ctx, period: "daily" | "weekly", when = n
   )
   return renderReport({
     period,
+    totalOpen,
     openByInstance: allInstances.map((i) => ({ name: i.name, open: open.find((o) => o.instanceId === i.id)?.n ?? 0 })),
     topWorkflows: top.map((t) => ({ workflow: t.workflow, instance: name.get(t.instanceId) ?? "?", failures: t.n })),
     incidents: incidents.map((i) => ({ at: i.at, text: telegramPlainText(i.text) })),

@@ -19,6 +19,9 @@ const problem = (id: string, at: number): AttentionItem => ({
   instanceName: "alpha",
   errorMessage: "boom",
   count: 1,
+  workflows: 1,
+  affectedTotal: 1,
+  instances: ["alpha"],
   at: new Date(at),
 })
 

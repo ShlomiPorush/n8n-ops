@@ -1,17 +1,22 @@
 import { and, asc, desc, eq, ilike, inArray, isNotNull, or, type SQL, sql } from "drizzle-orm"
 import type { Ctx } from "../context.ts"
-import { backupRuns, failures, type Health, instances, workflows } from "../db/schema.ts"
+import { backupRuns, type Health, instances, workflows } from "../db/schema.ts"
 import { likeContains } from "../lib/like.ts"
-import { listProblems, problemDetail } from "../routes/problems.ts"
 import { grantableScopes } from "./access.ts"
 import { currentHealth, type HealthNow } from "./collection.ts"
-import { effectiveScopes, executionUrl, latestN8nVersion } from "./instances.ts"
+import { effectiveScopes, latestN8nVersion } from "./instances.ts"
+import { problemDetail, problemFailure, problemPage } from "./problem-view.ts"
 
 /**
  * Read-only queries for agents (requirements E1 to E3). The REST API and the MCP server both use these,
  * so they always return the same picture.
  */
 
+/**
+ * Problems for agents: one per exact error, with the workflows it hit (`affectedWorkflows`, most recently failed
+ * first, at most AFFECTED_IN_LIST; `affectedTotal` counts them all). With an instance, a Problem is listed when it hit
+ * that instance, its state is its state there, and that instance's workflows come first.
+ */
 export async function agentProblems(
   ctx: Ctx,
   opts: { status?: string; instance?: string; q?: string; limit?: number },
@@ -19,40 +24,34 @@ export async function agentProblems(
   let instanceId: string | undefined
   if (opts.instance) {
     const [row] = await ctx.db.select({ id: instances.id }).from(instances).where(eq(instances.name, opts.instance))
-    instanceId = row?.id ?? "00000000-0000-0000-0000-000000000000"
+    if (!row) return []
+    instanceId = row.id
   }
-  return listProblems(ctx, {
+  const { items } = await problemPage(ctx, {
     status: opts.status ?? "open",
     instanceId,
     q: opts.q,
     limit: Math.min(opts.limit ?? 50, 200),
-    // The agents' API keeps its shape and order: a bare list, most recently seen first.
+    // Most recently seen first, as it always was.
     order: "recent",
   })
+  return items
 }
 
-export async function agentProblem(ctx: Ctx, id: string) {
-  return problemDetail(ctx, id)
+/**
+ * One Problem with all its workflows, and the chosen one's latest failure (`selected`). The id may be an Affected
+ * workflow's (it is then the one chosen) or a merged Problem's; `affectedWorkflowId` chooses explicitly.
+ */
+export async function agentProblem(ctx: Ctx, id: string, affectedWorkflowId?: string) {
+  return problemDetail(ctx, id, affectedWorkflowId)
 }
 
-/** The stored failed execution: error, stack, node input and n8n's full run data. */
-export async function agentFailure(ctx: Ctx, problemId: string, failureId?: string) {
-  const where = failureId
-    ? and(eq(failures.problemId, problemId), eq(failures.id, failureId))
-    : eq(failures.problemId, problemId)
-  const [row] = await ctx.db
-    .select({ f: failures, baseUrl: instances.baseUrl, instanceName: instances.name })
-    .from(failures)
-    .innerJoin(instances, eq(failures.instanceId, instances.id))
-    .where(where)
-    .orderBy(desc(failures.createdAt))
-    .limit(1)
-  if (!row) return null
-  return {
-    ...row.f,
-    instanceName: row.instanceName,
-    n8nUrl: executionUrl({ baseUrl: row.baseUrl }, row.f.workflowId, row.f.executionId),
-  }
+/**
+ * A stored failed execution: error, stack, node input and n8n's full run data. The latest of the workflow an
+ * Affected workflow id or `affectedWorkflowId` names, else of the whole Problem; a `failureId` must belong to both.
+ */
+export async function agentFailure(ctx: Ctx, problemId: string, failureId?: string, affectedWorkflowId?: string) {
+  return problemFailure(ctx, problemId, { failure: failureId, workflow: affectedWorkflowId })
 }
 
 const healthFields = (i: { id: string; health: Health }, now: Map<string, HealthNow>) => {

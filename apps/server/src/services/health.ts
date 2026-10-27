@@ -208,6 +208,8 @@ async function applyHealthNow(ctx: Ctx, instanceId: string, given: HealthReport,
         health,
         healthDetail: { ...report, backlogActive },
         healthCheckedAt: now,
+        // Only a check that read the instance is its last known health; one not collected leaves it.
+        ...(health !== "unknown" ? { lastKnownHealth: health, lastKnownAt: now } : {}),
         healthAppliedSeq: ticket.seq,
         backlogSince,
         ...(found ? { queueMode, queueModeSource: "found" as const } : {}),

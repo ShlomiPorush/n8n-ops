@@ -250,6 +250,12 @@ export const instances = pgTable("instances", {
   health: text("health").$type<Health>().notNull().default("unknown"),
   healthDetail: jsonb("health_detail").$type<Record<string, unknown>>(),
   healthCheckedAt: ts("health_checked_at"),
+  /**
+   * The health of the last check that read the instance, and when. A check that was not collected leaves them, so
+   * the last known health stays while the health is unknown.
+   */
+  lastKnownHealth: text("last_known_health").$type<Exclude<Health, "unknown">>(),
+  lastKnownAt: ts("last_known_at"),
   lastPollAt: ts("last_poll_at"),
   lastPollError: text("last_poll_error"),
   firstSyncDone: boolean("first_sync_done").notNull().default(false),

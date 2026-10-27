@@ -60,6 +60,7 @@ const healthFields = (i: { id: string; health: Health }, now: Map<string, Health
   return {
     health: h?.health ?? i.health,
     lastKnownHealth: h?.lastKnownHealth ?? null,
+    lastKnownAt: h?.lastKnownAt ?? null,
     unknownReason: h?.unknownReason ?? null,
   }
 }
@@ -74,7 +75,8 @@ export async function agentInstances(ctx: Ctx) {
     baseUrl: i.baseUrl,
     version: i.version,
     latestVersion: latest,
-    // "unknown" when nothing collects it now; healthDetail and healthCheckedAt are then the last known reading.
+    // "unknown" when nothing collects it now; healthDetail and healthCheckedAt are then the last check, and
+    // lastKnownHealth and lastKnownAt the last check that read the instance.
     ...healthFields(i, now),
     healthDetail: i.healthDetail,
     healthCheckedAt: i.healthCheckedAt,
@@ -92,7 +94,7 @@ export async function agentQueues(ctx: Ctx) {
     const d = i.healthDetail as { queue?: unknown; workers?: unknown; backlogActive?: boolean } | null
     return {
       name: i.name,
-      // "unknown" when nothing collects it now; the queue figures and checkedAt are then the last known reading.
+      // "unknown" when nothing collects it now; the queue figures and checkedAt are then those of the last check.
       ...healthFields(i, now),
       queue: d?.queue ?? null,
       workers: d?.workers ?? [],

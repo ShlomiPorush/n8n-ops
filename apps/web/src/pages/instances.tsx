@@ -140,8 +140,9 @@ export type InstanceRow = {
   scopesCheckedAt: string | null
   /** The health now: "unknown" also when nothing collects it (unknownReason). */
   health: HealthState
-  /** While the health is unknown, the health of the last check (healthDetail, healthCheckedAt); null if none. */
+  /** While the health is unknown, the health of the last check that read the instance, and when; null if none. */
   lastKnownHealth: HealthState | null
+  lastKnownAt: string | null
   unknownReason: string | null
   healthDetail: {
     main?: { ok: boolean; status: number; error?: string }
@@ -203,15 +204,15 @@ export const healthLabel = (i: Pick<InstanceRow, "health" | "healthDetail" | "un
 export function LastKnown({
   instance: i,
 }: {
-  instance: Pick<InstanceRow, "lastKnownHealth" | "healthDetail" | "healthCheckedAt">
+  instance: Pick<InstanceRow, "lastKnownHealth" | "lastKnownAt" | "healthDetail">
 }) {
   if (!i.lastKnownHealth) return null
   return (
     <span className="text-muted-foreground">
-      Last known: {readingLabel(i.lastKnownHealth, i.healthDetail)}
-      {i.healthCheckedAt && (
+      Last known: {readingLabel(i.lastKnownHealth, i.healthDetail?.notCollected ? null : i.healthDetail)}
+      {i.lastKnownAt && (
         <>
-          , <TimeAgo value={i.healthCheckedAt} />
+          , <TimeAgo value={i.lastKnownAt} />
         </>
       )}
     </span>
@@ -544,8 +545,8 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
     </Alert>
   )
   const collected = collectionView({ collection: i.collection, worker: i.worker, detail: hd })
-  // Nothing collects the health now: what is stored is only the last known health.
-  const past = Boolean(i.unknownReason && i.lastKnownHealth)
+  // Nothing collects the health now: the checks shown are only the last known health (unless it was not collected).
+  const past = Boolean(i.unknownReason && i.lastKnownHealth && !hd?.notCollected)
 
   const tabs: PaneTabItem[] = [
     { value: "overview", icon: LayoutDashboardIcon, label: "Overview" },
@@ -897,8 +898,9 @@ function CollectionTag({ instance: i }: { instance: InstanceRow }) {
 
 function StatusStrip({ instance: i, footer }: { instance: InstanceDetailData; footer: CollectionView }) {
   const hd = i.healthDetail
-  // While the health is unknown, the cells are the last known health and are drawn without their tone.
+  // While the health is unknown, the cells are the last check and are drawn without their tone.
   const past = Boolean(i.unknownReason)
+  const read = Boolean(i.lastKnownHealth && !hd?.notCollected)
   // A check that could not run says nothing about n8n: its parts show as unknown, not as failures.
   const check = (ok: boolean | undefined): HealthState =>
     ok === undefined || hd?.notCollected ? "unknown" : ok ? "ok" : "down"
@@ -948,7 +950,7 @@ function StatusStrip({ instance: i, footer }: { instance: InstanceDetailData; fo
           const health = past ? "unknown" : c.health
           return (
             <div key={c.label} className="flex min-w-0 items-baseline gap-2.5 bg-panel px-pad-x py-pad-y">
-              <Dot health={health} label={past && i.lastKnownHealth ? `${c.value} at the last check` : undefined} />
+              <Dot health={health} label={past && read ? `${c.value} at the last check` : undefined} />
               <div className="min-w-0">
                 <div className="text-small text-muted-foreground">{c.label}</div>
                 <div
@@ -973,7 +975,7 @@ function StatusStrip({ instance: i, footer }: { instance: InstanceDetailData; fo
             {i.lastKnownHealth && (
               <>
                 {" "}
-                Last known health, read <TimeAgo value={i.healthCheckedAt} />
+                Last known health, read <TimeAgo value={i.lastKnownAt} />
               </>
             )}
           </>

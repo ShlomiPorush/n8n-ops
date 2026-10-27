@@ -42,8 +42,10 @@ export function reportsSince(workerId: string): Date {
 export type HealthNow = {
   /** The health now: Unknown when nothing collects it. */
   health: Health
-  /** The stored health while the health now is Unknown, null when it was never read. */
-  lastKnownHealth: Health | null
+  /** While the health now is Unknown, that of the last check that read the instance; null when none did. */
+  lastKnownHealth: Exclude<Health, "unknown"> | null
+  /** When that check was. */
+  lastKnownAt: Date | null
   /** Why the health is Unknown, null when it is not. */
   unknownReason: string | null
 }
@@ -70,16 +72,20 @@ function whyUnknown(
 
 /** The health of an instance now, from what is stored and the worker that collects it. */
 export function healthNow(
-  instance: Pick<Instance, "health" | "healthDetail" | "healthCheckedAt" | "collection" | "workerId">,
+  instance: Pick<
+    Instance,
+    "health" | "healthDetail" | "healthCheckedAt" | "lastKnownHealth" | "lastKnownAt" | "collection" | "workerId"
+  >,
   worker: Worker | null | undefined,
   intervalSec: number,
   now = Date.now(),
 ): HealthNow {
   const reason = whyUnknown(instance, worker, intervalSec, now)
-  if (!reason) return { health: instance.health, lastKnownHealth: null, unknownReason: null }
+  if (!reason) return { health: instance.health, lastKnownHealth: null, lastKnownAt: null, unknownReason: null }
   return {
     health: "unknown",
-    lastKnownHealth: instance.health === "unknown" ? null : instance.health,
+    lastKnownHealth: instance.lastKnownHealth ?? null,
+    lastKnownAt: instance.lastKnownHealth ? instance.lastKnownAt : null,
     unknownReason: reason,
   }
 }

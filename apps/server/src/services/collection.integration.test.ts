@@ -11,8 +11,8 @@ import { sha256 } from "../lib/crypto.ts"
 import { workerApiRoutes } from "../routes/worker-api.ts"
 import { agentQueues } from "./agent.ts"
 import { enqueueProbes } from "./backups.ts"
-import { collectionClock, WORKER_ONLINE_MS, watchCollectors } from "./collection.ts"
-import { type HealthReport, startCheck } from "./health.ts"
+import { collectionClock, currentHealth, WORKER_ONLINE_MS, watchCollectors } from "./collection.ts"
+import { applyHealth, type HealthReport, startCheck } from "./health.ts"
 
 // When nothing collects an instance's health, against a real PostgreSQL: the alerts of a worker that stops
 // reporting, the checks that no longer count after a return or a restart, and reports read under a collection
@@ -80,6 +80,8 @@ async function workerCollecting(names: string[], seenAgo: number) {
         workerId: w.id,
         health: "ok" as const,
         healthCheckedAt: ago(minute),
+        lastKnownHealth: "ok" as const,
+        lastKnownAt: ago(minute),
       })),
     )
     .returning()
@@ -232,12 +234,38 @@ describe("a worker's probe result", () => {
   })
 })
 
+describe("the last known health", () => {
+  it("stays through a check that was not collected, and then a worker that went offline", async () => {
+    const { worker, instances: rows } = await workerCollecting(["alpha"], 1_000)
+    const id = rows[0]?.id ?? ""
+    const apply = async (r: HealthReport) => {
+      const started = await startCheck(ctx, id)
+      if (!started) throw new Error("no check")
+      return applyHealth(ctx, id, r, started.ticket)
+    }
+    expect(await apply(report("worker", true))).toBe("ok")
+    const [read] = await ctx.db.select().from(instances).where(eq(instances.id, id))
+    expect(await apply({ ...report("worker", true), notCollected: "docker exec timed out" })).toBe("unknown")
+    await setSeen(worker.id, 5 * minute)
+
+    const [row] = await ctx.db.select().from(instances).where(eq(instances.id, id))
+    if (!row || !read) throw new Error("no instance")
+    expect(row).toMatchObject({ health: "unknown", lastKnownHealth: "ok", lastKnownAt: read.healthCheckedAt })
+    expect((await currentHealth(ctx, [row])).get(id)).toEqual({
+      health: "unknown",
+      lastKnownHealth: "ok",
+      lastKnownAt: read.healthCheckedAt,
+      unknownReason: "host-a is offline",
+    })
+  })
+})
+
 describe("the agents' answer", () => {
   it("says unknown, with the last known health and the reason", async () => {
     const { instances: rows } = await workerCollecting(["alpha"], 5 * minute)
     await ctx.db
       .update(instances)
-      .set({ queueMode: true, health: "down" })
+      .set({ queueMode: true, health: "down", lastKnownHealth: "down" })
       .where(eq(instances.id, rows[0]?.id ?? ""))
     expect(await agentQueues(ctx)).toEqual([
       expect.objectContaining({

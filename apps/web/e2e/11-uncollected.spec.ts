@@ -30,9 +30,11 @@ test.beforeAll(async ({ browser }) => {
     values (${workerName}, ${`e2e-${Date.now()}`}, now() - interval '10 minutes') returning id`
   const detail = { main: { ok: true, status: 200, ms: 4 }, readiness: { ok: true, status: 200, ms: 4 }, workers: [] }
   const [instance] = await sql`insert into instances
-    (name, base_url, api_key_enc, collection, worker_id, health, health_detail, health_checked_at)
+    (name, base_url, api_key_enc, collection, worker_id, health, health_detail, health_checked_at,
+      last_known_health, last_known_at)
     values (${instanceName}, 'http://e2e-far.invalid:5678', 'v1:x:y:z', 'worker', ${worker?.id}, 'ok',
-      ${sql.json({ ...detail, via: "worker" })}, now() - interval '20 minutes') returning id`
+      ${sql.json({ ...detail, via: "worker" })}, now() - interval '20 minutes', 'ok', now() - interval '20 minutes')
+    returning id`
   instanceId = String(instance?.id)
   page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
   await signIn(page)

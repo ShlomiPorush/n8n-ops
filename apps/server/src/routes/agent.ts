@@ -180,7 +180,7 @@ export function buildMcpServer(
   )
   tool(
     "get_instance_health",
-    "Health, version and last check of every n8n instance. health is unknown when nothing checks it now (unknownReason says why); then lastKnownHealth and healthCheckedAt describe the last check.",
+    "Health, version and last check of every n8n instance. health is unknown when nothing checks it now (unknownReason says why); then lastKnownHealth and lastKnownAt are the last check that read it.",
     {},
     () => agentInstances(ctx),
   )

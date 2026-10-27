@@ -24,6 +24,7 @@ const worker = (seenAgo: number | null, extra: { revokedAt?: Date } = {}) => ({
   lastSeenAt: seenAgo === null ? null : at(seenAgo),
   revokedAt: extra.revokedAt ?? null,
 })
+/** An instance checked this long ago; a check that read it is also its last known health. */
 const instance = (
   checkedAgo: number | null,
   health: "ok" | "down" | "unknown" = "ok",
@@ -32,6 +33,8 @@ const instance = (
   health,
   healthDetail,
   healthCheckedAt: checkedAgo === null ? null : at(checkedAgo),
+  lastKnownHealth: health === "unknown" ? null : health,
+  lastKnownAt: health === "unknown" || checkedAgo === null ? null : at(checkedAgo),
   collection: "worker" as const,
   workerId: "w1",
 })
@@ -47,6 +50,7 @@ describe("healthNow", () => {
     expect(healthNow(instance(10_000), worker(5_000), 60, now)).toEqual({
       health: "ok",
       lastKnownHealth: null,
+      lastKnownAt: null,
       unknownReason: null,
     })
   })
@@ -61,6 +65,7 @@ describe("healthNow", () => {
     expect(healthNow({ ...instance(10_000), workerId: null }, null, 60, now)).toEqual({
       health: "unknown",
       lastKnownHealth: "ok",
+      lastKnownAt: at(10_000),
       unknownReason: "No worker is assigned",
     })
     const revoked = healthNow(instance(10_000), worker(5_000, { revokedAt: at(1_000) }), 60, now)
@@ -73,6 +78,7 @@ describe("healthNow", () => {
     expect(healthNow(instance(10_000, "down"), worker(WORKER_ONLINE_MS), 60, now)).toEqual({
       health: "unknown",
       lastKnownHealth: "down",
+      lastKnownAt: at(10_000),
       unknownReason: "host-a is offline",
     })
   })
@@ -82,6 +88,7 @@ describe("healthNow", () => {
     expect(healthNow(instance(null, "unknown"), worker(null), 60, now)).toEqual({
       health: "unknown",
       lastKnownHealth: null,
+      lastKnownAt: null,
       unknownReason: "host-a is offline",
     })
     // Online and not read yet: simply not checked yet.
@@ -114,13 +121,23 @@ describe("healthNow", () => {
 })
 
 describe("healthNow after a check that was not collected", () => {
-  it("says why, with no last known health to show", () => {
+  it("says why, with the last check that read the instance", () => {
     collectionClock.startedAt = at(86_400_000)
-    const notCollected = instance(10_000, "unknown", { notCollected: "docker exec failed" })
+    const notCollected = {
+      ...instance(10_000, "unknown", { notCollected: "docker exec failed" }),
+      lastKnownHealth: "ok" as const,
+      lastKnownAt: at(600_000),
+    }
     expect(healthNow(notCollected, worker(1_000), 60, now)).toEqual({
       health: "unknown",
-      lastKnownHealth: null,
+      lastKnownHealth: "ok",
+      lastKnownAt: at(600_000),
       unknownReason: "Not collected: docker exec failed",
+    })
+    // Its worker offline afterwards: still the same last known health.
+    expect(healthNow(notCollected, worker(WORKER_ONLINE_MS), 60, now)).toMatchObject({
+      lastKnownHealth: "ok",
+      unknownReason: "host-a is offline",
     })
   })
 })

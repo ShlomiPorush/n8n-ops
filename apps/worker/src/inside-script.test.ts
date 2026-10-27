@@ -32,7 +32,7 @@ const n8n = (routes: Record<string, (res: ServerResponse) => void>): Handler => 
   return (req, res) => {
     requested.push(req.url ?? "")
     const route = known.get(req.url ?? "")
-    if (route) return route(res)
+    if (typeof route === "function") return route(res)
     res.writeHead(404).end()
   }
 }

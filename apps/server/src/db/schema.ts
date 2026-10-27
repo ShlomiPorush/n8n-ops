@@ -224,6 +224,18 @@ export const instances = pgTable("instances", {
   containerName: text("container_name"),
   workerId: uuid("worker_id").references(() => workers.id, { onDelete: "set null" }),
   queueMode: boolean("queue_mode").notNull().default(false),
+  /** "manual": set by the owner; "found": read by the worker inside the main container, and not editable then. */
+  queueModeSource: text("queue_mode_source").$type<"manual" | "found">().notNull().default("manual"),
+  /**
+   * Raised with every change of how health is collected (collection, worker, container, URLs, queue mode set by
+   * hand). A check carries the revision it started from and is dropped if the instance has moved on.
+   */
+  collectionRevision: integer("collection_revision").notNull().default(0),
+  /** Taken by every health check when it starts; the last one applied, so a slower earlier check never wins. */
+  healthCheckSeq: bigint("health_check_seq", { mode: "number" }).notNull().default(0),
+  healthAppliedSeq: bigint("health_applied_seq", { mode: "number" }).notNull().default(0),
+  /** When the queue backlog went above the threshold; kept here so a restart does not reset it. */
+  backlogSince: ts("backlog_since"),
   /** URL of the main process /metrics endpoint (queue instance). */
   metricsUrl: text("metrics_url"),
   /** Health URLs of queue workers. */

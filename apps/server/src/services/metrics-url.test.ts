@@ -14,9 +14,9 @@ describe("metricsUrlOf", () => {
     expect(metricsUrlOf({ ...base, metricsUrl: "http://n8n-main:5678/metrics" })).toBe("http://n8n-main:5678/metrics")
   })
 
-  it("reads nothing outside queue mode unless a URL is set", () => {
+  it("reads nothing outside queue mode, even with a URL set", () => {
     expect(metricsUrlOf({ ...base, queueMode: false })).toBeNull()
-    expect(metricsUrlOf({ ...base, queueMode: false, metricsUrl: "http://m/metrics" })).toBe("http://m/metrics")
+    expect(metricsUrlOf({ ...base, queueMode: false, metricsUrl: "http://m/metrics" })).toBeNull()
   })
 })
 

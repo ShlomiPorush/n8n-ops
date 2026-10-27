@@ -71,7 +71,7 @@ const pairing = new Pairing({
 async function handle(identity: string, job: Job): Promise<JobResult> {
   switch (job.kind) {
     case "probe":
-      return probeJob(job.payload)
+      return probeJob(job.payload, docker)
     case "backup":
       return backupJob(docker, job.payload, (size, sha256) =>
         api(identity, "POST", `/jobs/${job.id}/upload-url`, { size, sha256 }),

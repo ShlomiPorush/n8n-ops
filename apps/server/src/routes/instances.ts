@@ -16,7 +16,8 @@ import { requireUser } from "../http/middleware.ts"
 import { actorName, type Env } from "../http/types.ts"
 import { instanceOverridesSchema } from "../lib/settings.ts"
 import { N8nClient, N8nError } from "../n8n/client.ts"
-import { applyHealth, collectDirect } from "../services/health.ts"
+import { checkDirect } from "../services/health.ts"
+import { updateInstance } from "../services/instance-update.ts"
 import {
   effectiveScopes,
   type Instance,
@@ -73,7 +74,16 @@ async function testConnection(baseUrl: string, apiKey: string) {
 }
 
 export function instanceView(instance: Instance, extra: { openProblems?: number; hasWorker: boolean }) {
-  const { apiKeyEnc: _secret, executionCursor: _cursor, ...rest } = instance
+  // The check counters and the backlog start are bookkeeping of the health checks, not part of the instance.
+  const {
+    apiKeyEnc: _secret,
+    executionCursor: _cursor,
+    healthCheckSeq: _seq,
+    healthAppliedSeq: _applied,
+    collectionRevision: _revision,
+    backlogSince: _backlog,
+    ...rest
+  } = instance
   const scopes = effectiveScopes(instance)
   return {
     ...rest,
@@ -247,16 +257,11 @@ export function instanceRoutes(ctx: Ctx) {
       const test = await testConnection(data.baseUrl ?? row.baseUrl, apiKey)
       if (!test.ok) return c.json({ error: "connection_failed", message: test.error }, 400)
     }
-    const [updated] = await ctx.db
-      .update(instances)
-      .set({
-        ...data,
-        ...(metricsUrl !== undefined ? { metricsUrl: metricsUrl || null } : {}),
-        ...(apiKey ? { apiKeyEnc: ctx.secrets.encrypt(apiKey) } : {}),
-        updatedAt: new Date(),
-      })
-      .where(eq(instances.id, row.id))
-      .returning()
+    const updated = await updateInstance(ctx, row.id, {
+      ...data,
+      ...(metricsUrl !== undefined ? { metricsUrl: metricsUrl || null } : {}),
+      ...(apiKey ? { apiKeyEnc: ctx.secrets.encrypt(apiKey) } : {}),
+    })
     if (updated && (apiKey || data.baseUrl)) await refreshInstanceMeta(ctx, updated)
     await ctx.audit({
       actor: actorName(c.get("actor")),
@@ -286,7 +291,7 @@ export function instanceRoutes(ctx: Ctx) {
       .where(eq(instances.id, c.req.param("id")))
     if (!row) return c.json({ error: "not_found" }, 404)
     const fresh = await refreshInstanceMeta(ctx, row)
-    if (fresh.collection === "direct") await applyHealth(ctx, fresh, await collectDirect(fresh))
+    if (fresh.collection === "direct") await checkDirect(ctx, fresh.id)
     const poll = await pollInstance(ctx, fresh).catch((e: Error) => ({ error: e.message }))
     return c.json({ ok: true, poll })
   })

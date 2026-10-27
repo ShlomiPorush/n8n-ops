@@ -128,6 +128,54 @@ test("the worker is assigned to the instance", async () => {
   await page.keyboard.press("Escape")
 })
 
+test("through the worker, health is read inside the main container", async () => {
+  // Two settings changes, each waiting for the next probe of the health interval.
+  test.setTimeout(240_000)
+  const collect = async (from: RegExp, to: string) => {
+    await page.getByRole("button", { name: "Edit" }).click()
+    await page.getByRole("button", { name: from }).click()
+    await page.getByRole("option", { name: to }).click()
+    await page.getByRole("button", { name: "Save" }).click()
+    await dialogClosed(page)
+  }
+  await page.goto("/instances")
+  await page.getByRole("row", { name: /e2e-n8n/ }).click()
+  await collect(/^Check health and metrics: Directly from the n8n-ops server$/, "Through the worker on the n8n host")
+  await page.getByRole("tab", { name: /^Health/ }).click()
+  // The sentence also stands under the Overview tab's status line; this reads the Health tab's.
+  const health = page.getByRole("tabpanel", { name: "Health" })
+  // The worker asks for a probe within the health interval, reads the main from inside and reports.
+  await expect(async () => {
+    await page.reload()
+    await expect(health.getByText(/^Checked inside the container by E2E Host\./)).toBeVisible({ timeout: 3_000 })
+  }).toPass({ timeout: 90_000 })
+  await expect(health.getByText("Main process (/healthz)")).toBeVisible()
+  // The e2e n8n runs in regular mode: nothing about a queue.
+  await expect(page.getByText("· queue mode")).toHaveCount(0)
+  await expect(health.getByText("regular, read in the main container")).toBeVisible()
+
+  // A container the socket proxy does not allow: the worker checks over the network and says what to add.
+  const containerName = async (name: string) => {
+    await page.getByRole("button", { name: "Edit" }).click()
+    await page.getByLabel("Container name").fill(name)
+    await page.getByRole("button", { name: "Save" }).click()
+    await dialogClosed(page)
+  }
+  await containerName("not-allowed-e2e")
+  await expect(async () => {
+    await page.reload()
+    await expect(
+      health.getByText(
+        'Checked over the network because the socket proxy does not allow commands in "not-allowed-e2e"',
+      ),
+    ).toBeVisible({ timeout: 3_000 })
+  }).toPass({ timeout: 90_000 })
+  await containerName(container)
+
+  await collect(/^Check health and metrics: Through the worker on the n8n host$/, "Directly from the n8n-ops server")
+  await expect(health.getByText(/^Checked directly from the n8n-ops server/)).toBeVisible()
+})
+
 test("a backup through the worker includes credential secrets", async () => {
   await n8nApi("/api/v1/credentials", {
     method: "POST",

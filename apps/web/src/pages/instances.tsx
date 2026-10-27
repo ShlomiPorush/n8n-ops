@@ -182,21 +182,25 @@ type InstanceDetailData = InstanceRow & {
   backupDestinationIds: string[]
 }
 
-/** Worse first when sorted high to low: down, needs a look, not checked, healthy. */
+/** Worse first when sorted high to low: down, needs a look, unknown, healthy. */
 const severity: Record<HealthState, number> = { down: 3, warn: 2, unknown: 1, ok: 0 }
 
+/** A warning in words: the first reason that applies, in the same order as the server's Overview. */
+function warnLabel(d: InstanceRow["healthDetail"]) {
+  const failed = d?.workers?.filter((w) => !w.ok) ?? []
+  const discovery = d?.discovery
+  if (d?.backlogActive) return "Queue backlog"
+  if (failed.some((w) => w.state === "down" || w.state === "unreachable")) return "Queue worker down"
+  if (failed.length > 0) return "Queue worker needs a look"
+  if (d?.readiness && !d.readiness.ok) return "Not ready"
+  if (discovery?.status === "ok" && discovery.found === 0) return "No queue worker found"
+  if (discovery?.status === "partial") return "Queue workers not all checked"
+  if (discovery && discovery.status !== "ok") return "Queue workers could not be listed"
+  return "Needs a look"
+}
+
 const readingLabel = (health: HealthState, d: InstanceRow["healthDetail"]) =>
-  health === "down"
-    ? "Not responding"
-    : health === "warn"
-      ? d?.backlogActive
-        ? "Queue backlog"
-        : d?.workers?.some((w) => !w.ok)
-          ? "Queue worker down"
-          : "Not ready"
-      : health === "ok"
-        ? "Healthy"
-        : "Not checked yet"
+  health === "down" ? "Down" : health === "warn" ? warnLabel(d) : health === "ok" ? "Healthy" : "Unknown"
 
 /** The health now in words: Unknown when nothing collects it, never the last known health. */
 export const healthLabel = (i: Pick<InstanceRow, "health" | "healthDetail" | "unknownReason">) =>
@@ -499,11 +503,17 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
   const invalidate = [`/instances/${id}`, "/instances", "/overview", "/overview/attention"]
   // Toasts name the instance (FB-4), read when the request ends.
   const named = () => detail.data?.name ?? "the instance"
-  const refresh = useApiMutation<void>("POST", `/instances/${id}/refresh`, {
+  // The server checks the health itself only for direct collection; a worker reports it on its own schedule.
+  const refresh = useApiMutation<void, { poll: { error?: string } }>("POST", `/instances/${id}/refresh`, {
     invalidate,
-    success: () => `Checked ${named()} now`,
     failed: () => `check ${named()}`,
   })
+  const checkNow = async () => {
+    const { poll } = await refresh.mutateAsync()
+    if (poll.error) toast.error(`Could not read the failures of ${named()}: ${poll.error}`)
+    else if (detail.data?.collection === "direct") toast.success(`Checked ${named()}`)
+    else toast.success(`Read the failures of ${named()}.`)
+  }
   const remove = useApiMutation<void>("DELETE", `/instances/${id}`, {
     invalidate: ["/instances", "/overview", "/overview/attention"],
     failed: () => `remove ${named()}`,
@@ -531,7 +541,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
   async function askRemove() {
     const ok = await confirm({
       title: `Remove ${name}?`,
-      message: `n8n-ops stops monitoring it and deletes its ${plural(i?.openProblems ?? 0, "open problem")}, stored failures and backup history from n8n-ops. Nothing changes on the n8n instance, and archives on the backup destinations are kept. This cannot be undone.`,
+      message: `n8n-ops stops monitoring it and deletes its problems (${n(i?.openProblems ?? 0)} open), failures, backup history and access requests from n8n-ops. Nothing changes on the n8n instance, and archives on the backup destinations are kept. This cannot be undone.`,
       confirmLabel: "Remove instance",
       danger: true,
     })
@@ -546,7 +556,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
 
   const pollError = i.lastPollError && (
     <Alert variant="fail">
-      <AlertTitle>Reading failures failed</AlertTitle>
+      <AlertTitle>Could not read failures</AlertTitle>
       <AlertDescription className="font-mono text-small break-words">{i.lastPollError}</AlertDescription>
     </Alert>
   )
@@ -608,7 +618,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
             icon={RefreshCw}
             busyLabel="Checking…"
             labelClassName="@max-[34rem]/pane:sr-only"
-            run={() => refresh.mutateAsync()}
+            run={checkNow}
           >
             Check now
           </BusyButton>
@@ -788,7 +798,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
             )}
             {hd?.notCollected && (
               <div className="border-t border-line px-pad-x py-pad-y text-warn">
-                Not collected: {hd.notCollected}. The health shown is not known until the next check succeeds.
+                Not collected: {hd.notCollected}. Health is Unknown until a collection reads the instance again.
               </div>
             )}
             {i.collection === "worker" && i.workerId && !i.containerName && (
@@ -835,7 +845,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
               description={
                 i.scopesSource === "discovered"
                   ? `Read from GET /api/v1/discover · checked ${i.scopesCheckedAt ? formatTime(i.scopesCheckedAt, w) : "never"}`
-                  : `n8n ${i.version ?? ""} has no /discover endpoint (added in 2.14.0). Tell n8n-ops what the key can do.`
+                  : "This n8n version cannot report what its API key allows (2.14.0 and later can). Choose what the key can do."
               }
               action={
                 i.scopesSource === "declared" && (
@@ -933,7 +943,7 @@ function StatusStrip({ instance: i, footer }: { instance: InstanceDetailData; fo
     {
       label: "Main process",
       health: check(hd?.main?.ok),
-      value: hd?.notCollected ? "not collected" : hd?.main ? (hd.main.ok ? "ok" : "not responding") : "not checked",
+      value: hd?.notCollected ? "not collected" : hd?.main ? (hd.main.ok ? "ok" : "down") : "not checked",
     },
     {
       label: "Ready",
@@ -1024,7 +1034,7 @@ function StatusStrip({ instance: i, footer }: { instance: InstanceDetailData; fo
         {i.lastPollError ? (
           // The whole error is in the Health tab; here it takes the place of the time failures were read.
           <span className="text-fail">
-            <b className="font-semibold">Reading failures failed:</b>{" "}
+            <b className="font-semibold">Could not read failures:</b>{" "}
             <span className="font-mono">{i.lastPollError}</span>
           </span>
         ) : (
@@ -1173,7 +1183,10 @@ async function exportCredentials(id: string, name: string) {
     a.download = `${name}-credentials.json.age`
     a.click()
     URL.revokeObjectURL(url)
-    toast.success(`Credentials of ${name} downloaded. Decrypt with: age -d -i backup-key.txt`, { id: loading })
+    toast.success(
+      `Credentials of ${name} downloaded. Decrypt with: age -d -i n8n-ops-backup-key.txt ./${name}-credentials.json.age`,
+      { id: loading },
+    )
   } catch (error) {
     toast.error(`Could not export the credentials of ${name}: ${(error as Error).message}`, { id: loading })
   }
@@ -1222,14 +1235,14 @@ function HealthRow({
 }
 
 const overrideFields: [string, string][] = [
-  ["pollIntervalSec", "Check for failures every (s)"],
-  ["healthIntervalSec", "Health check every (s)"],
+  ["pollIntervalSec", "Check for failures every (seconds)"],
+  ["healthIntervalSec", "Collect health every (seconds)"],
   ["backupTime", "Daily backup time"],
-  ["staleBackupHours", "Backup stale after (h)"],
+  ["staleBackupHours", "Backup is late after (hours)"],
   ["executionRetentionDays", "Keep failed executions (days)"],
-  ["autoResolveDays", "Auto-resolve after (days)"],
-  ["backlogThreshold", "Backlog alert (waiting jobs)"],
-  ["backlogMinutes", "Backlog alert after (min)"],
+  ["autoResolveDays", "Auto-resolve after days without failures"],
+  ["backlogThreshold", "Queue backlog alert (waiting jobs)"],
+  ["backlogMinutes", "Queue backlog alert after (minutes)"],
 ]
 
 function OverridesCard({ instance }: { instance: InstanceDetailData }) {
@@ -1267,7 +1280,7 @@ function OverridesCard({ instance }: { instance: InstanceDetailData }) {
   }
   return (
     <Panel className="overflow-visible">
-      <PanelHead title="Overrides" description="Empty fields use the global default shown as the placeholder." />
+      <PanelHead title="Overrides" description="Empty fields use the instance defaults from Settings." />
       <div className="grid gap-3 border-t border-line p-pad-x md:grid-cols-2">
         {overrideFields.map(([k, label]) => (
           <Field key={k}>
@@ -1394,11 +1407,15 @@ export function InstanceDialog({
       <DialogContent className="md:max-w-xl" keepOnBackdrop>
         <DialogHeader icon={ServerIcon}>
           <DialogTitle>{instance ? `Edit ${instance.name}` : "Add an Instance"}</DialogTitle>
-          <DialogDescription>The connection is tested before anything is saved.</DialogDescription>
+          <DialogDescription>
+            {instance
+              ? "A new API key is tested before it is saved."
+              : "The URL and API key are tested before the instance is added."}
+          </DialogDescription>
         </DialogHeader>
         <FieldGroup>
           <FieldSet>
-            <FieldLegend variant="label">Connection</FieldLegend>
+            <FieldLegend variant="label">Instance</FieldLegend>
             <Field>
               <FieldLabel htmlFor="i-name">Name</FieldLabel>
               <Input id="i-name" value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="n8n-1" />
@@ -1423,8 +1440,9 @@ export function InstanceDialog({
                 onChange={(v) => set("apiKey", v ?? undefined)}
               />
               <FieldDescription>
-                In n8n: Settings → n8n API → Create an API key. "Read only" is enough to monitor; moving and restoring
-                need workflow:create, workflow:activate and credential:create.
+                In n8n: Settings → n8n API → Create an API key. "Read only" is enough to monitor. Restoring needs
+                workflow:create and credential:create. Moving a workflow here needs workflow:create,
+                workflow:activate and credential:create; moving one away needs workflow:read and workflow:deactivate.
               </FieldDescription>
             </Field>
           </FieldSet>
@@ -1459,8 +1477,8 @@ export function InstanceDialog({
                   />
                   <FieldDescription>
                     {inside
-                      ? "Empty reads the metrics inside the main container."
-                      : "Empty reads /metrics of the base URL."}{" "}
+                      ? "Leave empty to read /metrics inside the main container."
+                      : "Leave empty to read /metrics of the base URL."}{" "}
                     Needs N8N_METRICS=true and N8N_METRICS_INCLUDE_QUEUE_METRICS=true on the main process.
                   </FieldDescription>
                 </Field>
@@ -1548,7 +1566,9 @@ export function InstanceDialog({
                 onChange={(e) => set("containerName", e.target.value)}
                 placeholder="n8n"
               />
-              <FieldDescription>The n8n main container on the host, used by the worker for exports.</FieldDescription>
+              <FieldDescription>
+                The n8n main container on the host. The worker checks health inside it and exports credentials from it.
+              </FieldDescription>
             </Field>
           </FieldSet>
           {error && <FieldError>{error}</FieldError>}
@@ -1559,7 +1579,7 @@ export function InstanceDialog({
             variant="primary"
             onClick={() => void submit()}
             busy={busy}
-            busyLabel="Testing connection…"
+            busyLabel={!instance || form.apiKey ? "Testing…" : "Saving…"}
             disabled={!form.name || !form.baseUrl || (!instance && !form.apiKey)}
           >
             {instance ? "Save" : "Add instance"}

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 import type { Ctx } from "../context.ts"
-import { type AttentionItem, attention, combine, worstTone } from "./overview.ts"
+import { type AttentionItem, attention, combine, instanceDetail, worstTone } from "./overview.ts"
 
 const worker = (name: string, at: number): AttentionItem => ({
   kind: "worker",
@@ -55,7 +55,7 @@ describe("Needs attention put together", () => {
           items: [],
           total: 0,
           tone: null,
-          unchecked: [{ kind: "health", id: "i1", name: "new", detail: "Health not checked yet", at: null }],
+          unchecked: [{ kind: "health", id: "i1", name: "new", detail: "Health unknown", at: null }],
         },
       ],
     ])
@@ -113,5 +113,28 @@ describe("Needs attention read from its sources", () => {
     const a = await attention(ctx([]), { read: { ...read, access: () => Promise.reject(new Error("boom")) } })
     expect(a.failed).toEqual(["access"])
     expect(a.total).toBe(1)
+  })
+})
+
+describe("what is wrong with an instance", () => {
+  it("names a down main with its error", () => {
+    expect(instanceDetail("down", { main: { error: "connect ECONNREFUSED" } })).toBe("Down: connect ECONNREFUSED")
+    expect(instanceDetail("down", null)).toBe("Down")
+  })
+
+  it("names the first of backlog, queue workers, readiness and finding the queue workers", () => {
+    const reading = { readiness: { ok: true }, workers: [], discovery: { status: "ok", found: 1 } }
+    const warn = (change: object) => instanceDetail("warn", { ...reading, ...change })
+    expect(warn({ backlogActive: true, readiness: { ok: false } })).toBe("Queue backlog")
+    expect(warn({ workers: [{ ok: false, state: "not-checked" }, { ok: false }] })).toBe("Queue worker needs a look")
+    for (const state of ["down", "unreachable"])
+      expect(warn({ workers: [{ ok: false, state: "not-ready" }, { ok: false, state }] })).toBe("Queue worker down")
+    expect(warn({ readiness: { ok: false }, discovery: { status: "failed", found: 0 } })).toBe("Not ready")
+    expect(warn({ discovery: { status: "ok", found: 0 } })).toBe("No queue worker found")
+    expect(warn({ discovery: { status: "partial", found: 2 } })).toBe("Queue workers not all checked")
+    for (const status of ["ambiguous", "refused", "failed"])
+      expect(warn({ discovery: { status, found: 0 } })).toBe("Queue workers could not be listed")
+    expect(warn({})).toBe("Needs a look")
+    expect(instanceDetail("warn", null)).toBe("Needs a look")
   })
 })

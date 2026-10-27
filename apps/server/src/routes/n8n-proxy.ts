@@ -59,7 +59,12 @@ export function n8nProxyRoutes(ctx: Ctx) {
         `${instance.baseUrl.replace(/\/+$/, "")}/api/v1/executions/${decision.executionId}`,
       )
       const execution = check.ok ? ((await check.json()) as { workflowId?: string }) : null
-      if (!execution?.workflowId || !request.workflowIds.includes(execution.workflowId))
+      if (!execution?.workflowId)
+        return refuse(
+          403,
+          `Could not check that execution ${decision.executionId} belongs to a workflow in this access. Try again, or ask the owner to check the instance.`,
+        )
+      if (!request.workflowIds.includes(execution.workflowId))
         return refuse(403, `Execution ${decision.executionId} is not of a workflow in this access.`)
     }
 

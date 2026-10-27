@@ -84,7 +84,7 @@ v1 includes all of A to G except the items listed under "Not in v1". Build order
 
 - **C1** Health of every main and every queue worker (`/healthz`, `/healthz/readiness`). Endpoints are polled directly when `server` can reach them; when they are only reachable on the n8n host, the n8n-ops `worker` on that host collects them and reports to `server`. Both paths are supported; the choice is per instance.
 - **C2** Queue metrics from the queue instance `/metrics`: jobs waiting, active, completed, failed; which queue workers are alive. Same direct-or-worker collection as C1.
-- **C3** Alerts: instance not responding, queue worker down, queue backlog above threshold for longer than N minutes.
+- **C3** Alerts: instance down, queue worker down, queue backlog above threshold for longer than N minutes.
 - **C4** Version of each instance compared with the latest n8n release, including which instances are below 2.14.0.
 
 ### D. Backups
@@ -95,7 +95,7 @@ Workflow-level only in v1. Full-instance backup (`pg_dump` plus `N8N_ENCRYPTION_
 - **D2** Every archive is encrypted with **age** on the host where it is produced, using a public key. If no key is configured the job fails; there is never an unencrypted fallback. Keys never appear on a command line or in the repository.
 - **D3** Each instance is backed up independently; one failure never stops the others. Status, size, counts and history are stored per instance, with every copy of every run.
 - **D4** Retention per destination (default 7 daily, 4 weekly, 6 monthly), applied per instance on that destination. The newest archive is always kept. (Added after v1: until then retention was global with a per-instance override; the upgrade keeps, per field, the largest value in use.)
-- **D5** Destinations (added after v1; v1 had one S3-compatible store): S3-compatible storage, a folder on the host mapped into the server container at `/backups`, SFTP with a pinned host key, and WebDAV over HTTPS. Several at once; each is tested before it is saved, and every copy is verified with the archive's size and SHA-256 (the service's own checksum, or reading it back) before it counts. The worker sends the encrypted archive to the server, which keeps it in its data directory until every copy is written, and tries a failed copy again within a day. Each instance backs up to the default destinations, as they change, or to those it chose. The place of a destination never changes once set; two destinations may not share a place.
+- **D5** Destinations (added after v1; v1 had one S3-compatible store): S3-compatible storage, a folder on the host mapped into the server container at `/backups`, SFTP with a pinned host key, and WebDAV over HTTPS. Several at once; each is tested before it is saved, and every copy is verified with the archive's size and SHA-256 (the service's own checksum, or reading it back) before it counts. The worker sends the encrypted archive to the server, which keeps it in its data directory until every copy is written, and tries a failed copy again within a day. Each instance backs up to the default destinations, as they change, or to those it chose. The Location of a destination never changes once set; two destinations may not share a Location.
 - **D5a** S3 Object Lock per destination (added after v1): every new copy is locked for a number of days in Compliance (default, 30 days) or Governance mode, and retention removes it only after the lock ends.
 - **D6** Restore one workflow with its credentials into the same instance (as an inactive copy) or another instance. The private key is pasted at restore time, used in memory, and never stored. Tested in a scratch container before v1 is accepted.
 - **D7** Alert when a backup fails or the last successful backup is older than a threshold (default 26 h), per destination: the alert names the destination, and a destination that recovers says so.
@@ -122,7 +122,7 @@ Workflow-level only in v1. Full-instance backup (`pg_dump` plus `N8N_ENCRYPTION_
 - **G3** English, LTR, light and dark themes.
 - **G4** Settings in the UI: alerts, Telegram, email reports, backup destinations, keys, instance defaults. The account (password, two-factor) and the connected agents and tokens have pages of their own. Instance-related settings (backup schedule, poll interval, alert thresholds, auto-resolve days) have a global default with per-instance override; which destinations an instance backs up to is chosen on the instance. SMTP, Telegram and the destinations themselves are global.
 - **G5** First-run setup wizard: account and TOTP, backup key pair (private key shown once, must confirm it was saved), then Telegram, the first backup destination and first instance (these three can be skipped and finished later; home shows what is missing).
-- **G6** Browser sessions end on three clocks, set under Settings → Sign-in security and applied to sessions already open (added after v1): an idle timeout after the last real input (keys, pointer, wheel, touch; default 60 minutes, can be off, at least 5), a maximum length from sign-in whatever the activity (default 12 hours, 1 to 720), and a lifetime after the last request of any kind, polling included (default 24 hours, 1 to 720). Polling never counts as activity. The page asks a minute before an idle sign-out, after checking with the server so input in another tab counts, and says so five minutes before the maximum length. An ended session answers every request with its reason, the sign-in page says why, and the end is audited once. A session that replaces another (password change, two-factor enrolment) keeps its sign-in time. Agents and API tokens are not affected.
+- **G6** Browser sessions end on three clocks, set under Settings → Sign-in security and applied to sessions already open (added after v1): an idle timeout after the last real input (keys, pointer, wheel, touch; default 60 minutes, can be off, at least 5), a maximum length from sign-in whatever the activity (default 12 hours, 1 to 720), and a lifetime after the last request of any kind, polling included (default 24 hours, 1 to 720). Polling never counts as activity. The page asks a minute before an idle sign-out, after checking with the server so input in another tab counts, and says so five minutes before the maximum length. An ended session answers every request with its reason, the sign-in page says why, and the end is audited once. A session that replaces another (password change, two-factor enrolment) keeps its sign-in time. Agents and tokens are not affected.
 
 ### Not in v1
 
@@ -139,8 +139,8 @@ The system must not recreate the inbox that is deleted today. This is a hard req
 
 1. A new problem.
 2. A regression.
-3. Instance not responding, queue worker down, queue backlog (C3).
-4. Backup failed or stale (D7).
+3. Instance down, queue worker down, queue backlog (C3).
+4. Backup failed or late (D7).
 
 **Rules:**
 

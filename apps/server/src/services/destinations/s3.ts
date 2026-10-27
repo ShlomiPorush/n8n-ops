@@ -166,7 +166,9 @@ export function s3Store(location: S3Location, credentials: S3Credentials, object
       }
       // The test file carries no lock of its own; a bucket with a default retention still keeps it that long.
       await roundTrip(store, signal)
-      return objectLock ? [`Object Lock is enabled; new archives are locked for ${objectLock.days} days.`] : []
+      if (!objectLock) return []
+      const days = objectLock.days === 1 ? "1 day" : `${objectLock.days} days`
+      return [`Object Lock is enabled; new archives are locked for ${days}.`]
     },
 
     async close() {

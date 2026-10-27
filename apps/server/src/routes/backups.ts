@@ -16,10 +16,15 @@ import {
 } from "../services/backups.ts"
 import { describeLocation, destinationsFor } from "../services/destinations/index.ts"
 
-const keySchema = z
-  .string()
-  .trim()
-  .regex(/^AGE-SECRET-KEY-1[0-9A-Z]+$/, "an AGE-SECRET-KEY-1… private key")
+const KEY_WANTED = "Paste the private key that starts with AGE-SECRET-KEY-1."
+const keySchema = z.string().trim().regex(/^AGE-SECRET-KEY-1[0-9A-Z]+$/, KEY_WANTED)
+
+/** A refused body, with the private key named in words when it is what is wrong. */
+const refused = (issues: { path: PropertyKey[] }[]) => ({
+  error: "invalid",
+  ...(issues.some((i) => i.path[0] === "privateKey") ? { message: KEY_WANTED } : {}),
+  issues,
+})
 
 /** Runs that hold an archive: every copy written (ok) or some of them (partial). */
 const withArchive = inArray(backupRuns.status, ["ok", "partial"])
@@ -111,7 +116,7 @@ export function backupRoutes(ctx: Ctx) {
 
   app.post("/runs/:runId/inspect", async (c) => {
     const body = z.object({ privateKey: keySchema }).safeParse(await c.req.json().catch(() => ({})))
-    if (!body.success) return c.json({ error: "invalid", issues: body.error.issues }, 400)
+    if (!body.success) return c.json(refused(body.error.issues), 400)
     try {
       return c.json(await inspectArchive(ctx, c.req.param("runId"), body.data.privateKey))
     } catch (error) {
@@ -123,7 +128,7 @@ export function backupRoutes(ctx: Ctx) {
     const body = z
       .object({ privateKey: keySchema, workflowId: z.string().min(1), targetInstanceId: z.string().uuid() })
       .safeParse(await c.req.json().catch(() => ({})))
-    if (!body.success) return c.json({ error: "invalid", issues: body.error.issues }, 400)
+    if (!body.success) return c.json(refused(body.error.issues), 400)
     try {
       const result = await restoreWorkflow(ctx, { runId: c.req.param("runId"), ...body.data })
       const [target] = await ctx.db

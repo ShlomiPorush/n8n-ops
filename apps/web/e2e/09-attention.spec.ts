@@ -157,7 +157,7 @@ test("the bell's badge counts every item in the worst tone, 99+ above 99, and a 
 
     stop = await standIn({
       ...workers(0),
-      unchecked: [{ kind: "health", id: "x", name: "new-n8n", detail: "Health not checked yet", at: null }],
+      unchecked: [{ kind: "health", id: "x", name: "new-n8n", detail: "Health unknown", at: null }],
     })
     await page.reload()
     await expect(bell()).toHaveAccessibleName("Needs attention, some checks could not run")

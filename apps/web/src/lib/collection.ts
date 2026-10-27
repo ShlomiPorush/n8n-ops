@@ -35,7 +35,7 @@ export function collectionView({ collection, worker, detail }: CollectionInput):
     return {
       tone: "warn",
       tag: "Worker offline",
-      sentence: `Checked on the host by ${worker.name}, which is offline, so its health is unknown`,
+      sentence: `${worker.name} collects its health on the host but is offline, so its health is Unknown`,
     }
   if (via === "direct")
     return {

@@ -703,7 +703,7 @@ export function ProblemDetail({ id }: { id: string }) {
             />
             {p.occurrences.length === 0 ? (
               <Empty title="No runs are stored for this problem.">
-                Failures older than the retention were removed; the count still includes them.
+                Failures older than "Keep failed executions" were removed. The count still includes them.
               </Empty>
             ) : (
               // No Sort button (TB-28): the latest runs, newest first, are all this list is for.

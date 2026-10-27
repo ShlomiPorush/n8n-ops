@@ -80,7 +80,7 @@ ${form}
     success: (clientName, label) =>
       page(
         "Agent Connected",
-        `<h1>Agent Connected</h1><p>${htmlText(label ?? clientName)} can use n8n-ops now. You can close this page; your agent carries on by itself.</p>`,
+        `<h1>Agent Connected</h1><p>${htmlText(label ?? clientName)} can use n8n-ops now. You can close this page and return to your agent.</p>`,
       ),
     error: (code, description) =>
       page(

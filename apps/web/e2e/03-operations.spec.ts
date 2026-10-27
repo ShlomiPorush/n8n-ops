@@ -109,7 +109,7 @@ test("a worker pairs with a one-time token", async () => {
   // The worker reads the token file within a few seconds, then reports in.
   await expect(async () => {
     await page.reload()
-    await expect(page.getByText("online", { exact: true }).first()).toBeVisible({ timeout: 3_000 })
+    await expect(page.getByText("Online", { exact: true }).first()).toBeVisible({ timeout: 3_000 })
   }).toPass({ timeout: 60_000 })
 })
 

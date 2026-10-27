@@ -427,6 +427,8 @@ describe("Telegram forum topics", () => {
   it("says when the test message went to General", async () => {
     const t = await setup({ defaultThreadId: 42 })
     expect(await sendTestTelegram(t.ctx)).toEqual({ topicNotFound: false })
+    // It says only that the chat can be reached, not where every alert goes: topic routes may send them elsewhere.
+    expect(String(bot.sends().at(-1)?.body.text)).toBe("<b>n8n-ops test message</b>\nn8n-ops can send to this chat.")
     bot.goneTopics.add(42)
     expect(await sendTestTelegram(t.ctx)).toEqual({ topicNotFound: true })
   })

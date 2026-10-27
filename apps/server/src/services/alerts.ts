@@ -455,7 +455,7 @@ export async function sendTestTelegram(ctx: Ctx, draft: Record<string, unknown> 
   const { token, chatId, threadId } = telegramTarget(await ctx.settings.get("telegram"), draft, (enc) =>
     ctx.secrets.decrypt(enc),
   )
-  const text = html`<b>n8n-ops test message</b>\nAlerts will arrive here.`
+  const text = html`<b>n8n-ops test message</b>\nn8n-ops can send to this chat.`
   const sent = await sendRouted(new Telegram(token), chatId, threadId, (note) =>
     note ? TelegramHtml.join([note, text]) : text,
   )

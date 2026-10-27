@@ -391,8 +391,8 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
         <DialogHeader icon={ArrowRightLeftIcon}>
           <DialogTitle>Move {workflow?.name}</DialogTitle>
           <DialogDescription>
-            Copies the workflow and its credentials to another instance, verifies it, then switches off the original.
-            Nothing is deleted.
+            Copies the workflow to another instance, with its credentials when a worker can read them. An active
+            workflow is checked there before the original is switched off. Nothing is deleted.
           </DialogDescription>
         </DialogHeader>
         {steps ? (
@@ -445,7 +445,7 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
                   ? "This workflow uses no credentials."
                   : preview.credentialsWithSecrets
                     ? `${preview.credentials.map((c) => c.name).join(", ")} will be created on ${preview.target.name} with the same values, read by the worker.`
-                    : `${preview.credentials.map((c) => c.name).join(", ")} will not be copied: ${preview.source.name} has no worker. Set them in n8n after the move.`}
+                    : `${preview.credentials.map((c) => c.name).join(", ")} will not be copied: ${preview.source.name} has no worker with its main container set. Set them in n8n after the move.`}
               </AlertDescription>
             </Alert>
             {preview.webhooks.map((h) => (

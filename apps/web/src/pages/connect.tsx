@@ -116,7 +116,7 @@ export function ConnectApprovePage() {
               {r.client.builtIn && r.client.label ? (
                 <>
                   <UserText>{r.client.label}</UserText>{" "}
-                  <span className="text-meta text-muted-foreground">(a script or command line; its own name)</span>
+                  <span className="text-meta text-muted-foreground">(the name the program gives itself)</span>
                 </>
               ) : r.client.builtIn ? (
                 "Script or command line"
@@ -130,7 +130,7 @@ export function ConnectApprovePage() {
               </KV>
             )}
             <KV label="Uses">{r.resource === "mcp" ? "The MCP server" : "The REST API"}</KV>
-            <KV label="Lasts">Until you revoke it; ends after 90 days unused</KV>
+            <KV label="Lasts">Until you disconnect it, or after 90 days unused</KV>
           </Panel>
 
           <Alert variant="warn">
@@ -159,7 +159,7 @@ export function ConnectApprovePage() {
               <Field orientation="horizontal">
                 <Checkbox id="connect-access" checked={access} onCheckedChange={(v) => setAccess(v === true)} />
                 <FieldContent>
-                  <FieldLabel htmlFor="connect-access">May ask for access to n8n instances</FieldLabel>
+                  <FieldLabel htmlFor="connect-access">May request access to n8n instances</FieldLabel>
                   <FieldDescription>
                     Temporary access to one instance for a task. Nothing is granted until a person approves each
                     request.

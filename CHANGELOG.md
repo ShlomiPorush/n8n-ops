@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Changed
+
+- **Clearer and truer texts across the app, alerts, emails, the agent API and the skill.** They now use the words of the glossary and say what actually happens. The main ones:
+  - Health reads Down, not "Not responding", and Unknown, not "Not checked yet". The Telegram alerts say "… is down" and "… is up again". A warning names its cause: a queue backlog, a queue worker that is down or needs a look, not ready, no queue worker found, or queue workers that could not be listed or not all checked.
+  - A backup that is overdue is late, not stale, in Settings, on the Backups page and in its alert. The alert says which destination has no recent copy. A failed copy says "Backup of … could not be copied to …".
+  - Backups that are not set up name what is missing, a destination that is on or the backup key, and link to it. A backup with nothing left to restore reads "No copy to restore".
+  - A destination's fixed place is its Location. Deleting one under Object Lock says that nothing is deleted while any archive is locked, and saving one with a missing field names the field.
+  - Connected Agents says that the list holds approved agents and tokens made by hand. Agent Access no longer says that a request can be approved by email, and it says where the decision was made ("in n8n-ops", "on Telegram"). The Audit Log and Recent Activity say "Access request approved" and "Token created", not "Instance access" or "API token".
+  - The email reports list health alerts, not incidents. A test email says that it is a test.
+  - Errors for agents name the agent, not its token, and say what to do next. The skill polls an access request while it is pending, and its messages are the same in all three versions.
+  - Smaller fixes: the decrypt command after a credentials export, the reset-password command on the sign-in page, the scopes that moving and restoring need, the Move dialog, the worker's revoke dialog and its generated Compose comments, the new backup key dialog, and Sign out in the account menu.
+
 ## [0.3.0] - 2026-10-27
 
 ### Added

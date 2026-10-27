@@ -14,6 +14,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Tip } from "@/components/ui/tooltip"
 import { useApi } from "@/lib/api"
+import { auditAction, auditTarget } from "@/lib/audit-text"
 import { useAttention } from "@/lib/attention"
 import { type Loadable, loadView } from "@/lib/load-state"
 import { healthCounts, n, plural } from "@/lib/numbers"
@@ -97,7 +98,10 @@ export function OverviewPage() {
               <Fragment key={s.key}>
                 {i > 0 && <span className="regular:hidden">, </span>}
                 <Link to={s.to} className={step}>
-                  <span className={stepText}>{s.text}</span>
+                  {/* Compact reads the steps as one sentence: only its first word starts with a capital. */}
+                  <span className={stepText}>
+                    {i === 0 ? `${s.text.charAt(0).toUpperCase()}${s.text.slice(1)}` : s.text}
+                  </span>
                   <StepArrow />
                 </Link>
               </Fragment>
@@ -204,11 +208,11 @@ export function OverviewPage() {
               events.map((e) => (
                 <Row key={e.id} className={cn("grid gap-0.5", timeline)}>
                   <span className="min-w-0">
-                    <span className="font-semibold">{e.action}</span>
+                    <span className="font-semibold">{auditAction(e.action)}</span>
                     {e.target && (
                       <span className="text-muted-foreground">
                         {" · "}
-                        <UserText>{e.target}</UserText>
+                        <UserText>{auditTarget(e.target)}</UserText>
                       </span>
                     )}
                   </span>

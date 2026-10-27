@@ -581,7 +581,7 @@ const sectionDot = (name: string) => settingsLink(name).getByRole("img", { name:
 test("Settings keeps changes across its sections, with one save bar and a dot on each changed section", async () => {
   const before = { alerts: await readSettings("alerts"), defaults: await readSettings("defaults") }
   const grouping = page.getByLabel("Grouping window (seconds)")
-  const stale = page.getByLabel("Backup is stale after (hours)")
+  const stale = page.getByLabel("Backup is late after (hours)")
   const unsaved = page.getByRole("region", { name: "Unsaved changes" })
   const nextGrouping = String((before.alerts.groupingWindowSec ?? 0) + 1)
   const nextStale = String((before.defaults.staleBackupHours ?? 0) + 1)
@@ -606,7 +606,7 @@ test("Settings keeps changes across its sections, with one save bar and a dot on
     // One Save writes every changed section.
     await unsaved.getByRole("button", { name: "Save changes" }).click()
     await expect(
-      page.getByText(/^Saved the (Alerts|Instance defaults) settings and the (Alerts|Instance defaults) settings$/),
+      page.getByText(/^Saved the (Alerts|Instance Defaults) settings and the (Alerts|Instance Defaults) settings$/),
     ).toBeVisible()
     await expect(unsaved).toHaveCount(0)
     await expect(sectionDot("Alerts")).toHaveCount(0)
@@ -622,7 +622,7 @@ test("Settings keeps changes across its sections, with one save bar and a dot on
 test("a section that fails to save keeps its changes and its dot, and the toast names it", async () => {
   const before = { alerts: await readSettings("alerts"), defaults: await readSettings("defaults") }
   const retry = page.getByLabel("Retry failed sends every (minutes)")
-  const stale = page.getByLabel("Backup is stale after (hours)")
+  const stale = page.getByLabel("Backup is late after (hours)")
   const unsaved = page.getByRole("region", { name: "Unsaved changes" })
   const nextStale = String((before.defaults.staleBackupHours ?? 0) + 1)
   const nextRetry = String(before.alerts.retryMin === 7 ? 8 : 7)
@@ -642,7 +642,7 @@ test("a section that fails to save keeps its changes and its dot, and the toast 
 
     // The saved section is saved; the failure is not covered by a success and names its section (SV-3).
     await expect(
-      page.getByText(/^Saved the Instance defaults settings\. Could not save the Alerts settings: .+/),
+      page.getByText(/^Saved the Instance Defaults settings\. Could not save the Alerts settings: .+/),
     ).toBeVisible()
     await expect(unsaved).toContainText("1 unsaved change")
     await expect(sectionDot("Alerts")).toBeVisible()
@@ -863,19 +863,41 @@ test("a failed Check now says what failed and why, and its toast waits while the
   await expect(toast).toHaveCount(0, { timeout: 8_000 })
 })
 
-test("backups that are not set up link to the destinations and the backup key", async () => {
-  await page.route("**/api/backups", async (route) => {
-    const res = await route.fetch()
-    await route.fulfill({ response: res, json: { ...(await res.json()), configured: false } })
-  })
-  try {
+test("backups that are not set up link to what is missing: a destination that is on, the backup key, or both", async () => {
+  type Status = { destinations: { enabled: boolean }[]; backupKey: boolean }
+  const missing = async (change: (s: Status) => Partial<Status>) => {
+    await page.unroute("**/api/backups")
+    await page.route("**/api/backups", async (route) => {
+      const res = await route.fetch()
+      const body = await res.json()
+      await route.fulfill({ response: res, json: { ...body, ...change(body), configured: false } })
+    })
     await page.goto("/backups")
     await expect(page.getByText("Backups are not set up")).toBeVisible()
-    await expect(page.getByRole("link", { name: "backup destination", exact: true })).toHaveAttribute(
+  }
+  const destinationLink = page.getByRole("link", { name: "backup destination", exact: true })
+  const keyLink = page.getByRole("link", { name: "backup key", exact: true })
+  try {
+    await missing(() => ({ destinations: [], backupKey: false }))
+    await expect(destinationLink).toHaveAttribute("href", "/settings/destinations")
+    await expect(keyLink).toHaveAttribute("href", "/settings/keys")
+    await expect(page.getByRole("link", { name: "Add a backup destination" })).toHaveAttribute(
       "href",
       "/settings/destinations",
     )
-    await expect(page.getByRole("link", { name: "backup key", exact: true })).toHaveAttribute("href", "/settings/keys")
+
+    await missing(() => ({ backupKey: false }))
+    await expect(keyLink).toHaveAttribute("href", "/settings/keys")
+    await expect(destinationLink).toHaveCount(0)
+    await expect(page.getByRole("link", { name: "Generate a backup key" })).toHaveAttribute("href", "/settings/keys")
+
+    await missing((s) => ({ destinations: s.destinations.map((d) => ({ ...d, enabled: false })), backupKey: true }))
+    await expect(destinationLink).toHaveAttribute("href", "/settings/destinations")
+    await expect(keyLink).toHaveCount(0)
+    await expect(page.getByRole("link", { name: "Turn on a backup destination" })).toHaveAttribute(
+      "href",
+      "/settings/destinations",
+    )
   } finally {
     await page.unroute("**/api/backups")
   }
@@ -892,7 +914,7 @@ test("Connected agents and Account are pages of their own, and their old Setting
 
   const sections = page.getByRole("navigation", { name: "Settings categories" })
   await page.goto("/settings/general")
-  await expect(sections.getByRole("link", { name: "Agent access" })).toBeVisible()
+  await expect(sections.getByRole("link", { name: "Agent Access" })).toBeVisible()
   await expect(sections.getByRole("link", { name: /Connected Agents|Account/i })).toHaveCount(0)
 
   // Agent access leads to Connected agents, and the account menu to Account.
@@ -1109,7 +1131,7 @@ test("edits on several instance tabs survive a switch, and one save bar saves or
   const tab = (name: string) => page.getByRole("tab", { name: new RegExp(`^${name}`) })
   const mark = (name: string) => tab(name).getByRole("img", { name: "Unsaved changes" })
   const unsaved = page.getByRole("region", { name: "Unsaved changes" })
-  const field = page.getByLabel("Auto-resolve after (days)")
+  const field = page.getByLabel("Auto-resolve after days without failures")
   const allowed = page.getByLabel("Agents may request access")
   const choose = page.getByRole("radio", { name: "Choose" })
 
@@ -1177,7 +1199,7 @@ test("on a phone the save bar of an instance shows inside its sheet", async () =
     await page.goto(`/instances/${id}?tab=settings`)
     const sheet = page.getByRole("dialog")
     await expect(sheet).toBeVisible()
-    const field = sheet.getByLabel("Auto-resolve after (days)")
+    const field = sheet.getByLabel("Auto-resolve after days without failures")
     const before = await field.inputValue()
     await field.fill("9")
     // Inside the sheet, so the focus trap and the backdrop leave it in reach.
@@ -2255,7 +2277,7 @@ test("Back from an instance added on another one asks, Stay keeps it without a r
     })
 
     const settings = page.getByRole("tab", { name: /^Settings/ })
-    const field = page.getByLabel("Auto-resolve after (days)")
+    const field = page.getByLabel("Auto-resolve after days without failures")
     /** The tab is a Back step on the same page, which does not ask. */
     const backFromTab = async () => {
       await page.goBack()

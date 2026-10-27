@@ -545,7 +545,7 @@ export function DestinationFields({
         </FieldLegend>
         {locked && (
           <FieldDescription>
-            Fixed once set: earlier archives stay where they were written. For another place, add a new destination.
+            Fixed once set: earlier archives stay where they were written. For another location, add a new destination.
           </FieldDescription>
         )}
         {kind.location.map((f) =>
@@ -693,7 +693,7 @@ export function DestinationFields({
           <SwitchRow
             id="d-lock"
             title="Object Lock"
-            description="Every archive is locked when it is written: nobody can delete or change it until the lock ends, not even with these keys. The bucket must have been created with Object Lock."
+            description="Every archive is locked when it is written, for the days set below. The bucket must have Object Lock enabled."
             checked={form.lock}
             onCheckedChange={(v) => setForm((f) => ({ ...f, lock: v }))}
           />
@@ -811,7 +811,10 @@ function DeleteDestination({
           <ToggleGroupItem value="delete">Delete its archives too</ToggleGroupItem>
         </ToggleGroup>
         {destination.objectLock && files === "delete" && (
-          <p className="text-small text-muted-foreground">Archives still under Object Lock cannot be deleted.</p>
+          <p className="text-small text-muted-foreground">
+            If any archive is still under Object Lock, nothing is deleted. Keep the archives, or turn the destination
+            off.
+          </p>
         )}
         {error && <FieldError>{error}</FieldError>}
         <DialogFooter>
@@ -870,7 +873,7 @@ function DestinationChoice({
         <p className="text-muted-foreground">
           {defaults.length
             ? `Now: ${defaults.map((d) => d.name).join(", ")}. Follows the defaults as they change.`
-            : "No destination is marked as default, so nothing is backed up."}
+            : "No default destination is on, so nothing is backed up."}
         </p>
       ) : (
         <div className="grid gap-2">
@@ -894,7 +897,7 @@ function DestinationChoice({
             </label>
           ))}
           {!choice.ids.some((x) => destinations.find((d) => d.id === x)?.enabled) && (
-            <p className="font-semibold text-warn">No destination chosen that is on: nothing is backed up.</p>
+            <p className="font-semibold text-warn">No chosen destination is on, so nothing is backed up.</p>
           )}
         </div>
       )}
@@ -1070,7 +1073,7 @@ function SelfBackupCard({ destinations, hidden }: { destinations: Destination[];
         title="n8n-ops Database"
         description={
           <>
-            n8n-ops backs up its own database every night, encrypted with the same key.
+            n8n-ops backs up its own database every day at the daily backup time, encrypted with the backup public key.
             {/* A failed refresh keeps what is shown and says so here (TB-5, LD-12). */}
             <RefreshNote live={query} separator=" " textClass={descriptionText} />
           </>

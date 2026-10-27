@@ -100,11 +100,11 @@ export function webdavStore(
         headers: { "content-length": String(expected.size), "content-type": "application/octet-stream" },
         body: createReadStream(file, { signal }),
       })
-      ;(await expect(put, [200, 201, 204], "Uploading the archive")).body.resume()
+      ;(await expect(put, [200, 201, 204], "Writing the archive")).body.resume()
       const moved = await send("MOVE", urlOf(part), signal, {
         headers: { destination: urlOf(key).toString(), overwrite: "T" },
       })
-      ;(await expect(moved, [201, 204], "Renaming the uploaded archive")).body.resume()
+      ;(await expect(moved, [201, 204], "Renaming the written archive")).body.resume()
       return {}
     },
 

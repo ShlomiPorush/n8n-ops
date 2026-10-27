@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tip } from "@/components/ui/tooltip"
 import { api } from "@/lib/api"
+import { auditAction, auditTarget } from "@/lib/audit-text"
 import { loadView } from "@/lib/load-state"
 import { n, plural } from "@/lib/numbers"
 import { formatTime, useTimeFormat } from "@/lib/time"
@@ -141,10 +142,10 @@ export function AuditPage() {
                   )}
                 </TableCell>
                 <TableCell className="font-semibold" data-primary>
-                  {a.action}
+                  {auditAction(a.action)}
                 </TableCell>
-                <TableCell className="max-w-md truncate" title={a.target} data-wide data-nolabel>
-                  {a.target && <UserText>{a.target}</UserText>}
+                <TableCell className="max-w-md truncate" title={auditTarget(a.target)} data-wide data-nolabel>
+                  {a.target && <UserText>{auditTarget(a.target)}</UserText>}
                 </TableCell>
                 <TableCell className="text-muted-foreground">
                   <ViaIcon via={a.via} />

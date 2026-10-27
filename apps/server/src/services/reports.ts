@@ -29,6 +29,8 @@ type ReportData = {
   when?: Date
   /** The start of that window; a day or a week before `when` when left out. */
   since?: Date
+  /** Sent by the test button in Settings → Email Reports, not on the schedule. */
+  test?: boolean
 }
 
 const backupWords: Record<string, [string, Tone]> = {
@@ -60,7 +62,7 @@ export function renderReport(d: ReportData): Report {
       title: "Top failing workflows",
       rows: d.topWorkflows.map((w) => [w.workflow, w.instance, plural(w.failures, "failure")]),
     },
-    { title: "Health incidents", rows: d.incidents.map((i) => [stamp(i.at), i.text]) },
+    { title: "Health alerts", rows: d.incidents.map((i) => [stamp(i.at), i.text]) },
     { title: "Backups", rows: d.backups.map((b) => [b.name, backupWords[b.status]?.[0] ?? b.status, stamp(b.at)]) },
     {
       title: d.latest ? `Versions (latest n8n ${d.latest})` : "Versions",
@@ -92,7 +94,7 @@ export function renderReport(d: ReportData): Report {
     blocks: [
       stats([
         { label: "Open problems", value: n(totalOpen), tone: totalOpen ? "fail" : undefined },
-        { label: "Health incidents", value: n(d.incidents.length), tone: d.incidents.length ? "warn" : undefined },
+        { label: "Health alerts", value: n(d.incidents.length), tone: d.incidents.length ? "warn" : undefined },
         {
           label: "Backups to check",
           value: n(badBackups.length),
@@ -123,12 +125,12 @@ export function renderReport(d: ReportData): Report {
         { count: totalOpen || undefined },
       ),
       panel(
-        "Health incidents",
+        "Health alerts",
         [
           table(
             ["When", "What"],
             d.incidents.map((i) => [stamp(i.at), i.text]),
-            { empty: "No incidents." },
+            { empty: "No health alerts." },
           ),
         ],
         { count: d.incidents.length || undefined },
@@ -156,12 +158,14 @@ export function renderReport(d: ReportData): Report {
           note: d.latest
             ? behind.length
               ? `${plural(behind.length, "instance is", "instances are")} behind n8n ${d.latest}.`
-              : `Every instance runs n8n ${d.latest} or later.`
+              : `Every instance with a known version runs n8n ${d.latest} or later.`
             : undefined,
         },
       ),
     ],
-    footer: `You get this because the ${d.period} report is on in Settings → Email Reports.`,
+    footer: d.test
+      ? "This is a test sent from Settings → Email Reports."
+      : `You get this because the ${d.period} report is on in Settings → Email Reports.`,
   })
   return { subject: `${title}: ${plural(totalOpen, "open problem")}`, text, html }
 }
@@ -169,9 +173,14 @@ export function renderReport(d: ReportData): Report {
 /**
  * The report of the day or week that ends at `when`. Every query counts what happened after `since` up to and
  * including `when`, the window the report prints (EM-6): what arrives while the report is being made waits for
- * the next one.
+ * the next one. `test` marks the one the test button sends, so its footer says so.
  */
-export async function buildReport(ctx: Ctx, period: "daily" | "weekly", when = new Date()): Promise<Report> {
+export async function buildReport(
+  ctx: Ctx,
+  period: "daily" | "weekly",
+  when = new Date(),
+  { test = false } = {},
+): Promise<Report> {
   const since = new Date(when.getTime() - periodMs[period])
   const allInstances = await ctx.db.select().from(instances)
   const name = new Map(allInstances.map((i) => [i.id, i.name]))
@@ -216,6 +225,7 @@ export async function buildReport(ctx: Ctx, period: "daily" | "weekly", when = n
     dates: messageWriting(await ctx.settings.get("general")),
     when,
     since,
+    test,
   })
 }
 

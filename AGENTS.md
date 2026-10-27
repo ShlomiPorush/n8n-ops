@@ -8,6 +8,7 @@ n8n-ops is a self-hosted operations console for many n8n instances: failure moni
 
 - Product requirements: `docs/requirements.md`
 - Foundation and repository contract (what exists, decisions, scripts, CI): `docs/project-foundation.md`
+- Domain language (use these words in code, UI and docs): `docs/CONTEXT.md`. It includes accepted decisions that are not built yet (see `docs/adr/`); check the code for current behaviour.
 
 Items marked planned in those documents do not exist yet. Check the repository before assuming a file, command or feature.
 

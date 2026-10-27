@@ -1261,6 +1261,10 @@ function MergeDialog({
     failed: (b) => `merge into ${target(b.into)}`,
   })
   const options = (candidates.data?.items ?? []).filter((c) => c.id !== problem.id)
+  const shown = options.some((c) => c.id === into)
+  useEffect(() => {
+    if (into && candidates.data && !shown) setInto("")
+  }, [into, candidates.data, shown])
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
@@ -1303,7 +1307,7 @@ function MergeDialog({
           <Button onClick={() => onOpenChange(false)}>Cancel</Button>
           <BusyButton
             variant="primary"
-            disabled={!into}
+            disabled={!into || !shown}
             busyLabel="Merging…"
             run={async () => {
               await merge.mutateAsync({ into })

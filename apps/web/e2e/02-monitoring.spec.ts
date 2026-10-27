@@ -198,8 +198,11 @@ test("a second workflow failing with the same error joins the Problem, and Split
   const listed = (await (await n8nApi("/api/v1/workflows?name=Get%20DNS%20Data")).json()) as { data: { id: string }[] }
   for (const w of listed.data) {
     await n8nApi(`/api/v1/workflows/${w.id}/deactivate`, { method: "POST" })
-    const removed = await n8nApi(`/api/v1/workflows/${w.id}`, { method: "DELETE" })
-    expect(removed.ok, await removed.clone().text()).toBe(true)
+    // n8n unpublishes a deactivated workflow in the background and refuses to delete it until then.
+    await expect(async () => {
+      const removed = await n8nApi(`/api/v1/workflows/${w.id}`, { method: "DELETE" })
+      expect(removed.ok, await removed.clone().text()).toBe(true)
+    }).toPass({ timeout: 30_000 })
   }
 })
 

@@ -429,7 +429,14 @@ export async function dispatchAlerts(ctx: Ctx) {
       // A Problem that had a message before gets a short one: only these workflows, and how many it is in now.
       const carried = ids.filter((id) => !rows.some((r) => r.id === id))
       newIds = await stillIn(ctx, problemId, newIds)
-      ids.splice(0, ids.length, ...idsOf(newIds), ...carried)
+      const carriedRows = carried.length
+        ? await ctx.db
+            .select({ id: alertOutbox.id, affectedWorkflowId: alertOutbox.affectedWorkflowId })
+            .from(alertOutbox)
+            .where(inArray(alertOutbox.id, carried))
+        : []
+      const kept = carriedRows.filter((r) => r.affectedWorkflowId && newIds.includes(r.affectedWorkflowId))
+      ids.splice(0, ids.length, ...idsOf(newIds), ...kept.map((r) => r.id))
       if (!newIds.length) continue
       const spread = await spreadOf(ctx, problemId)
       const lines = await groupLines(ctx, newIds)
@@ -533,17 +540,9 @@ export async function handleTelegramCallback(ctx: Ctx, update: CallbackUpdate): 
     const who = cb.from?.username ? `@${cb.from.username}` : (cb.from?.first_name ?? "someone")
     // The whole Problem the message is about, read now (a Merge since may have moved it). A message from before
     // 0012 names no Problem; its button acts on the Problems of the workflows it lists, as it did on those rows.
-    let problemIds: string[] = []
-    if (group.problemId) problemIds = [group.problemId]
-    else if (group.affectedWorkflowIds.length) {
-      const rows = await ctx.db
-        .selectDistinct({ problemId: affectedWorkflows.problemId })
-        .from(affectedWorkflows)
-        .where(inArray(affectedWorkflows.id, group.affectedWorkflowIds))
-      problemIds = rows.map((r) => r.problemId)
-    }
     // One transaction for all of them, which reads each Problem again under its lock and follows a Merge.
-    problemIds = await applyProblemActions(ctx, problemIds, action === "r" ? "resolve" : "mute", {
+    const named = group.problemId ? { problems: [group.problemId] } : { workflows: group.affectedWorkflowIds }
+    const problemIds = await applyProblemActions(ctx, named, action === "r" ? "resolve" : "mute", {
       muteHours: 24,
       audit: {
         actor: `telegram:${who}`,
@@ -568,6 +567,7 @@ export async function handleTelegramCallback(ctx: Ctx, update: CallbackUpdate): 
           lines,
           html`<i>${action === "r" ? "Resolved" : "Muted for 24 hours"} by ${who}</i>`,
           groupNote(group),
+          group.problemId && problemIds[0] ? await spreadOf(ctx, problemIds[0], group.createdAt) : undefined,
         ),
       )
     } catch (error) {

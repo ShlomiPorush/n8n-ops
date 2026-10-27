@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, lt, lte, sql } from "drizzle-orm"
+import { and, asc, eq, inArray, isNull, lt, lte, sql } from "drizzle-orm"
 import { type Ctx, changed } from "../context.ts"
 import type { Db } from "../db/client.ts"
 import { errorCode } from "../db/errors.ts"
@@ -360,7 +360,7 @@ export async function deleteInstance(ctx: Pick<Ctx, "db">, id: string) {
       const ids = [...locked]
       if (ids.length) {
         const empty = sql`not exists (select 1 from ${affectedWorkflows} where ${affectedWorkflows.problemId} = ${problems.id})`
-        await tx.delete(problems).where(and(inArray(problems.id, ids), empty))
+        await tx.delete(problems).where(and(inArray(problems.id, ids), isNull(problems.mergedInto), empty))
         await tx
           .update(problems)
           .set({ version: sql`${problems.version} + 1` })
@@ -561,12 +561,23 @@ export async function applyProblemAction(
  */
 export async function applyProblemActions(
   ctx: Pick<Ctx, "db" | "audit">,
-  ids: string[],
+  of: { problems: string[] } | { workflows: string[] },
   action: ProblemAction,
   { muteHours = 24, now = new Date(), audit }: { muteHours?: number; now?: Date; audit?: ProblemAudit } = {},
 ): Promise<string[]> {
+  /** The Problems the workflows are in now: a message from before 0012 names workflows, not a Problem. */
+  const problemsOf = async (tx: Tx, workflows: string[]) =>
+    workflows.length
+      ? (
+          await tx
+            .selectDistinct({ id: affectedWorkflows.problemId })
+            .from(affectedWorkflows)
+            .where(inArray(affectedWorkflows.id, workflows))
+        ).map((r) => r.id)
+      : []
   return retrying(() =>
     ctx.db.transaction(async (tx) => {
+      const ids = "problems" in of ? of.problems : await problemsOf(tx, of.workflows)
       const named = ids.length ? await tx.select().from(problems).where(inArray(problems.id, ids)) : []
       const targets = [...new Set(named.map((p) => p.mergedInto ?? p.id))].sort()
       const done: string[] = []
@@ -587,6 +598,11 @@ export async function applyProblemActions(
           await tx.update(affectedWorkflows).set(patch).where(eq(affectedWorkflows.id, row.id))
         }
         if (audit && touched) await ctx.audit({ ...audit, target: auditTarget(locked.problem, locked.rows, false) }, tx)
+      }
+      // A Split or Merge between the read and the locks moved a workflow of the message: a retry reads them again.
+      if ("workflows" in of) {
+        const now = (await problemsOf(tx, of.workflows)).sort()
+        if (now.join() !== done.join()) throw Object.assign(new Error("the problems changed"), { code: "40001" })
       }
       return done
     }),

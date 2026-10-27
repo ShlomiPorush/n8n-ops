@@ -381,19 +381,38 @@ describe("the review's rare states", () => {
     const into = await row()
     const from = await row()
     await mergeProblems(ctx, from.problemId, into.problemId)
-    expect(await applyProblemActions(ctx, [from.problemId], "resolve")).toEqual([into.problemId])
+    expect(await applyProblemActions(ctx, { problems: [from.problemId] }, "resolve")).toEqual([into.problemId])
     expect((await read(from.id)).status).toBe("resolved")
     expect((await read(into.id)).status).toBe("resolved")
     // Either all of them or none: an audit that cannot be written saves no change.
     const other = await row()
     const failing = { ...ctx, audit: async () => Promise.reject(new Error("audit log unavailable")) } as Ctx
     await expect(
-      applyProblemActions(failing, [into.problemId, other.problemId], "reopen", {
+      applyProblemActions(failing, { problems: [into.problemId, other.problemId] }, "reopen", {
         audit: { actor: "telegram:ops", action: "Problem reopened", via: "telegram" },
       }),
     ).rejects.toThrow("audit log unavailable")
     expect((await read(into.id)).status).toBe("resolved")
     expect((await read(other.id)).status).toBe("open")
+  })
+
+  it("a press on a message from before 0012 acts on the Problems its workflows are in now", async () => {
+    const a = await row()
+    const b = await row({ errorMessage: a.errorMessage }, a.problemId)
+    const split = await splitAffectedWorkflow(ctx, a.problemId, b.id)
+    const done = await applyProblemActions(ctx, { workflows: [b.id] }, "resolve")
+    expect(done).toEqual([split?.problem.id])
+    expect((await read(b.id)).status).toBe("resolved")
+    expect((await read(a.id)).status).toBe("open")
+  })
+
+  it("removing an instance keeps the aliases of a Problem that stays", async () => {
+    const other = await newInstance(`alias-${randomBytes(2).toString("hex")}`)
+    const into = await row()
+    const from = await row({ instanceId: other.id })
+    await mergeProblems(ctx, from.problemId, into.problemId)
+    await deleteInstance(ctx, other.id)
+    expect(await readProblem(from.problemId)).toMatchObject({ mergedInto: into.problemId })
   })
 
   it("removing an instance moves the version of a Problem it leaves with workflows, so an older Undo refuses", async () => {

@@ -19,8 +19,13 @@ export type ListedContainer = {
 
 export type ContainerState = "running" | "restarting" | "paused" | "exited" | "dead" | "created" | "removing"
 
+/** The `--concurrency` flag of a worker's command: its number, "invalid" when it is not 1..1000, or none. */
+export type ConcurrencyFlag = number | "invalid" | undefined
+
+export type FoundWorker = { name: string; state: ContainerState; concurrencyFlag?: ConcurrencyFlag }
+
 export type Discovery =
-  | { status: "ok"; main: ContainerState; workers: { name: string; state: ContainerState }[] }
+  | { status: "ok"; main: ContainerState; workers: FoundWorker[] }
   | { status: "ambiguous"; reason: string; main?: ContainerState }
 
 /** The entrypoint of the official n8n image, as the list shows it before the command's own words. */
@@ -38,6 +43,17 @@ export function nameOf(container: ListedContainer): string {
 const STATES = new Set<ContainerState>(["running", "restarting", "paused", "exited", "dead", "created", "removing"])
 export const stateOf = (container: ListedContainer): ContainerState =>
   STATES.has(container.State as ContainerState) ? (container.State as ContainerState) : "dead"
+
+/** The `--concurrency` flag of a listed command (`--concurrency N` or `--concurrency=N`); only its number leaves. */
+export function concurrencyFlag(container: ListedContainer): ConcurrencyFlag {
+  const words = (container.Command ?? "").trim().split(/\s+/)
+  const at = words.findIndex((w) => w === "--concurrency" || w.startsWith("--concurrency="))
+  if (at < 0) return undefined
+  const word = words[at] ?? ""
+  const value = word.includes("=") ? word.slice(word.indexOf("=") + 1) : words[at + 1]
+  const n = /^[0-9]{1,4}$/.test(value ?? "") ? Number(value) : Number.NaN
+  return Number.isInteger(n) && n >= 1 && n <= 1000 ? n : "invalid"
+}
 
 /** Whether the words after a command are flags only: `--x`, `--x=y`, or `--x value`. */
 function onlyFlags(words: string[]) {
@@ -112,7 +128,7 @@ export function discover(projectList: ListedContainer[], main: string): Discover
     }
   const workers = members
     .filter((c) => roleOf(c) === "worker")
-    .map((c) => ({ name: nameOf(c), state: stateOf(c) }))
+    .map((c) => ({ name: nameOf(c), state: stateOf(c), concurrencyFlag: concurrencyFlag(c) }))
     .sort((a, b) => a.name.localeCompare(b.name))
   return { status: "ok", main: mainState, workers }
 }

@@ -116,3 +116,102 @@ export function workerHealth(state: WorkerState | undefined, ok: boolean): "ok" 
   if (state === "not-verified" || state === "not-checked") return "warn"
   return ok ? "ok" : "down"
 }
+
+/** A queue worker as the Health tab shows it, with the figures the check in it read. */
+export type QueueWorkerRow = {
+  url: string
+  name?: string
+  ok: boolean
+  error?: string
+  state?: WorkerState
+  version?: string
+  uptimeSec?: number
+  memory?: { used: number; limit: number | null }
+  concurrency?: { value: number; from: "env" | "flag" | "default" }
+}
+
+/** By name, numbers in order (worker2 before worker10); the checks run in another order, the list does not. */
+export function byName(a: QueueWorkerRow, b: QueueWorkerRow): number {
+  return (a.name ?? a.url).localeCompare(b.name ?? b.url, "en", { numeric: true })
+}
+
+/** What a row says, in the summary's words. A row without a state (a health URL the owner typed) has no readiness. */
+type Bucket = WorkerState | "health-only" | "unknown"
+const bucketOf = (r: QueueWorkerRow): Bucket => r.state ?? (r.ok ? "health-only" : "unknown")
+
+const STATE_WORDS: [Bucket, string][] = [
+  ["not-ready", "not ready"],
+  ["unreachable", "no answer"],
+  ["not-verified", "health not verified"],
+  ["down", "down"],
+  ["not-checked", "not checked"],
+  ["health-only", "answering, readiness not checked"],
+  ["unknown", "state not known"],
+]
+
+/**
+ * One line above the queue workers: how many are ready of how many there are, then each other state with its count.
+ * When the list was cut (`found` above the rows), it says how many were checked; `past` marks the last check.
+ */
+export function workersSummary(rows: QueueWorkerRow[], options: { found?: number; past?: boolean } = {}): string {
+  const count = (bucket: Bucket) => rows.filter((r) => bucketOf(r) === bucket).length
+  const ready = count("ready")
+  const total = options.found !== undefined && options.found > rows.length ? options.found : rows.length
+  // More were found than are shown (the probe checks at most 50): say how many are shown, not how many were checked.
+  const head =
+    total > rows.length
+      ? `Showing ${rows.length} of ${total} queue workers: ${ready} ready`
+      : `${ready} of ${total} queue workers ready`
+  const others = STATE_WORDS.flatMap(([state, words]) => {
+    const n = count(state)
+    return n ? [`${n} ${words}`] : []
+  })
+  const text = [head, ...others].join(", ")
+  return options.past ? `At the last check: ${text}` : text
+}
+
+const MB = 1024 * 1024
+
+/** Bytes in words: MB under a GB, GB above, one decimal under ten. */
+export function bytesWords(bytes: number): string {
+  if (bytes < 1024 * MB) return `${Math.round(bytes / MB)} MB`
+  const gb = bytes / (1024 * MB)
+  return `${gb < 10 ? gb.toFixed(1).replace(/\.0$/, "") : Math.round(gb)} GB`
+}
+
+/** A duration in words, its two largest units: "3 d 4 h", "5 h 12 min", "12 min", "45 s". */
+export function uptimeWords(seconds: number): string {
+  const d = Math.floor(seconds / 86_400)
+  const h = Math.floor((seconds % 86_400) / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  if (d) return h ? `${d} d ${h} h` : `${d} d`
+  if (h) return m ? `${h} h ${m} min` : `${h} h`
+  return m ? `${m} min` : `${seconds} s`
+}
+
+const FROM_WORDS = {
+  env: "set by N8N_CONCURRENCY_PRODUCTION_LIMIT",
+  flag: "set by --concurrency",
+  default: "n8n's default",
+} as const
+
+/**
+ * The figures of a queue worker in words, each only when the check read it. The version is marked when it differs
+ * from the main's, and only against a version read inside the main in the same check (`mainVersion`).
+ */
+export function workerFigures(w: QueueWorkerRow, mainVersion?: string) {
+  return {
+    version: w.version
+      ? { text: `n8n ${w.version}`, differs: Boolean(mainVersion && mainVersion !== w.version), main: mainVersion }
+      : undefined,
+    uptime: w.uptimeSec !== undefined ? `container up for ${uptimeWords(w.uptimeSec)}` : undefined,
+    jobs: w.concurrency
+      ? `runs ${w.concurrency.value} ${w.concurrency.value === 1 ? "job" : "jobs"} at once (${FROM_WORDS[w.concurrency.from]})`
+      : undefined,
+    memory: w.memory
+      ? w.memory.limit === null
+        ? `memory ${bytesWords(w.memory.used)}, no limit set on the container`
+        : `memory ${bytesWords(w.memory.used)} of ${bytesWords(w.memory.limit)}`
+      : undefined,
+  }
+}

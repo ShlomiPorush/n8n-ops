@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, inArray, isNull, lte } from "drizzle-orm"
+import { and, asc, desc, eq, gt, inArray, isNull, lt, lte } from "drizzle-orm"
 import { type Ctx, changed } from "../context.ts"
 import {
   type AlertKind,
@@ -10,10 +10,11 @@ import {
   problems,
   workflows,
 } from "../db/schema.ts"
+import type { Section } from "../lib/settings.ts"
 import { type AlertSubject, resolveThread, sendRouted, topicGoneNote } from "./alert-routing.ts"
 import { telegramTarget } from "./draft-tests.ts"
 import type { DbLike } from "./problems.ts"
-import { applyProblemAction } from "./problems.ts"
+import { applyProblemActions } from "./problems.ts"
 import { clip, html, type InlineButton, isMessageGone, Telegram, TelegramError, TelegramHtml } from "./telegram.ts"
 
 type AffectedRow = typeof affectedWorkflows.$inferSelect
@@ -33,10 +34,16 @@ export async function threadFor(ctx: Ctx, subject: AlertSubject): Promise<number
   )
 }
 
-async function problemSubject(ctx: Ctx, row: AffectedRow): Promise<AlertSubject> {
-  const { routes } = await ctx.settings.get("telegram")
-  if (!routes.some((r) => r.tag)) return { instanceId: row.instanceId, workflowName: row.workflowName }
-  const [workflow] = await ctx.db
+/** What queueing a problem alert reads from Settings, read before the transaction that queues it. */
+export type ProblemAlertSettings = { alerts: Section<"alerts">; telegram: Section<"telegram"> }
+
+export async function problemAlertSettings(ctx: Ctx): Promise<ProblemAlertSettings> {
+  return { alerts: await ctx.settings.get("alerts"), telegram: await ctx.settings.get("telegram") }
+}
+
+async function problemSubject(db: DbLike, telegram: Section<"telegram">, row: AffectedRow): Promise<AlertSubject> {
+  if (!telegram.routes.some((r) => r.tag)) return { instanceId: row.instanceId, workflowName: row.workflowName }
+  const [workflow] = await db
     .select({ tags: workflows.tags })
     .from(workflows)
     .where(and(eq(workflows.instanceId, row.instanceId), eq(workflows.workflowId, row.workflowId)))
@@ -46,17 +53,27 @@ async function problemSubject(ctx: Ctx, row: AffectedRow): Promise<AlertSubject>
 /**
  * Queues the alert of an Affected workflow, in the transaction that recorded its failure. It waits for the grouping
  * window, so workflows of one Problem that fail together go out as one message. A workflow joining a Problem counts
- * as a new problem in the settings.
+ * as a new problem in the settings. Every read goes through `tx`, with the settings read before it: a transaction
+ * that waited for another connection of the pool could wait for ever when every connection holds one.
  */
-export async function enqueueProblemAlert(ctx: Ctx, tx: DbLike, row: AffectedRow, reason: ProblemAlertReason) {
-  const alerts = await ctx.settings.get("alerts")
+export async function enqueueProblemAlert(
+  ctx: Ctx,
+  tx: DbLike,
+  row: AffectedRow,
+  reason: ProblemAlertReason,
+  settings?: ProblemAlertSettings,
+) {
+  const { alerts, telegram } = settings ?? (await problemAlertSettings(ctx))
   if (reason !== "regression" && !alerts.newProblem) return
   if (reason === "regression" && !alerts.regression) return
+  const thread = resolveThread(telegram, await problemSubject(tx, telegram, row), (pattern) =>
+    ctx.log.warn("a Telegram route's workflow pattern took too long and is ignored until restart", { pattern }),
+  )
   await tx.insert(alertOutbox).values({
     kind: "problem",
     groupKey: row.errorMessage,
     affectedWorkflowId: row.id,
-    threadId: await threadFor(ctx, await problemSubject(ctx, row)),
+    threadId: thread,
     text: reason,
     sendAfter: new Date(Date.now() + alerts.groupingWindowSec * 1000),
   })
@@ -105,6 +122,8 @@ export async function setCondition(
 }
 
 export type GroupLine = {
+  /** The workflow on its instance; two lines of one workflow (two nodes) are one workflow. */
+  workflowKey?: string
   workflowName: string
   instanceName: string
   nodeName: string
@@ -146,15 +165,16 @@ export function renderProblemGroup(
   spread?: { workflows: number },
 ): TelegramHtml {
   const regression = lines.some((l) => l.regression)
+  const workflows = new Set(lines.map((l, i) => l.workflowKey ?? String(i))).size
   const title = spread
     ? regression
       ? "Regression"
       : `Now in ${spread.workflows} workflows`
-    : lines.length === 1
+    : workflows === 1
       ? regression
         ? "Regression"
         : "New problem"
-      : `${regression ? "Problems" : "New problem"} in ${lines.length} workflows`
+      : `${regression ? "Problems" : "New problem"} in ${workflows} workflows`
   const body = lines
     .slice(0, 15)
     .map(
@@ -198,6 +218,7 @@ async function groupLines(ctx: Ctx, ids: string[]): Promise<GroupLine[]> {
   return rows
     .sort((x, y) => (order.get(x.a.id) ?? 0) - (order.get(y.a.id) ?? 0))
     .map(({ a, instanceName }) => ({
+      workflowKey: `${a.instanceId}\u0000${a.workflowId}`,
       workflowName: a.workflowName,
       instanceName,
       nodeName: a.nodeName,
@@ -225,6 +246,25 @@ async function stillIn(ctx: Ctx, problemId: string, ids: string[]) {
     .where(and(inArray(affectedWorkflows.id, ids), eq(affectedWorkflows.problemId, problemId)))
   const kept = new Set(rows.map((r) => r.id))
   return ids.filter((id) => kept.has(id))
+}
+
+/**
+ * Whether a message of a Problem is a later one (another message of the Problem came before it), and then how many
+ * workflows the Problem is in: a later message keeps its short form in every edit.
+ */
+async function spreadOf(ctx: Ctx, problemId: string, before?: Date) {
+  const [earlier] = await ctx.db
+    .select({ id: alertGroups.id })
+    .from(alertGroups)
+    .where(
+      and(
+        eq(alertGroups.problemId, problemId),
+        gt(alertGroups.telegramMessageId, 0),
+        before ? lt(alertGroups.createdAt, before) : undefined,
+      ),
+    )
+    .limit(1)
+  return earlier ? { workflows: await workflowCount(ctx, problemId) } : undefined
 }
 
 async function groupButtons(ctx: Ctx, groupId: string, problemId?: string | null): Promise<InlineButton[][]> {
@@ -309,6 +349,9 @@ export async function dispatchAlerts(ctx: Ctx) {
       if (!problem) throw new Error("the problem went away")
       const error = problem.errorMessage
       let newIds = [...new Set(rows.map((r) => r.affectedWorkflowId).filter((id): id is string => Boolean(id)))]
+      /** The queued alerts of these workflows: those of a workflow that moved stay queued. */
+      const idsOf = (workflowIds: string[]) =>
+        rows.filter((r) => r.affectedWorkflowId && workflowIds.includes(r.affectedWorkflowId)).map((r) => r.id)
       const since = new Date(Date.now() - settings.editWindowMin * 60_000)
       // A message whose send failed (closed, or never given its ID) never takes later alerts.
       const [recent] = await ctx.db
@@ -330,13 +373,21 @@ export async function dispatchAlerts(ctx: Ctx) {
           const [current] = await ctx.db.select().from(alertGroups).where(eq(alertGroups.id, recent.id))
           if (!current || current.closedAt) return { merged: false as const }
           const kept = await stillIn(ctx, problemId, current.affectedWorkflowIds)
+          // Read again after the wait: a workflow split away meanwhile goes out with its own Problem later.
+          newIds = await stillIn(ctx, problemId, newIds)
           const all = [...new Set([...kept, ...newIds])]
           const lines = await groupLines(ctx, all)
           try {
             await tg.api.edit(
               tg.chatId,
               current.telegramMessageId,
-              renderProblemGroup(error, lines, undefined, groupNote(current)),
+              renderProblemGroup(
+                error,
+                lines,
+                undefined,
+                groupNote(current),
+                await spreadOf(ctx, problemId, current.createdAt),
+              ),
               await groupButtons(ctx, current.id, problemId),
             )
           } catch (error) {
@@ -366,7 +417,7 @@ export async function dispatchAlerts(ctx: Ctx) {
           await ctx.db
             .update(alertOutbox)
             .set({ status: "merged", sentAt: new Date(), telegramMessageId: current.telegramMessageId })
-            .where(inArray(alertOutbox.id, ids))
+            .where(inArray(alertOutbox.id, idsOf(newIds)))
           return { merged: true as const }
         })
         if (outcome.merged) continue
@@ -376,12 +427,11 @@ export async function dispatchAlerts(ctx: Ctx) {
         }
       }
       // A Problem that had a message before gets a short one: only these workflows, and how many it is in now.
-      const [earlier] = await ctx.db
-        .select({ id: alertGroups.id })
-        .from(alertGroups)
-        .where(and(eq(alertGroups.problemId, problemId), gt(alertGroups.telegramMessageId, 0)))
-        .limit(1)
-      const spread = earlier ? { workflows: await workflowCount(ctx, problemId) } : undefined
+      const carried = ids.filter((id) => !rows.some((r) => r.id === id))
+      newIds = await stillIn(ctx, problemId, newIds)
+      ids.splice(0, ids.length, ...idsOf(newIds), ...carried)
+      if (!newIds.length) continue
+      const spread = await spreadOf(ctx, problemId)
       const lines = await groupLines(ctx, newIds)
       const [group] = await ctx.db
         .insert(alertGroups)
@@ -484,26 +534,23 @@ export async function handleTelegramCallback(ctx: Ctx, update: CallbackUpdate): 
     // The whole Problem the message is about, read now (a Merge since may have moved it). A message from before
     // 0012 names no Problem; its button acts on the Problems of the workflows it lists, as it did on those rows.
     let problemIds: string[] = []
-    if (group.problemId) {
-      const [p] = await ctx.db.select().from(problems).where(eq(problems.id, group.problemId))
-      if (p) problemIds = [p.mergedInto ?? p.id]
-    } else if (group.affectedWorkflowIds.length) {
+    if (group.problemId) problemIds = [group.problemId]
+    else if (group.affectedWorkflowIds.length) {
       const rows = await ctx.db
         .selectDistinct({ problemId: affectedWorkflows.problemId })
         .from(affectedWorkflows)
         .where(inArray(affectedWorkflows.id, group.affectedWorkflowIds))
       problemIds = rows.map((r) => r.problemId)
     }
-    for (const problemId of problemIds) {
-      await applyProblemAction(ctx, problemId, action === "r" ? "resolve" : "mute", {
-        muteHours: 24,
-        audit: {
-          actor: `telegram:${who}`,
-          action: action === "r" ? "Problem resolved" : "Problem muted for 24 hours",
-          via: "telegram",
-        },
-      })
-    }
+    // One transaction for all of them, which reads each Problem again under its lock and follows a Merge.
+    problemIds = await applyProblemActions(ctx, problemIds, action === "r" ? "resolve" : "mute", {
+      muteHours: 24,
+      audit: {
+        actor: `telegram:${who}`,
+        action: action === "r" ? "Problem resolved" : "Problem muted for 24 hours",
+        via: "telegram",
+      },
+    })
     changed(ctx, "problems", "overview")
     const listed = group.problemId
       ? await stillIn(ctx, problemIds[0] ?? group.problemId, group.affectedWorkflowIds)

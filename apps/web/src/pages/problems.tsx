@@ -70,7 +70,7 @@ import {
   useSortOrder,
 } from "@/components/ui/table"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { api, useApi, useApiMutation } from "@/lib/api"
+import { ApiError, api, useApi, useApiMutation } from "@/lib/api"
 import { loadView } from "@/lib/load-state"
 import { countOf, n, plural, word } from "@/lib/numbers"
 import { useNavigateFromOverlay } from "@/lib/overlay-history"
@@ -701,6 +701,18 @@ export function ProblemDetail({ id }: { id: string }) {
       replace: true,
     })
   }, [canonical, chosen, id, navigate, params, workflow, detail.data])
+  const gone = detail.error instanceof ApiError && detail.error.status === 404
+  useEffect(() => {
+    if (!gone || !workflow) return
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        next.delete("workflow")
+        return next
+      },
+      { replace: true },
+    )
+  }, [gone, workflow, setParams])
   const [merging, setMerging] = useState(false)
   // Merge is opened from a menu item that is gone once the dialog closes: the focus goes back to the menu's button.
   const more = useRef<HTMLButtonElement>(null)
@@ -1155,6 +1167,7 @@ export function ProblemDetail({ id }: { id: string }) {
 
 /** The actions of one Affected workflow: its own Resolve, Mute and Reopen, and Split. */
 function WorkflowActions({ problem, row }: { problem: ProblemDetailData; row: AffectedRow }) {
+  const [, setParams] = useSearchParams()
   const named = () => row.workflowName
   const resolve = useProblemAction(problem.id, "resolve", named, row.id)
   const mute = useProblemAction(problem.id, "mute", named, row.id)
@@ -1170,6 +1183,16 @@ function WorkflowActions({ problem, row }: { problem: ProblemDetailData; row: Af
     },
   )
   const run = (action: () => Promise<unknown>) => () => void action().catch(() => {})
+  // The workflow split away is no longer this Problem's: the page shows the Problem's own choice again.
+  const splitOff = async () => {
+    await split.mutateAsync()
+    setParams((prev) => {
+      if (prev.get("workflow") !== row.id) return prev
+      const next = new URLSearchParams(prev)
+      next.delete("workflow")
+      return next
+    })
+  }
   return (
     // Not modal, like the pane's own menu.
     <DropdownMenu modal={false}>
@@ -1198,7 +1221,7 @@ function WorkflowActions({ problem, row }: { problem: ProblemDetailData; row: Af
           </DropdownMenuItem>
         ) : null}
         {problem.affectedTotal > 1 && (
-          <DropdownMenuItem onSelect={run(() => split.mutateAsync())}>
+          <DropdownMenuItem onSelect={run(splitOff)}>
             <SplitIcon /> Split into its own problem
           </DropdownMenuItem>
         )}
@@ -1220,9 +1243,13 @@ function MergeDialog({
   returnFocus: React.RefObject<HTMLElement | null>
 }) {
   const navigateOut = useNavigateFromOverlay()
-  // Any other Problem, in any state and on any instance: Merge is also the way back after a Split. `for` only names
-  // the request (the server ignores it), so it is told apart from the list beside it.
-  const candidates = useApi<ProblemList>(open ? problemsPath({ status: "all", for: "merge" }) : null)
+  // Any other Problem, in any state and on any instance: Merge is also the way back after a Split. The server
+  // searches them all; `for` only names the request (the server ignores it), so it is told apart from the list.
+  const [find, setFind] = useState("")
+  const candidates = useApi<ProblemList>(
+    open ? problemsPath({ status: "all", for: "merge", ...(find ? { q: find } : {}) }) : null,
+    { keepRows: true },
+  )
   const [into, setInto] = useState("")
   const target = (into: string) => {
     const c = candidates.data?.items.find((c) => c.id === into)
@@ -1249,10 +1276,13 @@ function MergeDialog({
             failures, and workflows that later fail with this error join it too.
           </DialogDescription>
         </DialogHeader>
+        <SearchBox label="Find a problem by error or workflow" value={find} onChange={setFind} debounce />
         {candidates.isLoading ? (
           <Loading />
         ) : options.length === 0 ? (
-          <Empty title="No other problem.">There is nothing to merge this problem into yet.</Empty>
+          <Empty title={find ? `No other problem matches "${find}".` : "No other problem."}>
+            {find ? "Search for another error or workflow." : "There is nothing to merge this problem into yet."}
+          </Empty>
         ) : (
           <FieldPicker
             label="Problem to merge into"

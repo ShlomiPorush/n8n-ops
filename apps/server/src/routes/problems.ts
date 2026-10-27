@@ -135,17 +135,13 @@ export function problemRoutes(ctx: Ctx) {
     if (!parsed.success) return c.json({ error: "invalid", issues: parsed.error.issues }, 400)
     let merged: Awaited<ReturnType<typeof mergeProblems>>
     try {
-      merged = await mergeProblems(ctx, id, parsed.data.into)
+      // The audit row is written in the Merge's transaction: a failed write saves neither.
+      merged = await mergeProblems(ctx, id, parsed.data.into, {
+        audit: { actor: actorName(c.get("actor")), action: "Problems merged", via: "web" },
+      })
     } catch (error) {
       return c.json({ error: "invalid", issues: [{ path: ["into"], message: (error as Error).message }] }, 400)
     }
-    await ctx.audit({
-      actor: actorName(c.get("actor")),
-      action: "Problems merged",
-      target: `${merged.from.errorMessage.slice(0, 120)} into ${merged.into.errorMessage.slice(0, 120)}`,
-      via: "web",
-      details: { from: merged.from.id, into: merged.into.id },
-    })
     changed(ctx, "problems", "overview")
     return c.json({ ok: true, id: merged.into.id })
   })
@@ -157,18 +153,13 @@ export function problemRoutes(ctx: Ctx) {
     if (!uuid.safeParse(id).success || !uuid.safeParse(workflow).success) return c.json({ error: "not_found" }, 404)
     let split: Awaited<ReturnType<typeof splitAffectedWorkflow>>
     try {
-      split = await splitAffectedWorkflow(ctx, id, workflow)
+      split = await splitAffectedWorkflow(ctx, id, workflow, {
+        audit: { actor: actorName(c.get("actor")), action: "Problem split", via: "web" },
+      })
     } catch (error) {
       return c.json({ error: "invalid", issues: [{ path: ["workflowId"], message: (error as Error).message }] }, 400)
     }
     if (!split) return c.json({ error: "not_found" }, 404)
-    await ctx.audit({
-      actor: actorName(c.get("actor")),
-      action: "Problem split",
-      target: `${split.row.workflowName} · ${split.row.nodeName}`,
-      via: "web",
-      details: { from: split.from.id, into: split.problem.id },
-    })
     changed(ctx, "problems", "overview")
     return c.json({ ok: true, id: split.problem.id })
   })

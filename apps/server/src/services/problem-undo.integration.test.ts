@@ -12,6 +12,7 @@ import type { N8nExecution } from "../n8n/client.ts"
 import {
   type AffectedWorkflow,
   applyProblemAction,
+  applyProblemActions,
   deleteInstance,
   errorFingerprint,
   fingerprint,
@@ -365,6 +366,56 @@ describe("problem actions", () => {
     expect((await read(b.id)).status).toBe("resolved")
     const elsewhere = await row()
     expect(await applyProblemAction(ctx, a.problemId, "resolve", { affectedWorkflowId: elsewhere.id })).toBeNull()
+  })
+})
+
+describe("the review's rare states", () => {
+  it("Mute works again on a workflow whose mute ended before housekeeping noticed", async () => {
+    const p = await row({ status: "muted", mutedUntil: new Date(Date.now() - hour) })
+    const result = await applyProblemAction(ctx, p.problemId, "mute")
+    expect(result?.receipt).toBeTruthy()
+    expect((await read(p.id)).mutedUntil?.getTime()).toBeGreaterThan(Date.now())
+  })
+
+  it("a Telegram press acts on the Problem a Merge moved its workflows to, all in one transaction", async () => {
+    const into = await row()
+    const from = await row()
+    await mergeProblems(ctx, from.problemId, into.problemId)
+    expect(await applyProblemActions(ctx, [from.problemId], "resolve")).toEqual([into.problemId])
+    expect((await read(from.id)).status).toBe("resolved")
+    expect((await read(into.id)).status).toBe("resolved")
+    // Either all of them or none: an audit that cannot be written saves no change.
+    const other = await row()
+    const failing = { ...ctx, audit: async () => Promise.reject(new Error("audit log unavailable")) } as Ctx
+    await expect(
+      applyProblemActions(failing, [into.problemId, other.problemId], "reopen", {
+        audit: { actor: "telegram:ops", action: "Problem reopened", via: "telegram" },
+      }),
+    ).rejects.toThrow("audit log unavailable")
+    expect((await read(into.id)).status).toBe("resolved")
+    expect((await read(other.id)).status).toBe("open")
+  })
+
+  it("removing an instance moves the version of a Problem it leaves with workflows, so an older Undo refuses", async () => {
+    const other = await newInstance(`left-${randomBytes(2).toString("hex")}`)
+    const stays = await row({ status: "resolved", resolvedAt: new Date() })
+    const leaves = await row({ errorMessage: stays.errorMessage, instanceId: other.id }, stays.problemId)
+    const receipt = await act(stays, "reopen")
+    await deleteInstance(ctx, other.id)
+    expect(await ctx.db.select().from(affectedWorkflows).where(eq(affectedWorkflows.id, leaves.id))).toEqual([])
+    expect(await undoProblemAction(ctx, stays.problemId, receipt.id)).toEqual({ ok: false, error: "already_changed" })
+  })
+
+  it("a Split whose audit row cannot be written is not saved", async () => {
+    const a = await row()
+    const b = await row({ errorMessage: a.errorMessage }, a.problemId)
+    const failing = { ...ctx, audit: async () => Promise.reject(new Error("audit log unavailable")) } as Ctx
+    await expect(
+      splitAffectedWorkflow(failing, a.problemId, b.id, {
+        audit: { actor: "admin", action: "Problem split", via: "web" },
+      }),
+    ).rejects.toThrow("audit log unavailable")
+    expect((await read(b.id)).problemId).toBe(a.problemId)
   })
 })
 

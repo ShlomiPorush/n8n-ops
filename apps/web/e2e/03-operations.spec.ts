@@ -353,7 +353,9 @@ test("another instance of the same n8n joins its failures to the Problem they sh
   await page.getByRole("button", { name: "Check now" }).click()
   await expect(page.getByText("Checked e2e-n8n-b now").last()).toBeVisible({ timeout: 45_000 })
   await page.goto("/problems?status=open")
-  const shared = page.getByRole("row", { name: /2 workflows/ })
+  // The list column: a wide screen also opens the first problem beside it, whose rows name workflows too.
+  const list = page.locator(`[data-scroll-pane="list"]`)
+  const shared = list.getByRole("row", { name: /2 workflows/ })
   await expect(shared).toContainText("2 instances")
   await shared.click()
   const onB = page.getByRole("tabpanel").getByRole("row").filter({ hasText: "e2e-n8n-b" })
@@ -362,6 +364,6 @@ test("another instance of the same n8n joins its failures to the Problem they sh
   await expect(page.getByText("Split into a problem of its own: Sync orders to ERP")).toBeVisible()
   // Each instance's failure is a Problem of its own again, as the files after this one expect.
   await page.goto("/problems?status=open")
-  await expect(page.getByRole("row", { name: /2 workflows/ })).toHaveCount(0)
-  await expect(page.getByRole("row", { name: /Sync orders to ERP/ })).toHaveCount(2)
+  await expect(list.getByRole("row", { name: /2 workflows/ })).toHaveCount(0)
+  await expect(list.getByRole("row", { name: /Sync orders to ERP/ })).toHaveCount(2)
 })

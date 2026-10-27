@@ -16,7 +16,7 @@ import type { AuditEntry } from "../lib/audit.ts"
 import { sha256 } from "../lib/crypto.ts"
 import type { N8nExecution } from "../n8n/client.ts"
 import { extractFailure } from "../n8n/execution.ts"
-import { enqueueProblemAlert, type ProblemAlertReason } from "./alerts.ts"
+import { enqueueProblemAlert, type ProblemAlertReason, problemAlertSettings } from "./alerts.ts"
 import { clientFor, type Instance } from "./instances.ts"
 
 export type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0]
@@ -96,6 +96,8 @@ export async function ingestExecution(
   const rowFingerprint = fingerprint(instance.id, execution.workflowId, failure.nodeName, failure.message)
   const textFingerprint = errorFingerprint(failure.message)
   const seenAt = new Date(execution.stoppedAt ?? execution.startedAt ?? Date.now())
+  // Read before the transaction: inside it, only the transaction's own connection is used.
+  const alertSettings = silent ? undefined : await problemAlertSettings(ctx)
 
   return retrying(() =>
     ctx.db.transaction(async (tx) => {
@@ -209,7 +211,7 @@ export async function ingestExecution(
         nodeInput: failure.input,
         data: { data: execution.data ?? null, workflowData: execution.workflowData ?? null },
       })
-      if (!silent && reason) await enqueueProblemAlert(ctx, tx, row, reason)
+      if (alertSettings && reason) await enqueueProblemAlert(ctx, tx, row, reason, alertSettings)
       return { problemId: row.problemId, affectedWorkflowId: row.id, reason }
     }),
   )
@@ -327,35 +329,43 @@ export async function housekeeping(ctx: Ctx, now = Date.now()) {
 
 /**
  * Removes an instance with its Affected workflows and failures, and the Problems it leaves without a workflow (and
- * so their aliases). Locks the instance first, then those Problems, as every writer does. Null when it was not there.
+ * so their aliases); the Problems it leaves with workflows move on their version, so an Undo from before refuses.
+ * Locks the instance first, then the Problems its workflows are in, read again until no Merge or Split moved one
+ * meanwhile, as every writer locks. Null when it was not there.
  */
 export async function deleteInstance(ctx: Pick<Ctx, "db">, id: string) {
   return retrying(() =>
     ctx.db.transaction(async (tx) => {
       const [instance] = await tx.select().from(instances).where(eq(instances.id, id)).for("update")
       if (!instance) return null
-      const hit = await tx
-        .selectDistinct({ id: affectedWorkflows.problemId })
-        .from(affectedWorkflows)
-        .where(eq(affectedWorkflows.instanceId, id))
-      const ids = hit.map((h) => h.id)
-      if (ids.length)
+      const hitBy = async () =>
+        (
+          await tx
+            .selectDistinct({ id: affectedWorkflows.problemId })
+            .from(affectedWorkflows)
+            .where(eq(affectedWorkflows.instanceId, id))
+        ).map((h) => h.id)
+      const locked = new Set<string>()
+      for (let ids = await hitBy(); ids.some((p) => !locked.has(p)); ids = await hitBy()) {
+        const more = ids.filter((p) => !locked.has(p))
         await tx
           .select({ id: problems.id })
           .from(problems)
-          .where(inArray(problems.id, ids))
+          .where(inArray(problems.id, more))
           .orderBy(asc(problems.id))
           .for("update")
+        for (const p of more) locked.add(p)
+      }
       await tx.delete(instances).where(eq(instances.id, id))
-      if (ids.length)
+      const ids = [...locked]
+      if (ids.length) {
+        const empty = sql`not exists (select 1 from ${affectedWorkflows} where ${affectedWorkflows.problemId} = ${problems.id})`
+        await tx.delete(problems).where(and(inArray(problems.id, ids), empty))
         await tx
-          .delete(problems)
-          .where(
-            and(
-              inArray(problems.id, ids),
-              sql`not exists (select 1 from ${affectedWorkflows} where ${affectedWorkflows.problemId} = ${problems.id})`,
-            ),
-          )
+          .update(problems)
+          .set({ version: sql`${problems.version} + 1` })
+          .where(inArray(problems.id, ids))
+      }
       return instance
     }),
   )
@@ -397,8 +407,18 @@ export function restoring(state: ProblemState) {
   }
 }
 
+/** The status an action sees: a mute that ended is open, also before housekeeping notices. */
+const statusAt = (p: StateRow, now: Date) =>
+  p.status === "muted" && p.mutedUntil !== null && p.mutedUntil <= now ? ("open" as const) : p.status
+
 /** What an action changes on one row, or null when it is already where it would put it (nothing to undo). */
-export function actionChange(action: ProblemAction, p: StateRow, now: Date, muteHours = 24): Partial<StateRow> | null {
+export function actionChange(
+  action: ProblemAction,
+  row: StateRow,
+  now: Date,
+  muteHours = 24,
+): Partial<StateRow> | null {
+  const p = { ...row, status: statusAt(row, now) }
   switch (action) {
     case "resolve":
       return p.status === "resolved" ? null : { status: "resolved", resolvedAt: now, mutedUntil: null }
@@ -410,9 +430,9 @@ export function actionChange(action: ProblemAction, p: StateRow, now: Date, mute
     // Reopen starts the workflow afresh, so it is no longer a regression.
     case "reopen":
       return p.status === "open" ? null : { status: "open", resolvedAt: null, mutedUntil: null, regression: false }
-    // Unmute only ends the mute: a regression stays one (FB-11).
+    // Unmute only ends the mute, also one that ended already: a regression stays one (FB-11).
     case "unmute":
-      return p.status === "muted" ? { status: "open", mutedUntil: null } : null
+      return row.status === "muted" ? { status: "open", mutedUntil: null } : null
   }
 }
 
@@ -421,7 +441,7 @@ export function actionChange(action: ProblemAction, p: StateRow, now: Date, mute
  * workflows resolved, so its end does not reopen them; the other actions are as on one row.
  */
 export function wholeProblemChange(action: ProblemAction, p: StateRow, now: Date, muteHours = 24) {
-  if (action === "mute" && p.status !== "open") return null
+  if (action === "mute" && statusAt(p, now) !== "open") return null
   return actionChange(action, p, now, muteHours)
 }
 
@@ -534,6 +554,46 @@ export async function applyProblemAction(
 }
 
 /**
+ * Applies an action to the whole of each of these Problems in one transaction, as a Telegram button does: saved for
+ * all of them or none. Each id is read again under its lock and a merged one is followed to the Problem it went into,
+ * so a Merge just before the press does not lose it. No receipts: Telegram offers no Undo. Answers the Problems acted
+ * on.
+ */
+export async function applyProblemActions(
+  ctx: Pick<Ctx, "db" | "audit">,
+  ids: string[],
+  action: ProblemAction,
+  { muteHours = 24, now = new Date(), audit }: { muteHours?: number; now?: Date; audit?: ProblemAudit } = {},
+): Promise<string[]> {
+  return retrying(() =>
+    ctx.db.transaction(async (tx) => {
+      const named = ids.length ? await tx.select().from(problems).where(inArray(problems.id, ids)) : []
+      const targets = [...new Set(named.map((p) => p.mergedInto ?? p.id))].sort()
+      const done: string[] = []
+      for (const id of targets) {
+        const locked = await lockProblem(tx, id)
+        // Merged after it was read: a retry reads it again.
+        if (!locked) {
+          const [gone] = await tx.select().from(problems).where(eq(problems.id, id))
+          if (gone) throw Object.assign(new Error("the problem changed"), { code: "40001" })
+          continue
+        }
+        done.push(id)
+        let touched = false
+        for (const row of locked.rows) {
+          const patch = wholeProblemChange(action, row, now, muteHours)
+          if (!patch) continue
+          touched = true
+          await tx.update(affectedWorkflows).set(patch).where(eq(affectedWorkflows.id, row.id))
+        }
+        if (audit && touched) await ctx.audit({ ...audit, target: auditTarget(locked.problem, locked.rows, false) }, tx)
+      }
+      return done
+    }),
+  )
+}
+
+/**
  * Undoes the action of a receipt, in the transaction that uses the receipt up and writes its audit row. Locks the
  * Problem, then the rows the action changed, then the receipt (the lock order), so of two Undos at once (two tabs)
  * the second waits and then finds it used. A refusal changes nothing and is not audited.
@@ -613,10 +673,24 @@ async function lockPair(tx: Tx, a: string, b: string) {
  * Merges Problem `from` into `into`: its Affected workflows move, with their failures, and a workflow that later
  * fails with `from`'s text joins `into`. `from` stays as an alias of `into`, so its links keep working.
  */
-export async function mergeProblems(ctx: Pick<Ctx, "db">, fromId: string, intoId: string) {
+export async function mergeProblems(
+  ctx: Pick<Ctx, "db" | "audit">,
+  fromId: string,
+  intoId: string,
+  { audit }: { audit?: ProblemAudit } = {},
+) {
   return retrying(() =>
     ctx.db.transaction(async (tx) => {
       const [from, into] = await lockPair(tx, fromId, intoId)
+      if (audit)
+        await ctx.audit(
+          {
+            ...audit,
+            target: `${clipped(from.errorMessage)} into ${clipped(into.errorMessage)}`,
+            details: { ...audit.details, from: from.id, into: into.id },
+          },
+          tx,
+        )
       await tx.update(affectedWorkflows).set({ problemId: into.id }).where(eq(affectedWorkflows.problemId, from.id))
       await tx.update(problems).set({ mergedInto: into.id }).where(eq(problems.mergedInto, from.id))
       await tx
@@ -637,7 +711,12 @@ export async function mergeProblems(ctx: Pick<Ctx, "db">, fromId: string, intoId
  * different cause there. The new Problem has no fingerprint: other workflows with that text keep joining the one it
  * came from. Refused for a Problem's only Affected workflow. Null when the Problem or the workflow in it is not there.
  */
-export async function splitAffectedWorkflow(ctx: Pick<Ctx, "db">, problemId: string, affectedWorkflowId: string) {
+export async function splitAffectedWorkflow(
+  ctx: Pick<Ctx, "db" | "audit">,
+  problemId: string,
+  affectedWorkflowId: string,
+  { audit }: { audit?: ProblemAudit } = {},
+) {
   return retrying(() =>
     ctx.db.transaction(async (tx) => {
       const locked = await lockProblem(tx, problemId)
@@ -651,6 +730,15 @@ export async function splitAffectedWorkflow(ctx: Pick<Ctx, "db">, problemId: str
         .update(problems)
         .set({ version: sql`${problems.version} + 1` })
         .where(eq(problems.id, problemId))
+      if (audit)
+        await ctx.audit(
+          {
+            ...audit,
+            target: `${row.workflowName} · ${row.nodeName}`,
+            details: { ...audit.details, from: problemId, into: made.id },
+          },
+          tx,
+        )
       return { problem: made, from: locked.problem, row }
     }),
   )

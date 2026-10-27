@@ -26,14 +26,16 @@ const metricsText = (prefix = "n8n_") =>
     `${prefix}scaling_mode_queue_jobs_failed_total 2`,
   ].join("\n")
 
-const n8n =
-  (routes: Record<string, (res: ServerResponse) => void>): Handler =>
-  (req, res) => {
+const n8n = (routes: Record<string, (res: ServerResponse) => void>): Handler => {
+  // A Map, so a requested path can only find a route given here, never a property of the object.
+  const known = new Map(Object.entries(routes))
+  return (req, res) => {
     requested.push(req.url ?? "")
-    const route = routes[req.url ?? ""]
+    const route = known.get(req.url ?? "")
     if (route) return route(res)
     res.writeHead(404).end()
   }
+}
 const answer =
   (status: number, body = "") =>
   (res: ServerResponse) =>

@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-27
+
 ### Added
 
 - **One problem per error, across workflows and instances.** A problem is now one exact error text wherever it happens, and the workflows it hit are its affected workflows, each with its own failures, first and last seen, and state. The Problems list shows a problem that hit several workflows as one row titled by its error, with how many workflows, the instance and their names ("CRM Quote, Get DNS Data and 2 more"); the row opens to its workflows. Its page opens on Affected workflows; a row there shows that workflow's Overview, Input and Occurrences. A problem that hit one workflow looks as before.

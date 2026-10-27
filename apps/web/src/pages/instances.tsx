@@ -126,6 +126,8 @@ export type InstanceRow = {
   containerName: string | null
   workerId: string | null
   queueMode: boolean
+  /** "found": read by the worker inside the main container; not editable while it is checked from there. */
+  queueModeSource: "manual" | "found"
   metricsUrl: string | null
   /** Where the queue metrics are read: metricsUrl, or /metrics of the base URL in queue mode. */
   effectiveMetricsUrl: string | null
@@ -149,6 +151,12 @@ export type InstanceRow = {
     metricsError?: string
     backlogActive?: boolean
     via?: string
+    source?: "inside" | "network"
+    fallback?: string
+    notCollected?: string
+    mainState?: "running" | "not-running" | "paused"
+    mode?: "queue" | "regular" | null
+    metricsState?: "read" | "off" | "404" | "no-queue-figures" | "failed" | "skipped"
   } | null
   healthCheckedAt: string | null
   lastPollAt: string | null
@@ -535,7 +543,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
       <AlertDescription className="font-mono text-small break-words">{i.lastPollError}</AlertDescription>
     </Alert>
   )
-  const collected = collectionView({ collection: i.collection, worker: i.worker, via: hd?.via })
+  const collected = collectionView({ collection: i.collection, worker: i.worker, detail: hd })
   // Nothing collects the health now: what is stored is only the last known health.
   const past = Boolean(i.unknownReason && i.lastKnownHealth)
 
@@ -575,7 +583,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
           <Copyable value={i.baseUrl} label="Copy base URL" />
           <span>· n8n {i.version ?? "unknown"}</span>
           {behind(i.version, i.latestVersion) && <Tone tone="warn">latest {i.latestVersion}</Tone>}
-          {i.queueMode && <span>· queue mode</span>}
+          {i.queueMode && <span>· queue mode{i.queueModeSource === "found" ? ", found by the worker" : ""}</span>}
           {/* A failed refresh keeps the instance on screen and says so here (TB-5, LD-12). */}
           <span>
             <RefreshNote live={detail} separator="· " />
@@ -697,8 +705,33 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
                 </>
               }
             />
-            <HealthRow label="Main process (/healthz)" ok={hd?.main?.ok} detail={hd?.main?.error} past={past} />
-            <HealthRow label="Ready (/healthz/readiness)" ok={hd?.readiness?.ok} past={past} />
+            <HealthRow
+              label="Main process (/healthz)"
+              ok={hd?.notCollected ? undefined : hd?.main?.ok}
+              detail={hd?.main?.error}
+              unknown={hd?.notCollected ? "not collected" : undefined}
+              past={past}
+            />
+            <HealthRow
+              label="Ready (/healthz/readiness)"
+              ok={hd?.notCollected ? undefined : hd?.readiness?.ok}
+              unknown={hd?.notCollected ? "not collected" : undefined}
+              past={past}
+            />
+            {hd?.source === "inside" && !hd.notCollected && (
+              <div className="flex min-w-0 items-center gap-2.5 border-t border-line px-pad-x py-pad-y">
+                <span className="min-w-0">Execution mode</span>
+                <span className="ms-auto text-end text-muted-foreground">
+                  {hd.mode ? `${hd.mode}, read in the main container` : "not read"}
+                </span>
+              </div>
+            )}
+            {hd?.source === "inside" && !hd.notCollected && hd.metricsState && (
+              <div className="flex min-w-0 items-center gap-2.5 border-t border-line px-pad-x py-pad-y">
+                <span className="min-w-0">Metrics (/metrics)</span>
+                <span className="ms-auto text-end text-muted-foreground">{metricsWords[hd.metricsState]}</span>
+              </div>
+            )}
             {(hd?.workers ?? []).map((w) => (
               <HealthRow key={w.url} label={`Queue worker ${w.url}`} ok={w.ok} detail={w.error} past={past} />
             ))}
@@ -722,6 +755,22 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
                 className={cn("border-t border-line px-pad-x py-pad-y", past ? "text-muted-foreground" : "text-warn")}
               >
                 Queue metrics: {hd.metricsError}
+              </div>
+            )}
+            {hd?.notCollected && (
+              <div className="border-t border-line px-pad-x py-pad-y text-warn">
+                Not collected: {hd.notCollected}. The health shown is not known until the next check succeeds.
+              </div>
+            )}
+            {i.collection === "worker" && i.workerId && !i.containerName && (
+              <div className="border-t border-line px-pad-x py-pad-y text-muted-foreground">
+                Set the name of the main container in Edit to check it from inside: health, metrics and the queue mode,
+                with nothing reachable from outside the host. Until then the worker checks over the network.
+              </div>
+            )}
+            {hd?.source === "network" && hd.fallback && (
+              <div className="border-t border-line px-pad-x py-pad-y text-warn">
+                Checked over the network because {hd.fallback}.
               </div>
             )}
             {i.queueMode && i.workerHealthUrls.length === 0 && (
@@ -833,7 +882,7 @@ function UnsavedMark() {
  * run, the tone when nothing is checked (worker offline or missing). The sentence of collectionView is its tooltip.
  */
 function CollectionTag({ instance: i }: { instance: InstanceRow }) {
-  const view = collectionView({ collection: i.collection, worker: i.worker, via: i.healthDetail?.via })
+  const view = collectionView({ collection: i.collection, worker: i.worker, detail: i.healthDetail })
   const Icon = i.collection === "worker" ? ContainerIcon : GlobeIcon
   const variant = view.tone === "warn" || view.tone === "fail" ? view.tone : "line"
   return (
@@ -850,17 +899,25 @@ function StatusStrip({ instance: i, footer }: { instance: InstanceDetailData; fo
   const hd = i.healthDetail
   // While the health is unknown, the cells are the last known health and are drawn without their tone.
   const past = Boolean(i.unknownReason)
-  const check = (ok: boolean | undefined): HealthState => (ok === undefined ? "unknown" : ok ? "ok" : "down")
+  // A check that could not run says nothing about n8n: its parts show as unknown, not as failures.
+  const check = (ok: boolean | undefined): HealthState =>
+    ok === undefined || hd?.notCollected ? "unknown" : ok ? "ok" : "down"
   const cells: { label: string; health: HealthState; value: React.ReactNode }[] = [
     {
       label: "Main process",
       health: check(hd?.main?.ok),
-      value: hd?.main ? (hd.main.ok ? "ok" : "not responding") : "not checked",
+      value: hd?.notCollected ? "not collected" : hd?.main ? (hd.main.ok ? "ok" : "not responding") : "not checked",
     },
     {
       label: "Ready",
       health: check(hd?.readiness?.ok),
-      value: hd?.readiness ? (hd.readiness.ok ? "ok" : "not ready") : "not checked",
+      value: hd?.notCollected
+        ? "not collected"
+        : hd?.readiness
+          ? hd.readiness.ok
+            ? "ok"
+            : "not ready"
+          : "not checked",
     },
   ]
   if (i.workerHealthUrls.length > 0) {
@@ -1084,9 +1141,31 @@ async function exportCredentials(id: string, name: string) {
   }
 }
 
+/** How the metrics were read inside the main, in words. */
+const metricsWords = {
+  read: "read in the main container",
+  off: "off (N8N_METRICS is not true)",
+  "404": "off (404)",
+  "no-queue-figures": "read, without queue figures",
+  failed: "could not be read",
+  skipped: "from the metrics URL you set",
+} as const
+
 /** One check of the instance; `past` when it is from the last known health, so it is drawn without its tone. */
-function HealthRow({ label, ok, detail, past }: { label: string; ok?: boolean; detail?: string; past?: boolean }) {
-  const result = ok === undefined ? "not checked" : ok ? "ok" : (detail ?? "failed")
+function HealthRow({
+  label,
+  ok,
+  detail,
+  unknown,
+  past,
+}: {
+  label: string
+  ok?: boolean
+  detail?: string
+  unknown?: string
+  past?: boolean
+}) {
+  const result = ok === undefined ? (unknown ?? "not checked") : ok ? "ok" : (detail ?? "failed")
   return (
     <div className="flex min-w-0 items-center gap-2.5 border-t border-line px-pad-x py-pad-y">
       {past ? (
@@ -1223,6 +1302,13 @@ export function InstanceDialog({
     setOpened(start)
   }, [open, instance?.id])
   const set = (k: keyof typeof form, v: string | boolean | undefined) => setForm((f) => ({ ...f, [k]: v }))
+  // The worker read the mode inside the main; it stays its value until the worker or the container changes.
+  const modeFound =
+    instance?.queueModeSource === "found" &&
+    form.collection === instance.collection &&
+    (form.workerId || null) === (instance.workerId ?? null) &&
+    (form.containerName.trim() || null) === (instance.containerName ?? null)
+  const inside = form.collection === "worker" && Boolean(form.workerId) && Boolean(form.containerName.trim())
   // Every close asks first while the form differs from how it opened (DS-9).
   const guard = useDiscardGuard(formChanged(form, opened), () => onOpenChange(false))
   // A stored API key is never sent to a different server: a changed base URL needs the key again (FS-5).
@@ -1314,9 +1400,17 @@ export function InstanceDialog({
               description="Main process plus separate queue workers using Redis."
               checked={form.queueMode}
               onCheckedChange={(v) => set("queueMode", v)}
+              disabled={modeFound}
+              reason="Found by the worker inside the main container. Change the worker or the container to set it by hand."
             />
             {form.queueMode && (
               <>
+                {inside && (
+                  <p className="text-small text-muted-foreground">
+                    The worker reads health and the queue inside the main container. The URLs below are overrides
+                    (optional): fill them in only when n8n serves them somewhere else.
+                  </p>
+                )}
                 <Field>
                   <FieldLabel htmlFor="i-metrics">Metrics URL (optional)</FieldLabel>
                   <Input
@@ -1326,12 +1420,16 @@ export function InstanceDialog({
                     placeholder={`${form.baseUrl.trim().replace(/\/+$/, "") || "https://n8n.example.com"}/metrics`}
                   />
                   <FieldDescription>
-                    Empty reads /metrics of the base URL. Needs N8N_METRICS=true and
-                    N8N_METRICS_INCLUDE_QUEUE_METRICS=true on the main process.
+                    {inside
+                      ? "Empty reads the metrics inside the main container."
+                      : "Empty reads /metrics of the base URL."}{" "}
+                    Needs N8N_METRICS=true and N8N_METRICS_INCLUDE_QUEUE_METRICS=true on the main process.
                   </FieldDescription>
                 </Field>
                 <Field>
-                  <FieldLabel htmlFor="i-workers">Queue worker health URLs</FieldLabel>
+                  <FieldLabel htmlFor="i-workers">
+                    Queue worker health URLs{form.collection === "worker" ? " (optional)" : ""}
+                  </FieldLabel>
                   <Textarea
                     id="i-workers"
                     className="font-mono text-small"
@@ -1362,7 +1460,8 @@ export function InstanceDialog({
                 ]}
               />
               <FieldDescription>
-                Use the worker when /healthz and /metrics are not reachable from outside the host.
+                Through the worker, health, metrics and the queue mode are read inside the main container when its name
+                is set below, so nothing has to be reachable from outside the host.
               </FieldDescription>
             </Field>
             <Field>

@@ -71,6 +71,13 @@
       "when": 1793036811975,
       "tag": "0009_session_clocks",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1793058502579,
+      "tag": "0010_inside_collection",
+      "breakpoints": true
     }
   ]
 }

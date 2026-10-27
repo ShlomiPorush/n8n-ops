@@ -12,7 +12,7 @@ import { workerApiRoutes } from "../routes/worker-api.ts"
 import { agentQueues } from "./agent.ts"
 import { enqueueProbes } from "./backups.ts"
 import { collectionClock, WORKER_ONLINE_MS, watchCollectors } from "./collection.ts"
-import { applyHealth, type HealthReport } from "./health.ts"
+import { type HealthReport, startCheck } from "./health.ts"
 
 // When nothing collects an instance's health, against a real PostgreSQL: the alerts of a worker that stops
 // reporting, the checks that no longer count after a return or a restart, and reports read under a collection
@@ -191,31 +191,6 @@ const report = (via: "direct" | "worker", mainOk: boolean): HealthReport => ({
   via,
 })
 
-describe("applyHealth", () => {
-  it("drops a report read under a collection mode or a worker that changed since", async () => {
-    const { worker, instances: rows } = await workerCollecting(["alpha"], 1_000)
-    const instance = rows[0]
-    if (!instance) throw new Error("no instance")
-    const stateOf = async () =>
-      (
-        await ctx.db
-          .select()
-          .from(alertState)
-          .where(eq(alertState.key, `down:${instance.id}`))
-      )[0]
-
-    // A direct check that started before the switch to the worker, and a report from another worker.
-    expect(await applyHealth(ctx, instance, report("direct", false))).toBeUndefined()
-    expect(await applyHealth(ctx, instance, report("worker", false), crypto.randomUUID())).toBeUndefined()
-    const [kept] = await ctx.db.select().from(instances).where(eq(instances.id, instance.id))
-    expect(kept?.health).toBe("ok")
-    expect(await stateOf()).toBeUndefined()
-
-    expect(await applyHealth(ctx, instance, report("worker", false), worker.id)).toBe("down")
-    expect((await stateOf())?.active).toBe(true)
-  })
-})
-
 describe("a worker's probe result", () => {
   const post = (jobId: string, identity: string) =>
     workerApiRoutes(ctx).request(`/jobs/${jobId}/result`, {
@@ -229,12 +204,20 @@ describe("a worker's probe result", () => {
     const instance = rows[0]
     if (!instance) throw new Error("no instance")
     collectionClock.returnedAt.set(worker.id, ago(30_000))
+    // Both carry a valid ticket: only when the worker claimed them tells them apart.
+    const first = await startCheck(ctx, instance.id)
+    const second = await startCheck(ctx, instance.id)
+    const job = (ticket: unknown, startedAt: Date) => ({
+      workerId: worker.id,
+      instanceId: instance.id,
+      kind: "probe" as const,
+      status: "running" as const,
+      payload: { check: ticket },
+      startedAt,
+    })
     const [old, fresh] = await ctx.db
       .insert(workerJobs)
-      .values([
-        { workerId: worker.id, instanceId: instance.id, kind: "probe", status: "running", startedAt: ago(minute) },
-        { workerId: worker.id, instanceId: instance.id, kind: "probe", status: "running", startedAt: ago(1_000) },
-      ])
+      .values([job(first?.ticket, ago(minute)), job(second?.ticket, ago(1_000))])
       .returning()
     if (!old || !fresh) throw new Error("no jobs")
 

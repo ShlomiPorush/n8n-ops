@@ -22,7 +22,8 @@ import { ARCHIVE_WAIT_MS, dropConditions, failRun, kickCopies } from "./backup-c
 import { reportsSince } from "./collection.ts"
 import { type Destination, destinationsFor, keyFor, openStore } from "./destinations/index.ts"
 import { withDeadline } from "./destinations/store.ts"
-import { clientFor, type Instance, metricsUrlOf } from "./instances.ts"
+import { type CheckTicket, startCheck } from "./health.ts"
+import { clientFor, type Instance, metricsUrlOf, readsInside } from "./instances.ts"
 import { zonedParts } from "./reports.ts"
 import { removeSpool, reserve, spoolDir, writeSpool } from "./spool.ts"
 import { enqueueJob, pendingJobs } from "./workers.ts"
@@ -485,6 +486,29 @@ export async function restoreWorkflow(
   return { workflowId: created.id, steps }
 }
 
+/**
+ * What a probe job asks of the worker. `inside` asks it to read the main from inside its container; `overrides`
+ * carries only what the owner typed. The URL fields stay for workers of earlier releases and as the network
+ * fallback; a worker of this release never takes them for overrides. Queue parts only in queue mode.
+ */
+export function probePayload(instance: Instance, check: CheckTicket) {
+  const base = instance.baseUrl.replace(/\/+$/, "")
+  const queue = instance.queueMode
+  const typedWorkers = queue && instance.workerHealthUrls.length > 0 ? instance.workerHealthUrls : undefined
+  return {
+    main: `${base}/healthz`,
+    readiness: `${base}/healthz/readiness`,
+    workers: typedWorkers ?? [],
+    metrics: metricsUrlOf(instance),
+    ...(readsInside(instance) ? { inside: { container: instance.containerName } } : {}),
+    overrides: {
+      ...(queue && instance.metricsUrl ? { metricsUrl: instance.metricsUrl } : {}),
+      ...(typedWorkers ? { workerHealthUrls: typedWorkers } : {}),
+    },
+    check,
+  }
+}
+
 /** Instances whose worker-collected health is due get a probe job (collection mode "worker"). */
 export async function enqueueProbes(ctx: Ctx) {
   const all = await ctx.db
@@ -522,19 +546,11 @@ export async function enqueueProbes(ctx: Ctx) {
       Date.now() - checked.getTime() < s.healthIntervalSec * 1000
     )
       continue
-    const base = instance.baseUrl.replace(/\/+$/, "")
-    await enqueueJob(
-      ctx,
-      instance.workerId,
-      "probe",
-      {
-        main: `${base}/healthz`,
-        readiness: `${base}/healthz/readiness`,
-        workers: instance.workerHealthUrls,
-        metrics: metricsUrlOf(instance),
-      },
-      instance.id,
-    )
+    // The probe is made from the row its ticket was taken with, so it asks for exactly that revision.
+    const started = await startCheck(ctx, instance.id)
+    const now = started?.instance
+    if (!started || !now || now.collection !== "worker" || !now.workerId) continue
+    await enqueueJob(ctx, now.workerId, "probe", probePayload(now, started.ticket), now.id)
   }
 }
 

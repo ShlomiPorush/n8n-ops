@@ -49,7 +49,7 @@ export type HealthNow = {
 }
 
 function whyUnknown(
-  i: Pick<Instance, "health" | "healthCheckedAt" | "collection" | "workerId">,
+  i: Pick<Instance, "health" | "healthDetail" | "healthCheckedAt" | "collection" | "workerId">,
   w: Worker | null | undefined,
   intervalSec: number,
   now: number,
@@ -63,12 +63,14 @@ function whyUnknown(
   if (checked < reportsSince(w.id).getTime()) return `Waiting for a new check by ${w.name}`
   // A due check is sent within seconds; one that does not come back within the online time is missing.
   if (now - checked >= intervalSec * 1000 + WORKER_ONLINE_MS) return `${w.name} has not reported a check in time`
-  return null
+  // The last check ran but could not read the instance.
+  const notCollected = (i.healthDetail as { notCollected?: string } | null)?.notCollected
+  return i.health === "unknown" && notCollected ? `Not collected: ${notCollected}` : null
 }
 
 /** The health of an instance now, from what is stored and the worker that collects it. */
 export function healthNow(
-  instance: Pick<Instance, "health" | "healthCheckedAt" | "collection" | "workerId">,
+  instance: Pick<Instance, "health" | "healthDetail" | "healthCheckedAt" | "collection" | "workerId">,
   worker: Worker | null | undefined,
   intervalSec: number,
   now = Date.now(),

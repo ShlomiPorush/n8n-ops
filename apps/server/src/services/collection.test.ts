@@ -24,8 +24,13 @@ const worker = (seenAgo: number | null, extra: { revokedAt?: Date } = {}) => ({
   lastSeenAt: seenAgo === null ? null : at(seenAgo),
   revokedAt: extra.revokedAt ?? null,
 })
-const instance = (checkedAgo: number | null, health: "ok" | "down" | "unknown" = "ok") => ({
+const instance = (
+  checkedAgo: number | null,
+  health: "ok" | "down" | "unknown" = "ok",
+  healthDetail: Record<string, unknown> | null = null,
+) => ({
   health,
+  healthDetail,
   healthCheckedAt: checkedAgo === null ? null : at(checkedAgo),
   collection: "worker" as const,
   workerId: "w1",
@@ -105,6 +110,18 @@ describe("healthNow", () => {
     collectionClock.returnedAt.set("w1", at(5_000))
     expect(healthNow(instance(10_000), worker(1_000), 3600, now).health).toBe("unknown")
     expect(healthNow(instance(4_000), worker(1_000), 3600, now).health).toBe("ok")
+  })
+})
+
+describe("healthNow after a check that was not collected", () => {
+  it("says why, with no last known health to show", () => {
+    collectionClock.startedAt = at(86_400_000)
+    const notCollected = instance(10_000, "unknown", { notCollected: "docker exec failed" })
+    expect(healthNow(notCollected, worker(1_000), 60, now)).toEqual({
+      health: "unknown",
+      lastKnownHealth: null,
+      unknownReason: "Not collected: docker exec failed",
+    })
   })
 })
 

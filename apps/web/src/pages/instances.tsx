@@ -1441,8 +1441,8 @@ export function InstanceDialog({
               />
               <FieldDescription>
                 In n8n: Settings → n8n API → Create an API key. "Read only" is enough to monitor. Restoring needs
-                workflow:create and credential:create. Moving a workflow here needs workflow:create,
-                workflow:activate and credential:create; moving one away needs workflow:read and workflow:deactivate.
+                workflow:create and credential:create. Moving a workflow here needs workflow:create, workflow:activate
+                and credential:create; moving one away needs workflow:read and workflow:deactivate.
               </FieldDescription>
             </Field>
           </FieldSet>

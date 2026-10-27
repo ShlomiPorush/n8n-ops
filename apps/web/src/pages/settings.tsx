@@ -184,8 +184,7 @@ export const forms: Record<string, { title: string; description: string; fields:
   },
   email: {
     title: "Email Reports",
-    description:
-      "Daily and weekly summaries: open problems, top failing workflows, health alerts, backups, versions.",
+    description: "Daily and weekly summaries: open problems, top failing workflows, health alerts, backups, versions.",
     fields: [
       { name: "dailyEnabled", label: "Daily report", type: "switch" },
       { name: "dailyTime", label: "Daily report time", type: "time", needs: "dailyEnabled" },

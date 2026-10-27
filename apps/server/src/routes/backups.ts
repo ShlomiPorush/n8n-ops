@@ -17,7 +17,10 @@ import {
 import { describeLocation, destinationsFor } from "../services/destinations/index.ts"
 
 const KEY_WANTED = "Paste the private key that starts with AGE-SECRET-KEY-1."
-const keySchema = z.string().trim().regex(/^AGE-SECRET-KEY-1[0-9A-Z]+$/, KEY_WANTED)
+const keySchema = z
+  .string()
+  .trim()
+  .regex(/^AGE-SECRET-KEY-1[0-9A-Z]+$/, KEY_WANTED)
 
 /** A refused body, with the private key named in words when it is what is wrong. */
 const refused = (issues: { path: PropertyKey[] }[]) => ({

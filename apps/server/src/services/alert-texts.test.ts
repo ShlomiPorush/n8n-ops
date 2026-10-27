@@ -137,9 +137,7 @@ describe("clip", () => {
 
 describe("telegramPlainText", () => {
   it("reads an alert back as the text it was made from", () => {
-    expect(telegramPlainText(healthAlerts.down("R&D <prod>", failed(link)))).toBe(
-      `R&D <prod> is down · ${link}`,
-    )
+    expect(telegramPlainText(healthAlerts.down("R&D <prod>", failed(link)))).toBe(`R&D <prod> is down · ${link}`)
   })
 
   it("reads any value back exactly", () => {

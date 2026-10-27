@@ -128,7 +128,14 @@ describe("what is wrong with an instance", () => {
     expect(warn({ backlogActive: true, readiness: { ok: false } })).toBe("Queue backlog")
     expect(warn({ workers: [{ ok: false, state: "not-checked" }, { ok: false }] })).toBe("Queue worker needs a look")
     for (const state of ["down", "unreachable"])
-      expect(warn({ workers: [{ ok: false, state: "not-ready" }, { ok: false, state }] })).toBe("Queue worker down")
+      expect(
+        warn({
+          workers: [
+            { ok: false, state: "not-ready" },
+            { ok: false, state },
+          ],
+        }),
+      ).toBe("Queue worker down")
     expect(warn({ readiness: { ok: false }, discovery: { status: "failed", found: 0 } })).toBe("Not ready")
     expect(warn({ discovery: { status: "ok", found: 0 } })).toBe("No queue worker found")
     expect(warn({ discovery: { status: "partial", found: 2 } })).toBe("Queue workers not all checked")

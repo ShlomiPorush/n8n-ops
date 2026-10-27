@@ -18,7 +18,9 @@ describe("audit entries in today's words", () => {
   })
 
   it("rewrites what a token may do, and leaves other targets alone", () => {
-    expect(auditTarget("ci (agent, may request instance access)")).toBe("ci (agent, may request access to n8n instances)")
+    expect(auditTarget("ci (agent, may request instance access)")).toBe(
+      "ci (agent, may request access to n8n instances)",
+    )
     expect(auditTarget("claude (through the browser, may request instance access)")).toBe(
       "claude (through the browser, may request access to n8n instances)",
     )

@@ -62,11 +62,7 @@ export function WorkersPage() {
     <Page
       title="Workers"
       live={workers}
-      description={
-        workers.data && list.length
-          ? `${n(online)} of ${n(list.length)} online. ${about}`
-          : about
-      }
+      description={workers.data && list.length ? `${n(online)} of ${n(list.length)} online. ${about}` : about}
       actions={
         <Button variant="primary" onClick={() => setOpen(true)}>
           <Plus /> Add worker

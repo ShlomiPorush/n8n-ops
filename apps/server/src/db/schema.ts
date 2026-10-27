@@ -1,4 +1,5 @@
 import {
+  type AnyPgColumn,
   bigint,
   bigserial,
   boolean,
@@ -286,10 +287,38 @@ export type AgentAccessPolicy = { enabled: boolean; scopes: string[] }
 
 export type ProblemStatus = "open" | "resolved" | "muted"
 
+/**
+ * One error, known by its exact text, wherever it happens (docs/adr/0001). Its state, failures and times are those
+ * of its Affected workflows, read from them and never stored here.
+ */
 export const problems = pgTable(
   "problems",
   {
     id: uuid("id").primaryKey().defaultRandom(),
+    /** The error the Problem is named by. After a Merge, its Affected workflows may carry other texts. */
+    errorMessage: text("error_message").notNull(),
+    /**
+     * sha256 of the error text: a workflow that starts failing with it joins this Problem. Null on a Problem made by
+     * Split, so that the text keeps joining the Problem it was split from.
+     */
+    fingerprint: text("fingerprint"),
+    /** Set when a person merged this Problem into another. Its workflows moved there; it stays as an alias. */
+    mergedInto: uuid("merged_into").references((): AnyPgColumn => problems.id, { onDelete: "cascade" }),
+    /** Moves on whenever an Affected workflow joins or leaves (ingest, Merge, Split), so an Undo can tell. */
+    version: integer("version").notNull().default(0),
+    createdAt: created(),
+  },
+  (t) => [uniqueIndex("problems_fingerprint_idx").on(t.fingerprint)],
+)
+
+/** A workflow, at one node, that a Problem hit, with its own failures, times and state. */
+export const affectedWorkflows = pgTable(
+  "affected_workflows",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    problemId: uuid("problem_id")
+      .notNull()
+      .references(() => problems.id, { onDelete: "cascade" }),
     instanceId: uuid("instance_id")
       .notNull()
       .references(() => instances.id, { onDelete: "cascade" }),
@@ -297,6 +326,7 @@ export const problems = pgTable(
     workflowName: text("workflow_name").notNull(),
     nodeName: text("node_name").notNull(),
     errorMessage: text("error_message").notNull(),
+    /** instance + workflow + node + exact error text: where a failed execution is counted. */
     fingerprint: text("fingerprint").notNull(),
     status: text("status").$type<ProblemStatus>().notNull().default("open"),
     mutedUntil: ts("muted_until"),
@@ -305,24 +335,23 @@ export const problems = pgTable(
     firstSeen: ts("first_seen").notNull(),
     lastSeen: ts("last_seen").notNull(),
     resolvedAt: ts("resolved_at"),
-    /** When set, this problem was merged into another one by the operator. */
-    mergedInto: uuid("merged_into"),
     /**
-     * Moves on with every change of the state an Undo restores (status, regression, mute end, resolved time, merge)
-     * and with every new occurrence (count, first and last seen), whoever makes it: a trigger in migration 0007 bumps
-     * it, so ingest, merges, housekeeping and Telegram count too (FB-16).
+     * Moves on with every change of the state an Undo restores (status, regression, mute end, resolved time), with
+     * every new occurrence (count, first and last seen) and with a move to another Problem, whoever makes it: a
+     * trigger (migrations 0007 and 0012) bumps it, so ingest, Merge, Split, housekeeping and Telegram count too (FB-16).
      */
     version: integer("version").notNull().default(0),
     createdAt: created(),
   },
   (t) => [
-    uniqueIndex("problems_fingerprint_idx").on(t.fingerprint),
-    index("problems_status_idx").on(t.status),
-    index("problems_instance_idx").on(t.instanceId),
+    uniqueIndex("affected_workflows_fingerprint_idx").on(t.fingerprint),
+    index("affected_workflows_problem_idx").on(t.problemId),
+    index("affected_workflows_status_idx").on(t.status),
+    index("affected_workflows_instance_idx").on(t.instanceId),
   ],
 )
 
-/** The state of a problem that its actions change and an Undo puts back. Times as ISO strings. */
+/** The state of an Affected workflow that actions change and an Undo puts back. Times as ISO strings. */
 export type ProblemState = {
   status: ProblemStatus
   regression: boolean
@@ -332,18 +361,24 @@ export type ProblemState = {
 
 export type ProblemAction = "resolve" | "mute" | "reopen" | "unmute"
 
+/** What an action changed: each Affected workflow, the version the action left it at, and its state before. */
+export type ReceiptRow = { affectedWorkflowId: string; version: number; state: ProblemState }
+
 /**
- * One receipt per problem action, for its Undo (FB-16): the version the action left and the state before it. Single
- * use and short lived; an Undo applies only while the problem is still at that version.
+ * One receipt per problem action, for its Undo (FB-16). Single use and short lived. An Undo applies only while every
+ * row the action changed is still at the version it left and still in the Problem, and, for an action on the whole
+ * Problem, while no workflow joined or left it.
  */
 export const problemReceipts = pgTable("problem_receipts", {
   id: uuid("id").primaryKey().defaultRandom(),
   problemId: uuid("problem_id")
     .notNull()
     .references(() => problems.id, { onDelete: "cascade" }),
+  /** The one Affected workflow the action was on; null for an action on the whole Problem. */
+  affectedWorkflowId: uuid("affected_workflow_id").references(() => affectedWorkflows.id, { onDelete: "cascade" }),
   action: text("action").$type<ProblemAction>().notNull(),
-  version: integer("version").notNull(),
-  prior: jsonb("prior").$type<ProblemState>().notNull(),
+  problemVersion: integer("problem_version").notNull(),
+  prior: jsonb("prior").$type<ReceiptRow[]>().notNull(),
   createdAt: created(),
   expiresAt: ts("expires_at").notNull(),
   usedAt: ts("used_at"),
@@ -353,9 +388,9 @@ export const failures = pgTable(
   "failures",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    problemId: uuid("problem_id")
+    affectedWorkflowId: uuid("affected_workflow_id")
       .notNull()
-      .references(() => problems.id, { onDelete: "cascade" }),
+      .references(() => affectedWorkflows.id, { onDelete: "cascade" }),
     instanceId: uuid("instance_id")
       .notNull()
       .references(() => instances.id, { onDelete: "cascade" }),
@@ -372,7 +407,7 @@ export const failures = pgTable(
   },
   (t) => [
     uniqueIndex("failures_execution_idx").on(t.instanceId, t.executionId),
-    index("failures_problem_idx").on(t.problemId),
+    index("failures_affected_workflow_idx").on(t.affectedWorkflowId),
     index("failures_created_idx").on(t.createdAt),
   ],
 )
@@ -388,9 +423,9 @@ export const alertOutbox = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     kind: text("kind").$type<AlertKind>().notNull(),
-    /** Problems with the same group key inside the grouping window go out as one message. */
+    /** The error text of a problem alert. Problem alerts are grouped by the Problem their workflow is in when sent. */
     groupKey: text("group_key"),
-    problemId: uuid("problem_id"),
+    affectedWorkflowId: uuid("affected_workflow_id"),
     text: text("text").notNull(),
     status: text("status").$type<"pending" | "sent" | "merged" | "failed">().notNull().default("pending"),
     sendAfter: ts("send_after").notNull().defaultNow(),
@@ -405,18 +440,22 @@ export const alertOutbox = pgTable(
   (t) => [index("alert_outbox_pending_idx").on(t.status, t.sendAfter)],
 )
 
-/** A sent Telegram message that later problems with the same error edit instead of sending a new message. */
+/** A sent Telegram message about one Problem, which later alerts of the Problem edit instead of sending a new one. */
 export const alertGroups = pgTable("alert_groups", {
   id: uuid("id").primaryKey().defaultRandom(),
+  /** The error text when the message was sent. */
   groupKey: text("group_key").notNull(),
+  /** The Problem the message is about. Null on a message sent before 0012, which may list several. */
+  problemId: uuid("problem_id"),
   telegramMessageId: integer("telegram_message_id").notNull(),
   /** The topic its alerts were routed to; problems group and edit only within it. Null is General. */
   threadId: integer("thread_id"),
   /** Telegram refused the topic and the message went to General; known only from that answer, never assumed. */
   fellBack: boolean("fell_back").notNull().default(false),
-  /** Set when the message cannot take later problems: its send failed, or it was deleted with its topic. */
+  /** Set when the message takes no later alerts: its send failed, it was deleted with its topic, or it predates 0012. */
   closedAt: ts("closed_at"),
-  problemIds: jsonb("problem_ids").$type<string[]>().notNull().default([]),
+  /** The Affected workflows the message lists. */
+  affectedWorkflowIds: jsonb("affected_workflow_ids").$type<string[]>().notNull().default([]),
   createdAt: created(),
 })
 

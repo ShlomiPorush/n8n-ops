@@ -37,7 +37,7 @@ export function describeDatabaseError(error: unknown, databaseUrl: string): stri
 }
 
 /** The first error code along the cause chain (postgres.js sets it on the cause of a query error). */
-function errorCode(error: unknown): string | null {
+export function errorCode(error: unknown): string | null {
   for (let e = error, depth = 0; e && depth < 5; e = (e as { cause?: unknown }).cause, depth++) {
     const code = (e as { code?: unknown }).code
     if (typeof code === "string" && code) return code

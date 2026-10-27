@@ -105,6 +105,7 @@ import { type CollectionView, collectionView } from "@/lib/collection"
 import { loadView } from "@/lib/load-state"
 import { healthCounts, n, plural } from "@/lib/numbers"
 import { useNavigateFromOverlay } from "@/lib/overlay-history"
+import { problemPath } from "@/lib/problems"
 import { queueWorkersNote, type WorkerState, workerHealth, workerWords } from "@/lib/queue-workers"
 import { formatTime, useTimeFormat } from "@/lib/time"
 import { toast } from "@/lib/toast"
@@ -673,7 +674,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
               count={i.openProblems}
               more={i.openProblems > 0 ? { to: `/instances/${i.id}?tab=problems`, label: "All" } : undefined}
               limit={3}
-              onOpen={(pid) => navigate(`/problems/${pid}`)}
+              onOpen={(pid, wf) => void navigate(problemPath(pid, "", wf))}
             />
           </Panel>
         </PaneTabPanel>
@@ -685,7 +686,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
               instanceId={i.id}
               count={i.openProblems}
               more={{ to: `/problems?status=open&instance=${i.id}`, label: "Open in Problems" }}
-              onOpen={(pid) => navigate(`/problems/${pid}`)}
+              onOpen={(pid, wf) => void navigate(problemPath(pid, "", wf))}
             />
           </Panel>
         </PaneTabPanel>
@@ -1125,7 +1126,7 @@ function InstanceProblems({
   more?: { to: string; label: string }
   /** A preview of the first few, in the order the server sends by default, with no Sort button. */
   limit?: number
-  onOpen: (id: string) => void
+  onOpen: (id: string, workflow?: string) => void
 }) {
   const preview = limit !== undefined
   // The full list sorts on the server, so the order covers every open problem of the instance (TB-4); a new order

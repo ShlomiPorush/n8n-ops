@@ -1,5 +1,5 @@
 {
-  "id": "afd9ae9c-592c-45fa-82c2-ea57e942d0a1",
+  "id": "b2cad4e0-2ce0-4429-b763-33b28f32aef1",
   "prevId": "16a149ff-7a57-4c9d-b7bf-33f100640b7b",
   "version": "7",
   "dialect": "postgresql",
@@ -422,6 +422,215 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.affected_workflows": {
+      "name": "affected_workflows",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "problem_id": {
+          "name": "problem_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "instance_id": {
+          "name": "instance_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "workflow_id": {
+          "name": "workflow_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "workflow_name": {
+          "name": "workflow_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "node_name": {
+          "name": "node_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "error_message": {
+          "name": "error_message",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "fingerprint": {
+          "name": "fingerprint",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'open'"
+        },
+        "muted_until": {
+          "name": "muted_until",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "regression": {
+          "name": "regression",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "count": {
+          "name": "count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "first_seen": {
+          "name": "first_seen",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "last_seen": {
+          "name": "last_seen",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "resolved_at": {
+          "name": "resolved_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "affected_workflows_fingerprint_idx": {
+          "name": "affected_workflows_fingerprint_idx",
+          "columns": [
+            {
+              "expression": "fingerprint",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "affected_workflows_problem_idx": {
+          "name": "affected_workflows_problem_idx",
+          "columns": [
+            {
+              "expression": "problem_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "affected_workflows_status_idx": {
+          "name": "affected_workflows_status_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "affected_workflows_instance_idx": {
+          "name": "affected_workflows_instance_idx",
+          "columns": [
+            {
+              "expression": "instance_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "affected_workflows_problem_id_problems_id_fk": {
+          "name": "affected_workflows_problem_id_problems_id_fk",
+          "tableFrom": "affected_workflows",
+          "tableTo": "problems",
+          "columnsFrom": [
+            "problem_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "affected_workflows_instance_id_instances_id_fk": {
+          "name": "affected_workflows_instance_id_instances_id_fk",
+          "tableFrom": "affected_workflows",
+          "tableTo": "instances",
+          "columnsFrom": [
+            "instance_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.alert_groups": {
       "name": "alert_groups",
       "schema": "",
@@ -438,6 +647,12 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true
+        },
+        "problem_id": {
+          "name": "problem_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
         },
         "telegram_message_id": {
           "name": "telegram_message_id",
@@ -464,8 +679,8 @@
           "primaryKey": false,
           "notNull": false
         },
-        "problem_ids": {
-          "name": "problem_ids",
+        "affected_workflow_ids": {
+          "name": "affected_workflow_ids",
           "type": "jsonb",
           "primaryKey": false,
           "notNull": true,
@@ -510,8 +725,8 @@
           "primaryKey": false,
           "notNull": false
         },
-        "problem_id": {
-          "name": "problem_id",
+        "affected_workflow_id": {
+          "name": "affected_workflow_id",
           "type": "uuid",
           "primaryKey": false,
           "notNull": false
@@ -1187,12 +1402,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "refusal": {
-          "name": "refusal",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
-        },
         "upload_started_at": {
           "name": "upload_started_at",
           "type": "timestamp with time zone",
@@ -1274,8 +1483,8 @@
           "notNull": true,
           "default": "gen_random_uuid()"
         },
-        "problem_id": {
-          "name": "problem_id",
+        "affected_workflow_id": {
+          "name": "affected_workflow_id",
           "type": "uuid",
           "primaryKey": false,
           "notNull": true
@@ -1364,11 +1573,11 @@
           "method": "btree",
           "with": {}
         },
-        "failures_problem_idx": {
-          "name": "failures_problem_idx",
+        "failures_affected_workflow_idx": {
+          "name": "failures_affected_workflow_idx",
           "columns": [
             {
-              "expression": "problem_id",
+              "expression": "affected_workflow_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -1396,12 +1605,12 @@
         }
       },
       "foreignKeys": {
-        "failures_problem_id_problems_id_fk": {
-          "name": "failures_problem_id_problems_id_fk",
+        "failures_affected_workflow_id_affected_workflows_id_fk": {
+          "name": "failures_affected_workflow_id_affected_workflows_id_fk",
           "tableFrom": "failures",
-          "tableTo": "problems",
+          "tableTo": "affected_workflows",
           "columnsFrom": [
-            "problem_id"
+            "affected_workflow_id"
           ],
           "columnsTo": [
             "id"
@@ -1992,12 +2201,6 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
-        },
-        "install": {
-          "name": "install",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
         }
       },
       "indexes": {},
@@ -2033,14 +2236,20 @@
           "primaryKey": false,
           "notNull": true
         },
+        "affected_workflow_id": {
+          "name": "affected_workflow_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
         "action": {
           "name": "action",
           "type": "text",
           "primaryKey": false,
           "notNull": true
         },
-        "version": {
-          "name": "version",
+        "problem_version": {
+          "name": "problem_version",
           "type": "integer",
           "primaryKey": false,
           "notNull": true
@@ -2085,6 +2294,19 @@
           ],
           "onDelete": "cascade",
           "onUpdate": "no action"
+        },
+        "problem_receipts_affected_workflow_id_affected_workflows_id_fk": {
+          "name": "problem_receipts_affected_workflow_id_affected_workflows_id_fk",
+          "tableFrom": "problem_receipts",
+          "tableTo": "affected_workflows",
+          "columnsFrom": [
+            "affected_workflow_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -2104,30 +2326,6 @@
           "notNull": true,
           "default": "gen_random_uuid()"
         },
-        "instance_id": {
-          "name": "instance_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "workflow_id": {
-          "name": "workflow_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "workflow_name": {
-          "name": "workflow_name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "node_name": {
-          "name": "node_name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
         "error_message": {
           "name": "error_message",
           "type": "text",
@@ -2137,51 +2335,6 @@
         "fingerprint": {
           "name": "fingerprint",
           "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'open'"
-        },
-        "muted_until": {
-          "name": "muted_until",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "regression": {
-          "name": "regression",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
-        "count": {
-          "name": "count",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "first_seen": {
-          "name": "first_seen",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "last_seen": {
-          "name": "last_seen",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "resolved_at": {
-          "name": "resolved_at",
-          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         },
@@ -2221,45 +2374,15 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
-        },
-        "problems_status_idx": {
-          "name": "problems_status_idx",
-          "columns": [
-            {
-              "expression": "status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "problems_instance_idx": {
-          "name": "problems_instance_idx",
-          "columns": [
-            {
-              "expression": "instance_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
         }
       },
       "foreignKeys": {
-        "problems_instance_id_instances_id_fk": {
-          "name": "problems_instance_id_instances_id_fk",
+        "problems_merged_into_problems_id_fk": {
+          "name": "problems_merged_into_problems_id_fk",
           "tableFrom": "problems",
-          "tableTo": "instances",
+          "tableTo": "problems",
           "columnsFrom": [
-            "instance_id"
+            "merged_into"
           ],
           "columnsTo": [
             "id"
@@ -2846,18 +2969,6 @@
         "revoked_at": {
           "name": "revoked_at",
           "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "install": {
-          "name": "install",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "allowed": {
-          "name": "allowed",
-          "type": "jsonb",
           "primaryKey": false,
           "notNull": false
         }

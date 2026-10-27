@@ -1,10 +1,20 @@
 import { and, count, desc, eq, gt, inArray, isNull, like, or, sql } from "drizzle-orm"
 import { Hono } from "hono"
 import type { Ctx } from "../context.ts"
-import { accessRequests, alertState, apiTokens, backupRuns, instances, problems, workers } from "../db/schema.ts"
+import {
+  accessRequests,
+  affectedWorkflows,
+  alertState,
+  apiTokens,
+  backupRuns,
+  instances,
+  problems,
+  workers,
+} from "../db/schema.ts"
 import { requireUser } from "../http/middleware.ts"
 import type { Env } from "../http/types.ts"
 import { currentHealth, WORKER_ONLINE_MS } from "../services/collection.ts"
+import { openProblemCount, problemItems } from "../services/problem-view.ts"
 import { telegramPlainText } from "../services/telegram.ts"
 
 export { WORKER_ONLINE_MS }
@@ -30,10 +40,15 @@ export type AttentionItem = { tone: Tone } & (
       id: string
       status: "open"
       reason: "new" | "regression"
+      /** The most recently failed workflow; with several, the item names the error and how many. */
       workflowName: string
       instanceName: string
       errorMessage: string
       count: number
+      /** Distinct workflows the Problem hit, and its Affected workflows (a workflow at two nodes is two). */
+      workflows: number
+      affectedTotal: number
+      instances: string[]
       at: Date
     }
   | { kind: "instance"; id: string; name: string; health: string; detail: string; at: Date | null }
@@ -143,45 +158,71 @@ async function accessPart(ctx: Ctx): Promise<Part> {
 }
 
 /**
- * New problems and regressions seen in the last 24 hours: red. Which problems count is decided in the query,
- * before the limit, so problems that do not count can never push one that does out of the list; the total
- * counts every one. The rows and the total come from one query, so they always agree.
+ * Problems with a workflow that is new or failed again after it was resolved, seen in the last 24 hours: red. A
+ * workflow newly joining an old Problem counts, so whether a Problem is eligible is decided per Affected workflow,
+ * in the query, before the limit; problems that do not count can never push one that does out of the list, and the
+ * total counts every one. The rows and the total come from one query, so they always agree.
  */
 async function problemsPart(ctx: Ctx): Promise<Part> {
   const dayAgo = new Date(Date.now() - 86_400_000)
+  const eligible = ctx.db
+    .select({
+      problemId: affectedWorkflows.problemId,
+      regression: sql<boolean>`bool_or(${affectedWorkflows.regression})`.as("e_regression"),
+      at: sql<Date>`max(${affectedWorkflows.lastSeen})`.as("e_at"),
+    })
+    .from(affectedWorkflows)
+    .where(
+      and(
+        eq(affectedWorkflows.status, "open"),
+        gt(affectedWorkflows.lastSeen, dayAgo),
+        or(eq(affectedWorkflows.regression, true), gt(affectedWorkflows.firstSeen, dayAgo)),
+      ),
+    )
+    .groupBy(affectedWorkflows.problemId)
+    .as("e")
   const shown = await ctx.db
     .select({
-      p: problems,
-      instanceName: instances.name,
+      id: problems.id,
+      regression: eligible.regression,
+      at: eligible.at,
       // Counted over every eligible row, before the limit.
       total: sql<number>`count(*) over ()`.mapWith(Number),
     })
     .from(problems)
-    .innerJoin(instances, eq(problems.instanceId, instances.id))
-    .where(
-      and(
-        eq(problems.status, "open"),
-        isNull(problems.mergedInto),
-        gt(problems.lastSeen, dayAgo),
-        or(eq(problems.regression, true), gt(problems.firstSeen, dayAgo)),
-      ),
-    )
-    .orderBy(desc(problems.lastSeen), desc(problems.id))
+    .innerJoin(eligible, eq(eligible.problemId, problems.id))
+    .where(isNull(problems.mergedInto))
+    .orderBy(desc(eligible.at), desc(problems.id))
     .limit(PROBLEMS_SHOWN)
   const total = shown[0]?.total ?? 0
+  const items = await problemItems(
+    ctx,
+    shown.map((p) => p.id),
+    1,
+  )
   return {
-    items: shown.map(({ p, instanceName }) => ({
-      kind: "problem",
-      tone: "fail",
-      id: p.id,
-      status: "open",
-      reason: p.regression ? "regression" : "new",
-      workflowName: p.workflowName,
-      instanceName,
-      errorMessage: p.errorMessage,
-      count: p.count,
-      at: p.lastSeen,
-    })),
+    items: shown.flatMap(({ id, regression, at }) => {
+      const p = items.get(id)
+      const first = p?.affectedWorkflows[0]
+      if (!p || !first) return []
+      return [
+        {
+          kind: "problem" as const,
+          tone: "fail" as const,
+          id,
+          status: "open" as const,
+          reason: regression ? ("regression" as const) : ("new" as const),
+          workflowName: first.workflowName,
+          instanceName: first.instanceName,
+          errorMessage: p.errorMessage,
+          count: p.count,
+          workflows: p.workflows,
+          affectedTotal: p.affectedTotal,
+          instances: p.instances,
+          at: new Date(at),
+        },
+      ]
+    }),
     total,
     tone: total ? "fail" : null,
   }
@@ -381,11 +422,8 @@ export function overviewRoutes(ctx: Ctx) {
   // Small summary for the sidebar.
   app.get("/summary", async (c) => {
     const onlineSince = new Date(Date.now() - WORKER_ONLINE_MS)
-    const [[open], [total], [online], [pendingAccess]] = await Promise.all([
-      ctx.db
-        .select({ n: count() })
-        .from(problems)
-        .where(and(eq(problems.status, "open"), isNull(problems.mergedInto))),
+    const [open, [total], [online], [pendingAccess]] = await Promise.all([
+      openProblemCount(ctx),
       ctx.db.select({ n: count() }).from(workers).where(isNull(workers.revokedAt)),
       ctx.db
         .select({ n: count() })
@@ -397,7 +435,7 @@ export function overviewRoutes(ctx: Ctx) {
         .where(and(eq(accessRequests.status, "pending"), gt(accessRequests.decideBy, new Date()))),
     ])
     return c.json({
-      openProblems: open?.n ?? 0,
+      openProblems: open,
       pendingAccess: pendingAccess?.n ?? 0,
       workers: { online: online?.n ?? 0, total: total?.n ?? 0 },
       version: ctx.version,
@@ -411,10 +449,7 @@ export function overviewRoutes(ctx: Ctx) {
     const rows = await ctx.db.select().from(instances)
     const now = await currentHealth(ctx, rows)
     const all = rows.map((r) => ({ health: now.get(r.id)?.health ?? r.health }))
-    const [open] = await ctx.db
-      .select({ n: count() })
-      .from(problems)
-      .where(and(eq(problems.status, "open"), isNull(problems.mergedInto)))
+    const open = await openProblemCount(ctx)
     const [lastBackup] = await ctx.db
       .select({ at: backupRuns.finishedAt })
       .from(backupRuns)
@@ -427,7 +462,7 @@ export function overviewRoutes(ctx: Ctx) {
         healthy: all.filter((i) => i.health === "ok").length,
         down: all.filter((i) => i.health === "down").length,
         warn: all.filter((i) => i.health === "warn").length,
-        openProblems: open?.n ?? 0,
+        openProblems: open,
         lastBackupAt: lastBackup?.at ?? null,
       },
     })

@@ -1,5 +1,5 @@
 import { capabilityStatus } from "@n8n-ops/shared"
-import { and, asc, count, desc, eq, inArray, isNull } from "drizzle-orm"
+import { asc, desc, eq, inArray } from "drizzle-orm"
 import { Hono } from "hono"
 import { z } from "zod"
 import type { Ctx } from "../context.ts"
@@ -8,7 +8,6 @@ import {
   backupRuns,
   instanceBackupDestinations,
   instances,
-  problems,
   workers,
   workflows,
 } from "../db/schema.ts"
@@ -26,7 +25,8 @@ import {
   metricsUrlOf,
   refreshInstanceMeta,
 } from "../services/instances.ts"
-import { pollInstance } from "../services/problems.ts"
+import { openProblemCount, openProblemsByInstance } from "../services/problem-view.ts"
+import { deleteInstance, pollInstance } from "../services/problems.ts"
 import { instanceProxyFix } from "../services/proxy-fix.ts"
 import { WORKER_ONLINE_MS } from "./overview.ts"
 
@@ -114,11 +114,7 @@ export function instanceRoutes(ctx: Ctx) {
 
   app.get("/", async (c) => {
     const rows = await ctx.db.select().from(instances).orderBy(asc(instances.name))
-    const open = await ctx.db
-      .select({ instanceId: problems.instanceId, n: count() })
-      .from(problems)
-      .where(and(eq(problems.status, "open"), isNull(problems.mergedInto)))
-      .groupBy(problems.instanceId)
+    const open = await openProblemsByInstance(ctx)
     const lastBackups = await Promise.all(
       rows.map(async (r) => {
         const [b] = await ctx.db
@@ -176,10 +172,7 @@ export function instanceRoutes(ctx: Ctx) {
       .from(instances)
       .where(eq(instances.id, c.req.param("id")))
     if (!row) return c.json({ error: "not_found" }, 404)
-    const [open] = await ctx.db
-      .select({ n: count() })
-      .from(problems)
-      .where(and(eq(problems.instanceId, row.id), eq(problems.status, "open"), isNull(problems.mergedInto)))
+    const open = { n: await openProblemCount(ctx, { instanceId: row.id }) }
     const worker = row.workerId
       ? (await ctx.db.select().from(workers).where(eq(workers.id, row.workerId)))[0]
       : undefined
@@ -283,10 +276,10 @@ export function instanceRoutes(ctx: Ctx) {
   })
 
   app.delete("/:id", async (c) => {
-    const [row] = await ctx.db
-      .delete(instances)
-      .where(eq(instances.id, c.req.param("id")))
-      .returning()
+    const id = c.req.param("id")
+    if (!z.string().uuid().safeParse(id).success) return c.json({ error: "not_found" }, 404)
+    // With its workflows, failures and the Problems it leaves without a workflow.
+    const row = await deleteInstance(ctx, id)
     if (!row) return c.json({ error: "not_found" }, 404)
     await ctx.audit({ actor: actorName(c.get("actor")), action: "Instance removed", target: row.name, via: "web" })
     return c.json({ ok: true })

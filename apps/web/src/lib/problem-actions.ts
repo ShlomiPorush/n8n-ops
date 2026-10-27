@@ -4,8 +4,8 @@ import { offerUndo } from "@/lib/undo"
 
 export type ProblemAction = "resolve" | "mute" | "reopen" | "unmute"
 
-/** A problem action's answer: a receipt for Undo, or `changed: false` when the problem was already there. */
-type ActionAnswer = { ok: true; changed: boolean; status: "open" | "muted" | "resolved"; receipt?: { id: string } }
+/** A problem action's answer: a receipt for Undo, or `changed: false` when everything was already there. */
+type ActionAnswer = { ok: true; changed: boolean; receipt?: { id: string } }
 
 /** The words of each problem action: its result (FB-4), its failure (FB-3), and its Undo (FB-16). */
 const actionWords: Record<
@@ -47,11 +47,13 @@ const actionWords: Record<
  * server answered with (FB-16, DS-20). An action another tab already did says so, with nothing to undo. Lists,
  * the pane, Overview and Needs attention refresh after the action and after its Undo, and an answer read before
  * either is dropped (`refreshAreas`); when they cannot refresh after an Undo, its message offers Refresh. Used by
- * the problem's pane and by the rows of Needs attention.
+ * the problem's pane and by the rows of Needs attention. With `workflow`, the action is on that Affected workflow of
+ * the Problem only; without, on every workflow of the Problem.
  */
-export function useProblemAction(id: string, action: ProblemAction, named: () => string) {
+export function useProblemAction(id: string, action: ProblemAction, named: () => string, workflow?: string) {
   const words = actionWords[action]
-  const mutation = useApiMutation<{ hours: number } | undefined, ActionAnswer>("POST", `/problems/${id}/${action}`, {
+  const path = `/problems/${id}${workflow ? `/workflows/${workflow}` : ""}/${action}`
+  const mutation = useApiMutation<{ hours: number } | undefined, ActionAnswer>("POST", path, {
     failed: () => `${words.failed} ${named()}`,
   })
   return async () => {

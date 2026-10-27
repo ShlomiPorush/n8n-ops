@@ -5,8 +5,9 @@
  * proxy, joins the Docker socket's group by itself (docker/worker-entrypoint.sh), so no value is filled in by hand.
  *
  * With the socket proxy, only wollomatic/socket-proxy mounts the Docker socket. The worker reaches it over an
- * internal network, and the proxy allows exactly the calls the worker makes: ping, and exec in the listed n8n
- * containers. Without it, the worker mounts the socket itself (full Docker access).
+ * internal network, and the proxy allows exactly the calls the worker makes: ping, listing containers (to find
+ * n8n queue workers; never inspecting one), and exec in the listed n8n containers. Without it, the worker mounts
+ * the socket itself (full Docker access).
  */
 
 export const SOCKET_PROXY_IMAGE = "wollomatic/socket-proxy:1.13.1"
@@ -30,7 +31,8 @@ export function containerRegex(containers: string[]): string {
 export function proxyRules(containers: string[]) {
   const version = String.raw`(/v1\.[0-9]+)?`
   return {
-    get: `${version}/(_ping|exec/[0-9a-f]+/json)`,
+    // Listing containers finds the n8n queue workers next to a main; inspecting one (its environment) stays refused.
+    get: `${version}/(_ping|exec/[0-9a-f]+/json|containers/json)`,
     post: `${version}/(containers/${containerRegex(containers)}/exec|exec/[0-9a-f]+/start)`,
   }
 }
@@ -79,7 +81,8 @@ export function workerInstall(options: {
   ]
   const rules = proxyRules(containers)
   const proxy = [
-    "  # Only the proxy sees the Docker socket. It allows ping and exec in the n8n containers listed below;",
+    "  # Only the proxy sees the Docker socket. It allows ping, listing containers (to find n8n queue workers)",
+    "  # and exec in the n8n containers listed below;",
     "  # to allow another container, add it to -allowPOST and run: docker compose up -d",
     "  socket-proxy:",
     `    image: ${SOCKET_PROXY_IMAGE}`,

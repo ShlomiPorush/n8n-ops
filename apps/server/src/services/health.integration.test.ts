@@ -208,6 +208,67 @@ describe("applyHealth", () => {
     expect(results.filter((r) => r === "ok").length).toBeGreaterThan(0)
   }, 20_000)
 
+  it("moves an alert of a found queue worker only on a verified state, and ends it only after a full list", async () => {
+    await ctx.db.update(instances).set({ queueMode: true }).where(eq(instances.id, id))
+    const w = (state: string, ok = false) => ({
+      url: "docker://acme-w-1",
+      name: "acme-w-1",
+      state,
+      ok,
+      status: 0,
+      ms: 1,
+    })
+    const found = (workers: ReturnType<typeof w>[], status = "ok") =>
+      report({ source: "inside", workers, discovery: { status, found: workers.length } } as Partial<HealthReport>)
+    const active = async () => (await conditions()).filter((c) => c.active).map((c) => c.key)
+    const key = `worker:${id}:docker://acme-w-1`
+
+    await applyHealth(ctx, id, found([w("not-ready")]), await ticket())
+    expect(await active()).toEqual([key])
+    expect((await sent()).at(-1)).toContain("acme-w-1")
+    // Not checked, or running without its health check: the alert stays as it was.
+    await applyHealth(ctx, id, found([w("not-checked")]), await ticket())
+    await applyHealth(ctx, id, found([w("not-verified")]), await ticket())
+    expect(await active()).toEqual([key])
+    // A list that could not be read in full says nothing about the worker being gone.
+    await applyHealth(ctx, id, found([], "failed"), await ticket())
+    expect(await active()).toEqual([key])
+    expect((await row())?.health).toBe("warn")
+    // Ready ends it with "Worker back"; gone from a full list ends it without a message.
+    await applyHealth(ctx, id, found([w("ready", true)]), await ticket())
+    expect(await active()).toEqual([])
+    expect((await sent()).at(-1)).toContain("Worker back")
+    await applyHealth(ctx, id, found([w("down")]), await ticket())
+    const before = (await sent()).length
+    await applyHealth(ctx, id, found([]), await ticket())
+    expect(await active()).toEqual([])
+    expect((await sent()).length).toBe(before)
+    // None found is a warning.
+    expect((await row())?.health).toBe("warn")
+  })
+
+  it("ends the alerts of the other source when the workers start being found, and back", async () => {
+    await ctx.db.update(instances).set({ queueMode: true }).where(eq(instances.id, id))
+    const typed = { url: "http://w:5678/healthz", ok: false, status: 0, ms: 1, error: "refused" }
+    await applyHealth(ctx, id, report({ workers: [typed] }), await ticket())
+    const foundDown = { url: "docker://acme-w-1", name: "acme-w-1", state: "down", ok: false, status: 0, ms: 1 }
+    await applyHealth(
+      ctx,
+      id,
+      report({
+        source: "inside",
+        workers: [foundDown],
+        discovery: { status: "ok", found: 1 },
+      } as Partial<HealthReport>),
+      await ticket(),
+    )
+    expect((await conditions()).filter((c) => c.active).map((c) => c.key)).toEqual([`worker:${id}:docker://acme-w-1`])
+    await applyHealth(ctx, id, report({ workers: [typed] }), await ticket())
+    expect((await conditions()).filter((c) => c.active).map((c) => c.key)).toEqual([
+      `worker:${id}:http://w:5678/healthz`,
+    ])
+  })
+
   it("says not collected when the check itself failed, and leaves the main's alerts as they were", async () => {
     await applyHealth(ctx, id, report({ main: { ok: false, status: 0, ms: 1, error: "refused" } }), await ticket())
     expect((await conditions()).find((c) => c.key === `down:${id}`)?.active).toBe(true)

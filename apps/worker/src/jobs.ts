@@ -2,6 +2,7 @@ import { readTar, textEntry } from "@n8n-ops/shared"
 import { type Manifest, sealArchive } from "@n8n-ops/shared/archive"
 import type { Docker } from "./docker.ts"
 import { checkInside } from "./inside.ts"
+import { discoverWorkers } from "./queue-workers.ts"
 
 export type Job = { id: string; kind: string; payload: Record<string, unknown> }
 export type JobResult = { ok: boolean; result?: Record<string, unknown>; error?: string }
@@ -88,11 +89,27 @@ export async function probeJob(payload: Record<string, unknown>, docker?: Docker
       signal: AbortSignal.timeout(10_000),
     })
     if (outcome.kind === "report") {
-      const report = outcome.report
+      let report = outcome.report
+      const metrics = typedMetrics && !report.notCollected ? await metricsOver(typedMetrics) : {}
+      if (payload.discover === true) {
+        // Queue mode with no worker URLs typed: find the queue workers next to the main and check them.
+        const check = payload.check as { seq?: unknown } | undefined
+        const found = await discoverWorkers(docker, inside.container, {
+          rotation: typeof check?.seq === "number" ? check.seq : 0,
+        })
+        // The list shows a main that is restarting or stopped as such, even when a check got through in between.
+        if (found.mainState && found.mainState !== "running" && report.mainState === "running") {
+          const down = { ok: false, status: 0, ms: 0, error: `container ${found.mainState}` }
+          report = { ...report, main: down, readiness: down, mainState: "not-running" }
+        }
+        return {
+          ok: true,
+          result: { ...report, ...metrics, workers: found.workers, discovery: found.discovery, checkedAt: checkedAt() },
+        }
+      }
       const workers = await Promise.all(
         strings(overrides.workerHealthUrls).map(async (url) => ({ url, ...(await requestUrl(url)) })),
       )
-      const metrics = typedMetrics && !report.notCollected ? await metricsOver(typedMetrics) : {}
       return { ok: true, result: { ...report, ...metrics, workers, checkedAt: checkedAt() } }
     }
     fallback = outcome.reason

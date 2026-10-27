@@ -16,11 +16,16 @@ describe("socket proxy rules", () => {
     expect(allows(rules.post, "/v1.43/containers/flow/../postgres/exec")).toBe(false)
   })
 
-  it("allows starting and reading an exec, and nothing else", () => {
+  it("allows starting and reading an exec, listing containers, and nothing else", () => {
     expect(allows(rules.post, "/v1.43/exec/3f2a9c/start")).toBe(true)
     expect(allows(rules.get, "/v1.43/exec/3f2a9c/json")).toBe(true)
     expect(allows(rules.get, "/v1.43/_ping")).toBe(true)
-    expect(allows(rules.get, "/v1.43/containers/json")).toBe(false)
+    // Listing finds the queue workers; inspecting a container, which shows its environment, stays refused.
+    expect(allows(rules.get, "/v1.43/containers/json")).toBe(true)
+    expect(allows(rules.get, "/containers/json")).toBe(true)
+    expect(allows(rules.get, "/v1.43/containers/3f2a9c/json")).toBe(false)
+    expect(allows(rules.get, "/v1.43/containers/n8n-main/json")).toBe(false)
+    expect(allows(rules.get, "/v1.43/containers/json/../3f2a9c/json")).toBe(false)
     expect(allows(rules.post, "/v1.43/containers/create")).toBe(false)
     expect(allows(rules.post, "/v1.43/containers/n8n-main/start")).toBe(false)
   })

@@ -18,7 +18,14 @@ const probeResult = z.object({ ok: z.boolean(), status: z.number(), ms: z.number
 export const probeReport = z.object({
   main: probeResult,
   readiness: probeResult,
-  workers: z.array(probeResult.extend({ url: z.string() })),
+  workers: z.array(
+    probeResult.extend({
+      url: z.string(),
+      /** Found next to the main (url docker://<name>), with its state; absent for a URL the owner typed. */
+      name: z.string().max(128).optional(),
+      state: z.enum(["ready", "not-ready", "unreachable", "not-verified", "down", "not-checked"]).optional(),
+    }),
+  ),
   queue: z
     .object({ waiting: z.number(), active: z.number(), completed: z.number(), failed: z.number() })
     .nullable() satisfies z.ZodType<QueueMetrics | null>,
@@ -35,6 +42,14 @@ export const probeReport = z.object({
   mainState: z.enum(["running", "not-running", "paused"]).optional(),
   /** How the metrics were read inside the main: read, off, 404, no queue figures, failed, or a typed URL used. */
   metricsState: z.enum(["read", "off", "404", "no-queue-figures", "failed", "skipped"]).optional(),
+  /** How finding the queue workers went: the container list read in full (ok), or why not. */
+  discovery: z
+    .object({
+      status: z.enum(["ok", "ambiguous", "refused", "failed", "partial"]),
+      reason: z.string().max(200).optional(),
+      found: z.number().int(),
+    })
+    .optional(),
   /** The check itself failed (not the main): health is unknown, not the last good state. */
   notCollected: z.string().max(300).optional(),
 })
@@ -117,7 +132,10 @@ export async function checkDirect(ctx: Ctx, instanceId: string) {
 export function healthOf(report: HealthReport, backlogActive: boolean): Health {
   if (report.notCollected) return "unknown"
   if (!report.main.ok) return "down"
-  if (!report.readiness.ok || report.workers.some((w) => !w.ok) || backlogActive) return "warn"
+  // Queue workers found next to the main: a list that could not be read in full, or no worker found, is a warning.
+  const d = report.discovery
+  const workersWrong = report.workers.some((w) => !w.ok) || (d !== undefined && (d.status !== "ok" || d.found === 0))
+  if (!report.readiness.ok || workersWrong || backlogActive) return "warn"
   return "ok"
 }
 
@@ -127,8 +145,8 @@ const failure = (p: ProbeResult) => clip(p.error ?? `HTTP ${p.status}`, 500)
 export const healthAlerts = {
   down: (name: string, main: ProbeResult) => html`<b>${clip(name, 200)} is not responding</b>\n${failure(main)}`,
   up: (name: string) => html`<b>${clip(name, 200)} is responding again</b>`,
-  workerDown: (name: string, worker: ProbeResult & { url: string }) =>
-    html`<b>Worker down on ${clip(name, 200)}</b>\n${clip(worker.url, 200)}: ${failure(worker)}`,
+  workerDown: (name: string, worker: ProbeResult & { url: string; name?: string }) =>
+    html`<b>Worker down on ${clip(name, 200)}</b>\n${clip(worker.name ?? worker.url, 200)}: ${failure(worker)}`,
   workerUp: (name: string, url: string) => html`<b>Worker back on ${clip(name, 200)}</b>\n${clip(url, 200)}`,
   backlog: (name: string, waiting: number, minutes: number) =>
     html`<b>Queue backlog on ${clip(name, 200)}</b>\n${waiting} jobs waiting for more than ${minutes} minutes`,
@@ -148,6 +166,52 @@ export async function closeQueueAlerts(db: Pick<Ctx["db"], "update">, instanceId
       .set({ active: false, since: new Date(), detail: NOT_QUEUE })
       .where(and(like(alertState.key, `${prefix}%`), eq(alertState.active, true)))
   }
+}
+
+/** Ends worker conditions of an instance that `ends` picks, without a message, saying why. */
+async function closeWorkerAlerts(ctx: Ctx, instanceId: string, ends: (key: string) => boolean, why: string) {
+  const prefix = `worker:${instanceId}:`
+  const open = await ctx.db
+    .select({ key: alertState.key })
+    .from(alertState)
+    .where(and(like(alertState.key, `${prefix}%`), eq(alertState.active, true)))
+  for (const { key } of open.filter((o) => ends(o.key))) {
+    await ctx.db
+      .update(alertState)
+      .set({ active: false, since: new Date(), detail: why })
+      .where(eq(alertState.key, key))
+  }
+}
+
+/**
+ * Keeps the worker conditions to the source of this report. Found next to the main: conditions of typed URLs end,
+ * and a found worker that is gone ends as removed, but only after the container list was read in full. Typed
+ * URLs, or no discovery: conditions of found workers end.
+ */
+async function settleWorkerSources(ctx: Ctx, instanceId: string, report: HealthReport) {
+  const found = `worker:${instanceId}:docker://`
+  const d = report.discovery
+  if (!d)
+    return closeWorkerAlerts(
+      ctx,
+      instanceId,
+      (key) => key.startsWith(found),
+      "Closed: the workers are checked another way",
+    )
+  await closeWorkerAlerts(
+    ctx,
+    instanceId,
+    (key) => !key.startsWith(found),
+    "Closed: the workers are found next to the main",
+  )
+  if (d.status !== "ok") return
+  const listed = new Set(report.workers.map((w) => `worker:${instanceId}:${w.url}`))
+  await closeWorkerAlerts(
+    ctx,
+    instanceId,
+    (key) => key.startsWith(found) && !listed.has(key),
+    "Closed: the worker was removed",
+  )
 }
 
 /**
@@ -186,7 +250,9 @@ async function applyHealthNow(ctx: Ctx, instanceId: string, given: HealthReport,
     const queueMode = found ? given.mode === "queue" : current.queueMode
     // Outside queue mode a report's queue parts mean nothing, whichever worker release sent them. How the metrics
     // were read stays: it says why there is a version or not.
-    const report: HealthReport = queueMode ? given : { ...given, workers: [], queue: null, metricsError: undefined }
+    const report: HealthReport = queueMode
+      ? given
+      : { ...given, workers: [], queue: null, metricsError: undefined, discovery: undefined }
 
     const measured = queueMode && !report.notCollected && report.queue !== null
     const now = new Date()
@@ -233,12 +299,15 @@ async function applyHealthNow(ctx: Ctx, instanceId: string, given: HealthReport,
     clear: () => healthAlerts.up(name),
   })
   if (!queueMode) return health
+  await settleWorkerSources(ctx, current.id, report)
   for (const w of report.workers) {
+    // Only a verified state moves an alert: a worker not checked, or running without its health check, keeps it.
+    if (w.state === "not-checked" || w.state === "not-verified") continue
     await setCondition(ctx, `worker:${current.id}:${w.url}`, !w.ok, {
       kind: "health",
       subject,
       start: () => healthAlerts.workerDown(name, w),
-      clear: () => healthAlerts.workerUp(name, w.url),
+      clear: () => healthAlerts.workerUp(name, w.name ?? w.url),
     })
   }
   if (measured) {

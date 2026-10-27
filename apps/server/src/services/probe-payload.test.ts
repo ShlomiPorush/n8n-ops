@@ -16,7 +16,8 @@ const check = { seq: 4, revision: 2 }
 describe("probePayload", () => {
   it("asks to read the main from inside, with no override the owner did not type", () => {
     const payload = probePayload(instance, check)
-    expect(payload).toMatchObject({ inside: { container: "n8n-main" }, overrides: {}, check })
+    expect(payload).toMatchObject({ inside: { container: "n8n-main" }, check })
+    expect(payload.overrides).toEqual({})
     // The URL fields stay for workers of earlier releases and as the network fallback.
     expect(payload).toMatchObject({
       main: "https://n8n.example.com/healthz",
@@ -38,8 +39,15 @@ describe("probePayload", () => {
   })
 
   it("asks for no queue parts outside queue mode", () => {
-    const regular = { ...instance, queueMode: false, workerHealthUrls: ["http://n8n-worker:5678/healthz"] } as Instance
-    expect(probePayload(regular, check)).toMatchObject({ workers: [], metrics: null, overrides: {} })
+    const regular = {
+      ...instance,
+      queueMode: false,
+      metricsUrl: "http://n8n-main:5678/metrics",
+      workerHealthUrls: ["http://n8n-worker:5678/healthz"],
+    } as Instance
+    const payload = probePayload(regular, check)
+    expect(payload).toMatchObject({ workers: [], metrics: null })
+    expect(payload.overrides).toEqual({})
   })
 
   it("does not ask to read inside without a container name", () => {

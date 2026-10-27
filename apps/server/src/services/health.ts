@@ -2,6 +2,7 @@ import { and, eq, like, sql } from "drizzle-orm"
 import { z } from "zod"
 import { type Ctx, changed } from "../context.ts"
 import { alertState, type Health, instances } from "../db/schema.ts"
+import { oneAtATime } from "../lib/one-at-a-time.ts"
 import { parseQueueMetrics, probe, type QueueMetrics } from "../n8n/client.ts"
 import { setCondition } from "./alerts.ts"
 import { type Instance, metricsUrlOf } from "./instances.ts"
@@ -32,6 +33,8 @@ export const probeReport = z.object({
   version: z.string().max(64).nullable().optional(),
   /** Docker refused to run a command in the main because it is stopped or paused: the main is down. */
   mainState: z.enum(["running", "not-running", "paused"]).optional(),
+  /** How the metrics were read inside the main: read, off, 404, no queue figures, failed, or a typed URL used. */
+  metricsState: z.enum(["read", "off", "404", "no-queue-figures", "failed", "skipped"]).optional(),
   /** The check itself failed (not the main): health is unknown, not the last good state. */
   notCollected: z.string().max(300).optional(),
 })
@@ -52,14 +55,21 @@ export function metricsAnswer(status: number) {
     : `metrics answered ${status}`
 }
 
-/** Starts a health check: takes the instance's next check number with its current collection revision. */
-export async function startCheck(ctx: Ctx, instanceId: string): Promise<CheckTicket | null> {
+/**
+ * Starts a health check: takes the instance's next check number, and returns the instance as it is in that same
+ * statement. The check must use this row, not one read before: then its settings are exactly those of the
+ * revision on its ticket, and a change made just before cannot pass for the new one.
+ */
+export async function startCheck(
+  ctx: Ctx,
+  instanceId: string,
+): Promise<{ ticket: CheckTicket; instance: Instance } | null> {
   const [row] = await ctx.db
     .update(instances)
     .set({ healthCheckSeq: sql`${instances.healthCheckSeq} + 1` })
     .where(eq(instances.id, instanceId))
-    .returning({ seq: instances.healthCheckSeq, revision: instances.collectionRevision })
-  return row ?? null
+    .returning()
+  return row ? { ticket: { seq: row.healthCheckSeq, revision: row.collectionRevision }, instance: row } : null
 }
 
 /** Checks an instance from the server (collection mode "direct"). Queue workers only in queue mode. */
@@ -97,10 +107,11 @@ export async function collectDirect(instance: Instance): Promise<HealthReport> {
 }
 
 /** Checks an instance from the server now and applies the result, unless a later check or change won. */
-export async function checkDirect(ctx: Ctx, instance: Instance) {
-  const ticket = await startCheck(ctx, instance.id)
-  if (!ticket) return null
-  return applyHealth(ctx, instance.id, await collectDirect(instance), ticket)
+export async function checkDirect(ctx: Ctx, instanceId: string) {
+  const started = await startCheck(ctx, instanceId)
+  // Collection may have moved to the worker in between: then this check is not the server's to make.
+  if (!started || started.instance.collection !== "direct") return null
+  return applyHealth(ctx, instanceId, await collectDirect(started.instance), started.ticket)
 }
 
 export function healthOf(report: HealthReport, backlogActive: boolean): Health {
@@ -124,20 +135,41 @@ export const healthAlerts = {
   backlogCleared: (name: string) => html`<b>Queue backlog cleared on ${clip(name, 200)}</b>`,
 }
 
-/** Ends conditions without a message, for queue alerts of an instance that is no longer in queue mode. */
-async function closeQuietly(ctx: Ctx, keyPrefix: string) {
-  await ctx.db
-    .update(alertState)
-    .set({ active: false, since: new Date() })
-    .where(and(like(alertState.key, `${keyPrefix}%`), eq(alertState.active, true)))
+const NOT_QUEUE = "Closed without a message: the instance is not in queue mode"
+
+/**
+ * Ends the queue alerts of an instance without a message: its worker conditions and its backlog. For an instance
+ * that is not in queue mode, whether it just left it or a closing was interrupted before.
+ */
+export async function closeQueueAlerts(db: Pick<Ctx["db"], "update">, instanceId: string) {
+  for (const prefix of [`worker:${instanceId}:`, `backlog:${instanceId}`]) {
+    await db
+      .update(alertState)
+      .set({ active: false, since: new Date(), detail: NOT_QUEUE })
+      .where(and(like(alertState.key, `${prefix}%`), eq(alertState.active, true)))
+  }
 }
 
 /**
  * Stores a health report and raises or clears health alerts (requirement C3). It applies only if, under a row lock
  * taken after the check's I/O, the instance still has the collection revision the check started from and no check
  * that started later has been applied; otherwise it is dropped. Returns the health, or null when dropped.
+ *
+ * The reports of one instance are applied one at a time, alerts included, so an earlier check's alerts never come
+ * after a later check's. The transaction uses only its own connection: settings are read before it.
  */
-export async function applyHealth(ctx: Ctx, instanceId: string, given: HealthReport, ticket: CheckTicket) {
+export function applyHealth(ctx: Ctx, instanceId: string, given: HealthReport, ticket: CheckTicket) {
+  return oneAtATime(`health:${instanceId}`, () => applyHealthNow(ctx, instanceId, given, ticket))
+}
+
+async function applyHealthNow(ctx: Ctx, instanceId: string, given: HealthReport, ticket: CheckTicket) {
+  const [before] = await ctx.db
+    .select({ overrides: instances.overrides })
+    .from(instances)
+    .where(eq(instances.id, instanceId))
+  if (!before) return null
+  const s = await ctx.settings.forInstance(before.overrides)
+
   const applied = await ctx.db.transaction(async (tx) => {
     const [current] = await tx.select().from(instances).where(eq(instances.id, instanceId)).for("update")
     if (!current) return null
@@ -153,9 +185,10 @@ export async function applyHealth(ctx: Ctx, instanceId: string, given: HealthRep
     const found = given.source === "inside" && (given.mode === "queue" || given.mode === "regular")
     const queueMode = found ? given.mode === "queue" : current.queueMode
     // Outside queue mode a report's queue parts mean nothing, whichever worker release sent them.
-    const report: HealthReport = queueMode ? given : { ...given, workers: [], queue: null, metricsError: undefined }
+    const report: HealthReport = queueMode
+      ? given
+      : { ...given, workers: [], queue: null, metricsError: undefined, metricsState: undefined }
 
-    const s = await ctx.settings.forInstance(current.overrides)
     const measured = queueMode && !report.notCollected && report.queue !== null
     const now = new Date()
     // The backlog changes only on a measurement; metrics that could not be read leave it as it was.
@@ -182,11 +215,13 @@ export async function applyHealth(ctx: Ctx, instanceId: string, given: HealthRep
         ...(version ? { version } : {}),
       })
       .where(eq(instances.id, current.id))
-    return { current, report, health, queueMode, measured, backlogActive, settings: s }
+    // In the same transaction, so a mode stored as regular never leaves queue alerts open behind it.
+    if (!queueMode) await closeQueueAlerts(tx, current.id)
+    return { current, report, health, queueMode, measured, backlogActive }
   })
   if (!applied) return null
 
-  const { current, report, health, queueMode, measured, backlogActive, settings: s } = applied
+  const { current, report, health, queueMode, measured, backlogActive } = applied
   if (health !== current.health) changed(ctx, "instances", "overview")
   const name = current.name
   const subject = { instanceId: current.id }
@@ -198,13 +233,7 @@ export async function applyHealth(ctx: Ctx, instanceId: string, given: HealthRep
     start: () => healthAlerts.down(name, report.main),
     clear: () => healthAlerts.up(name),
   })
-  if (!queueMode) {
-    if (current.queueMode) {
-      await closeQuietly(ctx, `worker:${current.id}:`)
-      await closeQuietly(ctx, `backlog:${current.id}`)
-    }
-    return health
-  }
+  if (!queueMode) return health
   for (const w of report.workers) {
     await setCondition(ctx, `worker:${current.id}:${w.url}`, !w.ok, {
       kind: "health",

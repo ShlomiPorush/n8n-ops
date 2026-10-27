@@ -101,6 +101,15 @@ function call(
   })
 }
 
+/** Reads a JSON answer of Docker. A broken one says which call, never a piece of the answer. */
+function answer<T>(data: Buffer, what: string): T {
+  try {
+    return JSON.parse(data.toString()) as T
+  } catch {
+    throw new DockerError(`Docker gave an answer to ${what} that is not JSON`, "other", 0)
+  }
+}
+
 /** Splits Docker's multiplexed stream (8-byte frame headers) into stdout and stderr. */
 export function demux(raw: Buffer): { stdout: Buffer; stderr: Buffer } {
   const out: Buffer[] = []
@@ -138,12 +147,13 @@ export class Docker {
       small,
     )
     if (created.status >= 300) throw execRefusal(container, created.status, created.data)
-    const { Id } = JSON.parse(created.data.toString()) as { Id: string }
+    const { Id } = answer<{ Id: string }>(created.data, "exec create")
     const started = await call(this.endpoint, "POST", `/exec/${Id}/start`, { Detach: false, Tty: false }, limits)
     if (started.status >= 300) throw execRefusal(container, started.status, started.data)
     const { stdout, stderr } = demux(started.data)
     const inspect = await call(this.endpoint, "GET", `/exec/${Id}/json`, undefined, small)
-    const { ExitCode } = JSON.parse(inspect.data.toString()) as { ExitCode: number }
+    if (inspect.status >= 300) throw execRefusal(container, inspect.status, inspect.data)
+    const { ExitCode } = answer<{ ExitCode: number }>(inspect.data, "exec inspect")
     return { exitCode: ExitCode ?? -1, stdout, stderr: stderr.toString() }
   }
 

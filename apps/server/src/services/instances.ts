@@ -2,6 +2,7 @@ import { readScopes, writeScopes } from "@n8n-ops/shared"
 import { and, eq } from "drizzle-orm"
 import type { Ctx } from "../context.ts"
 import { instances } from "../db/schema.ts"
+import { oneAtATime } from "../lib/one-at-a-time.ts"
 import { N8nClient } from "../n8n/client.ts"
 
 export type Instance = typeof instances.$inferSelect
@@ -16,12 +17,12 @@ export function readsInside(instance: Pick<Instance, "collection" | "workerId" |
 }
 
 /**
- * Where the queue metrics of an instance are read: the URL set on it, otherwise /metrics of its base URL in queue
- * mode, which is where n8n serves them. Null when there is nothing to read.
+ * Where the queue metrics of an instance are read over the network: the URL set on it, otherwise /metrics of its
+ * base URL, where n8n serves them. Only in queue mode: outside it there is no queue to read, so nothing is asked.
  */
 export function metricsUrlOf(instance: Pick<Instance, "metricsUrl" | "queueMode" | "baseUrl">): string | null {
-  if (instance.metricsUrl) return instance.metricsUrl
-  return instance.queueMode ? `${instance.baseUrl.replace(/\/+$/, "")}/metrics` : null
+  if (!instance.queueMode) return null
+  return instance.metricsUrl || `${instance.baseUrl.replace(/\/+$/, "")}/metrics`
 }
 
 type CollectionFields = Pick<
@@ -64,12 +65,19 @@ export function effectiveScopes(instance: Pick<Instance, "scopes" | "scopesSourc
 }
 
 /** Reads the n8n version and the API key's scopes, and stores them. */
-export async function refreshInstanceMeta(ctx: Ctx, instance: Instance) {
+export function refreshInstanceMeta(ctx: Ctx, instance: Instance) {
+  // One at a time per instance, so a slow earlier read never writes over a later one.
+  return oneAtATime(`meta:${instance.id}`, () => refreshInstanceMetaNow(ctx, instance))
+}
+
+async function refreshInstanceMetaNow(ctx: Ctx, instance: Instance) {
   const client = clientFor(ctx, instance)
-  // Checked from inside, the version comes with each health report; reading it over the network would race it.
-  const inside = readsInside(instance)
+  // While the worker reports a version from inside, reading it over the network would race it. A worker that
+  // checks over the network, or one of an earlier release, reports none: then it is read here, as before.
+  const detail = instance.healthDetail as { source?: string; version?: string } | null
+  const fromInside = readsInside(instance) && detail?.source === "inside" && Boolean(detail.version)
   const [version, scopes] = await Promise.all([
-    inside ? Promise.resolve(null) : client.version(instance.metricsUrl),
+    fromInside ? Promise.resolve(null) : client.version(instance.metricsUrl),
     client.discoverScopes(),
   ])
   if (version) {

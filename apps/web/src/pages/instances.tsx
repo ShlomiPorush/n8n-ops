@@ -151,6 +151,7 @@ export type InstanceRow = {
     fallback?: string
     notCollected?: string
     mainState?: "running" | "not-running" | "paused"
+    mode?: "queue" | "regular" | null
   } | null
   healthCheckedAt: string | null
   lastPollAt: string | null
@@ -647,8 +648,25 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
                 </>
               }
             />
-            <HealthRow label="Main process (/healthz)" ok={hd?.main?.ok} detail={hd?.main?.error} />
-            <HealthRow label="Ready (/healthz/readiness)" ok={hd?.readiness?.ok} />
+            <HealthRow
+              label="Main process (/healthz)"
+              ok={hd?.notCollected ? undefined : hd?.main?.ok}
+              detail={hd?.main?.error}
+              unknown={hd?.notCollected ? "not collected" : undefined}
+            />
+            <HealthRow
+              label="Ready (/healthz/readiness)"
+              ok={hd?.notCollected ? undefined : hd?.readiness?.ok}
+              unknown={hd?.notCollected ? "not collected" : undefined}
+            />
+            {hd?.source === "inside" && !hd.notCollected && (
+              <div className="flex min-w-0 items-center gap-2.5 border-t border-line px-pad-x py-pad-y">
+                <span className="min-w-0">Execution mode</span>
+                <span className="ms-auto text-end text-muted-foreground">
+                  {hd.mode ? `${hd.mode}, read in the main container` : "not read"}
+                </span>
+              </div>
+            )}
             {(hd?.workers ?? []).map((w) => (
               <HealthRow key={w.url} label={`Worker ${w.url}`} ok={w.ok} detail={w.error} />
             ))}
@@ -673,6 +691,12 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
             {hd?.notCollected && (
               <div className="border-t border-line px-pad-x py-pad-y text-warn">
                 Not collected: {hd.notCollected}. The health shown is not known until the next check succeeds.
+              </div>
+            )}
+            {i.collection === "worker" && i.workerId && !i.containerName && (
+              <div className="border-t border-line px-pad-x py-pad-y text-muted-foreground">
+                Set the name of the main container in Edit to check it from inside: health, metrics and the queue mode,
+                with nothing reachable from outside the host. Until then the worker checks over the network.
               </div>
             )}
             {hd?.source === "network" && hd.fallback && (
@@ -804,17 +828,25 @@ function CollectionTag({ instance: i }: { instance: InstanceRow }) {
 
 function StatusStrip({ instance: i, footer }: { instance: InstanceDetailData; footer: CollectionView }) {
   const hd = i.healthDetail
-  const check = (ok: boolean | undefined): HealthState => (ok === undefined ? "unknown" : ok ? "ok" : "down")
+  // A check that could not run says nothing about n8n: its parts show as unknown, not as failures.
+  const check = (ok: boolean | undefined): HealthState =>
+    ok === undefined || hd?.notCollected ? "unknown" : ok ? "ok" : "down"
   const cells: { label: string; health: HealthState; value: React.ReactNode }[] = [
     {
       label: "Main process",
       health: check(hd?.main?.ok),
-      value: hd?.main ? (hd.main.ok ? "ok" : "not responding") : "not checked",
+      value: hd?.notCollected ? "not collected" : hd?.main ? (hd.main.ok ? "ok" : "not responding") : "not checked",
     },
     {
       label: "Ready",
       health: check(hd?.readiness?.ok),
-      value: hd?.readiness ? (hd.readiness.ok ? "ok" : "not ready") : "not checked",
+      value: hd?.notCollected
+        ? "not collected"
+        : hd?.readiness
+          ? hd.readiness.ok
+            ? "ok"
+            : "not ready"
+          : "not checked",
     },
   ]
   if (i.workerHealthUrls.length > 0) {
@@ -1020,13 +1052,13 @@ async function exportCredentials(id: string, name: string) {
   }
 }
 
-function HealthRow({ label, ok, detail }: { label: string; ok?: boolean; detail?: string }) {
+function HealthRow({ label, ok, detail, unknown }: { label: string; ok?: boolean; detail?: string; unknown?: string }) {
   return (
     <div className="flex min-w-0 items-center gap-2.5 border-t border-line px-pad-x py-pad-y">
       <Dot health={ok === undefined ? "unknown" : ok ? "ok" : "down"} />
       <span className="min-w-0 break-words">{label}</span>
       <span className={cn("ms-auto text-end", ok === false ? "font-semibold text-fail" : "text-muted-foreground")}>
-        {ok === undefined ? "not checked" : ok ? "ok" : (detail ?? "failed")}
+        {ok === undefined ? (unknown ?? "not checked") : ok ? "ok" : (detail ?? "failed")}
       </span>
     </div>
   )
@@ -1254,6 +1286,12 @@ export function InstanceDialog({
             />
             {form.queueMode && (
               <>
+                {inside && (
+                  <p className="text-small text-muted-foreground">
+                    The worker reads health and the queue inside the main container. The URLs below are overrides
+                    (optional): fill them in only when n8n serves them somewhere else.
+                  </p>
+                )}
                 <Field>
                   <FieldLabel htmlFor="i-metrics">Metrics URL (optional)</FieldLabel>
                   <Input

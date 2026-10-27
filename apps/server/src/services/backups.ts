@@ -492,8 +492,8 @@ export async function restoreWorkflow(
  */
 export function probePayload(instance: Instance, check: CheckTicket) {
   const base = instance.baseUrl.replace(/\/+$/, "")
-  const typedWorkers =
-    instance.queueMode && instance.workerHealthUrls.length > 0 ? instance.workerHealthUrls : undefined
+  const queue = instance.queueMode
+  const typedWorkers = queue && instance.workerHealthUrls.length > 0 ? instance.workerHealthUrls : undefined
   return {
     main: `${base}/healthz`,
     readiness: `${base}/healthz/readiness`,
@@ -501,7 +501,7 @@ export function probePayload(instance: Instance, check: CheckTicket) {
     metrics: metricsUrlOf(instance),
     ...(readsInside(instance) ? { inside: { container: instance.containerName } } : {}),
     overrides: {
-      ...(instance.metricsUrl ? { metricsUrl: instance.metricsUrl } : {}),
+      ...(queue && instance.metricsUrl ? { metricsUrl: instance.metricsUrl } : {}),
       ...(typedWorkers ? { workerHealthUrls: typedWorkers } : {}),
     },
     check,
@@ -533,9 +533,11 @@ export async function enqueueProbes(ctx: Ctx) {
     const s = await ctx.settings.forInstance(instance.overrides)
     if (instance.healthCheckedAt && Date.now() - instance.healthCheckedAt.getTime() < s.healthIntervalSec * 1000)
       continue
-    const ticket = await startCheck(ctx, instance.id)
-    if (!ticket) continue
-    await enqueueJob(ctx, instance.workerId, "probe", probePayload(instance, ticket), instance.id)
+    // The probe is made from the row its ticket was taken with, so it asks for exactly that revision.
+    const started = await startCheck(ctx, instance.id)
+    const now = started?.instance
+    if (!started || !now || now.collection !== "worker" || !now.workerId) continue
+    await enqueueJob(ctx, now.workerId, "probe", probePayload(now, started.ticket), now.id)
   }
 }
 

@@ -111,20 +111,71 @@ describe("the check in the main", () => {
     })
   })
 
-  it("skips metrics when the owner typed a metrics URL", async () => {
+  it("with a metrics URL the owner typed, takes no queue figures here but still reads the version", async () => {
     const port = await listen(n8n({ ...healthy, "/metrics": answer(200, metricsText()) }))
-    expect((await output(at(port, { N8N_METRICS: "true" }), ["no-metrics"])).metrics).toEqual({ state: "skipped" })
-    expect(requested).not.toContain("/metrics")
+    const out = await output(at(port, { N8N_METRICS: "true" }), ["typed-metrics"])
+    expect(out).toMatchObject({ metrics: { state: "skipped" }, version: "2.44.3" })
+    expect(out.queue).toBeUndefined()
   })
 
-  it("normalises a custom health path, with or without slashes", async () => {
-    const port = await listen(n8n({ "/up": answer(200), "/up/readiness": answer(503) }))
-    for (const path of ["up", "/up", "/up/"]) {
+  it("reads settings as n8n does: 1 is true, quotes and spaces are dropped, an invalid mode is regular", async () => {
+    const port = await listen(n8n({ ...healthy, "/metrics": answer(200, metricsText()) }))
+    const out = await output({
+      N8N_LISTEN_ADDRESS: " '0.0.0.0' ",
+      N8N_PORT: String(port),
+      N8N_METRICS: "1",
+      EXECUTIONS_MODE: "cluster",
+    })
+    expect(out).toMatchObject({ health: { status: 200 }, metrics: { state: "read" }, mode: "regular" })
+  })
+
+  it("takes a variable that is set but empty over its _FILE, as n8n does", async () => {
+    const port = await listen(n8n({ ...healthy, "/metrics": answer(200, metricsText("acme_")) }))
+    const prefixFile = join(dir, "prefix")
+    writeFileSync(prefixFile, "acme_")
+    // The empty prefix wins, so the acme_ figures are not ours.
+    const out = await output(
+      at(port, { N8N_METRICS: "true", N8N_METRICS_PREFIX: "", N8N_METRICS_PREFIX_FILE: prefixFile }),
+    )
+    expect(out.metrics).toEqual({ state: "no-queue-figures" })
+  })
+
+  it("says unknown, not off, when a needed _FILE cannot be read", async () => {
+    const port = await listen(n8n(healthy))
+    const missing = join(dir, "missing")
+    expect(await output(at(port, { N8N_PROTOCOL: "https", N8N_SSL_KEY_FILE: missing, N8N_SSL_CERT: "c" }))).toEqual({
+      notCollected: "cannot read N8N_SSL_KEY in the main",
+    })
+    expect((await output(at(port, { N8N_METRICS: "true", N8N_METRICS_PREFIX_FILE: missing }))).metrics).toEqual({
+      state: "failed",
+      reason: "cannot read N8N_METRICS_PREFIX",
+    })
+  })
+
+  it("prints no setting value", async () => {
+    const port = await listen(n8n({ ...healthy, "/metrics": answer(200, metricsText()) }))
+    const secret = "s3cret-value-9f2"
+    const result = await run(
+      at(port, { N8N_METRICS: "true", N8N_SSL_KEY: secret, N8N_SSL_CERT: secret, N8N_ENCRYPTION_KEY: secret }),
+    )
+    expect(result.stdout).not.toContain(secret)
+    expect(result.stdout).not.toContain(String(port))
+  })
+
+  it("finds a custom health path where n8n puts it", async () => {
+    const port = await listen(
+      n8n({ "/up": answer(200), "/up/readiness": answer(503), "/up/": answer(200), "/up//readiness": answer(503) }),
+    )
+    for (const path of ["up", "/up"]) {
       expect(await output(at(port, { N8N_ENDPOINT_HEALTH: path }))).toMatchObject({
         health: { status: 200 },
         readiness: { status: 503 },
       })
     }
+    // n8n keeps a trailing slash, so its readiness is at /up//readiness.
+    requested = []
+    await output(at(port, { N8N_ENDPOINT_HEALTH: "/up/" }))
+    expect(requested.sort()).toEqual(["/up/", "/up//readiness"])
   })
 
   it("reads settings from _FILE, a direct value first, and an unreadable file is unknown, never off", async () => {

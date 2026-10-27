@@ -25,34 +25,57 @@ const done = () => {
   process.exit(0)
 }
 setTimeout(() => { out.notCollected = "the check in the main did not finish within 8 s"; done() }, 8000).unref()
-function setting(name, fallback) {
-  const direct = env[name]
-  if (direct !== undefined && direct !== "") return { value: direct }
+// As @n8n/config reads settings: a variable that is set wins even when empty; otherwise <NAME>_FILE, trimmed.
+// A file that cannot be read makes the setting unknown here (n8n would not start), never its default.
+function raw(name) {
+  if (name in env) return { value: env[name] }
   const file = env[name + "_FILE"]
   if (file) {
     try { return { value: fs.readFileSync(file, "utf8").trim() } } catch (e) { return { unknown: true } }
   }
-  return { value: fallback }
+  return {}
 }
-function present(name) {
-  if (env[name]) return true
-  const file = env[name + "_FILE"]
-  if (!file) return false
-  try { return fs.statSync(file).size > 0 } catch (e) { return false }
+const normalize = (v) => v.trim().replace(/^(['"])(.*)\1$/, "$2")
+function text(name, fallback) {
+  const r = raw(name)
+  return r.unknown ? r : { value: r.value === undefined ? fallback : normalize(r.value) }
 }
-const address = setting("N8N_LISTEN_ADDRESS", "::")
-const port = setting("N8N_PORT", "5678")
-const healthPath = setting("N8N_ENDPOINT_HEALTH", "/healthz")
-const protocol = setting("N8N_PROTOCOL", "http")
-const mode = setting("EXECUTIONS_MODE", "regular")
-const metricsOn = setting("N8N_METRICS", "false")
-const prefix = setting("N8N_METRICS_PREFIX", "n8n_")
-const unknown = [["N8N_LISTEN_ADDRESS", address], ["N8N_PORT", port], ["N8N_ENDPOINT_HEALTH", healthPath],
-  ["N8N_PROTOCOL", protocol]].filter((s) => s[1].unknown).map((s) => s[0])
+function number(name, fallback) {
+  const r = raw(name)
+  if (r.unknown) return r
+  if (r.value === undefined || normalize(r.value) === "") return { value: fallback }
+  const n = Number(r.value)
+  return { value: isNaN(n) ? fallback : n }
+}
+function flag(name, fallback) {
+  const r = raw(name)
+  if (r.unknown || r.value === undefined) return r.unknown ? r : { value: fallback }
+  const v = r.value.toLowerCase()
+  return { value: v === "true" || v === "1" ? true : v === "false" || v === "0" ? false : fallback }
+}
+function choice(name, options, fallback) {
+  const r = text(name, fallback)
+  return r.unknown ? r : { value: options.includes(r.value) ? r.value : fallback }
+}
+const address = text("N8N_LISTEN_ADDRESS", "::")
+const port = number("N8N_PORT", 5678)
+const healthPath = text("N8N_ENDPOINT_HEALTH", "/healthz")
+const protocol = choice("N8N_PROTOCOL", ["http", "https"], "http")
+const sslKey = text("N8N_SSL_KEY", "")
+const sslCert = text("N8N_SSL_CERT", "")
+const mode = choice("EXECUTIONS_MODE", ["regular", "queue"], "regular")
+const metricsOn = flag("N8N_METRICS", false)
+const prefix = text("N8N_METRICS_PREFIX", "n8n_")
+const needed = [["N8N_LISTEN_ADDRESS", address], ["N8N_PORT", port], ["N8N_ENDPOINT_HEALTH", healthPath],
+  ["N8N_PROTOCOL", protocol]]
+if (protocol.value === "https") needed.push(["N8N_SSL_KEY", sslKey], ["N8N_SSL_CERT", sslCert])
+const unknown = needed.filter((s) => s[1].unknown).map((s) => s[0])
 if (unknown.length) { out.notCollected = "cannot read " + unknown.join(", ") + " in the main"; done() }
 const host = address.value === "::" || address.value === "" ? "::1" : address.value === "0.0.0.0" ? "127.0.0.1" : address.value
-const tls = protocol.value === "https" && present("N8N_SSL_KEY") && present("N8N_SSL_CERT")
-const health = "/" + String(healthPath.value).replace(/^\/+|\/+$/g, "")
+// HTTPS exactly when n8n serves it: https with a key and a certificate. Only whether they are set is used.
+const tls = protocol.value === "https" && Boolean(sslKey.value) && Boolean(sslCert.value)
+// n8n adds a leading slash and keeps a trailing one: readiness is the health path followed by /readiness.
+const health = healthPath.value.startsWith("/") ? healthPath.value : "/" + healthPath.value
 function get(path, max) {
   return new Promise((resolve) => {
     const lib = tls ? https : http
@@ -82,24 +105,27 @@ const escape = (s) => s.replace(/[.*+?^$(){}|[\]\\]/g, "\\$&")
   const [h, r] = await Promise.all([get(health, 64 * 1024), get(health + "/readiness", 64 * 1024)])
   out.health = status(h)
   out.readiness = status(r)
-  out.mode = mode.unknown ? null : mode.value === "queue" ? "queue" : mode.value === "regular" ? "regular" : null
-  if (process.argv.includes("no-metrics")) out.metrics = { state: "skipped" }
-  else if (metricsOn.unknown) out.metrics = { state: "failed", reason: "cannot read N8N_METRICS" }
-  else if (String(metricsOn.value).toLowerCase() !== "true") out.metrics = { state: "off" }
+  out.mode = mode.unknown ? null : mode.value
+  // With a metrics URL the owner typed, the queue figures come from there; the version is still read here.
+  const typed = process.argv.includes("typed-metrics")
+  if (metricsOn.unknown) out.metrics = { state: "failed", reason: "cannot read N8N_METRICS" }
+  else if (prefix.unknown) out.metrics = { state: "failed", reason: "cannot read N8N_METRICS_PREFIX" }
+  else if (!metricsOn.value) out.metrics = { state: typed ? "skipped" : "off" }
   else {
     const m = await get("/metrics", 4 * 1024 * 1024)
     if (m.error) out.metrics = { state: "failed", reason: m.error }
     else if (m.status === 404) out.metrics = { state: "404" }
     else if (m.status !== 200) out.metrics = { state: "failed", reason: "HTTP " + m.status }
     else {
-      const p = escape(prefix.unknown ? "n8n_" : String(prefix.value))
+      const p = escape(prefix.value)
       const read = (name) => {
         const found = m.body.match(new RegExp("^" + p + "scaling_mode_queue_jobs_" + name +
           "(?:_total)?(?:\\{[^}]*\\})?\\s+([0-9.eE+-]+)$", "m"))
         return found ? Number(found[1]) : null
       }
       const waiting = read("waiting")
-      if (waiting === null) out.metrics = { state: "no-queue-figures" }
+      if (typed) out.metrics = { state: "skipped" }
+      else if (waiting === null) out.metrics = { state: "no-queue-figures" }
       else {
         out.metrics = { state: "read" }
         out.queue = { waiting: waiting, active: read("active") || 0, completed: read("completed") || 0,
@@ -155,6 +181,7 @@ export function reportFromOutput(output: MainCheckOutput, ms: number): Record<st
     mode: output.mode ?? null,
     queue: output.queue ?? null,
     metricsError: metricsText(output.metrics),
+    ...(output.metrics ? { metricsState: output.metrics.state } : {}),
     ...(output.version ? { version: output.version } : {}),
     mainState: "running",
     source: "inside",
@@ -179,7 +206,7 @@ export async function checkInside(
   const started = Date.now()
   const ms = () => Date.now() - started
   try {
-    const cmd = ["node", "-e", MAIN_CHECK, ...(options.skipMetrics ? ["no-metrics"] : [])]
+    const cmd = ["node", "-e", MAIN_CHECK, ...(options.skipMetrics ? ["typed-metrics"] : [])]
     const res = await docker.exec(container, cmd, { signal: options.signal, maxBytes: 8 * 1024 })
     if (res.exitCode === 126 || res.exitCode === 127)
       return { kind: "report", report: notCollected("node is not available in the main container", ms()) }
@@ -195,7 +222,8 @@ export async function checkInside(
       parsed = null
     }
     const output = mainCheckOutput.safeParse(parsed)
-    if (!output.success)
+    // A full answer has both statuses, or says why it could not get them; anything else is not understood.
+    if (!output.success || (!output.data.notCollected && (!output.data.health || !output.data.readiness)))
       return { kind: "report", report: notCollected("the answer of the check in the main was not understood", ms()) }
     return { kind: "report", report: reportFromOutput(output.data, ms()) }
   } catch (error) {

@@ -19,6 +19,7 @@ const frame = (text: string, stream = 1) => {
 type Engine = {
   create?: (res: ServerResponse) => void
   start?: (res: ServerResponse) => void
+  inspect?: (res: ServerResponse) => void
   exitCode?: number
 }
 async function engine(spec: Engine) {
@@ -34,6 +35,7 @@ async function engine(spec: Engine) {
       if (spec.start) return spec.start(res)
       return res.writeHead(200).end(frame('{"health":{"status":200},"readiness":{"status":200},"mode":"regular"}'))
     }
+    if (spec.inspect) return spec.inspect(res)
     return res.writeHead(200, { "content-type": "application/json" }).end(`{"ExitCode":${spec.exitCode ?? 0}}`)
   })
   servers.push(server)
@@ -86,6 +88,15 @@ describe("the Docker client in a probe", () => {
     await expect(docker.exec("n8n", ["true"], { maxBytes: 8 * 1024 })).rejects.toThrow(/longer than 8192 bytes/)
   })
 
+  it("classifies a refused exec inspection, and keeps no piece of a broken answer", async () => {
+    const refused = await engine({ inspect: refuse(403, "Forbidden") })
+    expect((await refused.docker.exec("n8n", ["true"]).catch((e) => e)).kind).toBe("refused")
+    const broken = await engine({ inspect: (res) => res.writeHead(200).end("token=s3cret not json") })
+    const error = await broken.docker.exec("n8n", ["true"]).catch((e) => e)
+    expect(error).toBeInstanceOf(DockerError)
+    expect(error.message).not.toContain("s3cret")
+  })
+
   it("keeps no limit for a backup's output", async () => {
     const big = "x".repeat(200_000)
     const { docker } = await engine({ start: (res) => res.writeHead(200).end(frame(big)) })
@@ -126,6 +137,9 @@ describe("checkInside", () => {
       { exitCode: 1 },
       { start: (res: ServerResponse) => res.writeHead(200).end(frame("not json")) },
       { start: (res: ServerResponse) => res.writeHead(200).end(frame('{"mode":"cluster"}')) },
+      // An answer without the statuses is not a result: never the main down.
+      { start: (res: ServerResponse) => res.writeHead(200).end(frame("{}")) },
+      { start: (res: ServerResponse) => res.writeHead(200).end(frame('{"other":1}')) },
     ]) {
       const { docker } = await engine(spec)
       const outcome = await checkInside(docker, "n8n", options())

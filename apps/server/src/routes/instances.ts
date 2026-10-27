@@ -16,7 +16,7 @@ import { requireUser } from "../http/middleware.ts"
 import { actorName, type Env } from "../http/types.ts"
 import { instanceOverridesSchema } from "../lib/settings.ts"
 import { N8nClient, N8nError } from "../n8n/client.ts"
-import { checkDirect } from "../services/health.ts"
+import { checkDirect, closeQueueAlerts } from "../services/health.ts"
 import {
   collectionUpdate,
   effectiveScopes,
@@ -277,6 +277,8 @@ export function instanceRoutes(ctx: Ctx) {
         })
         .where(eq(instances.id, row.id))
         .returning()
+      // Set to regular by hand: its queue alerts end now, without a message.
+      if (saved && current.queueMode && !saved.queueMode) await closeQueueAlerts(tx, saved.id)
       return saved
     })
     if (updated && (apiKey || data.baseUrl)) await refreshInstanceMeta(ctx, updated)
@@ -308,7 +310,7 @@ export function instanceRoutes(ctx: Ctx) {
       .where(eq(instances.id, c.req.param("id")))
     if (!row) return c.json({ error: "not_found" }, 404)
     const fresh = await refreshInstanceMeta(ctx, row)
-    if (fresh.collection === "direct") await checkDirect(ctx, fresh)
+    if (fresh.collection === "direct") await checkDirect(ctx, fresh.id)
     const poll = await pollInstance(ctx, fresh).catch((e: Error) => ({ error: e.message }))
     return c.json({ ok: true, poll })
   })

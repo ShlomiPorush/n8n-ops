@@ -39,7 +39,7 @@ const sent = async () => (await ctx.db.select().from(alertOutbox)).map((a) => a.
 const ticket = async () => {
   const t = await startCheck(ctx, id)
   if (!t) throw new Error("no instance")
-  return t
+  return t.ticket
 }
 
 beforeAll(async () => {
@@ -77,6 +77,16 @@ afterAll(async () => {
   await database?.close()
   await admin.unsafe(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`)
   await admin.end()
+})
+
+describe("startCheck", () => {
+  it("returns the instance as it was when the ticket was taken", async () => {
+    await ctx.db.update(instances).set({ collectionRevision: 7, containerName: "n8n-b" }).where(eq(instances.id, id))
+    const started = await startCheck(ctx, id)
+    // The check is made from this row: its settings are those of the revision on its ticket.
+    expect(started?.ticket.revision).toBe(7)
+    expect(started?.instance).toMatchObject({ collectionRevision: 7, containerName: "n8n-b" })
+  })
 })
 
 describe("applyHealth", () => {
@@ -156,6 +166,33 @@ describe("applyHealth", () => {
     await applyHealth(ctx, id, report({ workers: [down] }), await ticket())
     expect((await conditions()).filter((c) => c.active)).toEqual([])
   })
+
+  it("closes queue alerts left open once the mode is regular, as after a switch by hand", async () => {
+    // Set to regular by hand while a worker alert was open: the next report closes it without a message.
+    await ctx.db
+      .insert(alertState)
+      .values({ key: `worker:${id}:http://worker:5678/healthz`, active: true, since: new Date(), detail: "down" })
+    const before = (await sent()).length
+    await applyHealth(ctx, id, report(), await ticket())
+    expect((await conditions()).filter((c) => c.active)).toEqual([])
+    expect((await sent()).length).toBe(before)
+  })
+
+  it("applies reports one at a time, so the alerts end as the later check says", async () => {
+    const down = { ok: false, status: 0, ms: 1, error: "refused" }
+    const early = await ticket()
+    const late = await ticket()
+    // The later check comes in first; the earlier one, still in flight, must not open an alert after it.
+    await Promise.all([applyHealth(ctx, id, report(), late), applyHealth(ctx, id, report({ main: down }), early)])
+    expect((await row())?.health).toBe("ok")
+    expect((await conditions()).find((c) => c.key === `down:${id}`)?.active ?? false).toBe(false)
+  })
+
+  it("does not wait for a database connection it holds: many reports at once all finish", async () => {
+    const tickets = await Promise.all(Array.from({ length: 25 }, () => ticket()))
+    const results = await Promise.all(tickets.map((t) => applyHealth(ctx, id, report(), t)))
+    expect(results.filter((r) => r === "ok").length).toBeGreaterThan(0)
+  }, 20_000)
 
   it("says not collected when the check itself failed, and leaves the main's alerts as they were", async () => {
     await applyHealth(ctx, id, report({ main: { ok: false, status: 0, ms: 1, error: "refused" } }), await ticket())

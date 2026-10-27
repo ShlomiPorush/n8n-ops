@@ -51,7 +51,7 @@ export function startScheduler(ctx: Ctx, extraJobs: Job[] = []): () => void {
         void runOnce(`poll:${instance.id}`, () => pollInstance(ctx, instance))
       }
       if (instance.collection === "direct" && due(`health:${instance.id}`, s.healthIntervalSec * 1000)) {
-        void runOnce(`health:${instance.id}`, () => checkDirect(ctx, instance))
+        void runOnce(`health:${instance.id}`, () => checkDirect(ctx, instance.id))
       }
       if (due(`meta:${instance.id}`, 6 * 3600_000)) {
         void runOnce(`meta:${instance.id}`, () => refreshInstanceMeta(ctx, instance))

@@ -138,10 +138,13 @@ export function RuleLines({
     const keys = ["/workers", "/instances", ...refresh]
     const started = Date.now()
     await Promise.all(keys.map((key) => client.invalidateQueries({ queryKey: [key] }, { throwOnError: true })))
-    // A query paused while offline resolves without an answer: only data that arrived since counts as read.
+    // Only the queries on the page are fetched again, and only those must have new data. A query paused while
+    // offline resolves without an answer: only data that arrived since counts as read.
     return keys.every((key) => {
-      const state = client.getQueryState([key])
-      return !state || (state.status === "success" && state.fetchStatus === "idle" && state.dataUpdatedAt >= started)
+      const query = client.getQueryCache().find({ queryKey: [key], exact: true })
+      if (!query?.isActive()) return true
+      const state = query.state
+      return state.status === "success" && state.fetchStatus === "idle" && state.dataUpdatedAt >= started
     })
   })
   const after = (why: Reread) => (onSaved ? onSaved(why) : reread.run(why))

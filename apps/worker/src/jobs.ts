@@ -1,6 +1,7 @@
 import { readTar, textEntry } from "@n8n-ops/shared"
 import { type Manifest, sealArchive } from "@n8n-ops/shared/archive"
 import type { Docker } from "./docker.ts"
+import { checkInside } from "./inside.ts"
 
 export type Job = { id: string; kind: string; payload: Record<string, unknown> }
 export type JobResult = { ok: boolean; result?: Record<string, unknown>; error?: string }
@@ -22,51 +23,96 @@ async function cleanup(docker: Docker, container: string) {
   await run(docker, container, `rm -rf ${WORK} ${WORK}.tar ${WORK}.json`).catch(() => {})
 }
 
-/** Checks n8n endpoints from the host (collection mode "worker"). */
-export async function probeJob(payload: Record<string, unknown>): Promise<JobResult> {
-  const check = async (url: string) => {
-    const started = Date.now()
-    try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(10_000) })
-      return { ok: res.ok, status: res.status, ms: Date.now() - started }
-    } catch (error) {
-      return { ok: false, status: 0, ms: Date.now() - started, error: (error as Error).message }
-    }
+type Reading = { ok: boolean; status: number; ms: number; error?: string }
+
+async function requestUrl(url: string): Promise<Reading> {
+  const started = Date.now()
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(10_000) })
+    return { ok: res.ok, status: res.status, ms: Date.now() - started }
+  } catch (error) {
+    return { ok: false, status: 0, ms: Date.now() - started, error: (error as Error).message }
   }
-  const [main, readiness] = await Promise.all([check(String(payload.main)), check(String(payload.readiness))])
-  const workers = await Promise.all(
-    ((payload.workers as string[]) ?? []).map(async (url) => ({ url, ...(await check(url)) })),
-  )
-  let queue: Record<string, number> | null = null
-  let metricsError: string | undefined
-  if (payload.metrics) {
-    try {
-      const res = await fetch(String(payload.metrics), { signal: AbortSignal.timeout(10_000) })
-      // n8n answers 404 there while N8N_METRICS is off; the server words it the same (services/health.ts).
-      if (!res.ok)
-        throw new Error(
-          res.status === 404
-            ? "metrics are off (404); set N8N_METRICS=true and N8N_METRICS_INCLUDE_QUEUE_METRICS=true on the main process"
-            : `metrics answered ${res.status}`,
-        )
-      const text = await res.text()
-      const read = (name: string) => {
-        const m = text.match(
-          new RegExp(`^[a-zA-Z0-9_]*scaling_mode_queue_jobs_${name}(?:_total)?(?:\\{[^}]*\\})?\\s+([0-9.eE+-]+)$`, "m"),
-        )
-        return m ? Number(m[1]) : null
-      }
-      const waiting = read("waiting")
-      queue =
-        waiting === null
-          ? null
-          : { waiting, active: read("active") ?? 0, completed: read("completed") ?? 0, failed: read("failed") ?? 0 }
-      if (!queue) metricsError = "no queue metrics; set N8N_METRICS_INCLUDE_QUEUE_METRICS=true"
-    } catch (error) {
-      metricsError = (error as Error).message
+}
+
+/** Reads the queue figures from a metrics URL over the network. */
+async function metricsOver(url: string): Promise<{ queue: Record<string, number> | null; metricsError?: string }> {
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(10_000) })
+    // n8n answers 404 there while N8N_METRICS is off; the server words it the same (services/health.ts).
+    if (!res.ok)
+      throw new Error(
+        res.status === 404
+          ? "metrics are off (404); set N8N_METRICS=true and N8N_METRICS_INCLUDE_QUEUE_METRICS=true on the main process"
+          : `metrics answered ${res.status}`,
+      )
+    const text = await res.text()
+    const read = (name: string) => {
+      const m = text.match(
+        new RegExp(`^[a-zA-Z0-9_]*scaling_mode_queue_jobs_${name}(?:_total)?(?:\\{[^}]*\\})?\\s+([0-9.eE+-]+)$`, "m"),
+      )
+      return m ? Number(m[1]) : null
     }
+    const waiting = read("waiting")
+    const queue =
+      waiting === null
+        ? null
+        : { waiting, active: read("active") ?? 0, completed: read("completed") ?? 0, failed: read("failed") ?? 0 }
+    return queue
+      ? { queue }
+      : { queue: null, metricsError: "no queue metrics; set N8N_METRICS_INCLUDE_QUEUE_METRICS=true" }
+  } catch (error) {
+    return { queue: null, metricsError: (error as Error).message }
   }
-  return { ok: true, result: { main, readiness, workers, queue, metricsError, checkedAt: new Date().toISOString() } }
+}
+
+const strings = (value: unknown) =>
+  Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : []
+
+/**
+ * Checks an instance from its host (collection mode "worker"). With `inside`, the main is read from inside its
+ * container; when the worker cannot do that here (the socket proxy refuses, the container is missing), it checks
+ * the URL fields over the network instead and says why. `overrides` holds only what the owner typed: worker health
+ * URLs, and a metrics URL read over the network instead of the metrics inside the main.
+ */
+export async function probeJob(payload: Record<string, unknown>, docker?: Docker): Promise<JobResult> {
+  const inside = payload.inside as { container?: unknown } | undefined
+  const overrides = (payload.overrides ?? {}) as { metricsUrl?: unknown; workerHealthUrls?: unknown }
+  const typedMetrics = typeof overrides.metricsUrl === "string" ? overrides.metricsUrl : undefined
+  const checkedAt = () => new Date().toISOString()
+  let fallback: string | undefined
+  if (docker && typeof inside?.container === "string" && inside.container) {
+    const outcome = await checkInside(docker, inside.container, {
+      skipMetrics: Boolean(typedMetrics),
+      signal: AbortSignal.timeout(10_000),
+    })
+    if (outcome.kind === "report") {
+      const report = outcome.report
+      const workers = await Promise.all(
+        strings(overrides.workerHealthUrls).map(async (url) => ({ url, ...(await requestUrl(url)) })),
+      )
+      const metrics = typedMetrics && !report.notCollected ? await metricsOver(typedMetrics) : {}
+      return { ok: true, result: { ...report, ...metrics, workers, checkedAt: checkedAt() } }
+    }
+    fallback = outcome.reason
+  }
+  // Over the network: the URL fields, as workers of earlier releases do.
+  const [main, readiness] = await Promise.all([requestUrl(String(payload.main)), requestUrl(String(payload.readiness))])
+  const workers = await Promise.all(strings(payload.workers).map(async (url) => ({ url, ...(await requestUrl(url)) })))
+  const metrics = typeof payload.metrics === "string" && payload.metrics ? await metricsOver(payload.metrics) : {}
+  return {
+    ok: true,
+    result: {
+      main,
+      readiness,
+      workers,
+      queue: null,
+      ...metrics,
+      checkedAt: checkedAt(),
+      source: "network",
+      ...(fallback ? { fallback } : {}),
+    },
+  }
 }
 
 /**

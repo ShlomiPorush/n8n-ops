@@ -1,5 +1,5 @@
 import { readScopes, writeScopes } from "@n8n-ops/shared"
-import { eq } from "drizzle-orm"
+import { and, eq } from "drizzle-orm"
 import type { Ctx } from "../context.ts"
 import { instances } from "../db/schema.ts"
 import { N8nClient } from "../n8n/client.ts"
@@ -8,6 +8,11 @@ export type Instance = typeof instances.$inferSelect
 
 export function clientFor(ctx: Ctx, instance: Instance): N8nClient {
   return new N8nClient(instance.baseUrl, ctx.secrets.decrypt(instance.apiKeyEnc))
+}
+
+/** Whether the worker on the host reads the instance from inside its main container. */
+export function readsInside(instance: Pick<Instance, "collection" | "workerId" | "containerName">) {
+  return instance.collection === "worker" && Boolean(instance.workerId) && Boolean(instance.containerName)
 }
 
 /**
@@ -19,6 +24,39 @@ export function metricsUrlOf(instance: Pick<Instance, "metricsUrl" | "queueMode"
   return instance.queueMode ? `${instance.baseUrl.replace(/\/+$/, "")}/metrics` : null
 }
 
+type CollectionFields = Pick<
+  Instance,
+  | "collection"
+  | "workerId"
+  | "containerName"
+  | "queueMode"
+  | "queueModeSource"
+  | "baseUrl"
+  | "metricsUrl"
+  | "workerHealthUrls"
+>
+
+/**
+ * What an update means for how health is collected. The target (collection, worker, container) is where a found
+ * mode was read: changing it clears the found mode, so a manual value counts until the new target is read. While
+ * the mode is found and the target stays, a queue mode in the update is ignored, whoever sends it. Any change to
+ * how health is collected raises the collection revision, so checks that started before are dropped.
+ */
+export function collectionUpdate(row: CollectionFields, next: Partial<CollectionFields>) {
+  const differs = <K extends keyof CollectionFields>(key: K) =>
+    next[key] !== undefined && JSON.stringify(next[key] ?? null) !== JSON.stringify(row[key] ?? null)
+  const targetChanged = differs("collection") || differs("workerId") || differs("containerName")
+  const locked = row.queueModeSource === "found" && !targetChanged
+  const queueModeChanged = !locked && differs("queueMode")
+  return {
+    /** The queue mode to store, or undefined to keep the stored one. */
+    queueMode: locked ? undefined : next.queueMode,
+    queueModeSource: targetChanged ? ("manual" as const) : undefined,
+    raiseRevision:
+      targetChanged || queueModeChanged || differs("baseUrl") || differs("metricsUrl") || differs("workerHealthUrls"),
+  }
+}
+
 /** The scopes n8n-ops may rely on: discovered from n8n, or declared by the operator on older versions. */
 export function effectiveScopes(instance: Pick<Instance, "scopes" | "scopesSource" | "declaredAccess">): string[] {
   if (instance.scopesSource === "declared") return instance.declaredAccess === "write" ? writeScopes : readScopes
@@ -28,10 +66,21 @@ export function effectiveScopes(instance: Pick<Instance, "scopes" | "scopesSourc
 /** Reads the n8n version and the API key's scopes, and stores them. */
 export async function refreshInstanceMeta(ctx: Ctx, instance: Instance) {
   const client = clientFor(ctx, instance)
-  const [version, scopes] = await Promise.all([client.version(instance.metricsUrl), client.discoverScopes()])
+  // Checked from inside, the version comes with each health report; reading it over the network would race it.
+  const inside = readsInside(instance)
+  const [version, scopes] = await Promise.all([
+    inside ? Promise.resolve(null) : client.version(instance.metricsUrl),
+    client.discoverScopes(),
+  ])
+  if (version) {
+    // Only a version actually read, and only while collection is as it was when the read started.
+    await ctx.db
+      .update(instances)
+      .set({ version })
+      .where(and(eq(instances.id, instance.id), eq(instances.collectionRevision, instance.collectionRevision)))
+  }
   const before = new Set(effectiveScopes(instance))
   const patch = {
-    version: version ?? instance.version,
     scopes,
     scopesSource: scopes === null ? ("declared" as const) : ("discovered" as const),
     declaredAccess: scopes === null ? (instance.declaredAccess ?? "read") : instance.declaredAccess,
@@ -51,7 +100,7 @@ export async function refreshInstanceMeta(ctx: Ctx, instance: Instance) {
       details: { added, removed },
     })
   }
-  return { ...instance, ...patch }
+  return { ...instance, ...patch, version: version ?? instance.version }
 }
 
 /** Link to an execution in the n8n editor. */

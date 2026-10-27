@@ -164,22 +164,30 @@ export function workerApiRoutes(ctx: Ctx) {
     if (!body.success) return c.json({ error: "invalid" }, 400)
     const { ok, result = {}, error } = body.data
 
-    // Secrets (exported credentials) go straight to the waiting request and are never stored.
-    const stored =
+    // Secrets (exported credentials) go straight to the waiting request and are never stored. A health report is
+    // stored only as parsed, so nothing else a worker put in it (container details, by mistake) is kept.
+    let stored: Record<string, unknown> =
       job.kind === "export-credentials"
         ? { credentials: Array.isArray(result.credentials) ? result.credentials.length : 0 }
-        : result
+        : job.kind === "probe"
+          ? {}
+          : result
+    if (job.kind === "probe" && job.instanceId && ok) {
+      const [instance] = await ctx.db.select().from(instances).where(eq(instances.id, job.instanceId))
+      if (instance) stored = await applyWorkerReport(ctx, instance, job.payload, result, c.get("worker").name)
+    }
     await ctx.db
       .update(workerJobs)
-      .set({ status: ok ? "done" : "failed", result: stored, error: error ?? null, finishedAt: new Date() })
+      .set({
+        status: ok ? "done" : "failed",
+        result: stored,
+        error: error ? error.slice(0, 500) : null,
+        finishedAt: new Date(),
+      })
       .where(eq(workerJobs.id, job.id))
 
     if (job.kind === "export-credentials") deliverToWaiter(job.id, { ok, result, error })
     if (job.kind === "backup") await workerBackupResult(ctx, String(job.payload.runId), { ok, result, error })
-    if (job.kind === "probe" && job.instanceId && ok) {
-      const [instance] = await ctx.db.select().from(instances).where(eq(instances.id, job.instanceId))
-      if (instance) await applyWorkerReport(ctx, instance, result, c.get("worker").name)
-    }
     return c.json({ ok: true })
   })
 

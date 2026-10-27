@@ -126,6 +126,8 @@ export type InstanceRow = {
   containerName: string | null
   workerId: string | null
   queueMode: boolean
+  /** "found": read by the worker inside the main container; not editable while it is checked from there. */
+  queueModeSource: "manual" | "found"
   metricsUrl: string | null
   /** Where the queue metrics are read: metricsUrl, or /metrics of the base URL in queue mode. */
   effectiveMetricsUrl: string | null
@@ -145,6 +147,10 @@ export type InstanceRow = {
     metricsError?: string
     backlogActive?: boolean
     via?: string
+    source?: "inside" | "network"
+    fallback?: string
+    notCollected?: string
+    mainState?: "running" | "not-running" | "paused"
   } | null
   healthCheckedAt: string | null
   lastPollAt: string | null
@@ -497,7 +503,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
       <AlertDescription className="font-mono text-small break-words">{i.lastPollError}</AlertDescription>
     </Alert>
   )
-  const collected = collectionView({ collection: i.collection, worker: i.worker, via: hd?.via })
+  const collected = collectionView({ collection: i.collection, worker: i.worker, detail: hd })
 
   const tabs: PaneTabItem[] = [
     { value: "overview", icon: LayoutDashboardIcon, label: "Overview" },
@@ -534,7 +540,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
           <Copyable value={i.baseUrl} label="Copy base URL" />
           <span>· n8n {i.version ?? "unknown"}</span>
           {behind(i.version, i.latestVersion) && <Tone tone="warn">latest {i.latestVersion}</Tone>}
-          {i.queueMode && <span>· queue mode</span>}
+          {i.queueMode && <span>· queue mode{i.queueModeSource === "found" ? ", found by the worker" : ""}</span>}
           {/* A failed refresh keeps the instance on screen and says so here (TB-5, LD-12). */}
           <span>
             <RefreshNote live={detail} separator="· " />
@@ -664,6 +670,16 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
             {hd?.metricsError && (
               <div className="border-t border-line px-pad-x py-pad-y text-warn">Queue metrics: {hd.metricsError}</div>
             )}
+            {hd?.notCollected && (
+              <div className="border-t border-line px-pad-x py-pad-y text-warn">
+                Not collected: {hd.notCollected}. The health shown is not known until the next check succeeds.
+              </div>
+            )}
+            {hd?.source === "network" && hd.fallback && (
+              <div className="border-t border-line px-pad-x py-pad-y text-warn">
+                Checked over the network because {hd.fallback}.
+              </div>
+            )}
             {i.queueMode && i.workerHealthUrls.length === 0 && (
               <div className="border-t border-line p-pad-x">
                 <Alert variant="info">
@@ -773,7 +789,7 @@ function UnsavedMark() {
  * run, the tone when nothing is checked (worker offline or missing). The sentence of collectionView is its tooltip.
  */
 function CollectionTag({ instance: i }: { instance: InstanceRow }) {
-  const view = collectionView({ collection: i.collection, worker: i.worker, via: i.healthDetail?.via })
+  const view = collectionView({ collection: i.collection, worker: i.worker, detail: i.healthDetail })
   const Icon = i.collection === "worker" ? ContainerIcon : GlobeIcon
   const variant = view.tone === "warn" || view.tone === "fail" ? view.tone : "line"
   return (
@@ -1135,6 +1151,13 @@ export function InstanceDialog({
     setOpened(start)
   }, [open, instance?.id])
   const set = (k: keyof typeof form, v: string | boolean | undefined) => setForm((f) => ({ ...f, [k]: v }))
+  // The worker read the mode inside the main; it stays its value until the worker or the container changes.
+  const modeFound =
+    instance?.queueModeSource === "found" &&
+    form.collection === instance.collection &&
+    (form.workerId || null) === (instance.workerId ?? null) &&
+    (form.containerName.trim() || null) === (instance.containerName ?? null)
+  const inside = form.collection === "worker" && Boolean(form.workerId) && Boolean(form.containerName.trim())
   // Every close asks first while the form differs from how it opened (DS-9).
   const guard = useDiscardGuard(formChanged(form, opened), () => onOpenChange(false))
   // A stored API key is never sent to a different server: a changed base URL needs the key again (FS-5).
@@ -1226,6 +1249,8 @@ export function InstanceDialog({
               description="Main process plus separate workers using Redis."
               checked={form.queueMode}
               onCheckedChange={(v) => set("queueMode", v)}
+              disabled={modeFound}
+              reason="Found by the worker inside the main container. Change the worker or the container to set it by hand."
             />
             {form.queueMode && (
               <>
@@ -1238,12 +1263,16 @@ export function InstanceDialog({
                     placeholder={`${form.baseUrl.trim().replace(/\/+$/, "") || "https://n8n.example.com"}/metrics`}
                   />
                   <FieldDescription>
-                    Empty reads /metrics of the base URL. Needs N8N_METRICS=true and
-                    N8N_METRICS_INCLUDE_QUEUE_METRICS=true on the main process.
+                    {inside
+                      ? "Empty reads the metrics inside the main container."
+                      : "Empty reads /metrics of the base URL."}{" "}
+                    Needs N8N_METRICS=true and N8N_METRICS_INCLUDE_QUEUE_METRICS=true on the main process.
                   </FieldDescription>
                 </Field>
                 <Field>
-                  <FieldLabel htmlFor="i-workers">Worker health URLs</FieldLabel>
+                  <FieldLabel htmlFor="i-workers">
+                    Worker health URLs{form.collection === "worker" ? " (optional)" : ""}
+                  </FieldLabel>
                   <Textarea
                     id="i-workers"
                     className="font-mono text-small"
@@ -1274,7 +1303,8 @@ export function InstanceDialog({
                 ]}
               />
               <FieldDescription>
-                Use the worker when /healthz and /metrics are not reachable from outside the host.
+                Through the worker, health, metrics and the queue mode are read inside the main container when its name
+                is set below, so nothing has to be reachable from outside the host.
               </FieldDescription>
             </Field>
             <Field>

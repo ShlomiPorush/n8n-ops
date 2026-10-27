@@ -1,7 +1,7 @@
 import type { Ctx } from "../context.ts"
 import { instances } from "../db/schema.ts"
 import { dispatchAlerts, syncTelegramWebhook } from "./alerts.ts"
-import { applyHealth, collectDirect } from "./health.ts"
+import { checkDirect } from "./health.ts"
 import { refreshInstanceMeta } from "./instances.ts"
 import { housekeeping, pollInstance } from "./problems.ts"
 import { maybeSendReports } from "./reports.ts"
@@ -51,7 +51,7 @@ export function startScheduler(ctx: Ctx, extraJobs: Job[] = []): () => void {
         void runOnce(`poll:${instance.id}`, () => pollInstance(ctx, instance))
       }
       if (instance.collection === "direct" && due(`health:${instance.id}`, s.healthIntervalSec * 1000)) {
-        void runOnce(`health:${instance.id}`, async () => applyHealth(ctx, instance, await collectDirect(instance)))
+        void runOnce(`health:${instance.id}`, () => checkDirect(ctx, instance))
       }
       if (due(`meta:${instance.id}`, 6 * 3600_000)) {
         void runOnce(`meta:${instance.id}`, () => refreshInstanceMeta(ctx, instance))

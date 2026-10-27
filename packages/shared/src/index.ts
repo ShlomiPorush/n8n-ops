@@ -35,6 +35,7 @@ export {
 } from "./dates.ts"
 export { formatDuration } from "./format.ts"
 export { type Health, healthSchema } from "./health.ts"
+export { type MainCheckOutput, mainCheckOutput } from "./main-check.ts"
 export {
   isClockTime,
   isEmailAddress,

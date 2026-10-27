@@ -191,28 +191,45 @@ describe("a worker's health report", () => {
     expect(parsed.error?.issues.map((i) => i.path.join("."))).toEqual(["main.error", "workers.0.url"])
   })
 
-  // applyHealth starts by reading the instance's settings, so a call to it shows here as that read.
+  // applyHealth starts with a transaction that locks the instance, so a call to it shows here as that transaction.
   const reached = new Error("applyHealth was called")
   const fakeCtx = () => {
     const warn = vi.fn()
-    const forInstance = vi.fn(async () => {
+    const info = vi.fn()
+    const transaction = vi.fn(async (): Promise<null> => {
       throw reached
     })
-    return { ctx: { log: { warn }, settings: { forInstance } } as unknown as Ctx, warn, forInstance }
+    return { ctx: { log: { warn, info }, db: { transaction } } as unknown as Ctx, warn, info, transaction }
   }
   const instance = { id: "i1", name: "prod", overrides: {} } as unknown as Instance
+  const payload = { check: { seq: 3, revision: 1 } }
 
   it("reaches the health alerts when it fits", async () => {
     const { ctx, warn } = fakeCtx()
-    await expect(applyWorkerReport(ctx, instance, report, "w")).rejects.toBe(reached)
+    await expect(applyWorkerReport(ctx, instance, payload, report, "w")).rejects.toBe(reached)
     expect(warn).not.toHaveBeenCalled()
   })
 
+  it("is stored as parsed, without fields the worker added", async () => {
+    const { ctx, transaction } = fakeCtx()
+    transaction.mockResolvedValueOnce(null)
+    const stored = await applyWorkerReport(ctx, instance, payload, { ...report, labels: { secret: "x" } }, "w")
+    expect(stored).not.toHaveProperty("labels")
+    expect(stored).toMatchObject({ main: report.main })
+  })
+
+  it("is not applied when its probe carries no ticket (made before this release)", async () => {
+    const { ctx, transaction, info } = fakeCtx()
+    await expect(applyWorkerReport(ctx, instance, {}, report, "w")).resolves.toMatchObject({ main: report.main })
+    expect(transaction).not.toHaveBeenCalled()
+    expect(info).toHaveBeenCalled()
+  })
+
   it("is logged and skipped when it does not fit", async () => {
-    const { ctx, warn, forInstance } = fakeCtx()
+    const { ctx, warn, transaction } = fakeCtx()
     const broken = { ...report, main: { ok: false, status: 0, ms: 1, error: { code: 1 } } }
-    await expect(applyWorkerReport(ctx, instance, broken, "w")).resolves.toBeUndefined()
-    expect(forInstance).not.toHaveBeenCalled()
+    await expect(applyWorkerReport(ctx, instance, payload, broken, "w")).resolves.toEqual({ invalid: true })
+    expect(transaction).not.toHaveBeenCalled()
     expect(warn).toHaveBeenCalledWith("worker sent an invalid health report", {
       instance: "prod",
       worker: "w",

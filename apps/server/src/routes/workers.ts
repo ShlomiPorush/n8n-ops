@@ -1,4 +1,4 @@
-import { asc, eq, isNull } from "drizzle-orm"
+import { asc, eq, isNull, sql } from "drizzle-orm"
 import { Hono } from "hono"
 import { z } from "zod"
 import type { Ctx } from "../context.ts"
@@ -87,7 +87,15 @@ export function workerRoutes(ctx: Ctx) {
       .where(eq(workers.id, c.req.param("id")))
       .returning()
     if (!row) return c.json({ error: "not_found" }, 404)
-    await ctx.db.update(instances).set({ workerId: null }).where(eq(instances.workerId, row.id))
+    // The instances lose their collection target: checks under way are dropped, and a found mode no longer holds.
+    await ctx.db
+      .update(instances)
+      .set({
+        workerId: null,
+        queueModeSource: "manual",
+        collectionRevision: sql`${instances.collectionRevision} + 1`,
+      })
+      .where(eq(instances.workerId, row.id))
     await ctx.audit({ actor: actorName(c.get("actor")), action: "Worker revoked", target: row.name, via: "web" })
     return c.json({ ok: true })
   })

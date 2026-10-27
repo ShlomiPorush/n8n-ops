@@ -1,5 +1,5 @@
 import { capabilityStatus } from "@n8n-ops/shared"
-import { and, asc, count, desc, eq, inArray, isNull } from "drizzle-orm"
+import { and, asc, count, desc, eq, inArray, isNull, sql } from "drizzle-orm"
 import { Hono } from "hono"
 import { z } from "zod"
 import type { Ctx } from "../context.ts"
@@ -16,8 +16,9 @@ import { requireUser } from "../http/middleware.ts"
 import { actorName, type Env } from "../http/types.ts"
 import { instanceOverridesSchema } from "../lib/settings.ts"
 import { N8nClient, N8nError } from "../n8n/client.ts"
-import { applyHealth, collectDirect } from "../services/health.ts"
+import { checkDirect } from "../services/health.ts"
 import {
+  collectionUpdate,
   effectiveScopes,
   type Instance,
   latestN8nVersion,
@@ -73,7 +74,16 @@ async function testConnection(baseUrl: string, apiKey: string) {
 }
 
 export function instanceView(instance: Instance, extra: { openProblems?: number; hasWorker: boolean }) {
-  const { apiKeyEnc: _secret, executionCursor: _cursor, ...rest } = instance
+  // The check counters and the backlog start are bookkeeping of the health checks, not part of the instance.
+  const {
+    apiKeyEnc: _secret,
+    executionCursor: _cursor,
+    healthCheckSeq: _seq,
+    healthAppliedSeq: _applied,
+    collectionRevision: _revision,
+    backlogSince: _backlog,
+    ...rest
+  } = instance
   const scopes = effectiveScopes(instance)
   return {
     ...rest,
@@ -247,16 +257,28 @@ export function instanceRoutes(ctx: Ctx) {
       const test = await testConnection(data.baseUrl ?? row.baseUrl, apiKey)
       if (!test.ok) return c.json({ error: "connection_failed", message: test.error }, 400)
     }
-    const [updated] = await ctx.db
-      .update(instances)
-      .set({
-        ...data,
-        ...(metricsUrl !== undefined ? { metricsUrl: metricsUrl || null } : {}),
-        ...(apiKey ? { apiKeyEnc: ctx.secrets.encrypt(apiKey) } : {}),
-        updatedAt: new Date(),
-      })
-      .where(eq(instances.id, row.id))
-      .returning()
+    const nextMetricsUrl = metricsUrl !== undefined ? metricsUrl || null : undefined
+    // Locked, so a mode the worker finds at the same time is not lost or overwritten by a stale form.
+    const updated = await ctx.db.transaction(async (tx) => {
+      const [current] = await tx.select().from(instances).where(eq(instances.id, row.id)).for("update")
+      if (!current) return undefined
+      const change = collectionUpdate(current, { ...data, metricsUrl: nextMetricsUrl })
+      const { queueMode: _asked, ...rest } = data
+      const [saved] = await tx
+        .update(instances)
+        .set({
+          ...rest,
+          ...(change.queueMode !== undefined ? { queueMode: change.queueMode } : {}),
+          ...(change.queueModeSource ? { queueModeSource: change.queueModeSource } : {}),
+          ...(change.raiseRevision ? { collectionRevision: sql`${instances.collectionRevision} + 1` } : {}),
+          ...(nextMetricsUrl !== undefined ? { metricsUrl: nextMetricsUrl } : {}),
+          ...(apiKey ? { apiKeyEnc: ctx.secrets.encrypt(apiKey) } : {}),
+          updatedAt: new Date(),
+        })
+        .where(eq(instances.id, row.id))
+        .returning()
+      return saved
+    })
     if (updated && (apiKey || data.baseUrl)) await refreshInstanceMeta(ctx, updated)
     await ctx.audit({
       actor: actorName(c.get("actor")),
@@ -286,7 +308,7 @@ export function instanceRoutes(ctx: Ctx) {
       .where(eq(instances.id, c.req.param("id")))
     if (!row) return c.json({ error: "not_found" }, 404)
     const fresh = await refreshInstanceMeta(ctx, row)
-    if (fresh.collection === "direct") await applyHealth(ctx, fresh, await collectDirect(fresh))
+    if (fresh.collection === "direct") await checkDirect(ctx, fresh)
     const poll = await pollInstance(ctx, fresh).catch((e: Error) => ({ error: e.message }))
     return c.json({ ok: true, poll })
   })

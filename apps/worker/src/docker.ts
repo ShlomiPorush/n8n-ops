@@ -20,14 +20,53 @@ export function parseDockerEndpoint(value: string): DockerEndpoint {
   return { socketPath: value.replace(/^unix:\/\//, "") }
 }
 
+/** Limits of one Docker call: an absolute deadline that cancels it, and the most bytes its answer may have. */
+export type CallLimits = { signal?: AbortSignal; maxBytes?: number }
+
+/**
+ * Why Docker did not run a command: the socket proxy refused the call (403), the container does not exist (404),
+ * or it is stopped or paused (409). Anything else is "other".
+ */
+export class DockerError extends Error {
+  constructor(
+    message: string,
+    readonly kind: "refused" | "missing" | "not-running" | "paused" | "other",
+    readonly status: number,
+  ) {
+    super(message)
+  }
+}
+
+/** Reads a refused exec without keeping the answer, which may carry details of the container. */
+function execRefusal(container: string, status: number, data: Buffer): DockerError {
+  if (status === 403)
+    return new DockerError(`the socket proxy does not allow commands in "${container}"`, "refused", 403)
+  if (status === 404) return new DockerError(`container "${container}" was not found on this host`, "missing", 404)
+  if (status === 409) {
+    return /is paused/i.test(data.toString().slice(0, 300))
+      ? new DockerError(`container "${container}" is paused`, "paused", 409)
+      : new DockerError(`container "${container}" is not running`, "not-running", 409)
+  }
+  return new DockerError(`Docker refused the command (${status})`, "other", status)
+}
+
 function call(
   endpoint: DockerEndpoint,
   method: string,
   path: string,
   body?: unknown,
+  limits: CallLimits = {},
 ): Promise<{ status: number; data: Buffer }> {
   return new Promise((resolve, reject) => {
     const payload = body === undefined ? undefined : Buffer.from(JSON.stringify(body))
+    // Once failed, the call stays failed: an answer that ends after it was cut is not a result.
+    let failed = false
+    const fail = (error: Error) => {
+      if (failed) return
+      failed = true
+      reject(error)
+      req.destroy()
+    }
     const req = request(
       {
         ...endpoint,
@@ -37,13 +76,26 @@ function call(
       },
       (res) => {
         const chunks: Buffer[] = []
-        res.on("data", (c: Buffer) => chunks.push(c))
-        res.on("end", () => resolve({ status: res.statusCode ?? 0, data: Buffer.concat(chunks) }))
-        res.on("error", reject)
+        let size = 0
+        res.on("data", (c: Buffer) => {
+          size += c.length
+          if (limits.maxBytes !== undefined && size > limits.maxBytes)
+            return fail(new Error(`the answer is longer than ${limits.maxBytes} bytes`))
+          chunks.push(c)
+        })
+        res.on("end", () => {
+          if (!failed) resolve({ status: res.statusCode ?? 0, data: Buffer.concat(chunks) })
+        })
+        res.on("error", fail)
       },
     )
-    req.on("error", reject)
-    req.setTimeout(10 * 60_000, () => req.destroy(new Error(`docker ${method} ${path} timed out`)))
+    req.on("error", fail)
+    req.setTimeout(10 * 60_000, () => fail(new Error(`docker ${method} ${path} timed out`)))
+    // An absolute deadline, not an idle timeout: a slowly streamed answer is cut too.
+    const abort = () => fail(new Error(`docker ${method} ${path} passed its deadline`))
+    if (limits.signal?.aborted) abort()
+    limits.signal?.addEventListener("abort", abort, { once: true })
+    req.on("close", () => limits.signal?.removeEventListener("abort", abort))
     if (payload) req.write(payload)
     req.end()
   })
@@ -72,21 +124,25 @@ export class Docker {
     this.endpoint = parseDockerEndpoint(endpoint)
   }
 
-  async exec(container: string, cmd: string[]): Promise<ExecResult> {
-    const created = await call(this.endpoint, "POST", `/containers/${encodeURIComponent(container)}/exec`, {
-      AttachStdout: true,
-      AttachStderr: true,
-      Tty: false,
-      Cmd: cmd,
-    })
-    if (created.status === 404) throw new Error(`container "${container}" was not found on this host`)
-    if (created.status >= 300)
-      throw new Error(`docker exec create failed (${created.status}): ${created.data.toString().slice(0, 300)}`)
+  /**
+   * Runs a command in a container and collects its output. `limits` applies to the command's output; backups and
+   * exports pass none and keep the ten minutes and no size limit.
+   */
+  async exec(container: string, cmd: string[], limits: CallLimits = {}): Promise<ExecResult> {
+    const small = { signal: limits.signal, maxBytes: 64 * 1024 }
+    const created = await call(
+      this.endpoint,
+      "POST",
+      `/containers/${encodeURIComponent(container)}/exec`,
+      { AttachStdout: true, AttachStderr: true, Tty: false, Cmd: cmd },
+      small,
+    )
+    if (created.status >= 300) throw execRefusal(container, created.status, created.data)
     const { Id } = JSON.parse(created.data.toString()) as { Id: string }
-    const started = await call(this.endpoint, "POST", `/exec/${Id}/start`, { Detach: false, Tty: false })
-    if (started.status >= 300) throw new Error(`docker exec start failed (${started.status})`)
+    const started = await call(this.endpoint, "POST", `/exec/${Id}/start`, { Detach: false, Tty: false }, limits)
+    if (started.status >= 300) throw execRefusal(container, started.status, started.data)
     const { stdout, stderr } = demux(started.data)
-    const inspect = await call(this.endpoint, "GET", `/exec/${Id}/json`)
+    const inspect = await call(this.endpoint, "GET", `/exec/${Id}/json`, undefined, small)
     const { ExitCode } = JSON.parse(inspect.data.toString()) as { ExitCode: number }
     return { exitCode: ExitCode ?? -1, stdout, stderr: stderr.toString() }
   }

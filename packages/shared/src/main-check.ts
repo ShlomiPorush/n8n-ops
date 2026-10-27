@@ -23,3 +23,13 @@ export const mainCheckOutput = z.object({
 })
 
 export type MainCheckOutput = z.infer<typeof mainCheckOutput>
+
+/** What the worker's check inside an n8n queue worker container prints (apps/worker/src/inside.ts, WORKER_CHECK). */
+export const workerCheckOutput = z.object({
+  active: z.boolean().optional(),
+  health: reading.optional(),
+  readiness: reading.optional(),
+  notCollected: z.string().max(300).optional(),
+})
+
+export type WorkerCheckOutput = z.infer<typeof workerCheckOutput>

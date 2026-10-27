@@ -61,8 +61,8 @@ services:
       - -listenip=0.0.0.0
       - -allowfrom=worker
       - -allowhealthcheck
-      - '-allowGET=(/v1\.[0-9]+)?/(_ping|exec/[0-9a-f]+/json)'
-      - '-allowPOST=(/v1\.[0-9]+)?/(containers/([^/]*-n8n-1)/exec|exec/[0-9a-f]+/start)'
+      - '-allowGET=(/v1\.[0-9]+)?/(_ping|exec/[0-9a-f]+/json|containers/json)'
+      - '-allowPOST=(/v1\.[0-9]+)?/(containers/([^/]*-n8n(-worker)?-[0-9]+)/exec|exec/[0-9a-f]+/start)'
     healthcheck:
       test: ["CMD", "./healthcheck"]
       interval: 5s

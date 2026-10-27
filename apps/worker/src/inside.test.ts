@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from "vitest"
 import { Docker, DockerError } from "./docker.ts"
 import { checkInside } from "./inside.ts"
 import { probeJob } from "./jobs.ts"
+import { LIMITS } from "./queue-workers.ts"
 
 // The worker's side of reading the main from inside, against a stand-in Docker Engine API: what Docker's answers
 // mean, the limits of a probe's calls, and when the worker checks over the network instead.
@@ -145,6 +146,70 @@ describe("checkInside", () => {
       const outcome = await checkInside(docker, "n8n", options())
       expect(outcome.kind).toBe("report")
       expect(outcome.kind === "report" && outcome.report.notCollected).toEqual(expect.any(String))
+    }
+  })
+})
+
+describe("probeJob and the container list", () => {
+  /** A stand-in Docker whose list shows the main in the state given, and whose exec answers as given. */
+  async function withList(state: string, start: (res: ServerResponse) => void) {
+    const server = createServer((req, res) => {
+      req.resume()
+      const url = new URL(req.url ?? "/", "http://docker")
+      if (url.pathname.endsWith("/containers/json"))
+        return res
+          .writeHead(200)
+          .end(
+            JSON.stringify([{ Names: ["/n8n"], Command: "tini -- /docker-entrypoint.sh", State: state, Labels: {} }]),
+          )
+      if (url.pathname.includes("/containers/")) return res.writeHead(201).end('{"Id":"abc"}')
+      if (url.pathname.endsWith("/start")) return start(res)
+      return res.writeHead(200).end('{"ExitCode":0}')
+    })
+    servers.push(server)
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r))
+    return new Docker(`tcp://127.0.0.1:${(server.address() as AddressInfo).port}`)
+  }
+  const healthy = (res: ServerResponse) =>
+    res.writeHead(200).end(frame('{"health":{"status":200},"readiness":{"status":200},"mode":"regular"}'))
+
+  it("reads the state of the main from the list also without discovery, and takes restarting for down", async () => {
+    const docker = await withList("restarting", healthy)
+    const job = await probeJob({ inside: { container: "n8n" } }, docker)
+    expect(job.result).toMatchObject({ main: { ok: false, error: "container restarting" }, mainState: "not-running" })
+  })
+
+  it("takes a main the list shows stopped for down, even when the check in it was not collected", async () => {
+    const docker = await withList("exited", (res) => res.writeHead(200).end(frame("not json")))
+    const job = await probeJob({ inside: { container: "n8n" } }, docker)
+    expect(job.result).toMatchObject({ main: { ok: false, error: "container exited" } })
+    // As sent to the server.
+    expect(JSON.parse(JSON.stringify(job.result))).not.toHaveProperty("notCollected")
+  })
+
+  it("keeps a running main as the check found it", async () => {
+    const docker = await withList("running", healthy)
+    expect((await probeJob({ inside: { container: "n8n" } }, docker)).result).toMatchObject({ main: { ok: true } })
+  })
+})
+
+describe("probeJob's budget", () => {
+  it("holds the network fallback and typed URLs to the probe's deadline", async () => {
+    const port = await new Promise<number>((resolve) => {
+      const server = createServer(() => {})
+      servers.push(server)
+      server.listen(0, "127.0.0.1", () => resolve((server.address() as AddressInfo).port))
+    })
+    const hang = `http://127.0.0.1:${port}`
+    const before = LIMITS.probeMs
+    LIMITS.probeMs = 300
+    try {
+      const started = Date.now()
+      const job = await probeJob({ main: `${hang}/healthz`, readiness: `${hang}/r`, workers: [`${hang}/w`] })
+      expect(Date.now() - started).toBeLessThan(3000)
+      expect(job.result).toMatchObject({ main: { ok: false }, workers: [{ ok: false }] })
+    } finally {
+      LIMITS.probeMs = before
     }
   })
 })

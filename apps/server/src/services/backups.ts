@@ -501,6 +501,8 @@ export function probePayload(instance: Instance, check: CheckTicket) {
     workers: typedWorkers ?? [],
     metrics: metricsUrlOf(instance),
     ...(readsInside(instance) ? { inside: { container: instance.containerName } } : {}),
+    // Queue mode with no worker URLs typed: the worker finds the queue workers next to the main and checks them.
+    ...(readsInside(instance) && queue && !typedWorkers ? { discover: true } : {}),
     overrides: {
       ...(queue && instance.metricsUrl ? { metricsUrl: instance.metricsUrl } : {}),
       ...(typedWorkers ? { workerHealthUrls: typedWorkers } : {}),

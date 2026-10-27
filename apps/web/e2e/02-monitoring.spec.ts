@@ -154,7 +154,8 @@ test("a queue-mode instance reads /metrics of its base URL by itself and says wh
 
   await toggleQueueMode()
   await expect(alert).toBeVisible()
-  await expect(alert).toContainText("QUEUE_HEALTH_CHECK_ACTIVE=true")
+  // Checked from the server: the alert says how the worker on the host would find the queue workers by itself.
+  await expect(alert).toContainText("finds and checks them by itself")
   await page.getByRole("button", { name: "Check now" }).click()
   await expect(noQueue).toBeVisible(checked)
 

@@ -2,6 +2,7 @@ import { readTar, textEntry } from "@n8n-ops/shared"
 import { type Manifest, sealArchive } from "@n8n-ops/shared/archive"
 import type { Docker } from "./docker.ts"
 import { checkInside } from "./inside.ts"
+import { discoverWorkers, LIMITS, mainStateOf } from "./queue-workers.ts"
 
 export type Job = { id: string; kind: string; payload: Record<string, unknown> }
 export type JobResult = { ok: boolean; result?: Record<string, unknown>; error?: string }
@@ -25,10 +26,12 @@ async function cleanup(docker: Docker, container: string) {
 
 type Reading = { ok: boolean; status: number; ms: number; error?: string }
 
-async function requestUrl(url: string): Promise<Reading> {
+async function requestUrl(url: string, signal: AbortSignal = AbortSignal.timeout(10_000)): Promise<Reading> {
   const started = Date.now()
+  // Past the probe's deadline nothing more is asked.
+  if (signal.aborted) return { ok: false, status: 0, ms: 0, error: "the probe reached its deadline before this check" }
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(10_000) })
+    const res = await fetch(url, { signal })
     return { ok: res.ok, status: res.status, ms: Date.now() - started }
   } catch (error) {
     return { ok: false, status: 0, ms: Date.now() - started, error: (error as Error).message }
@@ -36,9 +39,12 @@ async function requestUrl(url: string): Promise<Reading> {
 }
 
 /** Reads the queue figures from a metrics URL over the network. */
-async function metricsOver(url: string): Promise<{ queue: Record<string, number> | null; metricsError?: string }> {
+async function metricsOver(
+  url: string,
+  signal: AbortSignal = AbortSignal.timeout(10_000),
+): Promise<{ queue: Record<string, number> | null; metricsError?: string }> {
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(10_000) })
+    const res = await fetch(url, { signal })
     // n8n answers 404 there while N8N_METRICS is off; the server words it the same (services/health.ts).
     if (!res.ok)
       throw new Error(
@@ -82,25 +88,53 @@ export async function probeJob(payload: Record<string, unknown>, docker?: Docker
   const typedMetrics = typeof overrides.metricsUrl === "string" ? overrides.metricsUrl : undefined
   const checkedAt = () => new Date().toISOString()
   let fallback: string | undefined
+  // One budget for the whole probe, from its start, the network fallback included; each call has a shorter one.
+  const deadline = AbortSignal.timeout(LIMITS.probeMs)
+  const within = () => AbortSignal.any([deadline, AbortSignal.timeout(LIMITS.callMs)])
   if (docker && typeof inside?.container === "string" && inside.container) {
-    const outcome = await checkInside(docker, inside.container, {
-      skipMetrics: Boolean(typedMetrics),
-      signal: AbortSignal.timeout(10_000),
-    })
+    const container = inside.container
+    const outcome = await checkInside(docker, container, { skipMetrics: Boolean(typedMetrics), signal: within() })
     if (outcome.kind === "report") {
-      const report = outcome.report
+      let report = outcome.report
+      const metrics = typedMetrics && !report.notCollected ? await metricsOver(typedMetrics, within()) : {}
+      const check = payload.check as { seq?: unknown } | undefined
+      // Queue mode with no worker URLs typed: find the queue workers next to the main and check them.
+      const found =
+        payload.discover === true
+          ? await discoverWorkers(docker, container, {
+              rotation: typeof check?.seq === "number" ? check.seq : 0,
+              deadline,
+            })
+          : undefined
+      // The state of the main in the container list, read with the workers or on its own. A main the list shows
+      // restarting or stopped is down, even when a check got through in between or could not finish.
+      const listed = found ? found.mainState : await mainStateOf(docker, container, within())
+      if (listed && listed !== "running" && report.mainState !== "not-running" && report.mainState !== "paused") {
+        const down = { ok: false, status: 0, ms: 0, error: `container ${listed}` }
+        report = { ...report, main: down, readiness: down, mainState: "not-running", notCollected: undefined }
+      }
+      if (found)
+        return {
+          ok: true,
+          result: { ...report, ...metrics, workers: found.workers, discovery: found.discovery, checkedAt: checkedAt() },
+        }
       const workers = await Promise.all(
-        strings(overrides.workerHealthUrls).map(async (url) => ({ url, ...(await requestUrl(url)) })),
+        strings(overrides.workerHealthUrls).map(async (url) => ({ url, ...(await requestUrl(url, within())) })),
       )
-      const metrics = typedMetrics && !report.notCollected ? await metricsOver(typedMetrics) : {}
       return { ok: true, result: { ...report, ...metrics, workers, checkedAt: checkedAt() } }
     }
     fallback = outcome.reason
   }
   // Over the network: the URL fields, as workers of earlier releases do.
-  const [main, readiness] = await Promise.all([requestUrl(String(payload.main)), requestUrl(String(payload.readiness))])
-  const workers = await Promise.all(strings(payload.workers).map(async (url) => ({ url, ...(await requestUrl(url)) })))
-  const metrics = typeof payload.metrics === "string" && payload.metrics ? await metricsOver(payload.metrics) : {}
+  const [main, readiness] = await Promise.all([
+    requestUrl(String(payload.main), within()),
+    requestUrl(String(payload.readiness), within()),
+  ])
+  const workers = await Promise.all(
+    strings(payload.workers).map(async (url) => ({ url, ...(await requestUrl(url, within())) })),
+  )
+  const metrics =
+    typeof payload.metrics === "string" && payload.metrics ? await metricsOver(payload.metrics, within()) : {}
   return {
     ok: true,
     result: {

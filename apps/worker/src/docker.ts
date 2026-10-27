@@ -157,6 +157,21 @@ export class Docker {
     return { exitCode: ExitCode ?? -1, stdout, stderr: stderr.toString() }
   }
 
+  /**
+   * Lists containers, stopped ones included, filtered as given (a convenience for less to read; the socket proxy's
+   * rule is the boundary). The answer is capped: a list larger than `limits.maxBytes` fails rather than being cut.
+   */
+  async listContainers(filters: Record<string, string[]>, limits: CallLimits = {}): Promise<unknown[]> {
+    const query = `all=1&filters=${encodeURIComponent(JSON.stringify(filters))}`
+    const res = await call(this.endpoint, "GET", `/containers/json?${query}`, undefined, limits)
+    if (res.status === 403) throw new DockerError("the socket proxy does not allow listing containers", "refused", 403)
+    if (res.status >= 300)
+      throw new DockerError(`Docker refused to list containers (${res.status})`, "other", res.status)
+    const list = answer<unknown>(res.data, "the container list")
+    if (!Array.isArray(list)) throw new DockerError("Docker gave a container list that is not a list", "other", 0)
+    return list
+  }
+
   async ping(): Promise<boolean> {
     try {
       return (await call(this.endpoint, "GET", "/_ping")).status === 200

@@ -158,6 +158,7 @@ stop_store_servers() {
 }
 
 cleanup_stack() {
+  docker compose -p "${PROJECT}-queue" -f "$REPO_ROOT/docker/verify-queue.yml" down -v >/dev/null 2>&1 || true
   stop_store_servers
   stack down --remove-orphans >/dev/null 2>&1 || true
   # After the last round the data is already gone; the exit trap must not turn that into a failure.
@@ -211,12 +212,16 @@ run_checks_on_stack() {
   TOOLCHAIN_EXTRA_ARGS=()
 
   info "Integration: the socket proxy allows only what the worker needs"
-  # From inside the worker: ping passes; listing containers and exec in another container are refused.
+  # From inside the worker: ping and listing containers pass, with or without an API version and with a query;
+  # inspecting a container (its environment), also with an encoded path, and exec in another container are refused.
   local probe='const p = (m, path) => fetch("http://socket-proxy:2375" + path, { method: m, headers: { "content-type": "application/json" }, body: m === "POST" ? "{}" : undefined }).then((r) => r.status);
 (async () => {
-  const got = [await p("GET", "/v1.43/_ping"), await p("GET", "/v1.43/containers/json"), await p("POST", "/v1.43/containers/'"${PROJECT}"'-postgres-1/exec")];
-  console.log("    ping, list, exec in postgres:", got.join(", "));
-  process.exit(got[0] === 200 && got[1] === 403 && got[2] === 403 ? 0 : 1);
+  const pg = "'"${PROJECT}"'-postgres-1";
+  const got = [await p("GET", "/v1.43/_ping"), await p("GET", "/v1.43/containers/json?all=1"), await p("GET", "/containers/json"),
+    await p("GET", "/v1.43/containers/" + pg + "/json"), await p("GET", "/v1.43/containers%2F" + pg + "%2Fjson"),
+    await p("POST", "/v1.43/containers/" + pg + "/exec")];
+  console.log("    ping, list, list without version, inspect, inspect encoded, exec in postgres:", got.join(", "));
+  process.exit(got[0] === 200 && got[1] === 200 && got[2] === 200 && got[3] === 403 && got[4] !== 200 && got[5] === 403 ? 0 : 1);
 })()'
   stack exec -T -u node worker node -e "$probe" || die "the socket proxy does not enforce its allowlist"
 
@@ -303,6 +308,65 @@ run_server_integration() {
   stop_store_servers
 }
 
+QUEUE_DONE=0
+
+# The n8n queue workers next to a main, found and checked by the stack's worker through its socket proxy, against
+# the official n8n in queue mode (docker/verify-queue.yml): ready, not ready while Redis is stopped (its readiness
+# endpoint is seen at 503 first), ready again, and down once stopped. Once per run: it does not depend on the design.
+run_queue_checks() {
+  [ "$QUEUE_DONE" = 0 ] || return 0
+  QUEUE_DONE=1
+  info "Integration: queue workers found next to the main and checked through the socket proxy"
+  local q="${PROJECT}-queue" started=$SECONDS
+  queue() { docker compose -p "$q" -f "$REPO_ROOT/docker/verify-queue.yml" "$@"; }
+  queue up -d --wait --wait-timeout 240 >/dev/null 2>&1 || {
+    queue logs --tail 40 n8n n8n-worker
+    queue down -v >/dev/null 2>&1
+    die "the queue-mode n8n did not start"
+  }
+  # One probe as the server asks for it; the JSON report is checked with node in the worker container.
+  local payload="{\"inside\":{\"container\":\"$q-n8n-1\"},\"discover\":true,\"check\":{\"seq\":1,\"revision\":0}}"
+  expect_worker() {
+    local want="$1" report
+    report="$(stack exec -T -u node worker node dist/probe-cli.js "$payload")"
+    # shellcheck disable=SC2016 # expands inside the container
+    stack exec -T -u node worker node -e '
+      const r = JSON.parse(process.argv[1]); const w = (r.workers || [])[0] || {};
+      console.log("    main " + r.source + " " + r.mode + ", list " + (r.discovery || {}).status + ", worker " + w.name + ": " + w.state);
+      // When the worker is ready the whole instance is: the main up and ready, and the queue figures read.
+      const whole = process.argv[2] !== "ready" || (r.main.ok && r.readiness.ok && r.queue !== null);
+      process.exit(r.source === "inside" && r.mode === "queue" && r.discovery && r.discovery.status === "ok" &&
+        r.discovery.found === 1 && w.state === process.argv[2] && whole ? 0 : 1)' "$report" "$want" ||
+      {
+        echo "$report"
+        queue down -v >/dev/null 2>&1
+        die "the queue worker was not seen as $want"
+      }
+  }
+  # Waits, at most a minute, until the worker's own readiness endpoint answers the status given, so the check is not
+  # raced. Each request gives up after two seconds.
+  readiness_is() {
+    local want="$1" until=$((SECONDS + 60))
+    while [ "$SECONDS" -lt "$until" ]; do
+      [ "$(timeout 5 docker exec "$q-n8n-worker-1" node -e "fetch('http://127.0.0.1:5678/healthz/readiness', { signal: AbortSignal.timeout(2000) }).then(r => console.log(r.status)).catch(() => console.log(0))")" = "$want" ] && return 0
+      sleep 1
+    done
+    queue down -v >/dev/null 2>&1
+    die "the queue worker's readiness did not answer $want"
+  }
+  expect_worker ready
+  queue stop redis >/dev/null 2>&1
+  readiness_is 503
+  expect_worker not-ready
+  queue start redis >/dev/null 2>&1
+  readiness_is 200
+  expect_worker ready
+  queue stop n8n-worker >/dev/null 2>&1
+  expect_worker down
+  queue down -v >/dev/null 2>&1
+  echo "    queue checks took $((SECONDS - started)) s"
+}
+
 # One end-to-end round per design, each on a fresh stack. Both designs are one app with the same functions,
 # so the same suite runs in each and must pass in each; only the look differs.
 run_e2e_round() {
@@ -312,6 +376,7 @@ run_e2e_round() {
   [ "$design" = regular ] || seed_design "$design"
   run_checks_on_stack
   run_server_integration
+  run_queue_checks
   # The alias lets the server reach the stand-in Telegram Bot API that the tests run (TELEGRAM_API_URL). The
   # session spec moves its session's clocks in the database, since the server's clock cannot be moved.
   docker run --rm --network "${PROJECT}_default" --network-alias e2e-runner \

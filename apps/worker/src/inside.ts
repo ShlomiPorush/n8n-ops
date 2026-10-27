@@ -13,7 +13,8 @@ import { type Docker, DockerError } from "./docker.ts"
  * verified, for these requests only: the peer is the same network namespace, the requests carry no credentials,
  * and a certificate issued for the public name cannot match a loopback address.
  */
-export const MAIN_CHECK = String.raw`
+/** What every check shares: reading settings as @n8n/config does, and requests on the loopback with a deadline. */
+const PRELUDE = String.raw`
 const fs = require("fs"), http = require("http"), https = require("https")
 const env = process.env
 const out = {}
@@ -24,7 +25,7 @@ const done = () => {
   process.stdout.write(JSON.stringify(out).slice(0, 4000))
   process.exit(0)
 }
-setTimeout(() => { out.notCollected = "the check in the main did not finish within 8 s"; done() }, 8000).unref()
+setTimeout(() => { out.notCollected = "the check in __WHERE__ did not finish within 8 s"; done() }, 8000).unref()
 // As @n8n/config reads settings: a variable that is set wins even when empty; otherwise <NAME>_FILE, trimmed.
 // A file that cannot be read makes the setting unknown here (n8n would not start), never its default.
 function raw(name) {
@@ -57,31 +58,12 @@ function choice(name, options, fallback) {
   const r = text(name, fallback)
   return r.unknown ? r : { value: options.includes(r.value) ? r.value : fallback }
 }
-const address = text("N8N_LISTEN_ADDRESS", "::")
-const port = number("N8N_PORT", 5678)
-const healthPath = text("N8N_ENDPOINT_HEALTH", "/healthz")
-const protocol = choice("N8N_PROTOCOL", ["http", "https"], "http")
-const sslKey = text("N8N_SSL_KEY", "")
-const sslCert = text("N8N_SSL_CERT", "")
-const mode = choice("EXECUTIONS_MODE", ["regular", "queue"], "regular")
-const metricsOn = flag("N8N_METRICS", false)
-const prefix = text("N8N_METRICS_PREFIX", "n8n_")
-const needed = [["N8N_LISTEN_ADDRESS", address], ["N8N_PORT", port], ["N8N_ENDPOINT_HEALTH", healthPath],
-  ["N8N_PROTOCOL", protocol]]
-if (protocol.value === "https") needed.push(["N8N_SSL_KEY", sslKey], ["N8N_SSL_CERT", sslCert])
-const unknown = needed.filter((s) => s[1].unknown).map((s) => s[0])
-if (unknown.length) { out.notCollected = "cannot read " + unknown.join(", ") + " in the main"; done() }
-const host = address.value === "::" || address.value === "" ? "::1" : address.value === "0.0.0.0" ? "127.0.0.1" : address.value
-// HTTPS exactly when n8n serves it: https with a key and a certificate. Only whether they are set is used.
-const tls = protocol.value === "https" && Boolean(sslKey.value) && Boolean(sslCert.value)
-// n8n adds a leading slash and keeps a trailing one: readiness is the health path followed by /readiness.
-const health = healthPath.value.startsWith("/") ? healthPath.value : "/" + healthPath.value
-function get(path, max) {
+function get(target, path, max) {
   return new Promise((resolve) => {
-    const lib = tls ? https : http
+    const lib = target.tls ? https : http
     let settled = false
     const settle = (value) => { if (!settled) { settled = true; resolve(value) } }
-    const req = lib.request({ host: host, port: Number(port.value), path: path, method: "GET",
+    const req = lib.request({ host: target.host, port: Number(target.port), path: path, method: "GET",
       rejectUnauthorized: false }, (res) => {
       const chunks = []
       let size = 0
@@ -101,8 +83,32 @@ function get(path, max) {
 }
 const status = (r) => (r.error ? { status: r.status || 0, error: r.error } : { status: r.status })
 const escape = (s) => s.replace(/[.*+?^$(){}|[\]\\]/g, "\\$&")
+const loopback = (a) => (a === "::" || a === "" ? "::1" : a === "0.0.0.0" ? "127.0.0.1" : a)
+// n8n adds a leading slash and keeps a trailing one: readiness is the health path followed by /readiness.
+const slashed = (p) => (p.startsWith("/") ? p : "/" + p)
+`
+
+export const MAIN_CHECK = `${PRELUDE.replace("__WHERE__", "the main")}${String.raw`
+const address = text("N8N_LISTEN_ADDRESS", "::")
+const port = number("N8N_PORT", 5678)
+const healthPath = text("N8N_ENDPOINT_HEALTH", "/healthz")
+const protocol = choice("N8N_PROTOCOL", ["http", "https"], "http")
+const sslKey = text("N8N_SSL_KEY", "")
+const sslCert = text("N8N_SSL_CERT", "")
+const mode = choice("EXECUTIONS_MODE", ["regular", "queue"], "regular")
+const metricsOn = flag("N8N_METRICS", false)
+const prefix = text("N8N_METRICS_PREFIX", "n8n_")
+const needed = [["N8N_LISTEN_ADDRESS", address], ["N8N_PORT", port], ["N8N_ENDPOINT_HEALTH", healthPath],
+  ["N8N_PROTOCOL", protocol]]
+if (protocol.value === "https") needed.push(["N8N_SSL_KEY", sslKey], ["N8N_SSL_CERT", sslCert])
+const unknown = needed.filter((s) => s[1].unknown).map((s) => s[0])
+if (unknown.length) { out.notCollected = "cannot read " + unknown.join(", ") + " in the main"; done() }
+// HTTPS exactly when n8n serves it: https with a key and a certificate. Only whether they are set is used.
+const tls = protocol.value === "https" && Boolean(sslKey.value) && Boolean(sslCert.value)
+const health = slashed(healthPath.value)
+const main = { host: loopback(address.value), port: port.value, tls: tls }
 ;(async () => {
-  const [h, r] = await Promise.all([get(health, 64 * 1024), get(health + "/readiness", 64 * 1024)])
+  const [h, r] = await Promise.all([get(main, health, 64 * 1024), get(main, health + "/readiness", 64 * 1024)])
   out.health = status(h)
   out.readiness = status(r)
   out.mode = mode.unknown ? null : mode.value
@@ -112,7 +118,7 @@ const escape = (s) => s.replace(/[.*+?^$(){}|[\]\\]/g, "\\$&")
   else if (prefix.unknown) out.metrics = { state: "failed", reason: "cannot read N8N_METRICS_PREFIX" }
   else if (!metricsOn.value) out.metrics = { state: typed ? "skipped" : "off" }
   else {
-    const m = await get("/metrics", 4 * 1024 * 1024)
+    const m = await get(main, "/metrics", 4 * 1024 * 1024)
     if (m.error) out.metrics = { state: "failed", reason: m.error }
     else if (m.status === 404) out.metrics = { state: "404" }
     else if (m.status !== 200) out.metrics = { state: "failed", reason: "HTTP " + m.status }
@@ -138,7 +144,33 @@ const escape = (s) => s.replace(/[.*+?^$(){}|[\]\\]/g, "\\$&")
   }
   done()
 })().catch((e) => { out.notCollected = "the check in the main failed: " + String((e && e.message) || e).slice(0, 150); done() })
-`
+`}`
+
+/**
+ * The check the worker runs in an n8n queue worker container, like the main's. n8n's worker server answers health
+ * and readiness only with QUEUE_HEALTH_CHECK_ACTIVE (readiness checks the database, Redis and that start-up
+ * finished), on N8N_WORKER_SERVER_ADDRESS and QUEUE_HEALTH_CHECK_PORT, over HTTP. With the health check off it says
+ * so and asks for nothing.
+ */
+export const WORKER_CHECK = `${PRELUDE.replace("__WHERE__", "the worker")}${String.raw`
+const active = flag("QUEUE_HEALTH_CHECK_ACTIVE", false)
+const address = text("N8N_WORKER_SERVER_ADDRESS", "::")
+const port = number("QUEUE_HEALTH_CHECK_PORT", 5678)
+const healthPath = text("N8N_ENDPOINT_HEALTH", "/healthz")
+const unknown = [["QUEUE_HEALTH_CHECK_ACTIVE", active], ["N8N_WORKER_SERVER_ADDRESS", address],
+  ["QUEUE_HEALTH_CHECK_PORT", port], ["N8N_ENDPOINT_HEALTH", healthPath]].filter((s) => s[1].unknown).map((s) => s[0])
+if (unknown.length) { out.notCollected = "cannot read " + unknown.join(", ") + " in the worker"; done() }
+if (!active.value) { out.active = false; done() }
+;(async () => {
+  const worker = { host: loopback(address.value), port: port.value, tls: false }
+  const health = slashed(healthPath.value)
+  const [h, r] = await Promise.all([get(worker, health, 64 * 1024), get(worker, health + "/readiness", 64 * 1024)])
+  out.active = true
+  out.health = status(h)
+  out.readiness = status(r)
+  done()
+})().catch((e) => { out.notCollected = "the check in the worker failed: " + String((e && e.message) || e).slice(0, 150); done() })
+`}`
 
 export type InsideOutcome =
   /** The check ran (or Docker said the main is down): a report to send. */

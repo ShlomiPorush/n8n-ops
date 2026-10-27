@@ -104,6 +104,7 @@ import { type CollectionView, collectionView } from "@/lib/collection"
 import { loadView } from "@/lib/load-state"
 import { healthCounts, n, plural } from "@/lib/numbers"
 import { useNavigateFromOverlay } from "@/lib/overlay-history"
+import { queueWorkersNote, type WorkerState, workerHealth, workerWords } from "@/lib/queue-workers"
 import { formatTime, useTimeFormat } from "@/lib/time"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
@@ -147,7 +148,8 @@ export type InstanceRow = {
   healthDetail: {
     main?: { ok: boolean; status: number; error?: string }
     readiness?: { ok: boolean }
-    workers?: { url: string; ok: boolean; error?: string }[]
+    workers?: { url: string; ok: boolean; error?: string; name?: string; state?: WorkerState }[]
+    discovery?: { status: string; reason?: string; found: number }
     queue?: { waiting: number; active: number; completed: number; failed: number } | null
     metricsError?: string
     backlogActive?: boolean
@@ -549,6 +551,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
     </Alert>
   )
   const collected = collectionView({ collection: i.collection, worker: i.worker, detail: hd })
+  const workersNote = queueWorkersNote({ ...i, detail: hd })
   // Nothing collects the health now: the checks shown are only the last known health (unless it was not collected).
   const past = Boolean(i.unknownReason && i.lastKnownHealth && !hd?.notCollected)
 
@@ -738,7 +741,28 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
               </div>
             )}
             {(hd?.workers ?? []).map((w) => (
-              <HealthRow key={w.url} label={`Queue worker ${w.url}`} ok={w.ok} detail={w.error} past={past} />
+              <div key={w.url} className="flex min-w-0 items-center gap-2.5 border-t border-line px-pad-x py-pad-y">
+                {past ? (
+                  <Dot health="unknown" label={`${workerWords(w.state, w.ok, w.error)} at the last check`} />
+                ) : (
+                  <Dot health={workerHealth(w.state, w.ok)} />
+                )}
+                <span className="min-w-0 break-words">Queue worker {w.name ?? w.url}</span>
+                <span
+                  className={cn(
+                    "ms-auto text-end",
+                    past
+                      ? "text-muted-foreground"
+                      : workerHealth(w.state, w.ok) === "down"
+                        ? "font-semibold text-fail"
+                        : workerHealth(w.state, w.ok) === "warn"
+                          ? "text-warn"
+                          : "text-muted-foreground",
+                  )}
+                >
+                  {workerWords(w.state, w.ok, w.error)}
+                </span>
+              </div>
             ))}
             {hd?.queue && (
               <div className="border-t border-line p-pad-x">
@@ -778,15 +802,12 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
                 Checked over the network because {hd.fallback}.
               </div>
             )}
-            {i.queueMode && i.workerHealthUrls.length === 0 && (
+            {workersNote && (
               <div className="border-t border-line p-pad-x">
                 <Alert variant="info">
-                  <AlertTitle>The queue workers are not checked</AlertTitle>
+                  <AlertTitle>{workersNote.title}</AlertTitle>
                   <AlertDescription>
-                    <p>
-                      Add their health URLs, and set <code>QUEUE_HEALTH_CHECK_ACTIVE=true</code> on them. Queue workers
-                      are usually reachable only on their host, so this often needs an n8n-ops worker there.
-                    </p>
+                    <p>{workersNote.text}</p>
                     <Button size="sm" className="mt-3" onClick={() => setEditing(true)}>
                       <Pencil /> Edit instance
                     </Button>
@@ -926,12 +947,23 @@ function StatusStrip({ instance: i, footer }: { instance: InstanceDetailData; fo
           : "not checked",
     },
   ]
-  if (i.workerHealthUrls.length > 0) {
-    const up = (hd?.workers ?? []).filter((w) => w.ok).length
+  if (i.workerHealthUrls.length > 0 || hd?.discovery) {
+    const workers = hd?.workers ?? []
+    const up = workers.filter((w) => w.ok).length
+    const lost = hd?.discovery && hd.discovery.status !== "ok"
+    // Down only for a worker seen down; one not checked, running without its health check, or none found warns.
+    const states = workers.map((w) => workerHealth(w.state, w.ok))
+    const health: HealthState = !hd?.workers
+      ? "unknown"
+      : states.includes("down")
+        ? "down"
+        : lost || workers.length === 0 || states.includes("warn")
+          ? "warn"
+          : "ok"
     cells.push({
       label: "Queue workers",
-      health: hd?.workers ? (up === hd.workers.length ? "ok" : "down") : "unknown",
-      value: hd?.workers ? `${n(up)} of ${n(hd.workers.length)} up` : "not checked",
+      health,
+      value: lost ? "not all checked" : hd?.workers ? `${n(up)} of ${n(workers.length)} ready` : "not checked",
     })
   }
   if (i.effectiveMetricsUrl) {

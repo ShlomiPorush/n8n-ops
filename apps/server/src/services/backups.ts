@@ -57,7 +57,7 @@ export function archiveParts(target: { id: string; name: string } | null, copyId
 
 async function backupRecipient(ctx: Ctx) {
   const { backupRecipient } = await ctx.settings.get("keys")
-  if (!backupRecipient) throw new Error("No backup key. Generate one in Settings > Encryption Keys.")
+  if (!backupRecipient) throw new Error("No backup key. Generate one in Settings → Encryption Keys.")
   return backupRecipient
 }
 
@@ -78,7 +78,7 @@ export async function usableWorker(ctx: Ctx, instance: Instance) {
 
 export class NoDestinationError extends Error {
   constructor(what: string) {
-    super(`${what} has no backup destination. Choose one under its backups, or mark a destination as default.`)
+    super(`${what} has no backup destination that is on. Turn on one of its destinations, or choose others.`)
   }
 }
 
@@ -459,7 +459,7 @@ export async function restoreWorkflow(
       steps.push({
         step: `Credential ${cred.name}`,
         ok: false,
-        detail: "archive has no secrets (API-only backup); set it in n8n",
+        detail: "the archive has no secrets; set this credential in n8n",
       })
       continue
     }

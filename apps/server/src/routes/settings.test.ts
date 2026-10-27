@@ -14,9 +14,13 @@ vi.mock("nodemailer", () => ({
   },
 }))
 // The report itself reads the database; these tests are about where it goes.
+const reports = vi.hoisted(() => ({ built: [] as unknown[][] }))
 vi.mock("../services/reports.ts", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../services/reports.ts")>()),
-  buildReport: async () => ({ subject: "n8n-ops test", text: "Test", html: "<p>Test</p>" }),
+  buildReport: async (...args: unknown[]) => {
+    reports.built.push(args.slice(1))
+    return { subject: "n8n-ops test", text: "Test", html: "<p>Test</p>" }
+  },
 }))
 
 // The session clocks have their own tests; here every session is live.
@@ -190,6 +194,8 @@ describe("Email and Telegram tests with the values on screen (FS-19, FS-5)", () 
     const test = send(alertTestRoutes(fakeCtx({ email: { ...storedEmail } })), "/test/email")
     expect((await test("POST")).body).toEqual({ ok: true, recipients: ["ops@example.com"] })
     expect(mail.transports[0]).toMatchObject({ host: "smtp.example.com", auth: { pass: "stored-secret" } })
+    // The daily report, made now, with the footer of a test.
+    expect(reports.built.at(-1)).toEqual(["daily", expect.any(Date), { test: true }])
   })
 
   it("refuses a bad recipient on screen in words, before connecting", async () => {

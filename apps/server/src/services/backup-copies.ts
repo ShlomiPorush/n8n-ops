@@ -93,7 +93,7 @@ async function copyPass(ctx: Ctx) {
     await failRun(ctx, run.id, "The encrypted archive did not arrive in time. Is the worker online?")
     await ctx.db
       .update(workerJobs)
-      .set({ status: "failed", error: "The backup run ended before the job ran.", finishedAt: now })
+      .set({ status: "failed", error: "The backup run ended before the worker started it.", finishedAt: now })
       .where(
         and(
           eq(workerJobs.kind, "backup"),

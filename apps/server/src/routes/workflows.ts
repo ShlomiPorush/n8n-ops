@@ -133,7 +133,8 @@ export function credentialExportRoutes(ctx: Ctx) {
       .where(eq(instances.id, c.req.param("id")))
     if (!instance) return c.json({ error: "not_found" }, 404)
     const { backupRecipient } = await ctx.settings.get("keys")
-    if (!backupRecipient) return c.json({ error: "invalid", message: "Generate a backup key first." }, 400)
+    if (!backupRecipient)
+      return c.json({ error: "invalid", message: "Generate a backup key first, in Settings → Encryption Keys." }, 400)
     try {
       const credentials = await exportCredentials(ctx, instance)
       const sealed = await sealBytes(new TextEncoder().encode(JSON.stringify(credentials, null, 2)), backupRecipient)

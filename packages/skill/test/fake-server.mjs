@@ -152,7 +152,10 @@ export async function startFakeServer(port = 0) {
         return send(401, { error: "unauthorized" }, { "www-authenticate": 'Bearer error="invalid_token"' })
       const scope = s.grants.get(a.grant).scope
       if (url.pathname === "/api/v1/access-requests" && req.method === "POST" && !scope.includes("ops:access"))
-        return send(403, { error: "not_allowed", message: "This token may not request access to n8n instances." })
+        return send(403, {
+          error: "not_allowed",
+          message: "This agent may not request access to n8n instances. Ask a person to allow it in n8n-ops.",
+        })
       s.lastBody = raw
       return send(200, {
         data: { method: req.method, path: url.pathname, query: url.search, body: raw ? JSON.parse(raw) : null },

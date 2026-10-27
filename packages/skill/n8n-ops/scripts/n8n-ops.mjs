@@ -328,7 +328,8 @@ function othersAllowed(saved, userSid) {
 
 function checkFile(file) {
   const st = fs.lstatSync(file)
-  if (st.isSymbolicLink() || !st.isFile()) throw new Fail("insecure_credentials", `${file} must be a plain file.`)
+  if (st.isSymbolicLink() || !st.isFile())
+    throw new Fail("insecure_credentials", `${file} must be a plain file, not a link.`)
   if (!win) {
     if (st.uid !== process.getuid()) throw new Fail("insecure_credentials", `${file} belongs to another user.`)
     if (st.mode & 0o077) throw new Fail("insecure_credentials", `Others can read ${file}. Run: chmod 600 '${file}'`)
@@ -828,7 +829,7 @@ async function accessToken(ctx, stale) {
       else removeRecord(ctx)
       throw new Fail(
         "connection_ended",
-        "This connection has ended (disconnected in n8n-ops, unused for 90 days, or its token was used twice). Run: n8n-ops connect",
+        "This connection has ended (disconnected in n8n-ops, unused for 90 days, the n8n-ops address changed, or its refresh token was used twice). Run: n8n-ops connect",
       )
     }
     // n8n-ops answered with an error before spending the token (a 4xx); a 5xx may have come after.
@@ -871,7 +872,7 @@ async function api(ctx, method, p, json) {
   if (r.status === 403 && r.json?.error === "not_allowed")
     throw new Fail(
       "insufficient_scope",
-      "This agent was connected without instance access. Ask the person, then run: n8n-ops connect --replace",
+      "This agent may not request access to n8n instances. Ask the person to allow it, then run: n8n-ops connect --replace",
     )
   throw httpFail(r, `${method} ${p}`)
 }
@@ -891,7 +892,7 @@ async function disconnect(ctx) {
       writeRecord(ctx, { ...rec, refreshToken: "", accessToken: "", accessExpiresAt: 0, toRevoke: left.join(" ") })
       throw new Fail(
         "disconnect_failed",
-        "n8n-ops did not confirm the disconnect. Run it again, or disconnect this agent in n8n-ops Settings.",
+        "n8n-ops did not confirm the disconnect. Run it again, or disconnect this agent on the Connected Agents page of n8n-ops.",
       )
     }
     removeRecord(ctx)

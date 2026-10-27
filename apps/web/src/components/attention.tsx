@@ -195,7 +195,7 @@ function UncheckedRow({ u, onOpen }: { u: UncheckedItem; onOpen?: OpenItem }) {
       onOpen={onOpen && ((e) => onOpen(to, e))}
       title={
         <>
-          <Tone tone="muted">Not checked</Tone>
+          <Tone tone="muted">{u.kind === "health" ? "Unknown" : "Not checked"}</Tone>
           <span className="font-semibold">{u.detail}</span>
           {time(u.at)}
         </>
@@ -296,7 +296,7 @@ export function AttentionList({
           </Empty>
         ) : (
           <Empty title="Nothing needs you right now." icon={icon}>
-            New problems, health issues and requests show up here.
+            New problems, instance health, failed backups, offline workers and access requests show up here.
           </Empty>
         )
       ) : (

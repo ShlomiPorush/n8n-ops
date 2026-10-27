@@ -134,7 +134,8 @@ export function LoginPage() {
               )}
             </Button>
             <FieldDescription>
-              Locked out? Run <code>reset-password</code> inside the server container.
+              Locked out? On the server, run:{" "}
+              <code className="break-all">docker compose exec -u node server node dist/cli.js reset-password</code>
             </FieldDescription>
           </Field>
         </FieldGroup>

@@ -49,7 +49,8 @@ export function alertTestRoutes(ctx: Ctx) {
   })
   app.post("/test/email", async (c) => {
     try {
-      const recipients = await sendEmail(ctx, await buildReport(ctx, "daily"), await draftOf(c))
+      const report = await buildReport(ctx, "daily", new Date(), { test: true })
+      const recipients = await sendEmail(ctx, report, await draftOf(c))
       return c.json({ ok: true, recipients })
     } catch (error) {
       return c.json({ error: "test_failed", message: emailFailureText(error) }, 400)

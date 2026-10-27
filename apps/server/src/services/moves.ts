@@ -24,7 +24,9 @@ export type ExportedCredential = { id: string; name: string; type: string; data:
 export async function exportCredentials(ctx: Ctx, instance: Instance, ids?: string[]): Promise<ExportedCredential[]> {
   const worker = await usableWorker(ctx, instance)
   if (!worker)
-    throw new Error(`${instance.name} has no worker and container name, so credential secrets cannot be read.`)
+    throw new Error(
+      `Credential secrets of ${instance.name} cannot be read: it needs a worker with its main container set.`,
+    )
   const job = await enqueueJob(
     ctx,
     worker.id,
@@ -146,10 +148,11 @@ export async function runMove(
           steps.push({ step: `Credential ${cred.name} created`, ok: true, detail: created.id })
         }
       } else {
+        const names = preview.credentials.map((c) => c.name).join(", ")
         steps.push({
           step: "Credentials not copied",
           ok: false,
-          detail: `${preview.credentials.map((c) => c.name).join(", ")}: no worker on ${source.name}; set them in n8n`,
+          detail: `${names}: no worker with a main container on ${source.name}; set them in n8n`,
         })
       }
     }

@@ -65,7 +65,7 @@ export function WorkersPage() {
   async function askRevoke(w: Worker) {
     const ok = await confirm({
       title: `Revoke the Worker ${w.name}?`,
-      message: `It stops being accepted at once and is removed from its ${plural(w.instances.length, "instance")}. Remove the container on the host too. This cannot be undone; pair it again to bring it back.`,
+      message: `n8n-ops stops accepting it at once and unassigns it from its ${plural(w.instances.length, "instance")}. Remove the container on the host too. This cannot be undone: to use the host again, add a new worker.`,
       confirmLabel: "Revoke worker",
       danger: true,
     })
@@ -73,15 +73,13 @@ export function WorkersPage() {
   }
   const list = workers.data ?? []
   const online = list.filter((w) => w.online).length
+  const about =
+    "A worker runs on an n8n Docker host. It backs up credential secrets, moves credentials and checks n8n from inside its containers. It connects out to n8n-ops; no inbound port is needed. Its settings show what its socket proxy must allow, with the lines to paste."
   return (
     <Page
       title="Workers"
       live={workers}
-      description={
-        workers.data && list.length
-          ? `${n(online)} of ${n(list.length)} online. Agents on n8n Docker hosts: they back up credential secrets, move credentials and check n8n from inside its containers, over outbound HTTPS only. Each worker's settings show what its socket proxy must allow, with the lines to paste.`
-          : "Agents on n8n Docker hosts. They back up credential secrets, move credentials and check endpoints that are only reachable on the host. Outbound HTTPS only; no open ports."
-      }
+      description={workers.data && list.length ? `${n(online)} of ${n(list.length)} online. ${about}` : about}
       actions={
         <Button variant="primary" onClick={() => setOpen(true)}>
           <Plus /> Add worker
@@ -282,11 +280,9 @@ function AddWorkerDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
               <FieldContent>
                 <FieldLabel htmlFor="worker-proxy">Limit Docker access with a socket proxy</FieldLabel>
                 <FieldDescription>
-                  Recommended. The worker gets no Docker socket; a proxy lets it run commands only in the n8n containers
-                  you list, and read the list of containers to find n8n queue workers. That list shows every container's
-                  name, image, command, labels, networks and mounted folders, but not its environment; only the names
-                  and states of n8n queue workers leave the host. Without the proxy, the worker has full control of
-                  Docker on the host.
+                  Recommended. The worker gets no Docker socket: a proxy lets it list the containers, to find n8n queue
+                  workers, and run commands only in the n8n containers you list. Only the names and states of queue
+                  workers leave the host. Without the proxy, the worker has full control of Docker on the host.
                 </FieldDescription>
               </FieldContent>
             </Field>

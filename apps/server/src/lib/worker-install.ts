@@ -43,8 +43,15 @@ export function workerInstall(options: {
     `      N8N_OPS_SERVER_URL: ${literal(serverUrl)}`,
     `      PAIRING_TOKEN: ${literal(token)}`,
     ...(socketProxy ? ["      DOCKER_HOST: tcp://socket-proxy:2375"] : []),
-    "    # Starts as root only to hand ./data to the worker's user and join the Docker socket's group, then",
-    "    # runs as that user with no capability left.",
+    ...(socketProxy
+      ? [
+          "    # Starts as root only to hand ./data to the worker's user, then runs as that user with no",
+          "    # capability left.",
+        ]
+      : [
+          "    # Starts as root only to hand ./data to the worker's user and join the Docker socket's group, then",
+          "    # runs as that user with no capability left.",
+        ]),
     "    security_opt: [no-new-privileges:true]",
     "    cap_drop: [ALL]",
     "    cap_add: [CHOWN, DAC_READ_SEARCH, SETUID, SETGID]",
@@ -63,7 +70,7 @@ export function workerInstall(options: {
   const proxy = [
     "  # Only the proxy sees the Docker socket. It allows ping, listing containers (to find n8n queue workers)",
     "  # and exec in the n8n containers listed below;",
-    "  # to allow another container, add it to -allowPOST and run: docker compose up -d",
+    "  # to allow another container, add its name to the (…|…) group in -allowPOST and run: docker compose up -d",
     "  socket-proxy:",
     `    image: ${SOCKET_PROXY_IMAGE}`,
     "    restart: unless-stopped",

@@ -491,7 +491,7 @@ function DestinationStep({ onDone, onSkip }: { onDone: () => Promise<void>; onSk
   return (
     <StepFrame
       title="Backup Destination"
-      description="Where encrypted backups are written. You can add more, such as SFTP or WebDAV, and change this in Settings later."
+      description="Where encrypted backups are written. You can add more in Settings later, such as SFTP or WebDAV."
       actions={
         <>
           <Button variant="ghost" className="me-auto" onClick={onSkip}>

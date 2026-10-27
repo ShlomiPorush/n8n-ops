@@ -71,7 +71,7 @@ describe("the bell's name (NL-19)", () => {
   })
 
   it("counts an instance not checked, a source not read and a read without answer as checks that could not run", () => {
-    const health = { kind: "health" as const, id: "i1", name: "new", detail: "Health not checked yet", at: null }
+    const health = { kind: "health" as const, id: "i1", name: "new", detail: "Health unknown", at: null }
     expect(checksFailed(answer(), false)).toBe(false)
     expect(checksFailed(answer({ unchecked: [health] }), false)).toBe(true)
     expect(checksFailed(answer({ failed: ["backups"] }), false)).toBe(true)
@@ -96,7 +96,7 @@ describe("a source that could not be read (NL-19)", () => {
   })
 
   it("keeps the problems left out of the list and the checks of instances too", () => {
-    const health = { kind: "health" as const, id: "i1", name: "new", detail: "Health not checked yet", at: null }
+    const health = { kind: "health" as const, id: "i1", name: "new", detail: "Health unknown", at: null }
     const before = answer({ total: 60, tone: "fail", moreProblems: 60, unchecked: [health] })
     const kept = keepFailed(before, answer({ failed: ["problems", "instances"] }))
     expect(kept.total).toBe(60)

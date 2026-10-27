@@ -87,12 +87,16 @@ describe("worker install", () => {
     expect(proxy).toContain("cap_drop: [ALL]")
     expect(proxy).toContain("read_only: true")
     expect(proxy).not.toContain("ports:")
+    // No socket in the worker, so no socket group to join; another container goes into the exec group.
+    expect(compose).not.toContain("socket's group")
+    expect(compose).toContain("add its name to the (…|…) group in -allowPOST")
   })
 
   it("mounts the socket in the worker without the proxy, with no group to fill in", () => {
     const { compose } = workerInstall({ ...base, socketProxy: false, containers: [] })
     expect(compose).not.toContain("socket-proxy")
     expect(compose).not.toContain("group_add")
+    expect(compose).toContain("join the Docker socket's group")
     expect(compose).toContain("- /var/run/docker.sock:/var/run/docker.sock")
   })
 })

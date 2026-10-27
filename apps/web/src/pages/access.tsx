@@ -62,6 +62,18 @@ export type AccessRow = {
   notifyError: string | null
 }
 
+/** Who decided and where, as people know them: a Telegram user without the "telegram:" mark, as the messages say. */
+const decidedWhere: Record<string, string> = {
+  web: "in n8n-ops",
+  telegram: "on Telegram",
+  email: "through the email link",
+}
+const decider = (r: AccessRow) => {
+  const who = (r.decidedBy ?? "someone").replace(/^telegram:/, "")
+  const where = r.decidedVia ? decidedWhere[r.decidedVia] : undefined
+  return where ? `${who} ${where}` : who
+}
+
 type AccessDetail = AccessRow & {
   calls: { id: string; at: string; method: string; path: string; status: number; refused: string | null }[]
 }
@@ -162,7 +174,7 @@ export function AccessPage() {
       ) : shown.length === 0 ? (
         <Panel>
           <Empty title={view === "open" ? "Nothing is waiting or active." : "No requests yet."}>
-            An agent with a token that may request access asks here; you approve it in the app, on Telegram or by email.
+            Agents allowed to request access ask here. You approve each request here or on Telegram.
           </Empty>
         </Panel>
       ) : items ? (
@@ -285,7 +297,7 @@ function AccessDetailPanel({ id }: { id: string }) {
             <UserText>{r.instance}</UserText>
           </Badge>
           <Badge variant="line">
-            token: <UserText>{r.token}</UserText>
+            Agent: <UserText>{r.token}</UserText>
           </Badge>
           {/* A failed refresh keeps the request on screen and says so here (TB-5, LD-12). */}
           <span className="ms-auto text-small">
@@ -304,15 +316,18 @@ function AccessDetailPanel({ id }: { id: string }) {
           )}
           {r.status === "approved" && r.expiresAt && (
             <>
-              Approved by {r.decidedBy} ({r.decidedVia}). Ends {formatTime(r.expiresAt, w, { seconds: false })} (
+              Approved by {decider(r)}. Ends {formatTime(r.expiresAt, w, { seconds: false })} (
               <TimeLeft value={r.expiresAt} />
-              ). {r.keyCollected ? "The agent has collected the key." : "The agent has not collected the key yet."}
+              ).{" "}
+              {r.keyCollected
+                ? "The agent has collected the access key."
+                : "The agent has not collected the access key yet."}
             </>
           )}
           {r.status !== "pending" && r.status !== "approved" && (
             <>
               {statusOf("access", r.status).label}
-              {r.decidedBy ? ` · decided by ${r.decidedBy} (${r.decidedVia})` : ""}
+              {r.decidedBy ? ` · decided by ${decider(r)}` : ""}
               {r.endedAt ? ` · ended ${formatTime(r.endedAt, w, { seconds: false })}` : ""}
             </>
           )}
@@ -410,7 +425,7 @@ function AccessDetailPanel({ id }: { id: string }) {
           )}
           {r.keyPrefix && (
             <p className="flex items-center gap-1.5 text-muted-foreground">
-              <KeyRound className="size-4" /> Key{" "}
+              <KeyRound className="size-4" /> Access key{" "}
               <Copyable value={r.keyPrefix} label="Copy key prefix" className="text-small">
                 {r.keyPrefix}…
               </Copyable>
@@ -470,7 +485,7 @@ function Notified({ r }: { r: AccessRow }) {
       {sent.length ? (
         `Sent to ${sent.join(" and ")}.`
       ) : (
-        <>Not sent anywhere yet: connect Telegram or email in Settings → Notifications.</>
+        <>Not sent anywhere yet. Turn on requests for Telegram or email in Settings → Agent Access.</>
       )}
       {r.notifyError && <span className="block font-semibold text-fail">Last attempt failed: {r.notifyError}</span>}
     </p>

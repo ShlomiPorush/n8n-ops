@@ -31,7 +31,9 @@ try {
 }
 const { key, created } = await loadOrCreateAppKey(config.appKeyPath)
 if (created)
-  log.warn("Created a new app secrets key. Download a copy from Settings > Keys.", { path: config.appKeyPath })
+  log.warn("Created a new app secrets key. Download a copy from Settings → Encryption Keys.", {
+    path: config.appKeyPath,
+  })
 
 const ctx: Ctx = {
   db: database.db,

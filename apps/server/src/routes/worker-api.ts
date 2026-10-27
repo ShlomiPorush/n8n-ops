@@ -82,7 +82,7 @@ export function workerApiRoutes(ctx: Ctx) {
       return c.json({ error: "conflict", message: "This backup run no longer takes an archive." }, 409)
     const max = await maxArchiveBytes(ctx)
     if (body.data.size > max) {
-      const message = `The archive has ${Math.ceil(body.data.size / 1024 ** 2)} MiB, more than the ${max / 1024 ** 2} MiB allowed (Settings > Backup Destinations).`
+      const message = `The archive has ${Math.ceil(body.data.size / 1024 ** 2)} MiB, more than the ${max / 1024 ** 2} MiB allowed (Settings → Backup Destinations).`
       await failRun(ctx, runId, message)
       return c.json({ error: "too_large", message }, 413)
     }

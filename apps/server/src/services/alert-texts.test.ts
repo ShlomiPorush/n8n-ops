@@ -13,11 +13,11 @@ const text = (value: TelegramHtml) => String(value)
 
 describe("health alert texts", () => {
   it("keep their wording for ordinary values", () => {
-    expect(text(healthAlerts.down("prod", failed()))).toBe("<b>prod is not responding</b>\nHTTP 503")
+    expect(text(healthAlerts.down("prod", failed()))).toBe("<b>prod is down</b>\nHTTP 503")
     expect(text(healthAlerts.down("prod", failed("connect ECONNREFUSED")))).toBe(
-      "<b>prod is not responding</b>\nconnect ECONNREFUSED",
+      "<b>prod is down</b>\nconnect ECONNREFUSED",
     )
-    expect(text(healthAlerts.up("prod"))).toBe("<b>prod is responding again</b>")
+    expect(text(healthAlerts.up("prod"))).toBe("<b>prod is up again</b>")
     expect(text(healthAlerts.workerDown("prod", { ...failed(), url: "http://w1:5678/healthz" }))).toBe(
       "<b>Queue worker down on prod</b>\nhttp://w1:5678/healthz: HTTP 503",
     )
@@ -25,14 +25,14 @@ describe("health alert texts", () => {
       "<b>Queue worker back on prod</b>\nhttp://w1:5678/healthz",
     )
     expect(text(healthAlerts.backlog("prod", 42, 10))).toBe(
-      "<b>Queue backlog on prod</b>\n42 jobs waiting for more than 10 minutes",
+      "<b>Queue backlog on prod</b>\nBacklog of 42 waiting jobs for more than 10 minutes",
     )
     expect(text(healthAlerts.backlogCleared("prod"))).toBe("<b>Queue backlog cleared on prod</b>")
   })
 
   it("escape names, URLs and errors, so no markup gets in", () => {
     expect(text(healthAlerts.down("R&D <prod>", failed(link)))).toBe(
-      `<b>R&amp;D &lt;prod&gt; is not responding</b>\n${escapedLink}`,
+      `<b>R&amp;D &lt;prod&gt; is down</b>\n${escapedLink}`,
     )
     expect(text(healthAlerts.workerDown("prod", { ...failed(link), url: "http://w1/?a=1&b=<2>" }))).toBe(
       `<b>Queue worker down on prod</b>\nhttp://w1/?a=1&amp;b=&lt;2&gt;: ${escapedLink}`,
@@ -40,7 +40,7 @@ describe("health alert texts", () => {
     expect(text(healthAlerts.workerUp("<i>x</i>", "http://w1/<b>"))).toBe(
       "<b>Queue worker back on &lt;i&gt;x&lt;/i&gt;</b>\nhttp://w1/&lt;b&gt;",
     )
-    expect(text(healthAlerts.up("a&b"))).toBe("<b>a&amp;b is responding again</b>")
+    expect(text(healthAlerts.up("a&b"))).toBe("<b>a&amp;b is up again</b>")
     expect(text(healthAlerts.backlog("a&b", 1, 1))).toContain("on a&amp;b</b>")
     expect(text(healthAlerts.backlogCleared("a&b"))).toBe("<b>Queue backlog cleared on a&amp;b</b>")
   })
@@ -62,22 +62,30 @@ describe("backup alert texts", () => {
     expect(text(backupAlerts.failed("prod"))).toBe("<b>Backup failed on prod</b>\n")
     expect(text(backupAlerts.working("prod"))).toBe("<b>Backups of prod are working again</b>")
     expect(text(backupAlerts.stale("prod", 26))).toBe(
-      "<b>Backup is stale on prod</b>\nNo successful backup for more than 26 hours.",
+      "<b>No recent backup of prod</b>\nNo backup of prod from the last 26 hours succeeded.",
+    )
+    expect(text(backupAlerts.stale("prod", 1))).toBe(
+      "<b>No recent backup of prod</b>\nNo backup of prod from the last hour succeeded.",
     )
   })
 
   it("name the destination when only its copies are concerned", () => {
-    expect(text(backupAlerts.failed("prod", "timeout", "NAS"))).toBe("<b>Backup failed on prod to NAS</b>\ntimeout")
+    expect(text(backupAlerts.failed("prod", "timeout", "NAS"))).toBe(
+      "<b>Backup of prod could not be copied to NAS</b>\ntimeout",
+    )
     expect(text(backupAlerts.working("prod", "NAS & co"))).toBe(
       "<b>Backups of prod to NAS &amp; co are working again</b>",
     )
-    expect(text(backupAlerts.stale("prod", 26, "S3"))).toContain("<b>Backup is stale on prod to S3</b>")
+    expect(text(backupAlerts.stale("prod", 26, "S3"))).toBe(
+      "<b>No recent backup of prod on S3</b>\nNo backup of prod from the last 26 hours has been copied to S3.",
+    )
   })
 
   it("escape the name and the worker's error, and shorten the error", () => {
     expect(text(backupAlerts.failed("R&D", link))).toBe(`<b>Backup failed on R&amp;D</b>\n${escapedLink}`)
     expect(text(backupAlerts.working("<prod>"))).toBe("<b>Backups of &lt;prod&gt; are working again</b>")
-    expect(text(backupAlerts.stale("<prod>", 1))).toContain("stale on &lt;prod&gt;</b>")
+    expect(text(backupAlerts.stale("<prod>", 1))).toContain("backup of &lt;prod&gt;</b>")
+    expect(text(backupAlerts.failed("prod", "timeout", "<NAS>"))).toContain("copied to &lt;NAS&gt;</b>")
     expect(text(backupAlerts.failed("prod", "x".repeat(5000))).split("\n")[1]).toHaveLength(500)
   })
 })
@@ -129,9 +137,7 @@ describe("clip", () => {
 
 describe("telegramPlainText", () => {
   it("reads an alert back as the text it was made from", () => {
-    expect(telegramPlainText(healthAlerts.down("R&D <prod>", failed(link)))).toBe(
-      `R&D <prod> is not responding · ${link}`,
-    )
+    expect(telegramPlainText(healthAlerts.down("R&D <prod>", failed(link)))).toBe(`R&D <prod> is down · ${link}`)
   })
 
   it("reads any value back exactly", () => {
@@ -158,7 +164,7 @@ describe("the Overview's backup item", () => {
       kind: "backup",
       id: "i1",
       name: "R&D <prod>",
-      detail: "Backup is stale on R&D <prod> · No successful backup for more than 26 hours.",
+      detail: "No recent backup of R&D <prod> · No backup of R&D <prod> from the last 26 hours succeeded.",
       at: since,
     })
   })

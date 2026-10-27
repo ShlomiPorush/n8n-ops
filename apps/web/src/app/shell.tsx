@@ -586,7 +586,7 @@ function UserMenu({ compact }: { compact?: boolean }) {
             navigate("/login", { replace: true })
           }}
         >
-          <LogOut /> Log out
+          <LogOut /> Sign out
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

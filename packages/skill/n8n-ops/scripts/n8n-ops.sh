@@ -157,8 +157,12 @@ install_id() {
 
 # Only this user may open the folder and its files; never loosened or fixed silently.
 check_private() {
-  [ -L "$1" ] && fail insecure_credentials "$1 must be plain, not a link."
-  [ -O "$1" ] || fail insecure_credentials "$1 belongs to another user. Use a folder of your own."
+  if [ -L "$1" ]; then
+    if [ -d "$1" ]; then fail insecure_credentials "$1 must be a plain folder, not a link."; else fail insecure_credentials "$1 must be a plain file, not a link."; fi
+  fi
+  if [ ! -O "$1" ]; then
+    if [ -d "$1" ]; then fail insecure_credentials "$1 belongs to another user. Use a folder of your own."; else fail insecure_credentials "$1 belongs to another user."; fi
+  fi
   # The mode string itself is what is checked; the path is ours.
   # shellcheck disable=SC2012
   mode=$(ls -ld "$1" | cut -c5-11)
@@ -171,7 +175,7 @@ check_private() {
 secure_dir() {
   [ "$SECURED" = 1 ] && return 0
   mkdir -p "$DIR" 2>/dev/null || fail cannot_save "Cannot create $DIR. Allow this agent to write there."
-  [ -d "$DIR" ] || fail insecure_credentials "$DIR must be a plain folder."
+  [ -d "$DIR" ] || fail insecure_credentials "$DIR must be a plain folder, not a link."
   check_private "$DIR"
   SECURED=1
   # Temp files of commands that were killed (their own cleanup never ran).
@@ -206,7 +210,7 @@ record_clear() {
 record_read() {
   record_clear
   [ -e "$FILE" ] || return 1
-  [ -f "$FILE" ] || fail insecure_credentials "$FILE must be a plain file."
+  [ -f "$FILE" ] || fail insecure_credentials "$FILE must be a plain file, not a link."
   check_private "$FILE"
   grep -q '^{' "$FILE" || fail insecure_credentials "$FILE is damaged. Delete it and connect again."
   for f in $FIELDS; do
@@ -617,7 +621,7 @@ access_token() {
     else
       record_remove
     fi
-    fail connection_ended "This connection has ended (disconnected in n8n-ops, unused for 90 days, or its token was used twice). Run: n8n-ops connect"
+    fail connection_ended "This connection has ended (disconnected in n8n-ops, unused for 90 days, the n8n-ops address changed, or its refresh token was used twice). Run: n8n-ops connect"
   fi
   # n8n-ops answered with an error before spending the token (a 4xx); a 5xx may have come after.
   if [ "$STATUS" -lt 500 ]; then
@@ -674,7 +678,7 @@ cmd_api() {
       ;;
   esac
   if [ "$STATUS" = 403 ] && [ "$(jstr error "$RESP")" = not_allowed ]; then
-    fail insufficient_scope "This agent was connected without instance access. Ask the person, then run: n8n-ops connect --replace"
+    fail insufficient_scope "This agent may not request access to n8n instances. Ask the person to allow it, then run: n8n-ops connect --replace"
   fi
   http_fail "$method ${2:-}"
 }
@@ -693,7 +697,7 @@ cmd_disconnect() {
   if [ -n "$left" ]; then
     R_refreshToken='' R_accessToken='' R_accessExpiresAt=0 R_toRevoke=$(printf '%s' "$left" | sed 's/^ *//')
     record_write
-    fail disconnect_failed "n8n-ops did not confirm the disconnect. Run it again, or disconnect this agent in n8n-ops Settings."
+    fail disconnect_failed "n8n-ops did not confirm the disconnect. Run it again, or disconnect this agent on the Connected Agents page of n8n-ops."
   fi
   record_remove
   printf '{"status":"disconnected"}\n'

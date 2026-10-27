@@ -36,7 +36,7 @@ export function AccountPage() {
   return (
     <Page
       title="Account"
-      description={`Your password and two-factor sign-in. Signed in as ${username ?? ""}.`}
+      description={`Your password and two-factor sign-in.${username ? ` Signed in as ${username}.` : ""}`}
       className="max-w-3xl"
     >
       <Panel>

@@ -225,7 +225,7 @@ function Protect-Dir([string]$dir) {
       if ($other) { Fail 'insecure_credentials' "Others can open $dir ($other). Remove their access." }
     } finally { if ([IO.File]::Exists($saved)) { [IO.File]::Delete($saved) } }
   } catch [OpsFail] { throw } catch {
-    Fail 'insecure_credentials' "Could not limit $dir to your user ($($_.Exception.Message))."
+    Fail 'insecure_credentials' "Could not limit $dir to your user (icacls failed)."
   }
   $script:Secured = $true
 }
@@ -233,7 +233,7 @@ function Protect-Dir([string]$dir) {
 function Test-PlainFile([string]$file) {
   $item = Get-Item -LiteralPath $file -Force
   if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $item.PSIsContainer) {
-    Fail 'insecure_credentials' "$file must be a plain file."
+    Fail 'insecure_credentials' "$file must be a plain file, not a link."
   }
 }
 
@@ -665,7 +665,7 @@ function Get-AccessToken($ctx, [string]$stale) {
       # An old connection still to be ended (after --replace) keeps its place until n8n-ops confirms it.
       if ($rec.toRevoke) { Write-Record $ctx (Merge (New-Record $ctx) @{ label = $rec.label; toRevoke = $rec.toRevoke }) }
       else { Remove-Record $ctx }
-      Fail 'connection_ended' 'This connection has ended (disconnected in n8n-ops, unused for 90 days, or its token was used twice). Run: n8n-ops connect'
+      Fail 'connection_ended' 'This connection has ended (disconnected in n8n-ops, unused for 90 days, the n8n-ops address changed, or its refresh token was used twice). Run: n8n-ops connect'
     }
     # n8n-ops answered with an error before spending the token (a 4xx); a 5xx may have come after.
     if ($r.status -lt 500) { Write-Record $ctx (Merge $rec $before) }
@@ -699,7 +699,7 @@ function Invoke-Api($ctx, [string]$method, [string]$p, $json) {
     return
   }
   if ($r.status -eq 403 -and (Get-Field $r 'error') -eq 'not_allowed') {
-    Fail 'insufficient_scope' 'This agent was connected without instance access. Ask the person, then run: n8n-ops connect --replace'
+    Fail 'insufficient_scope' 'This agent may not request access to n8n instances. Ask the person to allow it, then run: n8n-ops connect --replace'
   }
   throw (New-HttpFail $r "$method $p")
 }
@@ -718,7 +718,7 @@ function Invoke-Disconnect($ctx) {
     }
     if ($left.Count) {
       Write-Record $ctx (Merge $rec @{ refreshToken = ''; accessToken = ''; accessExpiresAt = [long]0; toRevoke = ($left -join ' ') })
-      Fail 'disconnect_failed' 'n8n-ops did not confirm the disconnect. Run it again, or disconnect this agent in n8n-ops Settings.'
+      Fail 'disconnect_failed' 'n8n-ops did not confirm the disconnect. Run it again, or disconnect this agent on the Connected Agents page of n8n-ops.'
     }
     Remove-Record $ctx
     Write-Json ([ordered]@{ status = 'disconnected' })

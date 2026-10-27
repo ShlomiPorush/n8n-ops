@@ -45,7 +45,7 @@ Retention is set per destination: the newest archive of each of the last N days,
 
 In each n8n instance: Settings → n8n API → create an API key. "Read only" is enough to monitor; moving and restoring workflows also needs `workflow:create`, `workflow:activate` and `credential:create`. n8n-ops reads the key's scopes (n8n 2.14 or later) and turns features on or off to match.
 
-For a queue-mode instance, set `N8N_METRICS=true` and `N8N_METRICS_INCLUDE_QUEUE_METRICS=true` on the main process and `QUEUE_HEALTH_CHECK_ACTIVE=true` on the workers, then add the metrics and worker health URLs.
+For a queue-mode instance, set `N8N_METRICS=true` and `N8N_METRICS_INCLUDE_QUEUE_METRICS=true` on the main process and `QUEUE_HEALTH_CHECK_ACTIVE=true` on the workers, then add the worker health URLs. n8n-ops reads the queue from `/metrics` of the base URL; set a metrics URL only when n8n serves it elsewhere.
 
 ## The worker (optional, one per n8n Docker host)
 

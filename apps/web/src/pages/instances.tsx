@@ -4,9 +4,11 @@ import {
   Bug as BugIcon,
   CircleCheck as CircleCheckIcon,
   CircleX as CircleXIcon,
+  Container as ContainerIcon,
   Download,
   Ellipsis,
   ExternalLink,
+  Globe as GlobeIcon,
   HeartPulse as HeartPulseIcon,
   Hourglass as HourglassIcon,
   KeyRound as KeyRoundIcon,
@@ -98,6 +100,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Tip } from "@/components/ui/tooltip"
 import { api, describeError, queryClient, useApi, useApiMutation } from "@/lib/api"
+import { type CollectionView, collectionView } from "@/lib/collection"
 import { loadView } from "@/lib/load-state"
 import { healthCounts, n, plural } from "@/lib/numbers"
 import { useNavigateFromOverlay } from "@/lib/overlay-history"
@@ -124,6 +127,8 @@ export type InstanceRow = {
   workerId: string | null
   queueMode: boolean
   metricsUrl: string | null
+  /** Where the queue metrics are read: metricsUrl, or /metrics of the base URL in queue mode. */
+  effectiveMetricsUrl: string | null
   workerHealthUrls: string[]
   collection: "direct" | "worker"
   version: string | null
@@ -151,10 +156,10 @@ export type InstanceRow = {
   agentAccess: { enabled: boolean; scopes: string[] }
   openProblems: number
   lastBackup?: { status: string; at: string } | null
+  worker: { id: string; name: string; lastSeenAt: string | null; online: boolean } | null
 }
 
 type InstanceDetailData = InstanceRow & {
-  worker: { id: string; name: string; lastSeenAt: string | null } | null
   workflowCounts: { total: number; active: number; runs30d: number }
   effectiveSettings: Record<string, number | string>
   latestVersion: string | null
@@ -278,7 +283,12 @@ export function InstancesPage() {
                   <TableRow key={i.id} {...rowProps(i)}>
                     <ItemRow
                       lead={<Dot health={i.health} />}
-                      title={<UserText>{i.name}</UserText>}
+                      title={
+                        <span className="flex min-w-0 items-center gap-2">
+                          <UserText className="truncate">{i.name}</UserText>
+                          <CollectionTag instance={i} />
+                        </span>
+                      }
                       titleText={i.name}
                       end={
                         i.openProblems > 0 ? (
@@ -342,10 +352,11 @@ export function InstancesPage() {
               <TableBody>
                 {sort.rows.map((i) => (
                   <TableRow key={i.id} {...rowProps(i)}>
-                    <TableCell className="max-w-56 font-semibold" truncate title={i.name}>
+                    <TableCell className="max-w-80 font-semibold" truncate title={i.name}>
                       <span className="flex items-center gap-2">
                         <Dot health={i.health} />
                         <UserText className="truncate">{i.name}</UserText>
+                        <CollectionTag instance={i} />
                       </span>
                     </TableCell>
                     <TableCell>
@@ -486,10 +497,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
       <AlertDescription className="font-mono text-small break-words">{i.lastPollError}</AlertDescription>
     </Alert>
   )
-  const collected =
-    i.collection === "worker"
-      ? `Collected on the host by ${i.worker?.name ?? "the assigned worker"}`
-      : "Checked from the n8n-ops server"
+  const collected = collectionView({ collection: i.collection, worker: i.worker, via: hd?.via })
 
   const tabs: PaneTabItem[] = [
     { value: "overview", icon: LayoutDashboardIcon, label: "Overview" },
@@ -625,9 +633,10 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
           <Panel>
             <PanelHead
               title="Health"
+              action={<CollectionTag instance={i} />}
               description={
                 <>
-                  {collected}. Health checked <TimeAgo value={i.healthCheckedAt} />, failures checked{" "}
+                  {collected.sentence}. Health checked <TimeAgo value={i.healthCheckedAt} />, failures checked{" "}
                   <TimeAgo value={i.lastPollAt} />.
                 </>
               }
@@ -655,31 +664,15 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
             {hd?.metricsError && (
               <div className="border-t border-line px-pad-x py-pad-y text-warn">Queue metrics: {hd.metricsError}</div>
             )}
-            {i.queueMode && (!i.metricsUrl || i.workerHealthUrls.length === 0) && (
+            {i.queueMode && i.workerHealthUrls.length === 0 && (
               <div className="border-t border-line p-pad-x">
                 <Alert variant="info">
-                  <AlertTitle>
-                    {!i.metricsUrl && i.workerHealthUrls.length === 0
-                      ? "Queue mode is on, but n8n-ops has nothing to read about the queue or its workers"
-                      : !i.metricsUrl
-                        ? "The queue backlog is not checked"
-                        : "The queue workers are not checked"}
-                  </AlertTitle>
+                  <AlertTitle>The queue workers are not checked</AlertTitle>
                   <AlertDescription>
-                    <ul className="list-disc space-y-1 ps-4">
-                      {!i.metricsUrl && (
-                        <li>
-                          Queue backlog: add the metrics URL, and set <code>N8N_METRICS=true</code> and{" "}
-                          <code>N8N_METRICS_INCLUDE_QUEUE_METRICS=true</code> on the main process.
-                        </li>
-                      )}
-                      {i.workerHealthUrls.length === 0 && (
-                        <li>
-                          Workers: add their health URLs, and set <code>QUEUE_HEALTH_CHECK_ACTIVE=true</code> on them.
-                          Workers are usually reachable only on their host, so this often needs an n8n-ops worker there.
-                        </li>
-                      )}
-                    </ul>
+                    <p>
+                      Add their health URLs, and set <code>QUEUE_HEALTH_CHECK_ACTIVE=true</code> on them. Workers are
+                      usually reachable only on their host, so this often needs an n8n-ops worker there.
+                    </p>
                     <Button size="sm" className="mt-3" onClick={() => setEditing(true)}>
                       <Pencil /> Edit instance
                     </Button>
@@ -774,7 +767,26 @@ function UnsavedMark() {
 }
 
 /** The state of the instance in one line of cells: what a health check found, worst in colour. */
-function StatusStrip({ instance: i, footer }: { instance: InstanceDetailData; footer: string }) {
+/**
+ * Where the health of an instance is checked from, beside its name in the list and on its page: a globe when the
+ * n8n-ops server checks it over the web, a container when the worker on the n8n host does. An outline while checks
+ * run, the tone when nothing is checked (worker offline or missing). The sentence of collectionView is its tooltip.
+ */
+function CollectionTag({ instance: i }: { instance: InstanceRow }) {
+  const view = collectionView({ collection: i.collection, worker: i.worker, via: i.healthDetail?.via })
+  const Icon = i.collection === "worker" ? ContainerIcon : GlobeIcon
+  const variant = view.tone === "warn" || view.tone === "fail" ? view.tone : "line"
+  return (
+    <Tip content={view.sentence}>
+      <Badge variant={variant} className="max-w-40">
+        <Icon aria-hidden />
+        <span className="truncate">{view.tag}</span>
+      </Badge>
+    </Tip>
+  )
+}
+
+function StatusStrip({ instance: i, footer }: { instance: InstanceDetailData; footer: CollectionView }) {
   const hd = i.healthDetail
   const check = (ok: boolean | undefined): HealthState => (ok === undefined ? "unknown" : ok ? "ok" : "down")
   const cells: { label: string; health: HealthState; value: React.ReactNode }[] = [
@@ -797,7 +809,7 @@ function StatusStrip({ instance: i, footer }: { instance: InstanceDetailData; fo
       value: hd?.workers ? `${n(up)} of ${n(hd.workers.length)} up` : "not checked",
     })
   }
-  if (i.queueMode && i.metricsUrl) {
+  if (i.effectiveMetricsUrl) {
     cells.push({
       label: "Queue",
       health: hd?.queue ? (hd.backlogActive ? "warn" : "ok") : hd?.metricsError ? "warn" : "unknown",
@@ -845,7 +857,10 @@ function StatusStrip({ instance: i, footer }: { instance: InstanceDetailData; fo
             Failures checked <TimeAgo value={i.lastPollAt} />
           </>
         )}{" "}
-        · {footer}
+        ·{" "}
+        <span className={cn(footer.tone === "fail" && "text-fail", footer.tone === "warn" && "text-warn")}>
+          {footer.sentence}
+        </span>
       </p>
     </Panel>
   )
@@ -1215,15 +1230,16 @@ export function InstanceDialog({
             {form.queueMode && (
               <>
                 <Field>
-                  <FieldLabel htmlFor="i-metrics">Metrics URL</FieldLabel>
+                  <FieldLabel htmlFor="i-metrics">Metrics URL (optional)</FieldLabel>
                   <Input
                     id="i-metrics"
                     value={form.metricsUrl}
                     onChange={(e) => set("metricsUrl", e.target.value)}
-                    placeholder="http://n8n-main:5678/metrics"
+                    placeholder={`${form.baseUrl.trim().replace(/\/+$/, "") || "https://n8n.example.com"}/metrics`}
                   />
                   <FieldDescription>
-                    Needs N8N_METRICS=true and N8N_METRICS_INCLUDE_QUEUE_METRICS=true on the main process.
+                    Empty reads /metrics of the base URL. Needs N8N_METRICS=true and
+                    N8N_METRICS_INCLUDE_QUEUE_METRICS=true on the main process.
                   </FieldDescription>
                 </Field>
                 <Field>

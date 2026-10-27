@@ -3,7 +3,7 @@ import { EventEmitter } from "node:events"
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { asc, eq } from "drizzle-orm"
+import { asc, desc, eq } from "drizzle-orm"
 import postgres from "postgres"
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { Ctx, Logger } from "../context.ts"
@@ -18,7 +18,7 @@ import {
   handleTelegramCallback,
   sendTestTelegram,
 } from "./alerts.ts"
-import { errorFingerprint, splitAffectedWorkflow } from "./problems.ts"
+import { errorFingerprint, mergeProblems, splitAffectedWorkflow } from "./problems.ts"
 import { html } from "./telegram.ts"
 
 // Forum topics end to end against a real PostgreSQL: routing when an alert is queued, grouping and edits per topic,
@@ -494,6 +494,30 @@ describe("Telegram forum topics", () => {
     expect(last).toContain("<b>Now in 2 workflows</b>")
     expect(last).toContain("Import leads")
     expect(last).not.toContain("Sync orders")
+  })
+
+  it("a later message keeps its short title when pressed, also after its Problem was merged", async () => {
+    const t = await setup({ defaultThreadId: 7 })
+    const first = await t.problem(t.a.id, "Sync orders")
+    await t.enqueue(first)
+    await t.dispatch()
+    await t.db.update(alertGroups).set({ createdAt: new Date(Date.now() - 3 * 3600_000) })
+    await t.enqueue(await t.problem(t.b.id, "Import leads"), "joined")
+    await t.dispatch()
+    const other = await t.problem(t.a.id, "Update stock", "another error")
+    await mergeProblems(t.ctx, first.problemId, other.problemId)
+    const [later] = await t.db.select().from(alertGroups).orderBy(desc(alertGroups.createdAt)).limit(1)
+    await handleTelegramCallback(t.ctx, {
+      callback_query: {
+        id: "cb-later",
+        data: `r:${later?.id}`,
+        from: { id: 1, username: "ops" },
+        message: { message_id: later?.telegramMessageId ?? 0, chat: { id: "-100" } },
+      },
+    })
+    const pressed = String(bot.edits().at(-1)?.body.text)
+    expect(pressed).toContain("<b>Now in 3 workflows</b>")
+    expect(pressed).toContain("Resolved by @ops")
   })
 
   it("a workflow split away is never listed in its old Problem's message again", async () => {

@@ -250,9 +250,10 @@ async function stillIn(ctx: Ctx, problemId: string, ids: string[]) {
 
 /**
  * Whether a message of a Problem is a later one (another message of the Problem came before it), and then how many
- * workflows the Problem is in: a later message keeps its short form in every edit.
+ * workflows the Problem is in (`countIn`, the Problem it went into after a Merge): a later message keeps its short
+ * form in every edit.
  */
-async function spreadOf(ctx: Ctx, problemId: string, before?: Date) {
+async function spreadOf(ctx: Ctx, problemId: string, before?: Date, countIn = problemId) {
   const [earlier] = await ctx.db
     .select({ id: alertGroups.id })
     .from(alertGroups)
@@ -264,7 +265,7 @@ async function spreadOf(ctx: Ctx, problemId: string, before?: Date) {
       ),
     )
     .limit(1)
-  return earlier ? { workflows: await workflowCount(ctx, problemId) } : undefined
+  return earlier ? { workflows: await workflowCount(ctx, countIn) } : undefined
 }
 
 async function groupButtons(ctx: Ctx, groupId: string, problemId?: string | null): Promise<InlineButton[][]> {
@@ -567,7 +568,10 @@ export async function handleTelegramCallback(ctx: Ctx, update: CallbackUpdate): 
           lines,
           html`<i>${action === "r" ? "Resolved" : "Muted for 24 hours"} by ${who}</i>`,
           groupNote(group),
-          group.problemId && problemIds[0] ? await spreadOf(ctx, problemIds[0], group.createdAt) : undefined,
+          // Its form by its own history, its count by the Problem it is in now (a Merge may have moved it).
+          group.problemId && problemIds[0]
+            ? await spreadOf(ctx, group.problemId, group.createdAt, problemIds[0])
+            : undefined,
         ),
       )
     } catch (error) {

@@ -52,7 +52,7 @@ describe("collectionView", () => {
   it("warns when the worker is offline, and fails when there is none", () => {
     const offline = collectionView({ collection: "worker", worker: { name: "host-a", online: false } })
     expect(offline).toMatchObject({ tone: "warn", tag: "Worker offline" })
-    expect(offline.sentence).toContain("not updated")
+    expect(offline.sentence).toContain("its health is unknown")
     expect(collectionView({ collection: "worker", worker: null })).toMatchObject({ tone: "fail", tag: "No worker" })
   })
 

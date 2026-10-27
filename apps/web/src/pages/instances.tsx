@@ -138,7 +138,12 @@ export type InstanceRow = {
   scopesSource: "discovered" | "declared"
   declaredAccess: "read" | "write" | null
   scopesCheckedAt: string | null
+  /** The health now: "unknown" also when nothing collects it (unknownReason). */
   health: HealthState
+  /** While the health is unknown, the health of the last check that read the instance, and when; null if none. */
+  lastKnownHealth: HealthState | null
+  lastKnownAt: string | null
+  unknownReason: string | null
   healthDetail: {
     main?: { ok: boolean; status: number; error?: string }
     readiness?: { ok: boolean }
@@ -178,18 +183,45 @@ type InstanceDetailData = InstanceRow & {
 /** Worse first when sorted high to low: down, needs a look, not checked, healthy. */
 const severity: Record<HealthState, number> = { down: 3, warn: 2, unknown: 1, ok: 0 }
 
-const healthLabel = (i: Pick<InstanceRow, "health" | "healthDetail">) =>
-  i.health === "down"
+const readingLabel = (health: HealthState, d: InstanceRow["healthDetail"]) =>
+  health === "down"
     ? "Not responding"
-    : i.health === "warn"
-      ? i.healthDetail?.backlogActive
+    : health === "warn"
+      ? d?.backlogActive
         ? "Queue backlog"
-        : i.healthDetail?.workers?.some((w) => !w.ok)
-          ? "Worker down"
+        : d?.workers?.some((w) => !w.ok)
+          ? "Queue worker down"
           : "Not ready"
-      : i.health === "ok"
+      : health === "ok"
         ? "Healthy"
         : "Not checked yet"
+
+/** The health now in words: Unknown when nothing collects it, never the last known health. */
+export const healthLabel = (i: Pick<InstanceRow, "health" | "healthDetail" | "unknownReason">) =>
+  i.unknownReason ? "Unknown" : readingLabel(i.health, i.healthDetail)
+
+/** What the health was at the last check, beside Unknown: "Last known: Healthy, 2 h ago". */
+export function LastKnown({
+  instance: i,
+}: {
+  instance: Pick<InstanceRow, "lastKnownHealth" | "lastKnownAt" | "healthDetail">
+}) {
+  if (!i.lastKnownHealth) return null
+  // After a check that was not collected, the detail of the last reading is gone: only its general words.
+  const label = i.healthDetail?.notCollected
+    ? statusOf("health", i.lastKnownHealth).label
+    : readingLabel(i.lastKnownHealth, i.healthDetail)
+  return (
+    <span className="text-muted-foreground">
+      Last known: {label}
+      {i.lastKnownAt && (
+        <>
+          , <TimeAgo value={i.lastKnownAt} />
+        </>
+      )}
+    </span>
+  )
+}
 
 /** Whether the API key may change anything in n8n: any scope beyond listing and reading. */
 const canWrite = (i: Pick<InstanceRow, "effectiveScopes">) => i.effectiveScopes.some((s) => !/:(list|read)$/.test(s))
@@ -290,7 +322,7 @@ export function InstancesPage() {
                 {sort.rows.map((i) => (
                   <TableRow key={i.id} {...rowProps(i)}>
                     <ItemRow
-                      lead={<Dot health={i.health} />}
+                      lead={<Dot health={i.health} label={healthLabel(i)} />}
                       title={
                         <span className="flex min-w-0 items-center gap-2">
                           <UserText className="truncate">{i.name}</UserText>
@@ -313,6 +345,12 @@ export function InstancesPage() {
                             <StatusTag kind="health" status={i.health}>
                               {healthLabel(i)}
                             </StatusTag>
+                          )}
+                          {i.lastKnownHealth && (
+                            <>
+                              {" · "}
+                              <LastKnown instance={i} />
+                            </>
                           )}
                           {" · "}
                           {behind(i.version, latest) ? (
@@ -362,7 +400,7 @@ export function InstancesPage() {
                   <TableRow key={i.id} {...rowProps(i)}>
                     <TableCell className="max-w-80 font-semibold" truncate title={i.name}>
                       <span className="flex items-center gap-2">
-                        <Dot health={i.health} />
+                        <Dot health={i.health} label={healthLabel(i)} />
                         <UserText className="truncate">{i.name}</UserText>
                         <CollectionTag instance={i} />
                       </span>
@@ -371,9 +409,14 @@ export function InstancesPage() {
                       {i.health === "ok" ? (
                         <span className="text-muted-foreground">{healthLabel(i)}</span>
                       ) : (
-                        <StatusTag kind="health" status={i.health}>
-                          {healthLabel(i)}
-                        </StatusTag>
+                        <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                          <StatusTag kind="health" status={i.health}>
+                            {healthLabel(i)}
+                          </StatusTag>
+                          <span className="text-small">
+                            <LastKnown instance={i} />
+                          </span>
+                        </span>
                       )}
                     </TableCell>
                     <TableCell>
@@ -506,6 +549,8 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
     </Alert>
   )
   const collected = collectionView({ collection: i.collection, worker: i.worker, detail: hd })
+  // Nothing collects the health now: the checks shown are only the last known health (unless it was not collected).
+  const past = Boolean(i.unknownReason && i.lastKnownHealth && !hd?.notCollected)
 
   const tabs: PaneTabItem[] = [
     { value: "overview", icon: LayoutDashboardIcon, label: "Overview" },
@@ -537,6 +582,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
           <StatusTag kind="health" status={health}>
             {healthLabel(i)}
           </StatusTag>
+          <LastKnown instance={i} />
         </div>
         <p className="flex flex-wrap items-center gap-x-1.5 text-muted-foreground @min-[40rem]/pane:col-span-2">
           <Copyable value={i.baseUrl} label="Copy base URL" />
@@ -640,12 +686,27 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
           {pollError}
           <Panel>
             <PanelHead
-              title="Health"
+              title={past ? "Last known health" : "Health"}
               action={<CollectionTag instance={i} />}
               description={
                 <>
-                  {collected.sentence}. Health checked <TimeAgo value={i.healthCheckedAt} />, failures checked{" "}
-                  <TimeAgo value={i.lastPollAt} />.
+                  {collected.sentence}.{" "}
+                  {i.unknownReason ? (
+                    <>
+                      Health unknown: {i.unknownReason}.
+                      {past && (
+                        <>
+                          {" "}
+                          What follows was read <TimeAgo value={i.healthCheckedAt} />.
+                        </>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      Health checked <TimeAgo value={i.healthCheckedAt} />.
+                    </>
+                  )}{" "}
+                  Failures checked <TimeAgo value={i.lastPollAt} />.
                 </>
               }
             />
@@ -654,11 +715,13 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
               ok={hd?.notCollected ? undefined : hd?.main?.ok}
               detail={hd?.main?.error}
               unknown={hd?.notCollected ? "not collected" : undefined}
+              past={past}
             />
             <HealthRow
               label="Ready (/healthz/readiness)"
               ok={hd?.notCollected ? undefined : hd?.readiness?.ok}
               unknown={hd?.notCollected ? "not collected" : undefined}
+              past={past}
             />
             {hd?.source === "inside" && !hd.notCollected && (
               <div className="flex min-w-0 items-center gap-2.5 border-t border-line px-pad-x py-pad-y">
@@ -675,7 +738,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
               </div>
             )}
             {(hd?.workers ?? []).map((w) => (
-              <HealthRow key={w.url} label={`Worker ${w.url}`} ok={w.ok} detail={w.error} />
+              <HealthRow key={w.url} label={`Queue worker ${w.url}`} ok={w.ok} detail={w.error} past={past} />
             ))}
             {hd?.queue && (
               <div className="border-t border-line p-pad-x">
@@ -684,7 +747,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
                     label="Waiting"
                     icon={HourglassIcon}
                     value={hd.queue.waiting}
-                    tone={hd.backlogActive ? "fail" : undefined}
+                    tone={hd.backlogActive && !past ? "fail" : undefined}
                   />
                   <Kpi label="Active" icon={LoaderIcon} value={hd.queue.active} />
                   <Kpi label="Completed" icon={CircleCheckIcon} value={hd.queue.completed} />
@@ -693,7 +756,11 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
               </div>
             )}
             {hd?.metricsError && (
-              <div className="border-t border-line px-pad-x py-pad-y text-warn">Queue metrics: {hd.metricsError}</div>
+              <div
+                className={cn("border-t border-line px-pad-x py-pad-y", past ? "text-muted-foreground" : "text-warn")}
+              >
+                Queue metrics: {hd.metricsError}
+              </div>
             )}
             {hd?.notCollected && (
               <div className="border-t border-line px-pad-x py-pad-y text-warn">
@@ -717,8 +784,8 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
                   <AlertTitle>The queue workers are not checked</AlertTitle>
                   <AlertDescription>
                     <p>
-                      Add their health URLs, and set <code>QUEUE_HEALTH_CHECK_ACTIVE=true</code> on them. Workers are
-                      usually reachable only on their host, so this often needs an n8n-ops worker there.
+                      Add their health URLs, and set <code>QUEUE_HEALTH_CHECK_ACTIVE=true</code> on them. Queue workers
+                      are usually reachable only on their host, so this often needs an n8n-ops worker there.
                     </p>
                     <Button size="sm" className="mt-3" onClick={() => setEditing(true)}>
                       <Pencil /> Edit instance
@@ -835,6 +902,9 @@ function CollectionTag({ instance: i }: { instance: InstanceRow }) {
 
 function StatusStrip({ instance: i, footer }: { instance: InstanceDetailData; footer: CollectionView }) {
   const hd = i.healthDetail
+  // While the health is unknown, the cells are the last check and are drawn without their tone.
+  const past = Boolean(i.unknownReason)
+  const read = Boolean(i.lastKnownHealth && !hd?.notCollected)
   // A check that could not run says nothing about n8n: its parts show as unknown, not as failures.
   const check = (ok: boolean | undefined): HealthState =>
     ok === undefined || hd?.notCollected ? "unknown" : ok ? "ok" : "down"
@@ -859,7 +929,7 @@ function StatusStrip({ instance: i, footer }: { instance: InstanceDetailData; fo
   if (i.workerHealthUrls.length > 0) {
     const up = (hd?.workers ?? []).filter((w) => w.ok).length
     cells.push({
-      label: "Workers",
+      label: "Queue workers",
       health: hd?.workers ? (up === hd.workers.length ? "ok" : "down") : "unknown",
       value: hd?.workers ? `${n(up)} of ${n(hd.workers.length)} up` : "not checked",
     })
@@ -880,27 +950,45 @@ function StatusStrip({ instance: i, footer }: { instance: InstanceDetailData; fo
   return (
     <Panel>
       <div className={cn("grid gap-px bg-line", cols)}>
-        {cells.map((c) => (
-          <div key={c.label} className="flex min-w-0 items-baseline gap-2.5 bg-panel px-pad-x py-pad-y">
-            <Dot health={c.health} />
-            <div className="min-w-0">
-              <div className="text-small text-muted-foreground">{c.label}</div>
-              <div
-                className={cn(
-                  "truncate font-semibold",
-                  c.health === "down" && "text-fail",
-                  c.health === "warn" && "text-warn",
-                  c.health === "unknown" && "font-normal text-muted-foreground",
-                )}
-              >
-                {c.value}
+        {cells.map((c) => {
+          const health = past ? "unknown" : c.health
+          return (
+            <div key={c.label} className="flex min-w-0 items-baseline gap-2.5 bg-panel px-pad-x py-pad-y">
+              <Dot health={health} label={past && read ? `${c.value} at the last check` : undefined} />
+              <div className="min-w-0">
+                <div className="text-small text-muted-foreground">{c.label}</div>
+                <div
+                  className={cn(
+                    "truncate font-semibold",
+                    health === "down" && "text-fail",
+                    health === "warn" && "text-warn",
+                    health === "unknown" && "font-normal text-muted-foreground",
+                  )}
+                >
+                  {c.value}
+                </div>
               </div>
             </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
       <p className="border-t border-line px-pad-x py-1.5 text-small break-words text-muted-foreground">
-        Health checked <TimeAgo value={i.healthCheckedAt} /> ·{" "}
+        {past ? (
+          <>
+            Health unknown: {i.unknownReason}.
+            {i.lastKnownHealth && (
+              <>
+                {" "}
+                Last known health, read <TimeAgo value={i.lastKnownAt} />
+              </>
+            )}
+          </>
+        ) : (
+          <>
+            Health checked <TimeAgo value={i.healthCheckedAt} />
+          </>
+        )}{" "}
+        ·{" "}
         {i.lastPollError ? (
           // The whole error is in the Health tab; here it takes the place of the time failures were read.
           <span className="text-fail">
@@ -1069,13 +1157,33 @@ const metricsWords = {
   skipped: "from the metrics URL you set",
 } as const
 
-function HealthRow({ label, ok, detail, unknown }: { label: string; ok?: boolean; detail?: string; unknown?: string }) {
+/** One check of the instance; `past` when it is from the last known health, so it is drawn without its tone. */
+function HealthRow({
+  label,
+  ok,
+  detail,
+  unknown,
+  past,
+}: {
+  label: string
+  ok?: boolean
+  detail?: string
+  unknown?: string
+  past?: boolean
+}) {
+  const result = ok === undefined ? (unknown ?? "not checked") : ok ? "ok" : (detail ?? "failed")
   return (
     <div className="flex min-w-0 items-center gap-2.5 border-t border-line px-pad-x py-pad-y">
-      <Dot health={ok === undefined ? "unknown" : ok ? "ok" : "down"} />
+      {past ? (
+        <Dot health="unknown" label={`${result} at the last check`} />
+      ) : (
+        <Dot health={ok === undefined ? "unknown" : ok ? "ok" : "down"} />
+      )}
       <span className="min-w-0 break-words">{label}</span>
-      <span className={cn("ms-auto text-end", ok === false ? "font-semibold text-fail" : "text-muted-foreground")}>
-        {ok === undefined ? (unknown ?? "not checked") : ok ? "ok" : (detail ?? "failed")}
+      <span
+        className={cn("ms-auto text-end", ok === false && !past ? "font-semibold text-fail" : "text-muted-foreground")}
+      >
+        {result}
       </span>
     </div>
   )
@@ -1295,7 +1403,7 @@ export function InstanceDialog({
             <SwitchRow
               id="i-queue"
               title="Queue mode"
-              description="Main process plus separate workers using Redis."
+              description="Main process plus separate queue workers using Redis."
               checked={form.queueMode}
               onCheckedChange={(v) => set("queueMode", v)}
               disabled={modeFound}
@@ -1326,7 +1434,7 @@ export function InstanceDialog({
                 </Field>
                 <Field>
                   <FieldLabel htmlFor="i-workers">
-                    Worker health URLs{form.collection === "worker" ? " (optional)" : ""}
+                    Queue worker health URLs{form.collection === "worker" ? " (optional)" : ""}
                   </FieldLabel>
                   <Textarea
                     id="i-workers"
@@ -1336,7 +1444,7 @@ export function InstanceDialog({
                     placeholder={"http://n8n-worker-1:5678/healthz\nhttp://n8n-worker-2:5678/healthz"}
                   />
                   <FieldDescription>
-                    One per line. Needs QUEUE_HEALTH_CHECK_ACTIVE=true on the workers.
+                    One per line. Needs QUEUE_HEALTH_CHECK_ACTIVE=true on the queue workers.
                   </FieldDescription>
                 </Field>
               </>

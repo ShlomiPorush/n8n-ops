@@ -128,8 +128,8 @@ export const healthAlerts = {
   down: (name: string, main: ProbeResult) => html`<b>${clip(name, 200)} is not responding</b>\n${failure(main)}`,
   up: (name: string) => html`<b>${clip(name, 200)} is responding again</b>`,
   workerDown: (name: string, worker: ProbeResult & { url: string }) =>
-    html`<b>Worker down on ${clip(name, 200)}</b>\n${clip(worker.url, 200)}: ${failure(worker)}`,
-  workerUp: (name: string, url: string) => html`<b>Worker back on ${clip(name, 200)}</b>\n${clip(url, 200)}`,
+    html`<b>Queue worker down on ${clip(name, 200)}</b>\n${clip(worker.url, 200)}: ${failure(worker)}`,
+  workerUp: (name: string, url: string) => html`<b>Queue worker back on ${clip(name, 200)}</b>\n${clip(url, 200)}`,
   backlog: (name: string, waiting: number, minutes: number) =>
     html`<b>Queue backlog on ${clip(name, 200)}</b>\n${waiting} jobs waiting for more than ${minutes} minutes`,
   backlogCleared: (name: string) => html`<b>Queue backlog cleared on ${clip(name, 200)}</b>`,
@@ -208,6 +208,8 @@ async function applyHealthNow(ctx: Ctx, instanceId: string, given: HealthReport,
         health,
         healthDetail: { ...report, backlogActive },
         healthCheckedAt: now,
+        // Only a check that read the instance is its last known health; one not collected leaves it.
+        ...(health !== "unknown" ? { lastKnownHealth: health, lastKnownAt: now } : {}),
         healthAppliedSeq: ticket.seq,
         backlogSince,
         ...(found ? { queueMode, queueModeSource: "found" as const } : {}),

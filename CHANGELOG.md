@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+
+- **Unknown health when nothing checks an instance.** An instance checked by a worker on its host shows its health as Unknown while that worker is offline, none is assigned, or the worker has not reported a check in time, and after the worker comes back or the server restarts until the next check arrives. Beside Unknown is the last known health and when it was read, in the instance list, on the instance's page and on the Overview, and Needs attention lists the instance as a check that could not run with the reason; the last known health is no longer shown as the current health or counted as healthy. A check that was not collected also reads Unknown, with its reason, and keeps the last known health from the check before it. The agents' `instances` and `queues` answers (REST and MCP) say `health: "unknown"` with `lastKnownHealth`, `lastKnownAt` and `unknownReason`. Down and other health alerts stay as they were until a check arrives, and a check the worker started before it went offline no longer counts.
+- **Alert when a worker stops reporting.** When a worker that checks instances goes offline, Telegram says so once with the instances whose health is now unknown (at most ten names), and once more when it is back online. It follows the health alerts switch, and the instance's topic when the worker checks one instance. A worker that is revoked or removed ends its alert without a message.
+
+### Changed
+
+- **Queue worker, not worker, for n8n's queue processes.** The alerts "Queue worker down on …" and "Queue worker back on …", the health alerts switch ("Instance or queue worker down, queue backlog"), the instance's health, its Health tab and its "Queue worker health URLs" field now say Queue worker, so Worker means only the n8n-ops worker on the host.
+- Worker offline and No worker beside an instance now say that its health is unknown, instead of that the health shown is not updated.
+
 ## [0.2.0] - 2026-10-27
 
 ### Added

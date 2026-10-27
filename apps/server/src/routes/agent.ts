@@ -178,8 +178,18 @@ export function buildMcpServer(
     { problemId: z.string().uuid(), failureId: z.string().uuid().optional() },
     (a) => agentFailure(ctx, a.problemId, a.failureId),
   )
-  tool("get_instance_health", "Health, version and last check of every n8n instance.", {}, () => agentInstances(ctx))
-  tool("get_queue_status", "Queue metrics and worker health of instances in queue mode.", {}, () => agentQueues(ctx))
+  tool(
+    "get_instance_health",
+    "Health, version and last check of every n8n instance. health is unknown when nothing checks it now (unknownReason says why); then lastKnownHealth and lastKnownAt are the last check that read it.",
+    {},
+    () => agentInstances(ctx),
+  )
+  tool(
+    "get_queue_status",
+    "Queue metrics and queue worker health of instances in queue mode. With health unknown, the figures are from checkedAt, the last check.",
+    {},
+    () => agentQueues(ctx),
+  )
   tool("get_backup_status", "Last backup and last successful backup of every instance.", {}, () => agentBackups(ctx))
   tool(
     "search_workflows",

@@ -1,11 +1,21 @@
 import { randomBytes } from "node:crypto"
 import { EventEmitter } from "node:events"
 import { join } from "node:path"
+import { eq } from "drizzle-orm"
 import postgres from "postgres"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import type { Ctx } from "../context.ts"
 import { createDatabase, type Database } from "../db/client.ts"
-import { accessRequests, alertState, apiTokens, backupRuns, instances, problems, workers } from "../db/schema.ts"
+import {
+  accessRequests,
+  affectedWorkflows,
+  alertState,
+  apiTokens,
+  backupRuns,
+  instances,
+  problems,
+  workers,
+} from "../db/schema.ts"
 import { createAudit } from "../lib/audit.ts"
 import { attention, PROBLEMS_SHOWN } from "./overview.ts"
 
@@ -30,20 +40,34 @@ const ago = (ms: number) => new Date(Date.now() - ms)
 const PLAIN = 60
 const ids: Record<string, string> = {}
 let seq = 0
-const problem = (instanceId: string, state: Partial<typeof problems.$inferInsert>) => {
+/** An Affected workflow, in `problemId` or in a Problem of its own made for it. */
+const problem = async (
+  instanceId: string,
+  state: Partial<typeof affectedWorkflows.$inferInsert>,
+  problemId?: string,
+) => {
   seq += 1
-  return {
-    instanceId,
-    workflowId: `wf-${seq}`,
-    workflowName: `Workflow ${seq}`,
-    nodeName: "Call ERP",
-    errorMessage: `ERP refused (${seq})`,
-    fingerprint: `fp-${seq}`,
-    count: 1,
-    firstSeen: ago(3 * day),
-    lastSeen: ago(3 * day),
-    ...state,
-  }
+  const errorMessage = state.errorMessage ?? `ERP refused (${seq})`
+  const pid = problemId ?? (await database.db.insert(problems).values({ errorMessage }).returning())[0]?.id
+  if (!pid) throw new Error("no problem")
+  const [row] = await database.db
+    .insert(affectedWorkflows)
+    .values({
+      problemId: pid,
+      instanceId,
+      workflowId: `wf-${seq}`,
+      workflowName: `Workflow ${seq}`,
+      nodeName: "Call ERP",
+      errorMessage,
+      fingerprint: `fp-${seq}`,
+      count: 1,
+      firstSeen: ago(3 * day),
+      lastSeen: ago(3 * day),
+      ...state,
+    })
+    .returning()
+  if (!row) throw new Error("no affected workflow")
+  return row
 }
 
 beforeAll(async () => {
@@ -94,20 +118,20 @@ beforeAll(async () => {
   for (const i of inserted) ids[i.name] = i.id
   const alpha = ids["alpha-n8n"] as string
   // Seen in the last hour, the most recent first, but first seen days ago: open, yet not new.
-  await database.db
-    .insert(problems)
-    .values(Array.from({ length: PLAIN }, (_, i) => problem(alpha, { lastSeen: ago((i + 1) * minute) })))
-  const named = async (key: string, state: Partial<typeof problems.$inferInsert>) => {
-    const [p] = await database.db.insert(problems).values(problem(alpha, state)).returning({ id: problems.id })
-    if (!p) throw new Error("no problem")
-    ids[key] = p.id
+  for (let i = 0; i < PLAIN; i++) await problem(alpha, { lastSeen: ago((i + 1) * minute) })
+  const named = async (key: string, state: Partial<typeof affectedWorkflows.$inferInsert>) => {
+    ids[key] = (await problem(alpha, state)).problemId
   }
   // New and a regression, both seen before every plain one: past the first 50 by the time they were seen.
   await named("new", { firstSeen: ago(3 * hour), lastSeen: ago(2 * hour) })
   await named("regression", { regression: true, lastSeen: ago(4 * hour) })
   // Not counted: muted, merged, or a regression not seen for more than a day.
   await named("muted", { status: "muted", firstSeen: ago(hour), lastSeen: ago(hour) })
-  await named("merged", { mergedInto: ids.new, firstSeen: ago(hour), lastSeen: ago(hour) })
+  const [merged] = await database.db
+    .insert(problems)
+    .values({ errorMessage: "merged away", mergedInto: ids.new })
+    .returning()
+  ids.merged = merged?.id ?? ""
   await named("quiet", { regression: true, lastSeen: ago(2 * day) })
 
   // Backups: alpha's last run failed after an earlier success; warn-n8n's last run wrote only some copies; the
@@ -250,16 +274,29 @@ describe("Needs attention", () => {
     expect(a.unchecked).toHaveLength(3)
   })
 
+  it("lists an old Problem that a new workflow joined, once, saying how many workflows it hit", async () => {
+    const before = await attention(ctx)
+    const old = await problem(ids["alpha-n8n"] as string, { firstSeen: ago(5 * day), lastSeen: ago(30 * minute) })
+    await problem(ids["warn-n8n"] as string, { firstSeen: ago(20 * minute), lastSeen: ago(20 * minute) }, old.problemId)
+    await problem(ids["warn-n8n"] as string, { firstSeen: ago(10 * minute), lastSeen: ago(10 * minute) }, old.problemId)
+    const a = await attention(ctx)
+    const items = a.items.flatMap((i) => (i.kind === "problem" && i.id === old.problemId ? [i] : []))
+    expect(items).toHaveLength(1)
+    expect(items[0]).toMatchObject({
+      reason: "new",
+      workflows: 3,
+      affectedTotal: 3,
+      instances: ["alpha-n8n", "warn-n8n"],
+    })
+    expect(a.total).toBe(before.total + 1)
+    await database.db.delete(problems).where(eq(problems.id, old.problemId))
+  })
+
   it("counts every new problem in the total and the tone, also those past the list", async () => {
     const before = await attention(ctx)
     const more = PROBLEMS_SHOWN + 5
-    await database.db
-      .insert(problems)
-      .values(
-        Array.from({ length: more }, (_, i) =>
-          problem(ids["alpha-n8n"] as string, { firstSeen: ago(hour), lastSeen: ago(hour + i * 1000) }),
-        ),
-      )
+    for (let i = 0; i < more; i++)
+      await problem(ids["alpha-n8n"] as string, { firstSeen: ago(hour), lastSeen: ago(hour + i * 1000) })
     const a = await attention(ctx)
     const listed = a.items.filter((i) => i.kind === "problem")
     expect(listed).toHaveLength(PROBLEMS_SHOWN)

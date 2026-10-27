@@ -51,6 +51,15 @@ describe("renderProblemGroup", () => {
     expect(text).toContain("Update stock")
   })
 
+  it("counts workflows, not nodes: one workflow failing at two nodes is one", () => {
+    const one = { ...line, workflowKey: "n8n-7/wf-1" }
+    const text = String(renderProblemGroup("boom", [one, { ...one, nodeName: "HTTP Request 2" }]))
+    expect(text).toContain("<b>New problem</b>")
+    expect(String(renderProblemGroup("boom", [one], undefined, undefined, { workflows: 3 }))).toContain(
+      "<b>Now in 3 workflows</b>",
+    )
+  })
+
   it("marks regressions", () => {
     expect(String(renderProblemGroup("boom", [{ ...line, regression: true }]))).toContain("<b>Regression</b>")
   })

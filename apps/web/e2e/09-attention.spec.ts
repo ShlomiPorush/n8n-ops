@@ -25,13 +25,23 @@ const count = async () => {
   return Number(/, ([\d,]+) items?/.exec(name)?.[1]?.replace(/,/g, "") ?? 0)
 }
 
-type Problem = { id: string; status: string; workflowName: string; instanceName: string }
+type Problem = {
+  id: string
+  status: string
+  affectedTotal: number
+  affectedWorkflows: { workflowName: string; instanceName: string }[]
+}
 
 /** The failing workflow's problem on the first instance, as 02-monitoring left it. */
 async function syncProblem(): Promise<string> {
   const res = await page.request.get(`/api/problems?status=all&q=${encodeURIComponent("Sync orders to ERP")}`)
   const { items } = (await res.json()) as { items: Problem[] }
-  const found = items.find((p) => p.workflowName === "Sync orders to ERP" && p.instanceName === "e2e-n8n")
+  const found = items.find(
+    (p) =>
+      p.affectedTotal === 1 &&
+      p.affectedWorkflows[0]?.workflowName === "Sync orders to ERP" &&
+      p.affectedWorkflows[0]?.instanceName === "e2e-n8n",
+  )
   expect(found, "the problem of 02-monitoring").toBeTruthy()
   return (found as Problem).id
 }

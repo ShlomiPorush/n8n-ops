@@ -16,6 +16,8 @@ import {
   agentWorkflows,
 } from "../services/agent.ts"
 
+const isUuid = (value: string) => z.string().uuid().safeParse(value).success
+
 /**
  * REST API for scripts and agents (requirement E1), bearer token of kind "rest". Read-only, except asking for
  * temporary access to an n8n instance, which a token may do only when allowed, and a person approves each time.
@@ -47,11 +49,17 @@ export function restRoutes(ctx: Ctx) {
     }),
   )
   app.get("/problems/:id", async (c) => {
-    const p = await agentProblem(ctx, c.req.param("id"))
+    const workflow = c.req.query("workflow")
+    if (!isUuid(c.req.param("id")) || (workflow && !isUuid(workflow))) return c.json({ error: "not_found" }, 404)
+    const p = await agentProblem(ctx, c.req.param("id"), workflow)
     return p ? c.json({ data: p }) : c.json({ error: "not_found" }, 404)
   })
   app.get("/problems/:id/execution", async (c) => {
-    const f = await agentFailure(ctx, c.req.param("id"), c.req.query("failure"))
+    const failure = c.req.query("failure")
+    const workflow = c.req.query("workflow")
+    if (!isUuid(c.req.param("id")) || (failure && !isUuid(failure)) || (workflow && !isUuid(workflow)))
+      return c.json({ error: "not_found" }, 404)
+    const f = await agentFailure(ctx, c.req.param("id"), failure, workflow)
     return f ? c.json({ data: f }) : c.json({ error: "not_found" }, 404)
   })
   app.get("/instances", async (c) => c.json({ data: await agentInstances(ctx) }))
@@ -160,7 +168,7 @@ export function buildMcpServer(
 
   tool(
     "list_open_problems",
-    "Open problems on all n8n instances: one per workflow + node + exact error, with failure counts. Filter by instance name or text.",
+    "Open problems on all n8n instances: one per exact error text, with the workflows it hit (affectedWorkflows: instance, workflow, node, state, failures; affectedTotal counts them all) and failure counts. A problem is open while any of its workflows is. Filter by instance name (the state is then the state on that instance) or text.",
     {
       instance: z.string().optional(),
       query: z.string().optional(),
@@ -171,15 +179,19 @@ export function buildMcpServer(
   )
   tool(
     "get_problem",
-    "Details of one problem: error, stack, the failed node's input, the workflow graph with the failed node, recent executions and the same error elsewhere.",
-    { problemId: z.string().uuid() },
-    (a) => agentProblem(ctx, a.problemId),
+    "Details of one problem: every workflow it hit (affectedWorkflows), and for one of them (selected: the most recently failed, or the one affectedWorkflowId names) the error, stack, the failed node's input, the workflow graph with the failed node and recent executions; sameError lists problems split off with the same text. problemId may also be an affected workflow id, which is then the one selected.",
+    { problemId: z.string().uuid(), affectedWorkflowId: z.string().uuid().optional() },
+    (a) => agentProblem(ctx, a.problemId, a.affectedWorkflowId),
   )
   tool(
     "get_failed_execution",
-    "The full stored failed execution of a problem (latest by default): n8n run data, error and input, plus a link to it in n8n.",
-    { problemId: z.string().uuid(), failureId: z.string().uuid().optional() },
-    (a) => agentFailure(ctx, a.problemId, a.failureId),
+    "A full stored failed execution of a problem: n8n run data, error and input, plus a link to it in n8n. The latest of the workflow affectedWorkflowId names (or that problemId names, when it is an affected workflow id), else the latest of the whole problem; failureId picks one of them.",
+    {
+      problemId: z.string().uuid(),
+      failureId: z.string().uuid().optional(),
+      affectedWorkflowId: z.string().uuid().optional(),
+    },
+    (a) => agentFailure(ctx, a.problemId, a.failureId, a.affectedWorkflowId),
   )
   tool(
     "get_instance_health",

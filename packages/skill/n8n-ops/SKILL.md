@@ -47,9 +47,9 @@ spaces and other characters in query values.
 
 | Path | What it returns |
 |---|---|
-| `problems?status=open&instance=<name>&q=<text>&limit=50` | Open problems on all instances: one per workflow, node and exact error, with failure counts. `status` is open, muted or resolved. |
-| `problems/<id>` | One problem: error, stack, the failed node's input, the workflow graph with the failed node, recent executions, the same error elsewhere. |
-| `problems/<id>/execution?failure=<failureId>` | The full stored failed execution (latest by default), with a link to it in n8n. |
+| `problems?status=open&instance=<name>&q=<text>&limit=50` | Open problems on all instances: one per exact error, with failure counts and the workflows it hit (`affectedWorkflows`: instance, workflow, node, state, failures; `affectedTotal` counts them all). A problem is open while any of its workflows is. `status` is open, muted or resolved; with `instance`, the state is the state on that instance. |
+| `problems/<id>?workflow=<affectedWorkflowId>` | One problem with every workflow it hit, and for one of them (`selected`: the most recently failed, or the one asked for) the error, stack, the failed node's input, the workflow graph with the failed node and recent executions; `sameError` lists problems split off with the same text. The id may also be an affected workflow's, which is then the one selected. |
+| `problems/<id>/execution?workflow=<affectedWorkflowId>&failure=<failureId>` | A full stored failed execution, with a link to it in n8n: the latest of the workflow asked for (or named by an affected workflow id), else of the whole problem. |
 | `instances` | Health, version and last check of every instance. `health` is `unknown` when the last collection could not read it or no collection runs now (`unknownReason` or `healthDetail.notCollected` says why); then `lastKnownHealth` and `lastKnownAt` are the last check that read it, not the present. |
 | `queues` | Queue metrics and queue worker health of instances in queue mode. With `health` `unknown`, the figures are from `checkedAt`, the last check. |
 | `backups` | The last backup run of every instance, and the last one that ended ok or partial. |

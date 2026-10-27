@@ -7,7 +7,26 @@ import { drizzle } from "drizzle-orm/postgres-js"
 import { migrate } from "drizzle-orm/postgres-js/migrator"
 import postgres from "postgres"
 import { afterAll, describe, expect, it } from "vitest"
-import { instances, problems } from "./schema.ts"
+import type { Ctx } from "../context.ts"
+import { createAudit } from "../lib/audit.ts"
+import type { N8nExecution } from "../n8n/client.ts"
+import {
+  applyProblemAction,
+  deleteInstance,
+  errorFingerprint,
+  fingerprint,
+  ingestExecution,
+  undoProblemAction,
+} from "../services/problems.ts"
+import {
+  affectedWorkflows,
+  alertGroups,
+  alertOutbox,
+  failures,
+  instances,
+  problemReceipts,
+  problems,
+} from "./schema.ts"
 
 // The upgrade to backup destinations (0004, 0005) on databases as earlier releases left them, against a real
 // PostgreSQL. MIGRATION_DATABASE_URL is a role that may create databases; each case gets its own.
@@ -219,26 +238,32 @@ describe("the upgrade to backup destinations", () => {
   })
 })
 
-// The version of a problem is moved by a trigger (0007), which the drizzle snapshot does not hold: the schema check
-// would not notice it dropped, and Undo would then overwrite later changes (FB-16).
-describe("the problem version trigger", () => {
-  it("is installed and moves the version on a change of state or a new occurrence, not on a rename", async () => {
+// The version of an Affected workflow is moved by a trigger (0007, 0012), which the drizzle snapshot does not hold:
+// the schema check would not notice it dropped, and Undo would then overwrite later changes (FB-16).
+describe("the affected workflow version trigger", () => {
+  it("is installed and moves the version on a change of state, a new occurrence or a move, not on a rename", async () => {
     const { sql, db, close } = await freshDatabase()
     try {
       await migrate(db, { migrationsFolder: folder })
       const triggers =
-        await sql`select tgname from pg_trigger where tgrelid = 'problems'::regclass and not tgisinternal`
-      expect(triggers.map((t) => t.tgname)).toContain("problems_bump_version")
+        await sql`select tgname from pg_trigger where tgrelid = 'affected_workflows'::regclass and not tgisinternal`
+      expect(triggers.map((t) => t.tgname)).toEqual(["affected_workflows_bump_version"])
 
       const [instance] = await db
         .insert(instances)
         .values({ name: "n8n-1", baseUrl: "http://n8n:5678", apiKeyEnc: "v1:x:y:z" })
         .returning()
       if (!instance) throw new Error("no instance")
+      const [problem, other] = await db
+        .insert(problems)
+        .values([{ errorMessage: "ERP refused" }, { errorMessage: "ERP refused" }])
+        .returning()
+      if (!problem || !other) throw new Error("no problem")
       const seen = new Date("2026-10-20T08:00:00Z")
       const [p] = await db
-        .insert(problems)
+        .insert(affectedWorkflows)
         .values({
+          problemId: problem.id,
           instanceId: instance.id,
           workflowId: "wf-1",
           workflowName: "Sync orders",
@@ -249,16 +274,388 @@ describe("the problem version trigger", () => {
           lastSeen: seen,
         })
         .returning()
-      if (!p) throw new Error("no problem")
+      if (!p) throw new Error("no affected workflow")
       expect(p.version).toBe(0)
-      const version = async () => (await db.select().from(problems).where(eq(problems.id, p.id)))[0]?.version
+      const version = async () =>
+        (await db.select().from(affectedWorkflows).where(eq(affectedWorkflows.id, p.id)))[0]?.version
+      const set = (values: Partial<typeof affectedWorkflows.$inferInsert>) =>
+        db.update(affectedWorkflows).set(values).where(eq(affectedWorkflows.id, p.id))
 
-      await db.update(problems).set({ workflowName: "Sync all orders" }).where(eq(problems.id, p.id))
+      await set({ workflowName: "Sync all orders" })
       expect(await version()).toBe(0)
-      await db.update(problems).set({ status: "resolved", resolvedAt: new Date() }).where(eq(problems.id, p.id))
+      await set({ status: "resolved", resolvedAt: new Date() })
       expect(await version()).toBe(1)
-      await db.update(problems).set({ count: 1, lastSeen: new Date() }).where(eq(problems.id, p.id))
+      await set({ count: 1, lastSeen: new Date() })
       expect(await version()).toBe(2)
+      await set({ problemId: other.id })
+      expect(await version()).toBe(3)
+    } finally {
+      await close()
+    }
+  })
+})
+
+const at = (iso: string) => new Date(iso).toISOString()
+
+/**
+ * A database as release 0.3.0 left it: one problem row per instance, workflow, node and text, merges made by the old
+ * Merge (failures and counts moved onto the target, the target renamed by later failures of the merged row), and
+ * broken merges an interrupted old Merge could leave: a chain, a loop, a target that is gone.
+ */
+async function seedRelease030(sql: postgres.Sql) {
+  const [alpha] = await sql`insert into instances (name, base_url, api_key_enc)
+    values ('alpha', 'http://n8n:5678', 'v1:x:y:z') returning id`
+  const [beta] = await sql`insert into instances (name, base_url, api_key_enc)
+    values ('beta', 'http://n8n:5678', 'v1:x:y:z') returning id`
+  const a = alpha?.id as string
+  const b = beta?.id as string
+  await sql`insert into workflows (instance_id, workflow_id, name, active, trigger_type, structure_hash, node_count)
+    values (${a}, 'wf-3', 'Payments', true, 'webhook', 'h', 3)`
+  type Row = {
+    id: string
+    instance: string
+    workflow: string
+    name: string
+    node: string
+    text: string
+    status?: string
+    regression?: boolean
+    count: number
+    mergedInto?: string | null
+    mutedUntil?: string | null
+    resolvedAt?: string | null
+    lastSeen?: string
+  }
+  const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`
+  const rows: Row[] = [
+    // One text on two instances, and in one workflow at two nodes.
+    { id: id(1), instance: a, workflow: "wf-1", name: "CRM Quote", node: "HTTP", text: "Bad request", count: 5 },
+    {
+      id: id(2),
+      instance: b,
+      workflow: "wf-2",
+      name: "Get DNS",
+      node: "HTTP",
+      text: "Bad request",
+      status: "resolved",
+      resolvedAt: "2026-10-19T10:00:00Z",
+      count: 3,
+    },
+    {
+      id: id(3),
+      instance: a,
+      workflow: "wf-1",
+      name: "CRM Quote",
+      node: "HTTP 2",
+      text: "Bad request",
+      status: "muted",
+      mutedUntil: "2099-01-01T00:00:00Z",
+      count: 2,
+    },
+    // A merge target: 2 failures of its own and 1 of the merged row kept; the merged row's ingest renamed it.
+    {
+      id: id(4),
+      instance: a,
+      workflow: "wf-3",
+      name: "Orders",
+      node: "Call",
+      text: "Timeout",
+      regression: true,
+      count: 6,
+      lastSeen: "2026-10-22T09:00:00Z",
+    },
+    {
+      id: id(5),
+      instance: a,
+      workflow: "wf-4",
+      name: "Orders",
+      node: "Call",
+      text: "ERP refused",
+      status: "resolved",
+      count: 0,
+      mergedInto: id(4),
+    },
+    // A chain the old Merge did not flatten.
+    {
+      id: id(6),
+      instance: a,
+      workflow: "wf-6",
+      name: "Chain",
+      node: "N",
+      text: "Chain start",
+      status: "resolved",
+      count: 0,
+      mergedInto: id(7),
+    },
+    {
+      id: id(7),
+      instance: a,
+      workflow: "wf-7",
+      name: "Mid",
+      node: "N",
+      text: "Chain middle",
+      status: "resolved",
+      count: 0,
+      mergedInto: id(8),
+    },
+    { id: id(8), instance: a, workflow: "wf-8", name: "End", node: "N", text: "Chain end", count: 1 },
+    // A loop, and a target that is gone: taken as not merged, each with a text no other row has.
+    {
+      id: id(9),
+      instance: a,
+      workflow: "wf-9",
+      name: "Loop A",
+      node: "N",
+      text: "Loop A text",
+      status: "resolved",
+      count: 1,
+      mergedInto: id(10),
+    },
+    {
+      id: id(10),
+      instance: b,
+      workflow: "wf-10",
+      name: "Loop B",
+      node: "N",
+      text: "Loop B text",
+      status: "resolved",
+      count: 1,
+      mergedInto: id(9),
+    },
+    {
+      id: id(11),
+      instance: a,
+      workflow: "wf-11",
+      name: "Orphan",
+      node: "N",
+      text: "Orphan text",
+      status: "resolved",
+      count: 2,
+      mergedInto: id(99),
+    },
+    // One text merged into two different targets, and no row of it left unmerged: it routes nowhere now.
+    {
+      id: id(12),
+      instance: a,
+      workflow: "wf-12",
+      name: "Shared 1",
+      node: "N",
+      text: "Shared merged",
+      status: "resolved",
+      count: 0,
+      mergedInto: id(1),
+    },
+    {
+      id: id(13),
+      instance: b,
+      workflow: "wf-13",
+      name: "Shared 2",
+      node: "N",
+      text: "Shared merged",
+      status: "resolved",
+      count: 0,
+      mergedInto: id(4),
+    },
+  ]
+  for (const r of rows) {
+    await sql`insert into problems (id, instance_id, workflow_id, workflow_name, node_name, error_message, fingerprint,
+        status, muted_until, regression, count, first_seen, last_seen, resolved_at, merged_into)
+      values (${r.id}, ${r.instance}, ${r.workflow}, ${r.name}, ${r.node}, ${r.text}, ${`fp-${r.id}`},
+        ${r.status ?? "open"}, ${r.mutedUntil ?? null}, ${r.regression ?? false}, ${r.count},
+        '2026-10-01T00:00:00Z', ${r.lastSeen ?? "2026-10-20T00:00:00Z"}, ${r.resolvedAt ?? null}, ${r.mergedInto ?? null})`
+  }
+  const failure = async (
+    n: number,
+    problem: string,
+    instance: string,
+    workflow: string,
+    node: string,
+    text: string,
+    stopped: string,
+  ) =>
+    sql`insert into failures (problem_id, instance_id, execution_id, workflow_id, mode, started_at, stopped_at, error, data)
+      values (${problem}, ${instance}, ${`exec-${n}`}, ${workflow}, 'webhook', ${stopped}, ${stopped},
+        ${JSON.stringify({ message: text })}::jsonb,
+        ${JSON.stringify({ data: { resultData: { error: { message: text, node: { name: node } } } }, workflowData: { name: `stored ${workflow}` } })}::jsonb)`
+  await failure(1, id(1), a, "wf-1", "HTTP", "Bad request", "2026-10-20T00:00:00Z")
+  await failure(2, id(4), a, "wf-3", "Call", "Timeout", "2026-10-20T08:00:00Z")
+  await failure(3, id(4), a, "wf-3", "Call", "Timeout", "2026-10-21T08:00:00Z")
+  // The merged row's failure, on its target since the old Merge.
+  await failure(4, id(4), a, "wf-4", "Call", "ERP refused", "2026-10-22T09:00:00Z")
+  await sql`insert into alert_outbox (kind, group_key, problem_id, text, status)
+    values ('problem', 'Bad request', ${id(1)}, 'new', 'pending')`
+  await sql`insert into alert_groups (group_key, telegram_message_id, problem_ids)
+    values ('Bad request', 42, ${JSON.stringify([id(1), id(2)])}::jsonb)`
+  await sql`insert into problem_receipts (problem_id, action, version, prior, expires_at)
+    values (${id(1)}, 'resolve', 1, '{}'::jsonb, now() + interval '10 minutes')`
+  return { alpha: a, beta: b, id }
+}
+
+describe("the upgrade to Problems across workflows (0012)", () => {
+  it("joins rows with the same text, keeps every row with its id, state and failures, and repairs old merges", async () => {
+    const { sql, db, close } = await freshDatabase()
+    try {
+      await migrate(db, { migrationsFolder: migrationsUpTo("0011_last_known_health") })
+      const { id } = await seedRelease030(sql)
+      const [before] = await sql`select sum(count)::int as total, (select count(*)::int from failures) as failures
+        from problems`
+      await migrate(db, { migrationsFolder: folder })
+
+      const rows = await db.select().from(affectedWorkflows)
+      expect(rows).toHaveLength(13)
+      const row = (n: number) => {
+        const r = rows.find((x) => x.id === id(n))
+        if (!r) throw new Error(`row ${n} is gone`)
+        return r
+      }
+      const [after] = await sql`select sum(count)::int as total, (select count(*)::int from failures) as failures
+        from affected_workflows`
+      expect(after).toEqual(before)
+
+      // One Problem per text over the rows that are not merged, with the fingerprint ingest computes.
+      const all = await db.select().from(problems)
+      expect(all.map((p) => p.errorMessage).sort()).toEqual(
+        ["Bad request", "Chain end", "Loop A text", "Loop B text", "Orphan text", "Timeout"].sort(),
+      )
+      for (const p of all) expect(p.fingerprint).toBe(errorFingerprint(p.errorMessage))
+      const problemOf = (n: number) => all.find((p) => p.id === row(n).problemId)?.errorMessage
+      expect([1, 2, 3, 12].map(problemOf)).toEqual(["Bad request", "Bad request", "Bad request", "Bad request"])
+      expect([4, 5, 13].map(problemOf)).toEqual(["Timeout", "Timeout", "Timeout"])
+      expect([6, 7, 8].map(problemOf)).toEqual(["Chain end", "Chain end", "Chain end"])
+      expect([9, 10, 11].map(problemOf)).toEqual(["Loop A text", "Loop B text", "Orphan text"])
+
+      // Each row keeps its own state; a merged row takes its target's, a broken merge keeps its own.
+      expect(row(1)).toMatchObject({ status: "open", count: 5 })
+      expect(row(2)).toMatchObject({ status: "resolved", count: 3 })
+      expect(row(3)).toMatchObject({ status: "muted", count: 2 })
+      expect(row(5)).toMatchObject({ status: "open", regression: true })
+      expect(row(6)).toMatchObject({ status: "open" })
+      expect(row(9)).toMatchObject({ status: "resolved", count: 1 })
+
+      // The merged row's kept failure and one count went back to it; its target got back its name and last seen.
+      const failuresOf = async (n: number) =>
+        (
+          await db
+            .select()
+            .from(failures)
+            .where(eq(failures.affectedWorkflowId, id(n)))
+        )
+          .map((f) => f.executionId)
+          .sort()
+      expect(await failuresOf(5)).toEqual(["exec-4"])
+      expect(await failuresOf(4)).toEqual(["exec-2", "exec-3"])
+      expect(row(5)).toMatchObject({ count: 1 })
+      expect(row(5).lastSeen.toISOString()).toBe(at("2026-10-22T09:00:00Z"))
+      expect(row(4)).toMatchObject({ count: 5, workflowName: "Payments" })
+      expect(row(4).lastSeen.toISOString()).toBe(at("2026-10-21T08:00:00Z"))
+
+      // Old Telegram messages take no later alerts; queued alerts and failures name the same ids; receipts are gone.
+      const [group] = await db.select().from(alertGroups)
+      expect(group?.closedAt).not.toBeNull()
+      expect(group).toMatchObject({ problemId: null, affectedWorkflowIds: [id(1), id(2)] })
+      const [queued] = await db.select().from(alertOutbox)
+      expect(queued?.affectedWorkflowId).toBe(id(1))
+      expect(await db.select().from(problemReceipts)).toEqual([])
+
+      // The catalog: the trigger no longer reads the dropped column; the new keys cascade.
+      const [fn] = await sql`select prosrc from pg_proc where proname = 'affected_workflows_bump_version'`
+      expect(fn?.prosrc).not.toContain("merged_into")
+      expect(fn?.prosrc).toContain("problem_id")
+      const keys = await sql`select conname, confdeltype from pg_constraint where contype = 'f'
+        and conrelid in ('affected_workflows'::regclass, 'problems'::regclass, 'failures'::regclass,
+          'problem_receipts'::regclass) order by conname`
+      expect(keys.map((k) => [k.conname, k.confdeltype])).toEqual([
+        ["affected_workflows_instance_id_instances_id_fk", "c"],
+        ["affected_workflows_problem_id_problems_id_fk", "c"],
+        ["failures_affected_workflow_id_affected_workflows_id_fk", "c"],
+        ["failures_instance_id_instances_id_fk", "c"],
+        ["problem_receipts_affected_workflow_id_affected_workflows_id_fk", "c"],
+        ["problem_receipts_problem_id_problems_id_fk", "c"],
+        ["problems_merged_into_problems_id_fk", "c"],
+      ])
+    } finally {
+      await close()
+    }
+  })
+
+  it("works after the upgrade: ingest, an action and its Undo, removing an instance", async () => {
+    const { sql, db, close } = await freshDatabase()
+    try {
+      await migrate(db, { migrationsFolder: migrationsUpTo("0011_last_known_health") })
+      const { alpha, beta, id } = await seedRelease030(sql)
+      await migrate(db, { migrationsFolder: folder })
+      const ctx = { db, audit: createAudit(db as never) } as unknown as Ctx
+      const [instance] = await db.select().from(instances).where(eq(instances.id, alpha))
+      if (!instance) throw new Error("no instance")
+      const execution = (executionId: string, workflowId: string, node: string, text: string): N8nExecution => ({
+        id: executionId,
+        status: "error",
+        mode: "webhook",
+        startedAt: "2026-10-25T08:00:00Z",
+        stoppedAt: "2026-10-25T08:00:00Z",
+        workflowId,
+        workflowData: { id: workflowId, name: workflowId, nodes: [], connections: {} } as never,
+        data: { resultData: { runData: {}, error: { message: text, node: { name: node } } } },
+      })
+      // The old row counts it, by its own fingerprint, which the migration kept.
+      const [old] = await db
+        .select()
+        .from(affectedWorkflows)
+        .where(eq(affectedWorkflows.id, id(1)))
+      await db
+        .update(affectedWorkflows)
+        .set({ fingerprint: fingerprint(alpha, "wf-1", "HTTP", "Bad request") })
+        .where(eq(affectedWorkflows.id, id(1)))
+      const counted = await ingestExecution(ctx, instance, execution("new-1", "wf-1", "HTTP", "Bad request"), {
+        silent: true,
+      })
+      expect(counted).toMatchObject({ affectedWorkflowId: id(1), problemId: old?.problemId, reason: null })
+      // A new workflow with the text joins the Problem.
+      const joined = await ingestExecution(ctx, instance, execution("new-2", "wf-new", "HTTP", "Bad request"), {
+        silent: true,
+      })
+      expect(joined).toMatchObject({ problemId: old?.problemId, reason: "joined" })
+
+      const acted = await applyProblemAction(ctx, old?.problemId ?? "", "resolve")
+      expect(acted?.receipt).toBeTruthy()
+      const undone = await undoProblemAction(ctx, old?.problemId ?? "", acted?.receipt?.id ?? "")
+      expect(undone.ok).toBe(true)
+
+      // Removing beta removes its rows, and the Problem it leaves without a workflow.
+      const loopB = (
+        await db
+          .select()
+          .from(affectedWorkflows)
+          .where(eq(affectedWorkflows.id, id(10)))
+      )[0]?.problemId
+      await deleteInstance(ctx, beta)
+      expect(await db.select().from(affectedWorkflows).where(eq(affectedWorkflows.instanceId, beta))).toEqual([])
+      expect(
+        await db
+          .select()
+          .from(problems)
+          .where(eq(problems.id, loopB ?? "")),
+      ).toEqual([])
+      expect(
+        await db
+          .select()
+          .from(problems)
+          .where(eq(problems.id, old?.problemId ?? "")),
+      ).toHaveLength(1)
+    } finally {
+      await close()
+    }
+  })
+
+  it("leaves the database as it was when a later step fails", async () => {
+    const { sql, db, close } = await freshDatabase()
+    try {
+      await migrate(db, { migrationsFolder: migrationsUpTo("0011_last_known_health") })
+      await seedRelease030(sql)
+      await expect(migrate(db, { migrationsFolder: migrationsUpTo(null, "SELECT 1 / 0;") })).rejects.toThrow()
+      const [table] = await sql`select to_regclass('affected_workflows') as t`
+      expect(table?.t).toBeNull()
+      expect(await sql`select 1 from problems where merged_into is not null`).toHaveLength(8)
     } finally {
       await close()
     }

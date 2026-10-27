@@ -319,7 +319,9 @@ run_queue_checks() {
   info "Integration: queue workers found next to the main and checked through the socket proxy"
   local q="${PROJECT}-queue" started=$SECONDS
   queue() { docker compose -p "$q" -f "$REPO_ROOT/docker/verify-queue.yml" "$@"; }
-  queue up -d --wait --wait-timeout 240 >/dev/null 2>&1 || {
+  # The proxy and the probe of run_proxy_checks start there, on their own.
+  queue up -d --wait --wait-timeout 240 postgres redis n8n n8n-worker >/dev/null 2>&1 || {
+    queue ps -a
     queue logs --tail 40 n8n n8n-worker
     queue down -v >/dev/null 2>&1
     die "the queue-mode n8n did not start"
@@ -379,7 +381,8 @@ run_proxy_checks() {
   local payload="{\"inside\":{\"container\":\"$q-n8n-1\"},\"discover\":true,\"check\":{\"seq\":1,\"revision\":0}}"
   fail_queue() {
     [ -z "${report:-}" ] || echo "$report"
-    queue logs --tail 20 queue-proxy
+    queue ps -a
+    queue logs --tail 20 queue-proxy queue-probe
     queue down -v >/dev/null 2>&1
     die "$1"
   }
@@ -395,6 +398,10 @@ run_proxy_checks() {
       fail_queue "the queue socket proxy did not start with $1"
   }
   # The proxy as it starts refuses commands everywhere.
+  queue up -d --wait --wait-timeout 60 queue-proxy queue-probe 2>&1 | tail -5 || true
+  if [ -z "$(queue ps -q --status running queue-probe)" ] || [ -z "$(queue ps -q --status running queue-proxy)" ]; then
+    fail_queue "the queue socket proxy or its probe did not start"
+  fi
   probe
   expect_report "a main the proxy refuses was not reported with its queue workers" \
     "r.source === 'network' && r.access.refused.some(x => x.call === 'exec-create' && x.container === '$q-n8n-1') && JSON.stringify(r.listed) === JSON.stringify({ names: ['$q-n8n-worker-1'], complete: true })"

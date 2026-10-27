@@ -891,7 +891,7 @@ function StatusStrip({ instance: i, footer }: { instance: InstanceDetailData; fo
           const health = past ? "unknown" : c.health
           return (
             <div key={c.label} className="flex min-w-0 items-baseline gap-2.5 bg-panel px-pad-x py-pad-y">
-              <Dot health={health} label={past ? `${c.value} at the last check` : undefined} />
+              <Dot health={health} label={past && i.lastKnownHealth ? `${c.value} at the last check` : undefined} />
               <div className="min-w-0">
                 <div className="text-small text-muted-foreground">{c.label}</div>
                 <div
@@ -1311,7 +1311,7 @@ export function InstanceDialog({
             <SwitchRow
               id="i-queue"
               title="Queue mode"
-              description="Main process plus separate workers using Redis."
+              description="Main process plus separate queue workers using Redis."
               checked={form.queueMode}
               onCheckedChange={(v) => set("queueMode", v)}
             />
@@ -1340,7 +1340,7 @@ export function InstanceDialog({
                     placeholder={"http://n8n-worker-1:5678/healthz\nhttp://n8n-worker-2:5678/healthz"}
                   />
                   <FieldDescription>
-                    One per line. Needs QUEUE_HEALTH_CHECK_ACTIVE=true on the workers.
+                    One per line. Needs QUEUE_HEALTH_CHECK_ACTIVE=true on the queue workers.
                   </FieldDescription>
                 </Field>
               </>

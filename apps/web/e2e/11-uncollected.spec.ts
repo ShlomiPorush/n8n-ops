@@ -62,12 +62,35 @@ test("an instance whose worker is offline shows Unknown with its last known heal
   ).toBeVisible()
   await expect(page.getByRole("img", { name: "ok at the last check" }).filter({ visible: true }).first()).toBeVisible()
 
+  // The Health tab names the checks as the last known health.
+  await page.goto(`/instances/${instanceId}?tab=health`)
+  await expect(page.getByRole("heading", { name: "Last known health" })).toBeVisible()
+  await expect(
+    page.getByText(`Health unknown: ${workerName} is offline. What follows was read`).filter({ visible: true }),
+  ).toBeVisible()
+  const main = page.getByText("Main process (/healthz)").filter({ visible: true }).locator("..")
+  await expect(main.getByRole("img", { name: "ok at the last check" })).toBeVisible()
+
   const res = await page.request.get(`/api/instances/${instanceId}`)
   expect(await res.json()).toMatchObject({
     health: "unknown",
     lastKnownHealth: "ok",
     unknownReason: `${workerName} is offline`,
   })
+})
+
+test("the list as a table, below the width of the reading pane, says the same", async () => {
+  await page.setViewportSize({ width: 900, height: 900 })
+  try {
+    await page.goto("/instances")
+    const row = page.getByRole("row").filter({ hasText: instanceName })
+    await expect(page.getByRole("columnheader", { name: /Status/ })).toBeVisible()
+    await expect(row.getByText("Unknown", { exact: true })).toBeVisible()
+    await expect(row).toContainText("Last known: Healthy")
+    await expect(row.getByRole("img", { name: "Unknown" })).toBeVisible()
+  } finally {
+    await page.setViewportSize({ width: 1440, height: 900 })
+  }
 })
 
 test("Overview does not count it healthy and lists it as not checked", async () => {

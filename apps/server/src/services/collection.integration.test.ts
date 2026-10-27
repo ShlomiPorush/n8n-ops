@@ -87,7 +87,7 @@ async function workerCollecting(names: string[], seenAgo: number) {
 }
 
 const sent = async () =>
-  (await ctx.db.select().from(alertOutbox).orderBy(asc(alertOutbox.id))).map((a) => a.text.split("\n")[0])
+  (await ctx.db.select().from(alertOutbox).orderBy(asc(alertOutbox.createdAt))).map((a) => a.text.split("\n")[0])
 const setSeen = (id: string, seenAgo: number) =>
   ctx.db
     .update(workers)

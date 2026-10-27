@@ -1614,8 +1614,7 @@ test("Merge lands on the problem merged into, and Back returns to the problem it
   await expect(page.getByRole("heading", { name: "Where It Broke" })).toBeVisible()
   const problem = new URL(page.url()).pathname
   // A stand-in problem to merge into, and a merge that is only answered: the stored problems stay as they are.
-  const candidates = (url: URL) =>
-    url.pathname === "/api/problems" && url.searchParams.get("for") === "merge"
+  const candidates = (url: URL) => url.pathname === "/api/problems" && url.searchParams.get("for") === "merge"
   const merge = (url: URL) => /^\/api\/problems\/[^/]+\/merge$/.test(url.pathname)
   await page.route(candidates, (route) =>
     route.fulfill({
@@ -1657,8 +1656,7 @@ test("a long choice in a form has a search that reads an underscore as a space, 
     .click()
   await expect(page.getByRole("heading", { name: "Where It Broke" })).toBeVisible()
   // Thirteen stand-in problems to merge into, one of them with a name far wider than the list.
-  const candidates = (url: URL) =>
-    url.pathname === "/api/problems" && url.searchParams.get("for") === "merge"
+  const candidates = (url: URL) => url.pathname === "/api/problems" && url.searchParams.get("for") === "merge"
   const items = [
     ...Array.from({ length: 12 }, (_, i) =>
       standInProblem(`e2e-candidate-${i}`, `Nightly_sync_${i}`, "Stand-in problem"),

@@ -35,8 +35,8 @@ for (const kind of ["rest", "mcp"] as const) {
 test("the REST API returns problems with a REST token only", async ({ request }) => {
   const ok = await request.get("/api/v1/problems", { headers: { authorization: `Bearer ${tokens.rest}` } })
   expect(ok.status()).toBe(200)
-  const body = (await ok.json()) as { data: { workflowName: string }[] }
-  expect(body.data.some((p) => p.workflowName === "Sync orders to ERP")).toBe(true)
+  const body = (await ok.json()) as { data: { affectedWorkflows: { workflowName: string }[] }[] }
+  expect(body.data.some((p) => p.affectedWorkflows.some((w) => w.workflowName === "Sync orders to ERP"))).toBe(true)
 
   const wrongKind = await request.get("/api/v1/problems", { headers: { authorization: `Bearer ${tokens.mcp}` } })
   expect(wrongKind.status()).toBe(401)

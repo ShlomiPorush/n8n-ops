@@ -341,3 +341,27 @@ test("a workflow moves to another instance with its credentials", async () => {
   await expect(page.getByText("Credential Mover login created")).toBeVisible({ timeout: 60_000 })
   await expect(page.getByText("Created on e2e-n8n-b")).toBeVisible()
 })
+
+test("another instance of the same n8n joins its failures to the Problem they share, and Split separates them", async () => {
+  // e2e-n8n-b reads the same n8n: its first read brings the same failure of the same workflow, which joins the
+  // Problem. Read now, so the files after this one find the same state every run.
+  await page.goto("/instances")
+  await page
+    .getByRole("row")
+    .filter({ has: page.getByText("e2e-n8n-b", { exact: true }) })
+    .click()
+  await page.getByRole("button", { name: "Check now" }).click()
+  await expect(page.getByText("Checked e2e-n8n-b now").last()).toBeVisible({ timeout: 45_000 })
+  await page.goto("/problems?status=open")
+  const shared = page.getByRole("row", { name: /2 workflows/ })
+  await expect(shared).toContainText("2 instances")
+  await shared.click()
+  const onB = page.getByRole("tabpanel").getByRole("row").filter({ hasText: "e2e-n8n-b" })
+  await onB.getByRole("button", { name: "Actions for Sync orders to ERP" }).click()
+  await page.getByRole("menuitem", { name: "Split into its own problem" }).click()
+  await expect(page.getByText("Split into a problem of its own: Sync orders to ERP")).toBeVisible()
+  // Each instance's failure is a Problem of its own again, as the files after this one expect.
+  await page.goto("/problems?status=open")
+  await expect(page.getByRole("row", { name: /2 workflows/ })).toHaveCount(0)
+  await expect(page.getByRole("row", { name: /Sync orders to ERP/ })).toHaveCount(2)
+})

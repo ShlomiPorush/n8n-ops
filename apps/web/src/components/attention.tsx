@@ -36,7 +36,10 @@ const time = (at: string | null) => (
 )
 
 function ProblemRow({ a, onOpen }: { a: Extract<AttentionItem, { kind: "problem" }>; onOpen?: OpenItem }) {
-  const named = () => a.workflowName
+  // A Problem in several workflows is named by its error, and its buttons say they act on all of them.
+  const single = a.affectedTotal <= 1
+  const title = single ? a.workflowName : a.errorMessage
+  const named = () => (title.length > 60 ? `${title.slice(0, 59)}…` : title)
   const resolve = useProblemAction(a.id, "resolve", named)
   const mute = useProblemAction(a.id, "mute", named)
   const to = attentionTarget(a)
@@ -50,25 +53,39 @@ function ProblemRow({ a, onOpen }: { a: Extract<AttentionItem, { kind: "problem"
           <StatusTag kind="problem" status={a.reason === "regression" ? "regression" : "new"}>
             {a.reason === "regression" ? "Regression" : "New problem"}
           </StatusTag>
-          <UserText className="font-semibold">{a.workflowName}</UserText>
+          <UserText className={cn("font-semibold", !single && "min-w-0 truncate")} title={title}>
+            {title}
+          </UserText>
           {time(a.at)}
         </>
       }
       actions={
         <>
           <BusyButton size="sm" icon={CheckCircle2} busyLabel="Resolving…" run={resolve}>
-            Resolve<span className="sr-only"> {a.workflowName}</span>
+            {single ? "Resolve" : "Resolve all"}
+            <span className="sr-only"> {title}</span>
           </BusyButton>
           <BusyButton size="sm" icon={BellOff} busyLabel="Muting…" run={mute}>
-            Mute 24 h<span className="sr-only"> {a.workflowName}</span>
+            {single ? "Mute 24 h" : "Mute all 24 h"}
+            <span className="sr-only"> {title}</span>
           </BusyButton>
         </>
       }
     >
-      <span className="block truncate font-mono text-code">{a.errorMessage}</span>
-      <span>
-        <UserText>{a.instanceName}</UserText> · {plural(a.count, "failure")}
-      </span>
+      {single ? (
+        <>
+          <span className="block truncate font-mono text-code">{a.errorMessage}</span>
+          <span>
+            <UserText>{a.instanceName}</UserText> · {plural(a.count, "failure")}
+          </span>
+        </>
+      ) : (
+        <span>
+          {plural(a.workflows, "workflow")} ·{" "}
+          <UserText>{a.instances.length === 1 ? a.instances[0] : plural(a.instances.length, "instance")}</UserText> ·{" "}
+          {plural(a.count, "failure")}
+        </span>
+      )}
     </AlertRow>
   )
 }

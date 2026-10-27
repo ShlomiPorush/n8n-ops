@@ -20,10 +20,15 @@ export type AttentionItem = { tone: Tone } & (
       id: string
       status: "open"
       reason: "new" | "regression"
+      /** The most recently failed workflow; with several, the item names the error and how many. */
       workflowName: string
       instanceName: string
       errorMessage: string
       count: number
+      /** Distinct workflows the Problem hit, and its Affected workflows (a workflow at two nodes is two). */
+      workflows: number
+      affectedTotal: number
+      instances: string[]
       at: string
     }
   | { kind: "instance"; id: string; name: string; health: string; detail: string; at: string | null }

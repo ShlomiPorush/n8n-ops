@@ -1,5 +1,5 @@
 import { expect, type Page, test } from "@playwright/test"
-import { dialogClosed, n8nFailingWorkflow, n8nSetup, n8nTrigger, n8nUrl, signIn } from "./helpers.ts"
+import { dialogClosed, n8nApi, n8nFailingWorkflow, n8nSetup, n8nTrigger, n8nUrl, signIn } from "./helpers.ts"
 
 // A real n8n 2.44 runs in the test stack. These tests register it, make a workflow fail,
 // and follow the failure through problems: first sync, repeat failures, resolve, regression.
@@ -131,6 +131,74 @@ test("a resolved problem that fails again is a regression", async () => {
 
   await page.goto("/")
   await expect(page.getByRole("link", { name: /Regression.*Sync orders to ERP/ })).toBeVisible()
+})
+
+test("a second workflow failing with the same error joins the Problem, and Split and Merge move it", async () => {
+  // The same error in another workflow: one Problem, one row, titled by the error.
+  const dnsHook = await n8nFailingWorkflow(apiKey, "Get DNS Data", message)
+  await n8nTrigger(apiKey, dnsHook)
+  await page.goto("/instances")
+  await page.getByRole("row", { name: /e2e-n8n/ }).click()
+  await page.getByRole("button", { name: "Check now" }).click()
+  await expect(page.getByText("Checked e2e-n8n now").last()).toBeVisible({ timeout: 30_000 })
+  await page.goto("/problems?status=open")
+  const joined = page.getByRole("row", { name: /2 workflows/ })
+  await expect(joined).toHaveCount(1)
+  await expect(joined).toContainText(message)
+  await expect(joined).toContainText("Get DNS Data and Sync orders to ERP")
+  await expect(page.getByRole("row", { name: /Sync orders to ERP/ })).toHaveCount(1)
+
+  // The row opens to its workflows; the Problem opens on them.
+  await joined.getByRole("button", { name: "Show the 2 workflows" }).click()
+  await expect(page.getByRole("row", { name: /^Get DNS Data/ })).toBeVisible()
+  await joined.click()
+  const tab = (name: RegExp) => page.getByRole("tab", { name })
+  await expect(tab(/^Affected workflows/)).toHaveAttribute("aria-selected", "true")
+  const pane = page.getByRole("tabpanel")
+  await expect(pane.getByRole("heading", { name: "Affected Workflows" })).toBeVisible()
+  await expect(pane.getByRole("row", { name: /Sync orders to ERP/ })).toBeVisible()
+  const problem = new URL(page.url()).pathname
+
+  // A workflow's row shows where it broke there.
+  await pane.getByRole("row", { name: /Get DNS Data/ }).click()
+  await expect(tab(/^Overview/)).toHaveAttribute("aria-selected", "true")
+  await expect(page.getByRole("tabpanel").getByText("Get DNS Data").first()).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Where It Broke" })).toBeVisible()
+
+  // Split gives it a Problem of its own; Merge brings it back.
+  await tab(/^Affected workflows/).click()
+  await page.getByRole("button", { name: "Actions for Get DNS Data" }).click()
+  await page.getByRole("menuitem", { name: "Split into its own problem" }).click()
+  await expect(page.getByText("Split into a problem of its own: Get DNS Data")).toBeVisible()
+  await page.goto("/problems?status=open")
+  await expect(page.getByRole("row", { name: /2 workflows/ })).toHaveCount(0)
+  await page.getByRole("row", { name: /^Get DNS Data/ }).click()
+  await expect(page.getByRole("heading", { name: "Get DNS Data" })).toBeVisible()
+  await page.getByRole("button", { name: "More actions" }).click()
+  await page.getByRole("menuitem", { name: "Merge into…" }).click()
+  const dialog = page.getByRole("dialog", { name: "Merge into Another Problem" })
+  await dialog.getByRole("button", { name: /^Problem to merge into:/ }).click()
+  await page.getByRole("option", { name: /^Sync orders to ERP · / }).click()
+  await dialog.getByRole("button", { name: "Merge", exact: true }).click()
+  await expect(page).toHaveURL((url) => url.pathname === problem)
+  await expect(tab(/^Affected workflows/)).toHaveAttribute("aria-selected", "true")
+  await expect(page.getByRole("tabpanel").getByRole("row", { name: /Get DNS Data/ })).toBeVisible()
+
+  // The later files expect the first workflow's Problem alone: split it off again, resolve it, and remove the
+  // workflow from n8n so another instance of the same n8n never reads its failure.
+  await page.getByRole("button", { name: "Actions for Get DNS Data" }).click()
+  await page.getByRole("menuitem", { name: "Split into its own problem" }).click()
+  await expect(page.getByText("Split into a problem of its own: Get DNS Data").last()).toBeVisible()
+  await page.goto("/problems?status=open")
+  await page.getByRole("row", { name: /^Get DNS Data/ }).click()
+  await page.getByRole("button", { name: "Mark resolved" }).click()
+  await expect(page.getByText("Problem resolved: Get DNS Data")).toBeVisible()
+  const listed = (await (await n8nApi("/api/v1/workflows?name=Get%20DNS%20Data")).json()) as { data: { id: string }[] }
+  for (const w of listed.data) {
+    await n8nApi(`/api/v1/workflows/${w.id}/deactivate`, { method: "POST" })
+    const removed = await n8nApi(`/api/v1/workflows/${w.id}`, { method: "DELETE" })
+    expect(removed.ok, await removed.clone().text()).toBe(true)
+  }
 })
 
 test("a queue-mode instance reads /metrics of its base URL by itself and says what is missing", async () => {

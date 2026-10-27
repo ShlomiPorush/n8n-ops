@@ -9,6 +9,7 @@ import { createDatabase, type Database } from "../db/client.ts"
 import { alertOutbox, alertState, instances } from "../db/schema.ts"
 import { createSettings } from "../lib/settings.ts"
 import { applyHealth, type HealthReport, startCheck } from "./health.ts"
+import { updateInstance } from "./instance-update.ts"
 
 // Applying health reports against a real PostgreSQL: a check that started earlier never overwrites a later one,
 // a change of how health is collected drops checks that started before it, the mode read inside the main becomes
@@ -176,6 +177,19 @@ describe("applyHealth", () => {
     await applyHealth(ctx, id, report(), await ticket())
     expect((await conditions()).filter((c) => c.active)).toEqual([])
     expect((await sent()).length).toBe(before)
+  })
+
+  it("never reopens queue alerts after a switch to regular by hand, whichever comes first", async () => {
+    await ctx.db.update(instances).set({ queueMode: true }).where(eq(instances.id, id))
+    const down = { url: "http://worker:5678/healthz", ok: false, status: 0, ms: 1, error: "refused" }
+    // A queue report in flight and the switch at the same time: the switch takes the report's turn.
+    const t = await ticket()
+    await Promise.all([
+      applyHealth(ctx, id, report({ workers: [down] }), t),
+      updateInstance(ctx, id, { queueMode: false }),
+    ])
+    expect((await conditions()).filter((c) => c.active)).toEqual([])
+    expect(await row()).toMatchObject({ queueMode: false, collectionRevision: 1 })
   })
 
   it("applies reports one at a time, so the alerts end as the later check says", async () => {

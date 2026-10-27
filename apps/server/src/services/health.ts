@@ -5,7 +5,7 @@ import { alertState, type Health, instances } from "../db/schema.ts"
 import { oneAtATime } from "../lib/one-at-a-time.ts"
 import { parseQueueMetrics, probe, type QueueMetrics } from "../n8n/client.ts"
 import { setCondition } from "./alerts.ts"
-import { type Instance, metricsUrlOf } from "./instances.ts"
+import { healthTurn, type Instance, metricsUrlOf } from "./instances.ts"
 import { clip, html } from "./telegram.ts"
 
 const probeResult = z.object({ ok: z.boolean(), status: z.number(), ms: z.number(), error: z.string().optional() })
@@ -159,7 +159,7 @@ export async function closeQueueAlerts(db: Pick<Ctx["db"], "update">, instanceId
  * after a later check's. The transaction uses only its own connection: settings are read before it.
  */
 export function applyHealth(ctx: Ctx, instanceId: string, given: HealthReport, ticket: CheckTicket) {
-  return oneAtATime(`health:${instanceId}`, () => applyHealthNow(ctx, instanceId, given, ticket))
+  return oneAtATime(healthTurn(instanceId), () => applyHealthNow(ctx, instanceId, given, ticket))
 }
 
 async function applyHealthNow(ctx: Ctx, instanceId: string, given: HealthReport, ticket: CheckTicket) {
@@ -184,10 +184,9 @@ async function applyHealthNow(ctx: Ctx, instanceId: string, given: HealthReport,
     // A mode read inside the main is the instance's mode from now on; one that could not be read keeps the last.
     const found = given.source === "inside" && (given.mode === "queue" || given.mode === "regular")
     const queueMode = found ? given.mode === "queue" : current.queueMode
-    // Outside queue mode a report's queue parts mean nothing, whichever worker release sent them.
-    const report: HealthReport = queueMode
-      ? given
-      : { ...given, workers: [], queue: null, metricsError: undefined, metricsState: undefined }
+    // Outside queue mode a report's queue parts mean nothing, whichever worker release sent them. How the metrics
+    // were read stays: it says why there is a version or not.
+    const report: HealthReport = queueMode ? given : { ...given, workers: [], queue: null, metricsError: undefined }
 
     const measured = queueMode && !report.notCollected && report.queue !== null
     const now = new Date()

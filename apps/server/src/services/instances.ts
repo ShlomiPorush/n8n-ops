@@ -1,5 +1,5 @@
 import { readScopes, writeScopes } from "@n8n-ops/shared"
-import { and, eq } from "drizzle-orm"
+import { eq } from "drizzle-orm"
 import type { Ctx } from "../context.ts"
 import { instances } from "../db/schema.ts"
 import { oneAtATime } from "../lib/one-at-a-time.ts"
@@ -9,6 +9,17 @@ export type Instance = typeof instances.$inferSelect
 
 export function clientFor(ctx: Ctx, instance: Instance): N8nClient {
   return new N8nClient(instance.baseUrl, ctx.secrets.decrypt(instance.apiKeyEnc))
+}
+
+/** The turn an instance's health reports, its version writes and its changes take, one at a time. */
+export const healthTurn = (instanceId: string) => `health:${instanceId}`
+
+/** Whether the version comes from the worker reading inside: checked from inside, and the last report had one. */
+export function versionFromInside(
+  instance: Pick<Instance, "collection" | "workerId" | "containerName" | "healthDetail">,
+) {
+  const detail = instance.healthDetail as { source?: string; version?: string } | null
+  return readsInside(instance) && detail?.source === "inside" && Boolean(detail.version)
 }
 
 /** Whether the worker on the host reads the instance from inside its main container. */
@@ -74,18 +85,18 @@ async function refreshInstanceMetaNow(ctx: Ctx, instance: Instance) {
   const client = clientFor(ctx, instance)
   // While the worker reports a version from inside, reading it over the network would race it. A worker that
   // checks over the network, or one of an earlier release, reports none: then it is read here, as before.
-  const detail = instance.healthDetail as { source?: string; version?: string } | null
-  const fromInside = readsInside(instance) && detail?.source === "inside" && Boolean(detail.version)
   const [version, scopes] = await Promise.all([
-    fromInside ? Promise.resolve(null) : client.version(instance.metricsUrl),
+    versionFromInside(instance) ? Promise.resolve(null) : client.version(instance.metricsUrl),
     client.discoverScopes(),
   ])
   if (version) {
-    // Only a version actually read, and only while collection is as it was when the read started.
-    await ctx.db
-      .update(instances)
-      .set({ version })
-      .where(and(eq(instances.id, instance.id), eq(instances.collectionRevision, instance.collectionRevision)))
+    // Only a version actually read, only while collection is as it was when the read started, and not once the
+    // worker has reported one from inside meanwhile: decided in the instance's turn with its health reports.
+    await oneAtATime(healthTurn(instance.id), async () => {
+      const [now] = await ctx.db.select().from(instances).where(eq(instances.id, instance.id))
+      if (!now || now.collectionRevision !== instance.collectionRevision || versionFromInside(now)) return
+      await ctx.db.update(instances).set({ version }).where(eq(instances.id, instance.id))
+    })
   }
   const before = new Set(effectiveScopes(instance))
   const patch = {

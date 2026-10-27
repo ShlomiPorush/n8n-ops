@@ -58,8 +58,9 @@ async function metricsOver(url: string): Promise<{ queue: Record<string, number>
       waiting === null
         ? null
         : { waiting, active: read("active") ?? 0, completed: read("completed") ?? 0, failed: read("failed") ?? 0 }
+    // What this read found replaces what the check in the main said about the queue, an error included.
     return queue
-      ? { queue }
+      ? { queue, metricsError: undefined }
       : { queue: null, metricsError: "no queue metrics; set N8N_METRICS_INCLUDE_QUEUE_METRICS=true" }
   } catch (error) {
     return { queue: null, metricsError: (error as Error).message }

@@ -152,6 +152,7 @@ export type InstanceRow = {
     notCollected?: string
     mainState?: "running" | "not-running" | "paused"
     mode?: "queue" | "regular" | null
+    metricsState?: "read" | "off" | "404" | "no-queue-figures" | "failed" | "skipped"
   } | null
   healthCheckedAt: string | null
   lastPollAt: string | null
@@ -667,6 +668,12 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
                 </span>
               </div>
             )}
+            {hd?.source === "inside" && !hd.notCollected && hd.metricsState && (
+              <div className="flex min-w-0 items-center gap-2.5 border-t border-line px-pad-x py-pad-y">
+                <span className="min-w-0">Metrics (/metrics)</span>
+                <span className="ms-auto text-end text-muted-foreground">{metricsWords[hd.metricsState]}</span>
+              </div>
+            )}
             {(hd?.workers ?? []).map((w) => (
               <HealthRow key={w.url} label={`Worker ${w.url}`} ok={w.ok} detail={w.error} />
             ))}
@@ -1051,6 +1058,16 @@ async function exportCredentials(id: string, name: string) {
     toast.error(`Could not export the credentials of ${name}: ${(error as Error).message}`, { id: loading })
   }
 }
+
+/** How the metrics were read inside the main, in words. */
+const metricsWords = {
+  read: "read in the main container",
+  off: "off (N8N_METRICS is not true)",
+  "404": "off (404)",
+  "no-queue-figures": "read, without queue figures",
+  failed: "could not be read",
+  skipped: "from the metrics URL you set",
+} as const
 
 function HealthRow({ label, ok, detail, unknown }: { label: string; ok?: boolean; detail?: string; unknown?: string }) {
   return (

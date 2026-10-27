@@ -1,5 +1,5 @@
 import { capabilityStatus } from "@n8n-ops/shared"
-import { and, asc, count, desc, eq, inArray, isNull, sql } from "drizzle-orm"
+import { and, asc, count, desc, eq, inArray, isNull } from "drizzle-orm"
 import { Hono } from "hono"
 import { z } from "zod"
 import type { Ctx } from "../context.ts"
@@ -16,9 +16,9 @@ import { requireUser } from "../http/middleware.ts"
 import { actorName, type Env } from "../http/types.ts"
 import { instanceOverridesSchema } from "../lib/settings.ts"
 import { N8nClient, N8nError } from "../n8n/client.ts"
-import { checkDirect, closeQueueAlerts } from "../services/health.ts"
+import { checkDirect } from "../services/health.ts"
+import { updateInstance } from "../services/instance-update.ts"
 import {
-  collectionUpdate,
   effectiveScopes,
   type Instance,
   latestN8nVersion,
@@ -257,29 +257,10 @@ export function instanceRoutes(ctx: Ctx) {
       const test = await testConnection(data.baseUrl ?? row.baseUrl, apiKey)
       if (!test.ok) return c.json({ error: "connection_failed", message: test.error }, 400)
     }
-    const nextMetricsUrl = metricsUrl !== undefined ? metricsUrl || null : undefined
-    // Locked, so a mode the worker finds at the same time is not lost or overwritten by a stale form.
-    const updated = await ctx.db.transaction(async (tx) => {
-      const [current] = await tx.select().from(instances).where(eq(instances.id, row.id)).for("update")
-      if (!current) return undefined
-      const change = collectionUpdate(current, { ...data, metricsUrl: nextMetricsUrl })
-      const { queueMode: _asked, ...rest } = data
-      const [saved] = await tx
-        .update(instances)
-        .set({
-          ...rest,
-          ...(change.queueMode !== undefined ? { queueMode: change.queueMode } : {}),
-          ...(change.queueModeSource ? { queueModeSource: change.queueModeSource } : {}),
-          ...(change.raiseRevision ? { collectionRevision: sql`${instances.collectionRevision} + 1` } : {}),
-          ...(nextMetricsUrl !== undefined ? { metricsUrl: nextMetricsUrl } : {}),
-          ...(apiKey ? { apiKeyEnc: ctx.secrets.encrypt(apiKey) } : {}),
-          updatedAt: new Date(),
-        })
-        .where(eq(instances.id, row.id))
-        .returning()
-      // Set to regular by hand: its queue alerts end now, without a message.
-      if (saved && current.queueMode && !saved.queueMode) await closeQueueAlerts(tx, saved.id)
-      return saved
+    const updated = await updateInstance(ctx, row.id, {
+      ...data,
+      ...(metricsUrl !== undefined ? { metricsUrl: metricsUrl || null } : {}),
+      ...(apiKey ? { apiKeyEnc: ctx.secrets.encrypt(apiKey) } : {}),
     })
     if (updated && (apiKey || data.baseUrl)) await refreshInstanceMeta(ctx, updated)
     await ctx.audit({

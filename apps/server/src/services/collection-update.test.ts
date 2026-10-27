@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { collectionUpdate, readsInside } from "./instances.ts"
+import { collectionUpdate, readsInside, versionFromInside } from "./instances.ts"
 
 const row = {
   collection: "worker" as const,
@@ -40,6 +40,17 @@ describe("collectionUpdate", () => {
     expect(collectionUpdate(manual, { metricsUrl: "http://n8n:5678/metrics" }).raiseRevision).toBe(true)
     expect(collectionUpdate(manual, { workerHealthUrls: ["http://w:5678/healthz"] }).raiseRevision).toBe(true)
     expect(collectionUpdate(manual, { workerHealthUrls: [] }).raiseRevision).toBe(false)
+  })
+})
+
+describe("versionFromInside", () => {
+  it("is true only when the last report came from inside with a version", () => {
+    const inside = { ...row, healthDetail: { source: "inside", version: "2.44.3" } }
+    expect(versionFromInside(inside)).toBe(true)
+    // A worker of an earlier release, or one that fell back to the network, reports none: read it over the network.
+    expect(versionFromInside({ ...row, healthDetail: { source: "network" } })).toBe(false)
+    expect(versionFromInside({ ...row, healthDetail: { source: "inside" } })).toBe(false)
+    expect(versionFromInside({ ...inside, collection: "direct" })).toBe(false)
   })
 })
 

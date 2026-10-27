@@ -129,6 +129,8 @@ test("the worker is assigned to the instance", async () => {
 })
 
 test("through the worker, health is read inside the main container", async () => {
+  // Two settings changes, each waiting for the next probe of the health interval.
+  test.setTimeout(240_000)
   const collect = async (from: RegExp, to: string) => {
     await page.getByRole("button", { name: "Edit" }).click()
     await page.getByRole("button", { name: from }).click()

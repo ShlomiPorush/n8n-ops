@@ -150,11 +150,12 @@ describe("checkInside", () => {
 })
 
 describe("probeJob", () => {
-  async function n8nOverNetwork() {
+  async function n8nOverNetwork(metrics?: string) {
     const hits: string[] = []
     const server = createServer((req, res) => {
       hits.push(req.url ?? "")
-      res.writeHead(req.url === "/metrics" ? 404 : 200).end()
+      if (req.url === "/metrics") return metrics ? res.writeHead(200).end(metrics) : res.writeHead(404).end()
+      res.writeHead(200).end()
     })
     servers.push(server)
     await new Promise<void>((r) => server.listen(0, "127.0.0.1", r))
@@ -194,6 +195,16 @@ describe("probeJob", () => {
     )
     expect(job.result).toMatchObject({ source: "network", fallback: expect.stringContaining("-allowPOST") })
     expect(hits.sort()).toEqual(["/healthz", "/healthz/readiness"])
+  })
+
+  it("lets a metrics URL the owner typed replace a failed read in the main, its error included", async () => {
+    const failedInside =
+      '{"health":{"status":200},"readiness":{"status":200},"mode":"queue","metrics":{"state":"failed","reason":"the answer is too large"}}'
+    const { docker } = await engine({ start: (res) => res.writeHead(200).end(frame(failedInside)) })
+    const { base } = await n8nOverNetwork("n8n_scaling_mode_queue_jobs_waiting 4\n")
+    const job = await probeJob({ inside: { container: "n8n" }, overrides: { metricsUrl: `${base}/metrics` } }, docker)
+    expect(job.result).toMatchObject({ queue: { waiting: 4 } })
+    expect(JSON.parse(JSON.stringify(job.result))).not.toHaveProperty("metricsError")
   })
 
   it("checks the worker health URLs and the metrics URL the owner typed", async () => {

@@ -207,9 +207,13 @@ export function LastKnown({
   instance: Pick<InstanceRow, "lastKnownHealth" | "lastKnownAt" | "healthDetail">
 }) {
   if (!i.lastKnownHealth) return null
+  // After a check that was not collected, the detail of the last reading is gone: only its general words.
+  const label = i.healthDetail?.notCollected
+    ? statusOf("health", i.lastKnownHealth).label
+    : readingLabel(i.lastKnownHealth, i.healthDetail)
   return (
     <span className="text-muted-foreground">
-      Last known: {readingLabel(i.lastKnownHealth, i.healthDetail?.notCollected ? null : i.healthDetail)}
+      Last known: {label}
       {i.lastKnownAt && (
         <>
           , <TimeAgo value={i.lastKnownAt} />

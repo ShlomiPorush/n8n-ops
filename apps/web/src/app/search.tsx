@@ -8,8 +8,9 @@ import { settingsGroups } from "@/app/settings-sections"
 import { api } from "@/lib/api"
 import { inertBeside } from "@/lib/inert"
 import { loadView } from "@/lib/load-state"
-import { n } from "@/lib/numbers"
+import { n, plural } from "@/lib/numbers"
 import { onMoveKept, useNavigateFromOverlay, useOverlayHistory } from "@/lib/overlay-history"
+import { instancesText, isSingle, type ProblemRow, problemTitle } from "@/lib/problems"
 import { revealTarget } from "@/lib/reveal"
 import { cn } from "@/lib/utils"
 import { forms } from "@/pages/settings"
@@ -90,7 +91,7 @@ function searchLocal(q: string, pages: SearchPage[]): { pages: Item[]; settings:
   return { pages: pageItems, settings: [...byName, ...byKey] }
 }
 
-type ProblemHit = { id: string; workflowName: string; errorMessage: string; instanceName: string; status: string }
+type ProblemHit = ProblemRow
 type WorkflowHit = { instanceId: string; workflowId: string; name: string; instanceName: string; triggerType: string }
 type InstanceHit = { id: string; name: string; baseUrl: string; health: string }
 
@@ -140,8 +141,10 @@ function useServerSearch(q: string, enabled: boolean) {
               all: `/problems?status=all&q=${query}`,
               items: data.items.map((p) => ({
                 id: `problem:${p.id}`,
-                title: p.workflowName,
-                subtitle: `${p.instanceName} · ${p.errorMessage}`,
+                title: problemTitle(p),
+                subtitle: isSingle(p)
+                  ? `${p.affectedWorkflows[0]?.instanceName ?? ""} · ${p.errorMessage}`
+                  : `${plural(p.workflows, "workflow")} · ${instancesText(p)}`,
                 meta: p.status,
                 to: `/problems/${p.id}?status=all&q=${query}`,
               })),

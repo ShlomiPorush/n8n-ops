@@ -1016,6 +1016,34 @@ test("the 12-hour Time format writes the daily backup time that way as soon as i
 })
 
 /** Opens the second test instance and returns its id. */
+/** A stand-in Problem in one workflow, as the server sends it. */
+function standInProblem(id: string, workflowName: string, errorMessage: string, more: Record<string, unknown> = {}) {
+  const at = new Date(Date.now() - 3 * 86_400_000).toISOString()
+  const state = { status: "open", regression: false, count: 1, firstSeen: at, lastSeen: at, mutedUntil: null }
+  return {
+    id,
+    errorMessage,
+    ...state,
+    workflows: 1,
+    instances: ["e2e-n8n"],
+    affectedTotal: 1,
+    affectedWorkflows: [
+      {
+        id: `${id}-workflow`,
+        instanceId: "e2e-instance",
+        instanceName: "e2e-n8n",
+        workflowId: `${id}-wf`,
+        workflowName,
+        nodeName: "Call ERP",
+        errorMessage,
+        ...state,
+        resolvedAt: null,
+      },
+    ],
+    ...more,
+  }
+}
+
 async function openInstanceB() {
   await page.goto("/instances")
   await page
@@ -1586,13 +1614,12 @@ test("Merge lands on the problem merged into, and Back returns to the problem it
   await expect(page.getByRole("heading", { name: "Where It Broke" })).toBeVisible()
   const problem = new URL(page.url()).pathname
   // A stand-in problem to merge into, and a merge that is only answered: the stored problems stay as they are.
-  const candidates = (url: URL) =>
-    url.pathname === "/api/problems" && url.searchParams.get("status") === "open" && url.searchParams.has("instance")
+  const candidates = (url: URL) => url.pathname === "/api/problems" && url.searchParams.get("for") === "merge"
   const merge = (url: URL) => /^\/api\/problems\/[^/]+\/merge$/.test(url.pathname)
   await page.route(candidates, (route) =>
     route.fulfill({
       json: {
-        items: [{ id: "e2e-merge-target", workflowName: "Merge target", errorMessage: "Stand-in problem" }],
+        items: [standInProblem("e2e-merge-target", "Merge target", "Stand-in problem")],
         total: 1,
       },
     }),
@@ -1629,15 +1656,12 @@ test("a long choice in a form has a search that reads an underscore as a space, 
     .click()
   await expect(page.getByRole("heading", { name: "Where It Broke" })).toBeVisible()
   // Thirteen stand-in problems to merge into, one of them with a name far wider than the list.
-  const candidates = (url: URL) =>
-    url.pathname === "/api/problems" && url.searchParams.get("status") === "open" && url.searchParams.has("instance")
+  const candidates = (url: URL) => url.pathname === "/api/problems" && url.searchParams.get("for") === "merge"
   const items = [
-    ...Array.from({ length: 12 }, (_, i) => ({
-      id: `e2e-candidate-${i}`,
-      workflowName: `Nightly_sync_${i}`,
-      errorMessage: "Stand-in problem",
-    })),
-    { id: "e2e-candidate-wide", workflowName: "W".repeat(300), errorMessage: "Stand-in problem" },
+    ...Array.from({ length: 12 }, (_, i) =>
+      standInProblem(`e2e-candidate-${i}`, `Nightly_sync_${i}`, "Stand-in problem"),
+    ),
+    standInProblem("e2e-candidate-wide", "W".repeat(300), "Stand-in problem"),
   ]
   await page.route(candidates, (route) => route.fulfill({ json: { items, total: items.length } }))
   try {
@@ -1880,21 +1904,12 @@ test("an order whose list fails to load leaves the rows and the Sort button in t
 test("the open problems of an instance say when a new order or a refresh failed, and keep the rows (TB-4, TB-5)", async () => {
   const id = await openInstanceB()
   // Stand-in rows, so the test does not depend on which problems are open: two, the fewer failures first.
-  const problem = (n: number, count: number) => ({
-    id: `00000000-0000-4000-8000-00000000000${n}`,
-    status: "open",
-    regression: false,
-    workflowId: `wf-${n}`,
-    workflowName: `E2E stand-in ${n}`,
-    nodeName: "Call ERP",
-    errorMessage: "ERP refused",
-    count,
-    firstSeen: new Date(Date.now() - 3 * 86_400_000).toISOString(),
-    lastSeen: new Date(Date.now() - n * 60_000).toISOString(),
-    mutedUntil: null,
-    instanceId: id,
-    instanceName: "e2e-n8n-b",
-  })
+  const problem = (n: number, count: number) =>
+    standInProblem(`00000000-0000-4000-8000-00000000000${n}`, `E2E stand-in ${n}`, "ERP refused", {
+      count,
+      lastSeen: new Date(Date.now() - n * 60_000).toISOString(),
+      instances: ["e2e-n8n-b"],
+    })
   const [few, many] = [problem(1, 2), problem(2, 9)]
   let sortFails = true
   let fails = false

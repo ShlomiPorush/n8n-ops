@@ -89,7 +89,7 @@ One error, known by its exact text, wherever it happens: on any instance, in any
 _Avoid_: incident, issue, error group, problem group
 
 **Affected workflow**:
-A workflow that a Problem hit, with its own failures, first and last seen, and its own resolved or muted state. A Problem is resolved when all its Affected workflows are.
+A workflow that a Problem hit, at one node, with its own failures, first and last seen, and its own resolved or muted state. The same workflow failing at two nodes is two Affected workflows. A Problem is resolved when all its Affected workflows are.
 _Avoid_: occurrence, instance of a problem
 
 **Regression**:

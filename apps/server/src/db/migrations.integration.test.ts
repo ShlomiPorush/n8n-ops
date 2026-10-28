@@ -688,3 +688,58 @@ describe("the session clocks (0009)", () => {
     }
   })
 })
+
+describe("the instance setup (0015)", () => {
+  it("keeps every instance active with every capability, backing up as before, and drops declared access", async () => {
+    const { sql, db, close } = await freshDatabase()
+    try {
+      await migrate(db, { migrationsFolder: migrationsUpTo("0014_compose_service_target") })
+      const [host] = await sql<{ id: string }[]>`insert into workers (name) values ('host') returning id`
+      const workerId = host?.id ?? null
+      await sql`insert into instances (name, base_url, api_key_enc, worker_id, container_name)
+        values ('with-worker', 'http://a', 'v1:x', ${workerId}, 'n8n-main')`
+      await sql`insert into instances (name, base_url, api_key_enc, worker_id, compose_project, compose_service)
+        values ('compose', 'http://b', 'v1:x', ${workerId}, 'shop', 'n8n')`
+      await sql`insert into instances (name, base_url, api_key_enc, worker_id)
+        values ('worker-without-main', 'http://c', 'v1:x', ${workerId})`
+      await sql`insert into instances (name, base_url, api_key_enc, scopes_source, declared_access)
+        values ('older-n8n', 'http://d', 'v1:x', 'declared', 'write')`
+      await migrate(db, { migrationsFolder: migrationsUpTo(null) })
+      const rows = await sql<
+        {
+          name: string
+          setup_state: string
+          chosen_capabilities: string[]
+          backup_via: string
+          config_revision: number
+          setup_checks: unknown
+          scopes: unknown
+        }[]
+      >`select name, setup_state, chosen_capabilities, backup_via, config_revision, setup_checks, scopes
+        from instances order by name`
+      expect(rows.map((r) => [r.name, r.backup_via])).toEqual([
+        ["compose", "worker"],
+        ["older-n8n", "api"],
+        ["with-worker", "worker"],
+        ["worker-without-main", "api"],
+      ])
+      for (const r of rows)
+        expect(r).toMatchObject({
+          setup_state: "complete",
+          chosen_capabilities: ["health", "monitor", "map", "move", "agents", "backup", "restore"],
+          config_revision: 0,
+          setup_checks: {},
+        })
+      // The declared path is gone: an older n8n has no scopes, and every API capability shows unavailable.
+      expect(rows.find((r) => r.name === "older-n8n")?.scopes).toBeNull()
+      expect(
+        await sql`select column_name from information_schema.columns
+          where table_name = 'instances' and column_name in ('scopes_source', 'declared_access')`,
+      ).toHaveLength(0)
+      // A draft has no key until its setup stores one.
+      await sql`insert into instances (name, base_url, setup_state) values ('draft', 'http://e', 'incomplete')`
+    } finally {
+      await close()
+    }
+  })
+})

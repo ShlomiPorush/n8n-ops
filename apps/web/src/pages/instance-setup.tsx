@@ -1489,7 +1489,7 @@ function ReviewStep(context: StepContext) {
       }
     >
       <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
-        <p className="min-w-0 flex-1">
+        <p className="min-w-[min(100%,18rem)] flex-1">
           <span className="font-semibold">{draft ? "Chosen: " : "Adding: "}</span>
           {added.join(", ") || "nothing yet"}
         </p>

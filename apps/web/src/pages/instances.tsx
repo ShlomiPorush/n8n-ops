@@ -380,31 +380,36 @@ export function InstancesPage() {
                         )
                       }
                       sub={
-                        <>
-                          {i.health === "ok" ? (
-                            healthLabel(i)
-                          ) : (
-                            <StatusTag kind="health" status={i.health}>
-                              {healthLabel(i)}
-                            </StatusTag>
-                          )}
-                          {i.lastKnownHealth && (
-                            <>
-                              {" · "}
-                              <LastKnown instance={i} />
-                            </>
-                          )}
-                          {" · "}
-                          {behind(i.version, latest) ? (
-                            <Tip content={`Latest is ${latest}`}>
-                              <Badge variant="warn">{i.version}</Badge>
-                            </Tip>
-                          ) : (
-                            <span className="font-mono">{i.version ?? "version unknown"}</span>
-                          )}
-                          {" · "}
-                          {canWrite(i) ? "read + write" : "read only"}
-                        </>
+                        // A draft has not been checked yet: nothing about its health or key to say.
+                        i.setupState === "incomplete" ? (
+                          "Not checked until its setup is completed"
+                        ) : (
+                          <>
+                            {i.health === "ok" ? (
+                              healthLabel(i)
+                            ) : (
+                              <StatusTag kind="health" status={i.health}>
+                                {healthLabel(i)}
+                              </StatusTag>
+                            )}
+                            {i.lastKnownHealth && (
+                              <>
+                                {" · "}
+                                <LastKnown instance={i} />
+                              </>
+                            )}
+                            {" · "}
+                            {behind(i.version, latest) ? (
+                              <Tip content={`Latest is ${latest}`}>
+                                <Badge variant="warn">{i.version}</Badge>
+                              </Tip>
+                            ) : (
+                              <span className="font-mono">{i.version ?? "version unknown"}</span>
+                            )}
+                            {" · "}
+                            {canWrite(i) ? "read + write" : "read only"}
+                          </>
+                        )
                       }
                       subEnd={
                         i.lastBackup ? (
@@ -452,7 +457,9 @@ export function InstancesPage() {
                       </span>
                     </TableCell>
                     <TableCell>
-                      {i.health === "ok" ? (
+                      {i.setupState === "incomplete" ? (
+                        <span className="text-muted-foreground">Not checked yet</span>
+                      ) : i.health === "ok" ? (
                         <span className="text-muted-foreground">{healthLabel(i)}</span>
                       ) : (
                         <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">

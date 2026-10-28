@@ -302,7 +302,31 @@ describe("the check in a queue worker", () => {
   }
 
   it("says the health check is off and asks for nothing", async () => {
-    expect(await run({})).toEqual({ active: false })
+    expect(await run({})).toMatchObject({ active: false })
+  })
+
+  it("sends figures only, and no setting, command or path of the worker", async () => {
+    const out = (await run({ N8N_CONCURRENCY_PRODUCTION_LIMIT: "7", SECRET_TOKEN: "s3cret" })) as {
+      details?: Record<string, unknown>
+    }
+    expect(
+      Object.keys(out.details ?? {}).every((k) => ["version", "uptimeSec", "memory", "concurrencyEnv"].includes(k)),
+    ).toBe(true)
+    expect(out.details?.concurrencyEnv).toBe(7)
+    const text = JSON.stringify(out)
+    for (const word of ["s3cret", "SECRET_TOKEN", "N8N_CONCURRENCY", "/proc", "/sys", "node_modules"])
+      expect(text).not.toContain(word)
+    // Unreadable, blank, not a number or n8n's -1: the variable decides nothing.
+    expect(
+      ((await run({ N8N_CONCURRENCY_PRODUCTION_LIMIT_FILE: "/missing" })) as { details: { concurrencyEnv: unknown } })
+        .details.concurrencyEnv,
+    ).toBe("unknown")
+    // As n8n reads a number: written with quotes, it is not one.
+    for (const value of ["", "-1", "many", '"7"'])
+      expect(
+        ((await run({ N8N_CONCURRENCY_PRODUCTION_LIMIT: value })) as { details: { concurrencyEnv: unknown } }).details
+          .concurrencyEnv,
+      ).toBe("absent")
   })
 
   it("reads health and readiness where the worker server listens", async () => {
@@ -313,11 +337,11 @@ describe("the check in a queue worker", () => {
         QUEUE_HEALTH_CHECK_PORT: String(port),
         N8N_WORKER_SERVER_ADDRESS: "0.0.0.0",
       }),
-    ).toEqual({ active: true, health: { status: 200 }, readiness: { status: 503 } })
+    ).toMatchObject({ active: true, health: { status: 200 }, readiness: { status: 503 } })
   })
 
   it("says unknown when a setting's _FILE cannot be read", async () => {
-    expect(await run({ QUEUE_HEALTH_CHECK_ACTIVE_FILE: "/missing/file" })).toEqual({
+    expect(await run({ QUEUE_HEALTH_CHECK_ACTIVE_FILE: "/missing/file" })).toMatchObject({
       notCollected: "cannot read QUEUE_HEALTH_CHECK_ACTIVE in the worker",
     })
   })

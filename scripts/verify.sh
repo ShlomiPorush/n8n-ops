@@ -336,7 +336,11 @@ run_queue_checks() {
       const r = JSON.parse(process.argv[1]); const w = (r.workers || [])[0] || {};
       console.log("    main " + r.source + " " + r.mode + ", list " + (r.discovery || {}).status + ", worker " + w.name + ": " + w.state);
       // When the worker is ready the whole instance is: the main up and ready, and the queue figures read.
-      const whole = process.argv[2] !== "ready" || (r.main.ok && r.readiness.ok && r.queue !== null);
+      // A ready worker also has its figures: the version of the main, the time its container is up, the n8n default
+      // of 10 jobs at once (no flag, no variable here), and memory in use when it can be read on this host.
+      const figures = w.version === r.version && w.uptimeSec > 0 && w.concurrency && w.concurrency.value === 10 &&
+        w.concurrency.from === "default" && (!w.memory || w.memory.used > 0);
+      const whole = process.argv[2] !== "ready" || (r.main.ok && r.readiness.ok && r.queue !== null && figures);
       process.exit(r.source === "inside" && r.mode === "queue" && r.discovery && r.discovery.status === "ok" &&
         r.discovery.found === 1 && w.state === process.argv[2] && whole ? 0 : 1)' "$report" "$want" ||
       {

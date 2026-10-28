@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { discover, type ListedContainer, roleOf } from "./discovery.ts"
+import { concurrencyFlag, discover, type ListedContainer, roleOf } from "./discovery.ts"
 
 // Container lists as Docker gives them for the official image (the Command shapes are copied from a real list):
 // a main runs the entrypoint alone, a worker the entrypoint followed by `worker` and its flags.
@@ -50,9 +50,20 @@ describe("discover", () => {
       main: "running",
       workers: [
         { name: "acme-n8n-worker-1", state: "running" },
-        { name: "acme-n8n-worker-2", state: "exited" },
+        { name: "acme-n8n-worker-2", state: "exited", concurrencyFlag: 5 },
       ],
     })
+  })
+
+  it("reads only the number of a --concurrency flag, and says when it is not one", () => {
+    const flag = (command: string) => concurrencyFlag({ Command: `${ENTRY} ${command}` })
+    expect(flag("worker")).toBeUndefined()
+    expect(flag("worker --concurrency 5")).toBe(5)
+    expect(flag("worker --concurrency=12")).toBe(12)
+    expect(flag("worker --concurrency")).toBe("invalid")
+    expect(flag("worker --concurrency=0")).toBe("invalid")
+    expect(flag("worker --concurrency 1001")).toBe("invalid")
+    expect(flag("worker --concurrency 5x")).toBe("invalid")
   })
 
   it("ignores one-off containers and other projects", () => {

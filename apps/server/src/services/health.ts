@@ -1,3 +1,4 @@
+import { workerDetails } from "@n8n-ops/shared"
 import { and, eq, like, sql } from "drizzle-orm"
 import { z } from "zod"
 import { type Ctx, changed } from "../context.ts"
@@ -32,6 +33,11 @@ export const probeReport = z.object({
       /** Found next to the main (url docker://<name>), with its state; absent for a URL the owner typed. */
       name: z.string().max(128).optional(),
       state: z.enum(["ready", "not-ready", "unreachable", "not-verified", "down", "not-checked"]).optional(),
+      ...workerDetails,
+      concurrency: z
+        .object({ value: z.number().int().min(1).max(10000), from: z.enum(["env", "flag", "default"]) })
+        .optional()
+        .catch(undefined),
     }),
   ),
   queue: z

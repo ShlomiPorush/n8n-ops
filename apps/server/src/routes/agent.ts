@@ -201,7 +201,7 @@ export function buildMcpServer(
   )
   tool(
     "get_queue_status",
-    "Queue metrics and queue worker health of instances in queue mode. With health unknown, the figures are from checkedAt, the last check.",
+    "Queue metrics and queue worker health of instances in queue mode. With health unknown, the figures are from checkedAt, the last check. Each queue worker has, when its check read them: version, uptimeSec (of its container), memory {used, limit} in bytes (limit null: none set on the container) and concurrency {value, from: env, flag or default}; they are missing for workers of earlier releases.",
     {},
     () => agentQueues(ctx),
   )

@@ -1,5 +1,12 @@
-import { ALLOWED_LIMITS, workerCheckOutput } from "@n8n-ops/shared"
-import { type ContainerState, discover, type ListedContainer, projectOf } from "./discovery.ts"
+import { ALLOWED_LIMITS, type WorkerCheckOutput, workerCheckOutput } from "@n8n-ops/shared"
+import {
+  type ConcurrencyFlag,
+  type ContainerState,
+  discover,
+  type FoundWorker,
+  type ListedContainer,
+  projectOf,
+} from "./discovery.ts"
 import { type Docker, DockerError, type Refusal, refusalOf } from "./docker.ts"
 import { WORKER_CHECK } from "./inside.ts"
 
@@ -16,6 +23,38 @@ export type CheckedWorker = {
   error?: string
   /** Set when the socket proxy refused the check; moved to the report's `access` before it is sent. */
   refusal?: Refusal
+} & WorkerFigures
+
+/** What the check in a worker read about it: figures only, each left out when not known for sure. */
+export type WorkerFigures = {
+  version?: string
+  uptimeSec?: number
+  memory?: { used: number; limit: number | null }
+  concurrency?: { value: number; from: "env" | "flag" | "default" }
+}
+
+/**
+ * The figures of a worker from its check and the `--concurrency` flag of its command. How many jobs it runs at once
+ * follows n8n 2 (checked in n8nio/n8n:2.44.3): N8N_CONCURRENCY_PRODUCTION_LIMIT when it is set and not -1, else the
+ * flag, else 10. Without a version 2 read in the worker, an unknown variable or a flag that is not a number, none.
+ */
+export function figuresOf(details: WorkerCheckOutput["details"], flag: ConcurrencyFlag): WorkerFigures {
+  if (!details) return {}
+  const { version, uptimeSec, memory, concurrencyEnv: env } = details
+  const known = version?.startsWith("2.") && env !== undefined && env !== "unknown" && flag !== "invalid"
+  const concurrency = !known
+    ? undefined
+    : typeof env === "number"
+      ? { value: env, from: "env" as const }
+      : typeof flag === "number"
+        ? { value: flag, from: "flag" as const }
+        : { value: 10, from: "default" as const }
+  return {
+    ...(version ? { version } : {}),
+    ...(uptimeSec !== undefined ? { uptimeSec } : {}),
+    ...(memory ? { memory } : {}),
+    ...(concurrency && concurrency.value >= 1 ? { concurrency } : {}),
+  }
 }
 
 export type Discovery = {
@@ -64,7 +103,12 @@ const entry = (name: string, state: WorkerState, ms: number, error?: string, sta
 const DOWN_STATES = new Set<ContainerState>(["exited", "dead", "restarting", "removing", "created", "paused"])
 
 /** Checks one running queue worker from inside its container. */
-export async function checkWorker(docker: Docker, name: string, signal: AbortSignal): Promise<CheckedWorker> {
+export async function checkWorker(
+  docker: Docker,
+  name: string,
+  signal: AbortSignal,
+  flag?: ConcurrencyFlag,
+): Promise<CheckedWorker> {
   const started = Date.now()
   const ms = () => Date.now() - started
   try {
@@ -82,18 +126,24 @@ export async function checkWorker(docker: Docker, name: string, signal: AbortSig
     if (!out.success)
       return entry(name, "not-checked", ms(), "the answer of the check in the worker was not understood")
     const o = out.data
-    if (o.notCollected) return entry(name, "not-checked", ms(), o.notCollected)
+    // The figures go with every state the check itself read, also when the worker is not ready.
+    const figures = figuresOf(o.details, flag)
+    const checked = (state: WorkerState, error?: string, status = 0) => ({
+      ...entry(name, state, ms(), error, status),
+      ...figures,
+    })
+    if (o.notCollected) return checked("not-checked", o.notCollected)
     if (o.active === false)
-      return entry(name, "not-verified", ms(), "running, health not verified; set QUEUE_HEALTH_CHECK_ACTIVE=true")
+      return checked("not-verified", "running, health not verified; set QUEUE_HEALTH_CHECK_ACTIVE=true")
     if (!o.health || !o.readiness)
-      return entry(name, "not-checked", ms(), "the answer of the check in the worker was not understood")
+      return checked("not-checked", "the answer of the check in the worker was not understood")
     const healthOk = !o.health.error && o.health.status >= 200 && o.health.status < 300
     if (!healthOk)
-      return entry(name, "unreachable", ms(), o.health.error ?? `health answered ${o.health.status}`, o.health.status)
+      return checked("unreachable", o.health.error ?? `health answered ${o.health.status}`, o.health.status)
     const ready = !o.readiness.error && o.readiness.status >= 200 && o.readiness.status < 300
     return ready
-      ? entry(name, "ready", ms(), undefined, o.readiness.status)
-      : entry(name, "not-ready", ms(), o.readiness.error ?? `not ready (${o.readiness.status})`, o.readiness.status)
+      ? checked("ready", undefined, o.readiness.status)
+      : checked("not-ready", o.readiness.error ?? `not ready (${o.readiness.status})`, o.readiness.status)
   } catch (error) {
     if (error instanceof DockerError) {
       if (error.kind === "refused")
@@ -128,9 +178,7 @@ export async function mainStateOf(
   }
 }
 
-type Found =
-  | { ok: true; workers: { name: string; state: ContainerState }[]; mainState?: ContainerState }
-  | { ok: false; result: DiscoveryResult }
+type Found = { ok: true; workers: FoundWorker[]; mainState?: ContainerState } | { ok: false; result: DiscoveryResult }
 
 /** Lists the containers of the main's Compose project and tells its queue workers apart. Runs no command. */
 async function findWorkers(docker: Docker, main: string, deadline: AbortSignal): Promise<Found> {
@@ -289,7 +337,7 @@ export async function discoverWorkers(
   const run = async () => {
     for (let next = queue.shift(); next; next = queue.shift()) {
       if (deadline.aborted) break
-      const checked = await checkWorker(docker, next.name, deadline)
+      const checked = await checkWorker(docker, next.name, deadline, next.concurrencyFlag)
       // An answer that came after the deadline is not used.
       if (!deadline.aborted) results.set(next.name, checked)
     }

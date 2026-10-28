@@ -26,7 +26,7 @@ _Avoid_: feature, module, permission
 
 **Setup incomplete**:
 An instance added but not activated yet: its setup checks have not all passed, or the owner chose Finish later. It does nothing in the background and never alerts. An active instance never returns to it.
-_Avoid_: draft (in the UI), pending, inactive
+_Avoid_: pending, inactive (the code calls such an instance a draft)
 
 ### Health
 

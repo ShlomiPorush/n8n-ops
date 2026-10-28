@@ -503,6 +503,41 @@ describe("backups", () => {
   })
 })
 
+describe("health turned off", () => {
+  it("ends its conditions without a message and drops queued health probes, not setup probes", async () => {
+    const w = await worker()
+    const row = await instance({ collection: "worker", workerId: w.id, containerName: "n8n-main" })
+    const keys = [`down:${row.id}`, `backlog:${row.id}`, `worker:${row.id}:docker://q1`]
+    await ctx.db.insert(alertState).values(keys.map((key) => ({ key, active: true })))
+    await ctx.db.insert(workerJobs).values([
+      { workerId: w.id, instanceId: row.id, kind: "probe", payload: { check: { seq: 1, revision: 0 } } },
+      { workerId: w.id, instanceId: row.id, kind: "probe", payload: { setup: { attempt: 1 } } },
+    ])
+    const alerts = (await ctx.db.select().from(alertOutbox)).length
+
+    expect((await removeCapability(ctx, row.id, "health"))?.removed).toEqual(["health"])
+    for (const key of keys)
+      expect((await ctx.db.select().from(alertState).where(eq(alertState.key, key)))[0]?.active).toBe(false)
+    const left = await ctx.db.select().from(workerJobs).where(eq(workerJobs.instanceId, row.id))
+    expect(left.map((j) => j.payload)).toEqual([{ setup: { attempt: 1 } }])
+    expect((await ctx.db.select().from(alertOutbox)).length).toBe(alerts)
+    // Nothing makes a new health alert for it now.
+    await setCondition(ctx, `down:${row.id}`, true, {
+      kind: "health",
+      subject: { instanceId: row.id },
+      start: () => html`<b>down</b>`,
+    })
+    expect(
+      (
+        await ctx.db
+          .select()
+          .from(alertState)
+          .where(eq(alertState.key, `down:${row.id}`))
+      )[0]?.active,
+    ).toBe(false)
+  })
+})
+
 describe("PATCH /instances/:id", () => {
   const app = () => new Hono<Env>().route("/api/instances", instanceRoutes(ctx))
   const patch = (id: string, body: unknown) =>

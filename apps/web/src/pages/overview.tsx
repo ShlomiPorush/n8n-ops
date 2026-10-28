@@ -52,9 +52,10 @@ export function OverviewPage() {
   const activity = useApi<AuditEntry[]>("/admin/audit", { refetchInterval: 30_000 })
   const o = overview.data
   const order: Record<string, number> = { down: 0, warn: 1, unknown: 2, ok: 3 }
-  const rows = [...(instances.data?.instances ?? [])].sort(
-    (a, b) => (order[a.health] ?? 9) - (order[b.health] ?? 9) || b.openProblems - a.openProblems,
-  )
+  // Drafts do nothing yet, so the overview leaves them out; the Instances page lists them as Setup incomplete.
+  const rows = (instances.data?.instances ?? [])
+    .filter((i) => i.setupState === "complete")
+    .sort((a, b) => (order[a.health] ?? 9) - (order[b.health] ?? 9) || b.openProblems - a.openProblems)
   // The same list the bell opens on every page, from the same query (NL-19).
   const attention = useAttention()
   const a = attention.data

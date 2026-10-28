@@ -5,7 +5,7 @@ import { tokenActor } from "../http/types.ts"
 import type { AuditVia } from "../lib/audit.ts"
 import { newToken, sha256 } from "../lib/crypto.ts"
 import { matchOperation, parseSpec, type SpecOperation, specHasScopes } from "../lib/n8n-spec.ts"
-import { can, effectiveScopes, type Instance } from "./instances.ts"
+import { can, effectiveScopes, type Instance, unsupportedVersion } from "./instances.ts"
 
 /**
  * Temporary access for agents to n8n instances. An agent asks for an instance, scopes, optional workflows and a
@@ -34,10 +34,14 @@ export function policyScopes(instance: Pick<Instance, "agentAccess" | "scopes">)
   return instance.agentAccess.scopes.filter((s) => held.has(s))
 }
 
-type AccessFields = Pick<Instance, "agentAccess" | "scopes" | "setupState" | "chosenCapabilities" | "apiKeyEnc">
+type AccessFields = Pick<
+  Instance,
+  "agentAccess" | "scopes" | "setupState" | "chosenCapabilities" | "apiKeyEnc" | "scopesCheckedAt" | "version"
+>
 
-/** Whether agents may use the instance's API now: active, chosen for Temporary access, with a key. */
-export const openToAgents = (instance: AccessFields) => can(instance, "agents") && Boolean(instance.apiKeyEnc)
+/** Whether agents may use the instance's API now: active, chosen for Temporary access, with a key, n8n 2.14.0+. */
+export const openToAgents = (instance: AccessFields) =>
+  can(instance, "agents") && Boolean(instance.apiKeyEnc) && !unsupportedVersion(instance)
 
 /** Scopes an agent may be granted on an instance: open to agents, allowed by its policy and held by its key. */
 export function grantableScopes(instance: AccessFields) {

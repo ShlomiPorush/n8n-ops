@@ -2,7 +2,7 @@ import type { Ctx } from "../context.ts"
 import { instances } from "../db/schema.ts"
 import { dispatchAlerts, syncTelegramWebhook } from "./alerts.ts"
 import { checkDirect } from "./health.ts"
-import { activeOnly, can, refreshInstanceMeta } from "./instances.ts"
+import { activeOnly, can, refreshInstanceMeta, unsupportedVersion } from "./instances.ts"
 import { housekeeping, pollInstance } from "./problems.ts"
 import { maybeSendReports } from "./reports.ts"
 
@@ -48,7 +48,12 @@ export function startScheduler(ctx: Ctx, extraJobs: Job[] = []): () => void {
     const all = await ctx.db.select().from(instances).where(activeOnly)
     for (const instance of all) {
       const s = await ctx.settings.forInstance(instance.overrides)
-      if (can(instance, "monitor") && due(`poll:${instance.id}`, s.pollIntervalSec * 1000)) {
+      // n8n older than 2.14.0 is not read through its API; the meta read below still notices an update.
+      if (
+        can(instance, "monitor") &&
+        !unsupportedVersion(instance) &&
+        due(`poll:${instance.id}`, s.pollIntervalSec * 1000)
+      ) {
         void runOnce(`poll:${instance.id}`, () => pollInstance(ctx, instance))
       }
       if (

@@ -1,3 +1,4 @@
+import { unsupportedVersionText } from "@n8n-ops/shared"
 import { sealBytes } from "@n8n-ops/shared/archive"
 import { and, asc, eq, ilike, type SQL } from "drizzle-orm"
 import { Hono } from "hono"
@@ -7,7 +8,7 @@ import { instances, workflows } from "../db/schema.ts"
 import { requireUser } from "../http/middleware.ts"
 import { actorName, type Env } from "../http/types.ts"
 import { likeContains } from "../lib/like.ts"
-import { activeWith, can, workflowUrl } from "../services/instances.ts"
+import { activeWith, can, unsupportedVersion, workflowUrl } from "../services/instances.ts"
 import { exportCredentials, ProxyRefusedError, previewMove, runMove } from "../services/moves.ts"
 import { syncWorkflows } from "../services/workflows.ts"
 
@@ -90,10 +91,13 @@ export function workflowRoutes(ctx: Ctx) {
         },
         400,
       )
+    // n8n older than 2.14.0 is not read through its API: said for that instance, the others are synced.
     const results = await Promise.all(
       targets.map(async (i) => ({
         instance: i.name,
-        ...(await syncWorkflows(ctx, i).catch((e: Error) => ({ error: e.message }))),
+        ...(unsupportedVersion(i)
+          ? { error: unsupportedVersionText(i.version) }
+          : await syncWorkflows(ctx, i).catch((e: Error) => ({ error: e.message }))),
       })),
     )
     return c.json(results)

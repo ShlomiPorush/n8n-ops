@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process"
 import { createHash } from "node:crypto"
 import { promisify } from "node:util"
-import { entryText, textEntry } from "@n8n-ops/shared"
+import { entryText, textEntry, unsupportedVersionText } from "@n8n-ops/shared"
 import { type Manifest, openArchive, sealArchive, sealBytes } from "@n8n-ops/shared/archive"
 import { and, desc, eq, inArray, isNotNull, isNull, like, sql } from "drizzle-orm"
 import type { Ctx } from "../context.ts"
@@ -33,6 +33,7 @@ import {
   metricsUrlOf,
   needsQueueWorkers,
   readsInside,
+  unsupportedVersion,
 } from "./instances.ts"
 import { jobProxyFix, refusalInError } from "./proxy-fix.ts"
 import { zonedParts } from "./reports.ts"
@@ -110,17 +111,23 @@ export class NoDestinationError extends Error {
   }
 }
 
-/** A new run with one copy waiting per destination; the set is fixed now, whatever changes later. */
-async function createRun(
-  ctx: Ctx,
-  target: { id: string; name: string } | null,
-  destinations: Destination[],
-  includesSecrets: boolean,
-) {
+/**
+ * A new run with one copy waiting per destination; the set is fixed now, whatever changes later. For an instance,
+ * only while it still has backup, read with its row share-locked in the same transaction: turning backup off locks
+ * the row before it ends the runs waiting for their archive, so a run is either made before and ended by it, or not
+ * made. Returns the run and the instance as locked, or null.
+ */
+async function createRun(ctx: Ctx, target: Instance | null, destinations: Destination[]) {
   return ctx.db.transaction(async (tx) => {
+    const [now] = target ? await tx.select().from(instances).where(eq(instances.id, target.id)).for("share") : []
+    if (target && !(now && can(now, "backup"))) return null
     const [run] = await tx
       .insert(backupRuns)
-      .values({ instanceId: target?.id ?? null, status: "running", includesSecrets })
+      .values({
+        instanceId: now?.id ?? null,
+        status: "running",
+        includesSecrets: now ? now.backupVia === "worker" : true,
+      })
       .returning()
     if (!run) throw new Error("could not record the backup run")
     for (const d of destinations) {
@@ -129,15 +136,18 @@ async function createRun(
         id,
         runId: run.id,
         destinationId: d.id,
-        objectKey: keyFor(d, archiveParts(target, id, run.startedAt)),
+        objectKey: keyFor(d, archiveParts(now ?? null, id, run.startedAt)),
       })
     }
-    return run
+    return { run, instance: now }
   })
 }
 
-/** Starts a backup of one instance (requirements D1 to D5). Never falls back to an unencrypted archive. */
-export async function startBackup(ctx: Ctx, instance: Instance, trigger: "schedule" | "manual"): Promise<Run> {
+/**
+ * Starts a backup of one instance (requirements D1 to D5). Never falls back to an unencrypted archive. Null when the
+ * instance no longer has backup.
+ */
+export async function startBackup(ctx: Ctx, instance: Instance, trigger: "schedule" | "manual"): Promise<Run | null> {
   const [running] = await ctx.db
     .select()
     .from(backupRuns)
@@ -146,29 +156,33 @@ export async function startBackup(ctx: Ctx, instance: Instance, trigger: "schedu
   if (running && (running.spooledAt || Date.now() - running.startedAt.getTime() < ARCHIVE_WAIT_MS)) return running
   const destinations = await destinationsFor(ctx, instance)
   if (!destinations.length) throw new NoDestinationError(instance.name)
+  const created = await createRun(ctx, instance, destinations)
+  if (!created?.instance) return null
+  const { run, instance: now } = created
   // Via the worker it is the worker or nothing: an API backup instead would drop the credential secrets unseen.
-  const viaWorker = instance.backupVia === "worker"
-  const worker = viaWorker ? await usableWorker(ctx, instance) : null
-  const run = await createRun(ctx, instance, destinations, viaWorker)
+  const viaWorker = now.backupVia === "worker"
+  const worker = viaWorker ? await usableWorker(ctx, now) : null
   try {
     if (viaWorker && !worker)
       throw new Error(
-        `The worker for ${instance.name} is not available: assign a worker and set the main${instance.composeProject ? ", and update the worker to a release that follows a Compose service" : ""}.`,
+        `The worker for ${now.name} is not available: assign a worker and set the main${now.composeProject ? ", and update the worker to a release that follows a Compose service" : ""}.`,
       )
+    // The API of n8n older than 2.14.0 is not used; a backup through the worker does not need it.
+    if (!viaWorker && unsupportedVersion(now)) throw new Error(unsupportedVersionText(now.version))
     const recipient = await backupRecipient(ctx)
     if (worker) {
       await enqueueJob(
         ctx,
         worker.id,
         "backup",
-        { runId: run.id, ...jobTarget(instance), recipient, instance: instance.name },
-        instance.id,
+        { runId: run.id, ...jobTarget(now), recipient, instance: now.name },
+        now.id,
       )
     } else {
-      void apiBackup(ctx, instance, run.id, recipient)
+      void apiBackup(ctx, now, run.id, recipient)
     }
     ctx.log.info("backup started", {
-      instance: instance.name,
+      instance: now.name,
       trigger,
       via: worker ? "worker" : "api",
       destinations: destinations.length,
@@ -294,7 +308,9 @@ export async function scheduleBackups(ctx: Ctx, now = new Date()) {
       .orderBy(desc(backupRuns.startedAt))
       .limit(1)
     const ranToday = last && zonedParts(last.startedAt, timezone || "UTC").date === local.date
-    if (local.time >= s.backupTime && !ranToday)
+    // Through the API of n8n older than 2.14.0 nothing is backed up, and nothing fails every day for it either.
+    const apiUnsupported = instance.backupVia === "api" && unsupportedVersion(instance)
+    if (local.time >= s.backupTime && !ranToday && !apiUnsupported)
       await startBackup(ctx, instance, "schedule").catch((error: Error) => {
         if (!(error instanceof NoDestinationError)) throw error
       })
@@ -332,7 +348,12 @@ async function checkStale(ctx: Ctx, instance: Instance | null, hours: number, no
       )
       .orderBy(desc(backupRuns.startedAt))
       .limit(1)
-    const since = [instance?.createdAt, d.createdAt, assigned.find((a) => a.destinationId === d.id)?.createdAt]
+    // From when backup was turned on: an old draft, or an old instance adding backup, has missed nothing yet.
+    const since = [
+      instance ? (instance.backupSince ?? instance.createdAt) : undefined,
+      d.createdAt,
+      assigned.find((a) => a.destinationId === d.id)?.createdAt,
+    ]
       .filter((x): x is Date => Boolean(x))
       .reduce((a, b) => (a > b ? a : b), new Date(0))
     const reference = lastOk?.at ?? since
@@ -373,7 +394,9 @@ async function maybeSelfBackup(ctx: Ctx, local: { date: string; time: string }) 
 export async function runSelfBackup(ctx: Ctx) {
   const destinations = await destinationsFor(ctx, null)
   if (!destinations.length) throw new NoDestinationError("The n8n-ops database")
-  const run = await createRun(ctx, null, destinations, true)
+  const created = await createRun(ctx, null, destinations)
+  if (!created) throw new Error("could not record the backup run")
+  const { run } = created
   void (async () => {
     try {
       const recipient = await backupRecipient(ctx)
@@ -493,6 +516,7 @@ export async function restoreWorkflow(
   if (!target) throw new Error("Target instance not found.")
   if (!can(target, "restore"))
     throw new Error(`${target.name} is not set up to restore workflows. Add Restore workflows to its capabilities.`)
+  if (unsupportedVersion(target)) throw new Error(unsupportedVersionText(target.version))
   const archive = await loadArchive(ctx, runId, privateKey)
   const workflow = archive.workflows.find((w) => w.id === workflowId)
   if (!workflow) throw new Error("This workflow is not in the archive.")

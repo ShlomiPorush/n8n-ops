@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto"
+import { createHash, randomBytes } from "node:crypto"
 import { EventEmitter } from "node:events"
 import { createServer, type Server } from "node:http"
 import type { AddressInfo } from "node:net"
@@ -23,12 +23,14 @@ import {
   workers,
 } from "../db/schema.ts"
 import type { Env } from "../http/types.ts"
-import { createSecrets } from "../lib/crypto.ts"
+import { createSecrets, sha256 } from "../lib/crypto.ts"
 import { createSettings } from "../lib/settings.ts"
 import { instanceRoutes } from "../routes/instances.ts"
+import { workerApiRoutes } from "../routes/worker-api.ts"
 import { setCondition } from "./alerts.ts"
-import { archiveReady, enqueueProbes, startBackup } from "./backups.ts"
-import { RevisionChanged, updateInstance } from "./instance-update.ts"
+import { archiveReady, enqueueProbes, restoreWorkflow, scheduleBackups, startBackup } from "./backups.ts"
+import { destinationsFor } from "./destinations/index.ts"
+import { ChangeRefused, RevisionChanged, updateInstance } from "./instance-update.ts"
 import { activeWith } from "./instances.ts"
 import {
   activate,
@@ -43,6 +45,7 @@ import {
   setupWorkerResult,
 } from "./setup.ts"
 import { html } from "./telegram.ts"
+import { waitForJob } from "./workers.ts"
 
 // The setup of an instance against a real PostgreSQL and a stand-in n8n: drafts stay silent, each check binds to
 // the configuration revision it was made for, activation verifies them under the row's lock, and removing a
@@ -184,6 +187,33 @@ const insideReport = (over: Record<string, unknown> = {}) => ({
   ...over,
 })
 
+/** Stores a passing worker check and backup check made for the instance as it is now (destinations, backup key). */
+async function passWorkerAndBackup(id: string) {
+  const row = await read(id)
+  const { backupRecipient } = await ctx.settings.get("keys")
+  const at = new Date().toISOString()
+  const done = { attempt: 1, startedAt: at, status: "done" as const, at, ok: true }
+  const destinations = (await destinationsFor(ctx, row)).map((d) => ({
+    id: d.id,
+    updatedAt: d.updatedAt.toISOString(),
+  }))
+  const recipient = backupRecipient ? createHash("sha256").update(backupRecipient).digest("hex").slice(0, 16) : null
+  await ctx.db
+    .update(instances)
+    .set({
+      setupChecks: {
+        worker: {
+          ...done,
+          workerId: row.workerId ?? undefined,
+          inputs: inputsOf("worker", row),
+          detail: { report: insideReport() },
+        },
+        backup: { ...done, inputs: inputsOf("backup", row), detail: { destinations, recipient } },
+      },
+    })
+    .where(eq(instances.id, id))
+}
+
 describe("a draft", () => {
   it("does nothing in the background: no probe, and no loop selects it", async () => {
     const w = await worker()
@@ -298,8 +328,8 @@ describe("activation", () => {
     expect(page.checks.health).toMatchObject({ state: "ok", current: true })
     expect(page.ready).toBe(true)
 
-    // A new base URL makes both stale; activation runs the API check again, but health must be checked again.
-    await updateInstance(ctx, row.id, { baseUrl: `${baseUrl}/` })
+    // A new base URL (with the key again) makes both stale; activation runs the API check again, not health's.
+    await updateInstance(ctx, row.id, { baseUrl: `${baseUrl}/`, apiKeyEnc: ctx.secrets.encrypt(KEY) })
     page = await setupState(ctx, await read(row.id))
     expect(page.checks.api).toMatchObject({ state: "stale", reason: expect.stringContaining("the base URL") })
     expect(page.checks.health).toMatchObject({ state: "stale" })
@@ -502,9 +532,98 @@ describe("backups", () => {
     await destination()
     const row = await instance({ backupVia: "worker", apiKeyEnc: ctx.secrets.encrypt(KEY) })
     const run = await startBackup(ctx, row, "manual")
-    const [ended] = await ctx.db.select().from(backupRuns).where(eq(backupRuns.id, run.id))
+    const [ended] = await ctx.db
+      .select()
+      .from(backupRuns)
+      .where(eq(backupRuns.id, run?.id ?? ""))
     expect(ended).toMatchObject({ status: "failed", includesSecrets: true })
     expect(ended?.error).toContain(`The worker for ${row.name} is not available`)
+  })
+
+  it("make no run once backup was turned off, even for a caller that read the instance before (R3)", async () => {
+    await destination()
+    const stale = await instance({ backupVia: "api", apiKeyEnc: ctx.secrets.encrypt(KEY) })
+    await removeCapability(ctx, stale.id, "backup")
+    expect(await startBackup(ctx, stale, "manual")).toBeNull()
+    expect(await ctx.db.select().from(backupRuns).where(eq(backupRuns.instanceId, stale.id))).toEqual([])
+  })
+
+  it("through the API of n8n older than 2.14.0 fail and say so; restore refuses it too (R5)", async () => {
+    await destination()
+    const older = await instance({
+      backupVia: "api",
+      apiKeyEnc: ctx.secrets.encrypt(KEY),
+      scopes: null,
+      scopesCheckedAt: new Date(),
+    })
+    const run = await startBackup(ctx, older, "manual")
+    const [ended] = await ctx.db
+      .select()
+      .from(backupRuns)
+      .where(eq(backupRuns.id, run?.id ?? ""))
+    expect(ended).toMatchObject({ status: "failed" })
+    expect(ended?.error).toContain("n8n-ops needs n8n 2.14.0 or later")
+    await expect(
+      restoreWorkflow(ctx, {
+        runId: run?.id ?? "",
+        privateKey: "AGE-SECRET-KEY-1X",
+        workflowId: "1",
+        targetInstanceId: older.id,
+      }),
+    ).rejects.toThrow("n8n-ops needs n8n 2.14.0 or later")
+  })
+
+  it("are missed only from when backup was turned on, not from when the instance was added (R9)", async () => {
+    await ctx.settings.set("defaults", { ...(await ctx.settings.get("defaults")), backupTime: "23:59" })
+    const old = new Date(Date.now() - 3 * 86_400_000)
+    const d = await destination()
+    await ctx.db.update(backupDestinations).set({ createdAt: old }).where(eq(backupDestinations.id, d.id))
+    const w = await worker()
+    const row = await draft({
+      chosenCapabilities: ["backup"],
+      backupVia: "worker",
+      workerId: w.id,
+      containerName: "n8n-main",
+      createdAt: old,
+    })
+    await passWorkerAndBackup(row.id)
+    await activate(ctx, row.id, {})
+    expect((await read(row.id)).backupSince).not.toBeNull()
+    await scheduleBackups(ctx)
+    const [stale] = await ctx.db
+      .select()
+      .from(alertState)
+      .where(eq(alertState.key, `backup:${row.id}:${d.id}`))
+    expect(stale?.active ?? false).toBe(false)
+  })
+
+  it("accept the backup check only for the backup key in use when activation commits (R7)", async () => {
+    await ctx.settings.set("keys", { ...(await ctx.settings.get("keys")), backupRecipient: "age1first" })
+    const w = await worker()
+    const row = await draft({
+      chosenCapabilities: ["backup"],
+      backupVia: "worker",
+      workerId: w.id,
+      containerName: "n8n-main",
+    })
+    await passWorkerAndBackup(row.id)
+    // Activation reads what it needs, then waits for the row; the key is replaced meanwhile.
+    let release = () => {}
+    const held = new Promise<void>((r) => {
+      release = r
+    })
+    const locking = ctx.db.transaction(async (tx) => {
+      await tx.select().from(instances).where(eq(instances.id, row.id)).for("update")
+      await held
+    })
+    await new Promise((r) => setTimeout(r, 100))
+    const activating = activate(ctx, row.id, {})
+    await new Promise((r) => setTimeout(r, 300))
+    await ctx.settings.set("keys", { ...(await ctx.settings.get("keys")), backupRecipient: "age1second" })
+    release()
+    await locking
+    await expect(activating).rejects.toMatchObject({ requirement: "backup" })
+    expect((await read(row.id)).setupState).toBe("incomplete")
   })
 
   it("turned off end the runs still waiting for their archive, quietly, and clear their conditions", async () => {
@@ -588,6 +707,22 @@ describe("PATCH /instances/:id", () => {
       body: JSON.stringify(body),
     })
 
+  it("decides on the locked row: a key stored, or an activation, after the request read the row (R1, R2)", async () => {
+    // What a PATCH read before: a draft without a key. A key was stored and it was activated meanwhile.
+    const row = await draft()
+    await ctx.db
+      .update(instances)
+      .set({ apiKeyEnc: ctx.secrets.encrypt(KEY), setupState: "complete" })
+      .where(eq(instances.id, row.id))
+    await expect(updateInstance(ctx, row.id, { baseUrl: "http://elsewhere.example.com" })).rejects.toMatchObject({
+      code: "key_required",
+    })
+    await expect(updateInstance(ctx, row.id, { chosenCapabilities: ["health", "restore"] })).rejects.toBeInstanceOf(
+      ChangeRefused,
+    )
+    expect(await read(row.id)).toMatchObject({ baseUrl, chosenCapabilities: ["health", "monitor"] })
+  })
+
   it("needs the key again for a new base URL, or its removal", async () => {
     reset()
     const row = await instance({ apiKeyEnc: ctx.secrets.encrypt(KEY) })
@@ -609,5 +744,42 @@ describe("PATCH /instances/:id", () => {
     const d = await draft()
     expect((await patch(d.id, { chosen: ["restore"] })).status).toBe(200)
     expect((await read(d.id)).chosenCapabilities).toEqual(["backup", "restore"])
+  })
+})
+
+describe("a credential export", () => {
+  it("hands no secrets over once the capability that allowed it was removed while it ran (R4)", async () => {
+    const token = `nops_worker_${randomBytes(8).toString("hex")}`
+    const [w] = await ctx.db
+      .insert(workers)
+      .values({ name: `exporter-${++seq}`, tokenHash: sha256(token), lastSeenAt: new Date() })
+      .returning()
+    // Move was removed while the worker ran the export; nothing else allows it.
+    const row = await instance({ chosenCapabilities: ["health"], workerId: w?.id, containerName: "n8n-main" })
+    const [job] = await ctx.db
+      .insert(workerJobs)
+      .values({
+        workerId: w?.id ?? "",
+        instanceId: row.id,
+        kind: "export-credentials",
+        status: "running",
+        startedAt: new Date(),
+      })
+      .returning()
+    const waiting = waitForJob(job?.id ?? "", 10_000)
+    const answer = await new Hono()
+      .route("/api/worker", workerApiRoutes(ctx))
+      .request(`/api/worker/jobs/${job?.id}/result`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify({
+          ok: true,
+          result: { credentials: [{ id: "1", name: "CRM", data: { key: "s3cret" } }] },
+        }),
+      })
+    expect(answer.status).toBe(200)
+    const outcome = await waiting
+    expect(outcome).toMatchObject({ ok: false, error: expect.stringContaining("Credentials of") })
+    expect(outcome.result).toBeUndefined()
   })
 })

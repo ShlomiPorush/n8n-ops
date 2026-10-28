@@ -252,7 +252,7 @@ function InstanceLine({ i, latest }: { i: InstanceRow; latest: string | null }) 
       <div className="flex items-center gap-1.5">
         {health !== "ok" && (
           <StatusTag kind="health" status={health}>
-            {i.unknownReason ? "Unknown" : undefined}
+            {!i.chosen.includes("health") ? "Health off" : i.unknownReason ? "Unknown" : undefined}
           </StatusTag>
         )}
         {i.version &&
@@ -271,16 +271,19 @@ function InstanceLine({ i, latest }: { i: InstanceRow; latest: string | null }) 
         >
           {n(i.openProblems)} open
         </Link>
-        <span>
-          backup{" "}
-          {i.lastBackup ? (
-            <span className={cn(i.lastBackup.status === "failed" && "font-semibold text-fail")}>
-              <TimeAgo value={i.lastBackup.at} />
-            </span>
-          ) : (
-            "never"
-          )}
-        </span>
+        {/* Backup not chosen: nothing to say about it here. */}
+        {i.chosen.includes("backup") && (
+          <span>
+            backup{" "}
+            {i.lastBackup ? (
+              <span className={cn(i.lastBackup.status === "failed" && "font-semibold text-fail")}>
+                <TimeAgo value={i.lastBackup.at} />
+              </span>
+            ) : (
+              "never"
+            )}
+          </span>
+        )}
         <LastKnown instance={i} />
       </div>
     </div>

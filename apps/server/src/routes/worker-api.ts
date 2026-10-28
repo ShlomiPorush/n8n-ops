@@ -282,7 +282,7 @@ export function workerApiRoutes(ctx: Ctx) {
       const [instance] = await ctx.db.select().from(instances).where(eq(instances.id, job.instanceId))
       if (instance) stored = await applyWorkerReport(ctx, instance, job.payload, result, worker.name)
     }
-    const why = job.kind === "backup" ? await unwanted(job) : null
+    const why = job.kind === "backup" || job.kind === "export-credentials" ? await unwanted(job) : null
     await ctx.db
       .update(workerJobs)
       .set({
@@ -293,7 +293,10 @@ export function workerApiRoutes(ctx: Ctx) {
       })
       .where(eq(workerJobs.id, job.id))
 
-    if (job.kind === "export-credentials") deliverToWaiter(job.id, { ok, result, error, refused, ...seen })
+    // Secrets go to the waiting request only while the instance still allows their export; otherwise it is told
+    // why, and the secrets are dropped here.
+    if (job.kind === "export-credentials")
+      deliverToWaiter(job.id, why ? { ok: false, error: why } : { ok, result, error, refused, ...seen })
     // A backup turned off meanwhile ends without an alert; one whose archive arrived finishes its copies.
     if (job.kind === "backup" && why) await endRunsWithoutArchive(ctx.db, { runId: String(job.payload.runId) }, why)
     else if (job.kind === "backup")

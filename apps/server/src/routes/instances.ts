@@ -5,6 +5,7 @@ import {
   chosenCapabilitiesSchema,
   missingScopes,
   requirementsOf,
+  unsupportedVersionText,
 } from "@n8n-ops/shared"
 import { asc, desc, eq, inArray } from "drizzle-orm"
 import { type Context, Hono } from "hono"
@@ -25,7 +26,13 @@ import { policyScopes } from "../services/access.ts"
 import { canReach } from "../services/backups.ts"
 import { currentHealth, healthNow } from "../services/collection.ts"
 import { checkDirect } from "../services/health.ts"
-import { RevisionChanged, TargetProblem, targetProblem, updateInstance } from "../services/instance-update.ts"
+import {
+  ChangeRefused,
+  RevisionChanged,
+  TargetProblem,
+  targetProblem,
+  updateInstance,
+} from "../services/instance-update.ts"
 import {
   can,
   effectiveScopes,
@@ -346,21 +353,9 @@ export function instanceRoutes(ctx: Ctx) {
     const parsed = updateSchema.safeParse(await c.req.json().catch(() => ({})))
     if (!parsed.success) return c.json({ error: "invalid", issues: parsed.error.issues }, 400)
     const { apiKey, metricsUrl, chosen, ...data } = parsed.data
-    if (chosen && isActive(row))
-      return c.json(
-        {
-          error: "invalid",
-          message: "An active instance adds a capability through its setup, and removes one on its own.",
-        },
-        400,
-      )
-    // The stored key was tested against the old address: a new one needs the key again, or no key.
+    // A selection only while a draft, and a new base URL only with the key again or without one: both decided by
+    // updateInstance on the locked row (ChangeRefused).
     const urlChanged = data.baseUrl !== undefined && data.baseUrl !== row.baseUrl
-    if (urlChanged && row.apiKeyEnc && apiKey === undefined)
-      return c.json(
-        { error: "key_required", message: "A new base URL needs the API key again. Enter it, or remove the key." },
-        400,
-      )
     // Any valid key is stored; the capabilities it lacks scopes for show on the instance's page.
     const test = apiKey ? await testKey(data.baseUrl ?? row.baseUrl, apiKey) : null
     if (test && !test.ok) return c.json({ error: "connection_failed", code: test.code, message: test.error }, 400)
@@ -383,6 +378,7 @@ export function instanceRoutes(ctx: Ctx) {
       )
     } catch (error) {
       if (error instanceof TargetProblem) return c.json({ error: "invalid", message: error.message }, 400)
+      if (error instanceof ChangeRefused) return c.json({ error: error.code, message: error.message }, 400)
       if (error instanceof RevisionChanged) return c.json({ error: "revision_changed", message: error.message }, 409)
       throw error
     }
@@ -424,9 +420,11 @@ export function instanceRoutes(ctx: Ctx) {
     if (!can(fresh, "health")) skipped.push("Health is not chosen, so it was not checked.")
     else if (fresh.collection === "direct") await checkDirect(ctx, fresh.id)
     if (!can(fresh, "monitor")) skipped.push("Monitoring is not chosen, so failures were not read.")
-    const poll = can(fresh, "monitor")
-      ? await pollInstance(ctx, fresh).catch((e: Error) => ({ error: e.message }))
-      : null
+    else if (unsupportedVersion(fresh)) skipped.push(`Failures were not read: ${unsupportedVersionText(fresh.version)}`)
+    const poll =
+      can(fresh, "monitor") && !unsupportedVersion(fresh)
+        ? await pollInstance(ctx, fresh).catch((e: Error) => ({ error: e.message }))
+        : null
     return c.json({ ok: true, poll, skipped })
   })
 

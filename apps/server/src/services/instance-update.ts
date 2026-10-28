@@ -34,6 +34,16 @@ export function targetProblem(t: {
 /** A change that would leave where the main is half set or set twice; nothing of it is saved. */
 export class TargetProblem extends Error {}
 
+/** A change the instance as it is now does not take; `code` is the API error. Nothing of it is saved. */
+export class ChangeRefused extends Error {
+  constructor(
+    message: string,
+    readonly code = "invalid",
+  ) {
+    super(message)
+  }
+}
+
 /** The configuration changed since it was read (another change, or a setup step): nothing was saved. */
 export class RevisionChanged extends Error {
   constructor() {
@@ -56,6 +66,16 @@ export function updateInstance(ctx: Ctx, id: string, data: InstanceChange, expec
       const [current] = await tx.select().from(instances).where(eq(instances.id, id)).for("update")
       if (!current) return undefined
       if (expectedRevision !== undefined && current.configRevision !== expectedRevision) throw new RevisionChanged()
+      // Decided on the locked row, so a key stored or an activation just before cannot slip past them.
+      if (
+        data.baseUrl !== undefined &&
+        data.baseUrl !== current.baseUrl &&
+        current.apiKeyEnc &&
+        data.apiKeyEnc === undefined
+      )
+        throw new ChangeRefused("A new base URL needs the API key again. Enter it, or remove the key.", "key_required")
+      if (data.chosenCapabilities !== undefined && current.setupState === "complete")
+        throw new ChangeRefused("An active instance adds a capability through its setup, and removes one on its own.")
       // Checked against the row as it is now, under its lock: two changes at once cannot set both kinds or half.
       const problem = targetProblem({ ...current, ...data })
       if (problem) throw new TargetProblem(problem)

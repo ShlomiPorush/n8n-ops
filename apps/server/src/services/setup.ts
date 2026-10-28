@@ -13,7 +13,15 @@ import {
 import { and, eq, inArray, like, or, sql } from "drizzle-orm"
 import type { z } from "zod"
 import { type Ctx, changed } from "../context.ts"
-import { alertState, instances, type SetupCheck, type SetupCheckKind, workerJobs, workers } from "../db/schema.ts"
+import {
+  alertState,
+  instances,
+  type SetupCheck,
+  type SetupCheckKind,
+  settings,
+  workerJobs,
+  workers,
+} from "../db/schema.ts"
 import { oneAtATime } from "../lib/one-at-a-time.ts"
 import { policyScopes } from "./access.ts"
 import { endRunsWithoutArchive } from "./backup-copies.ts"
@@ -638,11 +646,13 @@ export async function activate(ctx: Ctx, id: string, input: { add?: CapabilityKe
   if (!isActive(row) && !first.after.length) throw new SetupRefused("Choose at least one capability.")
   if (isActive(row) && !first.verify.length) throw new SetupRefused("These capabilities are already active.")
   if (requirementsOf(first.verify, row).api && row.apiKeyEnc) await checkApi(ctx, id)
-  const { backupRecipient } = await ctx.settings.get("keys")
   let verify = first.verify
   const saved = await ctx.db.transaction(async (tx) => {
     const [now] = await tx.select().from(instances).where(eq(instances.id, id)).for("update")
     if (!now) return undefined
+    // The backup key as it is now, held until the end: a key replaced since the backup check makes that check stale.
+    const [keys] = await tx.select().from(settings).where(eq(settings.key, "keys")).for("share")
+    const backupRecipient = (keys?.value as { backupRecipient?: string } | undefined)?.backupRecipient
     // The selection of the locked row: a draft's choice may have been saved since it was read above.
     const proposed = proposal(now, input.add)
     verify = proposed.verify
@@ -657,7 +667,15 @@ export async function activate(ctx: Ctx, id: string, input: { add?: CapabilityKe
       throw new RequirementNotMet(result.failing.kind, result.failing.view?.reason ?? "A check did not pass.")
     const [updated] = await tx
       .update(instances)
-      .set({ setupState: "complete", chosenCapabilities: after, updatedAt: new Date() })
+      .set({
+        setupState: "complete",
+        chosenCapabilities: after,
+        // Backups are due, and missed, from when backup was turned on, not from when the instance was added.
+        ...(after.includes("backup") && (!isActive(now) || !now.chosenCapabilities.includes("backup"))
+          ? { backupSince: new Date() }
+          : {}),
+        updatedAt: new Date(),
+      })
       .where(eq(instances.id, id))
       .returning()
     return updated
@@ -688,7 +706,11 @@ export function removeCapability(ctx: Ctx, id: string, capability: CapabilityKey
       if (!removed.length) return { instance: row, removed }
       const [saved] = await tx
         .update(instances)
-        .set({ chosenCapabilities: after, updatedAt: new Date() })
+        .set({
+          chosenCapabilities: after,
+          ...(removed.includes("backup") ? { backupSince: null } : {}),
+          updatedAt: new Date(),
+        })
         .where(eq(instances.id, id))
         .returning()
       const close = (why: string, ...keys: ReturnType<typeof eq>[]) =>

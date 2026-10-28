@@ -113,7 +113,9 @@ export function backupRoutes(ctx: Ctx) {
       }
       const [instance] = await ctx.db.select().from(instances).where(eq(instances.id, id))
       if (!instance) return c.json({ error: "not_found" }, 404)
-      if (!can(instance, "backup"))
+      // Decided again when the run is made, with the row locked: it may be turned off in between.
+      const run = can(instance, "backup") ? await startBackup(ctx, instance, "manual") : null
+      if (!run)
         return c.json(
           {
             error: "not_chosen",
@@ -121,7 +123,6 @@ export function backupRoutes(ctx: Ctx) {
           },
           400,
         )
-      const run = await startBackup(ctx, instance, "manual")
       await ctx.audit({ actor: actorName(c.get("actor")), action: "Backup started", target: instance.name, via: "web" })
       return c.json({ runId: run.id })
     } catch (error) {

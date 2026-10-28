@@ -412,7 +412,9 @@ export function InstancesPage() {
                         )
                       }
                       subEnd={
-                        i.lastBackup ? (
+                        !i.chosen.includes("backup") ? (
+                          "Backup off"
+                        ) : i.lastBackup ? (
                           <span className={cn(i.lastBackup.status === "failed" && "font-semibold text-fail")}>
                             {i.lastBackup.status === "failed" ? "Backup failed " : "Backup "}
                             <When value={i.lastBackup.at} />
@@ -488,7 +490,9 @@ export function InstancesPage() {
                       {n(i.openProblems)}
                     </TableCell>
                     <TableCell className="text-end text-muted-foreground">
-                      {i.lastBackup ? (
+                      {!i.chosen.includes("backup") ? (
+                        "off"
+                      ) : i.lastBackup ? (
                         <span className={cn(i.lastBackup.status === "failed" && "font-semibold text-fail")}>
                           <When value={i.lastBackup.at} />
                         </span>
@@ -725,7 +729,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
               to={`/workflows?instance=${i.id}`}
             />
             <Kpi label="Executions, 30 days" icon={ActivityIcon} value={i.workflowCounts.runs30d} />
-            <LastBackupKpi id={i.id} backup={backup} />
+            <LastBackupKpi id={i.id} backup={backup} chosen={i.chosen.includes("backup")} />
           </Kpis>
           <CapabilitiesPanel instance={i} />
           <Panel>
@@ -946,7 +950,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
         </PaneTabPanel>
 
         <PaneTabPanel value="backups">
-          <LastBackupPanel id={i.id} backup={backup} />
+          <LastBackupPanel id={i.id} backup={backup} chosen={i.chosen.includes("backup")} />
           <InstanceBackupCard
             key={`backup-destinations-${i.id}`}
             instanceId={i.id}
@@ -1317,25 +1321,36 @@ function StatusStrip({ instance: i, footer }: { instance: InstanceDetailData; fo
   )
 }
 
-/** The words for the last backup run; the list may still load, or may have failed. */
-function backupWords(backup: ListBackup) {
+/**
+ * The words for the last backup run; the list may still load, or may have failed. Backup not chosen: off, with an
+ * earlier run shown as history only, never as something to fix.
+ */
+function backupWords(backup: ListBackup, chosen: boolean) {
   if (backup.state === "loading") return { value: "…", tone: undefined, hint: undefined }
   if (backup.state !== "known") return { value: "Unknown", tone: undefined, hint: "Could not be read" }
+  if (!chosen)
+    return {
+      value: backup.run ? <When value={backup.run.at} /> : "Off",
+      tone: undefined,
+      hint: "Backup is not chosen",
+    }
   if (!backup.run) return { value: "Never", tone: "fail" as const, hint: "Not backed up" }
   const s = statusOf("backup", backup.run.status as keyof typeof statusTable.backup)
   const tone = s.tone === "fail" ? ("fail" as const) : s.tone === "warn" ? ("warn" as const) : undefined
   return { value: <When value={backup.run.at} />, tone, hint: s.label }
 }
 
-function LastBackupKpi({ id, backup }: { id: string; backup: ListBackup }) {
-  const w = backupWords(backup)
+type BackupProps = { id: string; backup: ListBackup; chosen: boolean }
+
+function LastBackupKpi({ id, backup, chosen }: BackupProps) {
+  const w = backupWords(backup, chosen)
   return (
     <Kpi label="Last backup run" icon={ArchiveIcon} value={w.value} tone={w.tone} hint={w.hint} to={`/backups/${id}`} />
   )
 }
 
-function LastBackupPanel({ id, backup }: { id: string; backup: ListBackup }) {
-  const w = backupWords(backup)
+function LastBackupPanel({ id, backup, chosen }: BackupProps) {
+  const w = backupWords(backup, chosen)
   return (
     <Panel>
       <PanelHead

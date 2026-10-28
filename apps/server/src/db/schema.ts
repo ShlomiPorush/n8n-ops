@@ -257,6 +257,8 @@ export const instances = pgTable("instances", {
     .$type<CapabilityKey[]>()
     .notNull()
     .default([...capabilityKeys]),
+  /** When backup was last turned on (activation or Add capability); backups are missed from then. Null before. */
+  backupSince: ts("backup_since"),
   /** How a backup is made: the worker in the main (with credential secrets), or the n8n API only. */
   backupVia: text("backup_via").$type<"worker" | "api">().notNull().default("api"),
   /**

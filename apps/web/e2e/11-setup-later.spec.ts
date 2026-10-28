@@ -10,6 +10,7 @@ test.describe.configure({ mode: "serial" })
 const later = "e2e-later"
 const apiOnly = "e2e-api-backup"
 const phone = "e2e-phone"
+const sayingWhy = "e2e-says-why"
 let page: Page
 
 /** Removes the instances this file makes, also those a failed test left behind. */
@@ -17,7 +18,7 @@ async function removeOurs() {
   const { instances } = (await (await page.request.get("/api/instances")).json()) as {
     instances: { id: string; name: string }[]
   }
-  for (const i of instances.filter((x) => [later, apiOnly, phone].includes(x.name)))
+  for (const i of instances.filter((x) => [later, apiOnly, phone, sayingWhy].includes(x.name)))
     expect((await page.request.delete(`/api/instances/${i.id}`)).ok()).toBe(true)
 }
 
@@ -131,6 +132,70 @@ test("an instance backed up through the API alone is told what it leaves out, an
   await row.click()
   const history = page.getByRole("region", { name: `Backups · ${apiOnly}` })
   await expect(history.getByText("OK", { exact: true })).toBeVisible({ timeout: 90_000 })
+})
+
+test("a capability that is not chosen shows as off, and what it did before as history only", async () => {
+  const { instances } = (await (await page.request.get("/api/instances")).json()) as {
+    instances: { id: string; name: string }[]
+  }
+  const id = instances.find((i) => i.name === apiOnly)?.id
+  // Backups only: Overview says its health is off, not unknown or down.
+  await page.goto("/")
+  const lineOf = () =>
+    page
+      .locator("section")
+      .filter({ has: heading("Instances") })
+      .getByRole("link", { name: apiOnly })
+      .locator("xpath=..")
+  const line = lineOf()
+  await expect(line).toContainText("Health off")
+  // "backup <when>" (the name has the word too, so the line's own part is looked for).
+  await expect(line.getByText(/^backup /)).toHaveCount(1)
+  await page.screenshot({ path: test.info().outputPath("overview-health-off.png") })
+
+  // Backup turned off too: its last run is history, not a diagnosis.
+  expect((await page.request.delete(`/api/instances/${id}/capabilities/backup`)).ok()).toBe(true)
+  await page.goto(`/instances/${id}`)
+  await expect(page.getByText("Backup is not chosen").filter({ visible: true }).first()).toBeVisible()
+  await expect(page.getByText("Not backed up")).toHaveCount(0)
+  await page.screenshot({ path: test.info().outputPath("instance-backup-off.png"), fullPage: true })
+  await page.goto("/")
+  await expect(lineOf().getByText(/^backup /)).toHaveCount(0)
+})
+
+test("a step that cannot be saved, or a check that cannot run from the review, says why", async () => {
+  test.setTimeout(120_000)
+  await startAdding(sayingWhy, ["Monitoring and problems"])
+  await page.getByRole("button", { name: "Continue" }).click()
+  await expect(heading("API Key")).toBeVisible()
+  const id = page.url().match(/\/instances\/([^/?]+)\/setup/)?.[1]
+  expect(id).toBeTruthy()
+
+  // Finish later saves the step first: a refusal is said, and the page stays.
+  await page.goto(`/instances/${id}/setup?step=health`)
+  await expect(heading("Health")).toBeVisible()
+  await page.route(`**/api/instances/${id}`, (r) =>
+    r.request().method() === "PATCH"
+      ? r.fulfill({ status: 400, json: { error: "invalid", message: "Simulated refusal of the change." } })
+      : r.continue(),
+  )
+  await page.getByLabel("Queue mode").click()
+  await page.getByRole("button", { name: "Finish later" }).click()
+  await expect(page.getByText("Simulated refusal of the change.")).toBeVisible()
+  await expect(heading("Health")).toBeVisible()
+  await page.screenshot({ path: test.info().outputPath("finish-later-refused.png") })
+  await page.unroute(`**/api/instances/${id}`)
+
+  // A check run again from the review that cannot run says why under the list.
+  await page.route(`**/api/instances/${id}/setup/health`, (r) =>
+    r.fulfill({ status: 400, json: { error: "invalid", message: "Simulated: the health check could not run." } }),
+  )
+  await page.goto(`/instances/${id}/setup?step=review`)
+  await expect(heading("Review")).toBeVisible()
+  await page.getByTestId("review-health").getByRole("button", { name: "Check again" }).click()
+  await expect(page.getByText("Simulated: the health check could not run.")).toBeVisible()
+  await page.screenshot({ path: test.info().outputPath("review-check-refused.png") })
+  await page.unroute(`**/api/instances/${id}/setup/health`)
 })
 
 test("every step of the setup fits a phone without sideways scrolling", async () => {

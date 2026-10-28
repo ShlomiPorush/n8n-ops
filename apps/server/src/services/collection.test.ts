@@ -37,9 +37,24 @@ const instance = (
   lastKnownAt: health === "unknown" || checkedAgo === null ? null : at(checkedAgo),
   collection: "worker" as const,
   workerId: "w1",
+  setupState: "complete" as const,
+  chosenCapabilities: ["health" as const],
 })
 
 describe("healthNow", () => {
+  it("shows what was read before as history only when health is not chosen, or the setup is not complete", () => {
+    const direct = { ...instance(10_000, "down"), collection: "direct" as const, workerId: null }
+    expect(healthNow({ ...direct, chosenCapabilities: ["backup"] }, null, 60, now)).toEqual({
+      health: "unknown",
+      lastKnownHealth: "down",
+      lastKnownAt: at(10_000),
+      unknownReason: "Health is not chosen for this instance",
+    })
+    expect(healthNow({ ...direct, setupState: "incomplete" }, null, 60, now).unknownReason).toBe(
+      "Its setup is not complete",
+    )
+  })
+
   // The server has run for a day: only the worker decides.
   const settled = () => {
     collectionClock.startedAt = at(86_400_000)

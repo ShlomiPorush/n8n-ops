@@ -1,9 +1,9 @@
-import { hasCapability } from "@n8n-ops/shared"
+import { hasCapability, unsupportedVersionText } from "@n8n-ops/shared"
 import { eq } from "drizzle-orm"
 import type { Ctx } from "../context.ts"
 import { instances, moves, workerJobs } from "../db/schema.ts"
 import { jobTarget, usableWorker } from "./backups.ts"
-import { can, clientFor, effectiveScopes, type Instance } from "./instances.ts"
+import { can, clientFor, effectiveScopes, type Instance, unsupportedVersion } from "./instances.ts"
 import { jobProxyFix, type ProxyFix } from "./proxy-fix.ts"
 import { enqueueJob, waitForJob } from "./workers.ts"
 import { calledWorkflowIds, credentialIds } from "./workflows.ts"
@@ -93,9 +93,11 @@ const join = (base: string, path: string) => `${base.replace(/\/+$/, "")}/${path
 export async function previewMove(ctx: Ctx, input: { sourceId: string; targetId: string; workflowId: string }) {
   const [source, target] = await Promise.all([load(ctx, input.sourceId), load(ctx, input.targetId)])
   if (source.id === target.id) throw new Error("Choose a different target instance.")
-  for (const end of [source, target])
+  for (const end of [source, target]) {
     if (!can(end, "move"))
       throw new Error(`${end.name} is not set up to move workflows. Add Move workflows to its capabilities.`)
+    if (unsupportedVersion(end)) throw new Error(`${end.name}: ${unsupportedVersionText(end.version)}`)
+  }
   const workflow = await clientFor(ctx, source).getWorkflow(input.workflowId)
   const webhooks = workflow.nodes
     .filter((n) => /webhook$/i.test(n.type) && !n.disabled)

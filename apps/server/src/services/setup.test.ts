@@ -77,6 +77,11 @@ describe("Temporary access", () => {
     // What the policy would allow is still shown on the instance's page.
     expect(policyScopes(instance({ chosenCapabilities: [] }))).toEqual(["workflow:read"])
   })
+
+  it("is closed on n8n older than 2.14.0 (R5)", () => {
+    expect(openToAgents(instance({ scopes: null, scopesCheckedAt: new Date() }))).toBe(false)
+    expect(openToAgents(instance({ version: "2.13.0" }))).toBe(false)
+  })
 })
 
 describe("credential export", () => {

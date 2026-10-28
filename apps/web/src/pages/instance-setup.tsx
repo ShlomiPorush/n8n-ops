@@ -586,7 +586,18 @@ function Actions({
     <StepActions
       start={
         draft ? (
-          <FinishLater save={save} leave={() => context.leave(true)} />
+          <FinishLater
+            save={async () => {
+              // The step's fields could not be saved: said, and the page stays where it is.
+              try {
+                await save()
+              } catch (e) {
+                toast.error(`Not saved: ${describeError(e)}`)
+                throw e
+              }
+            }}
+            leave={() => context.leave(true)}
+          />
         ) : (
           <Button onClick={() => context.leave(false)}>Cancel</Button>
         )
@@ -1462,6 +1473,16 @@ function ReviewStep(context: StepContext) {
       }),
     ),
   ]
+  /** Runs checks again from here; a check that cannot run says why under the list. */
+  async function recheck(kinds: ("api" | "health" | "worker" | "backup")[]) {
+    setError("")
+    try {
+      for (const kind of kinds) await runCheck(context, kind)
+    } catch (e) {
+      setError(describeError(e))
+      throw e
+    }
+  }
   return (
     <StepPanel
       title={stepTitles.review}
@@ -1495,14 +1516,7 @@ function ReviewStep(context: StepContext) {
         </p>
         {/* A check goes stale when what it depends on changes (the base URL, the worker), or after 15 minutes. */}
         {pending.length > 0 && (
-          <BusyButton
-            size="sm"
-            icon={RefreshCw}
-            busyLabel="Checking…"
-            run={async () => {
-              for (const kind of pending) await runCheck(context, kind)
-            }}
-          >
+          <BusyButton size="sm" icon={RefreshCw} busyLabel="Checking…" run={() => recheck(pending)}>
             Check all again
           </BusyButton>
         )}
@@ -1522,7 +1536,7 @@ function ReviewStep(context: StepContext) {
                 {check && <StatusTag kind="check" status={check.state} />}
                 <span className="ms-auto flex flex-wrap gap-1.5">
                   {kind && check && !check.ok && check.state !== "running" && (
-                    <BusyButton size="sm" icon={RefreshCw} busyLabel="Checking…" run={() => runCheck(context, kind)}>
+                    <BusyButton size="sm" icon={RefreshCw} busyLabel="Checking…" run={() => recheck([kind])}>
                       Check again
                     </BusyButton>
                   )}

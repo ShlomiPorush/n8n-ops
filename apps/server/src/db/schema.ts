@@ -228,13 +228,13 @@ export type CollectionMode = "direct" | "worker"
 export type SetupCheckKind = "api" | "health" | "worker" | "backup"
 
 /**
- * The last attempt of one setup check (services/setup.ts): its number and server start time, the configuration
- * revision it was made for, and once it ended whether it passed, why not, and what it found.
+ * The last attempt of one setup check (services/setup.ts): its number and server start time, a fingerprint of the
+ * settings it depends on (inputsOf), and once it ended whether it passed, why not, and what it found.
  */
 export type SetupCheck = {
   attempt: number
   startedAt: string
-  configRevision: number
+  inputs: string
   status: "running" | "done"
   ok?: boolean
   at?: string
@@ -260,8 +260,8 @@ export const instances = pgTable("instances", {
   /** How a backup is made: the worker in the main (with credential secrets), or the n8n API only. */
   backupVia: text("backup_via").$type<"worker" | "api">().notNull().default("api"),
   /**
-   * Raised by every change a setup check depends on (URL, key, worker, main, collection, queue settings, backup
-   * choices, Temporary access policy, chosen capabilities). A check counts only for the revision it was made for.
+   * Raised by every change of the base URL or the API key, so a key tested for one URL and key is stored only while
+   * they are still those (PATCH and the setup's API step), and a meta read made for them is dropped after a change.
    */
   configRevision: integer("config_revision").notNull().default(0),
   /** Taken by every setup check when it starts, so a slow earlier attempt never overwrites a later one. */

@@ -36,6 +36,7 @@ import {
   checkHealthDirect,
   checkWorker,
   evaluate,
+  inputsOf,
   RequirementNotMet,
   removeCapability,
   setupState,
@@ -231,17 +232,18 @@ describe("the API check", () => {
     const row = await draft()
     await expect(checkApi(ctx, row.id, "wrong-key-0123456789")).resolves.toMatchObject({
       keyStored: false,
-      check: { ok: false, reason: "n8n refused the API key.", configRevision: 0 },
+      check: { ok: false, reason: "n8n refused the API key." },
     })
     expect((await read(row.id)).apiKeyEnc).toBeNull()
 
     const ok = await checkApi(ctx, row.id, KEY)
-    expect(ok).toMatchObject({ keyStored: true, check: { ok: true, configRevision: 1 } })
+    expect(ok).toMatchObject({ keyStored: true, check: { ok: true } })
     const saved = await read(row.id)
     expect(saved.configRevision).toBe(1)
     expect(saved.apiKeyEnc && ctx.secrets.decrypt(saved.apiKeyEnc)).toBe(KEY)
     expect(saved.scopes).toEqual(allScopes)
-    expect(saved.setupChecks.api).toMatchObject({ ok: true, configRevision: 1, attempt: 2 })
+    // The result is bound to the key as stored, so it counts for it at once.
+    expect(saved.setupChecks.api).toMatchObject({ ok: true, attempt: 2, inputs: inputsOf("api", saved) })
   })
 
   it("refuses n8n older than 2.14.0, by its version or a missing /discover", async () => {
@@ -278,38 +280,48 @@ describe("the API check", () => {
 })
 
 describe("activation", () => {
-  it("needs a current check of every requirement, refuses a moved revision, and survives a failed meta read", async () => {
+  it("needs a check of every requirement made for its own inputs, and survives a failed meta read", async () => {
     reset()
-    const row = await draft({ chosenCapabilities: ["health", "monitor"] })
-    await expect(activate(ctx, row.id, { configRevision: 0 })).rejects.toMatchObject({
-      requirement: "api",
-    })
+    const row = await draft({ chosenCapabilities: ["health", "monitor", "agents"] })
+    await expect(activate(ctx, row.id, {})).rejects.toMatchObject({ requirement: "api" })
     await checkApi(ctx, row.id, KEY)
-    let now = await read(row.id)
-    await expect(activate(ctx, row.id, { configRevision: now.configRevision })).rejects.toMatchObject({
-      requirement: "health",
-    })
+    await expect(activate(ctx, row.id, {})).rejects.toMatchObject({ requirement: "health" })
     await checkHealthDirect(ctx, row.id)
-    // A change between the checks and activation: the page's revision is old, and the checks no longer count.
-    await updateInstance(ctx, row.id, { metricsUrl: `${baseUrl}/metrics` })
-    await expect(activate(ctx, row.id, { configRevision: now.configRevision })).rejects.toBeInstanceOf(RevisionChanged)
-    now = await read(row.id)
-    const page = await setupState(ctx, now)
-    expect(page.checks.api).toMatchObject({ state: "stale", ok: false })
-    expect(page.ready).toBe(false)
-    await expect(activate(ctx, row.id, { configRevision: now.configRevision })).rejects.toBeInstanceOf(
-      RequirementNotMet,
-    )
+    // Temporary access is no check: the policy of the locked row decides.
+    await expect(activate(ctx, row.id, {})).rejects.toMatchObject({ requirement: "access" })
 
-    await checkApi(ctx, row.id)
+    // Saving the policy and choosing destinations leave the API and health checks as they were.
+    await updateInstance(ctx, row.id, { agentAccess: { enabled: true, scopes: ["workflow:read"] } })
+    await updateInstance(ctx, row.id, { backupDestinations: "custom" })
+    let page = await setupState(ctx, await read(row.id))
+    expect(page.checks.api).toMatchObject({ state: "ok", current: true })
+    expect(page.checks.health).toMatchObject({ state: "ok", current: true })
+    expect(page.ready).toBe(true)
+
+    // A new base URL makes both stale; activation runs the API check again, but health must be checked again.
+    await updateInstance(ctx, row.id, { baseUrl: `${baseUrl}/` })
+    page = await setupState(ctx, await read(row.id))
+    expect(page.checks.api).toMatchObject({ state: "stale", reason: expect.stringContaining("the base URL") })
+    expect(page.checks.health).toMatchObject({ state: "stale" })
+    await expect(activate(ctx, row.id, {})).rejects.toMatchObject({ requirement: "health" })
+    expect((await setupState(ctx, await read(row.id))).checks.api?.state).toBe("ok")
+    // A queue setting is an input of health, not of the API check.
     await checkHealthDirect(ctx, row.id)
-    now = await read(row.id)
-    expect((await setupState(ctx, now)).ready).toBe(true)
+    await updateInstance(ctx, row.id, { metricsUrl: `${baseUrl}/metrics` })
+    page = await setupState(ctx, await read(row.id))
+    expect([page.checks.api?.state, page.checks.health?.state]).toEqual(["ok", "stale"])
+    await expect(activate(ctx, row.id, {})).rejects.toBeInstanceOf(RequirementNotMet)
+
+    await checkHealthDirect(ctx, row.id)
+    expect((await setupState(ctx, await read(row.id))).ready).toBe(true)
     // The API check runs again first (call 1 below); the meta read after activation (call 2) fails.
     n8n.calls = 0
     n8n.failFrom = 2
-    const done = await activate(ctx, row.id, { configRevision: now.configRevision })
-    expect(done?.instance).toMatchObject({ setupState: "complete", chosenCapabilities: ["health", "monitor"] })
+    const done = await activate(ctx, row.id, {})
+    expect(done?.instance).toMatchObject({
+      setupState: "complete",
+      chosenCapabilities: ["health", "monitor", "agents"],
+    })
     expect((await read(row.id)).setupState).toBe("complete")
   })
 
@@ -322,17 +334,17 @@ describe("activation", () => {
     expect(page.checks.api).toMatchObject({ state: "missing" })
     await checkApi(ctx, row.id)
     // The key lacks the scopes moving needs.
-    await expect(activate(ctx, row.id, { add: ["move"], configRevision: row.configRevision })).rejects.toMatchObject({
+    await expect(activate(ctx, row.id, { add: ["move"] })).rejects.toMatchObject({
       requirement: "api",
       message: expect.stringContaining("Move workflows needs workflow:create"),
     })
-    const added = await activate(ctx, row.id, { add: ["map"], configRevision: row.configRevision })
+    const added = await activate(ctx, row.id, { add: ["map"] })
     expect(added?.instance.chosenCapabilities).toEqual(["health", "map"])
   })
 })
 
 describe("the worker check", () => {
-  it("reuses the probe of the current attempt and counts only a read inside the main for its revision", async () => {
+  it("reuses the probe of the current attempt and counts only a read inside the main for its inputs", async () => {
     reset()
     const w = await worker()
     const row = await draft({
@@ -438,6 +450,35 @@ describe("the worker check", () => {
       .from(workerJobs)
       .where(and(eq(workerJobs.instanceId, row.id), eq(workerJobs.status, "queued")))
     expect(queued.map((j) => j.id)).toEqual([fifthJob?.id])
+  })
+
+  it("goes stale with the worker or the main, not with the key, the policy or the destinations", async () => {
+    reset()
+    const w = await worker()
+    const row = await instance({ chosenCapabilities: ["monitor"], apiKeyEnc: ctx.secrets.encrypt(KEY) })
+    await updateInstance(ctx, row.id, { backupVia: "worker", workerId: w.id, containerName: "n8n-main" })
+    await checkApi(ctx, row.id)
+    const started = await checkWorker(ctx, row.id)
+    const [job] = await ctx.db
+      .select()
+      .from(workerJobs)
+      .where(eq(workerJobs.id, started?.jobId ?? ""))
+    await setupWorkerResult(ctx, job as typeof workerJobs.$inferSelect, {
+      ok: true,
+      result: insideReport(),
+      current: true,
+    })
+    const states = async () => {
+      const page = await setupState(ctx, await read(row.id), ["move", "backup"])
+      return [page.checks.api?.state, page.checks.worker?.state]
+    }
+    // move needs scopes the key lacks: the API check is current and failed, which is what counts here.
+    expect(await states()).toEqual(["failed", "ok"])
+    await updateInstance(ctx, row.id, { agentAccess: { enabled: true, scopes: ["workflow:read"] } })
+    await updateInstance(ctx, row.id, { backupDestinations: "custom" })
+    expect(await states()).toEqual(["failed", "ok"])
+    await updateInstance(ctx, row.id, { containerName: "n8n-other" })
+    expect(await states()).toEqual(["failed", "stale"])
   })
 })
 

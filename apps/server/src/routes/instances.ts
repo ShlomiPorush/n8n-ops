@@ -6,7 +6,7 @@ import {
   missingScopes,
   requirementsOf,
 } from "@n8n-ops/shared"
-import { asc, desc, eq, inArray, sql } from "drizzle-orm"
+import { asc, desc, eq, inArray } from "drizzle-orm"
 import { type Context, Hono } from "hono"
 import { z } from "zod"
 import { type Ctx, changed } from "../context.ts"
@@ -315,14 +315,10 @@ export function instanceRoutes(ctx: Ctx) {
     if (known.length !== ids.length)
       return c.json({ error: "invalid", message: "A chosen destination no longer exists." }, 400)
     await ctx.db.transaction(async (tx) => {
-      // Another choice of destinations: a backup check made before it no longer counts.
+      // A backup check compares the destinations it tested with those in use now, so it notices this change.
       await tx
         .update(instances)
-        .set({
-          backupDestinations: body.data.mode,
-          configRevision: sql`${instances.configRevision} + 1`,
-          updatedAt: new Date(),
-        })
+        .set({ backupDestinations: body.data.mode, updatedAt: new Date() })
         .where(eq(instances.id, row.id))
       await tx.delete(instanceBackupDestinations).where(eq(instanceBackupDestinations.instanceId, row.id))
       // The choice is kept while defaults are used, so switching back restores it.
@@ -478,7 +474,6 @@ export function instanceRoutes(ctx: Ctx) {
         scopes: check.ok ? scopes : null,
         missingByCapability: missing,
         keyStored,
-        configRevision: check.configRevision,
       })
     } catch (error) {
       return setupRefusal(c, error)
@@ -493,7 +488,6 @@ export function instanceRoutes(ctx: Ctx) {
         ok: check.ok,
         reason: check.reason ?? null,
         detail: check.detail,
-        configRevision: check.configRevision,
       })
     } catch (error) {
       return setupRefusal(c, error)
@@ -519,7 +513,6 @@ export function instanceRoutes(ctx: Ctx) {
         ok: check.ok,
         reason: check.reason ?? null,
         detail: check.detail,
-        configRevision: check.configRevision,
       })
     } catch (error) {
       return setupRefusal(c, error)
@@ -529,7 +522,8 @@ export function instanceRoutes(ctx: Ctx) {
   /** Activates a draft, or adds capabilities to an active instance, once every requirement has a current check. */
   app.post("/:id/activate", async (c) => {
     const body = z
-      .object({ add: z.array(capability).optional(), configRevision: z.number().int() })
+      // A configRevision sent along is ignored: each check records the settings it was made for.
+      .object({ add: z.array(capability).optional(), configRevision: z.number().int().optional() })
       .safeParse(await c.req.json().catch(() => ({})))
     if (!body.success) return c.json({ error: "invalid", issues: body.error.issues }, 400)
     try {

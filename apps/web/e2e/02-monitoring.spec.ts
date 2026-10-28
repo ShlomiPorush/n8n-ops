@@ -79,12 +79,9 @@ test("an instance is registered through its setup, each step checked before it g
   await page.getByRole("button", { name: "Read only", exact: true }).click()
   await page.getByRole("button", { name: "Continue" }).click()
 
-  // Saving the access policy changed the instance's settings, so the checks made before it count no more: the
-  // review asks for them again, and Activate waits until every check passed for the settings as they are.
+  // Saving the access policy touches nothing the key and health checks depend on: they still count in the review.
   await expect(page.getByRole("heading", { name: "Review" })).toBeVisible()
-  await expect(page.getByTestId("review-api")).toContainText("Checked before the instance's settings changed.")
-  await expect(page.getByRole("button", { name: "Activate" })).toBeDisabled()
-  await page.getByRole("button", { name: "Check all again" }).click()
+  await expect(page.getByRole("button", { name: "Check all again" })).toHaveCount(0)
   for (const step of ["api", "health", "access"])
     await expect(page.getByTestId(`review-${step}`)).toContainText("Passed")
   await page.getByRole("button", { name: "Activate" }).click()

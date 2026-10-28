@@ -1493,7 +1493,7 @@ function ReviewStep(context: StepContext) {
           <span className="font-semibold">{draft ? "Chosen: " : "Adding: "}</span>
           {added.join(", ") || "nothing yet"}
         </p>
-        {/* A step saved after another's check (the access policy, the destinations) makes that check count no more. */}
+        {/* A check goes stale when what it depends on changes (the base URL, the worker), or after 15 minutes. */}
         {pending.length > 0 && (
           <BusyButton
             size="sm"

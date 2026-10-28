@@ -78,18 +78,16 @@ test("Finish later keeps an instance as Setup incomplete, off Overview, and Cont
   await expect(heading("Review")).toBeVisible()
   await expect(page.getByRole("button", { name: "Activate" })).toBeEnabled()
 
-  // A saved change makes the checks made before it count no more: the review asks for them again.
+  // A saved change makes only the checks that depend on it count no more: queue mode is health's, which its step
+  // checks again on Continue, and not the key's, which still counts.
   await rail()
     .getByRole("button", { name: /^Health/ })
     .click()
   await page.getByLabel("Queue mode").click()
   await page.getByRole("button", { name: "Continue" }).click()
   await expect(heading("Review")).toBeVisible()
-  const key = page.getByTestId("review-api")
-  await expect(key).toContainText("Checked before the instance's settings changed. Check again.")
-  await expect(page.getByRole("button", { name: "Activate" })).toBeDisabled()
-  await key.getByRole("button", { name: "Check again" }).click()
-  await expect(key).toContainText("Passed")
+  for (const step of ["api", "health"]) await expect(page.getByTestId(`review-${step}`)).toContainText("Passed")
+  await expect(page.getByRole("button", { name: "Check all again" })).toHaveCount(0)
   await expect(page.getByRole("button", { name: "Activate" })).toBeEnabled()
 
   // Finished later again, then deleted from its page.

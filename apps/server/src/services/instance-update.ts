@@ -41,18 +41,10 @@ export class RevisionChanged extends Error {
   }
 }
 
-/** Whether a change touches what a setup check depends on, besides how health is collected. */
-export function configChanged(current: Instance, data: InstanceChange) {
-  const differs = (key: "apiKeyEnc" | "backupVia" | "agentAccess" | "chosenCapabilities") =>
-    data[key] !== undefined && JSON.stringify(data[key]) !== JSON.stringify(current[key])
-  // A new key is a change even when it encrypts the same text.
-  return (
-    (data.apiKeyEnc !== undefined && data.apiKeyEnc !== current.apiKeyEnc) ||
-    differs("backupVia") ||
-    differs("agentAccess") ||
-    differs("chosenCapabilities")
-  )
-}
+/** Whether a change sets another base URL or API key (a new key is a change even when it encrypts the same text). */
+export const keyOrUrlChanged = (current: Instance, data: InstanceChange) =>
+  (data.apiKeyEnc !== undefined && data.apiKeyEnc !== current.apiKeyEnc) ||
+  (data.baseUrl !== undefined && data.baseUrl !== current.baseUrl)
 
 /**
  * Saves a change. With `expectedRevision`, only while the configuration revision is still the one the caller read
@@ -82,10 +74,8 @@ export function updateInstance(ctx: Ctx, id: string, data: InstanceChange, expec
           ...(change.queueMode !== undefined ? { queueMode: change.queueMode } : {}),
           ...(change.queueModeSource ? { queueModeSource: change.queueModeSource } : {}),
           ...(change.raiseRevision ? { collectionRevision: sql`${instances.collectionRevision} + 1` } : {}),
-          // Every check of the setup was made for the configuration before this change.
-          ...(change.raiseRevision || configChanged(current, data)
-            ? { configRevision: sql`${instances.configRevision} + 1` }
-            : {}),
+          // A key tested, or a meta read made, for the URL and key before this change is no longer stored.
+          ...(keyOrUrlChanged(current, data) ? { configRevision: sql`${instances.configRevision} + 1` } : {}),
           updatedAt: new Date(),
         })
         .where(eq(instances.id, id))
@@ -113,7 +103,6 @@ export async function detachWorker(ctx: Ctx, workerId: string) {
             workerId: null,
             queueModeSource: "manual",
             collectionRevision: sql`${instances.collectionRevision} + 1`,
-            configRevision: sql`${instances.configRevision} + 1`,
           })
           .where(and(eq(instances.id, id), eq(instances.workerId, workerId)))
           .returning({ id: instances.id })

@@ -356,7 +356,9 @@ async function checkStale(ctx: Ctx, instance: Instance | null, hours: number, no
     ]
       .filter((x): x is Date => Boolean(x))
       .reduce((a, b) => (a > b ? a : b), new Date(0))
-    const reference = lastOk?.at ?? since
+    // The later of the last good copy and when backup was turned on: a copy from before it was turned off and on
+    // again does not make the new start late at once.
+    const reference = lastOk && lastOk.at > since ? lastOk.at : since
     await setCondition(
       ctx,
       backupCondition(instance?.id ?? null, d.id),

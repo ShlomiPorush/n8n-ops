@@ -102,14 +102,14 @@ export function backupRoutes(ctx: Ctx) {
     const id = c.req.param("instanceId")
     try {
       if (id === "self") {
-        await runSelfBackup(ctx)
+        const run = await runSelfBackup(ctx)
         await ctx.audit({
           actor: actorName(c.get("actor")),
           action: "Backup started",
           target: "n8n-ops database",
           via: "web",
         })
-        return c.json({ ok: true })
+        return c.json({ ok: true, runId: run.id })
       }
       const [instance] = await ctx.db.select().from(instances).where(eq(instances.id, id))
       if (!instance) return c.json({ error: "not_found" }, 404)

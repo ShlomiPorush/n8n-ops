@@ -71,15 +71,25 @@ export async function testKey(baseUrl: string, apiKey: string, client = new N8nC
 /** The turn an instance's health reports, its version writes and its changes take, one at a time. */
 export const healthTurn = (instanceId: string) => `health:${instanceId}`
 
-/** Whether the version comes from the worker reading inside: checked from inside, and the last report had one. */
+/**
+ * Whether the version comes from the worker reading inside: health is collected that way now, and the last report
+ * had one. With health off no report comes, so the one stored is history and the version is read over the network.
+ */
 export function versionFromInside(
   instance: Pick<
     Instance,
-    "collection" | "workerId" | "containerName" | "composeProject" | "composeService" | "healthDetail"
+    | "collection"
+    | "workerId"
+    | "containerName"
+    | "composeProject"
+    | "composeService"
+    | "healthDetail"
+    | "setupState"
+    | "chosenCapabilities"
   >,
 ) {
   const detail = instance.healthDetail as { source?: string; version?: string } | null
-  return readsInside(instance) && detail?.source === "inside" && Boolean(detail.version)
+  return can(instance, "health") && readsInside(instance) && detail?.source === "inside" && Boolean(detail.version)
 }
 
 /** Whether the worker on the host reads the instance from inside its main container. */

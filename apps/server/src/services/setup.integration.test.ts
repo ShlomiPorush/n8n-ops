@@ -31,7 +31,7 @@ import { setCondition } from "./alerts.ts"
 import { archiveReady, enqueueProbes, restoreWorkflow, scheduleBackups, startBackup } from "./backups.ts"
 import { destinationsFor } from "./destinations/index.ts"
 import { ChangeRefused, RevisionChanged, updateInstance } from "./instance-update.ts"
-import { activeWith } from "./instances.ts"
+import { activeWith, refreshInstanceMeta, unsupportedVersion } from "./instances.ts"
 import {
   activate,
   checkApi,
@@ -597,6 +597,37 @@ describe("backups", () => {
     expect(stale?.active ?? false).toBe(false)
   })
 
+  it("are missed from when backup was turned on again, not from a copy made before it was off (R9)", async () => {
+    await ctx.settings.set("defaults", { ...(await ctx.settings.get("defaults")), backupTime: "23:59" })
+    const old = new Date(Date.now() - 3 * 86_400_000)
+    const d = await destination()
+    await ctx.db.update(backupDestinations).set({ createdAt: old }).where(eq(backupDestinations.id, d.id))
+    const w = await worker()
+    const row = await instance({
+      chosenCapabilities: ["backup"],
+      backupVia: "worker",
+      workerId: w.id,
+      containerName: "n8n-main",
+      createdAt: old,
+    })
+    const [run] = await ctx.db
+      .insert(backupRuns)
+      .values({ instanceId: row.id, status: "ok", includesSecrets: true, startedAt: old, finishedAt: old })
+      .returning()
+    await ctx.db
+      .insert(backupCopies)
+      .values({ runId: run?.id ?? "", destinationId: d.id, objectKey: `old-${seq}`, status: "ok", verifiedAt: old })
+    await removeCapability(ctx, row.id, "backup")
+    await passWorkerAndBackup(row.id)
+    await activate(ctx, row.id, { add: ["backup"] })
+    await scheduleBackups(ctx)
+    const [stale] = await ctx.db
+      .select()
+      .from(alertState)
+      .where(eq(alertState.key, `backup:${row.id}:${d.id}`))
+    expect(stale?.active ?? false).toBe(false)
+  })
+
   it("accept the backup check only for the backup key in use when activation commits (R7)", async () => {
     await ctx.settings.set("keys", { ...(await ctx.settings.get("keys")), backupRecipient: "age1first" })
     const w = await worker()
@@ -744,6 +775,29 @@ describe("PATCH /instances/:id", () => {
     const d = await draft()
     expect((await patch(d.id, { chosen: ["restore"] })).status).toBe(200)
     expect((await read(d.id)).chosenCapabilities).toEqual(["backup", "restore"])
+  })
+})
+
+describe("the n8n version", () => {
+  it("is read over the network again once health is off, so an update clears unsupported (R5)", async () => {
+    reset()
+    const w = await worker()
+    // The worker read 2.13.0 inside the main; then health was turned off, and n8n was updated.
+    const row = await instance({
+      chosenCapabilities: ["backup"],
+      collection: "worker",
+      workerId: w.id,
+      containerName: "n8n-main",
+      healthDetail: { source: "inside", version: "2.13.0" },
+      version: "2.13.0",
+      apiKeyEnc: ctx.secrets.encrypt(KEY),
+      scopes: allScopes,
+      scopesCheckedAt: new Date(),
+    })
+    expect(unsupportedVersion(row)).toBe(true)
+    const fresh = await refreshInstanceMeta(ctx, row)
+    expect(fresh?.version).toBe("2.20.0")
+    expect(unsupportedVersion(await read(row.id))).toBe(false)
   })
 })
 

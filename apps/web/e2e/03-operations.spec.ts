@@ -288,20 +288,44 @@ test("an instance can choose its destinations instead of the defaults", async ()
 
 test("n8n-ops backs up its own database to the destinations", async () => {
   await page.goto("/backups")
-  await page
-    .getByRole("row", { name: /n8n-ops database/ })
-    .getByRole("button", { name: "Run now" })
-    .click()
+  // The nightly backup of the database may run next to this one (every 5 minutes once a destination exists), so
+  // what is checked is the run this click started.
+  const [started] = await Promise.all([
+    page.waitForResponse((r) => r.request().method() === "POST" && r.url().endsWith("/api/backups/self/run")),
+    page
+      .getByRole("row", { name: /n8n-ops database/ })
+      .getByRole("button", { name: "Run now" })
+      .click(),
+  ])
+  const { runId } = (await started.json()) as { runId: string }
   await page.getByRole("row", { name: /n8n-ops database/ }).click()
   // The pane shows the database's own history, whichever backup opened by itself first.
   const history = page.getByRole("region", { name: "Backups · n8n-ops database" })
-  await expect(history.getByText("OK · with secrets")).toBeVisible({ timeout: 90_000 })
-  await expect(history.getByText("Written")).toHaveCount(2)
-  const dumps = () =>
-    readdirSync("/backups-data/nightly/_n8n-ops", { recursive: true })
-      .map(String)
-      .filter((f) => f.endsWith(".dump.age"))
-  expect(dumps()).toHaveLength(1)
+  await expect(history.getByText("OK · with secrets").first()).toBeVisible({ timeout: 90_000 })
+  type Copy = { id: string; kind: string; status: string; verifiedAt: string | null }
+  const run = async () =>
+    (
+      (await (await page.request.get("/api/backups/self/runs")).json()) as {
+        id: string
+        status: string
+        includesSecrets: boolean
+        copies: Copy[]
+      }[]
+    ).find((r) => r.id === runId)
+  await expect.poll(async () => (await run())?.status, { timeout: 90_000 }).toBe("ok")
+  const ours = await run()
+  expect(ours?.includesSecrets).toBe(true)
+  // Both destinations hold a verified copy, and the mapped folder exactly one file of this run's copy.
+  expect(ours?.copies.map((c) => [c.status, Boolean(c.verifiedAt)])).toEqual([
+    ["ok", true],
+    ["ok", true],
+  ])
+  const local = ours?.copies.find((c) => c.kind === "local")
+  const short = local?.id.replace(/-/g, "").slice(0, 8) ?? "none"
+  const dumps = readdirSync("/backups-data/nightly/_n8n-ops", { recursive: true })
+    .map(String)
+    .filter((f) => f.endsWith(`-${short}.dump.age`))
+  expect(dumps).toHaveLength(1)
 })
 
 test("a workflow is restored from the backup with the private key", async () => {

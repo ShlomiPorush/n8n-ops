@@ -155,6 +155,10 @@ test("every step of the setup fits a phone without sideways scrolling", async ()
     await page.getByRole("button", { name: "Continue" }).click()
     await expect(heading("API Key")).toBeVisible()
     const url = new URL(page.url())
+    // A step saves only its own fields, as the access step saves the policy: the first step's choices stay.
+    const id = url.pathname.split("/")[2]
+    const policy = { agentAccess: { enabled: false, scopes: [] } }
+    expect((await page.request.patch(`/api/instances/${id}`, { data: policy })).ok()).toBe(true)
     for (const [step, title] of [
       ["api", "API Key"],
       ["worker", "Host Worker"],
@@ -165,6 +169,9 @@ test("every step of the setup fits a phone without sideways scrolling", async ()
     ] as const) {
       await page.goto(`${url.pathname}?step=${step}`)
       await expect(heading(title)).toBeVisible()
+      // Each step saved only its own fields: health is still checked by the worker, as chosen first.
+      if (step === "health")
+        await expect(page.getByText(/^Checked by the worker inside the main container/)).toBeVisible()
       // The open step keeps its name on the one-line rail; Continue (Activate on the review) is in reach.
       await expect(rail().locator('[aria-current="step"]')).toContainText(title)
       await expect(page.getByRole("button", { name: step === "review" ? "Activate" : "Continue" })).toBeVisible()

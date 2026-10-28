@@ -89,9 +89,14 @@ const baseFields = {
 const backupVia = z.enum(["worker", "api"])
 /** A draft: what it is chosen for and where it is; the key and the checks come in its setup. */
 const createSchema = z.object({ ...baseFields, chosen: chosenCapabilitiesSchema, backupVia: backupVia.default("api") })
-const updateSchema = z
+export const updateSchema = z
   .object({
     ...baseFields,
+    // Without their defaults: Zod 4 fills a default in also under .partial(), so a change of one field (a setup
+    // step, the overrides) would otherwise put the collection, the queue mode and the worker URLs back to theirs.
+    queueMode: z.boolean(),
+    workerHealthUrls: z.array(url),
+    collection: z.enum(["direct", "worker"]),
     /** A new key, tested before it is stored; null removes the stored key. */
     apiKey: z.string().min(10).nullable().optional(),
     /** Only while the instance is a draft; an active one adds and removes capabilities on their own. */

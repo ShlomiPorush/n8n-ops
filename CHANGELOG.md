@@ -15,6 +15,10 @@ All notable changes to this project are documented here. The format follows [Kee
 - **A new base URL needs the API key again**, also through the API, or the key's removal.
 - **Upgrading is one way.** An earlier release cannot run against a database this one migrated. Before upgrading, make sure n8n-ops's own database backup is recent; to go back, restore it into the earlier release.
 
+### Fixed
+
+- **Saving an instance's overrides or its agent access keeps how its health is checked.** It no longer switched the health checks back to the n8n-ops server, turned queue mode off or dropped the queue worker URLs.
+
 ## [0.6.0] - 2026-10-28
 
 ### Added

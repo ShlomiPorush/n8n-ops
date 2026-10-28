@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-28
+
 ### Added
 
 - **More about each n8n queue worker.** The Health tab lists the queue workers by name, with a line that sums them up ("6 of 7 queue workers ready, 1 down", saying how many were checked when not all were). Under each, what the check in it read: its n8n version, marked when it differs from the main's, how long its container has been up, how many jobs it runs at once and where that comes from (`N8N_CONCURRENCY_PRODUCTION_LIMIT`, `--concurrency` or n8n's default of 10), and its memory use against the container's limit. A figure that cannot be read for sure is left out. The agents' `queues` answer (REST and MCP) carries the same fields. The worker sends these figures and nothing else about its queue workers: never their commands, environment or files; Add worker says so.

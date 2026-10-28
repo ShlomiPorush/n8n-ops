@@ -158,7 +158,11 @@ test("backup through the worker, restore and move are added to the instance, eac
   await expect(result).toContainText("This server")
   await page.getByRole("button", { name: "Continue" }).click()
 
+  // Saving the worker changed the instance's settings after the key's check: the review has it checked again.
   await expect(page.getByRole("heading", { name: "Review" })).toBeVisible()
+  await expect(page.getByTestId("review-api")).toContainText("Checked before the instance's settings changed.")
+  await page.getByRole("button", { name: "Check all again" }).click()
+  await expect(page.getByTestId("review-api")).toContainText("Passed")
   await page.getByRole("button", { name: "Activate" }).click()
   await expect(page.getByText("Added Move workflows, Backup and Restore workflows to e2e-n8n")).toBeVisible()
   for (const key of ["backup", "restore", "move"])

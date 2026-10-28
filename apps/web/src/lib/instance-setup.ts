@@ -121,6 +121,8 @@ export function stepMark(setup: SetupData | null, step: StepKey): StepMark {
   if (!setup || step === "review") return "todo"
   const check = stepCheck(setup, step)
   if (!check || check.state === "missing") return "todo"
+  // Temporary access has no stored check: it passes once its policy is saved, and is not a failure before that.
+  if (step === "access") return check.ok ? "done" : "todo"
   if (check.ok) return "done"
   if (check.state === "running") return "running"
   return "attention"

@@ -1,6 +1,6 @@
 import { type CapabilityKey, capabilityKeys, capabilityLabels, requirementsOf } from "@n8n-ops/shared"
 import { Check, LoaderCircle, Plus, RefreshCw } from "lucide-react"
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Link, useNavigate, useParams, useSearchParams } from "react-router"
 import { useCrumb } from "@/app/chrome"
 import { AgentAccessFields } from "@/components/agent-access-card"
@@ -16,7 +16,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { ApiError, api, describeError, queryClient, useApi } from "@/lib/api"
+import { ApiError, api, describeError, queryClient, refreshAreas, useApi } from "@/lib/api"
 import {
   badgesOf,
   type CheckView,
@@ -105,7 +105,9 @@ function NewInstance() {
   useCrumb("Add an instance")
   const [form, setForm] = useState(newForm)
   const [error, setError] = useState("")
-  const guard = useDiscardGuard(form.name.trim() !== "" || form.baseUrl.trim() !== "", () => navigate("/instances"))
+  const guard = useDiscardGuard(form.name.trim() !== "" || form.baseUrl.trim() !== "", () =>
+    navigate("/instances", { replace: true }),
+  )
   async function create() {
     setError("")
     try {
@@ -240,10 +242,8 @@ function ExistingSetup({ id }: { id: string }) {
   }, [s, current, choosing])
 
   const reread = async () => {
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: [path] }),
-      queryClient.invalidateQueries({ queryKey: [`/instances/${id}`] }),
-    ])
+    // The instance and its setup (both under /instances/<id>), marked saved so an answer that left before is not used.
+    await refreshAreas(`/instances/${id}`)
     const fresh = queryClient.getQueryData<SetupData>([path])
     if (!fresh) throw new Error("The setup could not be read again. Reload the page.")
     return fresh
@@ -440,12 +440,21 @@ function StepRail({
   mark: (step: StepKey) => StepMark
   onPick?: (step: StepKey) => void
 }) {
+  const list = useRef<HTMLOListElement>(null)
+  // On a phone the rail is one line that scrolls: the open step is brought into it.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs when another step opens
+  useEffect(() => {
+    const ol = list.current
+    const here = ol?.querySelector<HTMLElement>('[aria-current="step"]')
+    if (!ol || !here || ol.scrollWidth <= ol.clientWidth) return
+    ol.scrollLeft = here.offsetLeft - (ol.clientWidth - here.offsetWidth) / 2
+  }, [current])
   return (
     <nav
       aria-label="Setup steps"
       className="min-w-0 rounded-lg bg-panel p-1.5 regular:shadow-card regular:ring-1 regular:ring-ink/10"
     >
-      <ol className="flex min-w-0 gap-1 overflow-x-auto md:grid md:overflow-visible">
+      <ol ref={list} className="relative flex min-w-0 gap-1 overflow-x-auto md:grid md:overflow-visible">
         {steps.map((step, i) => {
           const m = mark(step)
           const here = step === current
@@ -722,7 +731,7 @@ function BasicsStep({
               data-testid={`card-${key}`}
               className={cn(
                 "grid min-w-0 content-start gap-3 rounded-lg border border-line p-3.5",
-                form.chosen.includes(key) && "bg-accent",
+                form.chosen.includes(key) && "border-muted-foreground/55",
               )}
             >
               {card(key)}
@@ -1280,6 +1289,11 @@ function AccessStep(context: StepContext) {
           onScopes={setScopes}
         />
       )}
+      {changed && (
+        <p className="text-small text-muted-foreground">
+          Saving the policy changes the instance's settings, so the review asks for the checks before it again.
+        </p>
+      )}
       {check?.ok && !changed && <CheckLine check={check} />}
       <StepError error={error} />
     </StepPanel>
@@ -1438,6 +1452,16 @@ function ReviewStep(context: StepContext) {
     if (step === "worker" || step === "backup") return step
     return null
   }
+  // The checks that can run again from here and do not pass now, each once (health through the worker is its check).
+  const pending = [
+    ...new Set(
+      steps.flatMap((step) => {
+        const check = stepCheck(s, step)
+        const kind = again(step)
+        return kind && check && !check.ok && check.state !== "running" ? [kind] : []
+      }),
+    ),
+  ]
   return (
     <StepPanel
       title={stepTitles.review}
@@ -1464,10 +1488,25 @@ function ReviewStep(context: StepContext) {
         </StepActions>
       }
     >
-      <p>
-        <span className="font-semibold">{draft ? "Chosen: " : "Adding: "}</span>
-        {added.join(", ") || "nothing yet"}
-      </p>
+      <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
+        <p className="min-w-0 flex-1">
+          <span className="font-semibold">{draft ? "Chosen: " : "Adding: "}</span>
+          {added.join(", ") || "nothing yet"}
+        </p>
+        {/* A step saved after another's check (the access policy, the destinations) makes that check count no more. */}
+        {pending.length > 0 && (
+          <BusyButton
+            size="sm"
+            icon={RefreshCw}
+            busyLabel="Checking…"
+            run={async () => {
+              for (const kind of pending) await runCheck(context, kind)
+            }}
+          >
+            Check all again
+          </BusyButton>
+        )}
+      </div>
       <div className="grid min-w-0 rounded-sm border border-line">
         {steps.map((step) => {
           const check = stepCheck(s, step)

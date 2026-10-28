@@ -118,6 +118,15 @@ describe("firstOpenStep and stepMark", () => {
     expect(stepMark(s, "review")).toBe("todo")
   })
 
+  it("marks Temporary access done once its policy passes, and never as a failure before", () => {
+    const access = setup({
+      chosen: ["agents"],
+      checks: { api: null, health: null, worker: null, backup: null, access: check("failed") },
+    })
+    expect(stepMark(access, "access")).toBe("todo")
+    expect(stepMark({ ...access, checks: { ...access.checks, access: check("ok") } }, "access")).toBe("done")
+  })
+
   it("reads health through the worker from the worker check", () => {
     const viaWorker = setup({
       chosen: ["health"],

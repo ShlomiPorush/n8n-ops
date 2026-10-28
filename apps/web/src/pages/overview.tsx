@@ -252,7 +252,7 @@ function InstanceLine({ i, latest }: { i: InstanceRow; latest: string | null }) 
       <div className="flex items-center gap-1.5">
         {health !== "ok" && (
           <StatusTag kind="health" status={health}>
-            {!i.chosen.includes("health") ? "Health off" : i.unknownReason ? "Unknown" : undefined}
+            {!i.chosen.includes("health") || i.unknownReason ? healthLabel(i) : undefined}
           </StatusTag>
         )}
         {i.version &&

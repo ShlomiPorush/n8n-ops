@@ -235,9 +235,18 @@ function warnLabel(d: InstanceRow["healthDetail"]) {
 const readingLabel = (health: HealthState, d: InstanceRow["healthDetail"]) =>
   health === "down" ? "Down" : health === "warn" ? warnLabel(d) : health === "ok" ? "Healthy" : "Unknown"
 
-/** The health now in words: Unknown when nothing collects it, never the last known health. */
-export const healthLabel = (i: Pick<InstanceRow, "health" | "healthDetail" | "unknownReason">) =>
-  i.unknownReason ? "Unknown" : readingLabel(i.health, i.healthDetail)
+/**
+ * The health now in words: Unknown when nothing collects it, never the last known health; Health off when an
+ * active instance was not chosen for it.
+ */
+export const healthLabel = (
+  i: Pick<InstanceRow, "health" | "healthDetail" | "unknownReason" | "chosen" | "setupState">,
+) =>
+  i.setupState === "complete" && !i.chosen.includes("health")
+    ? "Health off"
+    : i.unknownReason
+      ? "Unknown"
+      : readingLabel(i.health, i.healthDetail)
 
 /** What the health was at the last check, beside Unknown: "Last known: Healthy, 2 h ago". */
 export function LastKnown({

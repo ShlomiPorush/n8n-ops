@@ -157,6 +157,7 @@ test("a capability that is not chosen shows as off, and what it did before as hi
   expect((await page.request.delete(`/api/instances/${id}/capabilities/backup`)).ok()).toBe(true)
   await page.goto(`/instances/${id}`)
   await expect(page.getByText("Backup is not chosen").filter({ visible: true }).first()).toBeVisible()
+  await expect(page.getByText("Health off", { exact: true }).filter({ visible: true }).first()).toBeVisible()
   await expect(page.getByText("Not backed up")).toHaveCount(0)
   await page.screenshot({ path: test.info().outputPath("instance-backup-off.png"), fullPage: true })
   await page.goto("/")

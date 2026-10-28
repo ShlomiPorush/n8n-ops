@@ -3,6 +3,7 @@ import type { Ctx } from "../context.ts"
 import { alertState, type Health, instances, workers } from "../db/schema.ts"
 import { instanceSubject } from "./alert-routing.ts"
 import { setCondition } from "./alerts.ts"
+import { activeWith } from "./instances.ts"
 import { clip, html } from "./telegram.ts"
 
 /**
@@ -136,7 +137,7 @@ export async function watchCollectors(ctx: Ctx, now = Date.now()) {
     ctx.db
       .select({ id: instances.id, name: instances.name, workerId: instances.workerId })
       .from(instances)
-      .where(and(eq(instances.collection, "worker"), isNotNull(instances.workerId)))
+      .where(and(eq(instances.collection, "worker"), isNotNull(instances.workerId), activeWith("health")))
       .orderBy(asc(instances.name)),
     ctx.db
       .select({ key: alertState.key })

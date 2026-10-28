@@ -14,6 +14,7 @@ import {
 import { requireUser } from "../http/middleware.ts"
 import type { Env } from "../http/types.ts"
 import { currentHealth, WORKER_ONLINE_MS } from "../services/collection.ts"
+import { activeOnly, activeWith, can } from "../services/instances.ts"
 import { openProblemCount, problemItems } from "../services/problem-view.ts"
 import { telegramPlainText } from "../services/telegram.ts"
 
@@ -261,13 +262,25 @@ async function problemsPart(ctx: Ctx): Promise<Part> {
  * so its failed read is not listed too. The last known health of an instance whose health is unknown is not.
  */
 async function instancesPart(ctx: Ctx): Promise<Part> {
-  const all = await ctx.db.select().from(instances)
+  // Drafts do nothing yet; health is diagnosed only where it was chosen, failed reads only where monitoring was.
+  const all = await ctx.db.select().from(instances).where(activeOnly)
   const now = await currentHealth(ctx, all)
   const items: AttentionItem[] = []
   const unchecked: UncheckedItem[] = []
   for (const row of all) {
     const known = now.get(row.id)
     const i = { ...row, health: known?.health ?? row.health }
+    if (!can(row, "health")) {
+      if (can(row, "monitor") && i.lastPollError)
+        unchecked.push({
+          kind: "failures",
+          id: i.id,
+          name: i.name,
+          detail: `Could not read failures: ${i.lastPollError}`,
+          at: i.lastPollAt,
+        })
+      continue
+    }
     if (known?.unknownReason)
       unchecked.push({
         kind: "health",
@@ -290,7 +303,7 @@ async function instancesPart(ctx: Ctx): Promise<Part> {
     }
     if (i.health === "unknown" && !known?.unknownReason)
       unchecked.push({ kind: "health", id: i.id, name: i.name, detail: "Health unknown", at: null })
-    if (i.lastPollError && i.health !== "down")
+    if (can(row, "monitor") && i.lastPollError && i.health !== "down")
       unchecked.push({
         kind: "failures",
         id: i.id,
@@ -332,7 +345,8 @@ async function backupsPart(ctx: Ctx): Promise<Part> {
         finishedAt: last.finishedAt,
       })
       .from(instances)
-      .leftJoinLateral(last, sql`true`),
+      .leftJoinLateral(last, sql`true`)
+      .where(activeWith("backup")),
     ctx.db
       .select()
       .from(alertState)
@@ -461,9 +475,10 @@ export function overviewRoutes(ctx: Ctx) {
   app.get("/attention", async (c) => c.json(await attention(ctx)))
 
   app.get("/", async (c) => {
-    const rows = await ctx.db.select().from(instances)
+    const rows = await ctx.db.select().from(instances).where(activeOnly)
     const now = await currentHealth(ctx, rows)
-    const all = rows.map((r) => ({ health: now.get(r.id)?.health ?? r.health }))
+    // Instances without health chosen count as instances, never as healthy, down or warn.
+    const all = rows.map((r) => ({ health: can(r, "health") ? (now.get(r.id)?.health ?? r.health) : null }))
     const open = await openProblemCount(ctx)
     const [lastBackup] = await ctx.db
       .select({ at: backupRuns.finishedAt })

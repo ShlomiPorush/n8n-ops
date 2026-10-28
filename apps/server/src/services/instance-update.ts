@@ -3,7 +3,7 @@ import type { Ctx } from "../context.ts"
 import { instances } from "../db/schema.ts"
 import { oneAtATime } from "../lib/one-at-a-time.ts"
 import { closeQueueAlerts, closeWorkerConditions } from "./health.ts"
-import { collectionUpdate, healthTurn } from "./instances.ts"
+import { collectionUpdate, healthTurn, type Instance } from "./instances.ts"
 
 export type InstanceChange = Partial<typeof instances.$inferInsert>
 
@@ -34,16 +34,47 @@ export function targetProblem(t: {
 /** A change that would leave where the main is half set or set twice; nothing of it is saved. */
 export class TargetProblem extends Error {}
 
-export function updateInstance(ctx: Ctx, id: string, data: InstanceChange) {
+/** The configuration changed since it was read (another change, or a setup step): nothing was saved. */
+export class RevisionChanged extends Error {
+  constructor() {
+    super("The instance was changed meanwhile. Reload and try again.")
+  }
+}
+
+/** Whether a change touches what a setup check depends on, besides how health is collected. */
+export function configChanged(current: Instance, data: InstanceChange) {
+  const differs = (key: "apiKeyEnc" | "backupVia" | "agentAccess" | "chosenCapabilities") =>
+    data[key] !== undefined && JSON.stringify(data[key]) !== JSON.stringify(current[key])
+  // A new key is a change even when it encrypts the same text.
+  return (
+    (data.apiKeyEnc !== undefined && data.apiKeyEnc !== current.apiKeyEnc) ||
+    differs("backupVia") ||
+    differs("agentAccess") ||
+    differs("chosenCapabilities")
+  )
+}
+
+/**
+ * Saves a change. With `expectedRevision`, only while the configuration revision is still the one the caller read
+ * before its I/O (a key it tested); otherwise RevisionChanged and nothing is saved.
+ */
+export function updateInstance(ctx: Ctx, id: string, data: InstanceChange, expectedRevision?: number) {
   return oneAtATime(healthTurn(id), () =>
     ctx.db.transaction(async (tx) => {
       const [current] = await tx.select().from(instances).where(eq(instances.id, id)).for("update")
       if (!current) return undefined
+      if (expectedRevision !== undefined && current.configRevision !== expectedRevision) throw new RevisionChanged()
       // Checked against the row as it is now, under its lock: two changes at once cannot set both kinds or half.
       const problem = targetProblem({ ...current, ...data })
       if (problem) throw new TargetProblem(problem)
       const change = collectionUpdate(current, data)
-      const { queueMode: _asked, queueModeSource: _source, collectionRevision: _revision, ...rest } = data
+      const {
+        queueMode: _asked,
+        queueModeSource: _source,
+        collectionRevision: _revision,
+        configRevision: _config,
+        ...rest
+      } = data
       const [saved] = await tx
         .update(instances)
         .set({
@@ -51,6 +82,10 @@ export function updateInstance(ctx: Ctx, id: string, data: InstanceChange) {
           ...(change.queueMode !== undefined ? { queueMode: change.queueMode } : {}),
           ...(change.queueModeSource ? { queueModeSource: change.queueModeSource } : {}),
           ...(change.raiseRevision ? { collectionRevision: sql`${instances.collectionRevision} + 1` } : {}),
+          // Every check of the setup was made for the configuration before this change.
+          ...(change.raiseRevision || configChanged(current, data)
+            ? { configRevision: sql`${instances.configRevision} + 1` }
+            : {}),
           updatedAt: new Date(),
         })
         .where(eq(instances.id, id))
@@ -78,6 +113,7 @@ export async function detachWorker(ctx: Ctx, workerId: string) {
             workerId: null,
             queueModeSource: "manual",
             collectionRevision: sql`${instances.collectionRevision} + 1`,
+            configRevision: sql`${instances.configRevision} + 1`,
           })
           .where(and(eq(instances.id, id), eq(instances.workerId, workerId)))
           .returning({ id: instances.id })

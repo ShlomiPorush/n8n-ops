@@ -20,6 +20,7 @@ import { notifyAccess } from "./services/access-notify.ts"
 import { kickCopies, sweepRetention } from "./services/backup-copies.ts"
 import { enqueueProbes, scheduleBackups } from "./services/backups.ts"
 import { watchCollectors } from "./services/collection.ts"
+import { activeWith } from "./services/instances.ts"
 import { type Job, startScheduler } from "./services/scheduler.ts"
 import { sweepSessions } from "./services/session-policy.ts"
 import { syncWorkflows } from "./services/workflows.ts"
@@ -65,7 +66,7 @@ export function features(ctx: Ctx, extra: { mounts?: Mount[]; jobs?: Job[] } = {
       name: "workflow-map",
       everyMs: 30 * 60_000,
       run: async (c) => {
-        for (const instance of await c.db.select().from(instances)) {
+        for (const instance of await c.db.select().from(instances).where(activeWith("map"))) {
           await syncWorkflows(c, instance).catch((e: Error) =>
             c.log.warn("workflow sync failed", { instance: instance.name, error: e.message }),
           )

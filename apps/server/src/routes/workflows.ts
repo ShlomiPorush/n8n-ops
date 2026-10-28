@@ -7,7 +7,7 @@ import { instances, workflows } from "../db/schema.ts"
 import { requireUser } from "../http/middleware.ts"
 import { actorName, type Env } from "../http/types.ts"
 import { likeContains } from "../lib/like.ts"
-import { workflowUrl } from "../services/instances.ts"
+import { activeWith, can, workflowUrl } from "../services/instances.ts"
 import { exportCredentials, ProxyRefusedError, previewMove, runMove } from "../services/moves.ts"
 import { syncWorkflows } from "../services/workflows.ts"
 
@@ -80,7 +80,16 @@ export function workflowRoutes(ctx: Ctx) {
     const id = c.req.query("instance")
     const targets = id
       ? await ctx.db.select().from(instances).where(eq(instances.id, id))
-      : await ctx.db.select().from(instances)
+      : await ctx.db.select().from(instances).where(activeWith("map"))
+    const [one] = targets
+    if (id && one && !can(one, "map"))
+      return c.json(
+        {
+          error: "not_chosen",
+          message: `The workflow map is not chosen for ${one.name}. Add it to its capabilities first.`,
+        },
+        400,
+      )
     const results = await Promise.all(
       targets.map(async (i) => ({
         instance: i.name,

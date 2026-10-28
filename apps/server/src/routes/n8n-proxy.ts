@@ -1,7 +1,7 @@
 import { Hono } from "hono"
 import type { Ctx } from "../context.ts"
 import type { Env } from "../http/types.ts"
-import { AccessError, checkCall, grantForKey, instanceSpec, logCall } from "../services/access.ts"
+import { AccessError, checkCall, grantForKey, instanceSpec, logCall, openToAgents } from "../services/access.ts"
 
 /**
  * The access proxy: /n8n/<instance>/api/v1/... with a temporary key in X-N8N-API-KEY, the same header n8n uses,
@@ -19,6 +19,9 @@ export function n8nProxyRoutes(ctx: Ctx) {
     const ref = c.req.param("instance")
     if (ref !== instance.name && ref !== instance.id)
       return c.json({ message: `This key is for ${instance.name}, not ${ref}.` }, 403)
+    // Temporary access turned off on the instance (or its key removed) ends every call through it at once.
+    if (!openToAgents(instance) || !instance.apiKeyEnc)
+      return c.json({ message: `Temporary access to ${instance.name} is turned off.` }, 403)
 
     const url = new URL(c.req.url)
     const prefix = url.pathname.indexOf("/api/v1")

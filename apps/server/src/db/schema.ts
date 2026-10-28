@@ -1,3 +1,4 @@
+import { type CapabilityKey, capabilityKeys } from "@n8n-ops/shared"
 import {
   type AnyPgColumn,
   bigint,
@@ -223,14 +224,50 @@ export const pairingTokens = pgTable("worker_pairing_tokens", {
 // ---------------------------------------------------------------------------
 
 export type Health = "ok" | "warn" | "down" | "unknown"
-export type KeyAccess = "read" | "write"
 export type CollectionMode = "direct" | "worker"
+export type SetupCheckKind = "api" | "health" | "worker" | "backup"
+
+/**
+ * The last attempt of one setup check (services/setup.ts): its number and server start time, the configuration
+ * revision it was made for, and once it ended whether it passed, why not, and what it found.
+ */
+export type SetupCheck = {
+  attempt: number
+  startedAt: string
+  configRevision: number
+  status: "running" | "done"
+  ok?: boolean
+  at?: string
+  reason?: string
+  workerId?: string
+  jobId?: string
+  detail?: Record<string, unknown>
+}
 
 export const instances = pgTable("instances", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull().unique(),
   baseUrl: text("base_url").notNull(),
-  apiKeyEnc: text("api_key_enc").notNull(),
+  /** Null until the setup's API step stores a key, or after the owner removed it. */
+  apiKeyEnc: text("api_key_enc"),
+  /** "incomplete": a draft in setup that does nothing in the background; "complete": activated, never back. */
+  setupState: text("setup_state").$type<"incomplete" | "complete">().notNull().default("complete"),
+  /** What the owner wants this instance for (packages/shared instance-setup.ts); features off the list stay off. */
+  chosenCapabilities: jsonb("chosen_capabilities")
+    .$type<CapabilityKey[]>()
+    .notNull()
+    .default([...capabilityKeys]),
+  /** How a backup is made: the worker in the main (with credential secrets), or the n8n API only. */
+  backupVia: text("backup_via").$type<"worker" | "api">().notNull().default("api"),
+  /**
+   * Raised by every change a setup check depends on (URL, key, worker, main, collection, queue settings, backup
+   * choices, Temporary access policy, chosen capabilities). A check counts only for the revision it was made for.
+   */
+  configRevision: integer("config_revision").notNull().default(0),
+  /** Taken by every setup check when it starts, so a slow earlier attempt never overwrites a later one. */
+  setupAttemptSeq: bigint("setup_attempt_seq", { mode: "number" }).notNull().default(0),
+  /** The last attempt of each setup check. */
+  setupChecks: jsonb("setup_checks").$type<Partial<Record<SetupCheckKind, SetupCheck>>>().notNull().default({}),
   /** Container name on the Docker host, used by the worker for docker exec. Null when a Compose service is set. */
   containerName: text("container_name"),
   /**
@@ -260,9 +297,8 @@ export const instances = pgTable("instances", {
   /** How health and metrics are collected: directly from the server, or through the host worker. */
   collection: text("collection").$type<CollectionMode>().notNull().default("direct"),
   version: text("version"),
+  /** The API key's scopes from /discover; null before the first read and on n8n older than 2.14.0. */
   scopes: jsonb("scopes").$type<string[] | null>(),
-  scopesSource: text("scopes_source").$type<"discovered" | "declared">().notNull().default("discovered"),
-  declaredAccess: text("declared_access").$type<KeyAccess>(),
   scopesCheckedAt: ts("scopes_checked_at"),
   health: text("health").$type<Health>().notNull().default("unknown"),
   healthDetail: jsonb("health_detail").$type<Record<string, unknown>>(),

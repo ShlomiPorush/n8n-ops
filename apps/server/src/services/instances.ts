@@ -1,14 +1,71 @@
-import { readScopes, writeScopes } from "@n8n-ops/shared"
-import { eq } from "drizzle-orm"
+import { belowMinimum, type CapabilityKey, unsupportedVersionText } from "@n8n-ops/shared"
+import { and, eq, isNotNull, type SQL, sql } from "drizzle-orm"
 import type { Ctx } from "../context.ts"
 import { instances } from "../db/schema.ts"
 import { oneAtATime } from "../lib/one-at-a-time.ts"
-import { N8nClient } from "../n8n/client.ts"
+import { N8nClient, N8nError } from "../n8n/client.ts"
 
 export type Instance = typeof instances.$inferSelect
 
-export function clientFor(ctx: Ctx, instance: Instance): N8nClient {
+/** The instance has no API key stored: whatever needs the n8n API cannot run. */
+export class NoApiKey extends Error {
+  constructor(name: string) {
+    super(`${name} has no API key. Add one in its settings.`)
+  }
+}
+
+export function clientFor(ctx: Ctx, instance: Pick<Instance, "name" | "baseUrl" | "apiKeyEnc">): N8nClient {
+  if (!instance.apiKeyEnc) throw new NoApiKey(instance.name)
   return new N8nClient(instance.baseUrl, ctx.secrets.decrypt(instance.apiKeyEnc))
+}
+
+/** Whether the instance finished its setup; a draft does nothing in the background. */
+export const isActive = (instance: Pick<Instance, "setupState">) => instance.setupState === "complete"
+
+/** Whether the instance is active and was chosen for `capability` (docs/adr/0002). */
+export const can = (instance: Pick<Instance, "setupState" | "chosenCapabilities">, capability: CapabilityKey) =>
+  isActive(instance) && instance.chosenCapabilities.includes(capability)
+
+/** The same as `can`, as a filter for the background loops; admin lists show every instance. */
+export const activeWith = (capability: CapabilityKey): SQL =>
+  and(
+    eq(instances.setupState, "complete"),
+    sql`${instances.chosenCapabilities} @> ${JSON.stringify([capability])}::jsonb`,
+  ) as SQL
+
+/** Active instances only, for the overview, reports and agents. */
+export const activeOnly = eq(instances.setupState, "complete")
+
+/** Instances with a key, for the meta refresh. */
+export const withKey = isNotNull(instances.apiKeyEnc)
+
+/** Why a key test failed: n8n refused the key, it is older than the minimum, or it could not be reached. */
+export type KeyTest =
+  | { ok: true; version: string | null; scopes: string[] }
+  | { ok: false; code: "key_refused" | "unsupported_version" | "unreachable"; error: string; version: string | null }
+
+/**
+ * The one key test (setup and edits): n8n answers, accepts the key, and is 2.14.0 or later. It returns the key's
+ * scopes from /discover; it never judges them, so a key with fewer scopes is still a valid key.
+ */
+export async function testKey(baseUrl: string, apiKey: string, client = new N8nClient(baseUrl, apiKey)) {
+  const version = await client.version().catch(() => null)
+  const fail = (code: Exclude<KeyTest, { ok: true }>["code"], error: string): KeyTest => ({
+    ok: false,
+    code,
+    error,
+    version,
+  })
+  if (version && belowMinimum(version)) return fail("unsupported_version", unsupportedVersionText(version))
+  try {
+    const scopes = await client.discoverScopes()
+    if (scopes === null) return fail("unsupported_version", unsupportedVersionText(version))
+    return { ok: true, version, scopes } satisfies KeyTest
+  } catch (error) {
+    if (error instanceof N8nError && (error.status === 401 || error.status === 403))
+      return fail("key_refused", "n8n refused the API key.")
+    return fail("unreachable", `Cannot reach n8n at ${baseUrl}: ${(error as Error).message}`)
+  }
 }
 
 /** The turn an instance's health reports, its version writes and its changes take, one at a time. */
@@ -117,19 +174,31 @@ export function collectionUpdate(row: CollectionFields, next: Partial<Collection
   }
 }
 
-/** The scopes n8n-ops may rely on: discovered from n8n, or declared by the operator on older versions. */
-export function effectiveScopes(instance: Pick<Instance, "scopes" | "scopesSource" | "declaredAccess">): string[] {
-  if (instance.scopesSource === "declared") return instance.declaredAccess === "write" ? writeScopes : readScopes
+/** The scopes n8n-ops may rely on: those n8n reports for the key; none on n8n older than 2.14.0. */
+export function effectiveScopes(instance: Pick<Instance, "scopes">): string[] {
   return instance.scopes ?? []
 }
 
-/** Reads the n8n version and the API key's scopes, and stores them. */
-export function refreshInstanceMeta(ctx: Ctx, instance: Instance) {
+/** n8n is older than 2.14.0: the key was read and n8n has no /discover, or its version is known to be older. */
+export const unsupportedVersion = (instance: Pick<Instance, "apiKeyEnc" | "scopes" | "scopesCheckedAt" | "version">) =>
+  Boolean(
+    (instance.apiKeyEnc && instance.scopesCheckedAt && instance.scopes === null) ||
+      (instance.version && belowMinimum(instance.version)),
+  )
+
+/**
+ * Reads the n8n version and the API key's scopes, and stores them. It works from the row as it is when its turn
+ * comes, does nothing without a key, and stores nothing when the configuration changed meanwhile (a new URL or key
+ * is read by its own refresh). Returns the row as stored, or as it was when nothing was read.
+ */
+export function refreshInstanceMeta(ctx: Ctx, instance: Pick<Instance, "id">) {
   // One at a time per instance, so a slow earlier read never writes over a later one.
-  return oneAtATime(`meta:${instance.id}`, () => refreshInstanceMetaNow(ctx, instance))
+  return oneAtATime(`meta:${instance.id}`, () => refreshInstanceMetaNow(ctx, instance.id))
 }
 
-async function refreshInstanceMetaNow(ctx: Ctx, instance: Instance) {
+async function refreshInstanceMetaNow(ctx: Ctx, id: string): Promise<Instance | undefined> {
+  const [instance] = await ctx.db.select().from(instances).where(eq(instances.id, id))
+  if (!instance?.apiKeyEnc) return instance
   const client = clientFor(ctx, instance)
   // While the worker reports a version from inside, reading it over the network would race it. A worker that
   // checks over the network, or one of an earlier release, reports none: then it is read here, as before.
@@ -147,15 +216,14 @@ async function refreshInstanceMetaNow(ctx: Ctx, instance: Instance) {
     })
   }
   const before = new Set(effectiveScopes(instance))
-  const patch = {
-    scopes,
-    scopesSource: scopes === null ? ("declared" as const) : ("discovered" as const),
-    declaredAccess: scopes === null ? (instance.declaredAccess ?? "read") : instance.declaredAccess,
-    scopesCheckedAt: new Date(),
-    updatedAt: new Date(),
-  }
-  await ctx.db.update(instances).set(patch).where(eq(instances.id, instance.id))
-  const after = effectiveScopes({ ...instance, ...patch })
+  const patch = { scopes, scopesCheckedAt: new Date(), updatedAt: new Date() }
+  const [saved] = await ctx.db
+    .update(instances)
+    .set(patch)
+    .where(and(eq(instances.id, instance.id), eq(instances.configRevision, instance.configRevision)))
+    .returning()
+  if (!saved) return instance
+  const after = effectiveScopes(saved)
   const added = after.filter((s) => !before.has(s))
   const removed = [...before].filter((s) => !after.includes(s))
   if (instance.scopesCheckedAt && (added.length || removed.length)) {
@@ -167,7 +235,7 @@ async function refreshInstanceMetaNow(ctx: Ctx, instance: Instance) {
       details: { added, removed },
     })
   }
-  return { ...instance, ...patch, version: version ?? instance.version }
+  return saved
 }
 
 /** Link to an execution in the n8n editor. */

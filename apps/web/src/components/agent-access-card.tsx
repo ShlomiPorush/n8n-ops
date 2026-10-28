@@ -9,7 +9,8 @@ import { n } from "@/lib/numbers"
 type Props = {
   id: string
   name: string
-  scopesSource: "discovered" | "declared"
+  /** n8n older than 2.14.0: what the key allows cannot be read, so nothing that needs the API works. */
+  unsupported: boolean
   /** What the instance's API key holds; access can never go beyond it. */
   keyScopes: string[]
   agentAccess: { enabled: boolean; scopes: string[] }
@@ -18,7 +19,7 @@ type Props = {
 const readOnly = (s: string) => /:(read|list)$/.test(s)
 
 /** Per instance: whether agents may ask for temporary access, and the most they may ever be granted. */
-export function AgentAccessCard({ id, name, scopesSource, keyScopes, agentAccess }: Props) {
+export function AgentAccessCard({ id, name, unsupported, keyScopes, agentAccess }: Props) {
   const stored = () => ({
     enabled: agentAccess.enabled,
     scopes: new Set(agentAccess.scopes.filter((s) => keyScopes.includes(s))),
@@ -71,7 +72,6 @@ export function AgentAccessCard({ id, name, scopesSource, keyScopes, agentAccess
       else next.delete(s)
       return next
     })
-  const unsupported = scopesSource === "declared"
   useSaveSource(`agent-access-${id}`, {
     label: "agent access",
     saved: "Agent access saved",

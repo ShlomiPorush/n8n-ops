@@ -98,7 +98,6 @@ import {
   useSortOrder,
 } from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Tip } from "@/components/ui/tooltip"
 import { api, describeError, queryClient, useApi, useApiMutation } from "@/lib/api"
 import { type CollectionView, collectionView } from "@/lib/collection"
@@ -149,8 +148,8 @@ export type InstanceRow = {
   collection: "direct" | "worker"
   version: string | null
   scopes: string[] | null
-  scopesSource: "discovered" | "declared"
-  declaredAccess: "read" | "write" | null
+  /** n8n older than 2.14.0 (no /discover), or a version known to be older. */
+  unsupportedVersion: boolean
   scopesCheckedAt: string | null
   /** The health now: "unknown" also when nothing collects it (unknownReason). */
   health: HealthState
@@ -546,12 +545,6 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
     invalidate: ["/instances", "/overview", "/overview/attention"],
     failed: () => `remove ${named()}`,
   })
-  const declare = useApiMutation<{ declaredAccess: "read" | "write" }>("PATCH", `/instances/${id}`, {
-    invalidate,
-    success: (b) =>
-      `The API key of ${named()} ${b.declaredAccess === "write" ? "can read and write" : "can only read"}`,
-    failed: () => `change what the API key of ${named()} can do`,
-  })
   const unsaved = {
     backups: useUnsaved(`backup-destinations-${id}`),
     access: useUnsaved(`agent-access-${id}`),
@@ -934,23 +927,9 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
             <PanelHead
               title="API Key and What It Allows"
               description={
-                i.scopesSource === "discovered"
-                  ? `Read from GET /api/v1/discover · checked ${i.scopesCheckedAt ? formatTime(i.scopesCheckedAt, w) : "never"}`
-                  : "This n8n version cannot report what its API key allows (2.14.0 and later can). Choose what the key can do."
-              }
-              action={
-                i.scopesSource === "declared" && (
-                  <ToggleGroup
-                    type="single"
-                    segmented
-                    aria-label="What the API key can do"
-                    value={i.declaredAccess ?? "read"}
-                    onValueChange={(v) => v && declare.mutate({ declaredAccess: v as "read" | "write" })}
-                  >
-                    <ToggleGroupItem value="read">Read only</ToggleGroupItem>
-                    <ToggleGroupItem value="write">Read + write</ToggleGroupItem>
-                  </ToggleGroup>
-                )
+                i.unsupportedVersion
+                  ? "Unsupported n8n version: update to 2.14.0 or later."
+                  : `Read from GET /api/v1/discover · checked ${i.scopesCheckedAt ? formatTime(i.scopesCheckedAt, w) : "never"}`
               }
             />
             <div className="grid @min-[40rem]/pane:grid-cols-2">
@@ -979,7 +958,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
             key={`access-${i.id}`}
             id={i.id}
             name={i.name}
-            scopesSource={i.scopesSource}
+            unsupported={i.unsupportedVersion}
             keyScopes={i.effectiveScopes}
             agentAccess={i.agentAccess}
           />

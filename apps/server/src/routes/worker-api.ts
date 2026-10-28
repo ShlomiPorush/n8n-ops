@@ -6,10 +6,13 @@ import { createMiddleware } from "hono/factory"
 import { z } from "zod"
 import type { Ctx } from "../context.ts"
 import { backupRuns, instances, workerJobs, workers } from "../db/schema.ts"
-import { failRun } from "../services/backup-copies.ts"
+import { BACKUP_TURNED_OFF, endRunsWithoutArchive, failRun } from "../services/backup-copies.ts"
 import { archiveReady, COMPOSE_TARGET, maxArchiveBytes, workerBackupResult } from "../services/backups.ts"
 import { reportsSince, workerSeen } from "../services/collection.ts"
 import { applyWorkerReport, refusal } from "../services/health.ts"
+import { can } from "../services/instances.ts"
+import { credentialExportRefusal } from "../services/moves.ts"
+import { setupWorkerResult } from "../services/setup.ts"
 import { removeSpool, reserve, SpoolError, spoolDir, writeSpool } from "../services/spool.ts"
 import { readUpload, signUpload } from "../services/upload-token.ts"
 import { claimJob, deliverToWaiter, pairWorker, workerByIdentity } from "../services/workers.ts"
@@ -63,27 +66,64 @@ export function workerApiRoutes(ctx: Ctx) {
     await next()
   })
 
+  /**
+   * Why a job is no longer wanted: its instance is a draft, or no longer has the capability the job is for. A setup
+   * check is wanted for any instance (a draft, or one adding a capability). Null when it is wanted.
+   */
+  async function unwanted(job: typeof workerJobs.$inferSelect): Promise<string | null> {
+    if (!job.instanceId || (job.kind === "probe" && job.payload.setup)) return null
+    const [instance] = await ctx.db.select().from(instances).where(eq(instances.id, job.instanceId))
+    if (!instance) return "The instance was removed."
+    if (job.kind === "probe")
+      return can(instance, "health") && instance.collection === "worker"
+        ? null
+        : `Health of ${instance.name} is no longer collected by this worker.`
+    if (job.kind === "backup")
+      return can(instance, "backup") && instance.backupVia === "worker" ? null : BACKUP_TURNED_OFF
+    if (job.kind === "export-credentials") return credentialExportRefusal(instance)
+    return null
+  }
+
+  /** Ends a job here without handing it over; a backup's run ends with it, and a waiting export is told. */
+  async function dropJob(job: typeof workerJobs.$inferSelect, error: string, quiet: boolean) {
+    await ctx.db
+      .update(workerJobs)
+      .set({ status: "failed", error, finishedAt: new Date() })
+      .where(eq(workerJobs.id, job.id))
+    if (job.kind === "export-credentials") deliverToWaiter(job.id, { ok: false, error })
+    if (job.kind !== "backup") return
+    if (quiet) await endRunsWithoutArchive(ctx.db, { runId: String(job.payload.runId) }, error)
+    else await workerBackupResult(ctx, String(job.payload.runId), { ok: false, result: {}, error })
+  }
+
   app.get("/jobs/next", auth, async (c) => {
-    const job = await claimJob(ctx, c.get("worker").id)
-    // A backup or export of a Compose service, claimed by a worker that cannot follow one (an earlier image under
-    // the same identity): it would run in no container. It ends here, said as that, and is never handed over.
     const features = featuresOf(c.req.header("x-worker-features"))
-    if (
-      job &&
-      (job.kind === "backup" || job.kind === "export-credentials") &&
-      job.payload.target &&
-      !features.includes(COMPOSE_TARGET)
-    ) {
-      const error = "The worker on this host runs a release that cannot follow a Compose service. Update its image."
-      await ctx.db
-        .update(workerJobs)
-        .set({ status: "failed", error, finishedAt: new Date() })
-        .where(eq(workerJobs.id, job.id))
-      if (job.kind === "export-credentials") deliverToWaiter(job.id, { ok: false, error })
-      else await workerBackupResult(ctx, String(job.payload.runId), { ok: false, result: {}, error })
-      return c.json({ job: null })
+    // Jobs no longer wanted end here, so the next one is handed over in the same call.
+    for (;;) {
+      const job = await claimJob(ctx, c.get("worker").id)
+      if (!job) return c.json({ job: null })
+      const why = await unwanted(job)
+      if (why) {
+        await dropJob(job, why, true)
+        continue
+      }
+      // A backup or export of a Compose service, claimed by a worker that cannot follow one (an earlier image
+      // under the same identity): it would run in no container. It ends here, said as that, and is never handed
+      // over.
+      if (
+        (job.kind === "backup" || job.kind === "export-credentials") &&
+        job.payload.target &&
+        !features.includes(COMPOSE_TARGET)
+      ) {
+        await dropJob(
+          job,
+          "The worker on this host runs a release that cannot follow a Compose service. Update its image.",
+          false,
+        )
+        continue
+      }
+      return c.json({ job: { id: job.id, kind: job.kind, payload: job.payload } })
     }
-    return c.json({ job: job ? { id: job.id, kind: job.kind, payload: job.payload } : null })
   })
 
   async function ownJob(workerId: string, jobId: string) {
@@ -108,6 +148,11 @@ export function workerApiRoutes(ctx: Ctx) {
       .safeParse(await c.req.json().catch(() => ({})))
     if (!body.success) return c.json({ error: "invalid" }, 400)
     const runId = String(job.payload.runId)
+    const why = await unwanted(job)
+    if (why) {
+      await endRunsWithoutArchive(ctx.db, { runId }, why)
+      return c.json({ error: "conflict", message: why }, 409)
+    }
     const [run] = await ctx.db.select().from(backupRuns).where(eq(backupRuns.id, runId))
     if (run?.status !== "running" || run.uploadStartedAt || run.spooledAt)
       return c.json({ error: "conflict", message: "This backup run no longer takes an archive." }, 409)
@@ -148,6 +193,11 @@ export function workerApiRoutes(ctx: Ctx) {
       return c.json({ error: "unauthorized" }, 401)
     if (Number(c.req.header("content-length")) !== grant.size)
       return c.json({ error: "invalid", message: "The upload must have the size it was announced with." }, 400)
+    const why = await unwanted(job.job)
+    if (why) {
+      await endRunsWithoutArchive(ctx.db, { runId: grant.run }, why)
+      return c.json({ error: "conflict", message: why }, 409)
+    }
     // Taken before the body is read, so a second upload of the same run is refused.
     const [started] = await ctx.db
       .update(backupRuns)
@@ -176,7 +226,11 @@ export function workerApiRoutes(ctx: Ctx) {
         await removeSpool(dir, grant.run)
         throw new SpoolError("The uploaded archive does not match the size and checksum the worker announced.")
       }
-      await archiveReady(ctx, grant.run, written)
+      // The run ended while the archive came (backup turned off, or too late): the file is not kept.
+      if (!(await archiveReady(ctx, grant.run, written))) {
+        await removeSpool(dir, grant.run)
+        return c.json({ error: "conflict", message: "This backup run no longer takes an archive." }, 409)
+      }
       return c.json({ ok: true })
     } catch (error) {
       await removeSpool(dir, grant.run)
@@ -221,10 +275,14 @@ export function workerApiRoutes(ctx: Ctx) {
     // A check claimed before the worker was last offline, or before this server started, is not current.
     const worker = c.get("worker")
     const current = Boolean(job.startedAt && job.startedAt >= reportsSince(worker.id))
-    if (job.kind === "probe" && job.instanceId && ok && current) {
+    // A setup check is evidence for the setup only: it never applies health or alerts.
+    if (job.kind === "probe" && job.payload.setup)
+      stored = await setupWorkerResult(ctx, job, { ok, result, error, current })
+    else if (job.kind === "probe" && job.instanceId && ok && current && !(await unwanted(job))) {
       const [instance] = await ctx.db.select().from(instances).where(eq(instances.id, job.instanceId))
       if (instance) stored = await applyWorkerReport(ctx, instance, job.payload, result, worker.name)
     }
+    const why = job.kind === "backup" ? await unwanted(job) : null
     await ctx.db
       .update(workerJobs)
       .set({
@@ -236,7 +294,9 @@ export function workerApiRoutes(ctx: Ctx) {
       .where(eq(workerJobs.id, job.id))
 
     if (job.kind === "export-credentials") deliverToWaiter(job.id, { ok, result, error, refused, ...seen })
-    if (job.kind === "backup")
+    // A backup turned off meanwhile ends without an alert; one whose archive arrived finishes its copies.
+    if (job.kind === "backup" && why) await endRunsWithoutArchive(ctx.db, { runId: String(job.payload.runId) }, why)
+    else if (job.kind === "backup")
       await workerBackupResult(ctx, String(job.payload.runId), { ok, result, error, refused, ...seen })
     return c.json({ ok: true })
   })

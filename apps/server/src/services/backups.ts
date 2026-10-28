@@ -24,7 +24,16 @@ import { reportsSince } from "./collection.ts"
 import { type Destination, destinationsFor, keyFor, openStore } from "./destinations/index.ts"
 import { withDeadline } from "./destinations/store.ts"
 import { type CheckTicket, type Refusal, startCheck } from "./health.ts"
-import { clientFor, type Instance, mainTarget, metricsUrlOf, needsQueueWorkers, readsInside } from "./instances.ts"
+import {
+  activeWith,
+  can,
+  clientFor,
+  type Instance,
+  mainTarget,
+  metricsUrlOf,
+  needsQueueWorkers,
+  readsInside,
+} from "./instances.ts"
 import { jobProxyFix, refusalInError } from "./proxy-fix.ts"
 import { zonedParts } from "./reports.ts"
 import { removeSpool, reserve, spoolDir, writeSpool } from "./spool.ts"
@@ -137,9 +146,15 @@ export async function startBackup(ctx: Ctx, instance: Instance, trigger: "schedu
   if (running && (running.spooledAt || Date.now() - running.startedAt.getTime() < ARCHIVE_WAIT_MS)) return running
   const destinations = await destinationsFor(ctx, instance)
   if (!destinations.length) throw new NoDestinationError(instance.name)
-  const worker = await usableWorker(ctx, instance)
-  const run = await createRun(ctx, instance, destinations, Boolean(worker))
+  // Via the worker it is the worker or nothing: an API backup instead would drop the credential secrets unseen.
+  const viaWorker = instance.backupVia === "worker"
+  const worker = viaWorker ? await usableWorker(ctx, instance) : null
+  const run = await createRun(ctx, instance, destinations, viaWorker)
   try {
+    if (viaWorker && !worker)
+      throw new Error(
+        `The worker for ${instance.name} is not available: assign a worker and set the main${instance.composeProject ? ", and update the worker to a release that follows a Compose service" : ""}.`,
+      )
     const recipient = await backupRecipient(ctx)
     if (worker) {
       await enqueueJob(
@@ -166,14 +181,17 @@ export async function startBackup(ctx: Ctx, instance: Instance, trigger: "schedu
 
 /**
  * The encrypted archive of a run is complete in the spool with this size and checksum; its copies can be
- * written now.
+ * written now. Only while the run still waits for it: false when it ended meanwhile (backup turned off, timed
+ * out), and then the caller removes its spool file.
  */
 export async function archiveReady(ctx: Ctx, runId: string, archive: { size: number; sha256: string }) {
-  await ctx.db
+  const [applied] = await ctx.db
     .update(backupRuns)
     .set({ spooledAt: new Date(), sizeBytes: archive.size, sha256: archive.sha256 })
-    .where(and(eq(backupRuns.id, runId), eq(backupRuns.status, "running")))
-  void kickCopies(ctx)
+    .where(and(eq(backupRuns.id, runId), eq(backupRuns.status, "running"), isNull(backupRuns.spooledAt)))
+    .returning({ id: backupRuns.id })
+  if (applied) void kickCopies(ctx)
+  return Boolean(applied)
 }
 
 /** An archive made on the server (API backup, self backup) goes into the spool the same way an upload does. */
@@ -187,7 +205,7 @@ async function spoolSealed(ctx: Ctx, runId: string, bytes: Uint8Array) {
   const release = await reserve(dir, bytes.length)
   try {
     const written = await writeSpool(dir, runId, bytes, { limit: bytes.length })
-    await archiveReady(ctx, runId, written)
+    if (!(await archiveReady(ctx, runId, written))) await removeSpool(dir, runId)
   } catch (error) {
     await removeSpool(dir, runId)
     throw error
@@ -266,7 +284,7 @@ export async function workerBackupResult(
 export async function scheduleBackups(ctx: Ctx, now = new Date()) {
   const { timezone } = await ctx.settings.get("general")
   const local = zonedParts(now, timezone || "UTC")
-  const all = await ctx.db.select().from(instances)
+  const all = await ctx.db.select().from(instances).where(activeWith("backup"))
   for (const instance of all) {
     const s = await ctx.settings.forInstance(instance.overrides)
     const [last] = await ctx.db
@@ -471,11 +489,13 @@ export async function restoreWorkflow(
     targetInstanceId,
   }: { runId: string; privateKey: string; workflowId: string; targetInstanceId: string },
 ) {
+  const [target] = await ctx.db.select().from(instances).where(eq(instances.id, targetInstanceId))
+  if (!target) throw new Error("Target instance not found.")
+  if (!can(target, "restore"))
+    throw new Error(`${target.name} is not set up to restore workflows. Add Restore workflows to its capabilities.`)
   const archive = await loadArchive(ctx, runId, privateKey)
   const workflow = archive.workflows.find((w) => w.id === workflowId)
   if (!workflow) throw new Error("This workflow is not in the archive.")
-  const [target] = await ctx.db.select().from(instances).where(eq(instances.id, targetInstanceId))
-  if (!target) throw new Error("Target instance not found.")
   const client = clientFor(ctx, target)
   const steps: { step: string; ok: boolean; detail?: string }[] = []
   const idMap = new Map<string, string>()
@@ -522,9 +542,10 @@ export async function restoreWorkflow(
 /**
  * What a probe job asks of the worker. `inside` asks it to read the main from inside its container; `overrides`
  * carries only what the owner typed. The URL fields stay for workers of earlier releases and as the network
- * fallback; a worker of this release never takes them for overrides. Queue parts only in queue mode.
+ * fallback; a worker of this release never takes them for overrides. Queue parts only in queue mode. A setup check
+ * has no ticket and asks to read inside whatever the collection mode (`inside`).
  */
-export function probePayload(instance: Instance, check: CheckTicket) {
+export function probePayload(instance: Instance, check: CheckTicket | undefined, inside = readsInside(instance)) {
   const base = instance.baseUrl.replace(/\/+$/, "")
   const queue = instance.queueMode
   const typedWorkers = queue && instance.workerHealthUrls.length > 0 ? instance.workerHealthUrls : undefined
@@ -535,9 +556,9 @@ export function probePayload(instance: Instance, check: CheckTicket) {
     metrics: metricsUrlOf(instance),
     // Workers of earlier releases read `inside.container` only: for a Compose service they get none and check over
     // the network, and the page asks to update them.
-    ...(readsInside(instance) ? { inside: jobTarget(instance) } : {}),
+    ...(inside ? { inside: jobTarget(instance) } : {}),
     // Queue mode with no worker URLs typed: the worker finds the queue workers next to the main and checks them.
-    ...(readsInside(instance) && queue && !typedWorkers ? { discover: true } : {}),
+    ...(inside && queue && !typedWorkers ? { discover: true } : {}),
     // A main the socket proxy refuses: the worker lists its queue workers anyway, for what the proxy must allow.
     ...(needsQueueWorkers(instance) ? { list: true } : {}),
     overrides: {
@@ -548,15 +569,16 @@ export function probePayload(instance: Instance, check: CheckTicket) {
   }
 }
 
-/** Instances whose worker-collected health is due get a probe job (collection mode "worker"). */
+/** Instances whose worker-collected health is due get a probe job (collection mode "worker", health chosen). */
 export async function enqueueProbes(ctx: Ctx) {
   const all = await ctx.db
     .select()
     .from(instances)
-    .where(and(eq(instances.collection, "worker"), isNotNull(instances.workerId)))
+    .where(and(eq(instances.collection, "worker"), isNotNull(instances.workerId), activeWith("health")))
   // Only a probe its own worker has yet to answer holds an instance back. One left to a worker that was
   // revoked, or to the worker it had before, is never answered and would stop its health for good. Nor does one
-  // claimed before the worker was last offline or this server started: its answer no longer counts.
+  // claimed before the worker was last offline or this server started: its answer no longer counts. A setup check
+  // is not a health check and holds nothing back.
   const workerOf = new Map(all.map((i) => [i.id, i.workerId]))
   const busy = new Set(
     (
@@ -569,6 +591,7 @@ export async function enqueueProbes(ctx: Ctx) {
       .filter(
         (j) =>
           j.instanceId &&
+          !j.payload.setup &&
           j.workerId === workerOf.get(j.instanceId) &&
           !(j.startedAt && j.startedAt < reportsSince(j.workerId)),
       )
@@ -588,7 +611,7 @@ export async function enqueueProbes(ctx: Ctx) {
     // The probe is made from the row its ticket was taken with, so it asks for exactly that revision.
     const started = await startCheck(ctx, instance.id)
     const now = started?.instance
-    if (!started || !now || now.collection !== "worker" || !now.workerId) continue
+    if (!started || !now || now.collection !== "worker" || !now.workerId || !can(now, "health")) continue
     await enqueueJob(ctx, now.workerId, "probe", probePayload(now, started.ticket), now.id)
   }
 }

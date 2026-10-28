@@ -16,15 +16,31 @@ export const healthTurn = (instanceId: string) => `health:${instanceId}`
 
 /** Whether the version comes from the worker reading inside: checked from inside, and the last report had one. */
 export function versionFromInside(
-  instance: Pick<Instance, "collection" | "workerId" | "containerName" | "healthDetail">,
+  instance: Pick<
+    Instance,
+    "collection" | "workerId" | "containerName" | "composeProject" | "composeService" | "healthDetail"
+  >,
 ) {
   const detail = instance.healthDetail as { source?: string; version?: string } | null
   return readsInside(instance) && detail?.source === "inside" && Boolean(detail.version)
 }
 
 /** Whether the worker on the host reads the instance from inside its main container. */
-export function readsInside(instance: Pick<Instance, "collection" | "workerId" | "containerName">) {
-  return instance.collection === "worker" && Boolean(instance.workerId) && Boolean(instance.containerName)
+/** Where the main is: a container name, or a Compose project and service; nothing when neither is set. */
+export type MainTarget = { name: string } | { project: string; service: string }
+
+export function mainTarget(
+  instance: Pick<Instance, "containerName" | "composeProject" | "composeService">,
+): MainTarget | null {
+  if (instance.composeProject && instance.composeService)
+    return { project: instance.composeProject, service: instance.composeService }
+  return instance.containerName ? { name: instance.containerName } : null
+}
+
+export function readsInside(
+  instance: Pick<Instance, "collection" | "workerId" | "containerName" | "composeProject" | "composeService">,
+) {
+  return instance.collection === "worker" && Boolean(instance.workerId) && mainTarget(instance) !== null
 }
 
 /**
@@ -35,7 +51,14 @@ export function readsInside(instance: Pick<Instance, "collection" | "workerId" |
 export function needsQueueWorkers(
   instance: Pick<
     Instance,
-    "collection" | "workerId" | "containerName" | "queueMode" | "queueModeSource" | "workerHealthUrls"
+    | "collection"
+    | "workerId"
+    | "containerName"
+    | "composeProject"
+    | "composeService"
+    | "queueMode"
+    | "queueModeSource"
+    | "workerHealthUrls"
   >,
 ) {
   return (
@@ -59,6 +82,8 @@ type CollectionFields = Pick<
   | "collection"
   | "workerId"
   | "containerName"
+  | "composeProject"
+  | "composeService"
   | "queueMode"
   | "queueModeSource"
   | "baseUrl"
@@ -75,7 +100,12 @@ type CollectionFields = Pick<
 export function collectionUpdate(row: CollectionFields, next: Partial<CollectionFields>) {
   const differs = <K extends keyof CollectionFields>(key: K) =>
     next[key] !== undefined && JSON.stringify(next[key] ?? null) !== JSON.stringify(row[key] ?? null)
-  const targetChanged = differs("collection") || differs("workerId") || differs("containerName")
+  const targetChanged =
+    differs("collection") ||
+    differs("workerId") ||
+    differs("containerName") ||
+    differs("composeProject") ||
+    differs("composeService")
   const locked = row.queueModeSource === "found" && !targetChanged
   const queueModeChanged = !locked && differs("queueMode")
   return {

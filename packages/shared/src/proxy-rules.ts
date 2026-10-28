@@ -52,7 +52,32 @@ export type RuleSource =
   | { kind: "main"; instance: string }
   | { kind: "queue-worker"; instance: string }
 
-export type RuleEntry = { name: string; pattern: boolean; sources: RuleSource[] }
+/**
+ * One alternative of the POST rule: an exact name, an owner's `*` pattern, or the replicas of a Compose service
+ * (`regex` set: `<project>-<service>-` and digits, shown as `<project>-<service>-<number>`).
+ */
+export type RuleEntry = {
+  name: string
+  pattern: boolean
+  sources: RuleSource[]
+  regex?: string
+  /**
+   * Worked out from a Compose service each time (its replicas, or the container in use): never offered for the
+   * owner to record, never recorded, so a rollout or a change of target never leaves an old name allowed.
+   */
+  computed?: boolean
+}
+
+/** A main named by its Compose service: whether a rule for its replicas reaches only them, and the one in use. */
+export type ServiceMain = { project: string; service: string; clean?: boolean; resolved?: string }
+
+export type MainInput = { instance: string; container: string } | { instance: string; service: ServiceMain }
+
+/** The start of every replica's name, and the regex of the replicas: Compose v2 names them so. */
+export const replicaPrefix = (s: Pick<ServiceMain, "project" | "service">) => `${s.project}-${s.service}-`
+export const replicaRegex = (s: Pick<ServiceMain, "project" | "service">) => `${literal(replicaPrefix(s))}[0-9]+`
+
+const regexOf = (e: RuleEntry) => e.regex ?? (e.pattern ? patternRegex(e.name) : literal(e.name))
 
 export type NeededRule = {
   get: string
@@ -94,7 +119,7 @@ export const MAX_SUGGESTED = 100
 function widen(
   allows: RuleEntry[],
   suggested: SuggestedPattern[],
-  known: { mains: string[]; workers: { instance: string; name: string }[]; entered: string[] },
+  known: { mains: string[]; replicas: string[]; workers: { instance: string; name: string }[]; entered: string[] },
 ): Widened | null {
   let rest = allows
   const used: SuggestedPattern[] = []
@@ -103,6 +128,10 @@ function widen(
     if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]{2,126}$/.test(s.prefix) || s.pattern !== `${s.prefix}*`) continue
     const starts = (name: string) => name.startsWith(s.prefix)
     if (known.mains.some(starts)) continue
+    // A replica is the prefix and digits: a suggestion reaches one when its prefix starts that, or runs into it.
+    const intoReplica = (p: string) =>
+      p.startsWith(s.prefix) || (s.prefix.startsWith(p) && /^[0-9]*$/.test(s.prefix.slice(p.length)))
+    if (known.replicas.some(intoReplica)) continue
     if (known.workers.some((w) => w.instance !== s.instance && starts(w.name))) continue
     if (known.entered.some((p) => p.includes("*") && starts(p))) continue
     const covers = (e: RuleEntry) => starts(e.name)
@@ -124,7 +153,7 @@ function widen(
   }
   if (!used.length) return null
   const all = [...added, ...rest]
-  const post = proxyPost(all.map((e) => (e.pattern ? patternRegex(e.name) : literal(e.name))))
+  const post = proxyPost(all.map(regexOf))
   return { patterns: used, get: PROXY_GET, post, lines: proxyLines({ get: PROXY_GET, post }), allows: all }
 }
 
@@ -135,7 +164,7 @@ function widen(
  */
 export function neededRule(input: {
   entered: string[]
-  mains: { instance: string; container: string }[]
+  mains: MainInput[]
   queueWorkers: { instance: string; name: string }[]
   gaps?: string[]
   /** Patterns the worker found clean on the host, for queue workers added later. */
@@ -153,7 +182,35 @@ export function neededRule(input: {
     if (!entry.sources.some((s) => JSON.stringify(s) === JSON.stringify(source))) entry.sources.push(source)
     entries.set(key, entry)
   }
+  const replicaEntries: RuleEntry[] = []
   for (const m of input.mains) {
+    if ("service" in m) {
+      const { project, service, clean, resolved } = m.service
+      if (clean) {
+        replicaEntries.push({
+          name: `${replicaPrefix(m.service)}<number>`,
+          pattern: false,
+          sources: [{ kind: "main", instance: m.instance }],
+          regex: replicaRegex(m.service),
+          computed: true,
+        })
+        continue
+      }
+      // Not known to be clean: only the container in use, by its exact name, and why.
+      if (resolved && DOCKER_NAME.test(resolved)) {
+        add(resolved, { kind: "main", instance: m.instance })
+        const entry = entries.get(`n:${resolved}`)
+        if (entry) entry.computed = true
+      }
+      gaps.push(
+        clean === false
+          ? `another container on this host is named like a replica of service ${service} of ${project}, so only the one in use is in the line, and the next rollout needs the line again`
+          : resolved
+            ? `whether other containers are named like the replicas of service ${service} of ${project} is not known yet, so only the one in use is in the line`
+            : `the container of service ${service} of project ${project} is not known yet; the next check finds it`,
+      )
+      continue
+    }
     if (DOCKER_NAME.test(m.container)) add(m.container, { kind: "main", instance: m.instance })
     else
       gaps.push(
@@ -169,8 +226,8 @@ export function neededRule(input: {
   }
   const patterns = [...entries.values()].filter((e) => e.pattern)
   const names = [...entries.values()].filter((e) => !e.pattern).sort((a, b) => a.name.localeCompare(b.name))
-  const allows = [...patterns, ...names]
-  const post = proxyPost(allows.map((e) => (e.pattern ? patternRegex(e.name) : literal(e.name))))
+  const allows = [...patterns, ...replicaEntries, ...names]
+  const post = proxyPost(allows.map(regexOf))
   return {
     get: PROXY_GET,
     post,
@@ -179,7 +236,10 @@ export function neededRule(input: {
     coverage: gaps.length ? "partial" : "complete",
     gaps: [...new Set(gaps)],
     widened: widen(allows, input.suggested ?? [], {
-      mains: input.mains.map((m) => m.container),
+      mains: input.mains.flatMap((m) =>
+        "service" in m ? (m.service.resolved ? [m.service.resolved] : []) : [m.container],
+      ),
+      replicas: input.mains.flatMap((m) => ("service" in m ? [replicaPrefix(m.service)] : [])),
       workers: input.queueWorkers,
       entered,
     }),

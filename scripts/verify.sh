@@ -361,6 +361,22 @@ run_queue_checks() {
     die "the queue worker's readiness did not answer $want"
   }
   expect_worker ready
+  # The same main named by its Compose project and service instead of its name: the worker resolves the container,
+  # reads it inside, finds its queue workers, and finds a rule for the service's replicas clean on this host.
+  local by_service="{\"inside\":{\"target\":{\"project\":\"$q\",\"service\":\"n8n\"}},\"discover\":true,\"check\":{\"seq\":1,\"revision\":0}}"
+  local service_report
+  service_report="$(stack exec -T -u node worker node dist/probe-cli.js "$by_service")"
+  # shellcheck disable=SC2016 # expands inside the container
+  stack exec -T -u node worker node -e '
+    const r = JSON.parse(process.argv[1]);
+    process.exit(r.source === "inside" && r.resolvedContainer === process.argv[2] + "-n8n-1" && r.replicas &&
+      r.replicas.clean === true && r.discovery && r.discovery.status === "ok" && r.discovery.found === 1 ? 0 : 1)' \
+    "$service_report" "$q" || {
+    echo "$service_report"
+    queue down -v >/dev/null 2>&1
+    die "the main named by its Compose service was not read inside"
+  }
+  echo "    main found by its Compose project and service"
   queue stop redis >/dev/null 2>&1
   readiness_is 503
   expect_worker not-ready

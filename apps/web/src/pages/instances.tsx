@@ -135,6 +135,9 @@ export type InstanceRow = {
   name: string
   baseUrl: string
   containerName: string | null
+  /** The main as a Compose project and service; both null when it is a container name. */
+  composeProject: string | null
+  composeService: string | null
   workerId: string | null
   queueMode: boolean
   /** "found": read by the worker inside the main container; not editable while it is checked from there. */
@@ -170,6 +173,8 @@ export type InstanceRow = {
     notCollected?: string
     mainState?: "running" | "not-running" | "paused"
     mode?: "queue" | "regular" | null
+    /** The container a Compose service target used at this check. */
+    resolvedContainer?: string
     metricsState?: "read" | "off" | "404" | "no-queue-figures" | "failed" | "skipped"
   } | null
   healthCheckedAt: string | null
@@ -193,6 +198,10 @@ type InstanceDetailData = InstanceRow & {
   backupDestinationIds: string[]
   /** What the socket proxy refused in the current report, with the lines that allow it; null when nothing. */
   proxyFix: ProxyFix | null
+  /** A Compose service target whose worker is of a release that cannot follow one. */
+  composeNeedsUpdate: boolean
+  /** The container the Compose service resolved to at the last check of the current settings. */
+  resolvedContainer: string | null
 }
 
 /** Worse first when sorted high to low: down, needs a look, unknown, healthy. */
@@ -556,7 +565,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
   const hd = i.healthDetail
   const health = i.health
   const name = i.name
-  const canExport = Boolean(i.worker && i.containerName)
+  const canExport = Boolean(i.worker && (i.containerName || i.composeProject) && !i.composeNeedsUpdate)
   async function askRemove() {
     const ok = await confirm({
       title: `Remove ${name}?`,
@@ -758,6 +767,31 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
               unknown={hd?.notCollected ? "not collected" : undefined}
               past={past}
             />
+            {i.composeProject && (
+              <div
+                className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 border-t border-line px-pad-x py-pad-y"
+                data-testid="compose-target"
+              >
+                <span className="min-w-0">
+                  Main container: service {i.composeService} of {i.composeProject}
+                </span>
+                <span className="ms-auto min-w-0 text-end break-words text-muted-foreground">
+                  {i.resolvedContainer ? (
+                    <>
+                      {i.resolvedContainer} at the last check (<TimeAgo value={i.healthCheckedAt} />)
+                    </>
+                  ) : (
+                    "not found at the last check"
+                  )}
+                </span>
+              </div>
+            )}
+            {i.composeNeedsUpdate && (
+              <div className="border-t border-line px-pad-x py-pad-y text-warn">
+                The worker on this host runs a release that cannot follow a Compose service, so the main is not checked
+                inside, backed up with secrets or exported. Update the worker's image to the server's release.
+              </div>
+            )}
             {hd?.source === "inside" && !hd.notCollected && (
               <div className="flex min-w-0 items-center gap-2.5 border-t border-line px-pad-x py-pad-y">
                 <span className="min-w-0">Execution mode</span>
@@ -851,7 +885,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
                 Not collected: {hd.notCollected}. Health is Unknown until a collection reads the instance again.
               </div>
             )}
-            {i.collection === "worker" && i.workerId && !i.containerName && (
+            {i.collection === "worker" && i.workerId && !i.containerName && !i.composeProject && (
               <div className="border-t border-line px-pad-x py-pad-y text-muted-foreground">
                 Set the name of the main container in Edit to check it from inside: health, metrics and the queue mode,
                 with nothing reachable from outside the host. Until then the worker checks over the network.
@@ -1402,6 +1436,10 @@ export function InstanceDialog({
     baseUrl: "",
     apiKey: undefined as string | undefined,
     containerName: "",
+    // Where the main is: a container name, or a Compose project and service (followed across docker rollout).
+    mainBy: "name" as "name" | "service",
+    composeProject: "",
+    composeService: "",
     queueMode: false,
     metricsUrl: "",
     workerHealthUrls: "",
@@ -1422,6 +1460,9 @@ export function InstanceDialog({
       baseUrl: instance?.baseUrl ?? "",
       apiKey: undefined,
       containerName: instance?.containerName ?? "",
+      mainBy: (instance?.composeProject ? "service" : "name") as "name" | "service",
+      composeProject: instance?.composeProject ?? "",
+      composeService: instance?.composeService ?? "",
       queueMode: instance?.queueMode ?? false,
       metricsUrl: instance?.metricsUrl ?? "",
       workerHealthUrls: (instance?.workerHealthUrls ?? []).join("\n"),
@@ -1432,13 +1473,19 @@ export function InstanceDialog({
     setOpened(start)
   }, [open, instance?.id])
   const set = (k: keyof typeof form, v: string | boolean | undefined) => setForm((f) => ({ ...f, [k]: v }))
+  const byService = form.mainBy === "service"
+  const targetSet = byService
+    ? Boolean(form.composeProject.trim() && form.composeService.trim())
+    : Boolean(form.containerName.trim())
   // The worker read the mode inside the main; it stays its value until the worker or the container changes.
   const modeFound =
     instance?.queueModeSource === "found" &&
     form.collection === instance.collection &&
     (form.workerId || null) === (instance.workerId ?? null) &&
-    (form.containerName.trim() || null) === (instance.containerName ?? null)
-  const inside = form.collection === "worker" && Boolean(form.workerId) && Boolean(form.containerName.trim())
+    (byService ? null : form.containerName.trim() || null) === (instance.containerName ?? null) &&
+    (byService ? form.composeProject.trim() : null) === (instance.composeProject ?? null) &&
+    (byService ? form.composeService.trim() : null) === (instance.composeService ?? null)
+  const inside = form.collection === "worker" && Boolean(form.workerId) && targetSet
   // Every close asks first while the form differs from how it opened (DS-9).
   const guard = useDiscardGuard(formChanged(form, opened), () => onOpenChange(false))
   // A stored API key is never sent to a different server: a changed base URL needs the key again (FS-5).
@@ -1455,7 +1502,10 @@ export function InstanceDialog({
     const body = {
       name: form.name,
       baseUrl: normalUrl(form.baseUrl),
-      containerName: form.containerName || null,
+      // One of the two, never both: the server refuses a half pair or both together.
+      containerName: byService ? null : form.containerName.trim() || null,
+      composeProject: byService ? form.composeProject.trim() || null : null,
+      composeService: byService ? form.composeService.trim() || null : null,
       queueMode: form.queueMode,
       metricsUrl: form.metricsUrl || null,
       workerHealthUrls: form.workerHealthUrls.split(/\s+/).filter(Boolean),
@@ -1638,17 +1688,55 @@ export function InstanceDialog({
               <FieldDescription>Needed to back up credential secrets and to move credentials.</FieldDescription>
             </Field>
             <Field>
-              <FieldLabel htmlFor="i-container">Container name</FieldLabel>
-              <Input
-                id="i-container"
-                value={form.containerName}
-                onChange={(e) => set("containerName", e.target.value)}
-                placeholder="n8n"
+              <FieldPicker
+                label="Find the main container by"
+                value={form.mainBy}
+                onChange={(v) => set("mainBy", v)}
+                options={[
+                  { value: "name", label: "Container name" },
+                  { value: "service", label: "Compose service" },
+                ]}
               />
               <FieldDescription>
-                The n8n main container on the host. The worker checks health inside it and exports credentials from it.
+                {byService
+                  ? "Follows the service across docker rollout and redeploys: the worker uses its running container each time."
+                  : "The n8n main container on the host. The worker checks health inside it and exports credentials from it."}
               </FieldDescription>
             </Field>
+            {byService ? (
+              <div className="grid gap-4 md:grid-cols-2">
+                <Field>
+                  <FieldLabel htmlFor="i-compose-project">Compose project</FieldLabel>
+                  <Input
+                    id="i-compose-project"
+                    value={form.composeProject}
+                    onChange={(e) => set("composeProject", e.target.value)}
+                    placeholder="n8n1"
+                  />
+                  <FieldDescription>The name: in the Compose file, or its folder.</FieldDescription>
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="i-compose-service">Service</FieldLabel>
+                  <Input
+                    id="i-compose-service"
+                    value={form.composeService}
+                    onChange={(e) => set("composeService", e.target.value)}
+                    placeholder="app"
+                  />
+                  <FieldDescription>The n8n main's service in that file.</FieldDescription>
+                </Field>
+              </div>
+            ) : (
+              <Field>
+                <FieldLabel htmlFor="i-container">Container name</FieldLabel>
+                <Input
+                  id="i-container"
+                  value={form.containerName}
+                  onChange={(e) => set("containerName", e.target.value)}
+                  placeholder="n8n"
+                />
+              </Field>
+            )}
           </FieldSet>
           {error && <FieldError>{error}</FieldError>}
         </FieldGroup>

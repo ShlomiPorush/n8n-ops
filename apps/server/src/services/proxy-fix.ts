@@ -1,6 +1,7 @@
 import {
   ALLOWED_LIMITS,
   CONTAINER_PATTERN,
+  type MainInput,
   type NeededRule,
   neededRule,
   patternRegex,
@@ -32,7 +33,12 @@ type Detail = {
   fallback?: string
   workers?: { url?: string; name?: string; error?: string }[]
   discovery?: { status: string; reason?: string }
+  resolvedContainer?: string
+  replicas?: { clean: boolean }
 }
+
+/** What a job or a report said about a Compose service target: the container used, and whether its rule is clean. */
+export type ServiceSeen = { project: string; service: string; resolved?: string; clean?: boolean }
 
 /** The phrases with which workers of 0.2.0 and 0.3.0 said the socket proxy refused, before reports carried it. */
 const OLD_EXEC = /the socket proxy does not allow commands in "([^"]{1,128})"/
@@ -141,15 +147,32 @@ export async function workerRule(
   ctx: Ctx,
   worker: Worker,
   db: Pick<Ctx["db"], "select"> = ctx.db,
+  /** What a failed job saw of an instance's Compose service, used instead of its last report (by instance id). */
+  seen: Map<string, ServiceSeen> = new Map(),
 ): Promise<WorkerRule> {
   const assigned = await db.select().from(instances).where(eq(instances.workerId, worker.id))
-  const mains: { instance: string; container: string }[] = []
+  const mains: MainInput[] = []
   const queueWorkers: { instance: string; name: string }[] = []
   const gaps: string[] = []
   const suggested: SuggestedPattern[] = []
   for (const i of assigned.sort((a, b) => a.name.localeCompare(b.name))) {
     // Backups and credential exports run in the main whatever collects its health.
-    if (i.containerName) mains.push({ instance: i.name, container: i.containerName })
+    if (i.composeProject && i.composeService) {
+      // A service: its replicas when the worker found that rule clean, else the container in use by name.
+      const detail = currentDetail(i)
+      // Only while the instance still names the service the job saw: a target changed since reads its own report.
+      const saw = seen.get(i.id)
+      const job = saw && saw.project === i.composeProject && saw.service === i.composeService ? saw : undefined
+      mains.push({
+        instance: i.name,
+        service: {
+          project: i.composeProject,
+          service: i.composeService,
+          resolved: job?.resolved ?? detail?.resolvedContainer,
+          clean: job ? job.clean : detail?.replicas?.clean,
+        },
+      })
+    } else if (i.containerName) mains.push({ instance: i.name, container: i.containerName })
     const q = queueWorkersOf(i)
     queueWorkers.push(...q.names.map((name) => ({ instance: i.name, name })))
     gaps.push(...q.gaps)
@@ -183,11 +206,16 @@ export type ProxyFix = WorkerRule & {
   update: string | null
 }
 
-async function fixFor(ctx: Ctx, worker: Worker, refused: Refusal[]): Promise<ProxyFix | null> {
+async function fixFor(
+  ctx: Ctx,
+  worker: Worker,
+  refused: Refusal[],
+  seen: Map<string, ServiceSeen> = new Map(),
+): Promise<ProxyFix | null> {
   if (!refused.length) return null
   const words = [...new Set(refused.map(refusalWords))]
   return {
-    ...(await workerRule(ctx, worker)),
+    ...(await workerRule(ctx, worker, ctx.db, seen)),
     worker: { id: worker.id, name: worker.name },
     refused: words,
     update: workerUpdate(ctx.version, worker.version),
@@ -206,14 +234,27 @@ export async function instanceProxyFix(ctx: Ctx, instance: Instance, worker: Wor
  */
 export async function jobProxyFix(
   ctx: Ctx,
-  instance: Pick<Instance, "workerId" | "containerName">,
-  job: { workerId: string; container: string | null; refused?: Refusal; error?: string | null },
+  instance: Pick<Instance, "id" | "workerId" | "containerName" | "composeProject" | "composeService">,
+  job: {
+    workerId: string
+    container: string | null
+    /** The Compose service the job was sent for, and what it saw of it (C11: also without health reports). */
+    target?: { project: string; service: string }
+    seen?: ServiceSeen
+    refused?: Refusal
+    error?: string | null
+  },
 ) {
   const refused = job.refused ?? refusalInError(job.error)
-  if (!refused || instance.workerId !== job.workerId || instance.containerName !== job.container) return null
+  if (!refused || instance.workerId !== job.workerId) return null
+  // Only while the instance still has the target the job ran for.
+  const same = job.target
+    ? instance.composeProject === job.target.project && instance.composeService === job.target.service
+    : !instance.composeProject && instance.containerName === job.container
+  if (!same) return null
   const [worker] = await ctx.db.select().from(workers).where(eq(workers.id, job.workerId))
   if (!worker || worker.revokedAt) return null
-  return fixFor(ctx, worker, [refused])
+  return fixFor(ctx, worker, [refused], job.target && job.seen ? new Map([[instance.id, job.seen]]) : new Map())
 }
 
 /** The containers a worker's socket proxy allows, as the owner records them: the Add worker rules, 500 of 128. */
@@ -245,7 +286,10 @@ export async function recordPatterns(ctx: Ctx, workerId: string, requested: stri
     const offered = new Set(rule.widened?.patterns.map((p) => p.pattern) ?? [])
     const patterns = [...new Set(requested)]
     if (!patterns.every((p) => offered.has(p))) return { status: 409 as const }
-    const base = before.allowed?.containers ?? before.install?.containers ?? rule.allows.map((a) => a.name)
+    const base =
+      before.allowed?.containers ??
+      before.install?.containers ??
+      rule.allows.filter((a) => !a.computed).map((a) => a.name)
     const covers = patterns.map((p) => new RegExp(`^${patternRegex(p)}$`))
     const containers = [
       ...new Set([...base.filter((n) => n.includes("*") || !covers.some((re) => re.test(n))), ...patterns]),

@@ -166,3 +166,64 @@ describe("the lines with a pattern for queue workers added later", () => {
     }
   })
 })
+
+describe("a main named by its Compose service", () => {
+  const service = (clean?: boolean, resolved?: string) => ({
+    instance: "acme",
+    service: { project: "n8n1", service: "app", clean, resolved },
+  })
+
+  it("allows every replica of the service when the worker found that clean, and nothing like it", () => {
+    const rule = neededRule({ entered: [], mains: [service(true, "n8n1-app-2")], queueWorkers: [] })
+    expect(rule.coverage).toBe("complete")
+    expect(rule.allows.map((a) => a.name)).toEqual(["n8n1-app-<number>"])
+    for (const name of ["n8n1-app-1", "n8n1-app-27"]) expect(allows(rule.post, exec(name))).toBe(true)
+    for (const name of ["n8n1-app-x", "n8n1-app-1-extra", "n8n1-other-1", "n8n1-app"])
+      expect(allows(rule.post, exec(name))).toBe(false)
+  })
+
+  it("names only the container in use, and says why, when the check was not clean or not made", () => {
+    const notClean = neededRule({ entered: [], mains: [service(false, "n8n1-app-2")], queueWorkers: [] })
+    expect(notClean.allows.map((a) => a.name)).toEqual(["n8n1-app-2"])
+    expect(allows(notClean.post, exec("n8n1-app-3"))).toBe(false)
+    expect(notClean.coverage).toBe("partial")
+    expect(neededRule({ entered: [], mains: [service(undefined, undefined)], queueWorkers: [] }).gaps).toEqual([
+      "the container of service app of project n8n1 is not known yet; the next check finds it",
+    ])
+  })
+
+  it("keeps the replicas through a suggested pattern, and offers none that could reach a replica", () => {
+    const rule = neededRule({
+      entered: [],
+      mains: [service(true, "n8n1-app-2")],
+      queueWorkers: [1, 2].map((i) => ({ instance: "acme", name: `n8n1-worker-${i}` })),
+      suggested: [{ pattern: "n8n1-worker-*", prefix: "n8n1-worker-", instance: "acme" }],
+    })
+    expect(rule.widened?.allows.map((a) => a.name)).toEqual(["n8n1-worker-*", "n8n1-app-<number>"])
+    expect(allows(rule.widened?.post ?? "", exec("n8n1-app-9"))).toBe(true)
+    const reaching = neededRule({
+      entered: [],
+      mains: [service(true, "n8n1-app-2")],
+      queueWorkers: [{ instance: "acme", name: "n8n1-1" }],
+      suggested: [{ pattern: "n8n1-*", prefix: "n8n1-", instance: "acme" }],
+    })
+    expect(reaching.widened).toBeNull()
+  })
+})
+
+describe("the entries a Compose service gives", () => {
+  it("are marked as worked out each time, the replicas and the container in use alike", () => {
+    const clean = neededRule({
+      entered: [],
+      mains: [{ instance: "acme", service: { project: "n8n1", service: "app", clean: true } }],
+      queueWorkers: [],
+    })
+    expect(clean.allows.map((a) => [a.name, a.computed])).toEqual([["n8n1-app-<number>", true]])
+    const exact = neededRule({
+      entered: [],
+      mains: [{ instance: "acme", service: { project: "n8n1", service: "app", clean: false, resolved: "n8n1-app-4" } }],
+      queueWorkers: [],
+    })
+    expect(exact.allows.map((a) => [a.name, a.computed])).toEqual([["n8n1-app-4", true]])
+  })
+})

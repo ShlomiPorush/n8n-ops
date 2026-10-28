@@ -47,6 +47,7 @@ export {
   CONTAINER_PATTERN,
   DOCKER_NAME,
   MAX_SUGGESTED,
+  type MainInput,
   type NeededRule,
   neededRule,
   PROXY_GET,
@@ -56,6 +57,9 @@ export {
   proxyRules,
   type RuleEntry,
   type RuleSource,
+  replicaPrefix,
+  replicaRegex,
+  type ServiceMain,
   type SuggestedPattern,
   type Widened,
 } from "./proxy-rules.ts"

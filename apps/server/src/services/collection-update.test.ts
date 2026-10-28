@@ -5,6 +5,8 @@ const row = {
   collection: "worker" as const,
   workerId: "w1",
   containerName: "n8n",
+  composeProject: null,
+  composeService: null,
   queueMode: true,
   queueModeSource: "found" as const,
   baseUrl: "https://n8n.example.com",

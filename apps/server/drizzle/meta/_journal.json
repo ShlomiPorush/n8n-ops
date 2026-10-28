@@ -99,6 +99,13 @@
       "when": 1793117434592,
       "tag": "0013_worker_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1793154863652,
+      "tag": "0014_compose_service_target",
+      "breakpoints": true
     }
   ]
 }

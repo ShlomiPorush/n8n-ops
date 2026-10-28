@@ -105,6 +105,9 @@ export type JobOutcome = {
   result?: Record<string, unknown>
   error?: string
   refused?: { call: "exec-create" | "exec-start" | "exec-inspect" | "list"; container?: string }
+  /** For a main named by its Compose service: the container the job used, and whether its replicas' rule is clean. */
+  resolvedContainer?: string
+  replicas?: { clean: boolean }
 }
 
 /**

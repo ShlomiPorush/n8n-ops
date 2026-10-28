@@ -14,6 +14,10 @@ export type ListedContainer = {
   Image?: string
   Command?: string
   State?: string
+  /** Docker's words for the state, with the health check's answer: "Up 2 minutes (healthy)". */
+  Status?: string
+  /** When the container was created, in seconds since 1970. */
+  Created?: number
   Labels?: Record<string, string>
 }
 
@@ -34,6 +38,7 @@ const N8N_IMAGE = /^(docker\.n8n\.io\/)?n8nio\/n8n(:[\w.-]+)?(@sha256:[0-9a-f]{6
 
 const PROJECT = "com.docker.compose.project"
 const ONE_OFF = "com.docker.compose.oneoff"
+const SERVICE = "com.docker.compose.service"
 
 /** A container's name as exec takes it: Docker lists names with a leading slash. */
 export function nameOf(container: ListedContainer): string {
@@ -91,8 +96,11 @@ export function projectOf(list: ListedContainer[], main: string): { project?: st
   return found ? { project: found.Labels?.[PROJECT], state: stateOf(found) } : {}
 }
 
-/** Finds the queue workers of the main named `main` in the containers of its Compose project. */
-export function discover(projectList: ListedContainer[], main: string): Discovery {
+/**
+ * Finds the queue workers of the main named `main` in the containers of its Compose project. With `service`, the
+ * main is that Compose service: its replicas (two during a rollout, or an old one stopped) are one main.
+ */
+export function discover(projectList: ListedContainer[], main: string, service?: string): Discovery {
   const self = projectList.find((c) => nameOf(c) === main)
   if (!self) return { status: "ambiguous", reason: `container "${main}" is not in its Compose project` }
   const mainState = stateOf(self)
@@ -113,7 +121,9 @@ export function discover(projectList: ListedContainer[], main: string): Discover
     }
   if (roleOf(self) !== "main")
     return { status: "ambiguous", reason: `"${main}" does not run n8n's main process`, main: mainState }
-  const mains = members.filter((c) => roleOf(c) === "main")
+  const mains = members.filter(
+    (c) => roleOf(c) === "main" && (!service || c.Labels?.[SERVICE] !== service || c === self),
+  )
   if (mains.length > 1)
     return {
       status: "ambiguous",

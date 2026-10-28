@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+
+- **The main by its Compose service.** An instance can name its main container by Compose project and service instead of a container name, so it keeps working through docker rollout and redeploys that replace the container with another number. Each check, backup and credential export uses the service's container in use then: one that carries both Compose labels, is not a one-off and is named as Compose names it; during a rollout the healthy one, then the newest. A backup or export stays in the container it started in and says so when a rollout replaced it midway. The Health tab shows which container was used at the last check. The socket proxy lines allow the service's replicas (`<project>-<service>-<number>`) when the worker found that no other container on the host is named that way, and only the container in use otherwise. Following a service needs this release's worker; with an earlier one the Health tab says to update it.
+
+### Fixed
+
+- **A failed credential export fails the backup.** A worker backup of an instance with no workflows no longer passes when its credential export fails: each export is judged by its own output.
+
 ## [0.5.0] - 2026-10-28
 
 ### Added

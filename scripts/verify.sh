@@ -404,7 +404,7 @@ run_proxy_checks() {
   fi
   probe
   expect_report "a main the proxy refuses was not reported with its queue workers" \
-    "r.source === 'network' && r.access.refused.some(x => x.call === 'exec-create' && x.container === '$q-n8n-1') && JSON.stringify(r.listed) === JSON.stringify({ names: ['$q-n8n-worker-1'], complete: true })"
+    "r.source === 'network' && r.access.refused.some(x => x.call === 'exec-create' && x.container === '$q-n8n-1') && JSON.stringify([r.listed.names, r.listed.complete]) === JSON.stringify([['$q-n8n-worker-1'], true]) && JSON.stringify(r.listed.patterns) === JSON.stringify([{ pattern: '$q-n8n-worker-*', clean: true }])"
   TOOLCHAIN_EXTRA_ARGS=(-e "PROBE_REPORT=$report" -e "PROBE_MAIN=$q-n8n-1")
   in_toolchain "node scripts/lib/queue-proxy-override.mjs" >"$override" || fail_queue "the proxy lines could not be computed"
   TOOLCHAIN_EXTRA_ARGS=()

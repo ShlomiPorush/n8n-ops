@@ -79,3 +79,90 @@ describe("neededRule", () => {
     expect(rule.lines).toBe(`      - '-allowGET=${rule.get}'\n      - '-allowPOST=${rule.post}'`)
   })
 })
+
+describe("the lines with a pattern for queue workers added later", () => {
+  const suggest = (pattern: string, instance = "acme") => ({ pattern, prefix: pattern.slice(0, -1), instance })
+
+  it("replaces the exact queue worker names a clean pattern covers, and keeps the main", () => {
+    const rule = neededRule({
+      entered: [],
+      mains: [{ instance: "acme", container: "acme" }],
+      queueWorkers: [1, 2, 3].map((i) => ({ instance: "acme", name: `qworker${i}` })),
+      suggested: [suggest("qworker*")],
+    })
+    expect(rule.widened?.allows.map((a) => a.name)).toEqual(["qworker*", "acme"])
+    expect(allows(rule.widened?.post ?? "", exec("qworker8"))).toBe(true)
+    expect(allows(rule.widened?.post ?? "", exec("postgres"))).toBe(false)
+    // The exact lines stay as they were.
+    expect(allows(rule.post, exec("qworker8"))).toBe(false)
+  })
+
+  it("also replaces exact names the owner recorded, but never offers what a recorded pattern already covers", () => {
+    const exact = neededRule({
+      entered: ["qworker1", "qworker2"],
+      mains: [],
+      queueWorkers: [{ instance: "acme", name: "qworker1" }],
+      suggested: [suggest("qworker*")],
+    })
+    expect(exact.widened?.allows.map((a) => a.name)).toEqual(["qworker*", "qworker2"])
+    const covered = neededRule({
+      entered: ["qworker*"],
+      mains: [],
+      queueWorkers: [{ instance: "acme", name: "qworker1" }],
+      suggested: [suggest("qworker*")],
+    })
+    expect(covered.widened).toBeNull()
+  })
+
+  it("offers no pattern that would reach a main or the queue workers of another instance", () => {
+    const main = neededRule({
+      entered: [],
+      mains: [{ instance: "other", container: "n8n-main" }],
+      queueWorkers: [{ instance: "acme", name: "n8n-1" }],
+      suggested: [suggest("n8n-*")],
+    })
+    expect(main.widened).toBeNull()
+    const neighbour = neededRule({
+      entered: [],
+      mains: [],
+      queueWorkers: [
+        { instance: "acme", name: "worker1" },
+        { instance: "other", name: "worker2" },
+      ],
+      suggested: [suggest("worker*")],
+    })
+    expect(neighbour.widened).toBeNull()
+  })
+
+  it("checks a pattern against the names as they came, not as a recorded pattern or another suggestion merged them", () => {
+    const hidden = neededRule({
+      entered: ["*-main"],
+      mains: [{ instance: "acme", container: "queue-main" }],
+      queueWorkers: [{ instance: "acme", name: "queue-1" }],
+      suggested: [suggest("queue-*")],
+    })
+    expect(hidden.widened).toBeNull()
+    const ordered = neededRule({
+      entered: [],
+      mains: [],
+      queueWorkers: [
+        { instance: "east", name: "queue-east-1" },
+        { instance: "acme", name: "queue-1" },
+      ],
+      suggested: [suggest("queue-east-*", "east"), suggest("queue-*")],
+    })
+    expect(ordered.widened?.patterns.map((p) => p.pattern)).toEqual(["queue-east-*"])
+  })
+
+  it("takes only a plain prefix of three characters or more", () => {
+    for (const pattern of ["a*", "w*k*", ".*", "x'y*"]) {
+      const rule = neededRule({
+        entered: [],
+        mains: [],
+        queueWorkers: [{ instance: "acme", name: "a1" }],
+        suggested: [suggest(pattern)],
+      })
+      expect(rule.widened).toBeNull()
+    }
+  })
+})

@@ -38,13 +38,24 @@ const listed = (name: string, command: string, state = "running") => ({
 
 type Answer = { output?: string; refuse?: number; hang?: boolean }
 /** A stand-in Docker: the containers it lists, and what a check inside each one prints. */
-async function engine(containers: ReturnType<typeof listed>[], answers: Record<string, Answer>, listStatus = 200) {
+async function engine(
+  containers: ReturnType<typeof listed>[],
+  answers: Record<string, Answer>,
+  listStatus = 200,
+  /** What the list of every container on the host answers (no filter), when it differs from the others. */
+  host?: { containers?: unknown[]; status?: number; hang?: boolean },
+) {
   const execs = new Map<string, string>()
   const checked: string[] = []
   const port = await listen((req, res) => {
     req.resume()
     const url = new URL(req.url ?? "/", "http://docker")
     if (url.pathname.endsWith("/containers/json")) {
+      if (host && url.searchParams.get("filters") === "{}") {
+        if (host.hang) return res.writeHead(200)
+        if (host.status) return res.writeHead(host.status).end()
+        return res.writeHead(200).end(JSON.stringify(host.containers ?? containers))
+      }
       if (listStatus !== 200) return res.writeHead(listStatus).end()
       return res.writeHead(200).end(JSON.stringify(containers))
     }
@@ -101,7 +112,7 @@ describe("discoverWorkers", () => {
     expect(result.workers[3]?.error).toBe('the socket proxy does not allow commands in "acme-w-4"')
     expect(result.workers[3]).not.toHaveProperty("refusal")
     expect(result.refused).toEqual([{ call: "exec-create", container: "acme-w-4" }])
-    expect(result.listed).toEqual({
+    expect(result.listed).toMatchObject({
       names: ["acme-w-1", "acme-w-2", "acme-w-3", "acme-w-4", "acme-w-5"],
       complete: true,
     })
@@ -127,7 +138,45 @@ describe("discoverWorkers", () => {
       {},
     )
     const result = await listWorkers(docker, "acme-n8n-1", { check: false, deadline: AbortSignal.timeout(10_000) })
-    expect(result.listed).toEqual({ names: ["acme-w-1"], complete: false })
+    expect(result.listed).toMatchObject({ names: ["acme-w-1"], complete: false })
+  })
+
+  it("says whether a pattern for workers added later would reach any other container on the host", async () => {
+    const workers = [
+      listed("acme-n8n-1", ENTRY),
+      listed("acme-w-1", `${ENTRY} worker`),
+      listed("acme-w-2", `${ENTRY} worker`),
+    ]
+    const clean = await engine(workers, { "acme-w-1": { output: ready }, "acme-w-2": { output: ready } })
+    expect((await discoverWorkers(clean.docker, "acme-n8n-1", { rotation: 0 })).listed?.patterns).toEqual([
+      { pattern: "acme-w-*", clean: true },
+    ])
+    // Another container on the host starts the same way: the pattern is not clean, and its name does not leave.
+    const db = { ...listed("acme-w-db", "docker-entrypoint.sh postgres"), Image: "postgres:18" }
+    const crowded = await engine(workers, {}, 200, { containers: [...workers, db] })
+    const result = await discoverWorkers(crowded.docker, "acme-n8n-1", { rotation: 0 })
+    expect(result.listed?.patterns).toEqual([{ pattern: "acme-w-*", clean: false }])
+    expect(JSON.stringify(result)).not.toContain("acme-w-db")
+    // A host list that is refused gives no patterns at all, never a clean one.
+    const refused = await engine(workers, {}, 200, { status: 403 })
+    expect((await discoverWorkers(refused.docker, "acme-n8n-1", { rotation: 0 })).listed).not.toHaveProperty("patterns")
+  })
+
+  it("checks the pattern on every worker, beyond the 500 names sent and names too long to send", async () => {
+    const many = Array.from({ length: 501 }, (_, i) => listed(`acme-w-${i}`, `${ENTRY} worker`))
+    const long = listed(`acme-w-${"9".repeat(130)}`, `${ENTRY} worker`)
+    const { docker } = await engine([listed("acme-n8n-1", ENTRY), ...many, long], {})
+    const result = await listWorkers(docker, "acme-n8n-1", { check: false, deadline: AbortSignal.timeout(10_000) })
+    expect(result.listed?.complete).toBe(false)
+    expect(result.listed?.patterns).toEqual([{ pattern: "acme-w-*", clean: true }])
+  })
+
+  it("leaves the workers' states as they are and gives no pattern when the host list is too slow", async () => {
+    const workers = [listed("acme-n8n-1", ENTRY), listed("acme-w-1", `${ENTRY} worker`)]
+    const { docker } = await engine(workers, { "acme-w-1": { output: ready } }, 200, { hang: true })
+    const result = await discoverWorkers(docker, "acme-n8n-1", { rotation: 0, deadline: AbortSignal.timeout(1_500) })
+    expect(result.workers.map((w) => w.state)).toEqual(["ready"])
+    expect(result.listed).not.toHaveProperty("patterns")
   })
 
   it("says a refused list even when it only reads the main's state", async () => {

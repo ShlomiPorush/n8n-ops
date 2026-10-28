@@ -282,7 +282,9 @@ function AddWorkerDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
                 <FieldDescription>
                   Recommended. The worker gets no Docker socket: a proxy lets it list the containers, to find n8n queue
                   workers, and run commands only in the n8n containers you list. Only the names and states of queue
-                  workers leave the host. Without the proxy, the worker has full control of Docker on the host.
+                  workers leave the host and, for a pattern n8n-ops may suggest for queue workers added later, whether
+                  any other container's name starts the same way; never their names or details. Without the proxy, the
+                  worker has full control of Docker on the host.
                 </FieldDescription>
               </FieldContent>
             </Field>

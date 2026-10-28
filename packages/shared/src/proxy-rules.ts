@@ -63,6 +63,69 @@ export type NeededRule = {
   /** Complete: n8n-ops knows every container the worker uses. Partial: `gaps` says what is not known. */
   coverage: "complete" | "partial"
   gaps: string[]
+  /**
+   * The same lines with a pattern for queue workers added later, offered beside the exact ones and only chosen by the
+   * owner; null when there is none to offer.
+   */
+  widened: Widened | null
+}
+
+/** A pattern for the queue workers of one instance, as the worker checked it at `checkedAt`. */
+export type SuggestedPattern = { pattern: string; prefix: string; instance: string; checkedAt?: string }
+
+export type Widened = {
+  patterns: SuggestedPattern[]
+  get: string
+  post: string
+  lines: string
+  allows: RuleEntry[]
+}
+
+/** Most patterns offered at once, for every instance of a worker together. */
+export const MAX_SUGGESTED = 100
+
+/**
+ * The lines with patterns for queue workers added later. A suggestion is used only when it is a plain prefix and a
+ * `*` (the worker found no other container on the host starting so), when it covers no main, no queue worker of
+ * another instance and no pattern the owner recorded, and when it replaces at least one exact queue worker name.
+ * Those checks use the names as they came (`known`), before any were merged into a recorded pattern or replaced
+ * by another suggestion. Names the owner recorded exactly may be replaced; a main never is.
+ */
+function widen(
+  allows: RuleEntry[],
+  suggested: SuggestedPattern[],
+  known: { mains: string[]; workers: { instance: string; name: string }[]; entered: string[] },
+): Widened | null {
+  let rest = allows
+  const used: SuggestedPattern[] = []
+  const added: RuleEntry[] = []
+  for (const s of suggested.slice(0, MAX_SUGGESTED)) {
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]{2,126}$/.test(s.prefix) || s.pattern !== `${s.prefix}*`) continue
+    const starts = (name: string) => name.startsWith(s.prefix)
+    if (known.mains.some(starts)) continue
+    if (known.workers.some((w) => w.instance !== s.instance && starts(w.name))) continue
+    if (known.entered.some((p) => p.includes("*") && starts(p))) continue
+    const covers = (e: RuleEntry) => starts(e.name)
+    const covered = rest.filter(
+      (e) =>
+        covers(e) &&
+        !e.name.includes("*") &&
+        e.sources.some((src) => src.kind === "queue-worker") &&
+        !e.sources.some((src) => src.kind === "main"),
+    )
+    if (!covered.length) continue
+    rest = rest.filter((e) => !covered.includes(e))
+    used.push(s)
+    added.push({
+      name: s.pattern,
+      pattern: true,
+      sources: [...new Map(covered.flatMap((e) => e.sources).map((src) => [JSON.stringify(src), src])).values()],
+    })
+  }
+  if (!used.length) return null
+  const all = [...added, ...rest]
+  const post = proxyPost(all.map((e) => (e.pattern ? patternRegex(e.name) : literal(e.name))))
+  return { patterns: used, get: PROXY_GET, post, lines: proxyLines({ get: PROXY_GET, post }), allows: all }
 }
 
 /**
@@ -75,6 +138,8 @@ export function neededRule(input: {
   mains: { instance: string; container: string }[]
   queueWorkers: { instance: string; name: string }[]
   gaps?: string[]
+  /** Patterns the worker found clean on the host, for queue workers added later. */
+  suggested?: SuggestedPattern[]
 }): NeededRule {
   const gaps = [...(input.gaps ?? [])]
   const entered = [...new Set(input.entered.filter((p) => CONTAINER_PATTERN.test(p)))]
@@ -113,5 +178,10 @@ export function neededRule(input: {
     allows,
     coverage: gaps.length ? "partial" : "complete",
     gaps: [...new Set(gaps)],
+    widened: widen(allows, input.suggested ?? [], {
+      mains: input.mains.map((m) => m.container),
+      workers: input.queueWorkers,
+      entered,
+    }),
   }
 }

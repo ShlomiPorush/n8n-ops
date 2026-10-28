@@ -1,4 +1,4 @@
-import { workerCheckOutput } from "@n8n-ops/shared"
+import { ALLOWED_LIMITS, workerCheckOutput } from "@n8n-ops/shared"
 import { type ContainerState, discover, type ListedContainer, projectOf } from "./discovery.ts"
 import { type Docker, DockerError, type Refusal, refusalOf } from "./docker.ts"
 import { WORKER_CHECK } from "./inside.ts"
@@ -29,8 +29,12 @@ export type DiscoveryResult = {
   workers: CheckedWorker[]
   /** The main's state in the container list, when it was read. */
   mainState?: ContainerState
-  /** Every queue worker name of the main, when the list told them apart: the socket proxy must allow them all. */
-  listed?: { names: string[]; complete: boolean }
+  /**
+   * Every queue worker name of the main, when the list told them apart: the socket proxy must allow them all. With
+   * `patterns`, the patterns n8n-ops may suggest for workers added later, and whether each is clean: no other
+   * container on the host has a name that starts the same way. Only that answer leaves the host, never a name.
+   */
+  listed?: { names: string[]; complete: boolean; patterns?: { pattern: string; clean: boolean }[] }
   /** What the socket proxy refused while finding and checking the workers. */
   refused: Refusal[]
 }
@@ -181,6 +185,44 @@ async function findWorkers(docker: Docker, main: string, deadline: AbortSignal):
   return { ok: true, workers: found.workers, mainState: found.main }
 }
 
+/** A name that ends in digits, and the part before them: the start of a pattern for workers added later. */
+const NUMBERED = /^([a-zA-Z0-9][a-zA-Z0-9_.-]*[^0-9])[0-9]+$/
+
+/**
+ * Checks, for each prefix of the main's numbered queue workers, whether any other container on the host has a name
+ * that starts the same way. One more list call, all containers, after every health check of the probe and only with
+ * what is left of its deadline; a failure, a timeout or a list over the cap gives no patterns at all.
+ */
+export async function patternsOf(
+  docker: Docker,
+  workers: { name: string }[],
+  deadline: AbortSignal,
+): Promise<{ pattern: string; clean: boolean }[] | undefined> {
+  const prefixes = [
+    ...new Set(
+      workers
+        .flatMap((w) => NUMBERED.exec(w.name)?.[1] ?? [])
+        .filter((p) => p.length >= 3 && p.length < ALLOWED_LIMITS.length),
+    ),
+  ].slice(0, 20)
+  if (!prefixes.length || deadline.aborted) return undefined
+  let host: ListedContainer[]
+  try {
+    host = (await docker.listContainers(
+      {},
+      { signal: AbortSignal.any([deadline, AbortSignal.timeout(LIMITS.callMs)]), maxBytes: LIMITS.listBytes },
+    )) as ListedContainer[]
+  } catch {
+    return undefined
+  }
+  const own = new Set(workers.map((w) => w.name))
+  const names = host.flatMap((c) => (c.Names ?? []).map((n) => n.replace(/^\//, "")))
+  return prefixes.map((prefix) => ({
+    pattern: `${prefix}*`,
+    clean: names.every((n) => !n.startsWith(prefix) || own.has(n)),
+  }))
+}
+
 /** The names for the proxy's line: at most 500, none longer than the 128 characters the server takes. */
 const listedOf = (workers: { name: string }[]) => {
   const fit = workers.filter((w) => w.name.length <= 128)
@@ -214,10 +256,12 @@ export async function listWorkers(
           )
       : [],
     mainState: found.mainState,
-    listed: listedOf(found.workers),
+    listed: { ...listedOf(found.workers), ...withPatterns(await patternsOf(docker, found.workers, options.deadline)) },
     refused: [],
   }
 }
+
+const withPatterns = (patterns: { pattern: string; clean: boolean }[] | undefined) => (patterns ? { patterns } : {})
 
 /**
  * Finds the queue workers of the main `main` and checks them: from the container list, then one check inside each
@@ -264,7 +308,8 @@ export async function discoverWorkers(
       : { status: "ok", found: all.length },
     workers: checked.map(({ refusal: _r, ...w }) => w),
     mainState: found.mainState,
-    listed: listedOf(all),
+    // After every check above, with what is left of the deadline.
+    listed: { ...listedOf(all), ...withPatterns(await patternsOf(docker, all, deadline)) },
     refused: checked.flatMap((w) => (w.refusal ? [w.refusal] : [])),
   }
 }

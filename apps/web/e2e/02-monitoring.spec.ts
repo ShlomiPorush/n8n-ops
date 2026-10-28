@@ -26,34 +26,93 @@ test("n8n is prepared with an API key and a failing workflow", async () => {
   await n8nTrigger(apiKey, hookPath)
 })
 
-test("an instance is registered after its connection is tested", async () => {
+test("an instance is registered through its setup, each step checked before it goes on", async () => {
   // From Overview, so the way back after the add can be followed.
   await page.goto("/")
   await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible()
   await page.goto("/instances")
   await page.getByRole("button", { name: "Add instance" }).click()
+  await expect(page).toHaveURL(/\/instances\/new$/)
   await page.getByLabel("Name", { exact: true }).fill("e2e-n8n")
   await page.getByLabel("Base URL", { exact: true }).fill(n8nUrl)
+  // Health is chosen by default, checked from the server; the rest is chosen here.
+  await expect(page.getByRole("checkbox", { name: "Health", exact: true })).toBeChecked()
+  await expect(page.getByRole("radio", { name: "The n8n-ops server" })).toBeChecked()
+  for (const name of ["Monitoring and problems", "Workflow map", "Temporary access for agents"])
+    await page.getByRole("checkbox", { name, exact: true }).click()
+  // Only the steps those need follow.
+  const rail = page.getByRole("navigation", { name: "Setup steps" })
+  await expect(rail.getByRole("listitem")).toHaveText([
+    "1Basics",
+    "2API Key",
+    "3Health",
+    "4Temporary Access",
+    "5Review",
+  ])
+  await page.getByRole("button", { name: "Continue" }).click()
 
+  // A wrong key is refused and not stored; the right one shows what each chosen capability gets.
+  await expect(page.getByRole("heading", { name: "API Key" })).toBeVisible()
+  await expect(page).toHaveURL(/\/instances\/[^/]+\/setup\?step=api$/)
   await page.getByLabel("API key", { exact: true }).fill("not-a-real-key-123")
-  await page.getByRole("button", { name: "Add instance" }).last().click()
-  await expect(page.getByText(/rejected the API key/)).toBeVisible()
-
+  await page.getByRole("button", { name: "Test", exact: true }).click()
+  const result = page.getByTestId("check-line")
+  await expect(result).toContainText("Failed")
+  await expect(result).toContainText("n8n refused the API key.")
   await page.getByLabel("API key", { exact: true }).fill(apiKey)
-  await page.getByRole("button", { name: "Add instance" }).last().click()
+  await page.getByRole("button", { name: "Test", exact: true }).click()
+  await expect(result).toContainText("Passed")
+  await expect(result).toContainText(/n8n \d+\.\d+/)
+  await expect(page.getByTestId("scope-hint").getByText("Allowed")).toHaveCount(3)
+  await page.getByRole("button", { name: "Continue" }).click()
+
+  // Health from the server, with what it read.
+  await expect(page.getByRole("heading", { name: "Health", exact: true })).toBeVisible()
+  await page.getByRole("button", { name: "Check", exact: true }).click()
+  await expect(page.getByTestId("probe-rows")).toContainText("Main process (/healthz)")
+  await expect(result).toContainText("Passed")
+  await page.getByRole("button", { name: "Continue" }).click()
+
+  // Temporary access: on, within read-only scopes.
+  await expect(page.getByRole("heading", { name: "Temporary Access" })).toBeVisible()
+  await page.getByLabel("Agents may request access").click()
+  await page.getByRole("button", { name: "Read only", exact: true }).click()
+  await page.getByRole("button", { name: "Continue" }).click()
+
+  // Every check passed for the settings as they are: Activate.
+  await expect(page.getByRole("heading", { name: "Review" })).toBeVisible()
+  for (const step of ["api", "health", "access"])
+    await expect(page.getByTestId(`review-${step}`)).toContainText("Passed")
+  await page.getByRole("button", { name: "Activate" }).click()
+  await expect(page.getByText("e2e-n8n is set up and active")).toBeVisible()
   await expect(page.getByRole("heading", { name: "e2e-n8n" })).toBeVisible()
+  await expect(page.getByTestId("capability-monitor")).toContainText("Working")
   await page.getByRole("tab", { name: "Access" }).click()
   await expect(page.getByText("Read from GET /api/v1/discover")).toBeVisible()
 
-  // The new instance took the dialog's Back step instead of adding one after it (DS-10): Back leaves the tab,
+  // The new instance took the add page's Back step instead of adding one after it (DS-10): Back leaves the tab,
   // then the instance for the list (a wide screen opens its first instance in place), then the list for Overview.
   await page.goBack()
   await expect(page).not.toHaveURL(/tab=access/)
   await page.goBack()
   await expect(page).toHaveURL(/\/instances/)
-  await expect(page.getByRole("dialog")).toHaveCount(0)
+  await expect(page).not.toHaveURL(/setup|new/)
   await page.goBack()
   await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible()
+})
+
+test("Temporary access turned off stays chosen, and the instance says what it misses", async () => {
+  await page.goto("/instances")
+  await page.getByRole("row", { name: /e2e-n8n/ }).click()
+  const capability = page.getByTestId("capability-agents")
+  await expect(capability).toContainText("Working")
+  await page.getByRole("tab", { name: "Access" }).click()
+  await page.getByLabel("Agents may request access").click()
+  await page.getByRole("button", { name: "Save changes" }).click()
+  await expect(page.getByText("Agent access saved")).toBeVisible()
+  // Closed again, as the access tests expect to find it.
+  await page.getByRole("tab", { name: /^Overview/ }).click()
+  await expect(capability).toContainText("Temporary access is off, or allows no scope the API key grants.")
 })
 
 test("the first sync imports existing failures as a problem", async () => {

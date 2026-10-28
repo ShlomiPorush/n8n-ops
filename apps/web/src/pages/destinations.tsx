@@ -832,10 +832,10 @@ function DeleteDestination({
 // Choosing destinations: an instance, or n8n-ops's own database
 // ---------------------------------------------------------------------------
 
-type Choice = { mode: "default" | "custom"; ids: string[] }
+export type Choice = { mode: "default" | "custom"; ids: string[] }
 
 /** The default destinations, or a choice of them. The choice is kept while the defaults are used. */
-function DestinationChoice({
+export function DestinationChoice({
   id,
   destinations,
   choice,

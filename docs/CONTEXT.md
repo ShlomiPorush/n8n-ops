@@ -18,6 +18,16 @@ _Avoid_: worker, n8n worker
 The n8n main process of an instance and the container it runs in, as n8n itself names it.
 _Avoid_: main instance, primary
 
+### Instances
+
+**Capability**:
+What the owner chose an instance for: Health, Monitoring and problems, Workflow map, Move workflows, Temporary access for agents, Backup, Restore workflows. A Capability that was not chosen stays off for that instance; one that was chosen works only once its setup checks passed.
+_Avoid_: feature, module, permission
+
+**Setup incomplete**:
+An instance added but not activated yet: its setup checks have not all passed, or the owner chose Finish later. It does nothing in the background and never alerts. An active instance never returns to it.
+_Avoid_: draft (in the UI), pending, inactive
+
 ### Health
 
 **Collection**:

@@ -30,6 +30,8 @@ Open `https://<DOMAIN>`. The first visit runs the setup: your account, two-facto
 
 The compose file pulls the `ghcr.io/shlomiporush/n8n-ops` image of the release set in `VERSION`; the [releases](https://github.com/ShlomiPorush/n8n-ops/releases) list them.
 
+To upgrade, set the new `VERSION` and run `docker compose up -d`; the database is migrated on start. An earlier release cannot run against a database a later one migrated, so before upgrading make sure n8n-ops's own database backup (Backups → n8n-ops database) is recent. To go back, restore that backup into the earlier release.
+
 ## Backup destinations
 
 Settings → Backup Destinations. Each destination is tested with a small file before it is saved, and every archive written there is checked against its size and SHA-256. Instances back up to the destinations marked as default, unless an instance chooses others on its page.
@@ -43,7 +45,11 @@ Retention is set per destination: the newest archive of each of the last N days,
 
 ## Add n8n instances
 
-In each n8n instance: Settings → n8n API → create an API key. "Read only" is enough to monitor; moving and restoring workflows also needs `workflow:create`, `workflow:activate` and `credential:create`. n8n-ops reads the key's scopes (n8n 2.14 or later) and turns features on or off to match.
+n8n-ops needs **n8n 2.14.0 or later**: it reads what each API key allows from `GET /api/v1/discover`.
+
+Instances → Add instance opens a setup. First choose what the instance is for (health, monitoring and problems, the workflow map, moving workflows, Temporary access for agents, backup, restoring workflows); the next steps ask only for what those need and check each one: the API key and its scopes, the worker on the host and the main container, health, the Temporary access policy, the backup destinations. **Finish later** keeps the instance as Setup incomplete: it does nothing in the background and never alerts until its setup is completed and it is activated. Capabilities can be added to an active instance later (only the new checks run) or removed (no check; its history stays).
+
+For the API key, in each n8n instance: Settings → n8n API → create an API key. Monitoring needs `execution:list` and `execution:read`; the map also `workflow:list` and `workflow:read`; moving and restoring workflows also `workflow:create`, `workflow:activate` and `credential:create`. The setup shows what the chosen capabilities need and what the key lacks.
 
 For a queue-mode instance, set `N8N_METRICS=true` and `N8N_METRICS_INCLUDE_QUEUE_METRICS=true` on the main process and `QUEUE_HEALTH_CHECK_ACTIVE=true` on the queue workers, then add the queue worker health URLs. n8n-ops reads the queue from `/metrics` of the base URL; set a metrics URL only when n8n serves it elsewhere.
 

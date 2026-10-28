@@ -13,11 +13,35 @@ export type InstanceChange = Partial<typeof instances.$inferInsert>
  * worker finds at the same time is not lost or overwritten by a stale form. Set to regular by hand, its queue
  * alerts end now, without a message.
  */
+/**
+ * Where the main is, after merging a change with what is stored: a container name, or a Compose project and
+ * service, never part of a pair, never both. Their names together stay within Docker's 128 characters.
+ */
+export function targetProblem(t: {
+  containerName?: string | null
+  composeProject?: string | null
+  composeService?: string | null
+}): string | null {
+  const project = t.composeProject || null
+  const service = t.composeService || null
+  if (Boolean(project) !== Boolean(service)) return "Give both the Compose project and the service, or neither."
+  if (project && t.containerName) return "Give a container name or a Compose service, not both."
+  if (project && service && project.length + service.length > 120)
+    return "The Compose project and service names are too long together (at most 120 characters)."
+  return null
+}
+
+/** A change that would leave where the main is half set or set twice; nothing of it is saved. */
+export class TargetProblem extends Error {}
+
 export function updateInstance(ctx: Ctx, id: string, data: InstanceChange) {
   return oneAtATime(healthTurn(id), () =>
     ctx.db.transaction(async (tx) => {
       const [current] = await tx.select().from(instances).where(eq(instances.id, id)).for("update")
       if (!current) return undefined
+      // Checked against the row as it is now, under its lock: two changes at once cannot set both kinds or half.
+      const problem = targetProblem({ ...current, ...data })
+      if (problem) throw new TargetProblem(problem)
       const change = collectionUpdate(current, data)
       const { queueMode: _asked, queueModeSource: _source, collectionRevision: _revision, ...rest } = data
       const [saved] = await tx

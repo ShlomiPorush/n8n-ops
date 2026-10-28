@@ -33,7 +33,7 @@ export type WorkerRule = {
     get: string
     post: string
     lines: string
-    allows: { name: string; pattern: boolean; sources: RuleSource[] }[]
+    allows: { name: string; pattern: boolean; sources: RuleSource[]; regex?: string; computed?: boolean }[]
     coverage: "complete" | "partial"
     gaps: string[]
     /** The same lines with a pattern for queue workers added later, offered beside the exact ones. */
@@ -178,7 +178,12 @@ export function RuleLines({
                   {/* Ink, not muted: it stands on the tint of a warning, where muted text is too faint to read. */}
                   <span>
                     {" "}
-                    ({a.pattern && a.name.includes("*") ? "pattern, " : ""}
+                    (
+                    {a.regex
+                      ? "by name: any container named so on this host, also ones added later, "
+                      : a.pattern && a.name.includes("*")
+                        ? "pattern, "
+                        : ""}
                     {a.sources.map(sourceWords).join(", ")})
                   </span>
                 </li>
@@ -210,7 +215,7 @@ export function RuleLines({
           open
           onOpenChange={setEditing}
           workerId={workerId}
-          prefill={rule.allows.map((a) => a.name)}
+          prefill={rule.allows.filter((a) => !a.computed).map((a) => a.name)}
           refresh={refresh}
           onSaved={onSaved ? () => onSaved("saved") : undefined}
         />

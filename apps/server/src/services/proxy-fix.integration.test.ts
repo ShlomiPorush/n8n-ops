@@ -365,3 +365,88 @@ describe("recording a pattern for queue workers added later", () => {
     expect(await allowedNow()).toEqual(full)
   })
 })
+
+describe("a main named by its Compose service", () => {
+  const byService = async () => {
+    await ctx.db
+      .update(instances)
+      .set({ containerName: null, composeProject: "n8n1", composeService: "app" })
+      .where(eq(instances.id, instanceId))
+  }
+
+  it("allows the service's replicas when the worker found that clean, from the applied report", async () => {
+    await byService()
+    await applyHealth(
+      ctx,
+      instanceId,
+      report({
+        source: "network",
+        fallback: 'the socket proxy does not allow commands in "n8n1-app-2"',
+        access: { refused: [{ call: "exec-create", container: "n8n1-app-2" }] },
+        listed: { names: [], complete: true },
+        resolvedContainer: "n8n1-app-2",
+        replicas: { clean: true },
+      }),
+      await ticket(instanceId),
+    )
+    const fix = await instanceProxyFix(ctx, await instanceRow(instanceId), await workerRow(workerId))
+    expect(fix?.rule.allows.map((a) => a.name)).toEqual(["n8n1-app-<number>"])
+    // The replicas are worked out every time, never recorded as a container the owner allows.
+    expect(fix?.rule.allows[0]?.regex).toBe("n8n1-app-[0-9]+")
+  })
+
+  it("builds a failed backup's lines from what the backup saw, also with health checked directly", async () => {
+    await byService()
+    await ctx.db.update(instances).set({ collection: "direct" }).where(eq(instances.id, instanceId))
+    const [run] = await ctx.db
+      .insert(backupRuns)
+      .values({
+        instanceId,
+        status: "failed",
+        error: 'the socket proxy does not allow commands in "n8n1-app-3"',
+        refusal: {
+          call: "exec-create",
+          container: "n8n1-app-3",
+          resolvedContainer: "n8n1-app-3",
+          replicasClean: false,
+        },
+      })
+      .returning()
+    if (!run) throw new Error("no run")
+    await ctx.db.insert(workerJobs).values({
+      workerId,
+      instanceId,
+      kind: "backup",
+      status: "failed",
+      payload: { runId: run.id, target: { project: "n8n1", service: "app" } },
+    })
+    const [shown] = await recentRuns(ctx, instanceId)
+    const allows = (shown as { proxyFix?: { rule: { allows: { name: string }[] } } }).proxyFix?.rule.allows
+    // Not clean on that host: the container the backup used, by name.
+    expect(allows?.map((a) => a.name)).toEqual(["n8n1-app-3"])
+    // Another service since: no lines for the old one.
+    await ctx.db.update(instances).set({ composeService: "main" }).where(eq(instances.id, instanceId))
+    const [after] = await recentRuns(ctx, instanceId)
+    expect(after).not.toHaveProperty("proxyFix")
+  })
+})
+
+describe("what a failed job saw of a Compose service", () => {
+  it("counts only while the instance names the service the job saw", async () => {
+    await ctx.db
+      .update(instances)
+      .set({ containerName: null, composeProject: "n8n1", composeService: "main" })
+      .where(eq(instances.id, instanceId))
+    type Seen = { project: string; service: string; resolved?: string; clean?: boolean }
+    const names = async (seen?: Map<string, Seen>) =>
+      (await workerRule(ctx, await workerRow(workerId), ctx.db, seen)).rule.allows.map((a) => a.name)
+    const own = await names()
+    // Seen on the service it names now: the container the job used is in the rule.
+    const same = new Map([[instanceId, { project: "n8n1", service: "main", resolved: "n8n1-main-4" }]])
+    expect(await names(same)).toContain("n8n1-main-4")
+    // Seen on service app, before the instance moved to service main: ignored, its own report decides.
+    const before = new Map([[instanceId, { project: "n8n1", service: "app", resolved: "n8n1-app-2", clean: true }]])
+    expect(await names(before)).toEqual(own)
+    expect(own).not.toContain("n8n1-app-2")
+  })
+})

@@ -69,6 +69,14 @@ export const probeReport = z.object({
   /** What the socket proxy refused in this probe. Absent from workers of earlier releases. */
   access: z.object({ refused: z.array(refusal).max(60) }).optional(),
   /** The queue worker names the worker listed next to the main, when it told them apart. */
+  /** The container a Compose service target resolved to in this probe. */
+  resolvedContainer: z
+    .string()
+    .regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/)
+    .optional()
+    .catch(undefined),
+  /** Whether a rule for the service's replicas reaches only them on the host, at this probe. */
+  replicas: z.object({ clean: z.boolean() }).optional().catch(undefined),
   listed: z
     .object({
       names: z.array(z.string().max(128)).max(500),

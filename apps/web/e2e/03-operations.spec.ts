@@ -119,7 +119,7 @@ test("the worker is assigned to the instance", async () => {
   await page.getByRole("button", { name: "Edit" }).click()
   await page.getByRole("button", { name: /^Worker on this instance.s Docker host: None$/ }).click()
   await page.getByRole("option", { name: "E2E Host" }).click()
-  await page.getByLabel("Container name").fill(container)
+  await page.getByLabel("Container name", { exact: true }).fill(container)
   await page.getByRole("button", { name: "Save" }).click()
   await dialogClosed(page)
   // Export is a rare action, so it waits in the instance's menu.
@@ -158,7 +158,7 @@ test("through the worker, health is read inside the main container", async () =>
   // that allow it, with nothing else to look up.
   const containerName = async (name: string) => {
     await page.getByRole("button", { name: "Edit" }).click()
-    await page.getByLabel("Container name").fill(name)
+    await page.getByLabel("Container name", { exact: true }).fill(name)
     await page.getByRole("button", { name: "Save" }).click()
     await dialogClosed(page)
   }

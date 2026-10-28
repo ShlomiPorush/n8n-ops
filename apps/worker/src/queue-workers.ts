@@ -181,7 +181,7 @@ export async function mainStateOf(
 type Found = { ok: true; workers: FoundWorker[]; mainState?: ContainerState } | { ok: false; result: DiscoveryResult }
 
 /** Lists the containers of the main's Compose project and tells its queue workers apart. Runs no command. */
-async function findWorkers(docker: Docker, main: string, deadline: AbortSignal): Promise<Found> {
+async function findWorkers(docker: Docker, main: string, deadline: AbortSignal, service?: string): Promise<Found> {
   const call = () => ({
     signal: AbortSignal.any([deadline, AbortSignal.timeout(LIMITS.callMs)]),
     maxBytes: LIMITS.listBytes,
@@ -227,7 +227,7 @@ async function findWorkers(docker: Docker, main: string, deadline: AbortSignal):
       refusal ? [refusal] : [],
     )
   }
-  const found = discover(projectList, main)
+  const found = discover(projectList, main, service)
   if (found.status === "ambiguous")
     return failed({ status: "ambiguous", reason: clip(found.reason, 200), found: 0 }, found.main)
   return { ok: true, workers: found.workers, mainState: found.main }
@@ -287,9 +287,9 @@ const listedOf = (workers: { name: string }[]) => {
 export async function listWorkers(
   docker: Docker,
   main: string,
-  options: { check: boolean; deadline: AbortSignal },
+  options: { check: boolean; deadline: AbortSignal; service?: string },
 ): Promise<DiscoveryResult> {
-  const found = await findWorkers(docker, main, options.deadline)
+  const found = await findWorkers(docker, main, options.deadline, options.service)
   if (!found.ok) return found.result
   const why = `not checked: the socket proxy does not allow commands in "${main}"`
   return {
@@ -320,10 +320,10 @@ const withPatterns = (patterns: { pattern: string; clean: boolean }[] | undefine
 export async function discoverWorkers(
   docker: Docker,
   main: string,
-  options: { rotation: number; deadline?: AbortSignal },
+  options: { rotation: number; deadline?: AbortSignal; service?: string },
 ): Promise<DiscoveryResult> {
   const deadline = options.deadline ?? AbortSignal.timeout(LIMITS.probeMs)
-  const found = await findWorkers(docker, main, deadline)
+  const found = await findWorkers(docker, main, deadline, options.service)
   if (!found.ok) return found.result
 
   const all = found.workers

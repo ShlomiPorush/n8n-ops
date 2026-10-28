@@ -2,7 +2,7 @@ import { hasCapability } from "@n8n-ops/shared"
 import { eq } from "drizzle-orm"
 import type { Ctx } from "../context.ts"
 import { instances, moves, workerJobs } from "../db/schema.ts"
-import { usableWorker } from "./backups.ts"
+import { jobTarget, usableWorker } from "./backups.ts"
 import { clientFor, effectiveScopes, type Instance } from "./instances.ts"
 import { jobProxyFix, type ProxyFix } from "./proxy-fix.ts"
 import { enqueueJob, waitForJob } from "./workers.ts"
@@ -25,13 +25,15 @@ export async function exportCredentials(ctx: Ctx, instance: Instance, ids?: stri
   const worker = await usableWorker(ctx, instance)
   if (!worker)
     throw new Error(
-      `Credential secrets of ${instance.name} cannot be read: it needs a worker with its main container set.`,
+      instance.composeProject && instance.workerId
+        ? `Credential secrets of ${instance.name} cannot be read: update its worker to a release that follows a Compose service.`
+        : `Credential secrets of ${instance.name} cannot be read: it needs a worker with its main container set.`,
     )
   const job = await enqueueJob(
     ctx,
     worker.id,
     "export-credentials",
-    { container: instance.containerName, ids: ids ?? null },
+    { ...jobTarget(instance), ids: ids ?? null },
     instance.id,
   )
   const outcome = await waitForJob(job.id)
@@ -45,6 +47,17 @@ export async function exportCredentials(ctx: Ctx, instance: Instance, ids?: stri
           container: instance.containerName,
           refused: outcome.refused,
           error: outcome.error,
+          ...(instance.composeProject && instance.composeService
+            ? {
+                target: { project: instance.composeProject, service: instance.composeService },
+                seen: {
+                  project: instance.composeProject,
+                  service: instance.composeService,
+                  resolved: outcome.resolvedContainer,
+                  clean: outcome.replicas?.clean,
+                },
+              }
+            : {}),
         })
       : null
     throw proxyFix ? new ProxyRefusedError(message, proxyFix) : new Error(message)

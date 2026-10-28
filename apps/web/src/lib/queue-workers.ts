@@ -11,6 +11,7 @@ export type QueueWorkersInput = {
   collection: "direct" | "worker"
   workerId: string | null
   containerName: string | null
+  composeProject?: string | null
   workerHealthUrls: string[]
   detail?: {
     source?: string
@@ -33,7 +34,7 @@ export function queueWorkersNote(i: QueueWorkersInput): QueueWorkersNote | null 
       text: "The n8n-ops worker on the host finds and checks them by itself: choose it under Check health and metrics and set the main container's name. Or add their health URLs.",
       edit: true,
     }
-  if (!i.containerName)
+  if (!i.containerName && !i.composeProject)
     return {
       title: notChecked,
       text: "Set the name of the main container in Edit, and the worker finds the queue workers next to it.",

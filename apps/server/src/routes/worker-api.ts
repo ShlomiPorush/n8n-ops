@@ -7,12 +7,20 @@ import { z } from "zod"
 import type { Ctx } from "../context.ts"
 import { backupRuns, instances, workerJobs, workers } from "../db/schema.ts"
 import { failRun } from "../services/backup-copies.ts"
-import { archiveReady, maxArchiveBytes, workerBackupResult } from "../services/backups.ts"
+import { archiveReady, COMPOSE_TARGET, maxArchiveBytes, workerBackupResult } from "../services/backups.ts"
 import { reportsSince, workerSeen } from "../services/collection.ts"
 import { applyWorkerReport, refusal } from "../services/health.ts"
 import { removeSpool, reserve, SpoolError, spoolDir, writeSpool } from "../services/spool.ts"
 import { readUpload, signUpload } from "../services/upload-token.ts"
 import { claimJob, deliverToWaiter, pairWorker, workerByIdentity } from "../services/workers.ts"
+
+/** The features a worker names in x-worker-features: short words only, at most 20. */
+export const featuresOf = (header: string | undefined) =>
+  (header ?? "")
+    .split(",")
+    .map((w) => w.trim())
+    .filter((w) => /^[a-z0-9-]{1,40}$/.test(w))
+    .slice(0, 20)
 
 type WorkerEnv = { Variables: { worker: typeof workers.$inferSelect } }
 
@@ -44,7 +52,12 @@ export function workerApiRoutes(ctx: Ctx) {
     workerSeen(worker)
     await ctx.db
       .update(workers)
-      .set({ lastSeenAt: new Date(), version: c.req.header("x-worker-version") ?? worker.version })
+      .set({
+        lastSeenAt: new Date(),
+        version: c.req.header("x-worker-version") ?? worker.version,
+        // What it supports; a worker of an earlier release sends none, and none is what it supports.
+        features: featuresOf(c.req.header("x-worker-features")),
+      })
       .where(eq(workers.id, worker.id))
     c.set("worker", worker)
     await next()
@@ -52,6 +65,24 @@ export function workerApiRoutes(ctx: Ctx) {
 
   app.get("/jobs/next", auth, async (c) => {
     const job = await claimJob(ctx, c.get("worker").id)
+    // A backup or export of a Compose service, claimed by a worker that cannot follow one (an earlier image under
+    // the same identity): it would run in no container. It ends here, said as that, and is never handed over.
+    const features = featuresOf(c.req.header("x-worker-features"))
+    if (
+      job &&
+      (job.kind === "backup" || job.kind === "export-credentials") &&
+      job.payload.target &&
+      !features.includes(COMPOSE_TARGET)
+    ) {
+      const error = "The worker on this host runs a release that cannot follow a Compose service. Update its image."
+      await ctx.db
+        .update(workerJobs)
+        .set({ status: "failed", error, finishedAt: new Date() })
+        .where(eq(workerJobs.id, job.id))
+      if (job.kind === "export-credentials") deliverToWaiter(job.id, { ok: false, error })
+      else await workerBackupResult(ctx, String(job.payload.runId), { ok: false, result: {}, error })
+      return c.json({ job: null })
+    }
     return c.json({ job: job ? { id: job.id, kind: job.kind, payload: job.payload } : null })
   })
 
@@ -167,10 +198,17 @@ export function workerApiRoutes(ctx: Ctx) {
         error: z.string().optional(),
         // What the socket proxy refused, when that made the job fail. Workers of earlier releases leave it out.
         refused: refusal.optional().catch(undefined),
+        resolvedContainer: z
+          .string()
+          .regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/)
+          .optional()
+          .catch(undefined),
+        replicas: z.object({ clean: z.boolean() }).optional().catch(undefined),
       })
       .safeParse(await c.req.json().catch(() => ({})))
     if (!body.success) return c.json({ error: "invalid" }, 400)
-    const { ok, result = {}, error, refused } = body.data
+    const { ok, result = {}, error, refused, resolvedContainer, replicas } = body.data
+    const seen = { ...(resolvedContainer ? { resolvedContainer } : {}), ...(replicas ? { replicas } : {}) }
 
     // Secrets (exported credentials) go straight to the waiting request and are never stored. A health report is
     // stored only as parsed, so nothing else a worker put in it (container details, by mistake) is kept.
@@ -197,8 +235,9 @@ export function workerApiRoutes(ctx: Ctx) {
       })
       .where(eq(workerJobs.id, job.id))
 
-    if (job.kind === "export-credentials") deliverToWaiter(job.id, { ok, result, error, refused })
-    if (job.kind === "backup") await workerBackupResult(ctx, String(job.payload.runId), { ok, result, error, refused })
+    if (job.kind === "export-credentials") deliverToWaiter(job.id, { ok, result, error, refused, ...seen })
+    if (job.kind === "backup")
+      await workerBackupResult(ctx, String(job.payload.runId), { ok, result, error, refused, ...seen })
     return c.json({ ok: true })
   })
 

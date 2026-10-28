@@ -24,7 +24,7 @@ import { reportsSince } from "./collection.ts"
 import { type Destination, destinationsFor, keyFor, openStore } from "./destinations/index.ts"
 import { withDeadline } from "./destinations/store.ts"
 import { type CheckTicket, type Refusal, startCheck } from "./health.ts"
-import { clientFor, type Instance, metricsUrlOf, needsQueueWorkers, readsInside } from "./instances.ts"
+import { clientFor, type Instance, mainTarget, metricsUrlOf, needsQueueWorkers, readsInside } from "./instances.ts"
 import { jobProxyFix, refusalInError } from "./proxy-fix.ts"
 import { zonedParts } from "./reports.ts"
 import { removeSpool, reserve, spoolDir, writeSpool } from "./spool.ts"
@@ -66,14 +66,33 @@ export async function maxArchiveBytes(ctx: Ctx) {
   return (await ctx.settings.get("backups")).maxArchiveMb * 1024 ** 2
 }
 
-/** A worker can run the backup when one is assigned, online and the container name is known. */
+/** The feature a worker names when it can follow a Compose service (x-worker-features). */
+export const COMPOSE_TARGET = "compose-target"
+
+/** Whether a worker can run commands in the instance's main: any worker for a name, a recent one for a service. */
+export const canReach = (worker: Pick<typeof workers.$inferSelect, "features">, instance: Instance) =>
+  !instance.composeProject || (worker.features ?? []).includes(COMPOSE_TARGET)
+
+/**
+ * A worker can run the backup when one is assigned and where the main is known; for a Compose service, only a
+ * worker of a release that follows one (an earlier one has no such job to run).
+ */
 export async function usableWorker(ctx: Ctx, instance: Instance) {
-  if (!instance.workerId || !instance.containerName) return null
+  if (!instance.workerId || !mainTarget(instance)) return null
   const [worker] = await ctx.db
     .select()
     .from(workers)
     .where(and(eq(workers.id, instance.workerId), isNull(workers.revokedAt)))
-  return worker ?? null
+  return worker && canReach(worker, instance) ? worker : null
+}
+
+/** Where a job finds the main: a container name, or the Compose service it resolves at the job's start. */
+export function jobTarget(instance: Instance) {
+  const target = mainTarget(instance)
+  if (!target) return {}
+  return "name" in target
+    ? { container: target.name }
+    : { target: { project: target.project, service: target.service } }
 }
 
 export class NoDestinationError extends Error {
@@ -127,7 +146,7 @@ export async function startBackup(ctx: Ctx, instance: Instance, trigger: "schedu
         ctx,
         worker.id,
         "backup",
-        { runId: run.id, container: instance.containerName, recipient, instance: instance.name },
+        { runId: run.id, ...jobTarget(instance), recipient, instance: instance.name },
         instance.id,
       )
     } else {
@@ -214,7 +233,14 @@ async function apiBackup(ctx: Ctx, instance: Instance, runId: string, recipient:
 export async function workerBackupResult(
   ctx: Ctx,
   runId: string,
-  outcome: { ok: boolean; result: Record<string, unknown>; error?: string; refused?: Refusal },
+  outcome: {
+    ok: boolean
+    result: Record<string, unknown>
+    error?: string
+    refused?: Refusal
+    resolvedContainer?: string
+    replicas?: { clean: boolean }
+  },
 ) {
   const [run] = await ctx.db.select().from(backupRuns).where(eq(backupRuns.id, runId))
   if (!run) return
@@ -228,7 +254,12 @@ export async function workerBackupResult(
     return
   }
   // A failure after the archive arrived (a later step on the worker) does not undo the copies.
-  if (!run.spooledAt) await failRun(ctx, runId, outcome.error ?? "The worker reported a failure.", outcome.refused)
+  const refusal = outcome.refused && {
+    ...outcome.refused,
+    ...(outcome.resolvedContainer ? { resolvedContainer: outcome.resolvedContainer } : {}),
+    ...(outcome.replicas ? { replicasClean: outcome.replicas.clean } : {}),
+  }
+  if (!run.spooledAt) await failRun(ctx, runId, outcome.error ?? "The worker reported a failure.", refusal)
 }
 
 /** Starts scheduled backups and raises stale-backup alerts per destination (D1, D7). Checked every few minutes. */
@@ -502,7 +533,9 @@ export function probePayload(instance: Instance, check: CheckTicket) {
     readiness: `${base}/healthz/readiness`,
     workers: typedWorkers ?? [],
     metrics: metricsUrlOf(instance),
-    ...(readsInside(instance) ? { inside: { container: instance.containerName } } : {}),
+    // Workers of earlier releases read `inside.container` only: for a Compose service they get none and check over
+    // the network, and the page asks to update them.
+    ...(readsInside(instance) ? { inside: jobTarget(instance) } : {}),
     // Queue mode with no worker URLs typed: the worker finds the queue workers next to the main and checks them.
     ...(readsInside(instance) && queue && !typedWorkers ? { discover: true } : {}),
     // A main the socket proxy refuses: the worker lists its queue workers anyway, for what the proxy must allow.
@@ -617,7 +650,14 @@ async function runFix(ctx: Ctx, run: typeof backupRuns.$inferSelect) {
   const [instance] = await ctx.db.select().from(instances).where(eq(instances.id, run.instanceId))
   if (!job || !instance) return {}
   const container = typeof job.payload.container === "string" ? job.payload.container : null
-  const proxyFix = await jobProxyFix(ctx, instance, { workerId: job.workerId, container, refused })
+  const stored = (run.refusal ?? {}) as { resolvedContainer?: string; replicasClean?: boolean }
+  const target = job.payload.target as { project: string; service: string } | undefined
+  const proxyFix = await jobProxyFix(ctx, instance, {
+    workerId: job.workerId,
+    container,
+    refused,
+    ...(target ? { target, seen: { ...target, resolved: stored.resolvedContainer, clean: stored.replicasClean } } : {}),
+  })
   if (proxyFix) return { proxyFix }
   const [ranOn] = await ctx.db.select({ name: workers.name }).from(workers).where(eq(workers.id, job.workerId))
   return { ranOn: { worker: ranOn?.name ?? null, container } }

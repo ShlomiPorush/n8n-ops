@@ -15,9 +15,10 @@ import { requireUser } from "../http/middleware.ts"
 import { actorName, type Env } from "../http/types.ts"
 import { instanceOverridesSchema } from "../lib/settings.ts"
 import { N8nClient, N8nError } from "../n8n/client.ts"
+import { canReach } from "../services/backups.ts"
 import { currentHealth, healthNow } from "../services/collection.ts"
 import { checkDirect } from "../services/health.ts"
-import { updateInstance } from "../services/instance-update.ts"
+import { TargetProblem, targetProblem, updateInstance } from "../services/instance-update.ts"
 import {
   effectiveScopes,
   type Instance,
@@ -27,7 +28,7 @@ import {
 } from "../services/instances.ts"
 import { openProblemCount, openProblemsByInstance } from "../services/problem-view.ts"
 import { deleteInstance, pollInstance } from "../services/problems.ts"
-import { instanceProxyFix } from "../services/proxy-fix.ts"
+import { currentDetail, instanceProxyFix } from "../services/proxy-fix.ts"
 import { WORKER_ONLINE_MS } from "./overview.ts"
 
 const url = z
@@ -43,6 +44,18 @@ const baseFields = {
     .regex(/^[a-zA-Z0-9_.-]+$/, "letters, digits, dot, dash and underscore only"),
   baseUrl: url,
   containerName: z.string().max(128).nullish(),
+  // The main as a Compose project and service (Compose's project rule; a plain service name), instead of a name.
+  composeProject: z
+    .string()
+    .regex(
+      /^[a-z0-9][a-z0-9_-]{0,62}$/,
+      "lowercase letters, digits, dash and underscore, starting with a letter or digit",
+    )
+    .nullish(),
+  composeService: z
+    .string()
+    .regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}$/, "letters, digits, dot, dash and underscore only")
+    .nullish(),
   queueMode: z.boolean().default(false),
   metricsUrl: url.nullish().or(z.literal("")),
   workerHealthUrls: z.array(url).default([]),
@@ -151,6 +164,8 @@ export function instanceRoutes(ctx: Ctx) {
   app.post("/", async (c) => {
     const parsed = createSchema.safeParse(await c.req.json().catch(() => ({})))
     if (!parsed.success) return c.json({ error: "invalid", issues: parsed.error.issues }, 400)
+    const problem = targetProblem(parsed.data)
+    if (problem) return c.json({ error: "invalid", message: problem }, 400)
     const { apiKey, metricsUrl, ...data } = parsed.data
     const test = await testConnection(data.baseUrl, apiKey)
     if (!test.ok) return c.json({ error: "connection_failed", message: test.error }, 400)
@@ -188,6 +203,10 @@ export function instanceRoutes(ctx: Ctx) {
       worker: workerSummary(worker),
       // What the socket proxy refused in the current report, with the exact lines that allow it.
       proxyFix: await instanceProxyFix(ctx, row, worker),
+      // A Compose service needs a worker of a release that follows one (services/backups.ts canReach).
+      composeNeedsUpdate: Boolean(row.composeProject && worker && !worker.revokedAt && !canReach(worker, row)),
+      // The container the service resolved to, from a report of the current settings only (none after a change).
+      resolvedContainer: row.composeProject ? (currentDetail(row)?.resolvedContainer ?? null) : null,
       workflowCounts: {
         total: wfs.length,
         active: wfs.filter((w) => w.active).length,
@@ -259,11 +278,17 @@ export function instanceRoutes(ctx: Ctx) {
       const test = await testConnection(data.baseUrl ?? row.baseUrl, apiKey)
       if (!test.ok) return c.json({ error: "connection_failed", message: test.error }, 400)
     }
-    const updated = await updateInstance(ctx, row.id, {
-      ...data,
-      ...(metricsUrl !== undefined ? { metricsUrl: metricsUrl || null } : {}),
-      ...(apiKey ? { apiKeyEnc: ctx.secrets.encrypt(apiKey) } : {}),
-    })
+    let updated: Awaited<ReturnType<typeof updateInstance>>
+    try {
+      updated = await updateInstance(ctx, row.id, {
+        ...data,
+        ...(metricsUrl !== undefined ? { metricsUrl: metricsUrl || null } : {}),
+        ...(apiKey ? { apiKeyEnc: ctx.secrets.encrypt(apiKey) } : {}),
+      })
+    } catch (error) {
+      if (error instanceof TargetProblem) return c.json({ error: "invalid", message: error.message }, 400)
+      throw error
+    }
     if (updated && (apiKey || data.baseUrl)) await refreshInstanceMeta(ctx, updated)
     await ctx.audit({
       actor: actorName(c.get("actor")),

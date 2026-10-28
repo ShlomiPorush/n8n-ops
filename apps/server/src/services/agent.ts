@@ -80,6 +80,9 @@ export async function agentInstances(ctx: Ctx) {
     healthDetail: i.healthDetail,
     healthCheckedAt: i.healthCheckedAt,
     queueMode: i.queueMode,
+    // The main as a Compose project and service, when it is named so (both null otherwise).
+    composeProject: i.composeProject,
+    composeService: i.composeService,
     lastPollAt: i.lastPollAt,
     lastPollError: i.lastPollError,
     scopes: effectiveScopes(i),

@@ -204,6 +204,8 @@ export const workers = pgTable("workers", {
   install: jsonb("install").$type<WorkerInstall>(),
   /** The containers the socket proxy allows now, as the owner recorded them; null until recorded. */
   allowed: jsonb("allowed").$type<{ containers: string[] }>(),
+  /** What the worker says it supports (x-worker-features), such as following a Compose service. */
+  features: jsonb("features").$type<string[]>(),
 })
 
 export const pairingTokens = pgTable("worker_pairing_tokens", {
@@ -229,8 +231,14 @@ export const instances = pgTable("instances", {
   name: text("name").notNull().unique(),
   baseUrl: text("base_url").notNull(),
   apiKeyEnc: text("api_key_enc").notNull(),
-  /** Container name on the Docker host, used by the worker for docker exec. */
+  /** Container name on the Docker host, used by the worker for docker exec. Null when a Compose service is set. */
   containerName: text("container_name"),
+  /**
+   * The main as a Compose project and service instead of a name: the worker uses the running container of that
+   * service each time, so it follows docker rollout and redeploys. Both set or both null.
+   */
+  composeProject: text("compose_project"),
+  composeService: text("compose_service"),
   workerId: uuid("worker_id").references(() => workers.id, { onDelete: "set null" }),
   queueMode: boolean("queue_mode").notNull().default(false),
   /** "manual": set by the owner; "found": read by the worker inside the main container, and not editable then. */
@@ -553,7 +561,12 @@ export const backupRuns = pgTable(
     sha256: text("sha256"),
     error: text("error"),
     /** What the socket proxy refused when that made the backup fail: the call and the container. */
-    refusal: jsonb("refusal").$type<{ call: string; container?: string }>(),
+    refusal: jsonb("refusal").$type<{
+      call: string
+      container?: string
+      resolvedContainer?: string
+      replicasClean?: boolean
+    }>(),
     /** Set when the worker starts its one upload of the archive; a second upload is refused. */
     uploadStartedAt: ts("upload_started_at"),
     /** The encrypted archive is in the spool with the declared size and checksum; copies can be written. */

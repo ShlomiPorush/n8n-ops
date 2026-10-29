@@ -168,7 +168,7 @@ export async function startBackup(ctx: Ctx, instance: Instance, trigger: "schedu
         `The worker for ${now.name} is not available: assign a worker and set the main${now.composeProject ? ", and update the worker to a release that follows a Compose service" : ""}.`,
       )
     // The API of n8n older than 2.14.0 is not used; a backup through the worker does not need it.
-    if (!viaWorker && unsupportedVersion(now)) throw new Error(unsupportedVersionText(now.version))
+    if (!viaWorker && unsupportedVersion(now)) throw new Error(unsupportedVersionText)
     const recipient = await backupRecipient(ctx)
     if (worker) {
       await enqueueJob(
@@ -518,7 +518,7 @@ export async function restoreWorkflow(
   if (!target) throw new Error("Target instance not found.")
   if (!can(target, "restore"))
     throw new Error(`${target.name} is not set up to restore workflows. Add Restore workflows to its capabilities.`)
-  if (unsupportedVersion(target)) throw new Error(unsupportedVersionText(target.version))
+  if (unsupportedVersion(target)) throw new Error(unsupportedVersionText)
   const archive = await loadArchive(ctx, runId, privateKey)
   const workflow = archive.workflows.find((w) => w.id === workflowId)
   if (!workflow) throw new Error("This workflow is not in the archive.")

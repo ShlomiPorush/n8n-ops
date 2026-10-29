@@ -96,7 +96,7 @@ export async function previewMove(ctx: Ctx, input: { sourceId: string; targetId:
   for (const end of [source, target]) {
     if (!can(end, "move"))
       throw new Error(`${end.name} is not set up to move workflows. Add Move workflows to its capabilities.`)
-    if (unsupportedVersion(end)) throw new Error(`${end.name}: ${unsupportedVersionText(end.version)}`)
+    if (unsupportedVersion(end)) throw new Error(`${end.name}: ${unsupportedVersionText}`)
   }
   const workflow = await clientFor(ctx, source).getWorkflow(input.workflowId)
   const webhooks = workflow.nodes

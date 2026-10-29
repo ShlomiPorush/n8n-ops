@@ -423,7 +423,7 @@ export function instanceRoutes(ctx: Ctx) {
     if (!can(fresh, "health")) skipped.push("Health is not chosen, so it was not checked.")
     else if (fresh.collection === "direct") await checkDirect(ctx, fresh.id)
     if (!can(fresh, "monitor")) skipped.push("Monitoring is not chosen, so failures were not read.")
-    else if (unsupportedVersion(fresh)) skipped.push(`Failures were not read: ${unsupportedVersionText(fresh.version)}`)
+    else if (unsupportedVersion(fresh)) skipped.push(`Failures were not read: ${unsupportedVersionText}`)
     const poll =
       can(fresh, "monitor") && !unsupportedVersion(fresh)
         ? await pollInstance(ctx, fresh).catch((e: Error) => ({ error: e.message }))

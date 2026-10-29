@@ -56,10 +56,10 @@ export async function testKey(baseUrl: string, apiKey: string, client = new N8nC
     error,
     version,
   })
-  if (version && belowMinimum(version)) return fail("unsupported_version", unsupportedVersionText(version))
+  if (version && belowMinimum(version)) return fail("unsupported_version", unsupportedVersionText)
   try {
     const scopes = await client.discoverScopes()
-    if (scopes === null) return fail("unsupported_version", unsupportedVersionText(version))
+    if (scopes === null) return fail("unsupported_version", unsupportedVersionText)
     return { ok: true, version, scopes } satisfies KeyTest
   } catch (error) {
     if (error instanceof N8nError && (error.status === 401 || error.status === 403))

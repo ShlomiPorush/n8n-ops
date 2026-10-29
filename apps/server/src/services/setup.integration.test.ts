@@ -280,15 +280,11 @@ describe("the API check", () => {
     reset()
     const row = await draft()
     n8n.version = "2.13.0"
-    expect((await checkApi(ctx, row.id, KEY))?.check.reason).toBe(
-      "n8n-ops needs n8n 2.14.0 or later; this instance runs 2.13.0.",
-    )
+    expect((await checkApi(ctx, row.id, KEY))?.check.reason).toBe("n8n-ops needs n8n 2.14.0 or later.")
     n8n.version = null
     n8n.discover = false
     const refused = await checkApi(ctx, row.id, KEY)
-    expect(refused?.check.reason).toBe(
-      "n8n-ops needs n8n 2.14.0 or later. This instance has no /api/v1/discover, which n8n added in 2.14.0, so it runs an earlier version. Update n8n.",
-    )
+    expect(refused?.check.reason).toBe("n8n-ops needs n8n 2.14.0 or later.")
     expect((await read(row.id)).apiKeyEnc).toBeNull()
     // The key's scopes were never read, so the step names none of them as missing.
     const page = await setupState(ctx, await read(row.id))

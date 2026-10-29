@@ -40,9 +40,7 @@ describe("readWorkerReport", () => {
       exec: false,
       reason: "The main container is paused.",
     })
-    expect(readWorkerReport(report({ version: "2.13.4" })).reason).toBe(
-      "n8n-ops needs n8n 2.14.0 or later; this instance runs 2.13.4.",
-    )
+    expect(readWorkerReport(report({ version: "2.13.4" })).reason).toBe("n8n-ops needs n8n 2.14.0 or later.")
   })
 
   it("keeps a working command apart from a healthy main", () => {

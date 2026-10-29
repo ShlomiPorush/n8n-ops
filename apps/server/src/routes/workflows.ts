@@ -96,7 +96,7 @@ export function workflowRoutes(ctx: Ctx) {
       targets.map(async (i) => ({
         instance: i.name,
         ...(unsupportedVersion(i)
-          ? { error: unsupportedVersionText(i.version) }
+          ? { error: unsupportedVersionText }
           : await syncWorkflows(ctx, i).catch((e: Error) => ({ error: e.message }))),
       })),
     )

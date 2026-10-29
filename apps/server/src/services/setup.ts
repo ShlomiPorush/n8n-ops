@@ -291,7 +291,7 @@ export function readWorkerReport(report: ProbeReport) {
     return failed(
       report.mainState === "paused" ? "The main container is paused." : "The main container is not running.",
     )
-  if (report.version && belowMinimum(report.version)) return failed(unsupportedVersionText(report.version))
+  if (report.version && belowMinimum(report.version)) return failed(unsupportedVersionText)
   const healthy = report.main.ok
   return {
     exec: true,

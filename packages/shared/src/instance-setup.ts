@@ -121,8 +121,14 @@ export function belowMinimum(version: string): boolean {
   return false
 }
 
+/**
+ * Why an instance is below the minimum. n8n does not always say its version to a caller that is not signed in;
+ * then what showed it is that /discover is missing, and the text says so.
+ */
 export const unsupportedVersionText = (version: string | null) =>
-  `n8n-ops needs n8n ${MINIMUM_N8N_VERSION} or later; this instance runs ${version ?? "an earlier version"}.`
+  version
+    ? `n8n-ops needs n8n ${MINIMUM_N8N_VERSION} or later; this instance runs ${version}.`
+    : `n8n-ops needs n8n ${MINIMUM_N8N_VERSION} or later. This instance has no /api/v1/discover, which n8n added in ${MINIMUM_N8N_VERSION}, so it runs an earlier version. Update n8n.`
 
 /** What an instance has now, for the status of each chosen capability on its page. */
 export type CapabilityState = {

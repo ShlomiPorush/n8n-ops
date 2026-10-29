@@ -285,10 +285,14 @@ describe("the API check", () => {
     )
     n8n.version = null
     n8n.discover = false
-    expect((await checkApi(ctx, row.id, KEY))?.check.reason).toBe(
-      "n8n-ops needs n8n 2.14.0 or later; this instance runs an earlier version.",
+    const refused = await checkApi(ctx, row.id, KEY)
+    expect(refused?.check.reason).toBe(
+      "n8n-ops needs n8n 2.14.0 or later. This instance has no /api/v1/discover, which n8n added in 2.14.0, so it runs an earlier version. Update n8n.",
     )
     expect((await read(row.id)).apiKeyEnc).toBeNull()
+    // The key's scopes were never read, so the step names none of them as missing.
+    const page = await setupState(ctx, await read(row.id))
+    expect(page.checks.api?.detail?.missingByCapability).toEqual({})
   })
 
   it("stores nothing when the instance changed while the key was tested", async () => {
@@ -726,6 +730,13 @@ describe("health turned off", () => {
           .where(eq(alertState.key, `down:${row.id}`))
       )[0]?.active,
     ).toBe(false)
+  })
+})
+
+describe("GET /instances/:id", () => {
+  it("is a plain 404 for an id that is not a UUID, such as the setup page's address /instances/new", async () => {
+    const res = await new Hono<Env>().route("/api/instances", instanceRoutes(ctx)).request("/api/instances/new")
+    expect(res.status).toBe(404)
   })
 })
 

@@ -470,12 +470,13 @@ export async function evaluate(ctx: Ctx, row: Instance, verify: CapabilityKey[],
             ? { ok: false, reason: `The API key lacks scopes. ${lacks.join("; ")}.` }
             : { ok: true, reason: null }
         })
-        const scopes = (result.detail?.scopes as string[] | undefined) ?? []
+        // A key that failed its test has no scopes read: nothing is named missing then, the reason says why.
+        const scopes = result.detail?.scopes as string[] | undefined
         return {
           ...result,
           detail: {
             ...result.detail,
-            missingByCapability: result.current ? missingScopes(requirements.api, scopes) : {},
+            missingByCapability: result.current && scopes ? missingScopes(requirements.api, scopes) : {},
           },
         }
       })()

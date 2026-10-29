@@ -188,6 +188,9 @@ function workerSummary(worker: typeof workers.$inferSelect | undefined) {
   }
 }
 
+/** An instance's id in a path is a UUID: /instances/new and the like are a plain 404, never a failed query. */
+const ID = "/:id{[0-9a-fA-F-]{36}}"
+
 export function instanceRoutes(ctx: Ctx) {
   const app = new Hono<Env>()
   app.use("*", requireUser(ctx))
@@ -259,7 +262,7 @@ export function instanceRoutes(ctx: Ctx) {
     return c.json({ id: row.id, configRevision: row.configRevision })
   })
 
-  app.get("/:id", async (c) => {
+  app.get(ID, async (c) => {
     const [row] = await ctx.db
       .select()
       .from(instances)
@@ -302,7 +305,7 @@ export function instanceRoutes(ctx: Ctx) {
   })
 
   /** Where this instance's backups go: the default destinations as they change, or the ones chosen here. */
-  app.put("/:id/backup-destinations", async (c) => {
+  app.put(`${ID}/backup-destinations`, async (c) => {
     const [row] = await ctx.db
       .select()
       .from(instances)
@@ -344,7 +347,7 @@ export function instanceRoutes(ctx: Ctx) {
     return c.json({ ok: true })
   })
 
-  app.patch("/:id", async (c) => {
+  app.patch(ID, async (c) => {
     const [row] = await ctx.db
       .select()
       .from(instances)
@@ -396,7 +399,7 @@ export function instanceRoutes(ctx: Ctx) {
     return c.json({ ok: true, configRevision: updated?.configRevision ?? row.configRevision })
   })
 
-  app.delete("/:id", async (c) => {
+  app.delete(ID, async (c) => {
     const id = c.req.param("id")
     if (!z.string().uuid().safeParse(id).success) return c.json({ error: "not_found" }, 404)
     // With its workflows, failures and the Problems it leaves without a workflow.
@@ -407,7 +410,7 @@ export function instanceRoutes(ctx: Ctx) {
   })
 
   /** Re-reads version and scopes, checks health and polls failures now: each only where it was chosen. */
-  app.post("/:id/refresh", async (c) => {
+  app.post(`${ID}/refresh`, async (c) => {
     const [row] = await ctx.db
       .select()
       .from(instances)
@@ -437,7 +440,7 @@ export function instanceRoutes(ctx: Ctx) {
   }
 
   /** The selection (`?add=` proposes one), its requirements and each check as it stands now. */
-  app.get("/:id/setup", async (c) => {
+  app.get(`${ID}/setup`, async (c) => {
     const add = addOf(c.req.query("add"))
     if (!add.ok) return c.json({ error: "invalid", message: "Unknown capability in add." }, 400)
     const row = await load(c.req.param("id"))
@@ -445,7 +448,7 @@ export function instanceRoutes(ctx: Ctx) {
     return c.json(await setupState(ctx, row, add.add))
   })
 
-  app.post("/:id/setup/api", async (c) => {
+  app.post(`${ID}/setup/api`, async (c) => {
     const body = z
       .object({ apiKey: z.string().min(10).optional(), add: z.array(capability).optional() })
       .safeParse(await c.req.json().catch(() => ({})))
@@ -478,7 +481,7 @@ export function instanceRoutes(ctx: Ctx) {
     }
   })
 
-  app.post("/:id/setup/health", async (c) => {
+  app.post(`${ID}/setup/health`, async (c) => {
     try {
       const check = await checkHealthDirect(ctx, c.req.param("id"))
       if (!check) return c.json({ error: "not_found" }, 404)
@@ -493,7 +496,7 @@ export function instanceRoutes(ctx: Ctx) {
   })
 
   /** Starts the worker check, or answers with the one still running; GET /:id/setup tells how it ends. */
-  app.post("/:id/setup/worker", async (c) => {
+  app.post(`${ID}/setup/worker`, async (c) => {
     try {
       const started = await checkWorker(ctx, c.req.param("id"))
       if (!started) return c.json({ error: "not_found" }, 404)
@@ -503,7 +506,7 @@ export function instanceRoutes(ctx: Ctx) {
     }
   })
 
-  app.post("/:id/setup/backup", async (c) => {
+  app.post(`${ID}/setup/backup`, async (c) => {
     try {
       const check = await checkBackup(ctx, c.req.param("id"))
       if (!check) return c.json({ error: "not_found" }, 404)
@@ -518,7 +521,7 @@ export function instanceRoutes(ctx: Ctx) {
   })
 
   /** Activates a draft, or adds capabilities to an active instance, once every requirement has a current check. */
-  app.post("/:id/activate", async (c) => {
+  app.post(`${ID}/activate`, async (c) => {
     const body = z
       // A configRevision sent along is ignored: each check records the settings it was made for.
       .object({ add: z.array(capability).optional(), configRevision: z.number().int().optional() })
@@ -547,7 +550,7 @@ export function instanceRoutes(ctx: Ctx) {
   })
 
   /** Removes a capability and what needs it (removing the map removes Move workflows). No check is needed. */
-  app.delete("/:id/capabilities/:capability", async (c) => {
+  app.delete(`${ID}/capabilities/:capability`, async (c) => {
     const key = capability.safeParse(c.req.param("capability"))
     if (!key.success) return c.json({ error: "invalid", message: "Unknown capability." }, 400)
     const row = await load(c.req.param("id"))

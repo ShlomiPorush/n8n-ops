@@ -1,3 +1,4 @@
+import { type CapabilityKey, capabilityKeys, capabilityLabels, withoutDependents } from "@n8n-ops/shared"
 import {
   Activity as ActivityIcon,
   Archive as ArchiveIcon,
@@ -13,6 +14,7 @@ import {
   Hourglass as HourglassIcon,
   KeyRound as KeyRoundIcon,
   LayoutDashboard as LayoutDashboardIcon,
+  ListChecks as ListChecksIcon,
   Loader as LoaderIcon,
   Pencil,
   Plus,
@@ -98,7 +100,6 @@ import {
   useSortOrder,
 } from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Tip } from "@/components/ui/tooltip"
 import { api, describeError, queryClient, useApi, useApiMutation } from "@/lib/api"
 import { type CollectionView, collectionView } from "@/lib/collection"
@@ -128,12 +129,22 @@ type Capability = {
   available: boolean
   missing: string[]
   missingWorker: boolean
+  /** Temporary access: the key has no scopes n8n reported, or the policy grants none of them. */
+  missingAccess?: boolean
 }
 
 export type InstanceRow = {
   id: string
   name: string
   baseUrl: string
+  /** "incomplete": added, its setup not completed; it does nothing in the background (docs/adr/0002). */
+  setupState: "incomplete" | "complete"
+  /** What the instance was chosen for; on a draft, what its setup checks. */
+  chosen: CapabilityKey[]
+  /** Each chosen capability with what keeps it from working now; an empty list when nothing does. */
+  chosenStatus: { key: CapabilityKey; label: string; problems: string[] }[]
+  backupVia: "worker" | "api"
+  hasApiKey: boolean
   containerName: string | null
   /** The main as a Compose project and service; both null when it is a container name. */
   composeProject: string | null
@@ -149,8 +160,8 @@ export type InstanceRow = {
   collection: "direct" | "worker"
   version: string | null
   scopes: string[] | null
-  scopesSource: "discovered" | "declared"
-  declaredAccess: "read" | "write" | null
+  /** n8n older than 2.14.0 (no /discover), or a version known to be older. */
+  unsupportedVersion: boolean
   scopesCheckedAt: string | null
   /** The health now: "unknown" also when nothing collects it (unknownReason). */
   health: HealthState
@@ -190,7 +201,7 @@ export type InstanceRow = {
   worker: { id: string; name: string; lastSeenAt: string | null; online: boolean } | null
 }
 
-type InstanceDetailData = InstanceRow & {
+export type InstanceDetailData = InstanceRow & {
   workflowCounts: { total: number; active: number; runs30d: number }
   effectiveSettings: Record<string, number | string>
   latestVersion: string | null
@@ -224,9 +235,18 @@ function warnLabel(d: InstanceRow["healthDetail"]) {
 const readingLabel = (health: HealthState, d: InstanceRow["healthDetail"]) =>
   health === "down" ? "Down" : health === "warn" ? warnLabel(d) : health === "ok" ? "Healthy" : "Unknown"
 
-/** The health now in words: Unknown when nothing collects it, never the last known health. */
-export const healthLabel = (i: Pick<InstanceRow, "health" | "healthDetail" | "unknownReason">) =>
-  i.unknownReason ? "Unknown" : readingLabel(i.health, i.healthDetail)
+/**
+ * The health now in words: Unknown when nothing collects it, never the last known health; Health off when an
+ * active instance was not chosen for it.
+ */
+export const healthLabel = (
+  i: Pick<InstanceRow, "health" | "healthDetail" | "unknownReason" | "chosen" | "setupState">,
+) =>
+  i.setupState === "complete" && !i.chosen.includes("health")
+    ? "Health off"
+    : i.unknownReason
+      ? "Unknown"
+      : readingLabel(i.health, i.healthDetail)
 
 /** What the health was at the last check, beside Unknown: "Last known: Healthy, 2 h ago". */
 export function LastKnown({
@@ -271,7 +291,6 @@ export function InstancesPage() {
   })
   // A failed refresh keeps the rows; the head says so (TB-5, LD-12).
   const view = loadView(data)
-  const [adding, setAdding] = useState(false)
   const rows = data.data?.instances ?? []
   const latest = data.data?.latestVersion ?? null
   // Down and needing a look first, then by name as the server sends them: Status high to low (TB-11).
@@ -321,7 +340,7 @@ export function InstancesPage() {
             : "Every n8n instance n8n-ops watches, and what its API key allows."
         }
         actions={
-          <Button variant="primary" onClick={() => setAdding(true)}>
+          <Button variant="primary" onClick={() => navigate("/instances/new")}>
             <Plus /> Add instance
           </Button>
         }
@@ -337,7 +356,7 @@ export function InstancesPage() {
       ) : rows.length === 0 ? (
         <Panel>
           <Empty title="No instances yet.">
-            Add an n8n instance with its URL and an API key. Read-only is enough for monitoring.
+            Add an n8n instance: choose what it is for, and its setup checks each step.
           </Empty>
         </Panel>
       ) : (
@@ -354,7 +373,11 @@ export function InstancesPage() {
                       title={
                         <span className="flex min-w-0 items-center gap-2">
                           <UserText className="truncate">{i.name}</UserText>
-                          <CollectionTag instance={i} />
+                          {i.setupState === "incomplete" ? (
+                            <StatusTag kind="setup" status="incomplete" />
+                          ) : (
+                            <CollectionTag instance={i} />
+                          )}
                         </span>
                       }
                       titleText={i.name}
@@ -366,34 +389,41 @@ export function InstancesPage() {
                         )
                       }
                       sub={
-                        <>
-                          {i.health === "ok" ? (
-                            healthLabel(i)
-                          ) : (
-                            <StatusTag kind="health" status={i.health}>
-                              {healthLabel(i)}
-                            </StatusTag>
-                          )}
-                          {i.lastKnownHealth && (
-                            <>
-                              {" · "}
-                              <LastKnown instance={i} />
-                            </>
-                          )}
-                          {" · "}
-                          {behind(i.version, latest) ? (
-                            <Tip content={`Latest is ${latest}`}>
-                              <Badge variant="warn">{i.version}</Badge>
-                            </Tip>
-                          ) : (
-                            <span className="font-mono">{i.version ?? "version unknown"}</span>
-                          )}
-                          {" · "}
-                          {canWrite(i) ? "read + write" : "read only"}
-                        </>
+                        // A draft has not been checked yet: nothing about its health or key to say.
+                        i.setupState === "incomplete" ? (
+                          "Not checked until its setup is completed"
+                        ) : (
+                          <>
+                            {i.health === "ok" ? (
+                              healthLabel(i)
+                            ) : (
+                              <StatusTag kind="health" status={i.health}>
+                                {healthLabel(i)}
+                              </StatusTag>
+                            )}
+                            {i.lastKnownHealth && (
+                              <>
+                                {" · "}
+                                <LastKnown instance={i} />
+                              </>
+                            )}
+                            {" · "}
+                            {behind(i.version, latest) ? (
+                              <Tip content={`Latest is ${latest}`}>
+                                <Badge variant="warn">{i.version}</Badge>
+                              </Tip>
+                            ) : (
+                              <span className="font-mono">{i.version ?? "version unknown"}</span>
+                            )}
+                            {" · "}
+                            {canWrite(i) ? "read + write" : "read only"}
+                          </>
+                        )
                       }
                       subEnd={
-                        i.lastBackup ? (
+                        !i.chosen.includes("backup") ? (
+                          "Backup off"
+                        ) : i.lastBackup ? (
                           <span className={cn(i.lastBackup.status === "failed" && "font-semibold text-fail")}>
                             {i.lastBackup.status === "failed" ? "Backup failed " : "Backup "}
                             <When value={i.lastBackup.at} />
@@ -430,11 +460,17 @@ export function InstancesPage() {
                       <span className="flex items-center gap-2">
                         <Dot health={i.health} label={healthLabel(i)} />
                         <UserText className="truncate">{i.name}</UserText>
-                        <CollectionTag instance={i} />
+                        {i.setupState === "incomplete" ? (
+                          <StatusTag kind="setup" status="incomplete" />
+                        ) : (
+                          <CollectionTag instance={i} />
+                        )}
                       </span>
                     </TableCell>
                     <TableCell>
-                      {i.health === "ok" ? (
+                      {i.setupState === "incomplete" ? (
+                        <span className="text-muted-foreground">Not checked yet</span>
+                      ) : i.health === "ok" ? (
                         <span className="text-muted-foreground">{healthLabel(i)}</span>
                       ) : (
                         <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
@@ -463,7 +499,9 @@ export function InstancesPage() {
                       {n(i.openProblems)}
                     </TableCell>
                     <TableCell className="text-end text-muted-foreground">
-                      {i.lastBackup ? (
+                      {!i.chosen.includes("backup") ? (
+                        "off"
+                      ) : i.lastBackup ? (
                         <span className={cn(i.lastBackup.status === "failed" && "font-semibold text-fail")}>
                           <When value={i.lastBackup.at} />
                         </span>
@@ -478,7 +516,6 @@ export function InstancesPage() {
           )}
         </>
       )}
-      <InstanceDialog open={adding} onOpenChange={setAdding} afterAdd={(newId) => `/instances/${newId}`} />
     </>
   )
 
@@ -528,29 +565,26 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
   // Toasts name the instance (FB-4), read when the request ends.
   const named = () => detail.data?.name ?? "the instance"
   // The server checks the health itself only for direct collection; a worker reports it on its own schedule.
-  const refresh = useApiMutation<void, { poll: { error?: string } }>("POST", `/instances/${id}/refresh`, {
+  const refresh = useApiMutation<void, { poll: { error?: string } | null }>("POST", `/instances/${id}/refresh`, {
     invalidate,
     failed: () => `check ${named()}`,
   })
   const checkNow = async () => {
     const { poll } = await refresh.mutateAsync()
-    if (poll.error) {
+    if (poll?.error) {
       toast.error(`Could not read the failures of ${named()}: ${poll.error}`)
       // The button shows that it failed too; the toast has said why.
       throw new Error(poll.error)
     }
-    if (detail.data?.collection === "direct") toast.success(`Checked ${named()}`)
-    else toast.success(`Read the failures of ${named()}.`)
+    // Each part runs only where it was chosen: health checked here, failures read.
+    const healthHere = detail.data?.collection === "direct" && detail.data.chosen.includes("health")
+    if (healthHere) toast.success(`Checked ${named()}`)
+    else if (poll) toast.success(`Read the failures of ${named()}.`)
+    else toast.success(`Read the version and scopes of ${named()}.`)
   }
   const remove = useApiMutation<void>("DELETE", `/instances/${id}`, {
     invalidate: ["/instances", "/overview", "/overview/attention"],
     failed: () => `remove ${named()}`,
-  })
-  const declare = useApiMutation<{ declaredAccess: "read" | "write" }>("PATCH", `/instances/${id}`, {
-    invalidate,
-    success: (b) =>
-      `The API key of ${named()} ${b.declaredAccess === "write" ? "can read and write" : "can only read"}`,
-    failed: () => `change what the API key of ${named()} can do`,
   })
   const unsaved = {
     backups: useUnsaved(`backup-destinations-${id}`),
@@ -562,10 +596,14 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
     return <LoadError what="this instance" error={detail.error} retry={() => detail.refetch()} />
   const i = detail.data
   if (!i) return <Empty title="This instance no longer exists.">It was removed from n8n-ops.</Empty>
+  // Added but not set up: it does nothing yet, so there is no health, backup or problem to show.
+  if (i.setupState === "incomplete") return <DraftDetail instance={i} />
   const hd = i.healthDetail
   const health = i.health
   const name = i.name
-  const canExport = Boolean(i.worker && (i.containerName || i.composeProject) && !i.composeNeedsUpdate)
+  // The server exports credentials only for Move workflows or a backup through the worker.
+  const exports = i.chosen.includes("move") || (i.chosen.includes("backup") && i.backupVia === "worker")
+  const canExport = Boolean(exports && i.worker && (i.containerName || i.composeProject) && !i.composeNeedsUpdate)
   async function askRemove() {
     const ok = await confirm({
       title: `Remove ${name}?`,
@@ -700,8 +738,9 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
               to={`/workflows?instance=${i.id}`}
             />
             <Kpi label="Executions, 30 days" icon={ActivityIcon} value={i.workflowCounts.runs30d} />
-            <LastBackupKpi id={i.id} backup={backup} />
+            <LastBackupKpi id={i.id} backup={backup} chosen={i.chosen.includes("backup")} />
           </Kpis>
+          <CapabilitiesPanel instance={i} />
           <Panel>
             <InstanceProblems
               key={i.id}
@@ -920,7 +959,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
         </PaneTabPanel>
 
         <PaneTabPanel value="backups">
-          <LastBackupPanel id={i.id} backup={backup} />
+          <LastBackupPanel id={i.id} backup={backup} chosen={i.chosen.includes("backup")} />
           <InstanceBackupCard
             key={`backup-destinations-${i.id}`}
             instanceId={i.id}
@@ -934,23 +973,9 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
             <PanelHead
               title="API Key and What It Allows"
               description={
-                i.scopesSource === "discovered"
-                  ? `Read from GET /api/v1/discover · checked ${i.scopesCheckedAt ? formatTime(i.scopesCheckedAt, w) : "never"}`
-                  : "This n8n version cannot report what its API key allows (2.14.0 and later can). Choose what the key can do."
-              }
-              action={
-                i.scopesSource === "declared" && (
-                  <ToggleGroup
-                    type="single"
-                    segmented
-                    aria-label="What the API key can do"
-                    value={i.declaredAccess ?? "read"}
-                    onValueChange={(v) => v && declare.mutate({ declaredAccess: v as "read" | "write" })}
-                  >
-                    <ToggleGroupItem value="read">Read only</ToggleGroupItem>
-                    <ToggleGroupItem value="write">Read + write</ToggleGroupItem>
-                  </ToggleGroup>
-                )
+                i.unsupportedVersion
+                  ? "Unsupported n8n version: update to 2.14.0 or later."
+                  : `Read from GET /api/v1/discover · checked ${i.scopesCheckedAt ? formatTime(i.scopesCheckedAt, w) : "never"}`
               }
             />
             <div className="grid @min-[40rem]/pane:grid-cols-2">
@@ -967,6 +992,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
                       : [
                           c.missing.length ? `missing: ${c.missing.join(", ")}` : "",
                           c.missingWorker ? "needs a worker" : "",
+                          c.missingAccess ? "needs Temporary access on, with a scope the key grants" : "",
                         ]
                           .filter(Boolean)
                           .join("; ")}
@@ -979,7 +1005,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
             key={`access-${i.id}`}
             id={i.id}
             name={i.name}
-            scopesSource={i.scopesSource}
+            unsupported={i.unsupportedVersion}
             keyScopes={i.effectiveScopes}
             agentAccess={i.agentAccess}
           />
@@ -1008,6 +1034,152 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
         </DialogContent>
       </Dialog>
     </div>
+  )
+}
+
+/**
+ * A draft's page: it was added but its setup was not completed, so it does nothing in the background yet. Its
+ * setup goes on where it stopped, or it is deleted.
+ */
+function DraftDetail({ instance: i }: { instance: InstanceDetailData }) {
+  const navigate = useNavigate()
+  const confirm = useConfirm()
+  const remove = useApiMutation<void>("DELETE", `/instances/${i.id}`, {
+    invalidate: ["/instances", "/overview", "/overview/attention"],
+    failed: `delete ${i.name}`,
+  })
+  async function askDelete() {
+    const ok = await confirm({
+      title: `Delete ${i.name}?`,
+      message:
+        "Its setup and the checks made so far are deleted from n8n-ops. Nothing changes on the n8n instance. This cannot be undone.",
+      confirmLabel: "Delete instance",
+      danger: true,
+    })
+    if (!ok) return
+    remove.mutate(undefined, {
+      onSuccess: () => {
+        toast.success(`${i.name} deleted`)
+        navigate("/instances")
+      },
+    })
+  }
+  return (
+    <div className="@container/pane grid min-w-0 gap-gap">
+      <div className="grid gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2.5">
+          <h2 className="text-title">
+            <UserText>{i.name}</UserText>
+          </h2>
+          <StatusTag kind="setup" status="incomplete" />
+        </div>
+        <p className="flex flex-wrap items-center gap-x-1.5 text-muted-foreground">
+          <Copyable value={i.baseUrl} label="Copy base URL" />
+        </p>
+      </div>
+      <Panel>
+        <PanelHead
+          title="Setup Incomplete"
+          description={`${i.name} does nothing in the background and never alerts until its setup is completed.`}
+        />
+        <div className="grid gap-3 border-t border-line p-pad-x">
+          <p>
+            {i.chosen.length
+              ? `Chosen for: ${i.chosen.map((k) => capabilityLabels[k]).join(", ")}.`
+              : "Nothing is chosen for it yet."}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="primary" asChild>
+              <Link to={`/instances/${i.id}/setup`}>
+                <ListChecksIcon /> Continue setup
+              </Link>
+            </Button>
+            <Button variant="danger" onClick={() => void askDelete()}>
+              <Trash2 /> Delete
+            </Button>
+          </div>
+        </div>
+      </Panel>
+    </div>
+  )
+}
+
+/**
+ * What the instance was chosen for, each with what keeps it from working now, such as a scope the API key lacks.
+ * A capability is added through the setup, which checks only what it needs; removing one needs no check.
+ */
+function CapabilitiesPanel({ instance: i }: { instance: InstanceDetailData }) {
+  const confirm = useConfirm()
+  const remove = useApiMutation<CapabilityKey, { removed: CapabilityKey[] }>(
+    "DELETE",
+    (key) => `/instances/${i.id}/capabilities/${key}`,
+    {
+      invalidate: [`/instances/${i.id}`, "/instances", "/overview", "/overview/attention", "/backups"],
+      failed: (key) => `remove ${capabilityLabels[key]} from ${i.name}`,
+    },
+  )
+  const missing = capabilityKeys.filter((k) => !i.chosen.includes(k))
+  async function askRemove(key: CapabilityKey) {
+    const gone = i.chosen.filter((k) => !withoutDependents(i.chosen, [key]).includes(k))
+    const along = gone.filter((k) => k !== key).map((k) => capabilityLabels[k])
+    const ok = await confirm({
+      title: `Remove ${capabilityLabels[key]} from ${i.name}?`,
+      message: [
+        along.length ? `${along.join(" and ")} needs it and goes too.` : "",
+        "It stops at once: its alerts end without a message and its queued work is dropped. History stays. To use it again, add it with its setup.",
+      ]
+        .filter(Boolean)
+        .join(" "),
+      confirmLabel: "Remove",
+      danger: true,
+    })
+    if (!ok) return
+    remove.mutate(key, {
+      onSuccess: () => toast.success(`Removed ${gone.map((k) => capabilityLabels[k]).join(" and ")} from ${i.name}`),
+    })
+  }
+  return (
+    <Panel>
+      <PanelHead
+        title="Capabilities"
+        count={n(i.chosen.length)}
+        description={
+          missing.length
+            ? `Not chosen: ${missing.map((k) => capabilityLabels[k]).join(", ")}.`
+            : "Everything n8n-ops can do for an instance is chosen."
+        }
+        action={
+          missing.length > 0 && (
+            <Button size="sm" asChild>
+              <Link to={`/instances/${i.id}/setup`}>
+                <Plus /> Add capability
+              </Link>
+            </Button>
+          )
+        }
+      />
+      {i.chosenStatus.map((c) => (
+        <div
+          key={c.key}
+          className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 border-t border-line px-pad-x py-pad-y"
+          data-testid={`capability-${c.key}`}
+        >
+          <span className="min-w-0 font-semibold">{c.label}</span>
+          {c.problems.length ? <Tone tone="warn">Needs a look</Tone> : <Tone tone="ok">Working</Tone>}
+          <Button
+            size="sm"
+            variant="ghost"
+            className="ms-auto"
+            aria-label={`Remove ${c.label}`}
+            onClick={() => void askRemove(c.key)}
+          >
+            <Trash2 />
+            <span className="@max-[34rem]/pane:sr-only">Remove</span>
+          </Button>
+          {c.problems.length > 0 && <p className="w-full text-small break-words text-warn">{c.problems.join(" ")}</p>}
+        </div>
+      ))}
+    </Panel>
   )
 }
 
@@ -1158,25 +1330,36 @@ function StatusStrip({ instance: i, footer }: { instance: InstanceDetailData; fo
   )
 }
 
-/** The words for the last backup run; the list may still load, or may have failed. */
-function backupWords(backup: ListBackup) {
+/**
+ * The words for the last backup run; the list may still load, or may have failed. Backup not chosen: off, with an
+ * earlier run shown as history only, never as something to fix.
+ */
+function backupWords(backup: ListBackup, chosen: boolean) {
   if (backup.state === "loading") return { value: "…", tone: undefined, hint: undefined }
   if (backup.state !== "known") return { value: "Unknown", tone: undefined, hint: "Could not be read" }
+  if (!chosen)
+    return {
+      value: backup.run ? <When value={backup.run.at} /> : "Off",
+      tone: undefined,
+      hint: "Backup is not chosen",
+    }
   if (!backup.run) return { value: "Never", tone: "fail" as const, hint: "Not backed up" }
   const s = statusOf("backup", backup.run.status as keyof typeof statusTable.backup)
   const tone = s.tone === "fail" ? ("fail" as const) : s.tone === "warn" ? ("warn" as const) : undefined
   return { value: <When value={backup.run.at} />, tone, hint: s.label }
 }
 
-function LastBackupKpi({ id, backup }: { id: string; backup: ListBackup }) {
-  const w = backupWords(backup)
+type BackupProps = { id: string; backup: ListBackup; chosen: boolean }
+
+function LastBackupKpi({ id, backup, chosen }: BackupProps) {
+  const w = backupWords(backup, chosen)
   return (
     <Kpi label="Last backup run" icon={ArchiveIcon} value={w.value} tone={w.tone} hint={w.hint} to={`/backups/${id}`} />
   )
 }
 
-function LastBackupPanel({ id, backup }: { id: string; backup: ListBackup }) {
-  const w = backupWords(backup)
+function LastBackupPanel({ id, backup, chosen }: BackupProps) {
+  const w = backupWords(backup, chosen)
   return (
     <Panel>
       <PanelHead
@@ -1415,37 +1598,217 @@ function OverridesCard({ instance }: { instance: InstanceDetailData }) {
 type Worker = { id: string; name: string }
 
 /** A base URL compared and saved without surrounding spaces and trailing slashes. */
-const normalUrl = (url: string) => url.trim().replace(/\/+$/, "")
+export const normalUrl = (url: string) => url.trim().replace(/\/+$/, "")
 
+/** Where the main is: a container name, or a Compose project and service (followed across docker rollout). */
+export type MainTarget = {
+  mainBy: "name" | "service"
+  containerName: string
+  composeProject: string
+  composeService: string
+}
+
+export const mainTargetOf = (
+  i: Pick<InstanceRow, "containerName" | "composeProject" | "composeService"> | undefined,
+): MainTarget => ({
+  mainBy: i?.composeProject ? "service" : "name",
+  containerName: i?.containerName ?? "",
+  composeProject: i?.composeProject ?? "",
+  composeService: i?.composeService ?? "",
+})
+
+/** The main as the API takes it: one of the two, never both; the server refuses a half pair or both together. */
+export const mainTargetBody = (t: MainTarget) => {
+  const byService = t.mainBy === "service"
+  return {
+    containerName: byService ? null : t.containerName.trim() || null,
+    composeProject: byService ? t.composeProject.trim() || null : null,
+    composeService: byService ? t.composeService.trim() || null : null,
+  }
+}
+
+export const mainTargetSet = (t: MainTarget) =>
+  t.mainBy === "service" ? Boolean(t.composeProject.trim() && t.composeService.trim()) : Boolean(t.containerName.trim())
+
+/** How to find the n8n main container on the host: by its name, or by its Compose project and service. */
+export function MainTargetFields({
+  value,
+  onChange,
+}: {
+  value: MainTarget
+  onChange: (patch: Partial<MainTarget>) => void
+}) {
+  const byService = value.mainBy === "service"
+  return (
+    <>
+      <Field>
+        <FieldPicker
+          label="Find the main container by"
+          value={value.mainBy}
+          onChange={(v) => onChange({ mainBy: v as MainTarget["mainBy"] })}
+          options={[
+            { value: "name", label: "Container name" },
+            { value: "service", label: "Compose service" },
+          ]}
+        />
+        <FieldDescription>
+          {byService
+            ? "Follows the service across docker rollout and redeploys: the worker uses its running container each time."
+            : "The n8n main container on the host. The worker checks health inside it and exports credentials from it."}
+        </FieldDescription>
+      </Field>
+      {byService ? (
+        <div className="grid gap-4 md:grid-cols-2">
+          <Field>
+            <FieldLabel htmlFor="i-compose-project">Compose project</FieldLabel>
+            <Input
+              id="i-compose-project"
+              value={value.composeProject}
+              onChange={(e) => onChange({ composeProject: e.target.value })}
+              placeholder="n8n1"
+            />
+            <FieldDescription>The name: in the Compose file, or its folder.</FieldDescription>
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="i-compose-service">Service</FieldLabel>
+            <Input
+              id="i-compose-service"
+              value={value.composeService}
+              onChange={(e) => onChange({ composeService: e.target.value })}
+              placeholder="app"
+            />
+            <FieldDescription>The n8n main's service in that file.</FieldDescription>
+          </Field>
+        </div>
+      ) : (
+        <Field>
+          <FieldLabel htmlFor="i-container">Container name</FieldLabel>
+          <Input
+            id="i-container"
+            value={value.containerName}
+            onChange={(e) => onChange({ containerName: e.target.value })}
+            placeholder="n8n"
+          />
+        </Field>
+      )}
+    </>
+  )
+}
+
+export type QueueForm = { queueMode: boolean; metricsUrl: string; workerHealthUrls: string }
+
+export const queueFormOf = (i: Pick<InstanceRow, "queueMode" | "metricsUrl" | "workerHealthUrls"> | undefined) => ({
+  queueMode: i?.queueMode ?? false,
+  metricsUrl: i?.metricsUrl ?? "",
+  workerHealthUrls: (i?.workerHealthUrls ?? []).join("\n"),
+})
+
+export const queueBody = (q: QueueForm) => ({
+  queueMode: q.queueMode,
+  metricsUrl: q.metricsUrl || null,
+  workerHealthUrls: q.workerHealthUrls.split(/\s+/).filter(Boolean),
+})
+
+/**
+ * Queue mode and where its figures are read: the metrics URL and the queue workers' health URLs. `inside` when the
+ * worker reads the main from inside its container; `modeFound` when it read the mode there, so it is not set by hand.
+ */
+export function QueueFields({
+  value,
+  onChange,
+  baseUrl,
+  collection,
+  inside,
+  modeFound,
+}: {
+  value: QueueForm
+  onChange: (patch: Partial<QueueForm>) => void
+  baseUrl: string
+  collection: "direct" | "worker"
+  inside: boolean
+  modeFound: boolean
+}) {
+  return (
+    <>
+      <SwitchRow
+        id="i-queue"
+        title="Queue mode"
+        description="Main process plus separate queue workers using Redis."
+        checked={value.queueMode}
+        onCheckedChange={(v) => onChange({ queueMode: v })}
+        disabled={modeFound}
+        reason="Found by the worker inside the main container. Change the worker or the container to set it by hand."
+      />
+      {value.queueMode && (
+        <>
+          {inside && (
+            <p className="text-small text-muted-foreground">
+              The worker reads health and the queue inside the main container. The URLs below are overrides (optional):
+              fill them in only when n8n serves them somewhere else.
+            </p>
+          )}
+          <Field>
+            <FieldLabel htmlFor="i-metrics">Metrics URL (optional)</FieldLabel>
+            <Input
+              id="i-metrics"
+              value={value.metricsUrl}
+              onChange={(e) => onChange({ metricsUrl: e.target.value })}
+              placeholder={`${normalUrl(baseUrl) || "https://n8n.example.com"}/metrics`}
+            />
+            <FieldDescription>
+              {inside
+                ? "Leave empty to read /metrics inside the main container."
+                : "Leave empty to read /metrics of the base URL."}{" "}
+              Needs N8N_METRICS=true and N8N_METRICS_INCLUDE_QUEUE_METRICS=true on the main process.
+            </FieldDescription>
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="i-workers">
+              Queue worker health URLs{collection === "worker" ? " (optional)" : ""}
+            </FieldLabel>
+            <Textarea
+              id="i-workers"
+              className="font-mono text-small"
+              value={value.workerHealthUrls}
+              onChange={(e) => onChange({ workerHealthUrls: e.target.value })}
+              placeholder={"http://n8n-worker-1:5678/healthz\nhttp://n8n-worker-2:5678/healthz"}
+            />
+            <FieldDescription>
+              One per line. Needs QUEUE_HEALTH_CHECK_ACTIVE=true on the queue workers.
+            </FieldDescription>
+          </Field>
+        </>
+      )}
+    </>
+  )
+}
+
+/**
+ * Edits an instance's details. Adding an instance and its capabilities goes through its setup
+ * (pages/instance-setup.tsx); this dialog never refuses because of them, and the instance's page shows what a
+ * change leaves missing.
+ */
 export function InstanceDialog({
   open,
   onOpenChange,
   instance,
-  afterAdd,
 }: {
   open: boolean
   onOpenChange: (o: boolean) => void
-  instance?: InstanceRow
-  /** Where to go once a new instance is added. */
-  afterAdd?: (id: string) => string
+  instance: InstanceRow
 }) {
   const workers = useApi<Worker[]>(open ? "/workers" : null)
   const navigateOut = useNavigateFromOverlay()
-  const [form, setForm] = useState({
-    name: "",
-    baseUrl: "",
-    apiKey: undefined as string | undefined,
-    containerName: "",
-    // Where the main is: a container name, or a Compose project and service (followed across docker rollout).
-    mainBy: "name" as "name" | "service",
-    composeProject: "",
-    composeService: "",
-    queueMode: false,
-    metricsUrl: "",
-    workerHealthUrls: "",
-    collection: "direct" as "direct" | "worker",
-    workerId: "",
+  const start = () => ({
+    name: instance.name,
+    baseUrl: instance.baseUrl,
+    apiKey: undefined as string | null | undefined,
+    ...mainTargetOf(instance),
+    ...queueFormOf(instance),
+    collection: instance.collection,
+    workerId: instance.workerId ?? "",
   })
+  const [form, setForm] = useState(start)
   const [opened, setOpened] = useState(form)
   const [error, setError] = useState("")
   const [busy, setBusy] = useState(false)
@@ -1455,46 +1818,30 @@ export function InstanceDialog({
   useEffect(() => {
     if (!open) return
     setError("")
-    const start = {
-      name: instance?.name ?? "",
-      baseUrl: instance?.baseUrl ?? "",
-      apiKey: undefined,
-      containerName: instance?.containerName ?? "",
-      mainBy: (instance?.composeProject ? "service" : "name") as "name" | "service",
-      composeProject: instance?.composeProject ?? "",
-      composeService: instance?.composeService ?? "",
-      queueMode: instance?.queueMode ?? false,
-      metricsUrl: instance?.metricsUrl ?? "",
-      workerHealthUrls: (instance?.workerHealthUrls ?? []).join("\n"),
-      collection: instance?.collection ?? "direct",
-      workerId: instance?.workerId ?? "",
-    }
-    setForm(start)
-    setOpened(start)
-  }, [open, instance?.id])
-  const set = (k: keyof typeof form, v: string | boolean | undefined) => setForm((f) => ({ ...f, [k]: v }))
-  const byService = form.mainBy === "service"
-  const targetSet = byService
-    ? Boolean(form.composeProject.trim() && form.composeService.trim())
-    : Boolean(form.containerName.trim())
+    const values = start()
+    setForm(values)
+    setOpened(values)
+  }, [open, instance.id])
+  const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }))
+  const target = mainTargetBody(form)
   // The worker read the mode inside the main; it stays its value until the worker or the container changes.
   const modeFound =
-    instance?.queueModeSource === "found" &&
+    instance.queueModeSource === "found" &&
     form.collection === instance.collection &&
     (form.workerId || null) === (instance.workerId ?? null) &&
-    (byService ? null : form.containerName.trim() || null) === (instance.containerName ?? null) &&
-    (byService ? form.composeProject.trim() : null) === (instance.composeProject ?? null) &&
-    (byService ? form.composeService.trim() : null) === (instance.composeService ?? null)
-  const inside = form.collection === "worker" && Boolean(form.workerId) && targetSet
+    target.containerName === (instance.containerName ?? null) &&
+    target.composeProject === (instance.composeProject ?? null) &&
+    target.composeService === (instance.composeService ?? null)
+  const inside = form.collection === "worker" && Boolean(form.workerId) && mainTargetSet(form)
   // Every close asks first while the form differs from how it opened (DS-9).
   const guard = useDiscardGuard(formChanged(form, opened), () => onOpenChange(false))
-  // A stored API key is never sent to a different server: a changed base URL needs the key again (FS-5).
-  const urlChanged = Boolean(instance) && normalUrl(form.baseUrl) !== normalUrl(instance?.baseUrl ?? "")
+  // A stored API key is never sent to a different server: a changed base URL needs the key again, or its removal.
+  const urlChanged = normalUrl(form.baseUrl) !== normalUrl(instance.baseUrl)
 
   async function submit() {
-    if (urlChanged && !form.apiKey) {
-      setError("The base URL changed. Enter the API key again, so the stored key is not sent to the new address.")
-      set("apiKey", "")
+    if (urlChanged && instance.hasApiKey && form.apiKey === undefined) {
+      setError("The base URL changed. Enter the API key again, or remove it, so the stored key is not sent there.")
+      set({ apiKey: "" })
       return
     }
     setBusy(true)
@@ -1502,27 +1849,15 @@ export function InstanceDialog({
     const body = {
       name: form.name,
       baseUrl: normalUrl(form.baseUrl),
-      // One of the two, never both: the server refuses a half pair or both together.
-      containerName: byService ? null : form.containerName.trim() || null,
-      composeProject: byService ? form.composeProject.trim() || null : null,
-      composeService: byService ? form.composeService.trim() || null : null,
-      queueMode: form.queueMode,
-      metricsUrl: form.metricsUrl || null,
-      workerHealthUrls: form.workerHealthUrls.split(/\s+/).filter(Boolean),
+      ...target,
+      ...queueBody(form),
       collection: form.collection,
       workerId: form.workerId || null,
-      ...(form.apiKey ? { apiKey: form.apiKey } : {}),
+      ...(form.apiKey || form.apiKey === null ? { apiKey: form.apiKey } : {}),
     }
     try {
-      if (instance) {
-        await api(`/instances/${instance.id}`, { method: "PATCH", json: body })
-        void guard.requestClose("saved")
-      } else {
-        const res = await api<{ id: string }>("/instances", { method: "POST", json: body })
-        // The new instance's page takes the dialog's Back entry, so Back goes to the list (DS-10).
-        if (afterAdd) navigateOut(afterAdd(res.id))
-        void guard.requestClose("saved")
-      }
+      await api(`/instances/${instance.id}`, { method: "PATCH", json: body })
+      void guard.requestClose("saved")
       await queryClient.invalidateQueries()
     } catch (e) {
       setError(describeError(e))
@@ -1535,26 +1870,27 @@ export function InstanceDialog({
     <Dialog open={open} onOpenChange={guard.onOpenChange}>
       <DialogContent className="md:max-w-xl" keepOnBackdrop>
         <DialogHeader icon={ServerIcon}>
-          <DialogTitle>{instance ? `Edit ${instance.name}` : "Add an Instance"}</DialogTitle>
-          <DialogDescription>
-            {instance
-              ? "A new API key is tested before it is saved."
-              : "The URL and API key are tested before the instance is added."}
-          </DialogDescription>
+          <DialogTitle>Edit {instance.name}</DialogTitle>
+          <DialogDescription>A new API key is tested before it is saved.</DialogDescription>
         </DialogHeader>
         <FieldGroup>
           <FieldSet>
             <FieldLegend variant="label">Instance</FieldLegend>
             <Field>
               <FieldLabel htmlFor="i-name">Name</FieldLabel>
-              <Input id="i-name" value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="n8n-1" />
+              <Input
+                id="i-name"
+                value={form.name}
+                onChange={(e) => set({ name: e.target.value })}
+                placeholder="n8n-1"
+              />
             </Field>
             <Field>
               <FieldLabel htmlFor="i-url">Base URL</FieldLabel>
               <Input
                 id="i-url"
                 value={form.baseUrl}
-                onChange={(e) => set("baseUrl", e.target.value)}
+                onChange={(e) => set({ baseUrl: e.target.value })}
                 placeholder="https://n8n.example.com"
               />
             </Field>
@@ -1562,16 +1898,14 @@ export function InstanceDialog({
               <FieldLabel htmlFor="i-key">API key</FieldLabel>
               <SecretField
                 id="i-key"
-                stored={Boolean(instance)}
-                removable={false}
-                placeholder=""
+                stored={instance.hasApiKey}
+                placeholder={instance.hasApiKey ? "" : "Not set"}
                 value={form.apiKey}
-                onChange={(v) => set("apiKey", v ?? undefined)}
+                onChange={(v) => set({ apiKey: v })}
               />
               <FieldDescription>
-                In n8n: Settings → n8n API → Create an API key. "Read only" is enough to monitor. Restoring needs
-                workflow:create and credential:create. Moving a workflow here needs workflow:create, workflow:activate
-                and credential:create; moving one away needs workflow:read and workflow:deactivate.
+                In n8n: Settings → n8n API → Create an API key. Which scopes each capability needs is listed on the
+                instance's Access tab; a key without them is saved, and the instance's page says what it misses.
               </FieldDescription>
             </Field>
           </FieldSet>
@@ -1579,55 +1913,14 @@ export function InstanceDialog({
             <FieldLegend variant="label" className="w-full border-t border-line pt-4">
               Queue
             </FieldLegend>
-            <SwitchRow
-              id="i-queue"
-              title="Queue mode"
-              description="Main process plus separate queue workers using Redis."
-              checked={form.queueMode}
-              onCheckedChange={(v) => set("queueMode", v)}
-              disabled={modeFound}
-              reason="Found by the worker inside the main container. Change the worker or the container to set it by hand."
+            <QueueFields
+              value={form}
+              onChange={set}
+              baseUrl={form.baseUrl}
+              collection={form.collection}
+              inside={inside}
+              modeFound={modeFound}
             />
-            {form.queueMode && (
-              <>
-                {inside && (
-                  <p className="text-small text-muted-foreground">
-                    The worker reads health and the queue inside the main container. The URLs below are overrides
-                    (optional): fill them in only when n8n serves them somewhere else.
-                  </p>
-                )}
-                <Field>
-                  <FieldLabel htmlFor="i-metrics">Metrics URL (optional)</FieldLabel>
-                  <Input
-                    id="i-metrics"
-                    value={form.metricsUrl}
-                    onChange={(e) => set("metricsUrl", e.target.value)}
-                    placeholder={`${form.baseUrl.trim().replace(/\/+$/, "") || "https://n8n.example.com"}/metrics`}
-                  />
-                  <FieldDescription>
-                    {inside
-                      ? "Leave empty to read /metrics inside the main container."
-                      : "Leave empty to read /metrics of the base URL."}{" "}
-                    Needs N8N_METRICS=true and N8N_METRICS_INCLUDE_QUEUE_METRICS=true on the main process.
-                  </FieldDescription>
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor="i-workers">
-                    Queue worker health URLs{form.collection === "worker" ? " (optional)" : ""}
-                  </FieldLabel>
-                  <Textarea
-                    id="i-workers"
-                    className="font-mono text-small"
-                    value={form.workerHealthUrls}
-                    onChange={(e) => set("workerHealthUrls", e.target.value)}
-                    placeholder={"http://n8n-worker-1:5678/healthz\nhttp://n8n-worker-2:5678/healthz"}
-                  />
-                  <FieldDescription>
-                    One per line. Needs QUEUE_HEALTH_CHECK_ACTIVE=true on the queue workers.
-                  </FieldDescription>
-                </Field>
-              </>
-            )}
           </FieldSet>
           <FieldSet>
             <FieldLegend variant="label" className="w-full border-t border-line pt-4">
@@ -1638,7 +1931,7 @@ export function InstanceDialog({
               <FieldPicker
                 label="Check health and metrics"
                 value={form.collection}
-                onChange={(v) => set("collection", v)}
+                onChange={(v) => set({ collection: v as "direct" | "worker" })}
                 options={[
                   { value: "direct", label: "Directly from the n8n-ops server" },
                   { value: "worker", label: "Through the worker on the n8n host" },
@@ -1674,7 +1967,7 @@ export function InstanceDialog({
                 <FieldPicker
                   label="Worker on this instance's Docker host"
                   value={form.workerId || "none"}
-                  onChange={(v) => set("workerId", v === "none" ? "" : v)}
+                  onChange={(v) => set({ workerId: v === "none" ? "" : v })}
                   options={[
                     { value: "none", label: "None" },
                     // By name: the list says no more than the names, so the Workers page's offline-first order
@@ -1687,56 +1980,7 @@ export function InstanceDialog({
               )}
               <FieldDescription>Needed to back up credential secrets and to move credentials.</FieldDescription>
             </Field>
-            <Field>
-              <FieldPicker
-                label="Find the main container by"
-                value={form.mainBy}
-                onChange={(v) => set("mainBy", v)}
-                options={[
-                  { value: "name", label: "Container name" },
-                  { value: "service", label: "Compose service" },
-                ]}
-              />
-              <FieldDescription>
-                {byService
-                  ? "Follows the service across docker rollout and redeploys: the worker uses its running container each time."
-                  : "The n8n main container on the host. The worker checks health inside it and exports credentials from it."}
-              </FieldDescription>
-            </Field>
-            {byService ? (
-              <div className="grid gap-4 md:grid-cols-2">
-                <Field>
-                  <FieldLabel htmlFor="i-compose-project">Compose project</FieldLabel>
-                  <Input
-                    id="i-compose-project"
-                    value={form.composeProject}
-                    onChange={(e) => set("composeProject", e.target.value)}
-                    placeholder="n8n1"
-                  />
-                  <FieldDescription>The name: in the Compose file, or its folder.</FieldDescription>
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor="i-compose-service">Service</FieldLabel>
-                  <Input
-                    id="i-compose-service"
-                    value={form.composeService}
-                    onChange={(e) => set("composeService", e.target.value)}
-                    placeholder="app"
-                  />
-                  <FieldDescription>The n8n main's service in that file.</FieldDescription>
-                </Field>
-              </div>
-            ) : (
-              <Field>
-                <FieldLabel htmlFor="i-container">Container name</FieldLabel>
-                <Input
-                  id="i-container"
-                  value={form.containerName}
-                  onChange={(e) => set("containerName", e.target.value)}
-                  placeholder="n8n"
-                />
-              </Field>
-            )}
+            <MainTargetFields value={form} onChange={set} />
           </FieldSet>
           {error && <FieldError>{error}</FieldError>}
         </FieldGroup>
@@ -1746,10 +1990,10 @@ export function InstanceDialog({
             variant="primary"
             onClick={() => void submit()}
             busy={busy}
-            busyLabel={!instance || form.apiKey ? "Testing…" : "Saving…"}
-            disabled={!form.name || !form.baseUrl || (!instance && !form.apiKey)}
+            busyLabel={form.apiKey ? "Testing…" : "Saving…"}
+            disabled={!form.name || !form.baseUrl}
           >
-            {instance ? "Save" : "Add instance"}
+            Save
           </BusyButton>
         </DialogFooter>
       </DialogContent>

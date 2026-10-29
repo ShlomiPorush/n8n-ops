@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+
+- **Add an instance with a setup that checks each step.** Adding an instance starts by choosing what it is for: health, monitoring and problems, the workflow map, moving workflows, Temporary access for agents, backup and restoring workflows. Only the steps those need follow (API key, worker and main container, health, Temporary access, backup destinations), and each is checked before the instance is activated: the key and the scopes each chosen capability needs, a command in the main through the worker, the health endpoints, each destination and the backup key. **Finish later** keeps the instance as Setup incomplete: it does nothing in the background and never alerts until its setup is completed. An active instance can add a capability (only its own checks run) or remove one (its alerts end without a message, queued jobs are dropped, and a backup still waiting for its archive ends without an alert; history stays). Background work, pages and agents act only on what each instance was chosen for; existing instances keep every capability.
+
+### Changed
+
+- **n8n 2.14.0 or later is required.** n8n-ops reads what each API key allows from `GET /api/v1/discover`, which n8n added in 2.14.0. Declaring a key as read only or read and write on older n8n is no longer possible; on an older instance the features that use the API are unavailable and its page says to update n8n. Health and worker backups of such an instance keep running.
+- **A backup through the worker no longer falls back to the API.** When its worker is not available, the backup fails and says so, instead of making an API backup that silently leaves out the credential secrets. Existing instances back up through their worker when one was assigned with its main set, otherwise through the API, as before; the choice is now per instance.
+- **A new base URL needs the API key again**, also through the API, or the key's removal.
+- **Upgrading is one way.** An earlier release cannot run against a database this one migrated. Before upgrading, make sure n8n-ops's own database backup is recent; to go back, restore it into the earlier release.
+
+### Fixed
+
+- **Saving an instance's overrides or its agent access keeps how its health is checked.** It no longer switched the health checks back to the n8n-ops server, turned queue mode off or dropped the queue worker URLs.
+
 ## [0.6.0] - 2026-10-28
 
 ### Added

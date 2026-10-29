@@ -5,7 +5,7 @@ import type { Ctx } from "../context.ts"
 import { affectedWorkflows, alertOutbox, alertState, backupRuns, failures, instances } from "../db/schema.ts"
 import { emailAccount } from "./draft-tests.ts"
 import { type Email, formatDate, panel, plural, render, stats, type Tone, table, tag } from "./email-layout.ts"
-import { compareVersions, latestN8nVersion } from "./instances.ts"
+import { activeOnly, can, compareVersions, latestN8nVersion } from "./instances.ts"
 import { openProblemCount, openProblemsByInstance } from "./problem-view.ts"
 import { telegramPlainText } from "./telegram.ts"
 
@@ -187,7 +187,8 @@ export async function buildReport(
   { test = false } = {},
 ): Promise<Report> {
   const since = new Date(when.getTime() - periodMs[period])
-  const allInstances = await ctx.db.select().from(instances)
+  // Active instances only; their backups only where backup was chosen. History stays in the other figures.
+  const allInstances = await ctx.db.select().from(instances).where(activeOnly)
   const name = new Map(allInstances.map((i) => [i.id, i.name]))
   // A Problem on two instances counts on each of them, and once in the total.
   const open = await openProblemsByInstance(ctx, when)
@@ -207,15 +208,17 @@ export async function buildReport(
     .orderBy(desc(alertOutbox.createdAt))
     .limit(30)
   const backups = await Promise.all(
-    allInstances.map(async (i) => {
-      const [last] = await ctx.db
-        .select()
-        .from(backupRuns)
-        .where(and(eq(backupRuns.instanceId, i.id), lte(backupRuns.startedAt, when)))
-        .orderBy(desc(backupRuns.startedAt))
-        .limit(1)
-      return { name: i.name, status: last?.status ?? "none", at: last?.startedAt ?? null }
-    }),
+    allInstances
+      .filter((i) => can(i, "backup"))
+      .map(async (i) => {
+        const [last] = await ctx.db
+          .select()
+          .from(backupRuns)
+          .where(and(eq(backupRuns.instanceId, i.id), lte(backupRuns.startedAt, when)))
+          .orderBy(desc(backupRuns.startedAt))
+          .limit(1)
+        return { name: i.name, status: last?.status ?? "none", at: last?.startedAt ?? null }
+      }),
   )
   return renderReport({
     period,

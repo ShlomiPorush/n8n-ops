@@ -113,15 +113,58 @@ test("a worker pairs with a one-time token", async () => {
   }).toPass({ timeout: 60_000 })
 })
 
-test("the worker is assigned to the instance", async () => {
+test("backup through the worker, restore and move are added to the instance, each with its own checks", async () => {
+  test.setTimeout(180_000)
   await page.goto("/instances")
   await page.getByRole("row", { name: /e2e-n8n/ }).click()
-  await page.getByRole("button", { name: "Edit" }).click()
-  await page.getByRole("button", { name: /^Worker on this instance.s Docker host: None$/ }).click()
-  await page.getByRole("option", { name: "E2E Host" }).click()
+  await page.getByRole("link", { name: "Add capability" }).click()
+  await expect(page.getByRole("heading", { name: "What to Add" })).toBeVisible()
+  // What is active stays as it is, and is not checked again.
+  await expect(page.getByRole("checkbox", { name: "Monitoring and problems", exact: true })).toBeDisabled()
+  // Restore needs backups: it can be chosen once Backup is.
+  await expect(page.getByRole("checkbox", { name: "Restore workflows", exact: true })).toBeDisabled()
+  await page.getByRole("checkbox", { name: "Backup", exact: true }).click()
+  // Through the worker is recommended and chosen first; through the API alone says what it leaves out.
+  await expect(page.getByRole("radio", { name: "Through the worker (recommended)" })).toBeChecked()
+  await page.getByRole("radio", { name: "Through the API only" }).click()
+  await expect(page.getByText("Credential secrets are not backed up")).toBeVisible()
+  await page.getByRole("radio", { name: "Through the worker (recommended)" }).click()
+  await page.getByRole("checkbox", { name: "Restore workflows", exact: true }).click()
+  await page.getByRole("checkbox", { name: "Move workflows", exact: true }).click()
+  await page.getByRole("button", { name: "Continue" }).click()
+
+  // The key's check from the registration counts for 15 minutes; when it is older, its step comes first.
+  const apiStep = page.getByRole("heading", { name: "API Key" })
+  const workerStep = page.getByRole("heading", { name: "Host Worker" })
+  await expect(apiStep.or(workerStep)).toBeVisible()
+  if (await apiStep.isVisible()) await page.getByRole("button", { name: "Continue" }).click()
+  await expect(workerStep).toBeVisible()
+  // The worker is chosen by hand, never picked on its own, with the main container's name.
+  const result = page.getByTestId("check-line")
+  await expect(page.getByRole("button", { name: "Continue" })).toBeDisabled()
+  await page.getByRole("button", { name: /^Worker on this instance.s host:/ }).click()
+  await page.getByRole("option", { name: /^E2E Host/ }).click()
   await page.getByLabel("Container name", { exact: true }).fill(container)
-  await page.getByRole("button", { name: "Save" }).click()
-  await dialogClosed(page)
+  await page.getByRole("button", { name: "Check", exact: true }).click()
+  await expect(result).toContainText("Passed", { timeout: 100_000 })
+  await expect(result).toContainText("read inside the container")
+  await page.getByRole("button", { name: "Continue" }).click()
+
+  // The default destinations are tested with the backup key.
+  await expect(page.getByRole("heading", { name: "Backup", exact: true })).toBeVisible()
+  await page.getByRole("button", { name: "Check", exact: true }).click()
+  await expect(result).toContainText("Passed", { timeout: 60_000 })
+  await expect(result).toContainText("Offsite S3")
+  await expect(result).toContainText("This server")
+  await page.getByRole("button", { name: "Continue" }).click()
+
+  // Saving the worker after the key's check leaves that check as it was: the key does not depend on the worker.
+  await expect(page.getByRole("heading", { name: "Review" })).toBeVisible()
+  await expect(page.getByTestId("review-api")).toContainText("Passed")
+  await page.getByRole("button", { name: "Activate" }).click()
+  await expect(page.getByText("Added Move workflows, Backup and Restore workflows to e2e-n8n")).toBeVisible()
+  for (const key of ["backup", "restore", "move"])
+    await expect(page.getByTestId(`capability-${key}`)).toContainText("Working")
   // Export is a rare action, so it waits in the instance's menu.
   await page.getByRole("button", { name: "More actions" }).click()
   await expect(page.getByRole("menuitem", { name: "Export credentials" })).toBeVisible()
@@ -245,20 +288,44 @@ test("an instance can choose its destinations instead of the defaults", async ()
 
 test("n8n-ops backs up its own database to the destinations", async () => {
   await page.goto("/backups")
-  await page
-    .getByRole("row", { name: /n8n-ops database/ })
-    .getByRole("button", { name: "Run now" })
-    .click()
+  // The nightly backup of the database may run next to this one (every 5 minutes once a destination exists), so
+  // what is checked is the run this click started.
+  const [started] = await Promise.all([
+    page.waitForResponse((r) => r.request().method() === "POST" && r.url().endsWith("/api/backups/self/run")),
+    page
+      .getByRole("row", { name: /n8n-ops database/ })
+      .getByRole("button", { name: "Run now" })
+      .click(),
+  ])
+  const { runId } = (await started.json()) as { runId: string }
   await page.getByRole("row", { name: /n8n-ops database/ }).click()
   // The pane shows the database's own history, whichever backup opened by itself first.
   const history = page.getByRole("region", { name: "Backups · n8n-ops database" })
-  await expect(history.getByText("OK · with secrets")).toBeVisible({ timeout: 90_000 })
-  await expect(history.getByText("Written")).toHaveCount(2)
-  const dumps = () =>
-    readdirSync("/backups-data/nightly/_n8n-ops", { recursive: true })
-      .map(String)
-      .filter((f) => f.endsWith(".dump.age"))
-  expect(dumps()).toHaveLength(1)
+  await expect(history.getByText("OK · with secrets").first()).toBeVisible({ timeout: 90_000 })
+  type Copy = { id: string; kind: string; status: string; verifiedAt: string | null }
+  const run = async () =>
+    (
+      (await (await page.request.get("/api/backups/self/runs")).json()) as {
+        id: string
+        status: string
+        includesSecrets: boolean
+        copies: Copy[]
+      }[]
+    ).find((r) => r.id === runId)
+  await expect.poll(async () => (await run())?.status, { timeout: 90_000 }).toBe("ok")
+  const ours = await run()
+  expect(ours?.includesSecrets).toBe(true)
+  // Both destinations hold a verified copy, and the mapped folder exactly one file of this run's copy.
+  expect(ours?.copies.map((c) => [c.status, Boolean(c.verifiedAt)])).toEqual([
+    ["ok", true],
+    ["ok", true],
+  ])
+  const local = ours?.copies.find((c) => c.kind === "local")
+  const short = local?.id.replace(/-/g, "").slice(0, 8) ?? "none"
+  const dumps = readdirSync("/backups-data/nightly/_n8n-ops", { recursive: true })
+    .map(String)
+    .filter((f) => f.endsWith(`-${short}.dump.age`))
+  expect(dumps).toHaveLength(1)
 })
 
 test("a workflow is restored from the backup with the private key", async () => {
@@ -319,12 +386,21 @@ test("a workflow moves to another instance with its credentials", async () => {
       ],
     }),
   })
+  // Moving needs Move workflows on both instances; Continue checks each step before it goes on.
   await page.goto("/instances")
   await page.getByRole("button", { name: "Add instance" }).click()
   await page.getByLabel("Name", { exact: true }).fill("e2e-n8n-b")
   await page.getByLabel("Base URL", { exact: true }).fill(n8nUrl)
+  for (const name of ["Monitoring and problems", "Workflow map", "Move workflows"])
+    await page.getByRole("checkbox", { name, exact: true }).click()
+  await page.getByRole("button", { name: "Continue" }).click()
+  await expect(page.getByRole("heading", { name: "API Key" })).toBeVisible()
   await page.getByLabel("API key", { exact: true }).fill(currentApiKey())
-  await page.getByRole("button", { name: "Add instance" }).last().click()
+  await page.getByRole("button", { name: "Continue" }).click()
+  await expect(page.getByRole("heading", { name: "Health", exact: true })).toBeVisible()
+  await page.getByRole("button", { name: "Continue" }).click()
+  await expect(page.getByRole("heading", { name: "Review" })).toBeVisible()
+  await page.getByRole("button", { name: "Activate" }).click()
   await expect(page.getByRole("heading", { name: "e2e-n8n-b" })).toBeVisible()
 
   await page.goto("/workflows")

@@ -207,15 +207,17 @@ test("after the switch the page takes the other design's layout", async () => {
   await page.goto("/settings/general")
 })
 
-test("another tab follows when it comes back to the front, and keeps its open dialog and edits", async () => {
+test("another tab follows when it comes back to the front, and keeps its open page and edits", async () => {
   const tab = await context.newPage()
   try {
     await tab.goto("/instances")
     await expect(shown(tab)).toHaveAttribute("data-design", other)
+    // The first step of adding an instance, typed in and not saved yet.
     await tab.getByRole("button", { name: "Add instance" }).click()
-    const dialog = tab.getByRole("dialog", { name: "Add an instance" })
-    await expect(dialog).toBeVisible()
-    await dialog.getByLabel("Name", { exact: true }).fill("not saved")
+    const form = tab.getByRole("main")
+    const step = tab.getByRole("heading", { name: "Basics" })
+    await expect(step).toBeVisible()
+    await form.getByLabel("Name", { exact: true }).fill("not saved")
     await mark(tab)
 
     await page.bringToFront()
@@ -226,8 +228,8 @@ test("another tab follows when it comes back to the front, and keeps its open di
     await tab.bringToFront()
     await tab.evaluate(() => document.dispatchEvent(new Event("visibilitychange")))
     await expect(shown(tab)).toHaveAttribute("data-design", here)
-    await expect(dialog).toBeVisible()
-    await expect(dialog.getByLabel("Name", { exact: true })).toHaveValue("not saved")
+    await expect(step).toBeVisible()
+    await expect(form.getByLabel("Name", { exact: true })).toHaveValue("not saved")
     expect(await marked(tab)).toBe("kept")
   } finally {
     await tab.close()

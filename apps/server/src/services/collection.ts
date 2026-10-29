@@ -3,6 +3,7 @@ import type { Ctx } from "../context.ts"
 import { alertState, type Health, instances, workers } from "../db/schema.ts"
 import { instanceSubject } from "./alert-routing.ts"
 import { setCondition } from "./alerts.ts"
+import { activeWith } from "./instances.ts"
 import { clip, html } from "./telegram.ts"
 
 /**
@@ -51,11 +52,17 @@ export type HealthNow = {
 }
 
 function whyUnknown(
-  i: Pick<Instance, "health" | "healthDetail" | "healthCheckedAt" | "collection" | "workerId">,
+  i: Pick<
+    Instance,
+    "health" | "healthDetail" | "healthCheckedAt" | "collection" | "workerId" | "setupState" | "chosenCapabilities"
+  >,
   w: Worker | null | undefined,
   intervalSec: number,
   now: number,
 ) {
+  // Nothing collects the health of an instance not chosen for it: what was read before is its last known health.
+  if (i.setupState !== "complete") return "Its setup is not complete"
+  if (!i.chosenCapabilities.includes("health")) return "Health is not chosen for this instance"
   if (i.collection !== "worker") return null
   if (!w || w.revokedAt || w.id !== i.workerId) return "No worker is assigned"
   if (!workerOnline(w, now)) return `${w.name} is offline`
@@ -74,7 +81,15 @@ function whyUnknown(
 export function healthNow(
   instance: Pick<
     Instance,
-    "health" | "healthDetail" | "healthCheckedAt" | "lastKnownHealth" | "lastKnownAt" | "collection" | "workerId"
+    | "health"
+    | "healthDetail"
+    | "healthCheckedAt"
+    | "lastKnownHealth"
+    | "lastKnownAt"
+    | "collection"
+    | "workerId"
+    | "setupState"
+    | "chosenCapabilities"
   >,
   worker: Worker | null | undefined,
   intervalSec: number,
@@ -136,7 +151,7 @@ export async function watchCollectors(ctx: Ctx, now = Date.now()) {
     ctx.db
       .select({ id: instances.id, name: instances.name, workerId: instances.workerId })
       .from(instances)
-      .where(and(eq(instances.collection, "worker"), isNotNull(instances.workerId)))
+      .where(and(eq(instances.collection, "worker"), isNotNull(instances.workerId), activeWith("health")))
       .orderBy(asc(instances.name)),
     ctx.db
       .select({ key: alertState.key })

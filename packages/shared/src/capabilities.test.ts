@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest"
-import { capabilityStatus, hasCapability, readScopes, writeScopes } from "./capabilities.ts"
+import { capabilityStatus, hasCapability } from "./capabilities.ts"
+
+const readScopes = ["workflow:list", "workflow:read", "execution:list", "execution:read", "credential:list"]
+const writeScopes = [...readScopes, "workflow:create", "workflow:activate", "workflow:deactivate", "credential:create"]
 
 describe("capabilities", () => {
   it("a read-only key allows monitoring but not moving", () => {
@@ -21,5 +24,14 @@ describe("capabilities", () => {
   it("lists the missing scopes", () => {
     const status = capabilityStatus(["execution:list"], false).find((c) => c.key === "monitor")
     expect(status?.missing).toEqual(["execution:read"])
+  })
+
+  it("Temporary access needs no execution scope, only a policy with a scope the key grants", () => {
+    const agents = (scopes: string[], grantable: number) =>
+      capabilityStatus(scopes, false, grantable).find((c) => c.key === "agents")
+    expect(agents(["workflow:read"], 1)).toMatchObject({ available: true, missing: [] })
+    expect(agents(["workflow:read"], 0)).toMatchObject({ available: false, missingAccess: true })
+    // No scopes read: n8n older than 2.14.0, or not read yet.
+    expect(agents([], 1)).toMatchObject({ available: false, missingAccess: true })
   })
 })

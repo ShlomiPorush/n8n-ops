@@ -5,7 +5,7 @@ import { tokenActor } from "../http/types.ts"
 import type { AuditVia } from "../lib/audit.ts"
 import { newToken, sha256 } from "../lib/crypto.ts"
 import { matchOperation, parseSpec, type SpecOperation, specHasScopes } from "../lib/n8n-spec.ts"
-import { effectiveScopes, type Instance } from "./instances.ts"
+import { can, effectiveScopes, type Instance, unsupportedVersion } from "./instances.ts"
 
 /**
  * Temporary access for agents to n8n instances. An agent asks for an instance, scopes, optional workflows and a
@@ -27,13 +27,25 @@ export class AccessError extends Error {
 const MAX_PENDING_PER_TOKEN = 3
 const KEY_PREFIX = "nops_n8n"
 
-/** Scopes an agent may be granted on an instance: allowed by its policy and held by its API key. */
-export function grantableScopes(
-  instance: Pick<Instance, "agentAccess" | "scopes" | "scopesSource" | "declaredAccess">,
-) {
+/** Scopes the instance's policy allows that its API key holds, whether or not Temporary access is chosen. */
+export function policyScopes(instance: Pick<Instance, "agentAccess" | "scopes">) {
   if (!instance.agentAccess.enabled) return []
   const held = new Set(effectiveScopes(instance))
   return instance.agentAccess.scopes.filter((s) => held.has(s))
+}
+
+type AccessFields = Pick<
+  Instance,
+  "agentAccess" | "scopes" | "setupState" | "chosenCapabilities" | "apiKeyEnc" | "scopesCheckedAt" | "version"
+>
+
+/** Whether agents may use the instance's API now: active, chosen for Temporary access, with a key, n8n 2.14.0+. */
+export const openToAgents = (instance: AccessFields) =>
+  can(instance, "agents") && Boolean(instance.apiKeyEnc) && !unsupportedVersion(instance)
+
+/** Scopes an agent may be granted on an instance: open to agents, allowed by its policy and held by its key. */
+export function grantableScopes(instance: AccessFields) {
+  return openToAgents(instance) ? policyScopes(instance) : []
 }
 
 async function findInstance(ctx: Ctx, ref: string) {
@@ -86,7 +98,7 @@ export async function requestAccess(ctx: Ctx, tokenId: string, input: AccessRequ
     )
   const instance = await findInstance(ctx, input.instance)
   if (!instance) throw new AccessError("unknown_instance", `There is no instance named "${input.instance}".`)
-  if (!instance.agentAccess.enabled)
+  if (!instance.agentAccess.enabled || !openToAgents(instance))
     throw new AccessError("instance_closed", `Agents may not request access to ${instance.name}.`)
   const grantable = grantableScopes(instance)
   const scopes = [...new Set(input.scopes)]
@@ -153,6 +165,12 @@ const messageOutdated = { telegramClosedAt: null }
 
 export async function approveAccess(ctx: Ctx, id: string, who: Decider) {
   const row = await pendingRequest(ctx, id)
+  const [instance] = await ctx.db.select().from(instances).where(eq(instances.id, row.instanceId))
+  if (!instance || !openToAgents(instance))
+    throw new AccessError(
+      "instance_closed",
+      `Temporary access to ${instance?.name ?? "this instance"} is turned off. Deny the request, or add Temporary access to its capabilities first.`,
+    )
   const key = newToken(KEY_PREFIX)
   const now = new Date()
   const [updated] = await ctx.db

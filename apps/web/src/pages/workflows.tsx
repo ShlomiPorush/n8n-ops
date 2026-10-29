@@ -47,6 +47,7 @@ import { FieldError } from "@/components/ui/field"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, useSort } from "@/components/ui/table"
 import { Tip } from "@/components/ui/tooltip"
 import { api, describeError, queryClient, useApi, useApiMutation } from "@/lib/api"
+import { activeWith, type PickedInstance } from "@/lib/instance-setup"
 import { loadView } from "@/lib/load-state"
 import { counts, errorRate, n, plural } from "@/lib/numbers"
 import { cn } from "@/lib/utils"
@@ -133,7 +134,9 @@ export function WorkflowsPage() {
   // A failed refresh keeps the rows and the head says so; new filters that failed keep the previous rows and the
   // filter line says so (TB-5, LD-12).
   const view = loadView(data)
-  const instances = useApi<{ instances: { id: string; name: string }[] }>("/instances")
+  const instances = useApi<{ instances: PickedInstance[] }>("/instances")
+  // Moving needs Move workflows chosen on both instances; a workflow elsewhere has no Move.
+  const movable = new Set(activeWith(instances.data?.instances, "move").map((i) => i.id))
   const sync = useApiMutation<void>("POST", "/workflows/sync", {
     invalidate: [`/workflows?${query}`],
     success: "Workflow map refreshed",
@@ -333,9 +336,11 @@ export function WorkflowsPage() {
                   <TableCell className="text-end tabular-nums">{n(w.runs30d)}</TableCell>
                   <ErrorRateCell rate={rate(w)} errors={w.errors30d} runs={w.runs30d} />
                   <TableCell className="text-end">
-                    <Button size="sm" onClick={() => setMoving(w)}>
-                      Move <ArrowRight />
-                    </Button>
+                    {movable.has(w.instanceId) && (
+                      <Button size="sm" onClick={() => setMoving(w)}>
+                        Move <ArrowRight />
+                      </Button>
+                    )}
                   </TableCell>
                 </TableRow>
               ))}
@@ -360,7 +365,7 @@ type Preview = {
 }
 
 function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClose: () => void }) {
-  const instances = useApi<{ instances: { id: string; name: string }[] }>(workflow ? "/instances" : null)
+  const instances = useApi<{ instances: PickedInstance[] }>(workflow ? "/instances" : null)
   const [target, setTarget] = useState("")
   const [preview, setPreview] = useState<Preview | null>(null)
   const [steps, setSteps] = useState<{ step: string; ok: boolean; detail?: string }[] | null>(null)
@@ -426,7 +431,7 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
               setTarget(v)
               setPreview(null)
             }}
-            options={(instances.data?.instances ?? [])
+            options={activeWith(instances.data?.instances, "move")
               .filter((i) => i.id !== workflow?.instanceId)
               .map((i) => ({ value: i.id, label: i.name }))}
           />

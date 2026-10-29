@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import { renderProblemGroup } from "./alerts.ts"
 import { type HealthReport, healthOf } from "./health.ts"
-import { compareVersions, effectiveScopes } from "./instances.ts"
+import { compareVersions, effectiveScopes, unsupportedVersion } from "./instances.ts"
 import { fingerprint, isNewer } from "./problems.ts"
 import { renderReport, zonedParts } from "./reports.ts"
 import { html } from "./telegram.ts"
@@ -96,13 +96,18 @@ describe("versions and scopes", () => {
     expect(compareVersions("1.99.0", "2.0.0")).toBe(-1)
   })
 
-  it("uses declared access on old versions", () => {
-    expect(effectiveScopes({ scopes: null, scopesSource: "declared", declaredAccess: "write" })).toContain(
-      "workflow:create",
-    )
-    expect(effectiveScopes({ scopes: null, scopesSource: "declared", declaredAccess: "read" })).not.toContain(
-      "workflow:create",
-    )
+  it("relies on no scope on n8n older than 2.14.0 (no /discover)", () => {
+    expect(effectiveScopes({ scopes: null })).toEqual([])
+    expect(effectiveScopes({ scopes: ["workflow:read"] })).toEqual(["workflow:read"])
+  })
+
+  it("names an unsupported n8n version", () => {
+    const read = { apiKeyEnc: "v1:x", scopesCheckedAt: new Date(), version: null }
+    expect(unsupportedVersion({ ...read, scopes: null })).toBe(true)
+    expect(unsupportedVersion({ ...read, scopes: [] })).toBe(false)
+    expect(unsupportedVersion({ ...read, scopes: ["workflow:read"], version: "2.13.1" })).toBe(true)
+    // Not read yet: nothing is known.
+    expect(unsupportedVersion({ ...read, scopesCheckedAt: null, scopes: null })).toBe(false)
   })
 })
 

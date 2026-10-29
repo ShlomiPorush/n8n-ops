@@ -1,0 +1,1 @@
+ALTER TABLE "instances" ADD COLUMN "backup_since" timestamp with time zone;

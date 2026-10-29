@@ -52,7 +52,7 @@ services:
   # Same rules and settings the server generates: ping, and exec only in this stack's n8n container;
   # root only to open the Docker socket, with no capabilities.
   socket-proxy:
-    image: wollomatic/socket-proxy:1.13.1
+    image: wollomatic/socket-proxy:1.13.2
     user: "0:0"
     read_only: true
     cap_drop: [ALL]
@@ -74,7 +74,7 @@ services:
 
   # Disposable n8n for development and the end-to-end tests. No persistent data.
   n8n:
-    image: n8nio/n8n:2.44.3
+    image: n8nio/n8n:2.45.3
     env_file: docker/n8n-dev.env
     healthcheck:
       test: ["CMD-SHELL", "node -e \"fetch('http://localhost:5678/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
@@ -89,7 +89,7 @@ services:
 
   # SMTP for development and the end-to-end tests (Mailpit): catches every email, read through its API on :8025.
   mail:
-    image: axllent/mailpit:v1.31.6
+    image: axllent/mailpit:v1.32.0
 
 networks:
   docker-proxy:

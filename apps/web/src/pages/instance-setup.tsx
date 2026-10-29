@@ -97,6 +97,17 @@ const icons: Record<CapabilityKey, LucideIcon> = {
 /** Move workflows needs the map, and Restore needs backups; each is chosen only after the one it needs. */
 const parentOf: Partial<Record<CapabilityKey, CapabilityKey>> = { move: "map", restore: "backup" }
 
+/*
+ * The tiles fill every row at each width: Health is twice as wide, and so is Backup in three columns.
+ * Four columns: Health, Monitoring, Agents / Map, Move, Backup, Restore. Three: Health, Monitoring / Agents, Map,
+ * Move / Backup, Restore. Two: Health / then pairs, each pair beside the one it needs.
+ */
+const tileOrder: CapabilityKey[] = ["health", "monitor", "agents", "map", "move", "backup", "restore"]
+const spans: Partial<Record<CapabilityKey, string>> = {
+  health: "@[26rem]/caps:col-span-2",
+  backup: "@[40rem]/caps:col-span-2 @[54rem]/caps:col-span-1",
+}
+
 type BasicsForm = Selection & { name: string; baseUrl: string }
 
 const newForm: BasicsForm = { name: "", baseUrl: "", chosen: ["health"], collection: "direct", backupVia: "worker" }
@@ -678,7 +689,7 @@ function BasicsStep({
   const set = (patch: Partial<BasicsForm>) => onChange({ ...form, ...patch })
   /*
    * One tile per capability: its icon, name, what it does and what it needs. The whole tile is the checkbox's
-   * label. On a phone the tile is a row, the icon beside the text; from md up it stands as a square.
+   * label. Where only one column fits the tile is a row, the icon beside the text; otherwise it stands as a square.
    */
   const tile = (key: CapabilityKey) => {
     const on = form.chosen.includes(key)
@@ -693,31 +704,32 @@ function BasicsStep({
         htmlFor={`cap-${key}`}
         data-testid={`card-${key}`}
         className={cn(
-          "grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] content-start gap-x-3.5 gap-y-2 rounded-lg border border-line bg-bg p-4 transition-colors duration-150 md:min-h-48 md:grid-cols-[minmax(0,1fr)_auto] md:grid-rows-[auto_auto_1fr] md:gap-y-3 md:p-5 regular:shadow-card",
+          "grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] content-start gap-x-3.5 gap-y-2 rounded-lg border border-line bg-bg p-4 transition-colors duration-150 @[26rem]/caps:min-h-48 @[26rem]/caps:grid-cols-[minmax(0,1fr)_auto] @[26rem]/caps:grid-rows-[auto_auto_1fr] @[26rem]/caps:gap-y-3 @[26rem]/caps:p-5 regular:shadow-card",
           on ? "border-primary ring-1 ring-primary" : !(locked || blocked) && "hover:border-muted-foreground/55",
           locked || blocked ? "cursor-not-allowed" : "cursor-pointer",
           blocked && "opacity-60",
+          spans[key],
         )}
       >
         <span
           aria-hidden
           className={cn(
-            "row-span-2 grid size-11 place-items-center rounded-lg transition-colors duration-150 md:row-span-1 md:size-12",
+            "row-span-2 grid size-11 place-items-center rounded-lg transition-colors duration-150 @[26rem]/caps:row-span-1 @[26rem]/caps:size-12",
             on ? "bg-primary text-primary-foreground" : "bg-fill text-muted-foreground",
           )}
         >
-          <Icon className="size-5.5 md:size-6" />
+          <Icon className="size-5.5 @[26rem]/caps:size-6" />
         </span>
         <Checkbox
           id={`cap-${key}`}
           aria-label={capabilityLabels[key]}
           aria-describedby={`cap-${key}-about`}
-          className="col-start-3 row-start-1 md:col-start-2"
+          className="col-start-3 row-start-1 @[26rem]/caps:col-start-2"
           checked={on}
           disabled={locked || blocked}
           onCheckedChange={(v) => set({ chosen: toggle(form.chosen, key, v === true) })}
         />
-        <span className="col-start-2 row-start-1 grid min-w-0 gap-1 md:col-span-2 md:col-start-1 md:row-start-2">
+        <span className="col-start-2 row-start-1 grid min-w-0 gap-1 @[26rem]/caps:col-span-2 @[26rem]/caps:col-start-1 @[26rem]/caps:row-start-2">
           <span className="text-h2 font-semibold">{capabilityLabels[key]}</span>
           <span id={`cap-${key}-about`} className="text-small text-muted-foreground">
             {about[key]}
@@ -725,7 +737,7 @@ function BasicsStep({
           </span>
         </span>
         {(locked || badges.length > 0) && (
-          <span className="col-start-2 flex min-w-0 flex-wrap items-end gap-1.5 md:col-span-2 md:col-start-1 md:row-start-3">
+          <span className="col-start-2 flex min-w-0 flex-wrap items-end gap-1.5 @[26rem]/caps:col-span-2 @[26rem]/caps:col-start-1 @[26rem]/caps:row-start-3">
             {locked ? (
               <Tone tone="ok">Active</Tone>
             ) : (
@@ -773,8 +785,10 @@ function BasicsStep({
       )}
       <fieldset className="grid min-w-0 gap-3">
         <legend className="mb-3 font-semibold">{adding ? "Capabilities" : "What is it for?"}</legend>
-        <div className="grid min-w-0 grid-cols-1 gap-3 md:grid-cols-[repeat(auto-fill,minmax(12rem,1fr))]">
-          {capabilityKeys.map(tile)}
+        <div className="@container/caps min-w-0">
+          <div className="grid min-w-0 grid-cols-1 gap-3 @[26rem]/caps:grid-cols-2 @[40rem]/caps:grid-cols-3 @[54rem]/caps:grid-cols-4">
+            {tileOrder.map(tile)}
+          </div>
         </div>
       </fieldset>
       {(askHealth || askBackup) && (

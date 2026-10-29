@@ -1,8 +1,5 @@
 import { type CapabilityKey, capabilityKeys, capabilityLabels, requirementsOf } from "@n8n-ops/shared"
 import {
-  ArchiveRestore,
-  ArrowRightLeft,
-  Bug,
   Check,
   DatabaseBackup,
   HeartPulse,
@@ -72,7 +69,7 @@ import { AddWorkerDialog, type Worker } from "./workers"
  * so a reload, Finish later and another tab all find the same. The step open is in the address (?step=).
  */
 
-/** What each capability does, on its card. */
+/** What each capability does, read out with its checkbox. */
 const about: Record<CapabilityKey, string> = {
   health: "Whether n8n is up and ready; in queue mode also its queue and queue workers.",
   monitor: "Reads failed executions and groups them into problems, with alerts.",
@@ -83,30 +80,43 @@ const about: Record<CapabilityKey, string> = {
   restore: "Restores a workflow from a backup into this instance.",
 }
 
-/** Each capability's icon on its tile; those with a page of their own use that page's icon. */
-const icons: Record<CapabilityKey, LucideIcon> = {
-  health: HeartPulse,
-  monitor: Bug,
-  map: Workflow,
-  move: ArrowRightLeft,
-  agents: KeyRound,
-  backup: DatabaseBackup,
-  restore: ArchiveRestore,
-}
-
 /** Move workflows needs the map, and Restore needs backups; each is chosen only after the one it needs. */
 const parentOf: Partial<Record<CapabilityKey, CapabilityKey>> = { move: "map", restore: "backup" }
 
-/*
- * The tiles fill every row at each width: Health is twice as wide, and so is Backup in three columns.
- * Four columns: Health, Monitoring, Agents / Map, Move, Backup, Restore. Three: Health, Monitoring / Agents, Map,
- * Move / Backup, Restore. Two: Health / then pairs, each pair beside the one it needs.
+/**
+ * The first step's tiles: four areas, two by two, each with its capabilities. A capability that needs another
+ * sits under it in the same tile; the area's icon is that of its page where it has one.
  */
-const tileOrder: CapabilityKey[] = ["health", "monitor", "agents", "map", "move", "backup", "restore"]
-const spans: Partial<Record<CapabilityKey, string>> = {
-  health: "@[26rem]/caps:col-span-2",
-  backup: "@[40rem]/caps:col-span-2 @[54rem]/caps:col-span-1",
-}
+const areas: { key: string; title: string; about: string; icon: LucideIcon; items: CapabilityKey[] }[] = [
+  {
+    key: "monitoring",
+    title: "Monitoring",
+    about: "Know when n8n is down or its workflows fail.",
+    icon: HeartPulse,
+    items: ["health", "monitor"],
+  },
+  {
+    key: "workflows",
+    title: "Workflows",
+    about: "See every workflow and move workflows between instances.",
+    icon: Workflow,
+    items: ["map", "move"],
+  },
+  {
+    key: "agents",
+    title: "Agents",
+    about: "Let AI agents use this n8n, with your approval.",
+    icon: KeyRound,
+    items: ["agents"],
+  },
+  {
+    key: "backups",
+    title: "Backups",
+    about: "Keep encrypted copies and restore from them.",
+    icon: DatabaseBackup,
+    items: ["backup", "restore"],
+  },
+]
 
 type BasicsForm = Selection & { name: string; baseUrl: string }
 
@@ -687,57 +697,77 @@ function BasicsStep({
 }) {
   const adding = active.length > 0
   const set = (patch: Partial<BasicsForm>) => onChange({ ...form, ...patch })
-  /*
-   * One tile per capability: its icon, name, what it does and what it needs. The whole tile is the checkbox's
-   * label. Where only one column fits the tile is a row, the icon beside the text; otherwise it stands as a square.
-   */
-  const tile = (key: CapabilityKey) => {
-    const on = form.chosen.includes(key)
+  const askHealth = form.chosen.includes("health") && !active.includes("health")
+  const askBackup = form.chosen.includes("backup") && !active.includes("backup")
+  /** A chosen capability's own choice, under it in its tile. */
+  const choiceOf = (key: CapabilityKey) =>
+    key === "health" && askHealth ? (
+      <SubChoice
+        label="Health is checked by"
+        value={form.collection}
+        onChange={(v) => set({ collection: v as BasicsForm["collection"] })}
+        options={[
+          { value: "direct", label: "The n8n-ops server" },
+          { value: "worker", label: "The worker on the host" },
+        ]}
+        hint={
+          form.collection === "direct"
+            ? "n8n-ops calls /healthz of the base URL."
+            : "The worker reads health inside the main container, so nothing has to be reachable from outside the host."
+        }
+      />
+    ) : key === "backup" && askBackup ? (
+      <SubChoice
+        label="Backups are made"
+        value={form.backupVia}
+        onChange={(v) => set({ backupVia: v as BasicsForm["backupVia"] })}
+        options={[
+          { value: "worker", label: "Through the worker (recommended)" },
+          { value: "api", label: "Through the API only" },
+        ]}
+        hint={
+          form.backupVia === "worker"
+            ? "The worker on the n8n host exports the workflows and the credentials with their secrets."
+            : undefined
+        }
+      >
+        {form.backupVia === "api" && (
+          <Alert variant="warn">
+            <AlertTitle>Credential secrets are not backed up</AlertTitle>
+            <AlertDescription>
+              Through the API a backup holds the workflows, and the credentials' names and types only when the API key
+              may list credentials (credential:list). Restored credentials need their secrets entered again.
+            </AlertDescription>
+          </Alert>
+        )}
+      </SubChoice>
+    ) : null
+  /** One capability in its area's tile: its checkbox, its name and what it needs, then its own choice. */
+  const item = (key: CapabilityKey) => {
     const locked = active.includes(key)
     const parent = parentOf[key]
     const blocked = parent !== undefined && !form.chosen.includes(parent)
     const badges = badgesOf(key, form)
-    const Icon = icons[key]
     return (
-      <label
-        key={key}
-        htmlFor={`cap-${key}`}
-        data-testid={`card-${key}`}
-        className={cn(
-          "grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] content-start gap-x-3.5 gap-y-2 rounded-lg border border-line bg-bg p-4 transition-colors duration-150 @[26rem]/caps:min-h-48 @[26rem]/caps:grid-cols-[minmax(0,1fr)_auto] @[26rem]/caps:grid-rows-[auto_auto_1fr] @[26rem]/caps:gap-y-3 @[26rem]/caps:p-5 regular:shadow-card",
-          on ? "border-primary ring-1 ring-primary" : !(locked || blocked) && "hover:border-muted-foreground/55",
-          locked || blocked ? "cursor-not-allowed" : "cursor-pointer",
-          blocked && "opacity-60",
-          spans[key],
-        )}
-      >
-        <span
-          aria-hidden
+      <div key={key} className="grid min-w-0 gap-2.5">
+        <label
+          htmlFor={`cap-${key}`}
           className={cn(
-            "row-span-2 grid size-11 place-items-center rounded-lg transition-colors duration-150 @[26rem]/caps:row-span-1 @[26rem]/caps:size-12",
-            on ? "bg-primary text-primary-foreground" : "bg-fill text-muted-foreground",
+            "flex min-w-0 items-center gap-2.5",
+            locked || blocked ? "cursor-not-allowed" : "cursor-pointer",
+            blocked && "opacity-55",
           )}
         >
-          <Icon className="size-5.5 @[26rem]/caps:size-6" />
-        </span>
-        <Checkbox
-          id={`cap-${key}`}
-          aria-label={capabilityLabels[key]}
-          aria-describedby={`cap-${key}-about`}
-          className="col-start-3 row-start-1 @[26rem]/caps:col-start-2"
-          checked={on}
-          disabled={locked || blocked}
-          onCheckedChange={(v) => set({ chosen: toggle(form.chosen, key, v === true) })}
-        />
-        <span className="col-start-2 row-start-1 grid min-w-0 gap-1 @[26rem]/caps:col-span-2 @[26rem]/caps:col-start-1 @[26rem]/caps:row-start-2">
-          <span className="text-h2 font-semibold">{capabilityLabels[key]}</span>
-          <span id={`cap-${key}-about`} className="text-small text-muted-foreground">
-            {about[key]}
-            {blocked && ` Needs ${capabilityLabels[parent]}.`}
-          </span>
-        </span>
-        {(locked || badges.length > 0) && (
-          <span className="col-start-2 flex min-w-0 flex-wrap items-end gap-1.5 @[26rem]/caps:col-span-2 @[26rem]/caps:col-start-1 @[26rem]/caps:row-start-3">
+          <Checkbox
+            id={`cap-${key}`}
+            aria-label={capabilityLabels[key]}
+            aria-describedby={`cap-${key}-about`}
+            checked={form.chosen.includes(key)}
+            disabled={locked || blocked}
+            onCheckedChange={(v) => set({ chosen: toggle(form.chosen, key, v === true) })}
+          />
+          <span className="min-w-0 flex-1 font-medium">{capabilityLabels[key]}</span>
+          <span className="flex shrink-0 flex-wrap justify-end gap-1.5">
             {locked ? (
               <Tone tone="ok">Active</Tone>
             ) : (
@@ -748,12 +778,50 @@ function BasicsStep({
               ))
             )}
           </span>
-        )}
-      </label>
+        </label>
+        <span id={`cap-${key}-about`} className={cn(!blocked && "sr-only", "ps-6.5 text-small text-muted-foreground")}>
+          <span className="sr-only">{about[key]} </span>
+          {blocked && `Needs ${capabilityLabels[parent]}.`}
+        </span>
+        {choiceOf(key)}
+      </div>
     )
   }
-  const askHealth = form.chosen.includes("health") && !active.includes("health")
-  const askBackup = form.chosen.includes("backup") && !active.includes("backup")
+  /** One area's tile: its icon, name and what it is for, then its capabilities. */
+  const tile = (area: (typeof areas)[number]) => {
+    const on = area.items.some((k) => form.chosen.includes(k))
+    const Icon = area.icon
+    return (
+      <fieldset
+        key={area.key}
+        aria-labelledby={`area-${area.key}`}
+        data-testid={`area-${area.key}`}
+        className={cn(
+          "grid min-w-0 content-start gap-4 rounded-lg border border-line bg-bg p-4 transition-colors duration-150 @[34rem]/caps:p-5 regular:shadow-card",
+          on && "border-primary ring-1 ring-primary",
+        )}
+      >
+        <div className="flex min-w-0 items-start gap-3.5">
+          <span
+            aria-hidden
+            className={cn(
+              "grid size-11 shrink-0 place-items-center rounded-lg transition-colors duration-150",
+              on ? "bg-primary text-primary-foreground" : "bg-fill text-muted-foreground",
+            )}
+          >
+            <Icon className="size-5.5" />
+          </span>
+          <span className="grid min-w-0 gap-0.5">
+            <span id={`area-${area.key}`} className="text-h2 font-semibold">
+              {area.title}
+            </span>
+            <span className="text-small text-muted-foreground">{area.about}</span>
+          </span>
+        </div>
+        <div className="grid min-w-0 gap-3 border-t border-line pt-3.5">{area.items.map(item)}</div>
+      </fieldset>
+    )
+  }
   return (
     <StepPanel
       title={adding ? "What to Add" : stepTitles.basics}
@@ -786,67 +854,16 @@ function BasicsStep({
       <fieldset className="grid min-w-0 gap-3">
         <legend className="mb-3 font-semibold">{adding ? "Capabilities" : "What is it for?"}</legend>
         <div className="@container/caps min-w-0">
-          <div className="grid min-w-0 grid-cols-1 gap-3 @[26rem]/caps:grid-cols-2 @[40rem]/caps:grid-cols-3 @[54rem]/caps:grid-cols-4">
-            {tileOrder.map(tile)}
-          </div>
+          <div className="grid min-w-0 grid-cols-1 gap-3 @[34rem]/caps:grid-cols-2">{areas.map(tile)}</div>
         </div>
       </fieldset>
-      {(askHealth || askBackup) && (
-        <div className="grid min-w-0 items-start gap-3 lg:grid-cols-2">
-          {askHealth && (
-            <SubChoice
-              icon={icons.health}
-              label="Health is checked by"
-              value={form.collection}
-              onChange={(v) => set({ collection: v as BasicsForm["collection"] })}
-              options={[
-                { value: "direct", label: "The n8n-ops server" },
-                { value: "worker", label: "The worker on the host" },
-              ]}
-              hint={
-                form.collection === "direct"
-                  ? "n8n-ops calls /healthz of the base URL."
-                  : "The worker reads health inside the main container, so nothing has to be reachable from outside the host."
-              }
-            />
-          )}
-          {askBackup && (
-            <SubChoice
-              icon={icons.backup}
-              label="Backups are made"
-              value={form.backupVia}
-              onChange={(v) => set({ backupVia: v as BasicsForm["backupVia"] })}
-              options={[
-                { value: "worker", label: "Through the worker (recommended)" },
-                { value: "api", label: "Through the API only" },
-              ]}
-              hint={
-                form.backupVia === "worker"
-                  ? "The worker on the n8n host exports the workflows and the credentials with their secrets."
-                  : undefined
-              }
-            >
-              {form.backupVia === "api" && (
-                <Alert variant="warn">
-                  <AlertTitle>Credential secrets are not backed up</AlertTitle>
-                  <AlertDescription>
-                    Through the API a backup holds the workflows, and the credentials' names and types only when the API
-                    key may list credentials (credential:list). Restored credentials need their secrets entered again.
-                  </AlertDescription>
-                </Alert>
-              )}
-            </SubChoice>
-          )}
-        </div>
-      )}
       {error && <FieldError>{error}</FieldError>}
     </StepPanel>
   )
 }
 
-/** A chosen capability's own choice, such as where its health is checked from, in a box under the tiles. */
+/** A chosen capability's own choice, such as where its health is checked from, under it in its tile. */
 function SubChoice({
-  icon: Icon,
   label,
   value,
   onChange,
@@ -854,7 +871,6 @@ function SubChoice({
   hint,
   children,
 }: {
-  icon: LucideIcon
   label: string
   value: string
   onChange: (value: string) => void
@@ -863,11 +879,8 @@ function SubChoice({
   children?: React.ReactNode
 }) {
   return (
-    <div className="grid min-w-0 gap-2.5 rounded-lg border border-line bg-bg p-4 md:p-5 regular:shadow-card">
-      <span className="flex min-w-0 items-center gap-2 font-semibold">
-        <Icon aria-hidden className="size-4.5 shrink-0 text-muted-foreground" />
-        {label}
-      </span>
+    <div className="grid min-w-0 gap-2 ps-6.5">
+      <span className="text-small font-semibold text-muted-foreground">{label}</span>
       <ToggleGroup type="single" segmented aria-label={label} value={value} onValueChange={(v) => v && onChange(v)}>
         {options.map((o) => (
           <ToggleGroupItem key={o.value} value={o.value}>

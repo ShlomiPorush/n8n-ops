@@ -304,16 +304,10 @@ test("n8n-ops backs up its own database to the destinations", async () => {
   // The pane shows the database's own history, whichever backup opened by itself first.
   const history = page.getByRole("region", { name: "Backups · n8n-ops database" })
   await expect(history.getByText("OK · with secrets").first()).toBeVisible({ timeout: 90_000 })
-  type Copy = { id: string; kind: string; status: string; verifiedAt: string | null }
-  const run = async () =>
-    (
-      (await (await page.request.get("/api/backups/self/runs")).json()) as {
-        id: string
-        status: string
-        includesSecrets: boolean
-        copies: Copy[]
-      }[]
-    ).find((r) => r.id === runId)
+  type Copy = { id: string; kind: string; status: string; verifiedAt: string | null; deletedAt: string | null }
+  type Run = { id: string; status: string; includesSecrets: boolean; copies: Copy[] }
+  const runs = async () => (await (await page.request.get("/api/backups/self/runs")).json()) as Run[]
+  const run = async () => (await runs()).find((r) => r.id === runId)
   await expect.poll(async () => (await run())?.status, { timeout: 90_000 }).toBe("ok")
   const ours = await run()
   expect(ours?.includesSecrets).toBe(true)
@@ -322,12 +316,18 @@ test("n8n-ops backs up its own database to the destinations", async () => {
     ["ok", true],
     ["ok", true],
   ])
-  const local = ours?.copies.find((c) => c.kind === "local")
-  const short = local?.id.replace(/-/g, "").slice(0, 8) ?? "none"
-  const dumps = readdirSync("/backups-data/nightly/_n8n-ops", { recursive: true })
-    .map(String)
-    .filter((f) => f.endsWith(`-${short}.dump.age`))
-  expect(dumps).toHaveLength(1)
+  // A nightly run that ends after this one on the same day leaves this one to retention, which keeps the newest of
+  // each day: then its file is gone again. So the folder is compared with every copy: one file for each copy still
+  // kept, none for a removed one, and at least one kept. Retried, since retention may remove one in between.
+  await expect(async () => {
+    const files = readdirSync("/backups-data/nightly/_n8n-ops", { recursive: true }).map(String)
+    const locals = (await runs()).flatMap((r) => r.copies.filter((c) => c.kind === "local" && c.status === "ok"))
+    expect(locals.some((c) => !c.deletedAt)).toBe(true)
+    for (const c of locals) {
+      const short = c.id.replace(/-/g, "").slice(0, 8)
+      expect(files.filter((f) => f.endsWith(`-${short}.dump.age`))).toHaveLength(c.deletedAt ? 0 : 1)
+    }
+  }).toPass({ timeout: 30_000 })
 })
 
 test("a workflow is restored from the backup with the private key", async () => {

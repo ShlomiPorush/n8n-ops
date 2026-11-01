@@ -17,21 +17,30 @@ const PATTERN_MS = 20
 const sandbox = vm.createContext(Object.create(null))
 const matcher = new vm.Script("new RegExp(pattern, 'iu').test(subject)")
 
-/** Patterns that ran out of time once. They match nothing until the server restarts, so each costs PATTERN_MS once. */
+/**
+ * Patterns that ran out of time twice in a row. They match nothing until the server restarts, so each costs twice
+ * PATTERN_MS once. Twice, since a pause of a busy server can push any pattern past the limit once; the second try
+ * has a clock of its own.
+ */
 const slowPatterns = new Set<string>()
+
+const timedOut = (error: unknown) => (error as { code?: string }).code === "ERR_SCRIPT_EXECUTION_TIMEOUT"
 
 function patternMatches(pattern: string, subject: string, onSlow: (pattern: string) => void) {
   if (slowPatterns.has(pattern)) return false
   sandbox.pattern = pattern
   sandbox.subject = subject.slice(0, 1000)
-  try {
-    return matcher.runInContext(sandbox, { timeout: PATTERN_MS }) === true
-  } catch (error) {
-    if ((error as { code?: string }).code === "ERR_SCRIPT_EXECUTION_TIMEOUT") {
-      slowPatterns.add(pattern)
-      onSlow(pattern)
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return matcher.runInContext(sandbox, { timeout: PATTERN_MS }) === true
+    } catch (error) {
+      if (!timedOut(error)) return false
+      if (attempt === 2) {
+        slowPatterns.add(pattern)
+        onSlow(pattern)
+        return false
+      }
     }
-    return false
   }
 }
 

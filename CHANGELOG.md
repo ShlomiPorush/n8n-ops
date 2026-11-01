@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-11-01
+
 ### Fixed
 
 - **The setup's health check no longer asks for queue metrics on n8n in regular mode.** When the worker found the main in regular mode, the check showed "no queue metrics; set N8N_METRICS_INCLUDE_QUEUE_METRICS=true", although n8n publishes queue metrics only in queue mode. It now shows the queue parts only in queue mode, as the instance's Health tab already did.

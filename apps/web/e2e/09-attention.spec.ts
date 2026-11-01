@@ -1,5 +1,5 @@
 import { expect, type Page, test } from "@playwright/test"
-import { signIn } from "./helpers.ts"
+import { dialogOpened, signIn } from "./helpers.ts"
 
 // Needs attention from every page (NL-19, FB-10, FB-17) and the phone shell around it (NL-9, NL-10): the bell and its
 // window, a row's action with Undo, the capped list on Overview, the phone sheet and the More sheet.
@@ -251,6 +251,7 @@ test("on a phone the bell replaces the problems pill and opens a sheet (NL-9, NL
     await expect(sheet).toBeVisible()
     await expect(sheet.getByRole("link", { name: "Open the Overview" })).toBeVisible()
     // Back closes it and stays on the page.
+    await dialogOpened(page)
     await page.goBack()
     await expect(sheet).toHaveCount(0)
     await expect(page).toHaveURL(/\/workflows/)
@@ -317,6 +318,7 @@ test("on a phone a page chosen in More asks about unsaved changes, and Stay keep
     // Kept: the page, what was typed, and the sheet with its Back step.
     await expect(sheet).toBeVisible()
     await expect(page).toHaveURL(/\/settings\/general/)
+    await dialogOpened(page)
     await page.goBack()
     await expect(sheet).toHaveCount(0)
     await expect(page).toHaveURL(/\/settings\/general/)

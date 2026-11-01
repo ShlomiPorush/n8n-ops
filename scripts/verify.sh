@@ -469,7 +469,8 @@ run_e2e_round() {
     -v "$N8N_OPS_DATA_DIR/pairing:/worker-data" -v "$N8N_OPS_DATA_DIR/backups:/backups-data:ro" \
     -v "$REPO_ROOT:/repo" -w "/repo/$app" \
     "$PLAYWRIGHT_IMAGE" node node_modules/@playwright/test/cli.js test || {
-    stack logs --tail 60 server worker
+    # The proxy and n8n too: a worker's Docker call that breaks off shows there which hop dropped it.
+    stack logs --tail 60 server worker socket-proxy n8n
     die "end-to-end tests failed ($design design)"
   }
   stop_stack

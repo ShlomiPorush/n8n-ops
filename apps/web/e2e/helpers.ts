@@ -55,6 +55,16 @@ export async function signIn(page: Page) {
 }
 
 /**
+ * Waits until an open dialog, sheet or list holds its Back step. The step is pushed on the next task after it opens
+ * (lib/overlay-history.ts), so a Back pressed before that leaves the page instead of closing it.
+ */
+export async function dialogOpened(page: Page) {
+  await expect
+    .poll(() => page.evaluate(() => (window.history.state as { overlay?: number } | null)?.overlay ?? null))
+    .not.toBeNull()
+}
+
+/**
  * Waits until a dialog or confirmation closed without leaving the page has given back its Back entry. It calls
  * history.back() once its panel is gone (a dialog after its fade-out), and that back cancels a page.goto or reload
  * started in the meantime (net::ERR_ABORTED). Only for the top overlay: one still open underneath that holds an

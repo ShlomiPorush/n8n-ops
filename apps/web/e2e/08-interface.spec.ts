@@ -1,5 +1,5 @@
 import { expect, type Locator, type Page, type Request, test } from "@playwright/test"
-import { design, dialogClosed, discardChanges, signIn } from "./helpers.ts"
+import { design, dialogClosed, dialogOpened, discardChanges, signIn } from "./helpers.ts"
 
 // The shared ways of moving around: search, sorting, filters in the address, the keyboard, Back, unsaved
 // changes, the sidebar and the links out to n8n.
@@ -491,6 +491,7 @@ async function openEdit() {
 
 test("Back closes a dialog and stays on the page", async () => {
   const { from } = await openEdit()
+  await dialogOpened(page)
   await page.goBack()
   await expect(page.getByRole("dialog")).toHaveCount(0)
   await expect(page).toHaveURL(from)
@@ -944,6 +945,7 @@ test("the time zone is chosen from a list with a search, and Back closes the lis
   await expect(search).toBeFocused()
   await search.fill("jerusalem")
   await expect(page.getByRole("option", { name: /Asia\/Jerusalem/ })).toBeVisible()
+  await dialogOpened(page)
   await page.goBack()
   await expect(search).toHaveCount(0)
   await expect(page).toHaveURL(/\/settings\/general$/)

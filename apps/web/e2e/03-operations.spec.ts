@@ -222,6 +222,8 @@ test("through the worker, health is read inside the main container", async () =>
 })
 
 test("a backup through the worker includes credential secrets", async () => {
+  // The run below may take up to 90 seconds on its own, beyond the default 60 for the whole test.
+  test.setTimeout(150_000)
   await n8nApi("/api/v1/credentials", {
     method: "POST",
     body: JSON.stringify({

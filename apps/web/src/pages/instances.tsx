@@ -551,6 +551,9 @@ const kpisInPane = cn(
   "regular:@max-[36rem]/pane:**:data-[slot=kpi]:p-3.5",
 )
 
+/** What Check now did: the failures and the workflows it read, each null where not chosen. */
+type Refreshed = { poll: { error?: string } | null; map: { error?: string } | null }
+
 function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
   const navigate = useNavigate()
   const w = useTimeFormat()
@@ -565,10 +568,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
   // Toasts name the instance (FB-4), read when the request ends.
   const named = () => detail.data?.name ?? "the instance"
   // The server checks the health itself only for direct collection; a worker reports it on its own schedule.
-  const refresh = useApiMutation<
-    void,
-    { poll: { error?: string } | null; map: { error?: string } | null }
-  >("POST", `/instances/${id}/refresh`, {
+  const refresh = useApiMutation<void, Refreshed>("POST", `/instances/${id}/refresh`, {
     invalidate,
     failed: () => `check ${named()}`,
   })

@@ -394,10 +394,13 @@ describe("activation", () => {
     const added = await activate(ctx, row.id, { add: ["map"] })
     expect(added?.instance.chosenCapabilities).toEqual(["health", "map"])
     // The map is read right after activation, not at the next run of the 30-minute workflow-map job.
-    await vi.waitFor(async () => {
-      const rows = await ctx.db.select().from(workflows).where(eq(workflows.instanceId, row.id))
-      expect(rows).toMatchObject([{ workflowId: "wf-1", active: true, runs30d: 2, errors30d: 1 }])
-    }, { timeout: 10_000 })
+    await vi.waitFor(
+      async () => {
+        const rows = await ctx.db.select().from(workflows).where(eq(workflows.instanceId, row.id))
+        expect(rows).toMatchObject([{ workflowId: "wf-1", active: true, runs30d: 2, errors30d: 1 }])
+      },
+      { timeout: 10_000 },
+    )
   })
 
   it("does not read the workflows when the map is not among what is activated", async () => {

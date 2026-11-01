@@ -565,21 +565,29 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
   // Toasts name the instance (FB-4), read when the request ends.
   const named = () => detail.data?.name ?? "the instance"
   // The server checks the health itself only for direct collection; a worker reports it on its own schedule.
-  const refresh = useApiMutation<void, { poll: { error?: string } | null }>("POST", `/instances/${id}/refresh`, {
+  const refresh = useApiMutation<
+    void,
+    { poll: { error?: string } | null; map: { error?: string } | null }
+  >("POST", `/instances/${id}/refresh`, {
     invalidate,
     failed: () => `check ${named()}`,
   })
   const checkNow = async () => {
-    const { poll } = await refresh.mutateAsync()
-    if (poll?.error) {
-      toast.error(`Could not read the failures of ${named()}: ${poll.error}`)
-      // The button shows that it failed too; the toast has said why.
-      throw new Error(poll.error)
+    const { poll, map } = await refresh.mutateAsync()
+    const failed = [
+      poll?.error && `Could not read the failures of ${named()}: ${poll.error}`,
+      map?.error && `Could not read the workflows of ${named()}: ${map.error}`,
+    ].filter((m): m is string => Boolean(m))
+    if (failed.length) {
+      for (const message of failed) toast.error(message)
+      // The button shows that it failed too; the toasts have said why.
+      throw new Error(failed.join(" "))
     }
-    // Each part runs only where it was chosen: health checked here, failures read.
+    // Each part runs only where it was chosen: health checked here, failures and workflows read.
     const healthHere = detail.data?.collection === "direct" && detail.data.chosen.includes("health")
+    const read = [poll && "failures", map && "workflows"].filter(Boolean).join(" and ")
     if (healthHere) toast.success(`Checked ${named()}`)
-    else if (poll) toast.success(`Read the failures of ${named()}.`)
+    else if (read) toast.success(`Read the ${read} of ${named()}.`)
     else toast.success(`Read the version and scopes of ${named()}.`)
   }
   const remove = useApiMutation<void>("DELETE", `/instances/${id}`, {

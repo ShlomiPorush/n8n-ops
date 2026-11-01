@@ -6,7 +6,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Fixed
 
-- **The workflow and execution counts of a new instance appear right after its setup.** An instance activated with the workflow map showed no workflows or executions for up to 30 minutes, until the next scheduled sync. The sync now starts on activation, and an open page shows the counts when it ends, without a reload.
+- **The workflow and execution counts of a new instance appear right after its setup.** An instance activated with the workflow map showed no workflows or executions for up to 30 minutes, until the next scheduled sync. The sync now starts on activation, and an open page shows the counts when it ends, without a reload. **Check now** on an instance page also reads its workflows again.
 
 ## [0.7.0] - 2026-11-01
 

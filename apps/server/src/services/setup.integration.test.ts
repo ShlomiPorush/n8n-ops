@@ -826,6 +826,34 @@ describe("PATCH /instances/:id", () => {
   })
 })
 
+describe("POST /instances/:id/refresh", () => {
+  const refresh = async (id: string) => {
+    const res = await new Hono<Env>()
+      .route("/api/instances", instanceRoutes(ctx))
+      .request(`/api/instances/${id}/refresh`, { method: "POST" })
+    expect(res.status).toBe(200)
+    return (await res.json()) as { map: unknown; skipped: string[] }
+  }
+
+  it("syncs the workflows too, where the map is chosen", async () => {
+    reset()
+    const row = await instance({ chosenCapabilities: ["map"], apiKeyEnc: ctx.secrets.encrypt(KEY) })
+    expect((await refresh(row.id)).map).toEqual({ workflows: 1 })
+    expect(await ctx.db.select().from(workflows).where(eq(workflows.instanceId, row.id))).toMatchObject([
+      { workflowId: "wf-1", runs30d: 2, errors30d: 1 },
+    ])
+  })
+
+  it("says the workflows were not read where the map is not chosen", async () => {
+    reset()
+    const row = await instance({ chosenCapabilities: ["health"], apiKeyEnc: ctx.secrets.encrypt(KEY) })
+    const body = await refresh(row.id)
+    expect(body.map).toBeNull()
+    expect(body.skipped).toContain("The workflow map is not chosen, so workflows were not read.")
+    expect(n8n.workflowReads).toBe(0)
+  })
+})
+
 describe("the n8n version", () => {
   it("is read over the network again once health is off, so an update clears unsupported (R5)", async () => {
     reset()

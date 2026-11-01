@@ -197,8 +197,9 @@ test("through the worker, health is read inside the main container", async () =>
     overrides: Record<string, unknown>
   }
   const stored = detail.overrides
-  await storeOverrides({ ...stored, healthIntervalSec: 10 })
   try {
+    // Inside the try: a save that went through although its answer failed is put back too.
+    await storeOverrides({ ...stored, healthIntervalSec: 10 })
     await page.goto("/instances")
     await page.getByRole("row", { name: /e2e-n8n/ }).click()
     await collect(/^Check health and metrics: Directly from the n8n-ops server$/, "Through the worker on the n8n host")

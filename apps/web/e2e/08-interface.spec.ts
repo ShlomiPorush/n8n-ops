@@ -474,22 +474,33 @@ test("a list beside the reading pane sorts from its Sort button, and Default ord
   await expect(menu).toBeHidden()
 })
 
-test("Back closes a dialog and stays on the page", async () => {
+/** Opens e2e-n8n's Edit dialog, the dialog these tests type into. */
+async function openEdit() {
   await page.goto("/instances")
-  await page.getByRole("button", { name: "Add instance" }).click()
-  await expect(page.getByRole("dialog", { name: "Add an instance" })).toBeVisible()
+  await page
+    .getByRole("row")
+    .filter({ has: page.getByText("e2e-n8n", { exact: true }) })
+    .click()
+  await expect(page.getByRole("heading", { name: "e2e-n8n", exact: true })).toBeVisible()
+  const from = page.url()
+  await page.getByRole("button", { name: "Edit", exact: true }).click()
+  const dialog = page.getByRole("dialog", { name: "Edit e2e-n8n" })
+  await expect(dialog).toBeVisible()
+  return { dialog, from }
+}
+
+test("Back closes a dialog and stays on the page", async () => {
+  const { from } = await openEdit()
   await page.goBack()
   await expect(page.getByRole("dialog")).toHaveCount(0)
-  await expect(page).toHaveURL(/\/instances/)
+  await expect(page).toHaveURL(from)
 })
 
 /** The overlay Back entry the page is on, if any. */
 const overlayEntry = () => page.evaluate(() => (window.history.state as { overlay?: number } | null)?.overlay ?? null)
 
 test("a typed dialog asks before Cancel, Escape or Close drops what was typed, starting on Keep editing", async () => {
-  await page.goto("/instances")
-  await page.getByRole("button", { name: "Add instance" }).click()
-  const dialog = page.getByRole("dialog", { name: "Add an instance" })
+  const { dialog } = await openEdit()
   const name = dialog.getByLabel("Name", { exact: true })
   const ask = page.getByRole("alertdialog", { name: "Discard your changes?" })
   const keep = ask.getByRole("button", { name: "Keep editing" })
@@ -518,8 +529,8 @@ test("a typed dialog asks before Cancel, Escape or Close drops what was typed, s
   await dialogClosed(page)
 
   // With nothing typed, Cancel closes at once.
-  await page.getByRole("button", { name: "Add instance" }).click()
-  await expect(name).toHaveValue("")
+  await page.getByRole("button", { name: "Edit", exact: true }).click()
+  await expect(name).toHaveValue("e2e-n8n")
   await dialog.getByRole("button", { name: "Cancel" }).click()
   await expect(dialog).toHaveCount(0)
   await expect(ask).toHaveCount(0)
@@ -527,9 +538,7 @@ test("a typed dialog asks before Cancel, Escape or Close drops what was typed, s
 })
 
 test("Back on a typed dialog asks first, and Keep editing keeps the dialog and its Back step", async () => {
-  await page.goto("/instances")
-  await page.getByRole("button", { name: "Add instance" }).click()
-  const dialog = page.getByRole("dialog", { name: "Add an instance" })
+  const { dialog, from } = await openEdit()
   const name = dialog.getByLabel("Name", { exact: true })
   const ask = page.getByRole("alertdialog", { name: "Discard your changes?" })
   await name.fill("typed, not saved")
@@ -548,7 +557,7 @@ test("Back on a typed dialog asks first, and Keep editing keeps the dialog and i
   await ask.getByRole("button", { name: "Discard" }).click()
   await expect(dialog).toHaveCount(0)
   await dialogClosed(page)
-  await expect(page).toHaveURL(/\/instances/)
+  await expect(page).toHaveURL(from)
 })
 
 test("leaving with unsaved changes asks first", async () => {
@@ -2271,7 +2280,7 @@ test("Back from an instance added on another one asks, Stay keeps it without a r
   // An add that is only answered, with e2e-n8n-b as the new instance: nothing is stored.
   const add = (url: URL) => url.pathname === "/api/instances"
   await page.route(add, (route) =>
-    route.request().method() === "POST" ? route.fulfill({ json: { id: added } }) : route.continue(),
+    route.request().method() === "POST" ? route.fulfill({ json: { id: added, configRevision: 0 } }) : route.continue(),
   )
   const unsaved = page.getByRole("region", { name: "Unsaved changes" })
   const ask = page.getByRole("alertdialog", { name: "Leave without saving?" })
@@ -2279,14 +2288,15 @@ test("Back from an instance added on another one asks, Stay keeps it without a r
   const notReloaded = () => page.evaluate(() => (window as { e2eSamePage?: boolean }).e2eSamePage === true)
   try {
     await page.getByRole("button", { name: "Add instance" }).click()
-    const dialog = page.getByRole("dialog", { name: "Add an instance" })
-    await dialog.getByLabel("Name", { exact: true }).fill("e2e-added")
-    await dialog.getByLabel("Base URL", { exact: true }).fill("http://n8n.example.invalid")
-    await dialog.getByLabel("API key", { exact: true }).fill("not-a-real-key")
-    await expect.poll(overlayEntry).not.toBeNull()
-    await dialog.getByRole("button", { name: "Add instance" }).click()
+    await expect(page).toHaveURL((url) => url.pathname === "/instances/new")
+    await page.getByLabel("Name", { exact: true }).fill("e2e-added")
+    await page.getByLabel("Base URL", { exact: true }).fill("http://n8n.example.invalid")
+    await page.getByRole("button", { name: "Continue" }).click()
+    // The new instance's setup takes the add page's place; the answer here is an active instance, whose setup
+    // starts at what to add, and Cancel goes to its page in the same place.
+    await expect(page).toHaveURL((url) => url.pathname === `/instances/${added}/setup`)
+    await page.getByRole("button", { name: "Cancel" }).click()
     await expect(page).toHaveURL((url) => url.pathname === `/instances/${added}`)
-    await expect(dialog).toHaveCount(0)
     await page.evaluate(() => {
       ;(window as { e2eSamePage?: boolean }).e2eSamePage = true
     })

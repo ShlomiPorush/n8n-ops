@@ -1,3 +1,4 @@
+import { unsupportedVersionText } from "@n8n-ops/shared"
 import { sealBytes } from "@n8n-ops/shared/archive"
 import { and, asc, eq, ilike, type SQL } from "drizzle-orm"
 import { Hono } from "hono"
@@ -7,7 +8,7 @@ import { instances, workflows } from "../db/schema.ts"
 import { requireUser } from "../http/middleware.ts"
 import { actorName, type Env } from "../http/types.ts"
 import { likeContains } from "../lib/like.ts"
-import { workflowUrl } from "../services/instances.ts"
+import { activeWith, can, unsupportedVersion, workflowUrl } from "../services/instances.ts"
 import { exportCredentials, ProxyRefusedError, previewMove, runMove } from "../services/moves.ts"
 import { syncWorkflows } from "../services/workflows.ts"
 
@@ -80,11 +81,23 @@ export function workflowRoutes(ctx: Ctx) {
     const id = c.req.query("instance")
     const targets = id
       ? await ctx.db.select().from(instances).where(eq(instances.id, id))
-      : await ctx.db.select().from(instances)
+      : await ctx.db.select().from(instances).where(activeWith("map"))
+    const [one] = targets
+    if (id && one && !can(one, "map"))
+      return c.json(
+        {
+          error: "not_chosen",
+          message: `The workflow map is not chosen for ${one.name}. Add it to its capabilities first.`,
+        },
+        400,
+      )
+    // n8n older than 2.14.0 is not read through its API: said for that instance, the others are synced.
     const results = await Promise.all(
       targets.map(async (i) => ({
         instance: i.name,
-        ...(await syncWorkflows(ctx, i).catch((e: Error) => ({ error: e.message }))),
+        ...(unsupportedVersion(i)
+          ? { error: unsupportedVersionText }
+          : await syncWorkflows(ctx, i).catch((e: Error) => ({ error: e.message }))),
       })),
     )
     return c.json(results)

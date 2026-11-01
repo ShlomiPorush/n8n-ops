@@ -48,6 +48,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { useMediaQuery } from "@/hooks/use-mobile"
 import { api, describeError, useApi, useApiMutation } from "@/lib/api"
 import { SPLIT_QUERY } from "@/lib/behavior"
+import { activeWith, type PickedInstance } from "@/lib/instance-setup"
 import { loadView } from "@/lib/load-state"
 import { formatSize, n, plural } from "@/lib/numbers"
 import { formatClockAt, formatTime, useTimeFormat } from "@/lib/time"
@@ -97,6 +98,8 @@ type BackupRow = {
   backupTime: string
   staleBackupHours: number
   withSecrets: boolean
+  /** Backup is chosen and active for the instance; one without it keeps its history here, without Run now. */
+  backup: boolean
 }
 
 type Summary = {
@@ -151,11 +154,13 @@ export function BackupsPage() {
     failed: (id) => `start the backup of ${target(id)}`,
   })
   const s = data.data
-  const backedUp = s?.instances.filter((i) => i.destinations.length) ?? []
+  // Instances that back up, and those that did before Backup was removed (their history stays); not drafts.
+  const instances = s?.instances.filter((i) => i.backup || i.lastRun) ?? []
+  const backedUp = instances.filter((i) => i.backup && i.destinations.length)
   const okCount = backedUp.filter((i) => !stale(i)).length
   const rows: BackupRow[] = s
     ? [
-        ...s.instances,
+        ...instances,
         {
           id: "self",
           name: "n8n-ops database",
@@ -165,11 +170,12 @@ export function BackupsPage() {
           backupTime: s.backupTime,
           staleBackupHours: s.self.staleBackupHours,
           withSecrets: true,
+          backup: true,
         },
       ]
     : []
   const late = backedUp.length - okCount
-  const none = s ? s.instances.length - backedUp.length : 0
+  const none = instances.filter((i) => i.backup).length - backedUp.length
   const enabled = s?.destinations.filter((d) => d.enabled) ?? []
   // Failed and late first, then by name as the server sends them, the n8n-ops database last (TB-11).
   const sort = useSort(rows, {
@@ -199,7 +205,7 @@ export function BackupsPage() {
         live={data}
         description={
           s?.configured
-            ? `${n(okCount)} of ${plural(s.instances.length, "instance")} backed up on time${late ? `, ${n(late)} late` : ""}${none ? `, ${n(none)} not backed up` : ""}. Every backup is encrypted with your backup public key before it is written.`
+            ? `${n(okCount)} of ${plural(backedUp.length + none, "instance")} backed up on time${late ? `, ${n(late)} late` : ""}${none ? `, ${n(none)} not backed up` : ""}. Every backup is encrypted with your backup public key before it is written.`
             : "Every backup is encrypted with your backup public key before it is written. Click an instance for its history and restore."
         }
       />
@@ -247,7 +253,7 @@ export function BackupsPage() {
           <Kpi
             label="Backed up on time"
             icon={ShieldCheckIcon}
-            value={`${n(okCount)}/${n(s.instances.length)}`}
+            value={`${n(okCount)}/${n(backedUp.length + none)}`}
             tone={late || none ? "warn" : undefined}
           />
           <Kpi label="Daily backup time" icon={ClockIcon} value={formatClockAt(s.backupTime, w)} />
@@ -278,7 +284,7 @@ export function BackupsPage() {
       ) : (
         <>
           <FilterBar
-            count={s ? `${plural(s.instances.length, "instance")} and the n8n-ops database` : undefined}
+            count={s ? `${plural(instances.length, "instance")} and the n8n-ops database` : undefined}
             sort={{ control: sort.control, name: "backups" }}
           />
           <Table items={items}>
@@ -356,7 +362,9 @@ export function BackupsPage() {
                 // A button that cannot run says why in words beside it, not in a tip (AX-9, FB-1).
                 const runNow =
                   s?.configured &&
-                  (nowhere ? (
+                  (!r.backup ? (
+                    <span className="text-small text-muted-foreground">Backup is not chosen</span>
+                  ) : nowhere ? (
                     <span className="inline-flex flex-wrap items-center gap-x-2.5 gap-y-1">
                       {button}
                       <span id={`run-reason-${r.id}`} className="text-small text-muted-foreground">
@@ -601,7 +609,9 @@ type Inspection = {
 
 function RestoreDialog({ run, instanceId, onClose }: { run: Run | null; instanceId: string; onClose: () => void }) {
   const w = useTimeFormat()
-  const instances = useApi<{ instances: { id: string; name: string }[] }>(run ? "/instances" : null)
+  const instances = useApi<{ instances: PickedInstance[] }>(run ? "/instances" : null)
+  // Only an instance with Restore workflows chosen takes a restore.
+  const targets = activeWith(instances.data?.instances, "restore")
   const [key, setKey] = useState("")
   const [inspection, setInspection] = useState<Inspection | null>(null)
   const [workflowId, setWorkflowId] = useState("")
@@ -695,7 +705,7 @@ function RestoreDialog({ run, instanceId, onClose }: { run: Run | null; instance
                 listLabel="Instances"
                 value={target}
                 onChange={setTarget}
-                options={(instances.data?.instances ?? []).map((i) => ({
+                options={targets.map((i) => ({
                   value: i.id,
                   label: i.name,
                   hint: i.id === instanceId ? "same instance" : undefined,
@@ -737,7 +747,7 @@ function RestoreDialog({ run, instanceId, onClose }: { run: Run | null; instance
               <Button onClick={() => void guard.requestClose()}>Cancel</Button>
               <BusyButton
                 variant="primary"
-                disabled={!workflowId}
+                disabled={!workflowId || !targets.some((i) => i.id === target)}
                 busy={busy}
                 busyLabel="Restoring…"
                 onClick={() =>

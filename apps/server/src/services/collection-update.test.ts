@@ -12,6 +12,8 @@ const row = {
   baseUrl: "https://n8n.example.com",
   metricsUrl: null,
   workerHealthUrls: [],
+  setupState: "complete" as const,
+  chosenCapabilities: ["health" as const],
 }
 
 describe("collectionUpdate", () => {
@@ -53,6 +55,12 @@ describe("versionFromInside", () => {
     expect(versionFromInside({ ...row, healthDetail: { source: "network" } })).toBe(false)
     expect(versionFromInside({ ...row, healthDetail: { source: "inside" } })).toBe(false)
     expect(versionFromInside({ ...inside, collection: "direct" })).toBe(false)
+  })
+
+  it("is false once health is off: no report comes, so the stored one is history (R5)", () => {
+    const inside = { ...row, healthDetail: { source: "inside", version: "2.13.0" } }
+    expect(versionFromInside({ ...inside, chosenCapabilities: ["backup"] })).toBe(false)
+    expect(versionFromInside({ ...inside, setupState: "incomplete" })).toBe(false)
   })
 })
 

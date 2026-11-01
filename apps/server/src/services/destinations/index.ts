@@ -12,7 +12,7 @@ import {
 import { localStore } from "./local.ts"
 import { s3Store } from "./s3.ts"
 import { sftpStore } from "./sftp.ts"
-import { cleanFolder, type Store, StoreError } from "./store.ts"
+import { cleanFolder, type Store, StoreError, withDeadline } from "./store.ts"
 import { webdavBase, webdavStore } from "./webdav.ts"
 
 export type Destination = typeof backupDestinations.$inferSelect
@@ -169,6 +169,21 @@ export function openStore(
       })
     case "webdav":
       return webdavStore(l, { password: secret("password") ?? "" })
+  }
+}
+
+const TEST_MS = 60_000
+
+/** Runs the destination's test on settings that may not be stored yet. Returns the test's notes. */
+export async function testDestination(
+  ctx: Pick<Ctx, "secrets">,
+  d: Pick<Destination, "kind" | "location" | "credentials" | "objectLock">,
+) {
+  const store = openStore(ctx, d)
+  try {
+    return await withDeadline(TEST_MS, "The test", (signal) => store.test(signal))
+  } finally {
+    await store.close().catch(() => {})
   }
 }
 

@@ -225,7 +225,7 @@ function CopyBlock({ label, text }: { label: string; text: string }) {
   )
 }
 
-function AddWorkerDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
+export function AddWorkerDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
   const [name, setName] = useState("")
   const [socketProxy, setSocketProxy] = useState(true)
   const [containers, setContainers] = useState("")

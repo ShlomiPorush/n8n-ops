@@ -3,7 +3,7 @@ import type { Ctx } from "../context.ts"
 import { instances } from "../db/schema.ts"
 import { oneAtATime } from "../lib/one-at-a-time.ts"
 import { closeQueueAlerts, closeWorkerConditions } from "./health.ts"
-import { collectionUpdate, healthTurn } from "./instances.ts"
+import { collectionUpdate, healthTurn, type Instance } from "./instances.ts"
 
 export type InstanceChange = Partial<typeof instances.$inferInsert>
 
@@ -34,16 +34,59 @@ export function targetProblem(t: {
 /** A change that would leave where the main is half set or set twice; nothing of it is saved. */
 export class TargetProblem extends Error {}
 
-export function updateInstance(ctx: Ctx, id: string, data: InstanceChange) {
+/** A change the instance as it is now does not take; `code` is the API error. Nothing of it is saved. */
+export class ChangeRefused extends Error {
+  constructor(
+    message: string,
+    readonly code = "invalid",
+  ) {
+    super(message)
+  }
+}
+
+/** The configuration changed since it was read (another change, or a setup step): nothing was saved. */
+export class RevisionChanged extends Error {
+  constructor() {
+    super("The instance was changed meanwhile. Reload and try again.")
+  }
+}
+
+/** Whether a change sets another base URL or API key (a new key is a change even when it encrypts the same text). */
+export const keyOrUrlChanged = (current: Instance, data: InstanceChange) =>
+  (data.apiKeyEnc !== undefined && data.apiKeyEnc !== current.apiKeyEnc) ||
+  (data.baseUrl !== undefined && data.baseUrl !== current.baseUrl)
+
+/**
+ * Saves a change. With `expectedRevision`, only while the configuration revision is still the one the caller read
+ * before its I/O (a key it tested); otherwise RevisionChanged and nothing is saved.
+ */
+export function updateInstance(ctx: Ctx, id: string, data: InstanceChange, expectedRevision?: number) {
   return oneAtATime(healthTurn(id), () =>
     ctx.db.transaction(async (tx) => {
       const [current] = await tx.select().from(instances).where(eq(instances.id, id)).for("update")
       if (!current) return undefined
+      if (expectedRevision !== undefined && current.configRevision !== expectedRevision) throw new RevisionChanged()
+      // Decided on the locked row, so a key stored or an activation just before cannot slip past them.
+      if (
+        data.baseUrl !== undefined &&
+        data.baseUrl !== current.baseUrl &&
+        current.apiKeyEnc &&
+        data.apiKeyEnc === undefined
+      )
+        throw new ChangeRefused("A new base URL needs the API key again. Enter it, or remove the key.", "key_required")
+      if (data.chosenCapabilities !== undefined && current.setupState === "complete")
+        throw new ChangeRefused("An active instance adds a capability through its setup, and removes one on its own.")
       // Checked against the row as it is now, under its lock: two changes at once cannot set both kinds or half.
       const problem = targetProblem({ ...current, ...data })
       if (problem) throw new TargetProblem(problem)
       const change = collectionUpdate(current, data)
-      const { queueMode: _asked, queueModeSource: _source, collectionRevision: _revision, ...rest } = data
+      const {
+        queueMode: _asked,
+        queueModeSource: _source,
+        collectionRevision: _revision,
+        configRevision: _config,
+        ...rest
+      } = data
       const [saved] = await tx
         .update(instances)
         .set({
@@ -51,6 +94,8 @@ export function updateInstance(ctx: Ctx, id: string, data: InstanceChange) {
           ...(change.queueMode !== undefined ? { queueMode: change.queueMode } : {}),
           ...(change.queueModeSource ? { queueModeSource: change.queueModeSource } : {}),
           ...(change.raiseRevision ? { collectionRevision: sql`${instances.collectionRevision} + 1` } : {}),
+          // A key tested, or a meta read made, for the URL and key before this change is no longer stored.
+          ...(keyOrUrlChanged(current, data) ? { configRevision: sql`${instances.configRevision} + 1` } : {}),
           updatedAt: new Date(),
         })
         .where(eq(instances.id, id))

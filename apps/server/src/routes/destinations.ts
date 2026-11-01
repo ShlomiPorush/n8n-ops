@@ -20,11 +20,10 @@ import {
   placesOverlap,
   retentionSchema,
   sameLock,
+  testDestination,
 } from "../services/destinations/index.ts"
 import { fetchHostKey } from "../services/destinations/sftp.ts"
 import { withDeadline } from "../services/destinations/store.ts"
-
-const TEST_MS = 60_000
 
 const createSchema = z.object({
   name: z.string().trim().min(1).max(60),
@@ -85,16 +84,6 @@ const locationLabels: Record<string, string> = {
   username: "user name",
   path: "folder",
   url: "URL",
-}
-
-/** Runs the destination's test on settings that may not be stored yet. */
-async function testDestination(ctx: Ctx, d: Pick<Destination, "kind" | "location" | "credentials" | "objectLock">) {
-  const store = openStore(ctx, d)
-  try {
-    return await withDeadline(TEST_MS, "The test", (signal) => store.test(signal))
-  } finally {
-    await store.close().catch(() => {})
-  }
 }
 
 /** Backup destinations: Settings > Backup Destinations, and the choice on each instance. */

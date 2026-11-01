@@ -15,6 +15,7 @@ import { backupAlerts, backupCondition } from "./backup-alerts.ts"
 import { type Destination, openStore } from "./destinations/index.ts"
 import type { Store } from "./destinations/store.ts"
 import { withDeadline, writtenBy } from "./destinations/store.ts"
+import type { DbLike } from "./problems.ts"
 import { selectExpired } from "./retention.ts"
 import { removeSpool, spoolDir, spoolExists, spooledRuns, spoolFile } from "./spool.ts"
 
@@ -364,6 +365,46 @@ export async function failRun(
   ctx.log.warn("backup failed", { instance: name, error })
   await enqueueAlert(ctx, "backup", backupAlerts.failed(name, error), instanceSubject(run.instanceId))
   changed(ctx, "backups", "overview", "instances")
+}
+
+/** Why runs end without an alert when backup is turned off for their instance. */
+export const BACKUP_TURNED_OFF = "Backup was turned off"
+
+/**
+ * Ends runs still waiting for their archive as failed, without an alert: those of an instance whose backup was
+ * turned off, or one run whose job is no longer wanted. Decided with `spooledAt IS NULL`, as archiveReady is, so
+ * a run either gets its archive and finishes its copies or ends here. Their copies end with them.
+ */
+export async function endRunsWithoutArchive(
+  db: DbLike,
+  which: { instanceId: string } | { runId: string },
+  reason = BACKUP_TURNED_OFF,
+) {
+  const ended = await db
+    .update(backupRuns)
+    .set({ status: "failed", error: reason, finishedAt: new Date() })
+    .where(
+      and(
+        "runId" in which ? eq(backupRuns.id, which.runId) : eq(backupRuns.instanceId, which.instanceId),
+        eq(backupRuns.status, "running"),
+        isNull(backupRuns.spooledAt),
+      ),
+    )
+    .returning({ id: backupRuns.id })
+  if (ended.length)
+    await db
+      .update(backupCopies)
+      .set({ status: "failed", error: "The backup ended before this copy could be written.", finishedAt: new Date() })
+      .where(
+        and(
+          inArray(
+            backupCopies.runId,
+            ended.map((r) => r.id),
+          ),
+          inArray(backupCopies.status, ["pending", "writing"]),
+        ),
+      )
+  return ended.map((r) => r.id)
 }
 
 /**

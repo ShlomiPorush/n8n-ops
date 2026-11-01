@@ -4,6 +4,7 @@ import { AccountPage } from "@/pages/account"
 import { AgentsPage } from "@/pages/agents"
 import { AuditPage } from "@/pages/audit"
 import { BackupsPage } from "@/pages/backups"
+import { InstanceSetupPage } from "@/pages/instance-setup"
 import { InstancesPage } from "@/pages/instances"
 import { OverviewPage } from "@/pages/overview"
 import { ProblemsPage } from "@/pages/problems"
@@ -15,6 +16,9 @@ import { WorkflowsPage } from "@/pages/workflows"
 export const routes: RouteObject[] = [
   { index: true, element: <OverviewPage /> },
   { path: "problems/:id?", element: <ProblemsPage /> },
+  // The setup of a new instance, or of capabilities added to one, before the instance pages take the rest.
+  { path: "instances/new", element: <InstanceSetupPage /> },
+  { path: "instances/:id/setup", element: <InstanceSetupPage /> },
   { path: "instances/:id?", element: <InstancesPage /> },
   { path: "workflows", element: <WorkflowsPage /> },
   { path: "backups/:id?", element: <BackupsPage /> },

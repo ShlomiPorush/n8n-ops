@@ -1,8 +1,16 @@
-import { capabilityStatus } from "@n8n-ops/shared"
+import {
+  capabilityKeys,
+  capabilityProblems,
+  capabilityStatus,
+  chosenCapabilitiesSchema,
+  missingScopes,
+  requirementsOf,
+  unsupportedVersionText,
+} from "@n8n-ops/shared"
 import { asc, desc, eq, inArray } from "drizzle-orm"
-import { Hono } from "hono"
+import { type Context, Hono } from "hono"
 import { z } from "zod"
-import type { Ctx } from "../context.ts"
+import { type Ctx, changed } from "../context.ts"
 import {
   backupDestinations,
   backupRuns,
@@ -14,21 +22,44 @@ import {
 import { requireUser } from "../http/middleware.ts"
 import { actorName, type Env } from "../http/types.ts"
 import { instanceOverridesSchema } from "../lib/settings.ts"
-import { N8nClient, N8nError } from "../n8n/client.ts"
+import { policyScopes } from "../services/access.ts"
 import { canReach } from "../services/backups.ts"
 import { currentHealth, healthNow } from "../services/collection.ts"
 import { checkDirect } from "../services/health.ts"
-import { TargetProblem, targetProblem, updateInstance } from "../services/instance-update.ts"
 import {
+  ChangeRefused,
+  RevisionChanged,
+  TargetProblem,
+  targetProblem,
+  updateInstance,
+} from "../services/instance-update.ts"
+import {
+  can,
   effectiveScopes,
   type Instance,
+  isActive,
   latestN8nVersion,
+  mainTarget,
   metricsUrlOf,
   refreshInstanceMeta,
+  testKey,
+  unsupportedVersion,
 } from "../services/instances.ts"
 import { openProblemCount, openProblemsByInstance } from "../services/problem-view.ts"
 import { deleteInstance, pollInstance } from "../services/problems.ts"
 import { currentDetail, instanceProxyFix } from "../services/proxy-fix.ts"
+import {
+  activate,
+  checkApi,
+  checkBackup,
+  checkHealthDirect,
+  checkWorker,
+  proposal,
+  RequirementNotMet,
+  removeCapability,
+  SetupRefused,
+  setupState,
+} from "../services/setup.ts"
 import { WORKER_ONLINE_MS } from "./overview.ts"
 
 const url = z
@@ -62,51 +93,87 @@ const baseFields = {
   collection: z.enum(["direct", "worker"]).default("direct"),
   workerId: z.string().uuid().nullish(),
 }
-const createSchema = z.object({ ...baseFields, apiKey: z.string().min(10) })
-const updateSchema = z
+const backupVia = z.enum(["worker", "api"])
+/** A draft: what it is chosen for and where it is; the key and the checks come in its setup. */
+const createSchema = z.object({ ...baseFields, chosen: chosenCapabilitiesSchema, backupVia: backupVia.default("api") })
+export const updateSchema = z
   .object({
     ...baseFields,
-    apiKey: z.string().min(10).optional(),
-    declaredAccess: z.enum(["read", "write"]).optional(),
+    // Without their defaults: Zod 4 fills a default in also under .partial(), so a change of one field (a setup
+    // step, the overrides) would otherwise put the collection, the queue mode and the worker URLs back to theirs.
+    queueMode: z.boolean(),
+    workerHealthUrls: z.array(url),
+    collection: z.enum(["direct", "worker"]),
+    /** A new key, tested before it is stored; null removes the stored key. */
+    apiKey: z.string().min(10).nullable().optional(),
+    /** Only while the instance is a draft; an active one adds and removes capabilities on their own. */
+    chosen: chosenCapabilitiesSchema.optional(),
+    backupVia: backupVia.optional(),
     overrides: instanceOverridesSchema.optional(),
     agentAccess: z.object({ enabled: z.boolean(), scopes: z.array(z.string().max(80)).max(300) }).optional(),
   })
   .partial()
+const capability = z.enum(capabilityKeys)
 
-/** Checks that the URL and key work before anything is stored. */
-async function testConnection(baseUrl: string, apiKey: string) {
-  const client = new N8nClient(baseUrl, apiKey)
-  try {
-    const [version, scopes] = await Promise.all([client.version(), client.discoverScopes()])
-    await client.listExecutions({ limit: 1 })
-    return { ok: true as const, version, scopes }
-  } catch (error) {
-    if (error instanceof N8nError && (error.status === 401 || error.status === 403)) {
-      return { ok: false as const, error: "n8n rejected the API key, or it lacks execution:list." }
-    }
-    return { ok: false as const, error: `Cannot reach n8n at ${baseUrl}: ${(error as Error).message}` }
-  }
+/** `?add=monitor,map`: the capabilities a setup page proposes to add; undefined when not given. */
+function addOf(raw: string | undefined) {
+  if (raw === undefined) return { ok: true as const, add: undefined }
+  const parsed = z.array(capability).safeParse(
+    raw
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
+  )
+  return parsed.success ? { ok: true as const, add: parsed.data } : { ok: false as const }
 }
 
 export function instanceView(instance: Instance, extra: { openProblems?: number; hasWorker: boolean }) {
-  // The check counters and the backlog start are bookkeeping of the health checks, not part of the instance.
+  // The check counters and the backlog start are bookkeeping of the health checks, not part of the instance; the
+  // setup checks are read through GET /:id/setup.
   const {
-    apiKeyEnc: _secret,
+    apiKeyEnc,
     executionCursor: _cursor,
     healthCheckSeq: _seq,
     healthAppliedSeq: _applied,
     collectionRevision: _revision,
     backlogSince: _backlog,
+    setupChecks: _checks,
+    setupAttemptSeq: _attempts,
+    chosenCapabilities,
     ...rest
   } = instance
   const scopes = effectiveScopes(instance)
+  const unsupported = unsupportedVersion(instance)
+  const grantable = policyScopes(instance).length
   return {
     ...rest,
+    hasApiKey: Boolean(apiKeyEnc),
+    chosen: chosenCapabilities,
+    unsupportedVersion: unsupported,
     effectiveScopes: scopes,
     effectiveMetricsUrl: metricsUrlOf(instance),
-    capabilities: capabilityStatus(scopes, extra.hasWorker),
+    capabilities: capabilityStatus(scopes, extra.hasWorker, grantable),
+    // Each chosen capability with what keeps it from working now (empty when nothing does).
+    chosenStatus: capabilityProblems(chosenCapabilities, {
+      hasKey: Boolean(apiKeyEnc),
+      scopes: instance.scopes,
+      unsupported,
+      collection: instance.collection,
+      backupVia: instance.backupVia,
+      worker: extra.hasWorker && mainTarget(instance) !== null,
+      grantable,
+    }),
     openProblems: extra.openProblems ?? 0,
   }
+}
+
+/** A setup step's refusal as an answer; anything else is an internal error. */
+function setupRefusal(c: Context<Env>, error: unknown) {
+  if (error instanceof RevisionChanged) return c.json({ error: "revision_changed", message: error.message }, 409)
+  if (error instanceof RequirementNotMet)
+    return c.json({ error: "requirement_not_met", requirement: error.requirement, message: error.message }, 409)
+  if (error instanceof SetupRefused) return c.json({ error: "invalid", message: error.message }, 400)
+  throw error
 }
 
 /** The worker assigned to an instance as the pages show it. In collection mode "worker", only one online checks. */
@@ -120,6 +187,9 @@ function workerSummary(worker: typeof workers.$inferSelect | undefined) {
     online: Boolean(!revokedAt && lastSeenAt && Date.now() - lastSeenAt.getTime() < WORKER_ONLINE_MS),
   }
 }
+
+/** An instance's id in a path is a UUID: /instances/new and the like are a plain 404, never a failed query. */
+const ID = "/:id{[0-9a-fA-F-]{36}}"
 
 export function instanceRoutes(ctx: Ctx) {
   const app = new Hono<Env>()
@@ -158,30 +228,41 @@ export function instanceRoutes(ctx: Ctx) {
   app.post("/test", async (c) => {
     const body = z.object({ baseUrl: url, apiKey: z.string().min(10) }).safeParse(await c.req.json().catch(() => ({})))
     if (!body.success) return c.json({ error: "invalid", issues: body.error.issues }, 400)
-    return c.json(await testConnection(body.data.baseUrl, body.data.apiKey))
+    return c.json(await testKey(body.data.baseUrl, body.data.apiKey))
   })
 
+  /** Creates a draft (Setup incomplete): it does nothing in the background until its setup is completed. */
   app.post("/", async (c) => {
     const parsed = createSchema.safeParse(await c.req.json().catch(() => ({})))
     if (!parsed.success) return c.json({ error: "invalid", issues: parsed.error.issues }, 400)
     const problem = targetProblem(parsed.data)
     if (problem) return c.json({ error: "invalid", message: problem }, 400)
-    const { apiKey, metricsUrl, ...data } = parsed.data
-    const test = await testConnection(data.baseUrl, apiKey)
-    if (!test.ok) return c.json({ error: "connection_failed", message: test.error }, 400)
+    const { metricsUrl, chosen, ...data } = parsed.data
     const [existing] = await ctx.db.select({ id: instances.id }).from(instances).where(eq(instances.name, data.name))
     if (existing) return c.json({ error: "invalid", issues: [{ path: ["name"], message: "already used" }] }, 400)
     const [row] = await ctx.db
       .insert(instances)
-      .values({ ...data, metricsUrl: metricsUrl || null, apiKeyEnc: ctx.secrets.encrypt(apiKey) })
+      .values({
+        ...data,
+        metricsUrl: metricsUrl || null,
+        apiKeyEnc: null,
+        setupState: "incomplete",
+        chosenCapabilities: chosen,
+      })
       .returning()
     if (!row) return c.json({ error: "internal_error" }, 500)
-    await refreshInstanceMeta(ctx, row)
-    await ctx.audit({ actor: actorName(c.get("actor")), action: "Instance added", target: row.name, via: "web" })
-    return c.json({ id: row.id })
+    await ctx.audit({
+      actor: actorName(c.get("actor")),
+      action: "Instance added (setup incomplete)",
+      target: row.name,
+      via: "web",
+      details: { chosen },
+    })
+    changed(ctx, "instances")
+    return c.json({ id: row.id, configRevision: row.configRevision })
   })
 
-  app.get("/:id", async (c) => {
+  app.get(ID, async (c) => {
     const [row] = await ctx.db
       .select()
       .from(instances)
@@ -224,7 +305,7 @@ export function instanceRoutes(ctx: Ctx) {
   })
 
   /** Where this instance's backups go: the default destinations as they change, or the ones chosen here. */
-  app.put("/:id/backup-destinations", async (c) => {
+  app.put(`${ID}/backup-destinations`, async (c) => {
     const [row] = await ctx.db
       .select()
       .from(instances)
@@ -244,6 +325,7 @@ export function instanceRoutes(ctx: Ctx) {
     if (known.length !== ids.length)
       return c.json({ error: "invalid", message: "A chosen destination no longer exists." }, 400)
     await ctx.db.transaction(async (tx) => {
+      // A backup check compares the destinations it tested with those in use now, so it notices this change.
       await tx
         .update(instances)
         .set({ backupDestinations: body.data.mode, updatedAt: new Date() })
@@ -265,7 +347,7 @@ export function instanceRoutes(ctx: Ctx) {
     return c.json({ ok: true })
   })
 
-  app.patch("/:id", async (c) => {
+  app.patch(ID, async (c) => {
     const [row] = await ctx.db
       .select()
       .from(instances)
@@ -273,34 +355,51 @@ export function instanceRoutes(ctx: Ctx) {
     if (!row) return c.json({ error: "not_found" }, 404)
     const parsed = updateSchema.safeParse(await c.req.json().catch(() => ({})))
     if (!parsed.success) return c.json({ error: "invalid", issues: parsed.error.issues }, 400)
-    const { apiKey, metricsUrl, ...data } = parsed.data
-    if (apiKey) {
-      const test = await testConnection(data.baseUrl ?? row.baseUrl, apiKey)
-      if (!test.ok) return c.json({ error: "connection_failed", message: test.error }, 400)
-    }
+    const { apiKey, metricsUrl, chosen, ...data } = parsed.data
+    // A selection only while a draft, and a new base URL only with the key again or without one: both decided by
+    // updateInstance on the locked row (ChangeRefused).
+    const urlChanged = data.baseUrl !== undefined && data.baseUrl !== row.baseUrl
+    // Any valid key is stored; the capabilities it lacks scopes for show on the instance's page.
+    const test = apiKey ? await testKey(data.baseUrl ?? row.baseUrl, apiKey) : null
+    if (test && !test.ok) return c.json({ error: "connection_failed", code: test.code, message: test.error }, 400)
     let updated: Awaited<ReturnType<typeof updateInstance>>
     try {
-      updated = await updateInstance(ctx, row.id, {
-        ...data,
-        ...(metricsUrl !== undefined ? { metricsUrl: metricsUrl || null } : {}),
-        ...(apiKey ? { apiKeyEnc: ctx.secrets.encrypt(apiKey) } : {}),
-      })
+      updated = await updateInstance(
+        ctx,
+        row.id,
+        {
+          ...data,
+          ...(chosen ? { chosenCapabilities: chosen } : {}),
+          ...(metricsUrl !== undefined ? { metricsUrl: metricsUrl || null } : {}),
+          ...(apiKey && test?.ok
+            ? { apiKeyEnc: ctx.secrets.encrypt(apiKey), scopes: test.scopes, scopesCheckedAt: new Date() }
+            : {}),
+          ...(apiKey === null ? { apiKeyEnc: null, scopes: null, scopesCheckedAt: null } : {}),
+        },
+        // A tested key is stored only for the configuration it was tested with.
+        test ? row.configRevision : undefined,
+      )
     } catch (error) {
       if (error instanceof TargetProblem) return c.json({ error: "invalid", message: error.message }, 400)
+      if (error instanceof ChangeRefused) return c.json({ error: error.code, message: error.message }, 400)
+      if (error instanceof RevisionChanged) return c.json({ error: "revision_changed", message: error.message }, 409)
       throw error
     }
-    if (updated && (apiKey || data.baseUrl)) await refreshInstanceMeta(ctx, updated)
+    if (updated && (apiKey || urlChanged))
+      await refreshInstanceMeta(ctx, updated).catch((e: Error) =>
+        ctx.log.warn("reading the version and scopes failed", { instance: row.name, error: e.message }),
+      )
     await ctx.audit({
       actor: actorName(c.get("actor")),
-      action: apiKey ? "Instance API key replaced" : "Instance changed",
+      action: apiKey ? "Instance API key replaced" : apiKey === null ? "Instance API key removed" : "Instance changed",
       target: row.name,
       via: "web",
       details: { fields: Object.keys(parsed.data).filter((k) => k !== "apiKey") },
     })
-    return c.json({ ok: true })
+    return c.json({ ok: true, configRevision: updated?.configRevision ?? row.configRevision })
   })
 
-  app.delete("/:id", async (c) => {
+  app.delete(ID, async (c) => {
     const id = c.req.param("id")
     if (!z.string().uuid().safeParse(id).success) return c.json({ error: "not_found" }, 404)
     // With its workflows, failures and the Problems it leaves without a workflow.
@@ -310,17 +409,170 @@ export function instanceRoutes(ctx: Ctx) {
     return c.json({ ok: true })
   })
 
-  /** Re-reads version and scopes, checks health and polls failures now. */
-  app.post("/:id/refresh", async (c) => {
+  /** Re-reads version and scopes, checks health and polls failures now: each only where it was chosen. */
+  app.post(`${ID}/refresh`, async (c) => {
     const [row] = await ctx.db
       .select()
       .from(instances)
       .where(eq(instances.id, c.req.param("id")))
     if (!row) return c.json({ error: "not_found" }, 404)
-    const fresh = await refreshInstanceMeta(ctx, row)
-    if (fresh.collection === "direct") await checkDirect(ctx, fresh.id)
-    const poll = await pollInstance(ctx, fresh).catch((e: Error) => ({ error: e.message }))
-    return c.json({ ok: true, poll })
+    if (!isActive(row))
+      return c.json({ error: "setup_incomplete", message: `Finish the setup of ${row.name} first.` }, 409)
+    const fresh = (await refreshInstanceMeta(ctx, row)) ?? row
+    const skipped: string[] = []
+    if (!can(fresh, "health")) skipped.push("Health is not chosen, so it was not checked.")
+    else if (fresh.collection === "direct") await checkDirect(ctx, fresh.id)
+    if (!can(fresh, "monitor")) skipped.push("Monitoring is not chosen, so failures were not read.")
+    else if (unsupportedVersion(fresh)) skipped.push(`Failures were not read: ${unsupportedVersionText}`)
+    const poll =
+      can(fresh, "monitor") && !unsupportedVersion(fresh)
+        ? await pollInstance(ctx, fresh).catch((e: Error) => ({ error: e.message }))
+        : null
+    return c.json({ ok: true, poll, skipped })
+  })
+
+  // --- Setup (docs/adr/0002): the checks of a draft, or of capabilities added to an active instance.
+
+  const load = async (id: string) => {
+    if (!z.string().uuid().safeParse(id).success) return null
+    const [row] = await ctx.db.select().from(instances).where(eq(instances.id, id))
+    return row ?? null
+  }
+
+  /** The selection (`?add=` proposes one), its requirements and each check as it stands now. */
+  app.get(`${ID}/setup`, async (c) => {
+    const add = addOf(c.req.query("add"))
+    if (!add.ok) return c.json({ error: "invalid", message: "Unknown capability in add." }, 400)
+    const row = await load(c.req.param("id"))
+    if (!row) return c.json({ error: "not_found" }, 404)
+    return c.json(await setupState(ctx, row, add.add))
+  })
+
+  app.post(`${ID}/setup/api`, async (c) => {
+    const body = z
+      .object({ apiKey: z.string().min(10).optional(), add: z.array(capability).optional() })
+      .safeParse(await c.req.json().catch(() => ({})))
+    if (!body.success) return c.json({ error: "invalid", issues: body.error.issues }, 400)
+    try {
+      const result = await checkApi(ctx, c.req.param("id"), body.data.apiKey)
+      if (!result) return c.json({ error: "not_found" }, 404)
+      const { check, keyStored, instance } = result
+      if (keyStored)
+        await ctx.audit({
+          actor: actorName(c.get("actor")),
+          action: instance.apiKeyEnc ? "Instance API key replaced" : "Instance API key added",
+          target: instance.name,
+          via: "web",
+        })
+      const scopes = (check.detail?.scopes as string[] | undefined) ?? []
+      const { verify } = proposal(instance, body.data.add)
+      const missing = check.ok ? missingScopes(requirementsOf(verify, instance).api, scopes) : {}
+      return c.json({
+        ok: check.ok,
+        reason: check.reason ?? null,
+        code: (check.detail?.code as string | undefined) ?? null,
+        version: check.detail?.version ?? null,
+        scopes: check.ok ? scopes : null,
+        missingByCapability: missing,
+        keyStored,
+      })
+    } catch (error) {
+      return setupRefusal(c, error)
+    }
+  })
+
+  app.post(`${ID}/setup/health`, async (c) => {
+    try {
+      const check = await checkHealthDirect(ctx, c.req.param("id"))
+      if (!check) return c.json({ error: "not_found" }, 404)
+      return c.json({
+        ok: check.ok,
+        reason: check.reason ?? null,
+        detail: check.detail,
+      })
+    } catch (error) {
+      return setupRefusal(c, error)
+    }
+  })
+
+  /** Starts the worker check, or answers with the one still running; GET /:id/setup tells how it ends. */
+  app.post(`${ID}/setup/worker`, async (c) => {
+    try {
+      const started = await checkWorker(ctx, c.req.param("id"))
+      if (!started) return c.json({ error: "not_found" }, 404)
+      return c.json(started)
+    } catch (error) {
+      return setupRefusal(c, error)
+    }
+  })
+
+  app.post(`${ID}/setup/backup`, async (c) => {
+    try {
+      const check = await checkBackup(ctx, c.req.param("id"))
+      if (!check) return c.json({ error: "not_found" }, 404)
+      return c.json({
+        ok: check.ok,
+        reason: check.reason ?? null,
+        detail: check.detail,
+      })
+    } catch (error) {
+      return setupRefusal(c, error)
+    }
+  })
+
+  /** Activates a draft, or adds capabilities to an active instance, once every requirement has a current check. */
+  app.post(`${ID}/activate`, async (c) => {
+    const body = z
+      // A configRevision sent along is ignored: each check records the settings it was made for.
+      .object({ add: z.array(capability).optional(), configRevision: z.number().int().optional() })
+      .safeParse(await c.req.json().catch(() => ({})))
+    if (!body.success) return c.json({ error: "invalid", issues: body.error.issues }, 400)
+    try {
+      const result = await activate(ctx, c.req.param("id"), body.data)
+      if (!result) return c.json({ error: "not_found" }, 404)
+      const { instance, added, wasDraft } = result
+      await ctx.audit({
+        actor: actorName(c.get("actor")),
+        action: wasDraft ? "Instance setup completed" : "Capability added",
+        target: instance.name,
+        via: "web",
+        details: { [wasDraft ? "chosen" : "added"]: wasDraft ? instance.chosenCapabilities : added },
+      })
+      return c.json({
+        ok: true,
+        setupState: instance.setupState,
+        chosen: instance.chosenCapabilities,
+        configRevision: instance.configRevision,
+      })
+    } catch (error) {
+      return setupRefusal(c, error)
+    }
+  })
+
+  /** Removes a capability and what needs it (removing the map removes Move workflows). No check is needed. */
+  app.delete(`${ID}/capabilities/:capability`, async (c) => {
+    const key = capability.safeParse(c.req.param("capability"))
+    if (!key.success) return c.json({ error: "invalid", message: "Unknown capability." }, 400)
+    const row = await load(c.req.param("id"))
+    if (!row) return c.json({ error: "not_found" }, 404)
+    const result = await removeCapability(ctx, row.id, key.data)
+    if (!result) return c.json({ error: "not_found" }, 404)
+    if (result.removed.length) {
+      await ctx.audit({
+        actor: actorName(c.get("actor")),
+        action: "Capability removed",
+        target: row.name,
+        via: "web",
+        details: { removed: result.removed },
+      })
+      changed(ctx, "instances", "overview", "backups")
+    }
+    return c.json({
+      ok: true,
+      removed: result.removed,
+      chosen: result.instance.chosenCapabilities,
+      configRevision: result.instance.configRevision,
+    })
   })
 
   return app

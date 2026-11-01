@@ -13,6 +13,7 @@ import {
 import type { Section } from "../lib/settings.ts"
 import { type AlertSubject, resolveThread, sendRouted, topicGoneNote } from "./alert-routing.ts"
 import { telegramTarget } from "./draft-tests.ts"
+import { can } from "./instances.ts"
 import type { DbLike } from "./problems.ts"
 import { applyProblemActions } from "./problems.ts"
 import { clip, html, type InlineButton, isMessageGone, Telegram, TelegramError, TelegramHtml } from "./telegram.ts"
@@ -79,21 +80,45 @@ export async function enqueueProblemAlert(
   })
 }
 
-/** Queues an immediate alert (health, backup, test). `subject` picks its forum topic. */
-export async function enqueueAlert(
-  ctx: Ctx,
-  kind: Exclude<AlertKind, "problem">,
-  text: TelegramHtml,
-  subject: AlertSubject = {},
-) {
-  const alerts = await ctx.settings.get("alerts")
-  if ((kind === "health" && !alerts.health) || (kind === "backup" && !alerts.backup)) return
-  await ctx.db.insert(alertOutbox).values({ kind, text: String(text), threadId: await threadFor(ctx, subject) })
+type ImmediateKind = Exclude<AlertKind, "problem">
+
+/**
+ * Whether an alert about `subject` may be made now. Health and backup alerts of an instance only while it is active
+ * and chose that capability, read with its row share-locked in the alert's own transaction: removing the
+ * capability locks the row and clears its conditions in one transaction, so an alert decided before the removal
+ * is cleared by it, and one decided after it sees the capability gone.
+ */
+async function alertAllowed(tx: DbLike, kind: ImmediateKind, subject: AlertSubject) {
+  if ((kind !== "health" && kind !== "backup") || !subject.instanceId) return true
+  const [row] = await tx
+    .select({ setupState: instances.setupState, chosenCapabilities: instances.chosenCapabilities })
+    .from(instances)
+    .where(eq(instances.id, subject.instanceId))
+    .for("share")
+  return Boolean(row && can(row, kind))
 }
 
 /**
+ * Queues an immediate alert (health, backup, test). `subject` picks its forum topic. Settings and the topic are
+ * read before the transaction, which uses only its own connection.
+ */
+export async function enqueueAlert(ctx: Ctx, kind: ImmediateKind, text: TelegramHtml, subject: AlertSubject = {}) {
+  const alerts = await ctx.settings.get("alerts")
+  if (!alertsOn(alerts, kind)) return
+  const threadId = await threadFor(ctx, subject)
+  await ctx.db.transaction(async (tx) => {
+    if (await alertAllowed(tx, kind, subject))
+      await tx.insert(alertOutbox).values({ kind, text: String(text), threadId })
+  })
+}
+
+const alertsOn = (alerts: Section<"alerts">, kind: ImmediateKind) =>
+  !((kind === "health" && !alerts.health) || (kind === "backup" && !alerts.backup))
+
+/**
  * Tracks an ongoing condition (instance down, backup stale) so it alerts once when it starts
- * and once when it clears. The texts are made only when the condition changes.
+ * and once when it clears. The texts are made only when the condition changes. The condition and its alert are
+ * one transaction with the capability check (see alertAllowed).
  */
 export async function setCondition(
   ctx: Ctx,
@@ -103,22 +128,30 @@ export async function setCondition(
     kind,
     start,
     clear,
-    subject,
+    subject = {},
   }: { kind: "health" | "backup"; start: () => TelegramHtml; clear?: () => TelegramHtml; subject?: AlertSubject },
 ) {
-  const [row] = await ctx.db.select().from(alertState).where(eq(alertState.key, key))
-  if (active && !row?.active) {
-    const text = start()
-    const detail = String(text)
-    await ctx.db
-      .insert(alertState)
-      .values({ key, active: true, since: new Date(), detail })
-      .onConflictDoUpdate({ target: alertState.key, set: { active: true, since: new Date(), detail } })
-    await enqueueAlert(ctx, kind, text, subject)
-  } else if (!active && row?.active) {
-    await ctx.db.update(alertState).set({ active: false, since: new Date() }).where(eq(alertState.key, key))
-    if (clear) await enqueueAlert(ctx, kind, clear(), subject)
-  }
+  const on = alertsOn(await ctx.settings.get("alerts"), kind)
+  const threadId = await threadFor(ctx, subject)
+  await ctx.db.transaction(async (tx) => {
+    if (!(await alertAllowed(tx, kind, subject))) return
+    const [row] = await tx.select().from(alertState).where(eq(alertState.key, key))
+    const queue = async (text: TelegramHtml) => {
+      if (on) await tx.insert(alertOutbox).values({ kind, text: String(text), threadId })
+    }
+    if (active && !row?.active) {
+      const text = start()
+      const detail = String(text)
+      await tx
+        .insert(alertState)
+        .values({ key, active: true, since: new Date(), detail })
+        .onConflictDoUpdate({ target: alertState.key, set: { active: true, since: new Date(), detail } })
+      await queue(text)
+    } else if (!active && row?.active) {
+      await tx.update(alertState).set({ active: false, since: new Date() }).where(eq(alertState.key, key))
+      if (clear) await queue(clear())
+    }
+  })
 }
 
 export type GroupLine = {

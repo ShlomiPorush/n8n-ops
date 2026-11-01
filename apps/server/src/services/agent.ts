@@ -4,7 +4,7 @@ import { backupRuns, type Health, instances, workflows } from "../db/schema.ts"
 import { likeContains } from "../lib/like.ts"
 import { grantableScopes } from "./access.ts"
 import { currentHealth, type HealthNow } from "./collection.ts"
-import { effectiveScopes, latestN8nVersion } from "./instances.ts"
+import { activeOnly, effectiveScopes, latestN8nVersion } from "./instances.ts"
 import { problemDetail, problemFailure, problemPage } from "./problem-view.ts"
 
 /**
@@ -66,7 +66,7 @@ const healthFields = (i: { id: string; health: Health }, now: Map<string, Health
 
 export async function agentInstances(ctx: Ctx) {
   const latest = await latestN8nVersion()
-  const rows = await ctx.db.select().from(instances).orderBy(asc(instances.name))
+  const rows = await ctx.db.select().from(instances).where(activeOnly).orderBy(asc(instances.name))
   const now = await currentHealth(ctx, rows)
   return rows.map((i) => ({
     id: i.id,
@@ -90,7 +90,10 @@ export async function agentInstances(ctx: Ctx) {
 }
 
 export async function agentQueues(ctx: Ctx) {
-  const rows = await ctx.db.select().from(instances).where(eq(instances.queueMode, true))
+  const rows = await ctx.db
+    .select()
+    .from(instances)
+    .where(and(eq(instances.queueMode, true), activeOnly))
   const now = await currentHealth(ctx, rows)
   return rows.map((i) => {
     const d = i.healthDetail as { queue?: unknown; workers?: unknown; backlogActive?: boolean } | null
@@ -107,7 +110,7 @@ export async function agentQueues(ctx: Ctx) {
 }
 
 export async function agentBackups(ctx: Ctx) {
-  const rows = await ctx.db.select().from(instances).orderBy(asc(instances.name))
+  const rows = await ctx.db.select().from(instances).where(activeOnly).orderBy(asc(instances.name))
   return Promise.all(
     rows.map(async (i) => {
       const [last] = await ctx.db

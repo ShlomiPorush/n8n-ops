@@ -577,11 +577,15 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
     const failed = [
       poll?.error && `Could not read the failures of ${named()}: ${poll.error}`,
       map?.error && `Could not read the workflows of ${named()}: ${map.error}`,
-    ].filter((m): m is string => Boolean(m))
+    ]
+      .filter((m): m is string => Boolean(m))
+      .map((m) => (/[.!?]$/.test(m) ? m : `${m}.`))
     if (failed.length) {
-      for (const message of failed) toast.error(message)
-      // The button shows that it failed too; the toasts have said why.
-      throw new Error(failed.join(" "))
+      // One toast for both: a second one would replace the first.
+      const message = failed.join(" ")
+      toast.error(message)
+      // The button shows that it failed too; the toast has said why.
+      throw new Error(message)
     }
     // Each part runs only where it was chosen: health checked here, failures and workflows read.
     const healthHere = detail.data?.collection === "direct" && detail.data.chosen.includes("health")

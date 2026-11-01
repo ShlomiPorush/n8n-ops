@@ -34,7 +34,7 @@ describe("topic routes", () => {
     expect(resolveThread({ routes, defaultThreadId: 99 }, instanceSubject(null))).toBe(99)
   })
 
-  it("gives up on a pattern that takes too long, once, and ignores it from then on", () => {
+  it("gives up on a pattern that takes too long twice in a row, once, and ignores it from then on", () => {
     const slow: string[] = []
     const route = { workflow: "^(a+)+$", threadId: 1 }
     const name = `${"a".repeat(40)}!`

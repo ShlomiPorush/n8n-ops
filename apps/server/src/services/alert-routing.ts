@@ -13,25 +13,33 @@ export const instanceSubject = (instanceId: string | null): AlertSubject => (ins
  * (`^(a+)+$` against a long name) stops after PATTERN_MS instead of holding the server. The pattern and the name go
  * in as data, never as code, and the match runs synchronously inside `runInContext`, which the limit covers.
  */
-const PATTERN_MS = 20
+const PATTERN_MS = 100
 const sandbox = vm.createContext(Object.create(null))
 const matcher = new vm.Script("new RegExp(pattern, 'iu').test(subject)")
 
-/** Patterns that ran out of time once. They match nothing until the server restarts, so each costs PATTERN_MS once. */
+/**
+ * Patterns that ran out of time twice in a row. They match nothing until the server restarts, so each costs twice
+ * PATTERN_MS once. Twice, since a busy server can pause any pattern past the limit once.
+ */
 const slowPatterns = new Set<string>()
+
+const timedOut = (error: unknown) => (error as { code?: string }).code === "ERR_SCRIPT_EXECUTION_TIMEOUT"
 
 function patternMatches(pattern: string, subject: string, onSlow: (pattern: string) => void) {
   if (slowPatterns.has(pattern)) return false
   sandbox.pattern = pattern
   sandbox.subject = subject.slice(0, 1000)
-  try {
-    return matcher.runInContext(sandbox, { timeout: PATTERN_MS }) === true
-  } catch (error) {
-    if ((error as { code?: string }).code === "ERR_SCRIPT_EXECUTION_TIMEOUT") {
-      slowPatterns.add(pattern)
-      onSlow(pattern)
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return matcher.runInContext(sandbox, { timeout: PATTERN_MS }) === true
+    } catch (error) {
+      if (!timedOut(error)) return false
+      if (attempt === 2) {
+        slowPatterns.add(pattern)
+        onSlow(pattern)
+        return false
+      }
     }
-    return false
   }
 }
 

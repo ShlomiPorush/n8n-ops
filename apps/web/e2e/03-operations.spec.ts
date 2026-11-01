@@ -181,44 +181,66 @@ test("through the worker, health is read inside the main container", async () =>
     await page.getByRole("button", { name: "Save" }).click()
     await dialogClosed(page)
   }
-  await page.goto("/instances")
-  await page.getByRole("row", { name: /e2e-n8n/ }).click()
-  await collect(/^Check health and metrics: Directly from the n8n-ops server$/, "Through the worker on the n8n host")
-  await page.getByRole("tab", { name: /^Health/ }).click()
-  // The sentence also stands under the Overview tab's status line; this reads the Health tab's.
-  const health = page.getByRole("tabpanel", { name: "Health" })
-  // The worker asks for a probe within the health interval, reads the main from inside and reports.
-  await expect(async () => {
-    await page.reload()
-    await expect(health.getByText(/^Checked inside the container by E2E Host\./)).toBeVisible({ timeout: 3_000 })
-  }).toPass({ timeout: 90_000 })
-  await expect(health.getByText("Main process (/healthz)")).toBeVisible()
-  // The e2e n8n runs in regular mode: nothing about a queue.
-  await expect(page.getByText("· queue mode")).toHaveCount(0)
-  await expect(health.getByText("regular, read in the main container")).toBeVisible()
-
-  // A container the socket proxy does not allow: the worker checks over the network, and the tab gives the lines
-  // that allow it, with nothing else to look up.
-  const containerName = async (name: string) => {
-    await page.getByRole("button", { name: "Edit" }).click()
-    await page.getByLabel("Container name", { exact: true }).fill(name)
-    await page.getByRole("button", { name: "Save" }).click()
-    await dialogClosed(page)
+  // The instance's own health interval is set to its shortest, 10 seconds, through the overrides its page saves,
+  // so each wait below is for a probe of that interval instead of the default 30 seconds. The worker's probes
+  // follow the instance's interval (enqueueProbes); the overrides it had come back afterwards.
+  const { instances } = (await (await page.request.get("/api/instances")).json()) as {
+    instances: { id: string; name: string }[]
   }
-  await containerName("not-allowed-e2e")
-  await expect(async () => {
-    await page.reload()
-    await expect(
-      health.getByTestId("proxy-fix").getByText("The socket proxy on E2E Host refuses commands in not-allowed-e2e"),
-    ).toBeVisible({ timeout: 3_000 })
-  }).toPass({ timeout: 90_000 })
-  await expect(health.getByTestId("proxy-fix").locator("code").first()).toContainText(
-    /containers\/\([^)]*not-allowed-e2e\)\/exec/,
-  )
-  await containerName(container)
+  const id = instances.find((i) => i.name === "e2e-n8n")?.id
+  if (!id) throw new Error("no instance e2e-n8n")
+  const storeOverrides = async (overrides: Record<string, unknown>) => {
+    const res = await page.request.patch(`/api/instances/${id}`, { data: { overrides } })
+    expect(res.ok(), await res.text()).toBe(true)
+  }
+  const detail = (await (await page.request.get(`/api/instances/${id}`)).json()) as {
+    overrides: Record<string, unknown>
+  }
+  const stored = detail.overrides
+  await storeOverrides({ ...stored, healthIntervalSec: 10 })
+  try {
+    await page.goto("/instances")
+    await page.getByRole("row", { name: /e2e-n8n/ }).click()
+    await collect(/^Check health and metrics: Directly from the n8n-ops server$/, "Through the worker on the n8n host")
+    await page.getByRole("tab", { name: /^Health/ }).click()
+    // The sentence also stands under the Overview tab's status line; this reads the Health tab's.
+    const health = page.getByRole("tabpanel", { name: "Health" })
+    // The worker asks for a probe within the health interval, reads the main from inside and reports.
+    await expect(async () => {
+      await page.reload()
+      await expect(health.getByText(/^Checked inside the container by E2E Host\./)).toBeVisible({ timeout: 3_000 })
+    }).toPass({ timeout: 90_000 })
+    await expect(health.getByText("Main process (/healthz)")).toBeVisible()
+    // The e2e n8n runs in regular mode: nothing about a queue.
+    await expect(page.getByText("· queue mode")).toHaveCount(0)
+    await expect(health.getByText("regular, read in the main container")).toBeVisible()
 
-  await collect(/^Check health and metrics: Through the worker on the n8n host$/, "Directly from the n8n-ops server")
-  await expect(health.getByText(/^Checked directly from the n8n-ops server/)).toBeVisible()
+    // A container the socket proxy does not allow: the worker checks over the network, and the tab gives the lines
+    // that allow it, with nothing else to look up.
+    const containerName = async (name: string) => {
+      await page.getByRole("button", { name: "Edit" }).click()
+      await page.getByLabel("Container name", { exact: true }).fill(name)
+      await page.getByRole("button", { name: "Save" }).click()
+      await dialogClosed(page)
+    }
+    await containerName("not-allowed-e2e")
+    await expect(async () => {
+      await page.reload()
+      await expect(
+        health.getByTestId("proxy-fix").getByText("The socket proxy on E2E Host refuses commands in not-allowed-e2e"),
+      ).toBeVisible({ timeout: 3_000 })
+    }).toPass({ timeout: 90_000 })
+    await expect(health.getByTestId("proxy-fix").locator("code").first()).toContainText(
+      /containers\/\([^)]*not-allowed-e2e\)\/exec/,
+    )
+    await containerName(container)
+
+    await collect(/^Check health and metrics: Through the worker on the n8n host$/, "Directly from the n8n-ops server")
+    await expect(health.getByText(/^Checked directly from the n8n-ops server/)).toBeVisible()
+  } finally {
+    // Back to the overrides it had, none when it had none.
+    await storeOverrides(stored)
+  }
 })
 
 test("a backup through the worker includes credential secrets", async () => {

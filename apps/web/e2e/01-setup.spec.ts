@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test"
-import { design, password, saveSecret, saveState, username } from "./helpers.ts"
+import { design, password, saveSecret, saveSession, saveState, username } from "./helpers.ts"
 import { freshTotp } from "./totp.ts"
 
 // Runs against a fresh stack (empty database), in order: first run, sign out, sign in again.
@@ -68,6 +68,8 @@ test("signing in again requires the two-factor code", async ({ page }) => {
   await expect(page.getByText("Two-factor code")).toBeVisible()
   await page.getByLabel("Two-factor code").fill(await freshTotp(secret))
   await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible()
+  // The next spec files go on in this session instead of signing in again.
+  await saveSession(page)
 
   await page.goto("/audit")
   await expect(page.getByRole("cell", { name: "Account created" })).toBeVisible()

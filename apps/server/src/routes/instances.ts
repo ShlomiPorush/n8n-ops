@@ -60,7 +60,6 @@ import {
   SetupRefused,
   setupState,
 } from "../services/setup.ts"
-import { syncWorkflowsSoon } from "../services/workflows.ts"
 import { WORKER_ONLINE_MS } from "./overview.ts"
 
 const url = z
@@ -429,9 +428,6 @@ export function instanceRoutes(ctx: Ctx) {
       can(fresh, "monitor") && !unsupportedVersion(fresh)
         ? await pollInstance(ctx, fresh).catch((e: Error) => ({ error: e.message }))
         : null
-    // In the background: the counts arrive with a live update when the sync ends.
-    if (!can(fresh, "map")) skipped.push("The workflow map is not chosen, so workflows were not read.")
-    else if (!syncWorkflowsSoon(ctx, fresh)) skipped.push(`Workflows were not read: ${unsupportedVersionText}`)
     return c.json({ ok: true, poll, skipped })
   })
 

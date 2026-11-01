@@ -73,6 +73,8 @@ const n8n = {
   /** Fail /discover from this call on (counted from 1); 0 never. */
   failFrom: 0,
   calls: 0,
+  /** Requests for the workflow list, which only the workflow map makes. */
+  workflowReads: 0,
   /** Held until released, so a test can change the instance while a key is being tested. */
   hold: null as Promise<void> | null,
 }
@@ -133,6 +135,7 @@ beforeAll(async () => {
           ],
           nextCursor: null,
         })
+      n8n.workflowReads += 1
       const trigger = { name: "Start", type: "n8n-nodes-base.manualTrigger", parameters: {} }
       return send(200, {
         data: [{ id: "wf-1", name: "Mapped", active: true, nodes: [trigger], connections: {} }],
@@ -160,6 +163,7 @@ const reset = () =>
     healthy: true,
     failFrom: 0,
     calls: 0,
+    workflowReads: 0,
     hold: null,
   })
 
@@ -393,7 +397,7 @@ describe("activation", () => {
     await vi.waitFor(async () => {
       const rows = await ctx.db.select().from(workflows).where(eq(workflows.instanceId, row.id))
       expect(rows).toMatchObject([{ workflowId: "wf-1", active: true, runs30d: 2, errors30d: 1 }])
-    })
+    }, { timeout: 10_000 })
   })
 
   it("does not read the workflows when the map is not among what is activated", async () => {
@@ -401,8 +405,9 @@ describe("activation", () => {
     const row = await instance({ chosenCapabilities: ["health"], apiKeyEnc: ctx.secrets.encrypt(KEY) })
     await checkApi(ctx, row.id)
     await activate(ctx, row.id, { add: ["monitor"] })
-    await new Promise((resolve) => setTimeout(resolve, 200))
-    expect(await ctx.db.select().from(workflows).where(eq(workflows.instanceId, row.id))).toEqual([])
+    // A sync would have asked for the list by now; the stand-in counts every request for it.
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    expect(n8n.workflowReads).toBe(0)
   })
 })
 

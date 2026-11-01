@@ -28,7 +28,7 @@ import { endRunsWithoutArchive } from "./backup-copies.ts"
 import { canReach, jobTarget, probePayload } from "./backups.ts"
 import { reportsSince } from "./collection.ts"
 import { destinationsFor, testDestination } from "./destinations/index.ts"
-import { collectDirect, probeReport } from "./health.ts"
+import { collectDirect, forMode, probeReport, queueModeOf } from "./health.ts"
 import { RevisionChanged } from "./instance-update.ts"
 import { healthTurn, type Instance, isActive, mainTarget, refreshInstanceMeta, testKey } from "./instances.ts"
 import { jobProxyFix } from "./proxy-fix.ts"
@@ -549,7 +549,9 @@ async function workerView(
       })
     return view(check, { state: "running", current: true, reason: null })
   }
-  const report = check.detail?.report as ProbeReport | undefined
+  const stored = check.detail?.report as ProbeReport | undefined
+  // Shown as the instance will count it: outside queue mode the queue parts are dropped, as applyHealth does.
+  const report = stored && forMode(stored, queueModeOf(stored, row.queueMode))
   const read = report ? readWorkerReport(report) : null
   const ok = Boolean(read && (need.healthy ? read.healthy : read.exec))
   const reason = ok
@@ -578,6 +580,7 @@ async function workerView(
     reason,
     detail: {
       ...check.detail,
+      ...(report ? { report } : {}),
       exec: read?.exec ?? false,
       healthy: read?.healthy ?? false,
       ...(proxyFix ? { proxyFix } : {}),

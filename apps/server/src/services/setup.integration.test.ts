@@ -523,6 +523,41 @@ describe("the worker check", () => {
     expect(queued.map((j) => j.id)).toEqual([fifthJob?.id])
   })
 
+  it("shows no queue figures or queue metrics advice for a main in regular mode", async () => {
+    reset()
+    const w = await worker()
+    const row = await draft({
+      chosenCapabilities: ["health"],
+      collection: "worker",
+      workerId: w.id,
+      containerName: "n8n-main",
+    })
+    const answer = async (result: Record<string, unknown>) => {
+      const started = await checkWorker(ctx, row.id)
+      const [job] = await ctx.db
+        .select()
+        .from(workerJobs)
+        .where(eq(workerJobs.id, started?.jobId ?? ""))
+      await setupWorkerResult(ctx, job as typeof workerJobs.$inferSelect, { ok: true, result, current: true })
+      return (await setupState(ctx, await read(row.id))).checks.worker
+    }
+    // A worker sends its metrics advice whatever the mode; n8n has no queue in regular mode, so it does not apply.
+    const queueParts = {
+      metricsState: "no-queue-figures",
+      metricsError: "no queue metrics; set N8N_METRICS_INCLUDE_QUEUE_METRICS=true",
+      queue: { waiting: 1, active: 0, completed: 0, failed: 0 },
+    }
+    const regular = await answer(insideReport(queueParts))
+    expect(regular).toMatchObject({
+      state: "ok",
+      detail: { report: { queue: null, metricsError: undefined, metricsState: "no-queue-figures" } },
+    })
+
+    // In queue mode the same parts are what the owner must see.
+    const queue = await answer(insideReport({ ...queueParts, mode: "queue" }))
+    expect(queue?.detail?.report).toMatchObject({ queue: queueParts.queue, metricsError: queueParts.metricsError })
+  })
+
   it("goes stale with the worker or the main, not with the key, the policy or the destinations", async () => {
     reset()
     const w = await worker()

@@ -6,6 +6,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Fixed
 
+- **The setup's health check no longer asks for queue metrics on n8n in regular mode.** When the worker found the main in regular mode, the check showed "no queue metrics; set N8N_METRICS_INCLUDE_QUEUE_METRICS=true", although n8n publishes queue metrics only in queue mode. It now shows the queue parts only in queue mode, as the instance's Health tab already did.
 - **The workflow and execution counts of a new instance appear right after its setup.** An instance activated with the workflow map showed no workflows or executions for up to 30 minutes, until the next scheduled sync. The sync now starts on activation, and an open page shows the counts when it ends, without a reload. **Check now** on an instance page also reads its workflows again.
 
 ## [0.7.0] - 2026-11-01

@@ -45,7 +45,13 @@ All scripts are Bash for WSL or Linux with Docker. Node, pnpm, shellcheck and sh
 - Releases: the **Release** workflow (Actions → Release → Run workflow on `main`, choose patch, minor or major) runs the whole CI on the commit, then `scripts/release.sh`: release commit and tag, both images on GHCR (the version, then `:latest`) and the GitHub Release from the CHANGELOG section. A run that stopped halfway is finished by the next run (a new Run workflow, not "Re-run failed jobs"). `scripts/test-release.sh` (run by the guards) covers each way a run can stop. Never deploys.
 - Ad-hoc commands in the toolchain: `source scripts/lib/common.sh && build_toolchain && in_toolchain "pnpm ..."`.
 
-Before finishing a change, run `scripts/verify.sh` (or `--changed` for a quick pass) and report its result.
+Verify in proportion to the risk of the change, and report what ran and its result:
+
+- **Documentation only** (`docs/`, `README.md`, `AGENTS.md`, `CHANGELOG.md`; nothing under `packages/skill`, whose `SKILL.md` is served to agents): `scripts/verify.sh --changed`, which then runs only the guards.
+- **Small and low risk**: a contained change in `apps/server` or `packages/shared` that touches none of security or permissions, encryption, deleting, restoring or retaining data, the contract between server, worker, UI and skill, migrations, dependencies, or build and Compose configuration. For a bug fix, its regression test must be a unit test, run locally to show that it fails without the fix and passes with it. Run `scripts/verify.sh --changed --skip-integration` and open the pull request; CI runs the integration and end-to-end tests. The change is done only when every check is green.
+- **Anything else**, including a bug fix whose regression test is an integration test and every change to `apps/web`, `apps/worker`, `packages/skill`, `docker/`, `scripts/`, `.github/` or the root configuration: the full `scripts/verify.sh` before opening the pull request.
+
+On a pull request, CI runs the guards, the unit tests of the changed packages and their dependents, and the integration and end-to-end tests in full, one job per design in parallel. When only Markdown files, `docs/` or `LICENSE` changed, it runs only the guards.
 
 ## Traps
 

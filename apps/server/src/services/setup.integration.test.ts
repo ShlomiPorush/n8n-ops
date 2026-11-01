@@ -7,7 +7,7 @@ import { join } from "node:path"
 import { and, eq } from "drizzle-orm"
 import { Hono } from "hono"
 import postgres from "postgres"
-import { afterAll, beforeAll, describe, expect, it } from "vitest"
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest"
 import type { Ctx } from "../context.ts"
 import { createDatabase, type Database } from "../db/client.ts"
 import {
@@ -21,6 +21,7 @@ import {
   user,
   workerJobs,
   workers,
+  workflows,
 } from "../db/schema.ts"
 import type { Env } from "../http/types.ts"
 import { createSecrets, sha256 } from "../lib/crypto.ts"
@@ -72,6 +73,8 @@ const n8n = {
   /** Fail /discover from this call on (counted from 1); 0 never. */
   failFrom: 0,
   calls: 0,
+  /** Requests for the workflow list, which only the workflow map makes. */
+  workflowReads: 0,
   /** Held until released, so a test can change the instance while a key is being tested. */
   hold: null as Promise<void> | null,
 }
@@ -120,6 +123,25 @@ beforeAll(async () => {
       if (req.headers["x-n8n-api-key"] !== KEY) return send(401, { message: "unauthorized" })
       return send(200, { data: { scopes: n8n.scopes } })
     }
+    // What the workflow map reads: one workflow that ran twice, once failing.
+    if (path === "/api/v1/workflows" || path === "/api/v1/executions") {
+      if (req.headers["x-n8n-api-key"] !== KEY) return send(401, { message: "unauthorized" })
+      const startedAt = new Date().toISOString()
+      if (path === "/api/v1/executions")
+        return send(200, {
+          data: [
+            { id: "2", workflowId: "wf-1", status: "error", startedAt },
+            { id: "1", workflowId: "wf-1", status: "success", startedAt },
+          ],
+          nextCursor: null,
+        })
+      n8n.workflowReads += 1
+      const trigger = { name: "Start", type: "n8n-nodes-base.manualTrigger", parameters: {} }
+      return send(200, {
+        data: [{ id: "wf-1", name: "Mapped", active: true, nodes: [trigger], connections: {} }],
+        nextCursor: null,
+      })
+    }
     send(404)
   })
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
@@ -141,6 +163,7 @@ const reset = () =>
     healthy: true,
     failFrom: 0,
     calls: 0,
+    workflowReads: 0,
     hold: null,
   })
 
@@ -370,6 +393,24 @@ describe("activation", () => {
     })
     const added = await activate(ctx, row.id, { add: ["map"] })
     expect(added?.instance.chosenCapabilities).toEqual(["health", "map"])
+    // The map is read right after activation, not at the next run of the 30-minute workflow-map job.
+    await vi.waitFor(
+      async () => {
+        const rows = await ctx.db.select().from(workflows).where(eq(workflows.instanceId, row.id))
+        expect(rows).toMatchObject([{ workflowId: "wf-1", active: true, runs30d: 2, errors30d: 1 }])
+      },
+      { timeout: 10_000 },
+    )
+  })
+
+  it("does not read the workflows when the map is not among what is activated", async () => {
+    reset()
+    const row = await instance({ chosenCapabilities: ["health"], apiKeyEnc: ctx.secrets.encrypt(KEY) })
+    await checkApi(ctx, row.id)
+    await activate(ctx, row.id, { add: ["monitor"] })
+    // A sync would have asked for the list by now; the stand-in counts every request for it.
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    expect(n8n.workflowReads).toBe(0)
   })
 })
 
@@ -817,6 +858,34 @@ describe("PATCH /instances/:id", () => {
     const d = await draft()
     expect((await patch(d.id, { chosen: ["restore"] })).status).toBe(200)
     expect((await read(d.id)).chosenCapabilities).toEqual(["backup", "restore"])
+  })
+})
+
+describe("POST /instances/:id/refresh", () => {
+  const refresh = async (id: string) => {
+    const res = await new Hono<Env>()
+      .route("/api/instances", instanceRoutes(ctx))
+      .request(`/api/instances/${id}/refresh`, { method: "POST" })
+    expect(res.status).toBe(200)
+    return (await res.json()) as { map: unknown; skipped: string[] }
+  }
+
+  it("syncs the workflows too, where the map is chosen", async () => {
+    reset()
+    const row = await instance({ chosenCapabilities: ["map"], apiKeyEnc: ctx.secrets.encrypt(KEY) })
+    expect((await refresh(row.id)).map).toEqual({ workflows: 1 })
+    expect(await ctx.db.select().from(workflows).where(eq(workflows.instanceId, row.id))).toMatchObject([
+      { workflowId: "wf-1", runs30d: 2, errors30d: 1 },
+    ])
+  })
+
+  it("says the workflows were not read where the map is not chosen", async () => {
+    reset()
+    const row = await instance({ chosenCapabilities: ["health"], apiKeyEnc: ctx.secrets.encrypt(KEY) })
+    const body = await refresh(row.id)
+    expect(body.map).toBeNull()
+    expect(body.skipped).toContain("The workflow map is not chosen, so workflows were not read.")
+    expect(n8n.workflowReads).toBe(0)
   })
 })
 

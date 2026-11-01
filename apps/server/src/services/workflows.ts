@@ -1,10 +1,11 @@
 import { and, eq, notInArray } from "drizzle-orm"
-import type { Ctx } from "../context.ts"
+import { type Ctx, changed } from "../context.ts"
 import { workflows } from "../db/schema.ts"
 import { sha256 } from "../lib/crypto.ts"
+import { oneAtATime } from "../lib/one-at-a-time.ts"
 import { N8nError, type N8nExecution, type N8nWorkflow } from "../n8n/client.ts"
 import { describeTrigger } from "../n8n/execution.ts"
-import { clientFor, type Instance } from "./instances.ts"
+import { can, clientFor, type Instance, unsupportedVersion } from "./instances.ts"
 
 /**
  * Same structure = same node types connected the same way. Node names, positions and parameters are
@@ -79,8 +80,15 @@ export async function executionsSince(client: ExecutionLister, since: string) {
   return out
 }
 
-/** Reads every workflow of an instance and its run counts for the last 30 days (requirement F1). */
-export async function syncWorkflows(ctx: Ctx, instance: Instance) {
+/**
+ * Reads every workflow of an instance and its run counts for the last 30 days (requirement F1). One at a time per
+ * instance: an earlier sync that read an older list would otherwise delete what a later one stored.
+ */
+export function syncWorkflows(ctx: Ctx, instance: Instance) {
+  return oneAtATime(`workflows:${instance.id}`, () => syncWorkflowsNow(ctx, instance))
+}
+
+async function syncWorkflowsNow(ctx: Ctx, instance: Instance) {
   const client = clientFor(ctx, instance)
   const all = await client.listWorkflows()
   const stats = new Map<string, { runs: number; errors: number; last: Date | null }>()
@@ -121,5 +129,18 @@ export async function syncWorkflows(ctx: Ctx, instance: Instance) {
   await ctx.db
     .delete(workflows)
     .where(and(eq(workflows.instanceId, instance.id), ids.length ? notInArray(workflows.workflowId, ids) : undefined))
+  changed(ctx, "workflows", "instances")
   return { workflows: all.length }
+}
+
+/**
+ * Syncs the workflows of an instance now, without waiting for it: after activation, so the counts appear at once
+ * instead of at the next run of the workflow-map job. Only where the map is chosen and the n8n version is read
+ * through its API. A busy instance pages through 30 days of executions, so the caller does not await it.
+ */
+export function syncWorkflowsSoon(ctx: Ctx, instance: Instance) {
+  if (!can(instance, "map") || unsupportedVersion(instance)) return
+  void syncWorkflows(ctx, instance).catch((e: Error) =>
+    ctx.log.warn("workflow sync failed", { instance: instance.name, error: e.message }),
+  )
 }

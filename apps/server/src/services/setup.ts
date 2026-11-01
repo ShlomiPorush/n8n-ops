@@ -33,6 +33,7 @@ import { RevisionChanged } from "./instance-update.ts"
 import { healthTurn, type Instance, isActive, mainTarget, refreshInstanceMeta, testKey } from "./instances.ts"
 import { jobProxyFix } from "./proxy-fix.ts"
 import { enqueueJob } from "./workers.ts"
+import { syncWorkflowsSoon } from "./workflows.ts"
 
 /*
  * The setup of an instance (docs/adr/0002): each check proves one requirement of the chosen capabilities and
@@ -685,12 +686,15 @@ export async function activate(ctx: Ctx, id: string, input: { add?: CapabilityKe
     return updated
   })
   if (!saved) return null
-  await refreshInstanceMeta(ctx, saved).catch((error: Error) =>
+  const fresh = await refreshInstanceMeta(ctx, saved).catch((error: Error) => {
     ctx.log.warn("reading the version and scopes after activation failed", {
       instance: saved.name,
       error: error.message,
-    }),
-  )
+    })
+    return undefined
+  })
+  // The map counts now, not at the next workflow-map run; with the version just read, not the one saved above.
+  if (verify.includes("map")) syncWorkflowsSoon(ctx, fresh ?? saved)
   changed(ctx, "instances", "overview")
   return { instance: saved, added: verify, wasDraft: !isActive(row) }
 }

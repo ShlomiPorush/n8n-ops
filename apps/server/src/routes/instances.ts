@@ -60,6 +60,7 @@ import {
   SetupRefused,
   setupState,
 } from "../services/setup.ts"
+import { syncWorkflows } from "../services/workflows.ts"
 import { WORKER_ONLINE_MS } from "./overview.ts"
 
 const url = z
@@ -409,7 +410,7 @@ export function instanceRoutes(ctx: Ctx) {
     return c.json({ ok: true })
   })
 
-  /** Re-reads version and scopes, checks health and polls failures now: each only where it was chosen. */
+  /** Re-reads version and scopes, checks health, polls failures and syncs the workflows now: each only where chosen. */
   app.post(`${ID}/refresh`, async (c) => {
     const [row] = await ctx.db
       .select()
@@ -428,7 +429,13 @@ export function instanceRoutes(ctx: Ctx) {
       can(fresh, "monitor") && !unsupportedVersion(fresh)
         ? await pollInstance(ctx, fresh).catch((e: Error) => ({ error: e.message }))
         : null
-    return c.json({ ok: true, poll, skipped })
+    if (!can(fresh, "map")) skipped.push("The workflow map is not chosen, so workflows were not read.")
+    else if (unsupportedVersion(fresh)) skipped.push(`Workflows were not read: ${unsupportedVersionText}`)
+    const map =
+      can(fresh, "map") && !unsupportedVersion(fresh)
+        ? await syncWorkflows(ctx, fresh).catch((e: Error) => ({ error: e.message }))
+        : null
+    return c.json({ ok: true, poll, map, skipped })
   })
 
   // --- Setup (docs/adr/0002): the checks of a draft, or of capabilities added to an active instance.

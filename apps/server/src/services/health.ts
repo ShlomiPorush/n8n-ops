@@ -123,6 +123,27 @@ export async function startCheck(
   return row ? { ticket: { seq: row.healthCheckSeq, revision: row.collectionRevision }, instance: row } : null
 }
 
+type ModeReport = Pick<z.infer<typeof probeReport>, "source" | "mode">
+
+/** The execution mode a report read inside the main, or null when it was not read there. */
+const foundMode = (report: ModeReport) =>
+  report.source === "inside" && (report.mode === "queue" || report.mode === "regular") ? report.mode : null
+
+/** A mode read inside the main is the instance's mode from now on; one that could not be read keeps the last. */
+export function queueModeOf(report: ModeReport, current: boolean) {
+  const mode = foundMode(report)
+  return mode === null ? current : mode === "queue"
+}
+
+/**
+ * A report as it counts for an instance in that mode. Outside queue mode its queue parts mean nothing, whichever
+ * worker release sent them: n8n has no queue there, so it never publishes queue figures. How the metrics were read
+ * stays: it says why there is a version or not.
+ */
+export function forMode<T extends z.infer<typeof probeReport>>(report: T, queueMode: boolean): T {
+  return queueMode ? report : { ...report, workers: [], queue: null, metricsError: undefined, discovery: undefined }
+}
+
 /** Checks an instance from the server (collection mode "direct"). Queue workers only in queue mode. */
 export async function collectDirect(instance: Instance): Promise<HealthReport> {
   const base = instance.baseUrl.replace(/\/+$/, "")
@@ -298,14 +319,9 @@ async function applyHealthNow(ctx: Ctx, instanceId: string, given: HealthReport,
       })
       return null
     }
-    // A mode read inside the main is the instance's mode from now on; one that could not be read keeps the last.
-    const found = given.source === "inside" && (given.mode === "queue" || given.mode === "regular")
-    const queueMode = found ? given.mode === "queue" : current.queueMode
-    // Outside queue mode a report's queue parts mean nothing, whichever worker release sent them. How the metrics
-    // were read stays: it says why there is a version or not.
-    const report: HealthReport = queueMode
-      ? given
-      : { ...given, workers: [], queue: null, metricsError: undefined, discovery: undefined }
+    const found = foundMode(given) !== null
+    const queueMode = queueModeOf(given, current.queueMode)
+    const report = forMode(given, queueMode)
     // What the proxy refused and the names it listed are kept in any mode: they say what the proxy must allow.
 
     const measured = queueMode && !report.notCollected && report.queue !== null

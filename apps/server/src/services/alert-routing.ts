@@ -13,13 +13,14 @@ export const instanceSubject = (instanceId: string | null): AlertSubject => (ins
  * (`^(a+)+$` against a long name) stops after PATTERN_MS instead of holding the server. The pattern and the name go
  * in as data, never as code, and the match runs synchronously inside `runInContext`, which the limit covers.
  */
-const PATTERN_MS = 100
+const PATTERN_MS = 20
 const sandbox = vm.createContext(Object.create(null))
 const matcher = new vm.Script("new RegExp(pattern, 'iu').test(subject)")
 
 /**
  * Patterns that ran out of time twice in a row. They match nothing until the server restarts, so each costs twice
- * PATTERN_MS once. Twice, since a busy server can pause any pattern past the limit once.
+ * PATTERN_MS once. Twice, since a pause of a busy server can push any pattern past the limit once; the second try
+ * has a clock of its own.
  */
 const slowPatterns = new Set<string>()
 

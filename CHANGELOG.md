@@ -8,7 +8,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 - **The workflow and execution counts of a new instance appear right after its setup.** An instance activated with the workflow map showed no workflows or executions for up to 30 minutes, until the next scheduled sync. The sync now starts on activation, and an open page shows the counts when it ends, without a reload. **Check now** on an instance page also reads its workflows again.
 - **A worker behind the socket proxy no longer fails a check or a backup now and then with "aborted".** The socket proxy could cut Docker's answer to a command when the worker reused a connection, so a health check, a queue worker check or a backup export failed although nothing was wrong. The worker now opens a new connection for each call to Docker.
-- **A busy server no longer turns off a Telegram topic route.** A workflow pattern that ran past its time limit once matched nothing until the server restarted, and on a busy server even a simple pattern could run past it. A pattern now has more time, and only one that runs out of time twice in a row is ignored.
+- **A single pause of a busy server no longer turns off a Telegram topic route.** A workflow pattern that ran past its time limit once matched nothing until the server restarted, and a pause of a busy server could push even a simple pattern past it. A pattern that runs out of time is now tried again at once, and only one that runs out of time twice in a row is ignored.
 
 ## [0.7.1] - 2026-11-01
 

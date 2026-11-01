@@ -62,6 +62,54 @@ build_images() {
   done
 }
 
+# Pulls external images in the background, so they download while other work runs. An image already
+# present is left as it is, as Compose would, so a run without network still works from the local cache.
+# Each pull tries three times; wait_for_pulls waits for the images given right before their first use.
+declare -gA PULL_PIDS=()
+PULL_LOGS=""
+
+pull_log() {
+  echo "$PULL_LOGS/${1//[^A-Za-z0-9._-]/_}.log"
+}
+
+start_pulls() {
+  local image
+  for image in "$@"; do
+    [ -z "${PULL_PIDS[$image]:-}" ] || continue
+    docker image inspect "$image" >/dev/null 2>&1 && continue
+    [ -n "$PULL_LOGS" ] || PULL_LOGS="$(mktemp -d "${TMPDIR:-/tmp}/n8n-ops-pulls.XXXXXX")"
+    (
+      for try in 1 2 3; do
+        echo "pull $try of 3: $image"
+        docker pull --quiet "$image" && exit 0
+        [ "$try" = 3 ] || sleep $((try * 5))
+      done
+      exit 1
+    ) >"$(pull_log "$image")" 2>&1 &
+    PULL_PIDS[$image]=$!
+  done
+}
+
+# Waits for the background pulls of the images given. An image that is not being pulled passes at once.
+wait_for_pulls() {
+  local image pid
+  for image in "$@"; do
+    pid="${PULL_PIDS[$image]:-}"
+    [ -n "$pid" ] || continue
+    if ! wait "$pid"; then
+      cat "$(pull_log "$image")" >&2 || true
+      die "could not pull $image"
+    fi
+    unset 'PULL_PIDS[$image]'
+  done
+}
+
+# Removes the pull logs. A pull that still runs when the script stops early is left to finish.
+remove_pull_logs() {
+  [ -z "$PULL_LOGS" ] || rm -rf "$PULL_LOGS"
+  PULL_LOGS=""
+}
+
 docker_socket_gid() {
   local sock=/var/run/docker.sock
   [ -S "$sock" ] || die "Docker socket not found at $sock"

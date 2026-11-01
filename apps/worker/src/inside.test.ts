@@ -25,8 +25,11 @@ type Engine = {
 }
 async function engine(spec: Engine) {
   const calls: string[] = []
+  /** How each call came: its Connection header and the client port of the connection it used. */
+  const connections: { header: string | undefined; port: number | undefined }[] = []
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     calls.push(`${req.method} ${req.url}`)
+    connections.push({ header: req.headers.connection, port: req.socket.remotePort })
     req.resume()
     if (req.url?.includes("/containers/")) {
       if (spec.create) return spec.create(res)
@@ -41,7 +44,7 @@ async function engine(spec: Engine) {
   })
   servers.push(server)
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r))
-  return { docker: new Docker(`tcp://127.0.0.1:${(server.address() as AddressInfo).port}`), calls }
+  return { docker: new Docker(`tcp://127.0.0.1:${(server.address() as AddressInfo).port}`), calls, connections }
 }
 const refuse =
   (status: number, body = "") =>
@@ -54,6 +57,15 @@ afterEach(async () => {
 })
 
 describe("the Docker client in a probe", () => {
+  it("opens a connection of its own for each call, which a socket proxy cannot cut by reusing it", async () => {
+    const { docker, connections } = await engine({})
+    await docker.exec("n8n", ["true"])
+    await docker.exec("n8n", ["true"])
+    expect(connections).toHaveLength(6)
+    expect(connections.every((c) => c.header === "close")).toBe(true)
+    expect(new Set(connections.map((c) => c.port)).size).toBe(6)
+  })
+
   it("tells the socket proxy refusing, a missing container, and a stopped or paused one apart", async () => {
     const cases: [number, string, DockerError["kind"]][] = [
       [403, "Forbidden", "refused"],

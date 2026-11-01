@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-01
+
 ### Added
 
 - **Add an instance with a setup that checks each step.** Adding an instance starts by choosing what it is for: health, monitoring and problems, the workflow map, moving workflows, Temporary access for agents, backup and restoring workflows. Only the steps those need follow (API key, worker and main container, health, Temporary access, backup destinations), and each is checked before the instance is activated: the key and the scopes each chosen capability needs, a command in the main through the worker, the health endpoints, each destination and the backup key. **Finish later** keeps the instance as Setup incomplete: it does nothing in the background and never alerts until its setup is completed. An active instance can add a capability (only its own checks run) or remove one (its alerts end without a message, queued jobs are dropped, and a backup still waiting for its archive ends without an alert; history stays). Background work, pages and agents act only on what each instance was chosen for; existing instances keep every capability.

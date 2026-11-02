@@ -76,7 +76,7 @@ test("an instance is registered through its setup, each step checked before it g
   // Temporary access: on, within read-only scopes.
   await expect(page.getByRole("heading", { name: "Temporary Access" })).toBeVisible()
   await page.getByLabel("Agents may request access").click()
-  await page.getByRole("button", { name: "Read only", exact: true }).click()
+  await page.getByRole("radio", { name: "Read only", exact: true }).click()
   await page.getByRole("button", { name: "Continue" }).click()
 
   // Saving the access policy touches nothing the key and health checks depend on: they still count in the review.

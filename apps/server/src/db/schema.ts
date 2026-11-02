@@ -720,6 +720,8 @@ export const accessRequests = pgTable(
     scopes: jsonb("scopes").$type<string[]>().notNull(),
     /** Empty: the whole instance within the scopes. Otherwise only these workflows. */
     workflowIds: jsonb("workflow_ids").$type<string[]>().notNull().default([]),
+    /** The names of those workflows when the request was made, by ID; a name that could not be read is missing. */
+    workflowNames: jsonb("workflow_names").$type<Record<string, string>>().notNull().default({}),
     minutes: integer("minutes").notNull(),
     status: text("status").$type<AccessStatus>().notNull().default("pending"),
     requestedAt: created(),

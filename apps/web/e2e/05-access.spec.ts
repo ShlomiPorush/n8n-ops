@@ -8,6 +8,7 @@ test.describe.configure({ mode: "serial" })
 let page: Page
 let token = ""
 let workflowId = ""
+let workflowName = ""
 let otherWorkflowId = ""
 let requestId = ""
 let shortRequestId = ""
@@ -22,6 +23,7 @@ test.beforeAll(async ({ browser }) => {
   const list = ((await res.json()) as { data: { id: string; name: string }[] }).data
   expect(list.length).toBeGreaterThan(1)
   workflowId = list[0]?.id ?? ""
+  workflowName = list[0]?.name ?? ""
   otherWorkflowId = list[1]?.id ?? ""
 })
 
@@ -76,7 +78,18 @@ test("the instance opens read-only access to agents", async ({ request }) => {
     .click()
   await page.getByRole("tab", { name: "Access" }).click()
   await page.getByLabel("Agents may request access").click()
-  await page.getByRole("button", { name: "Read only", exact: true }).click()
+  // The presets show which one the selection matches, and none when it was changed by hand.
+  const preset = page.getByRole("radiogroup", { name: "Preset" })
+  await preset.getByRole("radio", { name: "None", exact: true }).click()
+  await expect(preset.getByRole("radio", { name: "None", exact: true })).toBeChecked()
+  await expect(page.getByRole("checkbox", { name: "workflow:read", exact: true })).not.toBeChecked()
+  await preset.getByRole("radio", { name: "Read only", exact: true }).click()
+  await expect(preset.getByRole("radio", { name: "Read only", exact: true })).toBeChecked()
+  await expect(preset.getByRole("radio", { checked: true })).toHaveCount(1)
+  await page.getByRole("checkbox", { name: "workflow:read", exact: true }).click()
+  await expect(preset.getByRole("radio", { checked: true })).toHaveCount(0)
+  await page.getByRole("checkbox", { name: "workflow:read", exact: true }).click()
+  await expect(preset.getByRole("radio", { name: "Read only", exact: true })).toBeChecked()
   await page.getByRole("button", { name: "Save changes" }).click()
   await expect(page.getByText("Agent access saved")).toBeVisible()
 
@@ -178,6 +191,11 @@ test("a person approves in the UI, and the agent collects the key once", async (
   await expect(page.getByText("Access request").first()).toBeVisible()
   for (const id of [requestId, shortRequestId]) {
     await page.goto(`/access/${id}`)
+    if (id === requestId) {
+      // The approver sees the workflow by its name, with its ID to copy.
+      await expect(page.getByText(workflowName, { exact: true })).toBeVisible()
+      await expect(page.getByRole("button", { name: `Copy workflow ID: ${workflowId}` })).toBeVisible()
+    }
     await page.getByRole("button", { name: "Approve" }).click()
     await expect(page.getByText("Access approved")).toBeVisible()
   }
@@ -293,7 +311,7 @@ test("agent access edits survive a refresh, and a clean card shows the stored ac
   await expect(read).toBeChecked()
 
   // Unsaved changes stay when the stored access changes under them.
-  await page.getByRole("button", { name: "None", exact: true }).click()
+  await page.getByRole("radio", { name: "None", exact: true }).click()
   await expect(unsaved).toContainText("1 unsaved change")
   await store({ enabled: false, scopes: [] })
   await expect(allowed).toBeChecked()
@@ -317,7 +335,7 @@ test("agent access edits survive a refresh, and a clean card shows the stored ac
   await expect(unsaved).toHaveCount(0)
 
   // While a save runs the card is locked, so nothing can be changed under it; afterwards it shows what was saved.
-  await page.getByRole("button", { name: "None", exact: true }).click()
+  await page.getByRole("radio", { name: "None", exact: true }).click()
   await expect(unsaved).toContainText("1 unsaved change")
   let release = () => {}
   const held = new Promise<void>((done) => {

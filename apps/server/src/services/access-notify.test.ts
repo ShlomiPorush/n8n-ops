@@ -45,6 +45,32 @@ describe("request messages", () => {
     expect(text.endsWith("For 1 h 30 min")).toBe(true)
   })
 
+  it("name the workflows they have names for, with the ID after each, escaped for Telegram", () => {
+    const named = {
+      ...request,
+      workflowIds: ["w1", "w2", "toString"],
+      workflowNames: { w1: "Sync <orders>" },
+    }
+    const text = String(renderAccessTelegram(named))
+    expect(text).toContain("Workflows: Sync &lt;orders&gt; (w1), w2, toString\n")
+    const email = renderAccessEmail(named, null)
+    expect(email.text).toContain("Workflows: Sync <orders> (w1), w2, toString")
+    expect(email.html).toContain("Sync &lt;orders&gt; (w1), w2, toString")
+  })
+
+  it("stay within Telegram's 4096 characters with long names, and count what is left out", () => {
+    const ids = Array.from({ length: 50 }, (_, i) => `${i}`.padEnd(83, "w"))
+    const long = {
+      ...request,
+      scopes: Array.from({ length: 300 }, (_, i) => `scope:${i}`.padEnd(80, "s")),
+      workflowIds: ids,
+      workflowNames: Object.fromEntries(ids.map((id) => [id, "n".repeat(5000)])),
+    }
+    const text = String(renderAccessTelegram(long))
+    expect([...telegramPlainText(text)].length).toBeLessThan(4096)
+    expect(text).toMatch(/\nWorkflows: n+… \(0w+…\), .* and \d+ more\n/)
+  })
+
   it("stay within Telegram's 4096 characters with long lists, and count what is left out", () => {
     const long = {
       ...request,

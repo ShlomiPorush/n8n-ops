@@ -31,6 +31,8 @@ jobs:
     name: Find a green CI run
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    # ci-result.sh ends at most about two minutes after its 30-minute wait (three API calls of up to
+    # 35 seconds each), so it decides before this limit and a slow API gives the CI here, not a failed find.
     timeout-minutes: 40
     permissions:
       contents: read

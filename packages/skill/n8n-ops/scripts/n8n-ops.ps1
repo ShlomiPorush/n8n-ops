@@ -246,10 +246,18 @@ function New-Record($ctx) {
   $rec
 }
 
+# Reads a file the other commands may replace or delete meanwhile. ReadAllText shares it for reading only, so on
+# Windows a Replace or Delete by another command fails while this one reads; Node opens files with every share.
+function Read-Shared([string]$file) {
+  $share = [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete
+  $fs = [IO.File]::Open($file, [IO.FileMode]::Open, [IO.FileAccess]::Read, $share)
+  try { (New-Object IO.StreamReader($fs, $Utf8)).ReadToEnd() } finally { $fs.Dispose() }
+}
+
 function Read-Record($ctx) {
   if (-not [IO.File]::Exists($ctx.file)) { return $null }
   Test-PlainFile $ctx.file
-  try { $parsed = [IO.File]::ReadAllText($ctx.file, $Utf8) | ConvertFrom-Json } catch {
+  try { $parsed = Read-Shared $ctx.file | ConvertFrom-Json } catch {
     Fail 'insecure_credentials' "$($ctx.file) is damaged. Delete it and connect again."
   }
   $rec = @{}
@@ -309,7 +317,7 @@ function Remove-Record($ctx) { if ([IO.File]::Exists($ctx.file)) { [IO.File]::De
 function Read-Lock([string]$file) {
   if (-not [IO.File]::Exists($file)) { return $null }
   try {
-    $text = [IO.File]::ReadAllText($file, $Utf8)
+    $text = Read-Shared $file
     $held = $text | ConvertFrom-Json
     if ($held -and $held.PSObject.Properties['token']) { return $held }
   } catch {}

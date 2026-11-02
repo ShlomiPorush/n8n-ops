@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Fixed
+
+- **The agent skill on Windows no longer fails now and then when several commands run at once.** The PowerShell version read its lock and its connection file in a way that kept another command from deleting or replacing them meanwhile, so that command failed with "The process cannot access the file". It now reads them the way the other versions do.
+
 ## [0.7.2] - 2026-11-01
 
 ### Fixed

@@ -7,6 +7,7 @@ All notable changes to this project are documented here. The format follows [Kee
 ### Added
 
 - **How often n8n-ops reads each instance is now a setting.** Settings → Instance Defaults sets how often the workflow map reads the workflows and their execution counts (every 10 minutes by default, before every 30) and how often the n8n version and the API key are checked (every 6 hours); each instance can override both. Settings → General sets how often n8n-ops looks for a new n8n release (every 6 hours). At most two instances read their workflows at the same time.
+- **Sign in with a passkey.** Account → Passkeys adds a passkey (fingerprint, face or device PIN), and **Sign in with a passkey** on the sign-in page then signs in with it alone, in place of the password and the two-factor code. A passkey must check the person (PIN or biometrics); one that does not is refused. The password with two-factor stays as before, and two-factor is still required. Passkeys work at the public URL (Settings → General, or `N8N_OPS_PUBLIC_URL`) over HTTPS, and belong to its host name: after a change of host name, add them again. Adding, renaming and deleting a passkey, and each sign-in with one, are in the audit log. `reset-password` keeps the passkeys; they sign in again once two-factor is set up again.
 - **A change an agent makes through temporary access shows in the workflow map at once.** A write to workflows, tags or executions that n8n accepts reads that instance's workflows again, without waiting for the next refresh.
 
 ### Changed

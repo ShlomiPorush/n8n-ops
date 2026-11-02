@@ -58,6 +58,12 @@ _Avoid_: stale, n/a
 The health from the last collection that read the instance, shown beside Unknown with the time it was read. It is never shown as the current health.
 _Avoid_: cached health, previous health
 
+### Signing in
+
+**Passkey**:
+A credential on the person's device that signs in to n8n-ops alone, in place of the password and the two-factor code, after the device checks the person (PIN or biometrics). It belongs to the host name of the public URL.
+_Avoid_: security key, WebAuthn credential
+
 ### Agents
 
 **Agent**:

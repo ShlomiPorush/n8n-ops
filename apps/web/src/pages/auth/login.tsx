@@ -1,4 +1,4 @@
-import { Clock, LoaderCircle } from "lucide-react"
+import { Clock, Fingerprint, LoaderCircle } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { Navigate, useNavigate, useSearchParams } from "react-router"
 import { Alert, AlertDescription } from "@/components/ui/alert"
@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input"
 import { PasswordInput } from "@/components/ui/password-input"
 import { UNREACHABLE_TEXT, useApi } from "@/lib/api"
 import { authClient, authErrorText, signInErrorText } from "@/lib/auth-client"
+import { passkeyBlock, passkeyCancelled } from "@/lib/passkeys"
 import { endedTexts } from "@/lib/session-clock"
 import { AuthFrame, type TotpAnswer, TotpInput, totpAnswer } from "./shared"
 
@@ -26,7 +27,9 @@ export function LoginPage() {
   const reason = params.get("ended") ?? ""
   const ended = Object.hasOwn(endedTexts, reason) ? endedTexts[reason] : undefined
   const passwordRef = useRef<HTMLInputElement>(null)
-  const status = useApi<{ hasUser: boolean }>("/setup/status")
+  const status = useApi<{ hasUser: boolean; passkeys: string | null }>("/setup/status")
+  // Only offered where it can work; the account page says why when it cannot.
+  const passkeys = status.data && !passkeyBlock(status.data.passkeys)
   const [step, setStep] = useState<"password" | "totp">("password")
   const [error, setError] = useState("")
   const [busy, setBusy] = useState(false)
@@ -60,6 +63,29 @@ export function LoginPage() {
       if (data && "twoFactorRedirect" in data && data.twoFactorRedirect) return setStep("totp")
       // Signed in without two-factor: it must be set up before anything else.
       navigate("/setup", { replace: true })
+    } catch {
+      setError(UNREACHABLE_TEXT)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // A passkey is a whole sign-in: no password and no code.
+  async function signInWithPasskey() {
+    setBusy(true)
+    setError("")
+    try {
+      const { data, error } = await authClient.signIn.passkey()
+      if (error) {
+        const e = error as { code?: string; status?: number; message?: string }
+        if (passkeyCancelled(e.code)) return setError("Passkey sign-in was cancelled or timed out.")
+        if (e.code === "USER_NOT_VERIFIED" || e.status === 429 || !e.status) return setError(authErrorText(e))
+        if (e.status >= 500) return setError("Could not sign in. Try again in a moment.")
+        return setError("This passkey did not sign you in. Try another one, or your password.")
+      }
+      // After a reset from the server, two-factor is set up again first.
+      const u = (data as { user?: { twoFactorEnabled?: boolean | null } } | null)?.user
+      navigate(u?.twoFactorEnabled ? next : "/setup", { replace: true })
     } catch {
       setError(UNREACHABLE_TEXT)
     } finally {
@@ -133,6 +159,11 @@ export function LoginPage() {
                 "Continue"
               )}
             </Button>
+            {passkeys && (
+              <Button type="button" disabled={busy} onClick={() => void signInWithPasskey()}>
+                <Fingerprint aria-hidden /> Sign in with a passkey
+              </Button>
+            )}
             <FieldDescription>
               Locked out? On the server, run:{" "}
               <code className="break-all">docker compose exec -u node server node dist/cli.js reset-password</code>

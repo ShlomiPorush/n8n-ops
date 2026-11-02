@@ -13,7 +13,8 @@ import type { Env } from "./types.ts"
  */
 export function requireUser(ctx: Ctx, options: { allowWithoutTotp?: boolean; mode?: CheckMode } = {}) {
   return createMiddleware<Env>(async (c, next) => {
-    const result = await ctx.auth.api.getSession({ headers: c.req.raw.headers })
+    const { auth } = await ctx.auth()
+    const result = await auth.api.getSession({ headers: c.req.raw.headers })
     if (!result) return c.json({ error: "unauthorized" }, 401)
     const u = result.user as typeof result.user & { username?: string | null; twoFactorEnabled?: boolean | null }
     const username = u.username ?? u.name

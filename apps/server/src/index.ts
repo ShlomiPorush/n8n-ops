@@ -4,7 +4,7 @@ import { writeSync } from "node:fs"
 import type { Server } from "node:http"
 import { serve } from "@hono/node-server"
 import { createApp } from "./app.ts"
-import { createAuth } from "./auth/auth.ts"
+import { createAuthSource } from "./auth/current.ts"
 import { loadConfig } from "./config.ts"
 import { type Ctx, consoleLogger } from "./context.ts"
 import { createDatabase } from "./db/client.ts"
@@ -35,11 +35,12 @@ if (created)
     path: config.appKeyPath,
   })
 
+const settings = createSettings(database.db, { publicUrl: config.publicUrl })
 const ctx: Ctx = {
   db: database.db,
-  auth: createAuth(database.db, key, config.publicUrl),
+  auth: createAuthSource(database.db, key, config.publicUrl, settings),
   secrets: createSecrets(key),
-  settings: createSettings(database.db, { publicUrl: config.publicUrl }),
+  settings,
   audit: createAudit(database.db),
   version: config.version,
   appKeyPath: config.appKeyPath,

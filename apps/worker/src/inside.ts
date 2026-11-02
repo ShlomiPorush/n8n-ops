@@ -152,7 +152,92 @@ const main = { host: loopback(address.value), port: port.value, tls: tls }
  * finished), on N8N_WORKER_SERVER_ADDRESS and QUEUE_HEALTH_CHECK_PORT, over HTTP. With the health check off it says
  * so and asks for nothing.
  */
-export const WORKER_CHECK = `${PRELUDE.replace("__WHERE__", "the worker")}${String.raw`
+/**
+ * What the check in a queue worker reads about the worker itself, as plain functions of a `read(path)` that returns
+ * a file's text. The check runs them with the container's files; the tests run the same text with stand-in files.
+ * Each answers undefined when it cannot be sure, and nothing they read leaves but the figures they return.
+ */
+export const READERS = String.raw`
+/** n8n's version, from the package of the official image. */
+function versionOf(read) {
+  try {
+    const v = JSON.parse(read("/usr/local/lib/node_modules/n8n/package.json")).version
+    return typeof v === "string" && /^(?=.{5,40}$)[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}([-+.][0-9A-Za-z.+-]*)?$/.test(v) ? v : undefined
+  } catch (e) { return undefined }
+}
+/**
+ * How long the container has run: since PID 1 started, when PID 1 is the container's init or n8n and belongs to
+ * this container (its groups are this process's; a PID namespace shared with another container fails that).
+ */
+function uptimeOf(read) {
+  try {
+    if (read("/proc/1/cgroup") !== read("/proc/self/cgroup")) return undefined
+    const stat = read("/proc/1/stat")
+    const open = stat.indexOf("("), close = stat.lastIndexOf(")")
+    if (open < 0 || close < open) return undefined
+    const comm = stat.slice(open + 1, close)
+    if (!["tini", "docker-init", "dumb-init", "node", "n8n"].includes(comm)) return undefined
+    // Fields after the command, from field 3 on: the start time is field 22, in ticks of USER_HZ (100).
+    const start = Number(stat.slice(close + 2).split(" ")[19])
+    const up = Number(read("/proc/uptime").split(" ")[0])
+    const sec = Math.floor(up - start / 100)
+    return Number.isFinite(sec) && sec >= 0 ? sec : undefined
+  } catch (e) { return undefined }
+}
+/**
+ * The container's memory use and limit, from the memory group in /proc/self/cgroup (the v1 memory controller when
+ * there is one, else v2), found through the cgroup mount in /proc/self/mountinfo. Limit null: none set on the group.
+ */
+function memoryOf(read) {
+  try {
+    const lines = read("/proc/self/cgroup").split("\n")
+    let v = 0, group
+    for (const line of lines) {
+      const m = /^[0-9]+:([^:]*):(.*)$/.exec(line)
+      if (!m) continue
+      if (m[1].split(",").includes("memory")) { v = 1; group = m[2]; break }
+      if (m[1] === "" && line.startsWith("0::")) { v = 2; group = m[2] }
+    }
+    if (!v || !group) return undefined
+    let best
+    for (const line of read("/proc/self/mountinfo").split("\n")) {
+      const parts = line.trim().split(" ")
+      const dash = parts.indexOf("-")
+      if (dash < 0 || parts.length < dash + 4) continue
+      // Spaces, tabs, new lines and backslashes in mountinfo paths are written as octal escapes (\040).
+      const plain = (p) => p.replace(/\\([0-7]{3})/g, (_, o) => String.fromCharCode(parseInt(o, 8)))
+      const root = plain(parts[3]), point = plain(parts[4]), type = parts[dash + 1], options = parts[dash + 3].split(",")
+      if (v === 1 ? !(type === "cgroup" && options.includes("memory")) : type !== "cgroup2") continue
+      const fits = root === "/" || group === root || group.startsWith(root + "/")
+      if (fits && (!best || root.length > best.root.length)) best = { root, point }
+    }
+    if (!best) return undefined
+    const rest = best.root === "/" ? group : group.slice(best.root.length)
+    const dir = best.point + (rest === "/" ? "" : rest)
+    const used = Number(read(dir + (v === 1 ? "/memory.usage_in_bytes" : "/memory.current")).trim())
+    const max = read(dir + (v === 1 ? "/memory.limit_in_bytes" : "/memory.max")).trim()
+    if (!Number.isFinite(used) || used < 0) return undefined
+    const limit = max === "max" ? null : Number(max)
+    if (limit !== null && (!Number.isFinite(limit) || limit <= 0)) return undefined
+    return { used: used, limit: limit !== null && limit >= Math.pow(2, 62) ? null : limit }
+  } catch (e) { return undefined }
+}
+`
+
+export const WORKER_CHECK = `${PRELUDE.replace("__WHERE__", "the worker")}${READERS}${String.raw`
+// About the worker itself: figures only, each left out when it cannot be read for sure.
+try {
+  const read = (path) => fs.readFileSync(path, "utf8")
+  const limit = raw("N8N_CONCURRENCY_PRODUCTION_LIMIT")
+  const n = limit.unknown || limit.value === undefined || normalize(limit.value) === "" ? undefined : Number(limit.value)
+  out.details = {
+    version: versionOf(read),
+    uptimeSec: uptimeOf(read),
+    memory: memoryOf(read),
+    // n8n reads it as a number; blank or not a number is its default, -1: then the flag or 10 decide.
+    concurrencyEnv: limit.unknown ? "unknown" : n === undefined || isNaN(n) || n === -1 ? "absent" : n,
+  }
+} catch (e) {}
 const active = flag("QUEUE_HEALTH_CHECK_ACTIVE", false)
 const address = text("N8N_WORKER_SERVER_ADDRESS", "::")
 const port = number("QUEUE_HEALTH_CHECK_PORT", 5678)

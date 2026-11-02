@@ -194,6 +194,9 @@ test("a person approves in the UI, and the agent collects the key once", async (
 
   shortKey = (await mcp(request, "get_access_request", { requestId: shortRequestId })).value.key
   expect(shortKey).toMatch(/^nops_n8n_/)
+  // The one-minute access works now; the last test of the file waits until it has ended on its own, so its real
+  // minute passes while the tests in between run. None of them uses it.
+  expect((await proxy("/workflows", shortKey)).status).toBe(200)
 })
 
 test("Deny asks first, since it is final, and Cancel keeps the request pending", async ({ request }) => {
@@ -256,19 +259,6 @@ test("released access stops working at once", async ({ request }) => {
   const released = await mcp(request, "release_instance_access", { requestId })
   expect(released.value.status).toBe("released")
   expect((await proxy(`/workflows/${workflowId}`, key)).status).toBe(401)
-})
-
-test("access ends on its own when its time is up", async () => {
-  test.setTimeout(150_000)
-  expect((await proxy("/workflows", shortKey)).status).toBe(200)
-  await expect(async () => {
-    expect((await proxy("/workflows", shortKey)).status).toBe(401)
-  }).toPass({ timeout: 120_000, intervals: [5_000] })
-  // The key is refused from the moment it expires; the background job then marks the request.
-  await expect(async () => {
-    await page.goto(`/access/${shortRequestId}`)
-    await expect(page.getByText("Expired").first()).toBeVisible({ timeout: 3_000 })
-  }).toPass({ timeout: 60_000 })
 })
 
 test("agent access edits survive a refresh, and a clean card shows the stored access", async () => {
@@ -355,4 +345,17 @@ test("agent access edits survive a refresh, and a clean card shows the stored ac
   // Back to closed, as the other tests expect.
   await store({ enabled: false, scopes: [] })
   await expect(allowed).not.toBeChecked()
+})
+
+// Last in the file: the one-minute access approved above has run its real minute while the tests in between ran.
+test("access ends on its own when its time is up", async () => {
+  test.setTimeout(150_000)
+  await expect(async () => {
+    expect((await proxy("/workflows", shortKey)).status).toBe(401)
+  }).toPass({ timeout: 120_000, intervals: [1_000] })
+  // The key is refused from the moment it expires; the background job then marks the request.
+  await expect(async () => {
+    await page.goto(`/access/${shortRequestId}`)
+    await expect(page.getByText("Expired").first()).toBeVisible({ timeout: 3_000 })
+  }).toPass({ timeout: 60_000 })
 })

@@ -15,6 +15,7 @@ import {
   usableWorker,
 } from "../services/backups.ts"
 import { describeLocation, destinationsFor } from "../services/destinations/index.ts"
+import { can } from "../services/instances.ts"
 
 const KEY_WANTED = "Paste the private key that starts with AGE-SECRET-KEY-1."
 const keySchema = z
@@ -64,7 +65,11 @@ export function backupRoutes(ctx: Ctx) {
           destinations: (await destinationsFor(ctx, i)).map(brief),
           backupTime: s.backupTime,
           staleBackupHours: s.staleBackupHours,
-          withSecrets: Boolean(await usableWorker(ctx, i)),
+          // What the instance was chosen for: pages pick only instances that may back up or take a restore.
+          backup: can(i, "backup"),
+          restore: can(i, "restore"),
+          backupVia: i.backupVia,
+          withSecrets: i.backupVia === "worker" && Boolean(await usableWorker(ctx, i)),
         }
       }),
     )
@@ -97,18 +102,27 @@ export function backupRoutes(ctx: Ctx) {
     const id = c.req.param("instanceId")
     try {
       if (id === "self") {
-        await runSelfBackup(ctx)
+        const run = await runSelfBackup(ctx)
         await ctx.audit({
           actor: actorName(c.get("actor")),
           action: "Backup started",
           target: "n8n-ops database",
           via: "web",
         })
-        return c.json({ ok: true })
+        return c.json({ ok: true, runId: run.id })
       }
       const [instance] = await ctx.db.select().from(instances).where(eq(instances.id, id))
       if (!instance) return c.json({ error: "not_found" }, 404)
-      const run = await startBackup(ctx, instance, "manual")
+      // Decided again when the run is made, with the row locked: it may be turned off in between.
+      const run = can(instance, "backup") ? await startBackup(ctx, instance, "manual") : null
+      if (!run)
+        return c.json(
+          {
+            error: "not_chosen",
+            message: `Backup is not chosen for ${instance.name}. Add it to its capabilities first.`,
+          },
+          400,
+        )
       await ctx.audit({ actor: actorName(c.get("actor")), action: "Backup started", target: instance.name, via: "web" })
       return c.json({ runId: run.id })
     } catch (error) {

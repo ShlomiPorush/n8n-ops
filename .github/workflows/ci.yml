@@ -5,7 +5,8 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
-  # The Release workflow runs the whole CI on the commit it releases.
+  # The Release workflow runs the whole CI on the commit it releases when it finds no green CI run of
+  # that commit on main to reuse (scripts/ci-result.sh).
   workflow_call:
   schedule:
     # Weekly full sweep that ignores path filters.
@@ -50,9 +51,45 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: scripts/verify.sh --guards-only
 
-  verify:
-    # One job per design, side by side: each runs the whole end-to-end suite on its own stack.
-    name: Verify (${{ matrix.design }})
+  # The parts of scripts/verify.sh side by side, each in a job of its own (--only): Checks, Integration, and the
+  # end-to-end suite once per design. Together they run what a full sweep runs.
+  checks:
+    name: Checks
+    needs: changes
+    if: needs.changes.outputs.code == 'true' || github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Verify changed areas
+        if: github.event_name == 'pull_request'
+        run: scripts/verify.sh --skip-guards --changed origin/main --only checks
+      - name: Verify everything
+        if: github.event_name != 'pull_request'
+        run: scripts/verify.sh --skip-guards --only checks
+
+  integration:
+    name: Integration
+    needs: changes
+    if: needs.changes.outputs.code == 'true' || github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Verify changed areas
+        if: github.event_name == 'pull_request'
+        run: scripts/verify.sh --skip-guards --changed origin/main --only integration
+      - name: Verify everything
+        if: github.event_name != 'pull_request'
+        run: scripts/verify.sh --skip-guards --only integration
+
+  e2e:
+    # One job per design: each runs the whole end-to-end suite on its own stack.
+    name: E2E (${{ matrix.design }})
     needs: changes
     if: needs.changes.outputs.code == 'true' || github.event_name != 'pull_request'
     strategy:
@@ -67,13 +104,13 @@ jobs:
           fetch-depth: 0
       - name: Verify changed areas
         if: github.event_name == 'pull_request'
-        run: scripts/verify.sh --skip-guards --changed origin/main --design ${{ matrix.design }}
+        run: scripts/verify.sh --skip-guards --changed origin/main --only e2e --design ${{ matrix.design }}
       - name: Verify everything
         if: github.event_name != 'pull_request'
-        run: scripts/verify.sh --skip-guards --design ${{ matrix.design }}
+        run: scripts/verify.sh --skip-guards --only e2e --design ${{ matrix.design }}
 
   skill:
-    # The skill runs on the agent's computer: its three versions are checked where they run (Linux runs in Verify).
+    # The skill runs on the agent's computer: its three versions are checked where they run (Linux runs in Checks).
     name: Skill (${{ matrix.os }})
     needs: changes
     if: needs.changes.outputs.code == 'true' || github.event_name != 'pull_request'
@@ -98,7 +135,7 @@ jobs:
   summary:
     name: CI summary
     if: always()
-    needs: [changes, guards, verify, skill]
+    needs: [changes, guards, checks, integration, e2e, skill]
     runs-on: ubuntu-latest
     steps:
       - name: Check results

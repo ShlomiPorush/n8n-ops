@@ -4,6 +4,56 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-11-01
+
+### Fixed
+
+- **The workflow and execution counts of a new instance appear right after its setup.** An instance activated with the workflow map showed no workflows or executions for up to 30 minutes, until the next scheduled sync. The sync now starts on activation, and an open page shows the counts when it ends, without a reload. **Check now** on an instance page also reads its workflows again.
+- **A worker behind the socket proxy no longer fails a check or a backup now and then with "aborted".** The socket proxy could cut Docker's answer to a command when the worker reused a connection, so a health check, a queue worker check or a backup export failed although nothing was wrong. The worker now opens a new connection for each call to Docker.
+- **A single pause of a busy server no longer turns off a Telegram topic route.** A workflow pattern that ran past its time limit once matched nothing until the server restarted, and a pause of a busy server could push even a simple pattern past it. A pattern that runs out of time is now tried again at once, and only one that runs out of time twice in a row is ignored.
+
+## [0.7.1] - 2026-11-01
+
+### Fixed
+
+- **The setup's health check no longer asks for queue metrics on n8n in regular mode.** When the worker found the main in regular mode, the check showed "no queue metrics; set N8N_METRICS_INCLUDE_QUEUE_METRICS=true", although n8n publishes queue metrics only in queue mode. It now shows the queue parts only in queue mode, as the instance's Health tab already did.
+
+## [0.7.0] - 2026-11-01
+
+### Added
+
+- **Add an instance with a setup that checks each step.** Adding an instance starts by choosing what it is for: health, monitoring and problems, the workflow map, moving workflows, Temporary access for agents, backup and restoring workflows. Only the steps those need follow (API key, worker and main container, health, Temporary access, backup destinations), and each is checked before the instance is activated: the key and the scopes each chosen capability needs, a command in the main through the worker, the health endpoints, each destination and the backup key. **Finish later** keeps the instance as Setup incomplete: it does nothing in the background and never alerts until its setup is completed. An active instance can add a capability (only its own checks run) or remove one (its alerts end without a message, queued jobs are dropped, and a backup still waiting for its archive ends without an alert; history stays). Background work, pages and agents act only on what each instance was chosen for; existing instances keep every capability.
+
+### Changed
+
+- **n8n 2.14.0 or later is required.** n8n-ops reads what each API key allows from `GET /api/v1/discover`, which n8n added in 2.14.0. Declaring a key as read only or read and write on older n8n is no longer possible; on an older instance the features that use the API are unavailable and its page says to update n8n. Health and worker backups of such an instance keep running.
+- **A backup through the worker no longer falls back to the API.** When its worker is not available, the backup fails and says so, instead of making an API backup that silently leaves out the credential secrets. Existing instances back up through their worker when one was assigned with its main set, otherwise through the API, as before; the choice is now per instance.
+- **A new base URL needs the API key again**, also through the API, or the key's removal.
+- **Upgrading is one way.** An earlier release cannot run against a database this one migrated. Before upgrading, make sure n8n-ops's own database backup is recent; to go back, restore it into the earlier release.
+
+### Fixed
+
+- **Saving an instance's overrides or its agent access keeps how its health is checked.** It no longer switched the health checks back to the n8n-ops server, turned queue mode off or dropped the queue worker URLs.
+
+## [0.6.0] - 2026-10-28
+
+### Added
+
+- **The main by its Compose service.** An instance can name its main container by Compose project and service instead of a container name, so it keeps working through docker rollout and redeploys that replace the container with another number. Each check, backup and credential export uses the service's container in use then: one that carries both Compose labels, is not a one-off and is named as Compose names it; during a rollout the healthy one, then the newest. A backup or export stays in the container it started in and says so when a rollout replaced it midway. The Health tab shows which container was used at the last check. The socket proxy lines allow the service's replicas (`<project>-<service>-<number>`) when the worker found that no other container on the host is named that way, and only the container in use otherwise. Following a service needs this release's worker; with an earlier one the Health tab says to update it.
+
+### Fixed
+
+- **A failed credential export fails the backup.** A worker backup of an instance with no workflows no longer passes when its credential export fails: each export is judged by its own output.
+
+## [0.5.0] - 2026-10-28
+
+### Added
+
+- **More about each n8n queue worker.** The Health tab lists the queue workers by name, with a line that sums them up ("6 of 7 queue workers ready, 1 down", saying how many were checked when not all were). Under each, what the check in it read: its n8n version, marked when it differs from the main's, how long its container has been up, how many jobs it runs at once and where that comes from (`N8N_CONCURRENCY_PRODUCTION_LIMIT`, `--concurrency` or n8n's default of 10), and its memory use against the container's limit. A figure that cannot be read for sure is left out. The agents' `queues` answer (REST and MCP) carries the same fields. The worker sends these figures and nothing else about its queue workers: never their commands, environment or files; Add worker says so.
+- **Socket proxy lines with a pattern for queue workers added later.** Beside the exact lines, the fix and a worker's settings offer the same lines with a pattern such as `qworker*`, so adding another n8n queue worker does not need a new line. It is offered only when the worker found, at its last check, that no other container on the host has a name starting the same way, and never when it would reach a main or another instance's queue workers; the text says what the pattern allows, also later. Record this pattern adds it to the containers recorded for the worker (audited) in place of the names it covers, so the lines keep it; a suggestion that is no longer current is not recorded and the lines are read again. Workers of earlier releases send no such check, so they get no pattern until they are updated.
+
+## [0.4.0] - 2026-10-27
+
 ### Added
 
 - **One problem per error, across workflows and instances.** A problem is now one exact error text wherever it happens, and the workflows it hit are its affected workflows, each with its own failures, first and last seen, and state. The Problems list shows a problem that hit several workflows as one row titled by its error, with how many workflows, the instance and their names ("CRM Quote, Get DNS Data and 2 more"); the row opens to its workflows. Its page opens on Affected workflows; a row there shows that workflow's Overview, Input and Occurrences. A problem that hit one workflow looks as before.

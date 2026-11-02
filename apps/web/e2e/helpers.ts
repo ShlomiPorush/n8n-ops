@@ -50,8 +50,26 @@ export async function signIn(page: Page) {
     await page.context().clearCookies()
   }
   await signInWithPassword(page)
+  await saveSession(page)
+}
+
+/**
+ * Keeps the page's session for the next spec file's signIn(). Each sign-in needs a two-factor code of a time step
+ * not used yet, so one that is not reused waits up to 30 seconds for the next step.
+ */
+export async function saveSession(page: Page) {
   mkdirSync("test-results", { recursive: true })
   writeFileSync(sessionFile, JSON.stringify(await page.context().cookies()))
+}
+
+/**
+ * Waits until an open dialog, sheet or list holds its Back step. The step is pushed on the next task after it opens
+ * (lib/overlay-history.ts), so a Back pressed before that leaves the page instead of closing it.
+ */
+export async function dialogOpened(page: Page) {
+  await expect
+    .poll(() => page.evaluate(() => (window.history.state as { overlay?: number } | null)?.overlay ?? null))
+    .not.toBeNull()
 }
 
 /**

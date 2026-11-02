@@ -27,6 +27,8 @@ async function api<T>(identity: string, method: string, path: string, body?: unk
     headers: {
       authorization: `Bearer ${identity}`,
       "x-worker-version": version,
+      // What this release supports, so the server sends only jobs it can run.
+      "x-worker-features": "compose-target",
       ...(body !== undefined ? { "content-type": "application/json" } : {}),
     },
     body: body !== undefined ? JSON.stringify(body) : undefined,

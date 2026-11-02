@@ -40,7 +40,11 @@ test.beforeAll(async ({ browser }) => {
     source: "network",
     fallback: 'the socket proxy does not allow commands in "e2e-acme"',
     access: { refused: [{ call: "exec-create", container: "e2e-acme" }] },
-    listed: { names: ["e2e-acme-worker-1"], complete: true },
+    listed: {
+      names: ["e2e-acme-worker-1"],
+      complete: true,
+      patterns: [{ pattern: "e2e-acme-worker-*", clean: true }],
+    },
     via: "worker",
     revision: 0,
   }
@@ -71,7 +75,7 @@ test("the Health tab shows the lines that allow what the proxy refused, and poin
   const fix = page.getByTestId("proxy-fix").filter({ visible: true })
   await expect(fix.getByText(`The socket proxy on ${workerName} refuses commands in e2e-acme`)).toBeVisible()
   await expect(fix.locator("code").first()).toHaveText(lines("e2e-acme|e2e-acme-worker-1"))
-  await expect(fix.getByRole("button", { name: "Copy the two lines" })).toBeVisible()
+  await expect(fix.getByRole("button", { name: "Copy the two lines", exact: true })).toBeVisible()
   await expect(fix.getByText("e2e-acme-worker-1 (queue worker of e2e-proxy-n8n)")).toBeVisible()
   await expect(fix.getByText("replace the -allowGET and -allowPOST lines")).toBeVisible()
   // Its settings were not recorded when it was added: replacing the lines is said to drop anything else.
@@ -81,6 +85,28 @@ test("the Health tab shows the lines that allow what the proxy refused, and poin
   ).toBeVisible()
   await expect(page.getByText("See why").filter({ visible: true })).toHaveCount(0)
   await expect(page.getByText("add it to -allowPOST").filter({ visible: true })).toHaveCount(0)
+})
+
+test("the lines with a pattern for queue workers added later are offered, and recorded on request", async () => {
+  await page.goto(`/instances/${instanceId}?tab=health`)
+  const fix = page.getByTestId("proxy-fix").filter({ visible: true })
+  const widened = fix.getByTestId("proxy-widened")
+  await expect(widened.getByText("Or allow queue workers added later")).toBeVisible()
+  await expect(
+    widened.getByText(/only queue workers of e2e-proxy-n8n on this host had a name starting with/),
+  ).toBeVisible()
+  await expect(widened.locator("code").last()).toHaveText(lines("e2e-acme-worker-[^/]*|e2e-acme"))
+  // The exact lines stay first and unchanged.
+  await expect(fix.locator("code").first()).toHaveText(lines("e2e-acme|e2e-acme-worker-1"))
+  await widened.getByRole("button", { name: "Record this pattern" }).click()
+  await expect(fix.locator("code").first()).toHaveText(lines("e2e-acme|e2e-acme-worker-[^/]*"))
+  // Recorded, the pattern is in the lines themselves, so nothing is offered beside them.
+  await expect(fix.getByTestId("proxy-widened")).toHaveCount(0)
+  const [row] = await sql`select allowed from workers where id = ${workerId}`
+  expect(row?.allowed).toEqual({ containers: ["e2e-acme", "e2e-acme-worker-*"] })
+  // Back as it was, for the next test.
+  await sql`update workers set allowed = null where id = ${workerId}`
+  await sql`delete from audit_log where target = ${workerName}`
 })
 
 test("recording the allowed containers keeps the owner's pattern in the lines, and is audited", async () => {

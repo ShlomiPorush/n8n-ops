@@ -1,3 +1,4 @@
+import { workerDetails } from "@n8n-ops/shared"
 import { and, eq, like, sql } from "drizzle-orm"
 import { z } from "zod"
 import { type Ctx, changed } from "../context.ts"
@@ -32,6 +33,11 @@ export const probeReport = z.object({
       /** Found next to the main (url docker://<name>), with its state; absent for a URL the owner typed. */
       name: z.string().max(128).optional(),
       state: z.enum(["ready", "not-ready", "unreachable", "not-verified", "down", "not-checked"]).optional(),
+      ...workerDetails,
+      concurrency: z
+        .object({ value: z.number().int().min(1).max(10000), from: z.enum(["env", "flag", "default"]) })
+        .optional()
+        .catch(undefined),
     }),
   ),
   queue: z
@@ -63,7 +69,25 @@ export const probeReport = z.object({
   /** What the socket proxy refused in this probe. Absent from workers of earlier releases. */
   access: z.object({ refused: z.array(refusal).max(60) }).optional(),
   /** The queue worker names the worker listed next to the main, when it told them apart. */
-  listed: z.object({ names: z.array(z.string().max(128)).max(500), complete: z.boolean() }).optional(),
+  /** The container a Compose service target resolved to in this probe. */
+  resolvedContainer: z
+    .string()
+    .regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/)
+    .optional()
+    .catch(undefined),
+  /** Whether a rule for the service's replicas reaches only them on the host, at this probe. */
+  replicas: z.object({ clean: z.boolean() }).optional().catch(undefined),
+  listed: z
+    .object({
+      names: z.array(z.string().max(128)).max(500),
+      complete: z.boolean(),
+      /** Patterns for queue workers added later, and whether no other container on the host starts the same way. */
+      patterns: z
+        .array(z.object({ pattern: z.string().max(130), clean: z.boolean() }))
+        .max(20)
+        .optional(),
+    })
+    .optional(),
 })
 
 export type ProbeResult = z.infer<typeof probeResult>
@@ -97,6 +121,27 @@ export async function startCheck(
     .where(eq(instances.id, instanceId))
     .returning()
   return row ? { ticket: { seq: row.healthCheckSeq, revision: row.collectionRevision }, instance: row } : null
+}
+
+type ModeReport = Pick<z.infer<typeof probeReport>, "source" | "mode">
+
+/** The execution mode a report read inside the main, or null when it was not read there. */
+const foundMode = (report: ModeReport) =>
+  report.source === "inside" && (report.mode === "queue" || report.mode === "regular") ? report.mode : null
+
+/** A mode read inside the main is the instance's mode from now on; one that could not be read keeps the last. */
+export function queueModeOf(report: ModeReport, current: boolean) {
+  const mode = foundMode(report)
+  return mode === null ? current : mode === "queue"
+}
+
+/**
+ * A report as it counts for an instance in that mode. Outside queue mode its queue parts mean nothing, whichever
+ * worker release sent them: n8n has no queue there, so it never publishes queue figures. How the metrics were read
+ * stays: it says why there is a version or not.
+ */
+export function forMode<T extends z.infer<typeof probeReport>>(report: T, queueMode: boolean): T {
+  return queueMode ? report : { ...report, workers: [], queue: null, metricsError: undefined, discovery: undefined }
 }
 
 /** Checks an instance from the server (collection mode "direct"). Queue workers only in queue mode. */
@@ -274,14 +319,9 @@ async function applyHealthNow(ctx: Ctx, instanceId: string, given: HealthReport,
       })
       return null
     }
-    // A mode read inside the main is the instance's mode from now on; one that could not be read keeps the last.
-    const found = given.source === "inside" && (given.mode === "queue" || given.mode === "regular")
-    const queueMode = found ? given.mode === "queue" : current.queueMode
-    // Outside queue mode a report's queue parts mean nothing, whichever worker release sent them. How the metrics
-    // were read stays: it says why there is a version or not.
-    const report: HealthReport = queueMode
-      ? given
-      : { ...given, workers: [], queue: null, metricsError: undefined, discovery: undefined }
+    const found = foundMode(given) !== null
+    const queueMode = queueModeOf(given, current.queueMode)
+    const report = forMode(given, queueMode)
     // What the proxy refused and the names it listed are kept in any mode: they say what the proxy must allow.
 
     const measured = queueMode && !report.notCollected && report.queue !== null

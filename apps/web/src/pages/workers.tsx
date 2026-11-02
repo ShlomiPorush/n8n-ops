@@ -225,7 +225,7 @@ function CopyBlock({ label, text }: { label: string; text: string }) {
   )
 }
 
-function AddWorkerDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
+export function AddWorkerDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
   const [name, setName] = useState("")
   const [socketProxy, setSocketProxy] = useState(true)
   const [containers, setContainers] = useState("")
@@ -281,8 +281,10 @@ function AddWorkerDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
                 <FieldLabel htmlFor="worker-proxy">Limit Docker access with a socket proxy</FieldLabel>
                 <FieldDescription>
                   Recommended. The worker gets no Docker socket: a proxy lets it list the containers, to find n8n queue
-                  workers, and run commands only in the n8n containers you list. Only the names and states of queue
-                  workers leave the host. Without the proxy, the worker has full control of Docker on the host.
+                  workers, and run commands only in the n8n containers you list. Of the queue workers, only their names,
+                  states, n8n version, time up, memory and jobs at once leave the host, and whether a suggested pattern
+                  would reach another container; never commands, environment or files. Without the proxy, the worker has
+                  full control of Docker on the host.
                 </FieldDescription>
               </FieldContent>
             </Field>

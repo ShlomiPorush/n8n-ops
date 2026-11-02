@@ -113,15 +113,58 @@ test("a worker pairs with a one-time token", async () => {
   }).toPass({ timeout: 60_000 })
 })
 
-test("the worker is assigned to the instance", async () => {
+test("backup through the worker, restore and move are added to the instance, each with its own checks", async () => {
+  test.setTimeout(180_000)
   await page.goto("/instances")
   await page.getByRole("row", { name: /e2e-n8n/ }).click()
-  await page.getByRole("button", { name: "Edit" }).click()
-  await page.getByRole("button", { name: /^Worker on this instance.s Docker host: None$/ }).click()
-  await page.getByRole("option", { name: "E2E Host" }).click()
-  await page.getByLabel("Container name").fill(container)
-  await page.getByRole("button", { name: "Save" }).click()
-  await dialogClosed(page)
+  await page.getByRole("link", { name: "Add capability" }).click()
+  await expect(page.getByRole("heading", { name: "What to Add" })).toBeVisible()
+  // What is active stays as it is, and is not checked again.
+  await expect(page.getByRole("checkbox", { name: "Monitoring and problems", exact: true })).toBeDisabled()
+  // Restore needs backups: it can be chosen once Backup is.
+  await expect(page.getByRole("checkbox", { name: "Restore workflows", exact: true })).toBeDisabled()
+  await page.getByRole("checkbox", { name: "Backup", exact: true }).click()
+  // Through the worker is recommended and chosen first; through the API alone says what it leaves out.
+  await expect(page.getByRole("radio", { name: "Through the worker (recommended)" })).toBeChecked()
+  await page.getByRole("radio", { name: "Through the API only" }).click()
+  await expect(page.getByText("Credential secrets are not backed up")).toBeVisible()
+  await page.getByRole("radio", { name: "Through the worker (recommended)" }).click()
+  await page.getByRole("checkbox", { name: "Restore workflows", exact: true }).click()
+  await page.getByRole("checkbox", { name: "Move workflows", exact: true }).click()
+  await page.getByRole("button", { name: "Continue" }).click()
+
+  // The key's check from the registration counts for 15 minutes; when it is older, its step comes first.
+  const apiStep = page.getByRole("heading", { name: "API Key" })
+  const workerStep = page.getByRole("heading", { name: "Host Worker" })
+  await expect(apiStep.or(workerStep)).toBeVisible()
+  if (await apiStep.isVisible()) await page.getByRole("button", { name: "Continue" }).click()
+  await expect(workerStep).toBeVisible()
+  // The worker is chosen by hand, never picked on its own, with the main container's name.
+  const result = page.getByTestId("check-line")
+  await expect(page.getByRole("button", { name: "Continue" })).toBeDisabled()
+  await page.getByRole("button", { name: /^Worker on this instance.s host:/ }).click()
+  await page.getByRole("option", { name: /^E2E Host/ }).click()
+  await page.getByLabel("Container name", { exact: true }).fill(container)
+  await page.getByRole("button", { name: "Check", exact: true }).click()
+  await expect(result).toContainText("Passed", { timeout: 100_000 })
+  await expect(result).toContainText("read inside the container")
+  await page.getByRole("button", { name: "Continue" }).click()
+
+  // The default destinations are tested with the backup key.
+  await expect(page.getByRole("heading", { name: "Backup", exact: true })).toBeVisible()
+  await page.getByRole("button", { name: "Check", exact: true }).click()
+  await expect(result).toContainText("Passed", { timeout: 60_000 })
+  await expect(result).toContainText("Offsite S3")
+  await expect(result).toContainText("This server")
+  await page.getByRole("button", { name: "Continue" }).click()
+
+  // Saving the worker after the key's check leaves that check as it was: the key does not depend on the worker.
+  await expect(page.getByRole("heading", { name: "Review" })).toBeVisible()
+  await expect(page.getByTestId("review-api")).toContainText("Passed")
+  await page.getByRole("button", { name: "Activate" }).click()
+  await expect(page.getByText("Added Move workflows, Backup and Restore workflows to e2e-n8n")).toBeVisible()
+  for (const key of ["backup", "restore", "move"])
+    await expect(page.getByTestId(`capability-${key}`)).toContainText("Working")
   // Export is a rare action, so it waits in the instance's menu.
   await page.getByRole("button", { name: "More actions" }).click()
   await expect(page.getByRole("menuitem", { name: "Export credentials" })).toBeVisible()
@@ -138,47 +181,72 @@ test("through the worker, health is read inside the main container", async () =>
     await page.getByRole("button", { name: "Save" }).click()
     await dialogClosed(page)
   }
-  await page.goto("/instances")
-  await page.getByRole("row", { name: /e2e-n8n/ }).click()
-  await collect(/^Check health and metrics: Directly from the n8n-ops server$/, "Through the worker on the n8n host")
-  await page.getByRole("tab", { name: /^Health/ }).click()
-  // The sentence also stands under the Overview tab's status line; this reads the Health tab's.
-  const health = page.getByRole("tabpanel", { name: "Health" })
-  // The worker asks for a probe within the health interval, reads the main from inside and reports.
-  await expect(async () => {
-    await page.reload()
-    await expect(health.getByText(/^Checked inside the container by E2E Host\./)).toBeVisible({ timeout: 3_000 })
-  }).toPass({ timeout: 90_000 })
-  await expect(health.getByText("Main process (/healthz)")).toBeVisible()
-  // The e2e n8n runs in regular mode: nothing about a queue.
-  await expect(page.getByText("· queue mode")).toHaveCount(0)
-  await expect(health.getByText("regular, read in the main container")).toBeVisible()
-
-  // A container the socket proxy does not allow: the worker checks over the network, and the tab gives the lines
-  // that allow it, with nothing else to look up.
-  const containerName = async (name: string) => {
-    await page.getByRole("button", { name: "Edit" }).click()
-    await page.getByLabel("Container name").fill(name)
-    await page.getByRole("button", { name: "Save" }).click()
-    await dialogClosed(page)
+  // The instance's own health interval is set to its shortest, 10 seconds, through the overrides its page saves,
+  // so each wait below is for a probe of that interval instead of the default 30 seconds. The worker's probes
+  // follow the instance's interval (enqueueProbes); the overrides it had come back afterwards.
+  const { instances } = (await (await page.request.get("/api/instances")).json()) as {
+    instances: { id: string; name: string }[]
   }
-  await containerName("not-allowed-e2e")
-  await expect(async () => {
-    await page.reload()
-    await expect(
-      health.getByTestId("proxy-fix").getByText("The socket proxy on E2E Host refuses commands in not-allowed-e2e"),
-    ).toBeVisible({ timeout: 3_000 })
-  }).toPass({ timeout: 90_000 })
-  await expect(health.getByTestId("proxy-fix").locator("code").first()).toContainText(
-    /containers\/\([^)]*not-allowed-e2e\)\/exec/,
-  )
-  await containerName(container)
+  const id = instances.find((i) => i.name === "e2e-n8n")?.id
+  if (!id) throw new Error("no instance e2e-n8n")
+  const storeOverrides = async (overrides: Record<string, unknown>) => {
+    const res = await page.request.patch(`/api/instances/${id}`, { data: { overrides } })
+    expect(res.ok(), await res.text()).toBe(true)
+  }
+  const detail = (await (await page.request.get(`/api/instances/${id}`)).json()) as {
+    overrides: Record<string, unknown>
+  }
+  const stored = detail.overrides
+  try {
+    // Inside the try: a save that went through although its answer failed is put back too.
+    await storeOverrides({ ...stored, healthIntervalSec: 10 })
+    await page.goto("/instances")
+    await page.getByRole("row", { name: /e2e-n8n/ }).click()
+    await collect(/^Check health and metrics: Directly from the n8n-ops server$/, "Through the worker on the n8n host")
+    await page.getByRole("tab", { name: /^Health/ }).click()
+    // The sentence also stands under the Overview tab's status line; this reads the Health tab's.
+    const health = page.getByRole("tabpanel", { name: "Health" })
+    // The worker asks for a probe within the health interval, reads the main from inside and reports.
+    await expect(async () => {
+      await page.reload()
+      await expect(health.getByText(/^Checked inside the container by E2E Host\./)).toBeVisible({ timeout: 3_000 })
+    }).toPass({ timeout: 90_000 })
+    await expect(health.getByText("Main process (/healthz)")).toBeVisible()
+    // The e2e n8n runs in regular mode: nothing about a queue.
+    await expect(page.getByText("· queue mode")).toHaveCount(0)
+    await expect(health.getByText("regular, read in the main container")).toBeVisible()
 
-  await collect(/^Check health and metrics: Through the worker on the n8n host$/, "Directly from the n8n-ops server")
-  await expect(health.getByText(/^Checked directly from the n8n-ops server/)).toBeVisible()
+    // A container the socket proxy does not allow: the worker checks over the network, and the tab gives the lines
+    // that allow it, with nothing else to look up.
+    const containerName = async (name: string) => {
+      await page.getByRole("button", { name: "Edit" }).click()
+      await page.getByLabel("Container name", { exact: true }).fill(name)
+      await page.getByRole("button", { name: "Save" }).click()
+      await dialogClosed(page)
+    }
+    await containerName("not-allowed-e2e")
+    await expect(async () => {
+      await page.reload()
+      await expect(
+        health.getByTestId("proxy-fix").getByText("The socket proxy on E2E Host refuses commands in not-allowed-e2e"),
+      ).toBeVisible({ timeout: 3_000 })
+    }).toPass({ timeout: 90_000 })
+    await expect(health.getByTestId("proxy-fix").locator("code").first()).toContainText(
+      /containers\/\([^)]*not-allowed-e2e\)\/exec/,
+    )
+    await containerName(container)
+
+    await collect(/^Check health and metrics: Through the worker on the n8n host$/, "Directly from the n8n-ops server")
+    await expect(health.getByText(/^Checked directly from the n8n-ops server/)).toBeVisible()
+  } finally {
+    // Back to the overrides it had, none when it had none.
+    await storeOverrides(stored)
+  }
 })
 
 test("a backup through the worker includes credential secrets", async () => {
+  // The run below may take up to 90 seconds on its own, beyond the default 60 for the whole test.
+  test.setTimeout(150_000)
   await n8nApi("/api/v1/credentials", {
     method: "POST",
     body: JSON.stringify({
@@ -245,20 +313,44 @@ test("an instance can choose its destinations instead of the defaults", async ()
 
 test("n8n-ops backs up its own database to the destinations", async () => {
   await page.goto("/backups")
-  await page
-    .getByRole("row", { name: /n8n-ops database/ })
-    .getByRole("button", { name: "Run now" })
-    .click()
+  // The nightly backup of the database may run next to this one (every 5 minutes once a destination exists), so
+  // what is checked is the run this click started.
+  const [started] = await Promise.all([
+    page.waitForResponse((r) => r.request().method() === "POST" && r.url().endsWith("/api/backups/self/run")),
+    page
+      .getByRole("row", { name: /n8n-ops database/ })
+      .getByRole("button", { name: "Run now" })
+      .click(),
+  ])
+  const { runId } = (await started.json()) as { runId: string }
   await page.getByRole("row", { name: /n8n-ops database/ }).click()
   // The pane shows the database's own history, whichever backup opened by itself first.
   const history = page.getByRole("region", { name: "Backups · n8n-ops database" })
-  await expect(history.getByText("OK · with secrets")).toBeVisible({ timeout: 90_000 })
-  await expect(history.getByText("Written")).toHaveCount(2)
-  const dumps = () =>
-    readdirSync("/backups-data/nightly/_n8n-ops", { recursive: true })
-      .map(String)
-      .filter((f) => f.endsWith(".dump.age"))
-  expect(dumps()).toHaveLength(1)
+  await expect(history.getByText("OK · with secrets").first()).toBeVisible({ timeout: 90_000 })
+  type Copy = { id: string; kind: string; status: string; verifiedAt: string | null; deletedAt: string | null }
+  type Run = { id: string; status: string; includesSecrets: boolean; copies: Copy[] }
+  const runs = async () => (await (await page.request.get("/api/backups/self/runs")).json()) as Run[]
+  const run = async () => (await runs()).find((r) => r.id === runId)
+  await expect.poll(async () => (await run())?.status, { timeout: 90_000 }).toBe("ok")
+  const ours = await run()
+  expect(ours?.includesSecrets).toBe(true)
+  // Both destinations hold a verified copy, and the mapped folder exactly one file of this run's copy.
+  expect(ours?.copies.map((c) => [c.status, Boolean(c.verifiedAt)])).toEqual([
+    ["ok", true],
+    ["ok", true],
+  ])
+  // A nightly run that ends after this one on the same day leaves this one to retention, which keeps the newest of
+  // each day: then its file is gone again. So the folder is compared with every copy: one file for each copy still
+  // kept, none for a removed one, and at least one kept. Retried, since retention may remove one in between.
+  await expect(async () => {
+    const files = readdirSync("/backups-data/nightly/_n8n-ops", { recursive: true }).map(String)
+    const locals = (await runs()).flatMap((r) => r.copies.filter((c) => c.kind === "local" && c.status === "ok"))
+    expect(locals.some((c) => !c.deletedAt)).toBe(true)
+    for (const c of locals) {
+      const short = c.id.replace(/-/g, "").slice(0, 8)
+      expect(files.filter((f) => f.endsWith(`-${short}.dump.age`))).toHaveLength(c.deletedAt ? 0 : 1)
+    }
+  }).toPass({ timeout: 30_000 })
 })
 
 test("a workflow is restored from the backup with the private key", async () => {
@@ -319,12 +411,21 @@ test("a workflow moves to another instance with its credentials", async () => {
       ],
     }),
   })
+  // Moving needs Move workflows on both instances; Continue checks each step before it goes on.
   await page.goto("/instances")
   await page.getByRole("button", { name: "Add instance" }).click()
   await page.getByLabel("Name", { exact: true }).fill("e2e-n8n-b")
   await page.getByLabel("Base URL", { exact: true }).fill(n8nUrl)
+  for (const name of ["Monitoring and problems", "Workflow map", "Move workflows"])
+    await page.getByRole("checkbox", { name, exact: true }).click()
+  await page.getByRole("button", { name: "Continue" }).click()
+  await expect(page.getByRole("heading", { name: "API Key" })).toBeVisible()
   await page.getByLabel("API key", { exact: true }).fill(currentApiKey())
-  await page.getByRole("button", { name: "Add instance" }).last().click()
+  await page.getByRole("button", { name: "Continue" }).click()
+  await expect(page.getByRole("heading", { name: "Health", exact: true })).toBeVisible()
+  await page.getByRole("button", { name: "Continue" }).click()
+  await expect(page.getByRole("heading", { name: "Review" })).toBeVisible()
+  await page.getByRole("button", { name: "Activate" }).click()
   await expect(page.getByRole("heading", { name: "e2e-n8n-b" })).toBeVisible()
 
   await page.goto("/workflows")

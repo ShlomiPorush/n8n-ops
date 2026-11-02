@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest"
-import { queueWorkersNote, workerHealth, workerWords } from "./queue-workers.ts"
+import {
+  byName,
+  queueWorkersNote,
+  type WorkerState,
+  workerFigures,
+  workerHealth,
+  workersSummary,
+  workerWords,
+} from "./queue-workers.ts"
 
 const base = {
   queueMode: true,
@@ -79,5 +87,62 @@ describe("workerWords and workerHealth", () => {
     expect(workerHealth("not-checked", false)).toBe("warn")
     expect(workerHealth("down", false)).toBe("down")
     expect(workerHealth(undefined, true)).toBe("ok")
+  })
+})
+
+describe("the queue worker list", () => {
+  const row = (name: string, state: WorkerState, more = {}) => ({
+    url: `docker://${name}`,
+    name,
+    ok: state === "ready",
+    state,
+    ...more,
+  })
+
+  it("lists by name with numbers in order", () => {
+    const rows = ["w5", "w10", "w1", "w2"].map((n) => row(n, "ready")).sort(byName)
+    expect(rows.map((r) => r.name)).toEqual(["w1", "w2", "w5", "w10"])
+  })
+
+  it("sums every state, says when the list was cut, and marks the last check", () => {
+    const rows = [
+      row("a", "ready"),
+      row("b", "ready"),
+      row("c", "down"),
+      row("d", "not-verified"),
+      { url: "x", ok: false },
+    ]
+    expect(workersSummary(rows)).toBe("2 of 5 queue workers ready, 1 health not verified, 1 down, 1 state not known")
+    expect(workersSummary(rows.slice(0, 2), { found: 51 })).toBe("Showing 2 of 51 queue workers: 2 ready")
+    // A health URL the owner typed answers health only: it is not counted ready.
+    expect(workersSummary([{ url: "http://w:5678/healthz", ok: true }])).toBe(
+      "0 of 1 queue workers ready, 1 answering, readiness not checked",
+    )
+    expect(workersSummary(rows.slice(0, 2), { past: true })).toBe("At the last check: 2 of 2 queue workers ready")
+  })
+
+  it("words the figures, and marks a version only against the main's", () => {
+    const w = row("a", "ready", {
+      version: "2.44.2",
+      uptimeSec: 3 * 86_400 + 4 * 3600 + 59,
+      memory: { used: 312 * 1024 * 1024, limit: 1024 * 1024 * 1024 },
+      concurrency: { value: 5, from: "flag" },
+    })
+    expect(workerFigures(w, "2.44.3")).toEqual({
+      version: { text: "n8n 2.44.2", differs: true, main: "2.44.3" },
+      uptime: "container up for 3 d 4 h",
+      jobs: "runs 5 jobs at once (set by --concurrency)",
+      memory: "memory 312 MB of 1 GB",
+    })
+    expect(workerFigures(w).version?.differs).toBe(false)
+    expect(workerFigures({ ...w, memory: { used: 2048 * 1024 * 1024, limit: null } }).memory).toBe(
+      "memory 2 GB, no limit set on the container",
+    )
+    expect(workerFigures(row("b", "not-checked"))).toEqual({
+      version: undefined,
+      uptime: undefined,
+      jobs: undefined,
+      memory: undefined,
+    })
   })
 })

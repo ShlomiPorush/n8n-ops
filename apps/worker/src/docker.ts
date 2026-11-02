@@ -93,6 +93,10 @@ function call(
     const req = request(
       {
         ...endpoint,
+        // A connection of its own for each call (Connection: close). On a kept-alive connection, the socket proxy's
+        // Go reverse proxy may close its connection to Docker in the middle of an answer to a request with a body
+        // (golang/go#40747), and the call fails as "aborted".
+        agent: false,
         method,
         path: `${API}${path}`,
         headers: payload ? { "content-type": "application/json", "content-length": payload.length } : {},

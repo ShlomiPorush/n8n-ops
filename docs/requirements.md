@@ -65,9 +65,9 @@ v1 includes all of A to G except the items listed under "Not in v1". Build order
 
 ### A. Instances
 
-- **A1** Register an instance: name, base URL, API key (encrypted at rest), mode (regular or queue), main and queue worker endpoints, assigned worker (optional).
+- **A1** Register an instance with a setup wizard (docs/adr/0002): name, base URL and the Capabilities it is for first; then only what those need, each checked before the next step: API key (encrypted at rest), assigned worker and main, mode (regular or queue) with main and queue worker endpoints, Temporary access policy, backup destinations. The owner can finish later; the instance stays Setup incomplete and does nothing until it is activated. Capabilities can be added (with their checks) or removed later.
 - **A3** Instance card: n8n version, active and total workflows, executions in 30 days, open problems, last backup, queue metrics (queue instance), overrides.
-- **A4** Periodic API key check. On registration and on every check, read the key's scopes from `GET /api/v1/discover` and turn features on or off to match. Changes in scopes are shown in the UI and written to the audit log. On n8n older than 2.14.0 the user declares the key as "read only" or "read + write".
+- **A4** Periodic API key check. On registration and on every check, read the key's scopes from `GET /api/v1/discover` and turn features on or off to match. Changes in scopes are shown in the UI and written to the audit log. n8n-ops needs n8n 2.14.0 or later; on an older instance every feature that uses the API is unavailable and the UI says to update n8n.
 - **A5** For each feature, the UI and the docs list the exact scopes it needs (table built from the n8n source, not from memory). Features whose scopes are missing are shown as unavailable with the missing scopes.
 
 ### B. Errors
@@ -85,7 +85,7 @@ v1 includes all of A to G except the items listed under "Not in v1". Build order
 - **C1** Health of every main and every queue worker (`/healthz`, `/healthz/readiness`). Endpoints are polled directly when `server` can reach them; when they are only reachable on the n8n host, the n8n-ops `worker` on that host collects them and reports to `server`. Both paths are supported; the choice is per instance.
 - **C2** Queue metrics from the queue instance `/metrics`: jobs waiting, active, completed, failed; which queue workers are alive. Same direct-or-worker collection as C1.
 - **C3** Alerts: instance down, queue worker down, queue backlog above threshold for longer than N minutes.
-- **C4** Version of each instance compared with the latest n8n release, including which instances are below 2.14.0.
+- **C4** Version of each instance compared with the latest n8n release, including which instances are below 2.14.0, the minimum n8n-ops supports.
 
 ### D. Backups
 

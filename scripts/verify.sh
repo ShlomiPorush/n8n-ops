@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # The single verification entry point, used locally, in CI and by the release workflow.
 # Usage: scripts/verify.sh [--changed [BASE]] [--guards-only] [--skip-guards] [--skip-integration] [--design NAME]
+#                          [--only checks|integration|e2e]
 set -euo pipefail
 
 # shellcheck source=scripts/lib/common.sh
@@ -14,8 +15,14 @@ WEBDAV_IMAGE="rclone/rclone:1.75.2"
 STORES_DONE=0
 CHANGED_BASE=""
 GUARDS=1
+GUARDS_ONLY=0
+SKIP_INTEGRATION=0
+ONLY=""
+# The three parts after the guards: checks before any stack, the integration checks on a stack, and the
+# end-to-end tests, each design on a stack of its own.
 CHECKS=1
 INTEGRATION=1
+E2E=1
 DESIGNS=(regular compact)
 
 usage() {
@@ -30,6 +37,11 @@ Usage: scripts/verify.sh [options]
   --skip-integration  Skip the container stack and end-to-end tests.
   --design NAME       End-to-end tests in one design only (regular or compact); CI runs each in its own job.
                       Without it they run once per design.
+  --only PART         The guards (unless --skip-guards) and one part; CI runs each part in its own job:
+                        checks       install, lint, types, unit tests, builds and the schema check
+                        integration  images, a stack and every check on it, the server integration tests
+                                     and the queue checks (one stack, in the regular design)
+                        e2e          images and the end-to-end tests, each design on a fresh stack
 EOF
 }
 
@@ -42,9 +54,19 @@ while [ $# -gt 0 ]; do
         shift
       fi
       ;;
-    --guards-only) CHECKS=0 INTEGRATION=0 ;;
+    --guards-only) GUARDS_ONLY=1 ;;
     --skip-guards) GUARDS=0 ;;
-    --skip-integration) INTEGRATION=0 ;;
+    --skip-integration) SKIP_INTEGRATION=1 ;;
+    --only)
+      case "${2:-}" in
+        checks | integration | e2e) ONLY="$2" ;;
+        *)
+          usage
+          die "--only needs checks, integration or e2e"
+          ;;
+      esac
+      shift
+      ;;
     --design)
       case "${2:-}" in
         regular | compact) DESIGNS=("$2") ;;
@@ -66,6 +88,24 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+
+if [ $GUARDS_ONLY -eq 1 ]; then
+  [ -z "$ONLY" ] || die "--only cannot be combined with --guards-only"
+  CHECKS=0 INTEGRATION=0 E2E=0
+fi
+if [ $SKIP_INTEGRATION -eq 1 ]; then
+  if [ "$ONLY" = integration ] || [ "$ONLY" = e2e ]; then
+    die "--only $ONLY cannot be combined with --skip-integration"
+  fi
+  INTEGRATION=0 E2E=0
+fi
+case "$ONLY" in
+  checks) INTEGRATION=0 E2E=0 ;;
+  integration) CHECKS=0 E2E=0 ;;
+  e2e) CHECKS=0 INTEGRATION=0 ;;
+esac
+# The integration checks alone run on one stack in the regular design, as in the first round of a full sweep.
+[ $E2E -eq 1 ] || DESIGNS=(regular)
 
 changed_files() {
   local base
@@ -103,6 +143,7 @@ run_guards() {
     done < <(git ls-files -s "scripts/*.sh")
 
     bash scripts/test-release.sh || fail=1
+    bash scripts/test-ci-result.sh || fail=1
 
     # Scripts inside the images run with plain POSIX sh.
     mapfile -t image_scripts < <(git ls-files -co --exclude-standard "docker/*.sh")
@@ -153,6 +194,28 @@ stack() {
     docker compose -p "$PROJECT" --project-directory "$REPO_ROOT" -f "$REPO_ROOT/docker/docker-compose-dev.example.yml" "$@"
 }
 
+# The external images of the stack and of the queue checks, read from their Compose files; the n8n-ops images are
+# built here, never pulled.
+STACK_IMAGES=()
+QUEUE_IMAGES=()
+read_images() {
+  mapfile -t STACK_IMAGES < <(N8N_OPS_DATA_DIR=/unused stack config --images | grep -v '^n8n-ops-' | sort -u)
+  mapfile -t QUEUE_IMAGES < <(docker compose -f "$REPO_ROOT/docker/verify-queue.yml" config --images |
+    grep -v '^n8n-ops-' | sort -u)
+  if [ ${#STACK_IMAGES[@]} -eq 0 ] || [ ${#QUEUE_IMAGES[@]} -eq 0 ]; then
+    die "could not read the external images from the Compose files"
+  fi
+}
+
+# Starts pulling every external image the parts that run will use, so they download during the work before it.
+start_image_pulls() {
+  [ $INTEGRATION -eq 1 ] || [ $E2E -eq 1 ] || return 0
+  read_images
+  start_pulls "${STACK_IMAGES[@]}"
+  [ $INTEGRATION -eq 0 ] || start_pulls "${QUEUE_IMAGES[@]}" "$SFTP_IMAGE" "$WEBDAV_IMAGE"
+  [ $E2E -eq 0 ] || start_pulls "$PLAYWRIGHT_IMAGE"
+}
+
 stop_store_servers() {
   docker rm -f "${PROJECT}-sftp" "${PROJECT}-webdav" >/dev/null 2>&1 || true
 }
@@ -180,6 +243,7 @@ start_stack() {
   N8N_OPS_DATA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/n8n-ops-verify.XXXXXX")"
   export N8N_OPS_DATA_DIR
   prepare_data_dirs "$N8N_OPS_DATA_DIR"
+  wait_for_pulls "${STACK_IMAGES[@]}"
   stack up -d --remove-orphans --wait --wait-timeout 180 || {
     stack ps
     stack logs --tail 50
@@ -203,6 +267,8 @@ seed_design() {
   fi
 }
 
+# The server's readiness, the stack's socket proxy and the worker image, none of which depend on the design. In each
+# round of a full sweep, and in CI in the Integration job only.
 run_checks_on_stack() {
   info "Integration: health endpoint"
   TOOLCHAIN_EXTRA_ARGS=(--network "${PROJECT}_default")
@@ -274,7 +340,7 @@ run_checks_on_stack() {
 }
 
 # The database upgrades on earlier releases' data, and each backup destination store against a real server
-# of its kind. Once per run: they do not depend on the design.
+# of its kind. Once per run, and in CI in the Integration job only: they do not depend on the design.
 run_server_integration() {
   [ "$STORES_DONE" = 0 ] || return 0
   STORES_DONE=1
@@ -286,6 +352,7 @@ run_server_integration() {
   in_toolchain "openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj /CN=webdav \
     -addext subjectAltName=DNS:webdav -keyout /certs/key.pem -out /certs/cert.pem 2>/dev/null \
     && chmod 0644 /certs/key.pem" || die "could not make the WebDAV test certificate"
+  wait_for_pulls "$SFTP_IMAGE" "$WEBDAV_IMAGE"
   docker run -d --name "${PROJECT}-sftp" --network "$net" --network-alias sftp \
     -e PUID=1000 -e PGID=1000 -e USER_NAME=n8n-ops -e USER_PASSWORD=sftp-test-password -e PASSWORD_ACCESS=true \
     "$SFTP_IMAGE" >/dev/null || die "the SFTP test server did not start"
@@ -312,7 +379,8 @@ QUEUE_DONE=0
 
 # The n8n queue workers next to a main, found and checked by the stack's worker through its socket proxy, against
 # the official n8n in queue mode (docker/verify-queue.yml): ready, not ready while Redis is stopped (its readiness
-# endpoint is seen at 503 first), ready again, and down once stopped. Once per run: it does not depend on the design.
+# endpoint is seen at 503 first), ready again, and down once stopped. Once per run, and in CI in the Integration job
+# only: it does not depend on the design.
 run_queue_checks() {
   [ "$QUEUE_DONE" = 0 ] || return 0
   QUEUE_DONE=1
@@ -320,6 +388,7 @@ run_queue_checks() {
   local q="${PROJECT}-queue" started=$SECONDS
   queue() { docker compose -p "$q" -f "$REPO_ROOT/docker/verify-queue.yml" "$@"; }
   # The proxy and the probe of run_proxy_checks start there, on their own.
+  wait_for_pulls "${QUEUE_IMAGES[@]}"
   queue up -d --wait --wait-timeout 240 postgres redis n8n n8n-worker >/dev/null 2>&1 || {
     queue ps -a
     queue logs --tail 40 n8n n8n-worker
@@ -336,7 +405,11 @@ run_queue_checks() {
       const r = JSON.parse(process.argv[1]); const w = (r.workers || [])[0] || {};
       console.log("    main " + r.source + " " + r.mode + ", list " + (r.discovery || {}).status + ", worker " + w.name + ": " + w.state);
       // When the worker is ready the whole instance is: the main up and ready, and the queue figures read.
-      const whole = process.argv[2] !== "ready" || (r.main.ok && r.readiness.ok && r.queue !== null);
+      // A ready worker also has its figures: the version of the main, the time its container is up, the n8n default
+      // of 10 jobs at once (no flag, no variable here), and memory in use when it can be read on this host.
+      const figures = w.version === r.version && w.uptimeSec > 0 && w.concurrency && w.concurrency.value === 10 &&
+        w.concurrency.from === "default" && (!w.memory || w.memory.used > 0);
+      const whole = process.argv[2] !== "ready" || (r.main.ok && r.readiness.ok && r.queue !== null && figures);
       process.exit(r.source === "inside" && r.mode === "queue" && r.discovery && r.discovery.status === "ok" &&
         r.discovery.found === 1 && w.state === process.argv[2] && whole ? 0 : 1)' "$report" "$want" ||
       {
@@ -357,6 +430,22 @@ run_queue_checks() {
     die "the queue worker's readiness did not answer $want"
   }
   expect_worker ready
+  # The same main named by its Compose project and service instead of its name: the worker resolves the container,
+  # reads it inside, finds its queue workers, and finds a rule for the service's replicas clean on this host.
+  local by_service="{\"inside\":{\"target\":{\"project\":\"$q\",\"service\":\"n8n\"}},\"discover\":true,\"check\":{\"seq\":1,\"revision\":0}}"
+  local service_report
+  service_report="$(stack exec -T -u node worker node dist/probe-cli.js "$by_service")"
+  # shellcheck disable=SC2016 # expands inside the container
+  stack exec -T -u node worker node -e '
+    const r = JSON.parse(process.argv[1]);
+    process.exit(r.source === "inside" && r.resolvedContainer === process.argv[2] + "-n8n-1" && r.replicas &&
+      r.replicas.clean === true && r.discovery && r.discovery.status === "ok" && r.discovery.found === 1 ? 0 : 1)' \
+    "$service_report" "$q" || {
+    echo "$service_report"
+    queue down -v >/dev/null 2>&1
+    die "the main named by its Compose service was not read inside"
+  }
+  echo "    main found by its Compose project and service"
   queue stop redis >/dev/null 2>&1
   readiness_is 503
   expect_worker not-ready
@@ -404,7 +493,7 @@ run_proxy_checks() {
   fi
   probe
   expect_report "a main the proxy refuses was not reported with its queue workers" \
-    "r.source === 'network' && r.access.refused.some(x => x.call === 'exec-create' && x.container === '$q-n8n-1') && JSON.stringify(r.listed) === JSON.stringify({ names: ['$q-n8n-worker-1'], complete: true })"
+    "r.source === 'network' && r.access.refused.some(x => x.call === 'exec-create' && x.container === '$q-n8n-1') && JSON.stringify([r.listed.names, r.listed.complete]) === JSON.stringify([['$q-n8n-worker-1'], true]) && JSON.stringify(r.listed.patterns) === JSON.stringify([{ pattern: '$q-n8n-worker-*', clean: true }])"
   TOOLCHAIN_EXTRA_ARGS=(-e "PROBE_REPORT=$report" -e "PROBE_MAIN=$q-n8n-1")
   in_toolchain "node scripts/lib/queue-proxy-override.mjs" >"$override" || fail_queue "the proxy lines could not be computed"
   TOOLCHAIN_EXTRA_ARGS=()
@@ -430,16 +519,29 @@ run_proxy_checks() {
   echo "    socket proxy lines checked against a proxy of their own"
 }
 
-# One end-to-end round per design, each on a fresh stack. Both designs are one app with the same functions,
-# so the same suite runs in each and must pass in each; only the look differs.
-run_e2e_round() {
-  local design="$1" app="$2"
-  info "End-to-end tests: $design design"
+# One round per design, each on a fresh stack: the integration checks, then the end-to-end tests. Both designs are
+# one app with the same functions, so the same suite runs in each and must pass in each; only the look differs.
+run_round() {
+  local design="$1"
+  if [ $E2E -eq 1 ]; then
+    info "End-to-end tests: $design design"
+  else
+    info "Integration: checks on a stack"
+  fi
   start_stack
   [ "$design" = regular ] || seed_design "$design"
-  run_checks_on_stack
-  run_server_integration
-  run_queue_checks
+  if [ $INTEGRATION -eq 1 ]; then
+    run_checks_on_stack
+    run_server_integration
+    run_queue_checks
+  fi
+  [ $E2E -eq 0 ] || run_e2e "$design" apps/web
+  stop_stack
+}
+
+run_e2e() {
+  local design="$1" app="$2"
+  wait_for_pulls "$PLAYWRIGHT_IMAGE"
   # The alias lets the server reach the stand-in Telegram Bot API that the tests run (TELEGRAM_API_URL). The
   # session spec moves its session's clocks in the database, since the server's clock cannot be moved.
   docker run --rm --network "${PROJECT}_default" --network-alias e2e-runner \
@@ -449,33 +551,44 @@ run_e2e_round() {
     -v "$N8N_OPS_DATA_DIR/pairing:/worker-data" -v "$N8N_OPS_DATA_DIR/backups:/backups-data:ro" \
     -v "$REPO_ROOT:/repo" -w "/repo/$app" \
     "$PLAYWRIGHT_IMAGE" node node_modules/@playwright/test/cli.js test || {
-    stack logs --tail 60 server worker
+    # The proxy and n8n too: a worker's Docker call that breaks off shows there which hop dropped it.
+    stack logs --tail 60 server worker socket-proxy n8n
     die "end-to-end tests failed ($design design)"
   }
-  stop_stack
 }
 
+# The integration checks and the end-to-end tests, as far as they run: both in a full sweep, where the integration
+# checks run in the first round only, except those on the stack itself, which run in each round.
 run_integration() {
   info "Integration: images and stack"
   build_images verify "verify-$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
   # Telegram calls go to the stand-in Bot API inside the end-to-end test runner, never to Telegram.
   export TELEGRAM_API_URL="http://e2e-runner:8099"
-  trap cleanup_stack EXIT
+  STACK_USED=1
   local design
   for design in "${DESIGNS[@]}"; do
-    run_e2e_round "$design" apps/web
+    run_round "$design"
   done
+}
+
+STACK_USED=0
+on_exit() {
+  stop_pulls
+  [ $STACK_USED -eq 0 ] || cleanup_stack
 }
 
 main() {
   require_docker
-  build_toolchain
+  trap on_exit EXIT
+  # Ctrl-C or a stopped CI job end the script through exit, so the EXIT trap stops the pulls and the stack.
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
 
   if [ -n "$CHANGED_BASE" ]; then
     mapfile -t files < <(changed_files)
     if [ ${#files[@]} -eq 0 ]; then
       info "No changes since $CHANGED_BASE"
-      CHECKS=0 INTEGRATION=0
+      CHECKS=0 INTEGRATION=0 E2E=0
     elif printf '%s\n' "${files[@]}" | grep -qvE '^(docs/|README\.md$|AGENTS\.md$|CHANGELOG\.md$|LICENSE$)'; then
       # Shared root files, config or images: the package filter cannot see their consumers, so run everything.
       if printf '%s\n' "${files[@]}" | grep -qE '^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|biome\.json|config/|docker/|docker-compose\.yml|scripts/lib/)'; then
@@ -484,16 +597,20 @@ main() {
       fi
     else
       info "Documentation-only change"
-      CHECKS=0 INTEGRATION=0
+      CHECKS=0 INTEGRATION=0 E2E=0
     fi
   fi
+
+  # The external images download while the toolchain, the checks and the images are built.
+  start_image_pulls
+  build_toolchain
 
   [ $GUARDS -eq 1 ] && run_guards
   if [ $CHECKS -eq 1 ]; then
     run_checks
   fi
-  if [ $INTEGRATION -eq 1 ]; then
-    # End-to-end tests need the web package's node_modules.
+  if [ $INTEGRATION -eq 1 ] || [ $E2E -eq 1 ]; then
+    # The server integration tests and the end-to-end tests need the workspace's node_modules.
     [ $CHECKS -eq 1 ] || install_deps
     run_integration
   fi

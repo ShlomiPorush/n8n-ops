@@ -8,7 +8,8 @@ import type { Ctx } from "../context.ts"
 import { createDatabase, type Database } from "../db/client.ts"
 import { alertOutbox, alertState, instances, workers } from "../db/schema.ts"
 import { createSettings } from "../lib/settings.ts"
-import { applyHealth, type HealthReport, startCheck } from "./health.ts"
+import { agentQueues } from "./agent.ts"
+import { applyHealth, applyWorkerReport, type HealthReport, startCheck } from "./health.ts"
 import { detachWorker, updateInstance } from "./instance-update.ts"
 
 // Applying health reports against a real PostgreSQL: a check that started earlier never overwrites a later one,
@@ -369,5 +370,49 @@ describe("applyHealth", () => {
     )
     expect(health).toBe("unknown")
     expect((await conditions()).find((c) => c.key === `down:${id}`)?.active).toBe(true)
+  })
+
+  it("keeps a queue worker's figures from the report to the agents' answer, and drops a bad one alone", async () => {
+    await ctx.db.update(instances).set({ queueMode: true, queueModeSource: "found" }).where(eq(instances.id, id))
+    const t = await ticket()
+    await applyWorkerReport(
+      ctx,
+      { id, name: "queue-n8n" },
+      { check: t },
+      {
+        main: ok,
+        readiness: ok,
+        queue: null,
+        checkedAt: new Date().toISOString(),
+        source: "inside",
+        mode: "queue",
+        discovery: { status: "ok", found: 1 },
+        workers: [
+          {
+            url: "docker://acme-w-1",
+            name: "acme-w-1",
+            state: "ready",
+            ok: true,
+            status: 200,
+            ms: 3,
+            version: "2.44.3",
+            uptimeSec: 3600,
+            memory: { used: -5, limit: null },
+            concurrency: { value: 10, from: "default" },
+          },
+        ],
+      },
+      "e2e-host",
+    )
+    expect((await row())?.health).toBe("ok")
+    const [queues] = await agentQueues(ctx)
+    const [worker] = (queues?.workers ?? []) as Record<string, unknown>[]
+    expect(worker).toMatchObject({
+      state: "ready",
+      version: "2.44.3",
+      uptimeSec: 3600,
+      concurrency: { value: 10, from: "default" },
+    })
+    expect(worker).not.toHaveProperty("memory")
   })
 })

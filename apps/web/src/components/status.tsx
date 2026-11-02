@@ -48,6 +48,18 @@ export const statusTable = {
     expired: { label: "No copy to restore", tone: "muted" },
     none: { label: "Not backed up", tone: "fail" },
   },
+  /** An instance added whose setup has not been completed (docs/adr/0002). */
+  setup: {
+    incomplete: { label: "Setup incomplete", tone: "warn" },
+  },
+  /** One check of an instance's setup, as it stands for its settings now. */
+  check: {
+    ok: { label: "Passed", tone: "ok" },
+    failed: { label: "Failed", tone: "fail" },
+    running: { label: "Checking", tone: "info" },
+    stale: { label: "Check again", tone: "warn" },
+    missing: { label: "Not checked", tone: "muted" },
+  },
   /** One archive on one destination. */
   copy: {
     pending: { label: "Waiting", tone: "info" },

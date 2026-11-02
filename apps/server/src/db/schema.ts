@@ -1,3 +1,4 @@
+import { type CapabilityKey, capabilityKeys } from "@n8n-ops/shared"
 import {
   type AnyPgColumn,
   bigint,
@@ -204,6 +205,8 @@ export const workers = pgTable("workers", {
   install: jsonb("install").$type<WorkerInstall>(),
   /** The containers the socket proxy allows now, as the owner recorded them; null until recorded. */
   allowed: jsonb("allowed").$type<{ containers: string[] }>(),
+  /** What the worker says it supports (x-worker-features), such as following a Compose service. */
+  features: jsonb("features").$type<string[]>(),
 })
 
 export const pairingTokens = pgTable("worker_pairing_tokens", {
@@ -221,16 +224,60 @@ export const pairingTokens = pgTable("worker_pairing_tokens", {
 // ---------------------------------------------------------------------------
 
 export type Health = "ok" | "warn" | "down" | "unknown"
-export type KeyAccess = "read" | "write"
 export type CollectionMode = "direct" | "worker"
+export type SetupCheckKind = "api" | "health" | "worker" | "backup"
+
+/**
+ * The last attempt of one setup check (services/setup.ts): its number and server start time, a fingerprint of the
+ * settings it depends on (inputsOf), and once it ended whether it passed, why not, and what it found.
+ */
+export type SetupCheck = {
+  attempt: number
+  startedAt: string
+  inputs: string
+  status: "running" | "done"
+  ok?: boolean
+  at?: string
+  reason?: string
+  workerId?: string
+  jobId?: string
+  detail?: Record<string, unknown>
+}
 
 export const instances = pgTable("instances", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull().unique(),
   baseUrl: text("base_url").notNull(),
-  apiKeyEnc: text("api_key_enc").notNull(),
-  /** Container name on the Docker host, used by the worker for docker exec. */
+  /** Null until the setup's API step stores a key, or after the owner removed it. */
+  apiKeyEnc: text("api_key_enc"),
+  /** "incomplete": a draft in setup that does nothing in the background; "complete": activated, never back. */
+  setupState: text("setup_state").$type<"incomplete" | "complete">().notNull().default("complete"),
+  /** What the owner wants this instance for (packages/shared instance-setup.ts); features off the list stay off. */
+  chosenCapabilities: jsonb("chosen_capabilities")
+    .$type<CapabilityKey[]>()
+    .notNull()
+    .default([...capabilityKeys]),
+  /** When backup was last turned on (activation or Add capability); backups are missed from then. Null before. */
+  backupSince: ts("backup_since"),
+  /** How a backup is made: the worker in the main (with credential secrets), or the n8n API only. */
+  backupVia: text("backup_via").$type<"worker" | "api">().notNull().default("api"),
+  /**
+   * Raised by every change of the base URL or the API key, so a key tested for one URL and key is stored only while
+   * they are still those (PATCH and the setup's API step), and a meta read made for them is dropped after a change.
+   */
+  configRevision: integer("config_revision").notNull().default(0),
+  /** Taken by every setup check when it starts, so a slow earlier attempt never overwrites a later one. */
+  setupAttemptSeq: bigint("setup_attempt_seq", { mode: "number" }).notNull().default(0),
+  /** The last attempt of each setup check. */
+  setupChecks: jsonb("setup_checks").$type<Partial<Record<SetupCheckKind, SetupCheck>>>().notNull().default({}),
+  /** Container name on the Docker host, used by the worker for docker exec. Null when a Compose service is set. */
   containerName: text("container_name"),
+  /**
+   * The main as a Compose project and service instead of a name: the worker uses the running container of that
+   * service each time, so it follows docker rollout and redeploys. Both set or both null.
+   */
+  composeProject: text("compose_project"),
+  composeService: text("compose_service"),
   workerId: uuid("worker_id").references(() => workers.id, { onDelete: "set null" }),
   queueMode: boolean("queue_mode").notNull().default(false),
   /** "manual": set by the owner; "found": read by the worker inside the main container, and not editable then. */
@@ -252,9 +299,8 @@ export const instances = pgTable("instances", {
   /** How health and metrics are collected: directly from the server, or through the host worker. */
   collection: text("collection").$type<CollectionMode>().notNull().default("direct"),
   version: text("version"),
+  /** The API key's scopes from /discover; null before the first read and on n8n older than 2.14.0. */
   scopes: jsonb("scopes").$type<string[] | null>(),
-  scopesSource: text("scopes_source").$type<"discovered" | "declared">().notNull().default("discovered"),
-  declaredAccess: text("declared_access").$type<KeyAccess>(),
   scopesCheckedAt: ts("scopes_checked_at"),
   health: text("health").$type<Health>().notNull().default("unknown"),
   healthDetail: jsonb("health_detail").$type<Record<string, unknown>>(),
@@ -553,7 +599,12 @@ export const backupRuns = pgTable(
     sha256: text("sha256"),
     error: text("error"),
     /** What the socket proxy refused when that made the backup fail: the call and the container. */
-    refusal: jsonb("refusal").$type<{ call: string; container?: string }>(),
+    refusal: jsonb("refusal").$type<{
+      call: string
+      container?: string
+      resolvedContainer?: string
+      replicasClean?: boolean
+    }>(),
     /** Set when the worker starts its one upload of the archive; a second upload is refused. */
     uploadStartedAt: ts("upload_started_at"),
     /** The encrypted archive is in the spool with the declared size and checksum; copies can be written. */

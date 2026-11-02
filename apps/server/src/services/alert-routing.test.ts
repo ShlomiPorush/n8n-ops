@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest"
+import vm from "node:vm"
+import { describe, expect, it, vi } from "vitest"
 import { sections, type TelegramRoute, telegramRouteSchema } from "../lib/settings.ts"
 import { instanceSubject, resolveThread, routeMatches, sendRouted } from "./alert-routing.ts"
 import { html, isMessageGone, isTopicGone, Telegram, TelegramError } from "./telegram.ts"
@@ -34,7 +35,7 @@ describe("topic routes", () => {
     expect(resolveThread({ routes, defaultThreadId: 99 }, instanceSubject(null))).toBe(99)
   })
 
-  it("gives up on a pattern that takes too long, once, and ignores it from then on", () => {
+  it("gives up on a pattern that takes too long twice in a row, once, and ignores it from then on", () => {
     const slow: string[] = []
     const route = { workflow: "^(a+)+$", threadId: 1 }
     const name = `${"a".repeat(40)}!`
@@ -45,6 +46,25 @@ describe("topic routes", () => {
     expect(slow).toEqual(["^(a+)+$"])
     // Other patterns still work in the same context.
     expect(routeMatches({ workflow: "^a+$", threadId: 1 }, { workflowName: "aaa" })).toBe(true)
+  })
+
+  it("tries a pattern again when a pause of the server ran it out of time once, and keeps it", () => {
+    const run = vm.Script.prototype.runInContext
+    const pause = vi.spyOn(vm.Script.prototype, "runInContext").mockImplementationOnce(() => {
+      throw Object.assign(new Error("Script execution timed out"), { code: "ERR_SCRIPT_EXECUTION_TIMEOUT" })
+    })
+    try {
+      const slow: string[] = []
+      const route = { workflow: "^paused once$", threadId: 1 }
+      expect(routeMatches(route, { workflowName: "paused once" }, (p) => slow.push(p))).toBe(true)
+      expect(slow).toEqual([])
+      expect(pause).toHaveBeenCalledTimes(2)
+      // Not set aside: it still matches later.
+      pause.mockImplementation(run)
+      expect(routeMatches(route, { workflowName: "paused once" }, (p) => slow.push(p))).toBe(true)
+    } finally {
+      pause.mockRestore()
+    }
   })
 })
 

@@ -62,6 +62,79 @@ build_images() {
   done
 }
 
+# Pulls external images in the background, so they download while other work runs. An image already
+# present is left as it is, as Compose would, so a run without network still works from the local cache.
+# Each pull tries three times; wait_for_pulls waits for the images given right before their first use.
+declare -gA PULL_PIDS=()
+PULL_LOGS=""
+
+pull_log() {
+  echo "$PULL_LOGS/${1//[^A-Za-z0-9._-]/_}.log"
+}
+
+start_pulls() {
+  local image held="" int_trap term_trap
+  # Ctrl-C or a stop while a pull starts waits until it is in PULL_PIDS, so stop_pulls always finds it. The pulls
+  # themselves get the default handling: a shell resets caught signals in what it starts.
+  int_trap="$(trap -p INT)"
+  term_trap="$(trap -p TERM)"
+  trap 'held=130' INT
+  trap 'held=143' TERM
+  for image in "$@"; do
+    [ -z "${PULL_PIDS[$image]:-}" ] || continue
+    docker image inspect "$image" >/dev/null 2>&1 && continue
+    [ -n "$PULL_LOGS" ] || PULL_LOGS="$(mktemp -d "${TMPDIR:-/tmp}/n8n-ops-pulls.XXXXXX")"
+    # A process group of its own (setsid execs in place, so the pid is the group's), which stop_pulls ends whole:
+    # the retry loop and whatever it runs at that moment.
+    # shellcheck disable=SC2016 # Expanded by the inner shell.
+    setsid bash -c '
+      for try in 1 2 3; do
+        echo "pull $try of 3: $1"
+        docker pull --quiet "$1" && exit 0
+        [ "$try" = 3 ] || sleep $((try * 5))
+      done
+      exit 1
+    ' _ "$image" >"$(pull_log "$image")" 2>&1 &
+    PULL_PIDS[$image]=$!
+  done
+  eval "${int_trap:-trap - INT}"
+  eval "${term_trap:-trap - TERM}"
+  [ -z "$held" ] || exit "$held"
+}
+
+# Waits for the background pulls of the images given. An image that is not being pulled passes at once.
+wait_for_pulls() {
+  local image pid
+  for image in "$@"; do
+    pid="${PULL_PIDS[$image]:-}"
+    [ -n "$pid" ] || continue
+    if ! wait "$pid"; then
+      cat "$(pull_log "$image")" >&2 || true
+      die "could not pull $image"
+    fi
+    unset 'PULL_PIDS[$image]'
+  done
+}
+
+# Stops the pulls that still run when the script ends early, failed or interrupted, waits for them, and removes
+# their logs. A pull already waited for is gone from PULL_PIDS.
+stop_pulls() {
+  local pid
+  for pid in "${PULL_PIDS[@]}"; do
+    # The whole group at once, so the loop cannot start another try in between. Stopped so early that it had not
+    # made its group yet: the process, then the group again, which it may have made and filled meanwhile.
+    if ! kill -TERM -- "-$pid" 2>/dev/null; then
+      kill -TERM "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      kill -TERM -- "-$pid" 2>/dev/null || true
+    fi
+    wait "$pid" 2>/dev/null || true
+  done
+  PULL_PIDS=()
+  [ -z "$PULL_LOGS" ] || rm -rf "$PULL_LOGS"
+  PULL_LOGS=""
+}
+
 docker_socket_gid() {
   local sock=/var/run/docker.sock
   [ -S "$sock" ] || die "Docker socket not found at $sock"

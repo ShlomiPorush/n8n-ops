@@ -2,7 +2,7 @@ import type { Ctx } from "../context.ts"
 import { instances } from "../db/schema.ts"
 import { dispatchAlerts, syncTelegramWebhook } from "./alerts.ts"
 import { checkDirect } from "./health.ts"
-import { refreshInstanceMeta } from "./instances.ts"
+import { activeOnly, can, refreshInstanceMeta, unsupportedVersion } from "./instances.ts"
 import { housekeeping, pollInstance } from "./problems.ts"
 import { maybeSendReports } from "./reports.ts"
 
@@ -44,16 +44,26 @@ export function startScheduler(ctx: Ctx, extraJobs: Job[] = []): () => void {
 
   const tick = async () => {
     for (const job of jobs) if (due(job.name, job.everyMs)) void runOnce(job.name, () => job.run(ctx))
-    const all = await ctx.db.select().from(instances)
+    // A draft does nothing in the background; an active instance only what it was chosen for.
+    const all = await ctx.db.select().from(instances).where(activeOnly)
     for (const instance of all) {
       const s = await ctx.settings.forInstance(instance.overrides)
-      if (due(`poll:${instance.id}`, s.pollIntervalSec * 1000)) {
+      // n8n older than 2.14.0 is not read through its API; the meta read below still notices an update.
+      if (
+        can(instance, "monitor") &&
+        !unsupportedVersion(instance) &&
+        due(`poll:${instance.id}`, s.pollIntervalSec * 1000)
+      ) {
         void runOnce(`poll:${instance.id}`, () => pollInstance(ctx, instance))
       }
-      if (instance.collection === "direct" && due(`health:${instance.id}`, s.healthIntervalSec * 1000)) {
+      if (
+        can(instance, "health") &&
+        instance.collection === "direct" &&
+        due(`health:${instance.id}`, s.healthIntervalSec * 1000)
+      ) {
         void runOnce(`health:${instance.id}`, () => checkDirect(ctx, instance.id))
       }
-      if (due(`meta:${instance.id}`, 6 * 3600_000)) {
+      if (instance.apiKeyEnc && due(`meta:${instance.id}`, 6 * 3600_000)) {
         void runOnce(`meta:${instance.id}`, () => refreshInstanceMeta(ctx, instance))
       }
     }

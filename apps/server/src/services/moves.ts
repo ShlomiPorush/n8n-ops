@@ -1,9 +1,9 @@
-import { hasCapability } from "@n8n-ops/shared"
+import { hasCapability, unsupportedVersionText } from "@n8n-ops/shared"
 import { eq } from "drizzle-orm"
 import type { Ctx } from "../context.ts"
 import { instances, moves, workerJobs } from "../db/schema.ts"
-import { usableWorker } from "./backups.ts"
-import { clientFor, effectiveScopes, type Instance } from "./instances.ts"
+import { jobTarget, usableWorker } from "./backups.ts"
+import { can, clientFor, effectiveScopes, type Instance, unsupportedVersion } from "./instances.ts"
 import { jobProxyFix, type ProxyFix } from "./proxy-fix.ts"
 import { enqueueJob, waitForJob } from "./workers.ts"
 import { calledWorkflowIds, credentialIds } from "./workflows.ts"
@@ -20,18 +20,31 @@ export class ProxyRefusedError extends Error {
 
 export type ExportedCredential = { id: string; name: string; type: string; data: Record<string, unknown> }
 
+/**
+ * Why credentials of an instance may not be exported: only an active instance chosen for moving workflows, or
+ * backed up through its worker, which already reads them. Null when they may.
+ */
+export function credentialExportRefusal(instance: Instance): string | null {
+  if (can(instance, "move") || (can(instance, "backup") && instance.backupVia === "worker")) return null
+  return `Credentials of ${instance.name} are exported only for Move workflows or a backup through its worker. Add one of them to its capabilities.`
+}
+
 /** Decrypted credentials of an instance, read by its worker with n8n's CLI. Kept in memory only. */
 export async function exportCredentials(ctx: Ctx, instance: Instance, ids?: string[]): Promise<ExportedCredential[]> {
+  const refusal = credentialExportRefusal(instance)
+  if (refusal) throw new Error(refusal)
   const worker = await usableWorker(ctx, instance)
   if (!worker)
     throw new Error(
-      `Credential secrets of ${instance.name} cannot be read: it needs a worker with its main container set.`,
+      instance.composeProject && instance.workerId
+        ? `Credential secrets of ${instance.name} cannot be read: update its worker to a release that follows a Compose service.`
+        : `Credential secrets of ${instance.name} cannot be read: it needs a worker with its main container set.`,
     )
   const job = await enqueueJob(
     ctx,
     worker.id,
     "export-credentials",
-    { container: instance.containerName, ids: ids ?? null },
+    { ...jobTarget(instance), ids: ids ?? null },
     instance.id,
   )
   const outcome = await waitForJob(job.id)
@@ -45,6 +58,17 @@ export async function exportCredentials(ctx: Ctx, instance: Instance, ids?: stri
           container: instance.containerName,
           refused: outcome.refused,
           error: outcome.error,
+          ...(instance.composeProject && instance.composeService
+            ? {
+                target: { project: instance.composeProject, service: instance.composeService },
+                seen: {
+                  project: instance.composeProject,
+                  service: instance.composeService,
+                  resolved: outcome.resolvedContainer,
+                  clean: outcome.replicas?.clean,
+                },
+              }
+            : {}),
         })
       : null
     throw proxyFix ? new ProxyRefusedError(message, proxyFix) : new Error(message)
@@ -69,6 +93,11 @@ const join = (base: string, path: string) => `${base.replace(/\/+$/, "")}/${path
 export async function previewMove(ctx: Ctx, input: { sourceId: string; targetId: string; workflowId: string }) {
   const [source, target] = await Promise.all([load(ctx, input.sourceId), load(ctx, input.targetId)])
   if (source.id === target.id) throw new Error("Choose a different target instance.")
+  for (const end of [source, target]) {
+    if (!can(end, "move"))
+      throw new Error(`${end.name} is not set up to move workflows. Add Move workflows to its capabilities.`)
+    if (unsupportedVersion(end)) throw new Error(`${end.name}: ${unsupportedVersionText}`)
+  }
   const workflow = await clientFor(ctx, source).getWorkflow(input.workflowId)
   const webhooks = workflow.nodes
     .filter((n) => /webhook$/i.test(n.type) && !n.disabled)

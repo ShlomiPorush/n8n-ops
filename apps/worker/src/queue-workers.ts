@@ -1,5 +1,12 @@
-import { workerCheckOutput } from "@n8n-ops/shared"
-import { type ContainerState, discover, type ListedContainer, projectOf } from "./discovery.ts"
+import { ALLOWED_LIMITS, type WorkerCheckOutput, workerCheckOutput } from "@n8n-ops/shared"
+import {
+  type ConcurrencyFlag,
+  type ContainerState,
+  discover,
+  type FoundWorker,
+  type ListedContainer,
+  projectOf,
+} from "./discovery.ts"
 import { type Docker, DockerError, type Refusal, refusalOf } from "./docker.ts"
 import { WORKER_CHECK } from "./inside.ts"
 
@@ -16,6 +23,38 @@ export type CheckedWorker = {
   error?: string
   /** Set when the socket proxy refused the check; moved to the report's `access` before it is sent. */
   refusal?: Refusal
+} & WorkerFigures
+
+/** What the check in a worker read about it: figures only, each left out when not known for sure. */
+export type WorkerFigures = {
+  version?: string
+  uptimeSec?: number
+  memory?: { used: number; limit: number | null }
+  concurrency?: { value: number; from: "env" | "flag" | "default" }
+}
+
+/**
+ * The figures of a worker from its check and the `--concurrency` flag of its command. How many jobs it runs at once
+ * follows n8n 2 (checked in n8nio/n8n:2.44.3): N8N_CONCURRENCY_PRODUCTION_LIMIT when it is set and not -1, else the
+ * flag, else 10. Without a version 2 read in the worker, an unknown variable or a flag that is not a number, none.
+ */
+export function figuresOf(details: WorkerCheckOutput["details"], flag: ConcurrencyFlag): WorkerFigures {
+  if (!details) return {}
+  const { version, uptimeSec, memory, concurrencyEnv: env } = details
+  const known = version?.startsWith("2.") && env !== undefined && env !== "unknown" && flag !== "invalid"
+  const concurrency = !known
+    ? undefined
+    : typeof env === "number"
+      ? { value: env, from: "env" as const }
+      : typeof flag === "number"
+        ? { value: flag, from: "flag" as const }
+        : { value: 10, from: "default" as const }
+  return {
+    ...(version ? { version } : {}),
+    ...(uptimeSec !== undefined ? { uptimeSec } : {}),
+    ...(memory ? { memory } : {}),
+    ...(concurrency && concurrency.value >= 1 ? { concurrency } : {}),
+  }
 }
 
 export type Discovery = {
@@ -29,8 +68,12 @@ export type DiscoveryResult = {
   workers: CheckedWorker[]
   /** The main's state in the container list, when it was read. */
   mainState?: ContainerState
-  /** Every queue worker name of the main, when the list told them apart: the socket proxy must allow them all. */
-  listed?: { names: string[]; complete: boolean }
+  /**
+   * Every queue worker name of the main, when the list told them apart: the socket proxy must allow them all. With
+   * `patterns`, the patterns n8n-ops may suggest for workers added later, and whether each is clean: no other
+   * container on the host has a name that starts the same way. Only that answer leaves the host, never a name.
+   */
+  listed?: { names: string[]; complete: boolean; patterns?: { pattern: string; clean: boolean }[] }
   /** What the socket proxy refused while finding and checking the workers. */
   refused: Refusal[]
 }
@@ -60,7 +103,12 @@ const entry = (name: string, state: WorkerState, ms: number, error?: string, sta
 const DOWN_STATES = new Set<ContainerState>(["exited", "dead", "restarting", "removing", "created", "paused"])
 
 /** Checks one running queue worker from inside its container. */
-export async function checkWorker(docker: Docker, name: string, signal: AbortSignal): Promise<CheckedWorker> {
+export async function checkWorker(
+  docker: Docker,
+  name: string,
+  signal: AbortSignal,
+  flag?: ConcurrencyFlag,
+): Promise<CheckedWorker> {
   const started = Date.now()
   const ms = () => Date.now() - started
   try {
@@ -78,18 +126,24 @@ export async function checkWorker(docker: Docker, name: string, signal: AbortSig
     if (!out.success)
       return entry(name, "not-checked", ms(), "the answer of the check in the worker was not understood")
     const o = out.data
-    if (o.notCollected) return entry(name, "not-checked", ms(), o.notCollected)
+    // The figures go with every state the check itself read, also when the worker is not ready.
+    const figures = figuresOf(o.details, flag)
+    const checked = (state: WorkerState, error?: string, status = 0) => ({
+      ...entry(name, state, ms(), error, status),
+      ...figures,
+    })
+    if (o.notCollected) return checked("not-checked", o.notCollected)
     if (o.active === false)
-      return entry(name, "not-verified", ms(), "running, health not verified; set QUEUE_HEALTH_CHECK_ACTIVE=true")
+      return checked("not-verified", "running, health not verified; set QUEUE_HEALTH_CHECK_ACTIVE=true")
     if (!o.health || !o.readiness)
-      return entry(name, "not-checked", ms(), "the answer of the check in the worker was not understood")
+      return checked("not-checked", "the answer of the check in the worker was not understood")
     const healthOk = !o.health.error && o.health.status >= 200 && o.health.status < 300
     if (!healthOk)
-      return entry(name, "unreachable", ms(), o.health.error ?? `health answered ${o.health.status}`, o.health.status)
+      return checked("unreachable", o.health.error ?? `health answered ${o.health.status}`, o.health.status)
     const ready = !o.readiness.error && o.readiness.status >= 200 && o.readiness.status < 300
     return ready
-      ? entry(name, "ready", ms(), undefined, o.readiness.status)
-      : entry(name, "not-ready", ms(), o.readiness.error ?? `not ready (${o.readiness.status})`, o.readiness.status)
+      ? checked("ready", undefined, o.readiness.status)
+      : checked("not-ready", o.readiness.error ?? `not ready (${o.readiness.status})`, o.readiness.status)
   } catch (error) {
     if (error instanceof DockerError) {
       if (error.kind === "refused")
@@ -124,12 +178,10 @@ export async function mainStateOf(
   }
 }
 
-type Found =
-  | { ok: true; workers: { name: string; state: ContainerState }[]; mainState?: ContainerState }
-  | { ok: false; result: DiscoveryResult }
+type Found = { ok: true; workers: FoundWorker[]; mainState?: ContainerState } | { ok: false; result: DiscoveryResult }
 
 /** Lists the containers of the main's Compose project and tells its queue workers apart. Runs no command. */
-async function findWorkers(docker: Docker, main: string, deadline: AbortSignal): Promise<Found> {
+async function findWorkers(docker: Docker, main: string, deadline: AbortSignal, service?: string): Promise<Found> {
   const call = () => ({
     signal: AbortSignal.any([deadline, AbortSignal.timeout(LIMITS.callMs)]),
     maxBytes: LIMITS.listBytes,
@@ -175,10 +227,48 @@ async function findWorkers(docker: Docker, main: string, deadline: AbortSignal):
       refusal ? [refusal] : [],
     )
   }
-  const found = discover(projectList, main)
+  const found = discover(projectList, main, service)
   if (found.status === "ambiguous")
     return failed({ status: "ambiguous", reason: clip(found.reason, 200), found: 0 }, found.main)
   return { ok: true, workers: found.workers, mainState: found.main }
+}
+
+/** A name that ends in digits, and the part before them: the start of a pattern for workers added later. */
+const NUMBERED = /^([a-zA-Z0-9][a-zA-Z0-9_.-]*[^0-9])[0-9]+$/
+
+/**
+ * Checks, for each prefix of the main's numbered queue workers, whether any other container on the host has a name
+ * that starts the same way. One more list call, all containers, after every health check of the probe and only with
+ * what is left of its deadline; a failure, a timeout or a list over the cap gives no patterns at all.
+ */
+export async function patternsOf(
+  docker: Docker,
+  workers: { name: string }[],
+  deadline: AbortSignal,
+): Promise<{ pattern: string; clean: boolean }[] | undefined> {
+  const prefixes = [
+    ...new Set(
+      workers
+        .flatMap((w) => NUMBERED.exec(w.name)?.[1] ?? [])
+        .filter((p) => p.length >= 3 && p.length < ALLOWED_LIMITS.length),
+    ),
+  ].slice(0, 20)
+  if (!prefixes.length || deadline.aborted) return undefined
+  let host: ListedContainer[]
+  try {
+    host = (await docker.listContainers(
+      {},
+      { signal: AbortSignal.any([deadline, AbortSignal.timeout(LIMITS.callMs)]), maxBytes: LIMITS.listBytes },
+    )) as ListedContainer[]
+  } catch {
+    return undefined
+  }
+  const own = new Set(workers.map((w) => w.name))
+  const names = host.flatMap((c) => (c.Names ?? []).map((n) => n.replace(/^\//, "")))
+  return prefixes.map((prefix) => ({
+    pattern: `${prefix}*`,
+    clean: names.every((n) => !n.startsWith(prefix) || own.has(n)),
+  }))
 }
 
 /** The names for the proxy's line: at most 500, none longer than the 128 characters the server takes. */
@@ -197,9 +287,9 @@ const listedOf = (workers: { name: string }[]) => {
 export async function listWorkers(
   docker: Docker,
   main: string,
-  options: { check: boolean; deadline: AbortSignal },
+  options: { check: boolean; deadline: AbortSignal; service?: string },
 ): Promise<DiscoveryResult> {
-  const found = await findWorkers(docker, main, options.deadline)
+  const found = await findWorkers(docker, main, options.deadline, options.service)
   if (!found.ok) return found.result
   const why = `not checked: the socket proxy does not allow commands in "${main}"`
   return {
@@ -214,10 +304,12 @@ export async function listWorkers(
           )
       : [],
     mainState: found.mainState,
-    listed: listedOf(found.workers),
+    listed: { ...listedOf(found.workers), ...withPatterns(await patternsOf(docker, found.workers, options.deadline)) },
     refused: [],
   }
 }
+
+const withPatterns = (patterns: { pattern: string; clean: boolean }[] | undefined) => (patterns ? { patterns } : {})
 
 /**
  * Finds the queue workers of the main `main` and checks them: from the container list, then one check inside each
@@ -228,10 +320,10 @@ export async function listWorkers(
 export async function discoverWorkers(
   docker: Docker,
   main: string,
-  options: { rotation: number; deadline?: AbortSignal },
+  options: { rotation: number; deadline?: AbortSignal; service?: string },
 ): Promise<DiscoveryResult> {
   const deadline = options.deadline ?? AbortSignal.timeout(LIMITS.probeMs)
-  const found = await findWorkers(docker, main, deadline)
+  const found = await findWorkers(docker, main, deadline, options.service)
   if (!found.ok) return found.result
 
   const all = found.workers
@@ -245,7 +337,7 @@ export async function discoverWorkers(
   const run = async () => {
     for (let next = queue.shift(); next; next = queue.shift()) {
       if (deadline.aborted) break
-      const checked = await checkWorker(docker, next.name, deadline)
+      const checked = await checkWorker(docker, next.name, deadline, next.concurrencyFlag)
       // An answer that came after the deadline is not used.
       if (!deadline.aborted) results.set(next.name, checked)
     }
@@ -264,7 +356,8 @@ export async function discoverWorkers(
       : { status: "ok", found: all.length },
     workers: checked.map(({ refusal: _r, ...w }) => w),
     mainState: found.mainState,
-    listed: listedOf(all),
+    // After every check above, with what is left of the deadline.
+    listed: { ...listedOf(all), ...withPatterns(await patternsOf(docker, all, deadline)) },
     refused: checked.flatMap((w) => (w.refusal ? [w.refusal] : [])),
   }
 }

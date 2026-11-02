@@ -1,11 +1,4 @@
-export {
-  type Capability,
-  capabilities,
-  capabilityStatus,
-  hasCapability,
-  readScopes,
-  writeScopes,
-} from "./capabilities.ts"
+export { type Capability, capabilities, capabilityStatus, hasCapability, scopesOf } from "./capabilities.ts"
 export {
   type DateFormat,
   type DateParts,
@@ -35,11 +28,37 @@ export {
 } from "./dates.ts"
 export { formatDuration } from "./format.ts"
 export { type Health, healthSchema } from "./health.ts"
-export { type MainCheckOutput, mainCheckOutput, type WorkerCheckOutput, workerCheckOutput } from "./main-check.ts"
+export {
+  apiScopesOf,
+  type BackupVia,
+  belowMinimum,
+  type CapabilityKey,
+  type CapabilityState,
+  capabilityKeys,
+  capabilityLabels,
+  capabilityProblems,
+  chosenCapabilitiesSchema,
+  MINIMUM_N8N_VERSION,
+  missingScopes,
+  type Requirements,
+  requirementsOf,
+  unsupportedVersionText,
+  withDependencies,
+  withoutDependents,
+} from "./instance-setup.ts"
+export {
+  type MainCheckOutput,
+  mainCheckOutput,
+  type WorkerCheckOutput,
+  workerCheckOutput,
+  workerDetails,
+} from "./main-check.ts"
 export {
   ALLOWED_LIMITS,
   CONTAINER_PATTERN,
   DOCKER_NAME,
+  MAX_SUGGESTED,
+  type MainInput,
   type NeededRule,
   neededRule,
   PROXY_GET,
@@ -49,6 +68,11 @@ export {
   proxyRules,
   type RuleEntry,
   type RuleSource,
+  replicaPrefix,
+  replicaRegex,
+  type ServiceMain,
+  type SuggestedPattern,
+  type Widened,
 } from "./proxy-rules.ts"
 export {
   isClockTime,

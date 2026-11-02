@@ -178,7 +178,9 @@ run_checks() {
   info "Lint and format"
   in_toolchain "pnpm lint"
   info "Types, unit tests and builds${CHANGED_BASE:+ (changed since $CHANGED_BASE)}"
-  in_toolchain "pnpm -r ${filter[*]:+${filter[*]@Q}} run typecheck \
+  # The skill is plain JavaScript without a typecheck script: left out of that run, so a change to it alone does not
+  # select only a package pnpm refuses as "no script". Remove the exclusion if the skill gets a typecheck script.
+  in_toolchain "pnpm -r ${filter[*]:+${filter[*]@Q}} --filter '!@n8n-ops/skill' run typecheck \
     && pnpm -r ${filter[*]:+${filter[*]@Q}} run test \
     && pnpm -r ${filter[*]:+${filter[*]@Q}} --filter=./apps/* run build"
   info "Database schema matches its migrations"

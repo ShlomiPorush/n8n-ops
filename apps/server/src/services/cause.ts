@@ -76,23 +76,38 @@ const KNOWN_ERRORS: [RegExp, string][] = [
   [/host is unreachable/i, "The server could not be reached."],
   [RUNNER, "The n8n task runner did not take the Code node's task. A problem of the instance, not the workflow."],
   [/is no longer available/i, "The provider no longer offers what the node asks for."],
-  [/^HTML page\b|· HTML page\b/, "A proxy answered instead of the service."],
+  [/(?:^|\s)HTML page(?: "|$|\s)/, "A proxy answered instead of the service."],
 ]
 
 const isStopAndError = (type: string | null) => !!type && /\.stopAndError$/.test(type)
 const isExecuteWorkflow = (type: string | null) => !!type && /\.executeWorkflow$/.test(type)
 
-/** The host of a URL that is literal up to the host, also in an expression that starts with it. */
+/**
+ * The host of a URL whose whole authority (user info, host, port) is literal, also in an expression that starts with
+ * it. An expression anywhere in the authority gives no host: the host could then be anything.
+ */
 export function hostOf(url: string | null | undefined): string | null {
   if (typeof url !== "string") return null
   const m = url
     .slice(0, LIMITS.url)
     .trim()
     .replace(/^=/, "")
-    .match(/^https?:\/\/(?:[^@/?#\s{}]*@)?([^/:?#\s{}]+)/i)
-  return m?.[1] ? m[1].toLowerCase() : null
+    .match(/^https?:\/\/([^/?#\s]*)/i)
+  let authority = m?.[1] ?? ""
+  if (!authority || /[{}$]/.test(authority)) return null
+  authority = authority.slice(authority.lastIndexOf("@") + 1)
+  if (authority.startsWith("[")) {
+    const ipv6 = authority.match(/^\[[0-9a-f:.]+\]/i)?.[0]
+    return ipv6 ? ipv6.toLowerCase() : null
+  }
+  const host = authority.replace(/:\d*$/, "").toLowerCase()
+  return /^[a-z0-9_-]+(\.[a-z0-9_-]+)*\.?$/.test(host) ? host : null
 }
 
+/**
+ * The HTTP status of a failure: n8n's fixed message for it, or the "NNN - " that n8n puts before the body of an answer
+ * when its message is one it has no fixed text for.
+ */
 function httpStatusOf(message: string, description: string | null): number | null {
   const fixed = HTTP_MESSAGES.find(([, text]) => message.startsWith(text))
   if (fixed) return fixed[0]
@@ -132,18 +147,7 @@ const stripTags = (s: string) =>
  */
 export function serviceAnswer(description: string | null): string | null {
   if (typeof description !== "string") return null
-  const s = description.slice(0, LIMITS.description).trim()
-  if (!s) return null
-  if (/^(<!doctype html|<html)/i.test(s)) {
-    const title = s.match(/<title>([^<]*)<\/title>/i)?.[1]?.trim()
-    return title ? `HTML page "${title}"` : "HTML page"
-  }
-  if (/^(<\?xml|<Error\b)/i.test(s)) {
-    const code = s.match(/<Code>([^<]*)<\/Code>/i)?.[1]?.trim()
-    const message = s.match(/<Message>([^<\n]*)/i)?.[1]?.trim()
-    const text = [code, message].filter(Boolean).join(": ")
-    return text || null
-  }
+  let s = description.slice(0, LIMITS.description).trim()
   const body = s.match(/^\d{3} - ([\s\S]*)$/)
   if (body) {
     let value: unknown = body[1]
@@ -154,10 +158,24 @@ export function serviceAnswer(description: string | null): string | null {
         break
       }
     }
-    if (typeof value === "string") return stripTags(value) || null
-    return pickText(value)
+    if (typeof value !== "string") return pickText(value)
+    s = value.trim()
   }
-  return stripTags(s) || null
+  return markupAnswer(s) ?? (stripTags(s) || null)
+}
+
+/** The title of an HTML page, or the Code and full Message of an XML error; null for anything else. */
+function markupAnswer(s: string): string | null {
+  if (/^(<!doctype html|<html)/i.test(s)) {
+    const title = stripTags(s.match(/<title>([^<]*)<\/title>/i)?.[1] ?? "")
+    return title ? `HTML page "${title}"` : "HTML page"
+  }
+  if (/^(<\?xml|<Error\b)/i.test(s)) {
+    const code = stripTags(s.match(/<Code>([^<]*)<\/Code>/i)?.[1] ?? "")
+    const message = stripTags(s.match(/<Message>([^<]*)<\/Message>/i)?.[1] ?? "")
+    return [code, message].filter(Boolean).join(": ") || null
+  }
+  return null
 }
 
 /** Replaces what changes from one failure to the next without changing what went wrong. */
@@ -169,16 +187,20 @@ export function normalize(reason: string): string {
     .replace(/\b[0-9a-f]{16,}\b/gi, "<hex>")
 }
 
-/** The reason as screens show it: wrapper tags and long asides dropped, then its first sentence, at most 300. */
+/**
+ * The reason as screens show it. Over 100 characters, the asides go: bracketed tags, "Error fetching from <url>:" and
+ * parentheses. Over 120, its first sentence. At most 300.
+ */
 export function displayReasonOf(reason: string): string {
-  let s = reason
-    .replace(/(\[[^\]\n]{1,80}\]:?\s*)+/g, "")
-    .replace(/Error fetching from \S+:\s+/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-  if (s.length > 100) s = s.replace(/\s*\([^)]*\)/g, "")
+  let s = reason.replace(/\s+/g, " ").trim()
+  if (s.length > 100)
+    s = s
+      .replace(/(\[[^\]]{1,80}\]:?\s*)+/g, "")
+      .replace(/Error fetching from \S+:\s+/g, "")
+      .replace(/\s*\([^)]*\)/g, "")
+      .trim()
   if (s.length > 120) {
-    const sentence = s.match(/^([\s\S]{20,}?[.!?])(\s|$)/)
+    const sentence = s.match(/^([\s\S]+?[.!?])(\s|$)/)
     if (sentence?.[1]) s = sentence[1]
   }
   if (s.length > DISPLAY_MAX) s = `${s.slice(0, DISPLAY_MAX - 1).trimEnd()}…`
@@ -238,15 +260,14 @@ export function causeOf(input: CauseInput): Cause {
       message,
       description: typeof input.description === "string" ? input.description : null,
       url: typeof input.url === "string" ? input.url : null,
-      credentials: Array.isArray(input.credentials) ? input.credentials : [],
+      credentials: Array.isArray(input.credentials)
+        ? input.credentials.filter((c) => typeof c?.id === "string" && c.id && typeof c.name === "string")
+        : [],
     }
     const httpStatus = httpStatusOf(message, safe.description)
     const answer = serviceAnswer(safe.description)
-    const reason = httpStatus
-      ? answer && !answer.startsWith(String(httpStatus))
-        ? `HTTP ${httpStatus} · ${answer}`
-        : `HTTP ${httpStatus}`
-      : answer || message || "Unknown error"
+    const said = answer || message || "Unknown error"
+    const reason = httpStatus ? `HTTP ${httpStatus} · ${said}` : said
     const target = targetOf(safe)
     const kind = kindOf(safe, httpStatus, `${message} ${safe.description?.slice(0, LIMITS.description) ?? ""}`)
     const hintText = `${message} ${answer ?? ""} ${reason}`

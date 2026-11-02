@@ -178,8 +178,10 @@ run_checks() {
   info "Lint and format"
   in_toolchain "pnpm lint"
   info "Types, unit tests and builds${CHANGED_BASE:+ (changed since $CHANGED_BASE)}"
-  in_toolchain "pnpm -r ${filter[*]:+${filter[*]@Q}} run typecheck \
-    && pnpm -r ${filter[*]:+${filter[*]@Q}} run test \
+  # --if-present: a change to packages/skill alone selects only a package without a typecheck script, which pnpm
+  # would refuse as "no script". A recursive run skips such packages anyway; this only keeps that one case running.
+  in_toolchain "pnpm -r ${filter[*]:+${filter[*]@Q}} --if-present run typecheck \
+    && pnpm -r ${filter[*]:+${filter[*]@Q}} --if-present run test \
     && pnpm -r ${filter[*]:+${filter[*]@Q}} --filter=./apps/* run build"
   info "Database schema matches its migrations"
   # A schema change without its migration would otherwise only show when the next migration is generated.

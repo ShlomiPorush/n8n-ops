@@ -78,14 +78,17 @@ start_pulls() {
     [ -z "${PULL_PIDS[$image]:-}" ] || continue
     docker image inspect "$image" >/dev/null 2>&1 && continue
     [ -n "$PULL_LOGS" ] || PULL_LOGS="$(mktemp -d "${TMPDIR:-/tmp}/n8n-ops-pulls.XXXXXX")"
-    (
+    # A process group of its own (setsid execs in place, so the pid is the group's), which stop_pulls ends whole:
+    # the retry loop and whatever it runs at that moment.
+    # shellcheck disable=SC2016 # Expanded by the inner shell.
+    setsid bash -c '
       for try in 1 2 3; do
-        echo "pull $try of 3: $image"
-        docker pull --quiet "$image" && exit 0
+        echo "pull $try of 3: $1"
+        docker pull --quiet "$1" && exit 0
         [ "$try" = 3 ] || sleep $((try * 5))
       done
       exit 1
-    ) >"$(pull_log "$image")" 2>&1 &
+    ' _ "$image" >"$(pull_log "$image")" 2>&1 &
     PULL_PIDS[$image]=$!
   done
 }
@@ -109,9 +112,8 @@ wait_for_pulls() {
 stop_pulls() {
   local pid
   for pid in "${PULL_PIDS[@]}"; do
-    # The docker client first, then the loop around it, which would otherwise try again.
-    pkill -P "$pid" 2>/dev/null || true
-    kill "$pid" 2>/dev/null || true
+    # The whole group at once, so the loop cannot start another try in between.
+    kill -TERM -- "-$pid" 2>/dev/null || true
     wait "$pid" 2>/dev/null || true
   done
   PULL_PIDS=()

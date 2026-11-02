@@ -265,7 +265,7 @@ const RELEASE_RETRY_MS = 3600_000
  * answer included, keeps the version known before and is tried again within an hour. Calls at the same time share
  * one read.
  */
-export function releaseChecker(fetchImpl: FetchLike = fetch, now = () => Date.now()) {
+export function releaseChecker(fetchImpl: FetchLike = (url, init) => fetch(url, init), now = () => Date.now()) {
   let known: string | null = null
   let checkedAt = 0
   let failed = false

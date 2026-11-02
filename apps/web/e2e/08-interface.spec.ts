@@ -664,14 +664,29 @@ test("how often instances are read is set in Settings, and per instance in its o
     await expect(unsaved).toHaveCount(0)
     expect(await overrides()).toMatchObject({ workflowMapMinutes: 60 })
   } finally {
-    await page.request.patch(`/api/instances/${id}`, { data: { overrides: stored } })
-    await page.request.put("/api/settings/defaults", {
-      data: {
-        workflowMapMinutes: before.defaults.workflowMapMinutes,
-        instanceCheckHours: before.defaults.instanceCheckHours,
-      },
-    })
-    await page.request.put("/api/settings/general", { data: { releaseCheckHours: before.general.releaseCheckHours } })
+    // Every step runs even when one fails, and each is checked, so a later test starts from what was stored.
+    const restore = async (what: string, send: () => Promise<{ ok(): boolean }>) => {
+      const ok = await send().then(
+        (res) => res.ok(),
+        () => false,
+      )
+      expect.soft(ok, `restore ${what}`).toBe(true)
+    }
+    await restore("the overrides", () => page.request.patch(`/api/instances/${id}`, { data: { overrides: stored } }))
+    await restore("Instance Defaults", () =>
+      page.request.put("/api/settings/defaults", {
+        data: {
+          workflowMapMinutes: before.defaults.workflowMapMinutes,
+          instanceCheckHours: before.defaults.instanceCheckHours,
+        },
+      }),
+    )
+    await restore("General", () =>
+      page.request.put("/api/settings/general", { data: { releaseCheckHours: before.general.releaseCheckHours } }),
+    )
+    expect.soft(await overrides()).toEqual(stored)
+    expect.soft(await readSettings("defaults")).toMatchObject({ workflowMapMinutes: 10, instanceCheckHours: 6 })
+    expect.soft((await readSettings("general")).releaseCheckHours).toBe(before.general.releaseCheckHours)
   }
 })
 

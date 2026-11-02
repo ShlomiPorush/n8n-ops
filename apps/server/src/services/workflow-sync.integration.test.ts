@@ -9,7 +9,7 @@ import type { Ctx } from "../context.ts"
 import { createDatabase, type Database } from "../db/client.ts"
 import { instances, workflows } from "../db/schema.ts"
 import { createSecrets } from "../lib/crypto.ts"
-import { syncWorkflows, syncWorkflowsSoon, workflowSyncBusy } from "./workflows.ts"
+import { lastWorkflowSync, syncWorkflows, syncWorkflowsSoon, workflowSyncBusy } from "./workflows.ts"
 
 // Syncs of the workflow map against a real PostgreSQL and a stand-in n8n that holds each workflow list until the
 // test lets it go: requests for an instance join the one waiting, few instances sync at once, and a sync that
@@ -130,8 +130,14 @@ describe("workflow map syncs", () => {
     await until(() => n8n.reads === 2)
     await new Promise((r) => setTimeout(r, 100))
     expect(n8n.open).toBe(2)
+    // The one waiting for its turn has not started: its interval counts from when it does.
+    const [, , third] = all
+    if (!third) throw new Error("no third instance")
+    expect(lastWorkflowSync(third.id)).toBe(0)
+    const before = Date.now()
     release()
     await until(() => n8n.reads === 3)
+    expect(lastWorkflowSync(third.id)).toBeGreaterThanOrEqual(before)
     release()
     await Promise.all(syncs)
     expect(n8n.mostOpen).toBe(2)

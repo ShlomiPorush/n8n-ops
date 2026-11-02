@@ -103,8 +103,14 @@ async function inSlot<T>(fn: () => Promise<T>): Promise<T> {
 const waiting = new Map<string, Promise<{ workflows: number }>>()
 const running = new Set<string>()
 
+/** When each instance's last sync started reading, whoever asked for it. */
+const startedAt = new Map<string, number>()
+
 /** Whether a sync of the instance is running or waiting, so the scheduler does not ask for another. */
 export const workflowSyncBusy = (instanceId: string) => waiting.has(instanceId) || running.has(instanceId)
+
+/** When the instance's last sync started reading, in milliseconds; 0 when none has since the server started. */
+export const lastWorkflowSync = (instanceId: string) => startedAt.get(instanceId) ?? 0
 
 /**
  * Reads every workflow of an instance and its run counts for the last 30 days (requirement F1). One at a time per
@@ -121,6 +127,7 @@ export function syncWorkflows(ctx: Ctx, instance: Pick<Instance, "id">): Promise
     running.add(instance.id)
     try {
       return await inSlot(async () => {
+        startedAt.set(instance.id, Date.now())
         const [fresh] = await ctx.db.select().from(instances).where(eq(instances.id, instance.id))
         if (!fresh) throw new Error("The instance was removed.")
         if (!can(fresh, "map")) throw new Error(`The workflow map is not chosen for ${fresh.name}.`)

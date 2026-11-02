@@ -5,13 +5,14 @@ import { AccessError, checkCall, grantForKey, instanceSpec, logCall, openToAgent
 import { syncWorkflowsSoon } from "../services/workflows.ts"
 
 /**
- * Whether a call forwarded to n8n changed what the workflow map shows: a write to workflows or tags that n8n
- * accepted. A refused or failed write changes nothing that is known; the next scheduled refresh reads it anyway.
+ * Whether a call forwarded to n8n changed what the workflow map shows: a write to workflows, tags or executions
+ * (deleting or retrying a run changes the counts) that n8n accepted. A refused or failed write changes nothing that
+ * is known; the next scheduled refresh reads it anyway.
  */
 export function changesWorkflowMap(method: string, path: string, status: number) {
   if (method === "GET" || method === "HEAD" || method === "OPTIONS") return false
   if (status < 200 || status > 299) return false
-  return /^\/(workflows|tags)(\/|$)/.test(path)
+  return /^\/(workflows|tags|executions)(\/|$)/.test(path)
 }
 
 /**

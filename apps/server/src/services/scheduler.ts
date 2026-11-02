@@ -5,7 +5,7 @@ import { checkDirect } from "./health.ts"
 import { activeOnly, can, refreshInstanceMeta, unsupportedVersion } from "./instances.ts"
 import { housekeeping, pollInstance } from "./problems.ts"
 import { maybeSendReports } from "./reports.ts"
-import { syncWorkflows, workflowSyncBusy } from "./workflows.ts"
+import { lastWorkflowSync, syncWorkflows, workflowSyncBusy } from "./workflows.ts"
 
 export type Job = { name: string; everyMs: number; run: (ctx: Ctx) => Promise<unknown> }
 
@@ -65,12 +65,12 @@ export function startScheduler(ctx: Ctx, extraJobs: Job[] = []): () => void {
       ) {
         void runOnce(`health:${instance.id}`, () => checkDirect(ctx, instance.id))
       }
-      // Asked for only when no sync of the instance runs or waits, so the interval counts from a sync that starts.
+      // Counted from when the last sync started reading, also one a person or an agent's change asked for.
       if (
         can(instance, "map") &&
         !unsupportedVersion(instance) &&
         !workflowSyncBusy(instance.id) &&
-        due(`map:${instance.id}`, s.workflowMapMinutes * 60_000)
+        Date.now() - lastWorkflowSync(instance.id) >= s.workflowMapMinutes * 60_000
       ) {
         void syncWorkflows(ctx, instance).catch((e: Error) =>
           ctx.log.warn("workflow sync failed", { instance: instance.name, error: e.message }),

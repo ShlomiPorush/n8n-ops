@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest"
 import { changesWorkflowMap } from "./n8n-proxy.ts"
 
 describe("a call through the access proxy refreshes the workflow map", () => {
-  it("after a write to workflows or tags that n8n accepted", () => {
+  it("after a write to workflows, tags or executions that n8n accepted", () => {
     for (const [method, path] of [
       ["POST", "/workflows"],
       ["PUT", "/workflows/abc"],
@@ -13,6 +13,8 @@ describe("a call through the access proxy refreshes the workflow map", () => {
       ["PUT", "/workflows/abc/tags"],
       ["PUT", "/tags/t1"],
       ["DELETE", "/tags/t1"],
+      ["DELETE", "/executions/1"],
+      ["POST", "/executions/1/retry"],
     ])
       expect(changesWorkflowMap(method as string, path as string, 200), `${method} ${path}`).toBe(true)
   })
@@ -24,6 +26,6 @@ describe("a call through the access proxy refreshes the workflow map", () => {
     expect(changesWorkflowMap("PUT", "/workflows/abc", 502)).toBe(false)
     expect(changesWorkflowMap("POST", "/credentials", 200)).toBe(false)
     expect(changesWorkflowMap("POST", "/workflowsx", 200)).toBe(false)
-    expect(changesWorkflowMap("DELETE", "/executions/1", 200)).toBe(false)
+    expect(changesWorkflowMap("POST", "/users", 200)).toBe(false)
   })
 })

@@ -5,7 +5,6 @@ import { tokenActor } from "../http/types.ts"
 import type { AuditVia } from "../lib/audit.ts"
 import { newToken, sha256 } from "../lib/crypto.ts"
 import { matchOperation, parseSpec, type SpecOperation, specHasScopes } from "../lib/n8n-spec.ts"
-import { oneAtATime } from "../lib/one-at-a-time.ts"
 import { type FetchLike, N8nClient } from "../n8n/client.ts"
 import { can, effectiveScopes, type Instance, unsupportedVersion } from "./instances.ts"
 
@@ -139,9 +138,22 @@ export async function workflowNamesOf(
 const nameIn = (names: Record<string, string>, id: string) =>
   Object.hasOwn(names, id) && typeof names[id] === "string" ? names[id] : undefined
 
-export function requestAccess(ctx: Ctx, tokenId: string, input: AccessRequestInput) {
-  // One request of an agent at a time, so parallel requests cannot pass the pending limit together.
-  return oneAtATime(`access-request:${tokenId}`, () => requestAccessNow(ctx, tokenId, input))
+/** Agents with a request being made now; one server process, as supported. */
+const requesting = new Set<string>()
+
+/** One request of an agent at a time, so parallel requests cannot pass the pending limit together or pile up. */
+export async function requestAccess(ctx: Ctx, tokenId: string, input: AccessRequestInput) {
+  if (requesting.has(tokenId))
+    throw new AccessError(
+      "request_in_progress",
+      "Another access request of this agent is still being made. Wait for its answer, then ask again.",
+    )
+  requesting.add(tokenId)
+  try {
+    return await requestAccessNow(ctx, tokenId, input)
+  } finally {
+    requesting.delete(tokenId)
+  }
 }
 
 async function requestAccessNow(ctx: Ctx, tokenId: string, input: AccessRequestInput) {

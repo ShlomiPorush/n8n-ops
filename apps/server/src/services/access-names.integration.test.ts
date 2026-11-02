@@ -9,7 +9,7 @@ import type { Ctx } from "../context.ts"
 import { createDatabase, type Database } from "../db/client.ts"
 import { accessRequests, apiTokens, instances, workflows } from "../db/schema.ts"
 import { createSecrets } from "../lib/crypto.ts"
-import { getAccess, workflowNamesOf } from "./access.ts"
+import { getAccess, requestAccess, workflowNamesOf } from "./access.ts"
 import type { Instance } from "./instances.ts"
 
 // The names of the workflows an access request is limited to, against a real PostgreSQL and a stand-in n8n: read
@@ -28,6 +28,8 @@ let tokenId: string
 const KEY = "names-key-0123456789"
 /** What the stand-in n8n has, by workflow ID; "slow" never answers. */
 const live: Record<string, string> = { "wf-renamed": "New name", "wf-live": "Only in n8n" }
+// An ID an agent may send that is also a name JavaScript gives objects; a literal would set the prototype instead.
+Object.defineProperty(live, "__proto__", { value: "Odd but real", enumerable: true })
 const asked: string[] = []
 
 beforeAll(async () => {
@@ -113,8 +115,23 @@ describe("workflow names on access requests", () => {
     const i = await instance(["workflow:read", "workflow:delete"])
     await mapped(i.id, "wf-renamed", "Old name")
     await mapped(i.id, "wf-mapped", "Only in the map")
-    const names = await workflowNamesOf(ctx, i, ["wf-renamed", "wf-live", "wf-mapped", "wf-gone", "__proto__", ".."])
-    expect(names).toEqual({ "wf-renamed": "New name", "wf-live": "Only in n8n", "wf-mapped": "Only in the map" })
+    const names = await workflowNamesOf(ctx, i, [
+      "wf-renamed",
+      "wf-live",
+      "wf-mapped",
+      "wf-gone",
+      "__proto__",
+      "toString",
+      "..",
+    ])
+    expect(names).toEqual(
+      Object.fromEntries([
+        ["wf-renamed", "New name"],
+        ["wf-live", "Only in n8n"],
+        ["wf-mapped", "Only in the map"],
+        ["__proto__", "Odd but real"],
+      ]),
+    )
     expect(Object.getPrototypeOf(names)).toBe(Object.prototype)
     expect(asked).not.toContain("..")
   })
@@ -139,11 +156,27 @@ describe("workflow names on access requests", () => {
     const i = await instance(["workflow:read"])
     await mapped(i.id, "wf-deleted", "Renamed since")
     await mapped(i.id, "wf-older", "From the map")
-    const stored = await request(i.id, ["wf-deleted", "__proto__"], { "wf-deleted": "As it was" })
+    const odd = Object.fromEntries([
+      ["wf-deleted", "As it was"],
+      ["__proto__", "Odd but real"],
+    ])
+    const stored = await request(i.id, ["wf-deleted", "__proto__"], odd)
     await ctx.db.delete(workflows).where(eq(workflows.workflowId, "wf-deleted"))
-    expect((await getAccess(ctx, stored))?.workflowNames).toEqual({ "wf-deleted": "As it was" })
+    const shown = (await getAccess(ctx, stored))?.workflowNames
+    expect(shown).toEqual(odd)
+    expect(shown && Object.hasOwn(shown, "__proto__")).toBe(true)
 
     const older = await request(i.id, ["wf-older", "wf-unknown", "toString"], {})
     expect((await getAccess(ctx, older))?.workflowNames).toEqual({ "wf-older": "From the map" })
+  })
+
+  it("refuses a second request of the same agent while its first is being made", async () => {
+    const input = { instance: "no-such-instance", reason: "Look at a workflow", scopes: ["workflow:read"], minutes: 5 }
+    const first = requestAccess(ctx, tokenId, input)
+    const second = requestAccess(ctx, tokenId, input)
+    await expect(second).rejects.toMatchObject({ code: "request_in_progress" })
+    await expect(first).rejects.toMatchObject({ code: "unknown_instance" })
+    // Once the first is answered, the agent may ask again.
+    await expect(requestAccess(ctx, tokenId, input)).rejects.toMatchObject({ code: "unknown_instance" })
   })
 })

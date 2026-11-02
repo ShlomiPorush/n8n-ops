@@ -83,7 +83,16 @@ export function restRoutes(ctx: Ctx) {
   }
   const accessError = (e: unknown) => {
     if (!(e instanceof AccessError)) throw e
-    const status = e.code === "not_found" ? 404 : e.code === "not_allowed" ? 403 : e.code.startsWith("spec") ? 502 : 400
+    const status =
+      e.code === "not_found"
+        ? 404
+        : e.code === "not_allowed"
+          ? 403
+          : e.code === "request_in_progress"
+            ? 409
+            : e.code.startsWith("spec")
+              ? 502
+              : 400
     return [{ error: e.code, message: e.message }, status] as const
   }
   app.post("/access-requests", async (c) => {

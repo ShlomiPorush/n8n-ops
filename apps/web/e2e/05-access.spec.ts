@@ -80,7 +80,9 @@ test("the instance opens read-only access to agents", async ({ request }) => {
   await page.getByLabel("Agents may request access").click()
   // The presets show which one the selection matches, and none when it was changed by hand.
   const preset = page.getByRole("radiogroup", { name: "Preset" })
+  await preset.getByRole("radio", { name: "None", exact: true }).click()
   await expect(preset.getByRole("radio", { name: "None", exact: true })).toBeChecked()
+  await expect(page.getByRole("checkbox", { name: "workflow:read", exact: true })).not.toBeChecked()
   await preset.getByRole("radio", { name: "Read only", exact: true }).click()
   await expect(preset.getByRole("radio", { name: "Read only", exact: true })).toBeChecked()
   await expect(preset.getByRole("radio", { checked: true })).toHaveCount(1)

@@ -5,7 +5,7 @@ import { and, eq } from "drizzle-orm"
 import postgres from "postgres"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { createApp } from "../app.ts"
-import { createAuth } from "../auth/auth.ts"
+import { createAuthSource } from "../auth/current.ts"
 import type { Ctx } from "../context.ts"
 import { createDatabase, type Database } from "../db/client.ts"
 import { auditLog, session, user } from "../db/schema.ts"
@@ -43,7 +43,7 @@ beforeAll(async () => {
   await database.migrate(join(import.meta.dirname, "../../drizzle"))
   ctx = {
     db: database.db,
-    auth: createAuth(database.db, randomBytes(32)),
+    auth: createAuthSource(database.db, randomBytes(32), undefined, createSettings(database.db)),
     settings: createSettings(database.db),
     audit: createAudit(database.db),
     events: new EventEmitter(),

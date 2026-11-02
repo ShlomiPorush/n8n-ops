@@ -19,10 +19,10 @@ const accountSchema = z.object({
 export function setupRoutes(ctx: Ctx) {
   const app = new Hono<Env>()
 
-  // Public: tells the UI whether this is a fresh install.
+  // Public: tells the UI whether this is a fresh install, and the address passkeys work at (null: they are off).
   app.get("/status", async (c) => {
-    const [row] = await ctx.db.select({ n: count() }).from(user)
-    return c.json({ hasUser: (row?.n ?? 0) > 0 })
+    const [[row], { passkeyUrl }] = await Promise.all([ctx.db.select({ n: count() }).from(user), ctx.auth()])
+    return c.json({ hasUser: (row?.n ?? 0) > 0, passkeys: passkeyUrl?.origin ?? null })
   })
 
   // Public, but only until the single account exists.
@@ -32,7 +32,8 @@ export function setupRoutes(ctx: Ctx) {
     const parsed = accountSchema.safeParse(await c.req.json().catch(() => ({})))
     if (!parsed.success) return c.json({ error: "invalid", issues: parsed.error.issues }, 400)
     const { username, password } = parsed.data
-    await ctx.auth.api.signUpEmail({
+    const { auth } = await ctx.auth()
+    await auth.api.signUpEmail({
       body: { email: `${username.toLowerCase()}@${LOGIN_DOMAIN}`, password, name: username, username },
     })
     await ctx.audit({ actor: username, action: "Account created", via: "web" })

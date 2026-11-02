@@ -93,14 +93,17 @@ beforeAll(async () => {
     events: new EventEmitter(),
     log: { info: () => {}, warn: () => {}, error: () => {} },
     appKeyPath: join(tmpdir(), `n8n-ops-setup-${randomBytes(4).toString("hex")}`, "app.key"),
-    auth: {
-      api: {
-        getSession: async () => ({
-          user: { id: "u1", name: "operator", username: "operator", twoFactorEnabled: true },
-          session: { id: "s1" },
-        }),
+    auth: async () => ({
+      auth: {
+        api: {
+          getSession: async () => ({
+            user: { id: "u1", name: "operator", username: "operator", twoFactorEnabled: true },
+            session: { id: "s1" },
+          }),
+        },
       },
-    },
+      passkeyUrl: null,
+    }),
   } as unknown as Ctx
   await database.db.insert(user).values({ id: "u1", name: "operator", email: "operator@n8n-ops.local" })
   await database.db

@@ -1,5 +1,5 @@
 import type { EventEmitter } from "node:events"
-import type { Auth } from "./auth/auth.ts"
+import type { AuthSource } from "./auth/current.ts"
 import type { Db } from "./db/client.ts"
 import type { Audit } from "./lib/audit.ts"
 import type { Secrets } from "./lib/crypto.ts"
@@ -9,7 +9,8 @@ import type { AgentConnect } from "./oauth/agents.ts"
 /** Everything request handlers and background jobs share. */
 export type Ctx = {
   db: Db
-  auth: Auth
+  /** Better Auth for the public URL in effect; take it once per request. */
+  auth: AuthSource
   secrets: Secrets
   settings: SettingsStore
   audit: Audit

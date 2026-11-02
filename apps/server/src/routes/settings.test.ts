@@ -50,14 +50,17 @@ function fakeCtx(data: Stored, env: { publicUrl?: string } = {}) {
   }
   return {
     settings,
-    auth: {
-      api: {
-        getSession: async () => ({
-          session: { id: "s1" },
-          user: { id: "u1", username: "operator", twoFactorEnabled: true },
-        }),
+    auth: async () => ({
+      auth: {
+        api: {
+          getSession: async () => ({
+            session: { id: "s1" },
+            user: { id: "u1", username: "operator", twoFactorEnabled: true },
+          }),
+        },
       },
-    },
+      passkeyUrl: null,
+    }),
     secrets: { encrypt: (s: string) => `enc:${s}`, decrypt: (s: string) => s.replace(/^enc:/, "") },
     audit: async () => {},
     log: { info() {}, warn() {}, error() {} },

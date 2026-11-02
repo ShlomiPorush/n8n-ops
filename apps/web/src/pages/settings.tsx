@@ -98,7 +98,7 @@ export const forms: Record<string, { title: string; description: string; fields:
       {
         name: "publicUrl",
         label: "Public URL",
-        hint: "Used in links sent by Telegram and email, for example https://ops.example.com. Changing it ends every agent connection; those agents must connect again.",
+        hint: "Used in links sent by Telegram and email, for example https://ops.example.com. Changing it ends every agent connection; those agents must connect again. Passkeys work only at this address: after a change of host name, add them again.",
         placeholder: "https://ops.example.com",
         clear: true,
       },

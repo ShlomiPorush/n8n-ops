@@ -104,6 +104,27 @@ export const twoFactor = pgTable(
   (t) => [index("auth_two_factor_secret_idx").on(t.secret), index("auth_two_factor_user_idx").on(t.userId)],
 )
 
+/** Passkeys (the @better-auth/passkey plugin's model). Each one signs in on its own, in place of password and TOTP. */
+export const passkey = pgTable(
+  "auth_passkey",
+  {
+    id: text("id").primaryKey(),
+    name: text("name"),
+    publicKey: text("public_key").notNull(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    credentialID: text("credential_id").notNull(),
+    counter: integer("counter").notNull(),
+    deviceType: text("device_type").notNull(),
+    backedUp: boolean("backed_up").notNull(),
+    transports: text("transports"),
+    createdAt: ts("created_at"),
+    aaguid: text("aaguid"),
+  },
+  (t) => [uniqueIndex("auth_passkey_credential_idx").on(t.credentialID), index("auth_passkey_user_idx").on(t.userId)],
+)
+
 // ---------------------------------------------------------------------------
 // Settings and audit
 // ---------------------------------------------------------------------------

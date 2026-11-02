@@ -6,9 +6,10 @@ import { PasswordInput } from "@/components/ui/password-input"
 import { UNREACHABLE_TEXT } from "@/lib/api"
 import { authClient, authErrorText } from "@/lib/auth-client"
 import { toast } from "@/lib/toast"
+import { PasskeysPanel } from "@/pages/account-passkeys"
 import { SettingRow } from "@/pages/settings"
 
-/** The signed-in person's own sign-in: password and two-factor. */
+/** The signed-in person's own sign-in: password, two-factor and passkeys. */
 export function AccountPage() {
   const session = authClient.useSession()
   const [busy, setBusy] = useState(false)
@@ -36,7 +37,7 @@ export function AccountPage() {
   return (
     <Page
       title="Account"
-      description={`Your password and two-factor sign-in.${username ? ` Signed in as ${username}.` : ""}`}
+      description={`Your password, two-factor sign-in and passkeys.${username ? ` Signed in as ${username}.` : ""}`}
       className="max-w-3xl"
     >
       <Panel>
@@ -72,10 +73,11 @@ export function AccountPage() {
           </div>
         </form>
       </Panel>
+      <PasskeysPanel />
       <Panel>
         <PanelHead
           title="Locked Out?"
-          description="Run this on the server, in the n8n-ops folder. It prints a new password, signs out every session and turns two-factor off; you set it up again at the next sign-in."
+          description="Run this on the server, in the n8n-ops folder. It prints a new password, signs out every session and turns two-factor off; you set it up again at the next sign-in. Your passkeys stay, and sign in again once two-factor is set up."
         />
         <div className="px-pad-x pb-4">
           <Command

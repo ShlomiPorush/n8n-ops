@@ -1,0 +1,1 @@
+ALTER TABLE "access_requests" ADD COLUMN "workflow_names" jsonb DEFAULT '{}'::jsonb NOT NULL;

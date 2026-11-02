@@ -4,7 +4,13 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Changed
+
+- **An access request shows its workflows by name.** The request page listed only workflow IDs. n8n-ops now reads the names when the agent asks, from n8n when the instance's key may read workflows and from the workflow map otherwise, and keeps them with the request, so they stay readable after a workflow is renamed or deleted. Each ID is still there to copy. Requests made earlier show the name while the workflow map still lists the workflow.
+
 ### Fixed
+
+- **The scope presets of Temporary access show which one is chosen.** Read only, Everything the key allows and None looked like a choice with two options selected, and choosing one did not change how the others looked. They are now one control that marks the preset the selected scopes match, and none when the scopes were picked by hand.
 
 - **The agent skill on Windows no longer fails now and then when several commands run at once.** The PowerShell version read its lock and its connection file in a way that kept another command from deleting or replacing them meanwhile, so that command failed with "The process cannot access the file". It now reads them the way the other versions do.
 

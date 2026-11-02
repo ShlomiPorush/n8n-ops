@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react"
 import { Link } from "react-router"
 import { Panel, PanelHead, SwitchRow, useSaveSource } from "@/components/kit"
-import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useApiMutation } from "@/lib/api"
 import { n } from "@/lib/numbers"
 import { cn } from "@/lib/utils"
@@ -145,6 +145,14 @@ export function AgentAccessFields({
     else next.delete(s)
     onScopes(next)
   }
+  const presets = [
+    { value: "read", label: "Read only", scopes: keyScopes.filter(readOnly) },
+    { value: "all", label: "Everything the key allows", scopes: keyScopes },
+    { value: "none", label: "None", scopes: [] },
+  ]
+  const matches = (list: string[]) => list.length === scopes.size && list.every((s) => scopes.has(s))
+  // When two presets hold the same scopes, None wins, then Everything the key allows.
+  const preset = ["none", "all", "read"].find((v) => matches(presets.find((p) => p.value === v)?.scopes ?? [])) ?? ""
   return (
     <fieldset disabled={disabled} className={cn("grid min-w-0 gap-4", className)}>
       <SwitchRow
@@ -160,15 +168,23 @@ export function AgentAccessFields({
             <span className="me-1 text-small font-semibold text-muted-foreground">
               Scopes that may be granted · {n(scopes.size)} of {n(keyScopes.length)}
             </span>
-            <Button size="sm" onClick={() => onScopes(new Set(keyScopes.filter(readOnly)))}>
-              Read only
-            </Button>
-            <Button size="sm" onClick={() => onScopes(new Set(keyScopes))}>
-              Everything the key allows
-            </Button>
-            <Button size="sm" variant="ghost" onClick={() => onScopes(new Set())}>
-              None
-            </Button>
+            {/* Shows the preset the selection matches; a selection made by hand matches none of them. */}
+            <ToggleGroup
+              type="single"
+              segmented
+              aria-label="Preset"
+              value={preset}
+              onValueChange={(v) => {
+                const next = presets.find((p) => p.value === v)
+                if (next) onScopes(new Set(next.scopes))
+              }}
+            >
+              {presets.map((p) => (
+                <ToggleGroupItem key={p.value} value={p.value}>
+                  {p.label}
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
           </div>
           <div className="grid gap-2 md:grid-cols-2 2xl:grid-cols-3">
             {[...groups].map(([resource, list]) => (

@@ -1,10 +1,12 @@
 import { and, desc, eq, inArray, lt, or } from "drizzle-orm"
 import { type Ctx, changed } from "../context.ts"
-import { type AccessStatus, accessCalls, accessRequests, apiTokens, instances } from "../db/schema.ts"
+import { type AccessStatus, accessCalls, accessRequests, apiTokens, instances, workflows } from "../db/schema.ts"
 import { tokenActor } from "../http/types.ts"
 import type { AuditVia } from "../lib/audit.ts"
 import { newToken, sha256 } from "../lib/crypto.ts"
 import { matchOperation, parseSpec, type SpecOperation, specHasScopes } from "../lib/n8n-spec.ts"
+import { oneAtATime } from "../lib/one-at-a-time.ts"
+import { type FetchLike, N8nClient } from "../n8n/client.ts"
 import { can, effectiveScopes, type Instance, unsupportedVersion } from "./instances.ts"
 
 /**
@@ -89,7 +91,60 @@ export type AccessRequestInput = {
   minutes: number
 }
 
-export async function requestAccess(ctx: Ctx, tokenId: string, input: AccessRequestInput) {
+/** How long a request waits for the names of its workflows; the ones not read by then show as their IDs. */
+const NAMES_WITHIN_MS = 5_000
+const NAMES_AT_ONCE = 5
+
+/**
+ * The names of the requested workflows, as n8n has them now when the key may read workflows, otherwise as the
+ * workflow map last saw them. Stored on the request, so the approver and the history see names even after a workflow
+ * is renamed or deleted. Never fails: a name that cannot be read within the time is left out.
+ */
+export async function workflowNamesOf(
+  ctx: Ctx,
+  instance: Instance,
+  ids: string[],
+  { fetchImpl = fetch as FetchLike, withinMs = NAMES_WITHIN_MS } = {},
+): Promise<Record<string, string>> {
+  const names = new Map<string, string>()
+  if (!ids.length) return {}
+  const mapped = await ctx.db
+    .select({ id: workflows.workflowId, name: workflows.name })
+    .from(workflows)
+    .where(and(eq(workflows.instanceId, instance.id), inArray(workflows.workflowId, ids)))
+  for (const w of mapped) names.set(w.id, w.name)
+  if (instance.apiKeyEnc && effectiveScopes(instance).includes("workflow:read")) {
+    const deadline = AbortSignal.timeout(withinMs)
+    const timed: FetchLike = (url, init) =>
+      fetchImpl(url, { ...init, signal: init?.signal ? AbortSignal.any([init.signal, deadline]) : deadline })
+    const client = new N8nClient(instance.baseUrl, ctx.secrets.decrypt(instance.apiKeyEnc), timed, withinMs)
+    // A segment of its own in the URL; "." and ".." would name another path.
+    const queue = ids.filter((id) => id && id !== "." && id !== "..")
+    const next = async (): Promise<void> => {
+      const id = queue.shift()
+      if (id === undefined || deadline.aborted) return
+      const name = await client.getWorkflow(id).then(
+        (w) => w?.name,
+        () => undefined,
+      )
+      if (typeof name === "string" && name) names.set(id, name)
+      return next()
+    }
+    await Promise.all(Array.from({ length: NAMES_AT_ONCE }, next))
+  }
+  return Object.fromEntries(names)
+}
+
+/** The stored name of a workflow on a request, never one inherited from Object. */
+const nameIn = (names: Record<string, string>, id: string) =>
+  Object.hasOwn(names, id) && typeof names[id] === "string" ? names[id] : undefined
+
+export function requestAccess(ctx: Ctx, tokenId: string, input: AccessRequestInput) {
+  // One request of an agent at a time, so parallel requests cannot pass the pending limit together.
+  return oneAtATime(`access-request:${tokenId}`, () => requestAccessNow(ctx, tokenId, input))
+}
+
+async function requestAccessNow(ctx: Ctx, tokenId: string, input: AccessRequestInput) {
   const [token] = await ctx.db.select().from(apiTokens).where(eq(apiTokens.id, tokenId))
   if (!token?.canRequestAccess || token.revokedAt)
     throw new AccessError(
@@ -122,6 +177,7 @@ export async function requestAccess(ctx: Ctx, tokenId: string, input: AccessRequ
       "This agent has too many access requests waiting for a decision. Wait for one to be decided, or release one.",
     )
 
+  const workflowIds = [...new Set(input.workflowIds ?? [])]
   const [row] = await ctx.db
     .insert(accessRequests)
     .values({
@@ -129,7 +185,8 @@ export async function requestAccess(ctx: Ctx, tokenId: string, input: AccessRequ
       instanceId: instance.id,
       reason: input.reason,
       scopes,
-      workflowIds: [...new Set(input.workflowIds ?? [])],
+      workflowIds,
+      workflowNames: await workflowNamesOf(ctx, instance, workflowIds),
       minutes: input.minutes,
       decideBy: new Date(Date.now() + pendingMinutes * 60_000),
     })
@@ -407,7 +464,23 @@ export async function getAccess(ctx: Ctx, id: string) {
     .where(eq(accessCalls.requestId, id))
     .orderBy(desc(accessCalls.at))
     .limit(500)
-  return { ...publicFields(row.r), instance: row.instanceName, token: row.tokenName, calls }
+  // Requests made before names were stored take them from the workflow map, while it still lists the workflow.
+  const ids = row.r.workflowIds
+  const unnamed = ids.filter((w) => nameIn(row.r.workflowNames, w) === undefined)
+  const mapped = unnamed.length
+    ? await ctx.db
+        .select({ id: workflows.workflowId, name: workflows.name })
+        .from(workflows)
+        .where(and(eq(workflows.instanceId, row.r.instanceId), inArray(workflows.workflowId, unnamed)))
+    : []
+  const fromMap = new Map(mapped.map((w) => [w.id, w.name]))
+  const workflowNames = Object.fromEntries(
+    ids.flatMap((w) => {
+      const name = nameIn(row.r.workflowNames, w) ?? fromMap.get(w)
+      return name === undefined ? [] : [[w, name]]
+    }),
+  )
+  return { ...publicFields(row.r), workflowNames, instance: row.instanceName, token: row.tokenName, calls }
 }
 
 function publicFields(r: typeof accessRequests.$inferSelect) {

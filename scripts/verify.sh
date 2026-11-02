@@ -143,6 +143,7 @@ run_guards() {
     done < <(git ls-files -s "scripts/*.sh")
 
     bash scripts/test-release.sh || fail=1
+    bash scripts/test-ci-result.sh || fail=1
 
     # Scripts inside the images run with plain POSIX sh.
     mapfile -t image_scripts < <(git ls-files -co --exclude-standard "docker/*.sh")

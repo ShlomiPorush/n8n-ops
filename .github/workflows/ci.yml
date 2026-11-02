@@ -5,7 +5,8 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
-  # The Release workflow runs the whole CI on the commit it releases.
+  # The Release workflow runs the whole CI on the commit it releases when it finds no green CI run of
+  # that commit on main to reuse (scripts/ci-result.sh).
   workflow_call:
   schedule:
     # Weekly full sweep that ignores path filters.

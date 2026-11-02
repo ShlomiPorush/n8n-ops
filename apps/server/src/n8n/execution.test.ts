@@ -66,6 +66,66 @@ describe("extractFailure", () => {
   it("falls back to sensible values when data is missing", () => {
     const f = extractFailure({ id: "1", status: "error", workflowId: "w" })
     expect(f).toMatchObject({ nodeName: "Workflow", message: "Unknown error", input: [] })
+    expect(f.node).toEqual({ url: null, credentials: [], calledWorkflow: null })
+  })
+
+  it("reads the failing node's URL and credentials", () => {
+    const withNode = structuredClone(execution)
+    const node = withNode.workflowData?.nodes.find((n) => n.name === "HTTP Request")
+    if (!node) throw new Error("no node")
+    node.parameters = { url: "=https://api.erp.example/orders/{{ $json.id }}" }
+    node.credentials = { httpHeaderAuth: { id: "c1", name: "ERP key" }, other: { id: "c2" } }
+    expect(extractFailure(withNode).node).toEqual({
+      url: "=https://api.erp.example/orders/{{ $json.id }}",
+      credentials: [{ id: "c1", name: "ERP key" }],
+      calledWorkflow: null,
+    })
+  })
+
+  it("reads the workflow an Execute Workflow node runs, unless it is an expression", () => {
+    const run = (workflowId: unknown) =>
+      extractFailure({
+        id: "2",
+        status: "error",
+        workflowId: "parent",
+        workflowData: {
+          ...workflow,
+          nodes: [{ name: "Run child", type: "n8n-nodes-base.executeWorkflow", parameters: { workflowId } }],
+        },
+        data: { resultData: { error: { message: "Error executing workflow", node: { name: "Run child" } } } },
+      }).node.calledWorkflow
+    expect(run("abc123")).toEqual({ id: "abc123", name: null })
+    expect(run({ __rl: true, value: "abc123", mode: "list", cachedResultName: "Child" })).toEqual({
+      id: "abc123",
+      name: "Child",
+    })
+    expect(run("={{ $json.target }}")).toBeNull()
+    expect(run({ __rl: true, value: "={{ $json.target }}", mode: "id" })).toBeNull()
+    expect(run(42)).toBeNull()
+  })
+
+  it("never throws on data of the wrong shape", () => {
+    let deep: unknown = "end"
+    for (let i = 0; i < 20_000; i++) deep = [deep]
+    const strange = [
+      { resultData: { error: { message: deep, description: { nested: deep }, node: { name: 7 } } } },
+      { resultData: { error: { message: ["a"], node: "HTTP" }, runData: { HTTP: "not a list" } } },
+      { resultData: { error: null, lastNodeExecuted: 3, runData: [] } },
+      "not an object",
+      { resultData: { error: { message: "x", node: { name: "N" } }, runData: { N: [{ inputOverride: 5 }] } } },
+    ]
+    for (const data of strange) {
+      const f = extractFailure({
+        id: "3",
+        status: "error",
+        workflowId: "w",
+        data,
+        workflowData: { ...workflow, nodes: "nope", connections: { N: { main: "x" } } } as unknown as N8nWorkflow,
+      })
+      expect(typeof f.message).toBe("string")
+      expect(typeof f.nodeName).toBe("string")
+      expect(Array.isArray(f.input)).toBe(true)
+    }
   })
 })
 

@@ -53,7 +53,7 @@ The product is generic and must not depend on the details of this environment. V
   - Problems, Instances, Backups, Access: a sortable table with filters kept in the address. From 1000px a reading pane beside it opens the first item and follows the selected row; narrower, an item opens as a sheet.
   - Workflows: table with insights; moving a workflow opens a dialog wizard.
   - Settings: grouped sections beside one form, with one save bar for unsaved changes. Workers and Audit Log: own pages.
-- **Problem page:** workflow, node, error text, counter, first and last seen; actions Mark resolved, Mute 24 h, Open in n8n (deep link to the execution). A drawn workflow graph with the failed node highlighted, the failed node's input as a key/value table (raw JSON on demand), recent occurrences, and other workflows with the same error.
+- **Problem page:** workflow, node, error text, counter, first and last seen; actions Mark resolved, Mute 24 h, Open in n8n (deep link to the execution). A drawn workflow graph with the failed node highlighted, the failed node's input as a key/value table (raw JSON on demand), recent occurrences, and the other workflows with the same cause.
 - **Live updates:** pages update by themselves (server-sent events).
 - **Mobile:** home and problem page are designed mobile first (Telegram links open there). Other pages work on mobile but are designed for desktop.
 - **Heavy actions** (move, restore): one review screen that lists what will happen, then one confirm button. No typed confirmation or extra password. Result and verification are shown after, and the action is audited.
@@ -73,10 +73,10 @@ v1 includes all of A to G except the items listed under "Not in v1". Build order
 ### B. Errors
 
 - **B1** Poll `GET /api/v1/executions?status=error&includeData=true` on every instance. Chosen over Error Workflows because those must be set on each workflow and any workflow without one would be missed. Polling needs no change to the instances.
-- **B2** Extract: failing node, error message, stack, the failing node's input, workflow name and version, trigger type.
-- **B3** Group failures into **problems** by their **exact** error text, on any instance and in any workflow (docs/adr/0001). Each workflow and node a problem hit is an **affected workflow** with its own count, first seen, last seen and state; the problem's are those of its affected workflows. The UI allows merging problems manually, and splitting an affected workflow into a problem of its own when the same text has another cause there.
+- **B2** Extract: failing node, error message, stack, the failing node's input, workflow name and version, trigger type, and what the cause is read from: the failing node's type, URL and credential, the answer of the service it called (n8n's error description), and the workflow an Execute Workflow node runs.
+- **B3** Group failures into **problems** by their **cause**: the target the failing node talked to and the reason it failed there, read by fixed rules (docs/adr/0003, which replaces grouping by exact error text). A host joins failures across instances; a workflow, credential or node joins them only within one instance. Each workflow and node a problem hit, with one cause, is an **affected workflow** with its own count, first seen, last seen and state; the problem's are those of its affected workflows. The UI allows merging problems manually, and splitting an affected workflow into a problem of its own when a person sees another cause there.
 - **B4** Store each failed execution in full before n8n prunes it, encrypted at rest and searchable. Retention is configurable globally and per instance (default 30 days). Poll interval must be shorter than each instance's `EXECUTIONS_DATA_MAX_AGE`.
-- **B5 (basic)** Problem states: open, resolved, muted, kept per affected workflow. A problem is open while any of its affected workflows is, muted while none is open and one is muted, else resolved. Resolved automatically after N days without failures (default 7, per affected workflow), manually in the UI for the whole problem or one affected workflow, or with the Telegram button (the whole problem). A failure after resolved is a regression of the same problem. A workflow that starts failing with the error of a problem joins it: it alerts when the problem is open, regresses it when it is resolved, and stays muted without an alert while the problem is muted.
+- **B5 (basic)** Problem states: open, resolved, muted, kept per affected workflow. A problem is open while any of its affected workflows is, muted while none is open and one is muted, else resolved. Resolved automatically after N days without failures (default 7, per affected workflow), manually in the UI for the whole problem or one affected workflow, or with the Telegram button (the whole problem). A failure after resolved is a regression of the same problem. A workflow that starts failing with the cause of a problem joins it: it alerts when the problem is open, regresses it when it is resolved, and stays muted without an alert while the problem is muted.
 - **B6** First sync of each instance is silent: existing failures are imported without alerts and appear in the UI and the first report.
 - **B7** Notifications, see section 7.
 
@@ -145,8 +145,8 @@ The system must not recreate the inbox that is deleted today. This is a hard req
 **Rules:**
 
 - Each problem alerts once. Further failures only increase its counter.
-- New problems are held for a grouping window (default 2 minutes). New problems with the same error text in that window go out as one message listing all affected workflows.
-- A workflow that later fails with the same error text, while the original message is less than 60 minutes old, **edits** the original message (for example "8 workflows affected") instead of sending a new one.
+- New problems are held for a grouping window (default 2 minutes). New problems with the same cause in that window go out as one message listing all affected workflows.
+- A workflow that later fails with the same cause, while the original message is less than 60 minutes old, **edits** the original message (for example "8 workflows affected") instead of sending a new one.
 - Health and worker alerts are sent immediately, without a window.
 - Messages are queued in the database and retried every 5 minutes on failure, respecting Telegram's `retry_after`. There is no hourly cap.
 - Messages have buttons "Resolved" and "Mute 24 h". Telegram calls n8n-ops by webhook, verified with the secret-token header, and presses are accepted only from the configured chat. Every press is audited.

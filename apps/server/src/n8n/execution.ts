@@ -1,17 +1,32 @@
-import type { N8nExecution, N8nWorkflow } from "./client.ts"
+import type { N8nExecution, N8nNode, N8nWorkflow } from "./client.ts"
 
 type RunEntry = {
-  error?: { message?: string; description?: string; stack?: string }
+  error?: { message?: unknown; description?: unknown; stack?: unknown }
   data?: { main?: ({ json?: unknown }[] | null)[] }
   inputOverride?: { main?: ({ json?: unknown }[] | null)[] }
 }
 
 type ExecutionData = {
   resultData?: {
-    error?: { message?: string; description?: string; stack?: string; node?: { name?: string; type?: string } }
-    lastNodeExecuted?: string
+    error?: {
+      message?: unknown
+      description?: unknown
+      stack?: unknown
+      node?: { name?: unknown; type?: unknown; parameters?: unknown; credentials?: unknown }
+    }
+    lastNodeExecuted?: unknown
     runData?: Record<string, RunEntry[]>
   }
+}
+
+/** What the cause of a failure is read from on the failing node (docs/adr/0003). */
+export type FailedNode = {
+  /** The `url` parameter when it is a string. */
+  url: string | null
+  /** Credentials that have both an id and a name, in the node's order. */
+  credentials: { id: string; name: string }[]
+  /** For an Execute Workflow node: the workflow it runs, when its id is literal (not an expression). */
+  calledWorkflow: { id: string; name: string | null } | null
 }
 
 export type Failure = {
@@ -22,41 +37,90 @@ export type Failure = {
   stack: string | null
   /** Up to MAX_INPUT_ITEMS input items of the failed node (their json). */
   input: unknown[]
+  node: FailedNode
 }
 
 export const MAX_INPUT_ITEMS = 20
 
-const lastRun = (runs: RunEntry[] | undefined) => (runs && runs.length > 0 ? runs[runs.length - 1] : undefined)
+const text = (value: unknown): string | undefined => (typeof value === "string" ? value : undefined)
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  !!value && typeof value === "object" && !Array.isArray(value)
 
-/** Finds the node that failed, its error and its input, from an error execution with data. */
+const lastRun = (runs: unknown): RunEntry | undefined =>
+  Array.isArray(runs) && runs.length > 0 && isRecord(runs[runs.length - 1])
+    ? (runs[runs.length - 1] as RunEntry)
+    : undefined
+
+/** The workflow's nodes, or none when n8n sent something that is not a list of nodes. */
+const nodesOf = (workflow: N8nWorkflow | undefined): N8nNode[] =>
+  Array.isArray(workflow?.nodes) ? (workflow.nodes as unknown[]).filter(isRecord).map((n) => n as N8nNode) : []
+
+/**
+ * Finds the node that failed, its error and its input, from an error execution with data. Total: fields of the wrong
+ * type count as absent, so a strange execution gives a weaker answer instead of an error.
+ */
 export function extractFailure(execution: N8nExecution): Failure {
-  const result = (execution.data as ExecutionData | undefined)?.resultData ?? {}
-  const runData = result.runData ?? {}
-  const error = result.error
-  const nodeName = error?.node?.name ?? result.lastNodeExecuted ?? "Workflow"
+  const data = isRecord(execution.data) ? (execution.data as ExecutionData) : {}
+  const result = isRecord(data.resultData) ? data.resultData : {}
+  const runData = isRecord(result.runData) ? (result.runData as Record<string, RunEntry[]>) : {}
+  const error = isRecord(result.error) ? result.error : undefined
+  const errorNode = isRecord(error?.node) ? error.node : undefined
+  const nodeName = text(errorNode?.name) ?? text(result.lastNodeExecuted) ?? "Workflow"
   const nodeError = lastRun(runData[nodeName])?.error
-  const message = (error?.message ?? nodeError?.message ?? "Unknown error").trim() || "Unknown error"
-  const nodeType = error?.node?.type ?? execution.workflowData?.nodes.find((n) => n.name === nodeName)?.type ?? null
+  const message = (text(error?.message) ?? text(nodeError?.message) ?? "Unknown error").trim() || "Unknown error"
+  const definition = nodesOf(execution.workflowData).find((n) => n.name === nodeName)
+  const nodeType = text(errorNode?.type) ?? text(definition?.type) ?? null
   return {
     nodeName,
     nodeType,
     message,
-    description: error?.description ?? nodeError?.description ?? null,
-    stack: error?.stack ?? nodeError?.stack ?? null,
-    input: nodeInput(nodeName, runData, execution.workflowData),
+    description: text(error?.description) ?? text(nodeError?.description) ?? null,
+    stack: text(error?.stack) ?? text(nodeError?.stack) ?? null,
+    input: safeInput(nodeName, runData, execution.workflowData),
+    node: failedNode(definition ?? (errorNode as N8nNode | undefined)),
+  }
+}
+
+function failedNode(node: N8nNode | undefined): FailedNode {
+  const parameters = isRecord(node?.parameters) ? node.parameters : {}
+  const credentials = isRecord(node?.credentials)
+    ? Object.values(node.credentials).flatMap((c) => {
+        const id = isRecord(c) ? text(c.id) : undefined
+        const name = isRecord(c) ? text(c.name) : undefined
+        return id && name ? [{ id, name }] : []
+      })
+    : []
+  return { url: text(parameters.url) ?? null, credentials, calledWorkflow: calledWorkflow(parameters.workflowId) }
+}
+
+/** The workflow an Execute Workflow node runs: a string id, or the value of a resource locator. Not an expression. */
+function calledWorkflow(ref: unknown): FailedNode["calledWorkflow"] {
+  const raw = typeof ref === "string" ? ref : isRecord(ref) ? text(ref.value) : undefined
+  const id = raw?.trim().replace(/^=/, "")
+  if (!id || id.includes("{{")) return null
+  const name = isRecord(ref) ? text(ref.cachedResultName) : undefined
+  return { id, name: name?.trim() || null }
+}
+
+function safeInput(nodeName: string, runData: Record<string, RunEntry[]>, workflow?: N8nWorkflow): unknown[] {
+  try {
+    return nodeInput(nodeName, runData, workflow)
+  } catch {
+    return []
   }
 }
 
 function nodeInput(nodeName: string, runData: Record<string, RunEntry[]>, workflow?: N8nWorkflow): unknown[] {
   const override = lastRun(runData[nodeName])?.inputOverride?.main?.[0]
-  if (override) return override.slice(0, MAX_INPUT_ITEMS).map((i) => i.json)
-  if (!workflow) return []
+  if (Array.isArray(override)) return override.slice(0, MAX_INPUT_ITEMS).map((i) => i?.json)
+  if (!workflow || !isRecord(workflow.connections)) return []
   const items: unknown[] = []
-  for (const [parent, outputs] of Object.entries(workflow.connections ?? {})) {
-    outputs.main?.forEach((targets, outputIndex) => {
-      if (!targets?.some((t) => t.node === nodeName)) return
-      const out = lastRun(runData[parent])?.data?.main?.[outputIndex] ?? []
-      for (const item of out) if (items.length < MAX_INPUT_ITEMS) items.push(item.json)
+  for (const [parent, outputs] of Object.entries(workflow.connections)) {
+    if (!isRecord(outputs) || !Array.isArray(outputs.main)) continue
+    outputs.main.forEach((targets, outputIndex) => {
+      if (!Array.isArray(targets) || !targets.some((t) => isRecord(t) && t.node === nodeName)) return
+      const out = lastRun(runData[parent])?.data?.main?.[outputIndex]
+      for (const item of Array.isArray(out) ? out : []) if (items.length < MAX_INPUT_ITEMS) items.push(item?.json)
     })
   }
   return items

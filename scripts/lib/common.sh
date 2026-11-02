@@ -73,7 +73,13 @@ pull_log() {
 }
 
 start_pulls() {
-  local image
+  local image held="" int_trap term_trap
+  # Ctrl-C or a stop while a pull starts waits until it is in PULL_PIDS, so stop_pulls always finds it. The pulls
+  # themselves get the default handling: a shell resets caught signals in what it starts.
+  int_trap="$(trap -p INT)"
+  term_trap="$(trap -p TERM)"
+  trap 'held=130' INT
+  trap 'held=143' TERM
   for image in "$@"; do
     [ -z "${PULL_PIDS[$image]:-}" ] || continue
     docker image inspect "$image" >/dev/null 2>&1 && continue
@@ -91,6 +97,9 @@ start_pulls() {
     ' _ "$image" >"$(pull_log "$image")" 2>&1 &
     PULL_PIDS[$image]=$!
   done
+  eval "${int_trap:-trap - INT}"
+  eval "${term_trap:-trap - TERM}"
+  [ -z "$held" ] || exit "$held"
 }
 
 # Waits for the background pulls of the images given. An image that is not being pulled passes at once.
@@ -112,8 +121,9 @@ wait_for_pulls() {
 stop_pulls() {
   local pid
   for pid in "${PULL_PIDS[@]}"; do
-    # The whole group at once, so the loop cannot start another try in between.
-    kill -TERM -- "-$pid" 2>/dev/null || true
+    # The whole group at once, so the loop cannot start another try in between; the process alone when it was
+    # stopped so early that it had not made its group yet.
+    kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
     wait "$pid" 2>/dev/null || true
   done
   PULL_PIDS=()

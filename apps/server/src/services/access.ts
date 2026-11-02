@@ -135,8 +135,8 @@ export async function workflowNamesOf(
 }
 
 /** The stored name of a workflow on a request, never one inherited from Object. */
-const nameIn = (names: Record<string, string>, id: string) =>
-  Object.hasOwn(names, id) && typeof names[id] === "string" ? names[id] : undefined
+export const nameIn = (names: Record<string, string> | undefined, id: string) =>
+  names && Object.hasOwn(names, id) && typeof names[id] === "string" ? names[id] : undefined
 
 /** Agents with a request being made now; one server process, as supported. */
 const requesting = new Set<string>()

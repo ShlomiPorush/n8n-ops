@@ -6,7 +6,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Changed
 
-- **An access request shows its workflows by name.** The request page listed only workflow IDs. n8n-ops now reads the names when the agent asks, from n8n when the instance's key may read workflows and from the workflow map otherwise, and keeps them with the request, so they stay readable after a workflow is renamed or deleted. Each ID is still there to copy. Requests made earlier show the name while the workflow map still lists the workflow. An agent that asks again while its previous request is still being made gets `request_in_progress` and asks once that one is answered.
+- **An access request shows its workflows by name**, on its page and in its Telegram message and email. They listed only workflow IDs. n8n-ops now reads the names when the agent asks, from n8n when the instance's key may read workflows and from the workflow map otherwise, and keeps them with the request, so they stay readable after a workflow is renamed or deleted. Each ID is still shown beside its name, and the page copies it with a click. Requests made earlier show the name while the workflow map still lists the workflow. An agent that asks again while its previous request is still being made gets `request_in_progress` and asks once that one is answered.
 
 ### Fixed
 

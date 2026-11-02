@@ -572,13 +572,16 @@ run_integration() {
 
 STACK_USED=0
 on_exit() {
-  remove_pull_logs
+  stop_pulls
   [ $STACK_USED -eq 0 ] || cleanup_stack
 }
 
 main() {
   require_docker
   trap on_exit EXIT
+  # Ctrl-C or a stopped CI job end the script through exit, so the EXIT trap stops the pulls and the stack.
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
 
   if [ -n "$CHANGED_BASE" ]; then
     mapfile -t files < <(changed_files)

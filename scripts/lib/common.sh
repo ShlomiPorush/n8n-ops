@@ -104,8 +104,17 @@ wait_for_pulls() {
   done
 }
 
-# Removes the pull logs. A pull that still runs when the script stops early is left to finish.
-remove_pull_logs() {
+# Stops the pulls that still run when the script ends early, failed or interrupted, waits for them, and removes
+# their logs. A pull already waited for is gone from PULL_PIDS.
+stop_pulls() {
+  local pid
+  for pid in "${PULL_PIDS[@]}"; do
+    # The docker client first, then the loop around it, which would otherwise try again.
+    pkill -P "$pid" 2>/dev/null || true
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+  done
+  PULL_PIDS=()
   [ -z "$PULL_LOGS" ] || rm -rf "$PULL_LOGS"
   PULL_LOGS=""
 }

@@ -121,9 +121,13 @@ wait_for_pulls() {
 stop_pulls() {
   local pid
   for pid in "${PULL_PIDS[@]}"; do
-    # The whole group at once, so the loop cannot start another try in between; the process alone when it was
-    # stopped so early that it had not made its group yet.
-    kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+    # The whole group at once, so the loop cannot start another try in between. Stopped so early that it had not
+    # made its group yet: the process, then the group again, which it may have made and filled meanwhile.
+    if ! kill -TERM -- "-$pid" 2>/dev/null; then
+      kill -TERM "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      kill -TERM -- "-$pid" 2>/dev/null || true
+    fi
     wait "$pid" 2>/dev/null || true
   done
   PULL_PIDS=()

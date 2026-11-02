@@ -3,7 +3,7 @@ import { and, eq, isNotNull, type SQL, sql } from "drizzle-orm"
 import type { Ctx } from "../context.ts"
 import { instances } from "../db/schema.ts"
 import { oneAtATime } from "../lib/one-at-a-time.ts"
-import { N8nClient, N8nError } from "../n8n/client.ts"
+import { type FetchLike, N8nClient, N8nError } from "../n8n/client.ts"
 
 export type Instance = typeof instances.$inferSelect
 
@@ -257,22 +257,52 @@ export function workflowUrl(instance: Pick<Instance, "baseUrl">, workflowId: str
   return `${instance.baseUrl.replace(/\/+$/, "")}/workflow/${encodeURIComponent(workflowId)}`
 }
 
-let latest: { version: string | null; at: number } = { version: null, at: 0 }
+/** After a failed read, the next one comes this soon (or at the set interval, if shorter). */
+const RELEASE_RETRY_MS = 3600_000
 
-/** Latest n8n release from GitHub, cached for six hours. */
-export async function latestN8nVersion(): Promise<string | null> {
-  if (Date.now() - latest.at < 6 * 3600_000) return latest.version
-  try {
-    const res = await fetch("https://api.github.com/repos/n8n-io/n8n/releases/latest", {
-      headers: { accept: "application/vnd.github+json", "user-agent": "n8n-ops" },
-      signal: AbortSignal.timeout(10_000),
-    })
-    const body = (await res.json()) as { tag_name?: string }
-    latest = { version: body.tag_name?.replace(/^n8n@/, "") ?? null, at: Date.now() }
-  } catch {
-    latest = { version: latest.version, at: Date.now() - 5 * 3600_000 }
+/**
+ * The newest n8n release on GitHub, read again every `everyHours` (Settings → General). A failed read, an error
+ * answer included, keeps the version known before and is tried again within an hour. Calls at the same time share
+ * one read.
+ */
+export function releaseChecker(fetchImpl: FetchLike = (url, init) => fetch(url, init), now = () => Date.now()) {
+  let known: string | null = null
+  let checkedAt = 0
+  let failed = false
+  let reading: Promise<string | null> | null = null
+  const read = async () => {
+    try {
+      const res = await fetchImpl("https://api.github.com/repos/n8n-io/n8n/releases/latest", {
+        headers: { accept: "application/vnd.github+json", "user-agent": "n8n-ops" },
+        signal: AbortSignal.timeout(10_000),
+      })
+      if (!res.ok) throw new Error(`GitHub answered ${res.status}`)
+      const tag = ((await res.json()) as { tag_name?: unknown }).tag_name
+      if (typeof tag !== "string" || !tag) throw new Error("GitHub gave no release tag")
+      known = tag.replace(/^n8n@/, "")
+      failed = false
+    } catch {
+      failed = true
+    }
+    checkedAt = now()
+    return known
   }
-  return latest.version
+  return (everyHours: number): Promise<string | null> => {
+    const every = everyHours * 3600_000
+    const wait = failed ? Math.min(every, RELEASE_RETRY_MS) : every
+    if (checkedAt && now() - checkedAt < wait) return Promise.resolve(known)
+    reading ??= read().finally(() => {
+      reading = null
+    })
+    return reading
+  }
+}
+
+const latestRelease = releaseChecker()
+
+/** Latest n8n release from GitHub, as often as Settings → General says. */
+export async function latestN8nVersion(ctx: Pick<Ctx, "settings">): Promise<string | null> {
+  return latestRelease((await ctx.settings.get("general")).releaseCheckHours)
 }
 
 /** -1, 0 or 1 comparing dotted versions numerically. */

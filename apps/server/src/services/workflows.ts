@@ -1,6 +1,7 @@
+import { unsupportedVersionText } from "@n8n-ops/shared"
 import { and, eq, notInArray } from "drizzle-orm"
 import { type Ctx, changed } from "../context.ts"
-import { workflows } from "../db/schema.ts"
+import { instances, workflows } from "../db/schema.ts"
 import { sha256 } from "../lib/crypto.ts"
 import { oneAtATime } from "../lib/one-at-a-time.ts"
 import { N8nError, type N8nExecution, type N8nWorkflow } from "../n8n/client.ts"
@@ -80,12 +81,65 @@ export async function executionsSince(client: ExecutionLister, since: string) {
   return out
 }
 
+/** At most this many instances sync at once: each sync lists every workflow and pages through 30 days of runs. */
+const SYNCS_AT_ONCE = 2
+let syncing = 0
+const slotWaiters: (() => void)[] = []
+
+async function inSlot<T>(fn: () => Promise<T>): Promise<T> {
+  if (syncing < SYNCS_AT_ONCE) syncing += 1
+  else await new Promise<void>((take) => slotWaiters.push(take))
+  try {
+    return await fn()
+  } finally {
+    // The slot passes straight to the next waiter, so the count stays.
+    const next = slotWaiters.shift()
+    if (next) next()
+    else syncing -= 1
+  }
+}
+
+/** Instances with a sync waiting to start, and with one running. */
+const waiting = new Map<string, Promise<{ workflows: number }>>()
+const running = new Set<string>()
+
+/** When each instance's last sync started reading, whoever asked for it. */
+const startedAt = new Map<string, number>()
+
+/** Whether a sync of the instance is running or waiting, so the scheduler does not ask for another. */
+export const workflowSyncBusy = (instanceId: string) => waiting.has(instanceId) || running.has(instanceId)
+
+/** When the instance's last sync started reading, in milliseconds; 0 when none has since the server started. */
+export const lastWorkflowSync = (instanceId: string) => startedAt.get(instanceId) ?? 0
+
 /**
  * Reads every workflow of an instance and its run counts for the last 30 days (requirement F1). One at a time per
- * instance: an earlier sync that read an older list would otherwise delete what a later one stored.
+ * instance: an earlier sync that read an older list would otherwise delete what a later one stored. A call while
+ * one waits joins it, so a burst of requests costs one running sync and one after it. The instance is read again
+ * when its sync starts, so a sync that waited follows a change made meanwhile (removed, map no longer chosen, a new
+ * key or address).
  */
-export function syncWorkflows(ctx: Ctx, instance: Instance) {
-  return oneAtATime(`workflows:${instance.id}`, () => syncWorkflowsNow(ctx, instance))
+export function syncWorkflows(ctx: Ctx, instance: Pick<Instance, "id">): Promise<{ workflows: number }> {
+  const queued = waiting.get(instance.id)
+  if (queued) return queued
+  const run = oneAtATime(`workflows:${instance.id}`, async () => {
+    waiting.delete(instance.id)
+    running.add(instance.id)
+    try {
+      return await inSlot(async () => {
+        startedAt.set(instance.id, Date.now())
+        const [fresh] = await ctx.db.select().from(instances).where(eq(instances.id, instance.id))
+        if (!fresh) throw new Error("The instance was removed.")
+        if (!can(fresh, "map")) throw new Error(`The workflow map is not chosen for ${fresh.name}.`)
+        if (unsupportedVersion(fresh)) throw new Error(unsupportedVersionText)
+        return syncWorkflowsNow(ctx, fresh)
+      })
+    } finally {
+      running.delete(instance.id)
+    }
+  })
+  waiting.set(instance.id, run)
+  return run
 }
 
 async function syncWorkflowsNow(ctx: Ctx, instance: Instance) {

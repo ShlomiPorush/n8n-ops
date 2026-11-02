@@ -213,7 +213,7 @@ export function instanceRoutes(ctx: Ctx) {
     const assigned = await ctx.db.select().from(workers)
     const now = await currentHealth(ctx, rows)
     return c.json({
-      latestVersion: await latestN8nVersion(),
+      latestVersion: await latestN8nVersion(ctx),
       instances: rows.map((r, i) => ({
         ...instanceView(r, {
           openProblems: open.find((o) => o.instanceId === r.id)?.n ?? 0,
@@ -295,7 +295,7 @@ export function instanceRoutes(ctx: Ctx) {
         runs30d: wfs.reduce((n, w) => n + w.runs, 0),
       },
       effectiveSettings,
-      latestVersion: await latestN8nVersion(),
+      latestVersion: await latestN8nVersion(ctx),
       backupDestinationIds: (
         await ctx.db
           .select({ id: instanceBackupDestinations.destinationId })

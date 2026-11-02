@@ -2,6 +2,18 @@ import { Hono } from "hono"
 import type { Ctx } from "../context.ts"
 import type { Env } from "../http/types.ts"
 import { AccessError, checkCall, grantForKey, instanceSpec, logCall, openToAgents } from "../services/access.ts"
+import { syncWorkflowsSoon } from "../services/workflows.ts"
+
+/**
+ * Whether a call forwarded to n8n changed what the workflow map shows: a write to workflows, tags or executions
+ * (deleting or retrying a run changes the counts) that n8n accepted. A refused or failed write changes nothing that
+ * is known; the next scheduled refresh reads it anyway.
+ */
+export function changesWorkflowMap(method: string, path: string, status: number) {
+  if (method === "GET" || method === "HEAD" || method === "OPTIONS") return false
+  if (status < 200 || status > 299) return false
+  return /^\/(workflows|tags|executions)(\/|$)/.test(path)
+}
 
 /**
  * The access proxy: /n8n/<instance>/api/v1/... with a temporary key in X-N8N-API-KEY, the same header n8n uses,
@@ -86,6 +98,8 @@ export function n8nProxyRoutes(ctx: Ctx) {
       return c.json({ ...data, data: (data.data ?? []).filter((w) => allowed.has(w.id)) }, res.status as 200)
     }
     await logCall(ctx, request.id, { method, path, status: res.status })
+    // The map shows the agent's change now, not at its next refresh; the answer does not wait for it.
+    if (changesWorkflowMap(method, path, res.status)) syncWorkflowsSoon(ctx, instance)
     const headers = new Headers()
     const type = res.headers.get("content-type")
     if (type) headers.set("content-type", type)

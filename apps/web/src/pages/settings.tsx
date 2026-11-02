@@ -127,6 +127,12 @@ export const forms: Record<string, { title: string; description: string; fields:
         hint: designHint,
         type: "design",
       },
+      {
+        name: "releaseCheckHours",
+        label: "Check for new n8n releases every (hours)",
+        hint: "How often n8n-ops asks GitHub for the newest n8n release, shown beside each instance's version.",
+        type: "number",
+      },
     ],
   },
   alerts: {
@@ -218,6 +224,18 @@ export const forms: Record<string, { title: string; description: string; fields:
       { name: "autoResolveDays", label: "Auto-resolve after days without failures", type: "number" },
       { name: "backlogThreshold", label: "Queue backlog alert (waiting jobs)", type: "number" },
       { name: "backlogMinutes", label: "Queue backlog alert after (minutes)", type: "number" },
+      {
+        name: "workflowMapMinutes",
+        label: "Refresh workflows and execution counts every (minutes)",
+        hint: "For instances with the workflow map. Each refresh reads every workflow and 30 days of executions, so a busy instance needs a longer interval. A change an agent makes through n8n-ops is read at once.",
+        type: "number",
+      },
+      {
+        name: "instanceCheckHours",
+        label: "Check the n8n version and API key every (hours)",
+        hint: "Check now on an instance reads them at once.",
+        type: "number",
+      },
     ],
   },
   security: {

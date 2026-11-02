@@ -228,7 +228,7 @@ export async function buildReport(
     incidents: incidents.map((i) => ({ at: i.at, text: telegramPlainText(i.text) })),
     backups,
     versions: allInstances.map((i) => ({ name: i.name, version: i.version })),
-    latest: await latestN8nVersion(),
+    latest: await latestN8nVersion(ctx),
     dates: messageWriting(await ctx.settings.get("general")),
     when,
     since,

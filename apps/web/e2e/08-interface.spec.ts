@@ -629,6 +629,67 @@ test("Settings keeps changes across its sections, with one save bar and a dot on
   }
 })
 
+test("how often instances are read is set in Settings, and per instance in its overrides", async () => {
+  const before = { general: await readSettings("general"), defaults: await readSettings("defaults") }
+  expect(before.defaults).toMatchObject({ workflowMapMinutes: 10, instanceCheckHours: 6 })
+  expect(before.general.releaseCheckHours).toBe(6)
+  const { instances } = (await (await page.request.get("/api/instances")).json()) as {
+    instances: { id: string; name: string }[]
+  }
+  const id = instances.find((i) => i.name === "e2e-n8n")?.id
+  if (!id) throw new Error("no instance e2e-n8n")
+  const overrides = async () =>
+    ((await (await page.request.get(`/api/instances/${id}`)).json()) as { overrides: Record<string, unknown> })
+      .overrides
+  const stored = await overrides()
+  const unsaved = page.getByRole("region", { name: "Unsaved changes" })
+  try {
+    await page.goto("/settings/defaults")
+    await page.getByLabel("Refresh workflows and execution counts every (minutes)").fill("15")
+    await page.getByLabel("Check the n8n version and API key every (hours)").fill("12")
+    await settingsLink("General").click()
+    await page.getByLabel("Check for new n8n releases every (hours)").fill("24")
+    await unsaved.getByRole("button", { name: "Save changes" }).click()
+    await expect(unsaved).toHaveCount(0)
+    expect(await readSettings("defaults")).toMatchObject({ workflowMapMinutes: 15, instanceCheckHours: 12 })
+    expect((await readSettings("general")).releaseCheckHours).toBe(24)
+
+    await page.goto(`/instances/${id}`)
+    await page.getByRole("tab", { name: "Settings" }).click()
+    const own = page.getByLabel("Refresh workflows and execution counts every (minutes)")
+    // Empty uses the default, which it shows.
+    await expect(own).toHaveAttribute("placeholder", "15")
+    await own.fill("60")
+    await unsaved.getByRole("button", { name: "Save changes" }).click()
+    await expect(unsaved).toHaveCount(0)
+    expect(await overrides()).toMatchObject({ workflowMapMinutes: 60 })
+  } finally {
+    // Every step runs even when one fails, and each is checked, so a later test starts from what was stored.
+    const restore = async (what: string, send: () => Promise<{ ok(): boolean }>) => {
+      const ok = await send().then(
+        (res) => res.ok(),
+        () => false,
+      )
+      expect.soft(ok, `restore ${what}`).toBe(true)
+    }
+    await restore("the overrides", () => page.request.patch(`/api/instances/${id}`, { data: { overrides: stored } }))
+    await restore("Instance Defaults", () =>
+      page.request.put("/api/settings/defaults", {
+        data: {
+          workflowMapMinutes: before.defaults.workflowMapMinutes,
+          instanceCheckHours: before.defaults.instanceCheckHours,
+        },
+      }),
+    )
+    await restore("General", () =>
+      page.request.put("/api/settings/general", { data: { releaseCheckHours: before.general.releaseCheckHours } }),
+    )
+    expect.soft(await overrides()).toEqual(stored)
+    expect.soft(await readSettings("defaults")).toMatchObject({ workflowMapMinutes: 10, instanceCheckHours: 6 })
+    expect.soft((await readSettings("general")).releaseCheckHours).toBe(before.general.releaseCheckHours)
+  }
+})
+
 test("a section that fails to save keeps its changes and its dot, and the toast names it", async () => {
   const before = { alerts: await readSettings("alerts"), defaults: await readSettings("defaults") }
   const retry = page.getByLabel("Retry failed sends every (minutes)")

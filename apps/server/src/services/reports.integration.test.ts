@@ -31,7 +31,7 @@ beforeAll(async () => {
   url.pathname = `/${name}`
   database = createDatabase(url.toString())
   await database.migrate(join(import.meta.dirname, "../../drizzle"))
-  const general = { timezone: "UTC", dateFormat: "YYYY-MM-DD", timeFormat: "24h" }
+  const general = { timezone: "UTC", dateFormat: "YYYY-MM-DD", timeFormat: "24h", releaseCheckHours: 6 }
   ctx = { db: database.db, settings: { get: async () => general } } as unknown as Ctx
 
   const [instance] = await ctx.db

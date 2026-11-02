@@ -12,6 +12,7 @@ export const settingLabels = {
     dateFormat: "Date format",
     timeFormat: "Time format",
     design: "Design",
+    releaseCheckHours: "Check for new n8n releases every (hours)",
   },
   alerts: {
     newProblem: "New problem",
@@ -52,6 +53,8 @@ export const settingLabels = {
     autoResolveDays: "Auto-resolve after days without failures",
     backlogThreshold: "Queue backlog alert (waiting jobs)",
     backlogMinutes: "Queue backlog alert after (minutes)",
+    workflowMapMinutes: "Refresh workflows and execution counts every (minutes)",
+    instanceCheckHours: "Check the n8n version and API key every (hours)",
   },
   access: {
     maxMinutes: "Longest access (minutes)",

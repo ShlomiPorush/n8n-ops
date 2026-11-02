@@ -38,6 +38,10 @@ export const instanceSettingsSchema = z.object({
   autoResolveDays: z.number().int().min(1).max(365),
   backlogThreshold: z.number().int().min(1),
   backlogMinutes: z.number().int().min(1).max(1440),
+  /** How often the workflow map reads the instance's workflows and their execution counts. */
+  workflowMapMinutes: z.number().int().min(1).max(1440),
+  /** How often the n8n version and the API key's scopes are read again. */
+  instanceCheckHours: z.number().int().min(1).max(168),
 })
 export type InstanceSettings = z.infer<typeof instanceSettingsSchema>
 export const instanceOverridesSchema = instanceSettingsSchema.partial()
@@ -144,6 +148,8 @@ export const sections = {
     timeFormat: z.enum(timeFormats),
     /** Which of the two web designs the whole installation uses. */
     design: z.enum(designs),
+    /** How often the newest n8n release is read from GitHub, for the "latest" shown beside each version. */
+    releaseCheckHours: z.number().int().min(1).max(168),
   }),
   defaults: instanceSettingsSchema,
   alerts: z.object({
@@ -230,7 +236,14 @@ export type SectionName = keyof typeof sections
 export type Section<K extends SectionName> = z.infer<(typeof sections)[K]>
 
 export const defaults: { [K in SectionName]: Section<K> } = {
-  general: { publicUrl: "", timezone: "UTC", dateFormat: "browser", timeFormat: "24h", design: "regular" },
+  general: {
+    publicUrl: "",
+    timezone: "UTC",
+    dateFormat: "browser",
+    timeFormat: "24h",
+    design: "regular",
+    releaseCheckHours: 6,
+  },
   defaults: {
     pollIntervalSec: 60,
     healthIntervalSec: 30,
@@ -240,6 +253,8 @@ export const defaults: { [K in SectionName]: Section<K> } = {
     autoResolveDays: 7,
     backlogThreshold: 200,
     backlogMinutes: 5,
+    workflowMapMinutes: 10,
+    instanceCheckHours: 6,
   },
   alerts: {
     newProblem: true,

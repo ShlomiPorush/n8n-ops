@@ -5,6 +5,7 @@ import { checkDirect } from "./health.ts"
 import { activeOnly, can, refreshInstanceMeta, unsupportedVersion } from "./instances.ts"
 import { housekeeping, pollInstance } from "./problems.ts"
 import { maybeSendReports } from "./reports.ts"
+import { syncWorkflows, workflowSyncBusy } from "./workflows.ts"
 
 export type Job = { name: string; everyMs: number; run: (ctx: Ctx) => Promise<unknown> }
 
@@ -34,6 +35,7 @@ export function startScheduler(ctx: Ctx, extraJobs: Job[] = []): () => void {
     lastRun.set(key, Date.now())
     return true
   }
+  // How soon the server acts on its own records, not how often it reads an instance (those follow the settings).
   const jobs: Job[] = [
     { name: "alerts", everyMs: 5_000, run: dispatchAlerts },
     { name: "telegram-webhook", everyMs: 60_000, run: syncTelegramWebhook },
@@ -63,7 +65,18 @@ export function startScheduler(ctx: Ctx, extraJobs: Job[] = []): () => void {
       ) {
         void runOnce(`health:${instance.id}`, () => checkDirect(ctx, instance.id))
       }
-      if (instance.apiKeyEnc && due(`meta:${instance.id}`, 6 * 3600_000)) {
+      // Asked for only when no sync of the instance runs or waits, so the interval counts from a sync that starts.
+      if (
+        can(instance, "map") &&
+        !unsupportedVersion(instance) &&
+        !workflowSyncBusy(instance.id) &&
+        due(`map:${instance.id}`, s.workflowMapMinutes * 60_000)
+      ) {
+        void syncWorkflows(ctx, instance).catch((e: Error) =>
+          ctx.log.warn("workflow sync failed", { instance: instance.name, error: e.message }),
+        )
+      }
+      if (instance.apiKeyEnc && due(`meta:${instance.id}`, s.instanceCheckHours * 3600_000)) {
         void runOnce(`meta:${instance.id}`, () => refreshInstanceMeta(ctx, instance))
       }
     }

@@ -166,8 +166,8 @@ export function WorkflowsPage() {
       updated={false}
       description={
         ins && !filtered
-          ? `${mapSummary(rows.length, ins.duplicateGroups.length, ins.inactive)}. Read from every instance every 30 minutes.`
-          : "Every workflow on every instance, refreshed every 30 minutes. Duplicates and unused instances help consolidate."
+          ? `${mapSummary(rows.length, ins.duplicateGroups.length, ins.inactive)}. Read from every instance as often as Settings → Instance Defaults says.`
+          : "Every workflow on every instance, refreshed as often as Settings → Instance Defaults says. Duplicates and unused instances help consolidate."
       }
       actions={
         <BusyButton icon={RefreshCw} busyLabel="Reading instances…" run={() => sync.mutateAsync()}>

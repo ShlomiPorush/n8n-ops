@@ -60,6 +60,29 @@ describe("instance settings", () => {
     const result = resolveInstanceSettings(defaults.defaults, { pollIntervalSec: 1 })
     expect(result.pollIntervalSec).toBe(defaults.defaults.pollIntervalSec)
   })
+
+  it("refreshes the workflow map every 10 minutes and checks an instance every 6 hours, each overridable", () => {
+    expect(defaults.defaults).toMatchObject({ workflowMapMinutes: 10, instanceCheckHours: 6 })
+    expect(defaults.general.releaseCheckHours).toBe(6)
+    const result = resolveInstanceSettings(defaults.defaults, { workflowMapMinutes: 60, instanceCheckHours: 24 })
+    expect(result).toMatchObject({ workflowMapMinutes: 60, instanceCheckHours: 24 })
+    // Out of range (1 to 168 hours): the defaults stay.
+    expect(resolveInstanceSettings(defaults.defaults, { instanceCheckHours: 0 }).instanceCheckHours).toBe(6)
+  })
+})
+
+describe("settings stored before a key existed", () => {
+  const dbWith = (stored: object) =>
+    ({ select: () => ({ from: () => ({ where: async () => [{ value: stored }] }) }) }) as unknown as Db
+
+  it("get the new keys' defaults and keep the values that were saved", async () => {
+    const { workflowMapMinutes: _m, instanceCheckHours: _h, ...before } = defaults.defaults
+    const settings = createSettings(dbWith({ ...before, pollIntervalSec: 120 }))
+    const stored = await settings.get("defaults")
+    expect(stored.pollIntervalSec).toBe(120)
+    expect(stored.workflowMapMinutes).toBe(10)
+    expect(stored.instanceCheckHours).toBe(6)
+  })
 })
 
 describe("public URL", () => {
@@ -99,7 +122,7 @@ describe("checks before a value is stored", () => {
       groupingWindowSec: { min: 0, max: 3600 },
     })
     expect(numberLimits("defaults").backlogThreshold).toEqual({ min: 1 })
-    expect(numberLimits("general")).toEqual({})
+    expect(numberLimits("general")).toEqual({ releaseCheckHours: { min: 1, max: 168 } })
   })
 
   it("checks only the fields a save changes", () => {
@@ -203,6 +226,7 @@ describe("web design", () => {
       dateFormat: "browser",
       timeFormat: "24h",
       design: "regular",
+      releaseCheckHours: 6,
     })
   })
 
@@ -256,6 +280,7 @@ describe("web design", () => {
       dateFormat: "browser",
       timeFormat: "24h",
       design: "compact",
+      releaseCheckHours: 6,
     })
   })
 
@@ -275,6 +300,7 @@ describe("web design", () => {
       dateFormat: "browser",
       timeFormat: "24h",
       design: "compact",
+      releaseCheckHours: 6,
     })
   })
 

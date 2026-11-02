@@ -4,7 +4,14 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+
+- **How often n8n-ops reads each instance is now a setting.** Settings → Instance Defaults sets how often the workflow map reads the workflows and their execution counts (every 10 minutes by default, before every 30) and how often the n8n version and the API key are checked (every 6 hours); each instance can override both. Settings → General sets how often n8n-ops looks for a new n8n release (every 6 hours). At most two instances read their workflows at the same time.
+- **A change an agent makes through temporary access shows in the workflow map at once.** A write to workflows or tags that n8n accepts reads that instance's workflows again, without waiting for the next refresh.
+
 ### Fixed
+
+- **A failed check for the newest n8n release no longer hides it for six hours.** When GitHub answered with an error, such as its rate limit, n8n-ops showed no latest version until the next check. It now keeps the version it knew and tries again within an hour.
 
 - **The agent skill on Windows no longer fails now and then when several commands run at once.** The PowerShell version read its lock and its connection file in a way that kept another command from deleting or replacing them meanwhile, so that command failed with "The process cannot access the file". It now reads them the way the other versions do.
 

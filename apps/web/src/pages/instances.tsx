@@ -1551,6 +1551,8 @@ const overrideFields: [string, string][] = [
   ["autoResolveDays", "Auto-resolve after days without failures"],
   ["backlogThreshold", "Queue backlog alert (waiting jobs)"],
   ["backlogMinutes", "Queue backlog alert after (minutes)"],
+  ["workflowMapMinutes", "Refresh workflows and execution counts every (minutes)"],
+  ["instanceCheckHours", "Check the n8n version and API key every (hours)"],
 ]
 
 function OverridesCard({ instance }: { instance: InstanceDetailData }) {

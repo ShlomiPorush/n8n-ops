@@ -65,7 +65,7 @@ const healthFields = (i: { id: string; health: Health }, now: Map<string, Health
 }
 
 export async function agentInstances(ctx: Ctx) {
-  const latest = await latestN8nVersion()
+  const latest = await latestN8nVersion(ctx)
   const rows = await ctx.db.select().from(instances).where(activeOnly).orderBy(asc(instances.name))
   const now = await currentHealth(ctx, rows)
   return rows.map((i) => ({

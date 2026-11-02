@@ -1,6 +1,5 @@
 import type { Hono } from "hono"
 import type { Ctx } from "./context.ts"
-import { instances } from "./db/schema.ts"
 import type { Env } from "./http/types.ts"
 import { agentConnectRoutes } from "./oauth/routes.ts"
 import { accessRoutes } from "./routes/access.ts"
@@ -20,10 +19,8 @@ import { notifyAccess } from "./services/access-notify.ts"
 import { kickCopies, sweepRetention } from "./services/backup-copies.ts"
 import { enqueueProbes, scheduleBackups } from "./services/backups.ts"
 import { watchCollectors } from "./services/collection.ts"
-import { activeWith, unsupportedVersion } from "./services/instances.ts"
 import { type Job, startScheduler } from "./services/scheduler.ts"
 import { sweepSessions } from "./services/session-policy.ts"
-import { syncWorkflows } from "./services/workflows.ts"
 
 type Mount = { path: string; router: Hono<Env> }
 
@@ -48,6 +45,8 @@ export function features(ctx: Ctx, extra: { mounts?: Mount[]; jobs?: Job[] } = {
     ...(ctx.agents ? [{ path: "/", router: agentConnectRoutes(ctx, ctx.agents) }] : []),
     ...(extra.mounts ?? []),
   ]
+  // These intervals are how soon the server acts on its own records (copies due, expired access, sessions to
+  // remove), not how often it reads an instance; shorter is always fine, so they are not settings.
   const jobs: Job[] = [
     { name: "backups", everyMs: 5 * 60_000, run: scheduleBackups },
     // Copies due again, cut off by a restart, or waiting for a free destination; new archives start it at once.
@@ -62,18 +61,7 @@ export function features(ctx: Ctx, extra: { mounts?: Mount[]; jobs?: Job[] } = {
     { name: "agent-connections", everyMs: 15 * 60_000, run: async (c) => c.agents?.sweep() },
     // Sessions that ended, or that Better Auth let expire, leave the database.
     { name: "sessions", everyMs: 60 * 60_000, run: sweepSessions },
-    {
-      name: "workflow-map",
-      everyMs: 30 * 60_000,
-      run: async (c) => {
-        for (const instance of await c.db.select().from(instances).where(activeWith("map"))) {
-          if (unsupportedVersion(instance)) continue
-          await syncWorkflows(c, instance).catch((e: Error) =>
-            c.log.warn("workflow sync failed", { instance: instance.name, error: e.message }),
-          )
-        }
-      },
-    },
+    // The workflow map runs per instance in the scheduler, as often as its settings say.
     ...(extra.jobs ?? []),
   ]
   return { mounts, start: () => startScheduler(ctx, jobs) }

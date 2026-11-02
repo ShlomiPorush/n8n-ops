@@ -46,6 +46,8 @@ export type AccessRow = {
   reason: string
   scopes: string[]
   workflowIds: string[]
+  /** Names by workflow ID, as they were when the request was made; a workflow without one shows its ID. */
+  workflowNames: Record<string, string>
   minutes: number
   status: AccessStatus
   requestedAt: string
@@ -413,15 +415,20 @@ function AccessDetailPanel({ id }: { id: string }) {
             ))}
           </div>
           {r.workflowIds.length > 0 && (
-            <p>
-              Workflows:{" "}
-              {r.workflowIds.map((id, i) => (
-                <span key={id}>
-                  {i > 0 && ", "}
-                  <Copyable value={id} label="Copy workflow ID" className="text-small" />
-                </span>
-              ))}
-            </p>
+            <div className="grid gap-1">
+              <span>Workflows</span>
+              <ul className="grid gap-1">
+                {r.workflowIds.map((id) => {
+                  const name = Object.hasOwn(r.workflowNames ?? {}, id) ? r.workflowNames[id] : undefined
+                  return (
+                    <li key={id} className="flex min-w-0 flex-wrap items-baseline gap-x-2">
+                      {typeof name === "string" && <span className="font-semibold text-ink">{name}</span>}
+                      <Copyable value={id} label="Copy workflow ID" className="text-small text-muted-foreground" />
+                    </li>
+                  )
+                })}
+              </ul>
+            </div>
           )}
           {r.keyPrefix && (
             <p className="flex items-center gap-1.5 text-muted-foreground">

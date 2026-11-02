@@ -2,7 +2,7 @@ import { type DateWriting, formatDuration, formatStamp, messageWriting } from "@
 import { and, eq, isNotNull, isNull, ne, type SQL } from "drizzle-orm"
 import type { Ctx } from "../context.ts"
 import { type AccessStatus, accessRequests, apiTokens, instances } from "../db/schema.ts"
-import { AccessError, approveAccess, denyAccess } from "./access.ts"
+import { AccessError, approveAccess, denyAccess, nameIn } from "./access.ts"
 import { sendRouted, topicGoneNote } from "./alert-routing.ts"
 import { type CallbackUpdate, telegramClient } from "./alerts.ts"
 import { button, type Email, formatDate, kv, mono, panel, panelText, paragraph, render } from "./email-layout.ts"
@@ -22,9 +22,18 @@ type RequestInfo = {
   reason: string
   scopes: string[]
   workflowIds: string[]
+  /** Names by workflow ID, stored with the request; a workflow without one is shown by its ID. */
+  workflowNames?: Record<string, string>
   minutes: number
   decideBy: Date
 }
+
+/** The requested workflows, each with its name when the request has one. */
+const workflowsOf = (r: RequestInfo) => r.workflowIds.map((id) => ({ id, name: nameIn(r.workflowNames, id) }))
+
+/** A workflow as text: its name with the ID after it, each clipped so the line stays within 100 characters. */
+const workflowText = ({ id, name }: { id: string; name?: string }) =>
+  name === undefined ? clip(id, 100) : `${clip(name, 60)} (${clip(id, 36)})`
 
 /** How a request ended up: decided, then perhaps ended. */
 type Outcome = {
@@ -83,15 +92,18 @@ function listWithin(items: string[], max: number) {
 
 export function renderAccessTelegram(r: RequestInfo, outcome?: { icon: string; lines: TelegramHtml[] }): TelegramHtml {
   const scopes = listWithin(r.scopes, 600)
-  const workflows = listWithin(r.workflowIds, 1500)
+  const named = workflowsOf(r)
+  const workflows = listWithin(named.map(workflowText), 1500)
   return TelegramHtml.join([
     html`${outcome?.icon ?? "🔐"} <b>Access request</b> · ${clip(r.instance, 200)}`,
     html`<b>${clip(r.token, 200)}</b>: ${clip(r.reason, 500)}`,
     html``,
     html`Scopes: <code>${scopes.text}</code>${scopes.more}`,
-    r.workflowIds.length
-      ? html`Workflows: <code>${workflows.text}</code>${workflows.more}`
-      : html`Workflows: the whole instance`,
+    !r.workflowIds.length
+      ? html`Workflows: the whole instance`
+      : named.some((w) => w.name !== undefined)
+        ? html`Workflows: ${workflows.text}${workflows.more}`
+        : html`Workflows: <code>${workflows.text}</code>${workflows.more}`,
     html`For ${formatDuration(r.minutes)}`,
     ...(outcome?.lines.length ? [html``, ...outcome.lines] : []),
   ])
@@ -107,7 +119,8 @@ export function renderAccessEmail(
   dates: DateWriting = messageWriting(undefined),
 ): Email {
   const decideBy = formatDate(r.decideBy, dates, true)
-  const workflows = r.workflowIds.length ? r.workflowIds.join(", ") : "the whole instance"
+  const named = workflowsOf(r)
+  const workflows = named.length ? named.map(workflowText).join(", ") : "the whole instance"
   const lines = [
     `${r.token} asks for temporary access to ${r.instance}.`,
     "",
@@ -134,7 +147,8 @@ export function renderAccessEmail(
           ["Agent", r.token],
           ["Instance", r.instance],
           ["Scopes", mono(r.scopes.join(", "))],
-          ["Workflows", r.workflowIds.length ? mono(r.workflowIds.join(", ")) : "the whole instance"],
+          // Names read as text; IDs alone keep the code font.
+          ["Workflows", named.some((w) => w.name !== undefined) || !named.length ? workflows : mono(workflows)],
           ["For", formatDuration(r.minutes)],
           ["Decide by", decideBy],
         ]),

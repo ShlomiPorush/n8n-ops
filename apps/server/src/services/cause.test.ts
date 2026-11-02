@@ -221,6 +221,11 @@ describe("hostile input", () => {
     ).toBe("HTTP 400")
   })
 
+  it("leaves no markup in a reason", () => {
+    expect(serviceAnswer("<<b>script>alert(1)<</b>/script> failed")).toBe("scriptalert(1)/script failed")
+    expect(cause({ description: "<p>Quota <b>exceeded</b></p>" }).reason).toBe("HTTP 400 · Quota exceeded")
+  })
+
   it("reads only the start of very long fields", () => {
     expect(serviceAnswer(`${"a".repeat(9000)}<title>`)).toHaveLength(8192)
     expect(hostOf(`https://${"h".repeat(3000)}`)?.length).toBeLessThan(2048)

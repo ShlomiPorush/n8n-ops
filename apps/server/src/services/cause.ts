@@ -115,10 +115,15 @@ function pickText(value: unknown, depth = 0): string | null {
   return null
 }
 
+/**
+ * Plain text from a service's answer: tags dropped, and then every angle bracket left over, so that nothing that looks
+ * like markup ("<<b>script>") survives. A reason is text; screens and messages escape it as well.
+ */
 const stripTags = (s: string) =>
   s
     .replace(/<br\s*\/?>/gi, " ")
     .replace(/<[^>]*>/g, "")
+    .replace(/[<>]/g, "")
     .trim()
 
 /**

@@ -139,6 +139,14 @@ describe("reason", () => {
     expect(proxied.hint).toBe("A proxy answered instead of the service.")
   })
 
+  it("keeps an XML message whose closing tag the input cap cut off", () => {
+    const xml = (start: string) =>
+      `<?xml version="1.0"?><Error><Code>Rejected</Code><Message>${start} ${"x".repeat(9000)}</Message></Error>`
+    const quota = cause({ description: xml("Quota exceeded.") })
+    expect(quota.reason).toMatch(/^HTTP 400 · Rejected: Quota exceeded\. x+$/)
+    expect(quota.key).not.toBe(cause({ description: xml("File gone.") }).key)
+  })
+
   it("reads an HTML page or an XML error inside n8n's NNN - body, also as a JSON string", () => {
     const page = "<html><head><title>Login</title></head><body>x</body></html>"
     expect(serviceAnswer(`500 - ${JSON.stringify(page)}`)).toBe('HTML page "Login"')

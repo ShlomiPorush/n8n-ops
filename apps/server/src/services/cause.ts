@@ -181,7 +181,8 @@ function markupAnswer(s: string): string | null {
   }
   if (/^(<\?xml|<Error\b)/i.test(s)) {
     const code = stripTags(s.match(/<Code>([^<]*)<\/Code>/i)?.[1] ?? "")
-    const message = stripTags(s.match(/<Message>([^<]*)<\/Message>/i)?.[1] ?? "")
+    // To the end of the text when the input cap cut the closing tag off.
+    const message = stripTags(s.match(/<Message>([\s\S]*?)(?:<\/Message>|$)/i)?.[1] ?? "")
     return [code, message].filter(Boolean).join(": ") || null
   }
   return null

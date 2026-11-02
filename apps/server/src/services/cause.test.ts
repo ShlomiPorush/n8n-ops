@@ -323,6 +323,9 @@ describe("hostile input", () => {
   it("leaves no markup in a reason", () => {
     expect(serviceAnswer("<<b>script>alert(1)<</b>/script> failed")).toBe("scriptalert(1)/script failed")
     expect(cause({ description: "<p>Quota <b>exceeded</b></p>" }).reason).toBe("HTTP 400 · Quota exceeded")
+    expect(serviceAnswer("Line one<br/>line two")).toBe("Line one line two")
+    expect(serviceAnswer("Limit is 5 < 10 items")).toBe("Limit is 5  10 items")
+    expect(serviceAnswer("<scr<script>ipt>x")).toBe("iptx")
   })
 
   it("reads only the start of very long fields", () => {

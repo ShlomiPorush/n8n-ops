@@ -131,15 +131,24 @@ function pickText(value: unknown, depth = 0): string | null {
 }
 
 /**
- * Plain text from a service's answer: tags dropped, and then every angle bracket left over, so that nothing that looks
- * like markup ("<<b>script>") survives. A reason is text; screens and messages escape it as well.
+ * Plain text from a service's answer, in one pass: what lies between "<" and ">" is dropped (a line break becomes a
+ * space), and no angle bracket is kept, so nothing that looks like markup ("<<b>script>") survives. Text after a "<"
+ * that never closes is kept. A reason is text; screens and messages escape it as well.
  */
-const stripTags = (s: string) =>
-  s
-    .replace(/<br\s*\/?>/gi, " ")
-    .replace(/<[^>]*>/g, "")
-    .replace(/[<>]/g, "")
-    .trim()
+function stripTags(s: string): string {
+  let out = ""
+  let tag: string | null = null
+  for (const ch of s) {
+    if (tag === null) {
+      if (ch === "<") tag = ""
+      else if (ch !== ">") out += ch
+    } else if (ch === ">") {
+      if (/^\/?br\b/i.test(tag)) out += " "
+      tag = null
+    } else if (ch !== "<") tag += ch
+  }
+  return (tag === null ? out : out + tag).trim()
+}
 
 /**
  * The service's own answer in n8n's error description: plain text, the text of a JSON body (n8n writes "NNN - body"),

@@ -441,6 +441,15 @@ describe("the Problems list as rows", () => {
       instanceId: own.id,
       order: { sort: "workflow", order: "asc" },
     })
-    expect(byName.items.map((r) => r.workflowName)).toEqual([...byName.items.map((r) => r.workflowName)].sort())
+    expect(byName.items.map((r) => r.workflowName)).toEqual([
+      "Alert one",
+      "Failing one",
+      "Muted one",
+      "Mute ended",
+      "Peer one",
+      "Quiet one",
+      "Resolved one",
+      "Runner one",
+    ])
   })
 })

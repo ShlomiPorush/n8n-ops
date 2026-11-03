@@ -395,7 +395,11 @@ test("a workflow moves to another instance with its credentials", async () => {
   const credential = (await (
     await n8nApi("/api/v1/credentials", {
       method: "POST",
-      body: JSON.stringify({ name: "Mover login", type: "httpBasicAuth", data: { user: "m", password: randomSecret() } }),
+      body: JSON.stringify({
+        name: "Mover login",
+        type: "httpBasicAuth",
+        data: { user: "m", password: randomSecret() },
+      }),
     })
   ).json()) as { id: string }
   await n8nApi("/api/v1/workflows", {

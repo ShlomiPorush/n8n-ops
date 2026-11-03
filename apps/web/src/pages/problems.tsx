@@ -77,13 +77,19 @@ import { useNavigateFromOverlay } from "@/lib/overlay-history"
 import { useProblemAction } from "@/lib/problem-actions"
 import {
   type AffectedRow,
+  type CauseKind,
   instancesText,
   isSingle,
+  KIND_LABELS,
   leadOf,
   type ProblemList,
   type ProblemRow,
   problemPath,
   problemTitle,
+  SECTION_ORDER,
+  SECTION_TITLES,
+  type Section,
+  sectionOf,
   workflowNames,
 } from "@/lib/problems"
 import { formatTime, useTimeFormat } from "@/lib/time"
@@ -122,7 +128,7 @@ export function useProblemsSort(rows: ProblemRow[], order: SortOrder, showInstan
     columns: {
       status: { label: "Status", kind: "number", words: RANK_WORDS, value: (p) => statusRank[problemStatus(p)] },
       workflow: { label: "Workflow", kind: "text", value: (p) => leadOf(p)?.workflowName ?? "" },
-      error: { label: "Error", kind: "text", value: (p) => p.errorMessage },
+      error: { label: "Cause", kind: "text", value: (p) => p.title },
       ...(showInstance
         ? { instance: { label: "Instance", kind: "text" as const, value: (p: ProblemRow) => p.instances[0] ?? "" } }
         : {}),
@@ -166,10 +172,59 @@ function ExpandButton({ open, count, onToggle }: { open: boolean; count: number;
       aria-expanded={open}
       aria-label={open ? `Hide the ${count} workflows` : `Show the ${count} workflows`}
       onClick={onToggle}
-      className="-m-1 inline-grid size-6 shrink-0 place-items-center rounded-sm text-muted-foreground hover:text-ink"
+      className="inline-grid size-5 shrink-0 place-items-center rounded-sm text-muted-foreground hover:text-ink"
     >
       <ChevronRight aria-hidden className={cn("size-4 transition-transform duration-150", open && "rotate-90")} />
     </button>
+  )
+}
+
+/** The kind of a cause, as a small badge. */
+export function KindBadge({ kind }: { kind: CauseKind | null }) {
+  if (!kind) return null
+  return (
+    <Badge variant="line" data-kind={kind} className="shrink-0">
+      {KIND_LABELS[kind]}
+    </Badge>
+  )
+}
+
+/** What went wrong, "target · reason", with its kind: the line under a workflow in a list. */
+function CauseLine({ p }: { p: Pick<ProblemRow, "title" | "kind"> }) {
+  return (
+    <span className="flex min-w-0 items-center gap-2">
+      <KindBadge kind={p.kind} />
+      <UserText className="min-w-0 truncate text-small" title={p.title}>
+        {p.title}
+      </UserText>
+    </span>
+  )
+}
+
+/** The rows of a list cut into its sections, in the order they came within each (`sectionOf`). */
+function bySection(rows: ProblemRow[]) {
+  const parts = new Map<Section, ProblemRow[]>()
+  for (const p of rows) {
+    const s = sectionOf(p, p.status)
+    parts.set(s, [...(parts.get(s) ?? []), p])
+  }
+  return SECTION_ORDER.flatMap((s) => {
+    const list = parts.get(s)
+    return list?.length ? [{ section: s, rows: list }] : []
+  })
+}
+
+/** The heading of a section: a row that is not one of the list's items. */
+function SectionRow({ section, count, columns }: { section: Section; count: number; columns: number }) {
+  const { title, note } = SECTION_TITLES[section]
+  return (
+    <TableRow role="presentation" data-section={section} className="border-0 hover:bg-transparent">
+      <TableCell colSpan={columns} className="pt-4 pb-1">
+        <span className="font-semibold">{title}</span>{" "}
+        <span className="text-small text-muted-foreground tabular-nums">{n(count)}</span>
+        <span className="block text-small text-muted-foreground">{note}</span>
+      </TableCell>
+    </TableRow>
   )
 }
 
@@ -183,6 +238,7 @@ export function ProblemsTable({
   bare,
   items,
   sort,
+  sections,
 }: {
   rows: ProblemRow[]
   selected?: string
@@ -201,6 +257,8 @@ export function ProblemsTable({
    * rows are a few picked by the caller, shown in their order with no sort.
    */
   sort?: Sorting<ProblemRow>
+  /** In the order the server sends by default: cut into sections (failing now, quiet, your alerts…). */
+  sections?: boolean
 }) {
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set())
   if (rows.length === 0) {
@@ -213,6 +271,9 @@ export function ProblemsTable({
       if (!next.delete(id)) next.add(id)
       return next
     })
+  /** The rows, with a heading before each section when the list is cut into sections. */
+  const grouped = (list: ProblemRow[]): (ProblemRow | { section: Section; count: number })[] =>
+    sections ? bySection(list).flatMap(({ section, rows: part }) => [{ section, count: part.length }, ...part]) : list
   const rowProps = (p: ProblemRow) => ({
     "data-state": selected === p.id ? "selected" : undefined,
     "aria-current": selected === p.id ? ("true" as const) : undefined,
@@ -238,7 +299,8 @@ export function ProblemsTable({
       <Table bare={bare} items>
         <ItemsHeader label="Problem" />
         <TableBody>
-          {(sort?.rows ?? rows).map((p) => {
+          {grouped(sort?.rows ?? rows).map((p) => {
+            if ("section" in p) return <SectionRow key={p.section} section={p.section} count={p.count} columns={1} />
             const lead = leadOf(p)
             if (isSingle(p) || !lead)
               return (
@@ -265,11 +327,7 @@ export function ProblemsTable({
                         <When value={p.lastSeen} />
                       </>
                     }
-                    detail={
-                      <span className="font-mono text-small" title={p.errorMessage}>
-                        {p.errorMessage}
-                      </span>
-                    }
+                    detail={<CauseLine p={p} />}
                   />
                 </TableRow>
               )
@@ -279,8 +337,8 @@ export function ProblemsTable({
                 <TableRow {...rowProps(p)}>
                   <ItemRow
                     lead={<ExpandButton open={open} count={p.affectedTotal} onToggle={() => toggle(p.id)} />}
-                    title={<UserText>{p.errorMessage}</UserText>}
-                    titleText={p.errorMessage}
+                    title={<UserText>{p.title}</UserText>}
+                    titleText={p.title}
                     end={failures(p.count)}
                     sub={
                       <>
@@ -362,7 +420,7 @@ export function ProblemsTable({
         <TableRow>
           <TableHead sort={sort?.head("status")}>Status</TableHead>
           <TableHead sort={sort?.head("workflow")}>Workflow</TableHead>
-          <TableHead sort={sort?.head("error")}>Error</TableHead>
+          <TableHead sort={sort?.head("error")}>Cause</TableHead>
           {showInstance && <TableHead sort={sort?.head("instance")}>Instance</TableHead>}
           <TableHead className="text-end" sort={sort?.head("failures")}>
             Failures
@@ -373,7 +431,9 @@ export function ProblemsTable({
         </TableRow>
       </TableHeader>
       <TableBody>
-        {(sort?.rows ?? rows).map((p) => {
+        {grouped(sort?.rows ?? rows).map((p) => {
+          if ("section" in p)
+            return <SectionRow key={p.section} section={p.section} count={p.count} columns={columns} />
           const lead = leadOf(p)
           const single = isSingle(p) || !lead
           const open = !single && expanded.has(p.id)
@@ -408,13 +468,8 @@ export function ProblemsTable({
                     </span>
                   )}
                 </TableCell>
-                <TableCell
-                  className="max-w-80 truncate font-mono text-small"
-                  title={p.errorMessage}
-                  data-wide
-                  data-nolabel
-                >
-                  {p.errorMessage}
+                <TableCell className="max-w-80" data-wide data-nolabel>
+                  <CauseLine p={p} />
                 </TableCell>
                 {showInstance && (
                   <TableCell>
@@ -511,7 +566,7 @@ export function ProblemsPage() {
     <>
       <PageHead
         title="Problems"
-        description="One row per problem: an error and the workflows it hit; each alerts once."
+        description="One row per problem: what the failing node called and what went wrong there, and the workflows it hit; each alerts once."
         live={rows}
       />
       <FilterBar
@@ -528,7 +583,9 @@ export function ProblemsPage() {
             <ToggleGroupItem value="all">All</ToggleGroupItem>
           </ToggleGroup>
         }
-        search={<SearchBox label="Search workflow or error" value={q} onChange={(v) => setParam("q", v)} debounce />}
+        search={
+          <SearchBox label="Search workflow, target or error" value={q} onChange={(v) => setParam("q", v)} debounce />
+        }
         sort={{ control: sort.control, name: "problems" }}
         pickers={
           <Picker
@@ -583,6 +640,8 @@ export function ProblemsPage() {
             onOpen={open}
             href={at}
             items={items}
+            // In the order that puts what needs a look first, the list reads in sections (docs/adr/0003).
+            sections={order.asked === null}
             empty={
               rows.previous === "failed"
                 ? "The previous list was empty."
@@ -725,6 +784,8 @@ export function ProblemDetail({ id }: { id: string }) {
   const unmute = useProblemAction(target, "unmute", named)
 
   if (detail.isLoading) return <Loading>Loading the problem…</Loading>
+  if (detail.error instanceof ApiError && detail.error.code === "regrouped" && !detail.data)
+    return <Regrouped body={detail.error.body} />
   if (detail.error && !detail.data)
     return <LoadError what="this problem" error={detail.error} retry={() => detail.refetch()} />
   if (!detail.data)
@@ -835,7 +896,7 @@ export function ProblemDetail({ id }: { id: string }) {
         {/* The title comes first; the actions sit beside it, or below it in a narrow pane. */}
         <div className="grid gap-2 @min-[40rem]/pane:grid-cols-[minmax(0,1fr)_auto] @min-[40rem]/pane:gap-x-2.5">
           <h2 className={cn("text-title", !single && "line-clamp-2 break-words")}>
-            <UserText>{single ? s.workflowName : p.errorMessage}</UserText>
+            <UserText>{single ? s.workflowName : p.title}</UserText>
           </h2>
           <div className="flex flex-wrap gap-2 @min-[40rem]/pane:self-start">
             {p.status === "resolved" ? (
@@ -894,7 +955,25 @@ export function ProblemDetail({ id }: { id: string }) {
             </DropdownMenu>
           </div>
         </div>
-        <p className="rounded-sm bg-fill px-3 py-2 font-mono text-small break-words">{p.errorMessage}</p>
+        {/* What went wrong (docs/adr/0003): the cause, a line for a known error, why its workflows are grouped, and
+            n8n's own text of the latest failure. */}
+        <div className="grid gap-1.5 rounded-sm bg-fill px-3 py-2">
+          <p className="flex min-w-0 flex-wrap items-center gap-2">
+            <KindBadge kind={p.kind} />
+            <UserText className="min-w-0 font-semibold break-words">{p.title}</UserText>
+          </p>
+          {p.hint && (
+            <p className="text-small">
+              <span className="font-semibold">Known error:</span> {p.hint}
+            </p>
+          )}
+          {!single && (
+            <p className="text-small text-muted-foreground">
+              Grouped because: the same target and reason in {plural(p.workflows, "workflow")}.
+            </p>
+          )}
+          <p className="font-mono text-small break-words text-muted-foreground">{p.errorMessage}</p>
+        </div>
         {single && s.error?.description && <p className="text-muted-foreground">{s.error.description}</p>}
       </div>
 
@@ -1166,6 +1245,47 @@ export function ProblemDetail({ id }: { id: string }) {
 }
 
 /** The actions of one Affected workflow: its own Resolve, Mute and Reopen, and Split. */
+/**
+ * An old link to a Problem that the regroup by cause split up (docs/adr/0003): where its workflows went. It takes no
+ * action of its own.
+ */
+function Regrouped({ body }: { body?: Record<string, unknown> }) {
+  const went = (Array.isArray(body?.problems) ? body.problems : []) as {
+    id: string
+    title: string
+    status: ProblemRow["status"]
+    instances: string[]
+    workflows: string[]
+  }[]
+  return (
+    <Panel>
+      <PanelHead title="This problem was regrouped" />
+      <div className="grid gap-2 px-pad-x pb-pad-y">
+        <p className="text-muted-foreground">
+          Problems are now grouped by what the failing node called and what went wrong there. Its workflows are in these
+          problems now.
+        </p>
+        {went.length === 0 ? (
+          <p>Its workflows no longer have problems.</p>
+        ) : (
+          <ul className="grid gap-1">
+            {went.map((g) => (
+              <li key={g.id}>
+                <Link to={problemPath(g.id)} className="font-semibold underline">
+                  <UserText>{g.title}</UserText>
+                </Link>{" "}
+                <span className="text-small text-muted-foreground">
+                  <UserText>{g.workflows.join(", ")}</UserText>
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </Panel>
+  )
+}
+
 function WorkflowActions({ problem, row }: { problem: ProblemDetailData; row: AffectedRow }) {
   const [, setParams] = useSearchParams()
   const named = () => row.workflowName

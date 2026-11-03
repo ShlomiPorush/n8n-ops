@@ -1462,6 +1462,8 @@ function InstanceProblems({
         showInstance={false}
         empty="No open problems on this instance."
         onOpen={onOpen}
+        // The instance's own problems (its task runner) first, then failing now, quiet and its alerts.
+        sections={preview || order.asked === null}
       />
       {!preview && rows.length < total && (
         <p className="border-t border-line px-pad-x py-pad-y text-small text-muted-foreground">

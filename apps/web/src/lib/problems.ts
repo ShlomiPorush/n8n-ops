@@ -1,6 +1,21 @@
 import { plural } from "@/lib/numbers"
 
-export type AffectedRow = {
+/** The sort of cause a Problem has (docs/adr/0003). */
+export type CauseKind = "alert" | "runner" | "sub" | "cert" | "net" | "cred" | "svc" | "req" | "other"
+
+/**
+ * What a Problem or an Affected workflow is about: `title` is "target · reason", `hint` one line for a known error.
+ * The cause fields are null on rows recorded before the regroup by cause.
+ */
+export type CauseFields = {
+  title: string
+  target: string | null
+  reason: string | null
+  kind: CauseKind | null
+  hint: string | null
+}
+
+export type AffectedRow = CauseFields & {
   id: string
   instanceId: string
   instanceName: string
@@ -15,10 +30,12 @@ export type AffectedRow = {
   lastSeen: string
   mutedUntil: string | null
   resolvedAt: string | null
+  /** An open workflow that failed in the last 24 hours is failing now; an open one that did not is quiet. */
+  state: "now" | "quiet" | null
 }
 
-/** A Problem: one error, its state over every workflow it hit, and those workflows, the most recently failed first. */
-export type ProblemRow = {
+/** A Problem: one cause, its state over every workflow it hit, and those workflows, the most recently failed first. */
+export type ProblemRow = CauseFields & {
   id: string
   errorMessage: string
   status: "open" | "muted" | "resolved"
@@ -44,9 +61,48 @@ export const isSingle = (p: Pick<ProblemRow, "affectedTotal">) => p.affectedTota
 /** The workflow a Problem in one workflow is about, and the most recently failed one of several. */
 export const leadOf = (p: Pick<ProblemRow, "affectedWorkflows">) => p.affectedWorkflows[0]
 
-/** What a Problem is called: its workflow when it hit one, else its error. */
-export function problemTitle(p: Pick<ProblemRow, "affectedTotal" | "affectedWorkflows" | "errorMessage">) {
-  return isSingle(p) ? (leadOf(p)?.workflowName ?? p.errorMessage) : p.errorMessage
+/** What a Problem is called: its workflow when it hit one, else its cause. */
+export function problemTitle(p: Pick<ProblemRow, "affectedTotal" | "affectedWorkflows" | "title">) {
+  return isSingle(p) ? (leadOf(p)?.workflowName ?? p.title) : p.title
+}
+
+/** The kind of a cause, as screens name it. */
+export const KIND_LABELS: Record<CauseKind, string> = {
+  alert: "Your alert",
+  runner: "n8n runner",
+  sub: "Called workflow failed",
+  cert: "Certificate",
+  net: "Network",
+  cred: "Sign-in rejected",
+  svc: "Service error",
+  req: "Request rejected",
+  other: "Other",
+}
+
+/**
+ * The part of a list a Problem sits in. Open ones: the n8n task runner first (a problem of the instance), then
+ * failing now (a workflow failed in the last 24 hours), quiet, and the alerts a Stop and Error node raised.
+ */
+export type Section = "instance" | "now" | "quiet" | "alerts" | "muted" | "resolved"
+
+export const SECTION_TITLES: Record<Section, { title: string; note: string }> = {
+  instance: { title: "Instance problems", note: "The n8n task runner did not take a task. A problem of the instance." },
+  now: { title: "Failing now", note: "Failed in the last 24 hours." },
+  quiet: { title: "Quiet", note: "Failed before, not in the last 24 hours. Closes by itself after quiet days." },
+  alerts: { title: "Your alerts", note: "A Stop and Error node in the workflow raised these on purpose." },
+  muted: { title: "Muted", note: "Muted for now; they alert again when the mute ends." },
+  resolved: { title: "Resolved", note: "Resolved by hand or after quiet days." },
+}
+
+export const SECTION_ORDER: Section[] = ["instance", "now", "quiet", "alerts", "muted", "resolved"]
+
+/** The section of a Problem, from its state and its cause. */
+export function sectionOf(p: Pick<ProblemRow, "kind" | "affectedWorkflows">, status: ProblemRow["status"]): Section {
+  if (status === "muted") return "muted"
+  if (status === "resolved") return "resolved"
+  if (p.kind === "runner") return "instance"
+  if (p.kind === "alert") return "alerts"
+  return p.affectedWorkflows.some((a) => a.state === "now") ? "now" : "quiet"
 }
 
 /** "alpha" for one instance, "3 instances" for more. */

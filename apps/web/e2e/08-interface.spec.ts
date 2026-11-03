@@ -385,7 +385,7 @@ test("the list stays in place while its first item opens by itself, so focus is 
   })
   try {
     await page.goto("/problems")
-    const box = page.getByLabel("Search workflow or error")
+    const box = page.getByLabel("Search workflow, target or error")
     await expect(box).toBeVisible()
     await expect(page.locator("tbody tr")).toHaveCount(0)
     await expect(page).toHaveURL(/\/problems$/)

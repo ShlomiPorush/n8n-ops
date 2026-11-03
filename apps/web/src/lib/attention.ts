@@ -24,6 +24,9 @@ export type AttentionItem = { tone: Tone } & (
       workflowName: string
       instanceName: string
       errorMessage: string
+      /** What the Problem is about, "target · reason" (docs/adr/0003), and the line for a known error. */
+      title: string
+      hint: string | null
       count: number
       /** Distinct workflows the Problem hit, and its Affected workflows (a workflow at two nodes is two). */
       workflows: number

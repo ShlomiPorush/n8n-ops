@@ -101,23 +101,47 @@ _Avoid_: proxy request, access log entry
 ### Problems
 
 **Problem**:
-One error, known by its exact text, wherever it happens: on any instance, in any workflow. It is what alerts, and what a person resolves or mutes.
+One Cause, wherever it happens: in any workflow, and on any instance when its Target is a host. It is what alerts, and what a person resolves or mutes (docs/adr/0003).
 _Avoid_: incident, issue, error group, problem group
 
+**Cause**:
+Why a failed execution failed: its Target and its Reason, read by fixed rules from what n8n stored with the execution.
+_Avoid_: root cause, error type
+
+**Target**:
+What the failing node talked to: the workflow an Execute Workflow node runs, the host of its URL, its credential, a host named in the error, or else the node itself. It keeps its identity when it is renamed.
+_Avoid_: service, endpoint, destination
+
+**Reason**:
+What went wrong at the Target: the answer of the service the node called, with its HTTP status, or else n8n's error message.
+_Avoid_: error text, message
+
+**Kind**:
+The sort of Cause: your alert (a Stop and Error node), n8n task runner, called workflow failed, certificate, network, sign-in rejected, service error, request rejected, or other.
+_Avoid_: category, type
+
+**Known error**:
+One line from a fixed table that says what a common Reason means, such as an expired certificate. A Reason not in the table has none.
+_Avoid_: hint, explanation, suggestion
+
 **Affected workflow**:
-A workflow that a Problem hit, at one node, with its own failures, first and last seen, and its own resolved or muted state. The same workflow failing at two nodes is two Affected workflows. A Problem is resolved when all its Affected workflows are.
+A workflow that a Problem hit, at one node, with its own failures, first and last seen, and its own resolved or muted state. The same workflow failing at two nodes, or at one node for two Causes, is two Affected workflows. A Problem is resolved when all its Affected workflows are.
 _Avoid_: occurrence, instance of a problem
+
+**Failing now**:
+An open Affected workflow that failed in the last 24 hours. An open one that did not is **Quiet**.
+_Avoid_: active, recent
 
 **Regression**:
 A new failure of a Problem, or of one of its Affected workflows, after it was resolved. It reopens the same Problem and never makes a new one.
 _Avoid_: recurrence, new problem
 
 **Merge**:
-Joining two Problems that a person judges to be the same error into one.
+Joining two Problems that a person judges to have the same Cause into one.
 _Avoid_: combine, link
 
 **Split**:
-Moving an Affected workflow out of its Problem into a Problem of its own, when the same error text has a different cause there.
+Moving an Affected workflow out of its Problem into a Problem of its own, when the rules gave it the same Cause but a person sees a different one.
 _Avoid_: unmerge, detach
 
 ### Backups

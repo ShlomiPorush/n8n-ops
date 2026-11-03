@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: superseded by 0003
 ---
 
 # A Problem is one error across workflows and instances

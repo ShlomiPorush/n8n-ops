@@ -1114,9 +1114,18 @@ test("the 12-hour Time format writes the daily backup time that way as soon as i
 function standInProblem(id: string, workflowName: string, errorMessage: string, more: Record<string, unknown> = {}) {
   const at = new Date(Date.now() - 3 * 86_400_000).toISOString()
   const state = { status: "open", regression: false, count: 1, firstSeen: at, lastSeen: at, mutedUntil: null }
+  // Its cause (docs/adr/0003): the node, as for a Code node that names no host or credential.
+  const cause = {
+    title: `Call ERP · ${errorMessage}`,
+    target: "Call ERP",
+    reason: errorMessage,
+    kind: "other",
+    hint: null,
+  }
   return {
     id,
     errorMessage,
+    ...cause,
     ...state,
     workflows: 1,
     instances: ["e2e-n8n"],
@@ -1130,8 +1139,10 @@ function standInProblem(id: string, workflowName: string, errorMessage: string, 
         workflowName,
         nodeName: "Call ERP",
         errorMessage,
+        ...cause,
         ...state,
         resolvedAt: null,
+        state: "quiet",
       },
     ],
     ...more,
@@ -1724,7 +1735,7 @@ test("Merge lands on the problem merged into, and Back returns to the problem it
     await page.getByRole("menuitem", { name: "Merge into…" }).click()
     const dialog = page.getByRole("dialog", { name: "Merge into Another Problem" })
     await dialog.getByRole("button", { name: /^Problem to merge into:/ }).click()
-    await page.getByRole("option", { name: "Merge target · Stand-in problem" }).click()
+    await page.getByRole("option", { name: "Merge target · Call ERP · Stand-in problem" }).click()
     await expect.poll(overlayEntry).not.toBeNull()
     await dialog.getByRole("button", { name: "Merge", exact: true }).click()
     await expect(page).toHaveURL((url) => url.pathname === "/problems/e2e-merge-target")
@@ -1774,7 +1785,7 @@ test("a long choice in a form has a search that reads an underscore as a space, 
     await expect(list.getByRole("option")).toHaveCount(1)
     await search.press("Enter")
     await expect(search).toHaveCount(0)
-    await expect(field).toHaveAccessibleName("Problem to merge into: Nightly_sync_7 · Stand-in problem")
+    await expect(field).toHaveAccessibleName("Problem to merge into: Nightly_sync_7 · Call ERP · Stand-in problem")
     await expect(field).toBeFocused()
     await page.keyboard.press("Escape")
     await expect(dialog).toHaveCount(0)

@@ -219,7 +219,7 @@ function SectionRow({ section, count, columns }: { section: Section; count: numb
   const { title, note } = SECTION_TITLES[section]
   return (
     <TableRow role="presentation" data-section={section} className="border-0 hover:bg-transparent">
-      <TableCell colSpan={columns} className="pt-4 pb-1">
+      <TableCell colSpan={columns} className="pt-4 pb-1 whitespace-normal">
         <span className="font-semibold">{title}</span>{" "}
         <span className="text-small text-muted-foreground tabular-nums">{n(count)}</span>
         <span className="block text-small text-muted-foreground">{note}</span>
@@ -1417,9 +1417,9 @@ function MergeDialog({
             options={options.map((c) => ({
               value: c.id,
               label: isSingle(c)
-                ? `${problemTitle(c)} · ${c.errorMessage.slice(0, 60)}`
-                : `${c.errorMessage.slice(0, 60)} · ${plural(c.workflows, "workflow")}`,
-              search: `${c.errorMessage} ${workflowNames(c, 50)}`,
+                ? `${problemTitle(c)} · ${c.title.slice(0, 60)}`
+                : `${c.title.slice(0, 60)} · ${plural(c.workflows, "workflow")}`,
+              search: `${c.title} ${c.errorMessage} ${workflowNames(c, 50)}`,
             }))}
           />
         )}

@@ -29,6 +29,17 @@ test.afterAll(async () => {
   await page.close()
 })
 
+/**
+ * Opens a menu and picks one of its items. The page refreshes itself as failures come in, which can close a menu
+ * opened at that moment: it is opened again then.
+ */
+async function pick(button: string, item: string) {
+  await expect(async () => {
+    await page.getByRole("button", { name: button }).click()
+    await page.getByRole("menuitem", { name: item }).click({ timeout: 3000 })
+  }).toPass({ timeout: 30_000 })
+}
+
 test("n8n is prepared with an API key and a failing workflow", async () => {
   apiKey = await n8nSetup()
   hookPath = await n8nFailingWorkflow(apiKey, "Sync orders to ERP", message)
@@ -243,15 +254,13 @@ test("a second workflow failing for the same cause joins the Problem, and Split 
 
   // Split gives it a Problem of its own; Merge brings it back.
   await tab(/^Affected workflows/).click()
-  await page.getByRole("button", { name: "Actions for Get DNS Data" }).click()
-  await page.getByRole("menuitem", { name: "Split into its own problem" }).click()
+  await pick("Actions for Get DNS Data", "Split into its own problem")
   await expect(page.getByText("Split into a problem of its own: Get DNS Data")).toBeVisible()
   await page.goto("/problems?status=open")
   await expect(list.getByRole("row", { name: /2 workflows/ })).toHaveCount(0)
   await list.getByRole("row", { name: /^Get DNS Data/ }).click()
   await expect(page.getByRole("heading", { name: "Get DNS Data" })).toBeVisible()
-  await page.getByRole("button", { name: "More actions" }).click()
-  await page.getByRole("menuitem", { name: "Merge into…" }).click()
+  await pick("More actions", "Merge into…")
   const dialog = page.getByRole("dialog", { name: "Merge into Another Problem" })
   await dialog.getByRole("button", { name: /^Problem to merge into:/ }).click()
   await page.getByRole("option", { name: /^Get DNS Zone · / }).click()
@@ -262,11 +271,7 @@ test("a second workflow failing for the same cause joins the Problem, and Split 
 
   // The later files expect the first workflow's Problem alone, and every other Problem with one workflow: split this
   // one again, resolve both, and remove both workflows from n8n so another instance of the same n8n never reads them.
-  // The Merge refreshes the page once more, which can close a menu opened at that moment: open it again then.
-  await expect(async () => {
-    await page.getByRole("button", { name: "Actions for Get DNS Data" }).click()
-    await page.getByRole("menuitem", { name: "Split into its own problem" }).click({ timeout: 3000 })
-  }).toPass({ timeout: 30_000 })
+  await pick("Actions for Get DNS Data", "Split into its own problem")
   await expect(page.getByText("Split into a problem of its own: Get DNS Data").last()).toBeVisible()
   await page.getByRole("button", { name: "Mark resolved" }).click()
   await expect(page.getByText("Problem resolved: Get DNS Zone")).toBeVisible()

@@ -378,7 +378,7 @@ test("the list stays in place while its first item opens by itself, so focus is 
   const held = new Promise<void>((resolve) => {
     release = resolve
   })
-  const list = /\/api\/problems\?/
+  const list = /\/api\/problems\/rows\?/
   await page.route(list, async (route) => {
     await held
     await route.continue()

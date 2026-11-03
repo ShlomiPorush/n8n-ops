@@ -50,33 +50,36 @@ status() {
 # Once, for a development stack made before it generated its own secrets: points docker-compose-dev.yml at the
 # generated env files, makes them, and moves the kept database to its new password. Resumes where a run stopped.
 migrate() {
-  local env="$N8N_OPS_DATA_DIR/env" marker="$N8N_OPS_DATA_DIR/env/.rotate-postgres" was_old=0 name complete=1
+  local env="$N8N_OPS_DATA_DIR/env" marker="$N8N_OPS_DATA_DIR/env/.rotate-postgres" name complete=1 data=0
   [ -f "$DEV_COMPOSE_FILE" ] || die "docker-compose-dev.yml is missing; nothing to migrate"
-  if dev_compose_is_old; then
-    was_old=1
-    rewrite_compose_copy
-  fi
   for name in "${STACK_ENV_FILES[@]}"; do
     [ -f "$env/$name.env" ] || complete=0
   done
-  if [ -z "$(ls -A "$N8N_OPS_DATA_DIR/postgres" 2>/dev/null)" ]; then
+  [ -z "$(ls -A "$N8N_OPS_DATA_DIR/postgres" 2>/dev/null)" ] || data=1
+  if [ $data -eq 1 ] && [ ! -e "$marker" ]; then
+    if dev_compose_is_old; then
+      # The marker comes first, before the copy is rewritten: a run that stops anywhere after it resumes.
+      prepare_env_dir "$env"
+      : >"$marker"
+    elif [ $complete -eq 1 ]; then
+      info "Already migrated"
+      return
+    else
+      # Missing secrets with a kept database and no migration under way: they were lost, not never made.
+      die "the secrets in $env are missing, but the database is kept and no migration is under way.
+Put $env back, or start over with scripts/local.sh nuke (deletes the development data)."
+    fi
+  fi
+  if dev_compose_is_old; then
+    rewrite_compose_copy
+  fi
+  if [ $data -eq 0 ]; then
     # No database yet: nothing to move.
     write_stack_env "$env"
     check_stack_env "$env"
     rm -f "$marker"
     info "Done; start the stack with: scripts/local.sh start"
     return
-  fi
-  if [ ! -e "$marker" ]; then
-    if [ $complete -eq 1 ]; then
-      info "Already migrated"
-      return
-    fi
-    # Missing secrets with a kept database and no migration under way: they were lost, not never made.
-    [ $was_old -eq 1 ] || die "the secrets in $env are missing, but the database is kept and no migration is under way.
-Put $env back, or start over with scripts/local.sh nuke (deletes the development data)."
-    prepare_env_dir "$env"
-    : >"$marker"
   fi
   # From here a stopped run resumes: existing files are kept, missing ones made with the password already chosen.
   write_stack_env "$env"

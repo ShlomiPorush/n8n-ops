@@ -337,7 +337,9 @@ dev_compose() {
   # names env files that no longer exist.
   if dev_compose_is_old; then
     case "${1:-}" in
-      down | logs | ps | stop) docker compose -p "$DEV_PROJECT" "$@" ;;
+      # From / so Compose finds no file at all (from the repository it would read the production one) and acts on
+      # the project's containers by their labels.
+      down | logs | ps | stop) (cd / && docker compose -p "$DEV_PROJECT" "$@") ;;
       *) die "docker-compose-dev.yml names the env files of before the stack generated its secrets. Run once:
   scripts/local.sh migrate" ;;
     esac

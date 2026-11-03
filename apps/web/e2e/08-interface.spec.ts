@@ -378,14 +378,14 @@ test("the list stays in place while its first item opens by itself, so focus is 
   const held = new Promise<void>((resolve) => {
     release = resolve
   })
-  const list = /\/api\/problems\?/
+  const list = /\/api\/problems\/rows\?/
   await page.route(list, async (route) => {
     await held
     await route.continue()
   })
   try {
     await page.goto("/problems")
-    const box = page.getByLabel("Search workflow or error")
+    const box = page.getByLabel("Search workflow, target or error")
     await expect(box).toBeVisible()
     await expect(page.locator("tbody tr")).toHaveCount(0)
     await expect(page).toHaveURL(/\/problems$/)
@@ -1114,9 +1114,18 @@ test("the 12-hour Time format writes the daily backup time that way as soon as i
 function standInProblem(id: string, workflowName: string, errorMessage: string, more: Record<string, unknown> = {}) {
   const at = new Date(Date.now() - 3 * 86_400_000).toISOString()
   const state = { status: "open", regression: false, count: 1, firstSeen: at, lastSeen: at, mutedUntil: null }
+  // Its cause (docs/adr/0003): the node, as for a Code node that names no host or credential.
+  const cause = {
+    title: `Call ERP · ${errorMessage}`,
+    target: "Call ERP",
+    reason: errorMessage,
+    kind: "other",
+    hint: null,
+  }
   return {
     id,
     errorMessage,
+    ...cause,
     ...state,
     workflows: 1,
     instances: ["e2e-n8n"],
@@ -1130,8 +1139,10 @@ function standInProblem(id: string, workflowName: string, errorMessage: string, 
         workflowName,
         nodeName: "Call ERP",
         errorMessage,
+        ...cause,
         ...state,
         resolvedAt: null,
+        state: "quiet",
       },
     ],
     ...more,
@@ -1627,7 +1638,8 @@ test("an item opened from its list starts on its first tab, and an address with 
   await expect(page).toHaveURL((url) => url.pathname !== `/instances/${id}` && url.search === "")
   await expect(page.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true")
 
-  // A problem's tab stays its own: the list's links keep its filters but not the open tab.
+  // A problem's tab stays its own: the list's links keep its filters but not the open tab. A row opens its own
+  // workflow on Overview.
   await page.goto("/problems?status=all")
   await page
     .getByRole("row", { name: /Sync orders to ERP/ })
@@ -1640,7 +1652,7 @@ test("an item opened from its list starts on its first tab, and an address with 
     .locator("[data-href]")
     .evaluateAll((els) => els.map((el) => (el as HTMLElement).dataset.href))
   expect(links.length).toBeGreaterThan(0)
-  for (const link of links) expect(link).toMatch(/^\/problems\/[^?]+\?status=all$/)
+  for (const link of links) expect(link).toMatch(/^\/problems\/[^?]+\?status=all&workflow=[^&]+&tab=overview$/)
 
   // A smaller screen opens it as a dialog; closing it leaves the list's address without the tab.
   await page.setViewportSize({ width: 900, height: 800 })
@@ -1724,7 +1736,7 @@ test("Merge lands on the problem merged into, and Back returns to the problem it
     await page.getByRole("menuitem", { name: "Merge into…" }).click()
     const dialog = page.getByRole("dialog", { name: "Merge into Another Problem" })
     await dialog.getByRole("button", { name: /^Problem to merge into:/ }).click()
-    await page.getByRole("option", { name: "Merge target · Stand-in problem" }).click()
+    await page.getByRole("option", { name: "Merge target · Call ERP · Stand-in problem" }).click()
     await expect.poll(overlayEntry).not.toBeNull()
     await dialog.getByRole("button", { name: "Merge", exact: true }).click()
     await expect(page).toHaveURL((url) => url.pathname === "/problems/e2e-merge-target")
@@ -1774,7 +1786,7 @@ test("a long choice in a form has a search that reads an underscore as a space, 
     await expect(list.getByRole("option")).toHaveCount(1)
     await search.press("Enter")
     await expect(search).toHaveCount(0)
-    await expect(field).toHaveAccessibleName("Problem to merge into: Nightly_sync_7 · Stand-in problem")
+    await expect(field).toHaveAccessibleName("Problem to merge into: Nightly_sync_7 · Call ERP · Stand-in problem")
     await expect(field).toBeFocused()
     await page.keyboard.press("Escape")
     await expect(dialog).toHaveCount(0)
@@ -1792,7 +1804,7 @@ test("a list keeps its rows when a refresh fails, says so under the title, and T
   await expect(page.getByRole("heading", { name: "Where It Broke" })).toBeVisible()
   const shown = await rows.count()
   // From now on the list answers as a server that has a problem does; the problem pane is not touched.
-  const list = (url: URL) => url.pathname === "/api/problems" && url.searchParams.get("status") === "all"
+  const list = (url: URL) => url.pathname === "/api/problems/rows" && url.searchParams.get("status") === "all"
   await page.route(list, (route) => route.fulfill({ status: 500, json: { error: "internal_error" } }))
   const failed = page.getByRole("status").filter({ hasText: "Could not refresh" })
   try {
@@ -1818,7 +1830,7 @@ test("new filters whose list fails to load keep the previous rows, and the filte
   await expect(rows.first()).toBeVisible()
   await expect(page.getByRole("heading", { name: "Where It Broke" })).toBeVisible()
   const shown = await rows.count()
-  const muted = (url: URL) => url.pathname === "/api/problems" && url.searchParams.get("status") === "muted"
+  const muted = (url: URL) => url.pathname === "/api/problems/rows" && url.searchParams.get("status") === "muted"
   await page.route(muted, (route) => route.fulfill({ status: 500, json: { error: "internal_error" } }))
   const note = page.getByRole("status").filter({ hasText: "Could not load muted problems; showing the previous list" })
   const countLine = page.locator('[data-slot="list-count"]')
@@ -1830,7 +1842,7 @@ test("new filters whose list fails to load keep the previous rows, and the filte
     // The rows stay instead of an error, and the line takes the place of a count that would name them muted.
     await expect(rows).toHaveCount(shown)
     await expect(page.getByText("Could not load problems")).toHaveCount(0)
-    await expect(countLine).not.toHaveText(/^[\d,]+ muted problems?/)
+    await expect(countLine).not.toHaveText(/^[\d,]+ muted rows?/)
     await expect(page.getByRole("status").filter({ hasText: "Could not refresh" })).toHaveCount(0)
   } finally {
     await page.unroute(muted)
@@ -1839,22 +1851,22 @@ test("new filters whose list fails to load keep the previous rows, and the filte
   await page.getByRole("button", { name: "Try again" }).click()
   await expect(note).toHaveCount(0)
   await expect(page.getByText("Could not load problems")).toHaveCount(0)
-  await expect(countLine).toHaveText(/^[\d,]+ muted problems?$/)
+  await expect(countLine).toHaveText(/^[\d,]+ muted rows?$/)
 })
 
-test("the Problems count line counts every problem, also above the 200 the list holds (TB-18)", async () => {
+test("the Problems count line counts every row, also above the 200 the list holds (TB-18)", async () => {
   await page.goto("/problems?status=all")
   const rows = page.locator("[data-scroll-pane]").first().locator("[data-href]")
   await expect(rows.first()).toBeVisible()
-  // Every problem is on screen: a plain count, and no note about the others. The count line only: Regular's top
+  // Every row is on screen: a plain count, and no note about the others. The count line only: Regular's top
   // bar has a link that counts the open problems too.
   const countLine = page.locator('[data-slot="list-count"]')
   const shown = await rows.count()
-  await expect(countLine).toHaveText(new RegExp(`^${shown} problems?$`))
+  await expect(countLine).toHaveText(new RegExp(`^${shown} rows?$`))
   await expect(page.getByText(/^Showing the first/)).toHaveCount(0)
 
   // The server says there are more than it sent.
-  const list = (url: URL) => url.pathname === "/api/problems" && url.searchParams.get("status") === "all"
+  const list = (url: URL) => url.pathname === "/api/problems/rows" && url.searchParams.get("status") === "all"
   await page.route(list, async (route) => {
     const res = await route.fetch()
     await route.fulfill({ response: res, json: { ...(await res.json()), total: 1240 } })
@@ -1862,7 +1874,7 @@ test("the Problems count line counts every problem, also above the 200 the list 
   try {
     await page.reload()
     await expect(rows.first()).toBeVisible()
-    await expect(countLine).toHaveText(new RegExp(`^${shown} of 1,240 problems$`))
+    await expect(countLine).toHaveText(new RegExp(`^${shown} of 1,240 rows$`))
     await expect(
       page.getByText(`Showing the first ${shown} in this order. Search or filter to find the others.`),
     ).toBeVisible()
@@ -1880,7 +1892,7 @@ test("the Problems list asks the server for its order and draws the rows as they
   // Beside the reading pane the list has no header row; its Sort button sets the same order. Failures start with
   // the most.
   const sorted = (url: URL) =>
-    url.pathname === "/api/problems" &&
+    url.pathname === "/api/problems/rows" &&
     url.searchParams.get("status") === "all" &&
     url.searchParams.get("sort") === "failures" &&
     url.searchParams.get("order") === "desc"
@@ -1894,7 +1906,7 @@ test("the Problems list asks the server for its order and draws the rows as they
   ])
   await expect(menu.getByRole("radio", { name: "Most first" })).toBeChecked()
   await page.keyboard.press("Escape")
-  const answer = (await asked.json()) as { items: { id: string; count: number }[]; total: number }
+  const answer = (await asked.json()) as { items: { problemId: string; count: number }[]; total: number }
   expect(answer.items.length).toBeGreaterThan(0)
   expect(answer.total).toBeGreaterThanOrEqual(answer.items.length)
   // The most failures first, and the rows in the server's order, not sorted again in the page.
@@ -1905,13 +1917,13 @@ test("the Problems list asks the server for its order and draws the rows as they
     (await rows.evaluateAll((els) => els.map((el) => el.getAttribute("data-href") ?? ""))).map(
       (href) => href.split("?")[0]?.split("/").pop() ?? "",
     )
-  await expect.poll(ids).toEqual(answer.items.map((p) => p.id))
+  await expect.poll(ids).toEqual(answer.items.map((r) => r.problemId))
 })
 
 test("a new filter starts the list at its first row, and the filter bar stays in sight (TB-7, NL-16)", async () => {
   // A short screen and sixty rows for every filter, so the list scrolls whatever the run recorded: the first
   // problem of all and copies of it under ids of their own.
-  const list = (url: URL) => url.pathname === "/api/problems"
+  const list = (url: URL) => url.pathname === "/api/problems/rows"
   let seed: { id: string } | undefined
   await page.route(list, async (route) => {
     try {
@@ -1970,7 +1982,7 @@ test("an order whose list fails to load leaves the rows and the Sort button in t
   await expect(button).toHaveAccessibleName("Sort: Default order")
   await expect(button).not.toHaveAttribute("data-set")
   const sorted = (url: URL) =>
-    url.pathname === "/api/problems" && url.searchParams.get("status") === "all" && url.searchParams.has("sort")
+    url.pathname === "/api/problems/rows" && url.searchParams.get("status") === "all" && url.searchParams.has("sort")
   await page.route(sorted, (route) => route.fulfill({ status: 500, json: { error: "internal_error" } }))
   const note = page.getByRole("status").filter({ hasText: "Could not load problems; showing the previous list" })
   try {
@@ -1998,16 +2010,16 @@ test("an order whose list fails to load leaves the rows and the Sort button in t
 test("the open problems of an instance say when a new order or a refresh failed, and keep the rows (TB-4, TB-5)", async () => {
   const id = await openInstanceB()
   // Stand-in rows, so the test does not depend on which problems are open: two, the fewer failures first.
-  const problem = (n: number, count: number) =>
-    standInProblem(`00000000-0000-4000-8000-00000000000${n}`, `E2E stand-in ${n}`, "ERP refused", {
-      count,
-      lastSeen: new Date(Date.now() - n * 60_000).toISOString(),
-      instances: ["e2e-n8n-b"],
-    })
+  const problem = (n: number, count: number) => {
+    const p = standInProblem(`00000000-0000-4000-8000-00000000000${n}`, `E2E stand-in ${n}`, "ERP refused")
+    const lastSeen = new Date(Date.now() - n * 60_000).toISOString()
+    // A row of the list: the problem's one workflow, on e2e-n8n-b.
+    return { ...p.affectedWorkflows[0], problemId: p.id, section: "now", problemTotal: 1, count, lastSeen }
+  }
   const [few, many] = [problem(1, 2), problem(2, 9)]
   let sortFails = true
   let fails = false
-  const list = (url: URL) => url.pathname === "/api/problems" && url.searchParams.get("instance") === id
+  const list = (url: URL) => url.pathname === "/api/problems/rows" && url.searchParams.get("instance") === id
   await page.route(list, (route) => {
     const sort = new URL(route.request().url()).searchParams.get("sort")
     if (fails || (sort && sortFails)) return route.fulfill({ status: 500, json: { error: "internal_error" } })
@@ -2016,7 +2028,8 @@ test("the open problems of an instance say when a new order or a refresh failed,
   try {
     await page.goto(`/instances/${id}?tab=problems`)
     const panel = page.getByRole("tabpanel")
-    const rows = panel.locator("tbody tr")
+    // Its rows, without the headings of the sections it reads in by default.
+    const rows = panel.locator("tbody tr:not([data-section])")
     const button = panel.getByRole("button", { name: /^Sort:/ })
     const menu = page.getByRole("dialog", { name: "Sort open problems" })
     await expect(rows.first()).toContainText("E2E stand-in 1")

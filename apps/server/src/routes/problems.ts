@@ -5,7 +5,13 @@ import { type Ctx, changed } from "../context.ts"
 import { affectedWorkflows, failures, type ProblemAction, problems } from "../db/schema.ts"
 import { requireUser } from "../http/middleware.ts"
 import { actorName, type Env } from "../http/types.ts"
-import { parseProblemOrder, problemDetail, problemPage, regroupedView } from "../services/problem-view.ts"
+import {
+  parseProblemOrder,
+  problemDetail,
+  problemPage,
+  problemRowsPage,
+  regroupedView,
+} from "../services/problem-view.ts"
 import {
   applyProblemAction,
   mergeProblems,
@@ -44,6 +50,22 @@ export function problemRoutes(ctx: Ctx) {
    * recently failed). The id may be an Affected workflow's or a merged Problem's (old links, old Telegram buttons):
    * the answer's `id` is the Problem's, which the page then uses.
    */
+  /*
+   * `{ items, total }`: the list as rows, one per Affected workflow (docs/adr/0003), with its section, in the order
+   * asked for or in sections, the first 200 and how many match in all (TB-4, TB-18). Before `/:id`.
+   */
+  app.get("/rows", async (c) => {
+    const instance = c.req.query("instance")
+    const filter = {
+      status: c.req.query("status") ?? "open",
+      instanceId: instance && uuid.safeParse(instance).success ? instance : undefined,
+      q: c.req.query("q"),
+    }
+    if (instance && !filter.instanceId) return c.json({ items: [], total: 0 })
+    const order = parseProblemOrder(c.req.query("sort"), c.req.query("order"))
+    return c.json(await problemRowsPage(ctx, { ...filter, order }))
+  })
+
   app.get("/:id", async (c) => {
     const id = c.req.param("id")
     const workflow = c.req.query("workflow")

@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto"
 import { EventEmitter } from "node:events"
 import { join } from "node:path"
+import { eq } from "drizzle-orm"
 import postgres from "postgres"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import type { Ctx } from "../context.ts"
@@ -9,7 +10,14 @@ import { affectedWorkflows, apiTokens, failures, instances, problems } from "../
 import { createAudit } from "../lib/audit.ts"
 import { sha256 } from "../lib/crypto.ts"
 import { agentFailure, agentProblem, agentProblems } from "../services/agent.ts"
-import { type ProblemFilter, type ProblemOrder, problemDetail, problemPage } from "../services/problem-view.ts"
+import {
+  type ProblemFilter,
+  type ProblemOrder,
+  problemDetail,
+  problemPage,
+  problemRowsPage,
+  titleSql,
+} from "../services/problem-view.ts"
 import { restRoutes } from "./agent.ts"
 
 // The Problems list against a real PostgreSQL (TB-4, TB-18): sorted before the limit, so a sort covers every
@@ -368,5 +376,175 @@ describe("a Problem that hit several workflows", () => {
     expect(await agentFailure(ctx, multi[1]?.id ?? "", m1?.id)).toBeNull()
     const chosen = await agentProblem(ctx, pid, multi[2]?.id)
     expect(chosen && "selected" in chosen ? chosen.selected.nodeName : null).toBe("HTTP 2")
+  })
+})
+
+describe("the Problems list as rows", () => {
+  it("lists one row per workflow in sections, filters before the limit, and reads an ended mute as open", async () => {
+    const [own] = await database.db
+      .insert(instances)
+      .values({ name: "rows-n8n", baseUrl: "http://rows:5678", apiKeyEnc: "v1:x:y:z" })
+      .returning()
+    if (!own) throw new Error("no instance")
+    const at = (state: Partial<typeof affectedWorkflows.$inferInsert>) =>
+      row(own.id, { target: "crm.example.com", reason: "HTTP 400 · Bad ticket", kind: "req", ...state })
+    await at({ workflowName: "Quiet one", lastSeen: ago(3 * day) })
+    const now = await at({ workflowName: "Failing one", lastSeen: ago(hour) })
+    await at({ workflowName: "Runner one", kind: "runner", lastSeen: ago(2 * day) })
+    await at({ workflowName: "Alert one", kind: "alert", lastSeen: ago(hour) })
+    const muted = await at({ workflowName: "Muted one", status: "muted", mutedUntil: new Date(Date.now() + day) })
+    const ended = await at({
+      workflowName: "Mute ended",
+      status: "muted",
+      mutedUntil: ago(minute),
+      lastSeen: ago(90 * minute),
+    })
+    const resolved = await at({ workflowName: "Resolved one", status: "resolved", resolvedAt: ago(day) })
+    // A second workflow in the Problem of the failing one: the same cause in 2 workflows.
+    await at({ workflowName: "Peer one", lastSeen: ago(2 * hour) }).then((r) =>
+      database.db.update(affectedWorkflows).set({ problemId: now.problemId }).where(eq(affectedWorkflows.id, r.id)),
+    )
+
+    const all = await problemRowsPage(ctx, { status: "all", instanceId: own.id })
+    expect(all.items.map((r) => [r.workflowName, r.section])).toEqual([
+      ["Runner one", "instance"],
+      ["Failing one", "now"],
+      ["Mute ended", "now"],
+      ["Peer one", "now"],
+      ["Quiet one", "quiet"],
+      ["Alert one", "alerts"],
+      ["Muted one", "muted"],
+      ["Resolved one", "resolved"],
+    ])
+    expect(all.total).toBe(8)
+    expect(all.items.find((r) => r.id === now.id)).toMatchObject({
+      problemId: now.problemId,
+      problemTotal: 2,
+      title: "crm.example.com · HTTP 400 · Bad ticket",
+      state: "now",
+    })
+
+    const open = await problemRowsPage(ctx, { status: "open", instanceId: own.id })
+    expect(open.items.map((r) => r.id)).not.toContain(muted.id)
+    expect(open.items.map((r) => r.id)).not.toContain(resolved.id)
+    expect(open.items.map((r) => r.id)).toContain(ended.id)
+    expect((await problemRowsPage(ctx, { status: "muted", instanceId: own.id })).items.map((r) => r.id)).toEqual([
+      muted.id,
+    ])
+
+    // Search reads the target and the reason too; the count is over every match, before the limit.
+    const found = await problemRowsPage(ctx, { status: "all", instanceId: own.id, q: "Bad ticket", limit: 2 })
+    expect(found.items).toHaveLength(2)
+    expect(found.total).toBe(8)
+    // An order picked replaces the sections.
+    const byName = await problemRowsPage(ctx, {
+      status: "all",
+      instanceId: own.id,
+      order: { sort: "workflow", order: "asc" },
+    })
+    expect(byName.items.map((r) => r.workflowName)).toEqual([
+      "Alert one",
+      "Failing one",
+      "Muted one",
+      "Mute ended",
+      "Peer one",
+      "Quiet one",
+      "Resolved one",
+      "Runner one",
+    ])
+  })
+
+  it("reads a row as screens show it: status, workflows, a Merge, and the orders by Status and Cause", async () => {
+    const [own] = await database.db
+      .insert(instances)
+      .values({ name: "shown-n8n", baseUrl: "http://shown:5678", apiKeyEnc: "v1:x:y:z" })
+      .returning()
+    if (!own) throw new Error("no instance")
+    const pad = " The service said so in many more words than any screen needs to show here."
+    // Over 100 characters, "Error fetching from <url>:" goes from the title, so this one reads "Zebra failed…".
+    const zebra = await row(own.id, {
+      workflowName: "Zebra",
+      target: "api.example.com",
+      reason: `Error fetching from https://api.example.com/v1: Zebra failed.${pad}`,
+      kind: "svc",
+      status: "muted",
+      mutedUntil: ago(minute),
+      lastSeen: ago(hour),
+    })
+    const mango = await row(own.id, {
+      workflowName: "Mango",
+      target: "api.example.com",
+      reason: `Mango failed.${pad}`,
+      kind: "svc",
+      regression: true,
+    })
+    // Two nodes of one workflow: one workflow, not two.
+    const { workflowId, workflowName, target, reason, kind } = zebra
+    await row(own.id, { workflowId, workflowName, target, reason, kind, nodeName: "Second node" }, zebra.problemId)
+    const page = (order?: { sort: "status" | "error"; order: "asc" | "desc" }) =>
+      problemRowsPage(ctx, { status: "all", instanceId: own.id, order })
+
+    const all = await page()
+    const shownZebra = all.items.find((r) => r.id === zebra.id)
+    // A mute that ended reads as open, in its status too.
+    expect(shownZebra).toMatchObject({ status: "open", state: "now", problemTotal: 1, mergedByHand: false })
+    expect(shownZebra?.title).toBe(`api.example.com · Zebra failed.${pad}`)
+
+    // By Cause: by the title shown, not by the reason as stored.
+    const byCause = await page({ sort: "error", order: "asc" })
+    expect(byCause.items.map((r) => r.workflowName)).toEqual(["Mango", "Zebra", "Zebra"])
+    // By Status, high to low: the regression first, as its badge reads, whatever its section.
+    const byStatus = await page({ sort: "status", order: "desc" })
+    expect(byStatus.items[0]?.id).toBe(mango.id)
+
+    // Merged by hand: the rows and the Problem say so.
+    await database.db.update(problems).set({ mergedInto: zebra.problemId }).where(eq(problems.id, mango.problemId))
+    await database.db
+      .update(affectedWorkflows)
+      .set({ problemId: zebra.problemId })
+      .where(eq(affectedWorkflows.id, mango.id))
+    const merged = await page()
+    expect(merged.items.find((r) => r.id === mango.id)).toMatchObject({ problemTotal: 2, mergedByHand: true })
+    expect((await problemDetail(ctx, zebra.problemId))?.mergedByHand).toBe(true)
+  })
+
+  it("orders by Cause by the very title screens show", async () => {
+    const [own] = await database.db
+      .insert(instances)
+      .values({ name: "titles-n8n", baseUrl: "http://titles:5678", apiKeyEnc: "v1:x:y:z" })
+      .returning()
+    if (!own) throw new Error("no instance")
+    const reasons = [
+      // Over 120 characters: its first sentence, which sorts before a shorter reason that goes on after it.
+      `Request failed. Zebra ${"Details ".repeat(20)}`,
+      "Request failed. Alpha",
+      `[RequestId: 42] Bad   ticket\n(see the log) ${"word ".repeat(20)}`,
+      `No sentence end ${"x".repeat(400)}`,
+      "  short  ",
+    ]
+    for (const reason of reasons) await row(own.id, { target: "api.example.com", reason, kind: "svc" })
+    // A row from before the regroup by cause reads its error text.
+    await row(own.id, { errorMessage: "Old error text" })
+
+    const byCause = await problemRowsPage(ctx, {
+      status: "all",
+      instanceId: own.id,
+      order: { sort: "error", order: "asc" },
+    })
+    const titles = byCause.items.map((r) => r.title)
+    expect(titles.indexOf("api.example.com · Request failed.")).toBeLessThan(
+      titles.indexOf("api.example.com · Request failed. Alpha"),
+    )
+    // The SQL that sorts gives each row the title the screens show.
+    const inSql = await database.db
+      .select({
+        id: affectedWorkflows.id,
+        title: titleSql(affectedWorkflows.target, affectedWorkflows.reason, affectedWorkflows.errorMessage),
+      })
+      .from(affectedWorkflows)
+      .where(eq(affectedWorkflows.instanceId, own.id))
+    expect(Object.fromEntries(inSql.map((r) => [r.id, r.title]))).toEqual(
+      Object.fromEntries(byCause.items.map((r) => [r.id, r.title])),
+    )
   })
 })

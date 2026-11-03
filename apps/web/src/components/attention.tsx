@@ -36,9 +36,9 @@ const time = (at: string | null) => (
 )
 
 function ProblemRow({ a, onOpen }: { a: Extract<AttentionItem, { kind: "problem" }>; onOpen?: OpenItem }) {
-  // A Problem in several workflows is named by its error, and its buttons say they act on all of them.
+  // A Problem in several workflows is named by its cause, and its buttons say they act on all of them.
   const single = a.affectedTotal <= 1
-  const title = single ? a.workflowName : a.errorMessage
+  const title = single ? a.workflowName : a.title
   const named = () => (title.length > 60 ? `${title.slice(0, 59)}…` : title)
   const resolve = useProblemAction(a.id, "resolve", named)
   const mute = useProblemAction(a.id, "mute", named)
@@ -74,7 +74,9 @@ function ProblemRow({ a, onOpen }: { a: Extract<AttentionItem, { kind: "problem"
     >
       {single ? (
         <>
-          <span className="block truncate font-mono text-code">{a.errorMessage}</span>
+          <span className="block truncate" title={a.title}>
+            <UserText>{a.title}</UserText>
+          </span>
           <span>
             <UserText>{a.instanceName}</UserText> · {plural(a.count, "failure")}
           </span>

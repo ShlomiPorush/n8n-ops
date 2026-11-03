@@ -143,7 +143,7 @@ function useServerSearch(q: string, enabled: boolean) {
                 id: `problem:${p.id}`,
                 title: problemTitle(p),
                 subtitle: isSingle(p)
-                  ? `${p.affectedWorkflows[0]?.instanceName ?? ""} · ${p.errorMessage}`
+                  ? `${p.affectedWorkflows[0]?.instanceName ?? ""} · ${p.title}`
                   : `${plural(p.workflows, "workflow")} · ${instancesText(p)}`,
                 meta: p.status,
                 to: `/problems/${p.id}?status=all&q=${query}`,

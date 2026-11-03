@@ -1638,7 +1638,8 @@ test("an item opened from its list starts on its first tab, and an address with 
   await expect(page).toHaveURL((url) => url.pathname !== `/instances/${id}` && url.search === "")
   await expect(page.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true")
 
-  // A problem's tab stays its own: the list's links keep its filters but not the open tab.
+  // A problem's tab stays its own: the list's links keep its filters but not the open tab. A row opens its own
+  // workflow on Overview.
   await page.goto("/problems?status=all")
   await page
     .getByRole("row", { name: /Sync orders to ERP/ })
@@ -1651,7 +1652,7 @@ test("an item opened from its list starts on its first tab, and an address with 
     .locator("[data-href]")
     .evaluateAll((els) => els.map((el) => (el as HTMLElement).dataset.href))
   expect(links.length).toBeGreaterThan(0)
-  for (const link of links) expect(link).toMatch(/^\/problems\/[^?]+\?status=all$/)
+  for (const link of links) expect(link).toMatch(/^\/problems\/[^?]+\?status=all&workflow=[^&]+&tab=overview$/)
 
   // A smaller screen opens it as a dialog; closing it leaves the list's address without the tab.
   await page.setViewportSize({ width: 900, height: 800 })

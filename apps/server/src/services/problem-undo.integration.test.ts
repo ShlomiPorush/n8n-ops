@@ -248,6 +248,40 @@ describe("a failed execution", () => {
     expect(await readProblem(a?.problemId ?? "")).toMatchObject({ target: "New" })
   })
 
+  it("keeps a newer label that another ingest committed while this one waited for the Problem", async () => {
+    const run = (id: string, workflowId: string, name: string, at: number) => ({
+      ...execution(id, workflowId, "Upload", "Client authentication failed."),
+      startedAt: new Date(Date.now() - at).toISOString(),
+      stoppedAt: new Date(Date.now() - at).toISOString(),
+      workflowData: {
+        id: workflowId,
+        name: workflowId,
+        nodes: [
+          { name: "Upload", type: "n8n-nodes-base.microsoftOneDrive", credentials: { oauth: { id: "cred-3", name } } },
+        ],
+        connections: {},
+      } as never,
+    })
+    const a = await ingestExecution(ctx, instance, run("race-a1", "race-a", "Initial", 3 * hour), { silent: true })
+    const b = await ingestExecution(ctx, instance, run("race-b1", "race-b", "Initial", 4 * hour), { silent: true })
+    const pid = a?.problemId ?? ""
+    let late: Promise<unknown> = Promise.resolve()
+    // Another ingest holds the Problem: workflow B failed an hour ago under the new name, not committed yet.
+    await database.db.transaction(async (tx) => {
+      await tx.select({ id: problems.id }).from(problems).where(eq(problems.id, pid)).for("update")
+      await tx
+        .update(affectedWorkflows)
+        .set({ lastSeen: new Date(Date.now() - hour) })
+        .where(eq(affectedWorkflows.id, b?.affectedWorkflowId ?? ""))
+      await tx.update(problems).set({ target: "New" }).where(eq(problems.id, pid))
+      // A failure of A from two hours ago, under a name in between, waits for that ingest.
+      late = ingestExecution(ctx, instance, run("race-a2", "race-a", "Between", 2 * hour), { silent: true })
+      await new Promise((done) => setTimeout(done, 500))
+    })
+    await late
+    expect(await readProblem(pid)).toMatchObject({ target: "New" })
+  })
+
   it("joining a resolved Problem is a regression, a muted one stays muted without alerting", async () => {
     const resolved = await row({ status: "resolved", resolvedAt: new Date() })
     const r = await ingestExecution(

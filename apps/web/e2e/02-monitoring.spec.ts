@@ -230,17 +230,17 @@ test("a second workflow failing for the same cause joins the Problem, and Split 
   await page.goto("/problems?status=open")
   // The list column: a wide screen also opens the first problem beside it, whose rows name workflows too.
   const list = page.locator(`[data-scroll-pane="list"]`)
-  const joined = list.getByRole("row", { name: /2 workflows/ })
-  await expect(joined).toHaveCount(1)
-  await expect(joined).toContainText(/Get DNS (Data and Get DNS Zone|Zone and Get DNS Data)/)
+  // One row per workflow, each saying the same cause hit the other one too.
+  const joined = list.getByRole("row", { name: /same cause in 2 workflows/ })
+  await expect(joined).toHaveCount(2)
+  await expect(list.getByRole("row", { name: /^Get DNS Data/ })).toContainText("erp.e2e.invalid")
   await expect(list.getByRole("row", { name: /Sync orders to ERP/ })).toHaveCount(1)
 
-  // The row opens to its workflows; the Problem opens on them.
-  await joined.getByRole("button", { name: "Show the 2 workflows" }).click()
-  await expect(list.getByRole("row", { name: /^Get DNS Data/ })).toBeVisible()
-  await joined.click()
+  // A row opens the Problem on its workflow; the Problem lists both.
+  await list.getByRole("row", { name: /^Get DNS Zone/ }).click()
   const tab = (name: RegExp) => page.getByRole("tab", { name })
-  await expect(tab(/^Affected workflows/)).toHaveAttribute("aria-selected", "true")
+  await expect(tab(/^Overview/)).toHaveAttribute("aria-selected", "true")
+  await tab(/^Affected workflows/).click()
   const pane = page.getByRole("tabpanel")
   await expect(pane.getByRole("heading", { name: "Affected Workflows" })).toBeVisible()
   await expect(pane.getByRole("row", { name: /Get DNS Zone/ })).toBeVisible()
@@ -257,7 +257,7 @@ test("a second workflow failing for the same cause joins the Problem, and Split 
   await pick("Actions for Get DNS Data", "Split into its own problem")
   await expect(page.getByText("Split into a problem of its own: Get DNS Data")).toBeVisible()
   await page.goto("/problems?status=open")
-  await expect(list.getByRole("row", { name: /2 workflows/ })).toHaveCount(0)
+  await expect(list.getByRole("row", { name: /same cause in 2 workflows/ })).toHaveCount(0)
   await list.getByRole("row", { name: /^Get DNS Data/ }).click()
   await expect(page.getByRole("heading", { name: "Get DNS Data" })).toBeVisible()
   await pick("More actions", "Merge into…")

@@ -5,7 +5,6 @@ import {
   Braces as BracesIcon,
   CalendarPlus as CalendarPlusIcon,
   CheckCircle2,
-  ChevronRight,
   Copy as CopyIcon,
   Ellipsis,
   ExternalLink,
@@ -43,7 +42,7 @@ import {
 } from "@/components/kit"
 import { ListWithPanel } from "@/components/list-panel"
 import { type PaneTabItem, PaneTabPanel, PaneTabs, usePaneTab, withoutTab } from "@/components/pane-tabs"
-import { ProblemBadge, problemStatus, TimeAgo, When } from "@/components/status"
+import { ProblemBadge, TimeAgo, When } from "@/components/status"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -81,21 +80,20 @@ import {
   instancesText,
   isSingle,
   KIND_LABELS,
-  leadOf,
   type ProblemList,
   type ProblemRow,
+  type ProblemRowItem,
+  type ProblemRows,
   problemPath,
   problemTitle,
-  SECTION_ORDER,
   SECTION_TITLES,
   type Section,
-  sectionOf,
   workflowNames,
 } from "@/lib/problems"
 import { formatTime, useTimeFormat } from "@/lib/time"
 import { cn } from "@/lib/utils"
 
-export type { AffectedRow, ProblemList, ProblemRow } from "@/lib/problems"
+export type { AffectedRow, ProblemList, ProblemRow, ProblemRowItem, ProblemRows } from "@/lib/problems"
 
 /**
  * The address of a Problems list: its filters and the order picked. The server sorts before it cuts the list at
@@ -110,30 +108,40 @@ export function problemsPath(filters: Record<string, string>, order: SortState |
   return `/problems?${query}`
 }
 
-/** The Status column high to low is the order the server sends by default: regressions, new, open, muted, resolved. */
-const statusRank = { resolved: 0, muted: 1, open: 2, new: 3, regression: 4 } as const
 const arrival: SortState = { key: "status", dir: "descending" }
+
+/** The address of the Problems list as rows (one per Affected workflow), with its filters and the order picked. */
+export function problemRowsPath(filters: Record<string, string>, order: SortState | null = null): string {
+  return problemsPath(filters, order).replace(/^\/problems\?/, "/problems/rows?")
+}
+
+/** The sections high to low: what needs a look first. */
+const sectionRank: Record<Section, number> = { instance: 5, now: 4, quiet: 3, alerts: 2, muted: 1, resolved: 0 }
 
 /**
  * The order of a Problems list, shared by its headers and its Sort button: `shown` of `useSortOrder`, the order
- * the rows are in, while `asked` of the same `useSortOrder` is sent through `problemsPath`. The server sorts every
- * problem before it sends the first 200, so the rows are drawn as they came, never sorted again here (TB-4). The
- * keys are the server's sort columns (`problemSortKeys` in services/problem-view.ts).
+ * the rows are in, while `asked` of the same `useSortOrder` is sent through `problemRowsPath`. The server sorts every
+ * row before it sends the first 200, so the rows are drawn as they came, never sorted again here (TB-4). The keys are
+ * the server's sort columns (`problemSortKeys` in services/problem-view.ts).
  */
-export function useProblemsSort(rows: ProblemRow[], order: SortOrder, showInstance = true): Sorting<ProblemRow> {
+export function useProblemsSort(
+  rows: ProblemRowItem[],
+  order: SortOrder,
+  showInstance = true,
+): Sorting<ProblemRowItem> {
   return useSort(rows, {
     id: showInstance ? "problems" : "instance-problems",
     order,
     arrival,
     columns: {
-      status: { label: "Status", kind: "number", words: RANK_WORDS, value: (p) => statusRank[problemStatus(p)] },
-      workflow: { label: "Workflow", kind: "text", value: (p) => leadOf(p)?.workflowName ?? "" },
-      error: { label: "Cause", kind: "text", value: (p) => p.title },
+      status: { label: "Status", kind: "number", words: RANK_WORDS, value: (r) => sectionRank[r.section] },
+      workflow: { label: "Workflow", kind: "text", value: (r) => r.workflowName },
+      error: { label: "Cause", kind: "text", value: (r) => r.title },
       ...(showInstance
-        ? { instance: { label: "Instance", kind: "text" as const, value: (p: ProblemRow) => p.instances[0] ?? "" } }
+        ? { instance: { label: "Instance", kind: "text" as const, value: (r: ProblemRowItem) => r.instanceName } }
         : {}),
-      failures: { label: "Failures", kind: "number", value: (p) => p.count },
-      lastSeen: { label: "Last seen", kind: "date", value: (p) => new Date(p.lastSeen) },
+      failures: { label: "Failures", kind: "number", value: (r) => r.count },
+      lastSeen: { label: "Last seen", kind: "date", value: (r) => new Date(r.lastSeen) },
     },
   })
 }
@@ -164,21 +172,6 @@ type RawView = { json: unknown } | { loading: true } | { failed: unknown }
 
 const statusWords: Record<string, string> = { open: "open", muted: "muted", resolved: "resolved" }
 
-/** Opens or closes the workflows of a Problem in a list; the row itself still opens the Problem. */
-function ExpandButton({ open, count, onToggle }: { open: boolean; count: number; onToggle: () => void }) {
-  return (
-    <button
-      type="button"
-      aria-expanded={open}
-      aria-label={open ? `Hide the ${count} workflows` : `Show the ${count} workflows`}
-      onClick={onToggle}
-      className="inline-grid size-5 shrink-0 place-items-center rounded-sm text-muted-foreground hover:text-ink"
-    >
-      <ChevronRight aria-hidden className={cn("size-4 transition-transform duration-150", open && "rotate-90")} />
-    </button>
-  )
-}
-
 /** The kind of a cause, as a small badge. */
 export function KindBadge({ kind }: { kind: CauseKind | null }) {
   if (!kind) return null
@@ -189,29 +182,23 @@ export function KindBadge({ kind }: { kind: CauseKind | null }) {
   )
 }
 
-/** What went wrong, "target · reason", with its kind: the line under a workflow in a list. */
-function CauseLine({ p }: { p: Pick<ProblemRow, "title" | "kind"> }) {
+/** What went wrong at a workflow, "target · reason" with its kind, and the line for a known error under it. */
+function CauseLine({ r }: { r: Pick<ProblemRowItem, "title" | "kind" | "hint"> }) {
   return (
-    <span className="flex min-w-0 items-center gap-2">
-      <KindBadge kind={p.kind} />
-      <UserText className="min-w-0 truncate text-small" title={p.title}>
-        {p.title}
-      </UserText>
-    </span>
+    <>
+      <span className="flex min-w-0 items-center gap-2">
+        <KindBadge kind={r.kind} />
+        <UserText className="min-w-0 truncate text-small" title={r.title}>
+          {r.title}
+        </UserText>
+      </span>
+      {r.hint && (
+        <span className="block truncate text-small text-muted-foreground" title={r.hint}>
+          {r.hint}
+        </span>
+      )}
+    </>
   )
-}
-
-/** The rows of a list cut into its sections, in the order they came within each (`sectionOf`). */
-function bySection(rows: ProblemRow[]) {
-  const parts = new Map<Section, ProblemRow[]>()
-  for (const p of rows) {
-    const s = sectionOf(p, p.status)
-    parts.set(s, [...(parts.get(s) ?? []), p])
-  }
-  return SECTION_ORDER.flatMap((s) => {
-    const list = parts.get(s)
-    return list?.length ? [{ section: s, rows: list }] : []
-  })
 }
 
 /** The heading of a section: a row that is not one of the list's items. */
@@ -228,6 +215,14 @@ function SectionRow({ section, count, columns }: { section: Section; count: numb
   )
 }
 
+/** " · same cause in 3 workflows" when the same cause hit other workflows too. */
+const alsoIn = (r: ProblemRowItem) =>
+  r.problemTotal > 1 ? ` · same cause in ${plural(r.problemTotal, "workflow")}` : ""
+
+/**
+ * The Problems list, one row per workflow at one node with one cause (docs/adr/0003): where it broke, what went
+ * wrong there, and how often. In the server's default order it reads in sections.
+ */
 export function ProblemsTable({
   rows,
   selected,
@@ -240,54 +235,53 @@ export function ProblemsTable({
   sort,
   sections,
 }: {
-  rows: ProblemRow[]
-  selected?: string
-  /** Opens a Problem, or one of its workflows. */
-  onOpen: (id: string, workflow?: string) => void
+  rows: ProblemRowItem[]
+  /** The Problem open beside the list, and the workflow it shows. */
+  selected?: { problemId: string; workflow?: string | null }
+  /** Opens a Problem on one of its workflows. */
+  onOpen: (problemId: string, workflow: string) => void
   /** The address of a row, for the list that opens its first item by itself. */
-  href?: (id: string, workflow?: string) => string
+  href?: (problemId: string, workflow: string) => string
   showInstance?: boolean
   empty?: string
   /** Inside a panel that has its own header. */
   bare?: boolean
   /** Each row as an item of a few lines, for a list beside a reading pane. */
   items?: boolean
-  /**
-   * The list's order (`useProblemsSort`), the order the rows are in, which its Sort button shares. Without it the
-   * rows are a few picked by the caller, shown in their order with no sort.
-   */
-  sort?: Sorting<ProblemRow>
-  /** In the order the server sends by default: cut into sections (failing now, quiet, your alerts…). */
+  /** The list's order (`useProblemsSort`), which its Sort button shares. Without it the rows come as given. */
+  sort?: Sorting<ProblemRowItem>
+  /** In the order the server sends by default: with a heading before each section. */
   sections?: boolean
 }) {
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set())
   if (rows.length === 0) {
     const empt = <Empty title={empty}>A failure that n8n reports shows up here once, however often it repeats.</Empty>
     return bare ? empt : <Panel>{empt}</Panel>
   }
-  const toggle = (id: string) =>
-    setExpanded((now) => {
-      const next = new Set(now)
-      if (!next.delete(id)) next.add(id)
-      return next
-    })
-  /** The rows, with a heading before each section when the list is cut into sections. */
-  const grouped = (list: ProblemRow[]): (ProblemRow | { section: Section; count: number })[] =>
-    sections ? bySection(list).flatMap(({ section, rows: part }) => [{ section, count: part.length }, ...part]) : list
-  const rowProps = (p: ProblemRow) => ({
-    "data-state": selected === p.id ? "selected" : undefined,
-    "aria-current": selected === p.id ? ("true" as const) : undefined,
+  const list = sort?.rows ?? rows
+  const isSelected = (r: ProblemRowItem) =>
+    selected?.problemId === r.problemId && (!selected.workflow || selected.workflow === r.id)
+  const rowProps = (r: ProblemRowItem) => ({
+    "data-state": isSelected(r) ? "selected" : undefined,
+    "aria-current": isSelected(r) ? ("true" as const) : undefined,
     className: "hover-row",
-    "data-href": href?.(p.id),
-    onClick: () => onOpen(p.id),
+    "data-href": href?.(r.problemId, r.id),
+    onClick: () => onOpen(r.problemId, r.id),
   })
-  const subProps = (p: ProblemRow, a: AffectedRow) => ({
-    className: "hover-row bg-fill",
-    "data-href": href?.(p.id, a.id),
-    onClick: () => onOpen(p.id, a.id),
-  })
-  /** A list row holds up to 50 workflows; the Problem's page holds them all. */
-  const rest = (p: ProblemRow) => p.affectedTotal - p.affectedWorkflows.length
+  const columns = items ? 1 : showInstance ? 6 : 5
+  /** The rows, with a heading before each section, in the order the server sent them. */
+  const withHeadings = (draw: (r: ProblemRowItem) => React.ReactNode) =>
+    list.map((r, i) => (
+      <Fragment key={r.id}>
+        {sections && list[i - 1]?.section !== r.section && (
+          <SectionRow
+            section={r.section}
+            count={list.filter((x) => x.section === r.section).length}
+            columns={columns}
+          />
+        )}
+        {draw(r)}
+      </Fragment>
+    ))
   const failures = (count: number) => (
     <>
       <b className="font-semibold">{n(count)}</b>{" "}
@@ -299,121 +293,39 @@ export function ProblemsTable({
       <Table bare={bare} items>
         <ItemsHeader label="Problem" />
         <TableBody>
-          {grouped(sort?.rows ?? rows).map((p) => {
-            if ("section" in p) return <SectionRow key={p.section} section={p.section} count={p.count} columns={1} />
-            const lead = leadOf(p)
-            if (isSingle(p) || !lead)
-              return (
-                <TableRow key={p.id} {...rowProps(p)}>
-                  <ItemRow
-                    title={<UserText>{lead?.workflowName}</UserText>}
-                    titleText={lead?.workflowName}
-                    end={failures(p.count)}
-                    sub={
+          {withHeadings((r) => (
+            <TableRow {...rowProps(r)}>
+              <ItemRow
+                title={<UserText>{r.workflowName}</UserText>}
+                titleText={r.workflowName}
+                end={failures(r.count)}
+                sub={
+                  <>
+                    <ProblemBadge status={r.status} regression={r.regression} firstSeen={r.firstSeen} />{" "}
+                    <UserText title={r.nodeName}>{r.nodeName}</UserText>
+                    {showInstance && (
                       <>
-                        <ProblemBadge status={p.status} regression={p.regression} firstSeen={p.firstSeen} />{" "}
-                        <UserText title={lead?.nodeName}>{lead?.nodeName}</UserText>
-                        {showInstance && (
-                          <>
-                            {" · "}
-                            <UserText title={lead?.instanceName}>{lead?.instanceName}</UserText>
-                          </>
-                        )}
+                        {" · "}
+                        <UserText title={r.instanceName}>{r.instanceName}</UserText>
                       </>
-                    }
-                    subEnd={
-                      <>
-                        <Said>Last seen</Said>
-                        <When value={p.lastSeen} />
-                      </>
-                    }
-                    detail={<CauseLine p={p} />}
-                  />
-                </TableRow>
-              )
-            const open = expanded.has(p.id)
-            return (
-              <Fragment key={p.id}>
-                <TableRow {...rowProps(p)}>
-                  <ItemRow
-                    lead={<ExpandButton open={open} count={p.affectedTotal} onToggle={() => toggle(p.id)} />}
-                    title={<UserText>{p.title}</UserText>}
-                    titleText={p.title}
-                    end={failures(p.count)}
-                    sub={
-                      <>
-                        <ProblemBadge status={p.status} regression={p.regression} firstSeen={p.firstSeen} />{" "}
-                        <b className="font-semibold text-ink">{plural(p.workflows, "workflow")}</b>
-                        {showInstance && (
-                          <>
-                            {" · "}
-                            <UserText>{instancesText(p)}</UserText>
-                          </>
-                        )}
-                      </>
-                    }
-                    subEnd={
-                      <>
-                        <Said>Last seen</Said>
-                        <When value={p.lastSeen} />
-                      </>
-                    }
-                    detail={
-                      <UserText className="text-small text-muted-foreground" title={workflowNames(p, 50)}>
-                        {workflowNames(p)}
-                      </UserText>
-                    }
-                  />
-                </TableRow>
-                {open &&
-                  p.affectedWorkflows.map((a) => (
-                    <TableRow key={a.id} {...subProps(p, a)}>
-                      <ItemRow
-                        title={
-                          <span className="ps-7">
-                            <UserText>{a.workflowName}</UserText>
-                          </span>
-                        }
-                        titleText={a.workflowName}
-                        end={<span className="text-small tabular-nums">{n(a.count)}</span>}
-                        sub={
-                          <span className="ps-7">
-                            {a.status !== "open" && (
-                              <>
-                                <ProblemBadge status={a.status} regression={a.regression} />{" "}
-                              </>
-                            )}
-                            <UserText>{a.nodeName}</UserText>
-                            {showInstance && (
-                              <>
-                                {" · "}
-                                <UserText>{a.instanceName}</UserText>
-                              </>
-                            )}
-                          </span>
-                        }
-                      />
-                    </TableRow>
-                  ))}
-                {open && rest(p) > 0 && (
-                  <TableRow className="bg-fill">
-                    <TableCell className="ps-pad-x text-small text-muted-foreground">
-                      <span className="ps-7">
-                        <Link to={href?.(p.id) ?? problemPath(p.id)} className="underline">
-                          {plural(rest(p), "more workflow")}
-                        </Link>
-                      </span>
-                    </TableCell>
-                  </TableRow>
-                )}
-              </Fragment>
-            )
-          })}
+                    )}
+                    {alsoIn(r)}
+                  </>
+                }
+                subEnd={
+                  <>
+                    <Said>Last seen</Said>
+                    <When value={r.lastSeen} />
+                  </>
+                }
+                detail={<CauseLine r={r} />}
+              />
+            </TableRow>
+          ))}
         </TableBody>
       </Table>
     )
   }
-  const columns = showInstance ? 6 : 5
   return (
     <Table bare={bare}>
       <TableHeader>
@@ -431,98 +343,34 @@ export function ProblemsTable({
         </TableRow>
       </TableHeader>
       <TableBody>
-        {grouped(sort?.rows ?? rows).map((p) => {
-          if ("section" in p)
-            return <SectionRow key={p.section} section={p.section} count={p.count} columns={columns} />
-          const lead = leadOf(p)
-          const single = isSingle(p) || !lead
-          const open = !single && expanded.has(p.id)
-          return (
-            <Fragment key={p.id}>
-              <TableRow {...rowProps(p)}>
-                <TableCell data-nolabel>
-                  <ProblemBadge status={p.status} regression={p.regression} firstSeen={p.firstSeen} />
-                </TableCell>
-                <TableCell className="max-w-64" data-primary>
-                  {single ? (
-                    <>
-                      <UserText className="block truncate font-semibold" title={lead?.workflowName}>
-                        {lead?.workflowName}
-                      </UserText>
-                      <UserText className="block truncate text-meta text-muted-foreground" title={lead?.nodeName}>
-                        {lead?.nodeName}
-                      </UserText>
-                    </>
-                  ) : (
-                    <span className="flex items-start gap-2">
-                      <ExpandButton open={open} count={p.affectedTotal} onToggle={() => toggle(p.id)} />
-                      <span className="min-w-0">
-                        <b className="block font-semibold">{plural(p.workflows, "workflow")}</b>
-                        <UserText
-                          className="block truncate text-meta text-muted-foreground"
-                          title={workflowNames(p, 50)}
-                        >
-                          {workflowNames(p)}
-                        </UserText>
-                      </span>
-                    </span>
-                  )}
-                </TableCell>
-                <TableCell className="max-w-80" data-wide data-nolabel>
-                  <CauseLine p={p} />
-                </TableCell>
-                {showInstance && (
-                  <TableCell>
-                    <UserText>{instancesText(p)}</UserText>
-                  </TableCell>
-                )}
-                <TableCell className="text-end font-semibold tabular-nums">{n(p.count)}</TableCell>
-                <TableCell className="text-end text-muted-foreground">
-                  <When value={p.lastSeen} />
-                </TableCell>
-              </TableRow>
-              {open &&
-                p.affectedWorkflows.map((a) => (
-                  <TableRow key={a.id} {...subProps(p, a)}>
-                    <TableCell data-nolabel>
-                      <ProblemBadge status={a.status} regression={a.regression} />
-                    </TableCell>
-                    <TableCell className="max-w-64" data-primary>
-                      <span className="block ps-8">
-                        <UserText className="block truncate font-semibold" title={a.workflowName}>
-                          {a.workflowName}
-                        </UserText>
-                        <UserText className="block truncate text-meta text-muted-foreground" title={a.nodeName}>
-                          {a.nodeName}
-                        </UserText>
-                      </span>
-                    </TableCell>
-                    <TableCell data-wide data-nolabel />
-                    {showInstance && (
-                      <TableCell>
-                        <UserText>{a.instanceName}</UserText>
-                      </TableCell>
-                    )}
-                    <TableCell className="text-end tabular-nums">{n(a.count)}</TableCell>
-                    <TableCell className="text-end text-muted-foreground">
-                      <When value={a.lastSeen} />
-                    </TableCell>
-                  </TableRow>
-                ))}
-              {open && rest(p) > 0 && (
-                <TableRow className="bg-fill">
-                  <TableCell colSpan={columns} className="text-small text-muted-foreground">
-                    <span className="ps-8">
-                      <Link to={href?.(p.id) ?? problemPath(p.id)} className="underline">
-                        {plural(rest(p), "more workflow")}
-                      </Link>
-                    </span>
-                  </TableCell>
-                </TableRow>
-              )}
-            </Fragment>
-          )
-        })}
+        {withHeadings((r) => (
+          <TableRow {...rowProps(r)}>
+            <TableCell data-nolabel>
+              <ProblemBadge status={r.status} regression={r.regression} firstSeen={r.firstSeen} />
+            </TableCell>
+            <TableCell className="max-w-64" data-primary>
+              <UserText className="block truncate font-semibold" title={r.workflowName}>
+                {r.workflowName}
+              </UserText>
+              <UserText className="block truncate text-meta text-muted-foreground" title={r.nodeName}>
+                {r.nodeName}
+                {alsoIn(r)}
+              </UserText>
+            </TableCell>
+            <TableCell className="max-w-80" data-wide data-nolabel>
+              <CauseLine r={r} />
+            </TableCell>
+            {showInstance && (
+              <TableCell>
+                <UserText>{r.instanceName}</UserText>
+              </TableCell>
+            )}
+            <TableCell className="text-end font-semibold tabular-nums">{n(r.count)}</TableCell>
+            <TableCell className="text-end text-muted-foreground">
+              <When value={r.lastSeen} />
+            </TableCell>
+          </TableRow>
+        ))}
       </TableBody>
     </Table>
   )
@@ -540,11 +388,12 @@ export function ProblemsPage() {
   // line says so.
   const order = useSortOrder("problems")
   const filters = { status, ...(instance !== "all" ? { instance } : {}), ...(q ? { q } : {}) }
-  const rows = useApi<ProblemList>(problemsPath(filters, order.asked), { refetchInterval: 15_000, keepRows: true })
+  const rows = useApi<ProblemRows>(problemRowsPath(filters, order.asked), { refetchInterval: 15_000, keepRows: true })
   // A failed refresh keeps the rows and the head says so; new filters that failed keep the previous rows and the
   // filter line says so (TB-5, LD-12).
   const view = loadView(rows)
-  const sort = useProblemsSort(rows.data?.items ?? [], order.shown(rows))
+  const shownOrder = order.shown(rows)
+  const sort = useProblemsSort(rows.data?.items ?? [], shownOrder)
   const instances = useApi<{ instances: { id: string; name: string }[] }>("/instances")
   const setParam = (k: string, v: string) => {
     const next = new URLSearchParams(params)
@@ -636,12 +485,13 @@ export function ProblemsPage() {
           <ProblemsTable
             rows={rows.data?.items ?? []}
             sort={sort}
-            selected={id}
+            selected={id ? { problemId: id, workflow: params.get("workflow") } : undefined}
             onOpen={open}
             href={at}
             items={items}
-            // In the order that puts what needs a look first, the list reads in sections (docs/adr/0003).
-            sections={order.asked === null}
+            // In the order that puts what needs a look first, the list reads in sections (docs/adr/0003): the
+            // order the rows are in, so a new order that failed to load leaves them as they were.
+            sections={shownOrder[0] === null}
             empty={
               rows.previous === "failed"
                 ? "The previous list was empty."
@@ -969,7 +819,9 @@ export function ProblemDetail({ id }: { id: string }) {
           )}
           {!single && (
             <p className="text-small text-muted-foreground">
-              Grouped because: the same target and reason in {plural(p.workflows, "workflow")}.
+              {p.affectedWorkflows.every((a) => a.title === p.title)
+                ? `Grouped because: the same target and reason in ${plural(p.workflows, "workflow")}.`
+                : "Merged by hand: its workflows failed for different causes."}
             </p>
           )}
           <p className="font-mono text-small break-words text-muted-foreground">{p.errorMessage}</p>

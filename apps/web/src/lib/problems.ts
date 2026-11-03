@@ -86,7 +86,7 @@ export const KIND_LABELS: Record<CauseKind, string> = {
 export type Section = "instance" | "now" | "quiet" | "alerts" | "muted" | "resolved"
 
 export const SECTION_TITLES: Record<Section, { title: string; note: string }> = {
-  instance: { title: "Instance problems", note: "The n8n task runner did not take a task. A problem of the instance." },
+  instance: { title: "Instance problems", note: "The n8n task runner did not take a task: a problem of the instance." },
   now: { title: "Failing now", note: "Failed in the last 24 hours." },
   quiet: { title: "Quiet", note: "Failed before, not in the last 24 hours. Closes by itself after quiet days." },
   alerts: { title: "Your alerts", note: "A Stop and Error node in the workflow raised these on purpose." },
@@ -96,14 +96,16 @@ export const SECTION_TITLES: Record<Section, { title: string; note: string }> = 
 
 export const SECTION_ORDER: Section[] = ["instance", "now", "quiet", "alerts", "muted", "resolved"]
 
-/** The section of a Problem, from its state and its cause. */
-export function sectionOf(p: Pick<ProblemRow, "kind" | "affectedWorkflows">, status: ProblemRow["status"]): Section {
-  if (status === "muted") return "muted"
-  if (status === "resolved") return "resolved"
-  if (p.kind === "runner") return "instance"
-  if (p.kind === "alert") return "alerts"
-  return p.affectedWorkflows.some((a) => a.state === "now") ? "now" : "quiet"
+/** A row of the Problems list: one Affected workflow, its section and its Problem (docs/adr/0003). */
+export type ProblemRowItem = AffectedRow & {
+  problemId: string
+  section: Section
+  /** How many Affected workflows its Problem has, this one included. */
+  problemTotal: number
 }
+
+/** The Problems list as rows: the first 200 in the order asked for, and how many match in all (TB-18). */
+export type ProblemRows = { items: ProblemRowItem[]; total: number }
 
 /** "alpha" for one instance, "3 instances" for more. */
 export const instancesText = (p: Pick<ProblemRow, "instances">) =>

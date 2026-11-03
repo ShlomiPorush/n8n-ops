@@ -459,6 +459,6 @@ test("another instance of the same n8n keeps its failures of a node with no know
   await page.goto("/problems?status=open")
   // The list column: a wide screen also opens the first problem beside it, whose rows name workflows too.
   const list = page.locator(`[data-scroll-pane="list"]`)
-  await expect(list.getByRole("row", { name: /2 workflows/ })).toHaveCount(0)
+  await expect(list.getByRole("row", { name: /same cause in 2 workflows/ })).toHaveCount(0)
   await expect(list.getByRole("row", { name: /Sync orders to ERP/ })).toHaveCount(2)
 })

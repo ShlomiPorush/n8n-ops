@@ -252,7 +252,8 @@ export async function problemPage(
   const sorts: Record<ProblemSortKey, SortColumn> = {
     status: { value: rank },
     workflow: text(r.workflowName),
-    error: text(problems.errorMessage),
+    // By what screens show: "target · reason", or the error text of rows from before the regroup by cause.
+    error: text(sql`coalesce(${problems.target} || ' · ' || ${problems.reason}, ${problems.errorMessage})`),
     instance: text(r.instanceName),
     failures: { value: sql`${s.count}` },
     lastSeen: { value: sql`${s.lastSeen}` },
@@ -310,6 +311,114 @@ export async function problemPage(
       mutedUntil: row.mutedUntil ? new Date(row.mutedUntil) : null,
       affectedWorkflows: affected.get(row.id) ?? [],
     })),
+    total: rows[0]?.total ?? 0,
+  }
+}
+
+/**
+ * The part of the Problems list an Affected workflow sits in (docs/adr/0003): the instance's task runner first, then
+ * failing now (failed in the last 24 hours), quiet, the alerts a Stop and Error node raised, muted and resolved.
+ */
+export const problemSections = ["instance", "now", "quiet", "alerts", "muted", "resolved"] as const
+export type ProblemSection = (typeof problemSections)[number]
+
+/** The section as a rank, in SQL; an Affected workflow whose mute ended counts as open. */
+const sectionRank = sql<number>`case
+  when ${a.status} = 'resolved' then 5
+  when ${a.status} = 'muted' and (${a.mutedUntil} is null or ${a.mutedUntil} > now()) then 4
+  when ${a.kind} = 'runner' then 0
+  when ${a.kind} = 'alert' then 3
+  when ${a.lastSeen} > now() - interval '24 hours' then 1
+  else 2 end`
+
+/** An Affected workflow in the list of rows: one row per workflow, at one node, with one cause. */
+export type ProblemRowItem = AffectedItem & {
+  problemId: string
+  section: ProblemSection
+  /** How many Affected workflows its Problem has, this one included. */
+  problemTotal: number
+}
+
+/**
+ * The Problems list as rows (TB-4, TB-18): one per Affected workflow, in sections in the default order, with the
+ * filters, the order and the count applied over all of them before the limit. Rows of merged and regrouped Problems
+ * are never listed.
+ */
+export async function problemRowsPage(
+  ctx: Pick<Ctx, "db">,
+  { order = null, limit = 200, status, instanceId, q }: ListOptions,
+): Promise<{ items: ProblemRowItem[]; total: number }> {
+  const where: (SQL | undefined)[] = [isNull(problems.mergedInto), eq(problems.regrouped, false)]
+  if (instanceId) where.push(eq(a.instanceId, instanceId))
+  if (status === "open") where.push(openish)
+  if (status === "muted")
+    where.push(sql`${a.status} = 'muted' and (${a.mutedUntil} is null or ${a.mutedUntil} > now())`)
+  if (status === "resolved") where.push(eq(a.status, "resolved"))
+  if (q) {
+    const like = likeContains(q)
+    where.push(
+      or(
+        ilike(a.workflowName, like),
+        ilike(a.nodeName, like),
+        ilike(a.errorMessage, like),
+        ilike(a.target, like),
+        ilike(a.reason, like),
+      ),
+    )
+  }
+  const title = sql`coalesce(${a.target} || ' · ' || ${a.reason}, ${a.errorMessage})`
+  const sorts: Record<ProblemSortKey, SortColumn> = {
+    status: { value: sql`-${sectionRank}` },
+    workflow: text(a.workflowName),
+    error: text(title),
+    instance: text(instances.name),
+    failures: { value: a.count },
+    lastSeen: { value: a.lastSeen },
+  }
+  const settle = [desc(a.lastSeen), asc(a.id)]
+  // What needs a look first: the sections in order, a regression first within one, then the latest failure.
+  const ranked = [asc(sectionRank), desc(a.regression), ...settle]
+  let orderBy: SQL[]
+  if (order === "recent") orderBy = settle
+  else if (!order) orderBy = ranked
+  else {
+    const column = order.sort === "status" ? { value: sectionRank } : sorts[order.sort]
+    const ascending = order.sort === "status" ? order.order === "desc" : order.order === "asc"
+    const by = ascending ? asc(column.value) : desc(column.value)
+    orderBy = [...(column.blank ? [asc(column.blank)] : []), by, ...ranked]
+  }
+  const peers = ctx.db
+    .select({ problemId: a.problemId, rows: sql<number>`count(*)::int`.as("peer_rows") })
+    .from(a)
+    .groupBy(a.problemId)
+    .as("peers")
+  const rows = await ctx.db
+    .select({
+      ...affectedColumns,
+      rank: sectionRank.mapWith(Number),
+      problemTotal: peers.rows,
+      total: sql<number>`count(*) over()`.mapWith(Number),
+    })
+    .from(a)
+    .innerJoin(instances, eq(a.instanceId, instances.id))
+    .innerJoin(problems, eq(problems.id, a.problemId))
+    .innerJoin(peers, eq(peers.problemId, a.problemId))
+    .where(and(...where))
+    .orderBy(...orderBy)
+    .limit(limit)
+  const now = Date.now()
+  return {
+    items: rows.map(({ total: _, rank, problemTotal, target, targetSource, reason, kind, ...row }) => {
+      const open =
+        row.status === "open" || (row.status === "muted" && row.mutedUntil !== null && row.mutedUntil.getTime() <= now)
+      return {
+        ...row,
+        ...causeFields({ errorMessage: row.errorMessage, target, targetSource, reason, kind }),
+        state: !open ? null : now - row.lastSeen.getTime() < DAY_MS ? ("now" as const) : ("quiet" as const),
+        section: problemSections[rank] ?? "quiet",
+        problemTotal,
+      }
+    }),
     total: rows[0]?.total ?? 0,
   }
 }

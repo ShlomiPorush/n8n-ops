@@ -1803,7 +1803,7 @@ test("a list keeps its rows when a refresh fails, says so under the title, and T
   await expect(page.getByRole("heading", { name: "Where It Broke" })).toBeVisible()
   const shown = await rows.count()
   // From now on the list answers as a server that has a problem does; the problem pane is not touched.
-  const list = (url: URL) => url.pathname === "/api/problems" && url.searchParams.get("status") === "all"
+  const list = (url: URL) => url.pathname === "/api/problems/rows" && url.searchParams.get("status") === "all"
   await page.route(list, (route) => route.fulfill({ status: 500, json: { error: "internal_error" } }))
   const failed = page.getByRole("status").filter({ hasText: "Could not refresh" })
   try {
@@ -1829,7 +1829,7 @@ test("new filters whose list fails to load keep the previous rows, and the filte
   await expect(rows.first()).toBeVisible()
   await expect(page.getByRole("heading", { name: "Where It Broke" })).toBeVisible()
   const shown = await rows.count()
-  const muted = (url: URL) => url.pathname === "/api/problems" && url.searchParams.get("status") === "muted"
+  const muted = (url: URL) => url.pathname === "/api/problems/rows" && url.searchParams.get("status") === "muted"
   await page.route(muted, (route) => route.fulfill({ status: 500, json: { error: "internal_error" } }))
   const note = page.getByRole("status").filter({ hasText: "Could not load muted problems; showing the previous list" })
   const countLine = page.locator('[data-slot="list-count"]')
@@ -1865,7 +1865,7 @@ test("the Problems count line counts every problem, also above the 200 the list 
   await expect(page.getByText(/^Showing the first/)).toHaveCount(0)
 
   // The server says there are more than it sent.
-  const list = (url: URL) => url.pathname === "/api/problems" && url.searchParams.get("status") === "all"
+  const list = (url: URL) => url.pathname === "/api/problems/rows" && url.searchParams.get("status") === "all"
   await page.route(list, async (route) => {
     const res = await route.fetch()
     await route.fulfill({ response: res, json: { ...(await res.json()), total: 1240 } })
@@ -1891,7 +1891,7 @@ test("the Problems list asks the server for its order and draws the rows as they
   // Beside the reading pane the list has no header row; its Sort button sets the same order. Failures start with
   // the most.
   const sorted = (url: URL) =>
-    url.pathname === "/api/problems" &&
+    url.pathname === "/api/problems/rows" &&
     url.searchParams.get("status") === "all" &&
     url.searchParams.get("sort") === "failures" &&
     url.searchParams.get("order") === "desc"
@@ -1905,7 +1905,7 @@ test("the Problems list asks the server for its order and draws the rows as they
   ])
   await expect(menu.getByRole("radio", { name: "Most first" })).toBeChecked()
   await page.keyboard.press("Escape")
-  const answer = (await asked.json()) as { items: { id: string; count: number }[]; total: number }
+  const answer = (await asked.json()) as { items: { problemId: string; count: number }[]; total: number }
   expect(answer.items.length).toBeGreaterThan(0)
   expect(answer.total).toBeGreaterThanOrEqual(answer.items.length)
   // The most failures first, and the rows in the server's order, not sorted again in the page.
@@ -1916,13 +1916,13 @@ test("the Problems list asks the server for its order and draws the rows as they
     (await rows.evaluateAll((els) => els.map((el) => el.getAttribute("data-href") ?? ""))).map(
       (href) => href.split("?")[0]?.split("/").pop() ?? "",
     )
-  await expect.poll(ids).toEqual(answer.items.map((p) => p.id))
+  await expect.poll(ids).toEqual(answer.items.map((r) => r.problemId))
 })
 
 test("a new filter starts the list at its first row, and the filter bar stays in sight (TB-7, NL-16)", async () => {
   // A short screen and sixty rows for every filter, so the list scrolls whatever the run recorded: the first
   // problem of all and copies of it under ids of their own.
-  const list = (url: URL) => url.pathname === "/api/problems"
+  const list = (url: URL) => url.pathname === "/api/problems/rows"
   let seed: { id: string } | undefined
   await page.route(list, async (route) => {
     try {
@@ -1981,7 +1981,7 @@ test("an order whose list fails to load leaves the rows and the Sort button in t
   await expect(button).toHaveAccessibleName("Sort: Default order")
   await expect(button).not.toHaveAttribute("data-set")
   const sorted = (url: URL) =>
-    url.pathname === "/api/problems" && url.searchParams.get("status") === "all" && url.searchParams.has("sort")
+    url.pathname === "/api/problems/rows" && url.searchParams.get("status") === "all" && url.searchParams.has("sort")
   await page.route(sorted, (route) => route.fulfill({ status: 500, json: { error: "internal_error" } }))
   const note = page.getByRole("status").filter({ hasText: "Could not load problems; showing the previous list" })
   try {
@@ -2009,16 +2009,16 @@ test("an order whose list fails to load leaves the rows and the Sort button in t
 test("the open problems of an instance say when a new order or a refresh failed, and keep the rows (TB-4, TB-5)", async () => {
   const id = await openInstanceB()
   // Stand-in rows, so the test does not depend on which problems are open: two, the fewer failures first.
-  const problem = (n: number, count: number) =>
-    standInProblem(`00000000-0000-4000-8000-00000000000${n}`, `E2E stand-in ${n}`, "ERP refused", {
-      count,
-      lastSeen: new Date(Date.now() - n * 60_000).toISOString(),
-      instances: ["e2e-n8n-b"],
-    })
+  const problem = (n: number, count: number) => {
+    const p = standInProblem(`00000000-0000-4000-8000-00000000000${n}`, `E2E stand-in ${n}`, "ERP refused")
+    const lastSeen = new Date(Date.now() - n * 60_000).toISOString()
+    // A row of the list: the problem's one workflow, on e2e-n8n-b.
+    return { ...p.affectedWorkflows[0], problemId: p.id, section: "now", problemTotal: 1, count, lastSeen }
+  }
   const [few, many] = [problem(1, 2), problem(2, 9)]
   let sortFails = true
   let fails = false
-  const list = (url: URL) => url.pathname === "/api/problems" && url.searchParams.get("instance") === id
+  const list = (url: URL) => url.pathname === "/api/problems/rows" && url.searchParams.get("instance") === id
   await page.route(list, (route) => {
     const sort = new URL(route.request().url()).searchParams.get("sort")
     if (fails || (sort && sortFails)) return route.fulfill({ status: 500, json: { error: "internal_error" } })

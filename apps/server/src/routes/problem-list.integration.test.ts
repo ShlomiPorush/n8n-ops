@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto"
 import { EventEmitter } from "node:events"
 import { join } from "node:path"
+import { eq } from "drizzle-orm"
 import postgres from "postgres"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import type { Ctx } from "../context.ts"
@@ -9,7 +10,13 @@ import { affectedWorkflows, apiTokens, failures, instances, problems } from "../
 import { createAudit } from "../lib/audit.ts"
 import { sha256 } from "../lib/crypto.ts"
 import { agentFailure, agentProblem, agentProblems } from "../services/agent.ts"
-import { type ProblemFilter, type ProblemOrder, problemDetail, problemPage } from "../services/problem-view.ts"
+import {
+  type ProblemFilter,
+  type ProblemOrder,
+  problemDetail,
+  problemPage,
+  problemRowsPage,
+} from "../services/problem-view.ts"
 import { restRoutes } from "./agent.ts"
 
 // The Problems list against a real PostgreSQL (TB-4, TB-18): sorted before the limit, so a sort covers every
@@ -368,5 +375,72 @@ describe("a Problem that hit several workflows", () => {
     expect(await agentFailure(ctx, multi[1]?.id ?? "", m1?.id)).toBeNull()
     const chosen = await agentProblem(ctx, pid, multi[2]?.id)
     expect(chosen && "selected" in chosen ? chosen.selected.nodeName : null).toBe("HTTP 2")
+  })
+})
+
+describe("the Problems list as rows", () => {
+  it("lists one row per workflow in sections, filters before the limit, and reads an ended mute as open", async () => {
+    const [own] = await database.db
+      .insert(instances)
+      .values({ name: "rows-n8n", baseUrl: "http://rows:5678", apiKeyEnc: "v1:x:y:z" })
+      .returning()
+    if (!own) throw new Error("no instance")
+    const at = (state: Partial<typeof affectedWorkflows.$inferInsert>) =>
+      row(own.id, { target: "crm.example.com", reason: "HTTP 400 · Bad ticket", kind: "req", ...state })
+    await at({ workflowName: "Quiet one", lastSeen: ago(3 * day) })
+    const now = await at({ workflowName: "Failing one", lastSeen: ago(hour) })
+    await at({ workflowName: "Runner one", kind: "runner", lastSeen: ago(2 * day) })
+    await at({ workflowName: "Alert one", kind: "alert", lastSeen: ago(hour) })
+    const muted = await at({ workflowName: "Muted one", status: "muted", mutedUntil: new Date(Date.now() + day) })
+    const ended = await at({
+      workflowName: "Mute ended",
+      status: "muted",
+      mutedUntil: ago(minute),
+      lastSeen: ago(90 * minute),
+    })
+    const resolved = await at({ workflowName: "Resolved one", status: "resolved", resolvedAt: ago(day) })
+    // A second workflow in the Problem of the failing one: the same cause in 2 workflows.
+    await at({ workflowName: "Peer one", lastSeen: ago(2 * hour) }).then((r) =>
+      database.db.update(affectedWorkflows).set({ problemId: now.problemId }).where(eq(affectedWorkflows.id, r.id)),
+    )
+
+    const all = await problemRowsPage(ctx, { status: "all", instanceId: own.id })
+    expect(all.items.map((r) => [r.workflowName, r.section])).toEqual([
+      ["Runner one", "instance"],
+      ["Failing one", "now"],
+      ["Mute ended", "now"],
+      ["Peer one", "now"],
+      ["Quiet one", "quiet"],
+      ["Alert one", "alerts"],
+      ["Muted one", "muted"],
+      ["Resolved one", "resolved"],
+    ])
+    expect(all.total).toBe(8)
+    expect(all.items.find((r) => r.id === now.id)).toMatchObject({
+      problemId: now.problemId,
+      problemTotal: 2,
+      title: "crm.example.com · HTTP 400 · Bad ticket",
+      state: "now",
+    })
+
+    const open = await problemRowsPage(ctx, { status: "open", instanceId: own.id })
+    expect(open.items.map((r) => r.id)).not.toContain(muted.id)
+    expect(open.items.map((r) => r.id)).not.toContain(resolved.id)
+    expect(open.items.map((r) => r.id)).toContain(ended.id)
+    expect((await problemRowsPage(ctx, { status: "muted", instanceId: own.id })).items.map((r) => r.id)).toEqual([
+      muted.id,
+    ])
+
+    // Search reads the target and the reason too; the count is over every match, before the limit.
+    const found = await problemRowsPage(ctx, { status: "all", instanceId: own.id, q: "Bad ticket", limit: 2 })
+    expect(found.items).toHaveLength(2)
+    expect(found.total).toBe(8)
+    // An order picked replaces the sections.
+    const byName = await problemRowsPage(ctx, {
+      status: "all",
+      instanceId: own.id,
+      order: { sort: "workflow", order: "asc" },
+    })
+    expect(byName.items.map((r) => r.workflowName)).toEqual([...byName.items.map((r) => r.workflowName)].sort())
   })
 })

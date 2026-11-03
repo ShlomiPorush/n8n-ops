@@ -120,7 +120,7 @@ import { formatTime, useTimeFormat } from "@/lib/time"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
 import { InstanceBackupCard } from "./destinations"
-import { type ProblemList, ProblemsTable, problemsPath, useProblemsSort } from "./problems"
+import { type ProblemRows, ProblemsTable, problemRowsPath, useProblemsSort } from "./problems"
 
 type Capability = {
   key: string
@@ -1415,15 +1415,16 @@ function InstanceProblems({
   // The full list sorts on the server, so the order covers every open problem of the instance (TB-4); a new order
   // keeps the rows on screen until its answer comes. Keyed by the instance, so no rows of another one stay.
   const order = useSortOrder("instance-problems")
-  const query = useApi<ProblemList>(
-    problemsPath({ status: "open", instance: instanceId }, preview ? null : order.asked),
+  const query = useApi<ProblemRows>(
+    problemRowsPath({ status: "open", instance: instanceId }, preview ? null : order.asked),
     { keepRows: !preview },
   )
   const rows = query.data?.items ?? []
   const total = query.data?.total ?? 0
   // The headers and the Sort button show the order the rows are in (TB-4). The preview's rows come in the default
   // order, so its answer must not count as the order picked being applied.
-  const sort = useProblemsSort(rows, preview ? noOrder : order.shown(query), false)
+  const shownOrder = preview ? noOrder : order.shown(query)
+  const sort = useProblemsSort(rows, shownOrder, false)
   const head = (
     <PanelHead
       title="Open Problems"
@@ -1462,8 +1463,9 @@ function InstanceProblems({
         showInstance={false}
         empty="No open problems on this instance."
         onOpen={onOpen}
-        // The instance's own problems (its task runner) first, then failing now, quiet and its alerts.
-        sections={preview || order.asked === null}
+        // The instance's own problems (its task runner) first, then failing now, quiet and its alerts: in the order
+        // the rows are in, so a new order that failed to load leaves them as they were.
+        sections={shownOrder[0] === null}
       />
       {!preview && rows.length < total && (
         <p className="border-t border-line px-pad-x py-pad-y text-small text-muted-foreground">

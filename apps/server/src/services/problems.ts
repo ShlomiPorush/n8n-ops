@@ -130,6 +130,8 @@ export async function ingestExecution(
           .set({
             workflowName,
             count: sql`${affectedWorkflows.count} + 1`,
+            // A page comes newest first, so an older failure can arrive after a newer one.
+            firstSeen: seenAt < existing.firstSeen ? seenAt : existing.firstSeen,
             lastSeen: seenAt > existing.lastSeen ? seenAt : existing.lastSeen,
             ...(regression ? { status: "open" as const, regression: true, resolvedAt: null } : {}),
             ...(unmute ? { status: "open" as const, mutedUntil: null } : {}),

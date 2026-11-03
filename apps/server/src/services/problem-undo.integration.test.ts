@@ -316,6 +316,25 @@ describe("a failed execution", () => {
     expect(await readProblem(pid)).toMatchObject({ target: "New" })
   })
 
+  it("keeps the earliest and latest failure times when a page arrives newest first", async () => {
+    // n8n lists executions newest first, so the first failure ingested for a workflow is its latest one.
+    const text = `Timeout (${randomBytes(3).toString("hex")})`
+    const now = Date.now()
+    const at = (minutesAgo: number) => new Date(now - minutesAgo * 60_000).toISOString()
+    const timed = (id: string, minutesAgo: number) => ({
+      ...execution(id, "page", "HTTP", text),
+      startedAt: at(minutesAgo),
+      stoppedAt: at(minutesAgo),
+    })
+    const newest = await ingestExecution(ctx, instance, timed("page-3", 10), { silent: true })
+    await ingestExecution(ctx, instance, timed("page-2", 40), { silent: true })
+    await ingestExecution(ctx, instance, timed("page-1", 90), { silent: true })
+    const r = await read(newest?.affectedWorkflowId ?? "")
+    expect(r.count).toBe(3)
+    expect(r.firstSeen.toISOString()).toBe(at(90))
+    expect(r.lastSeen.toISOString()).toBe(at(10))
+  })
+
   it("joining a resolved Problem is a regression, a muted one stays muted without alerting", async () => {
     const resolved = await row({ status: "resolved", resolvedAt: new Date() })
     const r = await ingestExecution(

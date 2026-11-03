@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-03
+
 ### Added
 
 - **How often n8n-ops reads each instance is now a setting.** Settings → Instance Defaults sets how often the workflow map reads the workflows and their execution counts (every 10 minutes by default, before every 30) and how often the n8n version and the API key are checked (every 6 hours); each instance can override both. Settings → General sets how often n8n-ops looks for a new n8n release (every 6 hours). At most two instances read their workflows at the same time.

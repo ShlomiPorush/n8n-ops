@@ -225,6 +225,29 @@ describe("a failed execution", () => {
     expect(await readProblem(first?.problemId ?? "")).toMatchObject({ target: "Drive (renamed)" })
   })
 
+  it("names the Problem after its latest failure over all its workflows", async () => {
+    // Two workflows with one credential: a late failure of the first never takes back the newer name.
+    const run = (id: string, workflowId: string, name: string, at: number) => ({
+      ...execution(id, workflowId, "Upload", "Client authentication failed."),
+      startedAt: new Date(Date.now() - at).toISOString(),
+      stoppedAt: new Date(Date.now() - at).toISOString(),
+      workflowData: {
+        id: workflowId,
+        name: workflowId,
+        nodes: [
+          { name: "Upload", type: "n8n-nodes-base.microsoftOneDrive", credentials: { oauth: { id: "cred-2", name } } },
+        ],
+        connections: {},
+      } as never,
+    })
+    const a = await ingestExecution(ctx, instance, run("both-1", "both-a", "Old", 3 * hour), { silent: true })
+    const b = await ingestExecution(ctx, instance, run("both-2", "both-b", "New", hour), { silent: true })
+    expect(b?.problemId).toBe(a?.problemId)
+    expect(await readProblem(a?.problemId ?? "")).toMatchObject({ target: "New" })
+    await ingestExecution(ctx, instance, run("both-3", "both-a", "Old", 2 * hour), { silent: true })
+    expect(await readProblem(a?.problemId ?? "")).toMatchObject({ target: "New" })
+  })
+
   it("joining a resolved Problem is a regression, a muted one stays muted without alerting", async () => {
     const resolved = await row({ status: "resolved", resolvedAt: new Date() })
     const r = await ingestExecution(

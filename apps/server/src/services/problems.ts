@@ -166,19 +166,7 @@ export async function ingestExecution(
           .returning()
         if (!updated) throw new Error("the affected workflow went away")
         row = updated
-        // The Problem's label follows its latest failure too (a credential renamed, a workflow name learned). Written
-        // only when it changed, so the Problem is locked only then; a deadlock with an action is retried.
-        if (seenAt >= existing.lastSeen)
-          await tx
-            .update(problems)
-            .set({ target: cause.target, reason: cause.reason, kind: cause.kind, targetSource: cause.targetSource })
-            .where(
-              and(
-                eq(problems.id, updated.problemId),
-                eq(problems.targetKey, cause.targetKey),
-                sql`(${problems.target}, ${problems.reason}) is distinct from (${cause.target}, ${cause.reason})`,
-              ),
-            )
+        await followLatestLabel(tx, updated.problemId, cause, seenAt)
       } else {
         const values = {
           instanceId: instance.id,
@@ -218,6 +206,7 @@ export async function ingestExecution(
             .update(problems)
             .set({ version: sql`${problems.version} + 1` })
             .where(eq(problems.id, problem.id))
+          await followLatestLabel(tx, problem.id, cause, seenAt)
           row = created
           reason = !peers.length ? "new" : status === "resolved" ? "regression" : status === "open" ? "joined" : null
         } else {
@@ -257,6 +246,25 @@ export async function ingestExecution(
       return { problemId: row.problemId, affectedWorkflowId: row.id, reason }
     }),
   )
+}
+
+/**
+ * The Problem's label follows its latest failure, over all its workflows (a credential renamed, a workflow name
+ * learned): written only when no workflow of the Problem failed later and the label differs, so the Problem is locked
+ * only then. A deadlock with an action is retried with the rest of the ingest.
+ */
+async function followLatestLabel(tx: Tx, problemId: string, cause: Cause, seenAt: Date) {
+  await tx
+    .update(problems)
+    .set({ target: cause.target, reason: cause.reason, kind: cause.kind, targetSource: cause.targetSource })
+    .where(
+      and(
+        eq(problems.id, problemId),
+        eq(problems.targetKey, cause.targetKey),
+        sql`(${problems.target}, ${problems.reason}) is distinct from (${cause.target}, ${cause.reason})`,
+        sql`not exists (select 1 from ${affectedWorkflows} where ${affectedWorkflows.problemId} = ${problemId} and ${affectedWorkflows.lastSeen} > ${seenAt.toISOString()}::timestamptz)`,
+      ),
+    )
 }
 
 /**

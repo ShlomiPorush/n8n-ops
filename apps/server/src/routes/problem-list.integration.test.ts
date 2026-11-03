@@ -452,4 +452,58 @@ describe("the Problems list as rows", () => {
       "Runner one",
     ])
   })
+
+  it("reads a row as screens show it: status, workflows, a Merge, and the orders by Status and Cause", async () => {
+    const [own] = await database.db
+      .insert(instances)
+      .values({ name: "shown-n8n", baseUrl: "http://shown:5678", apiKeyEnc: "v1:x:y:z" })
+      .returning()
+    if (!own) throw new Error("no instance")
+    const pad = " The service said so in many more words than any screen needs to show here."
+    // Over 100 characters, "Error fetching from <url>:" goes from the title, so this one reads "Zebra failed…".
+    const zebra = await row(own.id, {
+      workflowName: "Zebra",
+      target: "api.example.com",
+      reason: `Error fetching from https://api.example.com/v1: Zebra failed.${pad}`,
+      kind: "svc",
+      status: "muted",
+      mutedUntil: ago(minute),
+      lastSeen: ago(hour),
+    })
+    const mango = await row(own.id, {
+      workflowName: "Mango",
+      target: "api.example.com",
+      reason: `Mango failed.${pad}`,
+      kind: "svc",
+      regression: true,
+    })
+    // Two nodes of one workflow: one workflow, not two.
+    const { workflowId, workflowName, target, reason, kind } = zebra
+    await row(own.id, { workflowId, workflowName, target, reason, kind, nodeName: "Second node" }, zebra.problemId)
+    const page = (order?: { sort: "status" | "error"; order: "asc" | "desc" }) =>
+      problemRowsPage(ctx, { status: "all", instanceId: own.id, order })
+
+    const all = await page()
+    const shownZebra = all.items.find((r) => r.id === zebra.id)
+    // A mute that ended reads as open, in its status too.
+    expect(shownZebra).toMatchObject({ status: "open", state: "now", problemTotal: 1, mergedByHand: false })
+    expect(shownZebra?.title).toBe(`api.example.com · Zebra failed.${pad}`)
+
+    // By Cause: by the title shown, not by the reason as stored.
+    const byCause = await page({ sort: "error", order: "asc" })
+    expect(byCause.items.map((r) => r.workflowName)).toEqual(["Mango", "Zebra", "Zebra"])
+    // By Status, high to low: the regression first, as its badge reads, whatever its section.
+    const byStatus = await page({ sort: "status", order: "desc" })
+    expect(byStatus.items[0]?.id).toBe(mango.id)
+
+    // Merged by hand: the rows and the Problem say so.
+    await database.db.update(problems).set({ mergedInto: zebra.problemId }).where(eq(problems.id, mango.problemId))
+    await database.db
+      .update(affectedWorkflows)
+      .set({ problemId: zebra.problemId })
+      .where(eq(affectedWorkflows.id, mango.id))
+    const merged = await page()
+    expect(merged.items.find((r) => r.id === mango.id)).toMatchObject({ problemTotal: 2, mergedByHand: true })
+    expect((await problemDetail(ctx, zebra.problemId))?.mergedByHand).toBe(true)
+  })
 })

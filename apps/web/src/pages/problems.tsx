@@ -974,7 +974,10 @@ export function ProblemDetail({ id }: { id: string }) {
           )}
           <p className="font-mono text-small break-words text-muted-foreground">{p.errorMessage}</p>
         </div>
-        {single && s.error?.description && <p className="text-muted-foreground">{s.error.description}</p>}
+        {/* n8n's description, when the cause line above does not say it already. */}
+        {single && s.error?.description && !p.title.includes(s.error.description) && (
+          <p className="text-muted-foreground">{s.error.description}</p>
+        )}
       </div>
 
       <PaneTabs label="Problem sections" items={tabs} value={tab} onValueChange={show}>

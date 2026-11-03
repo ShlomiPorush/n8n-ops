@@ -2027,7 +2027,8 @@ test("the open problems of an instance say when a new order or a refresh failed,
   try {
     await page.goto(`/instances/${id}?tab=problems`)
     const panel = page.getByRole("tabpanel")
-    const rows = panel.locator("tbody tr")
+    // Its rows, without the headings of the sections it reads in by default.
+    const rows = panel.locator("tbody tr:not([data-section])")
     const button = panel.getByRole("button", { name: /^Sort:/ })
     const menu = page.getByRole("dialog", { name: "Sort open problems" })
     await expect(rows.first()).toContainText("E2E stand-in 1")

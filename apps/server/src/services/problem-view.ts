@@ -153,14 +153,20 @@ function readState(row: { status: ProblemStatus; mutedUntil: Date | null; lastSe
 }
 
 /**
- * The title screens show, in SQL, for the order by Cause: "target · reason" with the reason as `displayReasonOf`
- * shows it (over 100 characters without the asides that lead it), else the error text of rows from before the
- * regroup by cause. Cutting a long reason to its first sentence keeps its start, so the order needs no more.
+ * The title screens show (`causeFields`), in SQL, for the order by Cause: "target · reason" with the reason as
+ * `displayReasonOf` shows it, step by step, else the error text of rows from before the regroup by cause. The test
+ * "reads a row as screens show it" holds the two to the same titles.
  */
-function titleSql(target: AnyColumn, reason: AnyColumn, errorMessage: AnyColumn) {
+export function titleSql(target: AnyColumn, reason: AnyColumn, errorMessage: AnyColumn) {
   const flat = sql`btrim(regexp_replace(${reason}, '\\s+', ' ', 'g'))`
+  // Over 100 characters, the asides go: bracketed tags, "Error fetching from <url>:" and parentheses.
   const asides = sql`btrim(regexp_replace(regexp_replace(regexp_replace(${flat}, '(\\[[^\\]]{1,80}\\]:?\\s*)+', '', 'g'), 'Error fetching from \\S+:\\s+', '', 'g'), '\\s*\\([^)]*\\)', '', 'g'))`
-  const shown = sql`case when length(${flat}) > 100 then ${asides} else ${flat} end`
+  const cleaned = sql`(case when length(${flat}) > 100 then ${asides} else ${flat} end)`
+  // Over 120, its first sentence.
+  const sentence = sql`(case when length(${cleaned}) > 120 then coalesce(substring(${cleaned} from '^(.+?[.!?])(\\s|$)'), ${cleaned}) else ${cleaned} end)`
+  // At most 300.
+  const capped = sql`(case when length(${sentence}) > 300 then rtrim(left(${sentence}, 299)) || '…' else ${sentence} end)`
+  const shown = sql`coalesce(nullif(${capped}, ''), left(${reason}, 300))`
   return sql`coalesce(${target} || ' · ' || ${shown}, ${errorMessage})`
 }
 

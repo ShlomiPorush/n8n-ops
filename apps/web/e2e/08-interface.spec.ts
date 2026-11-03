@@ -1842,7 +1842,7 @@ test("new filters whose list fails to load keep the previous rows, and the filte
     // The rows stay instead of an error, and the line takes the place of a count that would name them muted.
     await expect(rows).toHaveCount(shown)
     await expect(page.getByText("Could not load problems")).toHaveCount(0)
-    await expect(countLine).not.toHaveText(/^[\d,]+ muted workflows?/)
+    await expect(countLine).not.toHaveText(/^[\d,]+ muted rows?/)
     await expect(page.getByRole("status").filter({ hasText: "Could not refresh" })).toHaveCount(0)
   } finally {
     await page.unroute(muted)
@@ -1851,7 +1851,7 @@ test("new filters whose list fails to load keep the previous rows, and the filte
   await page.getByRole("button", { name: "Try again" }).click()
   await expect(note).toHaveCount(0)
   await expect(page.getByText("Could not load problems")).toHaveCount(0)
-  await expect(countLine).toHaveText(/^[\d,]+ muted workflows?$/)
+  await expect(countLine).toHaveText(/^[\d,]+ muted rows?$/)
 })
 
 test("the Problems count line counts every row, also above the 200 the list holds (TB-18)", async () => {
@@ -1862,7 +1862,7 @@ test("the Problems count line counts every row, also above the 200 the list hold
   // bar has a link that counts the open problems too.
   const countLine = page.locator('[data-slot="list-count"]')
   const shown = await rows.count()
-  await expect(countLine).toHaveText(new RegExp(`^${shown} workflows?$`))
+  await expect(countLine).toHaveText(new RegExp(`^${shown} rows?$`))
   await expect(page.getByText(/^Showing the first/)).toHaveCount(0)
 
   // The server says there are more than it sent.
@@ -1874,7 +1874,7 @@ test("the Problems count line counts every row, also above the 200 the list hold
   try {
     await page.reload()
     await expect(rows.first()).toBeVisible()
-    await expect(countLine).toHaveText(new RegExp(`^${shown} of 1,240 workflows$`))
+    await expect(countLine).toHaveText(new RegExp(`^${shown} of 1,240 rows$`))
     await expect(
       page.getByText(`Showing the first ${shown} in this order. Search or filter to find the others.`),
     ).toBeVisible()

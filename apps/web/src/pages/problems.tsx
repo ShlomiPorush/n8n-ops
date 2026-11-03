@@ -424,7 +424,7 @@ export function ProblemsPage() {
     <>
       <PageHead
         title="Problems"
-        description="One row per failing workflow: what its failing node called and what went wrong there. Workflows that fail for the same cause are one problem, which alerts once."
+        description="One row per workflow and failing node: what the node called and what went wrong there. Workflows that fail for the same cause are one problem, which alerts once."
         live={rows}
       />
       <FilterBar
@@ -465,7 +465,7 @@ export function ProblemsPage() {
               {/* New filters that failed keep the previous rows, and this line says so instead of a count (TB-5).
                   Above 200 it counts them all: "200 of 1,240 open problems" (TB-18). */}
               {rows.previous !== "failed" &&
-                countOf(shown, total, [statusWords[status], "workflow"].filter(Boolean).join(" "))}
+                countOf(shown, total, [statusWords[status], "row"].filter(Boolean).join(" "))}
               <RefreshNote live={rows} what={noun} small />
             </>
           )

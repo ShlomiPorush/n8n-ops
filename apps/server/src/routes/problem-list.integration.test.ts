@@ -16,6 +16,7 @@ import {
   problemDetail,
   problemPage,
   problemRowsPage,
+  titleSql,
 } from "../services/problem-view.ts"
 import { restRoutes } from "./agent.ts"
 
@@ -505,5 +506,42 @@ describe("the Problems list as rows", () => {
     const merged = await page()
     expect(merged.items.find((r) => r.id === mango.id)).toMatchObject({ problemTotal: 2, mergedByHand: true })
     expect((await problemDetail(ctx, zebra.problemId))?.mergedByHand).toBe(true)
+  })
+
+  it("orders by Cause by the very title screens show", async () => {
+    const [own] = await database.db
+      .insert(instances)
+      .values({ name: "titles-n8n", baseUrl: "http://titles:5678", apiKeyEnc: "v1:x:y:z" })
+      .returning()
+    if (!own) throw new Error("no instance")
+    const reasons = [
+      // Over 120 characters: its first sentence, which sorts before a shorter reason that goes on after it.
+      `Request failed. Zebra ${"Details ".repeat(20)}`,
+      "Request failed. Alpha",
+      `[RequestId: 42] Bad   ticket\n(see the log) ${"word ".repeat(20)}`,
+      `No sentence end ${"x".repeat(400)}`,
+      "  short  ",
+    ]
+    for (const reason of reasons) await row(own.id, { target: "api.example.com", reason, kind: "svc" })
+    // A row from before the regroup by cause reads its error text.
+    await row(own.id, { errorMessage: "Old error text" })
+
+    const byCause = await problemRowsPage(ctx, {
+      status: "all",
+      instanceId: own.id,
+      order: { sort: "error", order: "asc" },
+    })
+    const titles = byCause.items.map((r) => r.title)
+    expect(titles.indexOf("api.example.com · Request failed.")).toBeLessThan(
+      titles.indexOf("api.example.com · Request failed. Alpha"),
+    )
+    // The SQL that sorts gives each row the title the screens show.
+    const inSql = await database.db
+      .select({ id: affectedWorkflows.id, title: titleSql(affectedWorkflows.target, affectedWorkflows.reason, affectedWorkflows.errorMessage) })
+      .from(affectedWorkflows)
+      .where(eq(affectedWorkflows.instanceId, own.id))
+    expect(Object.fromEntries(inSql.map((r) => [r.id, r.title]))).toEqual(
+      Object.fromEntries(byCause.items.map((r) => [r.id, r.title])),
+    )
   })
 })

@@ -17,8 +17,9 @@ import {
 } from "../db/schema.ts"
 import { createAudit } from "../lib/audit.ts"
 import { sha256 } from "../lib/crypto.ts"
-import { regroupedView } from "./problem-view.ts"
-import { applyProblemAction, RegroupedProblemError, resolveProblemId } from "./problems.ts"
+import { causeOf } from "./cause.ts"
+import { problemItems, regroupedView } from "./problem-view.ts"
+import { applyProblemAction, fingerprint, mergeProblems, RegroupedProblemError, resolveProblemId } from "./problems.ts"
 import { regroupByCause } from "./regroup.ts"
 
 // The one-time regroup of recorded Problems by cause (docs/adr/0003) on data as earlier releases left it, against a
@@ -83,7 +84,8 @@ async function fresh() {
         workflowName: `Workflow ${workflowId}`,
         nodeName: "Call API",
         errorMessage: text,
-        fingerprint: sha256(`${instance.id}|${workflowId}|Call API|${text}|${seq}`),
+        // As earlier releases made it: the exact error text in place of the cause key.
+        fingerprint: fingerprint(instance.id, workflowId, "Call API", text),
         count: 1,
         firstSeen: ago(48),
         lastSeen: ago(1),
@@ -284,5 +286,66 @@ describe("the regroup by cause", () => {
     expect(after).toMatchObject({ fingerprint: sha256(BAD), target: null })
     // Still to do at the next start.
     expect(await regroupByCause(ctx)).not.toBeNull()
+  })
+
+  it("frees the old keys first: an old error text may equal a new cause key", async () => {
+    const { db, ctx, instance, oldProblem, oldRow, failure } = await fresh()
+    const url = "https://crm.example.com/tickets"
+    const key = causeOf({
+      instanceId: instance.id,
+      workflowId: "w1",
+      nodeName: "Call API",
+      nodeType: "n8n-nodes-base.httpRequest",
+      message: BAD,
+      description: "Ticket info not correct",
+      url,
+      credentials: [],
+      calledWorkflow: null,
+    }).key
+    // This row's old key is fingerprint(instance, w1, Call API, key): the new key of the other row.
+    const odd = await oldRow((await oldProblem(key)).id, "w1", key)
+    const other = await oldRow((await oldProblem(BAD)).id, "w1", BAD)
+    await failure(other.id, "w1", ago(1), url, "Ticket info not correct")
+    await regroupByCause(ctx)
+    const rows = await db.select().from(affectedWorkflows)
+    expect(rows.map((r) => r.id).sort()).toEqual([odd.id, other.id].sort())
+  })
+
+  it("lists every row an old row went to, when it split and its latest cause then joined another row", async () => {
+    const { db, ctx, oldProblem, oldRow, failure } = await fresh()
+    const url = "https://crm.example.com/x"
+    const x = await oldRow((await oldProblem(`${BAD} x`)).id, "w1", `${BAD} x`, { lastSeen: ago(2) })
+    const y = await oldRow((await oldProblem(`${BAD} y`)).id, "w1", `${BAD} y`, { lastSeen: ago(1) })
+    await failure(x.id, "w1", ago(10), url, "Ticket info not correct")
+    await failure(x.id, "w1", ago(2), url, "Rate limit reached")
+    await failure(y.id, "w1", ago(1), url, "Rate limit reached")
+    await regroupByCause(ctx)
+    expect(await db.select().from(affectedWorkflows).where(eq(affectedWorkflows.id, x.id))).toEqual([])
+    const view = await regroupedView(ctx, x.id)
+    expect(view?.problems.map((p) => p.title).sort()).toEqual([
+      "crm.example.com · HTTP 400 · Rate limit reached",
+      "crm.example.com · HTTP 400 · Ticket info not correct",
+    ])
+
+    // A Problem merged after the regroup is still listed, where it went; the old one stays a page.
+    const ticket = view?.problems.find((p) => p.title.includes("Ticket"))?.id
+    const rate = view?.problems.find((p) => p.title.includes("Rate"))?.id
+    await mergeProblems(ctx, ticket ?? "", rate ?? "")
+    expect((await regroupedView(ctx, x.id))?.problems.map((p) => p.id)).toEqual([rate])
+  })
+
+  it("never follows a Merge of a regrouped Problem, and reads an ended mute as open", async () => {
+    const { db, ctx, oldProblem, oldRow, failure } = await fresh()
+    const generic = await oldProblem(BAD)
+    const merged = await oldProblem(`${BAD} merged`)
+    await db.update(problems).set({ mergedInto: generic.id }).where(eq(problems.id, merged.id))
+    const r = await oldRow(generic.id, "w1", BAD, { status: "muted", mutedUntil: ago(1), lastSeen: ago(0.5) })
+    await oldRow(generic.id, "w2", BAD)
+    await failure(r.id, "w1", ago(0.5), "https://crm.example.com/x", "Ticket info not correct")
+    await regroupByCause(ctx)
+    expect(await resolveProblemId(db, merged.id)).toEqual({ problemId: merged.id, affectedWorkflowId: null })
+    const [now] = await db.select().from(affectedWorkflows).where(eq(affectedWorkflows.id, r.id))
+    const item = (await problemItems(ctx, [now?.problemId ?? ""])).get(now?.problemId ?? "")
+    expect(item?.affectedWorkflows[0]).toMatchObject({ status: "muted", state: "now" })
   })
 })

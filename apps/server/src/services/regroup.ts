@@ -121,6 +121,17 @@ export async function regroupByCause(
 
 const minDate = (a: Date, b: Date) => (a < b ? a : b)
 const maxDate = (a: Date, b: Date) => (a > b ? a : b)
+
+/**
+ * Lists cut to a size one statement can carry: Postgres.js takes at most 65,534 parameters per query, and a large
+ * history easily has more failures than that.
+ */
+const CHUNK = 5000
+function chunks<T>(list: T[]): T[][] {
+  const out: T[][] = []
+  for (let i = 0; i < list.length; i += CHUNK) out.push(list.slice(i, i + CHUNK))
+  return out
+}
 const toDate = (v: Date | string | null) => (v === null ? null : v instanceof Date ? v : new Date(v))
 const pair = (a: string, b: string) => `${a}\u0000${b}`
 
@@ -255,8 +266,9 @@ async function regroup(tx: Tx, now: Date): Promise<RegroupReport> {
       only !== undefined &&
       (rowsOfProblem.get(only) ?? []).every((id) => oldIds.has(id)) &&
       [...oldIds].every((id) => (byRow.get(id) ?? []).every((x) => x.cause.key === causeKey))
-    const cause = ((group[0] as Final).parts[0] as Part).cause
+    // The latest failure names the Problem, as ingest does from then on.
     const latest = [...group].sort((a, b) => b.values.lastSeen.getTime() - a.values.lastSeen.getTime())[0] as Final
+    const cause = (latest.parts[0] as Part).cause
     const values = {
       fingerprint: causeKey,
       errorMessage: latest.values.errorMessage,
@@ -282,7 +294,9 @@ async function regroup(tx: Tx, now: Date): Promise<RegroupReport> {
     }
   }
 
-  // Rows: survivors take their new values, new rows are made, failures move, the rows combined away go.
+  // Rows: survivors take their new values, new rows are made, failures move, the rows combined away go. Every old
+  // key leaves first: an old row's key (made from its error text) may equal a new one (made from a cause key).
+  await tx.update(affectedWorkflows).set({ fingerprint: sql`'regroup:' || ${affectedWorkflows.id}` })
   const finalIdOf = new Map<string, string>() // old row id + cause key -> final row id
   const aliases: { oldId: string; newId: string; kind: "combined" | "split" }[] = []
   const kept = new Set(finals.flatMap((f) => (f.keptId ? [f.keptId] : [])))
@@ -309,7 +323,8 @@ async function regroup(tx: Tx, now: Date): Promise<RegroupReport> {
       else if (!kept.has(p.old.id)) aliases.push({ oldId: p.old.id, newId: id, kind: "combined" })
     }
     const ids = f.parts.flatMap((p) => p.failures.map((x) => x.id))
-    if (ids.length) await tx.update(failures).set({ affectedWorkflowId: id }).where(inArray(failures.id, ids))
+    for (const part of chunks(ids))
+      await tx.update(failures).set({ affectedWorkflowId: id }).where(inArray(failures.id, part))
   }
 
   // Pending alerts follow the failure that raised them (inserted in its transaction, so with its created_at); the
@@ -335,8 +350,8 @@ async function regroup(tx: Tx, now: Date): Promise<RegroupReport> {
   }
 
   const gone = oldRows.filter((r) => !kept.has(r.id)).map((r) => r.id)
-  if (gone.length) await tx.delete(affectedWorkflows).where(inArray(affectedWorkflows.id, gone))
-  if (aliases.length) await tx.insert(affectedWorkflowAliases).values(aliases).onConflictDoNothing()
+  for (const part of chunks(gone)) await tx.delete(affectedWorkflows).where(inArray(affectedWorkflows.id, part))
+  for (const part of chunks(aliases)) await tx.insert(affectedWorkflowAliases).values(part).onConflictDoNothing()
 
   // Old Problems: where their rows went; those not kept stay as pages that point there and take no action.
   const movedTo = new Map<string, Map<string, number>>()
@@ -351,13 +366,13 @@ async function regroup(tx: Tx, now: Date): Promise<RegroupReport> {
   const mapping = [...movedTo].flatMap(([oldProblemId, to]) =>
     [...to].map(([newProblemId, rows]) => ({ oldProblemId, newProblemId, rows })),
   )
-  if (mapping.length) await tx.insert(problemRegroups).values(mapping).onConflictDoNothing()
+  for (const part of chunks(mapping)) await tx.insert(problemRegroups).values(part).onConflictDoNothing()
   const left = oldProblems.filter((p) => !reused.has(p.id)).map((p) => p.id)
-  if (left.length)
+  for (const part of chunks(left))
     await tx
       .update(problems)
       .set({ regrouped: true, version: sql`${problems.version} + 1` })
-      .where(inArray(problems.id, left))
+      .where(inArray(problems.id, part))
 
   await tx.delete(problemReceipts)
   await tx

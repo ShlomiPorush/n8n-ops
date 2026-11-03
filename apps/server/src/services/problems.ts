@@ -166,6 +166,19 @@ export async function ingestExecution(
           .returning()
         if (!updated) throw new Error("the affected workflow went away")
         row = updated
+        // The Problem's label follows its latest failure too (a credential renamed, a workflow name learned). Written
+        // only when it changed, so the Problem is locked only then; a deadlock with an action is retried.
+        if (seenAt >= existing.lastSeen)
+          await tx
+            .update(problems)
+            .set({ target: cause.target, reason: cause.reason, kind: cause.kind, targetSource: cause.targetSource })
+            .where(
+              and(
+                eq(problems.id, updated.problemId),
+                eq(problems.targetKey, cause.targetKey),
+                sql`(${problems.target}, ${problems.reason}) is distinct from (${cause.target}, ${cause.reason})`,
+              ),
+            )
       } else {
         const values = {
           instanceId: instance.id,
@@ -824,7 +837,8 @@ export async function resolveProblemId(
 ): Promise<{ problemId: string; affectedWorkflowId: string | null } | null> {
   const [problem] = await db.select().from(problems).where(eq(problems.id, id))
   // A regrouped Problem names itself: its page says where its workflows went (docs/adr/0003).
-  if (problem) return { problemId: problem.mergedInto ?? problem.id, affectedWorkflowId: null }
+  if (problem)
+    return { problemId: problem.regrouped ? problem.id : (problem.mergedInto ?? problem.id), affectedWorkflowId: null }
   const [row] = await db
     .select({ problemId: affectedWorkflows.problemId })
     .from(affectedWorkflows)

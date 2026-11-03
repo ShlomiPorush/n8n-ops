@@ -199,6 +199,32 @@ describe("a failed execution", () => {
     expect(await read(first?.affectedWorkflowId ?? "")).toMatchObject({ count: 2 })
   })
 
+  it("names the Problem after its latest failure: a renamed credential keeps the Problem and changes its label", async () => {
+    const withCredential = (id: string, name: string, at: number) => ({
+      ...execution(id, "label", "Upload", "Client authentication failed."),
+      startedAt: new Date(Date.now() - at).toISOString(),
+      stoppedAt: new Date(Date.now() - at).toISOString(),
+      workflowData: {
+        id: "label",
+        name: "Label",
+        nodes: [
+          { name: "Upload", type: "n8n-nodes-base.microsoftOneDrive", credentials: { oauth: { id: "cred-1", name } } },
+        ],
+        connections: {},
+      } as never,
+    })
+    const first = await ingestExecution(ctx, instance, withCredential("label-1", "Drive", 2 * hour), { silent: true })
+    const again = await ingestExecution(ctx, instance, withCredential("label-2", "Drive (renamed)", hour), {
+      silent: true,
+    })
+    expect(again).toMatchObject({ problemId: first?.problemId, affectedWorkflowId: first?.affectedWorkflowId })
+    expect(await readProblem(first?.problemId ?? "")).toMatchObject({ target: "Drive (renamed)" })
+    expect(await read(first?.affectedWorkflowId ?? "")).toMatchObject({ target: "Drive (renamed)" })
+    // An older failure arriving later does not take the label back.
+    await ingestExecution(ctx, instance, withCredential("label-0", "Drive", 3 * hour), { silent: true })
+    expect(await readProblem(first?.problemId ?? "")).toMatchObject({ target: "Drive (renamed)" })
+  })
+
   it("joining a resolved Problem is a regression, a muted one stays muted without alerting", async () => {
     const resolved = await row({ status: "resolved", resolvedAt: new Date() })
     const r = await ingestExecution(

@@ -5,7 +5,7 @@ import { likeContains } from "../lib/like.ts"
 import { grantableScopes } from "./access.ts"
 import { currentHealth, type HealthNow } from "./collection.ts"
 import { activeOnly, effectiveScopes, latestN8nVersion } from "./instances.ts"
-import { problemDetail, problemFailure, problemPage } from "./problem-view.ts"
+import { problemDetail, problemFailure, problemPage, regroupedView } from "./problem-view.ts"
 
 /**
  * Read-only queries for agents (requirements E1 to E3). The REST API and the MCP server both use these,
@@ -43,7 +43,8 @@ export async function agentProblems(
  * workflow's (it is then the one chosen) or a merged Problem's; `affectedWorkflowId` chooses explicitly.
  */
 export async function agentProblem(ctx: Ctx, id: string, affectedWorkflowId?: string) {
-  return problemDetail(ctx, id, affectedWorkflowId)
+  // An id the regroup by cause replaced answers where its workflows went (docs/adr/0003).
+  return (await regroupedView(ctx, id)) ?? problemDetail(ctx, id, affectedWorkflowId)
 }
 
 /**

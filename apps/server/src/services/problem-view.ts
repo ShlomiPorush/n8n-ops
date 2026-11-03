@@ -197,7 +197,10 @@ async function affectedOf(ctx: Pick<Ctx, "db">, problemIds: string[], instanceId
   const now = Date.now()
   for (const { problemId, target, targetSource, reason, kind, ...row } of rows) {
     const list = byProblem.get(problemId) ?? []
-    const state = row.status !== "open" ? null : now - row.lastSeen.getTime() < DAY_MS ? "now" : "quiet"
+    // Open also when its mute ended and housekeeping has not noticed yet, as `openish` reads it.
+    const open =
+      row.status === "open" || (row.status === "muted" && row.mutedUntil !== null && row.mutedUntil.getTime() <= now)
+    const state = !open ? null : now - row.lastSeen.getTime() < DAY_MS ? "now" : "quiet"
     const item = {
       ...row,
       ...causeFields({ errorMessage: row.errorMessage, target, targetSource, reason, kind }),
@@ -471,16 +474,25 @@ export async function regroupedView(ctx: Pick<Ctx, "db">, id: string) {
         .where(eq(problemRegroups.oldProblemId, id))
     ).map((r) => r.id)
   } else {
-    const split = await ctx.db
-      .select({ problemId: a.problemId })
+    // Every row its failures went to: the split ones, and the one that kept its id even when that one was then
+    // combined into another row.
+    const aliases = await ctx.db
+      .select({ problemId: a.problemId, kind: affectedWorkflowAliases.kind })
       .from(affectedWorkflowAliases)
       .innerJoin(a, eq(a.id, affectedWorkflowAliases.newId))
-      .where(and(eq(affectedWorkflowAliases.oldId, id), eq(affectedWorkflowAliases.kind, "split")))
-    if (!split.length) return null
+      .where(eq(affectedWorkflowAliases.oldId, id))
+    if (!aliases.some((r) => r.kind === "split")) return null
     const [row] = await ctx.db.select({ problemId: a.problemId }).from(a).where(eq(a.id, id))
-    targets = [...(row ? [row.problemId] : []), ...split.map((r) => r.problemId)]
+    targets = [...(row ? [row.problemId] : []), ...aliases.map((r) => r.problemId)]
   }
-  const items = await problemItems(ctx, [...new Set(targets)], 5)
+  // A Problem merged since then is read where it went.
+  const followed = targets.length
+    ? await ctx.db
+        .select({ id: problems.id, mergedInto: problems.mergedInto })
+        .from(problems)
+        .where(inArray(problems.id, targets))
+    : []
+  const items = await problemItems(ctx, [...new Set(followed.map((p) => p.mergedInto ?? p.id))], 5)
   return {
     regrouped: true as const,
     problems: [...items.values()].map((p) => ({

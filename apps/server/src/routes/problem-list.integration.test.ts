@@ -366,6 +366,7 @@ describe("a Problem that hit several workflows", () => {
     const m1 = await agentFailure(ctx, pid, undefined, multi[0]?.id)
     expect(await agentFailure(ctx, pid, m1?.id, multi[1]?.id)).toBeNull()
     expect(await agentFailure(ctx, multi[1]?.id ?? "", m1?.id)).toBeNull()
-    expect((await agentProblem(ctx, pid, multi[2]?.id))?.selected.nodeName).toBe("HTTP 2")
+    const chosen = await agentProblem(ctx, pid, multi[2]?.id)
+    expect(chosen && "selected" in chosen ? chosen.selected.nodeName : null).toBe("HTTP 2")
   })
 })

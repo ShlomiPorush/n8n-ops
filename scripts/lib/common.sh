@@ -343,9 +343,10 @@ dev_compose() {
     esac
     return
   fi
+  local data
+  data="$(dev_data_dir)"
   # DOCKER_SOCKET_GID only for docker-compose-dev.yml copies made before the socket proxy ran as root.
-  N8N_OPS_DATA_DIR="$(dev_data_dir)" N8N_OPS_ENV_DIR="$(dev_data_dir)/env" N8N_OPS_IMAGE_TAG=dev \
-    DOCKER_SOCKET_GID="$(docker_socket_gid)" \
+  N8N_OPS_DATA_DIR="$data" N8N_OPS_ENV_DIR="$data/env" N8N_OPS_IMAGE_TAG=dev DOCKER_SOCKET_GID="$(docker_socket_gid)" \
     docker compose -p "$DEV_PROJECT" --project-directory "$REPO_ROOT" -f "$DEV_COMPOSE_FILE" "$@"
 }
 

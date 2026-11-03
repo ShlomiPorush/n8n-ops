@@ -68,7 +68,10 @@ migrate() {
     return
   fi
   if [ ! -e "$marker" ]; then
-    [ $complete -eq 1 ] && { info "Already migrated"; return; }
+    if [ $complete -eq 1 ]; then
+      info "Already migrated"
+      return
+    fi
     # Missing secrets with a kept database and no migration under way: they were lost, not never made.
     [ $was_old -eq 1 ] || die "the secrets in $env are missing, but the database is kept and no migration is under way.
 Put $env back, or start over with scripts/local.sh nuke (deletes the development data)."

@@ -537,7 +537,10 @@ describe("the Problems list as rows", () => {
     )
     // The SQL that sorts gives each row the title the screens show.
     const inSql = await database.db
-      .select({ id: affectedWorkflows.id, title: titleSql(affectedWorkflows.target, affectedWorkflows.reason, affectedWorkflows.errorMessage) })
+      .select({
+        id: affectedWorkflows.id,
+        title: titleSql(affectedWorkflows.target, affectedWorkflows.reason, affectedWorkflows.errorMessage),
+      })
       .from(affectedWorkflows)
       .where(eq(affectedWorkflows.instanceId, own.id))
     expect(Object.fromEntries(inSql.map((r) => [r.id, r.title]))).toEqual(

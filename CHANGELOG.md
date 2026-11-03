@@ -4,6 +4,11 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Changed
+
+- **The server and its database refuse to start with the example database password.** When `POSTGRES_PASSWORD` in `.env` is empty or still the placeholder from `.env.example` (or another placeholder such as `change-me`), PostgreSQL stops before it creates a database and the server stops before it connects, each saying what to set. Check `.env` before upgrading: an installation that runs with such a password does not start until it is set to a long random value (and changed in the database too, as `.env.example` explains).
+- **The development and verification stacks make their own secrets.** The repository no longer holds a password or key for them. `scripts/local.sh start` makes them once, owner-only, next to the development data; `scripts/verify.sh` and CI make new ones for each run. A development stack made before this runs `scripts/local.sh migrate` once, which keeps its data and moves its database to a new password; its disposable n8n starts again empty, with a new key.
+
 ## [0.8.0] - 2026-11-03
 
 ### Added

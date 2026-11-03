@@ -27,7 +27,7 @@ let app: ReturnType<typeof createApp>
 // The public URL as the browser sees it; requests reach the server as http://localhost, as behind a proxy.
 const PUBLIC = "https://ops.example.test"
 const USERNAME = "operator"
-const password = "a-long-test-password-1"
+const password = randomBytes(24).toString("hex")
 let totpSecret = ""
 const minute = 60_000
 const hour = 60 * minute

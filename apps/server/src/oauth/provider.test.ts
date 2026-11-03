@@ -69,7 +69,7 @@ beforeAll(async () => {
   server = serve({ fetch: app.fetch, port: 0 })
   await new Promise((r) => server.once("listening", r))
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
-  provider = createAgentProvider({ issuer: base, cookieKeys: ["test-key"], pages })
+  provider = createAgentProvider({ issuer: base, cookieKeys: [randomBytes(32).toString("hex")], pages })
 })
 afterAll(() => server.close())
 afterEach(() => vi.useRealTimers())

@@ -25,7 +25,7 @@ let server: Server
 let baseUrl: string
 let tokenId: string
 
-const KEY = "names-key-0123456789"
+const KEY = randomBytes(24).toString("hex")
 /** What the stand-in n8n has, by workflow ID; "slow" never answers. */
 const live: Record<string, string> = { "wf-renamed": "New name", "wf-live": "Only in n8n" }
 // An ID an agent may send that is also a name JavaScript gives objects; a literal would set the prototype instead.

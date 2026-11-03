@@ -59,6 +59,7 @@ running_image_id() {
 try_pr() {
   local pr="$1"
   [[ "$pr" =~ ^[0-9]+$ ]] || die "pull request number expected, got: $pr"
+  require_dev_secrets
   [ ! -f "$STATE_FILE" ] || die "pull request $(grep '^PR=' "$STATE_FILE" | cut -d= -f2) is active. Run: scripts/try-pr.sh restore"
   dev_compose ps --status running -q postgres | grep -q . || die "the development stack is not running. Run: scripts/local.sh start"
 
@@ -132,6 +133,7 @@ status() {
 
 restore() {
   load_state
+  require_dev_secrets
   local service
   info "Restoring images: $SERVICES"
   for service in $SERVICES; do

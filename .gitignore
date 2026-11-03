@@ -4,13 +4,16 @@ docs/private/
 # Discovery reports contain hostnames and URLs
 n8n-discovery-*.txt
 
-# Environment files (keep the contract)
+# Environment files: tracked only as examples; the real ones hold secrets (AGENTS.md, Secrets)
 .env
 .env.*
 !.env.example
+*.env
+!*.env.example
 
-# Machine-local development stack
+# Machine-local development stack, and the copy scripts/local.sh migrate keeps
 /docker-compose-dev.yml
+/docker-compose-dev.yml.*
 
 # Dependencies and build output
 node_modules/

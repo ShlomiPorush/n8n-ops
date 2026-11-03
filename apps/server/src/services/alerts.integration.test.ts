@@ -142,9 +142,9 @@ async function setup(
   const secrets = createSecrets(randomBytes(32))
   const settings = createSettings(d.db)
   await settings.set("telegram", {
-    botTokenEnc: secrets.encrypt("token"),
+    botTokenEnc: secrets.encrypt(`1:${randomBytes(16).toString("hex")}`),
     chatId: "-100",
-    webhookSecret: "secret",
+    webhookSecret: randomBytes(24).toString("hex"),
     routes: telegram.routes ?? [],
     defaultThreadId: telegram.defaultThreadId ?? null,
     accessThreadId: null,

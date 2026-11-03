@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto"
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { expect, type Page } from "@playwright/test"
 import { freshTotp } from "./totp.ts"
@@ -5,8 +6,18 @@ import { freshTotp } from "./totp.ts"
 /** The design this run of the suite is served in; scripts/verify.sh runs the suite once per design. */
 export const design: "regular" | "compact" = process.env.E2E_DESIGN === "compact" ? "compact" : "regular"
 
+/** A setting scripts/verify.sh made for this run (AGENTS.md, Secrets): no password of the suite is in the repository. */
+function fromRun(name: string): string {
+  const value = process.env[name]
+  if (!value) throw new Error(`${name} is required (scripts/verify.sh sets it)`)
+  return value
+}
+
+/** A new random value, for a password or key the tests make and use in one place. */
+export const randomSecret = () => randomBytes(24).toString("hex")
+
 export const username = "operator"
-export const password = "correct horse battery staple"
+export const password = fromRun("E2E_ADMIN_PASSWORD")
 const stateFile = "test-results/e2e-state.json"
 
 type State = { secret?: string; privateKey?: string; apiKey?: string }
@@ -135,7 +146,7 @@ export async function n8nSetup(): Promise<string> {
       email: "owner@example.com",
       firstName: "Test",
       lastName: "Owner",
-      password: "Passw0rd-Long-Enough",
+      password: fromRun("E2E_N8N_OWNER_PASSWORD"),
     }),
   })
   expect(setup.ok, await setup.clone().text()).toBe(true)

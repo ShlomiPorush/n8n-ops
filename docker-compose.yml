@@ -96,6 +96,21 @@ services:
         max-size: "10m"
         max-file: "3"
     restart: unless-stopped
+    # Refuses to start, and so to create a database, with no password or the example one from .env.example (the
+    # server refuses the same values). Then the image's own entrypoint, unchanged.
+    entrypoint:
+      - sh
+      - -c
+      - |
+        case "$$(printf '%s' "$$POSTGRES_PASSWORD" | tr '[:upper:]' '[:lower:]')" in
+          "" | replace-with* | change-me* | changeme* | example* | placeholder* | password | secret | postgres | n8n_ops | test)
+            echo "POSTGRES_PASSWORD in .env is empty or the example value; set it to a long random password" >&2
+            exit 1
+            ;;
+        esac
+        exec docker-entrypoint.sh "$$@"
+      - postgres-entrypoint
+    command: ["postgres"]
     # Only its own three values: the server's secrets in .env never reach this container.
     environment:
       POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in .env}

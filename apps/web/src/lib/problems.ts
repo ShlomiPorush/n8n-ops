@@ -50,6 +50,8 @@ export type ProblemRow = CauseFields & {
   affectedWorkflows: AffectedRow[]
   /** Every Affected workflow, also those a list leaves out of `affectedWorkflows`. */
   affectedTotal: number
+  /** A person merged other Problems into it, so its workflows need not share one cause. */
+  mergedByHand: boolean
 }
 
 /** A Problems list as the server sends it: the first 200 in the order asked for, and how many match in all (TB-18). */
@@ -94,14 +96,17 @@ export const SECTION_TITLES: Record<Section, { title: string; note: string }> = 
   resolved: { title: "Resolved", note: "Resolved by hand or after quiet days." },
 }
 
+/** The sections in the order the server sends them by default. */
 export const SECTION_ORDER: Section[] = ["instance", "now", "quiet", "alerts", "muted", "resolved"]
 
 /** A row of the Problems list: one Affected workflow, its section and its Problem (docs/adr/0003). */
 export type ProblemRowItem = AffectedRow & {
   problemId: string
   section: Section
-  /** How many Affected workflows its Problem has, this one included. */
+  /** How many workflows (instance and workflow, whatever the node) its Problem has, this one included. */
   problemTotal: number
+  /** Its Problem had others merged into it by hand, so its workflows need not share this cause. */
+  mergedByHand: boolean
 }
 
 /** The Problems list as rows: the first 200 in the order asked for, and how many match in all (TB-18). */

@@ -139,6 +139,31 @@ export type AffectedItem = {
 
 const DAY_MS = 86_400_000
 
+/**
+ * An Affected workflow's status and state as screens read them: open also when its mute ended and housekeeping has
+ * not noticed yet, as `openish` reads it; an open workflow that failed in the last 24 hours is failing now.
+ */
+function readState(row: { status: ProblemStatus; mutedUntil: Date | null; lastSeen: Date }, now: number) {
+  const open =
+    row.status === "open" || (row.status === "muted" && row.mutedUntil !== null && row.mutedUntil.getTime() <= now)
+  return {
+    status: open ? ("open" as const) : row.status,
+    state: !open ? null : now - row.lastSeen.getTime() < DAY_MS ? ("now" as const) : ("quiet" as const),
+  }
+}
+
+/**
+ * The title screens show, in SQL, for the order by Cause: "target · reason" with the reason as `displayReasonOf`
+ * shows it (over 100 characters without the asides that lead it), else the error text of rows from before the
+ * regroup by cause. Cutting a long reason to its first sentence keeps its start, so the order needs no more.
+ */
+function titleSql(target: AnyColumn, reason: AnyColumn, errorMessage: AnyColumn) {
+  const flat = sql`btrim(regexp_replace(${reason}, '\\s+', ' ', 'g'))`
+  const asides = sql`btrim(regexp_replace(regexp_replace(regexp_replace(${flat}, '(\\[[^\\]]{1,80}\\]:?\\s*)+', '', 'g'), 'Error fetching from \\S+:\\s+', '', 'g'), '\\s*\\([^)]*\\)', '', 'g'))`
+  const shown = sql`case when length(${flat}) > 100 then ${asides} else ${flat} end`
+  return sql`coalesce(${target} || ' · ' || ${shown}, ${errorMessage})`
+}
+
 /** A Problem as every reader sees it: the error, its derived state, and the workflows it hit. */
 export type ProblemItem = CauseFields & {
   id: string
@@ -157,6 +182,8 @@ export type ProblemItem = CauseFields & {
   affectedWorkflows: AffectedItem[]
   /** How many Affected workflows it has, also those left out of `affectedWorkflows`. */
   affectedTotal: number
+  /** A person merged other Problems into it, so its workflows need not share one cause. */
+  mergedByHand: boolean
 }
 
 /** How many Affected workflows a list row carries. The detail carries them all. */
@@ -197,20 +224,19 @@ async function affectedOf(ctx: Pick<Ctx, "db">, problemIds: string[], instanceId
   const now = Date.now()
   for (const { problemId, target, targetSource, reason, kind, ...row } of rows) {
     const list = byProblem.get(problemId) ?? []
-    // Open also when its mute ended and housekeeping has not noticed yet, as `openish` reads it.
-    const open =
-      row.status === "open" || (row.status === "muted" && row.mutedUntil !== null && row.mutedUntil.getTime() <= now)
-    const state = !open ? null : now - row.lastSeen.getTime() < DAY_MS ? "now" : "quiet"
     const item = {
       ...row,
       ...causeFields({ errorMessage: row.errorMessage, target, targetSource, reason, kind }),
-      state,
+      ...readState(row, now),
     }
     if (limit === undefined || list.length < limit) list.push(item as AffectedItem)
     byProblem.set(problemId, list)
   }
   return byProblem
 }
+
+/** A Problem that a person merged others into (Merge; a regroup by cause merges nothing). */
+const problemMergedByHand = sql<boolean>`exists (select 1 from ${problems} m where m.merged_into = ${problems.id} and not m.regrouped)`
 
 type ListOptions = ProblemFilter & { order?: ProblemOrder | null | "recent"; limit?: number }
 
@@ -252,8 +278,8 @@ export async function problemPage(
   const sorts: Record<ProblemSortKey, SortColumn> = {
     status: { value: rank },
     workflow: text(r.workflowName),
-    // By what screens show: "target · reason", or the error text of rows from before the regroup by cause.
-    error: text(sql`coalesce(${problems.target} || ' · ' || ${problems.reason}, ${problems.errorMessage})`),
+    // By the title screens show.
+    error: text(titleSql(problems.target, problems.reason, problems.errorMessage)),
     instance: text(r.instanceName),
     failures: { value: sql`${s.count}` },
     lastSeen: { value: sql`${s.lastSeen}` },
@@ -286,6 +312,7 @@ export async function problemPage(
       workflows: w.workflows,
       instances: w.instances,
       affectedTotal: w.rows,
+      mergedByHand: problemMergedByHand,
       total: sql<number>`count(*) over()`.mapWith(Number),
     })
     .from(problems)
@@ -331,12 +358,28 @@ const sectionRank = sql<number>`case
   when ${a.lastSeen} > now() - interval '24 hours' then 1
   else 2 end`
 
+/**
+ * An Affected workflow's Status column as a rank, high to low, the way the UI's badge reads it: a regression, then
+ * first seen in the last 24 hours, then open, muted and resolved. A mute that ended counts as open.
+ */
+const statusRank = sql<number>`case
+  when ${a.status} = 'resolved' then 0
+  when ${a.status} = 'muted' and (${a.mutedUntil} is null or ${a.mutedUntil} > now()) then 1
+  when ${a.regression} then 4
+  when ${a.firstSeen} > now() - interval '24 hours' then 3
+  else 2 end`
+
+/** A Problem that a person merged others into: its workflows may have failed for different causes. */
+const mergedByHand = sql<boolean>`exists (select 1 from ${problems} m where m.merged_into = ${a.problemId} and not m.regrouped)`
+
 /** An Affected workflow in the list of rows: one row per workflow, at one node, with one cause. */
 export type ProblemRowItem = AffectedItem & {
   problemId: string
   section: ProblemSection
-  /** How many Affected workflows its Problem has, this one included. */
+  /** How many workflows (instance and workflow, whatever the node) its Problem has, this one included. */
   problemTotal: number
+  /** Its Problem had others merged into it by hand, so its workflows need not share this cause. */
+  mergedByHand: boolean
 }
 
 /**
@@ -366,11 +409,10 @@ export async function problemRowsPage(
       ),
     )
   }
-  const title = sql`coalesce(${a.target} || ' · ' || ${a.reason}, ${a.errorMessage})`
   const sorts: Record<ProblemSortKey, SortColumn> = {
-    status: { value: sql`-${sectionRank}` },
+    status: { value: statusRank },
     workflow: text(a.workflowName),
-    error: text(title),
+    error: text(titleSql(a.target, a.reason, a.errorMessage)),
     instance: text(instances.name),
     failures: { value: a.count },
     lastSeen: { value: a.lastSeen },
@@ -382,13 +424,15 @@ export async function problemRowsPage(
   if (order === "recent") orderBy = settle
   else if (!order) orderBy = ranked
   else {
-    const column = order.sort === "status" ? { value: sectionRank } : sorts[order.sort]
-    const ascending = order.sort === "status" ? order.order === "desc" : order.order === "asc"
-    const by = ascending ? asc(column.value) : desc(column.value)
+    const column = sorts[order.sort]
+    const by = order.order === "asc" ? asc(column.value) : desc(column.value)
     orderBy = [...(column.blank ? [asc(column.blank)] : []), by, ...ranked]
   }
   const peers = ctx.db
-    .select({ problemId: a.problemId, rows: sql<number>`count(*)::int`.as("peer_rows") })
+    .select({
+      problemId: a.problemId,
+      workflows: sql<number>`count(distinct (${a.instanceId}, ${a.workflowId}))::int`.as("peer_workflows"),
+    })
     .from(a)
     .groupBy(a.problemId)
     .as("peers")
@@ -396,7 +440,8 @@ export async function problemRowsPage(
     .select({
       ...affectedColumns,
       rank: sectionRank.mapWith(Number),
-      problemTotal: peers.rows,
+      problemTotal: peers.workflows,
+      mergedByHand,
       total: sql<number>`count(*) over()`.mapWith(Number),
     })
     .from(a)
@@ -408,17 +453,12 @@ export async function problemRowsPage(
     .limit(limit)
   const now = Date.now()
   return {
-    items: rows.map(({ total: _, rank, problemTotal, target, targetSource, reason, kind, ...row }) => {
-      const open =
-        row.status === "open" || (row.status === "muted" && row.mutedUntil !== null && row.mutedUntil.getTime() <= now)
-      return {
-        ...row,
-        ...causeFields({ errorMessage: row.errorMessage, target, targetSource, reason, kind }),
-        state: !open ? null : now - row.lastSeen.getTime() < DAY_MS ? ("now" as const) : ("quiet" as const),
-        section: problemSections[rank] ?? "quiet",
-        problemTotal,
-      }
-    }),
+    items: rows.map(({ total: _, rank, target, targetSource, reason, kind, ...row }) => ({
+      ...row,
+      ...causeFields({ errorMessage: row.errorMessage, target, targetSource, reason, kind }),
+      ...readState(row, now),
+      section: problemSections[rank] ?? "quiet",
+    })),
     total: rows[0]?.total ?? 0,
   }
 }
@@ -446,6 +486,7 @@ export async function problemItems(ctx: Pick<Ctx, "db">, ids: string[], limit?: 
       workflows: w.workflows,
       instances: w.instances,
       affectedTotal: w.rows,
+      mergedByHand: problemMergedByHand,
     })
     .from(problems)
     .innerJoin(s, eq(s.problemId, problems.id))

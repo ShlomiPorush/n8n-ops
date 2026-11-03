@@ -86,6 +86,7 @@ import {
   type ProblemRows,
   problemPath,
   problemTitle,
+  SECTION_ORDER,
   SECTION_TITLES,
   type Section,
   workflowNames,
@@ -215,9 +216,13 @@ function SectionRow({ section, count, columns }: { section: Section; count: numb
   )
 }
 
-/** " · same cause in 3 workflows" when the same cause hit other workflows too. */
+/** " · same cause in 3 workflows" when the same cause hit other workflows too; after a Merge, that it was merged. */
 const alsoIn = (r: ProblemRowItem) =>
-  r.problemTotal > 1 ? ` · same cause in ${plural(r.problemTotal, "workflow")}` : ""
+  r.problemTotal <= 1
+    ? ""
+    : r.mergedByHand
+      ? ` · ${plural(r.problemTotal, "workflow")} merged by hand`
+      : ` · same cause in ${plural(r.problemTotal, "workflow")}`
 
 /**
  * The Problems list, one row per workflow at one node with one cause (docs/adr/0003): where it broke, what went
@@ -268,11 +273,15 @@ export function ProblemsTable({
     onClick: () => onOpen(r.problemId, r.id),
   })
   const columns = items ? 1 : showInstance ? 6 : 5
+  // Headings only over rows that are in the order of the sections: rows of another order kept while the default
+  // one loads are not.
+  const rank = (r: ProblemRowItem) => SECTION_ORDER.indexOf(r.section)
+  const inSections = sections && list.every((r, i) => i === 0 || rank(list[i - 1] as ProblemRowItem) <= rank(r))
   /** The rows, with a heading before each section, in the order the server sent them. */
   const withHeadings = (draw: (r: ProblemRowItem) => React.ReactNode) =>
     list.map((r, i) => (
       <Fragment key={r.id}>
-        {sections && list[i - 1]?.section !== r.section && (
+        {inSections && list[i - 1]?.section !== r.section && (
           <SectionRow
             section={r.section}
             count={list.filter((x) => x.section === r.section).length}
@@ -805,29 +814,29 @@ export function ProblemDetail({ id }: { id: string }) {
             </DropdownMenu>
           </div>
         </div>
-        {/* What went wrong (docs/adr/0003): the cause, a line for a known error, why its workflows are grouped, and
-            n8n's own text of the latest failure. */}
+        {/* What went wrong in the workflow shown (docs/adr/0003): its cause, a line for a known error, why the
+            Problem's workflows are grouped, and n8n's own text. */}
         <div className="grid gap-1.5 rounded-sm bg-fill px-3 py-2">
           <p className="flex min-w-0 flex-wrap items-center gap-2">
-            <KindBadge kind={p.kind} />
-            <UserText className="min-w-0 font-semibold break-words">{p.title}</UserText>
+            <KindBadge kind={s.kind} />
+            <UserText className="min-w-0 font-semibold break-words">{s.title}</UserText>
           </p>
-          {p.hint && (
+          {s.hint && (
             <p className="text-small">
-              <span className="font-semibold">Known error:</span> {p.hint}
+              <span className="font-semibold">Known error:</span> {s.hint}
             </p>
           )}
           {!single && (
             <p className="text-small text-muted-foreground">
-              {p.affectedWorkflows.every((a) => a.title === p.title)
-                ? `Grouped because: the same target and reason in ${plural(p.workflows, "workflow")}.`
-                : "Merged by hand: its workflows failed for different causes."}
+              {p.mergedByHand
+                ? `Merged by hand: ${plural(p.workflows, "workflow")} that may have failed for different causes.`
+                : `Grouped because: the same target and reason in ${plural(p.workflows, "workflow")}.`}
             </p>
           )}
-          <p className="font-mono text-small break-words text-muted-foreground">{p.errorMessage}</p>
+          <p className="font-mono text-small break-words text-muted-foreground">{s.errorMessage}</p>
         </div>
         {/* n8n's description, when the cause line above does not say it already. */}
-        {single && s.error?.description && !p.title.includes(s.error.description) && (
+        {single && s.error?.description && !s.title.includes(s.error.description) && (
           <p className="text-muted-foreground">{s.error.description}</p>
         )}
       </div>

@@ -250,26 +250,25 @@ export async function ingestExecution(
 
 /**
  * The Problem's label follows its latest failure, over all its workflows (a credential renamed, a workflow name
- * learned): written only when the label differs and no workflow of the Problem failed later, so the Problem is
- * locked only then. A deadlock with an action is retried with the rest of the ingest.
+ * learned): written when no workflow of the Problem failed later. The Problem is locked first, in a statement of its
+ * own, so the check reads every failure and label committed before the lock; an unlocked look first could miss a
+ * label another ingest is writing. A deadlock with an action is retried with the rest of the ingest, which leaves
+ * nothing behind.
  */
 async function followLatestLabel(tx: Tx, problemId: string, cause: Cause, seenAt: Date) {
   const [named] = await tx
-    .select({ targetKey: problems.targetKey, target: problems.target, reason: problems.reason })
+    .select({ targetKey: problems.targetKey })
     .from(problems)
     .where(eq(problems.id, problemId))
+    .for("update")
+  // The target key never changes on a Problem; a workflow merged in from another cause leaves the label alone.
   if (!named || named.targetKey !== cause.targetKey) return
-  if (named.target === cause.target && named.reason === cause.reason) return
-  // Locked first, in a statement of its own, so the check below reads every failure committed before the lock: in
-  // one statement, a failure another ingest committed while this one waited would not be seen.
-  await tx.select({ id: problems.id }).from(problems).where(eq(problems.id, problemId)).for("update")
   await tx
     .update(problems)
     .set({ target: cause.target, reason: cause.reason, kind: cause.kind, targetSource: cause.targetSource })
     .where(
       and(
         eq(problems.id, problemId),
-        eq(problems.targetKey, cause.targetKey),
         sql`(${problems.target}, ${problems.reason}) is distinct from (${cause.target}, ${cause.reason})`,
         sql`not exists (select 1 from ${affectedWorkflows} where ${affectedWorkflows.problemId} = ${problemId} and ${affectedWorkflows.lastSeen} > ${seenAt.toISOString()}::timestamptz)`,
       ),

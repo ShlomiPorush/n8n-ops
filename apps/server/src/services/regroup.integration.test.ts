@@ -346,6 +346,6 @@ describe("the regroup by cause", () => {
     expect(await resolveProblemId(db, merged.id)).toEqual({ problemId: merged.id, affectedWorkflowId: null })
     const [now] = await db.select().from(affectedWorkflows).where(eq(affectedWorkflows.id, r.id))
     const item = (await problemItems(ctx, [now?.problemId ?? ""])).get(now?.problemId ?? "")
-    expect(item?.affectedWorkflows[0]).toMatchObject({ status: "muted", state: "now" })
+    expect(item?.affectedWorkflows[0]).toMatchObject({ status: "open", state: "now" })
   })
 })

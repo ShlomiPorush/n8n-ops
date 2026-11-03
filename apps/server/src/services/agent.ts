@@ -13,7 +13,7 @@ import { problemDetail, problemFailure, problemPage } from "./problem-view.ts"
  */
 
 /**
- * Problems for agents: one per exact error, with the workflows it hit (`affectedWorkflows`, most recently failed
+ * Problems for agents: one per cause (docs/adr/0003), with the workflows it hit (`affectedWorkflows`, most recently failed
  * first, at most AFFECTED_IN_LIST; `affectedTotal` counts them all). With an instance, a Problem is listed when it hit
  * that instance, its state is its state there, and that instance's workflows come first.
  */

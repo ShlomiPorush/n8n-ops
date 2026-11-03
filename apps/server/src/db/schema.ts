@@ -14,10 +14,23 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core"
+import type { CauseKind, TargetSource } from "../services/cause.ts"
 
 const ts = (name: string) => timestamp(name, { withTimezone: true, mode: "date" })
 const created = () => ts("created_at").notNull().defaultNow()
 const updated = () => ts("updated_at").notNull().defaultNow()
+
+/**
+ * The cause of a Problem or an Affected workflow (docs/adr/0003, `services/cause.ts`): the target's stable key and its
+ * label, which rule found it, the full reason and the kind. Null only on rows recorded before the regroup by cause.
+ */
+const causeColumns = () => ({
+  targetKey: text("target_key"),
+  target: text("target"),
+  targetSource: text("target_source").$type<TargetSource>(),
+  reason: text("reason"),
+  kind: text("kind").$type<CauseKind>(),
+})
 
 // ---------------------------------------------------------------------------
 // Better Auth (property names must match Better Auth field names)
@@ -371,6 +384,12 @@ export const problems = pgTable(
     fingerprint: text("fingerprint"),
     /** Set when a person merged this Problem into another. Its workflows moved there; it stays as an alias. */
     mergedInto: uuid("merged_into").references((): AnyPgColumn => problems.id, { onDelete: "cascade" }),
+    ...causeColumns(),
+    /**
+     * Set by the regroup by cause (docs/adr/0003) on a Problem left without workflows. It keeps its id for old links,
+     * which show where its workflows went (problem_regroups), and refuses every action.
+     */
+    regrouped: boolean("regrouped").notNull().default(false),
     /** Moves on whenever an Affected workflow joins or leaves (ingest, Merge, Split), so an Undo can tell. */
     version: integer("version").notNull().default(0),
     createdAt: created(),
@@ -392,9 +411,11 @@ export const affectedWorkflows = pgTable(
     workflowId: text("workflow_id").notNull(),
     workflowName: text("workflow_name").notNull(),
     nodeName: text("node_name").notNull(),
+    /** n8n's error text of the latest failure. */
     errorMessage: text("error_message").notNull(),
-    /** instance + workflow + node + exact error text: where a failed execution is counted. */
+    /** instance + workflow + node + cause key (docs/adr/0003): where a failed execution is counted. */
     fingerprint: text("fingerprint").notNull(),
+    ...causeColumns(),
     status: text("status").$type<ProblemStatus>().notNull().default("open"),
     mutedUntil: ts("muted_until"),
     regression: boolean("regression").notNull().default(false),
@@ -416,6 +437,38 @@ export const affectedWorkflows = pgTable(
     index("affected_workflows_status_idx").on(t.status),
     index("affected_workflows_instance_idx").on(t.instanceId),
   ],
+)
+
+/**
+ * Ids of Affected workflows that the regroup by cause (docs/adr/0003) replaced, so old links and the Telegram messages
+ * that name them still find their rows: `combined` when the row joined another with the same new key, `split` for
+ * each new row that took some of its failures (the old id itself kept the cause of its latest failure).
+ */
+export const affectedWorkflowAliases = pgTable(
+  "affected_workflow_aliases",
+  {
+    oldId: uuid("old_id").notNull(),
+    newId: uuid("new_id")
+      .notNull()
+      .references(() => affectedWorkflows.id, { onDelete: "cascade" }),
+    kind: text("kind").$type<"combined" | "split">().notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.oldId, t.newId] })],
+)
+
+/** Where the workflows of each Problem went in the regroup by cause, for the page of an old Problem. */
+export const problemRegroups = pgTable(
+  "problem_regroups",
+  {
+    oldProblemId: uuid("old_problem_id")
+      .notNull()
+      .references(() => problems.id, { onDelete: "cascade" }),
+    newProblemId: uuid("new_problem_id")
+      .notNull()
+      .references(() => problems.id, { onDelete: "cascade" }),
+    rows: integer("rows").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.oldProblemId, t.newProblemId] })],
 )
 
 /** The state of an Affected workflow that actions change and an Undo puts back. Times as ISO strings. */
@@ -523,6 +576,8 @@ export const alertGroups = pgTable("alert_groups", {
   closedAt: ts("closed_at"),
   /** The Affected workflows the message lists. */
   affectedWorkflowIds: jsonb("affected_workflow_ids").$type<string[]>().notNull().default([]),
+  /** Sent before the regroup by cause (docs/adr/0003): its buttons no longer act, they only say so. */
+  beforeRegroup: boolean("before_regroup").notNull().default(false),
   createdAt: created(),
 })
 

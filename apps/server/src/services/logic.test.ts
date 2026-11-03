@@ -7,11 +7,11 @@ import { renderReport, zonedParts } from "./reports.ts"
 import { html } from "./telegram.ts"
 
 describe("fingerprint", () => {
-  it("is the same for the same workflow, node and exact error", () => {
+  it("is the same for the same workflow, node and cause key", () => {
     expect(fingerprint("i", "w", "HTTP", "404 for /users/1")).toBe(fingerprint("i", "w", "HTTP", "404 for /users/1"))
   })
 
-  it("differs when the error text differs (exact match, B3)", () => {
+  it("differs when the cause key differs (B3)", () => {
     expect(fingerprint("i", "w", "HTTP", "404 for /users/1")).not.toBe(
       fingerprint("i", "w", "HTTP", "404 for /users/2"),
     )

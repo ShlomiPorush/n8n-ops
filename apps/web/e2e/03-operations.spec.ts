@@ -445,9 +445,10 @@ test("a workflow moves to another instance with its credentials", async () => {
   await expect(page.getByText("Created on e2e-n8n-b")).toBeVisible()
 })
 
-test("another instance of the same n8n joins its failures to the Problem they share, and Split separates them", async () => {
-  // e2e-n8n-b reads the same n8n: its first read brings the same failure of the same workflow, which joins the
-  // Problem. Read now, so the files after this one find the same state every run.
+test("another instance of the same n8n keeps its failures of a node with no known target in a Problem of its own", async () => {
+  // e2e-n8n-b reads the same n8n: its first read brings the same failure of the same workflow. Its Code node names no
+  // host or credential, so the cause is the node on each instance and the two do not join (docs/adr/0003). Read now,
+  // so the files after this one find the same state every run.
   await page.goto("/instances")
   await page
     .getByRole("row")
@@ -458,15 +459,6 @@ test("another instance of the same n8n joins its failures to the Problem they sh
   await page.goto("/problems?status=open")
   // The list column: a wide screen also opens the first problem beside it, whose rows name workflows too.
   const list = page.locator(`[data-scroll-pane="list"]`)
-  const shared = list.getByRole("row", { name: /2 workflows/ })
-  await expect(shared).toContainText("2 instances")
-  await shared.click()
-  const onB = page.getByRole("tabpanel").getByRole("row").filter({ hasText: "e2e-n8n-b" })
-  await onB.getByRole("button", { name: "Actions for Sync orders to ERP" }).click()
-  await page.getByRole("menuitem", { name: "Split into its own problem" }).click()
-  await expect(page.getByText("Split into a problem of its own: Sync orders to ERP")).toBeVisible()
-  // Each instance's failure is a Problem of its own again, as the files after this one expect.
-  await page.goto("/problems?status=open")
   await expect(list.getByRole("row", { name: /2 workflows/ })).toHaveCount(0)
   await expect(list.getByRole("row", { name: /Sync orders to ERP/ })).toHaveCount(2)
 })

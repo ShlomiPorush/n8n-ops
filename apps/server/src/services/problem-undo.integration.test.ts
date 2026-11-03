@@ -9,12 +9,12 @@ import { createDatabase, type Database } from "../db/client.ts"
 import { affectedWorkflows, auditLog, failures, instances, problemReceipts, problems } from "../db/schema.ts"
 import { createAudit } from "../lib/audit.ts"
 import type { N8nExecution } from "../n8n/client.ts"
+import { causeOf } from "./cause.ts"
 import {
   type AffectedWorkflow,
   applyProblemAction,
   applyProblemActions,
   deleteInstance,
-  errorFingerprint,
   fingerprint,
   housekeeping,
   ingestExecution,
@@ -81,6 +81,22 @@ async function newInstance(instanceName: string) {
 const hour = 3600_000
 let seq = 0
 
+/** The service every failing node here calls, so one text is one cause across workflows and instances. */
+const ERP = "https://erp.example.com/api"
+/** The cause key of a failure with this text at a node calling the ERP (docs/adr/0003). */
+const causeKey = (message: string) =>
+  causeOf({
+    instanceId: "any",
+    workflowId: "any",
+    nodeName: "Call ERP",
+    nodeType: "n8n-nodes-base.httpRequest",
+    message,
+    description: null,
+    url: ERP,
+    credentials: [],
+    calledWorkflow: null,
+  }).key
+
 /** An Affected workflow in the given state, in `problemId` or in a new Problem of its own; seen an hour ago. */
 async function row(state: Partial<typeof affectedWorkflows.$inferInsert> = {}, problemId?: string) {
   seq += 1
@@ -92,7 +108,7 @@ async function row(state: Partial<typeof affectedWorkflows.$inferInsert> = {}, p
     (
       await ctx.db
         .insert(problems)
-        .values({ errorMessage, fingerprint: errorFingerprint(errorMessage) })
+        .values({ errorMessage, fingerprint: causeKey(errorMessage) })
         .returning()
     )[0]?.id
   if (!pid) throw new Error("no problem")
@@ -107,7 +123,7 @@ async function row(state: Partial<typeof affectedWorkflows.$inferInsert> = {}, p
       nodeName: "Call ERP",
       errorMessage,
       // The real one, so a failure ingested later lands on this row.
-      fingerprint: fingerprint(instanceId, workflowId, "Call ERP", errorMessage),
+      fingerprint: fingerprint(instanceId, workflowId, "Call ERP", causeKey(errorMessage)),
       firstSeen: seen,
       lastSeen: seen,
       ...state,
@@ -138,7 +154,7 @@ async function act(r: AffectedWorkflow, action: Parameters<typeof applyProblemAc
   return result.receipt
 }
 
-/** A failed execution of a workflow at a node with an exact error, as n8n returns it. */
+/** A failed execution of a workflow at a node calling the ERP with an exact error, as n8n returns it. */
 function execution(executionId: string, workflowId: string, nodeName: string, message: string): N8nExecution {
   return {
     id: executionId,
@@ -147,7 +163,12 @@ function execution(executionId: string, workflowId: string, nodeName: string, me
     startedAt: new Date().toISOString(),
     stoppedAt: new Date().toISOString(),
     workflowId,
-    workflowData: { id: workflowId, name: `Workflow ${workflowId}`, nodes: [], connections: {} } as never,
+    workflowData: {
+      id: workflowId,
+      name: `Workflow ${workflowId}`,
+      nodes: [{ name: nodeName, type: "n8n-nodes-base.httpRequest", parameters: { url: ERP } }],
+      connections: {},
+    } as never,
     data: { resultData: { runData: {}, error: { message, node: { name: nodeName } } } },
   }
 }

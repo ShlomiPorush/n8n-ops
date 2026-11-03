@@ -12,6 +12,7 @@ import {
 } from "../db/schema.ts"
 import type { Section } from "../lib/settings.ts"
 import { type AlertSubject, resolveThread, sendRouted, topicGoneNote } from "./alert-routing.ts"
+import { causeFields } from "./cause.ts"
 import { telegramTarget } from "./draft-tests.ts"
 import { can } from "./instances.ts"
 import type { DbLike } from "./problems.ts"
@@ -196,6 +197,7 @@ export function renderProblemGroup(
   footer?: TelegramHtml,
   note?: TelegramHtml,
   spread?: { workflows: number },
+  hint?: string | null,
 ): TelegramHtml {
   const regression = lines.some((l) => l.regression)
   const workflows = new Set(lines.map((l, i) => l.workflowKey ?? String(i))).size
@@ -221,6 +223,7 @@ export function renderProblemGroup(
     ...(note ? [note] : []),
     html`<b>${title}</b>`,
     html`<code>${clip(error, 500)}</code>`,
+    ...(hint ? [html`<i>${clip(hint, 200)}</i>`] : []),
     html``,
     ...body,
     ...(footer ? [html``, footer] : []),
@@ -381,7 +384,8 @@ export async function dispatchAlerts(ctx: Ctx) {
     try {
       const [problem] = await ctx.db.select().from(problems).where(eq(problems.id, problemId))
       if (!problem) throw new Error("the problem went away")
-      const error = problem.errorMessage
+      // What the Problem is about (docs/adr/0003): "target · reason", and the line for a known error.
+      const { title: error, hint } = causeFields(problem)
       let newIds = [...new Set(rows.map((r) => r.affectedWorkflowId).filter((id): id is string => Boolean(id)))]
       /** The queued alerts of these workflows: those of a workflow that moved stay queued. */
       const idsOf = (workflowIds: string[]) =>
@@ -421,6 +425,7 @@ export async function dispatchAlerts(ctx: Ctx) {
                 undefined,
                 groupNote(current),
                 await spreadOf(ctx, problemId, current.createdAt),
+                hint,
               ),
               await groupButtons(ctx, current.id, problemId),
             )
@@ -486,7 +491,7 @@ export async function dispatchAlerts(ctx: Ctx) {
           tg.api,
           tg.chatId,
           threadId,
-          (note) => renderProblemGroup(error, lines, undefined, note, spread),
+          (note) => renderProblemGroup(error, lines, undefined, note, spread, hint),
           buttons,
         )
       } catch (error) {
@@ -561,13 +566,24 @@ export async function handleTelegramCallback(ctx: Ctx, update: CallbackUpdate): 
   if (String(cb.message?.chat?.id) !== tg.chatId) return false
   const [action, groupId] = cb.data.split(":")
   if (!groupId || (action !== "r" && action !== "m")) return false
-  const [known] = await ctx.db.select({ id: alertGroups.id }).from(alertGroups).where(eq(alertGroups.id, groupId))
+  const [known] = await ctx.db
+    .select({ id: alertGroups.id, beforeRegroup: alertGroups.beforeRegroup })
+    .from(alertGroups)
+    .where(eq(alertGroups.id, groupId))
   // Answered at once: Telegram shows a spinner until then, and the change may wait for a dispatch editing this group.
+  // A message sent before the regroup by cause (docs/adr/0003) no longer acts: its workflows may be in other
+  // Problems now, and a press must never resolve or mute what the message did not show.
   await tg.api.answerCallback(
     cb.id,
-    !known ? "This alert is no longer known." : action === "r" ? "Marked as resolved" : "Muted for 24 hours",
+    !known
+      ? "This alert is no longer known."
+      : known.beforeRegroup
+        ? "This alert is from before the regrouping. Open n8n-ops to act."
+        : action === "r"
+          ? "Marked as resolved"
+          : "Muted for 24 hours",
   )
-  if (!known) return true
+  if (!known || known.beforeRegroup) return true
   return withGroup(groupId, async () => {
     const [group] = await ctx.db.select().from(alertGroups).where(eq(alertGroups.id, groupId))
     if (!group) return true
@@ -597,7 +613,7 @@ export async function handleTelegramCallback(ctx: Ctx, update: CallbackUpdate): 
         tg.chatId,
         messageId,
         renderProblemGroup(
-          group.problemId && problem ? problem.errorMessage : group.groupKey,
+          group.problemId && problem ? causeFields(problem).title : group.groupKey,
           lines,
           html`<i>${action === "r" ? "Resolved" : "Muted for 24 hours"} by ${who}</i>`,
           groupNote(group),
@@ -605,6 +621,7 @@ export async function handleTelegramCallback(ctx: Ctx, update: CallbackUpdate): 
           group.problemId && problemIds[0]
             ? await spreadOf(ctx, group.problemId, group.createdAt, problemIds[0])
             : undefined,
+          problem ? causeFields(problem).hint : null,
         ),
       )
     } catch (error) {

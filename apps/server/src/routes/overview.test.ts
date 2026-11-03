@@ -18,6 +18,8 @@ const problem = (id: string, at: number): AttentionItem => ({
   workflowName: id,
   instanceName: "alpha",
   errorMessage: "boom",
+  title: "boom",
+  hint: null,
   count: 1,
   workflows: 1,
   affectedTotal: 1,

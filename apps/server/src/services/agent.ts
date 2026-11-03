@@ -5,7 +5,7 @@ import { likeContains } from "../lib/like.ts"
 import { grantableScopes } from "./access.ts"
 import { currentHealth, type HealthNow } from "./collection.ts"
 import { activeOnly, effectiveScopes, latestN8nVersion } from "./instances.ts"
-import { problemDetail, problemFailure, problemPage } from "./problem-view.ts"
+import { problemDetail, problemFailure, problemPage, regroupedView } from "./problem-view.ts"
 
 /**
  * Read-only queries for agents (requirements E1 to E3). The REST API and the MCP server both use these,
@@ -13,7 +13,7 @@ import { problemDetail, problemFailure, problemPage } from "./problem-view.ts"
  */
 
 /**
- * Problems for agents: one per exact error, with the workflows it hit (`affectedWorkflows`, most recently failed
+ * Problems for agents: one per cause (docs/adr/0003), with the workflows it hit (`affectedWorkflows`, most recently failed
  * first, at most AFFECTED_IN_LIST; `affectedTotal` counts them all). With an instance, a Problem is listed when it hit
  * that instance, its state is its state there, and that instance's workflows come first.
  */
@@ -43,7 +43,8 @@ export async function agentProblems(
  * workflow's (it is then the one chosen) or a merged Problem's; `affectedWorkflowId` chooses explicitly.
  */
 export async function agentProblem(ctx: Ctx, id: string, affectedWorkflowId?: string) {
-  return problemDetail(ctx, id, affectedWorkflowId)
+  // An id the regroup by cause replaced answers where its workflows went (docs/adr/0003).
+  return (await regroupedView(ctx, id)) ?? problemDetail(ctx, id, affectedWorkflowId)
 }
 
 /**

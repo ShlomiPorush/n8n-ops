@@ -9,15 +9,10 @@ import postgres from "postgres"
 import { afterAll, describe, expect, it } from "vitest"
 import type { Ctx } from "../context.ts"
 import { createAudit } from "../lib/audit.ts"
+import { sha256 } from "../lib/crypto.ts"
 import type { N8nExecution } from "../n8n/client.ts"
-import {
-  applyProblemAction,
-  deleteInstance,
-  errorFingerprint,
-  fingerprint,
-  ingestExecution,
-  undoProblemAction,
-} from "../services/problems.ts"
+import { applyProblemAction, deleteInstance, ingestExecution, undoProblemAction } from "../services/problems.ts"
+import { regroupByCause } from "../services/regroup.ts"
 import {
   affectedWorkflows,
   alertGroups,
@@ -517,7 +512,7 @@ describe("the upgrade to Problems across workflows (0012)", () => {
       expect(all.map((p) => p.errorMessage).sort()).toEqual(
         ["Bad request", "Chain end", "Loop A text", "Loop B text", "Orphan text", "Timeout"].sort(),
       )
-      for (const p of all) expect(p.fingerprint).toBe(errorFingerprint(p.errorMessage))
+      for (const p of all) expect(p.fingerprint).toBe(sha256(p.errorMessage))
       const problemOf = (n: number) => all.find((p) => p.id === row(n).problemId)?.errorMessage
       expect([1, 2, 3, 12].map(problemOf)).toEqual(["Bad request", "Bad request", "Bad request", "Bad request"])
       expect([4, 5, 13].map(problemOf)).toEqual(["Timeout", "Timeout", "Timeout"])
@@ -578,7 +573,7 @@ describe("the upgrade to Problems across workflows (0012)", () => {
     }
   })
 
-  it("works after the upgrade: ingest, an action and its Undo, removing an instance", async () => {
+  it("works after the upgrade and the regroup by cause: ingest, an action and its Undo, removing an instance", async () => {
     const { sql, db, close } = await freshDatabase()
     try {
       await migrate(db, { migrationsFolder: migrationsUpTo("0011_last_known_health") })
@@ -597,24 +592,23 @@ describe("the upgrade to Problems across workflows (0012)", () => {
         workflowData: { id: workflowId, name: workflowId, nodes: [], connections: {} } as never,
         data: { resultData: { runData: {}, error: { message: text, node: { name: node } } } },
       })
-      // The old row counts it, by its own fingerprint, which the migration kept.
+      // Start-up regroups by cause after the migrations (docs/adr/0003). A row without stored failures takes its node
+      // and its error text as its cause, so a new failure there counts on it.
+      await regroupByCause(ctx)
       const [old] = await db
         .select()
         .from(affectedWorkflows)
-        .where(eq(affectedWorkflows.id, id(1)))
-      await db
-        .update(affectedWorkflows)
-        .set({ fingerprint: fingerprint(alpha, "wf-1", "HTTP", "Bad request") })
         .where(eq(affectedWorkflows.id, id(1)))
       const counted = await ingestExecution(ctx, instance, execution("new-1", "wf-1", "HTTP", "Bad request"), {
         silent: true,
       })
       expect(counted).toMatchObject({ affectedWorkflowId: id(1), problemId: old?.problemId, reason: null })
-      // A new workflow with the text joins the Problem.
-      const joined = await ingestExecution(ctx, instance, execution("new-2", "wf-new", "HTTP", "Bad request"), {
+      // The same text in another workflow, at a node with nothing known about its target, is a Problem of its own.
+      const other = await ingestExecution(ctx, instance, execution("new-2", "wf-new", "HTTP", "Bad request"), {
         silent: true,
       })
-      expect(joined).toMatchObject({ problemId: old?.problemId, reason: "joined" })
+      expect(other).toMatchObject({ reason: "new" })
+      expect(other?.problemId).not.toBe(old?.problemId)
 
       const acted = await applyProblemAction(ctx, old?.problemId ?? "", "resolve")
       expect(acted?.receipt).toBeTruthy()

@@ -3,6 +3,7 @@ import { type Ctx, changed } from "../context.ts"
 import type { Db } from "../db/client.ts"
 import { errorCode } from "../db/errors.ts"
 import {
+  affectedWorkflowAliases,
   affectedWorkflows,
   failures,
   instances,
@@ -11,12 +12,14 @@ import {
   problemReceipts,
   problems,
   type ReceiptRow,
+  workflows,
 } from "../db/schema.ts"
 import type { AuditEntry } from "../lib/audit.ts"
 import { sha256 } from "../lib/crypto.ts"
 import type { N8nExecution } from "../n8n/client.ts"
 import { extractFailure } from "../n8n/execution.ts"
 import { enqueueProblemAlert, type ProblemAlertReason, problemAlertSettings } from "./alerts.ts"
+import { type Cause, causeOf } from "./cause.ts"
 import { clientFor, type Instance } from "./instances.ts"
 
 export type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0]
@@ -25,15 +28,19 @@ export type DbLike = Db | Tx
 export type Problem = typeof problems.$inferSelect
 export type AffectedWorkflow = typeof affectedWorkflows.$inferSelect
 
-/** Where a failed execution is counted: one workflow, at one node, with one exact error text, on one instance. */
-export function fingerprint(instanceId: string, workflowId: string, nodeName: string, message: string): string {
-  return sha256([instanceId, workflowId, nodeName, message].join("\u0000"))
+/** Where a failed execution is counted: one workflow, at one node, with one cause, on one instance. */
+export function fingerprint(instanceId: string, workflowId: string, nodeName: string, causeKey: string): string {
+  return sha256([instanceId, workflowId, nodeName, causeKey].join("\u0000"))
 }
 
-/** A Problem is one exact error text wherever it happens (requirement B3, docs/adr/0001). */
-export function errorFingerprint(message: string): string {
-  return sha256(message)
-}
+/** The cause columns of an Affected workflow or a Problem (docs/adr/0003). */
+export const causeValues = (cause: Cause) => ({
+  targetKey: cause.targetKey,
+  target: cause.target,
+  targetSource: cause.targetSource,
+  reason: cause.reason,
+  kind: cause.kind,
+})
 
 /** Execution ids are increasing integers; compare them numerically when they look like numbers. */
 export function isNewer(id: string, cursor: string | null): boolean {
@@ -93,10 +100,29 @@ export async function ingestExecution(
 ): Promise<IngestResult | null> {
   const failure = extractFailure(execution)
   const workflowName = execution.workflowData?.name ?? `Workflow ${execution.workflowId}`
-  const rowFingerprint = fingerprint(instance.id, execution.workflowId, failure.nodeName, failure.message)
-  const textFingerprint = errorFingerprint(failure.message)
-  const seenAt = new Date(execution.stoppedAt ?? execution.startedAt ?? Date.now())
   // Read before the transaction: inside it, only the transaction's own connection is used.
+  const called = failure.node.calledWorkflow
+  const calledName = called
+    ? (
+        await ctx.db
+          .select({ name: workflows.name })
+          .from(workflows)
+          .where(and(eq(workflows.instanceId, instance.id), eq(workflows.workflowId, called.id)))
+      )[0]?.name
+    : undefined
+  const cause = causeOf({
+    instanceId: instance.id,
+    workflowId: execution.workflowId,
+    nodeName: failure.nodeName,
+    nodeType: failure.nodeType,
+    message: failure.message,
+    description: failure.description,
+    url: failure.node.url,
+    credentials: failure.node.credentials,
+    calledWorkflow: called ? { id: called.id, name: calledName ?? called.name } : null,
+  })
+  const rowFingerprint = fingerprint(instance.id, execution.workflowId, failure.nodeName, cause.key)
+  const seenAt = new Date(execution.stoppedAt ?? execution.startedAt ?? Date.now())
   const alertSettings = silent ? undefined : await problemAlertSettings(ctx)
 
   return retrying(() =>
@@ -129,6 +155,8 @@ export async function ingestExecution(
           .update(affectedWorkflows)
           .set({
             workflowName,
+            // The latest failure names the row: n8n's text and the target's current label.
+            ...(seenAt >= existing.lastSeen ? { errorMessage: failure.message, ...causeValues(cause) } : {}),
             count: sql`${affectedWorkflows.count} + 1`,
             // A page comes newest first, so an older failure can arrive after a newer one.
             firstSeen: seenAt < existing.firstSeen ? seenAt : existing.firstSeen,
@@ -140,6 +168,7 @@ export async function ingestExecution(
           .returning()
         if (!updated) throw new Error("the affected workflow went away")
         row = updated
+        await followLatestLabel(tx, updated.problemId, cause, seenAt)
       } else {
         const values = {
           instanceId: instance.id,
@@ -148,11 +177,12 @@ export async function ingestExecution(
           nodeName: failure.nodeName,
           errorMessage: failure.message,
           fingerprint: rowFingerprint,
+          ...causeValues(cause),
           count: 1,
           firstSeen: seenAt,
           lastSeen: seenAt,
         }
-        const problem = await joinableProblem(tx, textFingerprint)
+        const problem = await joinableProblem(tx, cause.key)
         if (problem) {
           // A workflow joining a Problem takes its state: a resolved Problem regresses, a muted one stays muted
           // until its mute ends and does not alert (the owner's decision), an open one alerts that it spread.
@@ -178,12 +208,13 @@ export async function ingestExecution(
             .update(problems)
             .set({ version: sql`${problems.version} + 1` })
             .where(eq(problems.id, problem.id))
+          await followLatestLabel(tx, problem.id, cause, seenAt)
           row = created
           reason = !peers.length ? "new" : status === "resolved" ? "regression" : status === "open" ? "joined" : null
         } else {
           const [made] = await tx
             .insert(problems)
-            .values({ errorMessage: failure.message, fingerprint: textFingerprint })
+            .values({ errorMessage: failure.message, fingerprint: cause.key, ...causeValues(cause) })
             .returning()
           if (!made) throw new Error("could not record the problem")
           const [created] = await tx
@@ -217,6 +248,33 @@ export async function ingestExecution(
       return { problemId: row.problemId, affectedWorkflowId: row.id, reason }
     }),
   )
+}
+
+/**
+ * The Problem's label follows its latest failure, over all its workflows (a credential renamed, a workflow name
+ * learned): written when no workflow of the Problem failed later. The Problem is locked first, in a statement of its
+ * own, so the check reads every failure and label committed before the lock; an unlocked look first could miss a
+ * label another ingest is writing. A deadlock with an action is retried with the rest of the ingest, which leaves
+ * nothing behind.
+ */
+async function followLatestLabel(tx: Tx, problemId: string, cause: Cause, seenAt: Date) {
+  const [named] = await tx
+    .select({ targetKey: problems.targetKey })
+    .from(problems)
+    .where(eq(problems.id, problemId))
+    .for("update")
+  // The target key never changes on a Problem; a workflow merged in from another cause leaves the label alone.
+  if (!named || named.targetKey !== cause.targetKey) return
+  await tx
+    .update(problems)
+    .set({ target: cause.target, reason: cause.reason, kind: cause.kind, targetSource: cause.targetSource })
+    .where(
+      and(
+        eq(problems.id, problemId),
+        sql`(${problems.target}, ${problems.reason}) is distinct from (${cause.target}, ${cause.reason})`,
+        sql`not exists (select 1 from ${affectedWorkflows} where ${affectedWorkflows.problemId} = ${problemId} and ${affectedWorkflows.lastSeen} > ${seenAt.toISOString()}::timestamptz)`,
+      ),
+    )
 }
 
 /**
@@ -472,9 +530,21 @@ export function auditTarget(problem: Pick<Problem, "errorMessage">, rows: Affect
   return `${clipped(problem.errorMessage)} (${workflows} workflow${workflows === 1 ? "" : "s"})`
 }
 
+/**
+ * An action on a Problem that the regroup by cause left without workflows (docs/adr/0003). Its page still opens; it
+ * acts on nothing, so an old link or an open tab cannot act on the Problems its workflows went to.
+ */
+export class RegroupedProblemError extends Error {
+  readonly code = "regrouped"
+  constructor() {
+    super("This problem was regrouped. Reload the list.")
+  }
+}
+
 /** Locks a Problem that is not merged, and its rows (all, or the one asked for) in id order. */
 async function lockProblem(tx: Tx, id: string, affectedWorkflowId?: string) {
   const [problem] = await tx.select().from(problems).where(eq(problems.id, id)).for("update")
+  if (problem?.regrouped) throw new RegroupedProblemError()
   if (!problem || problem.mergedInto) return null
   const rows = await tx
     .select()
@@ -683,6 +753,7 @@ async function lockPair(tx: Tx, a: string, b: string) {
     .for("update")
   const first = rows.find((r) => r.id === a)
   const second = rows.find((r) => r.id === b)
+  if (first?.regrouped || second?.regrouped) throw new RegroupedProblemError()
   if (!first || !second || first.mergedInto || second.mergedInto) throw new Error("problem not found")
   return [first, second] as const
 }
@@ -741,7 +812,19 @@ export async function splitAffectedWorkflow(
       const row = locked?.rows.find((r) => r.id === affectedWorkflowId)
       if (!locked || !row) return null
       if (locked.rows.length < 2) throw new Error("the problem has only this workflow")
-      const [made] = await tx.insert(problems).values({ errorMessage: row.errorMessage, fingerprint: null }).returning()
+      // The new Problem takes the cause of the row it is made for, not of the Problem it leaves.
+      const [made] = await tx
+        .insert(problems)
+        .values({
+          errorMessage: row.errorMessage,
+          fingerprint: null,
+          targetKey: row.targetKey,
+          target: row.target,
+          targetSource: row.targetSource,
+          reason: row.reason,
+          kind: row.kind,
+        })
+        .returning()
       if (!made) throw new Error("could not record the problem")
       await tx.update(affectedWorkflows).set({ problemId: made.id }).where(eq(affectedWorkflows.id, row.id))
       await tx
@@ -771,10 +854,27 @@ export async function resolveProblemId(
   id: string,
 ): Promise<{ problemId: string; affectedWorkflowId: string | null } | null> {
   const [problem] = await db.select().from(problems).where(eq(problems.id, id))
-  if (problem) return { problemId: problem.mergedInto ?? problem.id, affectedWorkflowId: null }
+  // A regrouped Problem names itself: its page says where its workflows went (docs/adr/0003).
+  if (problem)
+    return { problemId: problem.regrouped ? problem.id : (problem.mergedInto ?? problem.id), affectedWorkflowId: null }
   const [row] = await db
     .select({ problemId: affectedWorkflows.problemId })
     .from(affectedWorkflows)
     .where(eq(affectedWorkflows.id, id))
-  return row ? { problemId: row.problemId, affectedWorkflowId: id } : null
+  if (row) return { problemId: row.problemId, affectedWorkflowId: id }
+  // An Affected workflow the regroup replaced: one that joined another row resolves to it; one that split has no
+  // single answer, and its links show where its failures went instead (`regroupedView`).
+  const aliases = await db
+    .select({
+      newId: affectedWorkflowAliases.newId,
+      kind: affectedWorkflowAliases.kind,
+      problemId: affectedWorkflows.problemId,
+    })
+    .from(affectedWorkflowAliases)
+    .innerJoin(affectedWorkflows, eq(affectedWorkflows.id, affectedWorkflowAliases.newId))
+    .where(eq(affectedWorkflowAliases.oldId, id))
+  const [only] = aliases
+  if (aliases.length === 1 && only?.kind === "combined")
+    return { problemId: only.problemId, affectedWorkflowId: only.newId }
+  return null
 }

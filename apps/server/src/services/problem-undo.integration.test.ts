@@ -9,12 +9,12 @@ import { createDatabase, type Database } from "../db/client.ts"
 import { affectedWorkflows, auditLog, failures, instances, problemReceipts, problems } from "../db/schema.ts"
 import { createAudit } from "../lib/audit.ts"
 import type { N8nExecution } from "../n8n/client.ts"
+import { causeOf } from "./cause.ts"
 import {
   type AffectedWorkflow,
   applyProblemAction,
   applyProblemActions,
   deleteInstance,
-  errorFingerprint,
   fingerprint,
   housekeeping,
   ingestExecution,
@@ -81,6 +81,22 @@ async function newInstance(instanceName: string) {
 const hour = 3600_000
 let seq = 0
 
+/** The service every failing node here calls, so one text is one cause across workflows and instances. */
+const ERP = "https://erp.example.com/api"
+/** The cause key of a failure with this text at a node calling the ERP (docs/adr/0003). */
+const causeKey = (message: string) =>
+  causeOf({
+    instanceId: "any",
+    workflowId: "any",
+    nodeName: "Call ERP",
+    nodeType: "n8n-nodes-base.httpRequest",
+    message,
+    description: null,
+    url: ERP,
+    credentials: [],
+    calledWorkflow: null,
+  }).key
+
 /** An Affected workflow in the given state, in `problemId` or in a new Problem of its own; seen an hour ago. */
 async function row(state: Partial<typeof affectedWorkflows.$inferInsert> = {}, problemId?: string) {
   seq += 1
@@ -92,7 +108,7 @@ async function row(state: Partial<typeof affectedWorkflows.$inferInsert> = {}, p
     (
       await ctx.db
         .insert(problems)
-        .values({ errorMessage, fingerprint: errorFingerprint(errorMessage) })
+        .values({ errorMessage, fingerprint: causeKey(errorMessage) })
         .returning()
     )[0]?.id
   if (!pid) throw new Error("no problem")
@@ -107,7 +123,7 @@ async function row(state: Partial<typeof affectedWorkflows.$inferInsert> = {}, p
       nodeName: "Call ERP",
       errorMessage,
       // The real one, so a failure ingested later lands on this row.
-      fingerprint: fingerprint(instanceId, workflowId, "Call ERP", errorMessage),
+      fingerprint: fingerprint(instanceId, workflowId, "Call ERP", causeKey(errorMessage)),
       firstSeen: seen,
       lastSeen: seen,
       ...state,
@@ -138,7 +154,7 @@ async function act(r: AffectedWorkflow, action: Parameters<typeof applyProblemAc
   return result.receipt
 }
 
-/** A failed execution of a workflow at a node with an exact error, as n8n returns it. */
+/** A failed execution of a workflow at a node calling the ERP with an exact error, as n8n returns it. */
 function execution(executionId: string, workflowId: string, nodeName: string, message: string): N8nExecution {
   return {
     id: executionId,
@@ -147,7 +163,12 @@ function execution(executionId: string, workflowId: string, nodeName: string, me
     startedAt: new Date().toISOString(),
     stoppedAt: new Date().toISOString(),
     workflowId,
-    workflowData: { id: workflowId, name: `Workflow ${workflowId}`, nodes: [], connections: {} } as never,
+    workflowData: {
+      id: workflowId,
+      name: `Workflow ${workflowId}`,
+      nodes: [{ name: nodeName, type: "n8n-nodes-base.httpRequest", parameters: { url: ERP } }],
+      connections: {},
+    } as never,
     data: { resultData: { runData: {}, error: { message, node: { name: nodeName } } } },
   }
 }
@@ -176,6 +197,123 @@ describe("a failed execution", () => {
     // Read again: stored once, counted once.
     expect(await ingestExecution(ctx, instance, execution("join-2", "crm", "HTTP", text), { silent: true })).toBeNull()
     expect(await read(first?.affectedWorkflowId ?? "")).toMatchObject({ count: 2 })
+  })
+
+  it("names the Problem after its latest failure: a renamed credential keeps the Problem and changes its label", async () => {
+    const withCredential = (id: string, name: string, at: number) => ({
+      ...execution(id, "label", "Upload", "Client authentication failed."),
+      startedAt: new Date(Date.now() - at).toISOString(),
+      stoppedAt: new Date(Date.now() - at).toISOString(),
+      workflowData: {
+        id: "label",
+        name: "Label",
+        nodes: [
+          { name: "Upload", type: "n8n-nodes-base.microsoftOneDrive", credentials: { oauth: { id: "cred-1", name } } },
+        ],
+        connections: {},
+      } as never,
+    })
+    const first = await ingestExecution(ctx, instance, withCredential("label-1", "Drive", 2 * hour), { silent: true })
+    const again = await ingestExecution(ctx, instance, withCredential("label-2", "Drive (renamed)", hour), {
+      silent: true,
+    })
+    expect(again).toMatchObject({ problemId: first?.problemId, affectedWorkflowId: first?.affectedWorkflowId })
+    expect(await readProblem(first?.problemId ?? "")).toMatchObject({ target: "Drive (renamed)" })
+    expect(await read(first?.affectedWorkflowId ?? "")).toMatchObject({ target: "Drive (renamed)" })
+    // An older failure arriving later does not take the label back.
+    await ingestExecution(ctx, instance, withCredential("label-0", "Drive", 3 * hour), { silent: true })
+    expect(await readProblem(first?.problemId ?? "")).toMatchObject({ target: "Drive (renamed)" })
+  })
+
+  it("names the Problem after its latest failure over all its workflows", async () => {
+    // Two workflows with one credential: a late failure of the first never takes back the newer name.
+    const run = (id: string, workflowId: string, name: string, at: number) => ({
+      ...execution(id, workflowId, "Upload", "Client authentication failed."),
+      startedAt: new Date(Date.now() - at).toISOString(),
+      stoppedAt: new Date(Date.now() - at).toISOString(),
+      workflowData: {
+        id: workflowId,
+        name: workflowId,
+        nodes: [
+          { name: "Upload", type: "n8n-nodes-base.microsoftOneDrive", credentials: { oauth: { id: "cred-2", name } } },
+        ],
+        connections: {},
+      } as never,
+    })
+    const a = await ingestExecution(ctx, instance, run("both-1", "both-a", "Old", 3 * hour), { silent: true })
+    const b = await ingestExecution(ctx, instance, run("both-2", "both-b", "New", hour), { silent: true })
+    expect(b?.problemId).toBe(a?.problemId)
+    expect(await readProblem(a?.problemId ?? "")).toMatchObject({ target: "New" })
+    await ingestExecution(ctx, instance, run("both-3", "both-a", "Old", 2 * hour), { silent: true })
+    expect(await readProblem(a?.problemId ?? "")).toMatchObject({ target: "New" })
+  })
+
+  it("keeps a newer label that another ingest committed while this one waited for the Problem", async () => {
+    const run = (id: string, workflowId: string, name: string, at: number) => ({
+      ...execution(id, workflowId, "Upload", "Client authentication failed."),
+      startedAt: new Date(Date.now() - at).toISOString(),
+      stoppedAt: new Date(Date.now() - at).toISOString(),
+      workflowData: {
+        id: workflowId,
+        name: workflowId,
+        nodes: [
+          { name: "Upload", type: "n8n-nodes-base.microsoftOneDrive", credentials: { oauth: { id: "cred-3", name } } },
+        ],
+        connections: {},
+      } as never,
+    })
+    const a = await ingestExecution(ctx, instance, run("race-a1", "race-a", "Initial", 3 * hour), { silent: true })
+    const b = await ingestExecution(ctx, instance, run("race-b1", "race-b", "Initial", 4 * hour), { silent: true })
+    const pid = a?.problemId ?? ""
+    let late: Promise<unknown> = Promise.resolve()
+    // Another ingest holds the Problem: workflow B failed an hour ago under the new name, not committed yet.
+    await database.db.transaction(async (tx) => {
+      await tx.select({ id: problems.id }).from(problems).where(eq(problems.id, pid)).for("update")
+      await tx
+        .update(affectedWorkflows)
+        .set({ lastSeen: new Date(Date.now() - hour) })
+        .where(eq(affectedWorkflows.id, b?.affectedWorkflowId ?? ""))
+      await tx.update(problems).set({ target: "New" }).where(eq(problems.id, pid))
+      // A failure of A from two hours ago, under a name in between, waits for that ingest.
+      late = ingestExecution(ctx, instance, run("race-a2", "race-a", "Between", 2 * hour), { silent: true })
+      await new Promise((done) => setTimeout(done, 500))
+    })
+    await late
+    expect(await readProblem(pid)).toMatchObject({ target: "New" })
+  })
+
+  it("writes the newest label when another ingest held the Problem with an older one", async () => {
+    const run = (id: string, workflowId: string, name: string, at: number) => ({
+      ...execution(id, workflowId, "Upload", "Client authentication failed."),
+      startedAt: new Date(Date.now() - at).toISOString(),
+      stoppedAt: new Date(Date.now() - at).toISOString(),
+      workflowData: {
+        id: workflowId,
+        name: workflowId,
+        nodes: [
+          { name: "Upload", type: "n8n-nodes-base.microsoftOneDrive", credentials: { oauth: { id: "cred-4", name } } },
+        ],
+        connections: {},
+      } as never,
+    })
+    const a = await ingestExecution(ctx, instance, run("hold-a1", "hold-a", "New", 3 * hour), { silent: true })
+    const b = await ingestExecution(ctx, instance, run("hold-b1", "hold-b", "New", 4 * hour), { silent: true })
+    const pid = a?.problemId ?? ""
+    let late: Promise<unknown> = Promise.resolve()
+    // Another ingest holds the Problem with an older label: B failed two hours ago, not committed yet.
+    await database.db.transaction(async (tx) => {
+      await tx.select({ id: problems.id }).from(problems).where(eq(problems.id, pid)).for("update")
+      await tx
+        .update(affectedWorkflows)
+        .set({ lastSeen: new Date(Date.now() - 2 * hour) })
+        .where(eq(affectedWorkflows.id, b?.affectedWorkflowId ?? ""))
+      await tx.update(problems).set({ target: "Older" }).where(eq(problems.id, pid))
+      // A failed an hour ago under "New": the latest failure, so its label must win once the other one is done.
+      late = ingestExecution(ctx, instance, run("hold-a2", "hold-a", "New", hour), { silent: true })
+      await new Promise((done) => setTimeout(done, 500))
+    })
+    await late
+    expect(await readProblem(pid)).toMatchObject({ target: "New" })
   })
 
   it("keeps the earliest and latest failure times when a page arrives newest first", async () => {

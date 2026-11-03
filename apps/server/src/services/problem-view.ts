@@ -1,11 +1,23 @@
 import { type AnyColumn, and, asc, desc, eq, ilike, inArray, isNull, lte, or, type SQL, sql } from "drizzle-orm"
 import { z } from "zod"
 import type { Ctx } from "../context.ts"
-import { affectedWorkflows, failures, instances, type ProblemStatus, problems } from "../db/schema.ts"
+import {
+  affectedWorkflowAliases,
+  affectedWorkflows,
+  failures,
+  instances,
+  type ProblemStatus,
+  problemRegroups,
+  problems,
+} from "../db/schema.ts"
 import { likeContains } from "../lib/like.ts"
 import type { N8nWorkflow } from "../n8n/client.ts"
 import { workflowGraph } from "../n8n/execution.ts"
+import { type CauseFields, causeFields } from "./cause.ts"
 import { executionUrl } from "./instances.ts"
+
+export { type CauseFields, causeFields } from "./cause.ts"
+
 import { resolveProblemId } from "./problems.ts"
 
 /*
@@ -120,10 +132,15 @@ export type AffectedItem = {
   lastSeen: Date
   mutedUntil: Date | null
   resolvedAt: Date | null
-}
+} & CauseFields & {
+    /** An open workflow that failed in the last 24 hours is failing now; an open one that did not is quiet. */
+    state: "now" | "quiet" | null
+  }
+
+const DAY_MS = 86_400_000
 
 /** A Problem as every reader sees it: the error, its derived state, and the workflows it hit. */
-export type ProblemItem = {
+export type ProblemItem = CauseFields & {
   id: string
   errorMessage: string
   status: ProblemStatus
@@ -154,6 +171,10 @@ const affectedColumns = {
   workflowName: a.workflowName,
   nodeName: a.nodeName,
   errorMessage: a.errorMessage,
+  target: a.target,
+  targetSource: a.targetSource,
+  reason: a.reason,
+  kind: a.kind,
   status: a.status,
   regression: a.regression,
   count: a.count,
@@ -173,9 +194,19 @@ async function affectedOf(ctx: Pick<Ctx, "db">, problemIds: string[], instanceId
     .innerJoin(instances, eq(a.instanceId, instances.id))
     .where(inArray(a.problemId, problemIds))
     .orderBy(...(instanceId ? [desc(sql`${a.instanceId} = ${instanceId}`)] : []), desc(a.lastSeen), asc(a.id))
-  for (const { problemId, ...row } of rows) {
+  const now = Date.now()
+  for (const { problemId, target, targetSource, reason, kind, ...row } of rows) {
     const list = byProblem.get(problemId) ?? []
-    if (limit === undefined || list.length < limit) list.push(row)
+    // Open also when its mute ended and housekeeping has not noticed yet, as `openish` reads it.
+    const open =
+      row.status === "open" || (row.status === "muted" && row.mutedUntil !== null && row.mutedUntil.getTime() <= now)
+    const state = !open ? null : now - row.lastSeen.getTime() < DAY_MS ? "now" : "quiet"
+    const item = {
+      ...row,
+      ...causeFields({ errorMessage: row.errorMessage, target, targetSource, reason, kind }),
+      state,
+    }
+    if (limit === undefined || list.length < limit) list.push(item as AffectedItem)
     byProblem.set(problemId, list)
   }
   return byProblem
@@ -195,14 +226,16 @@ export async function problemPage(
   const s = summaryQuery(ctx, instanceId)
   const w = reachQuery(ctx)
   const r = representativeQuery(ctx, instanceId)
-  const where: (SQL | undefined)[] = [isNull(problems.mergedInto)]
+  const where: (SQL | undefined)[] = [isNull(problems.mergedInto), eq(problems.regrouped, false)]
   if (status === "open" || status === "muted" || status === "resolved") where.push(eq(s.status, status))
   if (q) {
     const like = likeContains(q)
     where.push(
       or(
         ilike(problems.errorMessage, like),
-        sql`exists (select 1 from ${a} where ${a.problemId} = ${problems.id} and (${ilike(a.workflowName, like)} or ${ilike(a.nodeName, like)} or ${ilike(a.errorMessage, like)}))`,
+        ilike(problems.target, like),
+        ilike(problems.reason, like),
+        sql`exists (select 1 from ${a} where ${a.problemId} = ${problems.id} and (${ilike(a.workflowName, like)} or ${ilike(a.nodeName, like)} or ${ilike(a.errorMessage, like)} or ${ilike(a.target, like)} or ${ilike(a.reason, like)}))`,
       ),
     )
   }
@@ -239,6 +272,10 @@ export async function problemPage(
     .select({
       id: problems.id,
       errorMessage: problems.errorMessage,
+      target: problems.target,
+      targetSource: problems.targetSource,
+      reason: problems.reason,
+      kind: problems.kind,
       status: s.status,
       regression: s.regression,
       count: s.count,
@@ -265,8 +302,9 @@ export async function problemPage(
   )
   // No rows means nothing matched: the count rides on each row.
   return {
-    items: rows.map(({ total: _, ...row }) => ({
+    items: rows.map(({ total: _, target, targetSource, reason, kind, ...row }) => ({
       ...row,
+      ...causeFields({ errorMessage: row.errorMessage, target, targetSource, reason, kind }),
       firstSeen: new Date(row.firstSeen),
       lastSeen: new Date(row.lastSeen),
       mutedUntil: row.mutedUntil ? new Date(row.mutedUntil) : null,
@@ -286,6 +324,10 @@ export async function problemItems(ctx: Pick<Ctx, "db">, ids: string[], limit?: 
     .select({
       id: problems.id,
       errorMessage: problems.errorMessage,
+      target: problems.target,
+      targetSource: problems.targetSource,
+      reason: problems.reason,
+      kind: problems.kind,
       status: s.status,
       regression: s.regression,
       count: s.count,
@@ -306,9 +348,10 @@ export async function problemItems(ctx: Pick<Ctx, "db">, ids: string[], limit?: 
     undefined,
     limit,
   )
-  for (const row of rows)
+  for (const { target, targetSource, reason, kind, ...row } of rows)
     items.set(row.id, {
       ...row,
+      ...causeFields({ errorMessage: row.errorMessage, target, targetSource, reason, kind }),
       firstSeen: new Date(row.firstSeen),
       lastSeen: new Date(row.lastSeen),
       mutedUntil: row.mutedUntil ? new Date(row.mutedUntil) : null,
@@ -411,6 +454,56 @@ export async function problemDetail(ctx: Pick<Ctx, "db">, id: string, workflow?:
 }
 
 export type ProblemDetail = NonNullable<Awaited<ReturnType<typeof problemDetail>>>
+
+/**
+ * Where the workflows of a Problem went in the regroup by cause (docs/adr/0003), for an old link: an old Problem the
+ * regroup left without workflows, or an old Affected workflow whose failures it split by cause. Null when the id is
+ * neither. A Problem deleted since drops out of the list.
+ */
+export async function regroupedView(ctx: Pick<Ctx, "db">, id: string) {
+  const [problem] = await ctx.db
+    .select({ id: problems.id, regrouped: problems.regrouped })
+    .from(problems)
+    .where(eq(problems.id, id))
+  let targets: string[]
+  if (problem?.regrouped) {
+    targets = (
+      await ctx.db
+        .select({ id: problemRegroups.newProblemId })
+        .from(problemRegroups)
+        .where(eq(problemRegroups.oldProblemId, id))
+    ).map((r) => r.id)
+  } else {
+    // Every row its failures went to: the split ones, and the one that kept its id even when that one was then
+    // combined into another row.
+    const aliases = await ctx.db
+      .select({ problemId: a.problemId, kind: affectedWorkflowAliases.kind })
+      .from(affectedWorkflowAliases)
+      .innerJoin(a, eq(a.id, affectedWorkflowAliases.newId))
+      .where(eq(affectedWorkflowAliases.oldId, id))
+    if (!aliases.some((r) => r.kind === "split")) return null
+    const [row] = await ctx.db.select({ problemId: a.problemId }).from(a).where(eq(a.id, id))
+    targets = [...(row ? [row.problemId] : []), ...aliases.map((r) => r.problemId)]
+  }
+  // A Problem merged since then is read where it went.
+  const followed = targets.length
+    ? await ctx.db
+        .select({ id: problems.id, mergedInto: problems.mergedInto })
+        .from(problems)
+        .where(inArray(problems.id, targets))
+    : []
+  const items = await problemItems(ctx, [...new Set(followed.map((p) => p.mergedInto ?? p.id))], 5)
+  return {
+    regrouped: true as const,
+    problems: [...items.values()].map((p) => ({
+      id: p.id,
+      title: p.title,
+      status: p.status,
+      instances: p.instances,
+      workflows: p.affectedWorkflows.map((w) => w.workflowName),
+    })),
+  }
+}
 
 /**
  * One stored failed execution of a Problem: the latest of the workflow chosen (by an Affected workflow id, or

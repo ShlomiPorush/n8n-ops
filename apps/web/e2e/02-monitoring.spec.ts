@@ -1,5 +1,14 @@
 import { expect, type Page, test } from "@playwright/test"
-import { dialogClosed, n8nApi, n8nFailingWorkflow, n8nSetup, n8nTrigger, n8nUrl, signIn } from "./helpers.ts"
+import {
+  dialogClosed,
+  n8nApi,
+  n8nFailingHttpWorkflow,
+  n8nFailingWorkflow,
+  n8nSetup,
+  n8nTrigger,
+  n8nUrl,
+  signIn,
+} from "./helpers.ts"
 
 // A real n8n 2.44 runs in the test stack. These tests register it, make a workflow fail,
 // and follow the failure through problems: first sync, repeat failures, resolve, regression.
@@ -193,10 +202,16 @@ test("a resolved problem that fails again is a regression", async () => {
   await expect(page.getByRole("link", { name: /Regression.*Sync orders to ERP/ })).toBeVisible()
 })
 
-test("a second workflow failing with the same error joins the Problem, and Split and Merge move it", async () => {
-  // The same error in another workflow: one Problem, one row, titled by the error.
-  const dnsHook = await n8nFailingWorkflow(apiKey, "Get DNS Data", message)
-  await n8nTrigger(apiKey, dnsHook)
+test("a second workflow failing for the same cause joins the Problem, and Split and Merge move it", async () => {
+  // Two workflows whose HTTP Request node calls the same host and fails the same way: one Problem, one row (the cause
+  // is the host and the reason, docs/adr/0003). The Code node of "Sync orders to ERP" names no host, so it stays apart.
+  // Calls to a host that does not exist take a few seconds each before they fail.
+  test.setTimeout(120_000)
+  const erp = "http://erp.e2e.invalid/orders"
+  const hooks = await Promise.all(
+    ["Get DNS Data", "Get DNS Zone"].map((name) => n8nFailingHttpWorkflow(apiKey, name, erp)),
+  )
+  for (const hook of hooks) await n8nTrigger(apiKey, hook)
   await page.goto("/instances")
   await page.getByRole("row", { name: /e2e-n8n/ }).click()
   await page.getByRole("button", { name: "Check now" }).click()
@@ -206,8 +221,7 @@ test("a second workflow failing with the same error joins the Problem, and Split
   const list = page.locator(`[data-scroll-pane="list"]`)
   const joined = list.getByRole("row", { name: /2 workflows/ })
   await expect(joined).toHaveCount(1)
-  await expect(joined).toContainText(message)
-  await expect(joined).toContainText("Get DNS Data and Sync orders to ERP")
+  await expect(joined).toContainText(/Get DNS (Data and Get DNS Zone|Zone and Get DNS Data)/)
   await expect(list.getByRole("row", { name: /Sync orders to ERP/ })).toHaveCount(1)
 
   // The row opens to its workflows; the Problem opens on them.
@@ -218,7 +232,7 @@ test("a second workflow failing with the same error joins the Problem, and Split
   await expect(tab(/^Affected workflows/)).toHaveAttribute("aria-selected", "true")
   const pane = page.getByRole("tabpanel")
   await expect(pane.getByRole("heading", { name: "Affected Workflows" })).toBeVisible()
-  await expect(pane.getByRole("row", { name: /Sync orders to ERP/ })).toBeVisible()
+  await expect(pane.getByRole("row", { name: /Get DNS Zone/ })).toBeVisible()
   const problem = new URL(page.url()).pathname
 
   // A workflow's row shows where it broke there.
@@ -240,29 +254,38 @@ test("a second workflow failing with the same error joins the Problem, and Split
   await page.getByRole("menuitem", { name: "Merge into…" }).click()
   const dialog = page.getByRole("dialog", { name: "Merge into Another Problem" })
   await dialog.getByRole("button", { name: /^Problem to merge into:/ }).click()
-  await page.getByRole("option", { name: /^Sync orders to ERP · / }).click()
+  await page.getByRole("option", { name: /^Get DNS Zone · / }).click()
   await dialog.getByRole("button", { name: "Merge", exact: true }).click()
   await expect(page).toHaveURL((url) => url.pathname === problem)
   await expect(tab(/^Affected workflows/)).toHaveAttribute("aria-selected", "true")
   await expect(page.getByRole("tabpanel").getByRole("row", { name: /Get DNS Data/ })).toBeVisible()
 
-  // The later files expect the first workflow's Problem alone: split it off again, resolve it, and remove the
-  // workflow from n8n so another instance of the same n8n never reads its failure.
-  await page.getByRole("button", { name: "Actions for Get DNS Data" }).click()
-  await page.getByRole("menuitem", { name: "Split into its own problem" }).click()
+  // The later files expect the first workflow's Problem alone, and every other Problem with one workflow: split this
+  // one again, resolve both, and remove both workflows from n8n so another instance of the same n8n never reads them.
+  // The Merge refreshes the page once more, which can close a menu opened at that moment: open it again then.
+  await expect(async () => {
+    await page.getByRole("button", { name: "Actions for Get DNS Data" }).click()
+    await page.getByRole("menuitem", { name: "Split into its own problem" }).click({ timeout: 3000 })
+  }).toPass({ timeout: 30_000 })
   await expect(page.getByText("Split into a problem of its own: Get DNS Data").last()).toBeVisible()
+  await page.getByRole("button", { name: "Mark resolved" }).click()
+  await expect(page.getByText("Problem resolved: Get DNS Zone")).toBeVisible()
   await page.goto("/problems?status=open")
   await list.getByRole("row", { name: /^Get DNS Data/ }).click()
   await page.getByRole("button", { name: "Mark resolved" }).click()
   await expect(page.getByText("Problem resolved: Get DNS Data")).toBeVisible()
-  const listed = (await (await n8nApi("/api/v1/workflows?name=Get%20DNS%20Data")).json()) as { data: { id: string }[] }
-  for (const w of listed.data) {
-    await n8nApi(`/api/v1/workflows/${w.id}/deactivate`, { method: "POST" })
-    // n8n unpublishes a deactivated workflow in the background and refuses to delete it until then.
-    await expect(async () => {
-      const removed = await n8nApi(`/api/v1/workflows/${w.id}`, { method: "DELETE" })
-      expect(removed.ok, await removed.clone().text()).toBe(true)
-    }).toPass({ timeout: 30_000 })
+  for (const name of ["Get DNS Data", "Get DNS Zone"]) {
+    const listed = (await (await n8nApi(`/api/v1/workflows?name=${encodeURIComponent(name)}`)).json()) as {
+      data: { id: string }[]
+    }
+    for (const w of listed.data) {
+      await n8nApi(`/api/v1/workflows/${w.id}/deactivate`, { method: "POST" })
+      // n8n unpublishes a deactivated workflow in the background and refuses to delete it until then.
+      await expect(async () => {
+        const removed = await n8nApi(`/api/v1/workflows/${w.id}`, { method: "DELETE" })
+        expect(removed.ok, await removed.clone().text()).toBe(true)
+      }).toPass({ timeout: 30_000 })
+    }
   }
 })
 

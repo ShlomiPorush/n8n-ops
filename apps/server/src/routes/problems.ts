@@ -2,13 +2,14 @@ import { and, eq } from "drizzle-orm"
 import { Hono } from "hono"
 import { z } from "zod"
 import { type Ctx, changed } from "../context.ts"
-import { affectedWorkflows, failures, type ProblemAction } from "../db/schema.ts"
+import { affectedWorkflows, failures, type ProblemAction, problems } from "../db/schema.ts"
 import { requireUser } from "../http/middleware.ts"
 import { actorName, type Env } from "../http/types.ts"
-import { parseProblemOrder, problemDetail, problemPage } from "../services/problem-view.ts"
+import { parseProblemOrder, problemDetail, problemPage, regroupedView } from "../services/problem-view.ts"
 import {
   applyProblemAction,
   mergeProblems,
+  RegroupedProblemError,
   resolveProblemId,
   splitAffectedWorkflow,
   undoProblemAction,
@@ -48,6 +49,9 @@ export function problemRoutes(ctx: Ctx) {
     const workflow = c.req.query("workflow")
     if (!uuid.safeParse(id).success || (workflow && !uuid.safeParse(workflow).success))
       return c.json({ error: "not_found" }, 404)
+    // An old link to a Problem or a workflow that the regroup by cause split says where they went (docs/adr/0003).
+    const regrouped = await regroupedView(ctx, id)
+    if (regrouped) return c.json({ error: "regrouped", ...regrouped }, 404)
     const detail = await problemDetail(ctx, id, workflow)
     return detail ? c.json(detail) : c.json({ error: "not_found" }, 404)
   })
@@ -79,11 +83,17 @@ export function problemRoutes(ctx: Ctx) {
       return c.json({ error: "not_found" }, 404)
     const body = action === "mute" ? await c.req.json().catch(() => ({})) : {}
     // The audit row is written in the action's transaction: a failed write saves neither.
-    const result = await applyProblemAction(ctx, id, action, {
-      affectedWorkflowId: workflow,
-      muteHours: Number(body?.hours ?? 24),
-      audit: { actor: actorName(c.get("actor")), action: audited, via: "web" },
-    })
+    let result: Awaited<ReturnType<typeof applyProblemAction>>
+    try {
+      result = await applyProblemAction(ctx, id, action, {
+        affectedWorkflowId: workflow,
+        muteHours: Number(body?.hours ?? 24),
+        audit: { actor: actorName(c.get("actor")), action: audited, via: "web" },
+      })
+    } catch (error) {
+      if (error instanceof RegroupedProblemError) return c.json({ error: error.code, message: error.message }, 409)
+      throw error
+    }
     if (!result) return c.json({ error: "not_found" }, 404)
     const { receipt } = result
     if (!receipt) return c.json({ ok: true, changed: false })
@@ -120,6 +130,12 @@ export function problemRoutes(ctx: Ctx) {
     const receiptId = c.req.param("receipt")
     if (!uuid.safeParse(id).success || !uuid.safeParse(receiptId).success)
       return c.json({ error: "receipt_not_found" }, 404)
+    // The regroup by cause removed every receipt; a Problem it regrouped takes no action at all.
+    const [problem] = await ctx.db.select({ regrouped: problems.regrouped }).from(problems).where(eq(problems.id, id))
+    if (problem?.regrouped) {
+      const refused = new RegroupedProblemError()
+      return c.json({ error: refused.code, message: refused.message }, 409)
+    }
     const result = await undoProblemAction(ctx, id, receiptId, {
       audit: { actor: actorName(c.get("actor")), action: "Problem action undone", via: "web" },
     })
@@ -140,6 +156,7 @@ export function problemRoutes(ctx: Ctx) {
         audit: { actor: actorName(c.get("actor")), action: "Problems merged", via: "web" },
       })
     } catch (error) {
+      if (error instanceof RegroupedProblemError) return c.json({ error: error.code, message: error.message }, 409)
       return c.json({ error: "invalid", issues: [{ path: ["into"], message: (error as Error).message }] }, 400)
     }
     changed(ctx, "problems", "overview")
@@ -157,6 +174,7 @@ export function problemRoutes(ctx: Ctx) {
         audit: { actor: actorName(c.get("actor")), action: "Problem split", via: "web" },
       })
     } catch (error) {
+      if (error instanceof RegroupedProblemError) return c.json({ error: error.code, message: error.message }, 409)
       return c.json({ error: "invalid", issues: [{ path: ["workflowId"], message: (error as Error).message }] }, 400)
     }
     if (!split) return c.json({ error: "not_found" }, 404)

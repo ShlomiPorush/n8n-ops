@@ -81,7 +81,8 @@ export function extractFailure(execution: N8nExecution): Failure {
   }
 }
 
-function failedNode(node: N8nNode | undefined): FailedNode {
+/** What the cause is read from on a node definition, from an execution or from one stored with a failure. */
+export function failedNode(node: N8nNode | undefined): FailedNode {
   const parameters = isRecord(node?.parameters) ? node.parameters : {}
   const credentials = isRecord(node?.credentials)
     ? Object.values(node.credentials).flatMap((c) => {

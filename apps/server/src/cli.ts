@@ -2,6 +2,9 @@
 //   node dist/cli.js reset-password
 // Sets a new random password, turns two-factor off (it must be set up again at the next sign-in)
 // and signs out every session.
+//   node dist/cli.js regroup-dry-run
+// Applies the migrations, then shows how the recorded Problems would be regrouped by cause (docs/adr/0003) and
+// changes nothing else: the regroup runs in a transaction that is rolled back. Meant for a copy of a database.
 import { randomBytes } from "node:crypto"
 import { eq } from "drizzle-orm"
 import { createAuth } from "./auth/auth.ts"
@@ -10,15 +13,24 @@ import { createDatabase } from "./db/client.ts"
 import { account, session, twoFactor, user } from "./db/schema.ts"
 import { createAudit } from "./lib/audit.ts"
 import { loadOrCreateAppKey } from "./lib/crypto.ts"
+import { regroupByCause } from "./services/regroup.ts"
 
 const command = process.argv[2]
-if (command !== "reset-password") {
-  console.error("Usage: node dist/cli.js reset-password")
+if (command !== "reset-password" && command !== "regroup-dry-run") {
+  console.error("Usage: node dist/cli.js reset-password | regroup-dry-run")
   process.exit(2)
 }
 
 const config = loadConfig()
 const database = createDatabase(config.databaseUrl)
+
+if (command === "regroup-dry-run") {
+  await database.migrate(config.migrationsDir)
+  const report = await regroupByCause({ db: database.db, audit: createAudit(database.db) }, { dryRun: true })
+  console.log(JSON.stringify(report, null, 2))
+  await database.close()
+  process.exit(0)
+}
 const { key } = await loadOrCreateAppKey(config.appKeyPath)
 const auth = createAuth(database.db, key, config.publicUrl)
 const db = database.db

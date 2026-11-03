@@ -45,6 +45,9 @@ export type AttentionItem = { tone: Tone } & (
       workflowName: string
       instanceName: string
       errorMessage: string
+      /** What the Problem is about, "target · reason" (docs/adr/0003), and the line for a known error. */
+      title: string
+      hint: string | null
       count: number
       /** Distinct workflows the Problem hit, and its Affected workflows (a workflow at two nodes is two). */
       workflows: number
@@ -243,6 +246,8 @@ async function problemsPart(ctx: Ctx): Promise<Part> {
           workflowName: first.workflowName,
           instanceName: first.instanceName,
           errorMessage: p.errorMessage,
+          title: p.title,
+          hint: p.hint,
           count: p.count,
           workflows: p.workflows,
           affectedTotal: p.affectedTotal,

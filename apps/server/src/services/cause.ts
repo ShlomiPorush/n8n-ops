@@ -79,6 +79,12 @@ const KNOWN_ERRORS: [RegExp, string][] = [
   [/(?:^|\s)HTML page(?: "|$|\s)/, "A proxy answered instead of the service."],
 ]
 
+/** The known-error line for n8n's message and a reason (which holds the service's answer), or null. */
+export function knownErrorOf(message: string, reason: string): string | null {
+  const text = `${message.slice(0, LIMITS.message)} ${reason.slice(0, LIMITS.description)}`
+  return KNOWN_ERRORS.find(([pattern]) => pattern.test(text))?.[1] ?? null
+}
+
 const isStopAndError = (type: string | null) => !!type && /\.stopAndError$/.test(type)
 const isExecuteWorkflow = (type: string | null) => !!type && /\.executeWorkflow$/.test(type)
 
@@ -280,8 +286,7 @@ export function causeOf(input: CauseInput): Cause {
     const reason = httpStatus ? `HTTP ${httpStatus} · ${said}` : said
     const target = targetOf(safe)
     const kind = kindOf(safe, httpStatus, `${message} ${safe.description?.slice(0, LIMITS.description) ?? ""}`)
-    const hintText = `${message} ${answer ?? ""} ${reason}`
-    const hint = KNOWN_ERRORS.find(([pattern]) => pattern.test(hintText))?.[1] ?? null
+    const hint = knownErrorOf(message, reason)
     return {
       ...target,
       reason,
@@ -310,5 +315,38 @@ export function fallbackCause(input: Pick<CauseInput, "instanceId" | "workflowId
     kind: "other",
     hint: null,
     key: keyOf(target.targetKey, reason),
+  }
+}
+
+/**
+ * What a Problem or an Affected workflow is about (docs/adr/0003): `title` is "target · reason" as screens show it,
+ * `reason` the reason shortened for screens, `hint` the line for a known error. Null on rows recorded before the
+ * regroup by cause, which never shows them.
+ */
+export type CauseFields = {
+  title: string
+  target: string | null
+  targetSource: TargetSource | null
+  reason: string | null
+  kind: CauseKind | null
+  hint: string | null
+}
+
+/** The cause fields of a stored row; the title falls back to the error text. */
+export function causeFields(row: {
+  errorMessage: string
+  target: string | null
+  targetSource: TargetSource | null
+  reason: string | null
+  kind: CauseKind | null
+}): CauseFields {
+  const reason = row.reason ? displayReasonOf(row.reason) : null
+  return {
+    title: row.target && reason ? `${row.target} · ${reason}` : row.errorMessage,
+    target: row.target,
+    targetSource: row.targetSource,
+    reason,
+    kind: row.kind,
+    hint: row.reason ? knownErrorOf(row.errorMessage, row.reason) : null,
   }
 }

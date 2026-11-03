@@ -15,6 +15,7 @@ import { createSecrets, loadOrCreateAppKey } from "./lib/crypto.ts"
 import { createSettings } from "./lib/settings.ts"
 import { createAgentConnect } from "./oauth/agents.ts"
 import { UPLOAD_DEADLINE_MS } from "./routes/worker-api.ts"
+import { regroupByCause } from "./services/regroup.ts"
 
 const config = loadConfig()
 const log = consoleLogger
@@ -56,6 +57,16 @@ ctx.agents = createAgentConnect(ctx, { cookieKeys: [cookieKey], webDir: config.w
 await ctx.agents.reconcile()
 
 await ctx.settings.loadDesign(log)
+// Once, after the migrations and before any request or job: Problems recorded before become one per cause
+// (docs/adr/0003). A failure here stops the start with everything as it was, and the next start tries again.
+const regrouped = await regroupByCause(ctx)
+if (regrouped)
+  log.info("regrouped the recorded problems by cause", {
+    problemsBefore: regrouped.problemsBefore,
+    problemsAfter: regrouped.problemsAfter,
+    affectedBefore: regrouped.affectedBefore,
+    affectedAfter: regrouped.affectedAfter,
+  })
 const { mounts, start } = features(ctx)
 const app = createApp(ctx, { webDir: config.webDir, mounts })
 const server = serve({ fetch: app.fetch, port: config.port }, ({ port }) => {

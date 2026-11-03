@@ -193,6 +193,45 @@ export async function n8nFailingWorkflow(apiKey: string, name: string, message: 
   return path
 }
 
+/**
+ * Creates and activates a workflow whose HTTP Request node calls a host that does not exist, so its failures have
+ * that host as their target and join across workflows (docs/adr/0003). Returns its webhook path.
+ */
+export async function n8nFailingHttpWorkflow(apiKey: string, name: string, url: string): Promise<string> {
+  const path = `http-${Math.random().toString(36).slice(2, 8)}`
+  const created = await n8n("/api/v1/workflows", {
+    method: "POST",
+    apiKey,
+    body: JSON.stringify({
+      name,
+      settings: { saveDataErrorExecution: "all" },
+      nodes: [
+        {
+          name: "Webhook",
+          type: "n8n-nodes-base.webhook",
+          typeVersion: 2,
+          position: [0, 0],
+          parameters: { httpMethod: "GET", path, responseMode: "onReceived" },
+          webhookId: crypto.randomUUID(),
+        },
+        {
+          name: "Call ERP",
+          type: "n8n-nodes-base.httpRequest",
+          typeVersion: 4.2,
+          position: [220, 0],
+          parameters: { url, options: { timeout: 5000 } },
+        },
+      ],
+      connections: { Webhook: { main: [[{ node: "Call ERP", type: "main", index: 0 }]] } },
+    }),
+  })
+  expect(created.ok, await created.clone().text()).toBe(true)
+  const { id } = (await created.json()) as { id: string }
+  const activated = await n8n(`/api/v1/workflows/${id}/activate`, { method: "POST", apiKey })
+  expect(activated.ok, await activated.clone().text()).toBe(true)
+  return path
+}
+
 /** Calls the workflow's webhook and waits until n8n has stored the failed execution. */
 export async function n8nTrigger(apiKey: string, path: string) {
   const before = await errorCount(apiKey)

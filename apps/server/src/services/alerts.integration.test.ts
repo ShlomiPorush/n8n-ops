@@ -9,7 +9,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vites
 import type { Ctx, Logger } from "../context.ts"
 import { createDatabase, type Database } from "../db/client.ts"
 import { affectedWorkflows, alertGroups, alertOutbox, instances, problems, workflows } from "../db/schema.ts"
-import { createSecrets } from "../lib/crypto.ts"
+import { createSecrets, sha256 } from "../lib/crypto.ts"
 import { createSettings, type TelegramRoute } from "../lib/settings.ts"
 import {
   dispatchAlerts,
@@ -18,7 +18,7 @@ import {
   handleTelegramCallback,
   sendTestTelegram,
 } from "./alerts.ts"
-import { errorFingerprint, mergeProblems, splitAffectedWorkflow } from "./problems.ts"
+import { mergeProblems, splitAffectedWorkflow } from "./problems.ts"
 import { html } from "./telegram.ts"
 
 // Forum topics end to end against a real PostgreSQL: routing when an alert is queued, grouping and edits per topic,
@@ -168,10 +168,10 @@ async function setup(
     .returning()
   if (!a || !b) throw new Error("no instances")
   let n = 0
-  /** An Affected workflow, in the Problem of its error text (made when it is the first). */
+  /** An Affected workflow, in a Problem keyed here by its error text (made when it is the first). */
   const problem = async (instanceId: string, workflowName: string, errorMessage = "connect ECONNREFUSED") => {
     n++
-    const fp = errorFingerprint(errorMessage)
+    const fp = sha256(errorMessage)
     await d.db.insert(problems).values({ errorMessage, fingerprint: fp }).onConflictDoNothing()
     const [owner] = await d.db.select().from(problems).where(eq(problems.fingerprint, fp))
     if (!owner) throw new Error("no problem")

@@ -177,7 +177,7 @@ export function buildMcpServer(
 
   tool(
     "list_open_problems",
-    "Open problems on all n8n instances: one per exact error text, with the workflows it hit (affectedWorkflows: instance, workflow, node, state, failures; affectedTotal counts them all) and failure counts. A problem is open while any of its workflows is. Filter by instance name (the state is then the state on that instance) or text.",
+    'Open problems on all n8n instances: one per cause, what the failing node talked to and what went wrong there (title "target · reason", with target, reason, kind and hint), with the workflows it hit (affectedWorkflows: instance, workflow, node, state, failures; affectedTotal counts them all) and failure counts. errorMessage is n8n\'s latest error text. A problem is open while any of its workflows is. Filter by instance name (the state is then the state on that instance) or text.',
     {
       instance: z.string().optional(),
       query: z.string().optional(),
@@ -188,7 +188,7 @@ export function buildMcpServer(
   )
   tool(
     "get_problem",
-    "Details of one problem: every workflow it hit (affectedWorkflows), and for one of them (selected: the most recently failed, or the one affectedWorkflowId names) the error, stack, the failed node's input, the workflow graph with the failed node and recent executions; sameError lists problems split off with the same text. problemId may also be an affected workflow id, which is then the one selected.",
+    "Details of one problem: every workflow it hit (affectedWorkflows), and for one of them (selected: the most recently failed, or the one affectedWorkflowId names) the error, stack, the failed node's input, the workflow graph with the failed node and recent executions; sameError lists other problems with the same latest error text. problemId may also be an affected workflow id, which is then the one selected.",
     { problemId: z.string().uuid(), affectedWorkflowId: z.string().uuid().optional() },
     (a) => agentProblem(ctx, a.problemId, a.affectedWorkflowId),
   )

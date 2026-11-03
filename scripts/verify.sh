@@ -259,6 +259,10 @@ start_stack() {
   }
   check_non_root "$PROJECT" server postgres worker
   check_socket_proxy "$PROJECT"
+  # The worker never gets database credentials (only the names are read, never printed).
+  if stack exec -T worker env | grep -qE '^(DATABASE_URL|POSTGRES_PASSWORD|POSTGRES_USER)='; then
+    die "the worker has database credentials"
+  fi
 }
 
 # Stores the design in the fresh database and restarts the server to read it, so even first-run setup

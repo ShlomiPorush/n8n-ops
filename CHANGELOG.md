@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-04
+
 ### Changed
 
 - **The server and its database refuse to start with the example database password.** When `POSTGRES_PASSWORD` in `.env` is empty or still the placeholder from `.env.example` (or another placeholder such as `change-me`), PostgreSQL stops before it creates a database and the server stops before it connects, each saying what to set. Check `.env` before upgrading: an installation that runs with such a password does not start until it is set to a long random value (and changed in the database too, as `.env.example` explains).

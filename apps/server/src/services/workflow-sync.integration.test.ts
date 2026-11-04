@@ -24,7 +24,7 @@ let ctx: Ctx
 let server: Server
 let baseUrl: string
 
-const KEY = "sync-key-0123456789"
+const KEY = randomBytes(24).toString("hex")
 const n8n = { reads: 0, open: 0, mostOpen: 0, held: [] as (() => void)[] }
 
 /** Lets every workflow list that is waiting go, and waits until the next one asks, if any. */

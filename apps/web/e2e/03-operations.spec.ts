@@ -1,7 +1,16 @@
 import { readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { expect, type Page, type Request, test } from "@playwright/test"
-import { currentApiKey, dialogClosed, discardChanges, loadPrivateKey, n8nApi, n8nUrl, signIn } from "./helpers.ts"
+import {
+  currentApiKey,
+  dialogClosed,
+  discardChanges,
+  loadPrivateKey,
+  n8nApi,
+  n8nUrl,
+  randomSecret,
+  signIn,
+} from "./helpers.ts"
 
 // Storage, a paired worker, an encrypted backup with credential secrets, a restore, and a move
 // with credentials, all against the real n8n and S3Mock in the test stack.
@@ -36,7 +45,7 @@ test("an S3 bucket and the mapped folder are added as destinations, each tested 
     await page.getByLabel("Bucket", { exact: true }).fill("n8n-ops-backups")
     await page.getByLabel("Key prefix", { exact: true }).fill("e2e")
     await page.getByLabel("Access key ID", { exact: true }).fill("test")
-    await page.getByLabel("Secret access key", { exact: true }).fill("test-secret")
+    await page.getByLabel("Secret access key", { exact: true }).fill(randomSecret())
   }, "Offsite S3")
   await add(async () => {
     await page.getByRole("radio", { name: "Folder" }).click()
@@ -72,7 +81,7 @@ test("a wrong secret is refused before a destination is stored", async () => {
   await page.getByLabel("Bucket", { exact: true }).fill("n8n-ops-backups")
   await page.getByLabel("Key prefix", { exact: true }).fill("broken")
   await page.getByLabel("Access key ID", { exact: true }).fill("test")
-  await page.getByLabel("Secret access key", { exact: true }).fill("test-secret")
+  await page.getByLabel("Secret access key", { exact: true }).fill(randomSecret())
   await page.getByRole("button", { name: "Test and add" }).click()
   await expect(page.getByText(/The destination test failed/)).toBeVisible({ timeout: 70_000 })
   await page.keyboard.press("Escape")
@@ -252,7 +261,7 @@ test("a backup through the worker includes credential secrets", async () => {
     body: JSON.stringify({
       name: "ERP login",
       type: "httpBasicAuth",
-      data: { user: "erp", password: "s3cret-erp-pass" },
+      data: { user: "erp", password: randomSecret() },
     }),
   })
   await page.goto("/backups")
@@ -386,7 +395,11 @@ test("a workflow moves to another instance with its credentials", async () => {
   const credential = (await (
     await n8nApi("/api/v1/credentials", {
       method: "POST",
-      body: JSON.stringify({ name: "Mover login", type: "httpBasicAuth", data: { user: "m", password: "mover-pass" } }),
+      body: JSON.stringify({
+        name: "Mover login",
+        type: "httpBasicAuth",
+        data: { user: "m", password: randomSecret() },
+      }),
     })
   ).json()) as { id: string }
   await n8nApi("/api/v1/workflows", {

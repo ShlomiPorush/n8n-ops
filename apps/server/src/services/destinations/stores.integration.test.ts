@@ -116,7 +116,8 @@ const s3Location = (bucket: string) => ({
   prefix: "it",
   forcePathStyle: true,
 })
-const s3Credentials = { accessKeyId: "test", secretAccessKey: "test-secret" }
+// S3Mock takes any credentials; these are new for each run all the same.
+const s3Credentials = { accessKeyId: randomBytes(8).toString("hex"), secretAccessKey: randomBytes(24).toString("hex") }
 
 contract("S3", () => s3Store(s3Location("n8n-ops-backups"), s3Credentials, null))
 

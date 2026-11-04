@@ -28,7 +28,7 @@ let app: ReturnType<typeof createApp>
 
 const ORIGIN = "http://localhost"
 const USERNAME = "operator"
-let password = "a-long-test-password-1"
+let password = randomBytes(24).toString("hex")
 let totpSecret = ""
 const minute = 60_000
 const hour = 60 * minute
@@ -277,7 +277,7 @@ describe("the clocks", () => {
     expect(read.status).toBe(200)
     expect(await read.json()).toBeNull()
     const refused = await call("POST", "/api/auth/change-password", {
-      json: { currentPassword: password, newPassword: "another-long-password-2" },
+      json: { currentPassword: password, newPassword: randomBytes(24).toString("hex") },
       cookie: own,
     })
     expect(refused.status).toBe(401)
@@ -300,7 +300,7 @@ describe("the clocks", () => {
     let own = await signIn()
     const signedInAt = ago(3 * hour)
     await setClocks((await rowOf(own)).id, { authenticatedAt: signedInAt })
-    const next = "a-long-test-password-2"
+    const next = randomBytes(24).toString("hex")
     const res = await call("POST", "/api/auth/change-password", {
       json: { currentPassword: password, newPassword: next, revokeOtherSessions: true },
       cookie: own,

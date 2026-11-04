@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test"
-import { design, password, saveSecret, saveSession, saveState, username } from "./helpers.ts"
+import { design, password, randomSecret, saveSecret, saveSession, saveState, username } from "./helpers.ts"
 import { freshTotp } from "./totp.ts"
 
 // Runs against a fresh stack (empty database), in order: first run, sign out, sign in again.
@@ -55,7 +55,7 @@ test("a fresh install leads through account, two-factor and backup key", async (
 
 test("sign-up is closed after setup", async ({ request }) => {
   const res = await request.post("/api/setup/account", {
-    data: { username: "intruder", password: "another long password" },
+    data: { username: "intruder", password: randomSecret() },
   })
   expect(res.status()).toBe(409)
 })

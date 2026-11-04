@@ -12,9 +12,30 @@ export type ServerConfig = {
   publicUrl?: string
 }
 
+/**
+ * Values that only stand for a secret: the placeholder of .env.example and words anyone would guess. The scripts
+ * refuse the same list (`SECRET_PLACEHOLDERS` in scripts/lib/common.sh), and so does the production PostgreSQL.
+ */
+const PLACEHOLDER = /^(|replace-with.*|change-?me.*|example.*|placeholder.*|password|secret|postgres|n8n_ops|test)$/i
+
+/** The password in a database URL, or null when the URL cannot be read. */
+function passwordOf(url: string): string | null {
+  try {
+    return decodeURIComponent(new URL(url).password)
+  } catch {
+    return null
+  }
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   const databaseUrl = env.DATABASE_URL
   if (!databaseUrl) throw new Error("DATABASE_URL is required")
+  const password = passwordOf(databaseUrl)
+  if (password === null) throw new Error("DATABASE_URL is not a valid URL")
+  if (PLACEHOLDER.test(password))
+    throw new Error(
+      "DATABASE_URL has no password or the example one from .env.example. Set POSTGRES_PASSWORD in .env to a long random value.",
+    )
   const port = Number(env.PORT ?? 8080)
   if (!Number.isInteger(port) || port <= 0) throw new Error(`PORT must be a positive integer, got "${env.PORT}"`)
   return {

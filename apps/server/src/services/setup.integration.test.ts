@@ -61,7 +61,7 @@ let ctx: Ctx
 let server: Server
 let baseUrl: string
 
-const KEY = "good-key-0123456789"
+const KEY = randomBytes(24).toString("hex")
 const allScopes = ["execution:list", "execution:read", "workflow:list", "workflow:read"]
 
 /** What the stand-in n8n answers; tests change it. */

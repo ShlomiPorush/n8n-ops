@@ -1,6 +1,6 @@
 import { createServer, type Server } from "node:http"
 import { type APIRequestContext, expect, type Page, test } from "@playwright/test"
-import { dialogClosed, openNewToken, signIn } from "./helpers.ts"
+import { dialogClosed, openNewToken, randomSecret, signIn } from "./helpers.ts"
 
 // Approving access requests from Telegram and email. The server's Telegram calls go to a stand-in Bot API run
 // here (verify.sh points TELEGRAM_API_URL at this runner); email goes to Mailpit in the test stack.
@@ -366,7 +366,7 @@ test("a new SMTP server needs the password again, so the stored one is not sent 
   const put = (body: object) => page.request.put("/api/settings/email", { data: body })
   const stored = async () => (await page.request.get("/api/settings/email")).json()
   try {
-    expect((await put({ smtpPassword: "e2e-smtp-secret" })).ok()).toBe(true)
+    expect((await put({ smtpPassword: randomSecret() })).ok()).toBe(true)
     // A save that keeps the server keeps the stored password.
     expect((await put({ smtpHost: "mail", smtpPort: 1025 })).ok()).toBe(true)
     const refused = await put({ smtpHost: "smtp.elsewhere.example" })

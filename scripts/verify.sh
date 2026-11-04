@@ -128,6 +128,12 @@ run_guards() {
       echo "Hebrew text is not allowed in tracked files:"; echo "$hebrew"; fail=1
     fi
 
+    # Env files are tracked only as examples; the stacks generate the real ones with new secrets (AGENTS.md, Secrets).
+    env_files="$(git ls-files -co --exclude-standard | grep -E "(^|/)(\.env[^/]*|[^/]*\.env)$" | grep -vE "\.example$" || true)"
+    if [ -n "$env_files" ]; then
+      echo "Env files may be tracked only as *.example, with empty or placeholder values:"; echo "$env_files"; fail=1
+    fi
+
     compose_files="docker-compose.yml docker/docker-compose-dev.example.yml"
     [ -f docker-compose-dev.yml ] && compose_files="$compose_files docker-compose-dev.yml"
     # shellcheck disable=SC2086
@@ -253,6 +259,10 @@ start_stack() {
   }
   check_non_root "$PROJECT" server postgres worker
   check_socket_proxy "$PROJECT"
+  # The worker never gets database credentials (only the names are read, never printed).
+  if stack exec -T worker env | grep -qE '^(DATABASE_URL|POSTGRES_PASSWORD|POSTGRES_USER)='; then
+    die "the worker has database credentials"
+  fi
 }
 
 # Stores the design in the fresh database and restarts the server to read it, so even first-run setup
@@ -355,18 +365,18 @@ run_server_integration() {
     -addext subjectAltName=DNS:webdav -keyout /certs/key.pem -out /certs/cert.pem 2>/dev/null \
     && chmod 0644 /certs/key.pem" || die "could not make the WebDAV test certificate"
   wait_for_pulls "$SFTP_IMAGE" "$WEBDAV_IMAGE"
+  # Their passwords are this run's (make_run_secrets), read from env files so they are on no command line.
   docker run -d --name "${PROJECT}-sftp" --network "$net" --network-alias sftp \
-    -e PUID=1000 -e PGID=1000 -e USER_NAME=n8n-ops -e USER_PASSWORD=sftp-test-password -e PASSWORD_ACCESS=true \
+    -e PUID=1000 -e PGID=1000 -e USER_NAME=n8n-ops -e PASSWORD_ACCESS=true --env-file "$RUN_ENV_DIR/sftp.env" \
     "$SFTP_IMAGE" >/dev/null || die "the SFTP test server did not start"
   docker run -d --name "${PROJECT}-webdav" --network "$net" --network-alias webdav --user 65534:65534 -e HOME=/tmp \
-    -v "$certs:/certs:ro" "$WEBDAV_IMAGE" serve webdav /tmp --addr :8443 \
-    --cert /certs/cert.pem --key /certs/key.pem --user n8n-ops --pass webdav-test-password >/dev/null ||
+    --env-file "$RUN_ENV_DIR/webdav.env" -v "$certs:/certs:ro" "$WEBDAV_IMAGE" serve webdav /tmp --addr :8443 \
+    --cert /certs/cert.pem --key /certs/key.pem >/dev/null ||
     die "the WebDAV test server did not start"
-  TOOLCHAIN_EXTRA_ARGS=(--network "$net" -v "$certs:/certs:ro"
-    -e MIGRATION_DATABASE_URL=postgres://n8n_ops:dev-only-password@postgres:5432/n8n_ops
+  TOOLCHAIN_EXTRA_ARGS=(--network "$net" -v "$certs:/certs:ro" --env-file "$RUN_ENV_DIR/tests.env"
     -e S3_ENDPOINT=http://s3:9090
-    -e SFTP_HOST=sftp -e SFTP_PORT=2222 -e SFTP_USER=n8n-ops -e SFTP_PASSWORD=sftp-test-password -e SFTP_PATH=/config
-    -e WEBDAV_URL=https://webdav:8443/ -e WEBDAV_USER=n8n-ops -e WEBDAV_PASSWORD=webdav-test-password
+    -e SFTP_HOST=sftp -e SFTP_PORT=2222 -e SFTP_USER=n8n-ops -e SFTP_PATH=/config
+    -e WEBDAV_URL=https://webdav:8443/ -e WEBDAV_USER=n8n-ops
     -e WEBDAV_CA=/certs/cert.pem)
   in_toolchain "pnpm --filter @n8n-ops/server run test:integration" || {
     docker logs --tail 30 "${PROJECT}-sftp" 2>&1 || true
@@ -549,7 +559,7 @@ run_e2e() {
   docker run --rm --network "${PROJECT}_default" --network-alias e2e-runner \
     --user "$(id -u):$(id -g)" -e HOME=/tmp -e CI="${CI:-}" -e E2E_DESIGN="$design" \
     -e E2E_BASE_URL=http://server:8080 -e E2E_N8N_CONTAINER="${PROJECT}-n8n-1" \
-    -e E2E_DATABASE_URL=postgres://n8n_ops:dev-only-password@postgres:5432/n8n_ops \
+    --env-file "$RUN_ENV_DIR/tests.env" \
     -v "$N8N_OPS_DATA_DIR/pairing:/worker-data" -v "$N8N_OPS_DATA_DIR/backups:/backups-data:ro" \
     -v "$REPO_ROOT:/repo" -w "/repo/$app" \
     "$PLAYWRIGHT_IMAGE" node node_modules/@playwright/test/cli.js test || {
@@ -573,10 +583,46 @@ run_integration() {
   done
 }
 
+# This run's secrets, new for each run (AGENTS.md, Secrets): the stack's env files, those of the queue checks, and
+# what the test containers and the SFTP and WebDAV test servers read. Every Compose call of the run reads this
+# directory, so it is made before the first one and removed by the exit trap after the stack is gone.
+RUN_ENV_DIR=""
+make_run_secrets() {
+  local queue_password queue_key sftp webdav admin owner url content
+  RUN_ENV_DIR="$(mktemp -d "${TMPDIR:-/tmp}/n8n-ops-verify-env.XXXXXX")" || die "could not make the run's env directory"
+  export N8N_OPS_ENV_DIR="$RUN_ENV_DIR"
+  write_stack_env "$RUN_ENV_DIR"
+  check_stack_env "$RUN_ENV_DIR"
+  queue_password="$(random_secret)" || exit 1
+  queue_key="$(random_secret)" || exit 1
+  content="$(fill_env_example queue-postgres "POSTGRES_PASSWORD=$queue_password")" || exit 1
+  publish_env_file "$RUN_ENV_DIR" queue-postgres.env "$content"
+  content="$(fill_env_example queue-n8n "N8N_ENCRYPTION_KEY=$queue_key" "DB_POSTGRESDB_PASSWORD=$queue_password")" ||
+    exit 1
+  publish_env_file "$RUN_ENV_DIR" queue-n8n.env "$content"
+  sftp="$(random_secret)" || exit 1
+  webdav="$(random_secret)" || exit 1
+  admin="$(random_secret)" || exit 1
+  owner="$(random_secret)" || exit 1
+  url="$(env_value "$RUN_ENV_DIR/server.env" DATABASE_URL)"
+  # n8n wants an upper-case letter and a digit in its owner's password, and at most 64 characters.
+  publish_env_file "$RUN_ENV_DIR" tests.env "MIGRATION_DATABASE_URL=$url
+E2E_DATABASE_URL=$url
+E2E_ADMIN_PASSWORD=$admin
+E2E_N8N_OWNER_PASSWORD=N8n-${owner:0:40}
+SFTP_PASSWORD=$sftp
+WEBDAV_PASSWORD=$webdav"
+  publish_env_file "$RUN_ENV_DIR" sftp.env "USER_PASSWORD=$sftp"
+  # rclone reads each flag from RCLONE_<FLAG>: --user and --pass of serve webdav.
+  publish_env_file "$RUN_ENV_DIR" webdav.env "RCLONE_USER=n8n-ops
+RCLONE_PASS=$webdav"
+}
+
 STACK_USED=0
 on_exit() {
   stop_pulls
   [ $STACK_USED -eq 0 ] || cleanup_stack
+  [ -z "$RUN_ENV_DIR" ] || rm -rf "$RUN_ENV_DIR"
 }
 
 main() {
@@ -603,6 +649,9 @@ main() {
     fi
   fi
 
+  if [ $INTEGRATION -eq 1 ] || [ $E2E -eq 1 ]; then
+    make_run_secrets
+  fi
   # The external images download while the toolchain, the checks and the images are built.
   start_image_pulls
   build_toolchain

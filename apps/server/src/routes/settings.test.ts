@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { Ctx } from "../context.ts"
 import { defaults, type SectionName, sections } from "../lib/settings.ts"
@@ -187,8 +188,9 @@ describe("Email and Telegram tests with the values on screen (FS-19, FS-5)", () 
     expect(mail.transports[0]).toMatchObject({ host: "SMTP.Example.com", auth: { pass: "stored-secret" } })
     expect(mail.sent[0]).toMatchObject({ to: "new@example.com" })
 
-    await test("POST", { smtpHost: "smtp.elsewhere.example", smtpPassword: "typed-secret" })
-    expect(mail.transports[1]).toMatchObject({ host: "smtp.elsewhere.example", auth: { pass: "typed-secret" } })
+    const typed = randomBytes(24).toString("hex")
+    await test("POST", { smtpHost: "smtp.elsewhere.example", smtpPassword: typed })
+    expect(mail.transports[1]).toMatchObject({ host: "smtp.elsewhere.example", auth: { pass: typed } })
     // A test stores nothing.
     expect(data.email).toEqual(storedEmail)
   })
@@ -227,8 +229,9 @@ describe("Email and Telegram tests with the values on screen (FS-19, FS-5)", () 
       expect((await test("POST", { chatId: "-1001234" })).status).toBe(200)
       expect(calls[0]?.url).toContain("/botstored-token/sendMessage")
       expect(calls[0]?.body.chat_id).toBe("-1001234")
-      await test("POST", { botToken: "123:new-token", chatId: "4242" })
-      expect(calls[1]?.url).toContain("/bot123:new-token/sendMessage")
+      const botToken = `123:${randomBytes(16).toString("hex")}`
+      await test("POST", { botToken, chatId: "4242" })
+      expect(calls[1]?.url).toContain(`/bot${botToken}/sendMessage`)
     })
 
     it("does not use the stored token once it is being removed", async () => {

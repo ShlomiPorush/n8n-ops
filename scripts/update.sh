@@ -10,15 +10,16 @@
 # Compose file itself. It rolls the services that run an n8n-ops image, found
 # by image and not by name: the server first, then a worker if the same file
 # has one. The database, the socket proxy and anything else stay as they are.
-# SERVICES="worker" rolls only the ones named. ROLLOUT_TIMEOUT (seconds,
-# default 180) is how long a new container has to become healthy. Needs the
-# docker rollout plugin (github.com/wowu/docker-rollout).
+# SERVICES="worker" rolls only the ones named, still in that order.
+# ROLLOUT_TIMEOUT (seconds, default 180) is how long a new container has to
+# become healthy. Needs the docker rollout plugin
+# (github.com/wowu/docker-rollout) and flock.
 #
 # docker rollout starts the new container beside the old one and removes the
 # old one only once the new one is healthy. A new container that does not
 # become healthy is removed and the old one keeps serving; the script then
-# stops and says where it stood. When nothing was rolled yet, VERSION goes
-# back to what it was.
+# stops and says where it stood. When it stops, or is interrupted, before
+# rolling anything, the VERSION line goes back to what it was.
 #
 # The server migrates the database when its new container starts, while the
 # old one still serves. A release whose migration breaks the previous release
@@ -43,9 +44,23 @@ service_values() {
   docker compose config | awk -v key="$1" '
     /^services:/ { in_services = 1; next }
     in_services && /^[^ ]/ { in_services = 0 }
-    in_services && /^  [^ ]/ { service = $1; sub(/:$/, "", service) }
-    in_services && $0 ~ "^    " key ": " { print service, $2 }
+    in_services && /^  [^ ]/ { service = $1; sub(/:$/, "", service); gsub(/^["\047]|["\047]$/, "", service) }
+    in_services && $0 ~ "^    " key ": " { value = $2; gsub(/^["\047]|["\047]$/, "", value); print service, value }
   '
+}
+
+# The value of VERSION in .env as Compose reads it: no comment, quotes or CR.
+env_version() {
+  grep -m 1 "^VERSION=" .env | cut -d= -f2- |
+    sed -E "s/\r$//; s/[[:space:]]+#.*$//; s/^[[:space:]]+//; s/[[:space:]]+$//; s/^\"(.*)\"$/\1/; s/^'(.*)'$/\1/"
+}
+
+# Replaces the first VERSION line of .env with the given line, taken literally.
+# The file is rewritten in place, so its owner and mode stay.
+write_version_line() {
+  local text
+  text="$(LINE="$1" awk '/^VERSION=/ && !done { print ENVIRON["LINE"]; done = 1; next } { print }' .env)"
+  printf '%s\n' "$text" >.env
 }
 
 if [[ ! -f docker-compose.yml || ! -f .env ]]; then
@@ -56,101 +71,153 @@ if ! docker rollout --help 2>/dev/null | grep -q "docker rollout"; then
   err "The docker rollout plugin is not installed: https://github.com/wowu/docker-rollout"
   exit 1
 fi
+if ! command -v flock >/dev/null; then
+  err "flock is not installed (it comes with util-linux)."
+  exit 1
+fi
+# One update at a time: a second run would change VERSION under the first.
+exec 9<"$(basename "${BASH_SOURCE[0]}")"
+if ! flock -n 9; then
+  err "Another update.sh is running in this folder. Wait for it to finish."
+  exit 1
+fi
 if ! grep -q "^VERSION=" .env; then
   err ".env has no VERSION line."
   exit 1
 fi
 
+previous_line=""
+changed=""
+rolled=()
+rolling=""
+
+restore() {
+  if [[ -n $changed ]]; then
+    write_version_line "$previous_line"
+    changed=""
+    warn "The VERSION line in .env is back to what it was: $previous_line"
+  fi
+}
+# Ends the update with the given exit code: before anything was rolled,
+# VERSION goes back; after, it stays, since some services already run the new
+# release.
+halt() {
+  local code="$1"
+  shift
+  err "$*"
+  if ((${#rolled[@]} == 0)); then
+    restore
+  else
+    warn "Already on the new release: ${rolled[*]}. Fix the cause and run this again."
+  fi
+  exit "$code"
+}
+stop() { halt 1 "$@"; }
+interrupted() {
+  if [[ -n $rolling ]]; then
+    err "Interrupted while rolling $rolling. VERSION stays ${expected:-as it is}; check the containers with: docker compose ps"
+    exit 130
+  fi
+  halt 130 "Interrupted."
+}
+trap interrupted INT TERM
+
 version="${1:-}"
-previous=""
 if [[ -n $version ]]; then
   if [[ ! $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     err "A release looks like 0.10.0, not '$version'."
     exit 1
   fi
-  previous="$(grep -m 1 "^VERSION=" .env | cut -d= -f2-)"
-  sed -i "s/^VERSION=.*/VERSION=${version}/" .env
-  log "VERSION=$version in .env (it was $previous)."
+  previous_line="$(grep -m 1 "^VERSION=" .env)"
+  changed=1
+  write_version_line "VERSION=$version"
+  log "VERSION=$version in .env (it was: $previous_line)."
 fi
-expected="$(grep -m 1 "^VERSION=" .env | cut -d= -f2- | tr -d "\"'")"
-
-restore() {
-  if [[ -n $previous ]]; then
-    sed -i "s/^VERSION=.*/VERSION=${previous}/" .env
-    warn "VERSION is back to $previous."
-  fi
-}
-fail() {
-  err "$*"
-  restore
-  exit 1
-}
+expected="$(env_version)"
 
 # The services that run an n8n-ops image, the server first: it migrates the
 # database, and the worker calls it.
 declare -A image_of=()
 servers=()
 workers=()
+config="$(service_values image)" || stop "docker compose config failed: see above."
 while read -r service image; do
+  [[ -n $service ]] || continue
   image_of[$service]="$image"
   case "${image%:*}" in
     "$SERVER_IMAGE") servers+=("$service") ;;
     "$WORKER_IMAGE") workers+=("$service") ;;
   esac
-done < <(service_values image)
-if [[ -n ${SERVICES:-} ]]; then
-  read -r -a services <<<"$SERVICES"
-  for service in "${services[@]}"; do
-    [[ -n ${image_of[$service]:-} ]] || fail "docker-compose.yml has no service $service."
-  done
-else
-  services=("${servers[@]}" "${workers[@]}")
+done <<<"$config"
+targets=("${servers[@]}" "${workers[@]}")
+if ((${#targets[@]} == 0)); then
+  stop "No service in docker-compose.yml runs $SERVER_IMAGE or $WORKER_IMAGE."
 fi
-if ((${#services[@]} == 0)); then
-  fail "No service in docker-compose.yml runs $SERVER_IMAGE or $WORKER_IMAGE."
+services=("${targets[@]}")
+if [[ -n ${SERVICES:-} ]]; then
+  read -r -a wanted <<<"$SERVICES"
+  for service in "${wanted[@]}"; do
+    if [[ " ${targets[*]} " != *" $service "* ]]; then
+      stop "$service is not a service of docker-compose.yml that runs $SERVER_IMAGE or $WORKER_IMAGE."
+    fi
+  done
+  services=()
+  for service in "${targets[@]}"; do
+    if [[ " ${wanted[*]} " == *" $service "* ]]; then
+      services+=("$service")
+    fi
+  done
 fi
 
 for service in "${services[@]}"; do
   tag="${image_of[$service]##*:}"
   if [[ $tag != "$expected" ]]; then
-    fail "$service runs ${image_of[$service]}, not version $expected. Write its image as ...:\${VERSION} in docker-compose.yml and run this again."
+    stop "$service runs ${image_of[$service]}, not version $expected. Write its image as ...:\${VERSION} in docker-compose.yml and run this again."
   fi
 done
 # A fixed container name allows one container per service, and docker rollout
 # needs two for a moment.
+names="$(service_values container_name)" || stop "docker compose config failed: see above."
 while read -r service name; do
-  if [[ " ${services[*]} " == *" $service "* ]]; then
-    fail "$service has container_name: $name in docker-compose.yml, so docker rollout cannot run it twice. Remove that line and run this again."
+  if [[ -n $service && " ${services[*]} " == *" $service "* ]]; then
+    stop "$service has container_name: $name in docker-compose.yml, so docker rollout cannot run it twice. Remove that line and run this again."
   fi
-done < <(service_values container_name)
+done <<<"$names"
+# Beside a running container, docker rollout replaces only the stopped ones of
+# the service and reports success without rolling the running one.
+declare -A running_ids=()
+for service in "${services[@]}"; do
+  all="$(docker compose ps -aq "$service")" || stop "Could not read the containers of $service from Docker."
+  running="$(docker compose ps -q "$service")" || stop "Could not read the containers of $service from Docker."
+  running_ids[$service]="$running"
+  if [[ -n $running ]] && (($(wc -w <<<"$all") != $(wc -w <<<"$running"))); then
+    stop "$service has stopped containers beside the running one, and docker rollout would replace only those. Remove them with: docker compose rm -f $service"
+  fi
+done
 
 log "Pulling: ${services[*]}"
 if ! docker compose pull "${services[@]}"; then
-  err "Pulling failed: nothing was changed."
-  restore
-  exit 1
+  stop "Pulling failed: nothing was changed."
 fi
 
-rolled=()
 for service in "${services[@]}"; do
-  if [[ -z $(docker compose ps -q "$service") ]]; then
+  if [[ -z ${running_ids[$service]} ]]; then
     log "$service is not running: starting it."
-    started=(docker compose up -d --wait --wait-timeout "$TIMEOUT" "$service")
+    # --no-deps: the database, the socket proxy and other services stay as they are.
+    started=(docker compose up -d --no-deps --wait --wait-timeout "$TIMEOUT" "$service")
   else
     log "Rolling $service"
     started=(docker rollout --timeout "$TIMEOUT" "$service")
   fi
+  rolling="$service"
   if ! "${started[@]}"; then
-    err "$service did not come up healthy. Its old container, if it had one, still runs."
-    if ((${#rolled[@]} == 0)); then
-      restore
-    else
-      warn "Already on the new release: ${rolled[*]}. Fix the cause and run this again."
-    fi
-    exit 1
+    rolling=""
+    stop "$service did not come up healthy. Its old container, if it had one, still runs."
   fi
+  rolling=""
   rolled+=("$service")
 done
+changed=""
 
 docker compose ps "${services[@]}"
 

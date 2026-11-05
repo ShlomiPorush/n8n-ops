@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, ilike, inArray, isNotNull, or, type SQL, sql } from "drizzle-orm"
+import { and, asc, count, desc, eq, ilike, inArray, isNotNull, or, type SQL, sql } from "drizzle-orm"
 import type { Ctx } from "../context.ts"
 import { backupRuns, type Health, instances, workflows } from "../db/schema.ts"
 import { likeContains } from "../lib/like.ts"
@@ -144,7 +144,21 @@ export async function agentBackups(ctx: Ctx) {
   )
 }
 
-export async function agentWorkflows(ctx: Ctx, opts: { q?: string; instance?: string; limit?: number }) {
+/** The most workflows one call returns, and how many when the caller does not say. */
+export const WORKFLOWS_MAX = 500
+export const WORKFLOWS_DEFAULT = 100
+
+/**
+ * One page of the workflows that match, by name, then instance, then ID, so the pages never overlap; `total` counts
+ * every match and `nextOffset` is where the next page starts (null after the last). The page and the count are read
+ * from one snapshot, so they always agree; a sync between two calls can still move workflows across pages.
+ */
+export async function agentWorkflows(
+  ctx: Ctx,
+  opts: { q?: string; instance?: string; limit?: number; offset?: number },
+) {
+  const limit = Math.min(opts.limit ?? WORKFLOWS_DEFAULT, WORKFLOWS_MAX)
+  const offset = opts.offset ?? 0
   const where: SQL[] = []
   if (opts.q) {
     // Agents often hold an ID, a webhook URL or a tag rather than the exact name.
@@ -160,20 +174,34 @@ export async function agentWorkflows(ctx: Ctx, opts: { q?: string; instance?: st
     if (match) where.push(match)
   }
   if (opts.instance) where.push(eq(instances.name, opts.instance))
-  const rows = await ctx.db
-    .select({ w: workflows, instanceName: instances.name })
-    .from(workflows)
-    .innerJoin(instances, eq(workflows.instanceId, instances.id))
-    .where(where.length ? and(...where) : undefined)
-    .orderBy(asc(workflows.name))
-    .limit(Math.min(opts.limit ?? 100, 500))
+  const filter = where.length ? and(...where) : undefined
+  const { rows, total, all } = await ctx.db.transaction(
+    async (tx) => {
+      const rows = await tx
+        .select({ w: workflows, instanceName: instances.name })
+        .from(workflows)
+        .innerJoin(instances, eq(workflows.instanceId, instances.id))
+        .where(filter)
+        .orderBy(asc(workflows.name), asc(instances.name), asc(workflows.workflowId))
+        .limit(limit)
+        .offset(offset)
+      const [counted] = await tx
+        .select({ total: count() })
+        .from(workflows)
+        .innerJoin(instances, eq(workflows.instanceId, instances.id))
+        .where(filter)
+      return { rows, total: counted?.total ?? 0, all: await tx.select().from(instances) }
+    },
+    { isolationLevel: "repeatable read", accessMode: "read only" },
+  )
   const policies = new Map(
-    (await ctx.db.select().from(instances)).map((i) => {
+    all.map((i) => {
       const scopes = grantableScopes(i)
       return [i.name, { requestable: scopes.length > 0, grantableScopes: scopes }]
     }),
   )
-  return rows.map(({ w, instanceName }) => ({
+  const next = offset + rows.length
+  const page = rows.map(({ w, instanceName }) => ({
     instance: instanceName,
     workflowId: w.workflowId,
     name: w.name,
@@ -185,4 +213,5 @@ export async function agentWorkflows(ctx: Ctx, opts: { q?: string; instance?: st
     runs30d: w.runs30d,
     errors30d: w.errors30d,
   }))
+  return { workflows: page, total, nextOffset: next < total ? next : null }
 }

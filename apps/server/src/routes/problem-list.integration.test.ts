@@ -14,6 +14,7 @@ import {
   type ProblemFilter,
   type ProblemOrder,
   problemDetail,
+  problemFailure,
   problemPage,
   problemRowsPage,
   titleSql,
@@ -546,5 +547,88 @@ describe("the Problems list as rows", () => {
     expect(Object.fromEntries(inSql.map((r) => [r.id, r.title]))).toEqual(
       Object.fromEntries(byCause.items.map((r) => [r.id, r.title])),
     )
+  })
+})
+
+describe("a Problem's detail", () => {
+  it("links other Problems at the same target, never by the error text alone (docs/adr/0003)", async () => {
+    const [own] = await database.db
+      .insert(instances)
+      .values({ name: "detail-n8n", baseUrl: "http://detail:5678", apiKeyEnc: "v1:x:y:z" })
+      .returning()
+    if (!own) throw new Error("no instance")
+    // n8n words a 403 the same way for every service it calls.
+    const text = "Forbidden - perhaps check your credentials?"
+    const problemAt = async (cause: { targetKey: string | null; target: string | null; reason: string | null }) => {
+      const [p] = await database.db
+        .insert(problems)
+        .values({ errorMessage: text, kind: cause.reason ? "cred" : null, ...cause })
+        .returning()
+      if (!p) throw new Error("no problem")
+      const r = await row(own.id, { errorMessage: text, target: cause.target, reason: cause.reason }, p.id)
+      return { problemId: p.id, row: r }
+    }
+    const cpanel = { targetKey: `credential:${own.id}:cred-1`, target: "cPanel - Web3" }
+    const here = await problemAt({ ...cpanel, reason: "HTTP 403 · Access denied" })
+    // The same credential failing for another reason is linked.
+    const sibling = await problemAt({ ...cpanel, reason: "HTTP 401 · Token expired" })
+    // The same text at another target is another cause, and not linked.
+    const elsewhere = await problemAt({
+      targetKey: "host:api.example.com",
+      target: "api.example.com",
+      reason: "HTTP 403 · Forbidden",
+    })
+    // A Problem merged into another is an alias, not linked.
+    const [alias] = await database.db
+      .insert(problems)
+      .values({ errorMessage: text, ...cpanel, reason: "HTTP 500 · Down", mergedInto: elsewhere.problemId })
+      .returning()
+    if (!alias) throw new Error("no alias")
+    // Rows from before the regroup by cause have no target: the same text links nothing.
+    const oldOne = await problemAt({ targetKey: null, target: null, reason: null })
+    await problemAt({ targetKey: null, target: null, reason: null })
+
+    const detail = await problemDetail(ctx, here.problemId)
+    expect(detail?.sameTarget).toEqual([
+      expect.objectContaining({
+        id: sibling.problemId,
+        title: "cPanel - Web3 · HTTP 401 · Token expired",
+        reason: "HTTP 401 · Token expired",
+        status: "open",
+        workflows: 1,
+        workflowName: sibling.row.workflowName,
+        instanceName: "detail-n8n",
+      }),
+    ])
+    expect((await problemDetail(ctx, elsewhere.problemId))?.sameTarget).toEqual([])
+    expect((await problemDetail(ctx, oldOne.problemId))?.sameTarget).toEqual([])
+  })
+
+  it("lists failures by when they ran, so failures stored later, such as by a backfill, do not come first", async () => {
+    const [own] = await database.db
+      .insert(instances)
+      .values({ name: "order-n8n", baseUrl: "http://order:5678", apiKeyEnc: "v1:x:y:z" })
+      .returning()
+    if (!own) throw new Error("no instance")
+    const r = await row(own.id)
+    const failure = (executionId: string, ranAgo: number, storedAgo: number) => ({
+      affectedWorkflowId: r.id,
+      instanceId: own.id,
+      executionId,
+      workflowId: r.workflowId,
+      startedAt: ago(ranAgo + minute),
+      stoppedAt: ago(ranAgo),
+      createdAt: ago(storedAgo),
+      error: { message: executionId },
+    })
+    // Stored in this order: the latest run first, then two older runs read in afterwards.
+    await database.db
+      .insert(failures)
+      .values([failure("latest", day, 2 * day), failure("oldest", 3 * day, hour), failure("middle", 2 * day, hour)])
+
+    const detail = await problemDetail(ctx, r.problemId)
+    expect(detail?.selected.occurrences.map((o) => o.executionId)).toEqual(["latest", "middle", "oldest"])
+    expect(detail?.selected.error).toEqual({ message: "latest" })
+    expect((await problemFailure(ctx, r.problemId, {}))?.executionId).toBe("latest")
   })
 })

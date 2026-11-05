@@ -11,6 +11,11 @@ All notable changes to this project are documented here. The format follows [Kee
 ### Changed
 
 - **The server container has no fixed name in `docker-compose.yml`**, so the update script can start its replacement beside it. The first `docker compose up -d` with the new file recreates it as `n8n-ops-server-1`; the data stays. Use `docker compose exec server ...` rather than its old name.
+- **A problem links only problems at the same target.** Its **Same target** tab (before, **Same error**) lists the other problems of the same credential, host, called workflow or node: another reason there, or a workflow split off by hand. It no longer lists a problem only because n8n worded its error the same way, such as "Forbidden - perhaps check your credentials?" for unrelated services. In the agents' API, `sameError` is now `sameTarget`, with each problem's title, reason and status.
+
+### Fixed
+
+- **Occurrences are listed by when they ran.** Failures read in later, such as by a backfill, came before newer ones, and the problem could show one of them as its latest failure.
 
 ## [0.9.1] - 2026-11-05
 

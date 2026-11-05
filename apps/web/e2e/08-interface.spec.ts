@@ -1695,7 +1695,7 @@ test("a problem's tabs have their own address, and Merge opens from its menu and
   await expect(page).toHaveURL(at("input"))
   await expect(tab(/^Input/)).toHaveAttribute("aria-selected", "true")
 
-  // A tab that is not there (unknown, or no other workflow has the same error) opens the overview.
+  // A tab that is not there (unknown, or no other problem at the same target) opens the overview.
   await page.goto(`${new URL(page.url()).pathname}?tab=nothing`)
   await expect(tab(/^Overview/)).toHaveAttribute("aria-selected", "true")
   await expect(page).toHaveURL((url) => url.pathname === problem.pathname && url.search === "")

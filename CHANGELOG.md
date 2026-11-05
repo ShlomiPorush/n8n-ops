@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Changed
+
+- **Agents keep temporary access to n8n until their change is checked.** The n8n-ops skill told agents to release access as soon as they had made their change, so when the change then failed, the agent had to ask again and a person had to approve again. Agents now keep the access while they check the result, fix an error or wait for a person's answer, within the approved minutes and for the approved reason only, and release it once the task is finished and checked, cancelled or given up. They also ask for enough minutes to check and fix.
+
 ## [0.10.0] - 2026-11-05
 
 ### Added

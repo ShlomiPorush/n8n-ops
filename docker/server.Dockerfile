@@ -28,7 +28,7 @@ FROM node:24.22.2-bookworm-slim
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates curl \
   && install -d /usr/share/postgresql-common/pgdg \
-  && curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 15 --max-time 60 \
+  && curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --retry-max-time 300 --connect-timeout 15 --max-time 60 \
     https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
   && echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" \
     > /etc/apt/sources.list.d/pgdg.list \

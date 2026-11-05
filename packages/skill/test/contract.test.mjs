@@ -46,7 +46,10 @@ function command(impl, dir) {
   if (impl === "node") return [process.execPath, [path.join(dir, "n8n-ops.mjs")]]
   if (impl === "sh") return ["sh", [path.join(dir, "n8n-ops.sh")]]
   if (impl === "pwsh")
-    return ["pwsh", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", path.join(dir, "n8n-ops.ps1")]]
+    return [
+      "pwsh",
+      ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", path.join(dir, "n8n-ops.ps1")],
+    ]
   // The entry points agents run, which pick a version themselves.
   if (impl === "entry-sh") return ["sh", [path.join(dir, "n8n-ops")]]
   if (impl === "entry-ps")
@@ -414,6 +417,17 @@ for (const impl of impls) {
       const bad = await run(impl, inst, null, ["status"])
       assert.equal(bad.json?.error, "no_url", bad.out + bad.err)
       assert.match(bad.json.message, /kept/)
+      // Line breaks at its end are fine, a second line is not, and a folder in its place is refused.
+      fs.writeFileSync(kept, `${server.issuer}\r\n`)
+      const crlf = await run(impl, inst, null, ["status"])
+      assert.equal(crlf.json?.url, server.issuer, crlf.out + crlf.err)
+      fs.writeFileSync(kept, `${server.issuer}\nhttps://other.example\n`)
+      const two = await run(impl, inst, null, ["status"])
+      assert.equal(two.json?.error, "no_url", two.out + two.err)
+      fs.rmSync(kept)
+      fs.mkdirSync(kept)
+      const folder = await run(impl, inst, null, ["status"])
+      assert.equal(folder.json?.error, "insecure_credentials", folder.out + folder.err)
     })
 
     it("finishes a connection at the address it began with, even when another one is kept meanwhile", async () => {

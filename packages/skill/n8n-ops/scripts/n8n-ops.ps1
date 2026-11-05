@@ -95,7 +95,11 @@ function Get-Context([string]$urlOption) {
   $kept = ''
   if (-not $raw) { $kept = Get-KeptAddress $dir; $raw = $kept }
   if (-not $raw) { Fail 'no_url' 'No n8n-ops address. Ask the person for it, then run: n8n-ops connect --url <address>' }
-  try { $issuer = Get-Issuer $raw } catch [OpsFail] {
+  try {
+    # A kept address is one line: anything else in the file makes it invalid, not a different address.
+    if ($kept -and $kept -match '\s') { Fail 'insecure_url' '' }
+    $issuer = Get-Issuer $raw
+  } catch [OpsFail] {
     if (-not $kept) { throw }
     Fail 'no_url' "The address kept in $(Join-Path $dir $AddressFile) is not valid. Pass --url <address>."
   }
@@ -125,9 +129,12 @@ $AddressFile = 'address'
 
 function Get-KeptAddress([string]$dir) {
   $file = Join-Path $dir $AddressFile
-  if (-not [IO.File]::Exists($file)) { return '' }
-  Test-PlainFile $file
-  (Read-Shared $file).Trim()
+  # Attributes of the path itself, without following a link: a folder or a broken link is refused, not missing.
+  try { $attr = [IO.File]::GetAttributes($file) } catch [IO.FileNotFoundException], [IO.DirectoryNotFoundException] { return '' }
+  if (($attr -band [IO.FileAttributes]::ReparsePoint) -or ($attr -band [IO.FileAttributes]::Directory)) {
+    Fail 'insecure_credentials' "$file must be a plain file, not a link."
+  }
+  (Read-Shared $file) -replace '[\r\n]+\z', ''
 }
 
 # Keeps the address of a working connection, in one step. Only a convenience: a failure changes nothing.

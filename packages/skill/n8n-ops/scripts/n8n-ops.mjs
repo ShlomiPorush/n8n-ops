@@ -135,6 +135,8 @@ function context(urlOption) {
     throw new Fail("no_url", "No n8n-ops address. Ask the person for it, then run: n8n-ops connect --url <address>")
   let issuer
   try {
+    // A kept address is one line: anything else in the file makes it invalid, not a different address.
+    if (kept && /\s/.test(kept)) throw new Fail("insecure_url", "")
     issuer = issuerOf(raw)
   } catch (e) {
     if (!kept) throw e
@@ -172,7 +174,7 @@ function keptAddress(dir) {
   const file = path.join(dir, ADDRESS)
   try {
     checkFile(file)
-    return fs.readFileSync(file, "utf8").trim()
+    return fs.readFileSync(file, "utf8").replace(/[\r\n]+$/, "")
   } catch (e) {
     if (e.code === "ENOENT") return ""
     throw e
@@ -189,7 +191,9 @@ function keepAddress(ctx) {
     fs.writeFileSync(tmp, `${ctx.issuer}\n`, { flag: "wx", mode: 0o600 })
     renameOver(tmp, file)
   } catch {
-    fs.rmSync(tmp, { force: true })
+    try {
+      fs.rmSync(tmp, { force: true })
+    } catch {}
   }
 }
 

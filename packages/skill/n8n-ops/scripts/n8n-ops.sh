@@ -95,6 +95,8 @@ setup() {
   [ -n "$raw" ] || kept_address
   [ -n "$raw" ] || raw=$KEPT
   [ -n "$raw" ] || fail no_url "No n8n-ops address. Ask the person for it, then run: n8n-ops connect --url <address>"
+  # A kept address is one line: anything else in the file makes it invalid, not a different address.
+  if [ -n "$KEPT" ]; then case "$KEPT" in *[[:space:]]*) bad_url "" ;; esac fi
   raw=${raw%/}
   case "$raw" in
     https://*) rest=${raw#https://} PROTO=https ;;
@@ -131,7 +133,21 @@ kept_address() {
   [ -e "$ADDRESS" ] || [ -L "$ADDRESS" ] || return 0
   [ -f "$ADDRESS" ] || fail insecure_credentials "$ADDRESS must be a plain file, not a link."
   check_private "$ADDRESS"
-  KEPT=$(head -n1 "$ADDRESS" | tr -d '\r')
+  # The whole file (x keeps the line breaks at its end), without the line breaks at its end.
+  KEPT=$(
+    cat "$ADDRESS"
+    printf x
+  )
+  KEPT=${KEPT%x}
+  cr=$(printf '\r')
+  nl='
+'
+  while :; do
+    case "$KEPT" in
+      *"$cr" | *"$nl") KEPT=${KEPT%?} ;;
+      *) break ;;
+    esac
+  done
 }
 
 # Keeps the address of a working connection, in one step. Only a convenience: a failure changes nothing (so it

@@ -16,7 +16,6 @@ import { createHash, randomBytes } from "node:crypto"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { fileURLToPath } from "node:url"
 
 // Filled in with the n8n-ops address when the file is downloaded from n8n-ops.
 const DEFAULT_URL = "__N8N_OPS_URL__"
@@ -78,10 +77,10 @@ const HELP = `n8n-ops: use n8n-ops after a person approves it.
   connect --wait        Wait up to ${WAIT_SECONDS} s for the approval; run again while it answers still_waiting.
   get <path>            GET /api/v1<path>, for example: get 'problems?status=open'
   post <path> [--json <body> | --json-file <file>]
-  status                Whether this agent is connected (no secrets).
-  disconnect            End this agent's connection.
+  status                Whether this computer user is connected (no secrets).
+  disconnect            End this computer user's connection.
 
-  --url <address>       The n8n-ops address (or N8N_OPS_URL).`
+  --url <address>       The n8n-ops address (or N8N_OPS_URL). Kept once connected, for the commands after.`
 
 async function main() {
   const args = process.argv.slice(2)
@@ -122,10 +121,38 @@ function body(opts) {
   return opts.json ?? "{}"
 }
 
-/** The n8n-ops address, this agent's identity (the folder it is installed in) and where its connection is kept. */
+/**
+ * The n8n-ops address and where its connection is kept. The connection belongs to the computer user, not to the
+ * folder the skill is in, so every agent install of this user shares it; the skill's folder is never written.
+ * The address: --url, N8N_OPS_URL, the one filled in when n8n-ops served this file, or the one kept on connecting.
+ */
 function context(urlOption) {
-  const raw = urlOption || process.env.N8N_OPS_URL || (DEFAULT_URL.startsWith("__") ? "" : DEFAULT_URL)
-  if (!raw) throw new Fail("no_url", "No n8n-ops address. Pass --url https://<your n8n-ops> or set N8N_OPS_URL.")
+  const dir = credentialsDir()
+  let raw = urlOption || process.env.N8N_OPS_URL || (DEFAULT_URL.startsWith("__") ? "" : DEFAULT_URL)
+  const kept = raw ? "" : keptAddress(dir)
+  raw ||= kept
+  if (!raw)
+    throw new Fail("no_url", "No n8n-ops address. Ask the person for it, then run: n8n-ops connect --url <address>")
+  let issuer
+  try {
+    // A kept address is one line: anything else in the file makes it invalid, not a different address.
+    if (kept && /\s/.test(kept)) throw new Fail("insecure_url", "")
+    issuer = issuerOf(raw)
+  } catch (e) {
+    if (!kept) throw e
+    throw new Fail("no_url", `The address kept in ${path.join(dir, ADDRESS)} is not valid. Pass --url <address>.`)
+  }
+  const key = createHash("sha256").update(issuer).digest("hex").slice(0, 32)
+  return {
+    issuer,
+    dir,
+    file: path.join(dir, `${key}.json`),
+    lock: path.join(dir, `${key}.lock`),
+    label: label(),
+  }
+}
+
+function issuerOf(raw) {
   let url
   try {
     url = new URL(raw)
@@ -137,94 +164,57 @@ function context(urlOption) {
     throw new Fail("insecure_url", "The n8n-ops address must start with https:// (http only for this computer).")
   if (url.username || url.password || url.search || url.hash || (url.pathname !== "/" && url.pathname !== ""))
     throw new Fail("insecure_url", "Use the n8n-ops address alone, for example https://ops.example.com.")
-  const issuer = url.origin
-  const install = installDir()
-  const dir = credentialsDir()
-  const key = createHash("sha256")
-    .update(`${issuer}\n${installId(install)}`)
-    .digest("hex")
-    .slice(0, 32)
-  return {
-    issuer,
-    install,
-    dir,
-    file: path.join(dir, `${key}.json`),
-    lock: path.join(dir, `${key}.lock`),
-    label: label(install),
-  }
+  return url.origin
 }
 
-/** The skill's folder: one connection per place the skill is installed (one agent). */
-function installDir() {
-  return path.resolve(path.dirname(path.dirname(fileURLToPath(import.meta.url))))
-}
+/** The file that keeps the address of the last connection, so a copy of the skill without one finds it. */
+const ADDRESS = "address"
 
-/**
- * This install's id, kept in the skill's folder (`.install-id`), so every version agrees on it however each one
- * spells the folder's path (short 8.3 names, links, letter case). Published in one step: written aside, then
- * linked into place, which fails if another process got there first.
- */
-function installId(install) {
-  const file = path.join(install, ".install-id")
-  const read = () => {
-    try {
-      const id = fs.readFileSync(file, "utf8").trim()
-      return /^[0-9a-f]{32}$/.test(id) ? id : null
-    } catch {
-      return null
-    }
-  }
-  const existing = read()
-  if (existing) return existing
-  const tmp = `${file}.${hex(6)}`
+function keptAddress(dir) {
+  const file = path.join(dir, ADDRESS)
   try {
-    fs.writeFileSync(tmp, `${hex(16)}\n`, { flag: "wx" })
-    fs.linkSync(tmp, file)
-  } catch {
-    // Another process published one first, or the folder cannot be written.
-  } finally {
-    fs.rmSync(tmp, { force: true })
+    checkFile(file)
+    return fs.readFileSync(file, "utf8").replace(/[\r\n]+$/, "")
+  } catch (e) {
+    if (e.code === "ENOENT") return ""
+    throw e
   }
-  const id = read()
-  if (!id) throw new Fail("cannot_save", `Cannot write in ${install}. The agent's id is kept there; allow writing it.`)
-  return id
 }
 
-/** What the agent is called on the approval page and in Settings: which agent, on which computer. */
-function label(install) {
-  if (process.env.N8N_OPS_AGENT_NAME) return process.env.N8N_OPS_AGENT_NAME.slice(0, 60)
-  let agent = "Agent"
-  for (const part of install.split(/[\\/]/)) {
-    const p = part.toLowerCase()
-    if (p.startsWith(".claude")) {
-      agent = p === ".claude" ? "Claude Code" : `Claude Code (${p})`
-      break
-    }
-    if (p.startsWith(".codex")) {
-      agent = p === ".codex" ? "Codex" : `Codex (${p})`
-      break
-    }
-    if (p.startsWith(".cursor")) {
-      agent = "Cursor"
-      break
-    }
+/** Keeps the address of a working connection, in one step. Only a convenience: a failure changes nothing. */
+function keepAddress(ctx) {
+  const file = path.join(ctx.dir, ADDRESS)
+  const tmp = `${file}.${hex(6)}.tmp`
+  try {
+    if (keptAddress(ctx.dir) === ctx.issuer) return
+    secureDir(ctx.dir)
+    fs.writeFileSync(tmp, `${ctx.issuer}\n`, { flag: "wx", mode: 0o600 })
+    renameOver(tmp, file)
+  } catch {
+    try {
+      fs.rmSync(tmp, { force: true })
+    } catch {}
   }
-  return `${agent} on ${host()}`.slice(0, 60)
+}
+
+/** What the connection is called on the approval page and in n8n-ops: the computer it is on. */
+function label() {
+  if (process.env.N8N_OPS_AGENT_NAME) return process.env.N8N_OPS_AGENT_NAME.slice(0, 60)
+  return `Agents on ${host()}`.slice(0, 60)
 }
 
 function credentialsDir() {
   const override = process.env.N8N_OPS_CREDENTIALS
   if (win) {
-    const appData = process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming")
-    const dir = path.resolve(override || path.join(appData, "n8n-ops"))
-    const home = path.resolve(process.env.USERPROFILE || os.homedir()).toLowerCase()
+    const home = path.resolve(process.env.USERPROFILE || os.homedir())
+    const dir = path.resolve(override || path.join(home, ".n8n-ops"))
+    const lowerHome = home.toLowerCase()
     const lower = dir.toLowerCase()
-    if (lower !== home && !lower.startsWith(`${home}\\`))
+    if (lower !== lowerHome && !lower.startsWith(`${lowerHome}\\`))
       throw new Fail("insecure_credentials", `Keep the n8n-ops folder inside your user profile (${home}), not ${dir}.`)
     return dir
   }
-  const base = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config")
-  return path.resolve(override || path.join(base, "n8n-ops"))
+  return path.resolve(override || path.join(os.homedir(), ".n8n-ops"))
 }
 
 let secured = false
@@ -662,7 +652,7 @@ async function connect(ctx, replace) {
     rec = await revokePending(ctx, rec)
     if (rec.refreshToken && !replace) return { status: "already_connected", label: rec.label, scope: rec.scope }
     // The open code again, unless asked for a new one (--replace: the link did not work for the person).
-    if (rec.deviceCode && rec.deviceExpiresAt - now() > 30 && !replace) return pending(rec)
+    if (rec.deviceCode && rec.deviceExpiresAt - now() > 30 && !replace) return pending(ctx, rec)
     assertMine(ctx, lock)
     const r = await oauth(ctx, "/oauth/device", {
       scope: SCOPE,
@@ -687,18 +677,20 @@ async function connect(ctx, replace) {
       nextPollAt: now() + interval,
     }
     writeRecord(ctx, rec)
-    return pending(rec)
+    return pending(ctx, rec)
   })
+  if (result.status === "already_connected") keepAddress(ctx)
   print(result)
 }
 
-function pending(rec) {
+/** The hint names the address, so the wait asks the same n8n-ops even if the kept address changes meanwhile. */
+function pending(ctx, rec) {
   return {
     status: "pending",
     link: rec.link,
     code: rec.userCode,
     expiresIn: Math.max(0, rec.deviceExpiresAt - now()),
-    next: "End your turn with a reply that shows the person the link and the code and asks them to reply once they approve. When they reply, run: n8n-ops connect --wait",
+    next: `End your turn with a reply that shows the person the link and the code and asks them to reply once they approve. When they reply, run: n8n-ops connect --wait --url ${ctx.issuer}`,
   }
 }
 
@@ -768,9 +760,15 @@ async function waitForApproval(ctx) {
       }
       throw httpFail(r, "Waiting for the approval")
     })
-    if (step.done) return print(step.done)
+    if (step.done) {
+      keepAddress(ctx)
+      return print(step.done)
+    }
     if (Date.now() + step.wait * 1000 > until)
-      return print({ status: "still_waiting", next: "Not approved yet. Run again: n8n-ops connect --wait" })
+      return print({
+        status: "still_waiting",
+        next: `Not approved yet. Run again: n8n-ops connect --wait --url ${ctx.issuer}`,
+      })
     await sleep(step.wait * 1000)
   }
 }

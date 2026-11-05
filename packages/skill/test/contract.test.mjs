@@ -11,25 +11,45 @@ import { startFakeServer } from "./fake-server.mjs"
 
 const win = process.platform === "win32"
 const scripts = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "n8n-ops", "scripts")
-const impls = (process.env.N8N_OPS_IMPLS ?? (win ? "node,ps" : "node,sh")).split(",").filter(Boolean)
+// ps is Windows PowerShell 5.1, pwsh PowerShell 7: the same n8n-ops.ps1 runs on both.
+const impls = (process.env.N8N_OPS_IMPLS ?? (win ? "node,ps,pwsh" : "node,sh")).split(",").filter(Boolean)
 const root = fs.mkdtempSync(path.join(process.env.N8N_OPS_TEST_TMP ?? os.tmpdir(), "n8n-ops-skill-"))
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-const CONNECT_NEXT =
-  "End your turn with a reply that shows the person the link and the code and asks them to reply once they approve. When they reply, run: n8n-ops connect --wait"
+const connectNext = (issuer) =>
+  `End your turn with a reply that shows the person the link and the code and asks them to reply once they approve. When they reply, run: n8n-ops connect --wait --url ${issuer}`
 
-/** A fresh install of the skill (its own folder, so its own connection) and its own credentials folder. */
-function install(name = ".claude-test") {
+/**
+ * A fresh install of the skill and a credentials folder of its own (a computer user of its own). Pass `creds` for
+ * another install of the same user. `url` fills in the address as n8n-ops does when it serves the skill.
+ */
+function install({ creds, url } = {}) {
   const base = fs.mkdtempSync(path.join(root, "agent-"))
-  const dir = path.join(base, name, "skills", "n8n-ops", "scripts")
+  const dir = path.join(base, ".claude-test", "skills", "n8n-ops", "scripts")
   fs.mkdirSync(dir, { recursive: true })
-  for (const f of fs.readdirSync(scripts)) fs.copyFileSync(path.join(scripts, f), path.join(dir, f))
-  const creds = path.join(base, "creds")
-  return { dir, creds, base }
+  for (const f of fs.readdirSync(scripts)) {
+    let text = fs.readFileSync(path.join(scripts, f), "utf8")
+    if (url) text = text.replaceAll("__N8N_OPS_URL__", url)
+    fs.writeFileSync(path.join(dir, f), text, { mode: fs.statSync(path.join(scripts, f)).mode })
+  }
+  return { dir, creds: creds ?? path.join(base, "creds"), base }
+}
+
+/** Every file under a folder, with its content, to show that nothing in it changed. */
+function snapshot(dir) {
+  return fs
+    .readdirSync(dir, { recursive: true })
+    .sort()
+    .map((f) => [f, fs.statSync(path.join(dir, f)).isFile() ? fs.readFileSync(path.join(dir, f), "utf8") : "/"])
 }
 
 function command(impl, dir) {
   if (impl === "node") return [process.execPath, [path.join(dir, "n8n-ops.mjs")]]
   if (impl === "sh") return ["sh", [path.join(dir, "n8n-ops.sh")]]
+  if (impl === "pwsh")
+    return [
+      "pwsh",
+      ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", path.join(dir, "n8n-ops.ps1")],
+    ]
   // The entry points agents run, which pick a version themselves.
   if (impl === "entry-sh") return ["sh", [path.join(dir, "n8n-ops")]]
   if (impl === "entry-ps")
@@ -45,12 +65,13 @@ function command(impl, dir) {
   throw new Error(`unknown impl ${impl}`)
 }
 
-/** Runs one command; resolves with its exit code, its parsed answer and its raw output. */
+/** Runs one command; resolves with its exit code, its parsed answer and its raw output. No server: no --url. */
 function run(impl, inst, server, args, env = {}) {
   const [cmd, base] = command(impl, inst.dir)
-  const child = spawn(cmd, [...base, ...args, "--url", server.issuer], {
+  const child = spawn(cmd, [...base, ...args, ...(server ? ["--url", server.issuer] : [])], {
     env: {
       ...process.env,
+      N8N_OPS_URL: "",
       N8N_OPS_CREDENTIALS: inst.creds,
       N8N_OPS_NO_NODE: impl === "node" ? "" : "1",
       N8N_OPS_TEST_POLL_SECONDS: "1",
@@ -125,7 +146,7 @@ for (const impl of impls) {
       return install()
     }
 
-    it("connects with a code the person approves, named after the agent and the computer", async () => {
+    it("connects with a code the person approves, named after the computer", async () => {
       const inst = fresh()
       const c = await run(impl, inst, server, ["connect"])
       assert.equal(c.code, 0, c.out + c.err)
@@ -133,8 +154,8 @@ for (const impl of impls) {
       assert.match(c.json.link, new RegExp(`^${server.issuer}/connect/device\\?user_code=`))
       assert.match(c.json.code, /^[A-Z0-9]{4}-[A-Z0-9]{4}$/)
       // The same hint from every version: the link and the code go in the reply that ends the agent's turn.
-      assert.equal(c.json.next, CONNECT_NEXT)
-      assert.match(server.lastLabel, /^Claude Code \(\.claude-test\) on /)
+      assert.equal(c.json.next, connectNext(server.issuer))
+      assert.match(server.lastLabel, /^Agents on .+/)
       assert.equal((await run(impl, inst, server, ["status"])).json.status, "pending")
       // Asking again while the code is open shows the same code, without a new one.
       const again = await run(impl, inst, server, ["connect"])
@@ -161,6 +182,7 @@ for (const impl of impls) {
       const w = await run(impl, inst, server, ["connect", "--wait"], { N8N_OPS_WAIT_SECONDS: "3" })
       assert.equal(w.code, 0, w.out + w.err)
       assert.equal(w.json.status, "still_waiting")
+      assert.equal(w.json.next, `Not approved yet. Run again: n8n-ops connect --wait --url ${server.issuer}`)
       server.deny()
       const d = await run(impl, inst, server, ["connect", "--wait"])
       assert.equal(d.json.error, "denied")
@@ -334,8 +356,101 @@ for (const impl of impls) {
       await connected(impl, inst, server)
       assert.equal((await run(impl, inst, server, ["get", "instances"])).code, 0)
       assert.equal(fs.readFileSync(path.join(inst.base, "my"), "utf8"), "keep")
-      const left = fs.readdirSync(inst.creds).filter((f) => !/^[0-9a-f]{32}\.json$/.test(f))
+      const left = fs.readdirSync(inst.creds).filter((f) => !/^[0-9a-f]{32}\.json$/.test(f) && f !== "address")
       assert.deepEqual(left, [])
+    })
+
+    it("shares one connection between the agent installs of one computer user", async () => {
+      const inst = fresh()
+      const other = install({ creds: inst.creds })
+      await connected(impl, inst, server)
+      const devices = server.counts.device
+      const s = await run(impl, other, server, ["status"])
+      assert.equal(s.json.status, "connected", s.out + s.err)
+      assert.equal((await run(impl, other, server, ["connect"])).json.status, "already_connected")
+      assert.equal((await run(impl, other, server, ["get", "instances"])).code, 0)
+      assert.equal(server.counts.device, devices, "no second connection")
+      // Another user (another credentials folder) has a connection of its own.
+      assert.equal((await run(impl, fresh(), server, ["status"])).json.status, "not_connected")
+    })
+
+    it("never writes in the skill's folder, which may be read only", async () => {
+      const inst = fresh()
+      const skillDir = path.dirname(inst.dir)
+      const before = snapshot(skillDir)
+      if (!win) fs.chmodSync(skillDir, 0o555)
+      try {
+        await connected(impl, inst, server)
+        assert.equal((await run(impl, inst, server, ["get", "instances"])).code, 0)
+        assert.equal((await run(impl, inst, server, ["disconnect"])).json.status, "disconnected")
+      } finally {
+        if (!win) fs.chmodSync(skillDir, 0o755)
+      }
+      assert.deepEqual(snapshot(skillDir), before)
+    })
+
+    it("keeps the address once connected, for the commands after", async () => {
+      const inst = fresh()
+      const kept = path.join(inst.creds, "address")
+      const none = await run(impl, inst, null, ["status"])
+      assert.equal(none.json?.error, "no_url", none.out + none.err)
+      // Not while the code waits, nor when the person says no.
+      await run(impl, inst, server, ["connect"])
+      assert.equal(fs.existsSync(kept), false)
+      server.deny()
+      assert.equal((await run(impl, inst, server, ["connect", "--wait"])).json.error, "denied")
+      assert.equal(fs.existsSync(kept), false)
+      await connected(impl, inst, server)
+      assert.equal(fs.readFileSync(kept, "utf8"), `${server.issuer}\n`)
+      const s = await run(impl, inst, null, ["status"])
+      assert.equal(s.json.status, "connected", s.out + s.err)
+      assert.equal(s.json.url, server.issuer)
+      assert.equal((await run(impl, inst, null, ["get", "instances"])).code, 0)
+      // An address given, or the one a copy served by n8n-ops carries, comes before the kept one.
+      const other = "https://other.example"
+      assert.equal((await run(impl, inst, null, ["status", "--url", other])).json.url, other)
+      assert.equal((await run(impl, inst, null, ["status"], { N8N_OPS_URL: other })).json.url, other)
+      const served = install({ creds: inst.creds, url: other })
+      assert.equal((await run(impl, served, null, ["status"])).json.url, other)
+      // A damaged one is refused, not guessed at.
+      fs.writeFileSync(kept, "ops.example\n")
+      const bad = await run(impl, inst, null, ["status"])
+      assert.equal(bad.json?.error, "no_url", bad.out + bad.err)
+      assert.match(bad.json.message, /kept/)
+      // Line breaks at its end are fine, a second line is not, and a folder in its place is refused.
+      fs.writeFileSync(kept, `${server.issuer}\r\n`)
+      const crlf = await run(impl, inst, null, ["status"])
+      assert.equal(crlf.json?.url, server.issuer, crlf.out + crlf.err)
+      // (Joined, the two lines would make another valid address.)
+      fs.writeFileSync(kept, "https://ops.example\ngarbage\n")
+      const two = await run(impl, inst, null, ["status"])
+      assert.equal(two.json?.error, "no_url", two.out + two.err)
+      fs.rmSync(kept)
+      fs.mkdirSync(kept)
+      const folder = await run(impl, inst, null, ["status"])
+      assert.equal(folder.json?.error, "insecure_credentials", folder.out + folder.err)
+    })
+
+    it("finishes a connection at the address it began with, even when another one is kept meanwhile", async () => {
+      const second = await startFakeServer()
+      try {
+        const inst = fresh()
+        await connected(impl, inst, server)
+        // A new code for the kept address, then another agent of this user connects to a second n8n-ops.
+        const c = await run(impl, inst, null, ["connect", "--replace"])
+        assert.equal(c.json?.status, "pending", c.out + c.err)
+        assert.equal(c.json.next, connectNext(server.issuer))
+        await connected(impl, install({ creds: inst.creds }), second)
+        assert.equal(fs.readFileSync(path.join(inst.creds, "address"), "utf8"), `${second.issuer}\n`)
+        // The hint's command finishes the first one.
+        server.approve()
+        const w = await run(impl, inst, null, ["connect", "--wait", "--url", server.issuer])
+        assert.equal(w.json?.status, "connected", w.out + w.err)
+        assert.equal(server.counts.reuse, 0)
+        assert.equal((await run(impl, inst, server, ["get", "instances"])).code, 0)
+      } finally {
+        await second.close()
+      }
     })
 
     it("disconnects, and keeps what n8n-ops did not confirm to try again", async () => {
@@ -462,20 +577,6 @@ for (const impl of impls) {
       assert.equal(server.counts.refresh, refreshes, "the new tokens were kept")
       assert.equal(server.counts.reuse, 0)
     })
-
-    if (!win) {
-      it("refuses to run from a skill folder it cannot write its id in", async () => {
-        const inst = fresh()
-        const skillDir = path.dirname(inst.dir)
-        fs.chmodSync(skillDir, 0o555)
-        try {
-          const r = await run(impl, inst, server, ["status"])
-          assert.equal(r.json?.error, "cannot_save", r.out + r.err)
-        } finally {
-          fs.chmodSync(skillDir, 0o755)
-        }
-      })
-    }
 
     const gitBin = "C:\\Program Files\\Git\\usr\\bin"
     if (win && fs.existsSync(path.join(gitBin, "whoami.exe"))) {

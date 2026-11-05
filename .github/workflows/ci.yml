@@ -119,7 +119,7 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            impls: node,ps
+            impls: node,ps,pwsh
           - os: macos-latest
             impls: node,sh
     runs-on: ${{ matrix.os }}

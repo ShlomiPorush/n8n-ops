@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+
+- **Upgrades without downtime.** `scripts/update.sh`, copied next to `docker-compose.yml` and `.env`, sets the release, pulls it and replaces the server and then the worker with the docker rollout plugin, each new container taking over only once it is healthy. It finds them by image, so services with other names work too, and says what to fix when a service cannot be updated this way. The README has the details.
+
+### Changed
+
+- **The server container has no fixed name in `docker-compose.yml`**, so the update script can start its replacement beside it. The first `docker compose up -d` with the new file recreates it as `n8n-ops-server-1`; the data stays. Use `docker compose exec server ...` rather than its old name.
+
 ## [0.9.1] - 2026-11-05
 
 ### Changed

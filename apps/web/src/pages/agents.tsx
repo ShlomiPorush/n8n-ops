@@ -105,7 +105,9 @@ function ConnectCard() {
               Agents download the skill from n8n-ops, so its public URL must start with https://.
             </p>
           )}
-          <p className="text-small text-muted-foreground">Each agent you install it in connects on its own.</p>
+          <p className="text-small text-muted-foreground">
+            Every agent of the same user on a computer shares one connection, so you approve it once there.
+          </p>
         </TabsContent>
         <TabsContent value="mcp" className="grid gap-3">
           <p className="max-w-[75ch]">
@@ -161,7 +163,7 @@ function AgentsCard() {
     const ok = await confirm({
       title: agent ? `Disconnect ${t.name}?` : `Revoke the Token ${t.name}?`,
       message: agent
-        ? "It loses access at once, along with any temporary access it holds. It can connect again only with a new approval."
+        ? `It loses access at once, along with any temporary access it holds. It can connect again only with a new approval.${t.connectedVia === "code" ? " Every agent that shares this connection on that computer is disconnected too." : ""}`
         : "The agent or script using it loses access at once. This cannot be undone; create a new token to give access again.",
       confirmLabel: agent ? "Disconnect" : "Revoke token",
       danger: true,

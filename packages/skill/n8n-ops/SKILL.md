@@ -1,13 +1,13 @@
 ---
 name: n8n-ops
-description: Read n8n-ops, the operations console of self-hosted n8n instances at __N8N_OPS_URL__ - open problems and failed executions, instance health, queues, backups, finding a workflow - and ask a person for temporary access to an n8n instance's API. Use it for anything about failing n8n workflows or the n8n instances n8n-ops watches.
+description: Read n8n-ops, the operations console of self-hosted n8n instances - open problems and failed executions, instance health, queues, backups, finding a workflow - and ask a person for temporary access to an n8n instance's API. Use it for anything about failing n8n workflows or the n8n instances n8n-ops watches.
 ---
 
 # n8n-ops
 
-n8n-ops (__N8N_OPS_URL__) watches self-hosted n8n instances. This skill reads it through its REST API with the
-`n8n-ops` command in `scripts/`. A person approves this agent once; after that the command keeps the connection by
-itself. Its secrets stay inside the command: never open, print or copy the files it keeps.
+n8n-ops watches self-hosted n8n instances. This skill reads it through its REST API with the `n8n-ops` command in
+`scripts/`. A person approves the connection once; after that the command keeps it by itself. Its secrets stay inside
+the command: never open, print or copy the files it keeps.
 
 ## Running the command
 
@@ -22,23 +22,27 @@ person the message as it is.
 
 ## Connecting (once)
 
-1. Run `n8n-ops connect`. It answers `{"status": "pending", "link": "...", "code": "..."}`.
+1. Run `n8n-ops connect`. It answers `{"status": "pending", "link": "...", "code": "...", "next": "..."}`. If it
+   answers `no_url` instead, ask the person for the address of their n8n-ops and run
+   `n8n-ops connect --url <address>`; once connected, the command keeps the address for the commands after.
 2. Show the person the link and the code exactly as printed in the reply that ends your turn, with the code on its
    own line: text written between commands is often folded away and never seen. Ask them to open the link, sign in,
-   check that the page shows the same code, approve, and then reply to you. They decide whether this agent may also
-   request access to n8n instances.
-3. When the person replies, run `n8n-ops connect --wait`. While it answers `still_waiting`, run it again.
-   `connected` means done; `denied` or `expired` means start again only if the person wants to. If the person says
-   the link or the code did not work, `n8n-ops connect --replace` gives a new one.
+   check that the page shows the same code, approve, and then reply to you. They decide whether the connection may
+   also request access to n8n instances.
+3. When the person replies, run the command that `next` names: `n8n-ops connect --wait --url <address>`, with the
+   address it gives. While it answers `still_waiting`, run it again. `connected` means done; `denied` or `expired`
+   means start again only if the person wants to. If the person says the link or the code did not work,
+   `n8n-ops connect --replace` gives a new one.
 
-Only if your tools can keep a command running after your turn ends and wake you when it finishes: start
-`n8n-ops connect --wait` in the background just before that reply and end your turn without waiting for it, so the
-person does not have to reply. Each time it wakes you with `still_waiting`, start it again the same way; at any other
-answer stop waiting and tell the person the result.
+Only if your tools can keep a command running after your turn ends and wake you when it finishes: start the command
+that `next` names in the background just before that reply and end your turn without waiting for it, so the person
+does not have to reply. Each time it wakes you with `still_waiting`, start it again the same way; at any other answer
+stop waiting and tell the person the result.
 
-`status` says whether this agent is connected. The connection belongs to this agent install (the folder this skill
-is in) and is shared by all its sessions. Run `disconnect` only when the person asks. If a command answers
-`connection_ended` or `not_connected`, connect again the same way.
+`status` says whether this computer user is connected. The connection belongs to the user on this computer, not to
+one agent: every agent install of that user (Claude Code, Codex and others, each account and each session) shares it,
+so connecting once is enough. Run `disconnect` only when the person asks; it ends the connection for all of them. If
+a command answers `connection_ended` or `not_connected`, connect again the same way.
 
 ## Reading
 
@@ -57,9 +61,10 @@ spaces and other characters in query values.
 
 ## Temporary access to an n8n instance
 
-Only when the task needs to change or read n8n itself, and only if the person allowed this agent to request access
-to n8n instances when they approved it (otherwise the command answers `insufficient_scope`: ask the person, then
-`connect --replace`).
+Only when the task needs to change or read n8n itself, and only if the person allowed the connection to request
+access to n8n instances when they approved it (otherwise the command answers `insufficient_scope`: ask the person,
+then `connect --replace`). Other agents of the same computer user share the connection and its limits: one request
+being made at a time (`request_in_progress`) and at most three waiting for a person (`too_many_pending`).
 
 1. Find the instance with `workflows` if you do not know it.
 2. Ask: `n8n-ops post access-requests --json-file <file>` with a JSON body
@@ -74,7 +79,7 @@ to n8n instances when they approved it (otherwise the command answers `insuffici
 ## When the command cannot run
 
 - `missing_curl`, `node_too_old`, or PowerShell blocked by policy: tell the person what is missing (curl, or Node 20+).
-- `cannot_save` or `unreachable`: something (often a sandbox) blocks writing the connection's folder or reaching
-  n8n-ops. Tell the person which, and do not keep its secrets anywhere else.
+- `cannot_save` or `unreachable`: something (often a sandbox) blocks writing the connection's folder (`.n8n-ops` in
+  the user's home folder) or reaching n8n-ops. Tell the person which, and do not keep its secrets anywhere else.
 - `insecure_credentials`: the connection's folder or file can be read by others; tell the person the fix it gives.
 - `busy`: another n8n-ops command is using the connection. Nothing was sent; run it again.

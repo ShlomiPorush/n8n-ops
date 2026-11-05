@@ -10,6 +10,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Changed
 
+- **One connection for every agent of a computer user.** The n8n-ops skill keeps its connection per user on a computer, not per place it is installed: every Claude Code and Codex account of that user, and every session, shares it. It is approved once, and Disconnect ends it for all of them. It is named `Agents on <computer>` (set `N8N_OPS_AGENT_NAME` to name it otherwise) and kept in `.n8n-ops` in the user's home folder. The skill no longer writes in its own folder, so a tool that installs skills from Git can install it from `packages/skill/n8n-ops`; such a copy connects once with `n8n-ops connect --url https://<your n8n-ops>` and keeps the address. Agents connected with an earlier version connect once more and are approved again; disconnect their old connections on the Connected Agents page.
 - **The server container has no fixed name in `docker-compose.yml`**, so the update script can start its replacement beside it. The first `docker compose up -d` with the new file recreates it as `n8n-ops-server-1`; the data stays. Use `docker compose exec server ...` rather than its old name.
 
 ## [0.9.1] - 2026-11-05

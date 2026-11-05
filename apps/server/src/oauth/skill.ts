@@ -33,7 +33,9 @@ ${list}
 On Linux and macOS, make \`scripts/n8n-ops\` and \`scripts/n8n-ops.sh\` executable (\`chmod +x\`).
 
 Then read \`n8n-ops/SKILL.md\` and follow its Connecting steps. Show the person the link and the code that
-\`n8n-ops connect\` prints in the reply that ends your turn.
+\`n8n-ops connect\` prints in the reply that ends your turn. The connection belongs to the user on this computer and
+every agent of that user shares it: when one is connected already, \`n8n-ops connect\` answers \`already_connected\`
+and there is nothing to approve.
 `
 }
 

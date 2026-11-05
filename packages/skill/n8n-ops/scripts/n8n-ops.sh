@@ -67,10 +67,10 @@ HELP="n8n-ops: use n8n-ops after a person approves it.
   connect --wait        Wait up to $WAIT_SECONDS s for the approval; run again while it answers still_waiting.
   get <path>            GET /api/v1<path>, for example: get 'problems?status=open'
   post <path> [--json <body> | --json-file <file>]
-  status                Whether this agent is connected (no secrets).
-  disconnect            End this agent's connection.
+  status                Whether this computer user is connected (no secrets).
+  disconnect            End this computer user's connection.
 
-  --url <address>       The n8n-ops address (or N8N_OPS_URL)."
+  --url <address>       The n8n-ops address (or N8N_OPS_URL). Kept once connected, for the commands after."
 
 sha() {
   if command -v sha256sum >/dev/null 2>&1; then
@@ -80,79 +80,75 @@ sha() {
   else openssl dgst -sha256 -r; fi
 }
 
-# The n8n-ops address, this agent's identity (the folder it is installed in) and where its connection is kept.
+# The n8n-ops address and where its connection is kept. The connection belongs to the computer user, not to the
+# folder the skill is in, so every agent install of this user shares it; the skill's folder is never written.
+# The address: --url, N8N_OPS_URL, the one filled in when n8n-ops served this file, or the one kept on connecting.
 setup() {
   command -v curl >/dev/null 2>&1 || fail missing_curl "curl is needed. Install curl, or Node 20 or later."
+  DIR="${N8N_OPS_CREDENTIALS:-$HOME/.n8n-ops}"
+  case "$DIR" in /*) ;; *) DIR="$(pwd -P)/$DIR" ;; esac
+  plain_ok "$DIR" || fail insecure_credentials "The n8n-ops folder's path cannot contain quotes or backslashes."
+  ADDRESS="$DIR/address"
   raw="${URL_OPTION:-${N8N_OPS_URL:-}}"
   if [ -z "$raw" ]; then case "$DEFAULT_URL" in __*) ;; *) raw="$DEFAULT_URL" ;; esac fi
-  [ -n "$raw" ] || fail no_url "No n8n-ops address. Pass --url https://<your n8n-ops> or set N8N_OPS_URL."
+  KEPT=""
+  [ -n "$raw" ] || kept_address
+  [ -n "$raw" ] || raw=$KEPT
+  [ -n "$raw" ] || fail no_url "No n8n-ops address. Ask the person for it, then run: n8n-ops connect --url <address>"
   raw=${raw%/}
   case "$raw" in
     https://*) rest=${raw#https://} PROTO=https ;;
     http://*) rest=${raw#http://} PROTO=http ;;
-    *) fail insecure_url "The n8n-ops address must start with https:// (http only for this computer)." ;;
+    *) bad_url "The n8n-ops address must start with https:// (http only for this computer)." ;;
   esac
   hostpart=$(lower "$rest")
   case "$hostpart" in
     "[::1]" | "[::1]:"*) name="[::1]" port=${hostpart#"[::1]"} ;;
-    "" | *[!a-z0-9.:-]* | :* | *:*:*) fail insecure_url "Use the n8n-ops address alone, for example https://ops.example.com." ;;
+    "" | *[!a-z0-9.:-]* | :* | *:*:*) bad_url "Use the n8n-ops address alone, for example https://ops.example.com." ;;
     *) name=${hostpart%%:*} port=${hostpart#"$name"} ;;
   esac
-  case "$port" in "" | :[0-9]*) ;; *) fail insecure_url "Use the n8n-ops address alone, for example https://ops.example.com." ;; esac
+  case "$port" in "" | :[0-9]*) ;; *) bad_url "Use the n8n-ops address alone, for example https://ops.example.com." ;; esac
   if [ "$PROTO" = http ]; then
-    case "$name" in 127.0.0.1 | localhost | "[::1]") ;; *) fail insecure_url "The n8n-ops address must start with https:// (http only for this computer)." ;; esac
+    case "$name" in 127.0.0.1 | localhost | "[::1]") ;; *) bad_url "The n8n-ops address must start with https:// (http only for this computer)." ;; esac
   fi
   # As a browser writes the origin: lower case, no default port.
   case "$hostpart" in *:443) [ "$PROTO" = https ] && hostpart=${hostpart%:443} ;; *:80) [ "$PROTO" = http ] && hostpart=${hostpart%:80} ;; esac
   ISSUER="$PROTO://$hostpart"
-  INSTALL=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd -P) || fail failed "Cannot find the skill's folder."
-  base="${XDG_CONFIG_HOME:-$HOME/.config}"
-  DIR="${N8N_OPS_CREDENTIALS:-$base/n8n-ops}"
-  case "$DIR" in /*) ;; *) DIR="$(pwd -P)/$DIR" ;; esac
-  plain_ok "$DIR" || fail insecure_credentials "The n8n-ops folder's path cannot contain quotes or backslashes."
-  install_id
-  key=$(printf '%s\n%s' "$ISSUER" "$ID" | sha | cut -c1-32)
+  key=$(printf '%s' "$ISSUER" | sha | cut -c1-32)
   FILE="$DIR/$key.json"
   LOCK="$DIR/$key.lock"
-  if [ -n "${N8N_OPS_AGENT_NAME:-}" ]; then
-    LABEL=$(printf '%s' "$N8N_OPS_AGENT_NAME" | cut -c1-60)
-  else
-    agent="Agent"
-    oldifs=$IFS
-    IFS=/
-    for part in $INSTALL; do
-      p=$(lower "$part")
-      case "$p" in
-        .claude) agent="Claude Code" && break ;;
-        .claude*) agent="Claude Code ($p)" && break ;;
-        .codex) agent="Codex" && break ;;
-        .codex*) agent="Codex ($p)" && break ;;
-        .cursor*) agent="Cursor" && break ;;
-      esac
-    done
-    IFS=$oldifs
-    LABEL=$(printf '%s on %s' "$agent" "$(host)" | cut -c1-60)
-  fi
+  # What the connection is called on the approval page and in n8n-ops: the computer it is on.
+  LABEL=$(printf '%s' "${N8N_OPS_AGENT_NAME:-Agents on $(host)}" | cut -c1-60)
 }
 
-# This install's id, kept in the skill's folder (.install-id), so every version agrees on it however each one spells
-# the folder's path. Published in one step: written aside, then linked into place, which fails if one is there.
-install_id() {
-  f="$INSTALL/.install-id"
-  id=$(head -n1 "$f" 2>/dev/null | tr -d '\r')
-  case "$id" in "" | *[!0-9a-f]*) id="" ;; esac
-  if [ ${#id} -ne 32 ]; then
-    t="$f.$(rand 6)"
+bad_url() {
+  [ -z "$KEPT" ] || fail no_url "The address kept in $ADDRESS is not valid. Pass --url <address>."
+  fail insecure_url "$1"
+}
+
+# The file that keeps the address of the last connection, so a copy of the skill without one finds it.
+kept_address() {
+  [ -e "$ADDRESS" ] || [ -L "$ADDRESS" ] || return 0
+  [ -f "$ADDRESS" ] || fail insecure_credentials "$ADDRESS must be a plain file, not a link."
+  check_private "$ADDRESS"
+  KEPT=$(head -n1 "$ADDRESS" | tr -d '\r')
+}
+
+# Keeps the address of a working connection, in one step. Only a convenience: a failure changes nothing (so it
+# runs in a subshell, where a failure stops only the subshell, and says nothing).
+keep_address() {
+  (
+    KEPT=""
+    kept_address
+    [ "$KEPT" = "$ISSUER" ] && exit 0
+    secure_dir
+    t="$ADDRESS.$(rand 6).tmp"
     if (
       set -C
-      printf '%s\n' "$(rand 16)" >"$t"
-    ) 2>/dev/null; then ln "$t" "$f" 2>/dev/null || :; fi
+      printf '%s\n' "$ISSUER" >"$t"
+    ) 2>/dev/null && mv -f "$t" "$ADDRESS" 2>/dev/null; then exit 0; fi
     rm -f "$t"
-    id=$(head -n1 "$f" 2>/dev/null | tr -d '\r')
-    case "$id" in "" | *[!0-9a-f]*) id="" ;; esac
-  fi
-  [ ${#id} -eq 32 ] || fail cannot_save "Cannot write in $INSTALL. The agent's id is kept there; allow writing it."
-  ID=$id
+  ) >/dev/null 2>&1 || :
 }
 
 # Only this user may open the folder and its files; never loosened or fixed silently.
@@ -413,11 +409,17 @@ revoke_pending() {
 
 clear_pending() { R_deviceCode='' R_userCode='' R_link='' R_deviceExpiresAt=0 R_interval=0 R_nextPollAt=0; }
 
+# The hint names the address, so the wait asks the same n8n-ops even if the kept address changes meanwhile.
 print_pending() {
   left=$((R_deviceExpiresAt - $(now)))
   [ $left -lt 0 ] && left=0
-  printf '{"status":"pending","link":"%s","code":"%s","expiresIn":%s,"next":"End your turn with a reply that shows the person the link and the code and asks them to reply once they approve. When they reply, run: n8n-ops connect --wait"}\n' \
-    "$(esc "$R_link")" "$(esc "$R_userCode")" "$left"
+  printf '{"status":"pending","link":"%s","code":"%s","expiresIn":%s,"next":"End your turn with a reply that shows the person the link and the code and asks them to reply once they approve. When they reply, run: n8n-ops connect --wait --url %s"}\n' \
+    "$(esc "$R_link")" "$(esc "$R_userCode")" "$left" "$ISSUER"
+}
+
+print_connected() {
+  keep_address
+  printf '{"status":"%s","label":"%s","scope":"%s"}\n' "$1" "$(esc "$R_label")" "$(esc "$R_scope")"
 }
 
 # Commands
@@ -452,7 +454,7 @@ cmd_connect() {
   record_read || :
   revoke_pending
   if [ -n "$R_refreshToken" ] && [ "$REPLACE" != 1 ]; then
-    printf '{"status":"already_connected","label":"%s","scope":"%s"}\n' "$(esc "$R_label")" "$(esc "$R_scope")"
+    print_connected already_connected
     return 0
   fi
   # The open code again, unless asked for a new one (--replace: the link did not work for the person).
@@ -488,7 +490,7 @@ cmd_wait() {
     acquire
     if ! record_read || [ -z "$R_deviceCode" ]; then
       if [ -n "$R_refreshToken" ]; then
-        printf '{"status":"connected","label":"%s","scope":"%s"}\n' "$(esc "$R_label")" "$(esc "$R_scope")"
+        print_connected connected
         return 0
       fi
       fail not_connected "No connection is being made. Run: n8n-ops connect"
@@ -519,7 +521,7 @@ cmd_wait() {
         R_generation=$(rand 8) R_refreshStartedAt=0 R_refreshRetried=0
         record_write
         revoke_pending
-        printf '{"status":"connected","label":"%s","scope":"%s"}\n' "$(esc "$R_label")" "$(esc "$R_scope")"
+        print_connected connected
         return 0
       fi
       case "$err" in
@@ -544,7 +546,7 @@ cmd_wait() {
     fi
     release
     if [ $(($(now) + wait)) -gt "$until" ]; then
-      printf '{"status":"still_waiting","next":"Not approved yet. Run again: n8n-ops connect --wait"}\n'
+      printf '{"status":"still_waiting","next":"Not approved yet. Run again: n8n-ops connect --wait --url %s"}\n' "$ISSUER"
       return 0
     fi
     sleep "$wait"

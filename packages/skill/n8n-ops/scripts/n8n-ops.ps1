@@ -77,19 +77,37 @@ n8n-ops: use n8n-ops after a person approves it.
   connect --wait        Wait up to $WaitSeconds s for the approval; run again while it answers still_waiting.
   get <path>            GET /api/v1<path>, for example: get 'problems?status=open'
   post <path> [--json <body> | --json-file <file>]
-  status                Whether this agent is connected (no secrets).
-  disconnect            End this agent's connection.
+  status                Whether this computer user is connected (no secrets).
+  disconnect            End this computer user's connection.
 
-  --url <address>       The n8n-ops address (or N8N_OPS_URL).
+  --url <address>       The n8n-ops address (or N8N_OPS_URL). Kept once connected, for the commands after.
 "@
 
-# Context: the n8n-ops address, this agent's identity (the folder it is installed in) and where its connection is kept.
+# Context: the n8n-ops address and where its connection is kept. The connection belongs to the computer user, not to
+# the folder the skill is in, so every agent install of this user shares it; the skill's folder is never written.
+# The address: --url, N8N_OPS_URL, the one filled in when n8n-ops served this file, or the one kept on connecting.
 
 function Get-Context([string]$urlOption) {
+  $dir = Get-CredentialsDir
   $raw = $urlOption
   if (-not $raw) { $raw = $env:N8N_OPS_URL }
   if (-not $raw -and -not $DefaultUrl.StartsWith('__')) { $raw = $DefaultUrl }
-  if (-not $raw) { Fail 'no_url' 'No n8n-ops address. Pass --url https://<your n8n-ops> or set N8N_OPS_URL.' }
+  $kept = ''
+  if (-not $raw) { $kept = Get-KeptAddress $dir; $raw = $kept }
+  if (-not $raw) { Fail 'no_url' 'No n8n-ops address. Ask the person for it, then run: n8n-ops connect --url <address>' }
+  try { $issuer = Get-Issuer $raw } catch [OpsFail] {
+    if (-not $kept) { throw }
+    Fail 'no_url' "The address kept in $(Join-Path $dir $AddressFile) is not valid. Pass --url <address>."
+  }
+  $sha = [Security.Cryptography.SHA256]::Create().ComputeHash($Utf8.GetBytes($issuer))
+  $key = (-join ($sha | ForEach-Object { $_.ToString('x2') })).Substring(0, 32)
+  @{
+    issuer = $issuer; dir = $dir
+    file = Join-Path $dir "$key.json"; lock = Join-Path $dir "$key.lock"; label = Get-Label
+  }
+}
+
+function Get-Issuer([string]$raw) {
   $u = $null
   if (-not [Uri]::TryCreate($raw, [UriKind]::Absolute, [ref]$u)) { Fail 'insecure_url' "`"$raw`" is not an address." }
   $loopback = @('127.0.0.1', '[::1]', 'localhost') -contains $u.Host
@@ -99,34 +117,32 @@ function Get-Context([string]$urlOption) {
   if ($u.UserInfo -or $u.Query -or $u.Fragment -or ($u.AbsolutePath -ne '/')) {
     Fail 'insecure_url' 'Use the n8n-ops address alone, for example https://ops.example.com.'
   }
-  $issuer = "$($u.Scheme)://$($u.Authority)"
-  $install = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot)).TrimEnd('\', '/').ToLowerInvariant()
-  $dir = Get-CredentialsDir
-  $sha = [Security.Cryptography.SHA256]::Create().ComputeHash($Utf8.GetBytes("$issuer`n$(Get-InstallId $install)"))
-  $key = (-join ($sha | ForEach-Object { $_.ToString('x2') })).Substring(0, 32)
-  @{
-    issuer = $issuer; install = $install; dir = $dir
-    file = Join-Path $dir "$key.json"; lock = Join-Path $dir "$key.lock"; label = Get-Label $install
-  }
+  "$($u.Scheme)://$($u.Authority)"
 }
 
-# This install's id, kept in the skill's folder (.install-id), so every version agrees on it however each one spells
-# the folder's path. Published in one step: written aside, then moved into place, which fails if one is there.
-function Get-InstallId([string]$install) {
-  $file = Join-Path $install '.install-id'
-  $read = {
-    try { $id = ([IO.File]::ReadAllText($file)).Trim(); if ($id -match '^[0-9a-f]{32}$') { return $id } } catch {}
-    return $null
-  }
-  $id = & $read
-  if ($id) { return $id }
-  $tmp = "$file.$(Hex 6)"
-  try { [IO.File]::WriteAllText($tmp, "$(Hex 16)`n"); [IO.File]::Move($tmp, $file) } catch {} finally {
+# The file that keeps the address of the last connection, so a copy of the skill without one finds it.
+$AddressFile = 'address'
+
+function Get-KeptAddress([string]$dir) {
+  $file = Join-Path $dir $AddressFile
+  if (-not [IO.File]::Exists($file)) { return '' }
+  Test-PlainFile $file
+  (Read-Shared $file).Trim()
+}
+
+# Keeps the address of a working connection, in one step. Only a convenience: a failure changes nothing.
+function Save-Address($ctx) {
+  $file = Join-Path $ctx.dir $AddressFile
+  $tmp = "$file.$(Hex 6).tmp"
+  try {
+    if ((Get-KeptAddress $ctx.dir) -ceq $ctx.issuer) { return }
+    Protect-Dir $ctx.dir
+    $fs = [IO.File]::Open($tmp, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    try { $bytes = $Utf8.GetBytes("$($ctx.issuer)`n"); $fs.Write($bytes, 0, $bytes.Length); $fs.Flush($true) } finally { $fs.Dispose() }
+    Move-Over $tmp $file
+  } catch {
     try { if ([IO.File]::Exists($tmp)) { [IO.File]::Delete($tmp) } } catch {}
   }
-  $id = & $read
-  if ($id) { return $id }
-  Fail 'cannot_save' "Cannot write in $install. The agent's id is kept there; allow writing it."
 }
 
 # icacls over the folder and its files; tried again while other commands add or replace files in it.
@@ -169,26 +185,18 @@ function Find-OtherAllowed([string]$saved, [string]$userSid) {
   $null
 }
 
-function Get-Label([string]$install) {
-  if ($env:N8N_OPS_AGENT_NAME) { $l = $env:N8N_OPS_AGENT_NAME; if ($l.Length -gt 60) { $l = $l.Substring(0, 60) }; return $l }
-  $agent = 'Agent'
-  foreach ($part in ($install -split '[\\/]')) {
-    $p = $part.ToLowerInvariant()
-    if ($p.StartsWith('.claude')) { if ($p -eq '.claude') { $agent = 'Claude Code' } else { $agent = "Claude Code ($p)" }; break }
-    if ($p.StartsWith('.codex')) { if ($p -eq '.codex') { $agent = 'Codex' } else { $agent = "Codex ($p)" }; break }
-    if ($p.StartsWith('.cursor')) { $agent = 'Cursor'; break }
-  }
-  $l = "$agent on $(HostName)"
+# What the connection is called on the approval page and in n8n-ops: the computer it is on.
+function Get-Label {
+  $l = "Agents on $(HostName)"
+  if ($env:N8N_OPS_AGENT_NAME) { $l = $env:N8N_OPS_AGENT_NAME }
   if ($l.Length -gt 60) { $l = $l.Substring(0, 60) }
   $l
 }
 
 function Get-CredentialsDir {
   if ([Environment]::OSVersion.Platform -ne 'Win32NT') { Fail 'failed' 'On Linux and macOS, run n8n-ops (or n8n-ops.sh).' }
-  $appData = $env:APPDATA
-  if (-not $appData) { $appData = Join-Path $env:USERPROFILE 'AppData\Roaming' }
   $dir = $env:N8N_OPS_CREDENTIALS
-  if (-not $dir) { $dir = Join-Path $appData 'n8n-ops' }
+  if (-not $dir) { $dir = Join-Path $env:USERPROFILE '.n8n-ops' }
   $dir = [IO.Path]::GetFullPath($dir).TrimEnd('\')
   $userHome = [IO.Path]::GetFullPath($env:USERPROFILE).TrimEnd('\').ToLowerInvariant()
   $lower = $dir.ToLowerInvariant()
@@ -518,10 +526,11 @@ function Show-Status($ctx) {
   Write-Json $out
 }
 
-function Get-Pending($rec) {
+# The hint names the address, so the wait asks the same n8n-ops even if the kept address changes meanwhile.
+function Get-Pending($ctx, $rec) {
   [ordered]@{
     status = 'pending'; link = $rec.link; code = $rec.userCode; expiresIn = [Math]::Max([long]0, $rec.deviceExpiresAt - (Now))
-    next = 'End your turn with a reply that shows the person the link and the code and asks them to reply once they approve. When they reply, run: n8n-ops connect --wait'
+    next = "End your turn with a reply that shows the person the link and the code and asks them to reply once they approve. When they reply, run: n8n-ops connect --wait --url $($ctx.issuer)"
   }
 }
 
@@ -543,9 +552,12 @@ function Invoke-Connect($ctx, [bool]$replace) {
     $rec = Read-Record $ctx
     if (-not $rec) { $rec = New-Record $ctx }
     $rec = Invoke-RevokePending $ctx $rec
-    if ($rec.refreshToken -and -not $replace) { return Write-Json ([ordered]@{ status = 'already_connected'; label = $rec.label; scope = $rec.scope }) }
+    if ($rec.refreshToken -and -not $replace) {
+      Save-Address $ctx
+      return Write-Json ([ordered]@{ status = 'already_connected'; label = $rec.label; scope = $rec.scope })
+    }
     # The open code again, unless asked for a new one (--replace: the link did not work for the person).
-    if ($rec.deviceCode -and ($rec.deviceExpiresAt - (Now)) -gt 30 -and -not $replace) { return Write-Json (Get-Pending $rec) }
+    if ($rec.deviceCode -and ($rec.deviceExpiresAt - (Now)) -gt 30 -and -not $replace) { return Write-Json (Get-Pending $ctx $rec) }
     Assert-Mine $ctx $lock
     $r = Invoke-OAuth $ctx '/oauth/device' ([ordered]@{ scope = $Scope; resource = "$($ctx.issuer)/api/v1"; client_label = $ctx.label })
     if ($r.status -ne 200) { throw (New-HttpFail $r 'Asking to connect') }
@@ -561,7 +573,7 @@ function Invoke-Connect($ctx, [bool]$replace) {
       deviceExpiresAt = (Now) + [Math]::Max([long]60, $expires); interval = $interval; nextPollAt = (Now) + $interval
     }
     Write-Record $ctx $rec
-    Write-Json (Get-Pending $rec)
+    Write-Json (Get-Pending $ctx $rec)
   } finally { Exit-Lock $ctx $lock }
 }
 
@@ -616,9 +628,9 @@ function Invoke-Wait($ctx) {
         }
       }
     } finally { Exit-Lock $ctx $lock }
-    if ($done) { return Write-Json $done }
+    if ($done) { Save-Address $ctx; return Write-Json $done }
     if ([DateTime]::UtcNow.AddSeconds($wait) -gt $until) {
-      return Write-Json ([ordered]@{ status = 'still_waiting'; next = 'Not approved yet. Run again: n8n-ops connect --wait' })
+      return Write-Json ([ordered]@{ status = 'still_waiting'; next = "Not approved yet. Run again: n8n-ops connect --wait --url $($ctx.issuer)" })
     }
     Start-Sleep -Seconds $wait
   }

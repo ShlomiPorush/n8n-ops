@@ -176,6 +176,8 @@ type ProblemDetailData = ProblemRow & {
     workflowName: string
     instanceName: string
   }[]
+  /** How many there are in all; `sameTarget` carries the 50 that matter most. */
+  sameTargetTotal: number
 }
 
 /** What the raw data window shows: JSON, Loading while the execution is on its way, or why it could not load. */
@@ -698,7 +700,7 @@ export function ProblemDetail({ id }: { id: string }) {
             value: "same",
             icon: CopyIcon,
             label: "Same target",
-            count: { value: p.sameTarget.length, tone: "plain" as const },
+            count: { value: p.sameTargetTotal, tone: "plain" as const },
           },
         ]
       : []),
@@ -1072,11 +1074,13 @@ export function ProblemDetail({ id }: { id: string }) {
           <PaneTabPanel value="same">
             <Panel>
               <PanelHead
-                title={`Same Target in ${plural(p.sameTarget.length, "Other Problem")}`}
+                title={`Same Target in ${plural(p.sameTargetTotal, "Other Problem")}`}
                 description={
                   <>
                     <UserText>{p.target}</UserText> also failed for another reason, or a workflow was split off by hand.
                     Each problem alerts and resolves on its own.
+                    {p.sameTarget.length < p.sameTargetTotal &&
+                      ` The ${n(p.sameTarget.length)} shown are the open ones first, then the latest.`}
                   </>
                 }
               />

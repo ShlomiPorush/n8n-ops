@@ -202,6 +202,9 @@ const latestFailureFirst = [
   desc(failures.id),
 ]
 
+/** How many other Problems at the same target a detail carries. */
+const SAME_TARGET_LIMIT = 50
+
 /** How many Affected workflows a list row carries. The detail carries them all. */
 export const AFFECTED_IN_LIST = 50
 
@@ -580,33 +583,33 @@ export async function problemDetail(ctx: Pick<Ctx, "db">, id: string, workflow?:
    * another reason, or a workflow split off from this Problem by hand. Never by the error text alone: n8n words many
    * unrelated failures the same way. Rows from before the regroup by cause have no target and list none.
    */
+  // What is open first, then the most recently failed, sorted before the limit so that no open one is left out.
+  const s = summaryQuery(ctx)
   const others = await ctx.db
-    .select({ id: problems.id })
+    .select({ id: problems.id, total: sql<number>`count(*) over()`.mapWith(Number) })
     .from(problems)
+    .innerJoin(s, eq(s.problemId, problems.id))
     .where(
       and(
         sql`${problems.targetKey} = (select p0.target_key from ${problems} p0 where p0.id = ${problem.id})`,
         sql`${problems.id} <> ${problem.id}`,
         isNull(problems.mergedInto),
         eq(problems.regrouped, false),
-        sql`exists (select 1 from ${a} where ${a.problemId} = ${problems.id})`,
       ),
     )
-    .limit(50)
+    .orderBy(
+      sql`case ${s.status} when 'open' then 0 when 'muted' then 1 else 2 end`,
+      desc(sql`${s.lastSeen}`),
+      asc(problems.id),
+    )
+    .limit(SAME_TARGET_LIMIT)
   const otherItems = await problemItems(
     ctx,
     others.map((o) => o.id),
     1,
   )
-  // What is open first, then the most recently failed.
-  const statusOrder: Record<ProblemStatus, number> = { open: 0, muted: 1, resolved: 2 }
-  const sameTarget = [...otherItems.values()]
-    .sort(
-      (x, y) =>
-        statusOrder[x.status] - statusOrder[y.status] ||
-        y.lastSeen.getTime() - x.lastSeen.getTime() ||
-        x.id.localeCompare(y.id),
-    )
+  const sameTarget = others
+    .flatMap((o) => otherItems.get(o.id) ?? [])
     .map((o) => {
       const [first] = o.affectedWorkflows
       return {
@@ -633,8 +636,10 @@ export async function problemDetail(ctx: Pick<Ctx, "db">, id: string, workflow?:
         url: where ? executionUrl({ baseUrl: where.baseUrl }, chosen.workflowId, f.executionId) : null,
       })),
     },
-    /** Other Problems at the same target: another reason there, or split off by hand. */
+    /** Other Problems at the same target: another reason there, or split off by hand. At most 50 of them. */
     sameTarget,
+    /** How many there are in all, also those left out of `sameTarget`. */
+    sameTargetTotal: others[0]?.total ?? 0,
   }
 }
 

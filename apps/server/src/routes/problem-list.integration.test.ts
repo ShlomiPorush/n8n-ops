@@ -559,19 +559,23 @@ describe("a Problem's detail", () => {
     if (!own) throw new Error("no instance")
     // n8n words a 403 the same way for every service it calls.
     const text = "Forbidden - perhaps check your credentials?"
-    const problemAt = async (cause: { targetKey: string | null; target: string | null; reason: string | null }) => {
+    const problemAt = async (
+      cause: { targetKey: string | null; target: string | null; reason: string | null },
+      state: Partial<typeof affectedWorkflows.$inferInsert> = {},
+      errorMessage = text,
+    ) => {
       const [p] = await database.db
         .insert(problems)
-        .values({ errorMessage: text, kind: cause.reason ? "cred" : null, ...cause })
+        .values({ errorMessage, kind: cause.reason ? "cred" : null, ...cause })
         .returning()
       if (!p) throw new Error("no problem")
-      const r = await row(own.id, { errorMessage: text, target: cause.target, reason: cause.reason }, p.id)
+      const r = await row(own.id, { errorMessage, target: cause.target, reason: cause.reason, ...state }, p.id)
       return { problemId: p.id, row: r }
     }
     const cpanel = { targetKey: `credential:${own.id}:cred-1`, target: "cPanel - Web3" }
     const here = await problemAt({ ...cpanel, reason: "HTTP 403 · Access denied" })
-    // The same credential failing for another reason is linked.
-    const sibling = await problemAt({ ...cpanel, reason: "HTTP 401 · Token expired" })
+    // The same credential failing for another reason is linked, whatever n8n's words.
+    const sibling = await problemAt({ ...cpanel, reason: "HTTP 401 · Token expired" }, {}, "Authorization failed")
     // The same text at another target is another cause, and not linked.
     const elsewhere = await problemAt({
       targetKey: "host:api.example.com",
@@ -600,8 +604,37 @@ describe("a Problem's detail", () => {
         instanceName: "detail-n8n",
       }),
     ])
+    expect(detail?.sameTargetTotal).toBe(1)
     expect((await problemDetail(ctx, elsewhere.problemId))?.sameTarget).toEqual([])
     expect((await problemDetail(ctx, oldOne.problemId))?.sameTarget).toEqual([])
+  })
+
+  it("puts open Problems at the same target first, before the limit, and counts them all", async () => {
+    const [own] = await database.db
+      .insert(instances)
+      .values({ name: "many-n8n", baseUrl: "http://many:5678", apiKeyEnc: "v1:x:y:z" })
+      .returning()
+    if (!own) throw new Error("no instance")
+    const targetKey = `credential:${own.id}:busy`
+    const at = async (reason: string, state: Partial<typeof affectedWorkflows.$inferInsert>) => {
+      const [p] = await database.db
+        .insert(problems)
+        .values({ errorMessage: reason, targetKey, target: "Busy API", reason, kind: "svc" })
+        .returning()
+      if (!p) throw new Error("no problem")
+      await row(own.id, { errorMessage: reason, target: "Busy API", reason, ...state }, p.id)
+      return p.id
+    }
+    const here = await at("HTTP 500 · Here", {})
+    // More resolved ones than the detail carries, each seen after the open one.
+    for (let i = 0; i < 51; i++)
+      await at(`HTTP 500 · Resolved ${i}`, { status: "resolved", resolvedAt: ago(hour), lastSeen: ago(hour + i) })
+    const open = await at("HTTP 500 · Still open", { lastSeen: ago(5 * day) })
+
+    const detail = await problemDetail(ctx, here)
+    expect(detail?.sameTarget).toHaveLength(50)
+    expect(detail?.sameTarget[0]?.id).toBe(open)
+    expect(detail?.sameTargetTotal).toBe(52)
   })
 
   it("lists failures by when they ran, so failures stored later, such as by a backfill, do not come first", async () => {

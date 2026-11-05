@@ -17,9 +17,9 @@
 # docker rollout starts the new container beside the old one and removes the
 # old one only once the new one is healthy. A new container that does not
 # become healthy is removed and the old one keeps serving; the script then
-# stops and says where it stood. The new release reaches Compose through a
-# private copy of .env (--env-file), and .env changes only once a service runs
-# it, so a run that stops or is interrupted before that leaves .env as it was.
+# stops and says where it stood. .env changes right before the first service
+# is rolled, and only its VERSION lines; when that service does not end up on
+# the new release, they go back to the release that ran before.
 #
 # The server migrates the database when its new container starts, while the
 # old one still serves. A release whose migration breaks the previous release
@@ -38,17 +38,13 @@ log() { printf '\033[36m%s\033[0m\n' "$*"; }
 warn() { printf '\033[33m%s\033[0m\n' "$*"; }
 err() { printf '\033[31m%s\033[0m\n' "$*" >&2; }
 
-# With a release given, every Compose and docker rollout command reads a
-# private copy of .env that carries it (--env-file), and .env itself is written
-# only once a service runs the new release.
-env_new=""
-compose=(docker compose)
-rollout=(docker rollout)
-
 # One line per service of the resolved Compose file: its name and the value of
-# one of its keys (image, container_name), when it has that key.
+# one of its keys (image, container_name), when it has that key. Arguments
+# before the key go in front of docker compose (env VERSION=... to resolve
+# another release).
 service_values() {
-  "${compose[@]}" config | awk -v key="$1" '
+  local key="${*: -1}"
+  "${@:1:$#-1}" docker compose config | awk -v key="$key" '
     /^services:/ { in_services = 1; next }
     in_services && /^[^ ]/ { in_services = 0 }
     in_services && /^  [^ ]/ { service = $1; sub(/:$/, "", service); gsub(/^["\047]|["\047]$/, "", service) }
@@ -59,39 +55,39 @@ service_values() {
 # The images the running containers of a service were created from.
 running_images() {
   local ids
-  ids="$("${compose[@]}" ps -q "$1")" || return 1
+  ids="$(docker compose ps -q "$1")" || return 1
   # shellcheck disable=SC2086 # one argument per container id
   [[ -z $ids ]] || docker inspect -f '{{.Config.Image}}' $ids
 }
 
-# Writes the private copy into .env once a service runs the new release, so
-# that a later "docker compose up" keeps it. Writing into the existing file
-# keeps its owner, mode and symlink target; if that fails part way, the copy
-# with the full text stays.
-persisted=""
-keep_env_new=""
-persist_version() {
-  [[ -n $env_new && -z $persisted ]] || return 0
-  if ! cat "$env_new" >.env; then
-    keep_env_new=1
-    err "Writing .env failed part way. Its full new text is in $env_new: put it in place with: cat $env_new > .env && rm $env_new"
-    return 1
-  fi
-  persisted=1
-  log "VERSION=$version in .env."
+# Sets every VERSION line of .env, as it is now, to the given value. The new
+# text goes to a private file (mktemp, owner only) and then into .env itself,
+# which keeps its owner, mode and symlink target. A write cut short leaves
+# that file, with the full text, for the operator.
+edited=""
+env_tmp=""
+env_partial=""
+env_value=""
+write_version() {
+  env_value="$1"
+  env_tmp="$(mktemp .env.update.XXXXXX)" || return 1
+  sed "s/^VERSION=.*/VERSION=$1/" .env >"$env_tmp" || return 1
+  edited=1
+  env_partial=1
+  cat "$env_tmp" >.env || return 1
+  env_partial=""
+  rm -f "$env_tmp"
+  env_tmp=""
 }
-
-# Records a service as rolled when its running containers use the new image,
-# whatever the command reported, and then keeps .env in step. Leaves what the
-# service runs in $images.
-images=""
-record() {
-  images="$(running_images "$1")" || return 1
-  if grep -qxF "${image_of[$1]}" <<<"$images"; then
-    [[ " ${rolled[*]} " == *" $1 "* ]] || rolled+=("$1")
-    persist_version || return 1
+cleanup() {
+  [[ -n $env_tmp ]] || return 0
+  if [[ -n $env_partial ]]; then
+    err "Writing .env was cut short. Its full text with VERSION=$env_value is in $env_tmp: put it in place with: cat $env_tmp > .env && rm $env_tmp"
+  else
+    rm -f "$env_tmp"
   fi
 }
+trap cleanup EXIT
 
 if [[ ! -f docker-compose.yml || ! -f .env ]]; then
   err "Run this beside the deployment's docker-compose.yml and .env."
@@ -112,41 +108,71 @@ if ! flock -n 9; then
   err "Another update.sh is running in this folder. Wait for it to finish."
   exit 1
 fi
+# Compose would take an exported VERSION before .env, and docker rollout sets
+# a VERSION of its own that would then reach Compose.
+if [[ -n ${VERSION+set} ]]; then
+  err "VERSION is set in this shell's environment. Unset it (unset VERSION) and run this again."
+  exit 1
+fi
 
 rolled=()
 rolling=""
+previous=""
+# Puts the VERSION lines back when .env was changed and no service runs the
+# new release.
+restore() {
+  # A signal lands only after cat returns, so a write may be complete though
+  # not yet marked so.
+  if [[ -n $env_partial ]] && cmp -s "$env_tmp" .env; then
+    env_partial=""
+  fi
+  [[ -n $edited && ${#rolled[@]} -eq 0 && -z $env_partial ]] || return 0
+  if write_version "$previous"; then
+    warn "VERSION is back to $previous in .env."
+  else
+    err "Could not set VERSION back to $previous in .env. Set it there by hand."
+  fi
+}
 stop() {
   err "$*"
+  restore
   if ((${#rolled[@]} > 0)); then
     warn "On the new release: ${rolled[*]}. Fix the cause and run this again."
   fi
   exit 1
 }
+# Records a service as rolled when its running containers use the new image,
+# whatever the command reported. Leaves what the service runs in $images.
+images=""
+record() {
+  images="$(running_images "$1")" || return 1
+  if grep -qxF "${image_of[$1]}" <<<"$images"; then
+    [[ " ${rolled[*]} " == *" $1 "* ]] || rolled+=("$1")
+  fi
+}
 interrupted() {
   trap - INT TERM
   if [[ -n $rolling ]]; then
-    record "$rolling" || true
-    err "Interrupted while rolling $rolling. It now runs: $(tr '\n' ' ' <<<"$images")Check its containers with docker compose ps $rolling, and remove one you do not want with docker rm -f <container>."
+    if record "$rolling"; then
+      err "Interrupted while rolling $rolling. It now runs: $(tr '\n' ' ' <<<"$images")Check its containers with docker compose ps $rolling, and remove one you do not want with docker rm -f <container>."
+    else
+      # Unknown what runs: leave .env as it is rather than guess.
+      rolled+=("$rolling")
+      err "Interrupted while rolling $rolling, and Docker did not say what runs now. .env has VERSION=$version; check with: docker compose ps $rolling"
+    fi
   else
     err "Interrupted."
   fi
+  restore
   if ((${#rolled[@]} > 0)); then
     warn "On the new release: ${rolled[*]}."
   fi
   exit 130
 }
 trap interrupted INT TERM
-# The private copy goes away, unless it is the only full text of .env left.
-trap '[[ -z $env_new || -n $keep_env_new ]] || rm -f "$env_new"' EXIT
-
-# docker rollout sets a VERSION of its own, which would reach Compose in place
-# of this one when VERSION is exported.
-if [[ -n ${VERSION+set} ]]; then
-  err "VERSION is set in this shell's environment. Unset it (unset VERSION) and run this again."
-  exit 1
-fi
 
 version="${1:-}"
+new_env=()
 if [[ -n $version ]]; then
   if [[ ! $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     err "A release looks like 0.10.0, not '$version'."
@@ -156,11 +182,8 @@ if [[ -n $version ]]; then
     err ".env has no VERSION line."
     exit 1
   fi
-  # mktemp makes it readable by its owner only, like the secrets in it deserve.
-  env_new="$(mktemp .env.update.XXXXXX)"
-  sed "s/^VERSION=.*/VERSION=${version}/" .env >"$env_new"
-  compose+=(--env-file "$env_new")
-  rollout+=(--env-file "$env_new")
+  # For the checks and the pull only; .env changes right before the rollout.
+  new_env=(env "VERSION=$version")
 fi
 
 # The services that run an n8n-ops image, the server first: it migrates the
@@ -169,7 +192,7 @@ fi
 declare -A image_of=()
 servers=()
 workers=()
-config="$(service_values image)" || stop "docker compose config failed: see above."
+config="$(service_values "${new_env[@]}" image)" || stop "docker compose config failed: see above."
 while read -r service image; do
   [[ -n $service ]] || continue
   image_of[$service]="$image"
@@ -212,28 +235,42 @@ while read -r service name; do
     stop "$service has container_name: $name in docker-compose.yml, so docker rollout cannot run it twice. Remove that line and run this again."
   fi
 done <<<"$names"
+# The release .env holds now, to put back if the first service fails.
+if [[ -n $version ]]; then
+  current="$(service_values image)" || stop "docker compose config failed: see above."
+  previous="$(awk -v s="${services[0]}" '$1 == s { sub(/.*:/, "", $2); print $2 }' <<<"$current")"
+  if [[ ! $previous =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]]; then
+    stop "Could not read the release ${services[0]} runs now from docker-compose.yml and .env."
+  fi
+fi
 
 log "Pulling: ${services[*]}"
-if ! "${compose[@]}" pull "${services[@]}"; then
+if ! "${new_env[@]}" docker compose pull "${services[@]}"; then
   stop "Pulling failed: nothing was changed."
 fi
 
 for service in "${services[@]}"; do
   # Read right before acting: a container may have stopped or come back
   # during the pull.
-  all="$("${compose[@]}" ps -aq "$service")" || stop "Could not read the containers of $service from Docker."
-  running="$("${compose[@]}" ps -q "$service")" || stop "Could not read the containers of $service from Docker."
-  if [[ -z $running ]]; then
-    log "$service is not running: starting it."
-    # --no-deps: the database, the socket proxy and other services stay as they are.
-    started=("${compose[@]}" up -d --no-deps --wait --wait-timeout "$TIMEOUT" "$service")
-  elif (($(wc -w <<<"$all") != $(wc -w <<<"$running"))); then
+  all="$(docker compose ps -aq "$service")" || stop "Could not read the containers of $service from Docker."
+  running="$(docker compose ps -q "$service")" || stop "Could not read the containers of $service from Docker."
+  if [[ -n $running ]] && (($(wc -w <<<"$all") != $(wc -w <<<"$running"))); then
     # Beside a running container, docker rollout replaces only the stopped
     # ones and reports success without rolling the running one.
     stop "$service has stopped containers beside the running one, and docker rollout would replace only those. Remove them with: docker compose rm -f $service"
+  fi
+  # .env first, so that a service reading it (env_file) starts with it.
+  if [[ -n $version && -z $edited ]]; then
+    write_version "$version" || stop "Could not write VERSION=$version into .env."
+    log "VERSION=$version in .env."
+  fi
+  if [[ -z $running ]]; then
+    log "$service is not running: starting it."
+    # --no-deps: the database, the socket proxy and other services stay as they are.
+    started=(docker compose up -d --no-deps --wait --wait-timeout "$TIMEOUT" "$service")
   else
     log "Rolling $service"
-    started=("${rollout[@]}" --timeout "$TIMEOUT" "$service")
+    started=(docker rollout --timeout "$TIMEOUT" "$service")
   fi
   rolling="$service"
   ok=1
@@ -241,8 +278,10 @@ for service in "${services[@]}"; do
   # What runs now decides, not the exit code alone: docker rollout can fail
   # after the new container took over, and a replica can stay behind.
   if ! record "$service"; then
+    # Unknown what runs: leave .env as it is rather than guess.
+    rolled+=("$service")
     rolling=""
-    stop "Could not read the containers of $service from Docker, or write .env; see above."
+    stop "Docker did not say what $service runs now. .env has VERSION=$expected; check with: docker compose ps $service"
   fi
   rolling=""
   if [[ -z $ok ]]; then
@@ -253,14 +292,14 @@ for service in "${services[@]}"; do
   fi
 done
 
-"${compose[@]}" ps "${services[@]}"
+docker compose ps "${services[@]}"
 
 # The version the server itself reports, from inside its container, so the
 # check needs neither a published port nor the public domain.
 for service in "${servers[@]}"; do
   [[ " ${rolled[*]} " == *" $service "* ]] || continue
   # shellcheck disable=SC2016 # expands inside the container
-  reported="$("${compose[@]}" exec -T -u node "$service" node -e 'fetch(`http://127.0.0.1:${process.env.PORT ?? 8080}/healthz/live`, { signal: AbortSignal.timeout(8000) }).then((r) => r.json()).then((b) => console.log(b.version))' 2>/dev/null)" || reported=""
+  reported="$(docker compose exec -T -u node "$service" node -e 'fetch(`http://127.0.0.1:${process.env.PORT ?? 8080}/healthz/live`, { signal: AbortSignal.timeout(8000) }).then((r) => r.json()).then((b) => console.log(b.version))' 2>/dev/null)" || reported=""
   if [[ -z $reported ]]; then
     warn "Could not read the version of $service from /healthz/live. Check it with: curl -fsS https://<DOMAIN>/healthz/live"
   elif [[ $reported != "$expected" ]]; then

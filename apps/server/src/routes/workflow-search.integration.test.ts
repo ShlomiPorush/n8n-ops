@@ -44,24 +44,22 @@ beforeAll(async () => {
   if (!alpha || !beta) throw new Error("no instances")
   const base = { active: true, triggerType: "manual", structureHash: "h", nodeCount: 1 }
   const job = (instanceId: string, i: number) => ({ ...base, instanceId, workflowId: `wf-${i}`, name: `Job ${pad(i)}` })
-  await database.db
-    .insert(workflows)
-    .values([
-      ...Array.from({ length: 65 }, (_, i) => job(alpha.id, i + 1)),
-      ...Array.from({ length: 60 }, (_, i) => job(beta.id, i + 1)),
-      // Alike in name on one instance, so only the ID can settle their order.
-      ...["t-3", "t-1", "t-2"].map((workflowId) => ({ ...base, instanceId: alpha.id, workflowId, name: "Twin" })),
-      { ...base, instanceId: alpha.id, workflowId: "inv-1", name: "Invoices", tags: ["Billing team"] },
-      {
-        ...base,
-        instanceId: beta.id,
-        workflowId: "hook-1",
-        name: "Orders in",
-        tags: ["billing", "eu"],
-        triggerType: "webhook",
-        triggerDetail: "POST orders-in",
-      },
-    ])
+  await database.db.insert(workflows).values([
+    ...Array.from({ length: 65 }, (_, i) => job(alpha.id, i + 1)),
+    ...Array.from({ length: 60 }, (_, i) => job(beta.id, i + 1)),
+    // Alike in name on one instance, so only the ID can settle their order.
+    ...["t-3", "t-1", "t-2"].map((workflowId) => ({ ...base, instanceId: alpha.id, workflowId, name: "Twin" })),
+    { ...base, instanceId: alpha.id, workflowId: "inv-1", name: "Invoices", tags: ["Billing team"] },
+    {
+      ...base,
+      instanceId: beta.id,
+      workflowId: "hook-1",
+      name: "Orders in",
+      tags: ["billing", "eu"],
+      triggerType: "webhook",
+      triggerDetail: "POST orders-in",
+    },
+  ])
   token = `n8nops_rest_${randomBytes(16).toString("hex")}`
   await database.db
     .insert(apiTokens)
@@ -77,7 +75,8 @@ afterAll(async () => {
 type Hit = { instance: string; workflowId: string; name: string }
 type Page = { data: Hit[]; total: number; nextOffset: number | null }
 
-const call = (query: string) => restRoutes(ctx).request(`/workflows${query}`, { headers: { authorization: `Bearer ${token}` } })
+const call = (query: string) =>
+  restRoutes(ctx).request(`/workflows${query}`, { headers: { authorization: `Bearer ${token}` } })
 
 async function page(query: string): Promise<Page> {
   const res = await call(query)

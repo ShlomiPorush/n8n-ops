@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-11-05
+
 ### Changed
 
 - **The images run on Node.js 24.22.2, and the server reaches PostgreSQL through version 4 of its driver.** Neither needs a change to the installation or its data.

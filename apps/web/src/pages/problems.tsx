@@ -157,11 +157,15 @@ type Selected = AffectedRow & {
     executionId: string
     mode: string | null
     createdAt: string
+    startedAt: string | null
     stoppedAt: string | null
     url: string | null
   }[]
   latestFailureId: string | null
 }
+
+/** When a failure ran, as the server orders them: stopped, else started, else when n8n-ops stored it. */
+const ranAt = (f: Selected["occurrences"][number]) => f.stoppedAt ?? f.startedAt ?? f.createdAt
 
 type ProblemDetailData = ProblemRow & {
   selected: Selected
@@ -973,7 +977,7 @@ export function ProblemDetail({ id }: { id: string }) {
                 </Copyable>
                 <span className="text-muted-foreground">
                   {latest.mode && `${latest.mode} · `}
-                  <When value={latest.stoppedAt ?? latest.createdAt} />
+                  <When value={ranAt(latest)} />
                 </span>
               </p>
             </Panel>
@@ -1057,7 +1061,7 @@ export function ProblemDetail({ id }: { id: string }) {
                         }
                         end={
                           <span className="font-normal text-muted-foreground">
-                            <When value={o.stoppedAt ?? o.createdAt} />
+                            <When value={ranAt(o)} />
                           </span>
                         }
                         sub={o.mode ?? undefined}

@@ -35,11 +35,11 @@ To upgrade, set the new `VERSION` and run `docker compose up -d`; the database i
 To upgrade without downtime, install the [docker rollout](https://github.com/wowu/docker-rollout) plugin and copy [`scripts/update.sh`](scripts/update.sh) next to `docker-compose.yml` and `.env`:
 
 ```bash
-./update.sh 0.10.0   # sets VERSION in .env, pulls the images and updates the services
+./update.sh 0.10.0   # pulls 0.10.0, updates the services and sets VERSION in .env
 ./update.sh          # pulls and updates the VERSION already in .env
 ```
 
-It updates the services that run the `n8n-ops` image and, when the same compose file has one, the `n8n-ops-worker` image, whatever their names; the database and any other service stay as they are. Each new container starts beside the old one, and the old one is removed only once the new one is healthy; a new one that does not become healthy is removed and the old one keeps running. The image of each of these services must use `${VERSION}`, and none may have a `container_name`. `SERVICES="worker" ./update.sh` updates only the services named. For a few seconds the old and the new server both run against the migrated database, so a release whose notes say it needs downtime is upgraded with `docker compose up -d` instead.
+It updates the services that run the `n8n-ops` image and, when the same compose file has one, the `n8n-ops-worker` image, whatever their names, server first. Other services are not updated (docker rollout does start a stopped service that an updated one depends on). Each new container starts beside the old one, and the old one is removed only once the new one is healthy; a new one that does not become healthy is removed and the old one keeps running. `.env` changes only once a service runs the new release, so a run that stops before that leaves it as it was. The image of each of these services must use `${VERSION}`, and none may have a `container_name`. `SERVICES="worker" ./update.sh` updates only the services named. For a few seconds the old and the new server both run against the migrated database, so a release whose notes say it needs downtime is upgraded with `docker compose up -d` instead.
 
 ## Backup destinations
 

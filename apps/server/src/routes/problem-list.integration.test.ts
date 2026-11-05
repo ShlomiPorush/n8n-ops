@@ -572,10 +572,10 @@ describe("a Problem's detail", () => {
       const r = await row(own.id, { errorMessage, target: cause.target, reason: cause.reason, ...state }, p.id)
       return { problemId: p.id, row: r }
     }
-    const cpanel = { targetKey: `credential:${own.id}:cred-1`, target: "cPanel - Web3" }
-    const here = await problemAt({ ...cpanel, reason: "HTTP 403 · Access denied" })
+    const hosting = { targetKey: `credential:${own.id}:cred-1`, target: "Hosting API" }
+    const here = await problemAt({ ...hosting, reason: "HTTP 403 · Access denied" })
     // The same credential failing for another reason is linked, whatever n8n's words.
-    const sibling = await problemAt({ ...cpanel, reason: "HTTP 401 · Token expired" }, {}, "Authorization failed")
+    const sibling = await problemAt({ ...hosting, reason: "HTTP 401 · Token expired" }, {}, "Authorization failed")
     // The same text at another target is another cause, and not linked.
     const elsewhere = await problemAt({
       targetKey: "host:api.example.com",
@@ -585,7 +585,7 @@ describe("a Problem's detail", () => {
     // A Problem merged into another is an alias, not linked.
     const [alias] = await database.db
       .insert(problems)
-      .values({ errorMessage: text, ...cpanel, reason: "HTTP 500 · Down", mergedInto: elsewhere.problemId })
+      .values({ errorMessage: text, ...hosting, reason: "HTTP 500 · Down", mergedInto: elsewhere.problemId })
       .returning()
     if (!alias) throw new Error("no alias")
     // Rows from before the regroup by cause have no target: the same text links nothing.
@@ -596,7 +596,7 @@ describe("a Problem's detail", () => {
     expect(detail?.sameTarget).toEqual([
       expect.objectContaining({
         id: sibling.problemId,
-        title: "cPanel - Web3 · HTTP 401 · Token expired",
+        title: "Hosting API · HTTP 401 · Token expired",
         reason: "HTTP 401 · Token expired",
         status: "open",
         workflows: 1,

@@ -32,6 +32,15 @@ The compose file pulls the `ghcr.io/shlomiporush/n8n-ops` image of the release s
 
 To upgrade, set the new `VERSION` and run `docker compose up -d`; the database is migrated on start. An earlier release cannot run against a database a later one migrated, so before upgrading make sure n8n-ops's own database backup (Backups → n8n-ops database) is recent. To go back, restore that backup into the earlier release.
 
+To upgrade without downtime, install the [docker rollout](https://github.com/wowu/docker-rollout) plugin and copy [`scripts/update.sh`](scripts/update.sh) next to `docker-compose.yml` and `.env`:
+
+```bash
+./update.sh 0.10.0   # sets VERSION in .env, pulls the images and updates the services
+./update.sh          # pulls and updates the VERSION already in .env
+```
+
+It updates the services that run the `n8n-ops` image and, when the same compose file has one, the `n8n-ops-worker` image, whatever their names; the database and any other service stay as they are. Each new container starts beside the old one, and the old one is removed only once the new one is healthy; a new one that does not become healthy is removed and the old one keeps running. The image of each of these services must use `${VERSION}`, and none may have a `container_name`. `SERVICES="worker" ./update.sh` updates only the services named. For a few seconds the old and the new server both run against the migrated database, so a release whose notes say it needs downtime is upgraded with `docker compose up -d` instead.
+
 ## Backup destinations
 
 Settings → Backup Destinations. Each destination is tested with a small file before it is saved, and every archive written there is checked against its size and SHA-256. Instances back up to the destinations marked as default, unless an instance chooses others on its page.

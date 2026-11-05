@@ -19,7 +19,10 @@ name: n8n-ops
 services:
   server:
     image: ghcr.io/shlomiporush/n8n-ops:${VERSION:?Set VERSION in .env to the release to run}
-    container_name: n8n-ops
+    # No container_name: scripts/update.sh updates the server with docker rollout, which runs the new
+    # container beside the old one for a moment, and a fixed name allows only one. Reach it with
+    # "docker compose exec server ...". Traefik sends requests to a container only once its health
+    # check passes.
     security_opt:
       - no-new-privileges:true
     # The image starts as root only to hand ./data to node, then runs the server as node with no

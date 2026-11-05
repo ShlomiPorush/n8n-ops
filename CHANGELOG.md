@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-05
+
 ### Added
 
 - **Upgrades without downtime.** `scripts/update.sh`, copied next to `docker-compose.yml` and `.env`, sets the release, pulls it and replaces the server and then the worker with the docker rollout plugin, each new container taking over only once it is healthy. It finds them by image, so services with other names work too, and says what to fix when a service cannot be updated this way. The README has the details.

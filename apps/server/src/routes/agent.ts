@@ -188,7 +188,7 @@ export function buildMcpServer(
   )
   tool(
     "get_problem",
-    "Details of one problem: every workflow it hit (affectedWorkflows), and for one of them (selected: the most recently failed, or the one affectedWorkflowId names) the error, stack, the failed node's input, the workflow graph with the failed node and recent executions; sameError lists other problems with the same latest error text. problemId may also be an affected workflow id, which is then the one selected.",
+    "Details of one problem: every workflow it hit (affectedWorkflows), and for one of them (selected: the most recently failed, or the one affectedWorkflowId names) the error, stack, the failed node's input, the workflow graph with the failed node and recent executions; sameTarget lists other problems at the same target (credential, host, called workflow or node) that failed for another reason or were split off by hand, open ones first, at most 50; sameTargetTotal counts them all. problemId may also be an affected workflow id, which is then the one selected.",
     { problemId: z.string().uuid(), affectedWorkflowId: z.string().uuid().optional() },
     (a) => agentProblem(ctx, a.problemId, a.affectedWorkflowId),
   )

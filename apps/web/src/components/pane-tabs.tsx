@@ -98,7 +98,7 @@ const barTabs: TabsLook = {
 
 /**
  * The tab list and the tabs' content. `items` are the tabs there are now; a tab the address asks for that is not
- * among them (unknown, or gone since, such as Same error after a merge) opens the first, and the address is
+ * among them (unknown, or gone since, such as Same target after a merge) opens the first, and the address is
  * corrected in place, without a Back step (NL-3), once no dialog holds a history entry (DS-10). The open tab,
  * when it is not the first, names the browser tab and ends the trail in the top bar (NL-3, NL-5).
  */
@@ -125,7 +125,7 @@ export function PaneTabs({
 
   /*
    * The first tab is the plain address; any other the address names but the pane lacks is corrected to it. Not
-   * while a dialog or picker holds a history entry (such as Merge, when Same error went away behind it): the
+   * while a dialog or picker holds a history entry (such as Merge, when Same target went away behind it): the
    * correction would replace the dialog's entry and leave an extra Back step after it closes (DS-10). It is made
    * once they closed and their entries are gone.
    */

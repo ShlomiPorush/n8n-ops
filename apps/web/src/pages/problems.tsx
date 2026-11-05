@@ -157,15 +157,31 @@ type Selected = AffectedRow & {
     executionId: string
     mode: string | null
     createdAt: string
+    startedAt: string | null
     stoppedAt: string | null
     url: string | null
   }[]
   latestFailureId: string | null
 }
 
+/** When a failure ran, as the server orders them: stopped, else started, else when n8n-ops stored it. */
+const ranAt = (f: Selected["occurrences"][number]) => f.stoppedAt ?? f.startedAt ?? f.createdAt
+
 type ProblemDetailData = ProblemRow & {
   selected: Selected
-  sameError: { id: string; workflowName: string; instanceName: string; status: string }[]
+  /** Other Problems at the same target: another reason there, or split off by hand. */
+  sameTarget: {
+    id: string
+    title: string
+    reason: string | null
+    status: ProblemRow["status"]
+    lastSeen: string
+    workflows: number
+    workflowName: string
+    instanceName: string
+  }[]
+  /** How many there are in all; `sameTarget` carries the 50 that matter most. */
+  sameTargetTotal: number
 }
 
 /** What the raw data window shows: JSON, Loading while the execution is on its way, or why it could not load. */
@@ -548,7 +564,7 @@ function flatten(value: unknown): [string, string][] {
 
 /*
  * The problem pane is split into tabs (components/pane-tabs.tsx). A Problem in one workflow reads as it always did:
- * what broke and where on one screen (Overview), the input, the runs and the same error split off one click away. A
+ * what broke and where on one screen (Overview), the input, the runs and other problems at the same target one click away. A
  * Problem in several workflows opens on its Affected workflows; a row there chooses the workflow the other tabs show.
  */
 /*
@@ -681,14 +697,14 @@ export function ProblemDetail({ id }: { id: string }) {
       label: "Occurrences",
       count: { value: s.count, tone: "plain" as const },
     },
-    // Only when the same text was split into Problems of their own.
-    ...(p.sameError.length > 0
+    // Only when the same target failed for another reason, or a workflow was split off by hand.
+    ...(p.sameTarget.length > 0
       ? [
           {
             value: "same",
             icon: CopyIcon,
-            label: "Same error",
-            count: { value: p.sameError.length, tone: "plain" as const },
+            label: "Same target",
+            count: { value: p.sameTargetTotal, tone: "plain" as const },
           },
         ]
       : []),
@@ -961,7 +977,7 @@ export function ProblemDetail({ id }: { id: string }) {
                 </Copyable>
                 <span className="text-muted-foreground">
                   {latest.mode && `${latest.mode} · `}
-                  <When value={latest.stoppedAt ?? latest.createdAt} />
+                  <When value={ranAt(latest)} />
                 </span>
               </p>
             </Panel>
@@ -1045,7 +1061,7 @@ export function ProblemDetail({ id }: { id: string }) {
                         }
                         end={
                           <span className="font-normal text-muted-foreground">
-                            <When value={o.stoppedAt ?? o.createdAt} />
+                            <When value={ranAt(o)} />
                           </span>
                         }
                         sub={o.mode ?? undefined}
@@ -1058,23 +1074,39 @@ export function ProblemDetail({ id }: { id: string }) {
           </Panel>
         </PaneTabPanel>
 
-        {p.sameError.length > 0 && (
+        {p.sameTarget.length > 0 && (
           <PaneTabPanel value="same">
             <Panel>
               <PanelHead
-                title={`Same Error in ${plural(p.sameError.length, "Other Problem")}`}
-                description="Split off: the same text with another cause, so each alerts and resolves on its own."
+                title={`Same Target in ${plural(p.sameTargetTotal, "Other Problem")}`}
+                description={
+                  <>
+                    <UserText>{p.target}</UserText> also failed for another reason, or a workflow was split off by hand.
+                    Each problem alerts and resolves on its own.
+                    {p.sameTarget.length < p.sameTargetTotal &&
+                      ` The ${n(p.sameTarget.length)} shown are the open ones first, then the latest.`}
+                  </>
+                }
               />
-              {p.sameError.map((other) => (
+              {p.sameTarget.map((other) => (
                 <RowLink
                   key={other.id}
                   to={`/problems/${other.id}`}
                   className="hover-row flex items-center gap-2.5 border-t border-line px-pad-x py-pad-y"
                 >
-                  <UserText className="min-w-0 truncate font-semibold" title={other.workflowName}>
-                    {other.workflowName}
-                  </UserText>
-                  <UserText className="ms-auto text-small text-muted-foreground">{other.instanceName}</UserText>
+                  <span className="grid min-w-0 gap-0.5">
+                    <UserText className="truncate font-semibold" title={other.title}>
+                      {other.reason ?? other.title}
+                    </UserText>
+                    <UserText className="truncate text-small text-muted-foreground">
+                      {other.workflows > 1
+                        ? `${other.workflowName} and ${plural(other.workflows - 1, "other workflow")}`
+                        : `${other.workflowName} · ${other.instanceName}`}
+                    </UserText>
+                  </span>
+                  <span className="ms-auto shrink-0">
+                    <ProblemBadge status={other.status} regression={false} />
+                  </span>
                 </RowLink>
               ))}
             </Panel>

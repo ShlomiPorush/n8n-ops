@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Changed
+
+- **The images run on Node.js 24.22.2, and the server reaches PostgreSQL through version 4 of its driver.** Neither needs a change to the installation or its data.
+
+### Security
+
+- **The server carries fast-uri 3.1.9**, which fixes four flaws in how it reads URLs (a spoofed scheme or host, and paths that normalize to another one). It comes in through the library behind the agents' MCP endpoint. Other packages with published advisories were updated too (body-parser, qs, undici, systeminformation); none of them is part of what the images run.
+
 ## [0.9.0] - 2026-11-04
 
 ### Changed

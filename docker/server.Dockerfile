@@ -24,10 +24,12 @@ RUN pnpm --filter @n8n-ops/server run build
 
 FROM node:24.22.2-bookworm-slim
 # pg_dump for the nightly backup of the n8n-ops database (must match the PostgreSQL 18 server).
+# The download of the signing key retries: a dropped connection to postgresql.org otherwise fails the whole build.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates curl \
   && install -d /usr/share/postgresql-common/pgdg \
-  && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+  && curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --retry-max-time 300 --connect-timeout 15 --max-time 60 \
+    https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
   && echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" \
     > /etc/apt/sources.list.d/pgdg.list \
   && apt-get update \

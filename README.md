@@ -93,7 +93,7 @@ Agents connect by approval: nothing to create or paste by hand. Set the public U
 - **A token made by hand** stays on Connected Agents, under Advanced → New token, for a program that cannot open the approval link. It lasts until revoked.
 
 - **MCP** (Streamable HTTP): `https://<your n8n-ops>/mcp` with the header `Authorization: Bearer <access token>`. Tools: `list_open_problems`, `get_problem`, `get_failed_execution`, `get_instance_health`, `get_queue_status`, `get_backup_status`, `search_workflows` (by name, workflow ID, webhook path or tag; each result says whether access to its instance can be requested).
-- **REST**: `GET /api/v1/problems`, `/api/v1/problems/{id}`, `/api/v1/problems/{id}/execution`, `/api/v1/instances`, `/api/v1/queues`, `/api/v1/backups`, `/api/v1/workflows?q=&limit=&offset=` with `Authorization: Bearer <access token>`.
+- **REST**: `GET /api/v1/problems`, `/api/v1/problems/{id}`, `/api/v1/problems/{id}/execution`, `/api/v1/instances`, `/api/v1/queues`, `/api/v1/backups`, `/api/v1/workflows?q=&limit=100&offset=0` with `Authorization: Bearer <access token>`.
 
 ### Temporary access to n8n instances
 

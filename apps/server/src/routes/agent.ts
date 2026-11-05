@@ -237,7 +237,7 @@ export function buildMcpServer(
   )
   tool(
     "search_workflows",
-    `Find workflows across all instances by name, workflow ID, webhook path or tag, by name, then instance, then ID. Each result says which instance it is on, and whether access to that instance can be requested and with which scopes. Returns { workflows, total, nextOffset }: at most limit (default ${WORKFLOWS_DEFAULT}, up to ${WORKFLOWS_MAX}) from offset on; total counts every match. To see them all, call again with offset set to nextOffset until it is null. If total changes between calls, the list changed: start again from offset 0.`,
+    `Find workflows across all instances by name, workflow ID, webhook path or tag, by name, then instance, then ID. Each result says which instance it is on, and whether access to that instance can be requested and with which scopes. Returns { workflows, total, nextOffset }: at most limit (default ${WORKFLOWS_DEFAULT}, up to ${WORKFLOWS_MAX}) from offset on; total counts every match. To see them all, call again with offset set to nextOffset until it is null. The pages hold every match only while the list does not change: a sync between calls can move a workflow across pages, even when total stays the same. If total changes between calls, start again from offset 0.`,
     {
       query: z.string().optional(),
       instance: z.string().optional(),

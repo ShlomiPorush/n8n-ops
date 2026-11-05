@@ -117,6 +117,9 @@ describe("the agents' workflow search", () => {
     expect(total).toBe(TOTAL)
     expect(hits.map(key)).toEqual(everything.data.map(key))
     expect(new Set(hits.map(key)).size).toBe(TOTAL)
+    const names = [...new Set(hits.map((h) => h.name))]
+    const jobs = Array.from({ length: 65 }, (_, i) => `Job ${pad(i + 1)}`)
+    expect(names).toEqual(["Invoices", ...jobs, "Orders in", "Twin"])
     // The same name on both instances: alpha first. The same name on one instance: by ID.
     const job1 = hits.filter((h) => h.name === "Job 001").map(key)
     expect(job1).toEqual(["alpha-n8n/wf-1", "beta-n8n/wf-1"])

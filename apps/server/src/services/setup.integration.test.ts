@@ -651,6 +651,7 @@ describe("backups", () => {
         itemId: "1",
         targetInstanceId: older.id,
         actor: "test",
+        actorId: null,
         via: "web",
       }),
     ).rejects.toThrow("n8n-ops needs n8n 2.14.0 or later")

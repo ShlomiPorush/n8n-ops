@@ -6,6 +6,7 @@ import {
   jsonFileName,
   type RestorePlan,
   restoreOutcome,
+  settingText,
   stepsOf,
 } from "./restore.ts"
 
@@ -111,6 +112,16 @@ describe("restoreOutcome", () => {
     expect(unknown).toMatch(/^Timed out\. /)
     expect(unknown).toMatch(/unknown/)
     expect(unknown).not.toMatch(/failed/)
+  })
+})
+
+describe("settingText", () => {
+  it("writes each setting exactly as sent, so text never looks like a number or a flag", () => {
+    expect(settingText("v1")).toBe('"v1"')
+    expect(settingText(true)).toBe("true")
+    expect(settingText(3600)).toBe("3600")
+    expect(settingText({ a: [1] })).toBe('{"a":[1]}')
+    expect(settingText(null)).toBe("null")
   })
 })
 

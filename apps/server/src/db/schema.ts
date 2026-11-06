@@ -703,12 +703,13 @@ export const restores = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     /** In the name of everything this restore creates, so each item can be found again for this restore alone. */
     code: text("code").notNull().unique(),
+    /** Who reviewed it, then who confirmed it: the name in the audit and the person's or token's ID. */
     actor: text("actor").notNull(),
+    actorId: text("actor_id"),
     via: text("via").notNull(),
     runId: uuid("run_id").references(() => backupRuns.id, { onDelete: "set null" }),
-    targetInstanceId: uuid("target_instance_id")
-      .notNull()
-      .references(() => instances.id, { onDelete: "cascade" }),
+    /** Null once the instance is removed: the record of what was written there stays (its name is in `reviewed`). */
+    targetInstanceId: uuid("target_instance_id").references(() => instances.id, { onDelete: "set null" }),
     kind: text("kind").$type<RestoreKind>().notNull(),
     itemId: text("item_id").notNull(),
     itemName: text("item_name").notNull(),

@@ -6,6 +6,7 @@ import {
   RotateCcw,
   ShieldCheck as ShieldCheckIcon,
 } from "lucide-react"
+import { useState } from "react"
 import { Link, useNavigate, useParams } from "react-router"
 import { useCrumb } from "@/app/chrome"
 import { FilterBar } from "@/components/filter-bar"
@@ -28,6 +29,7 @@ import {
 } from "@/components/kit"
 import { ListWithPanel } from "@/components/list-panel"
 import { type ProxyFix, ProxyFixBlock } from "@/components/proxy-fix"
+import { RestoreDetailsDialog } from "@/components/restore-view"
 import { Dot, StatusTag, When } from "@/components/status"
 import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, useSort } from "@/components/ui/table"
@@ -600,6 +602,9 @@ function RecentRestores({ instanceId }: { instanceId: string }) {
     failed: "check the restore",
   })
   const list = restores.data ?? []
+  // The restore whose details are open; read from the list, so a refresh shows it as it is now.
+  const [openId, setOpenId] = useState<string | null>(null)
+  const opened = list.find((r) => r.id === openId) ?? null
   if (restores.error && !restores.data)
     return (
       <Panel>
@@ -621,7 +626,14 @@ function RecentRestores({ instanceId }: { instanceId: string }) {
             className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 border-t border-line px-pad-x py-[7px]"
           >
             <StatusTag kind="restore" status={r.status} />
-            <UserText className="min-w-0 font-semibold break-words">{r.itemName}</UserText>
+            <button
+              type="button"
+              aria-haspopup="dialog"
+              onClick={() => setOpenId(r.id)}
+              className="min-w-0 text-start font-semibold break-words underline-offset-3 hover:underline"
+            >
+              <UserText>{r.itemName}</UserText>
+            </button>
             <span className="text-small text-muted-foreground">
               {r.kind === "workflow" ? "workflow" : "credential"} · <When value={r.confirmedAt ?? r.createdAt} /> ·{" "}
               <UserText>{r.actor}</UserText>
@@ -644,6 +656,7 @@ function RecentRestores({ instanceId }: { instanceId: string }) {
           </li>
         ))}
       </ul>
+      <RestoreDetailsDialog restore={opened} onClose={() => setOpenId(null)} />
     </Panel>
   )
 }

@@ -189,6 +189,7 @@ export function backupRoutes(ctx: Ctx) {
           runId: c.req.param("runId"),
           ...parsed.data,
           actor: actorName(c.get("actor")),
+          actorId: c.get("actor").id,
           via: "web",
         }),
       )
@@ -202,7 +203,8 @@ export function backupRoutes(ctx: Ctx) {
     if (!parsed.success) return c.json(refused(parsed.error.issues), 400)
     if (!uuid.safeParse(c.req.param("id")).success) return c.json({ error: "not_found" }, 404)
     try {
-      return c.json(await confirmRestore(ctx, c.req.param("id"), parsed.data.privateKey))
+      const by = { actor: actorName(c.get("actor")), actorId: c.get("actor").id, via: "web" as const }
+      return c.json(await confirmRestore(ctx, c.req.param("id"), parsed.data.privateKey, by))
     } catch (error) {
       return failed(c, error)
     }

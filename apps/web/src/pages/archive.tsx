@@ -1,16 +1,12 @@
 import {
   ArchiveRestore as ArchiveRestoreIcon,
   Braces as BracesIcon,
-  CheckCircle2,
-  CircleDashed,
   Download as DownloadIcon,
   Info as InfoIcon,
   Lock as LockIcon,
   LockOpen as LockOpenIcon,
   RefreshCw,
   RotateCcw,
-  TriangleAlert,
-  XCircle,
 } from "lucide-react"
 import * as React from "react"
 import { useState } from "react"
@@ -19,7 +15,7 @@ import { useCrumb } from "@/app/chrome"
 import { useConfirm } from "@/components/confirm"
 import { FieldPicker } from "@/components/field-picker"
 import { FilterBar, SearchBox } from "@/components/filter-bar"
-import { ItemRow, ItemsHeader, Said } from "@/components/item-row"
+import { ItemRow, ItemsHeader } from "@/components/item-row"
 import {
   BusyButton,
   Empty,
@@ -34,8 +30,9 @@ import {
   UserText,
 } from "@/components/kit"
 import { ListWithPanel } from "@/components/list-panel"
+import { checkRestore, PlanReview, RestoreResult } from "@/components/restore-view"
 import { guardLeaves } from "@/components/save-bar"
-import { Code, StatusTag, TimeAgo, TimeLeft, Tone } from "@/components/status"
+import { Code, StatusTag, TimeAgo, Tone } from "@/components/status"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -58,13 +55,10 @@ import { n, plural } from "@/lib/numbers"
 import {
   type CredentialSummary,
   changeText,
-  credentialActionText,
   type Inspection,
   jsonFileName,
   type RestoreKind,
   type RestoreView,
-  restoreOutcome,
-  stepsOf,
   type WorkflowSummary,
 } from "@/lib/restore"
 import { unsavedGuardOn } from "@/lib/session"
@@ -312,9 +306,11 @@ function Archive() {
         itemId === undefined ? null : !selected ? (
           <Empty title="This item is not in the archive." />
         ) : view === "workflows" ? (
-          <WorkflowPane workflow={selected as WorkflowSummary} {...shared} />
+          // Keyed by the item: a narrow screen keeps the pane mounted from item to item, and nothing of one item
+          // (its JSON, an open restore) may stay for the next.
+          <WorkflowPane key={`workflow:${selected.id}`} workflow={selected as WorkflowSummary} {...shared} />
         ) : (
-          <CredentialPane credential={selected as CredentialSummary} {...shared} />
+          <CredentialPane key={`credential:${selected.id}`} credential={selected as CredentialSummary} {...shared} />
         )
       }
       onClose={() => navigate(`${base}/${view}${search}`)}
@@ -600,6 +596,9 @@ function WorkflowPane({
             </BusyButton>
           </div>
         </div>
+        <p className="text-small text-muted-foreground">
+          The archive holds the latest saved version, which on n8n 2 is the draft and may differ from the published one.
+        </p>
       </div>
 
       <Panel>
@@ -811,14 +810,6 @@ const dropReview = (r: RestoreView | null) => {
   if (r?.status === "previewed") void api(`/backups/restores/${r.id}`, { method: "DELETE" }).catch(() => {})
 }
 
-const outcomeLook = {
-  done: { variant: "ok", icon: CheckCircle2, title: "Restored" },
-  failed: { variant: "fail", icon: XCircle, title: "Restore failed" },
-  unknown: { variant: "warn", icon: TriangleAlert, title: "Outcome unknown" },
-  pending: { variant: "info", icon: CircleDashed, title: "Still running" },
-  previewed: { variant: "info", icon: CircleDashed, title: "Not confirmed" },
-} as const
-
 /**
  * Restore one item (D6): choose where, review exactly what it will do, confirm once, then read how each step went.
  * Closing before the confirm drops the review. The key stays on the page, never in the dialog.
@@ -838,7 +829,6 @@ function RestoreDialog({
   instances: PickedInstance[] | undefined
   onClose: () => void
 }) {
-  const w = useTimeFormat()
   // Only an instance with Restore workflows chosen takes a restore; the archive's own one first when it can.
   const targets = activeWith(instances, "restore")
   const own = inspection.run.instanceId
@@ -885,7 +875,7 @@ function RestoreDialog({
       api<RestoreView>(`/backups/restores/${r.id}/confirm`, { method: "POST", json: { privateKey } }),
     )
   const check = async (r: RestoreView) => {
-    const next = await act("check", () => api<RestoreView>(`/backups/restores/${r.id}/check`, { method: "POST" }))
+    const next = await act("check", () => checkRestore(r))
     setStillUnknown(next?.status === "unknown")
   }
   const back = () => {
@@ -946,27 +936,7 @@ function RestoreDialog({
         ) : !ended ? (
           <PlanReview restore={r} />
         ) : (
-          <div className="grid gap-3">
-            <Alert variant={outcomeLook[r.status].variant}>
-              {React.createElement(outcomeLook[r.status].icon)}
-              <AlertTitle>{outcomeLook[r.status].title}</AlertTitle>
-              <AlertDescription>
-                {restoreOutcome(r)} Restore code <Code>{r.code}</Code>.
-              </AlertDescription>
-            </Alert>
-            <StepList restore={r} />
-            {stillUnknown && r.status === "unknown" && (
-              <p className="text-muted-foreground">
-                Not found yet, which does not prove it failed. Look in n8n, or review the restore again: the new review
-                names this one.
-              </p>
-            )}
-            {r.finishedAt && (
-              <p className="text-small text-muted-foreground">
-                Ended {formatTime(r.finishedAt, w, { seconds: false })}, confirmed by <UserText>{r.actor}</UserText>.
-              </p>
-            )}
-          </div>
+          <RestoreResult restore={r} stillUnknown={stillUnknown} />
         )}
         {error && <FieldError>{error}</FieldError>}
 
@@ -1024,121 +994,5 @@ function RestoreDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  )
-}
-
-/** The review: everything the restore will create, what happens to each credential, and what it leaves out. */
-function PlanReview({ restore: r }: { restore: RestoreView }) {
-  const w = useTimeFormat()
-  const p = r.plan
-  return (
-    <div className="grid gap-3">
-      <p>
-        Into <UserText className="font-semibold">{p.target.name}</UserText>
-        {p.target.sameInstance ? ", the instance this archive is from." : ", not the instance this archive is from."}{" "}
-        {r.kind === "workflow" && "The copy is created inactive, so nothing runs until you publish it."}
-      </p>
-      {p.earlierUnknown.map((e) => (
-        <Alert key={e.id} variant="warn">
-          <TriangleAlert />
-          <AlertTitle>An earlier restore of this item has an unknown outcome</AlertTitle>
-          <AlertDescription>
-            Reviewed {formatTime(e.at, w, { seconds: false })}.{" "}
-            {e.created.length
-              ? `It was seen to create ${e.created.join(", ")}.`
-              : "Nothing it created was seen in n8n yet."}{" "}
-            Check n8n first, so nothing is created twice.
-          </AlertDescription>
-        </Alert>
-      ))}
-      {p.warnings.length > 0 && (
-        <Alert variant="warn">
-          <TriangleAlert />
-          <AlertTitle>Look at this first</AlertTitle>
-          <AlertDescription>
-            <ul className="grid list-disc gap-1 ps-5">
-              {p.warnings.map((x) => (
-                <li key={x}>{x}</li>
-              ))}
-            </ul>
-          </AlertDescription>
-        </Alert>
-      )}
-      <section className="grid gap-1.5">
-        <h3 className="font-semibold">Creates</h3>
-        <ol className="grid gap-1.5">
-          {p.steps.map((s) => (
-            <li key={s.step} className="grid gap-0.5 rounded-sm bg-fill px-3 py-2">
-              <span className="text-small text-muted-foreground">
-                Step {s.step} ·{" "}
-                {s.kind === "workflow" ? "Workflow, inactive" : `Credential${s.type ? `, ${s.type}` : ""}`}
-              </span>
-              <UserText className="font-semibold break-words">{s.name}</UserText>
-            </li>
-          ))}
-        </ol>
-      </section>
-      {p.credentials.length > 0 && (
-        <section className="grid gap-1.5">
-          <h3 className="font-semibold">Credentials the workflow uses</h3>
-          <ul className="grid gap-1.5">
-            {p.credentials.map((a) => (
-              <li key={`${a.action}:${a.type}:${a.sourceId ?? a.name}`} className="grid gap-0.5">
-                <span>
-                  <UserText className="font-semibold">{a.name}</UserText>{" "}
-                  <span className="text-small text-muted-foreground">{a.type}</span>
-                  {a.embedded && (
-                    <Badge variant="line" className="ms-2">
-                      Inside an embedded workflow
-                    </Badge>
-                  )}
-                </span>
-                <span className="text-small text-muted-foreground">{credentialActionText(a)}</span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-      {p.notRestored.length > 0 && (
-        <section className="grid gap-1.5">
-          <h3 className="font-semibold">Not restored</h3>
-          <ul className="grid list-disc gap-1 ps-5 text-muted-foreground">
-            {p.notRestored.map((x) => (
-              <li key={x}>{x}</li>
-            ))}
-          </ul>
-        </section>
-      )}
-      {r.expiresAt && (
-        <p className="text-small text-muted-foreground">
-          Nothing is written until you choose Restore. This review ends <TimeLeft value={r.expiresAt} />.
-        </p>
-      )}
-    </div>
-  )
-}
-
-/** How each step of a restore went. */
-function StepList({ restore }: { restore: RestoreView }) {
-  return (
-    <ol className="grid gap-1.5">
-      {stepsOf(restore).map((s) => (
-        <li key={s.step} className="grid gap-1 rounded-sm bg-fill px-3 py-2">
-          <span className="flex flex-wrap items-center gap-2">
-            <StatusTag kind="restoreStep" status={s.status} />
-            <span className="text-small text-muted-foreground">
-              Step {s.step} · {s.kind === "workflow" ? "Workflow" : "Credential"}
-            </span>
-          </span>
-          <UserText className="font-semibold break-words">{s.name}</UserText>
-          {s.createdId && (
-            <span className="text-small text-muted-foreground">
-              <Said>Created with</Said>ID <Code>{s.createdId}</Code>
-            </span>
-          )}
-          {s.error && <span className="font-mono text-meta break-words text-muted-foreground">{s.error}</span>}
-        </li>
-      ))}
-    </ol>
   )
 }

@@ -40,7 +40,8 @@ export type RestoreStep = PlannedStep & {
 
 /** Everything the owner reviews before a restore; the confirm runs only if it is still exactly this. */
 export type RestorePlan = {
-  target: { id: string; name: string; sameInstance: boolean }
+  /** `revision` is the instance's configuration revision: a new URL or API key since the review refuses the confirm. */
+  target: { id: string; name: string; sameInstance: boolean; revision: number }
   item: { kind: RestoreKind; id: string; name: string }
   mode: RestoreMode
   /** The date in the names it creates (UTC). */
@@ -52,4 +53,6 @@ export type RestorePlan = {
   warnings: string[]
   /** Earlier restores of this item into this target whose outcome is unknown, with what they were seen to create. */
   earlierUnknown: { id: string; at: string; created: string[] }[]
+  /** For a workflow: the top-level fields sent to n8n and the exact settings. */
+  sent?: { fields: string[]; settings: Record<string, unknown> }
 }

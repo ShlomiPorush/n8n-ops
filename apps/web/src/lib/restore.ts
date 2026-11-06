@@ -93,6 +93,11 @@ export type RestorePlan = {
   credentials: CredentialAction[]
   steps: PlannedStep[]
   notRestored: string[]
+  /**
+   * What the restore of a workflow sends to n8n: the top-level fields of the request body, and its settings exactly
+   * as sent. Absent for a credential, and in reviews made before the server said it.
+   */
+  sent?: { fields: string[]; settings: Record<string, unknown> }
   warnings: string[]
   earlierUnknown: { id: string; at: string; created: string[] }[]
 }
@@ -106,7 +111,8 @@ export type RestoreView = {
   itemName: string
   mode: "copy"
   runId: string | null
-  targetInstanceId: string
+  /** Null once the instance was removed. */
+  targetInstanceId: string | null
   actor: string
   plan: RestorePlan
   steps: RestoreStep[]
@@ -172,6 +178,11 @@ export function restoreOutcome(r: Pick<RestoreView, "status" | "kind" | "error" 
     case "previewed":
       return "Not confirmed yet."
   }
+}
+
+/** One value of the settings a restore sends, exactly as sent: as JSON, so text and a number or flag never look alike. */
+export function settingText(value: unknown): string {
+  return value === undefined ? "undefined" : JSON.stringify(value)
 }
 
 /** A file name for an archived workflow's JSON, from its name; never empty. */

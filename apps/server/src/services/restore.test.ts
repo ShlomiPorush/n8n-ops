@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 import { parseWorkflowFields } from "../lib/n8n-spec.ts"
 import type { N8nNode, N8nWorkflow } from "../n8n/client.ts"
+import { N8nError } from "../n8n/client.ts"
 import {
   type ArchivedCredential,
   copyBody,
@@ -9,8 +10,45 @@ import {
   NAME_LIMIT,
   resolveCredentials,
   restoredName,
+  stepMessage,
+  TOO_DEEP,
   workflowChanges,
 } from "./restore.ts"
+
+describe("more of the review", () => {
+  it("flags a workflow embedded deeper than it follows", () => {
+    let inner: unknown = { nodes: [node("Bottom", { credentials: { gmail: { id: "c1" } } })] }
+    for (let i = 0; i < 12; i++) inner = { nodes: [embedding(inner)] }
+    const warnings: string[] = []
+    credentialRefs((inner as { nodes: N8nNode[] }).nodes, warnings)
+    expect(warnings.some((w) => w.includes(TOO_DEEP))).toBe(true)
+  })
+
+  it("removes a reference without an ID when the instance's credentials could be listed", () => {
+    const { actions } = resolveCredentials({
+      refs: [{ type: "slackApi", id: null, name: "Slack", embedded: false }],
+      archived: new Map(),
+      sameInstance: true,
+      live: [{ id: "x", name: "Slack", type: "slackApi" }],
+      targetName: "prod",
+      firstStep: 1,
+    })
+    expect(actions.map((a) => a.action)).toEqual(["remove"])
+  })
+
+  it("names moved nodes even when the workflow also changed, and archived in both directions", () => {
+    const w = workflow()
+    const live = { ...w, nodes: [...w.nodes.map((x) => ({ ...x, position: [9, 9] })), node("New")] as N8nNode[] }
+    expect(workflowChanges(w, live)).toEqual(["definition", "layout"])
+    expect(workflowChanges({ ...w, isArchived: true }, w)).toEqual(["archived"])
+  })
+
+  it("never keeps n8n's message for a credential, which could repeat its secret", () => {
+    const error = new N8nError("n8n answered 400 for POST /credentials", 400, '{"message":"bad value s3cr3t"}')
+    expect(stepMessage({ kind: "credential" }, error)).toBe("n8n answered 400.")
+    expect(stepMessage({ kind: "workflow" }, error)).toContain("bad value")
+  })
+})
 
 const node = (name: string, extra: Partial<N8nNode> & { position?: number[] } = {}): N8nNode =>
   ({ name, type: "n8n-nodes-base.set", parameters: {}, position: [0, 0], ...extra }) as N8nNode

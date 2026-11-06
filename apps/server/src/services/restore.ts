@@ -10,6 +10,7 @@ import type { Ctx } from "../context.ts"
 import { backupRuns, instances, restores } from "../db/schema.ts"
 import type { AuditVia } from "../lib/audit.ts"
 import type { WorkflowFields } from "../lib/n8n-spec.ts"
+import { oneAtATime } from "../lib/one-at-a-time.ts"
 import {
   type N8nClient,
   type N8nCredential,
@@ -52,8 +53,6 @@ export const REVIEW_TTL_MS = 60 * 60_000
 /** Longest name n8n takes for a workflow or a credential. */
 export const NAME_LIMIT = 128
 const EXECUTE_WORKFLOW = "n8n-nodes-base.executeWorkflow"
-/** Restores confirmed before this process started and still pending were cut off by a restart. */
-const processStartedAt = new Date()
 
 // ---------------------------------------------------------------------------
 // Reading the archive
@@ -116,6 +115,10 @@ function parseEmbedded(text: string): { nodes: N8nNode[] } | "expression" | "unr
   }
 }
 
+/** How deep embedded sub-workflows are followed; a restore of one nested deeper is refused (see `TOO_DEEP`). */
+const MAX_DEPTH = 10
+export const TOO_DEEP = "embeds workflows more than 10 levels deep"
+
 /** Every credential reference in the nodes, embedded sub-workflows included, with warnings for what cannot be read. */
 export function credentialRefs(nodes: N8nNode[], warnings: string[] = [], embedded = false, depth = 0) {
   const refs: CredentialRef[] = []
@@ -123,7 +126,11 @@ export function credentialRefs(nodes: N8nNode[], warnings: string[] = [], embedd
     for (const [type, ref] of Object.entries(node.credentials ?? {}))
       refs.push({ type, id: ref?.id ?? null, name: ref?.name ?? null, embedded })
     const source = embeddedSource(node)
-    if (!source || depth > 5) continue
+    if (!source) continue
+    if (depth >= MAX_DEPTH) {
+      warnings.push(`"${node.name}" ${TOO_DEEP}; n8n-ops cannot check the credentials inside.`)
+      continue
+    }
     const inner = parseEmbedded(source.text)
     if (inner === "expression")
       warnings.push(`"${node.name}" runs a workflow from an expression; credentials inside it are left as they are.`)
@@ -154,7 +161,7 @@ export function mapCredentialRefs(nodes: N8nNode[], change: (ref: CredentialRef)
       if (Object.keys(credentials).length === 0) delete next.credentials
     }
     const source = embeddedSource(node)
-    if (source && depth <= 5) {
+    if (source && depth < MAX_DEPTH) {
       const inner = parseEmbedded(source.text)
       if (typeof inner === "object") {
         const mapped = mapCredentialRefs(inner.nodes, change, depth + 1)
@@ -218,12 +225,18 @@ export type Comparison =
     }
   | { available: false; reason: string }
 
+// n8n names every node uniquely and refers to nodes by name; the order of the nodes array carries no meaning, so it
+// is compared by name. Every other array (parameters, connections) keeps its order.
 const shape = (nodes: N8nNode[]) =>
   [...(nodes ?? [])]
     .map(({ position: _p, ...rest }: N8nNode & { position?: unknown }) => rest)
     .sort((a, b) => a.name.localeCompare(b.name))
-const positions = (nodes: N8nNode[]) =>
-  Object.fromEntries((nodes ?? []).map((n) => [n.name, (n as N8nNode & { position?: unknown }).position ?? null]))
+const positionOf = (n: N8nNode) => (n as N8nNode & { position?: unknown }).position ?? null
+/** Whether a node both sides have was moved. */
+const moved = (a: N8nNode[], b: N8nNode[]) => {
+  const there = new Map((b ?? []).map((n) => [n.name, positionOf(n)]))
+  return (a ?? []).some((n) => there.has(n.name) && !isDeepStrictEqual(positionOf(n), there.get(n.name)))
+}
 
 /** What differs between the archived workflow and the one on the instance; a field the instance does not return is not compared. */
 export function workflowChanges(archived: N8nWorkflow, live: N8nWorkflow): ChangeKind[] {
@@ -235,7 +248,7 @@ export function workflowChanges(archived: N8nWorkflow, live: N8nWorkflow): Chang
     (has("nodeGroups") && !isDeepStrictEqual(archived.nodeGroups ?? null, live.nodeGroups ?? null))
   )
     out.push("definition")
-  else if (!isDeepStrictEqual(positions(archived.nodes), positions(live.nodes))) out.push("layout")
+  if (moved(archived.nodes, live.nodes)) out.push("layout")
   if (has("settings") && !isDeepStrictEqual(archived.settings ?? {}, live.settings ?? {})) out.push("settings")
   if (archived.name !== live.name) out.push("name")
   if (has("description") && (archived.description ?? null) !== (live.description ?? null)) out.push("description")
@@ -243,7 +256,7 @@ export function workflowChanges(archived: N8nWorkflow, live: N8nWorkflow): Chang
     out.push("staticData")
   if (has("pinData") && !isDeepStrictEqual(archived.pinData ?? null, live.pinData ?? null)) out.push("pinData")
   if (Boolean(archived.active) !== Boolean(live.active)) out.push("published")
-  if (live.isArchived && !archived.isArchived) out.push("archived")
+  if (Boolean(live.isArchived) !== Boolean(archived.isArchived)) out.push("archived")
   return out
 }
 
@@ -404,12 +417,17 @@ export function resolveCredentials({ refs, archived, sameInstance, live, targetN
       return false
     }
     if (sameInstance) {
-      if (!ref.id) {
-        actions.push({ ...base, action: "keep", reason: "The workflow names it without an ID; n8n finds it by name." })
-        continue
-      }
       if (typeof live === "string") {
         actions.push({ ...base, action: "keep", reason: `Not checked: ${live}` })
+        continue
+      }
+      if (!ref.id) {
+        // n8n would bind it by name to whatever credential has that name now, which proves nothing.
+        actions.push({
+          ...base,
+          action: "remove",
+          reason: "The workflow names it without an ID, so it cannot be matched; set it in n8n.",
+        })
         continue
       }
       const found = live.find((c) => c.id === ref.id && c.type === type)
@@ -525,7 +543,7 @@ async function buildPlan(
         `The archive has no secrets for ${credential.name}; n8n cannot take a credential without them.`,
       )
     plan = {
-      target: { id: target.id, name: target.name, sameInstance },
+      target: { id: target.id, name: target.name, sameInstance, revision: target.configRevision },
       item: { kind: "credential", id: credential.id, name: credential.name },
       mode: "copy",
       date,
@@ -546,6 +564,10 @@ async function buildPlan(
     workflow = archive.workflows.find((w) => w.id === item.id)
     if (!workflow) throw new RestoreError("This workflow is not in the archive.", "not_found")
     const refs = credentialRefs(workflow.nodes, warnings)
+    if (warnings.some((w) => w.includes(TOO_DEEP)))
+      throw new RestoreError(
+        `${workflow.name} ${TOO_DEEP}; n8n-ops cannot check the credentials inside, so it is not restored.`,
+      )
     let live: N8nCredential[] | string = "the API key cannot list credentials (credential:list)."
     if (sameInstance && refs.length > 0 && effectiveScopes(target).includes("credential:list")) {
       try {
@@ -577,9 +599,9 @@ async function buildPlan(
     )
     const name = restoredName(workflow.name, date, code, nextStep)
     steps.push({ step: nextStep, kind: "workflow", sourceId: workflow.id, name })
-    const { notRestored } = copyBody(workflow, name, await workflowFieldsOf(ctx, target))
+    const { body, notRestored } = copyBody(workflow, name, await workflowFieldsOf(ctx, target))
     plan = {
-      target: { id: target.id, name: target.name, sameInstance },
+      target: { id: target.id, name: target.name, sameInstance, revision: target.configRevision },
       item: { kind: "workflow", id: workflow.id, name: workflow.name },
       mode: "copy",
       date,
@@ -587,6 +609,8 @@ async function buildPlan(
       steps,
       notRestored,
       warnings,
+      // Nodes and connections are those of the archive with the credential changes above; the rest as sent.
+      sent: { fields: Object.keys(body), settings: body.settings },
     }
   }
   const unknown = await ctx.db
@@ -611,7 +635,8 @@ async function buildPlan(
   return { plan: { ...plan, earlierUnknown }, workflow, client }
 }
 
-export type RestoreActor = { actor: string; via: AuditVia }
+/** Who reviews or confirms: the name the audit shows and, for a person or token, its ID. */
+export type RestoreActor = { actor: string; actorId: string | null; via: AuditVia }
 
 /** Reviews a restore: stores what it will do (no key, no secrets) and returns it with the restore's ID. */
 export async function previewRestore(
@@ -635,6 +660,7 @@ export async function previewRestore(
       .values({
         code,
         actor: input.actor,
+        actorId: input.actorId,
         via: input.via,
         runId: archive.run.id,
         targetInstanceId: target.id,
@@ -742,6 +768,16 @@ export function n8nMessage(error: unknown) {
   return (error as Error)?.message ?? String(error)
 }
 
+/**
+ * What a failed step stores and shows. For a credential only the status, never n8n's own message: it could repeat
+ * a value of the secret that was sent.
+ */
+export function stepMessage(step: Pick<PlannedStep, "kind">, error: unknown) {
+  if (step.kind !== "credential") return n8nMessage(error)
+  if (error instanceof N8nError) return `n8n answered ${error.status}.`
+  return (error as Error)?.name === "TimeoutError" ? "n8n did not answer in time." : "The connection to n8n failed."
+}
+
 /** Finds what a step would have created, by its exact name: the ID, null when n8n has none, undefined when unclear. */
 async function findCreated(client: N8nClient, step: PlannedStep): Promise<string | null | undefined> {
   try {
@@ -770,7 +806,7 @@ async function runStep(
     const created = await write()
     return { ...step, status: "done", createdId: created.id }
   } catch (error) {
-    const message = n8nMessage(error)
+    const message = stepMessage(step, error)
     const found = await findCreated(client, step)
     if (typeof found === "string")
       return {
@@ -784,11 +820,28 @@ async function runStep(
   }
 }
 
-/** Runs a reviewed restore once. A second confirm, or one for a restore already running or ended, returns it as it is. */
-export async function confirmRestore(ctx: Ctx, restoreId: string, privateKey: string) {
+/** Restores this process is running now; a pending one that is not here was cut off (see `sweepRestores`). */
+const running = new Set<string>()
+
+/**
+ * Runs a reviewed restore once. A second confirm, or one for a restore already running or ended, returns it as it
+ * is. The person who confirms is the one the audit names.
+ */
+export function confirmRestore(ctx: Ctx, restoreId: string, privateKey: string, by: RestoreActor) {
+  return oneAtATime(`restore:${restoreId}`, async () => {
+    running.add(restoreId)
+    try {
+      return await confirmNow(ctx, restoreId, privateKey, by)
+    } finally {
+      running.delete(restoreId)
+    }
+  })
+}
+
+async function confirmNow(ctx: Ctx, restoreId: string, privateKey: string, by: RestoreActor) {
   const [row] = await ctx.db
     .update(restores)
-    .set({ status: "pending", confirmedAt: new Date() })
+    .set({ status: "pending", confirmedAt: new Date(), actor: by.actor, actorId: by.actorId, via: by.via })
     .where(and(eq(restores.id, restoreId), eq(restores.status, "previewed")))
     .returning()
   if (!row) {
@@ -799,6 +852,18 @@ export async function confirmRestore(ctx: Ctx, restoreId: string, privateKey: st
   if (row.createdAt.getTime() + REVIEW_TTL_MS < Date.now())
     return view(await finish(ctx, row, "failed", [], "The review expired before it was confirmed. Review it again."))
   const steps: RestoreStep[] = row.reviewed.steps.map((s) => ({ ...s, status: "todo" }))
+  try {
+    return await execute(ctx, row, steps, privateKey)
+  } catch (error) {
+    // The database failed in between (a step's progress, say): what n8n holds is not known. When even this
+    // fails, the row stays pending and the sweep marks it unknown, as it is no longer running.
+    const at = steps.findIndex((s) => s.status === "todo")
+    if (at >= 0) steps[at] = { ...(steps[at] as RestoreStep), status: "unknown" }
+    return view(await finish(ctx, row, "unknown", steps, `The restore stopped: ${(error as Error).message}`))
+  }
+}
+
+async function execute(ctx: Ctx, row: Row, steps: RestoreStep[], privateKey: string) {
   // Stored at once, so a restart from here on leaves the steps to check.
   await ctx.db.update(restores).set({ steps }).where(eq(restores.id, row.id))
   let built: Awaited<ReturnType<typeof buildPlan>>
@@ -806,6 +871,7 @@ export async function confirmRestore(ctx: Ctx, restoreId: string, privateKey: st
   let target: Target
   try {
     if (!row.runId) throw new RestoreError("The archive of this review is gone.")
+    if (!row.targetInstanceId) throw new RestoreError("The target instance was removed.")
     target = await targetFor(ctx, row.targetInstanceId)
     archive = await loadArchive(ctx, row.runId, privateKey)
     built = await buildPlan(
@@ -864,12 +930,19 @@ export async function confirmRestore(ctx: Ctx, restoreId: string, privateKey: st
  * "Check and try again" for a restore whose outcome is unknown: reads n8n for each step's exact name. It ends done
  * only when every step is proven written; not found does not prove a failure, so the restore stays unknown.
  */
-export async function checkRestore(ctx: Ctx, restoreId: string) {
+export function checkRestore(ctx: Ctx, restoreId: string) {
+  // One check at a time per restore, so a later one never writes over what an earlier one proved.
+  return oneAtATime(`restore:${restoreId}`, () => checkNow(ctx, restoreId))
+}
+
+async function checkNow(ctx: Ctx, restoreId: string) {
   const [row] = await ctx.db.select().from(restores).where(eq(restores.id, restoreId))
   if (!row) throw new RestoreError("Restore not found.", "not_found")
   if (row.status !== "unknown") return view(row)
-  const [target] = await ctx.db.select().from(instances).where(eq(instances.id, row.targetInstanceId))
-  if (!target) throw new RestoreError("Target instance not found.", "not_found")
+  const [target] = row.targetInstanceId
+    ? await ctx.db.select().from(instances).where(eq(instances.id, row.targetInstanceId))
+    : []
+  if (!target) throw new RestoreError("The target instance was removed.", "not_found")
   const client = clientFor(ctx, target)
   const steps = [...row.steps]
   for (let i = 0; i < steps.length; i++) {
@@ -885,8 +958,12 @@ export async function checkRestore(ctx: Ctx, restoreId: string) {
   }
   if (steps.every((s) => s.status === "done"))
     return view(await finish(ctx, row, "done", steps, null, "Confirmed by checking n8n."))
-  const [saved] = await ctx.db.update(restores).set({ steps }).where(eq(restores.id, row.id)).returning()
-  return view(saved as Row)
+  const [saved] = await ctx.db
+    .update(restores)
+    .set({ steps })
+    .where(and(eq(restores.id, row.id), eq(restores.status, "unknown")))
+    .returning()
+  return view(saved ?? row)
 }
 
 export async function getRestore(ctx: Ctx, restoreId: string) {
@@ -916,24 +993,21 @@ export async function dropReview(ctx: Ctx, restoreId: string) {
 }
 
 /**
- * Scheduled: reviews older than an hour leave (they never wrote anything), and restores cut off by a restart become
- * unknown, with their audit entry.
+ * Scheduled: reviews older than an hour leave (they never wrote anything), and restores this process is not running
+ * but still pending (cut off by a restart, or by a failed database write) become unknown, with their audit entry.
  */
 export async function sweepRestores(ctx: Ctx) {
   await ctx.db
     .delete(restores)
     .where(and(eq(restores.status, "previewed"), lt(restores.createdAt, new Date(Date.now() - REVIEW_TTL_MS))))
-  const cut = await ctx.db
-    .select()
-    .from(restores)
-    .where(and(eq(restores.status, "pending"), lt(restores.confirmedAt, processStartedAt)))
-  for (const row of cut) {
+  const pending = await ctx.db.select().from(restores).where(eq(restores.status, "pending"))
+  for (const row of pending.filter((r) => !running.has(r.id))) {
     const steps: RestoreStep[] = row.steps.length
       ? [...row.steps]
       : row.reviewed.steps.map((s) => ({ ...s, status: "todo" }))
     // The step that was running when the server stopped may have been written.
     const running = steps.findIndex((s) => s.status === "todo")
     if (running >= 0) steps[running] = { ...(steps[running] as RestoreStep), status: "unknown" }
-    await finish(ctx, row, "unknown", steps, "n8n-ops restarted during this restore. Check n8n before trying again.")
+    await finish(ctx, row, "unknown", steps, "This restore was cut off. Check n8n before trying again.")
   }
 }

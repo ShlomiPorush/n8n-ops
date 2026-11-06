@@ -1,5 +1,5 @@
 {
-  "id": "8dfc918f-8706-4af7-b91a-e34cd7de7bed",
+  "id": "e1e357f7-61b1-45ba-8cb6-172d6109570d",
   "prevId": "e27b255e-2bbd-4723-aabe-d2d1ea478ec1",
   "version": "7",
   "dialect": "postgresql",
@@ -2803,6 +2803,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "actor_id": {
+          "name": "actor_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "via": {
           "name": "via",
           "type": "text",
@@ -2819,7 +2825,7 @@
           "name": "target_instance_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "kind": {
           "name": "kind",
@@ -2958,7 +2964,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
+          "onDelete": "set null",
           "onUpdate": "no action"
         }
       },

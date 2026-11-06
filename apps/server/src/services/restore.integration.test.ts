@@ -85,7 +85,8 @@ beforeAll(async () => {
       const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : {}
       const create = (kind: "credential" | "workflow", save: () => { id: string }) => {
         const behaviour = n8n.next[kind].shift() ?? "ok"
-        if (behaviour === "refuse") return send(400, { message: "request/body must have required property" })
+        // Like a validation error that repeats what it was sent, secrets included.
+        if (behaviour === "refuse") return send(400, { message: `request/body is invalid: ${JSON.stringify(body)}` })
         if (behaviour === "dropWithoutSave") return res.destroy()
         n8n.writes += 1
         const saved = save()
@@ -234,9 +235,12 @@ const preview = (
     targetInstanceId: target.id,
     kind,
     itemId,
-    actor: "owner",
+    actor: "reviewer",
+    actorId: "user-1",
     via: "web",
   })
+/** The person who confirms; the audit names them, not who reviewed. */
+const by = { actor: "owner", actorId: "user-2", via: "web" as const }
 
 describe("browsing an archive", () => {
   it("lists summaries, compares with the instance, and never returns a credential secret", async () => {
@@ -287,7 +291,7 @@ describe("restoring a workflow as a copy", () => {
       `Orders (restored ${review.plan.date} ${review.code}-2)`,
     ])
 
-    const done = await confirmRestore(ctx, review.id, identity)
+    const done = await confirmRestore(ctx, review.id, identity, by)
     expect(done.status).toBe("done")
     expect(n8n.writes).toBe(2)
     const created = n8n.credentials.find((c) => c.name === names[0])
@@ -303,11 +307,13 @@ describe("restoring a workflow as a copy", () => {
     const inner = JSON.parse(String(copy?.nodes.find((n) => n.name === "Inner")?.parameters?.workflowJson))
     expect(inner.nodes[0].credentials.httpBasicAuth.id).toBe(created?.id)
     const [entry] = await ctx.db.select().from(auditLog).where(eq(auditLog.action, "Workflow restored"))
+    // The person who confirmed it, not who reviewed it.
     expect(entry).toMatchObject({ actor: "owner", via: "web" })
+    expect((await ctx.db.select().from(restores).where(eq(restores.id, review.id)))[0]?.actorId).toBe("user-2")
     expect(JSON.stringify(entry?.details)).not.toContain(SECRET)
 
     // A second confirm (double click, a resend) changes nothing.
-    expect((await confirmRestore(ctx, review.id, identity)).status).toBe("done")
+    expect((await confirmRestore(ctx, review.id, identity, by)).status).toBe("done")
     expect(n8n.writes).toBe(2)
   })
 
@@ -316,8 +322,8 @@ describe("restoring a workflow as a copy", () => {
     const run = await archiveOf(source)
     const review = await preview(run.id, source)
     const [a, b] = await Promise.all([
-      confirmRestore(ctx, review.id, identity),
-      confirmRestore(ctx, review.id, identity),
+      confirmRestore(ctx, review.id, identity, by),
+      confirmRestore(ctx, review.id, identity, by),
     ])
     // One ran it; the other got the restore as it was at that moment.
     expect([a.status, b.status]).toContain("done")
@@ -331,10 +337,55 @@ describe("restoring a workflow as a copy", () => {
     live("cred-slack", "Slack", "slackApi", "2026-01-03T00:00:00Z")
     const review = await preview(run.id, source)
     n8n.credentials = []
-    const result = await confirmRestore(ctx, review.id, identity)
+    const result = await confirmRestore(ctx, review.id, identity, by)
     expect(result.status).toBe("failed")
     expect(result.error).toContain("changed since you reviewed")
     expect(n8n.writes).toBe(0)
+  })
+
+  it("refuses when the instance got another URL or API key since the review", async () => {
+    const source = await instance()
+    const run = await archiveOf(source)
+    const review = await preview(run.id, source, "credential", "cred-basic")
+    await ctx.db
+      .update(instances)
+      .set({ configRevision: source.configRevision + 1 })
+      .where(eq(instances.id, source.id))
+    const result = await confirmRestore(ctx, review.id, identity, by)
+    expect(result.status).toBe("failed")
+    expect(n8n.writes).toBe(0)
+  })
+
+  it("removes a reference without an ID instead of letting n8n bind it by name", async () => {
+    const source = await instance()
+    const [run] = await ctx.db
+      .insert(backupRuns)
+      .values({ instanceId: source.id, status: "ok", includesSecrets: true })
+      .returning()
+    const w = archivedWorkflowJson()
+    w.nodes = [
+      { name: "Old", type: "n8n-nodes-base.slack", parameters: {}, credentials: { slackApi: { name: "Slack" } } },
+    ]
+    const sealed = await sealArchive(
+      [textEntry("workflows/wf-orders.json", JSON.stringify(w))],
+      await identityToRecipient(identity),
+    )
+    archives.set(run?.id ?? "", sealed.bytes)
+    live("other", "Slack", "slackApi", "2026-05-05T00:00:00Z")
+    const review = await preview(run?.id ?? "", source)
+    expect(review.plan.credentials.map((a) => a.action)).toEqual(["remove"])
+    expect((await confirmRestore(ctx, review.id, identity, by)).status).toBe("done")
+    expect(n8n.workflows[0]?.nodes[0]?.credentials).toBeUndefined()
+  })
+
+  it("keeps its record when the instance is removed", async () => {
+    const source = await instance()
+    const run = await archiveOf(source)
+    const review = await preview(run.id, source, "credential", "cred-basic")
+    expect((await confirmRestore(ctx, review.id, identity, by)).status).toBe("done")
+    await ctx.db.delete(instances).where(eq(instances.id, source.id))
+    const [row] = await ctx.db.select().from(restores).where(eq(restores.id, review.id))
+    expect(row).toMatchObject({ status: "done", targetInstanceId: null })
   })
 
   it("keeps the references and creates nothing when the key cannot list credentials", async () => {
@@ -342,7 +393,7 @@ describe("restoring a workflow as a copy", () => {
     const run = await archiveOf(source)
     const review = await preview(run.id, source)
     expect(review.plan.credentials.every((a) => a.action === "keep")).toBe(true)
-    expect((await confirmRestore(ctx, review.id, identity)).status).toBe("done")
+    expect((await confirmRestore(ctx, review.id, identity, by)).status).toBe("done")
     expect(n8n.credentials).toEqual([])
   })
 
@@ -356,7 +407,7 @@ describe("restoring a workflow as a copy", () => {
       ["cred-basic", "create"],
       ["cred-slack", "remove"],
     ])
-    expect((await confirmRestore(ctx, review.id, identity)).status).toBe("done")
+    expect((await confirmRestore(ctx, review.id, identity, by)).status).toBe("done")
     const copy = n8n.workflows[0]
     // Removed as a whole: n8n cannot bind it to another credential by name.
     expect(copy?.nodes.find((n) => n.name === "Notify")?.credentials).toBeUndefined()
@@ -369,7 +420,7 @@ describe("a write that ends in an error", () => {
     const run = await archiveOf(source)
     n8n.next.credential.push("saveThenFail")
     const review = await preview(run.id, await instance())
-    const result = await confirmRestore(ctx, review.id, identity)
+    const result = await confirmRestore(ctx, review.id, identity, by)
     expect(result.status).toBe("done")
     expect(result.steps[0]).toMatchObject({ status: "done", error: expect.stringContaining("created it") })
   })
@@ -379,10 +430,15 @@ describe("a write that ends in an error", () => {
     const run = await archiveOf(source)
     n8n.next.credential.push("refuse")
     const review = await preview(run.id, await instance())
-    const result = await confirmRestore(ctx, review.id, identity)
+    const result = await confirmRestore(ctx, review.id, identity, by)
     expect(result.status).toBe("failed")
     expect(result.steps.map((s) => s.status)).toEqual(["failed", "todo"])
     expect(n8n.workflows).toEqual([])
+    // n8n's message repeated the secret it was sent: neither the result nor the record nor the audit keeps it.
+    expect(result.steps[0]?.error).toBe("n8n answered 400.")
+    const [row] = await ctx.db.select().from(restores).where(eq(restores.id, review.id))
+    const audit = await ctx.db.select().from(auditLog).where(eq(auditLog.action, "Workflow restore failed"))
+    expect(JSON.stringify([result, row, audit])).not.toContain(SECRET)
   })
 
   it("that was cut off is unknown; checking finds it once it is there", async () => {
@@ -391,7 +447,7 @@ describe("a write that ends in an error", () => {
     n8n.next.workflow.push("dropWithoutSave")
     const target = await instance()
     const review = await preview(run.id, target)
-    const result = await confirmRestore(ctx, review.id, identity)
+    const result = await confirmRestore(ctx, review.id, identity, by)
     expect(result.status).toBe("unknown")
     expect(result.steps.map((s) => s.status)).toEqual(["done", "unknown"])
     const checked = await checkRestore(ctx, review.id)
@@ -400,7 +456,9 @@ describe("a write that ends in an error", () => {
     // The request lands late after all.
     const step = result.steps[1]
     n8n.workflows.push({ ...archivedWorkflowJson(), id: "late", name: step?.name ?? "", createdAt: "" })
-    const found = await checkRestore(ctx, review.id)
+    // Two checks at once: the second never writes the steps back over what the first proved.
+    const [found, again] = await Promise.all([checkRestore(ctx, review.id), checkRestore(ctx, review.id)])
+    expect(again).toMatchObject({ status: "done", steps: found.steps })
     expect(found.status).toBe("done")
     expect(found.steps[1]).toMatchObject({ status: "done", createdId: "late" })
     // The next review of the same item names the earlier unknown one while it is unknown; now it is done.
@@ -412,7 +470,7 @@ describe("a write that ends in an error", () => {
     const run = await archiveOf(source)
     n8n.next.workflow.push("dropAfterSave")
     const review = await preview(run.id, await instance())
-    expect((await confirmRestore(ctx, review.id, identity)).status).toBe("done")
+    expect((await confirmRestore(ctx, review.id, identity, by)).status).toBe("done")
   })
 
   it("is named in the next review of the same item while its outcome is unknown", async () => {
@@ -421,7 +479,7 @@ describe("a write that ends in an error", () => {
     n8n.next.credential.push("dropWithoutSave")
     const target = await instance()
     const first = await preview(run.id, target)
-    expect((await confirmRestore(ctx, first.id, identity)).status).toBe("unknown")
+    expect((await confirmRestore(ctx, first.id, identity, by)).status).toBe("unknown")
     const next = await preview(run.id, target)
     expect(next.plan.earlierUnknown.map((e) => e.id)).toEqual([first.id])
   })
@@ -433,7 +491,7 @@ describe("a credential on its own", () => {
     const run = await archiveOf(source)
     const review = await preview(run.id, source, "credential", "cred-basic")
     expect(review.plan.steps).toHaveLength(1)
-    expect((await confirmRestore(ctx, review.id, identity)).status).toBe("done")
+    expect((await confirmRestore(ctx, review.id, identity, by)).status).toBe("done")
     expect(n8n.credentials[0]).toMatchObject({ type: "httpBasicAuth", data: { password: SECRET } })
   })
 
@@ -466,7 +524,7 @@ describe("the sweep", () => {
     const audit = await ctx.db
       .select()
       .from(auditLog)
-      .where(and(eq(auditLog.action, "Workflow restore unknown"), eq(auditLog.actor, "owner")))
+      .where(and(eq(auditLog.action, "Workflow restore unknown"), eq(auditLog.actor, "reviewer")))
     expect(audit.length).toBeGreaterThan(0)
   })
 })

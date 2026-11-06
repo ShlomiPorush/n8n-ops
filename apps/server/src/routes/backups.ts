@@ -9,6 +9,7 @@ import { NoDestinationError, recentRuns, runSelfBackup, startBackup, usableWorke
 import { describeLocation, destinationsFor } from "../services/destinations/index.ts"
 import { can, NoApiKey } from "../services/instances.ts"
 import {
+  type ArchiveSource,
   archivedWorkflow,
   checkRestore,
   confirmRestore,
@@ -150,53 +151,71 @@ export function backupRoutes(ctx: Ctx) {
     schema.safeParse(await c.req.json().catch(() => ({})))
   const uuid = z.string().uuid()
 
-  app.post("/runs/:runId/inspect", async (c) => {
-    const parsed = await body(c, z.object({ privateKey: keySchema }))
-    if (!parsed.success) return c.json(refused(parsed.error.issues), 400)
-    try {
-      return c.json(await inspectArchive(ctx, c.req.param("runId"), parsed.data.privateKey))
-    } catch (error) {
-      return failed(c, error)
+  // A backup run's archive (`/runs/:runId/...`) and the Version before replace a restore kept
+  // (`/versions/:restoreId/...`) open, read and restore the same way.
+  const sources = [
+    { prefix: "runs", param: "runId", source: (id: string): ArchiveSource => ({ runId: id }) },
+    { prefix: "versions", param: "restoreId", source: (id: string): ArchiveSource => ({ versionOf: id }) },
+  ] as const
+  for (const { prefix, param, source } of sources) {
+    const from = (c: Context<Env>) => {
+      const id = c.req.param(param) ?? ""
+      return uuid.safeParse(id).success ? source(id) : null
     }
-  })
 
-  app.post("/runs/:runId/workflows/:workflowId", async (c) => {
-    const parsed = await body(c, z.object({ privateKey: keySchema }))
-    if (!parsed.success) return c.json(refused(parsed.error.issues), 400)
-    try {
-      return c.json(
-        await archivedWorkflow(ctx, c.req.param("runId"), parsed.data.privateKey, c.req.param("workflowId")),
-      )
-    } catch (error) {
-      return failed(c, error)
-    }
-  })
+    app.post(`/${prefix}/:${param}/inspect`, async (c) => {
+      const parsed = await body(c, z.object({ privateKey: keySchema }))
+      if (!parsed.success) return c.json(refused(parsed.error.issues), 400)
+      const src = from(c)
+      if (!src) return c.json({ error: "not_found", message: "This archive is not available." }, 404)
+      try {
+        return c.json(await inspectArchive(ctx, src, parsed.data.privateKey))
+      } catch (error) {
+        return failed(c, error)
+      }
+    })
 
-  app.post("/runs/:runId/restores", async (c) => {
-    const parsed = await body(
-      c,
-      z.object({
-        privateKey: keySchema,
-        targetInstanceId: uuid,
-        kind: z.enum(["workflow", "credential"]),
-        itemId: z.string().min(1).max(200),
-      }),
-    )
-    if (!parsed.success) return c.json(refused(parsed.error.issues), 400)
-    try {
-      return c.json(
-        await previewRestore(ctx, {
-          runId: c.req.param("runId"),
-          ...parsed.data,
-          actor: actorName(c.get("actor")),
-          actorId: c.get("actor").id,
-          via: "web",
+    app.post(`/${prefix}/:${param}/workflows/:workflowId`, async (c) => {
+      const parsed = await body(c, z.object({ privateKey: keySchema }))
+      if (!parsed.success) return c.json(refused(parsed.error.issues), 400)
+      const src = from(c)
+      if (!src) return c.json({ error: "not_found", message: "This archive is not available." }, 404)
+      try {
+        return c.json(await archivedWorkflow(ctx, src, parsed.data.privateKey, c.req.param("workflowId")))
+      } catch (error) {
+        return failed(c, error)
+      }
+    })
+
+    app.post(`/${prefix}/:${param}/restores`, async (c) => {
+      const parsed = await body(
+        c,
+        z.object({
+          privateKey: keySchema,
+          targetInstanceId: uuid,
+          kind: z.enum(["workflow", "credential"]),
+          itemId: z.string().min(1).max(200),
+          mode: z.enum(["copy", "replace"]).default("copy"),
         }),
       )
-    } catch (error) {
-      return failed(c, error)
-    }
-  })
+      if (!parsed.success) return c.json(refused(parsed.error.issues), 400)
+      const src = from(c)
+      if (!src) return c.json({ error: "not_found", message: "This archive is not available." }, 404)
+      try {
+        return c.json(
+          await previewRestore(ctx, {
+            source: src,
+            ...parsed.data,
+            actor: actorName(c.get("actor")),
+            actorId: c.get("actor").id,
+            via: "web",
+          }),
+        )
+      } catch (error) {
+        return failed(c, error)
+      }
+    })
+  }
 
   app.post("/restores/:id/confirm", async (c) => {
     const parsed = await body(c, z.object({ privateKey: keySchema }))

@@ -422,6 +422,84 @@ test("a credential is restored on its own as a new credential", async () => {
   await dialogClosed(page)
 })
 
+type LiveWorkflow = {
+  name: string
+  nodes: { name: string; notes?: string }[]
+  connections: unknown
+  active: boolean
+  activeVersionId?: string | null
+}
+
+test("a workflow is replaced from the backup, and put back from the version before", async () => {
+  test.setTimeout(150_000)
+  const all = (await (await n8nApi("/api/v1/workflows?limit=250")).json()) as { data: { id: string; name: string }[] }
+  const id = all.data.find((w) => w.name === "Sync orders to ERP")?.id ?? ""
+  const read = async () => (await (await n8nApi(`/api/v1/workflows/${id}`)).json()) as LiveWorkflow
+  // The draft in n8n changes after the backup: a note on one node, saved without publishing it.
+  const original = await read()
+  expect(original.active).toBe(true)
+  const note = `Edited after the backup at ${Date.now()}`
+  const edited = await n8nApi(`/api/v1/workflows/${id}?publishIfActive=false`, {
+    method: "PUT",
+    body: JSON.stringify({
+      name: original.name,
+      nodes: original.nodes.map((n) => (n.name === "Call ERP" ? { ...n, notes: note } : n)),
+      connections: original.connections,
+      // n8n merges the settings sent into its own: none sent, none changed.
+      settings: {},
+    }),
+  })
+  expect(edited.ok, await edited.clone().text()).toBe(true)
+
+  await openArchive(loadPrivateKey())
+  await page.getByRole("row", { name: /^Sync orders to ERP/ }).click()
+  await page.getByRole("button", { name: "Restore", exact: true }).click()
+  const dialog = page.getByRole("dialog", { name: "Restore Sync orders to ERP" })
+  await dialog.getByRole("radio", { name: "Replace the current workflow" }).click()
+  await dialog.getByRole("button", { name: "Review" }).click()
+  // The review says what stays live: the workflow is published, n8n-ops does not publish.
+  await expect(dialog.getByText("The workflow is published now")).toBeVisible()
+  await dialog.getByRole("button", { name: "Replace", exact: true }).click()
+  await expect(dialog.getByText(/^Replaced on e2e-n8n\./)).toBeVisible({ timeout: 30_000 })
+  // n8n did nothing the review did not expect (no settings change, still published).
+  await expect(dialog.getByText("Check the workflow in n8n now")).toHaveCount(0)
+  const replaced = await read()
+  expect(replaced.nodes.find((n) => n.name === "Call ERP")?.notes).toBeUndefined()
+  expect(replaced.active).toBe(true)
+  expect(replaced.activeVersionId ?? null).toBe(original.activeVersionId ?? null)
+  await dialog.getByRole("button", { name: "Done" }).click()
+  await dialogClosed(page)
+
+  // The instance's backup pane lists the replace and opens the version before it.
+  await page.goto("/backups")
+  await page.getByRole("row", { name: /e2e-n8n/ }).click()
+  const restores = page.locator("section").filter({ has: page.getByRole("heading", { name: "Restores" }) })
+  const entry = restores.getByRole("listitem").filter({ hasText: "workflow replaced" }).first()
+  await expect(entry).toContainText("Done")
+  await entry.getByRole("button", { name: "Sync orders to ERP" }).click()
+  await page
+    .getByRole("dialog", { name: "Restore of Sync orders to ERP" })
+    .getByRole("link", { name: "Open the version before" })
+    .click()
+  await expect(page).toHaveURL(/\/backups\/[^/]+\/versions\/[^/?]+$/)
+  await expect(page.getByRole("heading", { name: "Open the Version Before" })).toBeVisible()
+  await page.getByLabel("Private backup key").fill(loadPrivateKey())
+  await page.getByRole("button", { name: "Open version" }).click()
+  await page.getByRole("row", { name: /^Sync orders to ERP/ }).click()
+  await page.getByRole("button", { name: "Restore", exact: true }).click()
+  const back = page.getByRole("dialog", { name: "Restore Sync orders to ERP" })
+  await back.getByRole("radio", { name: "Replace the current workflow" }).click()
+  await back.getByRole("button", { name: "Review" }).click()
+  await back.getByRole("button", { name: "Replace", exact: true }).click()
+  await expect(back.getByText(/^Replaced on e2e-n8n\./)).toBeVisible({ timeout: 30_000 })
+  await expect(back.getByText("Check the workflow in n8n now")).toHaveCount(0)
+  const putBack = await read()
+  expect(putBack.nodes.find((n) => n.name === "Call ERP")?.notes).toBe(note)
+  expect(putBack.active).toBe(true)
+  await back.getByRole("button", { name: "Done" }).click()
+  await dialogClosed(page)
+})
+
 test("a wrong private key is refused, and leaving with a key typed asks first", async () => {
   await openArchive("AGE-SECRET-KEY-1QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ")
   await expect(page.getByText(/Cannot open the archive/)).toBeVisible()

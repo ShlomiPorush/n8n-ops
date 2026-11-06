@@ -2,12 +2,15 @@ import {
   ArchiveRestore as ArchiveRestoreIcon,
   CheckCircle2,
   CircleDashed,
+  History as HistoryIcon,
+  Info as InfoIcon,
   RefreshCw,
   TriangleAlert,
   XCircle,
 } from "lucide-react"
 import * as React from "react"
 import { useState } from "react"
+import { Link } from "react-router"
 import { Said } from "@/components/item-row"
 import { BusyButton, UserText } from "@/components/kit"
 import { Code, StatusTag, TimeLeft } from "@/components/status"
@@ -24,13 +27,16 @@ import {
 } from "@/components/ui/dialog"
 import { FieldError } from "@/components/ui/field"
 import { api, describeError, queryClient } from "@/lib/api"
+import { useNavigateFromOverlay } from "@/lib/overlay-history"
 import {
   type CredentialAction,
   credentialActionText,
+  type PlannedStep,
   type RestoreView,
   restoreOutcome,
   settingText,
   stepsOf,
+  versionBeforePath,
 } from "@/lib/restore"
 import { formatTime, useTimeFormat } from "@/lib/time"
 
@@ -65,18 +71,66 @@ function CredentialActions({ actions }: { actions: CredentialAction[] }) {
   )
 }
 
+/** Settings as a list of exact values. */
+function SettingsList({ settings, empty }: { settings: Record<string, unknown>; empty: string }) {
+  const entries = Object.entries(settings)
+  if (entries.length === 0) return <p className="text-small text-muted-foreground">{empty}</p>
+  return (
+    <dl className="grid rounded-sm bg-fill px-3 py-1">
+      {entries.map(([k, v]) => (
+        <div
+          key={k}
+          className="flex min-w-0 flex-wrap items-baseline gap-x-2.5 border-t border-line py-1 first:border-t-0"
+        >
+          <dt className="text-small text-muted-foreground">settings.{k}</dt>
+          <dd className="ms-auto min-w-0 font-mono text-meta break-all">{settingText(v)}</dd>
+        </div>
+      ))}
+    </dl>
+  )
+}
+
+/** What a replace does to the workflow on the instance, said before anything else in its review. */
+function ReplaceIntro({ plan: p }: { plan: RestoreView["plan"] }) {
+  const live = p.replace?.live
+  return (
+    <>
+      <p>
+        Replaces <UserText className="font-semibold">{p.item.name}</UserText> on{" "}
+        <UserText className="font-semibold">{p.target.name}</UserText>: the archived version becomes the workflow's
+        draft. n8n-ops never publishes it.
+      </p>
+      <Alert variant="info">
+        <InfoIcon />
+        <AlertTitle>
+          {live?.published ? "The workflow is published now" : "The workflow is not published now"}
+        </AlertTitle>
+        <AlertDescription>
+          {live?.published
+            ? "The published version stays live and keeps running. Publish the new draft in n8n when it is ready."
+            : "Nothing runs until you publish it in n8n."}
+        </AlertDescription>
+      </Alert>
+    </>
+  )
+}
+
 /** The review: everything the restore will create and send, what happens to each credential, and what it leaves out. */
 export function PlanReview({ restore: r }: { restore: RestoreView }) {
   const w = useTimeFormat()
   const p = r.plan
-  const settings = Object.entries(p.sent?.settings ?? {})
+  const replace = p.mode === "replace" ? p.replace : undefined
   return (
     <div className="grid gap-3">
-      <p>
-        Into <UserText className="font-semibold">{p.target.name}</UserText>
-        {p.target.sameInstance ? ", the instance this archive is from." : ", not the instance this archive is from."}{" "}
-        {r.kind === "workflow" && "The copy is created inactive, so nothing runs until you publish it."}
-      </p>
+      {replace ? (
+        <ReplaceIntro plan={p} />
+      ) : (
+        <p>
+          Into <UserText className="font-semibold">{p.target.name}</UserText>
+          {p.target.sameInstance ? ", the instance this archive is from." : ", not the instance this archive is from."}{" "}
+          {r.kind === "workflow" && "The copy is created inactive, so nothing runs until you publish it."}
+        </p>
+      )}
       {p.earlierUnknown.map((e) => (
         <Alert key={e.id} variant="warn">
           <TriangleAlert />
@@ -104,13 +158,12 @@ export function PlanReview({ restore: r }: { restore: RestoreView }) {
         </Alert>
       )}
       <section className="grid gap-1.5">
-        <h3 className="font-semibold">Creates</h3>
+        <h3 className="font-semibold">{replace ? "Writes" : "Creates"}</h3>
         <ol className="grid gap-1.5">
           {p.steps.map((s) => (
             <li key={s.step} className="grid gap-0.5 rounded-sm bg-fill px-3 py-2">
               <span className="text-small text-muted-foreground">
-                Step {s.step} ·{" "}
-                {s.kind === "workflow" ? "Workflow, inactive" : `Credential${s.type ? `, ${s.type}` : ""}`}
+                Step {s.step} · {stepLabel(s, "review")}
               </span>
               <UserText className="font-semibold break-words">{s.name}</UserText>
             </li>
@@ -121,7 +174,7 @@ export function PlanReview({ restore: r }: { restore: RestoreView }) {
         <section className="grid gap-1.5">
           <h3 className="font-semibold">Sent to n8n</h3>
           <p className="text-small text-muted-foreground">
-            The workflow is created with these fields:{" "}
+            {replace ? "The workflow is written with these fields:" : "The workflow is created with these fields:"}{" "}
             {p.sent.fields.map((f, i) => (
               <React.Fragment key={f}>
                 {i > 0 && ", "}
@@ -130,20 +183,19 @@ export function PlanReview({ restore: r }: { restore: RestoreView }) {
             ))}
             .
           </p>
-          {settings.length === 0 ? (
-            <p className="text-small text-muted-foreground">Its settings are empty.</p>
-          ) : (
-            <dl className="grid rounded-sm bg-fill px-3 py-1">
-              {settings.map(([k, v]) => (
-                <div
-                  key={k}
-                  className="flex min-w-0 flex-wrap items-baseline gap-x-2.5 border-t border-line py-1 first:border-t-0"
-                >
-                  <dt className="text-small text-muted-foreground">settings.{k}</dt>
-                  <dd className="ms-auto min-w-0 font-mono text-meta break-all">{settingText(v)}</dd>
-                </div>
-              ))}
-            </dl>
+          {replace && (
+            <p className="text-small text-muted-foreground">
+              {replace.settingsFrom === "live"
+                ? "Its settings are those it has now, unchanged: a change of settings would make n8n publish again. The archived settings are not restored."
+                : "Its settings are those of the archive. n8n merges them into the ones it has, so a setting only n8n has stays."}
+            </p>
+          )}
+          <SettingsList settings={p.sent.settings} empty="Its settings are empty." />
+          {replace && (
+            <>
+              <h4 className="text-small font-semibold">Settings after the write</h4>
+              <SettingsList settings={replace.effectiveSettings} empty="The workflow will have no settings." />
+            </>
           )}
         </section>
       )}
@@ -158,9 +210,16 @@ export function PlanReview({ restore: r }: { restore: RestoreView }) {
           </ul>
         </section>
       )}
+      {replace && (
+        <p className="text-small text-muted-foreground">
+          The workflow as n8n holds it right before the write is kept as the version before. Open it from the instance's
+          backup pane, under Restores, to put it back.
+        </p>
+      )}
       {r.expiresAt && (
         <p className="text-small text-muted-foreground">
-          Nothing is written until you choose Restore. This review ends <TimeLeft value={r.expiresAt} />.
+          Nothing is written until you choose {replace ? "Replace" : "Restore"}. This review ends{" "}
+          <TimeLeft value={r.expiresAt} />.
         </p>
       )}
     </div>
@@ -175,6 +234,13 @@ const outcomeLook = {
   previewed: { variant: "info", icon: CircleDashed, title: "Not confirmed" },
 } as const
 
+/** What one step writes, in the review or in the result. */
+function stepLabel(s: PlannedStep, when: "review" | "result") {
+  if (s.kind === "credential") return `Credential${when === "review" && s.type ? `, ${s.type}` : ""}`
+  if (s.action === "replace") return when === "review" ? "Workflow, written over as its draft" : "Workflow, replaced"
+  return when === "review" ? "Workflow, inactive" : "Workflow"
+}
+
 /** How each step of a restore went. */
 function StepList({ restore }: { restore: RestoreView }) {
   return (
@@ -184,13 +250,13 @@ function StepList({ restore }: { restore: RestoreView }) {
           <span className="flex flex-wrap items-center gap-2">
             <StatusTag kind="restoreStep" status={s.status} />
             <span className="text-small text-muted-foreground">
-              Step {s.step} · {s.kind === "workflow" ? "Workflow" : "Credential"}
+              Step {s.step} · {stepLabel(s, "result")}
             </span>
           </span>
           <UserText className="font-semibold break-words">{s.name}</UserText>
           {s.createdId && (
             <span className="text-small text-muted-foreground">
-              <Said>Created with</Said>ID <Code>{s.createdId}</Code>
+              <Said>{s.action === "replace" ? "Written to" : "Created with"}</Said>ID <Code>{s.createdId}</Code>
             </span>
           )}
           {s.error && <span className="font-mono text-meta break-words text-muted-foreground">{s.error}</span>}
@@ -200,12 +266,32 @@ function StepList({ restore }: { restore: RestoreView }) {
   )
 }
 
+/** What n8n did that the review did not expect (a replace that unpublished the workflow, say), said first. */
+function StepWarnings({ restore }: { restore: RestoreView }) {
+  const warnings = stepsOf(restore).flatMap((s) => (s.warning ? [s.warning] : []))
+  if (warnings.length === 0) return null
+  return (
+    <Alert variant="fail">
+      <TriangleAlert />
+      <AlertTitle>Check the workflow in n8n now</AlertTitle>
+      <AlertDescription>
+        <ul className="grid gap-1">
+          {warnings.map((x) => (
+            <li key={x}>{x}</li>
+          ))}
+        </ul>
+      </AlertDescription>
+    </Alert>
+  )
+}
+
 /**
  * The result of a confirmed restore: how it ended, each step with its exact name, status, created ID and error, and
  * what happened to each credential. `stillUnknown` after a check that found nothing yet.
  */
 export function RestoreResult({ restore: r, stillUnknown = false }: { restore: RestoreView; stillUnknown?: boolean }) {
   const w = useTimeFormat()
+  const navigateFromDialog = useNavigateFromOverlay()
   const look = outcomeLook[r.status]
   return (
     <div className="grid gap-3">
@@ -216,7 +302,28 @@ export function RestoreResult({ restore: r, stillUnknown = false }: { restore: R
           {restoreOutcome(r)} Restore code <Code className="break-normal whitespace-nowrap">{r.code}</Code>.
         </AlertDescription>
       </Alert>
+      <StepWarnings restore={r} />
       <StepList restore={r} />
+      {r.versionBefore && (
+        <p className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+          <span className="text-muted-foreground">
+            The workflow as it was before is kept ({formatTime(r.versionBefore.takenAt, w, { seconds: false })}).
+          </span>
+          <Button asChild size="sm">
+            <Link
+              to={versionBeforePath(r)}
+              onClick={(e) => {
+                // A plain click opens it in place of the dialog's Back entry; one with a modifier is the browser's.
+                if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+                e.preventDefault()
+                navigateFromDialog(versionBeforePath(r))
+              }}
+            >
+              <HistoryIcon /> Open the version before
+            </Link>
+          </Button>
+        </p>
+      )}
       <CredentialActions actions={r.plan.credentials} />
       {stillUnknown && r.status === "unknown" && (
         <p className="text-muted-foreground">
@@ -273,7 +380,9 @@ export function RestoreDetailsDialog({ restore, onClose }: { restore: RestoreVie
         <DialogHeader icon={ArchiveRestoreIcon}>
           <DialogTitle>Restore of {r?.itemName}</DialogTitle>
           <DialogDescription>
-            {r?.kind === "workflow" ? "A workflow" : "A credential"} restored into {r?.plan.target.name}.
+            {r?.mode === "replace"
+              ? `A workflow replaced on ${r.plan.target.name}${r.fromRestoreId ? " from the version before an earlier replace" : ""}.`
+              : `${r?.kind === "workflow" ? "A workflow" : "A credential"} restored into ${r?.plan.target.name}${r?.fromRestoreId ? " from the version before a replace" : ""}.`}
           </DialogDescription>
         </DialogHeader>
         {r && <RestoreResult restore={r} stillUnknown={stillUnknown} />}

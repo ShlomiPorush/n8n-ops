@@ -17,10 +17,10 @@ export type Manifest = {
 
 export type SealedArchive = { bytes: Uint8Array; size: number; sha256Base64: string }
 
-/** tar + gzip + age, encrypted to the backup public key. */
-export async function sealArchive(entries: TarEntry[], recipient: string): Promise<SealedArchive> {
+/** tar + gzip + age, encrypted to the backup public key, or to each of several recipients (any one opens it). */
+export async function sealArchive(entries: TarEntry[], recipients: string | string[]): Promise<SealedArchive> {
   const encrypter = new Encrypter()
-  encrypter.addRecipient(recipient)
+  for (const recipient of typeof recipients === "string" ? [recipients] : recipients) encrypter.addRecipient(recipient)
   const bytes = await encrypter.encrypt(gzipSync(createTar(entries)))
   return { bytes, size: bytes.length, sha256Base64: sha256Base64(bytes) }
 }

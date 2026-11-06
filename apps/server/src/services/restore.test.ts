@@ -6,14 +6,125 @@ import {
   type ArchivedCredential,
   copyBody,
   credentialRefs,
+  credentialRefusal,
+  definitionHash,
+  isPublished,
+  landed,
+  liveRefusal,
   mapCredentialRefs,
   NAME_LIMIT,
+  publishedChange,
+  replaceRefusal,
+  replaceSettings,
+  replaceWarning,
   resolveCredentials,
   restoredName,
+  settingsLanded,
   stepMessage,
   TOO_DEEP,
   workflowChanges,
 } from "./restore.ts"
+
+describe("replace", () => {
+  const target = { name: "prod", version: "2.35.0", scopes: ["workflow:read", "workflow:update"] }
+
+  it("is allowed on n8n 2.35.0 or later, on the archive's own instance, with a key that reads and updates", () => {
+    expect(replaceRefusal(target, true)).toBeNull()
+    expect(replaceRefusal({ ...target, version: "2.46.3" }, true)).toBeNull()
+  })
+
+  it("is refused below n8n 2.35.0, with an unknown version, on another instance, or without the scopes", () => {
+    expect(replaceRefusal({ ...target, version: "2.34.9" }, true)).toContain("needs n8n 2.35.0 or later")
+    expect(replaceRefusal({ ...target, version: null }, true)).toContain("not known")
+    expect(replaceRefusal(target, false)).toContain("only on the instance the archive is from")
+    expect(replaceRefusal({ ...target, scopes: ["workflow:read"] }, true)).toContain("(workflow:update)")
+    expect(replaceRefusal({ ...target, scopes: [] }, true)).toContain("(workflow:read, workflow:update)")
+    // Each refusal offers the copy.
+    expect(replaceRefusal(target, false)).toContain("Restore it as a copy instead.")
+  })
+
+  it("needs the live workflow, not archived, created at the same time as the archived one", () => {
+    const archived = workflow({ createdAt: "2026-01-01T00:00:00.000Z" })
+    expect(liveRefusal(archived, { ...archived, createdAt: "2026-01-01T00:00:00Z" }, "prod")).toBeNull()
+    expect(liveRefusal(archived, null, "prod")).toContain("not on prod any more")
+    expect(liveRefusal(archived, { ...archived, isArchived: true }, "prod")).toContain("archived in n8n")
+    expect(liveRefusal(archived, { ...archived, createdAt: "2026-02-01T00:00:00Z" }, "prod")).toContain(
+      "another workflow",
+    )
+    // Identity not proven when either side has no creation time.
+    expect(liveRefusal(archived, { ...archived, createdAt: undefined }, "prod")).toContain("cannot prove")
+    expect(liveRefusal({ ...archived, createdAt: undefined }, archived, "prod")).toContain("cannot prove")
+  })
+
+  it("needs every credential linked or created", () => {
+    const base = { sourceId: "c1", name: "Slack", type: "slackApi", embedded: false }
+    expect(
+      credentialRefusal([
+        { ...base, action: "link", targetId: "c1", matchedBy: "id_type" },
+        { ...base, action: "create", step: 1 },
+      ]),
+    ).toBeNull()
+    expect(credentialRefusal([{ ...base, action: "keep", reason: "Not checked: no list." }])).toContain(
+      "cannot check the credentials",
+    )
+    expect(
+      credentialRefusal([{ ...base, action: "remove", reason: "Not on prod, and not in the archive; set it in n8n." }]),
+    ).toContain("Slack (Not on prod, and not in the archive)")
+  })
+
+  it("sends the live settings unchanged for a published workflow, and the archived ones otherwise", () => {
+    const archived = workflow({ settings: { executionOrder: "v1", timezone: "UTC" } })
+    const live = workflow({ settings: { executionOrder: "v1", timezone: "Asia/Tokyo", errorWorkflow: "e1" } })
+    const fields = { fields: ["name", "nodes", "connections", "settings"], settings: ["executionOrder", "timezone"] }
+    const published = replaceSettings(archived, { ...live, active: true, activeVersionId: "v9" }, fields)
+    expect(published.settingsFrom).toBe("live")
+    // Only those the API takes are sent; n8n keeps the others, so nothing changes and it does not publish again.
+    expect(published.settings).toEqual({ executionOrder: "v1", timezone: "Asia/Tokyo" })
+    expect(published.effective).toEqual(live.settings)
+    const draft = replaceSettings(archived, { ...live, activeVersionId: null }, fields)
+    expect(draft.settingsFrom).toBe("backup")
+    expect(draft.settings).toEqual({ executionOrder: "v1", timezone: "UTC" })
+    // n8n merges what is sent into what it holds: a key only it has stays.
+    expect(draft.effective).toEqual({ executionOrder: "v1", timezone: "UTC", errorWorkflow: "e1" })
+  })
+
+  it("reads published from activeVersionId, or from active on n8n without it", () => {
+    expect(isPublished({ active: true, activeVersionId: null })).toBe(false)
+    expect(isPublished({ active: false, activeVersionId: "v1" })).toBe(true)
+    expect(isPublished({ active: true })).toBe(true)
+  })
+
+  it("hashes a definition the same whatever the node and key order", () => {
+    const w = workflow()
+    const reordered = [...w.nodes].reverse().map((n) => Object.fromEntries(Object.entries(n).reverse()) as N8nNode)
+    expect(definitionHash(reordered, w.connections)).toBe(definitionHash(w.nodes, w.connections))
+    expect(definitionHash([...w.nodes, node("New")], w.connections)).not.toBe(definitionHash(w.nodes, w.connections))
+    expect(landed(w, definitionHash(w.nodes, w.connections), "Orders")).toBe(true)
+    expect(landed(w, definitionHash(w.nodes, w.connections), "Other")).toBe(false)
+  })
+
+  it("accepts the settings n8n merged, and a sent default n8n dropped", () => {
+    const before = { executionOrder: "v1", errorWorkflow: "e1" }
+    expect(settingsLanded(before, { timezone: "UTC" }, { ...before, timezone: "UTC" })).toBe(true)
+    // n8n drops a value equal to its default instead of storing it.
+    expect(settingsLanded(before, { saveManualExecutions: true }, before)).toBe(true)
+    expect(settingsLanded(before, { timezone: "UTC" }, { executionOrder: "v1", timezone: "UTC" })).toBe(false)
+    expect(settingsLanded(before, { errorWorkflow: "e2" }, before)).toBe(false)
+  })
+
+  it("after the write, says loudly that n8n unpublished it or holds something else", () => {
+    const before = { ...workflow(), active: true, activeVersionId: "v1" }
+    const sent = { name: "Orders", hash: definitionHash(before.nodes, before.connections), settings: {} }
+    expect(replaceWarning(sent, before, { ...before, versionId: "v2" })).toBeNull()
+    expect(replaceWarning(sent, before, { ...before, active: false, activeVersionId: null })).toContain(
+      "Publish it again in n8n",
+    )
+    expect(publishedChange(before, { ...before, activeVersionId: "v3" })).toContain("another version")
+    expect(replaceWarning(sent, before, { ...before, name: "Renamed", nodes: [node("Other")] })).toContain(
+      "the nodes or connections, the name",
+    )
+  })
+})
 
 describe("more of the review", () => {
   it("flags a workflow embedded deeper than it follows", () => {

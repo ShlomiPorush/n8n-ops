@@ -175,8 +175,16 @@ The Destinations an instance backs up to when it has not chosen its own.
 _Avoid_: global destinations
 
 **Restore**:
-Bringing one item of an Archive back into an instance: a workflow as an inactive copy, or a credential as a new one. It is reviewed first, runs once when confirmed, and ends done, failed or unknown.
+Bringing one item of an Archive back into an instance: a workflow as an inactive copy or over the existing workflow (Replace), or a credential as a new one. It is reviewed first, runs once when confirmed, and ends done, failed or unknown.
 _Avoid_: recovery, import
+
+**Replace**:
+A Restore of a workflow that writes the archived version over the existing workflow, as its draft, on the instance the Archive is from. n8n-ops never publishes it.
+_Avoid_: overwrite, rollback
+
+**Version before replace**:
+The workflow as n8n held it right before a Replace wrote over it, kept with that Restore, encrypted like an Archive. It opens like an Archive and can be restored or replace the workflow again.
+_Avoid_: snapshot, backup
 
 **Restore code**:
 The short code in the name of everything a Restore creates, so n8n-ops can find each item again for that Restore alone.

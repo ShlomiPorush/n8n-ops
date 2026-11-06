@@ -1,21 +1,24 @@
 import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm"
-import { Hono } from "hono"
+import { type Context, Hono } from "hono"
 import { z } from "zod"
 import type { Ctx } from "../context.ts"
 import { backupDestinations, backupRuns, instances } from "../db/schema.ts"
 import { requireUser } from "../http/middleware.ts"
 import { actorName, type Env } from "../http/types.ts"
-import {
-  inspectArchive,
-  NoDestinationError,
-  recentRuns,
-  restoreWorkflow,
-  runSelfBackup,
-  startBackup,
-  usableWorker,
-} from "../services/backups.ts"
+import { NoDestinationError, recentRuns, runSelfBackup, startBackup, usableWorker } from "../services/backups.ts"
 import { describeLocation, destinationsFor } from "../services/destinations/index.ts"
-import { can } from "../services/instances.ts"
+import { can, NoApiKey } from "../services/instances.ts"
+import {
+  archivedWorkflow,
+  checkRestore,
+  confirmRestore,
+  dropReview,
+  getRestore,
+  inspectArchive,
+  previewRestore,
+  RestoreError,
+  recentRestores,
+} from "../services/restore.ts"
 
 const KEY_WANTED = "Paste the private key that starts with AGE-SECRET-KEY-1."
 const keySchema = z
@@ -131,38 +134,105 @@ export function backupRoutes(ctx: Ctx) {
     }
   })
 
+  // --- Archives and restores (requirement D6). The key comes with each request that reads the archive.
+
+  /** A refused restore call, with a status that says why. */
+  const failed = (c: Context<Env>, error: unknown) => {
+    if (error instanceof RestoreError)
+      return c.json(
+        { error: error.code, message: error.message },
+        error.code === "not_found" ? 404 : error.code === "changed" ? 409 : 400,
+      )
+    if (error instanceof NoApiKey) return c.json({ error: "invalid", message: error.message }, 400)
+    throw error
+  }
+  const body = async <T extends z.ZodTypeAny>(c: Context<Env>, schema: T) =>
+    schema.safeParse(await c.req.json().catch(() => ({})))
+  const uuid = z.string().uuid()
+
   app.post("/runs/:runId/inspect", async (c) => {
-    const body = z.object({ privateKey: keySchema }).safeParse(await c.req.json().catch(() => ({})))
-    if (!body.success) return c.json(refused(body.error.issues), 400)
+    const parsed = await body(c, z.object({ privateKey: keySchema }))
+    if (!parsed.success) return c.json(refused(parsed.error.issues), 400)
     try {
-      return c.json(await inspectArchive(ctx, c.req.param("runId"), body.data.privateKey))
+      return c.json(await inspectArchive(ctx, c.req.param("runId"), parsed.data.privateKey))
     } catch (error) {
-      return c.json({ error: "invalid", message: (error as Error).message }, 400)
+      return failed(c, error)
     }
   })
 
-  app.post("/runs/:runId/restore", async (c) => {
-    const body = z
-      .object({ privateKey: keySchema, workflowId: z.string().min(1), targetInstanceId: z.string().uuid() })
-      .safeParse(await c.req.json().catch(() => ({})))
-    if (!body.success) return c.json(refused(body.error.issues), 400)
+  app.post("/runs/:runId/workflows/:workflowId", async (c) => {
+    const parsed = await body(c, z.object({ privateKey: keySchema }))
+    if (!parsed.success) return c.json(refused(parsed.error.issues), 400)
     try {
-      const result = await restoreWorkflow(ctx, { runId: c.req.param("runId"), ...body.data })
-      const [target] = await ctx.db
-        .select({ name: instances.name })
-        .from(instances)
-        .where(eq(instances.id, body.data.targetInstanceId))
-      await ctx.audit({
-        actor: actorName(c.get("actor")),
-        action: "Workflow restored",
-        target: `${body.data.workflowId} into ${target?.name ?? "?"}`,
-        via: "web",
-        details: { steps: result.steps, runId: c.req.param("runId") },
-      })
-      return c.json(result)
+      return c.json(
+        await archivedWorkflow(ctx, c.req.param("runId"), parsed.data.privateKey, c.req.param("workflowId")),
+      )
     } catch (error) {
-      return c.json({ error: "invalid", message: (error as Error).message }, 400)
+      return failed(c, error)
     }
+  })
+
+  app.post("/runs/:runId/restores", async (c) => {
+    const parsed = await body(
+      c,
+      z.object({
+        privateKey: keySchema,
+        targetInstanceId: uuid,
+        kind: z.enum(["workflow", "credential"]),
+        itemId: z.string().min(1).max(200),
+      }),
+    )
+    if (!parsed.success) return c.json(refused(parsed.error.issues), 400)
+    try {
+      return c.json(
+        await previewRestore(ctx, {
+          runId: c.req.param("runId"),
+          ...parsed.data,
+          actor: actorName(c.get("actor")),
+          actorId: c.get("actor").id,
+          via: "web",
+        }),
+      )
+    } catch (error) {
+      return failed(c, error)
+    }
+  })
+
+  app.post("/restores/:id/confirm", async (c) => {
+    const parsed = await body(c, z.object({ privateKey: keySchema }))
+    if (!parsed.success) return c.json(refused(parsed.error.issues), 400)
+    if (!uuid.safeParse(c.req.param("id")).success) return c.json({ error: "not_found" }, 404)
+    try {
+      const by = { actor: actorName(c.get("actor")), actorId: c.get("actor").id, via: "web" as const }
+      return c.json(await confirmRestore(ctx, c.req.param("id"), parsed.data.privateKey, by))
+    } catch (error) {
+      return failed(c, error)
+    }
+  })
+
+  app.post("/restores/:id/check", async (c) => {
+    if (!uuid.safeParse(c.req.param("id")).success) return c.json({ error: "not_found" }, 404)
+    try {
+      return c.json(await checkRestore(ctx, c.req.param("id")))
+    } catch (error) {
+      return failed(c, error)
+    }
+  })
+
+  app.get("/restores/:id", async (c) => {
+    if (!uuid.safeParse(c.req.param("id")).success) return c.json({ error: "not_found" }, 404)
+    const found = await getRestore(ctx, c.req.param("id"))
+    return found ? c.json(found) : c.json({ error: "not_found" }, 404)
+  })
+
+  app.delete("/restores/:id", async (c) => {
+    if (uuid.safeParse(c.req.param("id")).success) await dropReview(ctx, c.req.param("id"))
+    return c.json({ ok: true })
+  })
+
+  app.get("/:instanceId/restores", async (c) => {
+    if (!uuid.safeParse(c.req.param("instanceId")).success) return c.json([])
+    return c.json(await recentRestores(ctx, c.req.param("instanceId")))
   })
 
   return app

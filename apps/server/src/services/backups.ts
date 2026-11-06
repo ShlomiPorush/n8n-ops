@@ -1,8 +1,8 @@
 import { execFile } from "node:child_process"
 import { createHash } from "node:crypto"
 import { promisify } from "node:util"
-import { entryText, textEntry, unsupportedVersionText } from "@n8n-ops/shared"
-import { type Manifest, openArchive, sealArchive, sealBytes } from "@n8n-ops/shared/archive"
+import { textEntry, unsupportedVersionText } from "@n8n-ops/shared"
+import { type Manifest, sealArchive, sealBytes } from "@n8n-ops/shared/archive"
 import { and, desc, eq, inArray, isNotNull, isNull, like, sql } from "drizzle-orm"
 import type { Ctx } from "../context.ts"
 import {
@@ -15,7 +15,6 @@ import {
   workerJobs,
   workers,
 } from "../db/schema.ts"
-import type { N8nWorkflow } from "../n8n/client.ts"
 import { instanceSubject } from "./alert-routing.ts"
 import { setCondition } from "./alerts.ts"
 import { backupAlerts, backupCondition } from "./backup-alerts.ts"
@@ -418,16 +417,14 @@ export async function runSelfBackup(ctx: Ctx) {
 }
 
 // ---------------------------------------------------------------------------
-// Restore (requirement D6)
+// Reading an archive back (restore, requirement D6, is in restore.ts)
 // ---------------------------------------------------------------------------
-
-type ArchivedCredential = { id: string; name: string; type: string; data?: Record<string, unknown> }
 
 /** Copies are read nearest first: the mapped folder, then remote file servers, then S3. */
 const readOrder: Record<string, number> = { local: 0, sftp: 1, webdav: 2, s3: 3 }
 
 /** The archive's bytes from the first copy that reads back whole and with the run's checksum. */
-async function readArchive(ctx: Ctx, run: Run) {
+export async function readArchive(ctx: Ctx, run: Run) {
   const copies = await ctx.db
     .select({ copy: backupCopies, destination: backupDestinations })
     .from(backupCopies)
@@ -460,109 +457,6 @@ async function readArchive(ctx: Ctx, run: Run) {
     }
   }
   throw new Error(`No copy of this archive could be read. ${errors.join("; ")}`)
-}
-
-async function loadArchive(ctx: Ctx, runId: string, privateKey: string) {
-  const [run] = await ctx.db.select().from(backupRuns).where(eq(backupRuns.id, runId))
-  if (!run || (run.status !== "ok" && run.status !== "partial")) throw new Error("This archive is not available.")
-  const bytes = await readArchive(ctx, run)
-  let entries: Awaited<ReturnType<typeof openArchive>>
-  try {
-    entries = await openArchive(bytes, privateKey)
-  } catch (error) {
-    throw new Error(`Cannot open the archive with this key: ${(error as Error).message}`)
-  }
-  const json = <T>(prefix: string) =>
-    entries
-      .filter((e) => e.name.startsWith(prefix) && e.name.endsWith(".json"))
-      .map((e) => JSON.parse(entryText(e)) as T)
-  const manifestEntry = entries.find((e) => e.name === "manifest.json")
-  return {
-    run,
-    manifest: manifestEntry ? (JSON.parse(entryText(manifestEntry)) as Manifest) : null,
-    workflows: json<N8nWorkflow>("workflows/"),
-    credentials: json<ArchivedCredential>("credentials/"),
-  }
-}
-
-/** Lists what an archive holds. The private key is used in memory only. */
-export async function inspectArchive(ctx: Ctx, runId: string, privateKey: string) {
-  const archive = await loadArchive(ctx, runId, privateKey)
-  return {
-    manifest: archive.manifest,
-    workflows: archive.workflows
-      .map((w) => ({
-        id: w.id,
-        name: w.name,
-        active: w.active,
-        credentials: [
-          ...new Set(w.nodes.flatMap((n) => Object.values(n.credentials ?? {}).map((c) => c.id ?? ""))),
-        ].filter(Boolean),
-      }))
-      .sort((a, b) => a.name.localeCompare(b.name)),
-    credentialsWithSecrets: archive.credentials.filter((c) => c.data).length,
-  }
-}
-
-/** Restores one workflow and the credentials it uses into an instance, as an inactive copy. */
-export async function restoreWorkflow(
-  ctx: Ctx,
-  {
-    runId,
-    privateKey,
-    workflowId,
-    targetInstanceId,
-  }: { runId: string; privateKey: string; workflowId: string; targetInstanceId: string },
-) {
-  const [target] = await ctx.db.select().from(instances).where(eq(instances.id, targetInstanceId))
-  if (!target) throw new Error("Target instance not found.")
-  if (!can(target, "restore"))
-    throw new Error(`${target.name} is not set up to restore workflows. Add Restore workflows to its capabilities.`)
-  if (unsupportedVersion(target)) throw new Error(unsupportedVersionText)
-  const archive = await loadArchive(ctx, runId, privateKey)
-  const workflow = archive.workflows.find((w) => w.id === workflowId)
-  if (!workflow) throw new Error("This workflow is not in the archive.")
-  const client = clientFor(ctx, target)
-  const steps: { step: string; ok: boolean; detail?: string }[] = []
-  const idMap = new Map<string, string>()
-  const used = new Set(workflow.nodes.flatMap((n) => Object.values(n.credentials ?? {}).map((c) => c.id ?? "")))
-  for (const id of used) {
-    const cred = archive.credentials.find((c) => c.id === id)
-    if (!cred) {
-      steps.push({ step: `Credential ${id}`, ok: false, detail: "not in the archive; assign it in n8n" })
-      continue
-    }
-    if (!cred.data) {
-      steps.push({
-        step: `Credential ${cred.name}`,
-        ok: false,
-        detail: "the archive has no secrets; set this credential in n8n",
-      })
-      continue
-    }
-    const created = await client.createCredential({ name: cred.name, type: cred.type, data: cred.data })
-    idMap.set(id, created.id)
-    steps.push({ step: `Credential ${cred.name}`, ok: true, detail: `created as ${created.id}` })
-  }
-  const nodes = workflow.nodes.map((n) => ({
-    ...n,
-    credentials: n.credentials
-      ? Object.fromEntries(
-          Object.entries(n.credentials).map(([type, c]) => [
-            type,
-            { ...c, id: c.id ? (idMap.get(c.id) ?? c.id) : c.id },
-          ]),
-        )
-      : undefined,
-  }))
-  const created = await client.createWorkflow({
-    name: `${workflow.name} (restored ${new Date().toISOString().slice(0, 10)})`,
-    nodes,
-    connections: workflow.connections,
-    settings: workflow.settings ?? {},
-  })
-  steps.push({ step: "Workflow created inactive", ok: true, detail: created.id })
-  return { workflowId: created.id, steps }
 }
 
 /**

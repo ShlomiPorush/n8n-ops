@@ -4,7 +4,14 @@ import { type AccessStatus, accessCalls, accessRequests, apiTokens, instances, w
 import { tokenActor } from "../http/types.ts"
 import type { AuditVia } from "../lib/audit.ts"
 import { newToken, sha256 } from "../lib/crypto.ts"
-import { matchOperation, parseSpec, type SpecOperation, specHasScopes } from "../lib/n8n-spec.ts"
+import {
+  matchOperation,
+  parseSpec,
+  parseWorkflowFields,
+  type SpecOperation,
+  specHasScopes,
+  type WorkflowFields,
+} from "../lib/n8n-spec.ts"
 import { type FetchLike, N8nClient } from "../n8n/client.ts"
 import { can, effectiveScopes, type Instance, unsupportedVersion } from "./instances.ts"
 
@@ -60,24 +67,44 @@ async function findInstance(ctx: Ctx, ref: string) {
 
 // --- The instance's API description, cached per instance and version.
 
-const specs = new Map<string, { version: string | null; ops: SpecOperation[]; at: number }>()
+const specs = new Map<
+  string,
+  { version: string | null; ops: SpecOperation[]; workflowFields: WorkflowFields | null; at: number }
+>()
 
-export async function instanceSpec(ctx: Ctx, instance: Instance, fetchImpl: typeof fetch = fetch) {
+async function loadSpec(ctx: Ctx, instance: Instance, fetchImpl: typeof fetch) {
   const cached = specs.get(instance.id)
-  if (cached && cached.version === instance.version && Date.now() - cached.at < 6 * 3600_000) return cached.ops
+  if (cached && cached.version === instance.version && Date.now() - cached.at < 6 * 3600_000) return cached
   const res = await fetchImpl(`${instance.baseUrl.replace(/\/+$/, "")}/api/v1/openapi.yml`, {
     signal: AbortSignal.timeout(20_000),
   })
   if (!res.ok) throw new AccessError("spec_unavailable", `n8n did not return its API description (HTTP ${res.status}).`)
-  const ops = parseSpec(await res.text())
+  const text = await res.text()
+  const ops = parseSpec(text)
   if (!specHasScopes(ops))
     throw new AccessError(
       "spec_without_scopes",
       "This n8n version does not describe API key scopes; it needs 2.14 or later.",
     )
-  specs.set(instance.id, { version: instance.version, ops, at: Date.now() })
+  let workflowFields: WorkflowFields | null = null
+  try {
+    workflowFields = parseWorkflowFields(text)
+  } catch {
+    // A document whose request bodies cannot be read still serves the access proxy.
+  }
+  const entry = { version: instance.version, ops, workflowFields, at: Date.now() }
+  specs.set(instance.id, entry)
   ctx.log.info("n8n API description loaded", { instance: instance.name, operations: ops.length })
-  return ops
+  return entry
+}
+
+export async function instanceSpec(ctx: Ctx, instance: Instance, fetchImpl: typeof fetch = fetch) {
+  return (await loadSpec(ctx, instance, fetchImpl)).ops
+}
+
+/** The workflow fields the instance's API takes on create, or null when its description does not say. */
+export async function instanceWorkflowFields(ctx: Ctx, instance: Instance, fetchImpl: typeof fetch = fetch) {
+  return (await loadSpec(ctx, instance, fetchImpl)).workflowFields
 }
 
 // --- Requests

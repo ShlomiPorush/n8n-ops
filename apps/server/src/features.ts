@@ -19,6 +19,7 @@ import { notifyAccess } from "./services/access-notify.ts"
 import { kickCopies, sweepRetention } from "./services/backup-copies.ts"
 import { enqueueProbes, scheduleBackups } from "./services/backups.ts"
 import { watchCollectors } from "./services/collection.ts"
+import { sweepRestores } from "./services/restore.ts"
 import { type Job, startScheduler } from "./services/scheduler.ts"
 import { sweepSessions } from "./services/session-policy.ts"
 
@@ -53,6 +54,8 @@ export function features(ctx: Ctx, extra: { mounts?: Mount[]; jobs?: Job[] } = {
     { name: "backup-copies", everyMs: 30_000, run: kickCopies },
     // Expired archives also go where nothing new is written, such as a destination turned off.
     { name: "backup-retention", everyMs: 6 * 3600_000, run: sweepRetention },
+    // Reviews of a restore not confirmed within the hour, and restores a restart cut off.
+    { name: "restores", everyMs: 5 * 60_000, run: sweepRestores },
     { name: "probes", everyMs: 10_000, run: enqueueProbes },
     // Workers that stop reporting leave the health of their instances unknown.
     { name: "collectors", everyMs: 15_000, run: (c) => watchCollectors(c) },

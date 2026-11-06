@@ -29,10 +29,11 @@ import { createSettings } from "../lib/settings.ts"
 import { instanceRoutes } from "../routes/instances.ts"
 import { workerApiRoutes } from "../routes/worker-api.ts"
 import { setCondition } from "./alerts.ts"
-import { archiveReady, enqueueProbes, restoreWorkflow, scheduleBackups, startBackup } from "./backups.ts"
+import { archiveReady, enqueueProbes, scheduleBackups, startBackup } from "./backups.ts"
 import { destinationsFor } from "./destinations/index.ts"
 import { ChangeRefused, RevisionChanged, updateInstance } from "./instance-update.ts"
 import { activeWith, refreshInstanceMeta, unsupportedVersion } from "./instances.ts"
+import { previewRestore } from "./restore.ts"
 import {
   activate,
   checkApi,
@@ -643,11 +644,15 @@ describe("backups", () => {
     expect(ended).toMatchObject({ status: "failed" })
     expect(ended?.error).toContain("n8n-ops needs n8n 2.14.0 or later")
     await expect(
-      restoreWorkflow(ctx, {
+      previewRestore(ctx, {
         runId: run?.id ?? "",
         privateKey: "AGE-SECRET-KEY-1X",
-        workflowId: "1",
+        kind: "workflow",
+        itemId: "1",
         targetInstanceId: older.id,
+        actor: "test",
+        actorId: null,
+        via: "web",
       }),
     ).rejects.toThrow("n8n-ops needs n8n 2.14.0 or later")
   })

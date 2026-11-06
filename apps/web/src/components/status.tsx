@@ -68,6 +68,27 @@ export const statusTable = {
     failed: { label: "Failed", tone: "fail" },
     expired: { label: "Expired", tone: "muted" },
   },
+  /** A workflow in an archive, compared with the one on its instance (D6). */
+  comparison: {
+    same: { label: "Same", tone: "ok" },
+    changed: { label: "Changed", tone: "warn" },
+    not_found: { label: "Not found with this API key", tone: "muted" },
+  },
+  /** One restore of an item of an archive (D6). */
+  restore: {
+    previewed: { label: "Reviewed", tone: "info" },
+    pending: { label: "Running", tone: "info" },
+    done: { label: "Done", tone: "ok" },
+    failed: { label: "Failed", tone: "fail" },
+    unknown: { label: "Unknown", tone: "warn" },
+  },
+  /** One step of a restore: one item it creates in n8n. */
+  restoreStep: {
+    todo: { label: "Not run", tone: "muted" },
+    done: { label: "Done", tone: "ok" },
+    failed: { label: "Failed", tone: "fail" },
+    unknown: { label: "Unknown", tone: "warn" },
+  },
 } as const satisfies Record<string, Record<string, { label: string; tone: ToneName }>>
 
 export type StatusKind = keyof typeof statusTable

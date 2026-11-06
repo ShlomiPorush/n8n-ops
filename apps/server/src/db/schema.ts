@@ -15,6 +15,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core"
 import type { CauseKind, TargetSource } from "../services/cause.ts"
+import type { RestoreKind, RestoreMode, RestorePlan, RestoreStatus, RestoreStep } from "../services/restore-types.ts"
 
 const ts = (name: string) => timestamp(name, { withTimezone: true, mode: "date" })
 const created = () => ts("created_at").notNull().defaultNow()
@@ -689,6 +690,44 @@ export const backupRuns = pgTable(
     finishedAt: ts("finished_at"),
   },
   (t) => [index("backup_runs_instance_idx").on(t.instanceId, t.startedAt)],
+)
+
+/**
+ * One restore of one item from an archive (requirement D6): reviewed first (`previewed`), then confirmed once.
+ * The row is written before anything is created in n8n, so a restore cut off midway is never lost or run twice.
+ * It never holds the private key or credential secrets.
+ */
+export const restores = pgTable(
+  "restores",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    /** In the name of everything this restore creates, so each item can be found again for this restore alone. */
+    code: text("code").notNull().unique(),
+    /** Who reviewed it, then who confirmed it: the name in the audit and the person's or token's ID. */
+    actor: text("actor").notNull(),
+    actorId: text("actor_id"),
+    via: text("via").notNull(),
+    runId: uuid("run_id").references(() => backupRuns.id, { onDelete: "set null" }),
+    /** Null once the instance is removed: the record of what was written there stays (its name is in `reviewed`). */
+    targetInstanceId: uuid("target_instance_id").references(() => instances.id, { onDelete: "set null" }),
+    kind: text("kind").$type<RestoreKind>().notNull(),
+    itemId: text("item_id").notNull(),
+    itemName: text("item_name").notNull(),
+    mode: text("mode").$type<RestoreMode>().notNull(),
+    status: text("status").$type<RestoreStatus>().notNull(),
+    /** What the owner reviewed: every action, the names it creates, and what is not restored. */
+    reviewed: jsonb("reviewed").$type<RestorePlan>().notNull(),
+    /** Each creation step with what became of it. */
+    steps: jsonb("steps").$type<RestoreStep[]>().notNull().default([]),
+    error: text("error"),
+    createdAt: created(),
+    confirmedAt: ts("confirmed_at"),
+    finishedAt: ts("finished_at"),
+  },
+  (t) => [
+    index("restores_target_idx").on(t.targetInstanceId, t.createdAt),
+    index("restores_status_idx").on(t.status, t.createdAt),
+  ],
 )
 
 export type DestinationKind = "s3" | "local" | "sftp" | "webdav"

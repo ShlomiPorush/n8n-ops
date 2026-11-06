@@ -720,6 +720,16 @@ export const restores = pgTable(
     /** Each creation step with what became of it. */
     steps: jsonb("steps").$type<RestoreStep[]>().notNull().default([]),
     error: text("error"),
+    /**
+     * The Version before replace: the workflow as n8n held it right before a replace wrote over it, as a one-workflow
+     * archive (base64), age-encrypted to the backup public key and to the key pasted for the restore. Stored before
+     * the write and kept as long as this row. Never holds credential secrets.
+     */
+    beforeArchive: text("before_archive"),
+    beforeSha256: text("before_sha256"),
+    beforeTakenAt: ts("before_taken_at"),
+    /** A restore from another restore's Version before replace, instead of from a backup run (`run_id`). */
+    fromRestoreId: uuid("from_restore_id").references((): AnyPgColumn => restores.id, { onDelete: "set null" }),
     createdAt: created(),
     confirmedAt: ts("confirmed_at"),
     finishedAt: ts("finished_at"),

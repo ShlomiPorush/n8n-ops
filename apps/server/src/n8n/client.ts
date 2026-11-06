@@ -150,6 +150,17 @@ export class N8nClient {
     return this.api<N8nWorkflow>("POST", "/workflows", { body: workflow })
   }
 
+  /**
+   * Writes an existing workflow (`PUT /workflows/{id}`). `publishIfActive: false` (n8n 2.35.0 and later) saves the
+   * draft and never publishes it, even when the workflow is published.
+   */
+  updateWorkflow(id: string, workflow: WorkflowBody, options: { publishIfActive?: boolean } = {}) {
+    return this.api<N8nWorkflow>("PUT", `/workflows/${encodeURIComponent(id)}`, {
+      query: { publishIfActive: options.publishIfActive },
+      body: workflow,
+    })
+  }
+
   activateWorkflow(id: string) {
     return this.api<N8nWorkflow>("POST", `/workflows/${encodeURIComponent(id)}/activate`)
   }

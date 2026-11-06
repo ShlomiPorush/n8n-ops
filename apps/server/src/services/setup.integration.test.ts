@@ -645,7 +645,7 @@ describe("backups", () => {
     expect(ended?.error).toContain("n8n-ops needs n8n 2.14.0 or later")
     await expect(
       previewRestore(ctx, {
-        runId: run?.id ?? "",
+        source: { runId: run?.id ?? "" },
         privateKey: "AGE-SECRET-KEY-1X",
         kind: "workflow",
         itemId: "1",

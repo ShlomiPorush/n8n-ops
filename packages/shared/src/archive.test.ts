@@ -28,6 +28,18 @@ describe("backup archives", () => {
     expect(await openArchive(sealed.bytes, identity, 1_000_000)).toHaveLength(1)
   })
 
+  it("sealed to several recipients open with each of their keys, and with no other", async () => {
+    const first = await generateX25519Identity()
+    const second = await generateX25519Identity()
+    const sealed = await sealArchive(
+      [textEntry("workflows/1.json", "{}")],
+      [await identityToRecipient(first), await identityToRecipient(second)],
+    )
+    expect((await openArchive(sealed.bytes, first))[0]?.name).toBe("workflows/1.json")
+    expect((await openArchive(sealed.bytes, second))[0]?.name).toBe("workflows/1.json")
+    await expect(openArchive(sealed.bytes, await generateX25519Identity())).rejects.toThrow()
+  })
+
   it("cannot be opened with another key", async () => {
     const sealed = await sealArchive([textEntry("a", "b")], await identityToRecipient(await generateX25519Identity()))
     await expect(openArchive(sealed.bytes, await generateX25519Identity())).rejects.toThrow()

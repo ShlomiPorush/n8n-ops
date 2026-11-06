@@ -24,6 +24,8 @@ export const routes: RouteObject[] = [
   { path: "workflows", element: <WorkflowsPage /> },
   // One archive of a backup, and the item open in it; before the backups pages take the rest.
   { path: "backups/:id/runs/:runId/:kind?/:itemId?", element: <ArchivePage /> },
+  // The Version before replace a restore kept opens on the same page.
+  { path: "backups/:id/versions/:restoreId/:kind?/:itemId?", element: <ArchivePage /> },
   { path: "backups/:id?", element: <BackupsPage /> },
   { path: "access/:id?", element: <AccessPage /> },
   { path: "agents", element: <AgentsPage /> },

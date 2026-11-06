@@ -30,7 +30,7 @@ import {
 import { ListWithPanel } from "@/components/list-panel"
 import { type ProxyFix, ProxyFixBlock } from "@/components/proxy-fix"
 import { RestoreDetailsDialog } from "@/components/restore-view"
-import { Dot, StatusTag, When } from "@/components/status"
+import { Dot, StatusTag, Tone, When } from "@/components/status"
 import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, useSort } from "@/components/ui/table"
 import { useMediaQuery } from "@/hooks/use-mobile"
@@ -635,9 +635,10 @@ function RecentRestores({ instanceId }: { instanceId: string }) {
               <UserText>{r.itemName}</UserText>
             </button>
             <span className="text-small text-muted-foreground">
-              {r.kind === "workflow" ? "workflow" : "credential"} · <When value={r.confirmedAt ?? r.createdAt} /> ·{" "}
-              <UserText>{r.actor}</UserText>
+              {r.mode === "replace" ? "workflow replaced" : r.kind === "workflow" ? "workflow" : "credential"} ·{" "}
+              <When value={r.confirmedAt ?? r.createdAt} /> · <UserText>{r.actor}</UserText>
             </span>
+            {r.steps.some((s) => s.warning) && <Tone tone="warn">Check in n8n</Tone>}
             {r.status === "unknown" && (
               <BusyButton
                 size="sm"

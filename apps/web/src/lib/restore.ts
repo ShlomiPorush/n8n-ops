@@ -5,6 +5,8 @@
  */
 
 export type RestoreKind = "workflow" | "credential"
+/** `copy` creates new items; `replace` writes the archived workflow over the existing one, as its draft. */
+export type RestoreMode = "copy" | "replace"
 export type RestoreStatus = "previewed" | "pending" | "done" | "failed" | "unknown"
 export type StepStatus = "todo" | "done" | "failed" | "unknown"
 
@@ -63,7 +65,8 @@ export type Comparison =
   | { available: false; reason: string }
 
 export type Inspection = {
-  run: { id: string; instanceId: string | null; startedAt: string }
+  /** A backup run's archive, or the Version before replace a restore kept; the instance it was taken from, and when. */
+  source: { kind: "run" | "version"; id: string; instanceId: string | null; at: string }
   manifest: { includesSecrets?: boolean } | null
   workflows: WorkflowSummary[]
   credentials: CredentialSummary[]
@@ -84,13 +87,43 @@ export type CredentialAction =
   | { action: "keep"; sourceId: string | null; name: string; type: string; reason: string; embedded: boolean }
   | { action: "remove"; sourceId: string | null; name: string; type: string; reason: string; embedded: boolean }
 
-export type PlannedStep = { step: number; kind: RestoreKind; sourceId: string; name: string; type?: string }
-export type RestoreStep = PlannedStep & { status: StepStatus; createdId?: string; error?: string }
+export type PlannedStep = {
+  step: number
+  kind: RestoreKind
+  /** `replace` writes the existing workflow; absent or `create` creates a new item. */
+  action?: "create" | "replace"
+  sourceId: string
+  name: string
+  type?: string
+}
+export type RestoreStep = PlannedStep & {
+  status: StepStatus
+  createdId?: string
+  error?: string
+  /** What n8n did that the review did not expect, such as unpublishing the workflow: shown loudly. */
+  warning?: string
+}
+
+/** What a replace found on the instance at review, and which settings it sends. */
+export type ReplacePlan = {
+  workflowId: string
+  live: {
+    name: string
+    updatedAt: string | null
+    versionId: string | null
+    activeVersionId: string | null
+    published: boolean
+  }
+  /** `live`: published, so its own settings are sent unchanged; `backup`: the archive's settings. */
+  settingsFrom: "live" | "backup"
+  /** The settings n8n holds after the write: its own merged with those sent. */
+  effectiveSettings: Record<string, unknown>
+}
 
 export type RestorePlan = {
   target: { id: string; name: string; sameInstance: boolean }
   item: { kind: RestoreKind; id: string; name: string }
-  mode: "copy"
+  mode: RestoreMode
   date: string
   credentials: CredentialAction[]
   steps: PlannedStep[]
@@ -102,6 +135,8 @@ export type RestorePlan = {
   sent?: { fields: string[]; settings: Record<string, unknown> }
   warnings: string[]
   earlierUnknown: { id: string; at: string; created: string[] }[]
+  /** For a replace. */
+  replace?: ReplacePlan
 }
 
 export type RestoreView = {
@@ -111,8 +146,12 @@ export type RestoreView = {
   kind: RestoreKind
   itemId: string
   itemName: string
-  mode: "copy"
+  mode: RestoreMode
   runId: string | null
+  /** Set when this restore came from another restore's Version before replace. */
+  fromRestoreId: string | null
+  /** The Version before replace this restore kept, when it kept one. */
+  versionBefore: { takenAt: string } | null
   /** Null once the instance was removed. */
   targetInstanceId: string | null
   actor: string
@@ -168,6 +207,10 @@ export function restoreOutcome(r: Pick<RestoreView, "status" | "kind" | "error" 
   const into = r.plan.target.name
   switch (r.status) {
     case "done":
+      if (r.plan.mode === "replace")
+        return r.plan.replace?.live.published
+          ? `Replaced on ${into}. The archived version is now the workflow's draft; the published version still runs. Publish it in n8n when ready.`
+          : `Replaced on ${into}. The archived version is now the workflow's draft; n8n-ops did not publish it.`
       return r.kind === "workflow"
         ? `Restored into ${into}. The workflow was created as an inactive copy.`
         : `Restored into ${into} as a new credential.`
@@ -180,6 +223,32 @@ export function restoreOutcome(r: Pick<RestoreView, "status" | "kind" | "error" 
     case "previewed":
       return "Not confirmed yet."
   }
+}
+
+/** The first n8n that can save a workflow's draft without publishing it, which Replace needs (as the server says). */
+export const REPLACE_MIN_VERSION = "2.35.0"
+
+/**
+ * Why the archive's own instance cannot take a replace, from what the page knows of it (its version and its key's
+ * scopes); null when nothing it knows stops it. The server decides again at review.
+ */
+export function replaceBlocked(i: { name: string; version?: string | null; effectiveScopes?: string[] }) {
+  if (i.version) {
+    const a = i.version.split(".").map((x) => Number.parseInt(x, 10) || 0)
+    const b = REPLACE_MIN_VERSION.split(".").map(Number)
+    const d = [0, 1, 2].map((k) => (a[k] ?? 0) - (b[k] ?? 0)).find((x) => x !== 0) ?? 0
+    if (d < 0) return `${i.name} runs n8n ${i.version}; Replace needs n8n ${REPLACE_MIN_VERSION} or later.`
+  }
+  const missing = ["workflow:read", "workflow:update"].filter(
+    (s) => i.effectiveScopes && !i.effectiveScopes.includes(s),
+  )
+  if (missing.length) return `The API key of ${i.name} lacks ${missing.join(" and ")}, which Replace needs.`
+  return null
+}
+
+/** Where the Version before replace a restore kept opens: on the archive page of the instance it was taken from. */
+export function versionBeforePath(r: Pick<RestoreView, "id" | "targetInstanceId">): string {
+  return `/backups/${r.targetInstanceId ?? "removed"}/versions/${r.id}`
 }
 
 /** One value of the settings a restore sends, exactly as sent: as JSON, so text and a number or flag never look alike. */

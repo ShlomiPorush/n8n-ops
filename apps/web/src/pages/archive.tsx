@@ -59,7 +59,9 @@ import {
   type Inspection,
   jsonFileName,
   type RestoreKind,
+  type RestoreMode,
   type RestoreView,
+  replaceBlocked,
   type WorkflowSummary,
 } from "@/lib/restore"
 import { unsavedGuardOn } from "@/lib/session"
@@ -73,6 +75,8 @@ import { toast } from "@/lib/toast"
  */
 
 type RunLite = { id: string; startedAt: string; includesSecrets: boolean; status: string }
+/** An instance as `/instances` lists it: what a restore may pick, and what Replace needs of it. */
+type TargetInstance = PickedInstance & { version?: string | null; effectiveScopes?: string[] }
 type View = "workflows" | "credentials"
 
 /** Asks before a move out of the archive drops the pasted key. Moves between its items do not ask. */
@@ -106,23 +110,39 @@ function useKeyGuard(held: boolean, base: string) {
 }
 
 export function ArchivePage() {
-  const { runId } = useParams()
+  const { runId, restoreId } = useParams()
   // Another archive is another page: nothing of this one stays.
-  return <Archive key={runId} />
+  return <Archive key={runId ?? `version:${restoreId}`} />
 }
 
+/*
+ * The page opens a backup run's archive (`/backups/:id/runs/:runId`) or the Version before replace that a restore
+ * kept (`/backups/:id/versions/:restoreId`), the workflow as n8n held it right before a replace wrote over it. Both
+ * read, compare and restore the same way.
+ */
 function Archive() {
-  const { id = "", runId = "", kind, itemId } = useParams()
+  const { id = "", runId = "", restoreId, kind, itemId } = useParams()
   const navigate = useNavigate()
   const [params, setParams] = useSearchParams()
   const q = params.get("q") ?? ""
   const w = useTimeFormat()
-  const base = `/backups/${id}/runs/${runId}`
-  const instances = useApi<{ instances: PickedInstance[] }>("/instances")
-  const runs = useApi<RunLite[]>(id ? `/backups/${id}/runs` : null)
+  const isVersion = restoreId !== undefined
+  const base = isVersion ? `/backups/${id}/versions/${restoreId}` : `/backups/${id}/runs/${runId}`
+  const apiBase = isVersion ? `/backups/versions/${restoreId}` : `/backups/runs/${runId}`
+  const instances = useApi<{ instances: TargetInstance[] }>("/instances")
+  const runs = useApi<RunLite[]>(id && !isVersion ? `/backups/${id}/runs` : null)
+  const kept = useApi<RestoreView>(isVersion ? `/backups/restores/${restoreId}` : null)
   const run = runs.data?.find((r) => r.id === runId)
+  const takenAt = kept.data?.versionBefore?.takenAt
   const instanceName = instances.data?.instances.find((i) => i.id === id)?.name
-  const archiveLabel = run ? `Archive of ${formatTime(run.startedAt, w, { seconds: false })}` : "Archive"
+  const title = isVersion ? "Version Before Replace" : "Archive"
+  const archiveLabel = isVersion
+    ? takenAt
+      ? `Version before replace, ${formatTime(takenAt, w, { seconds: false })}`
+      : "Version before replace"
+    : run
+      ? `Archive of ${formatTime(run.startedAt, w, { seconds: false })}`
+      : "Archive"
   useCrumb(id === "self" ? "n8n-ops database" : instanceName)
   useCrumb(archiveLabel)
 
@@ -136,9 +156,7 @@ function Archive() {
     setBusy(true)
     setError("")
     try {
-      setInspection(
-        await api<Inspection>(`/backups/runs/${runId}/inspect`, { method: "POST", json: { privateKey: key } }),
-      )
+      setInspection(await api<Inspection>(`${apiBase}/inspect`, { method: "POST", json: { privateKey: key } }))
     } catch (e) {
       setError(describeError(e))
     } finally {
@@ -147,20 +165,30 @@ function Archive() {
   }
 
   if (!inspection) {
-    const missing = id === "self" || (runs.data !== undefined && !run)
+    const missing =
+      id === "self" ||
+      (isVersion
+        ? Boolean(kept.error) || (kept.data !== undefined && !kept.data.versionBefore)
+        : runs.data !== undefined && !run)
+    const description = isVersion
+      ? kept.data && takenAt
+        ? `${kept.data.itemName} as ${instanceName ?? "the instance"} held it right before a replace, kept by n8n-ops on ${formatTime(takenAt, w, { seconds: false })}. Open it with the private backup key, or with the key pasted for that restore, to see it and put it back.`
+        : "The workflow as n8n held it right before a replace, kept by n8n-ops."
+      : run
+        ? `The backup of ${instanceName ?? "this instance"} from ${formatTime(run.startedAt, w, { seconds: false })}${run.includesSecrets ? ", with credential secrets" : ", without credential secrets"}. Open it to see its workflows and credentials and restore single items.`
+        : "Open an archive to see its workflows and credentials and restore single items."
     return (
-      <Page
-        title="Archive"
-        description={
-          run
-            ? `The backup of ${instanceName ?? "this instance"} from ${formatTime(run.startedAt, w, { seconds: false })}${run.includesSecrets ? ", with credential secrets" : ", without credential secrets"}. Open it to see its workflows and credentials and restore single items.`
-            : "Open an archive to see its workflows and credentials and restore single items."
-        }
-      >
+      <Page title={title} description={description}>
         {missing ? (
           <Panel>
             <Empty
-              title={id === "self" ? "The n8n-ops database is not opened here." : "This backup run was not found."}
+              title={
+                id === "self"
+                  ? "The n8n-ops database is not opened here."
+                  : isVersion
+                    ? "This version before was not found."
+                    : "This backup run was not found."
+              }
               action={
                 <Button asChild>
                   <Link to={`/backups/${id}`}>Back to the backups</Link>
@@ -169,12 +197,14 @@ function Archive() {
             >
               {id === "self"
                 ? "Restore it with age and pg_restore, as its backups pane says."
-                : "It may have been removed by retention."}
+                : isVersion
+                  ? "Only a restore that replaced a workflow keeps one."
+                  : "It may have been removed by retention."}
             </Empty>
           </Panel>
         ) : (
           <Panel className="max-w-2xl">
-            <PanelHead title="Open the Archive" />
+            <PanelHead title={isVersion ? "Open the Version Before" : "Open the Archive"} />
             <form
               className="grid gap-3 px-pad-x pb-pad-y"
               onSubmit={(e) => {
@@ -210,7 +240,7 @@ function Archive() {
                   busy={busy}
                   busyLabel="Opening…"
                 >
-                  Open archive
+                  {isVersion ? "Open version" : "Open archive"}
                 </BusyButton>
               </div>
             </form>
@@ -237,13 +267,17 @@ function Archive() {
   const list = (items: boolean) => (
     <>
       <PageHead
-        title="Archive"
+        title={title}
         actions={
           <Button onClick={close}>
-            <LockIcon /> Close archive
+            <LockIcon /> {isVersion ? "Close version" : "Close archive"}
           </Button>
         }
-        description={`${plural(inspection.workflows.length, "workflow")} and ${plural(inspection.credentials.length, "credential")}${secrets ? " with their secrets" : ", without secrets"}, backed up from ${instanceName ?? "the instance"} on ${formatTime(inspection.run.startedAt, w, { seconds: false })}. The key stays on this page until you close the archive or leave.`}
+        description={
+          isVersion
+            ? `The workflow as ${instanceName ?? "the instance"} held it right before a replace, kept on ${formatTime(inspection.source.at, w, { seconds: false })}. Restore it as a copy, or replace the workflow with it to put it back. The key stays on this page until you close it or leave.`
+            : `${plural(inspection.workflows.length, "workflow")} and ${plural(inspection.credentials.length, "credential")}${secrets ? " with their secrets" : ", without secrets"}, backed up from ${instanceName ?? "the instance"} on ${formatTime(inspection.source.at, w, { seconds: false })}. The key stays on this page until you close the archive or leave.`
+        }
       />
       <FilterBar
         views={
@@ -298,7 +332,7 @@ function Archive() {
     </>
   )
 
-  const shared = { inspection, privateKey: key, base, instances: instances.data?.instances }
+  const shared = { inspection, privateKey: key, base, apiBase, instances: instances.data?.instances }
   return (
     <ListWithPanel
       list={list}
@@ -527,8 +561,10 @@ function CredentialList({
 type PaneProps = {
   inspection: Inspection
   privateKey: string
+  /** The page of this archive, and where its API calls go. */
   base: string
-  instances: PickedInstance[] | undefined
+  apiBase: string
+  instances: TargetInstance[] | undefined
 }
 
 type JsonState = { loading: true } | { data: unknown } | { failed: unknown }
@@ -539,6 +575,7 @@ function WorkflowPane({
   inspection,
   privateKey,
   base,
+  apiBase,
   instances,
 }: PaneProps & { workflow: WorkflowSummary }) {
   useCrumb(x.name)
@@ -551,7 +588,7 @@ function WorkflowPane({
     load.current?.abort()
     const ctl = new AbortController()
     load.current = ctl
-    return api<unknown>(`/backups/runs/${inspection.run.id}/workflows/${encodeURIComponent(x.id)}`, {
+    return api<unknown>(`${apiBase}/workflows/${encodeURIComponent(x.id)}`, {
       method: "POST",
       json: { privateKey },
       signal: ctl.signal,
@@ -598,7 +635,9 @@ function WorkflowPane({
           </div>
         </div>
         <p className="text-small text-muted-foreground">
-          The archive holds the latest saved version, which on n8n 2 is the draft and may differ from the published one.
+          {inspection.source.kind === "version"
+            ? "This is the draft as n8n held it right before the replace; the published version may differ."
+            : "The archive holds the latest saved version, which on n8n 2 is the draft and may differ from the published one."}
         </p>
       </div>
 
@@ -728,6 +767,7 @@ function WorkflowPane({
         item={{ kind: "workflow", id: x.id, name: x.name }}
         inspection={inspection}
         privateKey={privateKey}
+        apiBase={apiBase}
         instances={instances}
         onClose={() => setRestoring(false)}
       />
@@ -741,6 +781,7 @@ function CredentialPane({
   inspection,
   privateKey,
   base,
+  apiBase,
   instances,
 }: PaneProps & { credential: CredentialSummary }) {
   useCrumb(x.name)
@@ -815,6 +856,7 @@ function CredentialPane({
         item={{ kind: "credential", id: x.id, name: x.name }}
         inspection={inspection}
         privateKey={privateKey}
+        apiBase={apiBase}
         instances={instances}
         onClose={() => setRestoring(false)}
       />
@@ -836,6 +878,7 @@ function RestoreDialog({
   item,
   inspection,
   privateKey,
+  apiBase,
   instances,
   onClose,
 }: {
@@ -843,15 +886,26 @@ function RestoreDialog({
   item: { kind: RestoreKind; id: string; name: string }
   inspection: Inspection
   privateKey: string
-  instances: PickedInstance[] | undefined
+  apiBase: string
+  instances: TargetInstance[] | undefined
   onClose: () => void
 }) {
   // Only an instance with Restore workflows chosen takes a restore; the archive's own one first when it can.
   const targets = activeWith(instances, "restore")
-  const own = inspection.run.instanceId
+  const own = inspection.source.instanceId
   const fallback = targets.some((t) => t.id === own) ? (own ?? "") : (targets[0]?.id ?? "")
   const [picked, setPicked] = useState("")
   const target = targets.some((t) => t.id === picked) ? picked : fallback
+  // Copy by default. Replace writes the workflow the archive is from, so only on its own instance.
+  const [chosenMode, setMode] = useState<RestoreMode>("copy")
+  // What the page knows of the instance can stop it too (its n8n version, its key's scopes); the server decides.
+  const ownInstance = targets.find((t) => t.id === own)
+  const replaceReason =
+    target === "" || target !== own || !ownInstance
+      ? "Replace works only on the instance the archive is from."
+      : replaceBlocked(ownInstance)
+  const canReplace = item.kind === "workflow" && replaceReason === null
+  const mode: RestoreMode = canReplace ? chosenMode : "copy"
   const [restore, setRestore] = useState<RestoreView | null>(null)
   const [stillUnknown, setStillUnknown] = useState(false)
   const [error, setError] = useState("")
@@ -880,12 +934,17 @@ function RestoreDialog({
   // Also "Review again" after an unknown outcome: a new review, which names the earlier restore.
   const review = async () => {
     const next = await act("review", () =>
-      api<RestoreView>(`/backups/runs/${inspection.run.id}/restores`, {
+      api<RestoreView>(`${apiBase}/restores`, {
         method: "POST",
-        json: { privateKey, targetInstanceId: target, kind: item.kind, itemId: item.id },
+        json: { privateKey, targetInstanceId: target, kind: item.kind, itemId: item.id, mode },
       }),
     )
     if (next) setStillUnknown(false)
+  }
+  // A replace the server refused says why; the copy is offered instead.
+  const asCopy = () => {
+    setMode("copy")
+    setError("")
   }
   const confirmIt = (r: RestoreView) =>
     act("confirm", () =>
@@ -908,20 +967,24 @@ function RestoreDialog({
     setStillUnknown(false)
     setError("")
     setPicked("")
+    setMode("copy")
     onClose()
   }
 
   const r = restore
   const ended = r !== null && r.status !== "previewed"
+  const replacing = (r?.mode ?? mode) === "replace"
   return (
     <Dialog open={open} onOpenChange={(o) => !o && close()}>
       <DialogContent className="md:max-w-2xl" keepOnBackdrop>
         <DialogHeader icon={ArchiveRestoreIcon}>
           <DialogTitle>Restore {item.name}</DialogTitle>
           <DialogDescription>
-            {item.kind === "workflow"
-              ? "Creates a copy of the workflow, inactive, with the credentials it needs. You review every action before anything is written."
-              : "Creates a new credential from the secrets in the archive. You review it before anything is written."}
+            {item.kind === "credential"
+              ? "Creates a new credential from the secrets in the archive. You review it before anything is written."
+              : replacing
+                ? "Writes the archived version over the workflow in n8n, as its draft, with the credentials it needs. You review every action before anything is written."
+                : "Creates a copy of the workflow, inactive, with the credentials it needs. You review every action before anything is written."}
           </DialogDescription>
         </DialogHeader>
 
@@ -949,6 +1012,36 @@ function RestoreDialog({
                 </FieldDescription>
               )}
             </Field>
+            {item.kind === "workflow" && (
+              <Field>
+                <FieldLabel id="restore-mode-label">How</FieldLabel>
+                <ToggleGroup
+                  type="single"
+                  aria-labelledby="restore-mode-label"
+                  value={mode}
+                  onValueChange={(v) => {
+                    if (v === "copy" || v === "replace") setMode(v)
+                    setError("")
+                  }}
+                >
+                  <ToggleGroupItem value="copy">As a copy</ToggleGroupItem>
+                  <ToggleGroupItem
+                    value="replace"
+                    disabled={!canReplace}
+                    aria-describedby={canReplace ? undefined : "restore-mode-reason"}
+                  >
+                    Replace the current workflow
+                  </ToggleGroupItem>
+                </ToggleGroup>
+                <FieldDescription id={canReplace ? undefined : "restore-mode-reason"}>
+                  {!canReplace
+                    ? replaceReason
+                    : mode === "replace"
+                      ? "The archived version becomes the workflow's draft in n8n. n8n-ops never publishes it; the version in n8n now is kept, so you can put it back."
+                      : "A new, inactive workflow beside the one in n8n."}
+                </FieldDescription>
+              </Field>
+            )}
           </FieldGroup>
         ) : !ended ? (
           <PlanReview restore={r} />
@@ -956,6 +1049,13 @@ function RestoreDialog({
           <RestoreResult restore={r} stillUnknown={stillUnknown} />
         )}
         {error && <FieldError>{error}</FieldError>}
+        {error && !r && mode === "replace" && (
+          <div>
+            <Button size="sm" onClick={asCopy}>
+              Restore as a copy instead
+            </Button>
+          </div>
+        )}
 
         <DialogFooter>
           {!r ? (
@@ -979,10 +1079,10 @@ function RestoreDialog({
               <BusyButton
                 variant="primary"
                 busy={busy === "confirm"}
-                busyLabel="Restoring…"
+                busyLabel={replacing ? "Replacing…" : "Restoring…"}
                 onClick={() => void confirmIt(r)}
               >
-                Restore
+                {replacing ? "Replace" : "Restore"}
               </BusyButton>
             </>
           ) : (

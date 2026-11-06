@@ -5,9 +5,11 @@ import {
   credentialActionText,
   jsonFileName,
   type RestorePlan,
+  replaceBlocked,
   restoreOutcome,
   settingText,
   stepsOf,
+  versionBeforePath,
 } from "./restore.ts"
 
 const plan: RestorePlan = {
@@ -101,6 +103,39 @@ describe("restoreOutcome", () => {
     )
     expect(restoreOutcome({ status: "done", kind: "credential", error: null, plan })).toBe(
       "Restored into n8n-2 as a new credential.",
+    )
+  })
+
+  it("says a replace wrote the draft only, and to publish it in n8n when it is published", () => {
+    const replace = {
+      ...plan,
+      mode: "replace" as const,
+      replace: {
+        workflowId: "w1",
+        live: { name: "Sync orders", updatedAt: null, versionId: "v1", activeVersionId: "v0", published: true },
+        settingsFrom: "live" as const,
+        effectiveSettings: {},
+      },
+    }
+    expect(restoreOutcome({ status: "done", kind: "workflow", error: null, plan: replace })).toContain(
+      "Publish it in n8n when ready.",
+    )
+    const draft = { ...replace, replace: { ...replace.replace, live: { ...replace.replace.live, published: false } } }
+    expect(restoreOutcome({ status: "done", kind: "workflow", error: null, plan: draft })).toContain(
+      "n8n-ops did not publish it",
+    )
+    expect(versionBeforePath({ id: "r1", targetInstanceId: "i1" })).toBe("/backups/i1/versions/r1")
+  })
+
+  it("says why the instance cannot take a replace when its version or key's scopes show it", () => {
+    const scopes = ["workflow:read", "workflow:update"]
+    expect(replaceBlocked({ name: "prod", version: "2.35.0", effectiveScopes: scopes })).toBeNull()
+    expect(replaceBlocked({ name: "prod", version: "2.46.3" })).toBeNull()
+    expect(replaceBlocked({ name: "prod", version: "2.34.9", effectiveScopes: scopes })).toContain(
+      "needs n8n 2.35.0 or later",
+    )
+    expect(replaceBlocked({ name: "prod", version: "2.44.0", effectiveScopes: ["workflow:read"] })).toContain(
+      "lacks workflow:update",
     )
   })
 

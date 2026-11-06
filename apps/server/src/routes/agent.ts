@@ -14,9 +14,17 @@ import {
   agentProblems,
   agentQueues,
   agentWorkflows,
+  WORKFLOWS_DEFAULT,
+  WORKFLOWS_MAX,
 } from "../services/agent.ts"
 
 const isUuid = (value: string) => z.string().uuid().safeParse(value).success
+
+/** A page of workflows: at most WORKFLOWS_MAX, from `offset` on. */
+const workflowPage = z.object({
+  limit: z.coerce.number().int().min(1).max(WORKFLOWS_MAX).default(WORKFLOWS_DEFAULT),
+  offset: z.coerce.number().int().min(0).default(0),
+})
 
 /**
  * REST API for scripts and agents (requirement E1), bearer token of kind "rest". Read-only, except asking for
@@ -65,9 +73,16 @@ export function restRoutes(ctx: Ctx) {
   app.get("/instances", async (c) => c.json({ data: await agentInstances(ctx) }))
   app.get("/queues", async (c) => c.json({ data: await agentQueues(ctx) }))
   app.get("/backups", async (c) => c.json({ data: await agentBackups(ctx) }))
-  app.get("/workflows", async (c) =>
-    c.json({ data: await agentWorkflows(ctx, { q: c.req.query("q"), instance: c.req.query("instance") }) }),
-  )
+  app.get("/workflows", async (c) => {
+    const parsed = workflowPage.safeParse(c.req.query())
+    if (!parsed.success) return c.json({ error: "invalid", issues: parsed.error.issues }, 400)
+    const { workflows, ...page } = await agentWorkflows(ctx, {
+      q: c.req.query("q"),
+      instance: c.req.query("instance"),
+      ...parsed.data,
+    })
+    return c.json({ data: workflows, ...page })
+  })
 
   // Temporary access to n8n instances, for tokens allowed to ask for it.
   const allowedToken = (who: Env["Variables"]["actor"]) =>
@@ -222,13 +237,14 @@ export function buildMcpServer(
   )
   tool(
     "search_workflows",
-    "Find workflows across all instances by name, workflow ID, webhook path or tag. Each result says which instance it is on, and whether access to that instance can be requested and with which scopes.",
+    `Find workflows across all instances by name, workflow ID, webhook path or tag, by name, then instance, then ID. Each result says which instance it is on, and whether access to that instance can be requested and with which scopes. Returns { workflows, total, nextOffset }: at most limit (default ${WORKFLOWS_DEFAULT}, up to ${WORKFLOWS_MAX}) from offset on; total counts every match. To see them all, call again with offset set to nextOffset until it is null. The pages hold every match only while the list does not change: a sync between calls can move a workflow across pages, even when total stays the same. If total changes between calls, start again from offset 0.`,
     {
       query: z.string().optional(),
       instance: z.string().optional(),
-      limit: z.number().int().min(1).max(500).optional(),
+      limit: z.number().int().min(1).max(WORKFLOWS_MAX).optional(),
+      offset: z.number().int().min(0).optional(),
     },
-    (a) => agentWorkflows(ctx, { q: a.query, instance: a.instance, limit: a.limit }),
+    (a) => agentWorkflows(ctx, { q: a.query, instance: a.instance, limit: a.limit, offset: a.offset }),
   )
   if (!access) return server
 

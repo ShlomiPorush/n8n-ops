@@ -57,7 +57,7 @@ spaces and other characters in query values.
 | `instances` | Health, version and last check of every instance. `health` is `unknown` when the last collection could not read it or no collection runs now (`unknownReason` or `healthDetail.notCollected` says why); then `lastKnownHealth` and `lastKnownAt` are the last check that read it, not the present. `composeProject` and `composeService` name the main by its Compose project and service when it is set so (both `null` when it is a container name). |
 | `queues` | Queue metrics and queue worker health of instances in queue mode. With `health` `unknown`, the figures are from `checkedAt`, the last check. Each queue worker has, when its check read them, `version`, `uptimeSec` (of its container), `memory` `{used, limit}` in bytes (`limit` `null`: none set on the container) and `concurrency` `{value, from}` (`env`, `flag` or `default`); they are missing for workers of earlier releases. |
 | `backups` | The last backup run of every instance, and the last one that ended ok or partial. |
-| `workflows?q=<text>&instance=<name>` | Workflows by name, ID, webhook path or tag; each says its instance and whether access to it can be requested, with which scopes. |
+| `workflows?q=<text>&instance=<name>&limit=100&offset=0` | Workflows by name, ID, webhook path or tag, by name, then instance, then ID; each says its instance and whether access to it can be requested, with which scopes. One page: at most `limit` (default 100, up to 500) from `offset` on, with `total` (every match) and `nextOffset` (where the next page starts, `null` after the last). To list them all, call again with `offset` set to `nextOffset` until it is `null`. The pages hold every match only while the list does not change: a sync between calls can move a workflow across pages, even when `total` stays the same. If `total` changes between pages, start again from `offset=0`. |
 
 ## Temporary access to an n8n instance
 
@@ -69,12 +69,19 @@ being made at a time (`request_in_progress`) and at most three waiting for a per
 1. Find the instance with `workflows` if you do not know it.
 2. Ask: `n8n-ops post access-requests --json-file <file>` with a JSON body
    `{"instance": "<name>", "reason": "<what you will do and why, 10-500 characters>", "scopes": ["workflow:read"], "workflowIds": ["<id>"], "minutes": 15}`.
-   Ask for the fewest scopes, workflows and minutes the task needs; a person reads the reason and decides. Writing
-   the body to a file avoids quoting trouble; `--json '<body>'` also works in a POSIX shell.
+   Ask for the fewest scopes, workflows and minutes the task needs; a person reads the reason and decides. Count in
+   the minutes the time to check the result and to fix a failure, not only the change itself. Writing the body to a
+   file avoids quoting trouble; `--json '<body>'` also works in a POSIX shell.
 3. Poll `n8n-ops get access-requests/<requestId>` every few seconds while its status is pending. Once approved it
    returns the base URL, and the key one time only: call the n8n public API there with the key in the
    `X-N8N-API-KEY` header, exactly as with n8n.
-4. As soon as the task is done: `n8n-ops post access-requests/<requestId>/release`. The key stops working at once.
+4. Keep the access until the task is finished and checked. Check the result the task is about: reading a workflow
+   back shows that it was saved, not that a failing run now succeeds. If you cannot check it yourself, ask the person.
+   While you fix an error or wait for the person's answer, keep the access, and use it only for the reason that was
+   approved: holding the key does not widen what the person approved. It stops working by itself after the approved
+   minutes. Release it as soon as the task no longer needs it, also when the task is cancelled or given up:
+   `n8n-ops post access-requests/<requestId>/release`. The key stops working at once. Once the access has expired or
+   was released, the same request gives no key again: if you still need access, make a new request.
 
 ## When the command cannot run
 

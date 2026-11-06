@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+
+- **Agents can read every workflow, page by page.** The agents' workflow search (`GET /api/v1/workflows` and the `search_workflows` MCP tool) sent at most 100 workflows, with no way to see the rest or to know there were more. It now takes `limit` (default 100, up to 500) and `offset`, and says how many match (`total`) and where the next page starts (`nextOffset`, `null` after the last). The REST answer keeps `data` as the list; a `limit` or `offset` out of range is refused with 400.
+
+### Changed
+
+- **`search_workflows` answers with `{ workflows, total, nextOffset }`** instead of a bare list.
+
 ## [0.10.0] - 2026-11-05
 
 ### Added

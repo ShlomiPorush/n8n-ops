@@ -213,7 +213,7 @@ export function RestoreResult({ restore: r, stillUnknown = false }: { restore: R
         {React.createElement(look.icon)}
         <AlertTitle>{look.title}</AlertTitle>
         <AlertDescription>
-          {restoreOutcome(r)} Restore code <Code>{r.code}</Code>.
+          {restoreOutcome(r)} Restore code <Code className="break-normal whitespace-nowrap">{r.code}</Code>.
         </AlertDescription>
       </Alert>
       <StepList restore={r} />

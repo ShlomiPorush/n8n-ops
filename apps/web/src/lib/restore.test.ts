@@ -5,6 +5,7 @@ import {
   credentialActionText,
   jsonFileName,
   type RestorePlan,
+  replaceBlocked,
   restoreOutcome,
   settingText,
   stepsOf,
@@ -124,6 +125,18 @@ describe("restoreOutcome", () => {
       "n8n-ops did not publish it",
     )
     expect(versionBeforePath({ id: "r1", targetInstanceId: "i1" })).toBe("/backups/i1/versions/r1")
+  })
+
+  it("says why the instance cannot take a replace when its version or key's scopes show it", () => {
+    const scopes = ["workflow:read", "workflow:update"]
+    expect(replaceBlocked({ name: "prod", version: "2.35.0", effectiveScopes: scopes })).toBeNull()
+    expect(replaceBlocked({ name: "prod", version: "2.46.3" })).toBeNull()
+    expect(replaceBlocked({ name: "prod", version: "2.34.9", effectiveScopes: scopes })).toContain(
+      "needs n8n 2.35.0 or later",
+    )
+    expect(replaceBlocked({ name: "prod", version: "2.44.0", effectiveScopes: ["workflow:read"] })).toContain(
+      "lacks workflow:update",
+    )
   })
 
   it("gives the reason of a failure, and never calls an unknown outcome a failure", () => {

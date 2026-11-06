@@ -225,6 +225,27 @@ export function restoreOutcome(r: Pick<RestoreView, "status" | "kind" | "error" 
   }
 }
 
+/** The first n8n that can save a workflow's draft without publishing it, which Replace needs (as the server says). */
+export const REPLACE_MIN_VERSION = "2.35.0"
+
+/**
+ * Why the archive's own instance cannot take a replace, from what the page knows of it (its version and its key's
+ * scopes); null when nothing it knows stops it. The server decides again at review.
+ */
+export function replaceBlocked(i: { name: string; version?: string | null; effectiveScopes?: string[] }) {
+  if (i.version) {
+    const a = i.version.split(".").map((x) => Number.parseInt(x, 10) || 0)
+    const b = REPLACE_MIN_VERSION.split(".").map(Number)
+    const d = [0, 1, 2].map((k) => (a[k] ?? 0) - (b[k] ?? 0)).find((x) => x !== 0) ?? 0
+    if (d < 0) return `${i.name} runs n8n ${i.version}; Replace needs n8n ${REPLACE_MIN_VERSION} or later.`
+  }
+  const missing = ["workflow:read", "workflow:update"].filter(
+    (s) => i.effectiveScopes && !i.effectiveScopes.includes(s),
+  )
+  if (missing.length) return `The API key of ${i.name} lacks ${missing.join(" and ")}, which Replace needs.`
+  return null
+}
+
 /** Where the Version before replace a restore kept opens: on the archive page of the instance it was taken from. */
 export function versionBeforePath(r: Pick<RestoreView, "id" | "targetInstanceId">): string {
   return `/backups/${r.targetInstanceId ?? "removed"}/versions/${r.id}`

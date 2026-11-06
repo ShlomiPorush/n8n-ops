@@ -13,13 +13,15 @@ import {
   liveRefusal,
   mapCredentialRefs,
   NAME_LIMIT,
+  proofDifferences,
   publishedChange,
+  replaceProof,
   replaceRefusal,
   replaceSettings,
   replaceWarning,
   resolveCredentials,
   restoredName,
-  settingsLanded,
+  settingsDifferences,
   stepMessage,
   TOO_DEEP,
   workflowChanges,
@@ -94,34 +96,72 @@ describe("replace", () => {
     expect(isPublished({ active: true })).toBe(true)
   })
 
+  const body = (w: N8nWorkflow, extra: Record<string, unknown> = {}) =>
+    ({ name: w.name, nodes: w.nodes, connections: w.connections, settings: w.settings ?? {}, ...extra }) as never
+
   it("hashes a definition the same whatever the node and key order", () => {
     const w = workflow()
     const reordered = [...w.nodes].reverse().map((n) => Object.fromEntries(Object.entries(n).reverse()) as N8nNode)
-    expect(definitionHash(reordered, w.connections)).toBe(definitionHash(w.nodes, w.connections))
-    expect(definitionHash([...w.nodes, node("New")], w.connections)).not.toBe(definitionHash(w.nodes, w.connections))
-    expect(landed(w, definitionHash(w.nodes, w.connections), "Orders")).toBe(true)
-    expect(landed(w, definitionHash(w.nodes, w.connections), "Other")).toBe(false)
+    expect(definitionHash({ ...w, nodes: reordered })).toBe(definitionHash(w))
+    expect(definitionHash({ ...w, nodes: [...w.nodes, node("New")] })).not.toBe(definitionHash(w))
+    expect(definitionHash({ ...w, name: "Other" })).not.toBe(definitionHash(w))
+    const proof = replaceProof(body(w), w.settings ?? {})
+    expect(landed(w, proof)).toBe(true)
+    expect(landed({ ...w, name: "Other" }, proof)).toBe(false)
   })
 
-  it("accepts the settings n8n merged, and a sent default n8n dropped", () => {
-    const before = { executionOrder: "v1", errorWorkflow: "e1" }
-    expect(settingsLanded(before, { timezone: "UTC" }, { ...before, timezone: "UTC" })).toBe(true)
-    // n8n drops a value equal to its default instead of storing it.
-    expect(settingsLanded(before, { saveManualExecutions: true }, before)).toBe(true)
-    expect(settingsLanded(before, { timezone: "UTC" }, { executionOrder: "v1", timezone: "UTC" })).toBe(false)
-    expect(settingsLanded(before, { errorWorkflow: "e2" }, before)).toBe(false)
+  it("compares a credential by its ID, as n8n writes the current name of a linked one", () => {
+    const w = workflow()
+    const renamed = {
+      ...w,
+      nodes: w.nodes.map((n) =>
+        n.credentials ? { ...n, credentials: { slackApi: { id: "c1", name: "Slack (new name)" } } } : n,
+      ),
+    }
+    expect(definitionHash(renamed)).toBe(definitionHash(w))
+    const other = {
+      ...w,
+      nodes: w.nodes.map((n) => (n.credentials ? { ...n, credentials: { slackApi: { id: "c2", name: "Slack" } } } : n)),
+    }
+    expect(definitionHash(other)).not.toBe(definitionHash(w))
+  })
+
+  it("proves the settings and the optional fields sent, not only the definition", () => {
+    const w = workflow({ settings: { executionOrder: "v1", timezone: "UTC" } })
+    const proof = replaceProof(body(w, { nodeGroups: [], description: "About" }), {
+      executionOrder: "v1",
+      timezone: "Asia/Tokyo",
+    })
+    // The backup differs only in settings, and n8n kept its own: not proven.
+    expect(proofDifferences(proof, { ...w, nodeGroups: [], description: "About" })).toEqual([
+      "settings.timezone has another value",
+    ])
+    const written = { ...w, settings: { executionOrder: "v1", timezone: "Asia/Tokyo" }, description: "About" }
+    // Groups sent empty to clear them: n8n still holding some is not as sent; none in any form is.
+    expect(proofDifferences(proof, { ...written, nodeGroups: [{ id: "g" }] })).toEqual(["nodeGroups"])
+    expect(landed({ ...written, nodeGroups: null }, proof)).toBe(true)
+    // A field n8n does not return cannot be compared.
+    expect(landed({ ...written }, proof)).toBe(true)
+  })
+
+  it("reports a setting sent but missing afterwards, which n8n may have dropped for its default", () => {
+    const expected = { executionOrder: "v1", saveManualExecutions: true }
+    expect(settingsDifferences(expected, { executionOrder: "v1", saveManualExecutions: true, extra: 1 })).toEqual([])
+    expect(settingsDifferences(expected, { executionOrder: "v1" })).toEqual([
+      "settings.saveManualExecutions is not set (n8n may use its default instead)",
+    ])
   })
 
   it("after the write, says loudly that n8n unpublished it or holds something else", () => {
     const before = { ...workflow(), active: true, activeVersionId: "v1" }
-    const sent = { name: "Orders", hash: definitionHash(before.nodes, before.connections), settings: {} }
-    expect(replaceWarning(sent, before, { ...before, versionId: "v2" })).toBeNull()
-    expect(replaceWarning(sent, before, { ...before, active: false, activeVersionId: null })).toContain(
+    const proof = replaceProof(body(before), before.settings ?? {})
+    expect(replaceWarning(proof, before, { ...before, versionId: "v2" })).toBeNull()
+    expect(replaceWarning(proof, before, { ...before, active: false, activeVersionId: null })).toContain(
       "Publish it again in n8n",
     )
     expect(publishedChange(before, { ...before, activeVersionId: "v3" })).toContain("another version")
-    expect(replaceWarning(sent, before, { ...before, name: "Renamed", nodes: [node("Other")] })).toContain(
-      "the nodes or connections, the name",
+    expect(replaceWarning(proof, before, { ...before, name: "Renamed", settings: {} })).toContain(
+      "the name, nodes or connections; settings.executionOrder is not set",
     )
   })
 })

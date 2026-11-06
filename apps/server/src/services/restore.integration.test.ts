@@ -26,8 +26,10 @@ vi.mock("./backups.ts", async (original) => ({
     if (!bytes) throw new Error("This archive is not available.")
     return bytes
   },
-  maxArchiveBytes: async () => 64 * 1024 ** 2,
+  maxArchiveBytes: async () => maxBytes,
 }))
+/** The largest an archive may unpack to (Settings, Largest archive). */
+let maxBytes = 64 * 1024 ** 2
 const {
   checkRestore,
   confirmRestore,
@@ -53,8 +55,18 @@ let identity: string
 const KEY = randomBytes(24).toString("hex")
 const SECRET = randomBytes(12).toString("hex")
 
-/** `unpublish` (a write only): n8n saves, then its re-activation of the published version fails. */
-type Behaviour = "ok" | "saveThenFail" | "dropWithoutSave" | "dropAfterSave" | "refuse" | "unpublish"
+/**
+ * For a write only: `unpublish`, n8n saves, then its re-activation of the published version fails; `refuseUnpublished`,
+ * n8n refuses the write and leaves the workflow unpublished.
+ */
+type Behaviour =
+  | "ok"
+  | "saveThenFail"
+  | "dropWithoutSave"
+  | "dropAfterSave"
+  | "refuse"
+  | "unpublish"
+  | "refuseUnpublished"
 type Stored = { id: string; name: string; type: string; createdAt: string; data?: unknown }
 const n8n = {
   credentials: [] as Stored[],
@@ -70,6 +82,10 @@ const n8n = {
   /** Serve an API description (which takes `description` on create) from the next credential create on. */
   specAfterCredential: false,
   spec: false,
+  /** The API description served while `spec` is on. */
+  specText: "",
+  /** Settings values n8n drops from a write as its defaults (its removeDefaultValues). */
+  defaults: {} as Record<string, unknown>,
 }
 let keys: { backupRecipient?: string } = {}
 
@@ -122,7 +138,7 @@ beforeAll(async () => {
       if (url.pathname === "/api/v1/openapi.yml") {
         if (!n8n.spec) return send(503, { message: "unavailable" })
         res.writeHead(200, { "content-type": "application/yaml" })
-        return res.end(SPEC)
+        return res.end(n8n.specText || SPEC)
       }
       if (req.headers["x-n8n-api-key"] !== KEY) return send(401, { message: "unauthorized" })
       const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : {}
@@ -170,12 +186,34 @@ beforeAll(async () => {
         n8n.puts.push({ query: url.search, body })
         await n8n.onPut?.()
         if (!stored) return send(404, { message: "Not Found" })
+        if (n8n.next.put[0] === "refuseUnpublished") {
+          n8n.next.put.shift()
+          Object.assign(stored, { active: false, activeVersionId: null })
+          return send(400, { message: "Workflow could not be activated" })
+        }
         return create("put", () => {
-          // As n8n 2.35.0: the settings sent are merged into the stored ones; a published workflow is published
-          // again unless `publishIfActive=false`.
+          // As n8n 2.35.0: the settings sent, less those equal to its defaults, are merged into the stored ones; a
+          // linked credential gets its current name; a published workflow is published again unless
+          // `publishIfActive=false`.
           const published = Boolean(stored.activeVersionId)
-          const settings = { ...(stored.settings ?? {}), ...(body.settings ?? {}) }
-          Object.assign(stored, body, { settings, versionId: id(), updatedAt: new Date().toISOString() })
+          const sent = Object.entries(body.settings ?? {}).filter(
+            ([k, v]) => !(k in n8n.defaults && n8n.defaults[k] === v),
+          )
+          const settings = { ...(stored.settings ?? {}), ...Object.fromEntries(sent) }
+          const nodes = (body.nodes as N8nWorkflow["nodes"]).map((node) => ({
+            ...node,
+            ...(node.credentials
+              ? {
+                  credentials: Object.fromEntries(
+                    Object.entries(node.credentials).map(([type, ref]) => {
+                      const now = n8n.credentials.find((c) => c.id === ref?.id)
+                      return [type, now ? { ...ref, name: now.name } : ref]
+                    }),
+                  ),
+                }
+              : {}),
+          }))
+          Object.assign(stored, body, { nodes, settings, versionId: id(), updatedAt: new Date().toISOString() })
           if (published && url.searchParams.get("publishIfActive") !== "false")
             stored.activeVersionId = stored.versionId
           return stored
@@ -207,8 +245,11 @@ beforeEach(async () => {
     editAfterCredential: false,
     specAfterCredential: false,
     spec: false,
+    specText: "",
+    defaults: {},
   })
   keys = {}
+  maxBytes = 64 * 1024 ** 2
   // Restores taken from another restore's version first: they refer to it.
   await ctx.db.update(restores).set({ fromRestoreId: null })
   await ctx.db.delete(restores)
@@ -944,5 +985,185 @@ describe("replacing a workflow", () => {
     await expect(preview(run.id, source, "credential", "cred-basic", "replace")).rejects.toThrow("Only a workflow")
     expect(n8n.writes).toBe(0)
     expect(await ctx.db.select().from(restores)).toEqual([])
+  })
+})
+
+/** A run of `source` whose archive holds only `workflow`, without credentials. */
+async function archiveWith(source: { id: string }, workflow: N8nWorkflow) {
+  const [run] = await ctx.db
+    .insert(backupRuns)
+    .values({ instanceId: source.id, status: "ok", includesSecrets: false, workflows: 1 })
+    .returning()
+  if (!run) throw new Error("no run")
+  const sealed = await sealArchive(
+    [textEntry(`workflows/${workflow.id}.json`, JSON.stringify(workflow))],
+    await identityToRecipient(identity),
+  )
+  archives.set(run.id, sealed.bytes)
+  return run
+}
+
+/** The archived workflow with one node and no credentials; `live` puts it on the instance as saved there. */
+const plain = (extra: Partial<N8nWorkflow> = {}): N8nWorkflow => ({
+  id: "wf-plain",
+  name: "Plain",
+  active: false,
+  createdAt: "2026-01-01T00:00:00.000Z",
+  nodes: [{ id: "n1", name: "Start", type: "n8n-nodes-base.manualTrigger", parameters: {} }],
+  connections: {},
+  settings: { executionOrder: "v1" },
+  ...extra,
+})
+function livePlain(extra: Partial<N8nWorkflow> = {}) {
+  const w = {
+    ...plain(),
+    updatedAt: "2026-03-01T00:00:00.000Z",
+    versionId: "v-draft",
+    activeVersionId: null as string | null,
+    ...extra,
+  } as N8nWorkflow & { createdAt: string }
+  n8n.workflows.push(w)
+  return w
+}
+const plainReview = (runId: string, target: { id: string }, source: { runId: string } | { versionOf: string }) =>
+  previewRestore(ctx, {
+    source: "runId" in source ? { runId } : source,
+    privateKey: identity,
+    targetInstanceId: target.id,
+    kind: "workflow",
+    itemId: "wf-plain",
+    mode: "replace",
+    actor: "reviewer",
+    actorId: "user-1",
+    via: "web",
+  })
+
+/** An API description that takes every optional field and the settings these tests use. */
+const FULL_SPEC = `
+openapi: 3.0.0
+paths:
+  /workflows:
+    post:
+      x-required-scope: workflow:create
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                nodes: { type: array }
+                connections: { type: object }
+                settings:
+                  type: object
+                  properties: { executionOrder: { type: string }, timezone: { type: string } }
+                nodeGroups: { type: array }
+                description: { type: string }
+                pinData: { type: object }
+`
+
+describe("proving a replace", () => {
+  it("is not done when n8n refuses a write that differs only in settings", async () => {
+    const source = await instance(REPLACE)
+    const run = await archiveWith(source, plain())
+    const wf = livePlain({ settings: { executionOrder: "v0" } })
+    const review = await plainReview(run.id, source, { runId: run.id })
+    expect(review.plan.replace?.sameAsLive).toBe(false)
+    n8n.next.put.push("refuse")
+    const result = await confirmRestore(ctx, review.id, identity, by)
+    // Name, nodes and connections match already; the settings do not, so nothing proves the write.
+    expect(result.status).toBe("failed")
+    expect(wf.settings).toEqual({ executionOrder: "v0" })
+  })
+
+  it("says so in the review when n8n holds this version already, and does not count a refused write as done", async () => {
+    const source = await instance(REPLACE)
+    const run = await archiveWith(source, plain())
+    livePlain()
+    const review = await plainReview(run.id, source, { runId: run.id })
+    expect(review.plan.replace?.sameAsLive).toBe(true)
+    expect(review.plan.warnings.join(" ")).toContain("already holds this version")
+    n8n.next.put.push("refuse")
+    expect((await confirmRestore(ctx, review.id, identity, by)).status).toBe("failed")
+    // The same check of an unknown write finds nothing new either.
+    const again = await plainReview(run.id, source, { runId: run.id })
+    n8n.next.put.push("dropWithoutSave")
+    expect((await confirmRestore(ctx, again.id, identity, by)).status).toBe("unknown")
+    expect((await checkRestore(ctx, again.id)).status).toBe("unknown")
+  })
+
+  it("reports a workflow n8n left unpublished after refusing the write", async () => {
+    const source = await instance(REPLACE)
+    const run = await archiveWith(source, plain())
+    livePlain({ active: true, activeVersionId: "v-published", nodes: [] })
+    const review = await plainReview(run.id, source, { runId: run.id })
+    n8n.next.put.push("refuseUnpublished")
+    const result = await confirmRestore(ctx, review.id, identity, by)
+    expect(result.status).toBe("failed")
+    expect(result.steps[0]?.warning).toContain("Publish it again in n8n")
+  })
+
+  it("clears node groups when the version put back has none", async () => {
+    const source = await instance(REPLACE)
+    n8n.spec = true
+    n8n.specText = FULL_SPEC
+    const groups = [{ id: "g1", name: "Group", nodeIds: ["n1"] }]
+    const run = await archiveWith(source, plain({ nodeGroups: groups }))
+    const wf = livePlain({ nodes: [] })
+    const first = await confirmRestore(ctx, (await plainReview(run.id, source, { runId: run.id })).id, identity, by)
+    expect(first.status).toBe("done")
+    expect(wf.nodeGroups).toEqual(groups)
+    // The version before had no groups: putting it back sends them empty, so n8n does not keep these.
+    const back = await plainReview(run.id, source, { versionOf: first.id })
+    expect(back.plan.sent?.fields).toContain("nodeGroups")
+    const putBack = await confirmRestore(ctx, back.id, identity, by)
+    expect(putBack.status).toBe("done")
+    expect(putBack.steps[0]?.warning).toBeUndefined()
+    expect(n8n.puts[1]?.body.nodeGroups).toEqual([])
+    expect(wf.nodeGroups).toEqual([])
+    expect(wf.nodes).toEqual([])
+  })
+
+  it("reports a setting sent that n8n dropped as its default", async () => {
+    const source = await instance(REPLACE)
+    const run = await archiveWith(source, plain())
+    livePlain({ settings: { timezone: "Asia/Tokyo" }, nodes: [] })
+    n8n.defaults = { executionOrder: "v1" }
+    const review = await plainReview(run.id, source, { runId: run.id })
+    expect(review.plan.replace?.effectiveSettings).toEqual({ timezone: "Asia/Tokyo", executionOrder: "v1" })
+    const done = await confirmRestore(ctx, review.id, identity, by)
+    expect(done.status).toBe("done")
+    expect(done.steps[0]?.warning).toContain("settings.executionOrder is not set (n8n may use its default instead)")
+  })
+
+  it("proves a write with a credential renamed since the backup", async () => {
+    const source = await instance(REPLACE)
+    const run = await archiveOf(source)
+    live("cred-basic", "Basic", "httpBasicAuth", "2026-01-02T00:00:00Z")
+    live("cred-slack", "Slack (renamed)", "slackApi", "2026-01-03T00:00:00Z")
+    liveOrders(false)
+    const review = await replaceReview(run.id, source)
+    n8n.next.put.push("saveThenFail")
+    const done = await confirmRestore(ctx, review.id, identity, by)
+    expect(done.status).toBe("done")
+    expect(done.steps[0]?.warning).toBeUndefined()
+    // Sent with its name now, as n8n would put it there anyway.
+    const sentNodes = (n8n.puts[0]?.body.nodes ?? []) as N8nWorkflow["nodes"]
+    const notify = sentNodes.find((n) => n.name === "Notify")
+    expect(notify?.credentials).toEqual({ slackApi: { id: "cred-slack", name: "Slack (renamed)" } })
+  })
+
+  it("does not write when the version before would be too large to open again", async () => {
+    const source = await instance(REPLACE)
+    const run = await archiveWith(source, plain())
+    const big = { id: "n2", name: "Big", type: "n8n-nodes-base.set", parameters: { text: "x".repeat(40_000) } }
+    livePlain({ nodes: [...plain().nodes, big] })
+    maxBytes = 20_000
+    const review = await plainReview(run.id, source, { runId: run.id })
+    const result = await confirmRestore(ctx, review.id, identity, by)
+    expect(result.status).toBe("failed")
+    expect(result.steps[0]?.error).toContain("too large to keep as the version before")
+    expect(n8n.puts).toEqual([])
+    expect(result.versionBefore).toBeNull()
   })
 })

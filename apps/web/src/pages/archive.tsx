@@ -61,6 +61,7 @@ import {
   type RestoreKind,
   type RestoreMode,
   type RestoreView,
+  replaceBlocked,
   type WorkflowSummary,
 } from "@/lib/restore"
 import { unsavedGuardOn } from "@/lib/session"
@@ -74,6 +75,8 @@ import { toast } from "@/lib/toast"
  */
 
 type RunLite = { id: string; startedAt: string; includesSecrets: boolean; status: string }
+/** An instance as `/instances` lists it: what a restore may pick, and what Replace needs of it. */
+type TargetInstance = PickedInstance & { version?: string | null; effectiveScopes?: string[] }
 type View = "workflows" | "credentials"
 
 /** Asks before a move out of the archive drops the pasted key. Moves between its items do not ask. */
@@ -126,7 +129,7 @@ function Archive() {
   const isVersion = restoreId !== undefined
   const base = isVersion ? `/backups/${id}/versions/${restoreId}` : `/backups/${id}/runs/${runId}`
   const apiBase = isVersion ? `/backups/versions/${restoreId}` : `/backups/runs/${runId}`
-  const instances = useApi<{ instances: PickedInstance[] }>("/instances")
+  const instances = useApi<{ instances: TargetInstance[] }>("/instances")
   const runs = useApi<RunLite[]>(id && !isVersion ? `/backups/${id}/runs` : null)
   const kept = useApi<RestoreView>(isVersion ? `/backups/restores/${restoreId}` : null)
   const run = runs.data?.find((r) => r.id === runId)
@@ -561,7 +564,7 @@ type PaneProps = {
   /** The page of this archive, and where its API calls go. */
   base: string
   apiBase: string
-  instances: PickedInstance[] | undefined
+  instances: TargetInstance[] | undefined
 }
 
 type JsonState = { loading: true } | { data: unknown } | { failed: unknown }
@@ -884,7 +887,7 @@ function RestoreDialog({
   inspection: Inspection
   privateKey: string
   apiBase: string
-  instances: PickedInstance[] | undefined
+  instances: TargetInstance[] | undefined
   onClose: () => void
 }) {
   // Only an instance with Restore workflows chosen takes a restore; the archive's own one first when it can.
@@ -895,7 +898,13 @@ function RestoreDialog({
   const target = targets.some((t) => t.id === picked) ? picked : fallback
   // Copy by default. Replace writes the workflow the archive is from, so only on its own instance.
   const [chosenMode, setMode] = useState<RestoreMode>("copy")
-  const canReplace = item.kind === "workflow" && target !== "" && target === own
+  // What the page knows of the instance can stop it too (its n8n version, its key's scopes); the server decides.
+  const ownInstance = targets.find((t) => t.id === own)
+  const replaceReason =
+    target === "" || target !== own || !ownInstance
+      ? "Replace works only on the instance the archive is from."
+      : replaceBlocked(ownInstance)
+  const canReplace = item.kind === "workflow" && replaceReason === null
   const mode: RestoreMode = canReplace ? chosenMode : "copy"
   const [restore, setRestore] = useState<RestoreView | null>(null)
   const [stillUnknown, setStillUnknown] = useState(false)
@@ -1026,7 +1035,7 @@ function RestoreDialog({
                 </ToggleGroup>
                 <FieldDescription id={canReplace ? undefined : "restore-mode-reason"}>
                   {!canReplace
-                    ? "Replace works only on the instance the archive is from."
+                    ? replaceReason
                     : mode === "replace"
                       ? "The archived version becomes the workflow's draft in n8n. n8n-ops never publishes it; the version in n8n now is kept, so you can put it back."
                       : "A new, inactive workflow beside the one in n8n."}

@@ -4,7 +4,7 @@
 // credential secrets never leave the server.
 import { createHash, randomBytes } from "node:crypto"
 import { isDeepStrictEqual } from "node:util"
-import { entryText, textEntry, unsupportedVersionText } from "@n8n-ops/shared"
+import { createTar, entryText, textEntry, unsupportedVersionText } from "@n8n-ops/shared"
 import { type Manifest, openArchive, sealArchive, sha256Base64 } from "@n8n-ops/shared/archive"
 import { identityToRecipient } from "age-encryption"
 import { and, desc, eq, getTableColumns, inArray, lt } from "drizzle-orm"
@@ -488,6 +488,7 @@ export function resolveCredentials({ refs, archived, sameInstance, live, targetN
           sourceId: ref.id,
           action: "link",
           targetId: found.id,
+          targetName: found.name,
           matchedBy: createdKnown ? "id_type_created" : "id_type",
         })
         continue
@@ -640,34 +641,80 @@ function canonical(value: unknown): unknown {
   return value
 }
 
-/** SHA-256 of a workflow's definition: its nodes (in name order, n8n names them uniquely) and connections. */
-export function definitionHash(nodes: N8nNode[] | undefined, connections: unknown): string {
-  const sorted = [...(nodes ?? [])].sort((a, b) => a.name.localeCompare(b.name))
-  return createHash("sha256")
-    .update(JSON.stringify(canonical({ nodes: sorted, connections: connections ?? {} })))
+const sha256 = (value: unknown) =>
+  createHash("sha256")
+    .update(JSON.stringify(canonical(value)))
     .digest("hex")
-}
 
-/** Whether n8n holds what a replace sent: the definition and the name. */
-export const landed = (live: N8nWorkflow, sentHash: string, name: string) =>
-  live.name === name && definitionHash(live.nodes, live.connections) === sentHash
+/** Empty `nodeGroups`, `description` and `pinData` are one value: none. */
+const optionalValue = (value: unknown) => (filled(value) ? value : null)
+
+/** What a replace sends to clear a field the archived workflow has empty and the live one has filled. */
+const CLEARED: Record<(typeof OPTIONAL_FIELDS)[number], unknown> = { nodeGroups: [], description: "", pinData: {} }
 
 /**
- * Whether the settings n8n holds after a replace are those the review showed: each key sent is there with its value
- * (or is missing on both sides, as n8n drops a value equal to its default), and every other key n8n had is unchanged.
+ * Nodes with each credential reference by its ID alone: n8n writes a linked credential's current name over the one
+ * sent, so the name proves nothing.
  */
-export function settingsLanded(
-  before: Record<string, unknown> | undefined,
-  sent: Record<string, unknown>,
-  after: Record<string, unknown> | undefined,
-) {
-  const b = before ?? {}
-  const a = after ?? {}
-  for (const [key, value] of Object.entries(sent))
-    if (key in a ? !isDeepStrictEqual(a[key], value) : key in b) return false
-  for (const [key, value] of Object.entries(b)) if (!(key in sent) && !isDeepStrictEqual(a[key], value)) return false
-  return true
+const byCredentialId = (nodes: N8nNode[]) =>
+  nodes.map((n) =>
+    n.credentials
+      ? {
+          ...n,
+          credentials: Object.fromEntries(
+            Object.entries(n.credentials).map(([type, ref]) => [type, ref?.id ? { id: ref.id } : ref]),
+          ),
+        }
+      : n,
+  )
+
+/**
+ * SHA-256 of a workflow's definition: its name, its nodes (in name order, as n8n names them uniquely, with credential
+ * references by ID) and its connections.
+ */
+export function definitionHash(w: Pick<N8nWorkflow, "nodes" | "connections"> & { name?: string }): string {
+  const sorted = byCredentialId([...(w.nodes ?? [])]).sort((a, b) => a.name.localeCompare(b.name))
+  return sha256({ name: w.name ?? null, nodes: sorted, connections: w.connections ?? {} })
 }
+
+/** What proves that n8n holds what a replace sent: the definition, each optional field sent, the settings expected. */
+export type ReplaceProof = { hash: string; fields: Record<string, string>; settings: Record<string, unknown> }
+
+/** The proof of a replace body; `settings` are the effective ones the review showed (n8n's merged with those sent). */
+export function replaceProof(body: WorkflowBody, settings: Record<string, unknown>): ReplaceProof {
+  const fields: Record<string, string> = {}
+  for (const field of OPTIONAL_FIELDS) if (field in body) fields[field] = sha256(optionalValue(body[field]))
+  return { hash: definitionHash(body), fields, settings }
+}
+
+/**
+ * The settings n8n holds that are not the effective ones the review showed, in words. A key sent but missing
+ * afterwards is not as reviewed either: n8n drops a value equal to its default, so the instance may use its own.
+ */
+export function settingsDifferences(expected: Record<string, unknown>, after: Record<string, unknown> | undefined) {
+  const a = after ?? {}
+  return Object.entries(expected).flatMap(([key, value]) =>
+    !(key in a)
+      ? [`settings.${key} is not set (n8n may use its default instead)`]
+      : !isDeepStrictEqual(a[key], value)
+        ? [`settings.${key} has another value`]
+        : [],
+  )
+}
+
+/** Everything in which n8n does not hold what a replace sent, in words; empty when it does. */
+export function proofDifferences(proof: ReplaceProof, after: N8nWorkflow): string[] {
+  const out: string[] = []
+  if (definitionHash(after) !== proof.hash) out.push("the name, nodes or connections")
+  // A field n8n does not return cannot be compared.
+  for (const [field, hash] of Object.entries(proof.fields))
+    if (field in after && sha256(optionalValue(after[field as keyof N8nWorkflow])) !== hash) out.push(field)
+  out.push(...settingsDifferences(proof.settings, after.settings))
+  return out
+}
+
+/** Whether n8n holds what a replace sent. */
+export const landed = (after: N8nWorkflow, proof: ReplaceProof) => proofDifferences(proof, after).length === 0
 
 /** What changed in the published state between two reads of a workflow, in words; null when nothing did. */
 export function publishedChange(
@@ -688,20 +735,17 @@ export function publishedChange(
  * the workflow read right before the write, `after` the one read right after it.
  */
 export function replaceWarning(
-  sent: { name: string; hash: string; settings: Record<string, unknown> },
-  before: N8nWorkflow,
+  proof: ReplaceProof,
+  before: Pick<N8nWorkflow, "active" | "activeVersionId">,
   after: N8nWorkflow,
 ): string | null {
   const out: string[] = []
   const published = publishedChange(before, after)
   if (published) out.push(published)
-  const differs: string[] = []
-  if (definitionHash(after.nodes, after.connections) !== sent.hash) differs.push("the nodes or connections")
-  if (after.name !== sent.name) differs.push("the name")
-  if (!settingsLanded(before.settings, sent.settings, after.settings)) differs.push("the settings")
+  const differs = proofDifferences(proof, after)
   if (differs.length)
     out.push(
-      `n8n now holds something else than what was sent: ${differs.join(", ")}. Look at the workflow in n8n; it may have been saved there at the same moment.`,
+      `n8n now holds something else than what was sent: ${differs.join("; ")}. Look at the workflow in n8n; it may have been saved there at the same moment.`,
     )
   return out.length ? out.join(" ") : null
 }
@@ -821,10 +865,34 @@ async function replacePlan(
       "settings: the workflow is published, so its current settings are sent unchanged and the archived ones are not restored (a change of settings makes n8n publish again)",
     )
   else for (const key of settings.dropped) notRestored.unshift(`settings.${key}: this n8n does not take it`)
+  // A field the archive has empty is sent empty, so it is cleared: n8n keeps a field that is not sent.
   for (const field of OPTIONAL_FIELDS)
-    if (!filled(workflow[field]) && filled(live[field]))
-      notRestored.push(`${field}: the archive has none, so the workflow keeps its current one`)
+    if (!filled(workflow[field]) && filled(live[field])) {
+      if (fields?.fields.includes(field)) Object.assign(body, { [field]: CLEARED[field] })
+      else
+        notRestored.push(
+          `${field}: the archive has none, and this n8n does not say it takes the field, so the workflow keeps its current one`,
+        )
+    }
   if (filled(live.staticData)) notRestored.push("staticData: the workflow keeps its current polling state")
+  // When n8n holds this version already, a read afterwards cannot tell whether the write happened.
+  const { ids, removed } = credentialChanges(actions)
+  const sameAsLive =
+    !actions.some((a) => a.action === "create") &&
+    landed(
+      live,
+      replaceProof(
+        {
+          ...body,
+          nodes: mapCredentialRefs(body.nodes, (ref) => (removed.has(refKey(ref)) ? null : ids.get(refKey(ref)))),
+        },
+        settings.effective,
+      ),
+    )
+  if (sameAsLive)
+    warnings.push(
+      "The workflow in n8n already holds this version in everything n8n-ops compares (name, nodes, connections, settings and the fields sent). A replace writes it again as a new version, but nothing will look different.",
+    )
   return {
     target: { id: target.id, name: target.name, sameInstance: true, revision: target.configRevision },
     item: { kind: "workflow", id: workflow.id, name: workflow.name },
@@ -846,8 +914,39 @@ async function replacePlan(
       },
       settingsFrom: settings.settingsFrom,
       effectiveSettings: settings.effective,
+      sameAsLive,
     },
   }
+}
+
+/** The credential changes a plan makes: linked ones with their current name, removed ones as a whole. */
+function credentialChanges(actions: CredentialAction[]) {
+  const ids = new Map<string, { id: string; name: string }>()
+  for (const a of actions)
+    if (a.action === "link") ids.set(`id:${a.sourceId}`, { id: a.targetId, name: a.targetName ?? a.name })
+  const removed = new Set(
+    actions.filter((a) => a.action === "remove").map((a) => refKey({ type: a.type, id: a.sourceId, name: a.name })),
+  )
+  return { ids, removed }
+}
+
+/**
+ * The body a workflow is written with: exactly the fields and settings the review showed, whatever the instance's
+ * API description says now, and a field sent empty to clear it (a replace) stays in it.
+ */
+function reviewedBody(
+  workflow: N8nWorkflow,
+  nodes: N8nNode[],
+  name: string,
+  sent: NonNullable<RestorePlan["sent"]>,
+): WorkflowBody {
+  const { body } = copyBody({ ...workflow, nodes, settings: sent.settings }, name, {
+    fields: sent.fields,
+    settings: Object.keys(sent.settings),
+  })
+  for (const field of OPTIONAL_FIELDS)
+    if (sent.fields.includes(field) && !(field in body)) Object.assign(body, { [field]: CLEARED[field] })
+  return body
 }
 
 /** The plan of a restore, computed the same way at review and at confirm. Writes nothing. */
@@ -1188,16 +1287,23 @@ async function sealVersionBefore(ctx: Ctx, live: N8nWorkflow, targetName: string
     credentials: 0,
     source: "api",
   }
+  const entries = [
+    textEntry("manifest.json", JSON.stringify(manifest)),
+    textEntry(`workflows/${live.id}.json`, JSON.stringify(live)),
+  ]
+  // It must open again: an archive is opened only up to the largest size allowed (`loadArchive`).
+  const unpacked = createTar(entries).length
+  const max = await maxArchiveBytes(ctx)
+  if (unpacked > max)
+    throw new RestoreError(
+      `The workflow is too large to keep as the version before (${mib(unpacked)}; an archive may hold at most ${mib(max)}), so it was not replaced. Raise Largest archive in the backup settings, or restore it as a copy instead.`,
+    )
   // Both the backup key and the key pasted for this restore open it.
   const recipients = [...(backupRecipient ? [backupRecipient] : []), await identityToRecipient(privateKey.trim())]
-  return sealArchive(
-    [
-      textEntry("manifest.json", JSON.stringify(manifest, null, 2)),
-      textEntry(`workflows/${live.id}.json`, JSON.stringify(live, null, 2)),
-    ],
-    [...new Set(recipients)],
-  )
+  return sealArchive(entries, [...new Set(recipients)])
 }
+
+const mib = (bytes: number) => `${(bytes / 1024 ** 2).toFixed(1)} MiB`
 
 /**
  * The replace step (S7). Reads the workflow right before the write and refuses when it is not what the review saw;
@@ -1239,10 +1345,12 @@ async function runReplace(
       status: "failed",
       error: "The workflow changed in n8n since you reviewed this restore, so it was not replaced. Review it again.",
     }
-  const sentHash = definitionHash(body.nodes, body.connections)
+  const proof = replaceProof(body, reviewed.effectiveSettings)
+  const sentHash = proof.hash
+  const sentFields = proof.fields
   try {
     const sealed = await sealVersionBefore(ctx, before, row.reviewed.target.name, privateKey)
-    steps[i] = { ...step, sentHash }
+    steps[i] = { ...step, sentHash, sentFields }
     // One write: the version before and the hash a later check needs, both before the workflow is touched.
     await ctx.db
       .update(restores)
@@ -1257,11 +1365,13 @@ async function runReplace(
     return {
       ...step,
       status: "failed",
-      error: `The version before could not be kept, so the workflow was not replaced: ${(error as Error).message}`,
+      error:
+        error instanceof RestoreError
+          ? error.message
+          : `The version before could not be kept, so the workflow was not replaced: ${(error as Error).message}`,
     }
   }
-  const current = { ...step, sentHash }
-  const sent = { name: body.name, hash: sentHash, settings: body.settings }
+  const current = { ...step, sentHash, sentFields }
   try {
     await client.updateWorkflow(id, body, { publishIfActive: false })
   } catch (error) {
@@ -1272,8 +1382,11 @@ async function runReplace(
     } catch {
       after = null
     }
-    if (after && landed(after, sentHash, body.name)) {
-      const warning = replaceWarning(sent, before, after)
+    // Whatever became of the write, a read that shows the workflow unpublished says so.
+    const published = after ? publishedChange(before, after) : null
+    const said = published ? { warning: published } : {}
+    if (after && provenWritten(after, proof, before.versionId, reviewed.sameAsLive)) {
+      const warning = replaceWarning(proof, before, after)
       return {
         ...current,
         status: "done",
@@ -1288,8 +1401,8 @@ async function runReplace(
       (after.updatedAt ?? null) === (before.updatedAt ?? null) &&
       (after.versionId ?? null) === (before.versionId ?? null)
     )
-      return { ...current, status: "failed", error: message }
-    return { ...current, status: "unknown", error: message }
+      return { ...current, status: "failed", error: message, ...said }
+    return { ...current, status: "unknown", error: message, ...said }
   }
   let after: N8nWorkflow
   try {
@@ -1302,8 +1415,21 @@ async function runReplace(
       warning: `Replaced, but n8n could not be read afterwards to check it: ${n8nMessage(error)}. Look at the workflow in n8n.`,
     }
   }
-  const warning = replaceWarning(sent, before, after)
+  const warning = replaceWarning(proof, before, after)
   return { ...current, status: "done", createdId: id, ...(warning ? { warning } : {}) }
+}
+
+/**
+ * Whether a read proves the write: n8n holds what was sent and, when it held all of that already before (the
+ * review said so), a version other than the one before.
+ */
+function provenWritten(
+  after: N8nWorkflow,
+  proof: ReplaceProof,
+  versionBefore: string | null | undefined,
+  sameAsLive: boolean | undefined,
+) {
+  return landed(after, proof) && (!sameAsLive || (after.versionId ?? null) !== (versionBefore ?? null))
 }
 
 /** Restores this process is running now; a pending one that is not here was cut off (see `sweepRestores`). */
@@ -1383,14 +1509,7 @@ async function execute(ctx: Ctx, row: Row, steps: RestoreStep[], privateKey: str
       await finish(ctx, row, "failed", steps, "Something changed since you reviewed this restore. Review it again."),
     )
   const { plan, workflow, client } = built
-  const ids = new Map<string, { id: string; name: string }>()
-  for (const a of plan.credentials)
-    if (a.action === "link") ids.set(`id:${a.sourceId}`, { id: a.targetId, name: a.name })
-  const removed = new Set(
-    plan.credentials
-      .filter((a) => a.action === "remove")
-      .map((a) => refKey({ type: a.type, id: a.sourceId, name: a.name })),
-  )
+  const { ids, removed } = credentialChanges(plan.credentials)
   const archived = new Map(archive.credentials.map((c) => [c.id, c]))
   for (let i = 0; i < steps.length; i++) {
     const step = steps[i] as RestoreStep
@@ -1405,12 +1524,8 @@ async function execute(ctx: Ctx, row: Row, steps: RestoreStep[], privateKey: str
       const nodes = mapCredentialRefs(workflow?.nodes ?? [], (ref) =>
         removed.has(refKey(ref)) ? null : ids.get(refKey(ref)),
       )
-      // Exactly the fields and settings the review showed, whatever the instance's API description says now.
       const sent = plan.sent ?? { fields: ["name", "nodes", "connections", "settings"], settings: {} }
-      const { body } = copyBody({ ...(workflow as N8nWorkflow), nodes, settings: sent.settings }, step.name, {
-        fields: sent.fields,
-        settings: Object.keys(sent.settings),
-      })
+      const body = reviewedBody(workflow as N8nWorkflow, nodes, step.name, sent)
       result =
         step.action === "replace" && plan.replace
           ? await runReplace(ctx, row, steps, i, client, plan.replace, body, privateKey)
@@ -1481,15 +1596,22 @@ async function checkReplace(client: N8nClient, step: RestoreStep, reviewed: Repl
   } catch {
     return { ...step, error: "Could not be checked now." }
   }
-  if (!landed(live, step.sentHash, step.name))
-    return { ...step, error: "n8n does not hold what was sent, which does not prove it failed." }
   const seen = reviewed && {
     active: reviewed.live.published,
     activeVersionId: reviewed.live.activeVersionId ?? undefined,
   }
-  const warning = seen ? publishedChange(seen, live) : null
+  // Whatever the check finds, a workflow n8n unpublished is said.
+  const published = seen ? publishedChange(seen, live) : null
+  const said = published ? { warning: published } : {}
+  const proof: ReplaceProof = {
+    hash: step.sentHash,
+    fields: step.sentFields ?? {},
+    settings: reviewed?.effectiveSettings ?? {},
+  }
+  if (!reviewed || !provenWritten(live, proof, reviewed.live.versionId, reviewed.sameAsLive))
+    return { ...step, error: "n8n does not hold what was sent, which does not prove it failed.", ...said }
   const { error: _e, ...rest } = step
-  return { ...rest, status: "done" as const, createdId: step.sourceId, ...(warning ? { warning } : {}) }
+  return { ...rest, status: "done" as const, createdId: step.sourceId, ...said }
 }
 
 export async function getRestore(ctx: Ctx, restoreId: string) {

@@ -13,6 +13,8 @@ export type CredentialAction =
       name: string
       type: string
       targetId: string
+      /** The credential's name on the instance now, which the workflow is sent with (n8n would put it there anyway). */
+      targetName?: string
       /** `id_type`: the archive or the instance has no creation time to compare, so the match is weaker. */
       matchedBy: "id_type_created" | "id_type"
       embedded: boolean
@@ -41,8 +43,12 @@ export type RestoreStep = PlannedStep & {
   error?: string
   /** For a replace: what n8n did that the review did not expect, such as unpublishing the workflow. */
   warning?: string
-  /** For a replace: SHA-256 of the definition sent (nodes and connections), so a later check can prove it landed. */
+  /**
+   * For a replace: SHA-256 of what was sent (name, nodes with credentials by ID, connections), so a later check can
+   * prove it landed; `sentFields` the same for each optional field sent (nodeGroups, description, pinData).
+   */
   sentHash?: string
+  sentFields?: Record<string, string>
 }
 
 /** What a replace found on the instance at review, and which settings it sends. */
@@ -60,6 +66,11 @@ export type ReplacePlan = {
   settingsFrom: "live" | "backup"
   /** The settings n8n holds after the write: its own merged with those sent (keys only it has stay). */
   effectiveSettings: Record<string, unknown>
+  /**
+   * The workflow in n8n already holds this version in everything n8n-ops compares: a read afterwards cannot prove
+   * the write, so only a new version in n8n does.
+   */
+  sameAsLive?: boolean
 }
 
 /** Everything the owner reviews before a restore; the confirm runs only if it is still exactly this. */

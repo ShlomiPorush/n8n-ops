@@ -45,6 +45,9 @@ async function mcp(request: import("@playwright/test").APIRequestContext, name: 
   return { error: Boolean(body.result.isError), value: JSON.parse(body.result.content[0]?.text ?? "null") }
 }
 
+/** What search_workflows answers: one page of workflows. */
+type Paged = { workflows: { workflowId: string; instance: string }[]; total: number; nextOffset: number | null }
+
 const proxy = (path: string, accessKey: string, init: RequestInit = {}) =>
   fetch(`${baseUrl}${path}`, { ...init, headers: { "X-N8N-API-KEY": accessKey, "content-type": "application/json" } })
 
@@ -99,7 +102,10 @@ test("the instance opens read-only access to agents", async ({ request }) => {
   await expect(async () => {
     const found = await mcp(request, "search_workflows", { query: workflowId })
     type Hit = { workflowId: string; instance: string; access: { requestable: boolean; grantableScopes: string[] } }
-    const hits = found.value as Hit[]
+    type Page = { workflows: Hit[]; total: number; nextOffset: number | null }
+    const { workflows: hits, total, nextOffset } = found.value as Page
+    expect(total).toBeGreaterThanOrEqual(2)
+    expect([hits.length, nextOffset]).toEqual([total, null])
     // Both test instances point at the same n8n, so the workflow is on both; only one is open to agents.
     const open = hits.find((h) => h.instance === "e2e-n8n")
     expect(open?.access.requestable).toBe(true)
@@ -108,6 +114,17 @@ test("the instance opens read-only access to agents", async ({ request }) => {
     const closed = hits.find((h) => h.instance === "e2e-n8n-b")
     expect(closed?.access.requestable).toBe(false)
   }).toPass({ timeout: 30_000 })
+
+  // One at a time: each page says where the next one starts, and together they hold every instance once.
+  const all = (await mcp(request, "search_workflows", { query: workflowId })).value as Paged
+  const walked: string[] = []
+  for (let offset: number | null = 0; offset !== null; ) {
+    const page = (await mcp(request, "search_workflows", { query: workflowId, limit: 1, offset })).value as Paged
+    expect([page.workflows.length, page.total]).toEqual([1, all.total])
+    walked.push(...page.workflows.map((h) => h.instance))
+    offset = page.nextOffset
+  }
+  expect(walked).toEqual(all.workflows.map((h) => h.instance))
 })
 
 test("an agent finds a workflow by part of one tag, read as written", async ({ request }) => {
@@ -128,7 +145,7 @@ test("an agent finds a workflow by part of one tag, read as written", async ({ r
     expect(results.filter((r) => r.error)).toEqual([])
   }
   const found = async (query: string) =>
-    ((await mcp(request, "search_workflows", { query })).value as { workflowId: string }[]).map((h) => h.workflowId)
+    ((await mcp(request, "search_workflows", { query })).value as Paged).workflows.map((h) => h.workflowId)
 
   const before = ((await (await n8nApi(`/workflows/${workflowId}/tags`)).json()) as { id: string }[]).map((t) => t.id)
   const created: string[] = []

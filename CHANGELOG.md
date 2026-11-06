@@ -4,8 +4,13 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+
+- **Agents can read every workflow, page by page.** The agents' workflow search (`GET /api/v1/workflows` and the `search_workflows` MCP tool) sent at most 100 workflows, with no way to see the rest or to know there were more. It now takes `limit` (default 100, up to 500) and `offset`, and says how many match (`total`) and where the next page starts (`nextOffset`, `null` after the last). The REST answer keeps `data` as the list; a `limit` or `offset` out of range is refused with 400.
+
 ### Changed
 
+- **`search_workflows` answers with `{ workflows, total, nextOffset }`** instead of a bare list.
 - **Agents keep temporary access to n8n until their change is checked.** The n8n-ops skill told agents to release access as soon as they had made their change, so when the change then failed, the agent had to ask again and a person had to approve again. Agents now keep the access while they check the result, fix an error or wait for a person's answer, within the approved minutes and for the approved reason only, and release it once the task is finished and checked, cancelled or given up. They also ask for enough minutes to check and fix.
 
 ## [0.10.0] - 2026-11-05

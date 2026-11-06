@@ -7,6 +7,7 @@ import {
   LockOpen as LockOpenIcon,
   RefreshCw,
   RotateCcw,
+  TriangleAlert,
 } from "lucide-react"
 import * as React from "react"
 import { useState } from "react"
@@ -615,6 +616,22 @@ function WorkflowPane({
           <KV label="Embedded workflows">{plural(x.embedded, "Execute Workflow node")} with a workflow inside</KV>
         )}
       </Panel>
+
+      {x.warnings.length > 0 && (
+        <Alert>
+          <TriangleAlert />
+          <AlertTitle>The credentials below may be incomplete</AlertTitle>
+          <AlertDescription>
+            <ul className="grid gap-1">
+              {x.warnings.map((warning) => (
+                <li key={warning}>
+                  <UserText>{warning}</UserText>
+                </li>
+              ))}
+            </ul>
+          </AlertDescription>
+        </Alert>
+      )}
 
       <Panel>
         <PanelHead

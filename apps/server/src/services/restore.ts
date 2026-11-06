@@ -203,6 +203,8 @@ export type WorkflowSummary = {
   }[]
   /** Execute Workflow nodes that run a workflow kept in the node itself. */
   embedded: number
+  /** What could not be read, such as a workflow embedded in an expression or too deep: the list above is partial. */
+  warnings: string[]
 }
 
 export type ChangeKind =
@@ -275,7 +277,8 @@ function summarize(archive: OpenedArchive): { workflows: WorkflowSummary[]; cred
   const workflows = archive.workflows
     .map((w): WorkflowSummary => {
       const seen = new Map<string, WorkflowSummary["credentials"][number]>()
-      for (const ref of credentialRefs(w.nodes)) {
+      const warnings: string[] = []
+      for (const ref of credentialRefs(w.nodes, warnings)) {
         const key = refKey(ref)
         if (seen.has(key)) continue
         const archived = ref.id ? creds.get(ref.id) : undefined
@@ -301,6 +304,7 @@ function summarize(archive: OpenedArchive): { workflows: WorkflowSummary[]; cred
         nodes: w.nodes.length,
         credentials: [...seen.values()],
         embedded: w.nodes.filter((n) => embeddedSource(n)).length,
+        warnings,
       }
     })
     .sort((a, b) => a.name.localeCompare(b.name))
@@ -913,7 +917,12 @@ async function execute(ctx: Ctx, row: Row, steps: RestoreStep[], privateKey: str
       const nodes = mapCredentialRefs(workflow?.nodes ?? [], (ref) =>
         removed.has(refKey(ref)) ? null : ids.get(refKey(ref)),
       )
-      const { body } = copyBody({ ...(workflow as N8nWorkflow), nodes }, step.name, await workflowFieldsOf(ctx, target))
+      // Exactly the fields and settings the review showed, whatever the instance's API description says now.
+      const sent = plan.sent ?? { fields: ["name", "nodes", "connections", "settings"], settings: {} }
+      const { body } = copyBody({ ...(workflow as N8nWorkflow), nodes }, step.name, {
+        fields: sent.fields,
+        settings: Object.keys(sent.settings),
+      })
       result = await runStep(client, step, () => client.createWorkflow(body))
     }
     steps[i] = result
@@ -1000,14 +1009,19 @@ export async function sweepRestores(ctx: Ctx) {
   await ctx.db
     .delete(restores)
     .where(and(eq(restores.status, "previewed"), lt(restores.createdAt, new Date(Date.now() - REVIEW_TTL_MS))))
-  const pending = await ctx.db.select().from(restores).where(eq(restores.status, "pending"))
-  for (const row of pending.filter((r) => !running.has(r.id))) {
-    const steps: RestoreStep[] = row.steps.length
-      ? [...row.steps]
-      : row.reviewed.steps.map((s) => ({ ...s, status: "todo" }))
-    // The step that was running when the server stopped may have been written.
-    const running = steps.findIndex((s) => s.status === "todo")
-    if (running >= 0) steps[running] = { ...(steps[running] as RestoreStep), status: "unknown" }
-    await finish(ctx, row, "unknown", steps, "This restore was cut off. Check n8n before trying again.")
+  const pending = await ctx.db.select({ id: restores.id }).from(restores).where(eq(restores.status, "pending"))
+  for (const { id } of pending) {
+    // In the restore's own queue and read again there, so a confirm that ends meanwhile is never written over.
+    await oneAtATime(`restore:${id}`, async () => {
+      const [row] = await ctx.db.select().from(restores).where(eq(restores.id, id))
+      if (!row || row.status !== "pending" || running.has(id)) return
+      const steps: RestoreStep[] = row.steps.length
+        ? [...row.steps]
+        : row.reviewed.steps.map((s) => ({ ...s, status: "todo" }))
+      // The step that was running when it stopped may have been written.
+      const at = steps.findIndex((s) => s.status === "todo")
+      if (at >= 0) steps[at] = { ...(steps[at] as RestoreStep), status: "unknown" }
+      await finish(ctx, row, "unknown", steps, "This restore was cut off. Check n8n before trying again.")
+    })
   }
 }

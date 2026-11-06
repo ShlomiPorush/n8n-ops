@@ -39,6 +39,8 @@ export type WorkflowSummary = {
   }[]
   /** Execute Workflow nodes that run a workflow kept in the node itself. */
   embedded: number
+  /** What could not be read (a workflow embedded in an expression or too deep): the credentials listed are partial. */
+  warnings: string[]
 }
 
 export type CredentialSummary = {

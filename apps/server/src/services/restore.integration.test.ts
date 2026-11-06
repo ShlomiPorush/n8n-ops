@@ -53,7 +53,29 @@ const n8n = {
   workflows: [] as (N8nWorkflow & { createdAt: string })[],
   next: { credential: [] as Behaviour[], workflow: [] as Behaviour[] },
   writes: 0,
+  /** Serve an API description (which takes `description` on create) from the next credential create on. */
+  specAfterCredential: false,
+  spec: false,
 }
+
+const SPEC = `
+openapi: 3.0.0
+paths:
+  /workflows:
+    post:
+      x-required-scope: workflow:create
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                nodes: { type: array }
+                connections: { type: object }
+                settings: { type: object, properties: { timezone: { type: string } } }
+                description: { type: string }
+`
 
 const live = (id: string, name: string, type: string, createdAt: string) =>
   n8n.credentials.push({ id, name, type, createdAt })
@@ -81,6 +103,11 @@ beforeAll(async () => {
         res.writeHead(status, { "content-type": "application/json" })
         res.end(JSON.stringify(body))
       }
+      if (url.pathname === "/api/v1/openapi.yml") {
+        if (!n8n.spec) return send(503, { message: "unavailable" })
+        res.writeHead(200, { "content-type": "application/yaml" })
+        return res.end(SPEC)
+      }
       if (req.headers["x-n8n-api-key"] !== KEY) return send(401, { message: "unauthorized" })
       const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : {}
       const create = (kind: "credential" | "workflow", save: () => { id: string }) => {
@@ -102,6 +129,7 @@ beforeAll(async () => {
         })
       if (url.pathname === "/api/v1/credentials" && req.method === "POST")
         return create("credential", () => {
+          if (n8n.specAfterCredential) n8n.spec = true
           const c = { id: id(), name: body.name, type: body.type, createdAt: new Date().toISOString(), data: body.data }
           n8n.credentials.push(c)
           return { id: c.id, name: c.name, type: c.type }
@@ -132,7 +160,14 @@ afterAll(async () => {
 })
 
 beforeEach(async () => {
-  Object.assign(n8n, { credentials: [], workflows: [], next: { credential: [], workflow: [] }, writes: 0 })
+  Object.assign(n8n, {
+    credentials: [],
+    workflows: [],
+    next: { credential: [], workflow: [] },
+    writes: 0,
+    specAfterCredential: false,
+    spec: false,
+  })
   await ctx.db.delete(restores)
 })
 
@@ -502,7 +537,53 @@ describe("a credential on its own", () => {
   })
 })
 
+describe("what is sent", () => {
+  it("is what the review showed, even when the instance's API description changes midway", async () => {
+    const source = await instance()
+    const [run] = await ctx.db
+      .insert(backupRuns)
+      .values({ instanceId: source.id, status: "ok", includesSecrets: true })
+      .returning()
+    const w = { ...archivedWorkflowJson(), description: "About", settings: { executionOrder: "v1" } }
+    const credential = { id: "cred-basic", name: "Basic", type: "httpBasicAuth", data: { password: SECRET } }
+    const sealed = await sealArchive(
+      [
+        textEntry("workflows/wf-orders.json", JSON.stringify(w)),
+        textEntry("credentials/cred-basic.json", JSON.stringify(credential)),
+      ],
+      await identityToRecipient(identity),
+    )
+    archives.set(run?.id ?? "", sealed.bytes)
+    const review = await preview(run?.id ?? "", await instance())
+    expect(review.plan.sent).toEqual({
+      fields: ["name", "nodes", "connections", "settings"],
+      settings: { executionOrder: "v1" },
+    })
+    n8n.specAfterCredential = true
+    expect((await confirmRestore(ctx, review.id, identity, by)).status).toBe("done")
+    expect(n8n.spec).toBe(true)
+    const copy = n8n.workflows[0] as N8nWorkflow
+    expect(copy.description).toBeUndefined()
+    expect(copy.settings).toEqual({ executionOrder: "v1" })
+  })
+})
+
 describe("the sweep", () => {
+  it("never writes over a restore that ends while it runs", async () => {
+    const source = await instance()
+    const run = await archiveOf(source)
+    const review = await preview(run.id, await instance())
+    const [done] = await Promise.all([
+      confirmRestore(ctx, review.id, identity, by),
+      sweepRestores(ctx),
+      sweepRestores(ctx),
+    ])
+    expect(done.status).toBe("done")
+    const [row] = await ctx.db.select().from(restores).where(eq(restores.id, review.id))
+    expect(row?.status).toBe("done")
+    expect(row?.steps.every((s) => s.status === "done" && s.createdId)).toBe(true)
+  })
+
   it("drops reviews older than an hour and marks restores cut off by a restart unknown", async () => {
     const source = await instance()
     const run = await archiveOf(source)

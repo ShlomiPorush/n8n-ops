@@ -70,7 +70,13 @@ export async function loadArchive(ctx: Ctx, runId: string, privateKey: string): 
   const [run] = await ctx.db.select().from(backupRuns).where(eq(backupRuns.id, runId))
   if (!run || (run.status !== "ok" && run.status !== "partial"))
     throw new RestoreError("This archive is not available.", "not_found")
-  const bytes = await readArchive(ctx, run)
+  let bytes: Uint8Array
+  try {
+    bytes = await readArchive(ctx, run)
+  } catch (error) {
+    // Every copy gone or unreadable: say which, as a refusal the page shows, not as a server error.
+    throw new RestoreError((error as Error).message, "not_found")
+  }
   let entries: Awaited<ReturnType<typeof openArchive>>
   try {
     // The unpacked archive may not exceed the largest archive allowed, so a hostile one cannot fill the memory.

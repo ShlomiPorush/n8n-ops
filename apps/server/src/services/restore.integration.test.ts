@@ -28,9 +28,8 @@ vi.mock("./backups.ts", async (original) => ({
   },
   maxArchiveBytes: async () => 64 * 1024 ** 2,
 }))
-const { checkRestore, confirmRestore, inspectArchive, previewRestore, sweepRestores, archivedWorkflow } = await import(
-  "./restore.ts"
-)
+const { checkRestore, confirmRestore, inspectArchive, previewRestore, RestoreError, sweepRestores, archivedWorkflow } =
+  await import("./restore.ts")
 
 const adminUrl = process.env.MIGRATION_DATABASE_URL
 if (!adminUrl) throw new Error("MIGRATION_DATABASE_URL is required (scripts/verify.sh sets it)")
@@ -295,6 +294,15 @@ describe("browsing an archive", () => {
       workflows: { "wf-orders": { state: "changed", changes: ["name"] } },
     })
     expect((await archivedWorkflow(ctx, run.id, identity, "wf-orders")).nodes).toHaveLength(4)
+  })
+
+  it("says why when no copy of the archive can be read", async () => {
+    const source = await instance()
+    const run = await archiveOf(source)
+    archives.delete(run.id)
+    const refused = inspectArchive(ctx, run.id, identity)
+    await expect(refused).rejects.toBeInstanceOf(RestoreError)
+    await expect(refused).rejects.toThrow("This archive is not available.")
   })
 
   it("says why it cannot compare, and refuses a wrong key", async () => {

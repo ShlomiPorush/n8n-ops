@@ -25,11 +25,18 @@ export async function sealArchive(entries: TarEntry[], recipient: string): Promi
   return { bytes, size: bytes.length, sha256Base64: sha256Base64(bytes) }
 }
 
-/** Decrypts and unpacks an archive with the private backup key. */
-export async function openArchive(bytes: Uint8Array, identity: string): Promise<TarEntry[]> {
+/**
+ * Decrypts and unpacks an archive with the private backup key. `maxUnpackedBytes` bounds the unpacked tar, so an
+ * archive that inflates far beyond its size fails cleanly instead of filling the memory.
+ */
+export async function openArchive(bytes: Uint8Array, identity: string, maxUnpackedBytes?: number): Promise<TarEntry[]> {
   const decrypter = new Decrypter()
   decrypter.addIdentity(identity.trim())
-  return readTar(new Uint8Array(gunzipSync(await decrypter.decrypt(bytes))))
+  const unpacked = gunzipSync(
+    await decrypter.decrypt(bytes),
+    maxUnpackedBytes ? { maxOutputLength: maxUnpackedBytes } : {},
+  )
+  return readTar(new Uint8Array(unpacked))
 }
 
 export function sha256Base64(bytes: Uint8Array): string {

@@ -173,3 +173,11 @@ _Avoid_: rotation, cleanup
 **Default destinations**:
 The Destinations an instance backs up to when it has not chosen its own.
 _Avoid_: global destinations
+
+**Restore**:
+Bringing one item of an Archive back into an instance: a workflow as an inactive copy, or a credential as a new one. It is reviewed first, runs once when confirmed, and ends done, failed or unknown.
+_Avoid_: recovery, import
+
+**Restore code**:
+The short code in the name of everything a Restore creates, so n8n-ops can find each item again for that Restore alone.
+_Avoid_: tag, suffix

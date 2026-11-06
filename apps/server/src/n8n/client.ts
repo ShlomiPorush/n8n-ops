@@ -31,10 +31,22 @@ export type N8nWorkflow = {
   connections: Record<string, { main?: ({ node: string; type: string; index: number }[] | null)[] }>
   settings?: Record<string, unknown>
   staticData?: unknown
+  pinData?: unknown
+  nodeGroups?: unknown
+  description?: string | null
+  createdAt?: string
   updatedAt?: string
+  /** The saved version (the draft on n8n 2.x); the published one is `activeVersionId`. */
+  versionId?: string
+  activeVersionId?: string | null
 }
 
-export type N8nCredential = { id: string; name: string; type: string }
+export type N8nCredential = { id: string; name: string; type: string; createdAt?: string }
+
+/** What a workflow create or update may carry besides its name, nodes, connections and settings. */
+export type WorkflowBody = Pick<N8nWorkflow, "name" | "nodes" | "connections"> & {
+  settings: Record<string, unknown>
+} & Partial<Pick<N8nWorkflow, "nodeGroups" | "description" | "pinData">>
 
 export class N8nError extends Error {
   constructor(
@@ -114,12 +126,13 @@ export class N8nClient {
     return this.api<N8nExecution>("GET", `/executions/${encodeURIComponent(id)}`, { query: { includeData: true } })
   }
 
-  async listWorkflows(): Promise<N8nWorkflow[]> {
+  /** Every workflow, or those n8n finds by `name` (callers still compare the name exactly). */
+  async listWorkflows(name?: string): Promise<N8nWorkflow[]> {
     const all: N8nWorkflow[] = []
     let cursor: string | undefined
     do {
       const page = await this.api<{ data: N8nWorkflow[]; nextCursor: string | null }>("GET", "/workflows", {
-        query: { limit: 250, cursor },
+        query: { limit: 250, cursor, name },
       })
       all.push(...page.data)
       cursor = page.nextCursor ?? undefined
@@ -131,7 +144,9 @@ export class N8nClient {
     return this.api<N8nWorkflow>("GET", `/workflows/${encodeURIComponent(id)}`)
   }
 
-  createWorkflow(workflow: Pick<N8nWorkflow, "name" | "nodes" | "connections" | "settings" | "staticData">) {
+  createWorkflow(
+    workflow: WorkflowBody | Pick<N8nWorkflow, "name" | "nodes" | "connections" | "settings" | "staticData">,
+  ) {
     return this.api<N8nWorkflow>("POST", "/workflows", { body: workflow })
   }
 

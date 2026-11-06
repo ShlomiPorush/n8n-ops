@@ -14,6 +14,15 @@ describe("backup archives", () => {
     expect(entryText(entries[0] as never)).toContain("hunter2")
   })
 
+  it("that unpack beyond the limit fail instead of filling the memory", async () => {
+    const identity = await generateX25519Identity()
+    const sealed = await sealArchive([textEntry("big.json", "x".repeat(200_000))], await identityToRecipient(identity))
+    // Compressed it is tiny; unpacked it is far over the limit.
+    expect(sealed.size).toBeLessThan(10_000)
+    await expect(openArchive(sealed.bytes, identity, 50_000)).rejects.toThrow()
+    expect(await openArchive(sealed.bytes, identity, 1_000_000)).toHaveLength(1)
+  })
+
   it("cannot be opened with another key", async () => {
     const sealed = await sealArchive([textEntry("a", "b")], await identityToRecipient(await generateX25519Identity()))
     await expect(openArchive(sealed.bytes, await generateX25519Identity())).rejects.toThrow()

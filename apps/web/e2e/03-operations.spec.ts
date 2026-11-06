@@ -362,32 +362,75 @@ test("n8n-ops backs up its own database to the destinations", async () => {
   }).toPass({ timeout: 30_000 })
 })
 
-test("a workflow is restored from the backup with the private key", async () => {
+/** Opens the newest archive of e2e-n8n on its own page and pastes the key into it. */
+async function openArchive(key: string) {
   await page.goto("/backups")
   await page.getByRole("row", { name: /e2e-n8n/ }).click()
   await page.getByRole("button", { name: "Restore" }).first().click()
-  await page.getByLabel("Private backup key").fill(loadPrivateKey())
+  await expect(page).toHaveURL(/\/backups\/[^/]+\/runs\/[^/?]+$/)
+  await page.getByLabel("Private backup key").fill(key)
   await page.getByRole("button", { name: "Open archive" }).click()
-  await page.getByRole("button", { name: /^Workflow:/ }).click()
-  await page.getByRole("option", { name: "Sync orders to ERP" }).click()
+}
+
+test("a workflow is restored from the backup with the private key", async () => {
+  await openArchive(loadPrivateKey())
+  // The archive lists its workflows, compared with the instance they were backed up from.
+  await page.getByRole("row", { name: /^Sync orders to ERP/ }).click()
+  await expect(page.getByRole("heading", { name: "Sync orders to ERP", exact: true })).toBeVisible()
   await page.getByRole("button", { name: "Restore", exact: true }).click()
-  await expect(page.getByText("Workflow created inactive")).toBeVisible({ timeout: 30_000 })
-  const list = (await (await n8nApi("/api/v1/workflows?limit=250")).json()) as { data: { name: string }[] }
-  expect(list.data.some((w) => w.name.startsWith("Sync orders to ERP (restored"))).toBe(true)
+  const dialog = page.getByRole("dialog", { name: "Restore Sync orders to ERP" })
+  await dialog.getByRole("button", { name: "Review" }).click()
+  // The review names exactly what it creates, with its restore code; nothing is written yet.
+  await expect(dialog.getByText(/^Sync orders to ERP \(restored \d{4}-\d{2}-\d{2} [0-9a-f]{8}-\d+\)$/)).toBeVisible()
+  await dialog.getByRole("button", { name: "Restore", exact: true }).click()
+  await expect(dialog.getByText(/The workflow was created as an inactive copy/)).toBeVisible({ timeout: 30_000 })
+  const list = (await (await n8nApi("/api/v1/workflows?limit=250")).json()) as {
+    data: { name: string; active: boolean }[]
+  }
+  const restored = list.data.filter((w) => w.name.startsWith("Sync orders to ERP (restored"))
+  expect(restored).toHaveLength(1)
+  expect(restored[0]?.active).toBe(false)
+  await dialog.getByRole("button", { name: "Done" }).click()
+  await dialogClosed(page)
+  // The instance's backup pane lists the restore.
+  await page.goto("/backups")
+  await page.getByRole("row", { name: /e2e-n8n/ }).click()
+  const restores = page.locator("section").filter({ has: page.getByRole("heading", { name: "Restores" }) })
+  await expect(restores.getByRole("listitem").filter({ hasText: "Sync orders to ERP" }).first()).toContainText("Done")
 })
 
-test("a wrong private key is refused", async () => {
-  await page.goto("/backups")
-  await page.getByRole("row", { name: /e2e-n8n/ }).click()
-  await page.getByRole("button", { name: "Restore" }).first().click()
-  await page
-    .getByLabel("Private backup key")
-    .fill("AGE-SECRET-KEY-1QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ")
-  await page.getByRole("button", { name: "Open archive" }).click()
-  await expect(page.getByText(/Cannot open the archive/)).toBeVisible()
-  await page.keyboard.press("Escape")
-  await discardChanges(page)
+test("a credential is restored on its own as a new credential", async () => {
+  await openArchive(loadPrivateKey())
+  await page.getByRole("radio", { name: /^Credentials/ }).click()
+  await page.getByRole("row", { name: /^ERP login/ }).click()
+  await expect(page.getByRole("heading", { name: "ERP login", exact: true })).toBeVisible()
+  await page.getByRole("button", { name: "Restore", exact: true }).click()
+  const dialog = page.getByRole("dialog", { name: "Restore ERP login" })
+  await dialog.getByRole("button", { name: "Review" }).click()
+  await expect(dialog.getByText(/^ERP login \(restored \d{4}-\d{2}-\d{2} [0-9a-f]{8}-1\)$/)).toBeVisible()
+  await dialog.getByRole("button", { name: "Restore", exact: true }).click()
+  await expect(dialog.getByText(/as a new credential/)).toBeVisible({ timeout: 30_000 })
+  // Created in n8n from the archive's secrets, beside the original.
+  const credentials = (await (await n8nApi("/api/v1/credentials")).json()) as {
+    data: { name: string; type: string }[]
+  }
+  const restored = credentials.data.filter((c) => c.name.startsWith("ERP login (restored "))
+  expect(restored).toHaveLength(1)
+  expect(restored[0]?.type).toBe("httpBasicAuth")
+  expect(credentials.data.some((c) => c.name === "ERP login")).toBe(true)
+  await dialog.getByRole("button", { name: "Done" }).click()
   await dialogClosed(page)
+})
+
+test("a wrong private key is refused, and leaving with a key typed asks first", async () => {
+  await openArchive("AGE-SECRET-KEY-1QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ")
+  await expect(page.getByText(/Cannot open the archive/)).toBeVisible()
+  // The key is only in the page: a move out of it asks before dropping it.
+  await page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Backups", exact: true }).click()
+  await discardChanges(page)
+  // A wide screen opens the first backup beside the list by itself.
+  await expect(page).toHaveURL(/\/backups(\/[^/]+)?$/)
+  await expect(page.getByLabel("Private backup key")).toHaveCount(0)
 })
 
 test("a workflow moves to another instance with its credentials", async () => {

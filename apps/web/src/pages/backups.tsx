@@ -1,18 +1,13 @@
 import {
-  ArchiveRestore as ArchiveRestoreIcon,
-  CheckCircle2,
   Clock as ClockIcon,
   HardDrive as HardDriveIcon,
   Play,
+  RefreshCw,
   RotateCcw,
   ShieldCheck as ShieldCheckIcon,
-  XCircle,
 } from "lucide-react"
-import { useState } from "react"
 import { Link, useNavigate, useParams } from "react-router"
 import { useCrumb } from "@/app/chrome"
-import { useDiscardGuard } from "@/components/discard-guard"
-import { FieldPicker } from "@/components/field-picker"
 import { FilterBar } from "@/components/filter-bar"
 import { ItemRow, ItemsHeader, Said } from "@/components/item-row"
 import {
@@ -27,6 +22,7 @@ import {
   NoValue,
   PageHead,
   Panel,
+  PanelHead,
   RefreshNote,
   UserText,
 } from "@/components/kit"
@@ -34,24 +30,15 @@ import { ListWithPanel } from "@/components/list-panel"
 import { type ProxyFix, ProxyFixBlock } from "@/components/proxy-fix"
 import { Dot, StatusTag, When } from "@/components/status"
 import { Button } from "@/components/ui/button"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
-import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, useSort } from "@/components/ui/table"
-import { Textarea } from "@/components/ui/textarea"
 import { useMediaQuery } from "@/hooks/use-mobile"
-import { api, describeError, useApi, useApiMutation } from "@/lib/api"
+import { useApi, useApiMutation } from "@/lib/api"
 import { SPLIT_QUERY } from "@/lib/behavior"
-import { activeWith, type PickedInstance } from "@/lib/instance-setup"
 import { loadView } from "@/lib/load-state"
 import { formatSize, n, plural } from "@/lib/numbers"
+import type { RestoreView } from "@/lib/restore"
 import { formatClockAt, formatTime, useTimeFormat } from "@/lib/time"
+import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
 import { type DestinationKind, KindIcon } from "./destinations"
 
@@ -484,7 +471,7 @@ function Copies({ copies }: { copies: Copy[] }) {
 function BackupHistory({ id, name }: { id: string; name: string }) {
   useCrumb(name || null)
   const runs = useApi<Run[]>(`/backups/${id}/runs`, { refetchInterval: 5_000 })
-  const [restoring, setRestoring] = useState<Run | null>(null)
+  const navigate = useNavigate()
   const list = runs.data ?? []
   return (
     <div className="grid min-w-0 gap-gap">
@@ -573,7 +560,7 @@ function BackupHistory({ id, name }: { id: string; name: string }) {
                 </TableCell>
                 <TableCell className="text-end align-top">
                   {restorable(r) && id !== "self" && (
-                    <Button size="sm" onClick={() => setRestoring(r)}>
+                    <Button size="sm" onClick={() => navigate(`/backups/${id}/runs/${r.id}`)}>
                       <RotateCcw /> Restore
                     </Button>
                   )}
@@ -596,177 +583,67 @@ function BackupHistory({ id, name }: { id: string; name: string }) {
           <Copyable value="age -d -i key.txt file.dump.age | pg_restore -d …" label="Copy command" />.
         </p>
       )}
-      <RestoreDialog run={restoring} instanceId={id} onClose={() => setRestoring(null)} />
+      {id !== "self" && <RecentRestores instanceId={id} />}
     </div>
   )
 }
 
-type Inspection = {
-  manifest: { includesSecrets: boolean } | null
-  workflows: { id: string; name: string; active: boolean; credentials: string[] }[]
-  credentialsWithSecrets: number
-}
-
-function RestoreDialog({ run, instanceId, onClose }: { run: Run | null; instanceId: string; onClose: () => void }) {
-  const w = useTimeFormat()
-  const instances = useApi<{ instances: PickedInstance[] }>(run ? "/instances" : null)
-  // Only an instance with Restore workflows chosen takes a restore.
-  const targets = activeWith(instances.data?.instances, "restore")
-  const [key, setKey] = useState("")
-  const [inspection, setInspection] = useState<Inspection | null>(null)
-  const [workflowId, setWorkflowId] = useState("")
-  const [target, setTarget] = useState(instanceId)
-  const [result, setResult] = useState<{ steps: { step: string; ok: boolean; detail?: string }[] } | null>(null)
-  const [error, setError] = useState("")
-  const [busy, setBusy] = useState(false)
-
-  // Clearing the fields is part of the close, so a typed key is asked about before it is dropped (DS-9).
-  const guard = useDiscardGuard(!result && key.trim() !== "", () => {
-    setKey("")
-    setInspection(null)
-    setWorkflowId("")
-    setTarget(instanceId)
-    setResult(null)
-    setError("")
-    onClose()
+/**
+ * Restores into this instance, newest first (D6): what, how it ended, when and by whom. One whose outcome is unknown
+ * is checked in n8n again from here; it is never tried again by itself.
+ */
+function RecentRestores({ instanceId }: { instanceId: string }) {
+  const path = `/backups/${instanceId}/restores`
+  const restores = useApi<RestoreView[]>(path, { refetchInterval: 30_000 })
+  const check = useApiMutation<string, RestoreView>("POST", (id) => `/backups/restores/${id}/check`, {
+    invalidate: [path],
+    failed: "check the restore",
   })
-  async function step(fn: () => Promise<void>) {
-    setBusy(true)
-    setError("")
-    try {
-      await fn()
-    } catch (e) {
-      setError(describeError(e))
-    } finally {
-      setBusy(false)
-    }
-  }
+  const list = restores.data ?? []
+  if (restores.error && !restores.data)
+    return (
+      <Panel>
+        <LoadError what="the restores" error={restores.error} retry={() => restores.refetch()} />
+      </Panel>
+    )
+  if (list.length === 0) return null
   return (
-    <Dialog open={run !== null} onOpenChange={guard.onOpenChange}>
-      <DialogContent className="md:max-w-lg" keepOnBackdrop>
-        <DialogHeader icon={ArchiveRestoreIcon}>
-          <DialogTitle>Restore from {run ? formatTime(run.startedAt, w, { seconds: false }) : ""}</DialogTitle>
-          <DialogDescription>
-            Restores one workflow with its credentials as an inactive copy. Your private key is used in memory and never
-            stored.
-          </DialogDescription>
-        </DialogHeader>
-        {result ? (
-          <ul className="grid gap-1.5">
-            {result.steps.map((s) => (
-              <li key={s.step} className="flex items-start gap-2">
-                {s.ok ? (
-                  <CheckCircle2 aria-label="Done" className="mt-0.5 size-4 shrink-0 text-ok" />
-                ) : (
-                  <XCircle aria-label="Needs you" className="mt-0.5 size-4 shrink-0 text-warn" />
-                )}
-                <span>
-                  {s.step}
-                  {s.detail && <span className="text-muted-foreground"> · {s.detail}</span>}
-                </span>
-              </li>
-            ))}
-          </ul>
-        ) : !inspection ? (
-          <FieldGroup>
-            <Field>
-              <FieldLabel htmlFor="restore-key">Private backup key</FieldLabel>
-              <Textarea
-                id="restore-key"
-                className="font-mono text-small"
-                placeholder="AGE-SECRET-KEY-1…"
-                value={key}
-                onChange={(e) => setKey(e.target.value)}
-              />
-            </Field>
-          </FieldGroup>
-        ) : (
-          <FieldGroup>
-            <Field>
-              <FieldLabel>Workflow</FieldLabel>
-              <FieldPicker
-                label="Workflow"
-                listLabel="Workflows"
-                placeholder="Choose a workflow"
-                value={workflowId}
-                onChange={setWorkflowId}
-                options={inspection.workflows.map((w) => ({ value: w.id, label: w.name }))}
-              />
-              {!inspection.manifest?.includesSecrets && (
-                <FieldDescription>
-                  This archive has no credential secrets; credentials must be set in n8n after restoring.
-                </FieldDescription>
-              )}
-            </Field>
-            <Field>
-              <FieldLabel>Restore into</FieldLabel>
-              <FieldPicker
-                label="Restore into"
-                listLabel="Instances"
-                value={target}
-                onChange={setTarget}
-                options={targets.map((i) => ({
-                  value: i.id,
-                  label: i.name,
-                  hint: i.id === instanceId ? "same instance" : undefined,
-                }))}
-              />
-            </Field>
-          </FieldGroup>
-        )}
-        {error && <FieldError>{error}</FieldError>}
-        <DialogFooter>
-          {result ? (
-            <Button variant="primary" onClick={() => void guard.requestClose("finished")}>
-              Done
-            </Button>
-          ) : !inspection ? (
-            <>
-              <Button onClick={() => void guard.requestClose()}>Cancel</Button>
+    <Panel>
+      <PanelHead
+        title="Restores"
+        count={n(list.length)}
+        description="Items restored into this instance from its archives or others."
+      />
+      <ul>
+        {list.map((r) => (
+          <li
+            key={r.id}
+            className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 border-t border-line px-pad-x py-[7px]"
+          >
+            <StatusTag kind="restore" status={r.status} />
+            <UserText className="min-w-0 font-semibold break-words">{r.itemName}</UserText>
+            <span className="text-small text-muted-foreground">
+              {r.kind === "workflow" ? "workflow" : "credential"} · <When value={r.confirmedAt ?? r.createdAt} /> ·{" "}
+              <UserText>{r.actor}</UserText>
+            </span>
+            {r.status === "unknown" && (
               <BusyButton
-                variant="primary"
-                disabled={!key.trim()}
-                busy={busy}
-                busyLabel="Opening…"
-                onClick={() =>
-                  step(async () =>
-                    setInspection(
-                      await api<Inspection>(`/backups/runs/${run?.id}/inspect`, {
-                        method: "POST",
-                        json: { privateKey: key },
-                      }),
-                    ),
-                  )
-                }
+                size="sm"
+                className="ms-auto"
+                icon={RefreshCw}
+                busyLabel="Checking…"
+                run={async () => {
+                  const after = await check.mutateAsync(r.id)
+                  if (after.status === "done") toast.success(`Restore confirmed in n8n: ${r.itemName}`)
+                  else toast.info(`Not found yet, which does not prove it failed: ${r.itemName}`)
+                }}
               >
-                Open archive
+                Check
               </BusyButton>
-            </>
-          ) : (
-            <>
-              <Button onClick={() => void guard.requestClose()}>Cancel</Button>
-              <BusyButton
-                variant="primary"
-                disabled={!workflowId || !targets.some((i) => i.id === target)}
-                busy={busy}
-                busyLabel="Restoring…"
-                onClick={() =>
-                  step(async () =>
-                    setResult(
-                      await api(`/backups/runs/${run?.id}/restore`, {
-                        method: "POST",
-                        json: { privateKey: key, workflowId, targetInstanceId: target },
-                      }),
-                    ),
-                  )
-                }
-              >
-                Restore
-              </BusyButton>
-            </>
-          )}
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+            )}
+          </li>
+        ))}
+      </ul>
+    </Panel>
   )
 }

@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-06
+
 ### Added
 
 - **See what is inside a backup, and restore single items from it.** Restore on a backup opens the archive on a page of its own with the private key, which is used for each request and never stored. It lists the workflows and credentials, compares each workflow with the instance (same, or what changed: the workflow itself, the layout, settings, name, published state, static or pinned data; or not found), and shows and downloads a workflow's JSON. A workflow is restored as an inactive copy, and now a credential can be restored on its own. A review before each restore shows every action: on the same instance a credential that still exists is linked instead of copied, only missing ones are created, credentials inside a workflow kept in an Execute Workflow node are handled too, and what is not restored is named. Names of what a restore creates end in `(restored <date> <code>-<step>)`. When n8n answers a call with an error, n8n-ops checks what was written; a restore whose outcome stays unknown is marked so, never retried by itself, and can be checked again from the page. Restores are listed on the instance's backup pane and audited, failed ones too.

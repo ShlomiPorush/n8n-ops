@@ -85,7 +85,7 @@ async function findInstances(ctx: Ctx, refs: string[]) {
     .from(instances)
     .where(ids.length ? or(inArray(instances.name, refs), inArray(instances.id, ids)) : inArray(instances.name, refs))
   // The name first, as the proxy does: agents name instances as the instance list does, and a name may look like an ID.
-  return (ref: string) => rows.find((r) => r.name === ref) ?? rows.find((r) => r.id === ref) ?? null
+  return (ref: string) => rows.find((r) => r.name === ref) ?? rows.find((r) => r.id === ref.toLowerCase()) ?? null
 }
 
 /** PostgreSQL gave up waiting: a statement or lock timeout set for the transaction. */
@@ -960,7 +960,8 @@ export async function grantForKey(ctx: Ctx, key: string, ref: string) {
     )
   // The name first: the addresses given to the agent use names, and one key opens several instances, so an instance
   // named like another one's ID must still get the calls sent to its own address.
-  const found = matches.find((m) => m.instance.name === ref) ?? matches.find((m) => m.instance.id === ref)
+  const found =
+    matches.find((m) => m.instance.name === ref) ?? matches.find((m) => m.instance.id === ref.toLowerCase())
   return { request: row.r, grant: found?.grant ?? null, instance: found?.instance ?? null }
 }
 

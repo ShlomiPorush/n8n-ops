@@ -254,6 +254,10 @@ describe("a request for several instances", () => {
     // The address given for b reaches b, never a; a is still reached by its own name.
     expect((await grantForKey(ctx, got.key, a.id))?.instance?.id).toBe(b.id)
     expect((await grantForKey(ctx, got.key, a.name))?.instance?.id).toBe(a.id)
+    // An ID in capitals names the same instance, in a request and in an address.
+    expect((await grantForKey(ctx, got.key, b.id.toUpperCase()))?.instance?.id).toBe(b.id)
+    const upper = await requestAccess(ctx, await agent(), ask([b.id.toUpperCase()]))
+    expect((await stored(upper.id)).list.map((i) => i.instanceId)).toEqual([b.id])
   })
 
   it("is refused as a whole, storing nothing, when one instance does not fit", async () => {

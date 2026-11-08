@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-11-08
+
 ### Added
 
 - **Agents can ask for access to several instances in one request.** `POST /api/v1/access-requests` and the `request_instance_access` MCP tool take `instances`, each with its own scopes and workflows; the single-instance body still works. One key works on every instance that was granted, and the answer after approval lists what was granted on each instance with its proxy address. The n8n-ops skill asks this way.

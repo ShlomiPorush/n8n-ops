@@ -4,8 +4,19 @@ import { type DateWriting, formatDay, formatStamp, messageWriting } from "@n8n-o
  * The HTML layout of every email n8n-ops sends, in the v3 design language of the console (EM-1, EM-2).
  *
  * Email clients ignore stylesheets, CSS variables and grid, so the blocks are tables with inline styles. The
- * colours are the light theme of apps/web/src/index.css; a <style> block switches to the dark theme in the
- * clients that honour prefers-color-scheme (Apple Mail, iOS, Outlook for Mac).
+ * colours follow the light theme of apps/web/src/index.css; a <style> block switches to the dark theme in the
+ * clients that honour prefers-color-scheme (Apple Mail, iOS, Outlook for Mac, Outlook on the web).
+ *
+ * Outlook for Android and Outlook on the web recolour an email in dark mode after its own dark theme applied.
+ * They flatten every near-grey surface with a faint tint into one mid grey, and keep neutral greys, so every
+ * surface here (background, panels, lines, the dark tile) is a neutral grey, in both themes. Outlook marks each
+ * element it recolours with data-ogsb; Outlook for Android honours rules under that mark, so the [data-ogsb]
+ * rules give it the dark surfaces directly. Outlook on the web writes its colours inline, so there only the
+ * colours themselves count. A light tinted fill turns muddy there, so status tags are outlined.
+ *
+ * The email declares its direction on the outer tables as well: Outlook on the web drops the dir of <html> and
+ * <body>, and would show it right to left under a Hebrew interface. Clients turn dates into links of their own;
+ * every link takes the colour of its text, and the links this module makes carry their underline inline.
  *
  * Outlook for Windows draws email with Word, which ignores padding and margins outside table cells, rounded
  * corners, max-width and font fallbacks. So every gap is cell padding or a spacer row, divider lines are 1px
@@ -47,21 +58,23 @@ function attr(value: Text): string {
 export const FONT = "Onest, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
 export const MONO = "'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
 
-// The light theme of the console.
+// The light theme of the console, with neutral grey surfaces (see the top of this file).
 const BG = "#FFFFFF"
-const PANEL = "#F4F6F5"
+const PANEL = "#EEEEEE"
 const INK = "#111814"
 const MUTED = "#5E6863"
-const LINE = "#E3E7E5"
+const LINE = "#E0E0E0"
+/** The dark tile of the mark and the button. */
+const SOLID = "#141414"
 
-/** Each tone's colour and its tag or banner tint: the colour at 13 to 15% over white, as color-mix() gives in
- * the console; email clients cannot mix colours. */
+/** Each tone's colour and its banner tint: the colour at 13 to 15% over white, as color-mix() gives in the
+ * console; email clients cannot mix colours. A banner's tint stays readable in Outlook's dark mode. */
 const TONES: Record<Tone, [string, string]> = {
   ok: ["#12803F", "#E0F0E6"],
   warn: ["#9A6200", "#F2EAD9"],
   fail: ["#C42B1C", "#F8E0DE"],
   info: ["#1F5FBF", "#E0E9F6"],
-  muted: ["#5E6863", "#ECEEED"],
+  muted: ["#5E6863", "#EEEEEE"],
 }
 const tone = (t?: Tone | null) => TONES[t ?? "muted"] ?? TONES.muted
 const CLASS_COLORS: Record<string, string> = {
@@ -117,22 +130,30 @@ export function formatDate(when: Date, dates: DateWriting, time = false): string
   return time ? formatStamp(when, dates) : formatDay(when, dates)
 }
 
+// The tone classes set the border colour with the text colour, so an outlined tag switches both together.
 const DARK_CSS = `
 :root { color-scheme: light dark; supported-color-schemes: light dark; }
+.m-bg a { color: inherit !important; text-decoration: none !important; }
 @media (prefers-color-scheme: dark) {
-  .m-bg { background-color: #0E1110 !important; }
-  .m-panel { background-color: #171B19 !important; }
+  .m-bg { background-color: #141414 !important; }
+  .m-panel { background-color: #202020 !important; }
   .m-ink { color: #F2F5F3 !important; }
-  .m-muted { color: #97A29C !important; }
-  .m-line { border-color: #262C29 !important; }
-  .m-rule { background-color: #262C29 !important; }
-  .m-mark { background-color: #F2F5F3 !important; color: #0E1110 !important; }
-  .m-ok { color: #3FCF7F !important; } .m-ok-bg { background-color: #1A3325 !important; }
-  .m-warn { color: #F0B03F !important; } .m-warn-bg { background-color: #3A2F1A !important; }
-  .m-fail { color: #FF6B61 !important; } .m-fail-bg { background-color: #3D2220 !important; }
-  .m-info { color: #7DB3FF !important; } .m-info-bg { background-color: #1E2C40 !important; }
-  .m-muted-bg { background-color: #232826 !important; }
+  .m-muted { color: #97A29C !important; border-color: #97A29C !important; }
+  .m-line { border-color: #333333 !important; }
+  .m-rule { background-color: #333333 !important; }
+  .m-mark { background-color: #E0E0E0 !important; color: #141414 !important; }
+  .m-ok { color: #3FCF7F !important; border-color: #3FCF7F !important; } .m-ok-bg { background-color: #1A3325 !important; }
+  .m-warn { color: #F0B03F !important; border-color: #F0B03F !important; } .m-warn-bg { background-color: #3A2F1A !important; }
+  .m-fail { color: #FF6B61 !important; border-color: #FF6B61 !important; } .m-fail-bg { background-color: #3D2220 !important; }
+  .m-info { color: #7DB3FF !important; border-color: #7DB3FF !important; } .m-info-bg { background-color: #1E2C40 !important; }
+  .m-muted-bg { background-color: #2A2A2A !important; }
 }
+[data-ogsb] .m-bg { background-color: #FFFFFF !important; }
+[data-ogsb] .m-panel { background-color: #202020 !important; }
+[data-ogsb] .m-line { border-color: #333333 !important; }
+[data-ogsb] .m-rule { background-color: #333333 !important; }
+[data-ogsb] .m-mark { background-color: #333333 !important; color: #FFFFFF !important; }
+[data-ogsb] .m-muted-bg { background-color: #2A2A2A !important; }
 @media (max-width: 620px) {
   .m-wrap { padding: 24px 16px !important; }
   .m-h1 { font-size: 26px !important; }
@@ -159,18 +180,20 @@ const spacer = (px: number) =>
 const rule = (colspan = 1) =>
   `<tr><td class="m-rule" colspan="${colspan}" height="1" style="height:1px;font-size:1px;line-height:1px;mso-line-height-rule:exactly;background-color:${LINE};">&nbsp;</td></tr>`
 
+/** An outlined tag: no fill, a 1px border and the text in the tone colour. A light tinted fill turns into a
+ * muddy chip in Outlook's dark mode; an outline keeps its colour. */
 function tagHtml(text: string, t: Tone, roundedInOutlook: boolean): string {
-  const [color, tint] = tone(t)
+  const [color] = tone(t)
   const cell =
     `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="display:inline-table;vertical-align:middle;">` +
-    `<tr><td class="m-${t} m-${t}-bg m-b" bgcolor="${tint}" style="padding:2px 8px;border-radius:6px;background-color:${tint};color:${color};font-size:12px;font-weight:700;line-height:1.4;white-space:nowrap;">` +
+    `<tr><td class="m-${t} m-b" style="padding:1px 7px;border:1px solid ${color};border-radius:6px;color:${color};font-size:12px;font-weight:700;line-height:1.4;white-space:nowrap;">` +
     `${e(text, `m-${t}`)}</td></tr></table>`
   if (!roundedInOutlook) return cell
   // VML inside a table, followed by more VML, can make Word report the table as corrupt: only the topic tag
   // gets this shape.
   const width = text.length * 7 + 18
   return (
-    `<!--[if mso]><v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" arcsize="30%" fillcolor="${tint}" stroked="f" ` +
+    `<!--[if mso]><v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" arcsize="30%" filled="f" strokecolor="${color}" strokeweight="1px" ` +
     `style="width:${(width * 3) / 4}pt;height:15pt;v-text-anchor:middle;"><v:textbox inset="0,0,0,0">` +
     `<center style="color:${color};font-family:'Segoe UI',Arial,sans-serif;font-size:12px;font-weight:bold;">` +
     `${attr(text)}</center></v:textbox></v:roundrect><![endif]-->` +
@@ -206,15 +229,19 @@ export function mono(value: Text, maxLength?: number): Safe {
 /** A link; only http(s) addresses become links, anything else stays text (OT-17). */
 export function link(text: Text, url: string | null | undefined): Safe {
   if (!url || !/^https?:\/\//i.test(url)) return new Safe(e(text))
-  return new Safe(`<a href="${attr(url)}" class="m-ink" style="color:${INK};text-decoration:underline;">${e(text)}</a>`)
+  // The underline is inline and important: the rule that keeps client-made links plain reaches this link too.
+  return new Safe(
+    `<a href="${attr(url)}" class="m-ink" style="color:${INK};text-decoration:underline !important;">${e(text)}</a>`,
+  )
 }
 
-/** The one call to action of an email: a dark button that works in Outlook as a padded cell. */
+/** The one call to action of an email: a dark button that works in Outlook as a padded cell. The cell holds the
+ * text colour, which the link inherits, so the dark theme switches both. */
 export function button(text: string, url: string | null | undefined): Safe {
   if (!url || !/^https?:\/\//i.test(url)) return new Safe("")
   return new Safe(
     `<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>` +
-      `<td class="m-mark" bgcolor="${INK}" style="padding:10px 18px;background-color:${INK};border-radius:8px;">` +
+      `<td class="m-mark" bgcolor="${SOLID}" style="padding:10px 18px;background-color:${SOLID};border-radius:8px;color:${BG};">` +
       `<a href="${attr(url)}" class="m-mark m-b" style="display:inline-block;color:${BG};font-size:14px;font-weight:700;text-decoration:none;">${attr(text)}</a>` +
       `</td></tr></table>`,
   )
@@ -363,7 +390,7 @@ export function panelText(text: Text): Safe {
 
 /** The n8n-ops mark: the ink tile with an "n", as in the console. A plain cell, so every client draws it
  * without loading anything; Word draws it square. */
-const MARK = `<td class="m-mark m-b" width="26" height="26" align="center" valign="middle" bgcolor="${INK}" style="width:26px;height:26px;background-color:${INK};border-radius:7px;color:${BG};font-size:14px;font-weight:800;line-height:26px;text-align:center;">n</td>`
+const MARK = `<td class="m-mark m-b" width="26" height="26" align="center" valign="middle" bgcolor="${SOLID}" style="width:26px;height:26px;background-color:${SOLID};border-radius:7px;color:${BG};font-size:14px;font-weight:800;line-height:26px;text-align:center;">n</td>`
 
 export type Email = { subject: string; text: string; html: string }
 
@@ -409,7 +436,7 @@ export function render({
   const blocksHtml = blocks.map((b) => `<tr><td style="padding:0 0 14px;">${b.html}</td></tr>`).join("")
 
   return `<!DOCTYPE html>
-<html lang="en" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<html lang="en" dir="ltr" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -419,12 +446,12 @@ export function render({
 <style>${DARK_CSS}</style>
 ${MSO_CSS}
 </head>
-<body class="m-bg" style="margin:0;padding:0;background-color:${BG};-webkit-text-size-adjust:100%;">
+<body class="m-bg" dir="ltr" style="margin:0;padding:0;background-color:${BG};-webkit-text-size-adjust:100%;">
 ${preHtml}
-<table role="presentation" class="m-bg" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:${BG};">
+<table role="presentation" class="m-bg" dir="ltr" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:${BG};">
 <tr><td align="center" class="m-wrap" style="padding:32px 24px;">
-<!--[if mso]><table role="presentation" width="600" align="center" cellpadding="0" cellspacing="0" border="0"><tr><td><![endif]-->
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;font-family:${FONT};">
+<!--[if mso]><table role="presentation" dir="ltr" width="600" align="center" cellpadding="0" cellspacing="0" border="0"><tr><td><![endif]-->
+<table role="presentation" dir="ltr" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;font-family:${FONT};">
 <tr><td style="padding:0 0 28px;">
   <table ${TABLE}><tr>
     ${MARK}

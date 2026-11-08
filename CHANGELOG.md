@@ -11,7 +11,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Changed
 
-- **Clearer access request messages in Telegram.** Workflows are named without their IDs (an ID shows only when the name is not known), several workflows are listed one per line, the requested length is in bold, a waiting request says when it expires, and times no longer end with the zone, such as GMT+2. The email is unchanged.
+- **Clearer access request messages in Telegram.** Workflows are named without their IDs (an ID shows only when the name is not known), several workflows are listed one per line, the requested length is in bold, a waiting request says when it expires, and times no longer end with the zone, such as GMT+2. The access request email still names workflows with their IDs.
+- **Emails read well in Outlook's dark mode.** Outlook for Android and Outlook on the web turned the whole email into one flat grey in dark mode, so its panels disappeared. Panels, lines and backgrounds are now neutral greys that Outlook keeps, status tags are outlined instead of filled, the email stays left to right in a mail client set to Hebrew, and dates no longer turn into blue links.
 
 ## [0.11.0] - 2026-11-06
 

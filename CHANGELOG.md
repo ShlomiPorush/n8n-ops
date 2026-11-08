@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Changed
+
+- **Dates on Connected Agents read evenly.** In the Agents and Tokens list, Approved and Last used show their digits at their natural width, so a date such as 05.11 no longer looks spaced out and smaller than a time such as 17:25.
+
 ## [0.14.0] - 2026-11-08
 
 ### Added

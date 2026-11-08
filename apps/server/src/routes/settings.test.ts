@@ -139,6 +139,17 @@ describe("a refused save names the field and the entry in words (SV-1, SV-12)", 
     expect(res.body.message).toBe('Who may approve in Telegram: "alice" is not a Telegram user ID or @username')
   })
 
+  it("keeps at least one known default channel for access requests", async () => {
+    const access = send(settingsRoutes(fakeCtx({})), "/access")
+    const none = await access("PUT", { defaultNotify: [] })
+    expect(none.status).toBe(400)
+    expect(none.body.message).toBe("Default channels: choose at least one of Telegram and Email")
+    const unknown = await access("PUT", { defaultNotify: ["slack"] })
+    expect(unknown.status).toBe(400)
+    expect(unknown.body.message).toBe("Default channels: choose at least one of Telegram and Email")
+    expect((await access("PUT", { defaultNotify: ["email"] })).status).toBe(200)
+  })
+
   it("says the range of a number and the form of a time instead of the schema's words", async () => {
     const alerts = await send(settingsRoutes(fakeCtx({})), "/alerts")("PUT", { retryMin: 99 })
     expect(alerts.body.message).toBe("Retry failed sends every (minutes): use a whole number from 1 to 60")

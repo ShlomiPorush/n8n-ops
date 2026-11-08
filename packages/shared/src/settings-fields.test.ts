@@ -65,6 +65,13 @@ describe("problems in words", () => {
     expect(valueProblem("emails", [])).toBeNull()
   })
 
+  it("asks for at least one known channel", () => {
+    expect(valueProblem("channels", ["telegram", "email"])).toBeNull()
+    expect(valueProblem("channels", [])).toBe("choose at least one of Telegram and Email")
+    expect(valueProblem("channels", undefined)).toBe("choose at least one of Telegram and Email")
+    expect(valueProblem("channels", ["slack"])).toBe("choose at least one of Telegram and Email")
+  })
+
   it("lets an empty single value through, as not set, but not an empty time", () => {
     expect(valueProblem("web-address", "")).toBeNull()
     expect(valueProblem("web-address", "ops.example.com")).toMatch(/^use a full address/)

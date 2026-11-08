@@ -48,6 +48,10 @@ describe("Settings fields", () => {
       "use a whole number from 1 to 60",
     )
     expect(fieldProblem("access", field("access", "telegramApprovers"), ["@ops_lead", "123"])).toBeNull()
+    expect(fieldProblem("access", field("access", "defaultNotify"), [])).toBe(
+      "choose at least one of Telegram and Email",
+    )
+    expect(fieldProblem("access", field("access", "defaultNotify"), ["email"])).toBeNull()
     expect(fieldProblem("telegram", field("telegram", "chatId"), "my chat")).toMatch(/chat's number/)
     expect(fieldProblem("general", field("general", "design"), "compact")).toBeNull()
   })

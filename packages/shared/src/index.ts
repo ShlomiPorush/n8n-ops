@@ -75,6 +75,9 @@ export {
   type Widened,
 } from "./proxy-rules.ts"
 export {
+  type AccessChannel,
+  accessChannelLabels,
+  accessChannels,
   isClockTime,
   isEmailAddress,
   isFromAddress,

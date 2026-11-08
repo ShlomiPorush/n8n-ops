@@ -4,8 +4,13 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+
+- **Choose where access requests go.** Settings → Agent Access has **Default channels**: Telegram, email or both, both by default, so nothing changes until you choose. An agent may name the channel itself when you ask it to, with `notify` (`["telegram"]`, `["email"]` or both) in `POST /api/v1/access-requests` and the `request_instance_access` MCP tool; the n8n-ops skill does so only when you asked. A channel that is off or not set up is replaced by the default ones that are on. The answer's `notify` says where the request is to go, and `notifiedVia` in its status where it went. Every request still shows in n8n-ops.
+
 ### Changed
 
+- **A channel that failed to send an access request no longer holds back the other.** Each channel is retried on its own after Retry failed sends.
 - **The n8n-ops skill tells agents how to work with n8n credentials.** Agents learn that temporary access can include the credential scopes, so they can create and change credentials themselves instead of leaving every step to you. They change only what the approved reason covers, use a separate credential when others share it, and change only the fields they mean to (`isPartialData`). They never ask for a secret in the conversation: they use a private way to enter it where their tool has one, or ask you to enter it in n8n, and keep its value out of commands, output, logs and repository files. When they leave a step to you, they say why.
 
 ## [0.13.0] - 2026-11-08

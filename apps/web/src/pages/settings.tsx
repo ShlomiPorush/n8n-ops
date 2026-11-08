@@ -18,6 +18,7 @@ import { Navigate, NavLink, useLocation, useNavigate, useParams } from "react-ro
 import { useCrumb } from "@/app/chrome"
 import { afterGeneralSave } from "@/app/design-sync"
 import { settingsGroups, settingsSectionLabel } from "@/app/settings-sections"
+import { ChannelsInput } from "@/components/channels-input"
 import { ChipsInput } from "@/components/chips-input"
 import { FieldPicker } from "@/components/field-picker"
 import {
@@ -76,6 +77,7 @@ export type FieldDef = {
     | "switch"
     | "time"
     | "list"
+    | "channels"
     | "weekday"
     | "design"
     | "timezone"
@@ -297,6 +299,12 @@ export const forms: Record<string, { title: string; description: string; fields:
         label: "Email requests",
         hint: "To the recipients set under Email Reports, with a link to decide here.",
         type: "switch",
+      },
+      {
+        name: "defaultNotify",
+        label: "Default channels",
+        hint: "Where a request goes when the agent does not choose one, or chooses one that is off. Only channels turned on above are used. Every request also shows here.",
+        type: "channels",
       },
       {
         name: "telegramApprovers",
@@ -593,7 +601,7 @@ export const toForm = (def: { fields: FieldDef[] }, data: Record<string, unknown
     def.fields.map((f) => {
       const v = data[f.name]
       if (f.type === "password") return [f.name, undefined]
-      if (f.type === "list") return [f.name, Array.isArray(v) ? v.map(String) : []]
+      if (f.type === "list" || f.type === "channels") return [f.name, Array.isArray(v) ? v.map(String) : []]
       if (f.type === "switch") return [f.name, Boolean(v)]
       if (f.type === "routes") return [f.name, routesToForm(v)]
       if (metaOf(data).env?.[f.name]?.inUse) return [f.name, ""]
@@ -928,7 +936,7 @@ export function SettingsForm({ section, active = true }: { section: string; acti
               <SettingRow
                 key={f.name}
                 // The routes are several fields; their label names the list, not one of them.
-                htmlFor={f.type === "routes" ? undefined : f.name}
+                htmlFor={f.type === "routes" || f.type === "channels" ? undefined : f.name}
                 label={f.label}
                 hint={f.hint}
                 inline={f.type === "switch"}
@@ -1008,6 +1016,16 @@ export function SettingsForm({ section, active = true }: { section: string; acti
                     onChange={(v) => set(f.name, Number(v))}
                     disabled={save.isPending}
                     options={weekdays.map((d, i) => ({ value: String(i), label: d }))}
+                  />
+                ) : f.type === "channels" ? (
+                  <ChannelsInput
+                    id={f.name}
+                    label={f.label}
+                    value={Array.isArray(values[f.name]) ? (values[f.name] as string[]) : []}
+                    onChange={(v) => set(f.name, v)}
+                    disabled={save.isPending}
+                    invalid={Boolean(problem)}
+                    describedBy={marks["aria-describedby"]}
                   />
                 ) : f.type === "list" ? (
                   <ChipsInput

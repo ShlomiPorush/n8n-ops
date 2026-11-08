@@ -14,6 +14,7 @@ import {
   nameIn,
   refusedCounts,
 } from "./access.ts"
+import { availableChannels, channelsFor, dueChannels } from "./access-channels.ts"
 import { sendRouted, topicGoneNote } from "./alert-routing.ts"
 import { type CallbackUpdate, telegramClient } from "./alerts.ts"
 import {
@@ -34,9 +35,10 @@ import { clip, html, type InlineButton, TelegramHtml, telegramPlainText } from "
 
 /**
  * Tells approvers about new access requests: a Telegram message with Approve, Deny and Edit buttons, and an email with
- * a link to the request in n8n-ops. Failed sends are retried. In Telegram an approver may leave out instances and
- * change the minutes before approving (the draft); the request page can change everything. Once a request is decided
- * or expires, and again when approved access ends, its Telegram message is edited to say so, without buttons.
+ * a link to the request in n8n-ops, on the channels the agent chose or else the default ones (access-channels.ts).
+ * Failed sends are retried. In Telegram an approver may leave out instances and change the minutes before approving
+ * (the draft); the request page can change everything. Once a request is decided or expires, and again when approved
+ * access ends, its Telegram message is edited to say so, without buttons.
  */
 
 /** One instance of a request as a message shows it: the draft while pending, what was granted once approved. */
@@ -500,27 +502,35 @@ async function requestsWith(ctx: Ctx, where: SQL | undefined) {
   })
 }
 
-/** Background job: notify approvers of new requests, and close the Telegram messages of finished ones. */
+/**
+ * Background job: notify approvers of new requests, and close the Telegram messages of finished ones. Each request
+ * goes to the channels `channelsFor` gives it on this run; a channel that failed waits the retry time on its own.
+ */
 export async function notifyAccess(ctx: Ctx) {
-  const settings = await ctx.settings.get("access")
+  const { defaultNotify } = await ctx.settings.get("access")
   const { retryMin } = await ctx.settings.get("alerts")
-  const email = await ctx.settings.get("email")
   const dates = messageWriting(await ctx.settings.get("general"))
-  const tg = settings.notifyTelegram ? await telegramClient(ctx) : null
-  const mail = settings.notifyEmail && Boolean(email.smtpHost && email.recipients.length)
+  const available = await availableChannels(ctx)
+  const tg = available.includes("telegram") ? await telegramClient(ctx) : null
   const now = Date.now()
 
   const waiting = await requestsWith(ctx, eq(accessRequests.status, "pending"))
   for (const { r, info } of waiting) {
     if (r.decideBy.getTime() < now) continue
-    const needTelegram = tg && r.telegramMessageId === null
-    const needEmail = mail && r.emailSentAt === null
-    if (!needTelegram && !needEmail) continue
-    if (r.notifyError && r.notifyAttemptAt && now - r.notifyAttemptAt.getTime() < retryMin * 60_000) continue
+    const sent = { telegram: r.telegramMessageId !== null, email: r.emailSentAt !== null }
+    const due = dueChannels(
+      channelsFor(r.notifyChoice, defaultNotify, available),
+      sent,
+      r.notifyFailed,
+      now,
+      retryMin * 60_000,
+    )
+    if (!due.length) continue
     const link = await publicLink(ctx, r.id)
     const errors: string[] = []
+    const failed = { ...r.notifyFailed }
     const patch: Partial<typeof accessRequests.$inferInsert> = { notifyAttemptAt: new Date() }
-    if (needTelegram && tg) {
+    if (due.includes("telegram") && tg) {
       try {
         const text = renderAccessTelegram(info, dates)
         const sent = await sendRouted(
@@ -533,18 +543,23 @@ export async function notifyAccess(ctx: Ctx) {
         if (sent.fellBack) ctx.log.warn("Telegram topic not found; the access request went to General")
         patch.telegramMessageId = sent.messageId
         patch.telegramMissingTopic = sent.fellBack ? tg.accessThreadId : null
+        delete failed.telegram
       } catch (e) {
         errors.push(`Telegram: ${(e as Error).message}`)
+        failed.telegram = new Date().toISOString()
       }
     }
-    if (needEmail) {
+    if (due.includes("email")) {
       try {
         await sendEmail(ctx, renderAccessEmail(info, link, dates))
         patch.emailSentAt = new Date()
+        delete failed.email
       } catch (e) {
         errors.push(`Email: ${(e as Error).message}`)
+        failed.email = new Date().toISOString()
       }
     }
+    patch.notifyFailed = failed
     patch.notifyError = errors.length ? errors.join("; ") : null
     await ctx.db.update(accessRequests).set(patch).where(eq(accessRequests.id, r.id))
     if (errors.length) ctx.log.warn("access request notification failed", { requestId: r.id, errors })

@@ -944,7 +944,10 @@ function Notified({ r }: { r: AccessRow }) {
       {sent.length ? (
         `Sent to ${sent.join(" and ")}.`
       ) : (
-        <>Not sent anywhere yet. Turn on requests for Telegram or email in Settings → Agent Access.</>
+        <>
+          Not sent anywhere yet. Turn on requests for Telegram or email, and check the default channels, in Settings →
+          Agent Access.
+        </>
       )}
       {r.notifyError && <span className="block font-semibold text-fail">Last attempt failed: {r.notifyError}</span>}
     </p>

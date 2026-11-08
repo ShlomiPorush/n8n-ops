@@ -224,6 +224,13 @@ describe("the access request email", () => {
     expect(email.html).not.toContain("&bull;")
   })
 
+  it("shortens a long name, which Outlook for Windows could not wrap, to 60 characters", () => {
+    const long = { ...request, workflowIds: ["w1", "w2"], workflowNames: { w1: "x".repeat(200), w2: "ERP import" } }
+    const email = renderAccessEmail(long, null, zone)
+    expect(email.html).toContain(`>${"x".repeat(59)}…</td>`)
+    expect(email.html).not.toContain("x".repeat(60))
+  })
+
   it("lists several workflows one per line, and shows an ID in code font only when the name is not known", () => {
     const email = renderAccessEmail(named, null, zone)
     expect(email.text).toContain("\nWorkflows:\n• Sync <orders>\n• ERP import\n• toString\nFor: ")

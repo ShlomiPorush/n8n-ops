@@ -43,8 +43,11 @@ type RequestInfo = {
 /** The requested workflows, each with its name when the request has one. */
 const workflowsOf = (r: RequestInfo) => r.workflowIds.map((id) => ({ id, name: nameIn(r.workflowNames, id) }))
 
-/** A workflow as email text: its name, or its ID when the name is not known, within 100 characters. */
-const workflowText = ({ id, name }: { id: string; name?: string }) => clip(name ?? id, 100)
+/**
+ * A workflow as email text: its name, or its ID when the name is not known, within 60 characters. Word (Outlook for
+ * Windows) cannot break a word, so a longer name without spaces would widen the email.
+ */
+const workflowText = ({ id, name }: { id: string; name?: string }) => clip(name ?? id, 60)
 
 /** How a request ended up: decided, then perhaps ended, with what the agent said and how many calls it made. */
 type Outcome = {

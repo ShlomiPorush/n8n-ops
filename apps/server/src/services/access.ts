@@ -960,8 +960,7 @@ export async function grantForKey(ctx: Ctx, key: string, ref: string) {
     )
   // The name first: the addresses given to the agent use names, and one key opens several instances, so an instance
   // named like another one's ID must still get the calls sent to its own address.
-  const found =
-    matches.find((m) => m.instance.name === ref) ?? matches.find((m) => m.instance.id === ref.toLowerCase())
+  const found = matches.find((m) => m.instance.name === ref) ?? matches.find((m) => m.instance.id === ref.toLowerCase())
   return { request: row.r, grant: found?.grant ?? null, instance: found?.instance ?? null }
 }
 

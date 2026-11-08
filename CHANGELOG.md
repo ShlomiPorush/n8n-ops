@@ -4,8 +4,14 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+
+- **Agents say what they did when they release access.** Releasing temporary access to n8n (`POST /api/v1/access-requests/<id>/release` and the `release_instance_access` MCP tool) takes an optional `summary`, up to 1000 characters; a longer one is shortened, never refused. The n8n-ops skill sends one. A release without a body works as before.
+- **The end of temporary access says how long it was used and what was done.** Once approved access ends, its Telegram message and its page in Agent Access show how long it was used (for example "Used 23 min of 1 h 30 min"), the agent's summary, and how many calls it made through n8n-ops, and how many of them were refused.
+
 ### Changed
 
+- **Clearer access request messages in Telegram.** Workflows are named without their IDs (an ID shows only when the name is not known), several workflows are listed one per line, the requested length is in bold, a waiting request says when it expires, and times no longer end with the zone, such as GMT+2. The access request email still names workflows with their IDs.
 - **Emails read well in Outlook's dark mode.** Outlook for Android and Outlook on the web turned the whole email into one flat grey in dark mode, so its panels disappeared. Panels, lines and backgrounds are now neutral greys that Outlook keeps, status tags are outlined instead of filled, the email stays left to right in a mail client set to Hebrew, and dates no longer turn into blue links.
 
 ## [0.11.0] - 2026-11-06

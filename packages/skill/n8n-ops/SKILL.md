@@ -80,8 +80,10 @@ being made at a time (`request_in_progress`) and at most three waiting for a per
    While you fix an error or wait for the person's answer, keep the access, and use it only for the reason that was
    approved: holding the key does not widen what the person approved. It stops working by itself after the approved
    minutes. Release it as soon as the task no longer needs it, also when the task is cancelled or given up:
-   `n8n-ops post access-requests/<requestId>/release`. The key stops working at once. Once the access has expired or
-   was released, the same request gives no key again: if you still need access, make a new request.
+   `n8n-ops post access-requests/<requestId>/release --json-file <file>` with a JSON body
+   `{"summary": "<what you did with the access and the result, up to 1000 characters>"}`. The person who approved
+   reads it; say also when you changed nothing or gave up, and why. The key stops working at once. Once the access has
+   expired or was released, the same request gives no key again: if you still need access, make a new request.
 
 ## When the command cannot run
 

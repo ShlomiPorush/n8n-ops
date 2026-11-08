@@ -231,6 +231,29 @@ describe("a request for several instances", () => {
     expect(await grantForKey(ctx, `nops_n8n_${randomBytes(8).toString("hex")}`, a.name)).toBeNull()
   })
 
+  it("sends a call to the instance whose address it used, also when another one's ID is that instance's name", async () => {
+    const token = await agent()
+    const a = await openInstance()
+    const b = await openInstance()
+    // b is renamed to a's ID; one key opens both.
+    await ctx.db.update(instances).set({ name: a.id }).where(eq(instances.id, b.id))
+    const { id } = await requestAccess(ctx, token, {
+      ...ask([]),
+      instances: [
+        { instance: a.name, scopes: ["workflow:read"] },
+        { instance: b.id, scopes: ["workflow:read", "workflow:update"] },
+      ],
+    })
+    await approveAccess(ctx, id, who, { revision: 0 })
+    const got = await collectAccess(ctx, token, id, "https://ops.example.com")
+    if (!("key" in got) || !got.key) throw new Error("no key")
+    const forB = got.instances.find((i) => i.scopes.includes("workflow:update"))
+    expect(forB?.baseUrl).toBe(`https://ops.example.com/n8n/${a.id}/api/v1`)
+    // The address given for b reaches b, never a; a is still reached by its own name.
+    expect((await grantForKey(ctx, got.key, a.id))?.instance?.id).toBe(b.id)
+    expect((await grantForKey(ctx, got.key, a.name))?.instance?.id).toBe(a.id)
+  })
+
   it("is refused as a whole, storing nothing, when one instance does not fit", async () => {
     const token = await agent()
     const a = await openInstance()

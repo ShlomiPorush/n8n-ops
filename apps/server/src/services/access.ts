@@ -945,7 +945,7 @@ export async function grantForKey(ctx: Ctx, key: string, ref: string) {
     .where(eq(accessRequests.keyHash, sha256(key)))
   if (row?.r.status !== "approved" || row.tokenRevokedAt) return null
   if (!row.r.expiresAt || row.r.expiresAt < new Date()) return null
-  const [found] = await ctx.db
+  const matches = await ctx.db
     .select({ grant: accessRequestInstances, instance: instances })
     .from(accessRequestInstances)
     .innerJoin(instances, eq(accessRequestInstances.instanceId, instances.id))
@@ -957,6 +957,9 @@ export async function grantForKey(ctx: Ctx, key: string, ref: string) {
         isUuid(ref) ? or(eq(instances.id, ref), eq(instances.name, ref)) : eq(instances.name, ref),
       ),
     )
+  // The name first: the addresses given to the agent use names, and one key opens several instances, so an instance
+  // named like another one's ID must still get the calls sent to its own address.
+  const found = matches.find((m) => m.instance.name === ref) ?? matches.find((m) => m.instance.id === ref)
   return { request: row.r, grant: found?.grant ?? null, instance: found?.instance ?? null }
 }
 

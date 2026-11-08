@@ -112,9 +112,11 @@ export function restRoutes(ctx: Ctx) {
           ? 403
           : e.code === "request_in_progress"
             ? 409
-            : e.code.startsWith("spec")
-              ? 502
-              : 400
+            : e.code === "busy"
+              ? 503
+              : e.code.startsWith("spec")
+                ? 502
+                : 400
     return [{ error: e.code, message: e.message }, status] as const
   }
   app.post("/access-requests", async (c) => {

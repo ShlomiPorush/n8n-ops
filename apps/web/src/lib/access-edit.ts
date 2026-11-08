@@ -226,11 +226,12 @@ export type ApproveBody = {
 }
 
 /**
- * The body of Approve: just the revision the editor started from when nothing changed, so the server approves the
- * draft as it stands; otherwise every instance in the editor, included or left out, and the minutes.
+ * The body of Approve: the revision the editor started from, and every instance as the editor shows it, included
+ * or left out, with the minutes. Always the selection on screen, never the stored draft: an instance's policy can
+ * change without changing the request, and the person approves what they see (the server still applies the policy
+ * as it is then).
  */
-export function approveBody(revision: number, state: EditState, base: EditState): ApproveBody {
-  if (!editChanged(state, base)) return { revision }
+export function approveBody(revision: number, state: EditState): ApproveBody {
   return {
     revision,
     edit: {

@@ -77,12 +77,20 @@ export function grantableScopes(instance: AccessFields) {
 
 const isUuid = (ref: string) => /^[0-9a-f-]{36}$/i.test(ref)
 
-async function findInstance(ctx: Ctx, ref: string) {
-  const [row] = await ctx.db
+/** The instances an agent names, by name or ID, read at once; a ref without an instance is missing from the map. */
+async function findInstances(ctx: Ctx, refs: string[]) {
+  const ids = refs.filter(isUuid)
+  const rows = await ctx.db
     .select()
     .from(instances)
-    .where(isUuid(ref) ? or(eq(instances.id, ref), eq(instances.name, ref)) : eq(instances.name, ref))
-  return row ?? null
+    .where(ids.length ? or(inArray(instances.name, refs), inArray(instances.id, ids)) : inArray(instances.name, refs))
+  return (ref: string) => rows.find((r) => r.id === ref) ?? rows.find((r) => r.name === ref) ?? null
+}
+
+/** PostgreSQL gave up waiting: a statement or lock timeout set for the transaction. */
+const timedOut = (e: unknown) => {
+  const code = (e as { code?: string } | null)?.code ?? (e as { cause?: { code?: string } } | null)?.cause?.code
+  return code === "57014" || code === "55P03"
 }
 
 // --- The instance's API description, cached per instance and version.
@@ -236,8 +244,12 @@ async function requestAccessNow(ctx: Ctx, tokenId: string, input: AccessRequestI
 
   // Every instance is checked before anything is stored; the first one that does not fit refuses the request.
   const asked: { instance: Instance; scopes: string[]; workflowIds: string[] }[] = []
+  const find = await findInstances(
+    ctx,
+    input.instances.map((i) => i.instance),
+  )
   for (const item of input.instances) {
-    const instance = await findInstance(ctx, item.instance)
+    const instance = find(item.instance)
     if (!instance) throw new AccessError("unknown_instance", `There is no instance named "${item.instance}".`)
     if (asked.some((a) => a.instance.id === instance.id))
       throw new AccessError("duplicate_instance", `${instance.name} is named more than once; name each instance once.`)
@@ -281,65 +293,78 @@ async function requestAccessNow(ctx: Ctx, tokenId: string, input: AccessRequestI
     asked.map((a) => workflowNamesOf(ctx, a.instance, a.workflowIds, { withinMs: Math.max(0, namesWithin) })),
   )
 
-  const row = await ctx.db.transaction(async (tx) => {
-    // The token row is held while counting, so a revoke or another request cannot slip in between.
-    const [held] = await tx.select().from(apiTokens).where(eq(apiTokens.id, tokenId)).for("update")
-    if (!held?.canRequestAccess || held.revokedAt) throw notAllowed()
-    const [pending] = await tx
-      .select({ n: count() })
-      .from(accessRequests)
-      .where(and(eq(accessRequests.tokenId, tokenId), eq(accessRequests.status, "pending")))
-    if ((pending?.n ?? 0) >= MAX_PENDING_PER_TOKEN)
-      throw new AccessError(
-        "too_many_pending",
-        "This agent has too many access requests waiting for a decision. Wait for one to be decided, or release one.",
-      )
-    const [created] = await tx
-      .insert(accessRequests)
-      .values({
-        tokenId,
-        reason: input.reason,
-        requestedMinutes: input.minutes,
-        minutes: input.minutes,
-        decideBy: new Date(Date.now() + pendingMinutes * 60_000),
-      })
-      .returning()
-    if (!created) throw new Error("the request was not stored")
-    await tx.insert(accessRequestInstances).values(
-      asked.map((a, position) => ({
-        requestId: created.id,
-        instanceId: a.instance.id,
-        instanceName: a.instance.name,
-        position,
-        requestedScopes: a.scopes,
-        requestedWorkflowIds: a.workflowIds,
-        scopes: a.scopes,
-        workflowIds: a.workflowIds,
-        workflowNames: named[position] ?? {},
-      })),
-    )
-    await ctx.audit(
-      {
-        actor: tokenActor(held),
-        action: "Instance access requested",
-        target: namesTarget(asked.map((a) => a.instance.name)),
-        via: "agent",
-        details: {
-          requestId: created.id,
-          minutes: input.minutes,
+  // What is left of the time is the most the database may take; past it, nothing is stored.
+  const left = REQUEST_WITHIN_MS - 500 - (Date.now() - started)
+  const busy = () =>
+    new AccessError("busy", "n8n-ops could not store the request in time; nothing was stored. Ask again.")
+  if (left < 250) throw busy()
+  const row = await ctx.db
+    .transaction(async (tx) => {
+      await tx.execute(sql.raw(`SET LOCAL statement_timeout = ${Math.floor(left)}`))
+      await tx.execute(sql.raw(`SET LOCAL lock_timeout = ${Math.floor(left)}`))
+      // The token row is held while counting, so a revoke or another request cannot slip in between.
+      const [held] = await tx.select().from(apiTokens).where(eq(apiTokens.id, tokenId)).for("update")
+      if (!held?.canRequestAccess || held.revokedAt) throw notAllowed()
+      const [pending] = await tx
+        .select({ n: count() })
+        .from(accessRequests)
+        .where(and(eq(accessRequests.tokenId, tokenId), eq(accessRequests.status, "pending")))
+      if ((pending?.n ?? 0) >= MAX_PENDING_PER_TOKEN)
+        throw new AccessError(
+          "too_many_pending",
+          "This agent has too many access requests waiting for a decision. Wait for one to be decided, or release one.",
+        )
+      const [created] = await tx
+        .insert(accessRequests)
+        .values({
+          tokenId,
           reason: input.reason,
-          instances: asked.map((a) => ({ name: a.instance.name, scopes: a.scopes, workflowIds: a.workflowIds })),
+          requestedMinutes: input.minutes,
+          minutes: input.minutes,
+          decideBy: new Date(Date.now() + pendingMinutes * 60_000),
+        })
+        .returning()
+      if (!created) throw new Error("the request was not stored")
+      await tx.insert(accessRequestInstances).values(
+        asked.map((a, position) => ({
+          requestId: created.id,
+          instanceId: a.instance.id,
+          instanceName: a.instance.name,
+          position,
+          requestedScopes: a.scopes,
+          requestedWorkflowIds: a.workflowIds,
+          scopes: a.scopes,
+          workflowIds: a.workflowIds,
+          workflowNames: named[position] ?? {},
+        })),
+      )
+      await ctx.audit(
+        {
+          actor: tokenActor(held),
+          action: "Instance access requested",
+          target: namesTarget(asked.map((a) => a.instance.name)),
+          via: "agent",
+          details: {
+            requestId: created.id,
+            minutes: input.minutes,
+            reason: input.reason,
+            instances: asked.map((a) => ({ name: a.instance.name, scopes: a.scopes, workflowIds: a.workflowIds })),
+          },
         },
-      },
-      tx,
-    )
-    return created
-  })
+        tx,
+      )
+      return created
+    })
+    .catch((e) => {
+      throw timedOut(e) ? busy() : e
+    })
   changed(ctx, "access", "overview")
   ctx.events.emit("access-requested", row.id)
   return {
     id: row.id,
     status: row.status,
+    // Agents of earlier skills, which ask for one instance, read its name here.
+    ...(asked.length === 1 ? { instance: asked[0]?.instance.name } : {}),
     instances: asked.map((a) => a.instance.name),
     decideBy: row.decideBy,
   }
@@ -485,7 +510,9 @@ export async function approveAccess(
 
     const targets: Target[] = edit
       ? edit.instances.map((i) => {
-          const existing = children.find((c) => c.instanceId === i.instanceId)
+          // An instance deleted since the page was loaded has lost its ID on the request; it is found by its row.
+          const was = before.get(id)?.find((c) => c.instanceId === i.instanceId)
+          const existing = children.find((c) => c.instanceId === i.instanceId || (was !== undefined && c.id === was.id))
           return {
             existing,
             instanceId: i.instanceId,
@@ -503,7 +530,8 @@ export async function approveAccess(
           scopes: c.scopes,
           workflowIds: c.workflowIds,
         }))
-    // Instances of the request the edit does not name are left out; deleted ones can no longer be named.
+    // Instances of the request the edit does not name are left out. A deleted one can no longer be named: it keeps
+    // its place in the draft, so the approval says it was left out because it was deleted.
     if (edit)
       for (const c of children)
         if (!targets.some((t) => t.existing === c))
@@ -511,7 +539,7 @@ export async function approveAccess(
             existing: c,
             instanceId: c.instanceId,
             instanceName: c.instanceName,
-            included: false,
+            included: c.instanceId === null && c.included,
             scopes: c.scopes,
             workflowIds: c.workflowIds,
           })
@@ -523,23 +551,23 @@ export async function approveAccess(
       : []
     const byId = new Map(locked.map((i) => [i.id, i]))
 
-    const decided = targets.map((t) => {
-      const instance = t.instanceId ? byId.get(t.instanceId) : undefined
+    // An instance an approver added that was deleted before the approval is not part of the request at all.
+    const kept = targets.filter((t) => t.existing || !t.included || (t.instanceId && byId.has(t.instanceId)))
+    const decided = kept.map((t) => {
+      const instance =
+        t.existing && !t.existing.instanceId ? undefined : t.instanceId ? byId.get(t.instanceId) : undefined
       if (!t.included) return { ...t, instance, droppedReason: null, droppedScopes: [] as string[] }
       if (t.existing && !t.existing.instanceId)
         return { ...t, instance, droppedReason: "deleted" as AccessDropReason, droppedScopes: [] }
-      if (!instance) {
-        if (!t.existing) throw new AccessError("unknown_instance", "An instance you added no longer exists.")
-        return { ...t, instance, droppedReason: "deleted" as AccessDropReason, droppedScopes: [] }
-      }
+      if (!instance) return { ...t, instance, droppedReason: "deleted" as AccessDropReason, droppedScopes: [] }
       if (!instance.agentAccess.enabled || !openToAgents(instance))
         return { ...t, instance, droppedReason: "closed" as AccessDropReason, droppedScopes: [] }
       const grantable = grantableScopes(instance)
-      const kept = t.scopes.filter((s) => grantable.includes(s))
+      const allowed = t.scopes.filter((s) => grantable.includes(s))
       const droppedScopes = t.scopes.filter((s) => !grantable.includes(s))
-      if (!kept.length)
+      if (!allowed.length)
         return { ...t, instance, droppedReason: "no_scopes" as AccessDropReason, droppedScopes, scopes: t.scopes }
-      return { ...t, instance, scopes: kept, droppedReason: null, droppedScopes }
+      return { ...t, instance, scopes: allowed, droppedReason: null, droppedScopes }
     })
     const granted = decided.filter((d) => d.included && !d.droppedReason)
     if (!granted.length)
@@ -574,8 +602,15 @@ export async function approveAccess(
 
     let position = Math.max(-1, ...children.map((c) => c.position))
     for (const d of decided) {
-      const names = { ...(d.existing?.workflowNames ?? {}), ...(d.instanceId ? extraNames.get(d.instanceId) : {}) }
-      const workflowNames = Object.fromEntries(d.workflowIds.flatMap((w) => (names[w] ? [[w, names[w]]] : [])))
+      const added = d.instanceId ? extraNames.get(d.instanceId) : undefined
+      // The names of what was asked for stay with the request too, so its history keeps them after a change.
+      const ids = [...new Set([...d.workflowIds, ...(d.existing?.requestedWorkflowIds ?? [])])]
+      const workflowNames = Object.fromEntries(
+        ids.flatMap((w) => {
+          const name = nameIn(d.existing?.workflowNames, w) ?? nameIn(added, w)
+          return name === undefined ? [] : [[w, name]]
+        }),
+      )
       const values = {
         included: d.included,
         scopes: d.scopes,

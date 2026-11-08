@@ -24,6 +24,7 @@ import {
   grantForKey,
   instancesOf,
   requestAccess,
+  revokeAccess,
 } from "./access.ts"
 import type { Instance } from "./instances.ts"
 import { deleteInstance } from "./problems.ts"
@@ -262,8 +263,54 @@ describe("a request for several instances", () => {
   it("is refused for an agent revoked while it was being made", async () => {
     const token = await agent()
     const a = await openInstance()
-    await ctx.db.update(apiTokens).set({ revokedAt: new Date() }).where(eq(apiTokens.id, token))
-    await expect(requestAccess(ctx, token, ask([a.name]))).rejects.toMatchObject({ code: "not_allowed" })
+    // The revoke holds the token row while the request is being made, and commits before the request stores it.
+    let release = () => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let locked = () => {}
+    const holding = new Promise<void>((resolve) => {
+      locked = resolve
+    })
+    const revoking = database.db.transaction(async (tx) => {
+      await tx.select().from(apiTokens).where(eq(apiTokens.id, token)).for("update")
+      await tx.update(apiTokens).set({ revokedAt: new Date() }).where(eq(apiTokens.id, token))
+      locked()
+      await gate
+    })
+    await holding
+    const asking = requestAccess(ctx, token, ask([a.name]))
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    release()
+    await revoking
+    await expect(asking).rejects.toMatchObject({ code: "not_allowed" })
+    expect(await ctx.db.select().from(accessRequests).where(eq(accessRequests.tokenId, token))).toEqual([])
+  })
+
+  it("stores nothing and says so when the database keeps it waiting past its time", { timeout: 30_000 }, async () => {
+    const token = await agent()
+    const a = await openInstance()
+    let release = () => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let locked = () => {}
+    const holding = new Promise<void>((resolve) => {
+      locked = resolve
+    })
+    const holder = database.db.transaction(async (tx) => {
+      await tx.select().from(apiTokens).where(eq(apiTokens.id, token)).for("update")
+      locked()
+      await gate
+    })
+    await holding
+    const started = Date.now()
+    await expect(requestAccess(ctx, token, ask([a.name]))).rejects.toMatchObject({ code: "busy" })
+    // Answered inside the time the agent's command waits (15 seconds).
+    expect(Date.now() - started).toBeLessThan(11_000)
+    release()
+    await holder
+    expect(await ctx.db.select().from(accessRequests).where(eq(accessRequests.tokenId, token))).toEqual([])
   })
 
   it("over REST takes the earlier single-instance body and the new one, and refuses both at once or neither", async () => {
@@ -289,7 +336,11 @@ describe("a request for several instances", () => {
     const reason = "Look at the ERP sync workflow"
     const legacy = await post({ instance: a.name, scopes: ["workflow:read"], reason, minutes: 10 })
     expect(legacy.status).toBe(201)
-    expect(((await legacy.json()) as { data: { instances: string[] } }).data.instances).toEqual([a.name])
+    // Agents of earlier skills read the instance's name where they always did.
+    expect(((await legacy.json()) as { data: { instance: string; instances: string[] } }).data).toMatchObject({
+      instance: a.name,
+      instances: [a.name],
+    })
     const both = await post({
       instances: [
         { instance: a.name, scopes: ["workflow:read"] },
@@ -448,6 +499,78 @@ describe("approving with changes", () => {
       code: "nothing_to_approve",
     })
     expect((await stored(other.id)).row.status).toBe("pending")
+  })
+
+  it("approves a change made on a page loaded before an instance was deleted, leaving the deleted ones out", async () => {
+    const token = await agent()
+    const [a, gone, addedGone] = [await openInstance(), await openInstance(), await openInstance()]
+    const { id } = await requestAccess(ctx, token, ask([a.name, gone.name]))
+    // The page was loaded with both; then both the instance asked for and the one the approver adds are deleted.
+    await deleteInstance(ctx, gone.id)
+    await deleteInstance(ctx, addedGone.id)
+    const all = (instanceId: string) => ({
+      instanceId,
+      included: true,
+      scopes: ["workflow:read"],
+      allWorkflows: true,
+      workflowIds: [],
+    })
+    await approveAccess(ctx, id, who, {
+      revision: 0,
+      edit: { minutes: 20, instances: [all(a.id), all(gone.id), all(addedGone.id)] },
+    })
+    const { row, list } = await stored(id)
+    expect(row).toMatchObject({ status: "approved", minutes: 20 })
+    expect(list.map((i) => [i.instanceName, i.included, i.droppedReason])).toEqual([
+      [a.name, true, null],
+      [gone.name, true, "deleted"],
+    ])
+  })
+
+  it("keeps the names of the workflows asked for when the approver grants others", async () => {
+    const token = await agent()
+    const a = await openInstance()
+    const { id } = await requestAccess(ctx, token, {
+      ...ask([]),
+      instances: [{ instance: a.name, scopes: ["workflow:read"], workflowIds: ["w-asked"] }],
+    })
+    await ctx.db
+      .update(accessRequestInstances)
+      .set({ workflowNames: { "w-asked": "Asked for" } })
+      .where(eq(accessRequestInstances.requestId, id))
+    await approveAccess(ctx, id, who, {
+      revision: 0,
+      edit: {
+        minutes: 30,
+        instances: [
+          {
+            instanceId: a.id,
+            included: true,
+            scopes: ["workflow:read"],
+            allWorkflows: false,
+            workflowIds: ["w-other"],
+          },
+        ],
+      },
+    })
+    const [child] = (await stored(id)).list
+    expect(child).toMatchObject({ workflowIds: ["w-other"], requestedWorkflowIds: ["w-asked"] })
+    expect(child?.workflowNames).toEqual({ "w-asked": "Asked for" })
+  })
+
+  it("never leaves a working key when a revoke and an approval meet", async () => {
+    for (let round = 0; round < 5; round++) {
+      const a = await openInstance()
+      const { id } = await requestAccess(ctx, await agent(), ask([a.name]))
+      await Promise.allSettled([
+        approveAccess(ctx, id, who, { revision: 0 }),
+        revokeAccess(ctx, id, { by: "shlomi", via: "web" }),
+      ])
+      // Either the revoke came first and nothing was approved, or it came second and ended the approval.
+      const { row } = await stored(id)
+      expect(row.status).toBe("revoked")
+      expect(row.keyEnc).toBeNull()
+    }
   })
 })
 

@@ -127,11 +127,14 @@ describe("the approval editor", () => {
     ])
   })
 
-  it("sends just the revision when nothing changed", () => {
+  it("sends the selection on screen also when nothing changed, not just the revision", () => {
     const base = initialEdit(request, choices)
-    expect(approveBody(4, base, base)).toEqual({ revision: 4 })
-    // Typing the same minutes again is no change.
-    expect(approveBody(4, { ...base, minutes: " 15 " }, base)).toEqual({ revision: 4 })
+    const body = approveBody(4, base)
+    expect(body.revision).toBe(4)
+    expect(body.edit?.minutes).toBe(15)
+    expect(body.edit?.instances.map((i) => [i.included, i.scopes])).toEqual(
+      base.instances.map((i) => [i.included, i.scopes]),
+    )
   })
 
   it("sends every instance and the minutes once something changed", () => {
@@ -145,7 +148,7 @@ describe("the approval editor", () => {
         { ...b, included: false },
       ],
     }
-    expect(approveBody(4, edit, base)).toEqual({
+    expect(approveBody(4, edit)).toEqual({
       revision: 4,
       edit: {
         minutes: 30,
@@ -183,7 +186,7 @@ describe("the approval editor", () => {
       instances: only.instances.map((i) => (i.instanceId === C ? { ...i, pending: " wf9 " } : i)),
     }
     expect(editProblem(typed)).toBeNull()
-    expect(approveBody(1, typed, base).edit?.instances.at(-1)).toEqual({
+    expect(approveBody(1, typed).edit?.instances.at(-1)).toEqual({
       instanceId: C,
       included: true,
       scopes: ["execution:list"],

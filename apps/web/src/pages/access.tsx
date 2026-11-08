@@ -383,7 +383,7 @@ function AccessDetailView({ r, detail }: { r: AccessDetail; detail: ReturnType<t
       : editProblem(editor.edit, maxMinutes)
     : null
   const approveNow = async () => {
-    const body = editing ? approveBody(editor.base.revision, editor.edit, editor.base.edit) : { revision: r.revision }
+    const body = editing ? approveBody(editor.base.revision, editor.edit) : { revision: r.revision }
     try {
       await approve.mutateAsync(body)
     } catch (e) {

@@ -505,6 +505,8 @@ export async function logCall(
       })
       .where(eq(accessRequests.id, requestId))
   })
+  // An open request page shows the new call and count; the event stream sends at most one change a second.
+  changed(ctx, "access")
 }
 
 /** Calls n8n-ops refused, by request; a request without any is left out. */
@@ -536,19 +538,32 @@ export async function listAccess(ctx: Ctx) {
 }
 
 export async function getAccess(ctx: Ctx, id: string) {
-  const [row] = await ctx.db
-    .select({ r: accessRequests, instanceName: instances.name, tokenName: apiTokens.name })
-    .from(accessRequests)
-    .innerJoin(instances, eq(accessRequests.instanceId, instances.id))
-    .innerJoin(apiTokens, eq(accessRequests.tokenId, apiTokens.id))
-    .where(eq(accessRequests.id, id))
-  if (!row) return null
-  const calls = await ctx.db
-    .select()
-    .from(accessCalls)
-    .where(eq(accessCalls.requestId, id))
-    .orderBy(desc(accessCalls.at))
-    .limit(500)
+  // One snapshot, so the count, the refused count and the calls listed agree while calls are being logged.
+  const read = await ctx.db.transaction(
+    async (tx) => {
+      const [row] = await tx
+        .select({ r: accessRequests, instanceName: instances.name, tokenName: apiTokens.name })
+        .from(accessRequests)
+        .innerJoin(instances, eq(accessRequests.instanceId, instances.id))
+        .innerJoin(apiTokens, eq(accessRequests.tokenId, apiTokens.id))
+        .where(eq(accessRequests.id, id))
+      if (!row) return null
+      const calls = await tx
+        .select()
+        .from(accessCalls)
+        .where(eq(accessCalls.requestId, id))
+        .orderBy(desc(accessCalls.at))
+        .limit(500)
+      const [refused] = await tx
+        .select({ n: count() })
+        .from(accessCalls)
+        .where(and(eq(accessCalls.requestId, id), isNotNull(accessCalls.refused)))
+      return { row, calls, refusedCount: refused?.n ?? 0 }
+    },
+    { isolationLevel: "repeatable read", accessMode: "read only" },
+  )
+  if (!read) return null
+  const { row, calls, refusedCount } = read
   // Requests made before names were stored take them from the workflow map, while it still lists the workflow.
   const ids = row.r.workflowIds
   const unnamed = ids.filter((w) => nameIn(row.r.workflowNames, w) === undefined)
@@ -565,7 +580,6 @@ export async function getAccess(ctx: Ctx, id: string) {
       return name === undefined ? [] : [[w, name]]
     }),
   )
-  const refusedCount = (await refusedCounts(ctx, [id])).get(id) ?? 0
   return {
     ...publicFields(row.r),
     workflowNames,

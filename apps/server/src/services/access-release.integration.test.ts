@@ -281,11 +281,21 @@ describe("calls made with the access", () => {
 
   it("are all counted on the request page, and the latest listed", async () => {
     const { id } = await approved()
+    // Each call tells open pages that the request changed, also one that ends after the access did.
+    const topics: string[][] = []
+    const listen = (t: string[]) => topics.push(t)
+    ctx.events.on("change", listen)
+    await releaseAccess(ctx, tokenId, id)
+    topics.length = 0
+    await logCall(ctx, id, { method: "GET", path: "/workflows", status: 200 }).finally(() =>
+      ctx.events.off("change", listen),
+    )
+    expect(topics).toEqual([["access"]])
     await logCall(ctx, id, { method: "GET", path: "/workflows", status: 200 })
     await logCall(ctx, id, { method: "DELETE", path: "/workflows/w1", status: 403, refused: "Needs workflow:delete" })
     const detail = await getAccess(ctx, id)
-    expect(detail).toMatchObject({ callCount: 2, refusedCount: 1 })
-    expect(detail?.calls).toHaveLength(2)
+    expect(detail).toMatchObject({ callCount: 3, refusedCount: 1 })
+    expect(detail?.calls).toHaveLength(3)
   })
 
   it("made before the upgrade are counted by it", async () => {

@@ -1,4 +1,4 @@
-import { type CapabilityKey, capabilityKeys } from "@n8n-ops/shared"
+import { type AccessChannel, type CapabilityKey, capabilityKeys } from "@n8n-ops/shared"
 import { sql } from "drizzle-orm"
 import {
   type AnyPgColumn,
@@ -877,6 +877,16 @@ export const accessRequests = pgTable(
     /** When the message last showed the current status; cleared on every change of status. */
     telegramClosedAt: ts("telegram_closed_at"),
     emailSentAt: ts("email_sent_at"),
+    /**
+     * The channels the agent asked to tell approvers on; null when it chose none, and for requests made before it
+     * could, which follow Settings → Agent Access like any other.
+     */
+    notifyChoice: jsonb("notify_choice").$type<AccessChannel[]>(),
+    /**
+     * When the last attempt on each channel failed, as an ISO time, until that channel succeeds; each channel waits
+     * its own retry time, so a failure on one never holds back another.
+     */
+    notifyFailed: jsonb("notify_failed").$type<Partial<Record<AccessChannel, string>>>().notNull().default({}),
     /** Last attempt to notify approvers, and its error, for retries. */
     notifyAttemptAt: ts("notify_attempt_at"),
     notifyError: text("notify_error"),

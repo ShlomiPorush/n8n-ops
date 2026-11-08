@@ -61,6 +61,7 @@ export const settingLabels = {
     pendingMinutes: "A request waits for a decision (minutes)",
     notifyTelegram: "Send requests to Telegram",
     notifyEmail: "Email requests",
+    defaultNotify: "Default channels",
     telegramApprovers: "Who may approve in Telegram",
   },
   security: {
@@ -122,8 +123,20 @@ export function isFromAddress(value: string): boolean {
   return isEmailAddress((named?.[1] ?? value).trim())
 }
 
+/** Where approvers hear of an agent's access request, besides n8n-ops itself. */
+export const accessChannels = ["telegram", "email"] as const
+export type AccessChannel = (typeof accessChannels)[number]
+export const accessChannelLabels: Record<AccessChannel, string> = { telegram: "Telegram", email: "Email" }
+
 /** What a setting's value must be, beyond its type. Empty single values are allowed: they mean not set. */
-export type ValueKind = "emails" | "telegram-users" | "telegram-chat" | "time" | "web-address" | "from-address"
+export type ValueKind =
+  | "emails"
+  | "telegram-users"
+  | "telegram-chat"
+  | "time"
+  | "web-address"
+  | "from-address"
+  | "channels"
 
 /** The settings checked beyond their type, by section and field. Numbers are checked against their limits. */
 export const settingKinds: Record<string, Record<string, ValueKind>> = {
@@ -131,7 +144,7 @@ export const settingKinds: Record<string, Record<string, ValueKind>> = {
   telegram: { chatId: "telegram-chat" },
   email: { recipients: "emails", from: "from-address", dailyTime: "time", weeklyTime: "time" },
   defaults: { backupTime: "time" },
-  access: { telegramApprovers: "telegram-users" },
+  access: { telegramApprovers: "telegram-users", defaultNotify: "channels" },
 }
 
 const quoted = (entries: string[]) => {
@@ -148,6 +161,13 @@ function listProblem(entries: string[], ok: (v: string) => boolean, one: string,
 
 /** What is wrong with a value of this kind, in words that follow its label; null when it is fine. */
 export function valueProblem(kind: ValueKind, value: unknown): string | null {
+  if (kind === "channels") {
+    const list = Array.isArray(value) ? value : []
+    const known = (v: unknown) => accessChannels.some((c) => c === v)
+    return list.length && list.every(known)
+      ? null
+      : `choose at least one of ${accessChannels.map((c) => accessChannelLabels[c]).join(" and ")}`
+  }
   if (kind === "emails" || kind === "telegram-users") {
     const entries = Array.isArray(value) ? value.map((v) => String(v).trim()).filter(Boolean) : []
     return kind === "emails"

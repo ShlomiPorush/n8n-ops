@@ -176,6 +176,13 @@
       "when": 1794137241446,
       "tag": "0024_access_instances_cleanup",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1794155019414,
+      "tag": "0025_access_notify_channels",
+      "breakpoints": true
     }
   ]
 }

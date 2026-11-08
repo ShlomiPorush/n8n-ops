@@ -74,7 +74,12 @@ being made at a time (`request_in_progress`) and at most three waiting for a per
    task needs; a person reads the reason and decides. Count in the minutes the time to check the result and to fix a
    failure, not only the change itself. Writing the body to a file avoids quoting trouble; `--json '<body>'` also
    works in a POSIX shell.
-3. Poll `n8n-ops get access-requests/<requestId>` every few seconds while its status is pending. The person may
+   n8n-ops tells the approvers on its default channels. Only when the person asked you to send the request somewhere
+   ("send it to Telegram", "email it"), add `"notify": ["telegram"]`, `["email"]` or `["telegram", "email"]`; never
+   choose a channel on your own. The answer's `notify` lists where the request is to go (a channel that is off is
+   replaced by the default; empty means only in n8n-ops); tell the person where to look.
+3. Poll `n8n-ops get access-requests/<requestId>` every few seconds while its status is pending; `notifiedVia` lists
+   the channels the approvers were told on so far. The person may
    change the request before approving it: leave out or add instances, change scopes, workflows or minutes. Once
    approved it returns, in `instances`, what was granted on each instance with its `baseUrl`, and the key one time
    only: one key for every granted instance. Call the n8n public API at an instance's `baseUrl` with the key in the

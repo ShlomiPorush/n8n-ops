@@ -1,4 +1,5 @@
 import {
+  accessChannels,
   dateFormats,
   isDateFormat,
   isRoutePattern,
@@ -210,6 +211,11 @@ export const sections = {
     /** Email each new request to the report recipients, with a link to decide in n8n-ops. */
     notifyEmail: z.boolean(),
     /**
+     * Where a request goes when its agent chose no channel, or none of the channels it chose is on and set up; of
+     * these, only the channels on and set up are used (services/access-notify.ts `channelsFor`).
+     */
+    defaultNotify: z.array(z.enum(accessChannels)).min(1),
+    /**
      * Telegram user IDs or @usernames allowed to press Approve or Deny. Empty: only the user of a private chat
      * (the chat ID is that user), never anyone in a group.
      */
@@ -280,7 +286,14 @@ export const defaults: { [K in SectionName]: Section<K> } = {
     smtpUser: "",
   },
   backups: { selfDestinations: "default", selfDestinationIds: [], maxArchiveMb: 2048 },
-  access: { maxMinutes: 240, pendingMinutes: 30, notifyTelegram: true, notifyEmail: true, telegramApprovers: [] },
+  access: {
+    maxMinutes: 240,
+    pendingMinutes: 30,
+    notifyTelegram: true,
+    notifyEmail: true,
+    defaultNotify: ["telegram", "email"],
+    telegramApprovers: [],
+  },
   security: { lifetimeHours: 24, idleTimeout: true, idleMinutes: 60, maxHours: 12 },
   keys: {},
 }

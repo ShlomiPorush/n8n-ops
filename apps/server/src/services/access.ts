@@ -1,3 +1,4 @@
+import { type AccessChannel, accessChannels } from "@n8n-ops/shared"
 import { and, asc, count, desc, eq, gt, inArray, isNotNull, lt, or, sql } from "drizzle-orm"
 import { type Ctx, changed } from "../context.ts"
 import {
@@ -22,6 +23,7 @@ import {
   type WorkflowFields,
 } from "../lib/n8n-spec.ts"
 import { type FetchLike, N8nClient } from "../n8n/client.ts"
+import { availableChannels, channelsFor } from "./access-channels.ts"
 import { can, effectiveScopes, type Instance, unsupportedVersion } from "./instances.ts"
 
 /**
@@ -144,6 +146,8 @@ export type AccessRequestInput = {
   reason: string
   minutes: number
   instances: AccessInstanceInput[]
+  /** Where to tell approvers, when the person asked the agent for a channel; otherwise the default applies. */
+  notify?: AccessChannel[]
 }
 
 /** How long a request waits for the names of its workflows; the ones not read by then show as their IDs. */
@@ -266,7 +270,7 @@ async function requestAccessNow(ctx: Ctx, tokenId: string, input: AccessRequestI
       )
     asked.push({ instance, scopes, workflowIds: [...new Set(item.workflowIds ?? [])] })
   }
-  const { maxMinutes, pendingMinutes } = await ctx.settings.get("access")
+  const { maxMinutes, pendingMinutes, defaultNotify } = await ctx.settings.get("access")
   if (input.minutes < 1 || input.minutes > maxMinutes)
     throw new AccessError("too_long", `Ask for 1 to ${maxMinutes} minutes.`)
 
@@ -288,6 +292,10 @@ async function requestAccessNow(ctx: Ctx, tokenId: string, input: AccessRequestI
     }
   })
   if (failed[0]) throw failed[0]
+
+  const notifyChoice = input.notify?.length ? accessChannels.filter((c) => input.notify?.includes(c)) : null
+  // Where it goes now; the notifier works it out again on each send, so a change in Settings still counts.
+  const notify = channelsFor(notifyChoice, defaultNotify, await availableChannels(ctx))
 
   const namesWithin = Math.min(NAMES_WITHIN_MS, REQUEST_WITHIN_MS - 1_000 - (Date.now() - started))
   const named = await Promise.all(
@@ -330,6 +338,7 @@ async function requestAccessNow(ctx: Ctx, tokenId: string, input: AccessRequestI
           requestedMinutes: input.minutes,
           minutes: input.minutes,
           decideBy: new Date(Date.now() + pendingMinutes * 60_000),
+          notifyChoice,
         })
         .returning()
       if (!created) throw new Error("the request was not stored")
@@ -379,6 +388,7 @@ async function requestAccessNow(ctx: Ctx, tokenId: string, input: AccessRequestI
     ...(asked.length === 1 ? { instance: asked[0]?.instance.name } : {}),
     instances: asked.map((a) => a.instance.name),
     decideBy: row.decideBy,
+    notify,
   }
 }
 
@@ -831,6 +841,7 @@ export async function collectAccess(ctx: Ctx, tokenId: string, id: string, publi
     decidedBy: r.decidedBy,
     expiresAt: r.expiresAt,
     ...(decided ? { changed: differsFromAsked(r, children) } : {}),
+    notifiedVia: accessChannels.filter((c) => (c === "telegram" ? r.telegramMessageId : r.emailSentAt) !== null),
   }
   const list = shown.map((c) => ({
     instance: nameOf(c),

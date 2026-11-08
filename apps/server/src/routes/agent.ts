@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js"
+import { type AccessChannel, accessChannels } from "@n8n-ops/shared"
 import { type Context, Hono } from "hono"
 import { z } from "zod"
 import type { Ctx } from "../context.ts"
@@ -216,6 +217,13 @@ const accessRequestShape = {
   workflowIds: workflowIdsShape.describe("With instance: limit the access to these workflows."),
   reason: z.string().min(10).max(500).describe("What you will do and why; the approver reads this."),
   minutes: z.number().int().min(1).describe("How long you need the access. The approver sees it; keep it short."),
+  notify: z
+    .array(z.enum(accessChannels))
+    .min(1)
+    .optional()
+    .describe(
+      "Where to tell the approvers: telegram, email, or both. Only when the person asked you for a channel; omit it otherwise and n8n-ops uses its default. A channel that is off or not set up is replaced by the default. The answer's notify says where the request is to be sent.",
+    ),
 }
 
 type AccessRequestBody = {
@@ -225,18 +233,21 @@ type AccessRequestBody = {
   workflowIds?: string[]
   reason: string
   minutes: number
+  notify?: AccessChannel[]
 }
 
 /** The request in one form, or what is wrong with the body. */
 export function accessInput(body: AccessRequestBody): AccessRequestInput | string {
   const single = body.instance !== undefined || body.scopes !== undefined || body.workflowIds !== undefined
   if (body.instances && single) return "Use either instances, or instance with scopes, not both."
-  if (body.instances) return { reason: body.reason, minutes: body.minutes, instances: body.instances }
+  const notify = body.notify ? { notify: body.notify } : {}
+  if (body.instances) return { reason: body.reason, minutes: body.minutes, instances: body.instances, ...notify }
   if (!body.instance || !body.scopes) return "Name the instances you need, each with its scopes."
   return {
     reason: body.reason,
     minutes: body.minutes,
     instances: [{ instance: body.instance, scopes: body.scopes, workflowIds: body.workflowIds }],
+    ...notify,
   }
 }
 
@@ -336,7 +347,7 @@ export function buildMcpServer(
 
   accessTool(
     "request_instance_access",
-    "Ask for temporary access to the API of one or more n8n instances, for a task: several in instances, each with its own scopes and workflows, or one in instance with scopes. A person approves, possibly after changing the instances, scopes, workflows or minutes, or denies; poll get_access_request for the result and the key. If you do not know which instance has the workflow, find it with search_workflows first. Ask only for the instances, scopes, workflows and minutes the task needs.",
+    "Ask for temporary access to the API of one or more n8n instances, for a task: several in instances, each with its own scopes and workflows, or one in instance with scopes. A person approves, possibly after changing the instances, scopes, workflows or minutes, or denies; poll get_access_request for the result and the key. Approvers hear of it on the default channels, or in notify on the ones the person asked you for. If you do not know which instance has the workflow, find it with search_workflows first. Ask only for the instances, scopes, workflows and minutes the task needs.",
     accessRequestShape,
     { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     (a) => {
@@ -347,7 +358,7 @@ export function buildMcpServer(
   )
   accessTool(
     "get_access_request",
-    "Status of an access request. Once approved it returns, in instances, what was granted on each instance with its baseUrl (the approver may have changed what you asked for), and the key one time only: one key for every granted instance. Call the n8n public API at an instance's baseUrl with the key in the X-N8N-API-KEY header, exactly as with n8n.",
+    "Status of an access request; notifiedVia lists the channels the approvers were told on so far. Once approved it returns, in instances, what was granted on each instance with its baseUrl (the approver may have changed what you asked for), and the key one time only: one key for every granted instance. Call the n8n public API at an instance's baseUrl with the key in the X-N8N-API-KEY header, exactly as with n8n.",
     { requestId: z.string().uuid() },
     { readOnlyHint: true, openWorldHint: false },
     (a) => collectAccess(ctx, access.tokenId, a.requestId, access.publicUrl),

@@ -1,6 +1,6 @@
 import { createServer, type Server } from "node:http"
 import { type APIRequestContext, expect, type Page, test } from "@playwright/test"
-import { dialogClosed, openNewToken, randomSecret, signIn } from "./helpers.ts"
+import { design, dialogClosed, openNewToken, randomSecret, signIn } from "./helpers.ts"
 
 // Approving access requests from Telegram and email. The server's Telegram calls go to a stand-in Bot API run
 // here (verify.sh points TELEGRAM_API_URL at this runner); email goes to Mailpit in the test stack.
@@ -232,6 +232,77 @@ test("a decision in n8n-ops updates the Telegram message too", async ({ request 
     )
     expect(edit).toBeTruthy()
   }).toPass({ timeout: 20_000 })
+})
+
+test("the default channels and the agent's choice decide where a request goes", async ({ request }) => {
+  const channels = page.getByRole("group", { name: "Default channels" })
+  const save = async () => {
+    await page.getByRole("button", { name: "Save" }).click()
+    await expect(page.getByText("Settings saved")).toBeVisible()
+    await expect(page.getByRole("region", { name: "Unsaved changes" })).toHaveCount(0)
+  }
+  await page.goto("/settings/access")
+  await expect(channels.getByText("Telegram", { exact: true })).toBeVisible()
+  await expect(channels.getByText("Email", { exact: true })).toBeVisible()
+  // A removed channel comes back from Add, in its place.
+  await channels.getByRole("button", { name: "Remove Telegram" }).click()
+  await expect(channels.getByText("Telegram", { exact: true })).toHaveCount(0)
+  await channels.getByRole("button", { name: "Add to Default channels" }).click()
+  await page.getByRole("menuitem", { name: "Telegram" }).click()
+  await expect(channels).toHaveText(/Telegram.*Email/)
+  // The last channel cannot be saved away: a request needs somewhere to go by default.
+  await channels.getByRole("button", { name: "Remove Telegram" }).click()
+  await channels.getByRole("button", { name: "Remove Email" }).click()
+  await page.getByRole("button", { name: "Save" }).click()
+  await expect(page.getByText("choose at least one of Telegram and Email").first()).toBeVisible()
+  await page.getByRole("region", { name: "Unsaved changes" }).getByRole("button", { name: "Discard" }).click()
+  await expect(channels.getByText("Email", { exact: true })).toBeVisible()
+  await channels.getByRole("button", { name: "Remove Telegram" }).click()
+  await save()
+  for (const scheme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme: scheme })
+    await channels.screenshot({ path: `test-results/default-channels-${design}-${scheme}.png` })
+  }
+  await page.emulateMedia({ colorScheme: null })
+
+  // Without a choice, the request goes by email only.
+  const quiet = "Read the invoice workflow (default channel)"
+  const quietId = await ask(request, quiet)
+  await expect(async () => {
+    const list = (await (await fetch(`${mailApi}/api/v1/messages`)).json()) as { messages: { ID: string }[] }
+    const texts = await Promise.all(
+      list.messages
+        .slice(0, 5)
+        .map(async (m) => ((await (await fetch(`${mailApi}/api/v1/message/${m.ID}`)).json()) as { Text: string }).Text),
+    )
+    expect(texts.some((t) => t.includes(quiet))).toBe(true)
+  }).toPass({ timeout: 30_000 })
+  await page.goto(`/access/${quietId}`)
+  await expect(page.getByText("Sent to email.")).toBeVisible()
+  expect(calls.some((c) => c.method === "sendMessage" && String(c.body.text).includes(quiet))).toBe(false)
+
+  // The person asked the agent for Telegram: it goes there, outside the default.
+  const loud = "Read the invoice workflow (asked for Telegram)"
+  const asked = await mcp(request, "request_instance_access", {
+    instance: "e2e-n8n",
+    reason: loud,
+    scopes: ["workflow:list"],
+    minutes: 15,
+    notify: ["telegram"],
+  })
+  expect(asked.notify).toEqual(["telegram"])
+  await announcement(loud)
+  await expect(async () => {
+    expect((await mcp(request, "get_access_request", { requestId: asked.id })).notifiedVia).toEqual(["telegram"])
+  }).toPass({ timeout: 15_000 })
+
+  for (const id of [quietId, asked.id])
+    expect((await mcp(request, "release_instance_access", { requestId: id })).status).toBe("released")
+  await page.goto("/settings/access")
+  await channels.getByRole("button", { name: "Add to Default channels" }).click()
+  await page.getByRole("menuitem", { name: "Telegram" }).click()
+  await expect(channels.getByText("Telegram", { exact: true })).toBeVisible()
+  await save()
 })
 
 test("a request for two instances is changed in Telegram, then approved as shown", async ({ request }) => {

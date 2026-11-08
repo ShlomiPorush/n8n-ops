@@ -304,6 +304,49 @@ test("released access stops working at once, and its page says what the agent di
   await expect(page.getByText(/\d+ refused\./)).toBeVisible()
 })
 
+test("an approver changes the request on its page before approving, and the agent gets what was granted", async ({
+  request,
+}) => {
+  const asked = await mcp(request, "request_instance_access", {
+    instances: [{ instance: "e2e-n8n", scopes: ["workflow:read", "workflow:list"], workflowIds: [workflowId] }],
+    reason: "Read the ERP sync workflow (changed before approval)",
+    minutes: 30,
+  })
+  expect(asked.value.status).toBe("pending")
+  const id = asked.value.id as string
+
+  await page.goto(`/access/${id}`)
+  const approve = page.getByRole("button", { name: "Approve" })
+  // Limited to no workflow is not something to approve: the whole instance is a choice of its own.
+  await page.getByRole("button", { name: `Remove ${workflowName}` }).click()
+  await expect(approve).toBeDisabled()
+  await page.getByLabel("Add a workflow ID on e2e-n8n").fill(otherWorkflowId)
+  await page.getByRole("button", { name: "Add", exact: true }).click()
+  await page.getByRole("checkbox", { name: "workflow:list", exact: true }).click()
+  await page.getByLabel("Minutes").fill("20")
+  await expect(approve).toBeEnabled()
+  await approve.click()
+  await expect(page.getByText("Access approved")).toBeVisible()
+
+  const got = await mcp(request, "get_access_request", { requestId: id })
+  expect(got.value).toMatchObject({
+    status: "approved",
+    changed: true,
+    minutes: 20,
+    scopes: ["workflow:read"],
+    workflowIds: [otherWorkflowId],
+  })
+  const call = (path: string) =>
+    fetch(`${got.value.baseUrl}${path}`, { headers: { "X-N8N-API-KEY": got.value.key } })
+  expect((await call(`/workflows/${otherWorkflowId}`)).status).toBe(200)
+  expect((await call(`/workflows/${workflowId}`)).status).toBe(403)
+  // workflow:list was taken out.
+  expect((await call("/workflows")).status).toBe(403)
+  await page.reload()
+  await expect(page.getByText("The agent asked for: workflow:read, workflow:list.")).toBeVisible()
+  expect((await mcp(request, "release_instance_access", { requestId: id })).value.status).toBe("released")
+})
+
 test("agent access edits survive a refresh, and a clean card shows the stored access", async () => {
   test.setTimeout(120_000)
   await page.goto("/instances")

@@ -1,5 +1,6 @@
 import { formatDuration, formatUsed, usedMinutes } from "@n8n-ops/shared"
-import { Ban, Check, KeyRound, Plug, X } from "lucide-react"
+import { Ban, Check, KeyRound, Plug, Plus, X } from "lucide-react"
+import { useMemo, useState } from "react"
 import { Link, useNavigate, useParams, useSearchParams } from "react-router"
 import { useCrumb } from "@/app/chrome"
 import { useConfirm } from "@/components/confirm"
@@ -11,6 +12,7 @@ import {
   Empty,
   LoadError,
   Loading,
+  NoValue,
   PageHead,
   Panel,
   PanelHead,
@@ -21,6 +23,10 @@ import { ListWithPanel } from "@/components/list-panel"
 import { StatusTag, statusOf, TimeAgo, TimeLeft, Tone, When } from "@/components/status"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
+import { Input } from "@/components/ui/input"
 import {
   RANK_WORDS,
   Table,
@@ -32,7 +38,30 @@ import {
   useSort,
 } from "@/components/ui/table"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { useApi, useApiMutation } from "@/lib/api"
+import {
+  type AccessInstance,
+  type ApproveBody,
+  addInstance,
+  approveBody,
+  askedNames,
+  byPosition,
+  type EditInstance,
+  type EditorChoices,
+  type EditState,
+  editChanged,
+  editProblem,
+  grantableOf,
+  grantedNames,
+  initialEdit,
+  instanceLabel,
+  instanceNotes,
+  isGranted,
+  listNames,
+  shortNames,
+  workflowLabel,
+} from "@/lib/access-edit"
+import { ApiError, useApi, useApiMutation } from "@/lib/api"
+import { addEntries } from "@/lib/entries"
 import { loadView } from "@/lib/load-state"
 import { counts, n, plural } from "@/lib/numbers"
 import { formatTime, useTimeFormat } from "@/lib/time"
@@ -41,14 +70,17 @@ export type AccessStatus = "pending" | "approved" | "denied" | "expired" | "rele
 
 export type AccessRow = {
   id: string
-  instance: string
+  /** Every instance on the request, in the order the agent named them; approvers' additions after. */
+  instances: AccessInstance[]
   token: string
   reason: string
-  scopes: string[]
-  workflowIds: string[]
-  /** Names by workflow ID, as they were when the request was made; a workflow without one shows its ID. */
-  workflowNames: Record<string, string>
+  /** The draft while the request waits (an approver may change it), what was granted once approved. */
   minutes: number
+  requestedMinutes: number
+  /** Moves on with every change to the draft; Approve sends the one the person saw. */
+  revision: number
+  /** An approver changed what the agent asked for. */
+  changed: boolean
   status: AccessStatus
   requestedAt: string
   decideBy: string
@@ -82,7 +114,18 @@ const decider = (r: AccessRow) => {
 
 type AccessDetail = AccessRow & {
   refusedCount: number
-  calls: { id: string; at: string; method: string; path: string; status: number; refused: string | null }[]
+  calls: {
+    id: string
+    at: string
+    /** The instance called, by its name; null when it is not known (deleted since). */
+    instance: string | null
+    method: string
+    path: string
+    status: number
+    refused: string | null
+  }[]
+  /** While the request waits: what the approver may grant on each instance, and other instances to add. */
+  editor?: EditorChoices
 }
 
 export function AccessPage() {
@@ -104,7 +147,7 @@ export function AccessPage() {
     rank: "status",
     columns: {
       status: { label: "Status", kind: "number", words: RANK_WORDS, value: rank },
-      instance: { label: "Instance", kind: "text", value: (r) => r.instance },
+      instance: { label: "Instance", kind: "text", value: (r) => instanceLabel(r.instances) },
       agent: { label: "Agent", kind: "text", value: (r) => r.token },
       reason: { label: "Reason", kind: "text", value: (r) => r.reason },
       time: {
@@ -147,7 +190,7 @@ export function AccessPage() {
                   " · ",
                 ) || "Nothing waiting or active"
               }. Nothing is granted until you approve, and access ends on its own.`
-            : "Agents ask for temporary access to an n8n instance for a task. Nothing is granted until you approve, and access ends on its own."
+            : "Agents ask for temporary access to n8n instances for a task. Nothing is granted until you approve, and access ends on its own."
         }
       />
       <FilterBar
@@ -196,7 +239,7 @@ export function AccessPage() {
                   end={<StatusTag kind="access" status={r.status} />}
                   sub={
                     <>
-                      <UserText>{r.instance}</UserText>
+                      <UserText>{instanceLabel(r.instances)}</UserText>
                       {" · "}
                       <UserText>{r.token}</UserText>
                       {" · "}
@@ -235,7 +278,7 @@ export function AccessPage() {
                   <StatusTag kind="access" status={r.status} />
                 </TableCell>
                 <TableCell className="font-semibold">
-                  <UserText>{r.instance}</UserText>
+                  <UserText>{instanceLabel(r.instances)}</UserText>
                 </TableCell>
                 <TableCell className="text-muted-foreground">
                   <UserText>{r.token}</UserText>
@@ -266,47 +309,105 @@ export function AccessPage() {
 }
 
 function AccessDetailPanel({ id }: { id: string }) {
-  const w = useTimeFormat()
   const detail = useApi<AccessDetail>(`/access/${id}`)
   useCrumb(detail.data?.reason)
-  const invalidate = ["/access", `/access/${id}`, "/overview", "/overview/summary", "/overview/attention"]
-  // Toasts name the agent and the instance (FB-4), read when the request ends.
-  const agent = () => detail.data?.token ?? "the agent"
-  const on = () => (detail.data ? ` on ${detail.data.instance}` : "")
-  const approve = useApiMutation<void>("POST", `/access/${id}/approve`, {
-    invalidate,
-    success: () => `Access approved for ${agent()}${on()}`,
-    failed: () => `approve access for ${agent()}`,
-  })
-  const deny = useApiMutation<void>("POST", `/access/${id}/deny`, {
-    invalidate,
-    success: () => `Access request denied for ${agent()}${on()}`,
-    failed: () => `deny access for ${agent()}`,
-  })
-  const revoke = useApiMutation<void>("POST", `/access/${id}/revoke`, {
-    invalidate,
-    success: () => `Access revoked for ${agent()}${on()}`,
-    failed: () => `revoke access for ${agent()}`,
-  })
-  const confirm = useConfirm()
   if (detail.isLoading) return <Loading>Loading the request…</Loading>
   if (detail.error && !detail.data)
     return <LoadError what="this request" error={detail.error} retry={() => detail.refetch()} />
   if (!detail.data) return <Empty title="This request no longer exists." />
-  const r = detail.data
+  // Keyed by the request, so the editor of one request never carries over to the next one opened.
+  return <AccessDetailView key={detail.data.id} r={detail.data} detail={detail} />
+}
+
+/**
+ * The approval editor's state. It starts from the draft and follows it while the person has changed nothing; once
+ * they have, a change made elsewhere (in Telegram) does not replace their edits, and Approve waits until they look
+ * at it, since the revision sent must be the one the edits were made on.
+ */
+function useApprovalEdit(r: AccessDetail) {
+  const fresh = useMemo(() => initialEdit(r, r.editor), [r])
+  const freshKey = `${r.revision}:${JSON.stringify(fresh)}`
+  const [base, setBase] = useState({ key: freshKey, revision: r.revision, edit: fresh })
+  const [edit, setEdit] = useState<EditState>(fresh)
+  const changed = editChanged(edit, base.edit)
+  // Follows the request while nothing was changed here (adjusting state while rendering, as React documents).
+  if (base.key !== freshKey && !changed) {
+    setBase({ key: freshKey, revision: r.revision, edit: fresh })
+    setEdit(fresh)
+  }
+  return {
+    edit,
+    setEdit,
+    base,
+    changed,
+    /** The request was changed elsewhere after the person started changing it. */
+    stale: changed && base.revision !== r.revision,
+    /** Drops the changes made here; the editor then shows the request as it is now. */
+    discard: () => setEdit(base.edit),
+  }
+}
+
+function AccessDetailView({ r, detail }: { r: AccessDetail; detail: ReturnType<typeof useApi<AccessDetail>> }) {
+  const w = useTimeFormat()
+  const id = r.id
+  const invalidate = ["/access", `/access/${id}`, "/overview", "/overview/summary", "/overview/attention"]
+  const label = instanceLabel(r.instances)
+  const granted = grantedNames(r.instances)
+  // Toasts name the agent and the instances (FB-4).
+  const agent = r.token
+  const editing = r.status === "pending" && r.editor !== undefined
+  const editor = useApprovalEdit(r)
+  const settings = useApi<{ maxMinutes?: number }>(editing ? "/settings/access" : null)
+  const maxMinutes = settings.data?.maxMinutes
+  const approve = useApiMutation<ApproveBody>("POST", `/access/${id}/approve`, {
+    invalidate,
+    success: () => `Access approved for ${agent} on ${label}`,
+    failed: () => `approve access for ${agent}`,
+  })
+  const deny = useApiMutation<void>("POST", `/access/${id}/deny`, {
+    invalidate,
+    success: () => `Access request denied for ${agent} on ${label}`,
+    failed: () => `deny access for ${agent}`,
+  })
+  const revoke = useApiMutation<void>("POST", `/access/${id}/revoke`, {
+    invalidate,
+    success: () => `Access revoked for ${agent} on ${shortNames(granted)}`,
+    failed: () => `revoke access for ${agent}`,
+  })
+  const confirm = useConfirm()
   const busy = approve.isPending || deny.isPending || revoke.isPending
   const used = usedMinutes(r)
+  const blocked = editing
+    ? editor.stale
+      ? "The request was changed elsewhere. Show the changes first."
+      : editProblem(editor.edit, maxMinutes)
+    : null
+  const approveNow = async () => {
+    const body = editing ? approveBody(editor.base.revision, editor.edit, editor.base.edit) : { revision: r.revision }
+    try {
+      await approve.mutateAsync(body)
+    } catch (e) {
+      // Changed meanwhile (in Telegram): the toast says so; the editor shows the request as it is now.
+      if (e instanceof ApiError && e.code === "request_changed") {
+        await detail.refetch()
+        editor.discard()
+      }
+      throw e
+    }
+  }
+  const asked = r.minutes !== r.requestedMinutes ? ` (asked for ${formatDuration(r.requestedMinutes)})` : ""
   return (
     <div className="grid min-w-0 gap-gap">
       <div className="grid gap-2.5">
         <div className="flex flex-wrap items-center gap-2">
           <StatusTag kind="access" status={r.status} />
           <Badge variant="line">
-            <UserText>{r.instance}</UserText>
+            <UserText>{label}</UserText>
           </Badge>
           <Badge variant="line">
             Agent: <UserText>{r.token}</UserText>
           </Badge>
+          {r.changed && <Badge variant="line">Changed by an approver</Badge>}
           {/* A failed refresh keeps the request on screen and says so here (TB-5, LD-12). */}
           <span className="ms-auto text-small">
             <RefreshNote live={detail} small />
@@ -318,13 +419,14 @@ function AccessDetailPanel({ id }: { id: string }) {
         <p className="text-muted-foreground">
           {r.status === "pending" && (
             <>
-              Asked <TimeAgo value={r.requestedAt} /> for {formatDuration(r.minutes)}. Expires without a decision{" "}
-              <TimeLeft value={r.decideBy} />.
+              Asked <TimeAgo value={r.requestedAt} /> for {formatDuration(r.requestedMinutes)}. Expires without a
+              decision <TimeLeft value={r.decideBy} />.
             </>
           )}
           {r.status === "approved" && r.expiresAt && (
             <>
-              Approved by {decider(r)}. Ends {formatTime(r.expiresAt, w, { seconds: false })} (
+              Approved by {decider(r)} for {formatDuration(r.minutes)}
+              {asked}. Ends {formatTime(r.expiresAt, w, { seconds: false })} (
               <TimeLeft value={r.expiresAt} />
               ).{" "}
               {r.keyCollected
@@ -338,19 +440,21 @@ function AccessDetailPanel({ id }: { id: string }) {
               {r.decidedBy ? ` · decided by ${decider(r)}` : ""}
               {r.endedAt ? ` · ended ${formatTime(r.endedAt, w, { seconds: false })}` : ""}
               {used !== null ? ` · ${formatUsed(used, r.minutes).toLowerCase()}` : ""}
+              {r.decidedAt && asked ? ` · granted for ${formatDuration(r.minutes)}${asked}` : ""}
             </>
           )}
         </p>
         {r.status === "pending" && <Notified r={r} />}
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {r.status === "pending" && (
             <>
               <BusyButton
                 variant="primary"
                 icon={Check}
                 busyLabel="Approving…"
-                disabled={busy}
-                run={() => approve.mutateAsync()}
+                disabled={busy || blocked !== null}
+                aria-describedby={blocked ? `approve-blocked-${id}` : undefined}
+                run={approveNow}
               >
                 Approve
               </BusyButton>
@@ -363,8 +467,8 @@ function AccessDetailPanel({ id }: { id: string }) {
                 onClick={async () => {
                   if (
                     await confirm({
-                      title: `Deny Access to ${r.instance}?`,
-                      message: `The agent ${r.token} gets no access to ${r.instance} for this request. This cannot be undone; the agent has to ask again.`,
+                      title: `Deny Access to ${label}?`,
+                      message: `The agent ${r.token} gets no access to ${listNames(askedNames(r.instances))} for this request. This cannot be undone; the agent has to ask again.`,
                       confirmLabel: "Deny access",
                       danger: true,
                     })
@@ -374,6 +478,11 @@ function AccessDetailPanel({ id }: { id: string }) {
               >
                 Deny
               </BusyButton>
+              {blocked && (
+                <span id={`approve-blocked-${id}`} className="text-small text-muted-foreground">
+                  {blocked}
+                </span>
+              )}
             </>
           )}
           {r.status === "approved" && (
@@ -387,8 +496,8 @@ function AccessDetailPanel({ id }: { id: string }) {
               onClick={async () => {
                 if (
                   await confirm({
-                    title: `Revoke Access to ${r.instance}?`,
-                    message: `The agent ${r.token} loses access at once, before its time is up. This cannot be undone; the agent has to ask again.`,
+                    title: `Revoke Access to ${shortNames(granted)}?`,
+                    message: `The agent ${r.token} loses access to ${listNames(granted)} at once, before its time is up. This cannot be undone; the agent has to ask again.`,
                     confirmLabel: "Revoke access",
                     danger: true,
                   })
@@ -402,51 +511,37 @@ function AccessDetailPanel({ id }: { id: string }) {
         </div>
       </div>
 
-      <Panel>
-        <PanelHead
-          title="What the Agent May Do"
-          count={n(r.scopes.length)}
-          description={
-            <>
-              Checked by n8n-ops on every call before it reaches {r.instance}.{" "}
-              {r.workflowIds.length ? "Only on the workflows listed." : "On the whole instance."}
-            </>
-          }
+      {editing && r.editor ? (
+        <ApprovalEditor
+          r={r}
+          choices={r.editor}
+          edit={editor.edit}
+          setEdit={editor.setEdit}
+          stale={editor.stale}
+          onShowChanges={editor.discard}
+          maxMinutes={maxMinutes}
+          disabled={busy}
         />
-        <div className="grid gap-3 border-t border-line p-pad-x">
-          <div className="flex flex-wrap gap-1.5">
-            {r.scopes.map((s) => (
-              <Badge key={s} variant="line" className="font-mono">
-                {s}
-              </Badge>
-            ))}
-          </div>
-          {r.workflowIds.length > 0 && (
-            <div className="grid gap-1">
-              <span>Workflows</span>
-              <ul className="grid gap-1">
-                {r.workflowIds.map((id) => {
-                  const name = Object.hasOwn(r.workflowNames ?? {}, id) ? r.workflowNames[id] : undefined
-                  return (
-                    <li key={id} className="flex min-w-0 flex-wrap items-baseline gap-x-2">
-                      {typeof name === "string" && <span className="font-semibold text-ink">{name}</span>}
-                      <Copyable value={id} label="Copy workflow ID" className="text-small text-muted-foreground" />
-                    </li>
-                  )
-                })}
-              </ul>
-            </div>
-          )}
+      ) : (
+        <Panel>
+          <PanelHead
+            title="What the Agent May Do"
+            count={n(granted.length)}
+            description="Checked by n8n-ops on every call before it reaches an instance."
+          />
+          {byPosition(r.instances).map((i) => (
+            <InstanceGrant key={i.position} i={i} />
+          ))}
           {r.keyPrefix && (
-            <p className="flex items-center gap-1.5 text-muted-foreground">
+            <p className="flex items-center gap-1.5 border-t border-line p-pad-x text-muted-foreground">
               <KeyRound className="size-4" /> Access key{" "}
               <Copyable value={r.keyPrefix} label="Copy key prefix" className="text-small">
                 {r.keyPrefix}…
               </Copyable>
             </p>
           )}
-        </div>
-      </Panel>
+        </Panel>
+      )}
 
       {r.summary && (
         <Panel>
@@ -477,6 +572,7 @@ function AccessDetailPanel({ id }: { id: string }) {
             <TableHeader>
               <TableRow>
                 <TableHead>When</TableHead>
+                <TableHead>Instance</TableHead>
                 <TableHead>Call</TableHead>
                 <TableHead className="text-end">Result</TableHead>
               </TableRow>
@@ -486,6 +582,9 @@ function AccessDetailPanel({ id }: { id: string }) {
                 <TableRow key={call.id}>
                   <TableCell className="text-muted-foreground">
                     <When value={call.at} />
+                  </TableCell>
+                  <TableCell>
+                    {call.instance ? <UserText>{call.instance}</UserText> : <NoValue said="Instance not known" />}
                   </TableCell>
                   <TableCell className="font-mono text-small break-all whitespace-normal" data-primary>
                     {call.method} {call.path}
@@ -502,6 +601,338 @@ function AccessDetailPanel({ id }: { id: string }) {
           </Table>
         )}
       </Panel>
+    </div>
+  )
+}
+
+/** The workflows of an instance by name, each with its ID to copy; a workflow without a known name shows its ID. */
+function WorkflowList({ i, ids }: { i: Pick<AccessInstance, "workflowNames">; ids: string[] }) {
+  return (
+    <ul className="grid gap-1">
+      {ids.map((id) => {
+        const name = workflowLabel(i, id)
+        return (
+          <li key={id} className="flex min-w-0 flex-wrap items-baseline gap-x-2">
+            {name !== id && <span className="font-semibold text-ink">{name}</span>}
+            <Copyable value={id} label="Copy workflow ID" className="text-small text-muted-foreground" />
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
+/** One instance of a decided request (or of a waiting one that can no longer be changed): what it grants, and what changed. */
+function InstanceGrant({ i }: { i: AccessInstance }) {
+  const granted = isGranted(i)
+  const notes = instanceNotes(i)
+  return (
+    <div className="grid gap-2.5 border-t border-line p-pad-x">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={granted ? "font-semibold text-ink" : "font-semibold text-muted-foreground"}>
+          <UserText>{i.name}</UserText>
+        </span>
+        {!granted && <Badge variant="line">Left out</Badge>}
+        {!i.requested && <Badge variant="line">Added</Badge>}
+      </div>
+      {i.scopes.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {i.scopes.map((s) => (
+            <Badge key={s} variant="line" className="font-mono">
+              {s}
+            </Badge>
+          ))}
+        </div>
+      )}
+      {i.workflowIds.length > 0 ? (
+        <div className="grid gap-1">
+          <span>Only these workflows</span>
+          <WorkflowList i={i} ids={i.workflowIds} />
+        </div>
+      ) : (
+        <p>The whole instance.</p>
+      )}
+      {notes.length > 0 && (
+        <ul className="grid gap-0.5 text-small text-muted-foreground">
+          {notes.map((note) => (
+            <li key={note}>{note}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+/** What the agent asked for on an instance, in one plain line. */
+function askedLine(i: AccessInstance): string | null {
+  if (!i.requested || !i.requestedScopes) return null
+  const scopes = i.requestedScopes.join(", ") || "no scopes"
+  const where = i.requestedWorkflowIds?.length
+    ? `only ${i.requestedWorkflowIds.map((w) => workflowLabel(i, w)).join(", ")}`
+    : "the whole instance"
+  return `The agent asked for ${scopes} on ${where}.`
+}
+
+/**
+ * The editor of a waiting request: the person narrows or widens it before approving, within each instance's
+ * policy. Approve sends what is set here; with nothing changed, it approves the request as it stands.
+ */
+function ApprovalEditor({
+  r,
+  choices,
+  edit,
+  setEdit,
+  stale,
+  onShowChanges,
+  maxMinutes,
+  disabled,
+}: {
+  r: AccessDetail
+  choices: EditorChoices
+  edit: EditState
+  setEdit: (update: (state: EditState) => EditState) => void
+  stale: boolean
+  onShowChanges: () => void
+  maxMinutes: number | undefined
+  disabled: boolean
+}) {
+  const update = (instanceId: string, change: Partial<EditInstance>) =>
+    setEdit((s) => ({
+      ...s,
+      instances: s.instances.map((i) => (i.instanceId === instanceId ? { ...i, ...change } : i)),
+    }))
+  const remove = (instanceId: string) =>
+    setEdit((s) => ({ ...s, instances: s.instances.filter((i) => i.instanceId !== instanceId) }))
+  const addable = choices.others.filter((o) => !edit.instances.some((i) => i.instanceId === o.instanceId))
+  const deleted = byPosition(r.instances).filter((i) => i.deleted || !i.instanceId)
+  return (
+    <Panel>
+      <PanelHead
+        title="What to Grant"
+        count={n(edit.instances.filter((i) => i.included).length)}
+        description="Change what the agent gets before you approve, within each instance's policy. n8n-ops checks every call before it reaches an instance."
+        action={
+          addable.length > 0 && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm" disabled={disabled}>
+                  <Plus /> Add instance
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                {addable.map((o) => (
+                  <DropdownMenuItem key={o.instanceId} onSelect={() => setEdit((s) => addInstance(s, o))}>
+                    <UserText>{o.name}</UserText>
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )
+        }
+      />
+      {stale && (
+        <div className="flex flex-wrap items-center gap-2 border-t border-line p-pad-x">
+          <span className="font-semibold text-warn">
+            The request was changed elsewhere, for example in Telegram, after you started changing it.
+          </span>
+          <Button size="sm" onClick={onShowChanges}>
+            Show the changes
+          </Button>
+        </div>
+      )}
+      <fieldset disabled={disabled} className="contents">
+        {edit.instances.map((i) => {
+          const source = r.instances.find((x) => x.instanceId === i.instanceId)
+          const grantable = i.added
+            ? (choices.others.find((o) => o.instanceId === i.instanceId)?.scopes ?? [])
+            : grantableOf(choices, i.instanceId)
+          return (
+            <EditorInstance
+              key={i.instanceId}
+              i={i}
+              source={source}
+              grantable={grantable}
+              onChange={(change) => update(i.instanceId, change)}
+              onRemove={() => remove(i.instanceId)}
+            />
+          )
+        })}
+        {deleted.map((i) => (
+          <div key={i.position} className="grid gap-1 border-t border-line p-pad-x">
+            <span className="font-semibold text-muted-foreground">
+              <UserText>{i.name}</UserText>
+            </span>
+            <p className="text-small text-muted-foreground">This instance was deleted. It will be left out.</p>
+          </div>
+        ))}
+        <div className="border-t border-line p-pad-x">
+          <Field className="max-w-60">
+            <FieldLabel htmlFor={`edit-minutes-${r.id}`}>Minutes</FieldLabel>
+            <Input
+              id={`edit-minutes-${r.id}`}
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={maxMinutes}
+              value={edit.minutes}
+              onChange={(e) => {
+                const minutes = e.target.value
+                setEdit((s) => ({ ...s, minutes }))
+              }}
+            />
+            <FieldDescription>
+              {maxMinutes !== undefined ? `Up to ${n(maxMinutes)}. ` : ""}The agent asked for{" "}
+              {formatDuration(r.requestedMinutes)}.
+            </FieldDescription>
+          </Field>
+        </div>
+      </fieldset>
+    </Panel>
+  )
+}
+
+/** One instance in the editor: included or not, its scopes, and the whole instance or only some workflows. */
+function EditorInstance({
+  i,
+  source,
+  grantable,
+  onChange,
+  onRemove,
+}: {
+  i: EditInstance
+  source: AccessInstance | undefined
+  grantable: string[]
+  onChange: (change: Partial<EditInstance>) => void
+  onRemove: () => void
+}) {
+  const key = i.instanceId
+  const asked = source ? askedLine(source) : null
+  const notAllowed = source && !i.added ? source.scopes.filter((s) => !grantable.includes(s)) : []
+  const closed = grantable.length === 0
+  const names = source ?? { workflowNames: {} }
+  const addTyped = () => {
+    if (!i.pending.trim()) return
+    onChange({ workflowIds: addEntries(i.workflowIds, i.pending), pending: "" })
+  }
+  return (
+    <div className="grid gap-3 border-t border-line p-pad-x">
+      <div className="flex flex-wrap items-center gap-2">
+        {i.added ? (
+          <>
+            <span className="font-semibold text-ink">
+              <UserText>{i.name}</UserText>
+            </span>
+            <Badge variant="line">Added</Badge>
+            <Button size="sm" variant="ghost" className="ms-auto" onClick={onRemove}>
+              <X /> Remove<span className="sr-only"> {i.name}</span>
+            </Button>
+          </>
+        ) : (
+          <>
+            <Checkbox
+              id={`edit-include-${key}`}
+              checked={i.included}
+              disabled={closed}
+              onCheckedChange={(v) => onChange({ included: v === true })}
+            />
+            <label htmlFor={`edit-include-${key}`} className="font-semibold text-ink">
+              <UserText>{i.name}</UserText>
+            </label>
+            {!i.included && <Badge variant="line">Left out</Badge>}
+          </>
+        )}
+      </div>
+      {(asked || i.added || closed || notAllowed.length > 0) && (
+        <ul className="grid gap-0.5 text-small text-muted-foreground">
+          {asked && <li>{asked}</li>}
+          {i.added && <li>The agent did not ask for this instance.</li>}
+          {closed && (
+            <li>It can't be granted now: closed to agents, or it allows none of its scopes. It will be left out.</li>
+          )}
+          {!closed && notAllowed.length > 0 && <li>No longer allowed, so not granted: {notAllowed.join(", ")}.</li>}
+        </ul>
+      )}
+      {i.included && !closed && (
+        <>
+          <fieldset className="grid gap-1.5">
+            <legend className="mb-1.5 text-small font-semibold text-muted-foreground">Scopes</legend>
+            <div className="flex flex-wrap gap-x-4 gap-y-2">
+              {grantable.map((s) => (
+                <div key={s} className="flex items-center gap-2">
+                  <Checkbox
+                    id={`edit-scope-${key}-${s}`}
+                    checked={i.scopes.includes(s)}
+                    onCheckedChange={(v) =>
+                      onChange({ scopes: v === true ? [...i.scopes, s] : i.scopes.filter((x) => x !== s) })
+                    }
+                  />
+                  <label htmlFor={`edit-scope-${key}-${s}`} className="font-mono text-small">
+                    {s}
+                  </label>
+                </div>
+              ))}
+            </div>
+          </fieldset>
+          <div className="grid gap-2">
+            <ToggleGroup
+              type="single"
+              segmented
+              aria-label={`Workflows on ${i.name}`}
+              value={i.whole === null ? "" : i.whole ? "whole" : "only"}
+              onValueChange={(v) => v && onChange({ whole: v === "whole" })}
+            >
+              <ToggleGroupItem value="whole">Whole instance</ToggleGroupItem>
+              <ToggleGroupItem value="only">Only these workflows</ToggleGroupItem>
+            </ToggleGroup>
+            {i.whole === false && (
+              <>
+                {i.workflowIds.length > 0 && (
+                  <ul className="flex flex-wrap gap-1.5">
+                    {i.workflowIds.map((wid) => {
+                      const name = workflowLabel(names, wid)
+                      return (
+                        <li
+                          key={wid}
+                          className="inline-flex max-w-full min-w-0 items-center gap-1.5 rounded-tag bg-fill py-0.5 ps-2 pe-0.5 text-meta regular:rounded-full regular:bg-raise regular:ring-1 regular:ring-line regular:ring-inset"
+                        >
+                          {name !== wid && <span className="truncate font-semibold text-ink">{name}</span>}
+                          <Copyable value={wid} label="Copy workflow ID" className="text-small text-muted-foreground" />
+                          <button
+                            type="button"
+                            title="Remove"
+                            aria-label={`Remove ${name}`}
+                            onClick={() => onChange({ workflowIds: i.workflowIds.filter((x) => x !== wid) })}
+                            className="grid size-5 shrink-0 place-items-center rounded-tag text-muted-foreground hover:bg-ink/10 hover:text-ink regular:rounded-full"
+                          >
+                            <X aria-hidden className="size-3" />
+                          </button>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                )}
+                <div className="flex max-w-md gap-2">
+                  <Input
+                    aria-label={`Add a workflow ID on ${i.name}`}
+                    placeholder="Workflow ID"
+                    autoComplete="off"
+                    value={i.pending}
+                    onChange={(e) => onChange({ pending: e.target.value })}
+                    onKeyDown={(e) => {
+                      if (e.key !== "Enter") return
+                      e.preventDefault()
+                      addTyped()
+                    }}
+                  />
+                  <Button onClick={addTyped} disabled={!i.pending.trim()}>
+                    <Plus /> Add
+                  </Button>
+                </div>
+              </>
+            )}
+          </div>
+        </>
+      )}
     </div>
   )
 }

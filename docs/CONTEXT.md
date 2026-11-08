@@ -87,7 +87,7 @@ How Agents reach the API of n8n instances through n8n-ops: their Access requests
 _Avoid_: instance access, proxy access
 
 **Access request**:
-An Agent's request to use the API of one n8n instance for a while, with a reason, scopes and a duration, which a person approves or denies.
+An Agent's request to use the API of one or more n8n instances for a while, with a reason, scopes and workflows for each instance, and a duration, which a person approves (as asked, or after changing it within each instance's policy) or denies.
 _Avoid_: grant request, permission request
 
 **Temporary access**:

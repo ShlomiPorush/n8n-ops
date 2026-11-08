@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import type { Ctx } from "../context.ts"
 import { createDatabase, type Database } from "../db/client.ts"
 import {
+  accessRequestInstances,
   accessRequests,
   affectedWorkflows,
   alertState,
@@ -178,15 +179,58 @@ beforeAll(async () => {
     .insert(accessRequests)
     .values({
       tokenId: token.id,
-      instanceId: alpha,
       reason: "Fix the ERP sync",
-      scopes: ["workflow:read"],
+      requestedMinutes: 30,
       minutes: 30,
       decideBy: new Date(Date.now() + hour),
     })
     .returning()
   if (!request) throw new Error("no request")
   ids.request = request.id
+  await database.db.insert(accessRequestInstances).values({
+    requestId: request.id,
+    instanceId: alpha,
+    instanceName: "alpha-n8n",
+    position: 0,
+    requestedScopes: ["workflow:read"],
+    requestedWorkflowIds: [],
+    scopes: ["workflow:read"],
+  })
+  // One request for two instances is one item, named by both; one of them was deleted since.
+  const [both] = await database.db
+    .insert(accessRequests)
+    .values({
+      tokenId: token.id,
+      reason: "Compare two instances",
+      requestedMinutes: 30,
+      minutes: 30,
+      revision: 2,
+      decideBy: new Date(Date.now() + hour),
+      requestedAt: new Date(Date.now() - hour),
+    })
+    .returning()
+  if (!both) throw new Error("no request")
+  ids.both = both.id
+  await database.db.insert(accessRequestInstances).values([
+    {
+      requestId: both.id,
+      instanceId: null,
+      instanceName: "gone-n8n",
+      position: 0,
+      requestedScopes: ["workflow:read"],
+      requestedWorkflowIds: [],
+      scopes: ["workflow:read"],
+    },
+    {
+      requestId: both.id,
+      instanceId: alpha,
+      instanceName: "alpha-n8n",
+      position: 1,
+      requestedScopes: ["workflow:read"],
+      requestedWorkflowIds: [],
+      scopes: ["workflow:read"],
+    },
+  ])
 })
 
 afterAll(async () => {
@@ -216,7 +260,7 @@ describe("Needs attention", () => {
         name: i.name,
         ...(i.kind === "instance" ? { detail: i.detail } : {}),
         ...(i.kind === "backup" ? { id: i.id, running: i.running, detail: i.detail } : {}),
-        ...(i.kind === "access" ? { id: i.id, agent: i.agent } : {}),
+        ...(i.kind === "access" ? { id: i.id, agent: i.agent, revision: i.revision } : {}),
       }))
     expect(brief).toEqual(
       expect.arrayContaining([
@@ -247,7 +291,8 @@ describe("Needs attention", () => {
           detail: "No recent backup of n8n-ops database",
         },
         { kind: "worker", tone: "warn", name: "host-a" },
-        { kind: "access", tone: "warn", name: "alpha-n8n", id: ids.request, agent: "ops-bot" },
+        { kind: "access", tone: "warn", name: "alpha-n8n", id: ids.request, agent: "ops-bot", revision: 0 },
+        { kind: "access", tone: "warn", name: "gone-n8n +1", id: ids.both, agent: "ops-bot", revision: 2 },
       ]),
     )
     // One item per backup target, and only what needs a look.

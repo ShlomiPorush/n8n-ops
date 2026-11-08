@@ -37,7 +37,17 @@ export type AttentionItem = { tone: Tone } & (
   | { kind: "instance"; id: string; name: string; health: string; detail: string; at: string | null }
   | { kind: "backup"; id: string; name: string; detail: string; running: boolean; at: string | null }
   | { kind: "worker"; id: string; name: string; at: string | null }
-  | { kind: "access"; id: string; name: string; agent: string; detail: string; at: string | null }
+  | {
+      kind: "access"
+      id: string
+      /** The instances the agent asked for, "name +N". */
+      name: string
+      agent: string
+      detail: string
+      at: string | null
+      /** The revision of the request as listed; Approve sends it, so a request changed since is not approved. */
+      revision: number
+    }
 )
 
 /** A check that could not run: an instance whose health was never read, or whose failures could not be read. */

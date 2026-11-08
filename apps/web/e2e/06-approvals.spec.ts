@@ -108,7 +108,8 @@ test("Telegram and email are connected", async () => {
   await expect(page.getByText("Settings saved")).toBeVisible()
 
   await page.goto("/settings/telegram")
-  await page.getByLabel("Bot token").fill("123456:e2e-test-token")
+  // A token made for this run; the stand-in Bot API takes any.
+  await page.getByLabel("Bot token").fill(`${100000 + Math.floor(Math.random() * 900000)}:${randomSecret()}`)
   await page.getByLabel("Chat ID").fill(chatId)
   await page.getByRole("button", { name: "Save" }).click()
   await expect(page.getByText("Settings saved")).toBeVisible()
@@ -143,7 +144,8 @@ test("a new request reaches Telegram with buttons and email with a link", async 
   const message = await announcement(reason)
   const keyboard = (message.body.reply_markup as { inline_keyboard: { text: string; callback_data?: string }[][] })
     .inline_keyboard
-  expect(keyboard[0]?.map((b) => b.callback_data)).toEqual([`xa:${id}`, `xd:${id}`])
+  expect(keyboard[0]?.map((b) => b.callback_data)).toEqual([`xa:${id}:0`, `xd:${id}`])
+  expect(keyboard[1]?.map((b) => b.callback_data)).toEqual([`xe:${id}`])
 
   let mail: { ID: string } | undefined
   await expect(async () => {
@@ -177,6 +179,7 @@ test("only an approver can approve from Telegram, and the message shows the outc
   }).toPass({ timeout: 10_000 })
   expect((await mcp(request, "get_access_request", { requestId: id })).status).toBe("pending")
 
+  // As a message sent before requests could be changed has it: approves the request as it was asked.
   await press(request, `xa:${id}`, Number(chatId), messageId)
   const approved = await mcp(request, "get_access_request", { requestId: id })
   expect(approved.status).toBe("approved")
@@ -229,6 +232,102 @@ test("a decision in n8n-ops updates the Telegram message too", async ({ request 
     )
     expect(edit).toBeTruthy()
   }).toPass({ timeout: 20_000 })
+})
+
+test("a request for two instances is changed in Telegram, then approved as shown", async ({ request }) => {
+  const { instances } = (await (await page.request.get("/api/instances")).json()) as {
+    instances: { id: string; name: string }[]
+  }
+  const other = instances.find((i) => i.name === "e2e-n8n-b")
+  if (!other) throw new Error("no e2e-n8n-b")
+  const agentAccess = (value: { enabled: boolean; scopes: string[] }) =>
+    page.request.patch(`/api/instances/${other.id}`, { data: { agentAccess: value } })
+  expect((await agentAccess({ enabled: true, scopes: ["workflow:list"] })).ok()).toBe(true)
+  // e2e-n8n-b was set up without Temporary access for agents; it is added for this test, as the instance page does.
+  const added = { data: { add: ["agents"] } }
+  const checked = await page.request.post(`/api/instances/${other.id}/setup/api`, added)
+  expect(checked.ok(), await checked.text()).toBe(true)
+  const activated = await page.request.post(`/api/instances/${other.id}/activate`, added)
+  expect(activated.ok(), await activated.text()).toBe(true)
+  try {
+    const reason = "Compare the schedules on both instances (changed in Telegram)"
+    const asked = await mcp(request, "request_instance_access", {
+      instances: [
+        { instance: "e2e-n8n", scopes: ["workflow:list"] },
+        { instance: "e2e-n8n-b", scopes: ["workflow:list"] },
+      ],
+      reason,
+      minutes: 15,
+    })
+    expect(asked.status, JSON.stringify(asked)).toBe("pending")
+    expect(asked.instances).toEqual(["e2e-n8n", "e2e-n8n-b"])
+    const id = asked.id as string
+    const message = await announcement(reason)
+    const messageId = message.messageId ?? 0
+    expect(String(message.body.text)).toContain("<b>Access request</b> · e2e-n8n +1")
+    expect(String(message.body.text)).toContain("\n<b>e2e-n8n-b</b>\n")
+    await expect(async () => {
+      const mails = (await (await fetch(`${mailApi}/api/v1/messages`)).json()) as { messages: { Subject: string }[] }
+      expect(mails.messages.map((m) => m.Subject)).toContain(
+        "n8n-ops: e2e-approvals-agent asks for 15 min of access to 2 instances",
+      )
+    }).toPass({ timeout: 30_000 })
+
+    type Keyboard = { inline_keyboard: { text: string; callback_data?: string }[][] }
+    const edits = () => calls.filter((c) => c.method === "editMessageText" && c.body.message_id === messageId)
+    const buttons = () => (edits().at(-1)?.body.reply_markup as Keyboard | undefined)?.inline_keyboard.flat() ?? []
+    const answered = (text: string) =>
+      expect(async () => {
+        expect(calls.some((c) => c.method === "answerCallbackQuery" && String(c.body.text).includes(text))).toBe(true)
+      }).toPass({ timeout: 10_000 })
+
+    // Edit shows a switch per instance and the lengths; e2e-n8n-b is left out, then the length is set to 30 min.
+    await press(request, `xe:${id}`, Number(chatId), messageId)
+    await expect.poll(() => buttons().map((b) => b.text)).toContain("✅ e2e-n8n-b")
+    await press(request, `xt:${id}:1:0:0`, Number(chatId), messageId)
+    await expect.poll(() => buttons().map((b) => b.text)).toContain("⬜ e2e-n8n-b")
+    expect(String(edits().at(-1)?.body.text)).toContain("⬜ <s>e2e-n8n-b</s> · left out")
+    await press(request, `xm:${id}:30:1`, Number(chatId), messageId)
+    await expect.poll(() => String(edits().at(-1)?.body.text)).toContain("For <b>30 min</b> (asked for 15 min)")
+
+    // A press from the view before (a retried webhook) changes nothing, nor does a page loaded before the changes.
+    await press(request, `xt:${id}:1:1:0`, Number(chatId), messageId)
+    await answered("The request changed meanwhile")
+    const stale = await page.request.post(`/api/access/${id}/approve`, { data: { revision: 0 } })
+    expect(stale.status()).toBe(409)
+    expect((await stale.json()).error).toBe("request_changed")
+    const bare = await page.request.post(`/api/access/${id}/approve`, { data: {} })
+    expect(bare.status()).toBe(400)
+    expect((await bare.json()).error).toBe("revision_required")
+
+    // Done brings back Approve, for the revision now shown.
+    await press(request, `xv:${id}`, Number(chatId), messageId)
+    await expect.poll(() => buttons().map((b) => b.callback_data)).toContain(`xa:${id}:2`)
+    await press(request, `xa:${id}:2`, Number(chatId), messageId)
+    const got = await mcp(request, "get_access_request", { requestId: id })
+    expect(got).toMatchObject({ status: "approved", changed: true, minutes: 30, instance: "e2e-n8n" })
+    expect(got.instances.map((i: { instance: string }) => i.instance)).toEqual(["e2e-n8n"])
+    const base = got.instances[0].baseUrl as string
+    const call = (url: string) => fetch(url, { headers: { "X-N8N-API-KEY": got.key } })
+    expect((await call(`${base}/workflows`)).status).toBe(200)
+    // The same key does not open the instance that was left out.
+    const refused = await call(base.replace("/n8n/e2e-n8n/", "/n8n/e2e-n8n-b/") + "/workflows")
+    expect(refused.status).toBe(403)
+
+    await expect(async () => {
+      const text = String(edits().at(-1)?.body.text)
+      expect(text).toContain(`✅ <b>Approved</b> by ${chatId} via Telegram, with changes`)
+      expect(text).toContain("⬜ <s>e2e-n8n-b</s> · left out")
+      expect(edits().at(-1)?.body.reply_markup).toEqual({ inline_keyboard: [] })
+    }).toPass({ timeout: 20_000 })
+    await page.goto(`/access/${id}`)
+    await expect(page.getByText("e2e-n8n-b").first()).toBeVisible()
+    expect((await mcp(request, "release_instance_access", { requestId: id })).status).toBe("released")
+  } finally {
+    // Closed again, as the specs that follow expect.
+    expect((await page.request.delete(`/api/instances/${other.id}/capabilities/agents`)).ok()).toBe(true)
+    expect((await agentAccess({ enabled: false, scopes: [] })).ok()).toBe(true)
+  }
 })
 
 test("forum topics are set in Settings > Telegram and keep their order through Discard and Save", async () => {

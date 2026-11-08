@@ -68,13 +68,18 @@ being made at a time (`request_in_progress`) and at most three waiting for a per
 
 1. Find the instance with `workflows` if you do not know it.
 2. Ask: `n8n-ops post access-requests --json-file <file>` with a JSON body
-   `{"instance": "<name>", "reason": "<what you will do and why, 10-500 characters>", "scopes": ["workflow:read"], "workflowIds": ["<id>"], "minutes": 15}`.
-   Ask for the fewest scopes, workflows and minutes the task needs; a person reads the reason and decides. Count in
-   the minutes the time to check the result and to fix a failure, not only the change itself. Writing the body to a
-   file avoids quoting trouble; `--json '<body>'` also works in a POSIX shell.
-3. Poll `n8n-ops get access-requests/<requestId>` every few seconds while its status is pending. Once approved it
-   returns the base URL, and the key one time only: call the n8n public API there with the key in the
-   `X-N8N-API-KEY` header, exactly as with n8n.
+   `{"instances": [{"instance": "<name>", "scopes": ["workflow:read"], "workflowIds": ["<id>"]}], "reason": "<what you will do and why, 10-500 characters>", "minutes": 15}`.
+   When the task needs several instances, name them all in `instances` in one request, each with its own scopes and
+   workflows, instead of one request per instance. Ask for the fewest instances, scopes, workflows and minutes the
+   task needs; a person reads the reason and decides. Count in the minutes the time to check the result and to fix a
+   failure, not only the change itself. Writing the body to a file avoids quoting trouble; `--json '<body>'` also
+   works in a POSIX shell.
+3. Poll `n8n-ops get access-requests/<requestId>` every few seconds while its status is pending. The person may
+   change the request before approving it: leave out or add instances, change scopes, workflows or minutes. Once
+   approved it returns, in `instances`, what was granted on each instance with its `baseUrl`, and the key one time
+   only: one key for every granted instance. Call the n8n public API at an instance's `baseUrl` with the key in the
+   `X-N8N-API-KEY` header, exactly as with n8n. Work only within what was granted, not what you asked for; `changed`
+   is true when the person changed the request.
 4. Keep the access until the task is finished and checked. Check the result the task is about: reading a workflow
    back shows that it was saved, not that a failing run now succeeds. If you cannot check it yourself, ask the person.
    While you fix an error or wait for the person's answer, keep the access, and use it only for the reason that was

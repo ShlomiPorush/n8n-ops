@@ -93,8 +93,9 @@ function ProblemRow({ a, onOpen }: { a: Extract<AttentionItem, { kind: "problem"
 }
 
 function AccessRow({ a, onOpen }: { a: Extract<AttentionItem, { kind: "access" }>; onOpen?: OpenItem }) {
-  // One click approves, as on the request's own page; Deny is final and asks first there (DS-20).
-  const approve = useApiMutation<void>("POST", `/access/${a.id}/approve`, {
+  // One click approves the request as it stands, as on the request's own page; Deny is final and asks first there
+  // (DS-20). The revision listed goes with it, so a request changed since (in Telegram) is not approved unseen.
+  const approve = useApiMutation<{ revision: number }>("POST", `/access/${a.id}/approve`, {
     invalidate: ["/access", `/access/${a.id}`, "/overview", "/overview/summary", ATTENTION_PATH],
     success: () => `Access approved for ${a.agent} on ${a.name}`,
     failed: () => `approve access for ${a.agent}`,
@@ -105,7 +106,13 @@ function AccessRow({ a, onOpen }: { a: Extract<AttentionItem, { kind: "access" }
       label="Access request"
       onOpen={onOpen}
       actions={
-        <BusyButton size="sm" variant="primary" icon={Check} busyLabel="Approving…" run={() => approve.mutateAsync()}>
+        <BusyButton
+          size="sm"
+          variant="primary"
+          icon={Check}
+          busyLabel="Approving…"
+          run={() => approve.mutateAsync({ revision: a.revision })}
+        >
           Approve
           <span className="sr-only">
             {" "}

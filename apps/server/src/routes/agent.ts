@@ -5,7 +5,14 @@ import { z } from "zod"
 import type { Ctx } from "../context.ts"
 import { requireToken } from "../http/middleware.ts"
 import { actorName, type Env } from "../http/types.ts"
-import { AccessError, collectAccess, releaseAccess, requestAccess, SUMMARY_MAX } from "../services/access.ts"
+import {
+  AccessError,
+  type AccessRequestInput,
+  collectAccess,
+  releaseAccess,
+  requestAccess,
+  SUMMARY_MAX,
+} from "../services/access.ts"
 import {
   agentBackups,
   agentFailure,
@@ -105,9 +112,11 @@ export function restRoutes(ctx: Ctx) {
           ? 403
           : e.code === "request_in_progress"
             ? 409
-            : e.code.startsWith("spec")
-              ? 502
-              : 400
+            : e.code === "busy"
+              ? 503
+              : e.code.startsWith("spec")
+                ? 502
+                : 400
     return [{ error: e.code, message: e.message }, status] as const
   }
   app.post("/access-requests", async (c) => {
@@ -115,8 +124,10 @@ export function restRoutes(ctx: Ctx) {
     if (!tokenId) return refuse(c)
     const parsed = z.object(accessRequestShape).safeParse(await c.req.json().catch(() => ({})))
     if (!parsed.success) return c.json({ error: "invalid", issues: parsed.error.issues }, 400)
+    const input = accessInput(parsed.data)
+    if (typeof input === "string") return c.json({ error: "invalid", message: input }, 400)
     try {
-      return c.json({ data: await requestAccess(ctx, tokenId, parsed.data) }, 201)
+      return c.json({ data: await requestAccess(ctx, tokenId, input) }, 201)
     } catch (e) {
       const [body, status] = accessError(e)
       return c.json(body, status)
@@ -177,19 +188,56 @@ const releaseShape = {
     ),
 }
 
+const scopesShape = z
+  .array(z.string())
+  .min(1)
+  .describe("n8n API key scopes you need there, for example workflow:read, workflow:update, execution:read.")
+const workflowIdsShape = z
+  .array(z.string())
+  .max(50)
+  .optional()
+  .describe("Limit the access there to these workflows. Omit only when the task needs the whole instance.")
+const instanceName = z.string().min(1).describe("Instance name, as listed by get_instance_health or search_workflows.")
+
+/**
+ * An access request: several instances in `instances`, or one in `instance`, `scopes` and `workflowIds` (the form
+ * agents of earlier skills send). `accessInput` takes either.
+ */
 const accessRequestShape = {
-  instance: z.string().min(1).describe("Instance name, as listed by get_instance_health or search_workflows."),
-  reason: z.string().min(10).max(500).describe("What you will do and why; the approver reads this."),
-  scopes: z
-    .array(z.string())
+  instances: z
+    .array(z.object({ instance: instanceName, scopes: scopesShape, workflowIds: workflowIdsShape }))
     .min(1)
-    .describe("n8n API key scopes you need, for example workflow:read, workflow:update, execution:read."),
-  workflowIds: z
-    .array(z.string())
-    .max(50)
     .optional()
-    .describe("Limit the access to these workflows. Omit only when the task needs the whole instance."),
+    .describe(
+      "The instances you need, each with its own scopes and workflows. Use this to ask for several instances in one request.",
+    ),
+  instance: instanceName.optional().describe("For one instance only, instead of instances: its name."),
+  scopes: scopesShape.optional().describe("With instance: the n8n API key scopes you need there."),
+  workflowIds: workflowIdsShape.describe("With instance: limit the access to these workflows."),
+  reason: z.string().min(10).max(500).describe("What you will do and why; the approver reads this."),
   minutes: z.number().int().min(1).describe("How long you need the access. The approver sees it; keep it short."),
+}
+
+type AccessRequestBody = {
+  instances?: { instance: string; scopes: string[]; workflowIds?: string[] }[]
+  instance?: string
+  scopes?: string[]
+  workflowIds?: string[]
+  reason: string
+  minutes: number
+}
+
+/** The request in one form, or what is wrong with the body. */
+export function accessInput(body: AccessRequestBody): AccessRequestInput | string {
+  const single = body.instance !== undefined || body.scopes !== undefined || body.workflowIds !== undefined
+  if (body.instances && single) return "Use either instances, or instance with scopes, not both."
+  if (body.instances) return { reason: body.reason, minutes: body.minutes, instances: body.instances }
+  if (!body.instance || !body.scopes) return "Name the instances you need, each with its scopes."
+  return {
+    reason: body.reason,
+    minutes: body.minutes,
+    instances: [{ instance: body.instance, scopes: body.scopes, workflowIds: body.workflowIds }],
+  }
 }
 
 /**
@@ -288,21 +336,18 @@ export function buildMcpServer(
 
   accessTool(
     "request_instance_access",
-    "Ask for temporary access to one n8n instance's API, for a task. A person approves or denies it; poll get_access_request for the result and the key. If you do not know which instance has the workflow, find it with search_workflows first. Ask only for the scopes, workflows and minutes the task needs.",
+    "Ask for temporary access to the API of one or more n8n instances, for a task: several in instances, each with its own scopes and workflows, or one in instance with scopes. A person approves, possibly after changing the instances, scopes, workflows or minutes, or denies; poll get_access_request for the result and the key. If you do not know which instance has the workflow, find it with search_workflows first. Ask only for the instances, scopes, workflows and minutes the task needs.",
     accessRequestShape,
     { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
-    (a) =>
-      requestAccess(ctx, access.tokenId, {
-        instance: a.instance,
-        reason: a.reason,
-        scopes: a.scopes,
-        workflowIds: a.workflowIds,
-        minutes: a.minutes,
-      }),
+    (a) => {
+      const input = accessInput(a as AccessRequestBody)
+      if (typeof input === "string") throw new AccessError("invalid", input)
+      return requestAccess(ctx, access.tokenId, input)
+    },
   )
   accessTool(
     "get_access_request",
-    "Status of an access request. Once approved it returns the base URL, and the key one time only: call the n8n public API there with the key in the X-N8N-API-KEY header, exactly as with n8n.",
+    "Status of an access request. Once approved it returns, in instances, what was granted on each instance with its baseUrl (the approver may have changed what you asked for), and the key one time only: one key for every granted instance. Call the n8n public API at an instance's baseUrl with the key in the X-N8N-API-KEY header, exactly as with n8n.",
     { requestId: z.string().uuid() },
     { readOnlyHint: true, openWorldHint: false },
     (a) => collectAccess(ctx, access.tokenId, a.requestId, access.publicUrl),

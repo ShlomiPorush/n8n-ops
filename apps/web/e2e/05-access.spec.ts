@@ -336,8 +336,7 @@ test("an approver changes the request on its page before approving, and the agen
     scopes: ["workflow:read"],
     workflowIds: [otherWorkflowId],
   })
-  const call = (path: string) =>
-    fetch(`${got.value.baseUrl}${path}`, { headers: { "X-N8N-API-KEY": got.value.key } })
+  const call = (path: string) => fetch(`${got.value.baseUrl}${path}`, { headers: { "X-N8N-API-KEY": got.value.key } })
   expect((await call(`/workflows/${otherWorkflowId}`)).status).toBe(200)
   expect((await call(`/workflows/${workflowId}`)).status).toBe(403)
   // workflow:list was taken out.

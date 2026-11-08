@@ -90,6 +90,38 @@ being made at a time (`request_in_progress`) and at most three waiting for a per
    reads it; say also when you changed nothing or gave up, and why. The key stops working at once. Once the access has
    expired or was released, the same request gives no key again: if you still need access, make a new request.
 
+### Credentials
+
+Access can include the credential scopes (`credential:list`, `credential:read`, `credential:create`,
+`credential:update`, `credential:delete`, `credential:move`), so you can create and change credentials, not only
+workflows; ask for them like any other scope. Access limited to some workflows does not limit credentials: these
+scopes reach every credential on the instance, but you may change only what the approved reason covers. Workflows
+outside the task can use the same credential, and a change to it changes them too: when other workflows use it, or
+you cannot tell, create a separate credential for the task's workflows if that suits the task, or ask the person
+first.
+
+- The n8n public API does not return a credential's data, so you cannot read a credential back or rebuild it from
+  what n8n shows. Check the result the task is about, such as a run that uses the credential. Where the instance's
+  `/api/v1/openapi.yml` lists `POST /credentials/{credentialId}/test` and n8n can test that type, it shows only that
+  n8n can connect with the credential.
+- To change some fields, send `PATCH /credentials/<id>` with `"isPartialData": true` and, in `data`, only those
+  fields: n8n keeps the fields you leave out, and each field you send replaces that whole field, including a JSON
+  field such as Custom Auth's `json`. Without `isPartialData`, sending `data` replaces all of the credential's data:
+  do that only when you know every field and replacing them is part of the task. If n8n refuses the partial change,
+  do not send it again without `isPartialData`. Leave a change to the person in n8n when it needs part of a field you
+  cannot read.
+- A secret you already have from the task, such as a key written in plain text in a node that you move into a
+  credential, when you know which service and account it is for and the task needs it there: create the credential
+  yourself, without asking the person for it again. If you are not sure what it is for, ask without showing it.
+- A secret only the person knows, such as a new password or a renewed key: never ask for it in the conversation. If
+  the tool you run in documents a way for the person to enter a secret that keeps it out of the conversation, such
+  as a reference to the secret or a file that your command reads when it runs, use it. Otherwise ask the person to
+  enter it in n8n, and name the instance, the credential and the field.
+- Wherever a secret comes from, keep its value out of the conversation, command lines, output, logs, files in the
+  repository and the release summary. Make any file you write it to readable only by you, and delete it once it is
+  no longer needed, also when the call fails or the task is cancelled.
+- When you leave a step to the person, say why: that you cannot do it, or that you chose not to.
+
 ## When the command cannot run
 
 - `missing_curl`, `node_too_old`, or PowerShell blocked by policy: tell the person what is missing (curl, or Node 20+).

@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Changed
+
+- **The n8n-ops skill tells agents how to work with n8n credentials.** Agents learn that temporary access can include the credential scopes, so they can create and change credentials themselves instead of leaving every step to you. They change only what the approved reason covers, use a separate credential when others share it, and change only the fields they mean to (`isPartialData`). They never ask for a secret in the conversation: they use a private way to enter it where their tool has one, or ask you to enter it in n8n, and keep its value out of commands, output, logs and repository files. When they leave a step to you, they say why.
+
 ## [0.13.0] - 2026-11-08
 
 ### Added

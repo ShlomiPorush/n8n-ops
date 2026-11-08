@@ -50,7 +50,8 @@ import {
   type EditState,
   editChanged,
   editProblem,
-  grantableOf,
+  offeredScopes,
+  onScreen,
   grantedNames,
   initialEdit,
   instanceLabel,
@@ -380,10 +381,10 @@ function AccessDetailView({ r, detail }: { r: AccessDetail; detail: ReturnType<t
   const blocked = editing
     ? editor.stale
       ? "The request was changed elsewhere. Show the changes first."
-      : editProblem(editor.edit, maxMinutes)
+      : editProblem(onScreen(editor.edit, r.editor), maxMinutes)
     : null
   const approveNow = async () => {
-    const body = editing ? approveBody(editor.base.revision, editor.edit) : { revision: r.revision }
+    const body = editing ? approveBody(editor.base.revision, onScreen(editor.edit, r.editor)) : { revision: r.revision }
     try {
       await approve.mutateAsync(body)
     } catch (e) {
@@ -743,9 +744,7 @@ function ApprovalEditor({
       <fieldset disabled={disabled} className="contents">
         {edit.instances.map((i) => {
           const source = r.instances.find((x) => x.instanceId === i.instanceId)
-          const grantable = i.added
-            ? (choices.others.find((o) => o.instanceId === i.instanceId)?.scopes ?? [])
-            : grantableOf(choices, i.instanceId)
+          const grantable = offeredScopes(choices, i)
           return (
             <EditorInstance
               key={i.instanceId}

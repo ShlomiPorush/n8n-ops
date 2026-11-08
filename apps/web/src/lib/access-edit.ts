@@ -151,6 +151,27 @@ export function initialEdit(
   }
 }
 
+/** The scopes the editor offers for an instance now: on the request, or one the approver added. */
+export const offeredScopes = (editor: EditorChoices | undefined, i: Pick<EditInstance, "instanceId" | "added">) =>
+  i.added
+    ? (editor?.others.find((o) => o.instanceId === i.instanceId)?.scopes ?? [])
+    : grantableOf(editor, i.instanceId)
+
+/**
+ * The editor as it shows now: a scope the policy no longer offers is not selected (its box is gone), and an
+ * instance that may be granted nothing is left out. Edits kept across a refresh can hold such values; what is
+ * checked and sent is always this, so nothing hidden is ever granted.
+ */
+export function onScreen(state: EditState, editor: EditorChoices | undefined): EditState {
+  return {
+    ...state,
+    instances: state.instances.map((i) => {
+      const offered = offeredScopes(editor, i)
+      return { ...i, included: i.included && offered.length > 0, scopes: i.scopes.filter((s) => offered.includes(s)) }
+    }),
+  }
+}
+
 /** Adds an instance open to agents: included, with no scope and no choice of workflows yet, so the approver chooses. */
 export function addInstance(state: EditState, other: { instanceId: string; name: string }): EditState {
   if (state.instances.some((i) => i.instanceId === other.instanceId)) return state

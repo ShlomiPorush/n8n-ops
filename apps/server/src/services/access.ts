@@ -293,18 +293,24 @@ async function requestAccessNow(ctx: Ctx, tokenId: string, input: AccessRequestI
     asked.map((a) => workflowNamesOf(ctx, a.instance, a.workflowIds, { withinMs: Math.max(0, namesWithin) })),
   )
 
-  // What is left of the time is the most the database may take; past it, nothing is stored.
-  const left = REQUEST_WITHIN_MS - 500 - (Date.now() - started)
+  // What is left of the time is the most the database may take, all statements together; past it, the transaction
+  // is rolled back and nothing is stored. Each statement may take only what the ones before it left.
+  const deadline = started + REQUEST_WITHIN_MS - 500
   const busy = () =>
     new AccessError("busy", "n8n-ops could not store the request in time; nothing was stored. Ask again.")
-  if (left < 250) throw busy()
   const row = await ctx.db
     .transaction(async (tx) => {
-      await tx.execute(sql.raw(`SET LOCAL statement_timeout = ${Math.floor(left)}`))
-      await tx.execute(sql.raw(`SET LOCAL lock_timeout = ${Math.floor(left)}`))
+      const within = async () => {
+        const left = Math.floor(deadline - Date.now())
+        if (left < 50) throw busy()
+        await tx.execute(sql.raw(`SET LOCAL statement_timeout = ${left}`))
+        await tx.execute(sql.raw(`SET LOCAL lock_timeout = ${left}`))
+      }
+      await within()
       // The token row is held while counting, so a revoke or another request cannot slip in between.
       const [held] = await tx.select().from(apiTokens).where(eq(apiTokens.id, tokenId)).for("update")
       if (!held?.canRequestAccess || held.revokedAt) throw notAllowed()
+      await within()
       const [pending] = await tx
         .select({ n: count() })
         .from(accessRequests)
@@ -314,6 +320,7 @@ async function requestAccessNow(ctx: Ctx, tokenId: string, input: AccessRequestI
           "too_many_pending",
           "This agent has too many access requests waiting for a decision. Wait for one to be decided, or release one.",
         )
+      await within()
       const [created] = await tx
         .insert(accessRequests)
         .values({
@@ -325,6 +332,7 @@ async function requestAccessNow(ctx: Ctx, tokenId: string, input: AccessRequestI
         })
         .returning()
       if (!created) throw new Error("the request was not stored")
+      await within()
       await tx.insert(accessRequestInstances).values(
         asked.map((a, position) => ({
           requestId: created.id,
@@ -338,6 +346,7 @@ async function requestAccessNow(ctx: Ctx, tokenId: string, input: AccessRequestI
           workflowNames: named[position] ?? {},
         })),
       )
+      await within()
       await ctx.audit(
         {
           actor: tokenActor(held),
@@ -353,6 +362,8 @@ async function requestAccessNow(ctx: Ctx, tokenId: string, input: AccessRequestI
         },
         tx,
       )
+      // A last statement that ended past the time is not committed: the agent has stopped waiting for its answer.
+      if (Date.now() > deadline) throw busy()
       return created
     })
     .catch((e) => {

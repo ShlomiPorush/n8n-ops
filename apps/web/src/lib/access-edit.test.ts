@@ -10,6 +10,7 @@ import {
   instanceLabel,
   instanceNotes,
   listNames,
+  onScreen,
 } from "@/lib/access-edit"
 
 const A = "00000000-0000-4000-8000-00000000000a"
@@ -205,5 +206,28 @@ describe("the approval editor", () => {
     expect(editProblem({ ...base, minutes: "61" }, 60)).toBe("Grant 1 to 60 minutes.")
     expect(editProblem({ ...base, minutes: "1.5" })).toBe("Grant at least 1 minute.")
     expect(editProblem({ ...base, minutes: "60" }, 60)).toBeNull()
+  })
+})
+
+describe("what the editor shows", () => {
+  it("never sends a scope whose box is gone, nor an instance that may be granted nothing", () => {
+    // Edits kept while the policy took workflow:read away from n8n-a and everything from n8n-b.
+    const kept = initialEdit(request, choices)
+    const [a, b] = kept.instances
+    if (!a || !b) throw new Error("instances")
+    const edits = { ...kept, instances: [{ ...a, scopes: ["workflow:list", "workflow:read"] }, b] }
+    const narrowed: EditorChoices = { grantable: { [A]: ["workflow:list"], [B]: [] }, others: [] }
+    const shown = onScreen(edits, narrowed)
+    expect(shown.instances.map((i) => [i.included, i.scopes])).toEqual([
+      [true, ["workflow:list"]],
+      [false, []],
+    ])
+    expect(approveBody(3, shown).edit?.instances.map((i) => [i.included, i.scopes])).toEqual([
+      [true, ["workflow:list"]],
+      [false, []],
+    ])
+    // An added instance no longer open to agents is left out too.
+    const added = onScreen(addInstance(kept, { instanceId: C, name: "n8n-c" }), { ...choices, others: [] })
+    expect(added.instances.at(-1)).toMatchObject({ included: false, scopes: [] })
   })
 })

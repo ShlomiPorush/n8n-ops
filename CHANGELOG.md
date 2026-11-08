@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-11-08
+
 ### Added
 
 - **Agents say what they did when they release access.** Releasing temporary access to n8n (`POST /api/v1/access-requests/<id>/release` and the `release_instance_access` MCP tool) takes an optional `summary`, up to 1000 characters; a longer one is shortened, never refused. The n8n-ops skill sends one. A release without a body works as before.

@@ -162,10 +162,10 @@ describe("zone names and windows in messages (EM-6)", () => {
     ).toBe("20/10/2026 13:00")
   })
 
-  it("gives a window its exact ends and names the zone once", () => {
+  it("gives a window its exact ends without the zone", () => {
     const fmt = w("DD.MM.YYYY", "24h", "Europe/Berlin")
     expect(formatWindow(new Date("2026-10-22T04:00:00Z"), new Date("2026-10-23T04:00:00Z"), fmt)).toBe(
-      "From 22.10.2026 06:00 to 23.10.2026 06:00 CEST",
+      "From 22.10.2026 06:00 to 23.10.2026 06:00",
     )
   })
 

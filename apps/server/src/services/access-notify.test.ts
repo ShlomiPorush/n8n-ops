@@ -77,10 +77,6 @@ describe("request messages", () => {
     expect(String(renderAccessTelegram({ ...request, workflowIds: [] }, zone))).toContain(
       "\nWorkflows: the whole instance\n",
     )
-    // The email keeps the IDs.
-    const email = renderAccessEmail(named, null)
-    expect(email.text).toContain("Workflows: Sync <orders> (w1), ERP import (w2), toString")
-    expect(email.html).toContain("Sync &lt;orders&gt; (w1), ERP import (w2), toString")
   })
 
   it("stay within Telegram's 4096 characters with every field at its longest, and count what is left out", () => {
@@ -193,10 +189,63 @@ describe("request messages", () => {
 
   it("link to the request in email when the public URL is known", () => {
     const withLink = renderAccessEmail(request, "https://ops.example.com/access/3f2a")
-    expect(withLink.subject).toBe("n8n-ops: claude-code asks for access to flow")
+    expect(withLink.subject).toBe("n8n-ops: claude-code asks for 1 h 30 min of access to flow")
     expect(withLink.text).toContain("https://ops.example.com/access/3f2a")
     expect(withLink.html).toContain('href="https://ops.example.com/access/3f2a"')
     expect(withLink.html).toContain("Fix the &lt;Set&gt; node")
     expect(renderAccessEmail(request, null).text).toContain("Agent Access page")
+  })
+})
+
+describe("the access request email", () => {
+  const named = {
+    ...request,
+    workflowIds: ["w1", "w2", "toString"],
+    workflowNames: { w1: "Sync <orders>", w2: "ERP import" },
+  }
+
+  it("says the requested length in its title and subject, and when the request expires, without the zone", () => {
+    const email = renderAccessEmail(request, null, zone)
+    expect(email.subject).toBe("n8n-ops: claude-code asks for 1 h 30 min of access to flow")
+    expect(email.html).toContain("claude-code asks for 1 h 30 min of access to flow")
+    // 10:30 UTC is 13:30 in Jerusalem, in summer time.
+    expect(email.html).toContain("Without a decision, the request expires at 15/10/2026 13:30.")
+    expect(email.text).toContain("\nFor: 1 h 30 min\nRequest expires at 15/10/2026 13:30.\n")
+    expect(email.html).not.toContain("Decide by")
+    expect(email.html).not.toContain("GMT")
+    expect(email.text).not.toContain("GMT")
+  })
+
+  it("names one workflow without its ID", () => {
+    const email = renderAccessEmail({ ...request, workflowNames: { w1: "Sync <orders>" } }, null, zone)
+    expect(email.text).toContain("\nWorkflow: Sync <orders>\n")
+    expect(email.html).toContain("Sync &lt;orders&gt;")
+    expect(email.html).not.toContain("w1")
+    expect(email.html).not.toContain("&bull;")
+  })
+
+  it("shortens a long name, which Outlook for Windows could not wrap, to 60 characters", () => {
+    const long = { ...request, workflowIds: ["w1", "w2"], workflowNames: { w1: "x".repeat(200), w2: "ERP import" } }
+    const email = renderAccessEmail(long, null, zone)
+    expect(email.html).toContain(`>${"x".repeat(59)}…</td>`)
+    expect(email.html).not.toContain("x".repeat(60))
+  })
+
+  it("lists several workflows one per line, and shows an ID in code font only when the name is not known", () => {
+    const email = renderAccessEmail(named, null, zone)
+    expect(email.text).toContain("\nWorkflows:\n• Sync <orders>\n• ERP import\n• toString\nFor: ")
+    expect(email.html).not.toContain("(w1)")
+    expect(email.html.match(/&bull;/g)).toHaveLength(3)
+    expect(email.html).toMatch(/>Workflows<\/span> <span[^>]*>3<\/span>/)
+    expect(email.html).toContain(">Sync &lt;orders&gt;</td>")
+    expect(email.html).toContain(">ERP import</td>")
+    expect(email.html).toMatch(/<span class="m-mono"[^>]*>toString<\/span><\/td>/)
+  })
+
+  it("says when the request is for the whole instance", () => {
+    const email = renderAccessEmail({ ...request, workflowIds: [] }, null, zone)
+    expect(email.text).toContain("\nWorkflows: the whole instance\n")
+    expect(email.html).toContain("The whole instance")
+    expect(email.html).not.toContain("&bull;")
   })
 })

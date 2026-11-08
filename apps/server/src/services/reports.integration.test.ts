@@ -131,7 +131,7 @@ afterAll(async () => {
 describe("buildReport", () => {
   it("counts what happened after the window's start up to and including its end, the window it prints", async () => {
     const report = await buildReport(ctx, "daily", when)
-    expect(report.text).toContain("From 2026-10-22 06:00 to 2026-10-23 06:00 UTC")
+    expect(report.text).toContain("From 2026-10-22 06:00 to 2026-10-23 06:00")
 
     // Failures: one inside, one at the end; the one at the start and those after the end are left out.
     expect(report.text).toContain("Sync orders  ·  report-n8n  ·  2 failures")

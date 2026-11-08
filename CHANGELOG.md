@@ -4,6 +4,11 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Changed
+
+- **Clearer access request emails.** As in Telegram, the email names workflows without their IDs (an ID shows only when the name is not known), lists several workflows one per line, gives the requested length in its subject and title, and says when the request expires.
+- **Times in emails no longer end with the zone,** such as GMT+2. Every time in an email is in the zone set in Settings → General. A report window still names the zone at both ends when daylight saving changed inside it.
+
 ## [0.12.0] - 2026-11-08
 
 ### Added

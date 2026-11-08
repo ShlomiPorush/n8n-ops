@@ -114,7 +114,8 @@ describe("email in Outlook's dark mode", () => {
   })
 
   it("gives Outlook for Android the dark surfaces under its mark, after the dark theme", () => {
-    const marked = style.slice(style.lastIndexOf("}\n[data-ogsb]"))
+    const marked = style.slice(style.indexOf("\n[data-ogsb]"))
+    expect(style.indexOf("@media (prefers-color-scheme: dark)")).toBeLessThan(style.indexOf("\n[data-ogsb]"))
     expect(marked).toContain("[data-ogsb] .m-bg { background-color: #FFFFFF !important; }")
     expect(marked).toContain("[data-ogsb] .m-panel { background-color: #202020 !important; }")
     expect(marked).toContain("[data-ogsb] .m-line { border-color: #333333 !important; }")
@@ -139,16 +140,22 @@ describe("email in Outlook's dark mode", () => {
     expect(html).toContain('<html lang="en" dir="ltr"')
     expect(html).toContain('<body class="m-bg" dir="ltr"')
     expect(html).toContain('<table role="presentation" class="m-bg" dir="ltr"')
-    expect(html).toContain('<table role="presentation" dir="ltr" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;')
+    expect(html).toContain(
+      '<table role="presentation" dir="ltr" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;',
+    )
   })
 
   it("keeps links the client makes in the text colour, and its own links as they are", () => {
     expect(style).toContain(".m-bg a { color: inherit !important; text-decoration: none !important; }")
     expect(link("Open", "https://ops.example.com/x").html).toContain("text-decoration:underline !important;")
     // The button's link inherits its colour from the cell, which the dark theme switches.
-    expect(html).toContain('<td class="m-mark" bgcolor="#141414" style="padding:10px 18px;background-color:#141414;border-radius:8px;color:#FFFFFF;">')
+    expect(html).toContain(
+      '<td class="m-mark" bgcolor="#141414" style="padding:10px 18px;background-color:#141414;border-radius:8px;color:#FFFFFF;">',
+    )
   })
+})
 
+describe("email dates", () => {
   it("writes dates in the console's time zone with the zone's short name, day/month/year for Browser (EM-6)", () => {
     const when = new Date("2026-10-16T22:30:00Z")
     const zone = (timezone: string) => messageWriting({ timezone })

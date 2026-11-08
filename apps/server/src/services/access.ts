@@ -84,7 +84,8 @@ async function findInstances(ctx: Ctx, refs: string[]) {
     .select()
     .from(instances)
     .where(ids.length ? or(inArray(instances.name, refs), inArray(instances.id, ids)) : inArray(instances.name, refs))
-  return (ref: string) => rows.find((r) => r.id === ref) ?? rows.find((r) => r.name === ref) ?? null
+  // The name first, as the proxy does: agents name instances as the instance list does, and a name may look like an ID.
+  return (ref: string) => rows.find((r) => r.name === ref) ?? rows.find((r) => r.id === ref) ?? null
 }
 
 /** PostgreSQL gave up waiting: a statement or lock timeout set for the transaction. */

@@ -241,9 +241,11 @@ describe("a request for several instances", () => {
       ...ask([]),
       instances: [
         { instance: a.name, scopes: ["workflow:read"] },
-        { instance: b.id, scopes: ["workflow:read", "workflow:update"] },
+        // By its name, as the instance list shows it, which is a's ID.
+        { instance: a.id, scopes: ["workflow:read", "workflow:update"] },
       ],
     })
+    expect((await stored(id)).list.map((i) => i.instanceId)).toEqual([a.id, b.id])
     await approveAccess(ctx, id, who, { revision: 0 })
     const got = await collectAccess(ctx, token, id, "https://ops.example.com")
     if (!("key" in got) || !got.key) throw new Error("no key")

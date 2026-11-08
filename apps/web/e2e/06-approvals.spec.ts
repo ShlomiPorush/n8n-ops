@@ -150,11 +150,13 @@ test("a new request reaches Telegram with buttons and email with a link", async 
     const list = (await (await fetch(`${mailApi}/api/v1/messages`)).json()) as {
       messages: { ID: string; Subject: string }[]
     }
-    mail = list.messages.find((m) => m.Subject === "n8n-ops: e2e-approvals-agent asks for access to e2e-n8n")
+    mail = list.messages.find((m) => m.Subject === "n8n-ops: e2e-approvals-agent asks for 15 min of access to e2e-n8n")
     expect(mail).toBeTruthy()
   }).toPass({ timeout: 30_000 })
   const body = (await (await fetch(`${mailApi}/api/v1/message/${mail?.ID}`)).json()) as { Text: string }
   expect(body.Text).toContain(`${publicUrl}/access/${id}`)
+  expect(body.Text).toContain("\nFor: 15 min\nRequest expires at ")
+  expect(body.Text).not.toMatch(/GMT|UTC/)
 
   await page.goto(`/access/${id}`)
   await expect(page.getByText("Sent to Telegram and email.")).toBeVisible()

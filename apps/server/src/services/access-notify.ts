@@ -5,7 +5,19 @@ import { type AccessStatus, accessRequests, apiTokens, instances } from "../db/s
 import { AccessError, approveAccess, denyAccess, nameIn, refusedCounts } from "./access.ts"
 import { sendRouted, topicGoneNote } from "./alert-routing.ts"
 import { type CallbackUpdate, telegramClient } from "./alerts.ts"
-import { button, type Email, formatDate, kv, mono, panel, panelText, paragraph, render } from "./email-layout.ts"
+import {
+  bullets,
+  button,
+  type Email,
+  formatDate,
+  kv,
+  mono,
+  panel,
+  panelText,
+  paragraph,
+  render,
+  type Safe,
+} from "./email-layout.ts"
 import { sendEmail } from "./reports.ts"
 import { clip, html, type InlineButton, TelegramHtml } from "./telegram.ts"
 
@@ -31,9 +43,8 @@ type RequestInfo = {
 /** The requested workflows, each with its name when the request has one. */
 const workflowsOf = (r: RequestInfo) => r.workflowIds.map((id) => ({ id, name: nameIn(r.workflowNames, id) }))
 
-/** A workflow as email text: its name with the ID after it, each clipped so the line stays within 100 characters. */
-const workflowText = ({ id, name }: { id: string; name?: string }) =>
-  name === undefined ? clip(id, 100) : `${clip(name, 60)} (${clip(id, 36)})`
+/** A workflow as email text: its name, or its ID when the name is not known, within 100 characters. */
+const workflowText = ({ id, name }: { id: string; name?: string }) => clip(name ?? id, 100)
 
 /** How a request ended up: decided, then perhaps ended, with what the agent said and how many calls it made. */
 type Outcome = {
@@ -149,35 +160,43 @@ export function renderAccessTelegram(
 }
 
 /**
- * The email for a waiting request: who asks, for what and how long, and one button to decide in n8n-ops.
- * Times follow Settings → General, with the zone's short name (EM-6).
+ * The email for a waiting request: who asks, for how long, for what, and one button to decide in n8n-ops.
+ * Workflows are named as in Telegram: without their IDs, one line each when there are several, and an ID in code
+ * font only when the name is not known. Times follow Settings → General, without the zone (EM-6).
  */
 export function renderAccessEmail(
   r: RequestInfo,
   link: string | null,
   dates: DateWriting = messageWriting(undefined),
 ): Email {
-  const decideBy = formatDate(r.decideBy, dates, true)
-  const named = workflowsOf(r)
-  const workflows = named.length ? named.map(workflowText).join(", ") : "the whole instance"
+  const expires = formatDate(r.decideBy, dates, true)
+  const length = formatDuration(r.minutes)
+  const named = workflowsOf(r).map((w) => ({ ...w, shown: workflowText(w) }))
+  const several = named.length > 1
+  const workflowValue = (w: (typeof named)[number]) => (w.name === undefined ? mono(w.shown) : w.shown)
+  const workflowRow: [string, Safe | string] = named[0]
+    ? ["Workflow", workflowValue(named[0])]
+    : ["Workflows", "The whole instance"]
   const lines = [
-    `${r.token} asks for temporary access to ${r.instance}.`,
+    `${r.token} asks for ${length} of access to ${r.instance}.`,
     "",
     `Reason: ${r.reason}`,
     `Scopes: ${r.scopes.join(", ")}`,
-    `Workflows: ${workflows}`,
-    `For: ${formatDuration(r.minutes)}`,
-    `Decide by: ${decideBy}; then the request expires.`,
+    ...(several
+      ? ["Workflows:", ...named.map((w) => `• ${w.shown}`)]
+      : [`Workflow${named.length ? "" : "s"}: ${named[0]?.shown ?? "the whole instance"}`]),
+    `For: ${length}`,
+    `Request expires at ${expires}.`,
     "",
     link
       ? `Approve or deny: ${link} (sign in with two-factor).`
       : "Approve or deny it on the Agent Access page in n8n-ops.",
   ]
   const html = render({
-    title: `${r.token} asks for access to ${r.instance}`,
+    title: `${r.token} asks for ${length} of access to ${r.instance}`,
     topic: "Access request",
     tone: "warn",
-    intro: `Nothing is granted until someone approves it. Without a decision the request expires on ${decideBy}.`,
+    intro: `Nothing is granted until someone approves it. Without a decision, the request expires at ${expires}.`,
     dates,
     blocks: [
       panel("Why", [panelText(r.reason)]),
@@ -186,12 +205,12 @@ export function renderAccessEmail(
           ["Agent", r.token],
           ["Instance", r.instance],
           ["Scopes", mono(r.scopes.join(", "))],
-          // Names read as text; IDs alone keep the code font.
-          ["Workflows", named.some((w) => w.name !== undefined) || !named.length ? workflows : mono(workflows)],
-          ["For", formatDuration(r.minutes)],
-          ["Decide by", decideBy],
+          ...(several ? [] : [workflowRow]),
+          ["For", length],
+          ["Request expires", expires],
         ]),
       ]),
+      ...(several ? [panel("Workflows", [bullets(named.map(workflowValue))], { count: named.length })] : []),
       link
         ? button("Approve or deny", link)
         : paragraph("Approve or deny it on the Agent Access page in n8n-ops.", true),
@@ -199,7 +218,7 @@ export function renderAccessEmail(
     ],
     footer: "You get this because Email requests is on in Settings → Agent Access.",
   })
-  return { subject: `n8n-ops: ${r.token} asks for access to ${r.instance}`, text: lines.join("\n"), html }
+  return { subject: `n8n-ops: ${r.token} asks for ${length} of access to ${r.instance}`, text: lines.join("\n"), html }
 }
 
 async function publicLink(ctx: Ctx, id: string) {

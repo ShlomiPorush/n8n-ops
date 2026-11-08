@@ -267,8 +267,9 @@ export function formatStamp(value: string | number | Date, w: DateWriting, { zon
 }
 
 /**
- * A span of time with its exact ends: "From 22/10/2026 06:00 to 23/10/2026 06:00 CEST". The zone is named once,
- * or at both ends when daylight saving changed in between (EM-6).
+ * A span of time with its exact ends: "From 22/10/2026 06:00 to 23/10/2026 06:00", without the zone. Only when
+ * daylight saving changed in between are both ends named with their zone, so a day that reads as 09:00 to 08:00
+ * is still clearly 24 hours (EM-6).
  */
 export function formatWindow(from: Date, to: Date, w: DateWriting): string {
   const end = (d: Date) => {
@@ -277,5 +278,5 @@ export function formatWindow(from: Date, to: Date, w: DateWriting): string {
   }
   const a = zoneName(from, w.zone)
   const b = zoneName(to, w.zone)
-  return a === b ? `From ${end(from)} to ${end(to)} ${b}` : `From ${end(from)} ${a} to ${end(to)} ${b}`
+  return a === b ? `From ${end(from)} to ${end(to)}` : `From ${end(from)} ${a} to ${end(to)} ${b}`
 }

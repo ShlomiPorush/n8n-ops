@@ -124,10 +124,10 @@ export const plural = (count: number, one: string, many = `${one}s`) =>
  * A date in an email, written by the same code as the console's (`@n8n-ops/shared` dates.ts), so both read alike
  * (EM-6): in the app's time zone (an unknown one is UTC), in the Date format and Time format chosen in Settings →
  * General, where Browser, which an email cannot ask, is day/month/year and the 24-hour clock (`messageWriting`).
- * A time carries the zone's short name after it: "20/10/2026 13:00 CEST".
+ * A time has no zone after it ("20/10/2026 13:00"): every time in an email is in the zone of Settings → General.
  */
 export function formatDate(when: Date, dates: DateWriting, time = false): string {
-  return time ? formatStamp(when, dates) : formatDay(when, dates)
+  return time ? formatStamp(when, dates, { zone: false }) : formatDay(when, dates)
 }
 
 // The tone classes set the border colour with the text colour, so an outlined tag switches both together.
@@ -160,6 +160,7 @@ const DARK_CSS = `
   .m-stat { padding: 9px 10px !important; }
   .m-stat-v { font-size: 20px !important; }
   .m-cell { padding-left: 10px !important; padding-right: 10px !important; }
+  .m-bullet { padding-left: 10px !important; }
 }
 `
 
@@ -386,6 +387,23 @@ export function panelText(text: Text): Safe {
   return new Safe(
     `<table ${TABLE}>${rule()}<tr><td class="m-ink m-cell" style="padding:10px 16px 12px;color:${INK};font-size:14px;line-height:1.55;">${lines(text)}</td></tr></table>`,
   )
+}
+
+/**
+ * A list inside a panel, one item a line with a bullet before it. The bullet is a cell of its own, so a long item
+ * wraps under its text, not under the bullet, in every client; Word ignores the margins of a <ul>.
+ */
+export function bullets(items: Text[]): Safe {
+  const cell = `color:${INK};font-size:14px;line-height:1.55;`
+  const rows = items.map((item, i) => {
+    const pad = `${i ? 2 : 10}px`
+    const bottom = `${i === items.length - 1 ? 12 : 2}px`
+    return (
+      `<tr><td class="m-ink m-bullet" valign="top" width="14" style="width:14px;padding:${pad} 0 ${bottom} 16px;${cell}">&bull;</td>` +
+      `<td class="m-ink" valign="top" style="padding:${pad} 16px ${bottom} 0;${cell}overflow-wrap:break-word;">${lines(item)}</td></tr>`
+    )
+  })
+  return new Safe(`<table ${TABLE}>${rule(2)}${rows.join("")}</table>`)
 }
 
 /** The n8n-ops mark: the ink tile with an "n", as in the console. A plain cell, so every client draws it

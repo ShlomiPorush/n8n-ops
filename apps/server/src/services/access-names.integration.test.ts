@@ -7,7 +7,7 @@ import postgres from "postgres"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import type { Ctx } from "../context.ts"
 import { createDatabase, type Database } from "../db/client.ts"
-import { accessRequests, apiTokens, instances, workflows } from "../db/schema.ts"
+import { accessRequestInstances, accessRequests, apiTokens, instances, workflows } from "../db/schema.ts"
 import { createSecrets } from "../lib/crypto.ts"
 import { getAccess, requestAccess, workflowNamesOf } from "./access.ts"
 import type { Instance } from "./instances.ts"
@@ -97,16 +97,24 @@ async function request(instanceId: string, workflowIds: string[], workflowNames:
     .insert(accessRequests)
     .values({
       tokenId,
-      instanceId,
       reason: "Delete the test workflow",
-      scopes: ["workflow:delete"],
-      workflowIds,
-      workflowNames,
+      requestedMinutes: 30,
       minutes: 30,
       decideBy: new Date(Date.now() + 3600_000),
     })
     .returning()
   if (!row) throw new Error("no request")
+  await ctx.db.insert(accessRequestInstances).values({
+    requestId: row.id,
+    instanceId,
+    instanceName: "names-n8n",
+    position: 0,
+    requestedScopes: ["workflow:delete"],
+    requestedWorkflowIds: workflowIds,
+    scopes: ["workflow:delete"],
+    workflowIds,
+    workflowNames,
+  })
   return row.id
 }
 
@@ -162,16 +170,20 @@ describe("workflow names on access requests", () => {
     ])
     const stored = await request(i.id, ["wf-deleted", "__proto__"], odd)
     await ctx.db.delete(workflows).where(eq(workflows.workflowId, "wf-deleted"))
-    const shown = (await getAccess(ctx, stored))?.workflowNames
+    const shown = (await getAccess(ctx, stored))?.instances[0]?.workflowNames
     expect(shown).toEqual(odd)
     expect(shown && Object.hasOwn(shown, "__proto__")).toBe(true)
 
     const older = await request(i.id, ["wf-older", "wf-unknown", "toString"], {})
-    expect((await getAccess(ctx, older))?.workflowNames).toEqual({ "wf-older": "From the map" })
+    expect((await getAccess(ctx, older))?.instances[0]?.workflowNames).toEqual({ "wf-older": "From the map" })
   })
 
   it("refuses a second request of the same agent while its first is being made", async () => {
-    const input = { instance: "no-such-instance", reason: "Look at a workflow", scopes: ["workflow:read"], minutes: 5 }
+    const input = {
+      reason: "Look at a workflow",
+      minutes: 5,
+      instances: [{ instance: "no-such-instance", scopes: ["workflow:read"] }],
+    }
     const first = requestAccess(ctx, tokenId, input)
     const second = requestAccess(ctx, tokenId, input)
     await expect(second).rejects.toMatchObject({ code: "request_in_progress" })

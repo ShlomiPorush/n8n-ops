@@ -4,7 +4,14 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+
+- **Agents can ask for access to several instances in one request.** `POST /api/v1/access-requests` and the `request_instance_access` MCP tool take `instances`, each with its own scopes and workflows; the single-instance body still works. One key works on every instance that was granted, and the answer after approval lists what was granted on each instance with its proxy address. The n8n-ops skill asks this way.
+- **Change an access request before approving it.** On the request's page in Agent Access, which the access request email links to, you can leave out or add instances, change the scopes and the workflows of each, choose between the whole instance and some workflows, and change the length, within what each instance allows. In Telegram, ✏️ Edit lets you leave out instances and pick another length before you approve. A request changed elsewhere since you looked at it is not approved; you see it again first. An instance closed to agents or deleted by then is left out, and so are scopes its settings no longer allow, and the message, the page and the audit log say so. The agent is told what was granted.
+
 ### Changed
+
+- **Deleting an instance keeps the access requests that named it,** with the instance's name, instead of deleting them.
 
 - **Clearer access request emails.** As in Telegram, the email names workflows without their IDs (an ID shows only when the name is not known), lists several workflows one per line, gives the requested length in its subject and title, and says when the request expires.
 - **Times in emails no longer end with the zone,** such as GMT+2. Every time in an email is in the zone set in Settings → General. A report window still names the zone at both ends when daylight saving changed inside it.

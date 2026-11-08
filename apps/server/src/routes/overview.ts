@@ -13,6 +13,7 @@ import {
 } from "../db/schema.ts"
 import { requireUser } from "../http/middleware.ts"
 import type { Env } from "../http/types.ts"
+import { instancesOf } from "../services/access.ts"
 import { currentHealth, WORKER_ONLINE_MS } from "../services/collection.ts"
 import { activeOnly, activeWith, can } from "../services/instances.ts"
 import { openProblemCount, problemItems } from "../services/problem-view.ts"
@@ -60,7 +61,7 @@ export type AttentionItem = { tone: Tone } & (
   | { kind: "backup"; id: string; name: string; detail: string; running: boolean; at: Date | null }
   | { kind: "worker"; id: string; name: string; at: Date | null }
   /** `agent` is the token that asks. */
-  | { kind: "access"; id: string; name: string; agent: string; detail: string; at: Date | null }
+  | { kind: "access"; id: string; name: string; agent: string; detail: string; at: Date | null; revision: number }
 )
 
 /** A check that could not run, so the list must not say that all is well (NL-19, FB-10). */
@@ -166,25 +167,36 @@ export function backupItem(
   }
 }
 
-/** Agents waiting for access: amber, each with the request Approve needs. */
+/**
+ * Agents waiting for access: amber, one item per request, named by the instances it asks for ("name +N"), each with
+ * the request and the revision Approve needs (the card approves the request as it stands).
+ */
 async function accessPart(ctx: Ctx): Promise<Part> {
   const waiting = await ctx.db
-    .select({ r: accessRequests, instanceName: instances.name, tokenName: apiTokens.name })
+    .select({ r: accessRequests, tokenName: apiTokens.name })
     .from(accessRequests)
-    .innerJoin(instances, eq(accessRequests.instanceId, instances.id))
     .innerJoin(apiTokens, eq(accessRequests.tokenId, apiTokens.id))
     .where(and(eq(accessRequests.status, "pending"), gt(accessRequests.decideBy, new Date())))
     .orderBy(desc(accessRequests.requestedAt))
+  const children = await instancesOf(
+    ctx.db,
+    waiting.map((w) => w.r.id),
+  )
   return listed(
-    waiting.map(({ r, instanceName, tokenName }) => ({
-      kind: "access",
-      tone: "warn",
-      id: r.id,
-      name: instanceName,
-      agent: tokenName,
-      detail: `${tokenName} asks for access: ${r.reason}`,
-      at: r.requestedAt,
-    })),
+    waiting.map(({ r, tokenName }) => {
+      const asked = (children.get(r.id) ?? []).filter((c) => c.requestedScopes !== null)
+      const first = asked[0]?.instanceName ?? "?"
+      return {
+        kind: "access",
+        tone: "warn",
+        id: r.id,
+        name: asked.length > 1 ? `${first} +${asked.length - 1}` : first,
+        agent: tokenName,
+        detail: `${tokenName} asks for access: ${r.reason}`,
+        at: r.requestedAt,
+        revision: r.revision,
+      }
+    }),
   )
 }
 

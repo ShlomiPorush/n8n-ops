@@ -275,11 +275,9 @@ describe("emails", () => {
     const access = renderAccessEmail(
       {
         id: "1",
-        instance: "flow",
         token: "claude-code",
         reason: "Fix a node",
-        scopes: ["workflow:read"],
-        workflowIds: [],
+        instances: [{ position: 0, name: "flow", scopes: ["workflow:read"], workflowIds: [] }],
         minutes: 30,
         decideBy: new Date("2026-10-16T10:00:00Z"),
       },

@@ -8,7 +8,7 @@ import postgres from "postgres"
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 import type { Ctx } from "../context.ts"
 import { createDatabase, type Database } from "../db/client.ts"
-import { accessCalls, accessRequests, apiTokens, instances } from "../db/schema.ts"
+import { accessCalls, accessRequestInstances, accessRequests, apiTokens, instances } from "../db/schema.ts"
 import { createSecrets, sha256 } from "../lib/crypto.ts"
 import { createSettings } from "../lib/settings.ts"
 import { restRoutes } from "../routes/agent.ts"
@@ -124,9 +124,8 @@ async function approved() {
     .insert(accessRequests)
     .values({
       tokenId,
-      instanceId,
       reason: "Fix the ERP sync",
-      scopes: ["workflow:read"],
+      requestedMinutes: 30,
       minutes: 30,
       status: "approved",
       decideBy: new Date(now + 3600_000),
@@ -140,6 +139,15 @@ async function approved() {
     })
     .returning()
   if (!row) throw new Error("no request")
+  await ctx.db.insert(accessRequestInstances).values({
+    requestId: row.id,
+    instanceId,
+    instanceName: "release-n8n",
+    position: 0,
+    requestedScopes: ["workflow:read"],
+    requestedWorkflowIds: [],
+    scopes: ["workflow:read"],
+  })
   return { id: row.id, key }
 }
 
@@ -152,12 +160,12 @@ const stored = async (id: string) => {
 describe("releasing access with a summary", () => {
   it("keeps the summary with the release that ends the access, without NUL, and the key stops working", async () => {
     const { id, key } = await approved()
-    expect(await grantForKey(ctx, key)).not.toBeNull()
+    expect(await grantForKey(ctx, key, "release-n8n")).not.toBeNull()
     await releaseAccess(ctx, tokenId, id, "  Checked\u0000 the workflow and fixed the <Set> node.  ")
     const row = await stored(id)
     expect(row.status).toBe("released")
     expect(row.summary).toBe("Checked the workflow and fixed the <Set> node.")
-    expect(await grantForKey(ctx, key)).toBeNull()
+    expect(await grantForKey(ctx, key, "release-n8n")).toBeNull()
   })
 
   it("shortens a long summary on whole characters instead of refusing the release", async () => {
@@ -237,8 +245,14 @@ describe("releasing access with a summary", () => {
 describe("calls made with the access", () => {
   it("are counted with each call; a call that ends after the access did marks its message to be edited again", async () => {
     const { id } = await approved()
-    await logCall(ctx, id, { method: "GET", path: "/workflows/w1", status: 200 })
-    await logCall(ctx, id, { method: "PUT", path: "/workflows/w1", status: 403, refused: "Needs workflow:update" })
+    await logCall(ctx, id, { instanceId, method: "GET", path: "/workflows/w1", status: 200 })
+    await logCall(ctx, id, {
+      instanceId,
+      method: "PUT",
+      path: "/workflows/w1",
+      status: 403,
+      refused: "Needs workflow:update",
+    })
     let row = await stored(id)
     expect(row.callCount).toBe(2)
     // While the access works, a call does not touch its message: it shows no calls yet.
@@ -250,7 +264,7 @@ describe("calls made with the access", () => {
     expect((await stored(id)).telegramClosedAt).not.toBeNull()
 
     // A call that started before the release and ends after it.
-    await logCall(ctx, id, { method: "GET", path: "/workflows/w1", status: 200 })
+    await logCall(ctx, id, { instanceId, method: "GET", path: "/workflows/w1", status: 200 })
     row = await stored(id)
     expect(row.callCount).toBe(3)
     expect(row.telegramClosedAt).toBeNull()
@@ -269,7 +283,7 @@ describe("calls made with the access", () => {
     const closing = closeTelegramMessages(ctx)
     // The edit is on its way with no calls; one is logged before it lands.
     await vi.waitFor(() => expect(editGate).toBeNull())
-    await logCall(ctx, id, { method: "GET", path: "/workflows", status: 200 })
+    await logCall(ctx, id, { instanceId, method: "GET", path: "/workflows", status: 200 })
     release()
     await closing
     expect(edits.at(-1)).toContain("No calls through n8n-ops")
@@ -287,12 +301,18 @@ describe("calls made with the access", () => {
     ctx.events.on("change", listen)
     await releaseAccess(ctx, tokenId, id)
     topics.length = 0
-    await logCall(ctx, id, { method: "GET", path: "/workflows", status: 200 }).finally(() =>
+    await logCall(ctx, id, { instanceId, method: "GET", path: "/workflows", status: 200 }).finally(() =>
       ctx.events.off("change", listen),
     )
     expect(topics).toEqual([["access"]])
-    await logCall(ctx, id, { method: "GET", path: "/workflows", status: 200 })
-    await logCall(ctx, id, { method: "DELETE", path: "/workflows/w1", status: 403, refused: "Needs workflow:delete" })
+    await logCall(ctx, id, { instanceId, method: "GET", path: "/workflows", status: 200 })
+    await logCall(ctx, id, {
+      instanceId,
+      method: "DELETE",
+      path: "/workflows/w1",
+      status: 403,
+      refused: "Needs workflow:delete",
+    })
     const detail = await getAccess(ctx, id)
     expect(detail).toMatchObject({ callCount: 3, refusedCount: 1 })
     expect(detail?.calls).toHaveLength(3)

@@ -1,4 +1,5 @@
 import { type CapabilityKey, capabilityKeys } from "@n8n-ops/shared"
+import { sql } from "drizzle-orm"
 import {
   type AnyPgColumn,
   bigint,
@@ -838,16 +839,16 @@ export const accessRequests = pgTable(
     tokenId: uuid("token_id")
       .notNull()
       .references(() => apiTokens.id, { onDelete: "cascade" }),
-    instanceId: uuid("instance_id")
-      .notNull()
-      .references(() => instances.id, { onDelete: "cascade" }),
     reason: text("reason").notNull(),
-    scopes: jsonb("scopes").$type<string[]>().notNull(),
-    /** Empty: the whole instance within the scopes. Otherwise only these workflows. */
-    workflowIds: jsonb("workflow_ids").$type<string[]>().notNull().default([]),
-    /** The names of those workflows when the request was made, by ID; a name that could not be read is missing. */
-    workflowNames: jsonb("workflow_names").$type<Record<string, string>>().notNull().default({}),
+    /** The minutes the agent asked for. */
+    requestedMinutes: integer("requested_minutes").notNull(),
+    /** While pending, the minutes an approver means to grant (the draft); once approved, the minutes granted. */
     minutes: integer("minutes").notNull(),
+    /**
+     * Bumped by every edit of the draft; a decision names the revision the approver saw, so a view from before an
+     * edit can never approve something it did not show.
+     */
+    revision: integer("revision").notNull().default(0),
     status: text("status").$type<AccessStatus>().notNull().default("pending"),
     requestedAt: created(),
     /** A pending request nobody answers expires at this time. */
@@ -883,6 +884,50 @@ export const accessRequests = pgTable(
   (t) => [index("access_requests_status_idx").on(t.status)],
 )
 
+/** Why an instance of a request was left out when it was approved. */
+export type AccessDropReason = "closed" | "deleted" | "no_scopes"
+
+/**
+ * The instances of an access request, each with its scopes and workflows: what the agent asked for, and the draft an
+ * approver edits, which becomes what was granted. An instance an approver added has no requested values. A deleted
+ * instance keeps its row and name, so the request's history stays whole.
+ */
+export const accessRequestInstances = pgTable(
+  "access_request_instances",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    requestId: uuid("request_id")
+      .notNull()
+      .references(() => accessRequests.id, { onDelete: "cascade" }),
+    instanceId: uuid("instance_id").references(() => instances.id, { onDelete: "set null" }),
+    /** The instance's name when it was added to the request. */
+    instanceName: text("instance_name").notNull(),
+    /** Its place in the request, fixed once given; Telegram buttons name an instance by it. */
+    position: integer("position").notNull(),
+    /** Null when an approver added the instance. */
+    requestedScopes: jsonb("requested_scopes").$type<string[]>(),
+    requestedWorkflowIds: jsonb("requested_workflow_ids").$type<string[]>(),
+    scopes: jsonb("scopes").$type<string[]>().notNull(),
+    /** Empty: the whole instance within the scopes. Otherwise only these workflows. */
+    workflowIds: jsonb("workflow_ids").$type<string[]>().notNull().default([]),
+    /** The names of those workflows when they were added, by ID; a name that could not be read is missing. */
+    workflowNames: jsonb("workflow_names").$type<Record<string, string>>().notNull().default({}),
+    /** Whether the draft, or the approval, includes this instance. */
+    included: boolean("included").notNull().default(true),
+    /** Set when the approval left the instance out although it was included. */
+    droppedReason: text("dropped_reason").$type<AccessDropReason>(),
+    /** Scopes the approval left out because the instance no longer allowed them. */
+    droppedScopes: jsonb("dropped_scopes").$type<string[]>().notNull().default([]),
+  },
+  (t) => [
+    uniqueIndex("access_request_instances_position_idx").on(t.requestId, t.position),
+    uniqueIndex("access_request_instances_instance_idx")
+      .on(t.requestId, t.instanceId)
+      .where(sql`${t.instanceId} is not null`),
+    index("access_request_instances_instance_ref_idx").on(t.instanceId),
+  ],
+)
+
 export const accessCalls = pgTable(
   "access_calls",
   {
@@ -890,6 +935,8 @@ export const accessCalls = pgTable(
     requestId: uuid("request_id")
       .notNull()
       .references(() => accessRequests.id, { onDelete: "cascade" }),
+    /** The instance the call went to; null for a deleted instance. */
+    instanceId: uuid("instance_id").references(() => instances.id, { onDelete: "set null" }),
     at: created(),
     method: text("method").notNull(),
     path: text("path").notNull(),

@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, lt, or } from "drizzle-orm"
+import { and, count, desc, eq, inArray, isNotNull, lt, or, sql } from "drizzle-orm"
 import { type Ctx, changed } from "../context.ts"
 import { type AccessStatus, accessCalls, accessRequests, apiTokens, instances, workflows } from "../db/schema.ts"
 import { tokenActor } from "../http/types.ts"
@@ -378,17 +378,41 @@ export async function collectAccess(ctx: Ctx, tokenId: string, id: string, publi
   return { ...base, ...usage, key: ctx.secrets.decrypt(r.keyEnc) }
 }
 
-export async function releaseAccess(ctx: Ctx, tokenId: string, id: string) {
+/** The longest summary kept, in characters (code points). */
+export const SUMMARY_MAX = 1000
+
+/**
+ * A summary as it is stored: without NUL, which PostgreSQL cannot keep in text, trimmed, and clipped on whole
+ * characters. Never refused, so a summary cannot keep a key working by failing its release. Empty is none.
+ */
+export function cleanSummary(summary: string | undefined): string | null {
+  const chars = [...(summary ?? "").replaceAll("\u0000", "").trim()]
+  if (!chars.length) return null
+  if (chars.length <= SUMMARY_MAX) return chars.join("")
+  return `${chars
+    .slice(0, SUMMARY_MAX - 1)
+    .join("")
+    .trimEnd()}…`
+}
+
+export async function releaseAccess(ctx: Ctx, tokenId: string, id: string, summary?: string) {
   const [row] = await ctx.db
     .select({ id: apiTokens.id, name: apiTokens.name })
     .from(accessRequests)
     .innerJoin(apiTokens, eq(accessRequests.tokenId, apiTokens.id))
     .where(and(eq(accessRequests.id, id), eq(accessRequests.tokenId, tokenId)))
   if (!row) throw new AccessError("not_found", "This agent has no such access request.")
+  // The summary is kept by the same update that ends the access, so a release that comes too late changes nothing.
   const [updated] = await ctx.db
     .update(accessRequests)
-    .set({ status: "released", endedAt: new Date(), keyEnc: null, ...messageOutdated })
-    .where(and(eq(accessRequests.id, id), inArray(accessRequests.status, ["pending", "approved"])))
+    .set({ status: "released", endedAt: new Date(), keyEnc: null, summary: cleanSummary(summary), ...messageOutdated })
+    .where(
+      and(
+        eq(accessRequests.id, id),
+        eq(accessRequests.tokenId, tokenId),
+        inArray(accessRequests.status, ["pending", "approved"]),
+      ),
+    )
     .returning()
   if (!updated) throw new AccessError("not_active", "The request is not pending or active.")
   await auditDecision(ctx, id, "Instance access released", { by: tokenActor(row), via: "agent" })
@@ -469,7 +493,29 @@ export async function logCall(
   requestId: string,
   call: { method: string; path: string; status: number; refused?: string },
 ) {
-  await ctx.db.insert(accessCalls).values({ requestId, ...call, refused: call.refused ?? null })
+  // One transaction: the call and its count are kept together. A call that ends after the access did (it started
+  // before) marks the Telegram message as outdated, so the next run shows it in the count.
+  await ctx.db.transaction(async (tx) => {
+    await tx.insert(accessCalls).values({ requestId, ...call, refused: call.refused ?? null })
+    await tx
+      .update(accessRequests)
+      .set({
+        callCount: sql`${accessRequests.callCount} + 1`,
+        telegramClosedAt: sql`CASE WHEN ${accessRequests.status} IN ('released', 'expired', 'revoked') THEN NULL ELSE ${accessRequests.telegramClosedAt} END`,
+      })
+      .where(eq(accessRequests.id, requestId))
+  })
+}
+
+/** Calls n8n-ops refused, by request; a request without any is left out. */
+export async function refusedCounts(ctx: Ctx, ids: string[]): Promise<Map<string, number>> {
+  if (!ids.length) return new Map()
+  const rows = await ctx.db
+    .select({ id: accessCalls.requestId, n: count() })
+    .from(accessCalls)
+    .where(and(inArray(accessCalls.requestId, ids), isNotNull(accessCalls.refused)))
+    .groupBy(accessCalls.requestId)
+  return new Map(rows.map((r) => [r.id, r.n]))
 }
 
 // --- For the UI
@@ -519,7 +565,15 @@ export async function getAccess(ctx: Ctx, id: string) {
       return name === undefined ? [] : [[w, name]]
     }),
   )
-  return { ...publicFields(row.r), workflowNames, instance: row.instanceName, token: row.tokenName, calls }
+  const refusedCount = (await refusedCounts(ctx, [id])).get(id) ?? 0
+  return {
+    ...publicFields(row.r),
+    workflowNames,
+    instance: row.instanceName,
+    token: row.tokenName,
+    calls,
+    refusedCount,
+  }
 }
 
 function publicFields(r: typeof accessRequests.$inferSelect) {

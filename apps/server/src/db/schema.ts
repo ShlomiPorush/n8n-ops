@@ -857,6 +857,13 @@ export const accessRequests = pgTable(
     decidedVia: text("decided_via"),
     expiresAt: ts("expires_at"),
     endedAt: ts("ended_at"),
+    /** What the agent says it did, given when it released the access; null when it gave none. */
+    summary: text("summary"),
+    /**
+     * Calls made with the key, counted with each logged call in the same transaction; the Telegram message is marked
+     * as up to date only while it is the count shown.
+     */
+    callCount: integer("call_count").notNull().default(0),
     keyPrefix: text("key_prefix"),
     keyHash: text("key_hash").unique(),
     /** The key, encrypted, until the agent collects it once; then cleared. */

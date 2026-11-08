@@ -157,6 +157,9 @@ describe("zone names and windows in messages (EM-6)", () => {
     expect(formatStamp(new Date("2026-10-20T11:00:00Z"), w("MM/DD/YYYY", "12h", "Europe/Berlin"))).toBe(
       "10/20/2026 1:00 PM CEST",
     )
+    expect(
+      formatStamp(new Date("2026-10-20T11:00:00Z"), w("DD/MM/YYYY", "24h", "Europe/Berlin"), { zone: false }),
+    ).toBe("20/10/2026 13:00")
   })
 
   it("gives a window its exact ends and names the zone once", () => {

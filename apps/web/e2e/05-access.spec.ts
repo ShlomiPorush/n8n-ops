@@ -290,10 +290,18 @@ test("every call is recorded on the request", async () => {
   await expect(page.getByText(/is outside this access/)).toBeVisible()
 })
 
-test("released access stops working at once", async ({ request }) => {
-  const released = await mcp(request, "release_instance_access", { requestId })
+test("released access stops working at once, and its page says what the agent did", async ({ request }) => {
+  const released = await mcp(request, "release_instance_access", {
+    requestId,
+    summary: "Read the <workflow> and changed nothing.",
+  })
   expect(released.value.status).toBe("released")
   expect((await proxy(`/workflows/${workflowId}`, key)).status).toBe(401)
+
+  await page.goto(`/access/${requestId}`)
+  await expect(page.getByText("Read the <workflow> and changed nothing.", { exact: true })).toBeVisible()
+  await expect(page.getByText(/ · used (under 1 min|\d+ min) of /)).toBeVisible()
+  await expect(page.getByText(/\d+ refused\./)).toBeVisible()
 })
 
 test("agent access edits survive a refresh, and a clean card shows the stored access", async () => {

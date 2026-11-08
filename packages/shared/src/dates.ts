@@ -254,12 +254,16 @@ export function zoneName(when: Date, zone: string): string {
   return offsetName.test(gb) ? us : gb
 }
 
-/** A date and time with the zone after it, as messages write them: "20/10/2026 13:00 CEST" (EM-6). */
-export function formatStamp(value: string | number | Date, w: DateWriting): string {
+/**
+ * A date and time with the zone after it, as emails write them: "20/10/2026 13:00 CEST" (EM-6). `zone: false`
+ * leaves the zone out, as Telegram writes them: "20/10/2026 13:00".
+ */
+export function formatStamp(value: string | number | Date, w: DateWriting, { zone = true } = {}): string {
   const d = instant(value)
   if (!d) return "-"
   const p = partsIn(d, w.zone)
-  return `${writeDate(p, w)} ${writeClock(p, w)} ${zoneName(d, w.zone)}`
+  const at = `${writeDate(p, w)} ${writeClock(p, w)}`
+  return zone ? `${at} ${zoneName(d, w.zone)}` : at
 }
 
 /**

@@ -26,7 +26,7 @@ export {
   writingOf,
   zoneName,
 } from "./dates.ts"
-export { formatDuration } from "./format.ts"
+export { formatDuration, formatUsed, usedMinutes } from "./format.ts"
 export { type Health, healthSchema } from "./health.ts"
 export {
   apiScopesOf,

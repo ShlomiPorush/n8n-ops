@@ -5,7 +5,7 @@ import { z } from "zod"
 import type { Ctx } from "../context.ts"
 import { requireToken } from "../http/middleware.ts"
 import { actorName, type Env } from "../http/types.ts"
-import { AccessError, collectAccess, releaseAccess, requestAccess } from "../services/access.ts"
+import { AccessError, collectAccess, releaseAccess, requestAccess, SUMMARY_MAX } from "../services/access.ts"
 import {
   agentBackups,
   agentFailure,
@@ -135,8 +135,20 @@ export function restRoutes(ctx: Ctx) {
   app.post("/access-requests/:id/release", async (c) => {
     const tokenId = allowedToken(c.get("actor"))
     if (!tokenId) return refuse(c)
+    // Without a body, as earlier skills send it, the access is released without a summary.
+    const text = await c.req.text()
+    let body: unknown = {}
+    if (text.trim()) {
+      try {
+        body = JSON.parse(text)
+      } catch {
+        return c.json({ error: "invalid", message: "The body is not JSON." }, 400)
+      }
+    }
+    const parsed = z.object(releaseShape).safeParse(body)
+    if (!parsed.success) return c.json({ error: "invalid", issues: parsed.error.issues }, 400)
     try {
-      return c.json({ data: await releaseAccess(ctx, tokenId, c.req.param("id")) })
+      return c.json({ data: await releaseAccess(ctx, tokenId, c.req.param("id"), parsed.data.summary) })
     } catch (e) {
       const [body, status] = accessError(e)
       return c.json(body, status)
@@ -153,6 +165,16 @@ const readOnly = { readOnlyHint: true, openWorldHint: false }
 async function publicBase(ctx: Ctx, requestUrl: string) {
   const { publicUrl } = await ctx.settings.get("general")
   return publicUrl || new URL(requestUrl).origin
+}
+
+/** What a release may say; longer summaries are clipped, never refused, so the release always ends the access. */
+const releaseShape = {
+  summary: z
+    .string()
+    .optional()
+    .describe(
+      `What you did with the access and the result, for the person who approved it; up to ${SUMMARY_MAX} characters.`,
+    ),
 }
 
 const accessRequestShape = {
@@ -287,10 +309,10 @@ export function buildMcpServer(
   )
   accessTool(
     "release_instance_access",
-    "End your access as soon as the task is done; the key stops working at once.",
-    { requestId: z.string().uuid() },
+    "End your access once the task is finished and checked, or cancelled or given up; the key stops working at once. In summary, tell the person what you did with the access and the result, in a few sentences.",
+    { requestId: z.string().uuid(), ...releaseShape },
     { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
-    (a) => releaseAccess(ctx, access.tokenId, a.requestId),
+    (a) => releaseAccess(ctx, access.tokenId, a.requestId, a.summary),
   )
   return server
 }

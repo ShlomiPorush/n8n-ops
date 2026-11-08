@@ -1,8 +1,8 @@
-import { type DateWriting, formatDuration, formatStamp, messageWriting } from "@n8n-ops/shared"
+import { type DateWriting, formatDuration, formatStamp, formatUsed, messageWriting, usedMinutes } from "@n8n-ops/shared"
 import { and, eq, isNotNull, isNull, ne, type SQL } from "drizzle-orm"
 import type { Ctx } from "../context.ts"
 import { type AccessStatus, accessRequests, apiTokens, instances } from "../db/schema.ts"
-import { AccessError, approveAccess, denyAccess, nameIn } from "./access.ts"
+import { AccessError, approveAccess, denyAccess, nameIn, refusedCounts } from "./access.ts"
 import { sendRouted, topicGoneNote } from "./alert-routing.ts"
 import { type CallbackUpdate, telegramClient } from "./alerts.ts"
 import { button, type Email, formatDate, kv, mono, panel, panelText, paragraph, render } from "./email-layout.ts"
@@ -31,11 +31,11 @@ type RequestInfo = {
 /** The requested workflows, each with its name when the request has one. */
 const workflowsOf = (r: RequestInfo) => r.workflowIds.map((id) => ({ id, name: nameIn(r.workflowNames, id) }))
 
-/** A workflow as text: its name with the ID after it, each clipped so the line stays within 100 characters. */
+/** A workflow as email text: its name with the ID after it, each clipped so the line stays within 100 characters. */
 const workflowText = ({ id, name }: { id: string; name?: string }) =>
   name === undefined ? clip(id, 100) : `${clip(name, 60)} (${clip(id, 36)})`
 
-/** How a request ended up: decided, then perhaps ended. */
+/** How a request ended up: decided, then perhaps ended, with what the agent said and how many calls it made. */
 type Outcome = {
   status: AccessStatus
   decidedAt: Date | null
@@ -43,7 +43,14 @@ type Outcome = {
   decidedVia: string | null
   expiresAt: Date | null
   endedAt: Date | null
+  minutes: number
+  summary: string | null
+  callCount: number
+  refusedCount: number
 }
+
+/** The longest summary a Telegram message shows; the request page shows all of it. */
+const TELEGRAM_SUMMARY_MAX = 500
 
 const channels: Record<string, string> = { telegram: "Telegram", web: "n8n-ops", email: "the email link" }
 
@@ -54,13 +61,18 @@ function decider(r: Outcome) {
   return clip(channel ? `${who} via ${channel}` : who, 200)
 }
 
+/** How many calls the key made, and how many of them n8n-ops refused. */
+const callsLine = (calls: number, refused: number) =>
+  html`${calls ? `${calls} ${calls === 1 ? "call" : "calls"}` : "No calls"} through n8n-ops${refused ? `, ${refused} refused` : ""}`
+
 /**
  * What a decided or ended request's message shows: an icon for its first line, so the outcome is clear at a glance,
- * and lines under the request saying who decided where, and then how the access ended. Times are the date and time
- * with the zone, as the emails write them (EM-6): access can last days, and the message stays in the chat.
+ * and lines under the request saying who decided where, and then how the access ended, how long it was used and
+ * what was done. Times are the date and time without the zone; the zone is the one of Settings → General.
  */
 export function accessOutcome(r: Outcome, dates: DateWriting): { icon: string; lines: TelegramHtml[] } {
-  const at = (when: Date | null) => (when ? ` at ${formatStamp(when, dates)}` : "")
+  const stamp = (when: Date) => formatStamp(when, dates, { zone: false })
+  const at = (when: Date | null) => (when ? ` at ${stamp(when)}` : "")
   if (r.status === "pending") return { icon: "🔐", lines: [] }
   if (!r.decidedAt) {
     if (r.status === "expired") return { icon: "⌛", lines: [html`⌛ <b>Expired</b> without a decision`] }
@@ -69,10 +81,18 @@ export function accessOutcome(r: Outcome, dates: DateWriting): { icon: string; l
   }
   if (r.status === "denied") return { icon: "❌", lines: [html`❌ <b>Denied</b> by ${decider(r)}`] }
   const lines = [html`✅ <b>Approved</b> by ${decider(r)}`]
-  if (r.status === "approved") lines.push(html`Access until ${r.expiresAt ? formatStamp(r.expiresAt, dates) : "?"}`)
-  else if (r.status === "released") lines.push(html`⏹ <b>Released</b> by the agent${at(r.endedAt)}`)
+  if (r.status === "approved") {
+    lines.push(html`Access until ${r.expiresAt ? stamp(r.expiresAt) : "?"}`)
+    return { icon: "✅", lines }
+  }
+  if (r.status === "released") lines.push(html`⏹ <b>Released</b> by the agent${at(r.endedAt)}`)
   else if (r.status === "expired") lines.push(html`⌛ <b>Access ended</b>${at(r.endedAt)}`)
   else lines.push(html`⛔ <b>Revoked</b>${at(r.endedAt)}`)
+  const used = usedMinutes(r)
+  if (used !== null) lines.push(html`${formatUsed(used, r.minutes)}`)
+  lines.push(html``)
+  if (r.summary) lines.push(html`What was done:`, html`${clip(r.summary, TELEGRAM_SUMMARY_MAX)}`)
+  lines.push(callsLine(r.callCount, r.refusedCount))
   return { icon: "✅", lines }
 }
 
@@ -86,25 +106,44 @@ function listWithin(items: string[], max: number) {
     shown.push(text)
     length += (shown.length > 1 ? 2 : 0) + text.length
   }
-  const rest = items.length - shown.length
-  return { text: shown.join(", "), more: rest ? ` and ${rest} more` : "" }
+  return { shown, rest: items.length - shown.length }
 }
 
-export function renderAccessTelegram(r: RequestInfo, outcome?: { icon: string; lines: TelegramHtml[] }): TelegramHtml {
-  const scopes = listWithin(r.scopes, 600)
+/**
+ * The requested workflows by name, one line each when there are several; a workflow whose name is not known is
+ * shown by its ID, in code font. Within about 1200 characters; the rest is counted.
+ */
+function workflowLines(r: RequestInfo): TelegramHtml[] {
+  if (!r.workflowIds.length) return [html`Workflows: the whole instance`]
   const named = workflowsOf(r)
-  const workflows = listWithin(named.map(workflowText), 1500)
+  const { shown, rest } = listWithin(
+    named.map((w) => w.name ?? w.id),
+    1200,
+  )
+  const item = (text: string, i: number) => (named[i]?.name === undefined ? html`<code>${text}</code>` : html`${text}`)
+  if (named.length === 1) return [html`Workflow: ${item(shown[0] ?? "", 0)}`]
+  return [
+    html`Workflows:`,
+    ...shown.map((text, i) => html`• ${item(text, i)}`),
+    ...(rest ? [html`• and ${rest} more`] : []),
+  ]
+}
+
+export function renderAccessTelegram(
+  r: RequestInfo,
+  dates: DateWriting,
+  outcome?: { icon: string; lines: TelegramHtml[] },
+): TelegramHtml {
+  const scopes = listWithin(r.scopes, 600)
   return TelegramHtml.join([
     html`${outcome?.icon ?? "🔐"} <b>Access request</b> · ${clip(r.instance, 200)}`,
     html`<b>${clip(r.token, 200)}</b>: ${clip(r.reason, 500)}`,
     html``,
-    html`Scopes: <code>${scopes.text}</code>${scopes.more}`,
-    !r.workflowIds.length
-      ? html`Workflows: the whole instance`
-      : named.some((w) => w.name !== undefined)
-        ? html`Workflows: ${workflows.text}${workflows.more}`
-        : html`Workflows: <code>${workflows.text}</code>${workflows.more}`,
-    html`For ${formatDuration(r.minutes)}`,
+    html`Scopes: <code>${scopes.shown.join(", ")}</code>${scopes.rest ? ` and ${scopes.rest} more` : ""}`,
+    ...workflowLines(r),
+    html`For <b>${formatDuration(r.minutes)}</b>`,
+    // Only while it waits for a decision; once decided, the outcome says what follows.
+    ...(outcome ? [] : [html`Request expires at ${formatStamp(r.decideBy, dates, { zone: false })}`]),
     ...(outcome?.lines.length ? [html``, ...outcome.lines] : []),
   ])
 }
@@ -211,7 +250,7 @@ export async function notifyAccess(ctx: Ctx) {
     const patch: Partial<typeof accessRequests.$inferInsert> = { notifyAttemptAt: new Date() }
     if (needTelegram && tg) {
       try {
-        const text = renderAccessTelegram(info)
+        const text = renderAccessTelegram(info, dates)
         const sent = await sendRouted(
           tg.api,
           tg.chatId,
@@ -266,16 +305,31 @@ async function closeOutdated(ctx: Ctx) {
       isNull(accessRequests.telegramClosedAt),
     ),
   )
+  const refused = await refusedCounts(
+    ctx,
+    outdated.map(({ r }) => r.id),
+  )
   for (const { r, info } of outdated) {
     try {
-      const text = renderAccessTelegram(info, accessOutcome(r, dates))
+      const text = renderAccessTelegram(
+        info,
+        dates,
+        accessOutcome({ ...r, refusedCount: refused.get(r.id) ?? 0 }, dates),
+      )
       const note = r.telegramMissingTopic ? topicGoneNote(r.telegramMissingTopic) : undefined
       await tg.api.edit(tg.chatId, r.telegramMessageId ?? 0, note ? TelegramHtml.join([note, text]) : text)
-      // Marked as shown only if the status is still the one shown; if it changed meanwhile, the next run edits again.
+      // Marked as shown only if the status and the call count are still the ones shown; if either changed meanwhile,
+      // the next run edits again. A call logged now holds the row, and this update then checks the count it left.
       await ctx.db
         .update(accessRequests)
         .set({ telegramClosedAt: new Date() })
-        .where(and(eq(accessRequests.id, r.id), eq(accessRequests.status, r.status)))
+        .where(
+          and(
+            eq(accessRequests.id, r.id),
+            eq(accessRequests.status, r.status),
+            eq(accessRequests.callCount, r.callCount),
+          ),
+        )
     } catch (e) {
       ctx.log.warn("could not update the access request message", { requestId: r.id, error: (e as Error).message })
     }

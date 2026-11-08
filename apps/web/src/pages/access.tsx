@@ -1,4 +1,4 @@
-import { formatDuration } from "@n8n-ops/shared"
+import { formatDuration, formatUsed, usedMinutes } from "@n8n-ops/shared"
 import { Ban, Check, KeyRound, Plug, X } from "lucide-react"
 import { Link, useNavigate, useParams, useSearchParams } from "react-router"
 import { useCrumb } from "@/app/chrome"
@@ -62,6 +62,10 @@ export type AccessRow = {
   telegramMessageId: number | null
   emailSentAt: string | null
   notifyError: string | null
+  /** What the agent said it did when it released the access; null when it said nothing. */
+  summary: string | null
+  /** Every call made with the access; the detail lists only the latest. */
+  callCount: number
 }
 
 /** Who decided and where, as people know them: a Telegram user without the "telegram:" mark, as the messages say. */
@@ -77,6 +81,7 @@ const decider = (r: AccessRow) => {
 }
 
 type AccessDetail = AccessRow & {
+  refusedCount: number
   calls: { id: string; at: string; method: string; path: string; status: number; refused: string | null }[]
 }
 
@@ -290,6 +295,7 @@ function AccessDetailPanel({ id }: { id: string }) {
   if (!detail.data) return <Empty title="This request no longer exists." />
   const r = detail.data
   const busy = approve.isPending || deny.isPending || revoke.isPending
+  const used = usedMinutes(r)
   return (
     <div className="grid min-w-0 gap-gap">
       <div className="grid gap-2.5">
@@ -331,6 +337,7 @@ function AccessDetailPanel({ id }: { id: string }) {
               {statusOf("access", r.status).label}
               {r.decidedBy ? ` · decided by ${decider(r)}` : ""}
               {r.endedAt ? ` · ended ${formatTime(r.endedAt, w, { seconds: false })}` : ""}
+              {used !== null ? ` · ${formatUsed(used, r.minutes).toLowerCase()}` : ""}
             </>
           )}
         </p>
@@ -441,11 +448,26 @@ function AccessDetailPanel({ id }: { id: string }) {
         </div>
       </Panel>
 
+      {r.summary && (
+        <Panel>
+          <PanelHead title="What Was Done" description="As the agent said when it released the access." />
+          <p className="border-t border-line p-pad-x break-words whitespace-pre-wrap">
+            <UserText>{r.summary}</UserText>
+          </p>
+        </Panel>
+      )}
+
       <Panel>
         <PanelHead
           title="Calls"
-          count={n(r.calls.length)}
-          description="Every call the agent made with this access, newest first."
+          count={n(r.callCount)}
+          description={
+            <>
+              Every call the agent made with this access, newest first.
+              {r.refusedCount ? ` ${n(r.refusedCount)} refused.` : ""}
+              {r.callCount > r.calls.length ? ` The latest ${n(r.calls.length)} are listed.` : ""}
+            </>
+          }
         />
         {r.calls.length === 0 ? (
           <Empty title="No calls yet." />

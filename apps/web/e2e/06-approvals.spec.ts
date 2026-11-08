@@ -235,8 +235,10 @@ test("a decision in n8n-ops updates the Telegram message too", async ({ request 
 })
 
 test("a request for two instances is changed in Telegram, then approved as shown", async ({ request }) => {
-  const list = (await (await page.request.get("/api/instances")).json()) as { id: string; name: string }[]
-  const other = list.find((i) => i.name === "e2e-n8n-b")
+  const { instances } = (await (await page.request.get("/api/instances")).json()) as {
+    instances: { id: string; name: string }[]
+  }
+  const other = instances.find((i) => i.name === "e2e-n8n-b")
   if (!other) throw new Error("no e2e-n8n-b")
   const agentAccess = (value: { enabled: boolean; scopes: string[] }) =>
     page.request.patch(`/api/instances/${other.id}`, { data: { agentAccess: value } })

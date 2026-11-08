@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-11-08
+
 ### Added
 
 - **Choose where access requests go.** Settings → Agent Access has **Default channels**: Telegram, email or both, both by default, so nothing changes until you choose. An agent may name the channel itself when you ask it to, with `notify` (`["telegram"]`, `["email"]` or both) in `POST /api/v1/access-requests` and the `request_instance_access` MCP tool; the n8n-ops skill does so only when you asked. A channel that is off or not set up is replaced by the default ones that are on. The answer's `notify` says where the request is to go, and `notifiedVia` in its status where it went. Every request still shows in n8n-ops.

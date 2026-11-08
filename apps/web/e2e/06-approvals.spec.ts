@@ -243,6 +243,12 @@ test("a request for two instances is changed in Telegram, then approved as shown
   const agentAccess = (value: { enabled: boolean; scopes: string[] }) =>
     page.request.patch(`/api/instances/${other.id}`, { data: { agentAccess: value } })
   expect((await agentAccess({ enabled: true, scopes: ["workflow:list"] })).ok()).toBe(true)
+  // e2e-n8n-b was set up without Temporary access for agents; it is added for this test, as the instance page does.
+  const added = { data: { add: ["agents"] } }
+  const checked = await page.request.post(`/api/instances/${other.id}/setup/api`, added)
+  expect(checked.ok(), await checked.text()).toBe(true)
+  const activated = await page.request.post(`/api/instances/${other.id}/activate`, added)
+  expect(activated.ok(), await activated.text()).toBe(true)
   try {
     const reason = "Compare the schedules on both instances (changed in Telegram)"
     const asked = await mcp(request, "request_instance_access", {
@@ -319,6 +325,7 @@ test("a request for two instances is changed in Telegram, then approved as shown
     expect((await mcp(request, "release_instance_access", { requestId: id })).status).toBe("released")
   } finally {
     // Closed again, as the specs that follow expect.
+    expect((await page.request.delete(`/api/instances/${other.id}/capabilities/agents`)).ok()).toBe(true)
     expect((await agentAccess({ enabled: false, scopes: [] })).ok()).toBe(true)
   }
 })

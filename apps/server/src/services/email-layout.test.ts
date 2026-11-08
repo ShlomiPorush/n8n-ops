@@ -82,12 +82,71 @@ describe("email layout", () => {
     const html = render({ title: "t", topic: "Test" })
     expect(html).toContain("prefers-color-scheme: dark")
     expect(html).toContain("max-width: 620px")
-    expect(html).toContain('<!--[if mso]><table role="presentation" width="600"')
+    expect(html).toContain('<!--[if mso]><table role="presentation" dir="ltr" width="600"')
   })
 
   it("gives Outlook a rounded shape only for the fixed-size topic tag", () => {
     const html = render({ title: "t", topic: "Test", blocks: [panel("p", [kv([["a", tag("b", "ok")]])])] })
     expect(html.match(/v:roundrect/g)).toHaveLength(2) // the opening and closing tag of one shape
+  })
+})
+
+describe("email in Outlook's dark mode", () => {
+  const html = render({
+    title: "t",
+    topic: "Test",
+    tone: "fail",
+    blocks: [panel("p", [kv([["a", tag("Failed", "fail")]])]), button("Open", "https://ops.example.com/x")],
+  })
+  const style = html.slice(html.indexOf("<style>"), html.indexOf("</style>"))
+
+  it("draws every surface in a neutral grey, which Outlook keeps, in both themes", () => {
+    // Outlook flattens near-grey surfaces with a faint tint (#F4F6F5, #0E1110, #171B19) into one mid grey.
+    for (const tinted of ["#F4F6F5", "#E3E7E5", "#ECEEED", "#0E1110", "#171B19", "#262C29", "#232826"]) {
+      expect(html).not.toContain(tinted)
+    }
+    expect(panel("p", []).html).toContain('bgcolor="#EEEEEE" style="background-color:#EEEEEE;')
+    expect(html).toContain('bgcolor="#141414" style="width:26px;height:26px;background-color:#141414;')
+    expect(style).toContain(".m-bg { background-color: #141414 !important; }")
+    expect(style).toContain(".m-panel { background-color: #202020 !important; }")
+    expect(style).toContain(".m-line { border-color: #333333 !important; }")
+    expect(style).toContain(".m-rule { background-color: #333333 !important; }")
+  })
+
+  it("gives Outlook for Android the dark surfaces under its mark, after the dark theme", () => {
+    const marked = style.slice(style.lastIndexOf("}\n[data-ogsb]"))
+    expect(marked).toContain("[data-ogsb] .m-bg { background-color: #FFFFFF !important; }")
+    expect(marked).toContain("[data-ogsb] .m-panel { background-color: #202020 !important; }")
+    expect(marked).toContain("[data-ogsb] .m-line { border-color: #333333 !important; }")
+    expect(marked).toContain("[data-ogsb] .m-rule { background-color: #333333 !important; }")
+    // Outlook does not support an attribute joined to a class in one selector.
+    expect(style).not.toMatch(/\[data-ogs[bc]\][.\w]/)
+  })
+
+  it("outlines status tags instead of filling them, and switches the border with the text", () => {
+    const failed = tag("Failed", "fail").html
+    expect(failed).toContain("border:1px solid #C42B1C;")
+    expect(failed).not.toContain("bgcolor")
+    expect(failed).not.toContain("background-color")
+    expect(html).toContain('filled="f" strokecolor="#C42B1C"')
+    expect(html).not.toContain("fillcolor")
+    expect(style).toContain(".m-fail { color: #FF6B61 !important; border-color: #FF6B61 !important; }")
+    // A banner keeps its tint: it stays readable in Outlook's dark mode.
+    expect(banner("warn", "w").html).toContain('bgcolor="#F2EAD9"')
+  })
+
+  it("declares left to right on the outer tables, which Outlook on the web keeps", () => {
+    expect(html).toContain('<html lang="en" dir="ltr"')
+    expect(html).toContain('<body class="m-bg" dir="ltr"')
+    expect(html).toContain('<table role="presentation" class="m-bg" dir="ltr"')
+    expect(html).toContain('<table role="presentation" dir="ltr" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;')
+  })
+
+  it("keeps links the client makes in the text colour, and its own links as they are", () => {
+    expect(style).toContain(".m-bg a { color: inherit !important; text-decoration: none !important; }")
+    expect(link("Open", "https://ops.example.com/x").html).toContain("text-decoration:underline !important;")
+    // The button's link inherits its colour from the cell, which the dark theme switches.
+    expect(html).toContain('<td class="m-mark" bgcolor="#141414" style="padding:10px 18px;background-color:#141414;border-radius:8px;color:#FFFFFF;">')
   })
 
   it("writes dates in the console's time zone with the zone's short name, day/month/year for Browser (EM-6)", () => {

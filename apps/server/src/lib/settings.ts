@@ -38,6 +38,8 @@ export const instanceSettingsSchema = z.object({
   backupTime: time,
   staleBackupHours: z.number().int().min(1).max(720),
   executionRetentionDays: z.number().int().min(1).max(3650),
+  /** How long every health check of the main is kept for the history and the response-time chart. */
+  healthHistoryDays: z.number().int().min(1).max(30),
   autoResolveDays: z.number().int().min(1).max(365),
   backlogThreshold: z.number().int().min(1),
   backlogMinutes: z.number().int().min(1).max(1440),
@@ -259,6 +261,7 @@ export const defaults: { [K in SectionName]: Section<K> } = {
     backupTime: "02:00",
     staleBackupHours: 26,
     executionRetentionDays: 30,
+    healthHistoryDays: 30,
     autoResolveDays: 7,
     backlogThreshold: 200,
     backlogMinutes: 5,

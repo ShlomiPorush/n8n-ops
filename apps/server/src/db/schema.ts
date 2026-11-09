@@ -535,6 +535,49 @@ export const failures = pgTable(
 )
 
 // ---------------------------------------------------------------------------
+// Health history
+// ---------------------------------------------------------------------------
+
+/** What made a check of the main fail, or that n8n-ops could not check it (services/health-history.ts). */
+export type FailureKind = "timeout" | "refused" | "network" | "container" | "http" | "other" | "not-collected"
+
+/**
+ * One applied health check of an instance's main, kept for Keep health history (days). Facts of the check itself
+ * (how it was made, the mode and the alert threshold then), so the history never reads them from today's settings.
+ */
+export const healthChecks = pgTable(
+  "health_checks",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    instanceId: uuid("instance_id")
+      .notNull()
+      .references(() => instances.id, { onDelete: "cascade" }),
+    /** Server time when the check was applied; the order of the checks is the order of `id`. */
+    checkedAt: ts("checked_at").notNull(),
+    /** Who checked: the server over the network, or the instance's worker. */
+    via: text("via").$type<"direct" | "worker">().notNull(),
+    /** How the main was reached: inside its container, or over the network; null from workers that do not say. */
+    source: text("source").$type<"inside" | "network">(),
+    mode: text("mode").$type<"regular" | "queue">().notNull(),
+    /** Down alert after failed checks in a row, as it was set for this check. */
+    alertAfter: integer("alert_after").notNull(),
+    /** Null when the check was not collected: it says nothing about the main. */
+    mainOk: boolean("main_ok"),
+    mainStatus: integer("main_status"),
+    /** The /healthz request alone until its whole answer; null when not measured. */
+    mainMs: integer("main_ms"),
+    readinessOk: boolean("readiness_ok"),
+    readinessMs: integer("readiness_ms"),
+    failureKind: text("failure_kind").$type<FailureKind>(),
+    code: text("code"),
+    error: text("error"),
+    /** This check queued a down alert (put it in the outbox; whether Telegram took it is not recorded here). */
+    alertQueued: boolean("alert_queued").notNull().default(false),
+  },
+  (t) => [index("health_checks_instance_checked_idx").on(t.instanceId, t.checkedAt)],
+)
+
+// ---------------------------------------------------------------------------
 // Alerts
 // ---------------------------------------------------------------------------
 

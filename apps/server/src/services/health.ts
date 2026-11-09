@@ -6,6 +6,7 @@ import { alertState, type Health, instances } from "../db/schema.ts"
 import { oneAtATime } from "../lib/one-at-a-time.ts"
 import { parseQueueMetrics, probe, type QueueMetrics } from "../n8n/client.ts"
 import { conditionSettings, type Streak, setConditionIn } from "./alerts.ts"
+import { recordCheck } from "./health-history.ts"
 import { healthTurn, type Instance, metricsUrlOf } from "./instances.ts"
 import type { DbLike } from "./problems.ts"
 import { clip, html } from "./telegram.ts"
@@ -410,8 +411,9 @@ async function applyHealthNow(ctx: Ctx, instanceId: string, given: HealthReport,
     const after = s.downAfterFailures
     // Not collected says nothing about the main: its conditions and failed checks in a row stay as they were.
     // Queue workers checked in the same probe were verified on their own, so their results still apply.
-    if (!report.notCollected)
-      await setConditionIn(
+    const alertQueued =
+      !report.notCollected &&
+      (await setConditionIn(
         tx,
         `down:${current.id}`,
         !report.main.ok,
@@ -423,7 +425,9 @@ async function applyHealthNow(ctx: Ctx, instanceId: string, given: HealthReport,
           clear: () => healthAlerts.up(name),
         },
         alerting,
-      )
+      ))
+    // The history keeps every applied check of the main, with the facts it was made with.
+    await recordCheck(tx, current.id, report, { at: now, queueMode, alertAfter: after, alertQueued })
     if (queueMode) {
       await settleWorkerSources(tx, current.id, report)
       // A URL listed twice is one worker: its condition moves once per check, on its first verified result.

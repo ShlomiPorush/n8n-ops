@@ -1553,6 +1553,7 @@ const overrideFields: [string, string][] = [
   ["backupTime", "Daily backup time"],
   ["staleBackupHours", "Backup is late after (hours)"],
   ["executionRetentionDays", "Keep failed executions (days)"],
+  ["healthHistoryDays", "Keep health history (days)"],
   ["autoResolveDays", "Auto-resolve after days without failures"],
   ["backlogThreshold", "Queue backlog alert (waiting jobs)"],
   ["backlogMinutes", "Queue backlog alert after (minutes)"],

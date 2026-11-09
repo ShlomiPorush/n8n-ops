@@ -366,8 +366,9 @@ export async function healthHistory(ctx: Ctx, ref: { name?: string; id?: string 
       notCollected: Number(sum.not_collected ?? 0),
       measured: Number(sum.measured ?? 0),
       failedByKind: Object.fromEntries(read.byKind.map((k) => [k.kind ?? "other", Number(k.n)])),
-      p50Ms: num(sum.p50 as string | number | null),
-      p95Ms: num(sum.p95 as string | number | null),
+      // Whole milliseconds: the percentiles are interpolated, and a fraction of a millisecond says nothing here.
+      p50Ms: whole(num(sum.p50 as string | number | null) ?? undefined),
+      p95Ms: whole(num(sum.p95 as string | number | null) ?? undefined),
       maxMs: num(sum.max_ms as string | number | null),
       runs: total,
       runsAlertQueued: Number(read.counted?.alerted ?? 0),

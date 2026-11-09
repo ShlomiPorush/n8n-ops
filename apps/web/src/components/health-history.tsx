@@ -351,7 +351,7 @@ function Chart({ history }: { history: History }) {
       {hovered && (
         <div
           className={cn(
-            "pointer-events-none absolute top-2 z-10 rounded-sm bg-popover px-2.5 py-1.5 text-small shadow-float ring-1 ring-ink/10",
+            "pointer-events-none absolute top-2 z-10 w-max max-w-[min(18rem,calc(100%-1rem))] rounded-sm bg-popover px-2.5 py-1.5 text-small shadow-float ring-1 ring-ink/10",
             x(mid(hovered)) > width / 2 ? "-translate-x-full" : "",
           )}
           style={{ left: x(mid(hovered)) + (x(mid(hovered)) > width / 2 ? -10 : 10) }}

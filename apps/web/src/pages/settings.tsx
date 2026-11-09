@@ -223,7 +223,7 @@ export const forms: Record<string, { title: string; description: string; fields:
       {
         name: "downAfterFailures",
         label: "Down alert after failed checks in a row",
-        hint: "3 to 20. The alert comes about this many health intervals after the first failed check; a single slow or failed check alerts no one.",
+        hint: "3 to 20. The alert comes with the last of them: with 3 checks 30 seconds apart, about a minute after the first failed one. A single slow or failed check alerts no one.",
         type: "number",
       },
       { name: "backupTime", label: "Daily backup time", type: "time" },

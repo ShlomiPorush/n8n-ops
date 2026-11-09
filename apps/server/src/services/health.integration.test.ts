@@ -477,13 +477,18 @@ describe("down alerts after failed checks in a row", () => {
     await apply(down)
     await apply(down)
     await removeCapability(ctx, id, "health")
-    await ctx.db
-      .update(instances)
-      .set({ chosenCapabilities: before?.chosenCapabilities })
-      .where(eq(instances.id, id))
+    await ctx.db.update(instances).set({ chosenCapabilities: before?.chosenCapabilities }).where(eq(instances.id, id))
     await apply(down)
     expect(await sent()).toEqual([])
     expect(await state()).toMatchObject({ failures: 1 })
+  })
+
+  it("counts a worker URL listed more than once as one failed check per collection", async () => {
+    await ctx.db.update(instances).set({ queueMode: true }).where(eq(instances.id, id))
+    const worker = { url: "http://worker:5678/healthz", ok: false, status: 0, ms: 1, error: "refused" }
+    await apply(report({ workers: [worker, worker, worker] }))
+    expect(await sent()).toEqual([])
+    expect((await conditions()).find((c) => c.key === `worker:${id}:${worker.url}`)).toMatchObject({ failures: 1 })
   })
 
   it("closes a queue worker's pending count quietly when the instance leaves queue mode", async () => {

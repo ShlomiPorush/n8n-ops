@@ -46,7 +46,6 @@ export {
   withDependencies,
   withoutDependents,
 } from "./instance-setup.ts"
-export { errorCode, type RequestReading, requestOnce } from "./request-once.ts"
 export {
   type MainCheckOutput,
   mainCheckOutput,
@@ -75,6 +74,7 @@ export {
   type SuggestedPattern,
   type Widened,
 } from "./proxy-rules.ts"
+export { errorCode, type RequestReading, requestOnce } from "./request-once.ts"
 export {
   type AccessChannel,
   accessChannelLabels,

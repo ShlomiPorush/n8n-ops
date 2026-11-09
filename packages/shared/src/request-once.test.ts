@@ -26,6 +26,18 @@ describe("requestOnce", () => {
     const reading = await requestOnce(url, AbortSignal.timeout(5000))
     expect(reading).toMatchObject({ ok: true, status: 200 })
     expect(reading.requestMs).toBeGreaterThanOrEqual(350)
+    // `ms` keeps its earlier meaning: until the headers came.
+    expect(reading.ms).toBeLessThan(300)
+  })
+
+  it("decides by the status as before when the body never ends, and gives no request time", async () => {
+    const url = await listen((res) => {
+      res.writeHead(200)
+      res.write("{")
+    })
+    const reading = await requestOnce(url, AbortSignal.timeout(500))
+    expect(reading).toMatchObject({ ok: true, status: 200 })
+    expect(reading.requestMs).toBeUndefined()
   })
 
   it("times an error status too: n8n answered", async () => {

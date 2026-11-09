@@ -230,12 +230,7 @@ export const healthAlerts = {
   down: (name: string, main: ProbeResult, streak?: Streak, now = new Date()) =>
     html`<b>${clip(name, 200)} is down</b>\n${failure(main)}${streakLine(streak, now)}`,
   up: (name: string) => html`<b>${clip(name, 200)} is up again</b>`,
-  workerDown: (
-    name: string,
-    worker: ProbeResult & { url: string; name?: string },
-    streak?: Streak,
-    now = new Date(),
-  ) =>
+  workerDown: (name: string, worker: ProbeResult & { url: string; name?: string }, streak?: Streak, now = new Date()) =>
     html`<b>Queue worker down on ${clip(name, 200)}</b>
 ${clip(worker.name ?? worker.url, 200)}: ${failure(worker)}${streakLine(streak, now)}`,
   workerUp: (name: string, url: string) => html`<b>Queue worker back on ${clip(name, 200)}</b>
@@ -431,12 +426,17 @@ async function applyHealthNow(ctx: Ctx, instanceId: string, given: HealthReport,
       )
     if (queueMode) {
       await settleWorkerSources(tx, current.id, report)
+      // A URL listed twice is one worker: its condition moves once per check, on its first verified result.
+      const moved = new Set<string>()
       for (const w of report.workers) {
         // Only a verified state moves an alert: a worker not checked, or running without its health check, keeps it.
         if (w.state === "not-checked" || w.state === "not-verified") continue
+        const key = `worker:${current.id}:${w.url}`
+        if (moved.has(key)) continue
+        moved.add(key)
         await setConditionIn(
           tx,
-          `worker:${current.id}:${w.url}`,
+          key,
           !w.ok,
           {
             kind: "health",

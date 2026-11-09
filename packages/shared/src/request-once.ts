@@ -2,10 +2,10 @@
 const MAX_BODY = 64 * 1024
 
 /**
- * One health request over the network, as the server and the worker make it. `ms` is the time until the call ended,
- * whatever happened, as before. `requestMs` is the same request until its whole answer (up to 64 KiB) arrived, so it
- * means the same as the time the check inside a container measures; it is absent when no whole answer came. `code`
- * names what failed when it is known: the system error code, or `timeout` for the deadline.
+ * One health request over the network, as the server and the worker make it. `ms` keeps its earlier meaning: until
+ * the answer's headers came, or until the call failed. `requestMs` is the same request until its whole answer (up to
+ * 64 KiB) arrived, so it means the same as the time the check inside a container measures; it is absent when no
+ * whole answer came. `code` names what failed when it is known: the system error code, or `timeout` for the deadline.
  */
 export type RequestReading = {
   ok: boolean
@@ -22,9 +22,13 @@ export async function requestOnce(url: string, signal: AbortSignal, fetchImpl: F
   const started = Date.now()
   try {
     const res = await fetchImpl(url, { signal })
-    await readUpTo(res, MAX_BODY)
     const ms = Date.now() - started
-    return { ok: res.ok, status: res.status, ms, requestMs: ms }
+    // The status decides, as before; a body that never ends only leaves the request without a time.
+    const whole = await readUpTo(res, MAX_BODY).then(
+      () => true,
+      () => false,
+    )
+    return { ok: res.ok, status: res.status, ms, ...(whole ? { requestMs: Date.now() - started } : {}) }
   } catch (error) {
     const code = errorCode(error)
     return {

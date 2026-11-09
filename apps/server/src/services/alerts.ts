@@ -180,7 +180,13 @@ export async function setConditionIn(
       return false
     }
     const text = start(streak)
-    const set = { active: true, since: now, detail: String(text), failures: streak.failures, failingSince: streak.since }
+    const set = {
+      active: true,
+      since: now,
+      detail: String(text),
+      failures: streak.failures,
+      failingSince: streak.since,
+    }
     await tx
       .insert(alertState)
       .values({ key, ...set })

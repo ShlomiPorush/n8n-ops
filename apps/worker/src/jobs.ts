@@ -1,4 +1,4 @@
-import { readTar, textEntry } from "@n8n-ops/shared"
+import { type RequestReading, readTar, requestOnce, textEntry } from "@n8n-ops/shared"
 import { type Manifest, sealArchive } from "@n8n-ops/shared/archive"
 import { type Docker, DockerError, type Refusal, refusalOf } from "./docker.ts"
 import { checkInside } from "./inside.ts"
@@ -80,18 +80,10 @@ async function cleanup(docker: Docker, container: string) {
   await run(docker, container, `rm -rf ${WORK} ${WORK}.tar ${WORK}.json`).catch(() => {})
 }
 
-type Reading = { ok: boolean; status: number; ms: number; error?: string }
-
-async function requestUrl(url: string, signal: AbortSignal = AbortSignal.timeout(10_000)): Promise<Reading> {
-  const started = Date.now()
+async function requestUrl(url: string, signal: AbortSignal = AbortSignal.timeout(10_000)): Promise<RequestReading> {
   // Past the probe's deadline nothing more is asked.
   if (signal.aborted) return { ok: false, status: 0, ms: 0, error: "the probe reached its deadline before this check" }
-  try {
-    const res = await fetch(url, { signal })
-    return { ok: res.ok, status: res.status, ms: Date.now() - started }
-  } catch (error) {
-    return { ok: false, status: 0, ms: Date.now() - started, error: (error as Error).message }
-  }
+  return requestOnce(url, signal)
 }
 
 /** Reads the queue figures from a metrics URL over the network. */

@@ -152,7 +152,7 @@ The system must not recreate the inbox that is deleted today. This is a hard req
 - Each problem alerts once. Further failures only increase its counter.
 - New problems are held for a grouping window (default 2 minutes). New problems with the same cause in that window go out as one message listing all affected workflows.
 - A workflow that later fails with the same cause, while the original message is less than 60 minutes old, **edits** the original message (for example "8 workflows affected") instead of sending a new one.
-- Health and worker alerts are sent immediately, without a window.
+- Health and worker alerts are sent without a window, once the main or a queue worker failed a number of health checks in a row (3 by default, 3 to 20, per instance). A passing check starts the count again; a collection that was not collected counts neither way.
 - Messages are queued in the database and retried every 5 minutes on failure, respecting Telegram's `retry_after`. There is no hourly cap.
 - Messages have buttons "Resolved" and "Mute 24 h". Telegram calls n8n-ops by webhook, verified with the secret-token header, and presses are accepted only from the configured chat. Every press is audited.
 - The chat ID is configuration.

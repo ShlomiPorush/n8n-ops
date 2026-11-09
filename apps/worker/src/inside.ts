@@ -58,9 +58,12 @@ function choice(name, options, fallback) {
   const r = text(name, fallback)
   return r.unknown ? r : { value: options.includes(r.value) ? r.value : fallback }
 }
+// Each request is timed on its own, from sending it until its whole answer arrived; a request that got no whole
+// answer has no time.
 function get(target, path, max) {
   return new Promise((resolve) => {
     const lib = target.tls ? https : http
+    const started = Date.now()
     let settled = false
     const settle = (value) => { if (!settled) { settled = true; resolve(value) } }
     const req = lib.request({ host: target.host, port: Number(target.port), path: path, method: "GET",
@@ -72,16 +75,19 @@ function get(target, path, max) {
         if (size > max) { req.destroy(); settle({ status: res.statusCode, error: "the answer is too large" }) }
         else if (max > 0) chunks.push(c)
       })
-      res.on("end", () => settle({ status: res.statusCode, body: Buffer.concat(chunks).toString("utf8") }))
-      res.on("error", (e) => settle({ error: e.code || e.message }))
+      res.on("end", () => settle({ status: res.statusCode, body: Buffer.concat(chunks).toString("utf8"),
+        ms: Date.now() - started }))
+      res.on("error", (e) => settle({ error: e.code || e.message, code: e.code }))
     })
-    const timer = setTimeout(() => { req.destroy(); settle({ error: "no answer within 3 s" }) }, 3000)
+    const timer = setTimeout(() => { req.destroy(); settle({ error: "no answer within 3 s", code: "timeout" }) }, 3000)
     req.on("close", () => clearTimeout(timer))
-    req.on("error", (e) => settle({ error: e.code || e.message }))
+    req.on("error", (e) => settle({ error: e.code || e.message, code: e.code }))
     req.end()
   })
 }
-const status = (r) => (r.error ? { status: r.status || 0, error: r.error } : { status: r.status })
+const status = (r) => (r.error
+  ? { status: r.status || 0, error: r.error, ...(r.code ? { code: String(r.code) } : {}) }
+  : { status: r.status, ms: r.ms })
 const escape = (s) => s.replace(/[.*+?^$(){}|[\]\\]/g, "\\$&")
 const loopback = (a) => (a === "::" || a === "" ? "::1" : a === "0.0.0.0" ? "127.0.0.1" : a)
 // n8n adds a leading slash and keeps a trailing one: readiness is the health path followed by /readiness.
@@ -279,13 +285,16 @@ export function metricsText(metrics: MainCheckOutput["metrics"]): string | undef
   }
 }
 
+// `ms` stays the whole check, as workers of earlier releases sent it; `requestMs` is the request alone.
 const probe = (r: MainCheckOutput["health"], ms: number) =>
   r
     ? {
         ok: !r.error && r.status >= 200 && r.status < 300,
         status: r.status,
         ms,
+        ...(r.ms !== undefined ? { requestMs: r.ms } : {}),
         ...(r.error ? { error: r.error } : {}),
+        ...(r.code ? { code: r.code } : {}),
       }
     : { ok: false, status: 0, ms, error: "not checked" }
 

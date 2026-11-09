@@ -11,6 +11,7 @@ import { createSettings } from "../lib/settings.ts"
 import { agentQueues } from "./agent.ts"
 import { applyHealth, applyWorkerReport, type HealthReport, startCheck } from "./health.ts"
 import { detachWorker, updateInstance } from "./instance-update.ts"
+import { removeCapability } from "./setup.ts"
 
 // Applying health reports against a real PostgreSQL: a check that started earlier never overwrites a later one,
 // a change of how health is collected drops checks that started before it, the mode read inside the main becomes
@@ -42,6 +43,10 @@ const ticket = async () => {
   const t = await startCheck(ctx, id)
   if (!t) throw new Error("no instance")
   return t.ticket
+}
+/** Applies the same report as many checks in a row as a down alert takes by default (3). */
+const thrice = async (r: HealthReport) => {
+  for (let i = 0; i < 3; i++) await applyHealth(ctx, id, r, await ticket())
 }
 
 beforeAll(async () => {
@@ -158,7 +163,7 @@ describe("applyHealth", () => {
   it("closes the queue alerts quietly when the instance leaves queue mode", async () => {
     await ctx.db.update(instances).set({ queueMode: true }).where(eq(instances.id, id))
     const down = { url: "http://worker:5678/healthz", ok: false, status: 0, ms: 1, error: "refused" }
-    await applyHealth(ctx, id, report({ workers: [down] }), await ticket())
+    await thrice(report({ workers: [down] }))
     expect((await conditions()).filter((c) => c.active)).toHaveLength(1)
     const before = (await sent()).length
     await applyHealth(ctx, id, report({ source: "inside", mode: "regular", workers: [down] }), await ticket())
@@ -224,7 +229,7 @@ describe("applyHealth", () => {
     const active = async () => (await conditions()).filter((c) => c.active).map((c) => c.key)
     const key = `worker:${id}:docker://acme-w-1`
 
-    await applyHealth(ctx, id, found([w("not-ready")]), await ticket())
+    await thrice(found([w("not-ready")]))
     expect(await active()).toEqual([key])
     expect((await sent()).at(-1)).toContain("acme-w-1")
     // Not checked, or running without its health check: the alert stays as it was.
@@ -251,20 +256,17 @@ describe("applyHealth", () => {
   it("ends the alerts of the other source when the workers start being found, and back", async () => {
     await ctx.db.update(instances).set({ queueMode: true }).where(eq(instances.id, id))
     const typed = { url: "http://w:5678/healthz", ok: false, status: 0, ms: 1, error: "refused" }
-    await applyHealth(ctx, id, report({ workers: [typed] }), await ticket())
+    await thrice(report({ workers: [typed] }))
     const foundDown = { url: "docker://acme-w-1", name: "acme-w-1", state: "down", ok: false, status: 0, ms: 1 }
-    await applyHealth(
-      ctx,
-      id,
+    await thrice(
       report({
         source: "inside",
         workers: [foundDown],
         discovery: { status: "ok", found: 1 },
       } as Partial<HealthReport>),
-      await ticket(),
     )
     expect((await conditions()).filter((c) => c.active).map((c) => c.key)).toEqual([`worker:${id}:docker://acme-w-1`])
-    await applyHealth(ctx, id, report({ workers: [typed] }), await ticket())
+    await thrice(report({ workers: [typed] }))
     expect((await conditions()).filter((c) => c.active).map((c) => c.key)).toEqual([
       `worker:${id}:http://w:5678/healthz`,
     ])
@@ -273,11 +275,8 @@ describe("applyHealth", () => {
   it("keeps the alerts of found workers through a fallback to the network, and ends them when the worker changes", async () => {
     await ctx.db.update(instances).set({ queueMode: true }).where(eq(instances.id, id))
     const down = { url: "docker://acme-w-1", name: "acme-w-1", state: "down", ok: false, status: 0, ms: 1 }
-    await applyHealth(
-      ctx,
-      id,
+    await thrice(
       report({ source: "inside", workers: [down], discovery: { status: "ok", found: 1 } } as Partial<HealthReport>),
-      await ticket(),
     )
     const open = async () => (await conditions()).filter((c) => c.active).map((c) => c.key)
     expect(await open()).toEqual([`worker:${id}:docker://acme-w-1`])
@@ -297,16 +296,13 @@ describe("applyHealth", () => {
   it("applies the found workers' verified states when the main itself could not be collected", async () => {
     await ctx.db.update(instances).set({ queueMode: true }).where(eq(instances.id, id))
     const down = { url: "docker://acme-w-1", name: "acme-w-1", state: "down", ok: false, status: 0, ms: 1 }
-    await applyHealth(
-      ctx,
-      id,
+    await thrice(
       report({
         source: "inside",
         notCollected: "the check in the main did not finish within 8 s",
         workers: [down],
         discovery: { status: "ok", found: 1 },
       } as Partial<HealthReport>),
-      await ticket(),
     )
     const keys = (await conditions()).filter((c) => c.active).map((c) => c.key)
     expect(keys).toEqual([`worker:${id}:docker://acme-w-1`])
@@ -323,12 +319,7 @@ describe("applyHealth", () => {
       await ticket(),
     )
     const typed = { url: "http://w:5678/healthz", ok: false, status: 0, ms: 1, error: "refused" }
-    await applyHealth(
-      ctx,
-      id,
-      report({ source: "inside", notCollected: "no answer", workers: [typed] }),
-      await ticket(),
-    )
+    await thrice(report({ source: "inside", notCollected: "no answer", workers: [typed] }))
     expect((await conditions()).filter((c) => c.active).map((c) => c.key)).toEqual([
       `worker:${id}:http://w:5678/healthz`,
     ])
@@ -360,7 +351,7 @@ describe("applyHealth", () => {
   })
 
   it("says not collected when the check itself failed, and leaves the main's alerts as they were", async () => {
-    await applyHealth(ctx, id, report({ main: { ok: false, status: 0, ms: 1, error: "refused" } }), await ticket())
+    await thrice(report({ main: { ok: false, status: 0, ms: 1, error: "refused" } }))
     expect((await conditions()).find((c) => c.key === `down:${id}`)?.active).toBe(true)
     const health = await applyHealth(
       ctx,
@@ -414,5 +405,100 @@ describe("applyHealth", () => {
       concurrency: { value: 10, from: "default" },
     })
     expect(worker).not.toHaveProperty("memory")
+  })
+})
+
+describe("down alerts after failed checks in a row", () => {
+  const down = report({ main: { ok: false, status: 0, ms: 3100, error: "no answer within 3 s", code: "timeout" } })
+  const apply = async (r: HealthReport) => applyHealth(ctx, id, r, await ticket())
+  const state = async () => (await conditions()).find((c) => c.key === `down:${id}`)
+
+  it("alerts on the third failed check, says how many and over how long, and says up again once", async () => {
+    await apply(down)
+    await apply(down)
+    expect(await sent()).toEqual([])
+    expect(await state()).toMatchObject({ active: false, failures: 2 })
+    // The status shows every check as it is; only the alert waits.
+    expect((await row())?.health).toBe("down")
+    await apply(down)
+    expect(await sent()).toHaveLength(1)
+    expect((await sent())[0]).toContain("is down</b>\nno answer within 3 s\n3 failed checks in a row over ")
+    expect(await state()).toMatchObject({ active: true, failures: 3 })
+    await apply(down)
+    expect(await sent()).toHaveLength(1)
+    await apply(report())
+    expect((await sent()).at(-1)).toContain("is up again")
+    expect(await state()).toMatchObject({ active: false, failures: 0, failingSince: null })
+  })
+
+  it("starts the count again after a passing check, and says nothing about failures that never alerted", async () => {
+    await apply(down)
+    await apply(down)
+    await apply(report())
+    await apply(down)
+    await apply(down)
+    expect(await sent()).toEqual([])
+    expect(await state()).toMatchObject({ active: false, failures: 2 })
+  })
+
+  it("counts a check that was not collected neither as a failure nor as a pass", async () => {
+    const notCollected = report({ source: "inside", notCollected: "the check in the main did not finish within 8 s" })
+    await apply(down)
+    await apply(notCollected)
+    await apply(down)
+    expect(await sent()).toEqual([])
+    await apply(notCollected)
+    await apply(down)
+    expect(await sent()).toHaveLength(1)
+  })
+
+  it("follows the instance's own setting", async () => {
+    await ctx.db
+      .update(instances)
+      .set({ overrides: { backlogThreshold: 10, backlogMinutes: 1, downAfterFailures: 5 } })
+      .where(eq(instances.id, id))
+    for (let i = 0; i < 4; i++) await apply(down)
+    expect(await sent()).toEqual([])
+    await apply(down)
+    expect((await sent())[0]).toContain("5 failed checks in a row")
+  })
+
+  it("forgets failed checks of what was checked before a change of collection", async () => {
+    await apply(down)
+    await apply(down)
+    await updateInstance(ctx, id, { collection: "worker", workerId: null, containerName: "acme-n8n-2" })
+    expect(await state()).toMatchObject({ active: false, failures: 0 })
+    await apply(down)
+    expect(await sent()).toEqual([])
+  })
+
+  it("forgets failed checks when health is turned off, so they never add up after it comes back", async () => {
+    const before = await row()
+    await apply(down)
+    await apply(down)
+    await removeCapability(ctx, id, "health")
+    await ctx.db.update(instances).set({ chosenCapabilities: before?.chosenCapabilities }).where(eq(instances.id, id))
+    await apply(down)
+    expect(await sent()).toEqual([])
+    expect(await state()).toMatchObject({ failures: 1 })
+  })
+
+  it("counts a worker URL listed more than once as one failed check per collection", async () => {
+    await ctx.db.update(instances).set({ queueMode: true }).where(eq(instances.id, id))
+    const worker = { url: "http://worker:5678/healthz", ok: false, status: 0, ms: 1, error: "refused" }
+    await apply(report({ workers: [worker, worker, worker] }))
+    expect(await sent()).toEqual([])
+    expect((await conditions()).find((c) => c.key === `worker:${id}:${worker.url}`)).toMatchObject({ failures: 1 })
+  })
+
+  it("closes a queue worker's pending count quietly when the instance leaves queue mode", async () => {
+    await ctx.db.update(instances).set({ queueMode: true }).where(eq(instances.id, id))
+    const worker = { url: "http://worker:5678/healthz", ok: false, status: 0, ms: 1, error: "refused" }
+    await apply(report({ workers: [worker] }))
+    await apply(report({ workers: [worker] }))
+    await apply(report({ source: "inside", mode: "regular" }))
+    await ctx.db.update(instances).set({ queueMode: true, queueModeSource: "manual" }).where(eq(instances.id, id))
+    await apply(report({ workers: [worker] }))
+    expect(await sent()).toEqual([])
   })
 })

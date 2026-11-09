@@ -20,7 +20,10 @@ export type CheckedWorker = {
   ok: boolean
   status: number
   ms: number
+  /** The request that decided the state, alone; absent when it got no whole answer. */
+  requestMs?: number
   error?: string
+  code?: string
   /** Set when the socket proxy refused the check; moved to the report's `access` before it is sent. */
   refusal?: Refusal
 } & WorkerFigures
@@ -128,8 +131,11 @@ export async function checkWorker(
     const o = out.data
     // The figures go with every state the check itself read, also when the worker is not ready.
     const figures = figuresOf(o.details, flag)
-    const checked = (state: WorkerState, error?: string, status = 0) => ({
+    // The request that decided the state gives its own time and error code, as for the main.
+    const checked = (state: WorkerState, error?: string, status = 0, reading?: { ms?: number; code?: string }) => ({
       ...entry(name, state, ms(), error, status),
+      ...(reading?.ms !== undefined ? { requestMs: reading.ms } : {}),
+      ...(reading?.code ? { code: reading.code } : {}),
       ...figures,
     })
     if (o.notCollected) return checked("not-checked", o.notCollected)
@@ -139,11 +145,11 @@ export async function checkWorker(
       return checked("not-checked", "the answer of the check in the worker was not understood")
     const healthOk = !o.health.error && o.health.status >= 200 && o.health.status < 300
     if (!healthOk)
-      return checked("unreachable", o.health.error ?? `health answered ${o.health.status}`, o.health.status)
+      return checked("unreachable", o.health.error ?? `health answered ${o.health.status}`, o.health.status, o.health)
     const ready = !o.readiness.error && o.readiness.status >= 200 && o.readiness.status < 300
     return ready
-      ? checked("ready", undefined, o.readiness.status)
-      : checked("not-ready", o.readiness.error ?? `not ready (${o.readiness.status})`, o.readiness.status)
+      ? checked("ready", undefined, o.readiness.status, o.readiness)
+      : checked("not-ready", o.readiness.error ?? `not ready (${o.readiness.status})`, o.readiness.status, o.readiness)
   } catch (error) {
     if (error instanceof DockerError) {
       if (error.kind === "refused")

@@ -589,6 +589,10 @@ export const alertState = pgTable("alert_state", {
   active: boolean("active").notNull(),
   since: ts("since").notNull().defaultNow(),
   detail: text("detail"),
+  /** Failed checks in a row while the condition has not started yet (health conditions with a threshold). */
+  failures: integer("failures").notNull().default(0),
+  /** When the first of those failed checks was applied; null when there is no pending streak. */
+  failingSince: ts("failing_since"),
 })
 
 // ---------------------------------------------------------------------------

@@ -74,6 +74,7 @@ export {
   type SuggestedPattern,
   type Widened,
 } from "./proxy-rules.ts"
+export { errorCode, type RequestReading, requestOnce } from "./request-once.ts"
 export {
   type AccessChannel,
   accessChannelLabels,

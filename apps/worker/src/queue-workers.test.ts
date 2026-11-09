@@ -119,6 +119,23 @@ describe("discoverWorkers", () => {
     expect(result.workers[0]?.url).toBe("docker://acme-w-1")
   })
 
+  it("gives the time and error code of the request that decided each worker's state", async () => {
+    const { docker } = await engine(
+      [listed("acme-n8n-1", ENTRY), listed("acme-w-1", `${ENTRY} worker`), listed("acme-w-2", `${ENTRY} worker`)],
+      {
+        "acme-w-1": { output: '{"active":true,"health":{"status":200,"ms":7},"readiness":{"status":200,"ms":40}}' },
+        "acme-w-2": {
+          output:
+            '{"active":true,"health":{"status":0,"error":"ECONNRESET","code":"ECONNRESET"},"readiness":{"status":200}}',
+        },
+      },
+    )
+    const result = await discoverWorkers(docker, "acme-n8n-1", { rotation: 0 })
+    expect(result.workers[0]).toMatchObject({ state: "ready", requestMs: 40 })
+    expect(result.workers[1]).toMatchObject({ state: "unreachable", code: "ECONNRESET" })
+    expect(result.workers[1]).not.toHaveProperty("requestMs")
+  })
+
   it("says when the socket proxy does not allow listing containers", async () => {
     const { docker } = await engine([], {}, 403)
     const result = await discoverWorkers(docker, "acme-n8n-1", { rotation: 0 })

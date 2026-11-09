@@ -183,6 +183,13 @@
       "when": 1794155019414,
       "tag": "0025_access_notify_channels",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1794255667004,
+      "tag": "0026_alert_streak",
+      "breakpoints": true
     }
   ]
 }

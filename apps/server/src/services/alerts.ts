@@ -116,43 +116,93 @@ export async function enqueueAlert(ctx: Ctx, kind: ImmediateKind, text: Telegram
 const alertsOn = (alerts: Section<"alerts">, kind: ImmediateKind) =>
   !((kind === "health" && !alerts.health) || (kind === "backup" && !alerts.backup))
 
+/** The failed checks in a row that started a condition: how many, and since when. */
+export type Streak = { failures: number; since: Date }
+
+type ConditionOptions = {
+  kind: "health" | "backup"
+  start: (streak: Streak) => TelegramHtml
+  clear?: () => TelegramHtml
+  subject?: AlertSubject
+  /** Failed checks in a row before the condition starts. 1 starts it on the first. */
+  after?: number
+}
+
+/** What a condition reads from Settings, read before the transaction that sets it. */
+export type ConditionSettings = { on: boolean; threadId: number | null }
+
+export async function conditionSettings(
+  ctx: Ctx,
+  kind: "health" | "backup",
+  subject: AlertSubject = {},
+): Promise<ConditionSettings> {
+  return { on: alertsOn(await ctx.settings.get("alerts"), kind), threadId: await threadFor(ctx, subject) }
+}
+
 /**
  * Tracks an ongoing condition (instance down, backup stale) so it alerts once when it starts
  * and once when it clears. The texts are made only when the condition changes. The condition and its alert are
  * one transaction with the capability check (see alertAllowed).
  */
-export async function setCondition(
-  ctx: Ctx,
+export async function setCondition(ctx: Ctx, key: string, active: boolean, options: ConditionOptions) {
+  const settings = await conditionSettings(ctx, options.kind, options.subject)
+  await ctx.db.transaction((tx) => setConditionIn(tx, key, active, options, settings))
+}
+
+/**
+ * setCondition inside the caller's transaction, with its settings read before it. With `after` above 1, a failing
+ * check that does not start the condition yet counts toward it; a passing one ends that count. Returns whether a
+ * start alert was queued.
+ */
+export async function setConditionIn(
+  tx: DbLike,
   key: string,
   active: boolean,
-  {
-    kind,
-    start,
-    clear,
-    subject = {},
-  }: { kind: "health" | "backup"; start: () => TelegramHtml; clear?: () => TelegramHtml; subject?: AlertSubject },
-) {
-  const on = alertsOn(await ctx.settings.get("alerts"), kind)
-  const threadId = await threadFor(ctx, subject)
-  await ctx.db.transaction(async (tx) => {
-    if (!(await alertAllowed(tx, kind, subject))) return
-    const [row] = await tx.select().from(alertState).where(eq(alertState.key, key))
-    const queue = async (text: TelegramHtml) => {
-      if (on) await tx.insert(alertOutbox).values({ kind, text: String(text), threadId })
-    }
-    if (active && !row?.active) {
-      const text = start()
-      const detail = String(text)
+  { kind, start, clear, subject = {}, after = 1 }: ConditionOptions,
+  { on, threadId }: ConditionSettings,
+): Promise<boolean> {
+  if (!(await alertAllowed(tx, kind, subject))) return false
+  const [row] = await tx.select().from(alertState).where(eq(alertState.key, key)).for("update")
+  const queue = async (text: TelegramHtml) => {
+    if (!on) return false
+    await tx.insert(alertOutbox).values({ kind, text: String(text), threadId })
+    return true
+  }
+  const now = new Date()
+  if (active && !row?.active) {
+    const streak = { failures: (row?.failures ?? 0) + 1, since: row?.failingSince ?? now }
+    if (streak.failures < after) {
+      const pending = { failures: streak.failures, failingSince: streak.since }
       await tx
         .insert(alertState)
-        .values({ key, active: true, since: new Date(), detail })
-        .onConflictDoUpdate({ target: alertState.key, set: { active: true, since: new Date(), detail } })
-      await queue(text)
-    } else if (!active && row?.active) {
-      await tx.update(alertState).set({ active: false, since: new Date() }).where(eq(alertState.key, key))
-      if (clear) await queue(clear())
+        .values({ key, active: false, since: now, ...pending })
+        .onConflictDoUpdate({ target: alertState.key, set: pending })
+      return false
     }
-  })
+    const text = start(streak)
+    const set = {
+      active: true,
+      since: now,
+      detail: String(text),
+      failures: streak.failures,
+      failingSince: streak.since,
+    }
+    await tx
+      .insert(alertState)
+      .values({ key, ...set })
+      .onConflictDoUpdate({ target: alertState.key, set })
+    return queue(text)
+  }
+  if (!active && row?.active) {
+    await tx
+      .update(alertState)
+      .set({ active: false, since: now, failures: 0, failingSince: null })
+      .where(eq(alertState.key, key))
+    if (clear) await queue(clear())
+  } else if (!active && row && row.failures > 0) {
+    await tx.update(alertState).set({ failures: 0, failingSince: null }).where(eq(alertState.key, key))
+  }
+  return false
 }
 
 export type GroupLine = {

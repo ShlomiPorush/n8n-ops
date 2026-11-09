@@ -1,6 +1,16 @@
 import { z } from "zod"
 
-const reading = z.object({ status: z.number(), error: z.string().max(200).optional() })
+/**
+ * One request's result. `ms` is that request alone, from sending it until its whole answer arrived; absent when no
+ * whole answer came (or from checks of earlier releases). `code` is the error code when the request failed with one
+ * (`timeout` for the check's own deadline).
+ */
+const reading = z.object({
+  status: z.number(),
+  error: z.string().max(200).optional(),
+  ms: z.number().min(0).max(60_000).optional().catch(undefined),
+  code: z.string().max(40).optional().catch(undefined),
+})
 
 /**
  * What the worker's check inside an n8n main container prints (apps/worker/src/inside.ts): health and readiness

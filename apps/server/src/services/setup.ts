@@ -28,7 +28,7 @@ import { endRunsWithoutArchive } from "./backup-copies.ts"
 import { canReach, jobTarget, probePayload } from "./backups.ts"
 import { reportsSince } from "./collection.ts"
 import { destinationsFor, testDestination } from "./destinations/index.ts"
-import { collectDirect, forMode, probeReport, queueModeOf } from "./health.ts"
+import { closed, collectDirect, forMode, openOrPending, probeReport, queueModeOf } from "./health.ts"
 import { RevisionChanged } from "./instance-update.ts"
 import { healthTurn, type Instance, isActive, mainTarget, refreshInstanceMeta, testKey } from "./instances.ts"
 import { jobProxyFix } from "./proxy-fix.ts"
@@ -721,11 +721,13 @@ export function removeCapability(ctx: Ctx, id: string, capability: CapabilityKey
         })
         .where(eq(instances.id, id))
         .returning()
+      // Failed checks still counting toward a condition end with it: they never add up with checks made after the
+      // capability comes back.
       const close = (why: string, ...keys: ReturnType<typeof eq>[]) =>
         tx
           .update(alertState)
-          .set({ active: false, since: new Date(), detail: why })
-          .where(and(eq(alertState.active, true), or(...keys)))
+          .set(closed(why))
+          .where(and(openOrPending, or(...keys)))
       if (removed.includes("health")) {
         await close(
           "Closed: health was turned off for the instance",

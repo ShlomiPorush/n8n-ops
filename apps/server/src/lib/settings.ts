@@ -33,6 +33,8 @@ export const maxSessionHours = 720
 export const instanceSettingsSchema = z.object({
   pollIntervalSec: z.number().int().min(15).max(3600),
   healthIntervalSec: z.number().int().min(10).max(3600),
+  /** Failed health checks in a row before a down alert about the main or a queue worker. */
+  downAfterFailures: z.number().int().min(3).max(20),
   backupTime: time,
   staleBackupHours: z.number().int().min(1).max(720),
   executionRetentionDays: z.number().int().min(1).max(3650),
@@ -253,6 +255,7 @@ export const defaults: { [K in SectionName]: Section<K> } = {
   defaults: {
     pollIntervalSec: 60,
     healthIntervalSec: 30,
+    downAfterFailures: 3,
     backupTime: "02:00",
     staleBackupHours: 26,
     executionRetentionDays: 30,

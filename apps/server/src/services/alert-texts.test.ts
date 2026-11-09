@@ -30,6 +30,21 @@ describe("health alert texts", () => {
     expect(text(healthAlerts.backlogCleared("prod"))).toBe("<b>Queue backlog cleared on prod</b>")
   })
 
+  it("say how many checks failed in a row and over how long", () => {
+    const now = new Date("2026-11-09T12:01:05Z")
+    const streak = { failures: 3, since: new Date("2026-11-09T12:00:00Z") }
+    expect(text(healthAlerts.down("prod", failed(), streak, now))).toBe(
+      "<b>prod is down</b>\nHTTP 503\n3 failed checks in a row over 1 min 5 s",
+    )
+    expect(text(healthAlerts.workerDown("prod", { ...failed(), url: "http://w1" }, streak, now))).toBe(
+      "<b>Queue worker down on prod</b>\nhttp://w1: HTTP 503\n3 failed checks in a row over 1 min 5 s",
+    )
+    // One failed check is the old text.
+    expect(text(healthAlerts.down("prod", failed(), { failures: 1, since: now }, now))).toBe(
+      "<b>prod is down</b>\nHTTP 503",
+    )
+  })
+
   it("escape names, URLs and errors, so no markup gets in", () => {
     expect(text(healthAlerts.down("R&D <prod>", failed(link)))).toBe(
       `<b>R&amp;D &lt;prod&gt; is down</b>\n${escapedLink}`,
@@ -184,6 +199,19 @@ describe("a worker's health report", () => {
     expect(probeReport.safeParse(report).success).toBe(true)
     const withQueue = { ...report, queue: { waiting: 3, active: 1, completed: 9, failed: 0 }, metricsError: "x" }
     expect(probeReport.safeParse(withQueue).success).toBe(true)
+  })
+
+  it("keeps a request's own time and error code apart from the step's, and drops one that does not fit alone", () => {
+    const timed = { ...report, main: { ...probe, ms: 900, requestMs: 12 }, readiness: { ...probe, code: "timeout" } }
+    expect(probeReport.parse(timed)).toMatchObject({
+      main: { ms: 900, requestMs: 12 },
+      readiness: { code: "timeout" },
+    })
+    const odd = { ...report, main: { ...probe, requestMs: -1, code: "x".repeat(41) } }
+    const parsed = probeReport.parse(odd)
+    expect(parsed.main).toEqual({ ok: true, status: 200, ms: 5 })
+    // A report of an earlier release has no request time at all.
+    expect(probeReport.parse(report).main).not.toHaveProperty("requestMs")
   })
 
   it("is refused when a field has the wrong type, instead of breaking the health alerts", () => {

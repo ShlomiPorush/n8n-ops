@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-11-09
+
 ### Added
 
 - **Health history.** n8n-ops keeps every health check of an instance's main: when it ran, how (inside the container or over the network), the response time, and what failed. Settings → Instance Defaults has **Keep health history (days)** (1 to 30, 30 by default), and an instance can override it.

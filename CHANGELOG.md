@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+
+- **Health history.** n8n-ops keeps every health check of an instance's main: when it ran, how (inside the container or over the network), the response time, and what failed. Settings → Instance Defaults has **Keep health history (days)** (1 to 30, 30 by default), and an instance can override it.
+  - The instance's **Health** tab shows response times over the last 24 hours, 7 days or 30 days, with failed checks marked, and the runs of failed checks in a row: what failed, a hint (what was seen, then possible causes), whether a down alert was sent, and when a passing check came again.
+  - Agents read the same through `GET /api/v1/health?instance=<name>&hours=24` and the `get_health_history` MCP tool, paged. `GET /api/v1/instances` and `get_instance_health` now say how each instance is checked (`check`: interval, timeouts, the down alert threshold, the mode). The n8n-ops skill lists the new path.
+
 ### Changed
 
 - **A down alert waits for failed checks in a row.** An instance's main or a queue worker is reported down only after 3 health checks in a row failed, not on the first one, so a single slow or missed check no longer sends "is down" and "is up again" a minute apart. Settings → Instance Defaults has **Down alert after failed checks in a row** (3 to 20), and an instance can override it. A passing check starts the count again; a check n8n-ops could not make counts neither way. The alert says how many checks failed and over how long. The status on the page still shows every check as it is.

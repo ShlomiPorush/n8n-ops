@@ -2,6 +2,7 @@ import type { Ctx } from "../context.ts"
 import { instances } from "../db/schema.ts"
 import { dispatchAlerts, syncTelegramWebhook } from "./alerts.ts"
 import { checkDirect } from "./health.ts"
+import { pruneHealthHistory } from "./health-history.ts"
 import { activeOnly, can, refreshInstanceMeta, unsupportedVersion } from "./instances.ts"
 import { housekeeping, pollInstance } from "./problems.ts"
 import { maybeSendReports } from "./reports.ts"
@@ -41,6 +42,7 @@ export function startScheduler(ctx: Ctx, extraJobs: Job[] = []): () => void {
     { name: "telegram-webhook", everyMs: 60_000, run: syncTelegramWebhook },
     { name: "reports", everyMs: 60_000, run: maybeSendReports },
     { name: "housekeeping", everyMs: 3600_000, run: housekeeping },
+    { name: "health-history", everyMs: 3600_000, run: pruneHealthHistory },
     ...extraJobs,
   ]
 

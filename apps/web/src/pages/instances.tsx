@@ -32,6 +32,7 @@ import { useConfirm } from "@/components/confirm"
 import { useDiscardGuard } from "@/components/discard-guard"
 import { FieldPicker } from "@/components/field-picker"
 import { FilterBar } from "@/components/filter-bar"
+import { HealthHistory } from "@/components/health-history"
 import { ItemRow, ItemsHeader } from "@/components/item-row"
 import {
   BusyButton,
@@ -968,6 +969,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
               </div>
             )}
           </Panel>
+          <HealthHistory instanceId={i.id} active={tab === "health"} />
         </PaneTabPanel>
 
         <PaneTabPanel value="backups">
@@ -1553,6 +1555,7 @@ const overrideFields: [string, string][] = [
   ["backupTime", "Daily backup time"],
   ["staleBackupHours", "Backup is late after (hours)"],
   ["executionRetentionDays", "Keep failed executions (days)"],
+  ["healthHistoryDays", "Keep health history (days)"],
   ["autoResolveDays", "Auto-resolve after days without failures"],
   ["backlogThreshold", "Queue backlog alert (waiting jobs)"],
   ["backlogMinutes", "Queue backlog alert after (minutes)"],

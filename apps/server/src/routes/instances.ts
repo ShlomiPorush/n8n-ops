@@ -26,6 +26,7 @@ import { policyScopes } from "../services/access.ts"
 import { canReach } from "../services/backups.ts"
 import { currentHealth, healthNow } from "../services/collection.ts"
 import { checkDirect } from "../services/health.ts"
+import { HistoryError, healthHistory, historyQuery } from "../services/health-history.ts"
 import {
   ChangeRefused,
   RevisionChanged,
@@ -445,6 +446,18 @@ export function instanceRoutes(ctx: Ctx) {
     const [row] = await ctx.db.select().from(instances).where(eq(instances.id, id))
     return row ?? null
   }
+
+  /** The instance's health history for the Health tab: the same answer agents get from /api/v1/health. */
+  app.get(`${ID}/health-history`, async (c) => {
+    const parsed = historyQuery.safeParse(c.req.query())
+    if (!parsed.success) return c.json({ error: "invalid", message: "Choose a range of 1 to 720 hours." }, 400)
+    try {
+      return c.json(await healthHistory(ctx, { id: c.req.param("id") }, parsed.data))
+    } catch (e) {
+      if (!(e instanceof HistoryError)) throw e
+      return c.json({ error: e.code, message: e.message }, e.code === "not_found" ? 404 : 400)
+    }
+  })
 
   /** The selection (`?add=` proposes one), its requirements and each check as it stands now. */
   app.get(`${ID}/setup`, async (c) => {

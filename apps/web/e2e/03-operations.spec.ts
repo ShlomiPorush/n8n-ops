@@ -224,6 +224,12 @@ test("through the worker, health is read inside the main container", async () =>
     // The e2e n8n runs in regular mode: nothing about a queue.
     await expect(page.getByText("· queue mode")).toHaveCount(0)
     await expect(health.getByText("regular, read in the main container")).toBeVisible()
+    // Every check is kept: the chart draws the response times the worker measured for each request.
+    await expect(health.getByRole("heading", { name: "Response times" })).toBeVisible()
+    await expect(health.getByTestId("health-chart").getByRole("img")).toBeVisible()
+    await expect(health.getByText(/^Median \d+ ms, 95% under \d+ ms/)).toBeVisible()
+    await health.getByRole("radio", { name: "7 d" }).click()
+    await expect(health.getByTestId("health-chart").getByRole("img")).toBeVisible()
 
     // A container the socket proxy does not allow: the worker checks over the network, and the tab gives the lines
     // that allow it, with nothing else to look up.

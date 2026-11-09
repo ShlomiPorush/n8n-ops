@@ -8,6 +8,7 @@ import type { Ctx } from "../context.ts"
 import { createDatabase, type Database } from "../db/client.ts"
 import { alertOutbox, alertState, instances, workerJobs, workers } from "../db/schema.ts"
 import { sha256 } from "../lib/crypto.ts"
+import { defaults } from "../lib/settings.ts"
 import { workerApiRoutes } from "../routes/worker-api.ts"
 import { agentQueues } from "./agent.ts"
 import { enqueueProbes } from "./backups.ts"
@@ -40,7 +41,12 @@ beforeAll(async () => {
     log: { info: () => {}, warn: () => {}, error: () => {} },
     settings: {
       get: async (key: string) => (key === "alerts" ? alerts : { routes: [], defaultThreadId: null }),
-      forInstance: async () => ({ healthIntervalSec: 3600, backlogThreshold: 100, backlogMinutes: 5 }),
+      forInstance: async () => ({
+        ...defaults.defaults,
+        healthIntervalSec: 3600,
+        backlogThreshold: 100,
+        backlogMinutes: 5,
+      }),
     },
   } as unknown as Ctx
 })

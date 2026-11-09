@@ -190,6 +190,13 @@
       "when": 1794255667004,
       "tag": "0026_alert_streak",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1794259406602,
+      "tag": "0027_health_checks",
+      "breakpoints": true
     }
   ]
 }

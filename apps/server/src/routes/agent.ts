@@ -25,6 +25,14 @@ import {
   WORKFLOWS_DEFAULT,
   WORKFLOWS_MAX,
 } from "../services/agent.ts"
+import {
+  HistoryError,
+  HOURS_MAX,
+  healthHistory,
+  historyQuery,
+  OFFSET_MAX,
+  RUNS_MAX,
+} from "../services/health-history.ts"
 
 const isUuid = (value: string) => z.string().uuid().safeParse(value).success
 
@@ -79,6 +87,19 @@ export function restRoutes(ctx: Ctx) {
     return f ? c.json({ data: f }) : c.json({ error: "not_found" }, 404)
   })
   app.get("/instances", async (c) => c.json({ data: await agentInstances(ctx) }))
+  app.get("/health", async (c) => {
+    const instance = c.req.query("instance")
+    if (!instance) return c.json({ error: "invalid", message: "instance (its name) is required." }, 400)
+    const parsed = historyQuery.safeParse(c.req.query())
+    if (!parsed.success) return c.json({ error: "invalid", issues: parsed.error.issues }, 400)
+    try {
+      const { runs, ...rest } = await healthHistory(ctx, { name: instance }, parsed.data)
+      return c.json({ data: runs, ...rest })
+    } catch (e) {
+      if (!(e instanceof HistoryError)) throw e
+      return c.json({ error: e.code, message: e.message }, e.code === "not_found" ? 404 : 400)
+    }
+  })
   app.get("/queues", async (c) => c.json({ data: await agentQueues(ctx) }))
   app.get("/backups", async (c) => c.json({ data: await agentBackups(ctx) }))
   app.get("/workflows", async (c) => {
@@ -303,6 +324,28 @@ export function buildMcpServer(
     "Health, version and last check of every n8n instance. health is unknown when the last collection could not read it or no collection runs now (unknownReason or healthDetail.notCollected says why); then lastKnownHealth and lastKnownAt are the last check that read it.",
     {},
     () => agentInstances(ctx),
+  )
+  tool(
+    "get_health_history",
+    `The health history of one instance's main, to explain outages and repeated down alerts. check: how it is checked now (interval, timeouts, downAfterFailures, mode, collection; today's configuration, not that of past checks). summary: checks, failed, notCollected and response times (p50, p95, max of passing checks that measured one) in the window. series: buckets (5 minutes up to 48 hours, 1 hour beyond) with checks, failed and min/avg/max ms. runs: failed checks in a row, newest first, overlapping the window, each with lastFailure (its kind, status, code, error, how it was checked, mode, the alert threshold then, and a hint: what was observed, then possible causes), alertQueued (a down alert was queued; null when unknown), recoverySeen (a passing check came after it before the window end; recoverySeenAt is when it was seen, not when n8n recovered), startTruncated (history kept starts inside it; checks is then at least). Paged: limit (default 50, up to ${RUNS_MAX}), offset, total, nextOffset; pass the returned window.to as to for the next pages.`,
+    {
+      instance: z.string().min(1),
+      hours: z.number().int().min(1).max(HOURS_MAX).optional(),
+      limit: z.number().int().min(1).max(RUNS_MAX).optional(),
+      offset: z.number().int().min(0).max(OFFSET_MAX).optional(),
+      to: z.string().datetime({ offset: true }).optional(),
+    },
+    async (a) => {
+      // The SDK checked the arguments against the schema above; a thrown error becomes a tool error.
+      const parsed = historyQuery.parse({ hours: a.hours, limit: a.limit, offset: a.offset, to: a.to })
+      try {
+        return await healthHistory(ctx, { name: a.instance }, parsed)
+      } catch (e) {
+        if (!(e instanceof HistoryError)) throw e
+        if (e.code === "not_found") return null
+        throw new Error(e.message)
+      }
+    },
   )
   tool(
     "get_queue_status",

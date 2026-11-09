@@ -4,6 +4,7 @@ import { backupRuns, type Health, instances, workflows } from "../db/schema.ts"
 import { likeContains } from "../lib/like.ts"
 import { grantableScopes } from "./access.ts"
 import { currentHealth, type HealthNow } from "./collection.ts"
+import { checkFacts } from "./health-history.ts"
 import { activeOnly, effectiveScopes, latestN8nVersion } from "./instances.ts"
 import { problemDetail, problemFailure, problemPage, regroupedView } from "./problem-view.ts"
 
@@ -69,7 +70,8 @@ export async function agentInstances(ctx: Ctx) {
   const latest = await latestN8nVersion(ctx)
   const rows = await ctx.db.select().from(instances).where(activeOnly).orderBy(asc(instances.name))
   const now = await currentHealth(ctx, rows)
-  return rows.map((i) => ({
+  const settings = await Promise.all(rows.map((i) => ctx.settings.forInstance(i.overrides)))
+  return rows.map((i, n) => ({
     id: i.id,
     name: i.name,
     baseUrl: i.baseUrl,
@@ -80,6 +82,8 @@ export async function agentInstances(ctx: Ctx) {
     ...healthFields(i, now),
     healthDetail: i.healthDetail,
     healthCheckedAt: i.healthCheckedAt,
+    // How the instance is checked now and when a down alert is sent; past checks are in the health history.
+    check: settings[n] ? checkFacts(i, settings[n]) : null,
     queueMode: i.queueMode,
     // The main as a Compose project and service, when it is named so (both null otherwise).
     composeProject: i.composeProject,

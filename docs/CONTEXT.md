@@ -54,6 +54,14 @@ _Avoid_: offline, dead
 Collections in a row whose Main (or a queue worker) was Down. Health alerts wait for a number of them (Down alert after failed checks in a row); a passing collection starts the count again, and one Not collected counts neither way. The health shown is each collection's own.
 _Avoid_: retries, grace period
 
+**Health history**:
+Every applied collection of an instance's Main, kept for Keep health history (days), with how it was made and its response time. Not collected collections are kept too, as such.
+_Avoid_: uptime log, metrics
+
+**Failure run**:
+Failed checks in a row of the Main in the Health history, from the first failed one to the next passing one (when the recovery was seen, not when it happened). A Not collected collection neither extends nor ends one.
+_Avoid_: outage, incident, downtime
+
 **Unknown**:
 The health of an instance when there is no current knowledge of its Main: the last collection was not collected, or no collection runs, for example because its Worker is offline or none is assigned.
 _Avoid_: stale, n/a

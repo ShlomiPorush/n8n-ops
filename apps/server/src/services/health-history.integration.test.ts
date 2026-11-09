@@ -202,6 +202,19 @@ describe("failure runs", () => {
     ])
   })
 
+  it("sets the window by the order the checks were applied, so a clock that went back hides no run", async () => {
+    // The last hour starts with the failed check; the passing check after it carries an earlier clock time.
+    await stored([
+      [70, "ok"],
+      [50, "fail"],
+      [65, "ok"],
+    ])
+    const h = await healthHistory(ctx, { name: "n8n-a" }, query({ hours: 1 }), NOW)
+    expect(h.summary.failed).toBe(1)
+    expect(h.runs).toHaveLength(1)
+    expect(h.runs[0]).toMatchObject({ checks: 1, recoverySeen: true, startedBeforeWindow: false })
+  })
+
   it("gives the counts on a page past the end, and reaches every page", async () => {
     await stored([
       [60, "ok"],
@@ -299,5 +312,18 @@ describe("retention", () => {
     await pruneChecks(ctx, id, 2, NOW.getTime())
     const rows = await ctx.db.select().from(healthChecks)
     expect(rows.map((r) => r.checkedAt)).toEqual([minutesAgo(60)])
+  })
+
+  it("deletes the first checks as applied, so no hole joins two runs when the clock went back", async () => {
+    const day = 24 * 60
+    // Applied in this order around the one-day limit: a failure inside it, a pass the clock put outside, a failure.
+    await stored([
+      [day - 1, "fail"],
+      [day + 1, "ok"],
+      [day - 2, "fail"],
+    ])
+    await pruneChecks(ctx, id, 1, NOW.getTime())
+    const rows = await ctx.db.select().from(healthChecks)
+    expect(rows.map((r) => r.checkedAt)).toEqual([minutesAgo(day - 2)])
   })
 })

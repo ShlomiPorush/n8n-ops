@@ -1,9 +1,9 @@
 import { and, asc, eq, inArray, sql } from "drizzle-orm"
 import { z } from "zod"
 import type { Ctx } from "../context.ts"
-import { type FailureKind, healthChecks, instances } from "../db/schema.ts"
+import { type FailureKind, healthChecks, instances, workers } from "../db/schema.ts"
 import { type InstanceSettings, resolveInstanceSettings } from "../lib/settings.ts"
-import { currentHealth } from "./collection.ts"
+import { healthNow } from "./collection.ts"
 import type { HealthReport } from "./health.ts"
 import { activeOnly, type Instance } from "./instances.ts"
 import type { DbLike } from "./problems.ts"
@@ -129,15 +129,22 @@ export async function recordCheck(
 const at = (d: Date) => sql`${d.toISOString()}::timestamptz`
 
 /**
- * Deletes an instance's checks older than its Keep health history (days), a batch at a time, oldest first: a run
- * read between two batches, or after a stop, only lost its beginning, which startTruncated then says.
+ * Deletes an instance's checks older than its Keep health history (days), a batch at a time. What goes is always the
+ * first checks as they were applied, up to the last one older than the limit, so the history kept never has a hole:
+ * a run read between two batches, after a stop, or after the clock went back, only lost its beginning, which
+ * startTruncated then says. A check applied before that one is deleted with it even when its clock time is later.
  */
 export async function pruneChecks(ctx: Ctx, instanceId: string, days: number, now = Date.now()) {
   const before = at(new Date(now - days * 86_400_000))
+  const [edge] = (await ctx.db.execute(sql`
+    select max(id) as id from health_checks where instance_id = ${instanceId} and checked_at < ${before}`)) as unknown as {
+    id: string | number | null
+  }[]
+  if (edge?.id === null || edge?.id === undefined) return
   for (;;) {
     const gone = await ctx.db.execute(sql`
       delete from health_checks where id in (
-        select id from health_checks where instance_id = ${instanceId} and checked_at < ${before}
+        select id from health_checks where instance_id = ${instanceId} and id <= ${edge.id}
         order by id limit 5000)`)
     if ((gone as unknown as { count?: number }).count !== 5000) return
   }
@@ -261,12 +268,23 @@ export async function healthHistory(ctx: Ctx, ref: { name?: string; id?: string 
         select failure_kind as kind, count(*) as n from health_checks
         where instance_id = ${id} and checked_at >= ${fromAt} and checked_at <= ${toAt} and main_ok = false
         group by 1`)) as unknown as { kind: FailureKind; n: string | number }[]
-      // Runs start after the last passing check before the window; with none, from the oldest stored check, and
-      // a run there may have started before what is kept (startTruncated).
+      // The window in the order the checks were applied: from the first check at or after its start to the last one
+      // at or before its end, so a clock that went back never moves a check across it. Runs start after the last
+      // passing check before that; with none, from the oldest stored check, and a run there may have started before
+      // what is kept (startTruncated).
+      const [edges] = (await tx.execute(sql`
+        select
+          (select min(id) from health_checks where instance_id = ${id} and checked_at >= ${fromAt}) as start_id,
+          (select max(id) from health_checks where instance_id = ${id} and checked_at <= ${toAt}) as end_id`)) as unknown as {
+        start_id: string | number | null
+        end_id: string | number | null
+      }[]
+      const endId = Number(edges?.end_id ?? 0)
+      const startId = edges?.start_id === null || edges?.start_id === undefined ? endId + 1 : Number(edges.start_id)
       const [anchor] = (await tx.execute(sql`
         select max(id) as id from health_checks
-        where instance_id = ${id} and main_ok and checked_at < ${fromAt}`)) as unknown as { id: string | null }[]
-      const anchorId = anchor?.id ?? 0
+        where instance_id = ${id} and main_ok and id < ${startId}`)) as unknown as { id: string | number | null }[]
+      const anchorId = Number(anchor?.id ?? 0)
       // Each passing check starts a new group (grp), so a run is the failed checks of one group, and the passing
       // check that ends it is the one row of the next group that passed. Times come from the rows the ids pick:
       // the order of the checks is the order they were applied in, whatever the clock did.
@@ -275,20 +293,21 @@ export async function healthHistory(ctx: Ctx, ref: { name?: string; id?: string 
           select id, checked_at, main_ok, alert_queued, failure_kind,
             count(*) filter (where main_ok) over (order by id) as grp
           from health_checks
-          where instance_id = ${id} and main_ok is not null and id >= ${anchorId} and checked_at <= ${toAt}
+          where instance_id = ${id} and main_ok is not null and id >= ${anchorId} and id <= ${endId}
         ), runs as (
           select grp, min(id) as first_id, max(id) as last_id, count(*) as checks,
             bool_or(alert_queued) as alert_queued, array_agg(distinct failure_kind) as kinds
           from c where not main_ok group by grp
         ), ended as (
-          select r.*, f.checked_at as started_at, l.checked_at as last_failure_at, o.checked_at as recovered_at
+          select r.*, f.checked_at as started_at, l.checked_at as last_failure_at, o.checked_at as recovered_at,
+            o.id as recovered_id
           from runs r
           join c f on f.id = r.first_id
           join c l on l.id = r.last_id
           left join c o on o.main_ok and o.grp = r.grp + 1
         )
         select *, count(*) over () as total, count(*) filter (where alert_queued) over () as alerted
-        from ended where recovered_at is null or recovered_at >= ${fromAt}`
+        from ended where recovered_id is null or recovered_id >= ${startId}`
       const runs = (await tx.execute(sql`
         ${runsSql} order by first_id desc limit ${q.limit} offset ${q.offset}`)) as unknown as RunRow[]
       // A page past the end has no row to carry the counts.
@@ -299,13 +318,36 @@ export async function healthHistory(ctx: Ctx, ref: { name?: string; id?: string 
             from (${runsSql}) x`)) as unknown as { total: string | number; alerted: string | number }[])
       const lastIds = runs.map((r) => Number(r.last_id))
       const last = lastIds.length ? await tx.select().from(healthChecks).where(inArray(healthChecks.id, lastIds)) : []
-      return { instance, s, first, series, summary, byKind, counted, runs, last, anchored: anchorId !== 0 }
+      // The health now, from the same picture and the same settings as the rest of the answer.
+      const [worker] =
+        instance.collection === "worker" && instance.workerId
+          ? await tx.select().from(workers).where(eq(workers.id, instance.workerId))
+          : []
+      const health = healthNow(
+        instance,
+        worker ?? null,
+        instance.collection === "worker" ? s.healthIntervalSec : 0,
+        now.getTime(),
+      )
+      return {
+        instance,
+        s,
+        health,
+        first,
+        series,
+        summary,
+        byKind,
+        counted,
+        runs,
+        last,
+        startId,
+        anchored: anchorId !== 0,
+      }
     },
     { isolationLevel: "repeatable read", accessMode: "read only" },
   )
 
-  const { instance, s } = read
-  const [health] = (await currentHealth(ctx, [instance], now.getTime())).values()
+  const { instance, s, health } = read
   const lastById = new Map(read.last.map((r) => [r.id, r]))
   const total = Number(read.counted?.total ?? 0)
   const next = q.offset + read.runs.length
@@ -317,7 +359,7 @@ export async function healthHistory(ctx: Ctx, ref: { name?: string; id?: string 
     window: { from, to, bucketMinutes: bucketMin },
     historyStartsAt,
     check: checkFacts(instance, s),
-    now: { health: health?.health ?? instance.health, unknownReason: health?.unknownReason ?? null },
+    now: { health: health.health, unknownReason: health.unknownReason },
     summary: {
       checks: Number(sum.checks ?? 0),
       failed: Number(sum.failed ?? 0),
@@ -347,7 +389,7 @@ export async function healthHistory(ctx: Ctx, ref: { name?: string; id?: string 
       const startedAt = asDate(r.started_at)
       return {
         startedAt,
-        startedBeforeWindow: startedAt < from,
+        startedBeforeWindow: Number(r.first_id) < read.startId,
         startTruncated,
         lastFailureAt: asDate(r.last_failure_at),
         // The first passing check after the run: when the recovery was seen, not when n8n recovered.

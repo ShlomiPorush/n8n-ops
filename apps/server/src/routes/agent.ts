@@ -25,7 +25,14 @@ import {
   WORKFLOWS_DEFAULT,
   WORKFLOWS_MAX,
 } from "../services/agent.ts"
-import { HistoryError, HOURS_MAX, healthHistory, historyQuery, RUNS_MAX } from "../services/health-history.ts"
+import {
+  HistoryError,
+  HOURS_MAX,
+  healthHistory,
+  historyQuery,
+  OFFSET_MAX,
+  RUNS_MAX,
+} from "../services/health-history.ts"
 
 const isUuid = (value: string) => z.string().uuid().safeParse(value).success
 
@@ -325,7 +332,7 @@ export function buildMcpServer(
       instance: z.string().min(1),
       hours: z.number().int().min(1).max(HOURS_MAX).optional(),
       limit: z.number().int().min(1).max(RUNS_MAX).optional(),
-      offset: z.number().int().min(0).max(100_000).optional(),
+      offset: z.number().int().min(0).max(OFFSET_MAX).optional(),
       to: z.string().datetime({ offset: true }).optional(),
     },
     async (a) => {

@@ -82,8 +82,8 @@ describe("the check in the main", () => {
   it("reads health, readiness, the mode, the queue figures and the version", async () => {
     const port = await listen(n8n({ ...healthy, "/metrics": answer(200, metricsText()) }))
     expect(await output(at(port, { EXECUTIONS_MODE: "queue", N8N_METRICS: "true" }))).toEqual({
-      health: { status: 200 },
-      readiness: { status: 200 },
+      health: { status: 200, ms: expect.any(Number) },
+      readiness: { status: 200, ms: expect.any(Number) },
       mode: "queue",
       metrics: { state: "read" },
       queue: { waiting: 3, active: 1, completed: 450, failed: 2 },
@@ -204,11 +204,36 @@ describe("the check in the main", () => {
   it("says why when nothing answers, within the time it allows", async () => {
     const port = await listen(() => {})
     const started = Date.now()
-    expect(await output(at(port))).toMatchObject({
-      health: { status: 0, error: "no answer within 3 s" },
-      readiness: { status: 0, error: "no answer within 3 s" },
+    const out = await output(at(port))
+    expect(out).toMatchObject({
+      health: { status: 0, error: "no answer within 3 s", code: "timeout" },
+      readiness: { status: 0, error: "no answer within 3 s", code: "timeout" },
     })
+    // No whole answer came, so the request has no time.
+    expect(out.health?.ms).toBeUndefined()
     expect(Date.now() - started).toBeLessThan(8000)
+  })
+
+  it("says the error code when nothing listens", async () => {
+    const port = await listen(n8n(healthy))
+    await Promise.all(servers.splice(0).map((s) => new Promise((r) => s.close(r))))
+    expect(await output(at(port))).toMatchObject({ health: { status: 0, code: "ECONNREFUSED" } })
+  })
+
+  it("times each request on its own, until its whole answer came", async () => {
+    // Health sends its headers at once and its body after 400 ms; readiness answers at once; metrics take 1.5 s.
+    const late = (res: ServerResponse) => {
+      res.writeHead(200)
+      res.write("{")
+      setTimeout(() => res.end('"status":"ok"}'), 400)
+    }
+    const slow = (res: ServerResponse) => setTimeout(() => res.writeHead(200).end(metricsText()), 1500)
+    const port = await listen(n8n({ "/healthz": late, "/healthz/readiness": answer(200, "{}"), "/metrics": slow }))
+    const out = await output(at(port, { N8N_METRICS: "true" }))
+    expect(out.health?.ms).toBeGreaterThanOrEqual(350)
+    expect(out.health?.ms).toBeLessThan(1400)
+    expect(out.readiness?.ms).toBeLessThan(350)
+    expect(out.metrics).toEqual({ state: "read" })
   })
 
   it("does not read metrics larger than 4 MiB", async () => {

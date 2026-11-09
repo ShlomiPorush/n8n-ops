@@ -2,7 +2,7 @@ import { and, eq, sql } from "drizzle-orm"
 import type { Ctx } from "../context.ts"
 import { instances } from "../db/schema.ts"
 import { oneAtATime } from "../lib/one-at-a-time.ts"
-import { closeQueueAlerts, closeWorkerConditions } from "./health.ts"
+import { closeQueueAlerts, closeWorkerConditions, resetPendingDown } from "./health.ts"
 import { collectionUpdate, healthTurn, type Instance } from "./instances.ts"
 
 export type InstanceChange = Partial<typeof instances.$inferInsert>
@@ -103,6 +103,8 @@ export function updateInstance(ctx: Ctx, id: string, data: InstanceChange, expec
       if (saved && current.queueMode && !saved.queueMode) await closeQueueAlerts(tx, saved.id)
       // Another worker, container or collection mode: the worker conditions of the old target end.
       else if (saved && change.queueModeSource) await closeWorkerConditions(tx, saved.id)
+      // Failed checks of the old target never count toward a down alert about the new one.
+      if (saved && change.raiseRevision) await resetPendingDown(tx, saved.id)
       return saved
     }),
   )
@@ -126,7 +128,10 @@ export async function detachWorker(ctx: Ctx, workerId: string) {
           })
           .where(and(eq(instances.id, id), eq(instances.workerId, workerId)))
           .returning({ id: instances.id })
-        if (saved) await closeWorkerConditions(tx, saved.id)
+        if (saved) {
+          await closeWorkerConditions(tx, saved.id)
+          await resetPendingDown(tx, saved.id)
+        }
       }),
     )
   }

@@ -47,6 +47,7 @@ export const settingLabels = {
   defaults: {
     pollIntervalSec: "Check for failures every (seconds)",
     healthIntervalSec: "Collect health every (seconds)",
+    downAfterFailures: "Down alert after failed checks in a row",
     backupTime: "Daily backup time",
     staleBackupHours: "Backup is late after (hours)",
     executionRetentionDays: "Keep failed executions (days)",

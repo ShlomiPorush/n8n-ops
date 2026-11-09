@@ -220,6 +220,12 @@ export const forms: Record<string, { title: string; description: string; fields:
     fields: [
       { name: "pollIntervalSec", label: "Check for failures every (seconds)", type: "number" },
       { name: "healthIntervalSec", label: "Collect health every (seconds)", type: "number" },
+      {
+        name: "downAfterFailures",
+        label: "Down alert after failed checks in a row",
+        hint: "3 to 20. The alert comes about this many health intervals after the first failed check; a single slow or failed check alerts no one.",
+        type: "number",
+      },
       { name: "backupTime", label: "Daily backup time", type: "time" },
       { name: "staleBackupHours", label: "Backup is late after (hours)", type: "number" },
       { name: "executionRetentionDays", label: "Keep failed executions (days)", type: "number" },

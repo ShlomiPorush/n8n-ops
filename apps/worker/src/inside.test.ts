@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from "node:net"
 import { afterEach, describe, expect, it } from "vitest"
 import { Docker, DockerError } from "./docker.ts"
-import { checkInside } from "./inside.ts"
+import { checkInside, reportFromOutput } from "./inside.ts"
 import { probeJob } from "./jobs.ts"
 import { LIMITS } from "./queue-workers.ts"
 
@@ -128,6 +128,26 @@ describe("the Docker client in a probe", () => {
     const { docker } = await engine({ start: (res) => res.writeHead(200).end(frame(big)) })
     const result = await docker.exec("n8n", ["cat", "/tmp/export.tar"])
     expect(result.stdout.length).toBe(big.length)
+  })
+})
+
+describe("reportFromOutput", () => {
+  it("keeps each request's own time apart from the whole check's", () => {
+    const report = reportFromOutput(
+      { health: { status: 200, ms: 12 }, readiness: { status: 503, ms: 40 }, mode: "regular" },
+      900,
+    )
+    expect(report.main).toEqual({ ok: true, status: 200, ms: 900, requestMs: 12 })
+    expect(report.readiness).toEqual({ ok: false, status: 503, ms: 900, requestMs: 40 })
+  })
+
+  it("has no request time where none was measured, and keeps the error code", () => {
+    const report = reportFromOutput(
+      { health: { status: 0, error: "no answer within 3 s", code: "timeout" }, readiness: { status: 200 } },
+      3100,
+    )
+    expect(report.main).toEqual({ ok: false, status: 0, ms: 3100, error: "no answer within 3 s", code: "timeout" })
+    expect(report.readiness).toEqual({ ok: true, status: 200, ms: 3100 })
   })
 })
 

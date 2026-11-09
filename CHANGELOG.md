@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Changed
 
+- **A down alert waits for failed checks in a row.** An instance's main or a queue worker is reported down only after 3 health checks in a row failed, not on the first one, so a single slow or missed check no longer sends "is down" and "is up again" a minute apart. Settings → Instance Defaults has **Down alert after failed checks in a row** (3 to 20), and an instance can override it. A passing check starts the count again; a check n8n-ops could not make counts neither way. The alert says how many checks failed and over how long. The status on the page still shows every check as it is.
+- **Health checks time each request on its own.** A worker of this release reports how long n8n took to answer `/healthz` and `/healthz/readiness` each, until the whole answer came, and the error code when a request failed (`ECONNREFUSED`, `timeout` and so on). Before, the time of a check from inside the container was the whole check, starting Node and reading the metrics included. Update the worker on each n8n host to get them; a worker of an earlier release keeps working as before.
 - **Dates on Connected Agents read evenly.** In the Agents and Tokens list, Approved and Last used show their digits at their natural width, so a date such as 05.11 no longer looks spaced out and smaller than a time such as 17:25.
 
 ## [0.14.0] - 2026-11-08

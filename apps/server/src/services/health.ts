@@ -1,15 +1,28 @@
 import { workerDetails } from "@n8n-ops/shared"
-import { and, eq, like, sql } from "drizzle-orm"
+import { and, eq, gt, like, or, sql } from "drizzle-orm"
 import { z } from "zod"
 import { type Ctx, changed } from "../context.ts"
 import { alertState, type Health, instances } from "../db/schema.ts"
 import { oneAtATime } from "../lib/one-at-a-time.ts"
 import { parseQueueMetrics, probe, type QueueMetrics } from "../n8n/client.ts"
-import { setCondition } from "./alerts.ts"
+import { conditionSettings, type Streak, setConditionIn } from "./alerts.ts"
 import { healthTurn, type Instance, metricsUrlOf } from "./instances.ts"
+import type { DbLike } from "./problems.ts"
 import { clip, html } from "./telegram.ts"
 
-const probeResult = z.object({ ok: z.boolean(), status: z.number(), ms: z.number(), error: z.string().optional() })
+/**
+ * One request's result. `ms` is how long the worker's step took (for a check inside a container, the whole check);
+ * `requestMs` is the request alone until its whole answer, absent when none came or from workers of earlier
+ * releases, so the two are never mixed. `code` names what failed, when known.
+ */
+const probeResult = z.object({
+  ok: z.boolean(),
+  status: z.number(),
+  ms: z.number(),
+  requestMs: z.number().min(0).max(600_000).optional().catch(undefined),
+  error: z.string().optional(),
+  code: z.string().max(40).optional().catch(undefined),
+})
 
 /** What the socket proxy refused: the Docker call, and the container for a command. */
 export const refusal = z.object({
@@ -198,13 +211,33 @@ export function healthOf(report: HealthReport, backlogActive: boolean): Health {
 
 const failure = (p: ProbeResult) => clip(p.error ?? `HTTP ${p.status}`, 500)
 
+/** How long a streak of failed checks has lasted: seconds, or minutes and seconds. */
+export function lasted(ms: number) {
+  const total = Math.max(0, Math.round(ms / 1000))
+  const min = Math.floor(total / 60)
+  const sec = total % 60
+  return min ? (sec ? `${min} min ${sec} s` : `${min} min`) : `${sec} s`
+}
+
+/** The line of a down alert that says how many checks failed in a row, and over how long. */
+const streakLine = (streak: Streak | undefined, now: Date) =>
+  streak && streak.failures > 1
+    ? html`\n${streak.failures} failed checks in a row over ${lasted(now.getTime() - streak.since.getTime())}`
+    : html``
+
 /** Telegram texts of the health alerts. Names, URLs and errors come from outside and are shortened. */
 export const healthAlerts = {
-  down: (name: string, main: ProbeResult) => html`<b>${clip(name, 200)} is down</b>\n${failure(main)}`,
+  down: (name: string, main: ProbeResult, streak?: Streak, now = new Date()) =>
+    html`<b>${clip(name, 200)} is down</b>\n${failure(main)}${streakLine(streak, now)}`,
   up: (name: string) => html`<b>${clip(name, 200)} is up again</b>`,
-  workerDown: (name: string, worker: ProbeResult & { url: string; name?: string }) =>
+  workerDown: (
+    name: string,
+    worker: ProbeResult & { url: string; name?: string },
+    streak?: Streak,
+    now = new Date(),
+  ) =>
     html`<b>Queue worker down on ${clip(name, 200)}</b>
-${clip(worker.name ?? worker.url, 200)}: ${failure(worker)}`,
+${clip(worker.name ?? worker.url, 200)}: ${failure(worker)}${streakLine(streak, now)}`,
   workerUp: (name: string, url: string) => html`<b>Queue worker back on ${clip(name, 200)}</b>
 ${clip(url, 200)}`,
   backlog: (name: string, waiting: number, minutes: number) =>
@@ -222,10 +255,20 @@ export async function closeQueueAlerts(db: Pick<Ctx["db"], "update">, instanceId
   for (const prefix of [`worker:${instanceId}:`, `backlog:${instanceId}`]) {
     await db
       .update(alertState)
-      .set({ active: false, since: new Date(), detail: NOT_QUEUE })
-      .where(and(like(alertState.key, `${prefix}%`), eq(alertState.active, true)))
+      .set(closed(NOT_QUEUE))
+      .where(and(like(alertState.key, `${prefix}%`), openOrPending))
   }
 }
+
+/**
+ * A condition that is on, or has failed checks counting toward it. Closing one ends both: failed checks of what was
+ * checked before a change never add up with those of what is checked after it.
+ */
+export const openOrPending = or(eq(alertState.active, true), gt(alertState.failures, 0))
+
+/** What a condition closed without a message is set to, saying why. */
+export const closed = (why: string) =>
+  ({ active: false, since: new Date(), detail: why, failures: 0, failingSince: null }) as const
 
 /**
  * Ends every worker condition of an instance without a message: its collection target changed (another worker or
@@ -234,22 +277,30 @@ export async function closeQueueAlerts(db: Pick<Ctx["db"], "update">, instanceId
 export async function closeWorkerConditions(db: Pick<Ctx["db"], "update">, instanceId: string) {
   await db
     .update(alertState)
-    .set({ active: false, since: new Date(), detail: "Closed: the instance is now checked from somewhere else" })
-    .where(and(like(alertState.key, `worker:${instanceId}:%`), eq(alertState.active, true)))
+    .set(closed("Closed: the instance is now checked from somewhere else"))
+    .where(and(like(alertState.key, `worker:${instanceId}:%`), openOrPending))
+}
+
+/**
+ * Drops the failed checks counting toward the instance's down condition, when what is checked changed: they were
+ * about the old target. A down condition already on stays until a check passes.
+ */
+export async function resetPendingDown(db: Pick<Ctx["db"], "update">, instanceId: string) {
+  await db
+    .update(alertState)
+    .set({ failures: 0, failingSince: null })
+    .where(and(eq(alertState.key, `down:${instanceId}`), eq(alertState.active, false), gt(alertState.failures, 0)))
 }
 
 /** Ends worker conditions of an instance that `ends` picks, without a message, saying why. */
-async function closeWorkerAlerts(ctx: Ctx, instanceId: string, ends: (key: string) => boolean, why: string) {
+async function closeWorkerAlerts(tx: DbLike, instanceId: string, ends: (key: string) => boolean, why: string) {
   const prefix = `worker:${instanceId}:`
-  const open = await ctx.db
+  const open = await tx
     .select({ key: alertState.key })
     .from(alertState)
-    .where(and(like(alertState.key, `${prefix}%`), eq(alertState.active, true)))
+    .where(and(like(alertState.key, `${prefix}%`), openOrPending))
   for (const { key } of open.filter((o) => ends(o.key))) {
-    await ctx.db
-      .update(alertState)
-      .set({ active: false, since: new Date(), detail: why })
-      .where(eq(alertState.key, key))
+    await tx.update(alertState).set(closed(why)).where(eq(alertState.key, key))
   }
 }
 
@@ -258,7 +309,7 @@ async function closeWorkerAlerts(ctx: Ctx, instanceId: string, ends: (key: strin
  * and a found worker that is gone ends as removed, but only after the container list was read in full. Typed
  * URLs, or no discovery: conditions of found workers end.
  */
-async function settleWorkerSources(ctx: Ctx, instanceId: string, report: HealthReport) {
+async function settleWorkerSources(tx: DbLike, instanceId: string, report: HealthReport) {
   const found = `worker:${instanceId}:docker://`
   const d = report.discovery
   if (!d) {
@@ -266,14 +317,14 @@ async function settleWorkerSources(ctx: Ctx, instanceId: string, report: HealthR
     // (a fallback to the network, a worker of an earlier release) says nothing about them: they stay.
     if (!report.workers.some((w) => !w.url.startsWith("docker://"))) return
     return closeWorkerAlerts(
-      ctx,
+      tx,
       instanceId,
       (key) => key.startsWith(found),
       "Closed: the workers are checked another way",
     )
   }
   await closeWorkerAlerts(
-    ctx,
+    tx,
     instanceId,
     (key) => !key.startsWith(found),
     "Closed: the workers are found next to the main",
@@ -281,7 +332,7 @@ async function settleWorkerSources(ctx: Ctx, instanceId: string, report: HealthR
   if (d.status !== "ok") return
   const listed = new Set(report.workers.map((w) => `worker:${instanceId}:${w.url}`))
   await closeWorkerAlerts(
-    ctx,
+    tx,
     instanceId,
     (key) => key.startsWith(found) && !listed.has(key),
     "Closed: the worker was removed",
@@ -307,6 +358,8 @@ async function applyHealthNow(ctx: Ctx, instanceId: string, given: HealthReport,
     .where(eq(instances.id, instanceId))
   if (!before) return null
   const s = await ctx.settings.forInstance(before.overrides)
+  const subject = { instanceId }
+  const alerting = await conditionSettings(ctx, "health", subject)
 
   const applied = await ctx.db.transaction(async (tx) => {
     const [current] = await tx.select().from(instances).where(eq(instances.id, instanceId)).for("update")
@@ -355,44 +408,66 @@ async function applyHealthNow(ctx: Ctx, instanceId: string, given: HealthReport,
       .where(eq(instances.id, current.id))
     // In the same transaction, so a mode stored as regular never leaves queue alerts open behind it.
     if (!queueMode) await closeQueueAlerts(tx, current.id)
-    return { current, report, health, queueMode, measured, backlogActive }
+
+    // The conditions and their alerts are applied with the report, so a report stored is never one whose alerts
+    // were lost, and failed checks are counted exactly once each.
+    const name = current.name
+    const after = s.downAfterFailures
+    // Not collected says nothing about the main: its conditions and failed checks in a row stay as they were.
+    // Queue workers checked in the same probe were verified on their own, so their results still apply.
+    if (!report.notCollected)
+      await setConditionIn(
+        tx,
+        `down:${current.id}`,
+        !report.main.ok,
+        {
+          kind: "health",
+          subject,
+          after,
+          start: (streak) => healthAlerts.down(name, report.main, streak, now),
+          clear: () => healthAlerts.up(name),
+        },
+        alerting,
+      )
+    if (queueMode) {
+      await settleWorkerSources(tx, current.id, report)
+      for (const w of report.workers) {
+        // Only a verified state moves an alert: a worker not checked, or running without its health check, keeps it.
+        if (w.state === "not-checked" || w.state === "not-verified") continue
+        await setConditionIn(
+          tx,
+          `worker:${current.id}:${w.url}`,
+          !w.ok,
+          {
+            kind: "health",
+            subject,
+            after,
+            start: (streak) => healthAlerts.workerDown(name, w, streak, now),
+            clear: () => healthAlerts.workerUp(name, w.name ?? w.url),
+          },
+          alerting,
+        )
+      }
+      if (measured) {
+        await setConditionIn(
+          tx,
+          `backlog:${current.id}`,
+          backlogActive,
+          {
+            kind: "health",
+            subject,
+            start: () => healthAlerts.backlog(name, report.queue?.waiting ?? 0, s.backlogMinutes),
+            clear: () => healthAlerts.backlogCleared(name),
+          },
+          alerting,
+        )
+      }
+    }
+    return { current, health }
   })
   if (!applied) return null
-
-  const { current, report, health, queueMode, measured, backlogActive } = applied
-  if (health !== current.health) changed(ctx, "instances", "overview")
-  const name = current.name
-  const subject = { instanceId: current.id }
-  // Not collected says nothing about the main: its conditions stay as they were. Queue workers checked in the same
-  // probe were verified on their own, so their results still apply.
-  if (!report.notCollected)
-    await setCondition(ctx, `down:${current.id}`, !report.main.ok, {
-      kind: "health",
-      subject,
-      start: () => healthAlerts.down(name, report.main),
-      clear: () => healthAlerts.up(name),
-    })
-  if (!queueMode) return health
-  await settleWorkerSources(ctx, current.id, report)
-  for (const w of report.workers) {
-    // Only a verified state moves an alert: a worker not checked, or running without its health check, keeps it.
-    if (w.state === "not-checked" || w.state === "not-verified") continue
-    await setCondition(ctx, `worker:${current.id}:${w.url}`, !w.ok, {
-      kind: "health",
-      subject,
-      start: () => healthAlerts.workerDown(name, w),
-      clear: () => healthAlerts.workerUp(name, w.name ?? w.url),
-    })
-  }
-  if (measured) {
-    await setCondition(ctx, `backlog:${current.id}`, backlogActive, {
-      kind: "health",
-      subject,
-      start: () => healthAlerts.backlog(name, report.queue?.waiting ?? 0, s.backlogMinutes),
-      clear: () => healthAlerts.backlogCleared(name),
-    })
-  }
-  return health
+  if (applied.health !== applied.current.health) changed(ctx, "instances", "overview")
+  return applied.health
 }
 
 /**

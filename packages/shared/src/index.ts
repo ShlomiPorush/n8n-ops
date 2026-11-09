@@ -46,6 +46,7 @@ export {
   withDependencies,
   withoutDependents,
 } from "./instance-setup.ts"
+export { errorCode, type RequestReading, requestOnce } from "./request-once.ts"
 export {
   type MainCheckOutput,
   mainCheckOutput,

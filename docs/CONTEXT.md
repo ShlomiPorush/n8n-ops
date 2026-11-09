@@ -50,6 +50,10 @@ _Avoid_: failed check, error
 The health of an instance whose Main does not answer, answers that it is not healthy, or is stopped.
 _Avoid_: offline, dead
 
+**Failed checks in a row**:
+Collections in a row whose Main (or a queue worker) was Down. Health alerts wait for a number of them (Down alert after failed checks in a row); a passing collection starts the count again, and one Not collected counts neither way. The health shown is each collection's own.
+_Avoid_: retries, grace period
+
 **Unknown**:
 The health of an instance when there is no current knowledge of its Main: the last collection was not collected, or no collection runs, for example because its Worker is offline or none is assigned.
 _Avoid_: stale, n/a

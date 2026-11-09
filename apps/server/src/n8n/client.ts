@@ -1,3 +1,5 @@
+import { requestOnce } from "@n8n-ops/shared"
+
 /** Minimal client for the n8n public API (v1) and the unauthenticated health endpoints. */
 
 export type N8nExecution = {
@@ -212,14 +214,8 @@ export class N8nClient {
 }
 
 /** Probes a health URL: true when it answers 2xx. */
-export async function probe(url: string, fetchImpl: FetchLike = fetch, timeoutMs = 10_000) {
-  const started = Date.now()
-  try {
-    const res = await fetchImpl(url, { signal: AbortSignal.timeout(timeoutMs) })
-    return { ok: res.ok, status: res.status, ms: Date.now() - started }
-  } catch (error) {
-    return { ok: false, status: 0, ms: Date.now() - started, error: (error as Error).message }
-  }
+export function probe(url: string, fetchImpl: FetchLike = fetch, timeoutMs = 10_000) {
+  return requestOnce(url, AbortSignal.timeout(timeoutMs), fetchImpl)
 }
 
 export type QueueMetrics = { waiting: number; active: number; completed: number; failed: number }

@@ -186,6 +186,36 @@ describe("failure runs", () => {
     expect(past.runs[0]).toMatchObject({ recoverySeen: false, endTruncated: true })
   })
 
+  it("takes a run's times from its first and last checks as applied, even after the clock went back", async () => {
+    // Applied in this order; the clock went back 5 minutes after the first failed check.
+    await stored([
+      [100, "ok"],
+      [90, "fail"],
+      [95, "fail"],
+      [93, "ok"],
+      [92, "fail"],
+    ])
+    const h = await healthHistory(ctx, { name: "n8n-a" }, query(), NOW)
+    expect(h.runs.map((r) => [r.startedAt, r.lastFailureAt, r.recoverySeenAt])).toEqual([
+      [minutesAgo(92), minutesAgo(92), null],
+      [minutesAgo(90), minutesAgo(95), minutesAgo(93)],
+    ])
+  })
+
+  it("gives the counts on a page past the end, and reaches every page", async () => {
+    await stored([
+      [60, "ok"],
+      [50, "fail"],
+      [49, "ok"],
+    ])
+    expect(await healthHistory(ctx, { name: "n8n-a" }, query({ offset: 5 }), NOW)).toMatchObject({
+      total: 1,
+      nextOffset: null,
+      runs: [],
+    })
+    expect(historyQuery.safeParse({ offset: 300_000 }).success).toBe(true)
+  })
+
   it("pages the runs newest first with a total and the next offset", async () => {
     await stored([
       [60, "ok"],

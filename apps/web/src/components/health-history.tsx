@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { Empty, LoadError, Loading, Panel, PanelHead } from "@/components/kit"
+import { Empty, LoadError, Loading, Panel, PanelHead, RefreshLine } from "@/components/kit"
 import { Code, Tone, When } from "@/components/status"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useApi } from "@/lib/api"
@@ -89,6 +89,8 @@ export function HealthHistory({ instanceId, active }: { instanceId: string; acti
   return (
     <>
       <Panel>
+        {/* A refresh, or another range, that failed: says so with Try again, over the data kept on screen. */}
+        <RefreshLine live={history} what="this range" />
         <PanelHead
           title="Response times"
           action={
@@ -111,7 +113,7 @@ export function HealthHistory({ instanceId, active }: { instanceId: string; acti
               <>
                 {s.measured > 0
                   ? `Median ${ms(s.p50Ms)}, 95% under ${ms(s.p95Ms)}, slowest ${ms(s.maxMs)}. `
-                  : "No response time was measured: the worker on this host sends them from its next release on. "}
+                  : "No response time was measured in this range. "}
                 {s.failed > 0
                   ? `${plural(s.failed, "failed check")} of ${n(s.checks)}.`
                   : `All ${plural(s.checks, "check")} passed.`}
@@ -164,7 +166,7 @@ function RunRow({ run }: { run: Run }) {
           {run.checksAtLeast ? "at least " : ""}
           {plural(run.checks, "check")}
         </span>
-        {run.alertQueued === true && <Tone tone="warn">Down alert sent</Tone>}
+        {run.alertQueued === true && <Tone tone="warn">Down alert queued</Tone>}
         <span className="ms-auto text-end text-muted-foreground">
           {run.recoverySeenAt ? (
             <>
@@ -223,14 +225,17 @@ function Chart({ history }: { history: History }) {
   const y = (v: number) => PAD.top + plotH - (Math.min(v, top) / top) * plotH
   const mid = (b: Bucket) => new Date(b.at).getTime() + bucketMs / 2
 
-  // A line breaks where a bucket has no measured time, so a gap is never drawn as if it were known.
+  // A line breaks where a bucket has no measured time, and where buckets are missing (no check at all, the server
+  // or the worker was away), so a gap is never drawn as if it were known.
   const segments: Bucket[][] = []
   let current: Bucket[] = []
   for (const b of history.series) {
-    if (b.avgMs === null) {
+    const prev = current.at(-1)
+    if (b.avgMs === null || (prev && new Date(b.at).getTime() - new Date(prev.at).getTime() > bucketMs)) {
       if (current.length) segments.push(current)
       current = []
-    } else current.push(b)
+    }
+    if (b.avgMs !== null) current.push(b)
   }
   if (current.length) segments.push(current)
   const line = (seg: Bucket[]) =>

@@ -125,9 +125,12 @@ export async function recordCheck(
   })
 }
 
+/** An instant as a raw SQL value: the driver takes a Date only where the query builder knows the column. */
+const at = (d: Date) => sql`${d.toISOString()}::timestamptz`
+
 /** Deletes an instance's checks older than its Keep health history (days), a batch at a time. */
 export async function pruneChecks(ctx: Ctx, instanceId: string, days: number, now = Date.now()) {
-  const before = new Date(now - days * 86_400_000)
+  const before = at(new Date(now - days * 86_400_000))
   for (;;) {
     const gone = await ctx.db.execute(sql`
       delete from health_checks where id in (
@@ -207,6 +210,8 @@ export async function healthHistory(ctx: Ctx, ref: { name?: string; id?: string 
   const from = new Date(to.getTime() - q.hours * 3_600_000)
   const bucketMin = q.hours <= 48 ? 5 : 60
   const id = instance.id
+  const fromAt = at(from)
+  const toAt = at(to)
 
   const read = await ctx.db.transaction(
     async (tx) => {
@@ -217,7 +222,7 @@ export async function healthHistory(ctx: Ctx, ref: { name?: string; id?: string 
         .orderBy(asc(healthChecks.id))
         .limit(1)
       const series = (await tx.execute(sql`
-        select date_bin(${`${bucketMin} minutes`}::interval, checked_at, ${from}::timestamptz) as at,
+        select date_bin(${`${bucketMin} minutes`}::interval, checked_at, ${fromAt}) as at,
           count(*) filter (where main_ok is not null) as checks,
           count(*) filter (where main_ok = false) as failed,
           count(*) filter (where main_ok is null) as not_collected,
@@ -226,7 +231,7 @@ export async function healthHistory(ctx: Ctx, ref: { name?: string; id?: string 
           round(avg(main_ms) filter (where main_ok)) as avg_ms,
           max(main_ms) filter (where main_ok) as max_ms
         from health_checks
-        where instance_id = ${id} and checked_at >= ${from} and checked_at <= ${to}
+        where instance_id = ${id} and checked_at >= ${fromAt} and checked_at <= ${toAt}
         group by 1 order by 1`)) as unknown as Record<string, string | number | Date | null>[]
       const [summary] = (await tx.execute(sql`
         select count(*) filter (where main_ok is not null) as checks,
@@ -237,26 +242,26 @@ export async function healthHistory(ctx: Ctx, ref: { name?: string; id?: string 
           percentile_cont(0.95) within group (order by main_ms) filter (where main_ok and main_ms is not null) as p95,
           max(main_ms) filter (where main_ok) as max_ms
         from health_checks
-        where instance_id = ${id} and checked_at >= ${from} and checked_at <= ${to}`)) as unknown as Record<
+        where instance_id = ${id} and checked_at >= ${fromAt} and checked_at <= ${toAt}`)) as unknown as Record<
         string,
         string | number | null
       >[]
       const byKind = (await tx.execute(sql`
         select failure_kind as kind, count(*) as n from health_checks
-        where instance_id = ${id} and checked_at >= ${from} and checked_at <= ${to} and main_ok = false
+        where instance_id = ${id} and checked_at >= ${fromAt} and checked_at <= ${toAt} and main_ok = false
         group by 1`)) as unknown as { kind: FailureKind; n: string | number }[]
       // Runs start after the last passing check before the window; with none, from the oldest stored check, and
       // a run there may have started before what is kept (startTruncated).
       const [anchor] = (await tx.execute(sql`
         select max(id) as id from health_checks
-        where instance_id = ${id} and main_ok and checked_at < ${from}`)) as unknown as { id: string | null }[]
+        where instance_id = ${id} and main_ok and checked_at < ${fromAt}`)) as unknown as { id: string | null }[]
       const anchorId = anchor?.id ?? 0
       const runsSql = sql`
         with c as (
           select id, checked_at, main_ok, alert_queued, failure_kind,
             count(*) filter (where main_ok) over (order by id) as grp
           from health_checks
-          where instance_id = ${id} and main_ok is not null and id >= ${anchorId} and checked_at <= ${to}
+          where instance_id = ${id} and main_ok is not null and id >= ${anchorId} and checked_at <= ${toAt}
         ), runs as (
           select grp, min(id) as first_id, max(id) as last_id, min(checked_at) as started_at,
             max(checked_at) as last_failure_at, count(*) as checks, bool_or(alert_queued) as alert_queued,
@@ -265,7 +270,7 @@ export async function healthHistory(ctx: Ctx, ref: { name?: string; id?: string 
         ), ended as (
           select r.*, (select min(c.checked_at) from c where c.grp = r.grp + 1) as recovered_at from runs r
         )
-        select * from ended where recovered_at is null or recovered_at >= ${from}`
+        select * from ended where recovered_at is null or recovered_at >= ${fromAt}`
       const [counted] = (await tx.execute(sql`
         select count(*) as total, count(*) filter (where alert_queued) as alerted from (${runsSql}) x`)) as unknown as {
         total: string | number

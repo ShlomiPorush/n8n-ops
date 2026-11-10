@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Security
+
+- **The build tools no longer pull versions with published advisories.** The database migration tool now runs on esbuild 0.25 instead of 0.18, and the UI component tool on minimatch 11 instead of 10. Neither is part of what the images run, so an installation needs no change.
+
 ## [0.15.0] - 2026-11-09
 
 ### Added

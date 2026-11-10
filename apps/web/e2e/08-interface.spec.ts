@@ -2091,6 +2091,18 @@ test("a control that a new width moves gives the focus to the one in its place (
     await page.setViewportSize({ width: 2600, height: 900 })
     await expect(bar).toHaveAttribute("data-mode", "wide")
     await expect(bar.getByRole("radio", { name: "Resolved", exact: true })).toBeFocused()
+    // An option of an open Instance list hands the focus to the Filters button that Instance went behind (R5).
+    await instance.click()
+    await expect(page.getByRole("option", { name: "All", exact: true })).toBeFocused()
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await expect(bar).toHaveAttribute("data-mode", "narrow")
+    await expect(bar.getByRole("button", { name: /^Filters/ })).toBeFocused()
+    // The search button hands the focus to the field that takes its place (R5).
+    await page.goto("/problems?status=open")
+    const searchButton = bar.getByRole("button", { name: "Search problems", exact: true })
+    await searchButton.focus()
+    await page.setViewportSize({ width: 2600, height: 900 })
+    await expect(bar.getByLabel("Search workflow, target or error")).toBeFocused()
   } finally {
     await page.setViewportSize({ width: 1440, height: 900 })
   }

@@ -562,12 +562,24 @@ export function FilterBar({
   React.useLayoutEffect(() => {
     const el = bar.current
     if (!el) return
+    // The part that holds the focus, also through an open picker list, which Radix puts outside the bar: its
+    // trigger names the list in aria-controls.
+    const partOf = (focused: Element | null) => {
+      if (!focused) return null
+      let owner: Element | null = el.contains(focused) ? focused : null
+      const list = focused.closest('[data-slot="picker-content"]')
+      if (!owner && list)
+        owner =
+          [...el.querySelectorAll("[aria-controls]")].find((c) => {
+            const id = c.getAttribute("aria-controls")
+            const controlled = id ? document.getElementById(id) : null
+            return controlled !== null && list.contains(controlled)
+          }) ?? null
+      return owner?.closest("[data-part]")?.getAttribute("data-part") ?? null
+    }
     const check = () => {
-      const next = barMode(el.clientWidth, hasViews)
-      const focused = document.activeElement
-      moved.current =
-        focused && el.contains(focused) ? (focused.closest("[data-part]")?.getAttribute("data-part") ?? null) : null
-      setMode(next)
+      moved.current = partOf(document.activeElement)
+      setMode(barMode(el.clientWidth, hasViews))
     }
     check()
     const observer = new ResizeObserver(check)
@@ -575,8 +587,8 @@ export function FilterBar({
     return () => observer.disconnect()
   }, [hasViews])
   // A control that a new width took away gives the focus to the one in its place: the views to the chosen view
-  // (or the views picker), a picker or the Filters button to the pickers in the row or to the Filters button
-  // they went behind.
+  // (or the views picker), the search button to the field, a picker or the Filters button to the pickers in the
+  // row or to the Filters button they went behind.
   React.useLayoutEffect(() => {
     const el = bar.current
     const part = moved.current
@@ -586,10 +598,12 @@ export function FilterBar({
     const target =
       part === "views"
         ? (find('[data-part="views"] [aria-checked="true"]') ?? find('[data-part="views"] button'))
-        : part === "pickers" || part === "filters"
-          ? (find(mode === "wide" ? '[data-part="pickers"] button' : '[data-part="filters"]') ??
-            find('[data-part="filters"]'))
-          : null
+        : part === "search"
+          ? (find('[data-part="search"]:not([hidden]) input') ?? find('button[data-part="search"]'))
+          : part === "pickers" || part === "filters"
+            ? (find(mode === "wide" ? '[data-part="pickers"] button' : '[data-part="filters"]') ??
+              find('[data-part="filters"]'))
+            : null
     target?.focus()
   }, [mode])
   // Opening the rare filters moves the focus to the first of them (MP-6).
@@ -694,6 +708,7 @@ export function FilterBar({
             <button
               ref={searchButton}
               type="button"
+              data-part="search"
               aria-expanded={false}
               aria-controls={fieldId}
               aria-label={searchName}
@@ -712,6 +727,7 @@ export function FilterBar({
             <div
               ref={field}
               id={fieldId}
+              data-part="search"
               hidden={!fieldShown}
               className={mode === "wide" ? "w-64" : "min-w-0 flex-1 basis-0"}
             >

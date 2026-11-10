@@ -166,6 +166,11 @@ type Selected = AffectedRow & {
 
 /** When a failure ran, as the server orders them: stopped, else started, else when n8n-ops stored it. */
 const ranAt = (f: Selected["occurrences"][number]) => f.stoppedAt ?? f.startedAt ?? f.createdAt
+/**
+ * An execution number reads in the body text's font, size and natural digit widths, not as a smaller monospace
+ * code beside it.
+ */
+const RUN_ID = "font-sans text-body normal-nums"
 
 type ProblemDetailData = ProblemRow & {
   selected: Selected
@@ -972,7 +977,7 @@ export function ProblemDetail({ id }: { id: string }) {
               <p className="flex flex-wrap items-center gap-x-2 gap-y-1 px-pad-x py-pad-y">
                 <HistoryIcon aria-hidden className="size-4 text-muted-foreground" />
                 <b className="font-semibold">Latest failure</b>
-                <Copyable value={latest.executionId} label="Copy execution ID">
+                <Copyable value={latest.executionId} label="Copy execution ID" className={RUN_ID}>
                   #{latest.executionId}
                 </Copyable>
                 <span className="text-muted-foreground">
@@ -1043,7 +1048,7 @@ export function ProblemDetail({ id }: { id: string }) {
                       <ItemRow
                         title={
                           <span className="flex items-center gap-2">
-                            <Copyable value={o.executionId} label="Copy execution ID">
+                            <Copyable value={o.executionId} label="Copy execution ID" className={RUN_ID}>
                               #{o.executionId}
                             </Copyable>
                             {o.url && (

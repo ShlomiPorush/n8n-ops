@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Changed
+
+- **Dates and execution numbers read evenly everywhere.** Every list time, age and countdown shows its digits at their natural width, so a date such as 09.11 no longer looks spaced out and smaller than a time such as 01:00. On a problem, the execution numbers under Occurrences and Latest failure use the text's own font and size instead of a smaller monospace one.
+
 ### Security
 
 - **Two build tools no longer install vulnerable versions of their dependencies.** The database migration tool no longer installs esbuild 0.18 (GHSA-67mh-4wv8-2f99), and the UI component tool uses minimatch 11 instead of 10 (GHSA-g3hv-75wg-m249). Neither tool is part of what the images run, so an installation needs no change.

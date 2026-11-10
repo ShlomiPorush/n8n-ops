@@ -7,6 +7,7 @@ All notable changes to this project are documented here. The format follows [Kee
 ### Changed
 
 - **Dates and execution numbers read evenly everywhere.** Every list time, age and countdown shows its digits at their natural width, so a date such as 09.11 no longer looks spaced out and smaller than a time such as 01:00. On a problem, the execution numbers under Occurrences and Latest failure use the text's own font and size instead of a smaller monospace one.
+- **A problem's failures show when they ran in full.** Each run under Occurrences, and the Latest failure line, shows the whole date and time with its age, such as 09/11/2026, 01:00 and 1 d ago, instead of only the day and month.
 
 ### Security
 

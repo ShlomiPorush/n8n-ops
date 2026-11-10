@@ -42,7 +42,7 @@ import {
 } from "@/components/kit"
 import { ListWithPanel } from "@/components/list-panel"
 import { type PaneTabItem, PaneTabPanel, PaneTabs, usePaneTab, withoutTab } from "@/components/pane-tabs"
-import { ProblemBadge, TimeAgo, When } from "@/components/status"
+import { FullTime, ProblemBadge, TimeAgo, When } from "@/components/status"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -982,7 +982,7 @@ export function ProblemDetail({ id }: { id: string }) {
                 </Copyable>
                 <span className="text-muted-foreground">
                   {latest.mode && `${latest.mode} · `}
-                  <When value={ranAt(latest)} />
+                  <FullTime value={ranAt(latest)} /> · <TimeAgo value={ranAt(latest)} />
                 </span>
               </p>
             </Panel>
@@ -1064,12 +1064,14 @@ export function ProblemDetail({ id }: { id: string }) {
                             )}
                           </span>
                         }
+                        // The pane has room for the whole time, and the age says how recent at a glance.
                         end={
                           <span className="font-normal text-muted-foreground">
-                            <When value={ranAt(o)} />
+                            <FullTime value={ranAt(o)} />
                           </span>
                         }
                         sub={o.mode ?? undefined}
+                        subEnd={<TimeAgo value={ranAt(o)} />}
                       />
                     </TableRow>
                   ))}

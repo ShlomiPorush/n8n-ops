@@ -302,3 +302,18 @@ export function When({ value }: { value: string | Date | null | undefined }) {
     </Tip>
   )
 }
+
+/**
+ * The whole date and time to the minute, "16/10/2026, 14:05", as the Date and Time format write them, for a place
+ * with room for it; the time to the second on hover, keyboard focus or a tap (MO-4). Pair it with TimeAgo.
+ */
+export function FullTime({ value }: { value: string | Date }) {
+  const w = useTimeFormat()
+  return (
+    <Tip content={formatTime(value, w)}>
+      <time dateTime={isoTime(value)} className="normal-nums">
+        {formatTime(value, w, { seconds: false })}
+      </time>
+    </Tip>
+  )
+}

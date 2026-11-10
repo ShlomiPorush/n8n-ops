@@ -4,6 +4,15 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Changed
+
+- **The section figures above the Problems list take one line each.** Each figure shows its count and the section's name, such as 3 Failing now, without the short line under it, so the list starts higher; each section's heading still says what it holds. Instance problems is called Instance there, as its rows' tag is. A selected figure's frame is no longer cut at the rounded corner in Compact.
+- **Each Problems section heading spans the whole list.** Its band runs edge to edge like the rows under it, with no panel showing around it.
+
+### Fixed
+
+- **A list's filters stay flush at the top beside an open item.** When you scroll a list beside its reading pane, such as Problems, Instances or Backups, no rows show above the filters any more.
+
 ## [0.16.0] - 2026-11-10
 
 ### Added

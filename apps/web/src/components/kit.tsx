@@ -541,6 +541,7 @@ export function Kpi({
   tone,
   to,
   selected = false,
+  inline = false,
   icon: Icon,
 }: {
   label: React.ReactNode
@@ -552,10 +553,31 @@ export function Kpi({
   to?: string
   /** The link shows the list on screen now (a filter it set): marked, and said to assistive technology. */
   selected?: boolean
+  /**
+   * The figure and its label on one line, a size smaller and with no hint or icon: a row of figures that filter
+   * the list right under them, which should cost the list as little height as it can. In a narrow cell the label
+   * goes under the figure.
+   */
+  inline?: boolean
   /** What the figure is about; drawn by Regular only, beside the figure. */
   icon?: LucideIcon
 }) {
-  const inner = (
+  const inner = inline ? (
+    <span className="flex min-w-0 flex-wrap items-baseline gap-x-2">
+      <b
+        data-slot="kpi-figure"
+        className={cn(
+          "text-h2",
+          tone === "fail" && "text-fail",
+          tone === "warn" && "text-warn",
+          tone === "ok" && "text-ok",
+        )}
+      >
+        {typeof value === "number" ? <Figure value={value} /> : value}
+      </b>
+      <span className="text-small text-muted-foreground">{label}</span>
+    </span>
+  ) : (
     <>
       <span className="flex min-w-0 flex-col">
         <b
@@ -594,17 +616,19 @@ export function Kpi({
   const cls = cn(
     "flex min-w-0 items-start justify-between gap-3 px-pad-x py-[11px] outline outline-line",
     "regular:rounded-lg regular:bg-panel regular:p-5 regular:shadow-card regular:ring-1 regular:ring-ink/10 regular:outline-0",
+    inline && "items-center py-2 regular:px-4 regular:py-2.5",
   )
   return to ? (
     <Link
       to={to}
       data-slot="kpi"
       aria-current={selected ? "true" : undefined}
-      // Inside the block's clip in Compact, so the mark is whole at its edges; Regular rings its own card.
+      // Inside the block's clip in Compact, rounded so the block's rounded corners never cut it; Regular rings its
+      // own card.
       className={cn(
         cls,
         "hover-row",
-        selected && "outline-2 -outline-offset-2 outline-ink regular:ring-2 regular:ring-ink",
+        selected && "rounded-md outline-2 -outline-offset-2 outline-ink regular:rounded-lg regular:ring-2 regular:ring-ink",
       )}
     >
       <TipInControl>{inner}</TipInControl>

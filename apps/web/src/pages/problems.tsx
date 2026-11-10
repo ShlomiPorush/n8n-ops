@@ -269,9 +269,11 @@ function SectionRow({ section, count, columns }: { section: Section; count?: num
   const { title, note } = SECTION_TITLES[section]
   const Icon = SECTION_ICONS[section]
   return (
-    <TableRow role="presentation" data-section={section} className="border-0 hover:bg-transparent">
-      <TableCell colSpan={columns} className="pt-4 pb-1 whitespace-normal">
-        <div className={cn("rounded-sm px-3 py-2", TINTS[statusOf("section", section).tone])}>
+    // The band takes the whole width of the list, edge to edge like the rows under it, so no panel shows around it.
+    <TableRow role="presentation" data-section={section} className="hover:bg-transparent">
+      {/* The cell's own padding, also its first and last cell padding, gives way to the band's (`!`). */}
+      <TableCell colSpan={columns} className="p-0! whitespace-normal">
+        <div className={cn("px-pad-x py-2.5", TINTS[statusOf("section", section).tone])}>
           <span className="flex items-center gap-2 font-semibold">
             <Icon aria-hidden className="size-4 shrink-0" />
             {title}
@@ -525,19 +527,21 @@ function SectionFigures({
   link: (s: OpenSection | null) => string
 }) {
   return (
-    // One row at any width, so the list beside the reading pane keeps its rows in sight (FB-17).
+    // One row at any width and one line per figure, so the rows stay in sight, also beside the reading pane (FB-17).
+    // What a section holds is said by its heading in the list. Each figure takes the width its line needs, so a
+    // narrow column fits more of them on one line; where it still cannot, a label goes under its count.
     <nav aria-label="Sections">
-      <Kpis row>
+      <Kpis row className="auto-cols-auto">
         {OPEN_SECTIONS.filter((s) => s !== "instance" || counts.instance > 0 || chosen === s).map((s) => {
           const tone = statusOf("section", s).tone
           return (
             <Kpi
               key={s}
-              label={SECTION_TITLES[s].title}
+              inline
+              // "Instance", as its rows' tag says: the whole title does not fit four figures beside the pane.
+              label={s === "instance" ? statusOf("section", s).label : SECTION_TITLES[s].title}
               value={counts[s]}
-              hint={SECTION_TITLES[s].short}
               tone={counts[s] > 0 && (tone === "fail" || tone === "warn") ? tone : undefined}
-              icon={SECTION_ICONS[s]}
               to={link(chosen === s ? null : s)}
               selected={chosen === s}
             />

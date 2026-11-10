@@ -1958,8 +1958,16 @@ test("a new filter starts the list at its first row, and the filter bar stays in
         el.scrollTop = el.scrollHeight
       })
       await expect(rows.first()).not.toBeInViewport()
-      // The filters stuck at the top of where the list scrolls.
+      // The filters stuck at the very top of where the list scrolls, with no rows showing above them.
       await expect(page.getByRole("radio", { name: "Open", exact: true })).toBeInViewport()
+      await expect
+        .poll(() =>
+          page.locator(scroller).first().evaluate((el) => {
+            const bar = el.querySelector('[data-slot="filter-bar"]')
+            return bar ? Math.round(bar.getBoundingClientRect().top - el.getBoundingClientRect().top) : null
+          }),
+        )
+        .toBe(0)
       await page.getByRole("radio", { name: "Open", exact: true }).click()
       await expect(page).not.toHaveURL(/status=all/)
       await expect(rows.first()).toBeInViewport()
@@ -2137,11 +2145,20 @@ test("the Problems list says what each section holds, cuts to one, and tags ever
   const item = (name: string) => column.getByRole("row", { name: new RegExp(name) })
   try {
     await page.goto("/problems?status=open")
-    // A figure per open section with its count and what it means; Instance problems only when there are some.
-    await expect(figure("Failing now")).toContainText("Failed in the last day")
+    // A figure per open section with its count on one line (its heading says what it holds); Instance problems
+    // only when there are some.
+    await expect(figure("Failing now")).toBeVisible()
     await expect(figure("Quiet")).toContainText("240")
-    await expect(figure("Your alerts")).toContainText("From a Stop and Error node")
-    await expect(figure("Instance problems")).toHaveCount(0)
+    await expect(figure("Your alerts")).not.toContainText("Stop and Error")
+    for (const name of ["Failing now", "Quiet", "Your alerts"]) {
+      const [box, label] = await Promise.all([
+        figure(name).boundingBox(),
+        figure(name).getByText(name, { exact: true }).boundingBox(),
+      ])
+      // The figure is as high as one line of it and its padding, its label beside the number.
+      expect(box && label && box.height < label.height * 3).toBe(true)
+    }
+    await expect(figure("Instance")).toHaveCount(0)
     // Each heading counts its section in all and says what it holds.
     const quietHeading = column.locator('[data-section="quiet"]')
     await expect(quietHeading).toContainText("240")

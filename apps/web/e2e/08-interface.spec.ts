@@ -2103,6 +2103,19 @@ test("a control that a new width moves gives the focus to the one in its place (
     await searchButton.focus()
     await page.setViewportSize({ width: 2600, height: 900 })
     await expect(bar.getByLabel("Search workflow, target or error")).toBeFocused()
+    // A picker that stays where it is keeps its open list and the focus in it (R6): narrow to phone, Instance
+    // behind Filters in both.
+    await page.setViewportSize({ width: 600, height: 900 })
+    await page.goto("/problems?status=open")
+    await expect(bar).toHaveAttribute("data-mode", "narrow")
+    await bar.getByRole("button", { name: /^Filters/ }).click()
+    await bar.getByRole("button", { name: /^Instance:/ }).click()
+    const option = page.getByRole("option", { name: "All", exact: true })
+    await expect(option).toBeFocused()
+    await page.setViewportSize({ width: 430, height: 900 })
+    await expect(bar).toHaveAttribute("data-mode", "phone")
+    await expect(option).toBeFocused()
+    await page.keyboard.press("Escape")
   } finally {
     await page.setViewportSize({ width: 1440, height: 900 })
   }

@@ -593,7 +593,9 @@ export function FilterBar({
     const el = bar.current
     const part = moved.current
     moved.current = null
-    if (!el || !part || el.contains(document.activeElement)) return
+    // Only focus that was lost: a control that stayed, or its list that is still open, keeps it.
+    const active = document.activeElement
+    if (!el || !part || (active && active !== document.body && active.isConnected)) return
     const find = (selector: string) => el.querySelector<HTMLElement>(selector)
     const target =
       part === "views"

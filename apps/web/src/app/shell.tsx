@@ -1010,7 +1010,8 @@ export function AppShell() {
           <main
             ref={setMain}
             id="main"
-            className="relative col-start-1 row-start-2 min-h-0 overflow-y-auto overscroll-contain px-3 pt-4 pb-[calc(var(--spacing-tabbar)+16px+env(safe-area-inset-bottom))] md:col-start-2 md:p-[22px] md:pb-15 lg:px-7 regular:md:me-2 regular:md:mb-2 regular:md:rounded-b-lg"
+            // The top padding is --main-pad-top (index.css), which a list's sticky filter bar also reads (NL-16).
+            className="relative col-start-1 row-start-2 min-h-0 overflow-y-auto overscroll-contain px-3 pt-(--main-pad-top) pb-[calc(var(--spacing-tabbar)+16px+env(safe-area-inset-bottom))] md:col-start-2 md:px-[22px] md:pb-15 lg:px-7 regular:md:me-2 regular:md:mb-2 regular:md:rounded-b-lg"
           >
             <Outlet />
           </main>

@@ -11,7 +11,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Fixed
 
-- **A list's filters stay flush at the top beside an open item.** When you scroll a list beside its reading pane, such as Problems, Instances or Backups, no rows show above the filters any more.
+- **A list's filters stay flush at the top while you scroll.** On a list such as Problems, Instances or Backups, no rows show above the filters any more, whether the list scrolls beside its reading pane or with the whole page on a narrower or shorter screen.
 
 ## [0.16.0] - 2026-11-10
 

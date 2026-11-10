@@ -280,21 +280,31 @@ function Archive() {
         }
       />
       <FilterBar
-        views={
-          <ToggleGroup
-            type="single"
-            aria-label="Show"
-            value={view}
-            onValueChange={(v) => v && navigate(`${base}/${v}${search}`, { replace: true })}
-          >
-            <ToggleGroupItem value="workflows">
-              Workflows <small>{n(inspection.workflows.length)}</small>
-            </ToggleGroupItem>
-            <ToggleGroupItem value="credentials">
-              Credentials <small>{n(inspection.credentials.length)}</small>
-            </ToggleGroupItem>
-          </ToggleGroup>
-        }
+        views={{
+          label: "Show",
+          value: view,
+          onChange: (v) => navigate(`${base}/${v}${search}`, { replace: true }),
+          options: [
+            {
+              value: "workflows",
+              label: (
+                <>
+                  Workflows <small>{n(inspection.workflows.length)}</small>
+                </>
+              ),
+              text: `Workflows ${n(inspection.workflows.length)}`,
+            },
+            {
+              value: "credentials",
+              label: (
+                <>
+                  Credentials <small>{n(inspection.credentials.length)}</small>
+                </>
+              ),
+              text: `Credentials ${n(inspection.credentials.length)}`,
+            },
+          ],
+        }}
         search={
           <SearchBox
             label={view === "workflows" ? "Search workflows" : "Search credentials"}

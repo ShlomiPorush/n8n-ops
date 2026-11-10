@@ -385,11 +385,13 @@ test("the list stays in place while its first item opens by itself, so focus is 
   })
   try {
     await page.goto("/problems")
+    // Beside the pane the search is a button that opens into the field (FB-19).
+    await page.locator('[data-slot="filter-bar"]').getByRole("button", { name: "Search", exact: true }).click()
     const box = page.getByLabel("Search workflow, target or error")
     await expect(box).toBeVisible()
     await expect(page.locator("tbody tr")).toHaveCount(0)
     await expect(page).toHaveURL(/\/problems$/)
-    await box.focus()
+    await expect(box).toBeFocused()
     const field = await box.elementHandle()
     release()
     await expect(page).toHaveURL(/\/problems\/[^/?]+/)
@@ -1979,6 +1981,76 @@ test("a new filter starts the list at its first row, and the filter bar stays in
     await page.unroute(list)
     await page.setViewportSize({ width: 1440, height: 900 })
   }
+})
+
+test("beside the pane the filters keep one line: the search opens from a button and Instance sits behind Filters (FB-19)", async () => {
+  await page.goto("/problems?status=open")
+  const bar = page.locator('[data-slot="filter-bar"]').first()
+  const searchButton = bar.getByRole("button", { name: "Search", exact: true })
+  const box = bar.getByLabel("Search workflow, target or error")
+  const sort = bar.getByRole("button", { name: /^Sort:/ })
+  const filters = bar.getByRole("button", { name: /^Filters/ })
+  const openView = bar.getByRole("radio", { name: "Open", exact: true })
+  const status = bar.getByRole("button", { name: /^Status:/ })
+  const middle = async (l: ReturnType<typeof page.locator>) => {
+    const b = await l.boundingBox()
+    return b ? b.y + b.height / 2 : Number.NaN
+  }
+  const oneLine = async (...parts: ReturnType<typeof page.locator>[]) => {
+    const ys = await Promise.all(parts.map(middle))
+    expect(Math.max(...ys) - Math.min(...ys)).toBeLessThan(4)
+  }
+  // Closed: the views, the search button, Sort and Filters on one line; Instance is not in the row.
+  await expect(searchButton).toBeVisible()
+  await expect(box).toBeHidden()
+  await expect(bar.getByRole("button", { name: /^Instance:/ })).toHaveCount(0)
+  await oneLine(openView, searchButton, sort, filters)
+  // Open: the field takes the room, focused, and the views turn into a short picker; still one line.
+  await searchButton.click()
+  await expect(box).toBeFocused()
+  await expect(openView).toHaveCount(0)
+  await expect(status).toHaveText(/Open/)
+  await oneLine(status, box, sort, filters)
+  // Moving on inside the bar keeps the empty search open; Escape in it closes it and goes back to the button.
+  await page.keyboard.press("Tab")
+  await expect(sort).toBeFocused()
+  await expect(box).toBeVisible()
+  await page.keyboard.press("Shift+Tab")
+  await expect(box).toBeFocused()
+  await page.keyboard.press("Escape")
+  await expect(searchButton).toBeFocused()
+  await expect(box).toBeHidden()
+  await expect(openView).toBeVisible()
+  // A status chosen while searching keeps the search open; Escape in the picker closes only the picker.
+  await searchButton.click()
+  await status.click()
+  await page.keyboard.press("Escape")
+  await expect(status).toBeFocused()
+  await expect(box).toBeVisible()
+  await status.click()
+  await page.getByRole("option", { name: "Muted", exact: true }).click()
+  await expect(page).toHaveURL(/status=muted/)
+  await expect(box).toBeVisible()
+  // Leaving the bar closes an empty search, and the focus stays where it went.
+  const elsewhere = page.getByRole("link", { name: "Overview", exact: true }).first()
+  await elsewhere.focus()
+  await expect(box).toBeHidden()
+  await expect(elsewhere).toBeFocused()
+  // A search from the address shows the field, without taking the focus.
+  await page.goto("/problems?status=open&q=ERP")
+  await expect(box).toHaveValue("ERP")
+  await expect(box).toBeVisible()
+  await expect(box).not.toBeFocused()
+  // Instance is chosen behind Filters, whose badge counts it, and Clear filters clears both.
+  await filters.click()
+  await bar.getByRole("button", { name: /^Instance:/ }).click()
+  await page.getByRole("option", { name: "e2e-n8n", exact: true }).click()
+  await expect(page).toHaveURL(/instance=/)
+  await expect(filters).toHaveAccessibleName("Filters, 1 in use")
+  await bar.getByRole("button", { name: "Clear filters" }).click()
+  await expect(page).not.toHaveURL(/instance=|q=/)
+  await expect(filters).toHaveAccessibleName("Filters")
+  await expect(box).toBeHidden()
 })
 
 test("an order whose list fails to load leaves the rows and the Sort button in the order the rows are in (TB-4)", async () => {

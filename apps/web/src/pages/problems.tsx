@@ -82,7 +82,6 @@ import {
   useSort,
   useSortOrder,
 } from "@/components/ui/table"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { ApiError, api, useApi, useApiMutation } from "@/lib/api"
 import { loadView } from "@/lib/load-state"
 import { countOf, n, plural, word } from "@/lib/numbers"
@@ -614,23 +613,22 @@ export function ProblemsPage() {
         live={rows}
       />
       <FilterBar
-        views={
-          <ToggleGroup
-            type="single"
-            value={status}
-            onValueChange={(v) => v && setParam("status", v)}
-            aria-label="Status"
-          >
-            <ToggleGroupItem value="open">Open</ToggleGroupItem>
-            <ToggleGroupItem value="muted">Muted</ToggleGroupItem>
-            <ToggleGroupItem value="resolved">Resolved</ToggleGroupItem>
-            <ToggleGroupItem value="all">All</ToggleGroupItem>
-          </ToggleGroup>
-        }
+        views={{
+          label: "Status",
+          value: status,
+          onChange: (v) => setParam("status", v),
+          options: [
+            { value: "open", label: "Open", text: "Open" },
+            { value: "muted", label: "Muted", text: "Muted" },
+            { value: "resolved", label: "Resolved", text: "Resolved" },
+            { value: "all", label: "All", text: "All" },
+          ],
+        }}
         search={
           <SearchBox label="Search workflow, target or error" value={q} onChange={(v) => setParam("q", v)} debounce />
         }
         sort={{ control: sort.control, name: "problems" }}
+        pickersActive={instance === "all" ? 0 : 1}
         pickers={
           <Picker
             label="Instance"

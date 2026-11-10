@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Security
+
+- **Two build tools no longer install vulnerable versions of their dependencies.** The database migration tool no longer installs esbuild 0.18 (GHSA-67mh-4wv8-2f99), and the UI component tool uses minimatch 11 instead of 10 (GHSA-g3hv-75wg-m249). Neither tool is part of what the images run, so an installation needs no change.
+
 ## [0.15.0] - 2026-11-09
 
 ### Added

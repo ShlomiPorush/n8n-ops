@@ -11,3 +11,11 @@ allowBuilds:
   esbuild: true
   cpu-features: false
   ssh2: false
+
+# Security fixes in build-time tools. Remove an entry once its parent package allows a fixed version.
+overrides:
+  # drizzle-kit 0.31.11 (the latest) still loads the deprecated @esbuild-kit loader, which asks for
+  # esbuild 0.18 (GHSA-67mh-4wv8-2f99).
+  '@esbuild-kit/core-utils>esbuild': 0.25.12
+  # The shadcn CLI pulls ts-morph, whose @ts-morph/common still asks for minimatch 10 (GHSA-g3hv-75wg-m249).
+  '@ts-morph/common>minimatch': 11.0.5

@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-11-10
+
 ### Changed
 
 - **Numbers read evenly everywhere.** Digits show at their natural width across the console, so names such as n8n13, counts such as 146 workflows, addresses and dates such as 10/11/2026 no longer look spaced out after a 1. Only columns of figures in tables and counters that change in place keep digits of one width, so they still line up. Versions, the execution numbers on a problem and an error inside a sentence use the text's own font, and values you can copy, such as a base URL, are no longer smaller than the text around them.

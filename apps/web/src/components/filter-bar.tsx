@@ -574,18 +574,21 @@ export function FilterBar({
     observer.observe(el)
     return () => observer.disconnect()
   }, [hasViews])
-  // A control that a new width took away gives the focus to the one in its place: the views to the views, a
-  // picker to the picker in the row or to the Filters button it went behind.
+  // A control that a new width took away gives the focus to the one in its place: the views to the chosen view
+  // (or the views picker), a picker or the Filters button to the pickers in the row or to the Filters button
+  // they went behind.
   React.useLayoutEffect(() => {
     const el = bar.current
     const part = moved.current
     moved.current = null
     if (!el || !part || el.contains(document.activeElement)) return
+    const find = (selector: string) => el.querySelector<HTMLElement>(selector)
     const target =
       part === "views"
-        ? el.querySelector<HTMLElement>('[data-part="views"] [aria-checked="true"], [data-part="views"] button')
-        : part === "pickers"
-          ? el.querySelector<HTMLElement>(mode === "wide" ? '[data-part="pickers"] button' : '[data-part="filters"]')
+        ? (find('[data-part="views"] [aria-checked="true"]') ?? find('[data-part="views"] button'))
+        : part === "pickers" || part === "filters"
+          ? (find(mode === "wide" ? '[data-part="pickers"] button' : '[data-part="filters"]') ??
+            find('[data-part="filters"]'))
           : null
     target?.focus()
   }, [mode])

@@ -291,7 +291,7 @@ test("on a phone a result the Leave question keeps from opening leaves its query
     await field.fill("https://ops.example.test")
     const unsaved = page.getByRole("region", { name: "Unsaved changes" })
     await expect(unsaved).toBeVisible()
-    const opener = page.getByRole("button", { name: "Search problems", exact: true })
+    const opener = page.getByRole("button", { name: "Search", exact: true })
     const search = page.getByRole("combobox", { name: "Search" })
     const audit = page.getByRole("option").filter({ hasText: "Audit" }).first()
 
@@ -335,7 +335,7 @@ test("on a phone the search is a layer: the page behind waits, Tab stays inside,
   await page.setViewportSize({ width: 390, height: 844 })
   try {
     await page.goto("/instances")
-    const opener = page.getByRole("button", { name: "Search problems", exact: true })
+    const opener = page.getByRole("button", { name: "Search", exact: true })
     const layer = page.getByRole("dialog", { name: "Search" })
     const behindInert = () => page.locator("#main").evaluate((el) => el.closest("[inert]") !== null)
     const focusInside = () => layer.evaluate((el) => el.contains(document.activeElement))
@@ -2077,13 +2077,20 @@ test("a control that a new width moves gives the focus to the one in its place (
     await page.setViewportSize({ width: 1440, height: 900 })
     await expect(bar).toHaveAttribute("data-mode", "narrow")
     await expect(bar.getByRole("button", { name: /^Filters/ })).toBeFocused()
+    // And back: the Filters button goes, and Instance in the row takes the focus.
+    await page.setViewportSize({ width: 2600, height: 900 })
+    await expect(bar).toHaveAttribute("data-mode", "wide")
+    await expect(instance).toBeFocused()
     // With the search open the views are a short picker; a wide bar turns them back into the toggle group,
     // with the chosen one focused.
+    await page.goto("/problems?status=resolved")
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await expect(bar).toHaveAttribute("data-mode", "narrow")
     await bar.getByRole("button", { name: "Search problems", exact: true }).click()
     await bar.getByRole("button", { name: /^Status:/ }).focus()
     await page.setViewportSize({ width: 2600, height: 900 })
     await expect(bar).toHaveAttribute("data-mode", "wide")
-    await expect(bar.getByRole("radio", { name: "Open", exact: true })).toBeFocused()
+    await expect(bar.getByRole("radio", { name: "Resolved", exact: true })).toBeFocused()
   } finally {
     await page.setViewportSize({ width: 1440, height: 900 })
   }

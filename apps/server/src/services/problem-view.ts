@@ -11,6 +11,7 @@ import {
   problems,
 } from "../db/schema.ts"
 import { likeContains } from "../lib/like.ts"
+import { type InstanceSettings, resolveInstanceSettings } from "../lib/settings.ts"
 import type { N8nWorkflow } from "../n8n/client.ts"
 import { workflowGraph } from "../n8n/execution.ts"
 import { type CauseFields, causeFields } from "./cause.ts"
@@ -511,19 +512,25 @@ export async function problemRowsPage(
     .where(and(...where))
     .orderBy(...orderBy)
     .limit(limit)
-  // Each instance's auto-resolve days, read once per instance on the page.
+  // Each instance's auto-resolve days, from the defaults read once and only when an open row needs them.
+  let defaults: InstanceSettings | undefined
   const days = new Map<string, number>()
+  const daysOf = async (instanceId: string, overrides: Record<string, unknown>) => {
+    defaults ??= await ctx.settings.get("defaults")
+    const found = days.get(instanceId) ?? resolveInstanceSettings(defaults, overrides).autoResolveDays
+    days.set(instanceId, found)
+    return found
+  }
   const now = Date.now()
   const items: ProblemRowItem[] = []
   for (const { total: _, overrides, rank, target, targetSource, reason, kind, ...row } of rows) {
-    const autoResolveDays = days.get(row.instanceId) ?? (await ctx.settings.forInstance(overrides)).autoResolveDays
-    days.set(row.instanceId, autoResolveDays)
+    const state = readState(row, now)
     items.push({
       ...row,
       ...causeFields({ errorMessage: row.errorMessage, target, targetSource, reason, kind }),
-      ...readState(row, now),
+      ...state,
       section: problemSections[rank] ?? "quiet",
-      closesAt: closesAt(row, autoResolveDays, now),
+      closesAt: state.status === "open" ? closesAt(row, await daysOf(row.instanceId, overrides), now) : null,
     })
   }
   return { items, total: rows[0]?.total ?? 0, sections }

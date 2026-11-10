@@ -2117,7 +2117,8 @@ test("the Problems list says what each section holds, cuts to one, and tags ever
   const raised = row(3, "E2E alert", "alerts", { ...alert, count: 9, lastSeen: quietSince, closesAt: quietSince })
   const muted = row(4, "E2E muted alert", "muted", { ...alert, status: "muted", mutedUntil: quietSince })
   const open = [failing, quiet, raised]
-  const counts = { instance: 0, now: 1, quiet: 1, alerts: 1, muted: 0, resolved: 0 }
+  // Quiet holds more than the list sends: the figure and the heading count the section in all, not the rows shown.
+  const counts = { instance: 0, now: 1, quiet: 240, alerts: 1, muted: 0, resolved: 0 }
   const asked: string[] = []
   const list = (url: URL) => url.pathname === "/api/problems/rows" && !url.searchParams.has("instance")
   await page.route(list, (route) => {
@@ -2138,11 +2139,13 @@ test("the Problems list says what each section holds, cuts to one, and tags ever
     await page.goto("/problems?status=open")
     // A figure per open section with its count and what it means; Instance problems only when there are some.
     await expect(figure("Failing now")).toContainText("Failed in the last day")
-    await expect(figure("Quiet")).toContainText("1")
+    await expect(figure("Quiet")).toContainText("240")
     await expect(figure("Your alerts")).toContainText("From a Stop and Error node")
     await expect(figure("Instance problems")).toHaveCount(0)
-    // Each heading counts its section and says what it holds.
-    await expect(column.locator('[data-section="quiet"]')).toContainText("closes by itself")
+    // Each heading counts its section in all and says what it holds.
+    const quietHeading = column.locator('[data-section="quiet"]')
+    await expect(quietHeading).toContainText("240")
+    await expect(quietHeading).toContainText("closes by itself")
     // Each row's tag names its section, never a plain Open; a quiet one says how long and when it closes.
     await expect(item("E2E failing")).toContainText("Failing now")
     await expect(item("E2E failing")).toContainText("Regression")
@@ -2160,6 +2163,9 @@ test("the Problems list says what each section holds, cuts to one, and tags ever
     await expect(column.locator("[data-href]")).toHaveCount(1)
     await expect(page.getByText(/\b1 quiet row\b/).first()).toBeVisible()
     expect(asked).toContain("quiet")
+    // The section shown alone keeps its full count, in its figure and its heading.
+    await expect(figure("Quiet")).toContainText("240")
+    await expect(quietHeading).toContainText("240")
     await figure("Quiet").click()
     await expect(page).not.toHaveURL(/section=/)
     await expect(column.locator("[data-href]")).toHaveCount(3)

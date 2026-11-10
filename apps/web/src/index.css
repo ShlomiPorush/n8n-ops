@@ -701,7 +701,8 @@ html[data-design="regular"].dark {
 #main [data-slot="filter-bar"] {
   top: calc(-1 * var(--main-pad-top));
 }
-@media (min-height: 601px) {
+/* Exactly where `short` (max-height: 600px) does not apply, also at a fractional height such as 600.5px. */
+@media not all and (max-height: 600px) {
   #main [data-scroll-pane="list"] [data-slot="filter-bar"] {
     top: 0;
   }

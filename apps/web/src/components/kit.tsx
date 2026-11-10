@@ -628,7 +628,8 @@ export function Kpi({
       className={cn(
         cls,
         "hover-row",
-        selected && "rounded-md outline-2 -outline-offset-2 outline-ink regular:rounded-lg regular:ring-2 regular:ring-ink",
+        selected &&
+          "rounded-md outline-2 -outline-offset-2 outline-ink regular:rounded-lg regular:ring-2 regular:ring-ink",
       )}
     >
       <TipInControl>{inner}</TipInControl>

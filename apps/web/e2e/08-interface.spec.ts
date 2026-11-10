@@ -1962,10 +1962,13 @@ test("a new filter starts the list at its first row, and the filter bar stays in
       await expect(page.getByRole("radio", { name: "Open", exact: true })).toBeInViewport()
       await expect
         .poll(() =>
-          page.locator(scroller).first().evaluate((el) => {
-            const bar = el.querySelector('[data-slot="filter-bar"]')
-            return bar ? Math.round(bar.getBoundingClientRect().top - el.getBoundingClientRect().top) : null
-          }),
+          page
+            .locator(scroller)
+            .first()
+            .evaluate((el) => {
+              const bar = el.querySelector('[data-slot="filter-bar"]')
+              return bar ? Math.round(bar.getBoundingClientRect().top - el.getBoundingClientRect().top) : null
+            }),
         )
         .toBe(0)
       await page.getByRole("radio", { name: "Open", exact: true }).click()
@@ -2151,12 +2154,16 @@ test("the Problems list says what each section holds, cuts to one, and tags ever
     await expect(figure("Quiet")).toContainText("240")
     await expect(figure("Your alerts")).not.toContainText("Stop and Error")
     for (const name of ["Failing now", "Quiet", "Your alerts"]) {
-      const [box, label] = await Promise.all([
-        figure(name).boundingBox(),
+      const [count, label] = await Promise.all([
+        figure(name).locator("[data-slot=kpi-figure]").boundingBox(),
         figure(name).getByText(name, { exact: true }).boundingBox(),
       ])
-      // The figure is as high as one line of it and its padding, its label beside the number.
-      expect(box && label && box.height < label.height * 3).toBe(true)
+      // The label sits beside its count on the count's line, and takes one line itself.
+      expect(count && label).toBeTruthy()
+      if (!count || !label) continue
+      expect(label.x).toBeGreaterThan(count.x + count.width - 1)
+      expect(label.y).toBeGreaterThanOrEqual(count.y - 1)
+      expect(label.y + label.height).toBeLessThanOrEqual(count.y + count.height + 1)
     }
     await expect(figure("Instance")).toHaveCount(0)
     // Each heading counts its section in all and says what it holds.

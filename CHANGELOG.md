@@ -6,7 +6,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Changed
 
-- **The section figures above the Problems list take one line each.** Each figure shows its count and the section's name, such as 3 Failing now, without the short line under it, so the list starts higher; each section's heading still says what it holds. Instance problems is called Instance there, as its rows' tag is. A selected figure's frame is no longer cut at the rounded corner in Compact.
+- **The section figures above the Problems list take one line each.** Each figure shows its count and the section's name, such as 3 Failing now, without the short line under it, so the list starts higher (on a phone a name may go under its count); each section's heading still says what it holds. Instance problems is called Instance there, as its rows' tag is. A selected figure's frame is no longer cut at the rounded corner in Compact.
 - **Each Problems section heading spans the whole list.** Its band runs edge to edge like the rows under it, with no panel showing around it.
 
 ### Fixed

@@ -492,7 +492,7 @@ export type FilterViews = {
  */
 type BarMode = "wide" | "narrow" | "phone"
 const PHONE_BELOW = 420
-const modeOf = (width: number, views: boolean): BarMode =>
+export const barMode = (width: number, views: boolean): BarMode =>
   width < PHONE_BELOW ? "phone" : width < (views ? 740 : 480) ? "narrow" : "wide"
 
 /** A popover opened from the bar (a picker's list) is part of it while it is open. */
@@ -556,16 +556,39 @@ export function FilterBar({
   const focusNext = React.useRef<"field" | "button" | null>(null)
   useFirstRowOnChange(bar, listKey, loading)
   const hasViews = views !== undefined
+  // Which part of the bar held the focus when a new width moved it (views, pickers), to give it back after.
+  const moved = React.useRef<string | null>(null)
   // The bar's width decides its layout before it is painted, and again whenever it changes (FB-19).
   React.useLayoutEffect(() => {
     const el = bar.current
     if (!el) return
-    const check = () => setMode(modeOf(el.clientWidth, hasViews))
+    const check = () => {
+      const next = barMode(el.clientWidth, hasViews)
+      const focused = document.activeElement
+      moved.current =
+        focused && el.contains(focused) ? (focused.closest("[data-part]")?.getAttribute("data-part") ?? null) : null
+      setMode(next)
+    }
     check()
     const observer = new ResizeObserver(check)
     observer.observe(el)
     return () => observer.disconnect()
   }, [hasViews])
+  // A control that a new width took away gives the focus to the one in its place: the views to the views, a
+  // picker to the picker in the row or to the Filters button it went behind.
+  React.useLayoutEffect(() => {
+    const el = bar.current
+    const part = moved.current
+    moved.current = null
+    if (!el || !part || el.contains(document.activeElement)) return
+    const target =
+      part === "views"
+        ? el.querySelector<HTMLElement>('[data-part="views"] [aria-checked="true"], [data-part="views"] button')
+        : part === "pickers"
+          ? el.querySelector<HTMLElement>(mode === "wide" ? '[data-part="pickers"] button' : '[data-part="filters"]')
+          : null
+    target?.focus()
+  }, [mode])
   // Opening the rare filters moves the focus to the first of them (MP-6).
   React.useEffect(() => {
     if (!open || !opened.current) return
@@ -591,7 +614,14 @@ export function FilterBar({
     if (!el) return
     const inField = (t: EventTarget | null) => t instanceof Node && field.current?.contains(t) === true
     const onIn = (e: FocusEvent) => inField(e.target) && setExpanded(true)
-    const outside = (to: Element | null) => !(to && (el.contains(to) || inPopover(to)))
+    // What a control of the bar opened, such as the Sort menu, which Radix puts outside it: the control names it
+    // in aria-controls.
+    const openedFromBar = (to: Element) =>
+      [...el.querySelectorAll("[aria-controls]")].some((c) => {
+        const id = c.getAttribute("aria-controls")
+        return id ? document.getElementById(id)?.contains(to) === true : false
+      })
+    const outside = (to: Element | null) => !(to && (el.contains(to) || inPopover(to) || openedFromBar(to)))
     const onOut = (e: FocusEvent) => {
       if (outside(e.relatedTarget instanceof Element ? e.relatedTarget : null) && !live.current.hasText)
         setExpanded(false)
@@ -624,21 +654,25 @@ export function FilterBar({
   const filtersLabel = badge > 0 ? `Filters, ${badge} in use` : "Filters"
   const sortButton = sort && <SortButton control={sort.control} name={sort.name} small={!search} />
   const top = views || search || pickers || more
+  // Named for its list, so it is not taken for the search of the whole console.
+  const searchName = sort ? `Search ${sort.name}` : "Search this list"
   return (
     <div ref={bar} data-slot="filter-bar" data-mode={mode} className="grid gap-2">
       {top && (
         <div className="flex flex-wrap items-center gap-2">
           {views &&
             (narrow && fieldShown ? (
-              <Picker
-                label={views.label}
-                value={views.value}
-                defaultValue={views.value}
-                onChange={views.onChange}
-                options={views.options.map((o) => ({ value: o.value, label: o.text }))}
-              />
+              <div data-part="views">
+                <Picker
+                  label={views.label}
+                  value={views.value}
+                  defaultValue={views.value}
+                  onChange={views.onChange}
+                  options={views.options.map((o) => ({ value: o.value, label: o.text }))}
+                />
+              </div>
             ) : (
-              <div className={cn(mode === "phone" && "basis-full")}>
+              <div data-part="views" className={cn(mode === "phone" && "basis-full")}>
                 <ToggleGroup
                   type="single"
                   value={views.value}
@@ -659,8 +693,8 @@ export function FilterBar({
               type="button"
               aria-expanded={false}
               aria-controls={fieldId}
-              aria-label="Search"
-              title="Search"
+              aria-label={searchName}
+              title={searchName}
               onClick={() => {
                 focusNext.current = "field"
                 setExpanded(true)
@@ -687,6 +721,7 @@ export function FilterBar({
           {(more || pickersInPanel) && (
             <button
               type="button"
+              data-part="filters"
               aria-expanded={open}
               aria-controls={panelId}
               aria-label={filtersLabel}
@@ -708,7 +743,11 @@ export function FilterBar({
               )}
             </button>
           )}
-          {pickers && !pickersInPanel && <div className="flex flex-wrap items-center gap-2">{pickers}</div>}
+          {pickers && !pickersInPanel && (
+            <div data-part="pickers" className="flex flex-wrap items-center gap-2">
+              {pickers}
+            </div>
+          )}
           {(more || pickersInPanel) && (
             <div
               ref={panel}
@@ -716,7 +755,11 @@ export function FilterBar({
               hidden={!open}
               className="grid basis-full grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-2"
             >
-              {pickersInPanel && pickers}
+              {pickersInPanel && (
+                <div data-part="pickers" className="contents">
+                  {pickers}
+                </div>
+              )}
               {more}
             </div>
           )}

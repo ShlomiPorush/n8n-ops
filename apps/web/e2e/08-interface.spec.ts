@@ -291,7 +291,7 @@ test("on a phone a result the Leave question keeps from opening leaves its query
     await field.fill("https://ops.example.test")
     const unsaved = page.getByRole("region", { name: "Unsaved changes" })
     await expect(unsaved).toBeVisible()
-    const opener = page.getByRole("button", { name: "Search", exact: true })
+    const opener = page.getByRole("button", { name: "Search problems", exact: true })
     const search = page.getByRole("combobox", { name: "Search" })
     const audit = page.getByRole("option").filter({ hasText: "Audit" }).first()
 
@@ -335,7 +335,7 @@ test("on a phone the search is a layer: the page behind waits, Tab stays inside,
   await page.setViewportSize({ width: 390, height: 844 })
   try {
     await page.goto("/instances")
-    const opener = page.getByRole("button", { name: "Search", exact: true })
+    const opener = page.getByRole("button", { name: "Search problems", exact: true })
     const layer = page.getByRole("dialog", { name: "Search" })
     const behindInert = () => page.locator("#main").evaluate((el) => el.closest("[inert]") !== null)
     const focusInside = () => layer.evaluate((el) => el.contains(document.activeElement))
@@ -386,7 +386,7 @@ test("the list stays in place while its first item opens by itself, so focus is 
   try {
     await page.goto("/problems")
     // Beside the pane the search is a button that opens into the field (FB-19).
-    await page.locator('[data-slot="filter-bar"]').getByRole("button", { name: "Search", exact: true }).click()
+    await page.locator('[data-slot="filter-bar"]').getByRole("button", { name: "Search problems", exact: true }).click()
     const box = page.getByLabel("Search workflow, target or error")
     await expect(box).toBeVisible()
     await expect(page.locator("tbody tr")).toHaveCount(0)
@@ -1986,7 +1986,7 @@ test("a new filter starts the list at its first row, and the filter bar stays in
 test("beside the pane the filters keep one line: the search opens from a button and Instance sits behind Filters (FB-19)", async () => {
   await page.goto("/problems?status=open")
   const bar = page.locator('[data-slot="filter-bar"]').first()
-  const searchButton = bar.getByRole("button", { name: "Search", exact: true })
+  const searchButton = bar.getByRole("button", { name: "Search problems", exact: true })
   const box = bar.getByLabel("Search workflow, target or error")
   const sort = bar.getByRole("button", { name: /^Sort:/ })
   const filters = bar.getByRole("button", { name: /^Filters/ })
@@ -2015,6 +2015,13 @@ test("beside the pane the filters keep one line: the search opens from a button 
   await page.keyboard.press("Tab")
   await expect(sort).toBeFocused()
   await expect(box).toBeVisible()
+  // Its Sort menu opens outside the bar, and is still part of it (R1).
+  await page.keyboard.press("Enter")
+  await expect(page.getByRole("dialog", { name: "Sort problems" })).toBeVisible()
+  await expect(box).toBeVisible()
+  await page.keyboard.press("Escape")
+  await expect(sort).toBeFocused()
+  await expect(box).toBeVisible()
   await page.keyboard.press("Shift+Tab")
   await expect(box).toBeFocused()
   await page.keyboard.press("Escape")
@@ -2031,6 +2038,11 @@ test("beside the pane the filters keep one line: the search opens from a button 
   await page.getByRole("option", { name: "Muted", exact: true }).click()
   await expect(page).toHaveURL(/status=muted/)
   await expect(box).toBeVisible()
+  // The longest status still leaves one line.
+  await status.click()
+  await page.getByRole("option", { name: "Resolved", exact: true }).click()
+  await expect(status).toHaveText(/Resolved/)
+  await oneLine(status, box, sort, filters)
   // Leaving the bar closes an empty search, and the focus stays where it went.
   const elsewhere = page.getByRole("link", { name: "Overview", exact: true }).first()
   await elsewhere.focus()
@@ -2051,6 +2063,30 @@ test("beside the pane the filters keep one line: the search opens from a button 
   await expect(page).not.toHaveURL(/instance=|q=/)
   await expect(filters).toHaveAccessibleName("Filters")
   await expect(box).toBeHidden()
+})
+
+test("a control that a new width moves gives the focus to the one in its place (FB-19)", async () => {
+  // Beside the pane on a very wide screen the bar has room for everything; on 1440 it is narrow.
+  await page.setViewportSize({ width: 2600, height: 900 })
+  try {
+    await page.goto("/problems?status=open")
+    const bar = page.locator('[data-slot="filter-bar"]').first()
+    const instance = bar.getByRole("button", { name: /^Instance:/ })
+    await expect(bar).toHaveAttribute("data-mode", "wide")
+    await instance.focus()
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await expect(bar).toHaveAttribute("data-mode", "narrow")
+    await expect(bar.getByRole("button", { name: /^Filters/ })).toBeFocused()
+    // With the search open the views are a short picker; a wide bar turns them back into the toggle group,
+    // with the chosen one focused.
+    await bar.getByRole("button", { name: "Search problems", exact: true }).click()
+    await bar.getByRole("button", { name: /^Status:/ }).focus()
+    await page.setViewportSize({ width: 2600, height: 900 })
+    await expect(bar).toHaveAttribute("data-mode", "wide")
+    await expect(bar.getByRole("radio", { name: "Open", exact: true })).toBeFocused()
+  } finally {
+    await page.setViewportSize({ width: 1440, height: 900 })
+  }
 })
 
 test("an order whose list fails to load leaves the rows and the Sort button in the order the rows are in (TB-4)", async () => {

@@ -591,10 +591,14 @@ export function FilterBar({
     if (!el) return
     const inField = (t: EventTarget | null) => t instanceof Node && field.current?.contains(t) === true
     const onIn = (e: FocusEvent) => inField(e.target) && setExpanded(true)
+    const outside = (to: Element | null) => !(to && (el.contains(to) || inPopover(to)))
     const onOut = (e: FocusEvent) => {
-      const to = e.relatedTarget instanceof Element ? e.relatedTarget : null
-      if (to && (el.contains(to) || inPopover(to))) return
-      if (!live.current.hasText) setExpanded(false)
+      if (outside(e.relatedTarget instanceof Element ? e.relatedTarget : null) && !live.current.hasText)
+        setExpanded(false)
+    }
+    // Focus that lands outside from where the bar does not see it leave, such as a picker's closed list.
+    const onFocusElsewhere = (e: FocusEvent) => {
+      if (e.target instanceof Element && outside(e.target) && !live.current.hasText) setExpanded(false)
     }
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || !live.current.narrow || !inField(e.target)) return
@@ -605,10 +609,12 @@ export function FilterBar({
     el.addEventListener("focusin", onIn)
     el.addEventListener("focusout", onOut)
     el.addEventListener("keydown", onKey)
+    document.addEventListener("focusin", onFocusElsewhere)
     return () => {
       el.removeEventListener("focusin", onIn)
       el.removeEventListener("focusout", onOut)
       el.removeEventListener("keydown", onKey)
+      document.removeEventListener("focusin", onFocusElsewhere)
     }
   }, [])
   // A narrow bar shows the field while it is opened or holds text, typed or from the address.

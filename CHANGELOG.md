@@ -6,7 +6,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Changed
 
-- **Dates and execution numbers read evenly everywhere.** Every list time, age and countdown shows its digits at their natural width, so a date such as 09.11 no longer looks spaced out and smaller than a time such as 01:00. On a problem, the execution numbers under Occurrences and Latest failure use the text's own font and size instead of a smaller monospace one.
+- **Numbers read evenly everywhere.** Digits show at their natural width across the console, so names such as n8n13, counts such as 146 workflows, addresses and dates such as 10/11/2026 no longer look spaced out after a 1. Only columns of figures in tables and counters that change in place keep digits of one width, so they still line up. Versions, the execution numbers on a problem and an error inside a sentence use the text's own font, and values you can copy, such as a base URL, are no longer smaller than the text around them.
 - **A problem's failures show when they ran in full.** Each run under Occurrences, and the Latest failure line, shows the whole date and time with its age, such as 09/11/2026, 01:00 and 1 d ago, instead of only the day and month.
 
 ### Security

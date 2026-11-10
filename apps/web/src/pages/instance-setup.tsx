@@ -1013,13 +1013,7 @@ function ApiStep(context: StepContext) {
           )
         })}
       </div>
-      <CheckLine check={check}>
-        {version && (
-          <p className="text-muted-foreground">
-            n8n <span className="font-mono">{version}</span>
-          </p>
-        )}
-      </CheckLine>
+      <CheckLine check={check}>{version && <p className="text-muted-foreground">n8n {version}</p>}</CheckLine>
       <StepError error={error} />
     </StepPanel>
   )

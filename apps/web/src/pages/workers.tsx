@@ -141,9 +141,7 @@ export function WorkersPage() {
                   <span>
                     Last seen <TimeAgo value={w.lastSeenAt} />
                   </span>
-                  <span>
-                    Version <span className="font-mono">{w.version ?? "unknown"}</span>
-                  </span>
+                  <span>Version {w.version ?? "unknown"}</span>
                   <span>
                     Paired <When value={w.createdAt} />
                   </span>

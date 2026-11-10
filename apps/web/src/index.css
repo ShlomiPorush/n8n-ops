@@ -438,8 +438,6 @@ html[data-design="regular"].dark {
   --text-small--line-height: var(--ui-small-lh);
   --text-meta: var(--ui-meta);
   --text-meta--line-height: var(--ui-meta-lh);
-  /* Inline code and values: a touch smaller than the text around them. */
-  --text-code: 0.9em;
   /* Phone inputs: 16px so iOS does not zoom. */
   --text-input-touch: 16px;
   /* A count that shrinks to a bare dot. */
@@ -536,9 +534,13 @@ html[data-design="regular"].dark {
   html {
     font-family: var(--ui-font);
   }
+  /*
+   * Digits keep their natural width: the UI font's tabular "1" is as wide as a "0", which spaces out names such
+   * as n8n13 and dates such as 10/11. Only a column of figures and a counter that changes in place set
+   * tabular-nums, so their digits line up and their width holds still.
+   */
   body {
     @apply bg-bg text-body text-ink antialiased;
-    font-variant-numeric: tabular-nums;
   }
   button:not(:disabled),
   [role="button"]:not(:disabled) {

@@ -166,11 +166,8 @@ type Selected = AffectedRow & {
 
 /** When a failure ran, as the server orders them: stopped, else started, else when n8n-ops stored it. */
 const ranAt = (f: Selected["occurrences"][number]) => f.stoppedAt ?? f.startedAt ?? f.createdAt
-/**
- * An execution number reads in the body text's font, size and natural digit widths, not as a smaller monospace
- * code beside it.
- */
-const RUN_ID = "font-sans text-body normal-nums"
+/** An execution number reads in the text's own font, not as monospace code beside it. */
+const RUN_ID = "font-sans"
 
 type ProblemDetailData = ProblemRow & {
   selected: Selected
@@ -230,7 +227,7 @@ function SectionRow({ section, count, columns }: { section: Section; count: numb
     <TableRow role="presentation" data-section={section} className="border-0 hover:bg-transparent">
       <TableCell colSpan={columns} className="pt-4 pb-1 whitespace-normal">
         <span className="font-semibold">{title}</span>{" "}
-        <span className="text-small text-muted-foreground tabular-nums">{n(count)}</span>
+        <span className="text-small text-muted-foreground">{n(count)}</span>
         <span className="block text-small text-muted-foreground">{note}</span>
       </TableCell>
     </TableRow>

@@ -414,7 +414,7 @@ export function InstancesPage() {
                                 <Badge variant="warn">{i.version}</Badge>
                               </Tip>
                             ) : (
-                              <span className="font-mono">{i.version ?? "version unknown"}</span>
+                              <span>{i.version ?? "version unknown"}</span>
                             )}
                             {" · "}
                             {canWrite(i) ? "read + write" : "read only"}
@@ -490,7 +490,7 @@ export function InstancesPage() {
                           <Badge variant="warn">{i.version}</Badge>
                         </Tip>
                       ) : (
-                        <span className="font-mono text-small">{i.version ?? "unknown"}</span>
+                        <span className="text-small">{i.version ?? "unknown"}</span>
                       )}
                     </TableCell>
                     <TableCell>
@@ -1327,8 +1327,7 @@ function StatusStrip({ instance: i, footer }: { instance: InstanceDetailData; fo
         {i.lastPollError ? (
           // The whole error is in the Health tab; here it takes the place of the time failures were read.
           <span className="text-fail">
-            <b className="font-semibold">Could not read failures:</b>{" "}
-            <span className="font-mono">{i.lastPollError}</span>
+            <b className="font-semibold">Could not read failures:</b> {i.lastPollError}
           </span>
         ) : (
           <>

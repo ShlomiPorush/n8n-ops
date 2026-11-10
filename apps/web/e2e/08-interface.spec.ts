@@ -2014,7 +2014,15 @@ test("the open problems of an instance say when a new order or a refresh failed,
     const p = standInProblem(`00000000-0000-4000-8000-00000000000${n}`, `E2E stand-in ${n}`, "ERP refused")
     const lastSeen = new Date(Date.now() - n * 60_000).toISOString()
     // A row of the list: the problem's one workflow, on e2e-n8n-b.
-    return { ...p.affectedWorkflows[0], problemId: p.id, section: "now", problemTotal: 1, count, lastSeen }
+    return {
+      ...p.affectedWorkflows[0],
+      problemId: p.id,
+      section: "now",
+      problemTotal: 1,
+      count,
+      lastSeen,
+      closesAt: null,
+    }
   }
   const [few, many] = [problem(1, 2), problem(2, 9)]
   let sortFails = true
@@ -2023,7 +2031,8 @@ test("the open problems of an instance say when a new order or a refresh failed,
   await page.route(list, (route) => {
     const sort = new URL(route.request().url()).searchParams.get("sort")
     if (fails || (sort && sortFails)) return route.fulfill({ status: 500, json: { error: "internal_error" } })
-    return route.fulfill({ json: { items: sort === "failures" ? [many, few] : [few, many], total: 2 } })
+    const sections = { instance: 0, now: 2, quiet: 0, alerts: 0, muted: 0, resolved: 0 }
+    return route.fulfill({ json: { items: sort === "failures" ? [many, few] : [few, many], total: 2, sections } })
   })
   try {
     await page.goto(`/instances/${id}?tab=problems`)
@@ -2075,6 +2084,121 @@ test("the open problems of an instance say when a new order or a refresh failed,
     await expect(button).not.toHaveAttribute("data-set")
   } finally {
     await page.unroute(list)
+  }
+})
+
+test("the Problems list says what each section holds, cuts to one, and tags every row with its section", async () => {
+  // Stand-in rows, one per open section, and a muted alert, so the test does not depend on what the run recorded.
+  const day = 86_400_000
+  const row = (n: number, workflowName: string, section: string, more: Record<string, unknown> = {}) => {
+    const p = standInProblem(`00000000-0000-4000-8000-0000000001${n}0`, workflowName, "ERP refused")
+    return {
+      ...p.affectedWorkflows[0],
+      problemId: p.id,
+      section,
+      problemTotal: 1,
+      mergedByHand: false,
+      closesAt: null,
+      ...more,
+    }
+  }
+  const quietSince = new Date(Date.now() - 3 * day).toISOString()
+  const failing = row(1, "E2E failing", "now", {
+    regression: true,
+    count: 4,
+    lastSeen: new Date(Date.now() - 5 * 60_000).toISOString(),
+  })
+  const quiet = row(2, "E2E quiet", "quiet", {
+    count: 2,
+    lastSeen: quietSince,
+    closesAt: new Date(Date.now() + 4 * day + 3_600_000).toISOString(),
+  })
+  const alert = { kind: "alert", title: "Stock below minimum", target: null, reason: "Stock below minimum" }
+  const raised = row(3, "E2E alert", "alerts", { ...alert, count: 9, lastSeen: quietSince, closesAt: quietSince })
+  const muted = row(4, "E2E muted alert", "muted", { ...alert, status: "muted", mutedUntil: quietSince })
+  const open = [failing, quiet, raised]
+  const counts = { instance: 0, now: 1, quiet: 1, alerts: 1, muted: 0, resolved: 0 }
+  const asked: string[] = []
+  const list = (url: URL) => url.pathname === "/api/problems/rows" && !url.searchParams.has("instance")
+  await page.route(list, (route) => {
+    const params = new URL(route.request().url()).searchParams
+    asked.push(params.get("section") ?? "")
+    const all = params.get("status") === "all"
+    const section = params.get("section")
+    let items = all ? [...open, muted] : open.filter((r) => !section || r.section === section)
+    if (params.get("sort") === "failures") items = [...items].sort((x, y) => Number(y.count) - Number(x.count))
+    const sections = all ? { ...counts, muted: 1 } : counts
+    return route.fulfill({ json: { items, total: items.length, sections } })
+  })
+  const strip = page.getByRole("navigation", { name: "Sections" })
+  const figure = (name: string) => strip.getByRole("link").filter({ hasText: name })
+  const column = page.locator('[data-scroll-pane="list"]')
+  const item = (name: string) => column.getByRole("row", { name: new RegExp(name) })
+  try {
+    await page.goto("/problems?status=open")
+    // A figure per open section with its count and what it means; Instance problems only when there are some.
+    await expect(figure("Failing now")).toContainText("Failed in the last day")
+    await expect(figure("Quiet")).toContainText("1")
+    await expect(figure("Your alerts")).toContainText("From a Stop and Error node")
+    await expect(figure("Instance problems")).toHaveCount(0)
+    // Each heading counts its section and says what it holds.
+    await expect(column.locator('[data-section="quiet"]')).toContainText("closes by itself")
+    // Each row's tag names its section, never a plain Open; a quiet one says how long and when it closes.
+    await expect(item("E2E failing")).toContainText("Failing now")
+    await expect(item("E2E failing")).toContainText("Regression")
+    await expect(item("E2E quiet")).toContainText("Quiet 3 d")
+    await expect(item("E2E quiet")).toContainText("Auto-closes in ~4 d")
+    // An alert says so once: its tag, not a kind badge as well.
+    await expect(item("E2E alert").getByText("Your alert", { exact: true })).toHaveCount(1)
+    for (const name of ["E2E failing", "E2E quiet", "E2E alert"])
+      await expect(item(name).getByText("Open", { exact: true })).toHaveCount(0)
+
+    // A figure shows its section alone and is marked; again, all of them.
+    await figure("Quiet").click()
+    await expect(page).toHaveURL(/section=quiet/)
+    await expect(figure("Quiet")).toHaveAttribute("aria-current", "true")
+    await expect(column.locator("[data-href]")).toHaveCount(1)
+    await expect(page.getByText(/\b1 quiet row\b/).first()).toBeVisible()
+    expect(asked).toContain("quiet")
+    await figure("Quiet").click()
+    await expect(page).not.toHaveURL(/section=/)
+    await expect(column.locator("[data-href]")).toHaveCount(3)
+
+    // Another status leaves the section, and the figures go: they count the open sections.
+    await figure("Quiet").click()
+    await expect(page).toHaveURL(/section=quiet/)
+    await page.getByRole("radio", { name: "All", exact: true }).click()
+    await expect(page).not.toHaveURL(/section=/)
+    await expect(strip).toHaveCount(0)
+    // A muted alert keeps its kind: its tag says Muted.
+    await expect(item("E2E muted alert")).toContainText("Muted")
+    await expect(item("E2E muted alert").getByText("Your alert", { exact: true })).toHaveCount(1)
+
+    // Sorted by another column, the headings go and each row's tag still says its section.
+    await page.getByRole("radio", { name: "Open", exact: true }).click()
+    const button = page.getByRole("button", { name: /^Sort:/ })
+    await button.click()
+    await page.getByRole("radio", { name: "Failures" }).check()
+    await page.keyboard.press("Escape")
+    await expect(column.locator("[data-href]").first()).toContainText("E2E alert")
+    await expect(column.locator("[data-section]")).toHaveCount(0)
+    await expect(item("E2E alert")).toContainText("Your alert")
+    await expect(item("E2E quiet")).toContainText("Quiet 3 d")
+    await button.click()
+    await page.getByRole("radio", { name: "Default order" }).check()
+    await page.keyboard.press("Escape")
+    await expect(column.locator("[data-section]").first()).toBeVisible()
+
+    // The wide table, at a width with no reading pane, tags its rows the same way.
+    await page.setViewportSize({ width: 900, height: 900 })
+    await page.goto("/problems?status=open")
+    const quietRow = page.getByRole("row", { name: /E2E quiet/ })
+    await expect(quietRow).toContainText("Quiet 3 d")
+    await expect(quietRow).toContainText("Auto-closes in ~4 d")
+    await expect(page.getByRole("row", { name: /E2E failing/ })).toContainText("Failing now")
+  } finally {
+    await page.unroute(list)
+    await page.setViewportSize({ width: 1440, height: 900 })
   }
 })
 

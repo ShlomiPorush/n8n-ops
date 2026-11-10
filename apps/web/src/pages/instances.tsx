@@ -1461,6 +1461,8 @@ function InstanceProblems({
         bare
         sort={preview ? undefined : sort}
         rows={preview ? rows.slice(0, limit) : rows}
+        // The full list's headings count each section in all; a preview of a few rows counts none.
+        counts={preview ? undefined : query.data?.sections}
         showInstance={false}
         empty="No open problems on this instance."
         onOpen={onOpen}

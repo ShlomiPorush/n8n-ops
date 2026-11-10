@@ -368,6 +368,30 @@ export async function problemPage(
 export const problemSections = ["instance", "now", "quiet", "alerts", "muted", "resolved"] as const
 export type ProblemSection = (typeof problemSections)[number]
 
+/** The sections the list can be cut to: the open ones, which the Problems page counts above its list. */
+export const openSections = ["instance", "now", "quiet", "alerts"] as const
+export type OpenSection = (typeof openSections)[number]
+
+/** How many rows each section holds. */
+export type SectionCounts = Record<ProblemSection, number>
+export const noSections = (): SectionCounts => ({ instance: 0, now: 0, quiet: 0, alerts: 0, muted: 0, resolved: 0 })
+
+/**
+ * The earliest time housekeeping may resolve an open Affected workflow by itself: its last failure plus its
+ * instance's auto-resolve days, and for a mute that ended, not before the mute's end. Housekeeping runs hourly and
+ * turns ended mutes back to open after it resolves, so such a row closes up to a run later; screens say "soon",
+ * never an hour. Null when the row is not open.
+ */
+export function closesAt(
+  row: { status: ProblemStatus; mutedUntil: Date | null; lastSeen: Date },
+  autoResolveDays: number,
+  now: number,
+) {
+  if (readState(row, now).status !== "open") return null
+  const after = row.lastSeen.getTime() + autoResolveDays * DAY_MS
+  return new Date(row.status === "muted" && row.mutedUntil ? Math.max(after, row.mutedUntil.getTime()) : after)
+}
+
 /** The section as a rank, in SQL; an Affected workflow whose mute ended counts as open. */
 const sectionRank = sql<number>`case
   when ${a.status} = 'resolved' then 5
@@ -399,17 +423,20 @@ export type ProblemRowItem = AffectedItem & {
   problemTotal: number
   /** Its Problem had others merged into it by hand, so its workflows need not share this cause. */
   mergedByHand: boolean
+  /** When housekeeping may resolve it by itself at the earliest (`closesAt`); null when it is not open. */
+  closesAt: Date | null
 }
 
 /**
  * The Problems list as rows (TB-4, TB-18): one per Affected workflow, in sections in the default order, with the
  * filters, the order and the count applied over all of them before the limit. Rows of merged and regrouped Problems
- * are never listed.
+ * are never listed. `section` cuts the list to one open section; `sections` counts every section under the other
+ * filters, before the limit and whatever `section` is.
  */
 export async function problemRowsPage(
-  ctx: Pick<Ctx, "db">,
-  { order = null, limit = 200, status, instanceId, q }: ListOptions,
-): Promise<{ items: ProblemRowItem[]; total: number }> {
+  ctx: Pick<Ctx, "db" | "settings">,
+  { order = null, limit = 200, status, instanceId, q, section }: ListOptions & { section?: OpenSection },
+): Promise<{ items: ProblemRowItem[]; total: number; sections: SectionCounts }> {
   const where: (SQL | undefined)[] = [isNull(problems.mergedInto), eq(problems.regrouped, false)]
   if (instanceId) where.push(eq(a.instanceId, instanceId))
   if (status === "open") where.push(openish)
@@ -455,9 +482,23 @@ export async function problemRowsPage(
     .from(a)
     .groupBy(a.problemId)
     .as("peers")
+  // Counted before the cut to one section, so every section keeps its figure while one is shown.
+  const counted = await ctx.db
+    .select({ rank: sectionRank.mapWith(Number), rows: sql<number>`count(*)`.mapWith(Number) })
+    .from(a)
+    .innerJoin(problems, eq(problems.id, a.problemId))
+    .where(and(...where))
+    .groupBy(sectionRank)
+  const sections = noSections()
+  for (const { rank, rows } of counted) {
+    const name = problemSections[rank]
+    if (name) sections[name] = rows
+  }
+  if (section) where.push(sql`${sectionRank} = ${problemSections.indexOf(section)}`)
   const rows = await ctx.db
     .select({
       ...affectedColumns,
+      overrides: instances.overrides,
       rank: sectionRank.mapWith(Number),
       problemTotal: peers.workflows,
       mergedByHand,
@@ -470,16 +511,22 @@ export async function problemRowsPage(
     .where(and(...where))
     .orderBy(...orderBy)
     .limit(limit)
+  // Each instance's auto-resolve days, read once per instance on the page.
+  const days = new Map<string, number>()
   const now = Date.now()
-  return {
-    items: rows.map(({ total: _, rank, target, targetSource, reason, kind, ...row }) => ({
+  const items: ProblemRowItem[] = []
+  for (const { total: _, overrides, rank, target, targetSource, reason, kind, ...row } of rows) {
+    const autoResolveDays = days.get(row.instanceId) ?? (await ctx.settings.forInstance(overrides)).autoResolveDays
+    days.set(row.instanceId, autoResolveDays)
+    items.push({
       ...row,
       ...causeFields({ errorMessage: row.errorMessage, target, targetSource, reason, kind }),
       ...readState(row, now),
       section: problemSections[rank] ?? "quiet",
-    })),
-    total: rows[0]?.total ?? 0,
+      closesAt: closesAt(row, autoResolveDays, now),
+    })
   }
+  return { items, total: rows[0]?.total ?? 0, sections }
 }
 
 /** These Problems (not merged), by id, with their Affected workflows (at most `limit` each). */

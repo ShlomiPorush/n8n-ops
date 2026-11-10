@@ -27,6 +27,15 @@ export const statusTable = {
     muted: { label: "Muted", tone: "muted" },
     resolved: { label: "Resolved", tone: "ok" },
   },
+  /** The section of the Problems list a row sits in (lib/problems.ts), as the row's own tag. */
+  section: {
+    instance: { label: "Instance", tone: "fail" },
+    now: { label: "Failing now", tone: "fail" },
+    quiet: { label: "Quiet", tone: "muted" },
+    alerts: { label: "Your alert", tone: "warn" },
+    muted: { label: "Muted", tone: "muted" },
+    resolved: { label: "Resolved", tone: "ok" },
+  },
   access: {
     pending: { label: "Waiting for you", tone: "warn" },
     approved: { label: "Active", tone: "ok" },

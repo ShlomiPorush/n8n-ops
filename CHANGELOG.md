@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+
+- **The Problems list says what each section means.** Above the open problems, a figure for each section (Failing now, Quiet, Your alerts, and Instance problems when there are any) counts its rows and says in a line what it holds; selecting one shows that section alone. Each section's heading is now a tinted band with its icon, its full count and a sentence that explains it. Each row's tag names its section instead of a plain Open, so it still says where the row belongs after you sort by another column: Failing now, Quiet with how long it has been quiet, Your alert or Instance, with Regression or New beside it. A quiet row says when it closes by itself, such as Auto-closes in ~4 d, and Closing soon in its last day.
+
 ## [0.15.1] - 2026-11-10
 
 ### Changed

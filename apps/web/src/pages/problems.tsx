@@ -8,12 +8,16 @@ import {
   Copy as CopyIcon,
   Ellipsis,
   ExternalLink,
+  Flag as FlagIcon,
   GitMerge,
   GitMerge as GitMergeIcon,
   History as HistoryIcon,
   LayoutDashboard as LayoutDashboardIcon,
   ListTree as ListTreeIcon,
+  type LucideIcon,
+  Moon as MoonIcon,
   RotateCcw,
+  Server as ServerIcon,
   Split as SplitIcon,
 } from "lucide-react"
 import { Fragment, useEffect, useRef, useState } from "react"
@@ -42,7 +46,17 @@ import {
 } from "@/components/kit"
 import { ListWithPanel } from "@/components/list-panel"
 import { type PaneTabItem, PaneTabPanel, PaneTabs, usePaneTab, withoutTab } from "@/components/pane-tabs"
-import { FullTime, ProblemBadge, TimeAgo, When } from "@/components/status"
+import {
+  FullTime,
+  ProblemBadge,
+  problemStatus,
+  StatusTag,
+  statusOf,
+  TimeAgo,
+  type ToneName,
+  useTick,
+  When,
+} from "@/components/status"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -77,18 +91,24 @@ import { useProblemAction } from "@/lib/problem-actions"
 import {
   type AffectedRow,
   type CauseKind,
+  closesText,
   instancesText,
+  isOpenSection,
   isSingle,
   KIND_LABELS,
+  OPEN_SECTIONS,
+  type OpenSection,
   type ProblemList,
   type ProblemRow,
   type ProblemRowItem,
   type ProblemRows,
   problemPath,
   problemTitle,
+  quietText,
   SECTION_ORDER,
   SECTION_TITLES,
   type Section,
+  type SectionCounts,
   workflowNames,
 } from "@/lib/problems"
 import { formatTime, useTimeFormat } from "@/lib/time"
@@ -201,12 +221,15 @@ export function KindBadge({ kind }: { kind: CauseKind | null }) {
   )
 }
 
-/** What went wrong at a workflow, "target · reason" with its kind, and the line for a known error under it. */
-function CauseLine({ r }: { r: Pick<ProblemRowItem, "title" | "kind" | "hint"> }) {
+/**
+ * What went wrong at a workflow, "target · reason" with its kind, and the line for a known error under it. A row in
+ * Your alerts leaves out its kind: its section tag already says it is an alert.
+ */
+function CauseLine({ r }: { r: Pick<ProblemRowItem, "title" | "kind" | "hint" | "section"> }) {
   return (
     <>
       <span className="flex min-w-0 items-center gap-2">
-        <KindBadge kind={r.kind} />
+        {r.section !== "alerts" && <KindBadge kind={r.kind} />}
         <UserText className="min-w-0 truncate text-small" title={r.title}>
           {r.title}
         </UserText>
@@ -220,18 +243,84 @@ function CauseLine({ r }: { r: Pick<ProblemRowItem, "title" | "kind" | "hint"> }
   )
 }
 
-/** The heading of a section: a row that is not one of the list's items. */
-function SectionRow({ section, count, columns }: { section: Section; count: number; columns: number }) {
+/** A section's icon, in its heading and its figure above the list. */
+export const SECTION_ICONS: Record<Section, LucideIcon> = {
+  instance: ServerIcon,
+  now: ActivityIcon,
+  quiet: MoonIcon,
+  alerts: FlagIcon,
+  muted: BellOff,
+  resolved: CheckCircle2,
+}
+
+const TINTS: Record<ToneName, string> = {
+  ok: "tint-ok",
+  warn: "tint-warn",
+  fail: "tint-fail",
+  info: "tint-info",
+  muted: "tint-muted",
+}
+
+/**
+ * The heading of a section: a tinted band with the section's icon, its name, how many rows it holds in all (when
+ * the list was given the counts) and what it means, so it never reads as one of the list's items.
+ */
+function SectionRow({ section, count, columns }: { section: Section; count?: number; columns: number }) {
   const { title, note } = SECTION_TITLES[section]
+  const Icon = SECTION_ICONS[section]
   return (
     <TableRow role="presentation" data-section={section} className="border-0 hover:bg-transparent">
       <TableCell colSpan={columns} className="pt-4 pb-1 whitespace-normal">
-        <span className="font-semibold">{title}</span>{" "}
-        <span className="text-small text-muted-foreground">{n(count)}</span>
-        <span className="block text-small text-muted-foreground">{note}</span>
+        <div className={cn("rounded-sm px-3 py-2", TINTS[statusOf("section", section).tone])}>
+          <span className="flex items-center gap-2 font-semibold">
+            <Icon aria-hidden className="size-4 shrink-0" />
+            {title}
+            {count !== undefined && <span className="text-small font-normal">{n(count)}</span>}
+          </span>
+          <span className="mt-0.5 block text-small text-ink">{note}</span>
+        </div>
       </TableCell>
     </TableRow>
   )
+}
+
+/**
+ * The tag that names the section a row sits in ("Quiet 3 d" with its age), and Regression or New beside it. The
+ * age moves on by itself, also in a list that is not refreshed.
+ */
+function SectionTag({ r, stacked = false }: { r: ProblemRowItem; stacked?: boolean }) {
+  useTick()
+  const status = problemStatus(r)
+  const tag = (
+    <StatusTag kind="section" status={r.section}>
+      {r.section === "quiet" ? quietText(r.lastSeen) : undefined}
+    </StatusTag>
+  )
+  const also = (status === "regression" || status === "new") && (
+    <Badge variant="line" className="text-fail">
+      {statusOf("problem", status).label}
+    </Badge>
+  )
+  // In a table's Status column the second tag goes under the first, so the column stays as narrow as one tag.
+  if (stacked)
+    return (
+      <span className="flex flex-col items-start gap-1">
+        {tag}
+        {also}
+      </span>
+    )
+  return (
+    <>
+      {tag}
+      {also && <> {also}</>}
+    </>
+  )
+}
+
+/** When a quiet row may close by itself ("Auto-closes in ~4 d", then "Closing soon"), moving on by itself. */
+function Closes({ at }: { at: string }) {
+  useTick()
+  return <>{closesText(at)}</>
 }
 
 /** " · same cause in 3 workflows" when the same cause hit other workflows too; after a Merge, that it was merged. */
@@ -257,6 +346,7 @@ export function ProblemsTable({
   items,
   sort,
   sections,
+  counts,
 }: {
   rows: ProblemRowItem[]
   /** The Problem open beside the list, and the workflow it shows. */
@@ -275,6 +365,11 @@ export function ProblemsTable({
   sort?: Sorting<ProblemRowItem>
   /** In the order the server sends by default: with a heading before each section. */
   sections?: boolean
+  /**
+   * How many rows each section holds in all, which its heading shows. Without them (a preview of a few rows) the
+   * headings show no count, as one of the rows on screen would not be the section's.
+   */
+  counts?: SectionCounts
 }) {
   if (rows.length === 0) {
     const empt = <Empty title={empty}>A failure that n8n reports shows up here once, however often it repeats.</Empty>
@@ -300,11 +395,7 @@ export function ProblemsTable({
     list.map((r, i) => (
       <Fragment key={r.id}>
         {inSections && list[i - 1]?.section !== r.section && (
-          <SectionRow
-            section={r.section}
-            count={list.filter((x) => x.section === r.section).length}
-            columns={columns}
-          />
+          <SectionRow section={r.section} count={counts?.[r.section]} columns={columns} />
         )}
         {draw(r)}
       </Fragment>
@@ -328,8 +419,7 @@ export function ProblemsTable({
                 end={failures(r.count)}
                 sub={
                   <>
-                    <ProblemBadge status={r.status} regression={r.regression} firstSeen={r.firstSeen} />{" "}
-                    <UserText title={r.nodeName}>{r.nodeName}</UserText>
+                    <SectionTag r={r} /> <UserText title={r.nodeName}>{r.nodeName}</UserText>
                     {showInstance && (
                       <>
                         {" · "}
@@ -340,10 +430,15 @@ export function ProblemsTable({
                   </>
                 }
                 subEnd={
-                  <>
-                    <Said>Last seen</Said>
-                    <When value={r.lastSeen} />
-                  </>
+                  // A quiet row's age is in its tag; what is left to know is when it closes by itself.
+                  r.section === "quiet" && r.closesAt ? (
+                    <Closes at={r.closesAt} />
+                  ) : (
+                    <>
+                      <Said>Last seen</Said>
+                      <When value={r.lastSeen} />
+                    </>
+                  )
                 }
                 detail={<CauseLine r={r} />}
               />
@@ -373,7 +468,7 @@ export function ProblemsTable({
         {withHeadings((r) => (
           <TableRow {...rowProps(r)}>
             <TableCell data-nolabel>
-              <ProblemBadge status={r.status} regression={r.regression} firstSeen={r.firstSeen} />
+              <SectionTag r={r} stacked />
             </TableCell>
             <TableCell className="max-w-64" data-primary>
               <UserText className="block truncate font-semibold" title={r.workflowName}>
@@ -395,11 +490,61 @@ export function ProblemsTable({
             <TableCell className="text-end font-semibold tabular-nums">{n(r.count)}</TableCell>
             <TableCell className="text-end text-muted-foreground">
               <When value={r.lastSeen} />
+              {r.section === "quiet" && r.closesAt && (
+                <span className="block text-meta">
+                  <Closes at={r.closesAt} />
+                </span>
+              )}
             </TableCell>
           </TableRow>
         ))}
       </TableBody>
     </Table>
+  )
+}
+
+/** A section's rows in the count line and the empty list: "2 quiet rows", "No failing problems." */
+const SECTION_WORDS: Record<OpenSection, string> = {
+  instance: "runner",
+  now: "failing",
+  quiet: "quiet",
+  alerts: "alert",
+}
+
+/**
+ * A figure for each open section above the list: how many rows it holds, what it means, and a link that shows that
+ * section alone, or all of them again. The instance's own problems show only when there are some.
+ */
+function SectionFigures({
+  counts,
+  chosen,
+  link,
+}: {
+  counts: SectionCounts
+  chosen: OpenSection | null
+  link: (s: OpenSection | null) => string
+}) {
+  return (
+    // One row at any width, so the list beside the reading pane keeps its rows in sight (FB-17).
+    <nav aria-label="Sections">
+      <Kpis row>
+        {OPEN_SECTIONS.filter((s) => s !== "instance" || counts.instance > 0 || chosen === s).map((s) => {
+          const tone = statusOf("section", s).tone
+          return (
+            <Kpi
+              key={s}
+              label={SECTION_TITLES[s].title}
+              value={counts[s]}
+              hint={SECTION_TITLES[s].short}
+              tone={counts[s] > 0 && (tone === "fail" || tone === "warn") ? tone : undefined}
+              icon={SECTION_ICONS[s]}
+              to={link(chosen === s ? null : s)}
+              selected={chosen === s}
+            />
+          )
+        })}
+      </Kpis>
+    </nav>
   )
 }
 
@@ -410,11 +555,19 @@ export function ProblemsPage() {
   const status = params.get("status") ?? "open"
   const instance = params.get("instance") ?? "all"
   const q = params.get("q") ?? ""
+  // One open section, chosen by its figure above the list; it applies to the Open view only.
+  const asked = params.get("section")
+  const section = status === "open" && isOpenSection(asked) ? asked : null
   // The order is asked of the server, so it covers every problem and not only the 200 sent (TB-4). An order whose
   // rows failed to come leaves the rows, the headers and the Sort button in the order before it, and the filter
   // line says so.
   const order = useSortOrder("problems")
-  const filters = { status, ...(instance !== "all" ? { instance } : {}), ...(q ? { q } : {}) }
+  const filters = {
+    status,
+    ...(instance !== "all" ? { instance } : {}),
+    ...(q ? { q } : {}),
+    ...(section ? { section } : {}),
+  }
   const rows = useApi<ProblemRows>(problemRowsPath(filters, order.asked), { refetchInterval: 15_000, keepRows: true })
   // A failed refresh keeps the rows and the head says so; new filters that failed keep the previous rows and the
   // filter line says so (TB-5, LD-12).
@@ -426,7 +579,17 @@ export function ProblemsPage() {
     const next = new URLSearchParams(params)
     if (v && !(k === "instance" && v === "all")) next.set(k, v)
     else next.delete(k)
+    // A section is a part of the open problems: another status leaves it.
+    if (k === "status") next.delete("section")
     setParams(next, { replace: true })
+  }
+  /** The list cut to one section, or to all of them again, with the other filters kept. */
+  const sectionLink = (s: OpenSection | null) => {
+    const next = new URLSearchParams(params)
+    if (s) next.set("section", s)
+    else next.delete("section")
+    const search = next.toString()
+    return search ? `?${search}` : "?"
   }
   // The list's filters go with an opened problem, its open tab and workflow do not: each opening starts afresh.
   const listSearch = withoutTab(params)
@@ -434,9 +597,10 @@ export function ProblemsPage() {
   const open = (pid: string, workflow?: string) => navigate(at(pid, workflow))
   const shown = rows.data?.items.length
   const total = rows.data?.total ?? 0
-  const filtered = instance !== "all" || q !== ""
-  // "All" shows every status; the words then name no status.
-  const noun = [statusWords[status], "problems"].filter(Boolean).join(" ")
+  const filtered = instance !== "all" || q !== "" || section !== null
+  // "All" shows every status; the words then name no status. A section names its rows: "quiet problems".
+  const what = section ? SECTION_WORDS[section] : statusWords[status]
+  const noun = [what, "problems"].filter(Boolean).join(" ")
 
   const list = (items: boolean) => (
     <>
@@ -475,15 +639,14 @@ export function ProblemsPage() {
             ]}
           />
         }
-        listKey={`${status}|${instance}|${q}`}
+        listKey={`${status}|${instance}|${q}|${section ?? ""}`}
         loading={rows.isFetching || rows.isPlaceholderData}
         count={
           shown === undefined ? undefined : (
             <>
               {/* New filters that failed keep the previous rows, and this line says so instead of a count (TB-5).
                   Above 200 it counts them all: "200 of 1,240 open problems" (TB-18). */}
-              {rows.previous !== "failed" &&
-                countOf(shown, total, [statusWords[status], "row"].filter(Boolean).join(" "))}
+              {rows.previous !== "failed" && countOf(shown, total, [what, "row"].filter(Boolean).join(" "))}
               <RefreshNote live={rows} what={noun} small />
             </>
           )
@@ -494,11 +657,16 @@ export function ProblemsPage() {
                 const next = new URLSearchParams(params)
                 next.delete("instance")
                 next.delete("q")
+                next.delete("section")
                 setParams(next, { replace: true })
               }
             : undefined
         }
       />
+      {/* What each open section holds, above the rows they came with; none when nothing is open. */}
+      {status === "open" && rows.data?.sections && (section || OPEN_SECTIONS.some((s) => rows.data?.sections[s])) && (
+        <SectionFigures counts={rows.data.sections} chosen={section} link={sectionLink} />
+      )}
       {view === "failed" ? (
         <Panel>
           <LoadError what="problems" error={rows.error} retry={() => rows.refetch()} />
@@ -510,6 +678,7 @@ export function ProblemsPage() {
       ) : (
         <Reloading busy={rows.isPlaceholderData || (rows.previous === "failed" && rows.isFetching)}>
           <ProblemsTable
+            counts={rows.data?.sections}
             rows={rows.data?.items ?? []}
             sort={sort}
             selected={id ? { problemId: id, workflow: params.get("workflow") } : undefined}

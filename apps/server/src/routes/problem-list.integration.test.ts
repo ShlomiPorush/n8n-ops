@@ -9,6 +9,7 @@ import { createDatabase, type Database } from "../db/client.ts"
 import { affectedWorkflows, apiTokens, failures, instances, problems } from "../db/schema.ts"
 import { createAudit } from "../lib/audit.ts"
 import { sha256 } from "../lib/crypto.ts"
+import { createSettings } from "../lib/settings.ts"
 import { agentFailure, agentProblem, agentProblems } from "../services/agent.ts"
 import {
   type ProblemFilter,
@@ -75,7 +76,12 @@ beforeAll(async () => {
   url.pathname = `/${name}`
   database = createDatabase(url.toString())
   await database.migrate(join(import.meta.dirname, "../../drizzle"))
-  ctx = { db: database.db, audit: createAudit(database.db), events: new EventEmitter() } as unknown as Ctx
+  ctx = {
+    db: database.db,
+    audit: createAudit(database.db),
+    events: new EventEmitter(),
+    settings: createSettings(database.db),
+  } as unknown as Ctx
   const [alpha, beta, aster] = await database.db
     .insert(instances)
     .values([
@@ -432,6 +438,26 @@ describe("the Problems list as rows", () => {
     expect((await problemRowsPage(ctx, { status: "muted", instanceId: own.id })).items.map((r) => r.id)).toEqual([
       muted.id,
     ])
+
+    // Every section is counted under the filters, before the limit and whatever section is shown.
+    expect(all.sections).toEqual({ instance: 1, now: 3, quiet: 1, alerts: 1, muted: 1, resolved: 1 })
+    const openCounts = { instance: 1, now: 3, quiet: 1, alerts: 1, muted: 0, resolved: 0 }
+    expect(open.sections).toEqual(openCounts)
+    const cut = await problemRowsPage(ctx, { status: "open", instanceId: own.id, limit: 2 })
+    expect(cut.items).toHaveLength(2)
+    expect(cut.sections).toEqual(openCounts)
+    const quiet = await problemRowsPage(ctx, { status: "open", instanceId: own.id, section: "quiet" })
+    expect(quiet.items.map((r) => r.workflowName)).toEqual(["Quiet one"])
+    expect(quiet.total).toBe(1)
+    expect(quiet.sections).toEqual(openCounts)
+    const failing = await problemRowsPage(ctx, { status: "open", instanceId: own.id, section: "now" })
+    expect(failing.items.map((r) => r.workflowName)).toEqual(["Failing one", "Mute ended", "Peer one"])
+    expect((await problemRowsPage(ctx, { status: "open", instanceId: own.id, q: "Alert one" })).sections).toEqual({
+      ...openCounts,
+      instance: 0,
+      now: 0,
+      quiet: 0,
+    })
 
     // Search reads the target and the reason too; the count is over every match, before the limit.
     const found = await problemRowsPage(ctx, { status: "all", instanceId: own.id, q: "Bad ticket", limit: 2 })

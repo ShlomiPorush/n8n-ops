@@ -87,17 +87,59 @@ export const KIND_LABELS: Record<CauseKind, string> = {
  */
 export type Section = "instance" | "now" | "quiet" | "alerts" | "muted" | "resolved"
 
-export const SECTION_TITLES: Record<Section, { title: string; note: string }> = {
-  instance: { title: "Instance problems", note: "The n8n task runner did not take a task: a problem of the instance." },
-  now: { title: "Failing now", note: "Failed in the last 24 hours." },
-  quiet: { title: "Quiet", note: "Failed before, not in the last 24 hours. Closes by itself after quiet days." },
-  alerts: { title: "Your alerts", note: "A Stop and Error node in the workflow raised these on purpose." },
-  muted: { title: "Muted", note: "Muted for now; they alert again when the mute ends." },
-  resolved: { title: "Resolved", note: "Resolved by hand or after quiet days." },
+/** The open sections, which the Problems page counts above its list and can cut the list to. */
+export type OpenSection = "instance" | "now" | "quiet" | "alerts"
+export const OPEN_SECTIONS: OpenSection[] = ["instance", "now", "quiet", "alerts"]
+export const isOpenSection = (v: string | null): v is OpenSection => OPEN_SECTIONS.includes(v as OpenSection)
+
+/** A section's heading, what it means in a sentence, and the short line under its count above the list. */
+export const SECTION_TITLES: Record<Section, { title: string; note: string; short: string }> = {
+  instance: {
+    title: "Instance problems",
+    note: "The n8n task runner on the instance did not take a task: check the runner first, it is not a fault of these workflows.",
+    short: "Runner not taking tasks",
+  },
+  now: {
+    title: "Failing now",
+    note: "These workflows failed in the last 24 hours. Start here.",
+    short: "Failed in the last day",
+  },
+  quiet: {
+    title: "Quiet",
+    note: "Failed before, but not in the last 24 hours. Each one closes by itself after days without a failure, as its row says; a new failure moves it back to Failing now.",
+    short: "No failure for a day",
+  },
+  alerts: {
+    title: "Your alerts",
+    note: "A Stop and Error node in your workflow raised these on purpose. Recent or old, they stay here.",
+    short: "From a Stop and Error node",
+  },
+  muted: { title: "Muted", note: "Muted for now; they alert again when the mute ends.", short: "" },
+  resolved: { title: "Resolved", note: "Resolved by hand or after days without a failure.", short: "" },
 }
 
 /** The sections in the order the server sends them by default. */
 export const SECTION_ORDER: Section[] = ["instance", "now", "quiet", "alerts", "muted", "resolved"]
+
+/** How many rows each section holds, under the list's filters and before its limit. */
+export type SectionCounts = Record<Section, number>
+
+const DAY_MS = 86_400_000
+
+/** "Quiet 3 d": how long a quiet row has gone without a failure, in days rounded as `timeAgo` rounds them. */
+export function quietText(lastSeen: string, now = Date.now()) {
+  return `Quiet ${Math.max(1, Math.round((now - new Date(lastSeen).getTime()) / DAY_MS))} d`
+}
+
+/**
+ * When a row may close by itself, never closer than a day: housekeeping runs hourly and closes an ended mute a run
+ * later, so "Auto-closes in ~4 d" counts days rounded as ages are, and under a day, or past it, the row is
+ * "Closing soon".
+ */
+export function closesText(closesAt: string, now = Date.now()) {
+  const days = (new Date(closesAt).getTime() - now) / DAY_MS
+  return days >= 1 ? `Auto-closes in ~${Math.round(days)} d` : "Closing soon"
+}
 
 /** A row of the Problems list: one Affected workflow, its section and its Problem (docs/adr/0003). */
 export type ProblemRowItem = AffectedRow & {
@@ -107,10 +149,15 @@ export type ProblemRowItem = AffectedRow & {
   problemTotal: number
   /** Its Problem had others merged into it by hand, so its workflows need not share this cause. */
   mergedByHand: boolean
+  /** The earliest time it may close by itself; null when it is not open. */
+  closesAt: string | null
 }
 
-/** The Problems list as rows: the first 200 in the order asked for, and how many match in all (TB-18). */
-export type ProblemRows = { items: ProblemRowItem[]; total: number }
+/**
+ * The Problems list as rows: the first 200 in the order asked for, how many match in all (TB-18), and how many
+ * each section holds.
+ */
+export type ProblemRows = { items: ProblemRowItem[]; total: number; sections: SectionCounts }
 
 /** "alpha" for one instance, "3 instances" for more. */
 export const instancesText = (p: Pick<ProblemRow, "instances">) =>

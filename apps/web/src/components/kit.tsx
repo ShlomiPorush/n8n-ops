@@ -540,6 +540,7 @@ export function Kpi({
   hint,
   tone,
   to,
+  selected = false,
   icon: Icon,
 }: {
   label: React.ReactNode
@@ -549,6 +550,8 @@ export function Kpi({
   tone?: "fail" | "warn" | "ok"
   /** Every count is a link to the list it counts. */
   to?: string
+  /** The link shows the list on screen now (a filter it set): marked, and said to assistive technology. */
+  selected?: boolean
   /** What the figure is about; drawn by Regular only, beside the figure. */
   icon?: LucideIcon
 }) {
@@ -593,7 +596,17 @@ export function Kpi({
     "regular:rounded-lg regular:bg-panel regular:p-5 regular:shadow-card regular:ring-1 regular:ring-ink/10 regular:outline-0",
   )
   return to ? (
-    <Link to={to} data-slot="kpi" className={cn(cls, "hover-row")}>
+    <Link
+      to={to}
+      data-slot="kpi"
+      aria-current={selected ? "true" : undefined}
+      // Inside the block's clip in Compact, so the mark is whole at its edges; Regular rings its own card.
+      className={cn(
+        cls,
+        "hover-row",
+        selected && "outline-2 -outline-offset-2 outline-ink regular:ring-2 regular:ring-ink",
+      )}
+    >
       <TipInControl>{inner}</TipInControl>
     </Link>
   ) : (

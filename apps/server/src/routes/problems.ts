@@ -6,6 +6,8 @@ import { affectedWorkflows, failures, type ProblemAction, problems } from "../db
 import { requireUser } from "../http/middleware.ts"
 import { actorName, type Env } from "../http/types.ts"
 import {
+  noSections,
+  openSections,
   parseProblemOrder,
   problemDetail,
   problemPage,
@@ -51,8 +53,9 @@ export function problemRoutes(ctx: Ctx) {
    * the answer's `id` is the Problem's, which the page then uses.
    */
   /*
-   * `{ items, total }`: the list as rows, one per Affected workflow (docs/adr/0003), with its section, in the order
-   * asked for or in sections, the first 200 and how many match in all (TB-4, TB-18). Before `/:id`.
+   * `{ items, total, sections }`: the list as rows, one per Affected workflow (docs/adr/0003), with its section and
+   * when it may close by itself, in the order asked for or in sections, the first 200, how many match in all
+   * (TB-4, TB-18) and how many each section holds. Before `/:id`.
    */
   app.get("/rows", async (c) => {
     const instance = c.req.query("instance")
@@ -60,8 +63,10 @@ export function problemRoutes(ctx: Ctx) {
       status: c.req.query("status") ?? "open",
       instanceId: instance && uuid.safeParse(instance).success ? instance : undefined,
       q: c.req.query("q"),
+      // One open section (`?section=quiet`); any other value lists them all.
+      section: openSections.find((s) => s === c.req.query("section")),
     }
-    if (instance && !filter.instanceId) return c.json({ items: [], total: 0 })
+    if (instance && !filter.instanceId) return c.json({ items: [], total: 0, sections: noSections() })
     const order = parseProblemOrder(c.req.query("sort"), c.req.query("order"))
     return c.json(await problemRowsPage(ctx, { ...filter, order }))
   })

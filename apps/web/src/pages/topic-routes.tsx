@@ -180,7 +180,6 @@ export function TopicRoutes({
                     id={field("topic")}
                     value={r.threadId}
                     inputMode="numeric"
-                    className="tabular-nums"
                     aria-label={`Route ${n} topic`}
                     onChange={(e) => update(i, { threadId: e.target.value })}
                     {...marks("topic")}

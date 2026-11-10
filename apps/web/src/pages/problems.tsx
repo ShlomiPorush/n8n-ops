@@ -42,7 +42,7 @@ import {
 } from "@/components/kit"
 import { ListWithPanel } from "@/components/list-panel"
 import { type PaneTabItem, PaneTabPanel, PaneTabs, usePaneTab, withoutTab } from "@/components/pane-tabs"
-import { ProblemBadge, TimeAgo, When } from "@/components/status"
+import { FullTime, ProblemBadge, TimeAgo, When } from "@/components/status"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -166,6 +166,8 @@ type Selected = AffectedRow & {
 
 /** When a failure ran, as the server orders them: stopped, else started, else when n8n-ops stored it. */
 const ranAt = (f: Selected["occurrences"][number]) => f.stoppedAt ?? f.startedAt ?? f.createdAt
+/** An execution number reads in the text's own font, not as monospace code beside it. */
+const RUN_ID = "font-sans"
 
 type ProblemDetailData = ProblemRow & {
   selected: Selected
@@ -225,7 +227,7 @@ function SectionRow({ section, count, columns }: { section: Section; count: numb
     <TableRow role="presentation" data-section={section} className="border-0 hover:bg-transparent">
       <TableCell colSpan={columns} className="pt-4 pb-1 whitespace-normal">
         <span className="font-semibold">{title}</span>{" "}
-        <span className="text-small text-muted-foreground tabular-nums">{n(count)}</span>
+        <span className="text-small text-muted-foreground">{n(count)}</span>
         <span className="block text-small text-muted-foreground">{note}</span>
       </TableCell>
     </TableRow>
@@ -972,12 +974,12 @@ export function ProblemDetail({ id }: { id: string }) {
               <p className="flex flex-wrap items-center gap-x-2 gap-y-1 px-pad-x py-pad-y">
                 <HistoryIcon aria-hidden className="size-4 text-muted-foreground" />
                 <b className="font-semibold">Latest failure</b>
-                <Copyable value={latest.executionId} label="Copy execution ID">
+                <Copyable value={latest.executionId} label="Copy execution ID" className={RUN_ID}>
                   #{latest.executionId}
                 </Copyable>
                 <span className="text-muted-foreground">
                   {latest.mode && `${latest.mode} · `}
-                  <When value={ranAt(latest)} />
+                  <FullTime value={ranAt(latest)} /> · <TimeAgo value={ranAt(latest)} />
                 </span>
               </p>
             </Panel>
@@ -1043,7 +1045,7 @@ export function ProblemDetail({ id }: { id: string }) {
                       <ItemRow
                         title={
                           <span className="flex items-center gap-2">
-                            <Copyable value={o.executionId} label="Copy execution ID">
+                            <Copyable value={o.executionId} label="Copy execution ID" className={RUN_ID}>
                               #{o.executionId}
                             </Copyable>
                             {o.url && (
@@ -1059,12 +1061,14 @@ export function ProblemDetail({ id }: { id: string }) {
                             )}
                           </span>
                         }
+                        // The pane has room for the whole time, and the age says how recent at a glance.
                         end={
                           <span className="font-normal text-muted-foreground">
-                            <When value={ranAt(o)} />
+                            <FullTime value={ranAt(o)} />
                           </span>
                         }
                         sub={o.mode ?? undefined}
+                        subEnd={<TimeAgo value={ranAt(o)} />}
                       />
                     </TableRow>
                   ))}

@@ -162,7 +162,7 @@ function RunRow({ run }: { run: Run }) {
           <When value={run.startedAt} />
         </span>
         <Tone tone="fail">{kinds.join(", ") || "Failed"}</Tone>
-        <span className="text-muted-foreground tabular-nums">
+        <span className="text-muted-foreground">
           {run.checksAtLeast ? "at least " : ""}
           {plural(run.checks, "check")}
         </span>
@@ -289,7 +289,7 @@ function Chart({ history }: { history: History }) {
               x={x(t)}
               y={HEIGHT - 6}
               textAnchor={i === 0 ? "start" : i === 2 ? "end" : "middle"}
-              className="fill-muted-foreground text-meta tabular-nums"
+              className="fill-muted-foreground text-meta"
             >
               {tick(t)}
             </text>
@@ -359,7 +359,7 @@ function Chart({ history }: { history: History }) {
           <div className="text-muted-foreground">{formatTime(hovered.at, w, { seconds: false })}</div>
           {hovered.avgMs !== null ? (
             <div>
-              <span className="font-title tabular-nums">{ms(hovered.avgMs)}</span>{" "}
+              <span className="font-title">{ms(hovered.avgMs)}</span>{" "}
               <span className="text-muted-foreground">
                 average, {ms(hovered.minMs)} to {ms(hovered.maxMs)}
               </span>
@@ -368,7 +368,7 @@ function Chart({ history }: { history: History }) {
             <div className="text-muted-foreground">No measured time</div>
           )}
           {hovered.failed > 0 && (
-            <div className="font-semibold text-fail tabular-nums">{plural(hovered.failed, "failed check")}</div>
+            <div className="font-semibold text-fail">{plural(hovered.failed, "failed check")}</div>
           )}
           {hovered.notCollected > 0 && (
             <div className="text-muted-foreground">{plural(hovered.notCollected, "check")} could not be made</div>

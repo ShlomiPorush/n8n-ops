@@ -697,7 +697,7 @@ export function formatExample(f: FieldDef, values: Record<string, unknown>): Rea
   })
   const now = new Date()
   return (
-    <span aria-live="polite" className="tabular-nums">
+    <span aria-live="polite">
       Example: {f.type === "date-format" ? formatDay(now, draft) : formatClock(now, draft)}
     </span>
   )
@@ -1060,7 +1060,6 @@ export function SettingsForm({ section, active = true }: { section: string; acti
                     // Times are typed as 24-hour HH:MM; a native time field would follow the browser's 12-hour clock.
                     type={f.type === "number" ? "number" : "text"}
                     inputMode={f.type === "time" || f.type === "topic" ? "numeric" : undefined}
-                    className={f.type === "time" || f.type === "topic" ? "tabular-nums" : undefined}
                     placeholder={f.type === "time" ? "HH:MM" : (env?.value ?? f.placeholder)}
                     value={String(values[f.name] ?? "")}
                     onChange={(e) => set(f.name, e.target.value)}

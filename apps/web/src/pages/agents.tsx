@@ -228,8 +228,7 @@ function AgentsCard() {
                       {t.canRequestAccess && <Badge variant="line">may request access</Badge>}
                     </span>
                   </TableCell>
-                  {/* Proportional digits in both date cells: tabular "05.11" looks gappy beside "17:25". */}
-                  <TableCell className="text-muted-foreground [&_time]:normal-nums">
+                  <TableCell className="text-muted-foreground">
                     <When value={t.createdAt} />
                     {t.approvedBy ? (
                       <>
@@ -242,7 +241,7 @@ function AgentsCard() {
                       ""
                     )}
                   </TableCell>
-                  <TableCell className="text-end text-muted-foreground [&_time]:normal-nums">
+                  <TableCell className="text-end text-muted-foreground">
                     {t.lastUsedAt ? <When value={t.lastUsedAt} /> : "Never"}
                   </TableCell>
                   <TableCell className="text-end">

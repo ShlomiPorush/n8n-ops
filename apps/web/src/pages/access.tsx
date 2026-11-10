@@ -244,7 +244,7 @@ export function AccessPage() {
                       {" · "}
                       <UserText>{r.token}</UserText>
                       {" · "}
-                      <span className="tabular-nums">{formatDuration(r.minutes)}</span>
+                      <span>{formatDuration(r.minutes)}</span>
                     </>
                   }
                   subEnd={
@@ -287,7 +287,7 @@ export function AccessPage() {
                 <TableCell className="max-w-80 truncate font-semibold" title={r.reason} data-primary>
                   <UserText>{r.reason}</UserText>
                 </TableCell>
-                <TableCell className="tabular-nums">{formatDuration(r.minutes)}</TableCell>
+                <TableCell>{formatDuration(r.minutes)}</TableCell>
                 <TableCell className="text-end text-muted-foreground">
                   <When value={r.requestedAt} />
                 </TableCell>

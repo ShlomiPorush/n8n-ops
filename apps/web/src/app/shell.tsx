@@ -457,7 +457,7 @@ function SideNav({ nav }: { nav: ReturnType<typeof useNavFolded> }) {
       </div>
       {counts.summary?.version && (
         <p data-testid="app-version" className="hidden px-3 pt-2 text-meta text-muted-foreground side:block">
-          n8n-ops <span className="font-mono">{counts.summary.version}</span>
+          n8n-ops {counts.summary.version}
         </p>
       )}
     </nav>

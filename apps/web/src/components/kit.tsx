@@ -303,12 +303,7 @@ export function PanelHead({
           {title}
         </h2>
         {count !== undefined && (
-          <span
-            className={cn(
-              "font-medium text-muted-foreground tabular-nums",
-              Icon && "regular:text-figure regular:text-ink",
-            )}
-          >
+          <span className={cn("font-medium text-muted-foreground", Icon && "regular:text-figure regular:text-ink")}>
             {count}
           </span>
         )}
@@ -411,7 +406,7 @@ export function KV({
   return (
     <div className={cn("flex min-w-0 items-center gap-2.5 border-t border-line px-pad-x py-[7px]", className)}>
       <span className="shrink-0 text-muted-foreground">{label}</span>
-      <span className="ms-auto min-w-0 text-end font-title break-words tabular-nums">{children}</span>
+      <span className="ms-auto min-w-0 text-end font-title break-words">{children}</span>
     </div>
   )
 }
@@ -563,7 +558,7 @@ export function Kpi({
         <b
           data-slot="kpi-figure"
           className={cn(
-            "block text-figure tabular-nums",
+            "block text-figure",
             // Words ("just now", "14 h ago") a size down in Regular, so they fit a narrow card on one line.
             typeof value !== "number" && "regular:text-h1",
             tone === "fail" && "text-fail",
@@ -743,7 +738,7 @@ export function Copyable({
       title="Click to copy"
       aria-label={`${label ?? "Copy"}: ${value}`}
       className={cn(
-        "group/copy inline-flex max-w-full min-w-0 gap-1 rounded-tag px-1 -mx-1 text-start font-mono text-code transition-colors duration-150 [@media(hover:hover)]:hover:bg-copy-hover",
+        "group/copy inline-flex max-w-full min-w-0 gap-1 rounded-tag px-1 -mx-1 text-start font-mono transition-colors duration-150 [@media(hover:hover)]:hover:bg-copy-hover",
         wrap ? "items-end" : "items-center",
         className,
       )}

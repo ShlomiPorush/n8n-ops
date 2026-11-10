@@ -389,7 +389,7 @@ export function BackupsPage() {
                             {includes} · to {to}
                           </>
                         }
-                        subEnd={<span className="tabular-nums">daily at {formatClockAt(r.backupTime, w)}</span>}
+                        subEnd={<span>daily at {formatClockAt(r.backupTime, w)}</span>}
                         action={runNow || undefined}
                       />
                     ) : (
@@ -410,9 +410,7 @@ export function BackupsPage() {
                         <TableCell className={cn("max-w-56", nowhere ? "text-fail" : "text-muted-foreground")} truncate>
                           {to}
                         </TableCell>
-                        <TableCell className="text-muted-foreground tabular-nums">
-                          {formatClockAt(r.backupTime, w)}
-                        </TableCell>
+                        <TableCell className="text-muted-foreground">{formatClockAt(r.backupTime, w)}</TableCell>
                         {runNow && <TableCell className="text-end">{runNow}</TableCell>}
                       </>
                     )}

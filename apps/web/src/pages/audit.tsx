@@ -124,7 +124,7 @@ export function AuditPage() {
           <TableBody>
             {rows.map((a) => (
               <TableRow key={a.id}>
-                <TableCell className="text-muted-foreground tabular-nums">
+                <TableCell className="text-muted-foreground">
                   <Tip content={formatTime(a.at, w)}>
                     <time dateTime={a.at}>{formatTime(a.at, w, { seconds: false })}</time>
                   </Tip>

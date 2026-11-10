@@ -49,7 +49,7 @@ export function TimeZonePicker({
         node: (
           <>
             {name}
-            {offset && <span className="text-muted-foreground tabular-nums"> {offset}</span>}
+            {offset && <span className="text-muted-foreground"> {offset}</span>}
           </>
         ),
       }}

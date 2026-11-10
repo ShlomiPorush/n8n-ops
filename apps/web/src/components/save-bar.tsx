@@ -300,7 +300,7 @@ function SaveBar({
           : "fixed inset-x-0 bottom-[18px] z-45 mx-auto w-fit max-w-[calc(100vw-36px)] md:start-rail side:start-side max-md:inset-x-2.5 max-md:bottom-[calc(var(--spacing-tabbar)+12px+env(safe-area-inset-bottom))] max-md:w-auto",
       )}
     >
-      <span aria-live="polite" className="min-w-0 flex-1 pe-1 font-semibold whitespace-nowrap tabular-nums">
+      <span aria-live="polite" className="min-w-0 flex-1 pe-1 font-semibold whitespace-nowrap">
         {plural(count, "unsaved change")}
       </span>
       <Button

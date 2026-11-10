@@ -574,7 +574,7 @@ export function FilterBar({
       {(count !== undefined || onClear || (sortButton && !search)) && (
         <p className="flex flex-wrap items-center gap-x-3 text-small text-muted-foreground">
           {count !== undefined && (
-            <span data-slot="list-count" className="font-semibold text-ink tabular-nums">
+            <span data-slot="list-count" className="font-semibold text-ink">
               {count}
             </span>
           )}

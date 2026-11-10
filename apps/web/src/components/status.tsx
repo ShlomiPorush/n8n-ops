@@ -248,6 +248,11 @@ export function useTick() {
   }, [])
 }
 
+/*
+ * The times below keep their digits at their natural width (normal-nums) even in a column of figures: the UI
+ * font's tabular "1" is as wide as a "0", so "09.11" looked spaced out and smaller than "01:00".
+ */
+
 /** An age ("18 h ago"), with the exact time on hover, keyboard focus or a tap (FW-1, MO-4). */
 export function TimeAgo({ value }: { value: string | Date | null | undefined }) {
   const w = useTimeFormat()
@@ -255,7 +260,7 @@ export function TimeAgo({ value }: { value: string | Date | null | undefined }) 
   if (!value) return <span>never</span>
   return (
     <Tip content={formatTime(value, w)}>
-      <time dateTime={isoTime(value)} className="tabular-nums">
+      <time dateTime={isoTime(value)} className="normal-nums">
         {timeAgo(value)}
       </time>
     </Tip>
@@ -268,7 +273,7 @@ export function TimeLeft({ value }: { value: string | Date }) {
   useTick()
   return (
     <Tip content={formatTime(value, w)}>
-      <time dateTime={isoTime(value)} className="tabular-nums">
+      <time dateTime={isoTime(value)} className="normal-nums">
         {timeLeft(value)}
       </time>
     </Tip>
@@ -291,8 +296,23 @@ export function When({ value }: { value: string | Date | null | undefined }) {
         </>
       }
     >
-      <time dateTime={isoTime(value)} className="tabular-nums">
+      <time dateTime={isoTime(value)} className="normal-nums">
         {formatListTime(value, w)}
+      </time>
+    </Tip>
+  )
+}
+
+/**
+ * The whole date and time to the minute, "16/10/2026, 14:05", as the Date and Time format write them, for a place
+ * with room for it; the time to the second on hover, keyboard focus or a tap (MO-4). Pair it with TimeAgo.
+ */
+export function FullTime({ value }: { value: string | Date }) {
+  const w = useTimeFormat()
+  return (
+    <Tip content={formatTime(value, w)}>
+      <time dateTime={isoTime(value)} className="normal-nums">
+        {formatTime(value, w, { seconds: false })}
       </time>
     </Tip>
   )

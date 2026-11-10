@@ -68,7 +68,7 @@ export function ItemRow({
           {title}
         </div>
         {end !== undefined && (
-          <div data-part="end" className={cn(side, "row-start-1 text-end whitespace-nowrap tabular-nums")}>
+          <div data-part="end" className={cn(side, "row-start-1 text-end whitespace-nowrap")}>
             {end}
           </div>
         )}

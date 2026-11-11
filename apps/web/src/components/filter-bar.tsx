@@ -11,8 +11,9 @@ import { cn } from "@/lib/utils"
 /*
  * The shared filter bar of every list (MP-1, MP-3, MP-6, TB-17): a search with the list's Sort button beside
  * it, the common pickers, and the rarely used filters behind a Filters button at every size, whose badge counts
- * those in use. Where the bar is narrow it keeps one line (FB-19). Under the bar one line holds the count,
- * "Clear filters", and the Sort button of a list with no search. The bar stays in sight wherever its list
+ * those in use. Where the bar is narrow it keeps one line (FB-19). Under the bar one line holds the Sort button
+ * of a list with no search, first, then the count and "Clear filters": on every list the Sort button is at the
+ * start, never at the end. The bar stays in sight wherever its list
  * scrolls, at every width (NL-16, index.css), and a new filter or search starts the list at its first row (TB-7).
  */
 
@@ -557,7 +558,7 @@ export function FilterBar({
 }: {
   views?: FilterViews
   search?: React.ReactNode
-  /** The list's Sort button (TB-28): beside the search, else at the end of the count line. */
+  /** The list's Sort button (TB-28): beside the search, else at the start of the count line. */
   sort?: { control: SortControl; name: string }
   /** The filters most people use: in the row where there is room, else behind Filters. */
   pickers?: React.ReactNode
@@ -908,6 +909,7 @@ export function FilterBar({
       )}
       {(count !== undefined || onClear || (sortButton && !search)) && (
         <p className="flex flex-wrap items-center gap-x-3 text-small text-muted-foreground">
+          {!search && sortButton}
           {count !== undefined && (
             <span data-slot="list-count" className="font-semibold text-ink">
               {count}
@@ -926,7 +928,6 @@ export function FilterBar({
               Clear filters
             </button>
           )}
-          {!search && sortButton && <span className="ms-auto">{sortButton}</span>}
         </p>
       )}
     </div>

@@ -30,7 +30,7 @@ import {
 import { ListWithPanel } from "@/components/list-panel"
 import { type ProxyFix, ProxyFixBlock } from "@/components/proxy-fix"
 import { RestoreDetailsDialog } from "@/components/restore-view"
-import { Dot, StatusTag, Tone, When } from "@/components/status"
+import { Dot, FullTime, FullWhen, StatusTag, TimeAgo, Tone } from "@/components/status"
 import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, useSort } from "@/components/ui/table"
 import { useMediaQuery } from "@/hooks/use-mobile"
@@ -39,7 +39,7 @@ import { SPLIT_QUERY } from "@/lib/behavior"
 import { loadView } from "@/lib/load-state"
 import { formatSize, n, plural } from "@/lib/numbers"
 import type { RestoreView } from "@/lib/restore"
-import { formatClockAt, formatTime, useTimeFormat } from "@/lib/time"
+import { formatClock, formatClockAt, formatDay, formatTime, isoTime, useTimeFormat } from "@/lib/time"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
 import { type DestinationKind, KindIcon } from "./destinations"
@@ -313,11 +313,9 @@ export function BackupsPage() {
                     }
                   />
                 )
-                const lastOkTime = (
-                  <span className={cn(late && !nowhere && "font-semibold text-warn")}>
-                    <When value={r.lastOk?.startedAt} />
-                  </span>
-                )
+                // The whole date of the last success, as Occurrences writes it; late is drawn in the warning colour.
+                const lateText = late && !nowhere && "font-semibold text-warn"
+                const lastOk = r.lastOk?.startedAt
                 const tag = nowhere ? (
                   <StatusTag kind="backup" status="none" />
                 ) : failed ? (
@@ -380,16 +378,28 @@ export function BackupsPage() {
                         end={
                           <>
                             <Said>Last success</Said>
-                            {lastOkTime}
+                            <span className={cn(lateText)}>
+                              {lastOk ? (
+                                // The whole date and time, as FullTime writes it; the time goes where the list is
+                                // at its narrowest, so the name keeps its room (index.css).
+                                <time dateTime={isoTime(lastOk)}>
+                                  {formatDay(lastOk, w)}
+                                  <span data-part="clock">, {formatClock(lastOk, w, { seconds: false })}</span>
+                                </time>
+                              ) : (
+                                <span className="text-muted-foreground">never</span>
+                              )}
+                            </span>
                           </>
                         }
                         sub={
                           <>
                             {tag && <>{tag} </>}
-                            {includes} · to {to}
+                            daily at {formatClockAt(r.backupTime, w)} · {includes} · to {to}
                           </>
                         }
-                        subEnd={<span>daily at {formatClockAt(r.backupTime, w)}</span>}
+                        // The age of the last success under its date, as on Occurrences.
+                        subEnd={lastOk && <TimeAgo value={lastOk} />}
                         action={runNow || undefined}
                       />
                     ) : (
@@ -402,7 +412,9 @@ export function BackupsPage() {
                         </TableCell>
                         <TableCell>
                           <span className="flex items-center gap-2">
-                            {lastOkTime}
+                            <span className={cn(lateText)}>
+                              <FullWhen value={lastOk} />
+                            </span>
                             {tag}
                           </span>
                         </TableCell>
@@ -515,7 +527,7 @@ function BackupHistory({ id, name }: { id: string; name: string }) {
             {list.map((r) => [
               <TableRow key={r.id}>
                 <TableCell className="align-top text-muted-foreground">
-                  <When value={r.startedAt} />
+                  <FullWhen value={r.startedAt} />
                 </TableCell>
                 <TableCell className="whitespace-normal">
                   {r.status === "ok" || r.status === "partial" ? (
@@ -634,7 +646,8 @@ function RecentRestores({ instanceId }: { instanceId: string }) {
             </button>
             <span className="text-small text-muted-foreground">
               {r.mode === "replace" ? "workflow replaced" : r.kind === "workflow" ? "workflow" : "credential"} ·{" "}
-              <When value={r.confirmedAt ?? r.createdAt} /> · <UserText>{r.actor}</UserText>
+              <FullTime value={r.confirmedAt ?? r.createdAt} /> · <TimeAgo value={r.confirmedAt ?? r.createdAt} /> ·{" "}
+              <UserText>{r.actor}</UserText>
             </span>
             {r.steps.some((s) => s.warning) && <Tone tone="warn">Check in n8n</Tone>}
             {r.status === "unknown" && (

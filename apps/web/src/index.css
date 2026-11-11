@@ -735,6 +735,12 @@ html[data-design="regular"].dark {
 [data-slot="table-wrap"] {
   container-type: inline-size;
 }
+/* A whole date at the end of an item drops its time where the list is at its narrowest, so the name keeps room. */
+@container (max-width: 359px) {
+  [data-slot="item-row"] [data-part="clock"] {
+    display: none;
+  }
+}
 /* Compact marks the open item with an edge at its start as well; Regular draws no status edges (#29). */
 html:not([data-design="regular"]) tr[data-state="selected"] > td:has(> [data-slot="item-row"]) {
   box-shadow: inset 3px 0 0 var(--ui-ink);
@@ -788,6 +794,16 @@ html:not([data-design="regular"]) tr[data-state="selected"] > td:has(> [data-slo
     display: inline-flex;
     max-width: 100%;
     vertical-align: baseline;
+  }
+  /* A whole date and its age (FullWhen) share that line: "When 16/10/2026, 14:05 · 3 h ago". */
+  [data-stack] > tbody > tr > td [data-slot="full-when"] {
+    flex-direction: row;
+    align-items: baseline;
+    flex-wrap: wrap;
+    column-gap: 0.3em;
+  }
+  [data-stack] > tbody > tr > td [data-slot="full-when"] > :last-child::before {
+    content: "· ";
   }
   [data-stack] > tbody > tr:not(:has(> [data-primary])) > td:first-child::before,
   [data-stack] > tbody > tr > td:last-child:has([data-slot="button"])::before {

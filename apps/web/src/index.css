@@ -736,7 +736,7 @@ html[data-design="regular"].dark {
   container-type: inline-size;
 }
 /* A whole date at the end of an item drops its time where the list is at its narrowest, so the name keeps room. */
-@container (max-width: 339px) {
+@container (max-width: 359px) {
   [data-slot="item-row"] [data-part="clock"] {
     display: none;
   }

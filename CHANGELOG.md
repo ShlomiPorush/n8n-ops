@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.16.3] - 2026-11-11
+
 ### Fixed
 
 - **The commands the skill tells an agent to run are safe to run as printed.** The address in `n8n-ops connect --wait --url "<address>"` is now quoted, so an address such as `http://[::1]:8080` works in zsh and in bash with `failglob`, which took its brackets as a file pattern. Every version of the skill's command accepts only a plain address (letters, digits, dots and hyphens, or a bracketed IPv6 address, and a port from 1 to 65535) and refuses one with characters a shell would run, such as `$(...)`, given or kept; the sh version no longer accepts a port such as `:12bad` or one above 65535. Windows PowerShell 5.1 now accepts `http://[::1]` like the other versions.

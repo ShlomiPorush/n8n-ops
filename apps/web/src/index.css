@@ -735,6 +735,12 @@ html[data-design="regular"].dark {
 [data-slot="table-wrap"] {
   container-type: inline-size;
 }
+/* A whole date at the end of an item drops its time where the list is at its narrowest, so the name keeps room. */
+@container (max-width: 339px) {
+  [data-slot="item-row"] [data-part="clock"] {
+    display: none;
+  }
+}
 /* Compact marks the open item with an edge at its start as well; Regular draws no status edges (#29). */
 html:not([data-design="regular"]) tr[data-state="selected"] > td:has(> [data-slot="item-row"]) {
   box-shadow: inset 3px 0 0 var(--ui-ink);

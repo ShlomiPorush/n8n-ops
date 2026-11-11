@@ -39,7 +39,7 @@ import { SPLIT_QUERY } from "@/lib/behavior"
 import { loadView } from "@/lib/load-state"
 import { formatSize, n, plural } from "@/lib/numbers"
 import type { RestoreView } from "@/lib/restore"
-import { formatClockAt, formatTime, useTimeFormat } from "@/lib/time"
+import { formatClock, formatClockAt, formatDay, formatTime, isoTime, useTimeFormat } from "@/lib/time"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
 import { type DestinationKind, KindIcon } from "./destinations"
@@ -380,7 +380,12 @@ export function BackupsPage() {
                             <Said>Last success</Said>
                             <span className={cn(lateText)}>
                               {lastOk ? (
-                                <FullTime value={lastOk} />
+                                // The whole date and time, as FullTime writes it; the time goes where the list is
+                                // at its narrowest, so the name keeps its room (index.css).
+                                <time dateTime={isoTime(lastOk)}>
+                                  {formatDay(lastOk, w)}
+                                  <span data-part="clock">, {formatClock(lastOk, w, { seconds: false })}</span>
+                                </time>
                               ) : (
                                 <span className="text-muted-foreground">never</span>
                               )}
@@ -390,20 +395,11 @@ export function BackupsPage() {
                         sub={
                           <>
                             {tag && <>{tag} </>}
-                            {includes} · to {to}
+                            daily at {formatClockAt(r.backupTime, w)} · {includes} · to {to}
                           </>
                         }
-                        // The age of the last success under its date, as on Occurrences, then the daily time.
-                        subEnd={
-                          <span>
-                            {lastOk && (
-                              <>
-                                <TimeAgo value={lastOk} /> ·{" "}
-                              </>
-                            )}
-                            daily at {formatClockAt(r.backupTime, w)}
-                          </span>
-                        }
+                        // The age of the last success under its date, as on Occurrences.
+                        subEnd={lastOk && <TimeAgo value={lastOk} />}
                         action={runNow || undefined}
                       />
                     ) : (

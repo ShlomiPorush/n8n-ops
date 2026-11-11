@@ -311,7 +311,14 @@ describe("serving the skill", () => {
     ]) {
       expect(new URL(issuer).origin, "Node keeps it in the origin").toBe(issuer)
       expect(servesSkill(issuer), issuer).toBe(false)
-      for (const file of ["", "SKILL.md", "scripts/n8n-ops", "scripts/n8n-ops.mjs", "scripts/n8n-ops.ps1", "scripts/n8n-ops.sh"]) {
+      for (const file of [
+        "",
+        "SKILL.md",
+        "scripts/n8n-ops",
+        "scripts/n8n-ops.mjs",
+        "scripts/n8n-ops.ps1",
+        "scripts/n8n-ops.sh",
+      ]) {
         const res = await app(issuer).request(`/connect/skill/${file}`)
         expect(res.status, `${issuer} ${file}`).toBe(404)
         const body = await res.text()

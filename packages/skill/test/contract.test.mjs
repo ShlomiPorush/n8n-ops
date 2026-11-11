@@ -557,7 +557,9 @@ for (const impl of impls) {
       }
       try {
         const { shells, missing } = hintShells()
-        t.diagnostic(`shells: ${shells.map((s) => s.name).join(", ") || "none"}; missing: ${missing.join(", ") || "none"}`)
+        t.diagnostic(
+          `shells: ${shells.map((s) => s.name).join(", ") || "none"}; missing: ${missing.join(", ") || "none"}`,
+        )
         const inst = fresh()
         const p = await run(impl, inst, v6, ["connect"])
         assert.equal(p.json?.next, connectNext(v6.issuer), p.out + p.err)

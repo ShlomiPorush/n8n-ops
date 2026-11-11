@@ -92,30 +92,26 @@ export type OpenSection = "instance" | "now" | "quiet" | "alerts"
 export const OPEN_SECTIONS: OpenSection[] = ["instance", "now", "quiet", "alerts"]
 export const isOpenSection = (v: string | null): v is OpenSection => OPEN_SECTIONS.includes(v as OpenSection)
 
-/** A section's heading, what it means in a sentence, and the short line under its count above the list. */
-export const SECTION_TITLES: Record<Section, { title: string; note: string; short: string }> = {
+/** A section's heading and what it means in a sentence. */
+export const SECTION_TITLES: Record<Section, { title: string; note: string }> = {
   instance: {
     title: "Instance problems",
     note: "The n8n task runner on the instance did not take a task: check the runner first, it is not a fault of these workflows.",
-    short: "Runner not taking tasks",
   },
   now: {
     title: "Failing now",
     note: "These workflows failed in the last 24 hours. Start here.",
-    short: "Failed in the last day",
   },
   quiet: {
     title: "Quiet",
     note: "Failed before, but not in the last 24 hours. Each one closes by itself after days without a failure, as its row says; a new failure moves it back to Failing now.",
-    short: "No failure for a day",
   },
   alerts: {
     title: "Your alerts",
     note: "A Stop and Error node in your workflow raised these on purpose. Recent or old, they stay here.",
-    short: "From a Stop and Error node",
   },
-  muted: { title: "Muted", note: "Muted for now; they alert again when the mute ends.", short: "" },
-  resolved: { title: "Resolved", note: "Resolved by hand or after days without a failure.", short: "" },
+  muted: { title: "Muted", note: "Muted for now; they alert again when the mute ends." },
+  resolved: { title: "Resolved", note: "Resolved by hand or after days without a failure." },
 }
 
 /** The sections in the order the server sends them by default. */

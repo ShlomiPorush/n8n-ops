@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Changed
+
+- **The section figures above the Problems list take one line each.** Each figure shows its count and the section's name, such as 3 Failing now, without the short line under it, so the list starts higher (on a phone a name may go under its count); each section's heading still says what it holds. Instance problems is called Instance there, as its rows' tag is. A selected figure's frame is no longer cut at the rounded corner in Compact.
+- **Each Problems section heading spans the whole list.** Its band runs edge to edge like the rows under it, with no panel showing around it.
+- **A list's filters keep one line beside an open item.** Where the list is narrow, such as Problems beside its reading pane, the search is a button that opens into the field, and while it is open the views (Open, Muted, Resolved, All) shrink to a short picker, such as Status: Open. Escape in an empty search closes it. Instance and the other common filters move behind the Filters button, whose badge counts those in use. On a phone the filters take two lines instead of three. Where a page has room, the filters show as before.
+
+### Fixed
+
+- **A list's filters stay flush at the top while you scroll.** On a list such as Problems, Instances or Backups, no rows show above the filters any more, whether the list scrolls beside its reading pane or with the whole page on a narrower or shorter screen.
+
 ## [0.16.0] - 2026-11-10
 
 ### Added

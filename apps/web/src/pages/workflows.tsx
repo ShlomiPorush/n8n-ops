@@ -231,6 +231,7 @@ export function WorkflowsPage() {
       <FilterBar
         search={<SearchBox label="Search all instances" value={q} onChange={(v) => setParam("q", v)} debounce />}
         sort={{ control: sort.control, name: "workflows" }}
+        pickersActive={instance === "all" ? 0 : 1}
         pickers={
           <Picker
             label="Instance"

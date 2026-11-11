@@ -1,7 +1,16 @@
 import { renderToStaticMarkup } from "react-dom/server"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { LIST_WAIT_MS, SEARCH_PAUSE_MS } from "@/lib/behavior"
-import { FilterBar, filterOptions, firstRowReset, searchDraft } from "./filter-bar.tsx"
+import { barMode, FilterBar, filterOptions, firstRowReset, searchDraft } from "./filter-bar.tsx"
+
+describe("the layout of a filter bar by its width (FB-19)", () => {
+  it("is narrow under 740px with views and under 480px without, and phone under 420px", () => {
+    expect([419, 420, 739, 740].map((w) => barMode(w, true))).toEqual(["phone", "narrow", "narrow", "wide"])
+    expect([419, 420, 479, 480].map((w) => barMode(w, false))).toEqual(["phone", "narrow", "narrow", "wide"])
+    expect(barMode(419.5, true)).toBe("phone")
+    expect(barMode(739.5, true)).toBe("narrow")
+  })
+})
 
 // No list has a rarely used filter yet, so the Filters button is checked here, not on a page (MP-6).
 describe("the Filters button of a filter bar (MP-6)", () => {
@@ -11,12 +20,18 @@ describe("the Filters button of a filter bar (MP-6)", () => {
     </select>
   )
 
-  it("is there only when the bar has rare filters, and the common pickers always show", () => {
+  it("is there only when the bar has rare filters while the common pickers have room in the row", () => {
+    // A bar starts wide; a narrow one moves the pickers behind Filters once measured (FB-19, e2e).
     const html = renderToStaticMarkup(<FilterBar pickers={<button type="button">Instance: All</button>} />)
     expect(html).not.toContain("Filters")
     expect(html).toContain("Instance: All")
-    // Nothing folds the common pickers away on a phone any more.
-    expect(html).not.toContain("max-md:hidden")
+  })
+
+  it("counts only its rare filters on the badge while the common pickers are in the row", () => {
+    const html = renderToStaticMarkup(
+      <FilterBar more={rare} active={1} pickers={<button type="button">Instance: e2e</button>} pickersActive={1} />,
+    )
+    expect(html).toContain('aria-label="Filters, 1 in use"')
   })
 
   it("is named Filters and keeps the rare filters hidden until opened", () => {

@@ -20,6 +20,9 @@ import path from "node:path"
 // Filled in with the n8n-ops address when the file is downloaded from n8n-ops.
 const DEFAULT_URL = "__N8N_OPS_URL__"
 const CLIENT_ID = "n8n-ops-cli"
+// The only address shape accepted, after the parsing below: the hints print it in a command for a shell (quoted), so
+// no character a shell treats specially may reach it. The server serves the skill only for this shape too.
+const SAFE_ORIGIN = /^https?:\/\/(\[[0-9a-f:.]+\]|[a-z0-9.-]+)(:[1-9][0-9]{0,4})?$/
 const SCOPE = "ops:read ops:access offline_access"
 const WAIT_SECONDS = Number(process.env.N8N_OPS_WAIT_SECONDS) || 90
 const LOCK_WAIT_MS = Number(process.env.N8N_OPS_LOCK_WAIT_MS) || 20_000
@@ -132,7 +135,7 @@ function context(urlOption) {
   const kept = raw ? "" : keptAddress(dir)
   raw ||= kept
   if (!raw)
-    throw new Fail("no_url", "No n8n-ops address. Ask the person for it, then run: n8n-ops connect --url <address>")
+    throw new Fail("no_url", 'No n8n-ops address. Ask the person for it, then run: n8n-ops connect --url "<address>"')
   let issuer
   try {
     // A kept address is one line: anything else in the file makes it invalid, not a different address.
@@ -140,7 +143,7 @@ function context(urlOption) {
     issuer = issuerOf(raw)
   } catch (e) {
     if (!kept) throw e
-    throw new Fail("no_url", `The address kept in ${path.join(dir, ADDRESS)} is not valid. Pass --url <address>.`)
+    throw new Fail("no_url", `The address kept in ${path.join(dir, ADDRESS)} is not valid. Pass --url "<address>".`)
   }
   const key = createHash("sha256").update(issuer).digest("hex").slice(0, 32)
   return {
@@ -163,6 +166,8 @@ function issuerOf(raw) {
   if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback))
     throw new Fail("insecure_url", "The n8n-ops address must start with https:// (http only for this computer).")
   if (url.username || url.password || url.search || url.hash || (url.pathname !== "/" && url.pathname !== ""))
+    throw new Fail("insecure_url", "Use the n8n-ops address alone, for example https://ops.example.com.")
+  if (!SAFE_ORIGIN.test(url.origin))
     throw new Fail("insecure_url", "Use the n8n-ops address alone, for example https://ops.example.com.")
   return url.origin
 }
@@ -683,14 +688,17 @@ async function connect(ctx, replace) {
   print(result)
 }
 
-/** The hint names the address, so the wait asks the same n8n-ops even if the kept address changes meanwhile. */
+/**
+ * The hint names the address, so the wait asks the same n8n-ops even if the kept address changes meanwhile. Quoted:
+ * a shell would take the brackets of an IPv6 address as a file pattern.
+ */
 function pending(ctx, rec) {
   return {
     status: "pending",
     link: rec.link,
     code: rec.userCode,
     expiresIn: Math.max(0, rec.deviceExpiresAt - now()),
-    next: `End your turn with a reply that shows the person the link and the code and asks them to reply once they approve. When they reply, run: n8n-ops connect --wait --url ${ctx.issuer}`,
+    next: `End your turn with a reply that shows the person the link and the code and asks them to reply once they approve. When they reply, run: n8n-ops connect --wait --url "${ctx.issuer}"`,
   }
 }
 
@@ -767,7 +775,7 @@ async function waitForApproval(ctx) {
     if (Date.now() + step.wait * 1000 > until)
       return print({
         status: "still_waiting",
-        next: `Not approved yet. Run again: n8n-ops connect --wait --url ${ctx.issuer}`,
+        next: `Not approved yet. Run again: n8n-ops connect --wait --url "${ctx.issuer}"`,
       })
     await sleep(step.wait * 1000)
   }

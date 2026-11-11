@@ -12,9 +12,16 @@ const FILES: Record<string, string> = {
   "scripts/n8n-ops.sh": "text/plain; charset=utf-8",
 }
 const PLACEHOLDER = /__N8N_OPS_URL__/g
+// The address goes into JavaScript, PowerShell and sh source, and the skill prints it in commands, so only an origin
+// of this shape is filled in (the same shape the skill's scripts accept).
+const SAFE_ORIGIN = /^https?:\/\/(\[[0-9a-f:.]+\]|[a-z0-9.-]+)(:[1-9][0-9]{0,4})?$/
 
-/** Whether agents may fetch the skill from this address: https, or http to this computer (development). */
+/**
+ * Whether agents may fetch the skill from this address: https, or http to this computer (development), and nothing
+ * in it a shell or the scripts' languages would treat as code.
+ */
 export function servesSkill(issuer: string) {
+  if (!SAFE_ORIGIN.test(issuer)) return false
   const url = new URL(issuer)
   return url.protocol === "https:" || ["127.0.0.1", "[::1]", "localhost"].includes(url.hostname)
 }
@@ -72,7 +79,8 @@ export function skillRoutes(issuer: () => Promise<string | null>, skillDir: stri
       return c.json(
         {
           error: "not_configured",
-          message: "Agents install the skill from an https address. Set an https public URL in Settings → General.",
+          message:
+            "Agents install the skill from an https address with a plain host name. Set one as the public URL in Settings → General.",
         },
         404,
       )

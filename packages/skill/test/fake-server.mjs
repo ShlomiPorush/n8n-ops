@@ -5,7 +5,8 @@ import http from "node:http"
 
 const id = () => randomBytes(18).toString("base64url")
 
-export async function startFakeServer(port = 0) {
+/** On this computer, at 127.0.0.1 unless `host` names another address (such as ::1). */
+export async function startFakeServer(port = 0, host = "127.0.0.1") {
   const s = {
     issuer: "",
     devices: new Map(), // device_code -> { userCode, label, state: pending|approved|denied|used, scope }
@@ -164,9 +165,15 @@ export async function startFakeServer(port = 0) {
     send(404, { error: "not_found" })
   })
 
-  await new Promise((r) => server.listen(port, "127.0.0.1", r))
+  await new Promise((r, reject) => {
+    server.once("error", reject)
+    server.listen(port, host, () => {
+      server.off("error", reject)
+      r()
+    })
+  })
   s.port = server.address().port
-  s.issuer = `http://127.0.0.1:${s.port}`
+  s.issuer = `http://${host.includes(":") ? `[${host}]` : host}:${s.port}`
   s.close = () =>
     new Promise((r) => {
       server.closeAllConnections?.()
@@ -174,7 +181,7 @@ export async function startFakeServer(port = 0) {
     })
   /** Goes away and comes back on the same address, with the same state. */
   s.stop = s.close
-  s.start = () => new Promise((r) => server.listen(s.port, "127.0.0.1", r))
+  s.start = () => new Promise((r) => server.listen(s.port, host, r))
   /** The person approves the latest code, optionally without instance access. */
   s.approve = ({ access = true } = {}) => {
     const d = [...s.devices.values()].at(-1)

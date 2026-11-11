@@ -16,7 +16,8 @@ const impls = (process.env.N8N_OPS_IMPLS ?? (win ? "node,ps,pwsh" : "node,sh")).
 const root = fs.mkdtempSync(path.join(process.env.N8N_OPS_TEST_TMP ?? os.tmpdir(), "n8n-ops-skill-"))
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const connectNext = (issuer) =>
-  `End your turn with a reply that shows the person the link and the code and asks them to reply once they approve. When they reply, run: n8n-ops connect --wait --url ${issuer}`
+  `End your turn with a reply that shows the person the link and the code and asks them to reply once they approve. When they reply, run: n8n-ops connect --wait --url "${issuer}"`
+const waitNext = (issuer) => `Not approved yet. Run again: n8n-ops connect --wait --url "${issuer}"`
 
 /**
  * A fresh install of the skill and a credentials folder of its own (a computer user of its own). Pass `creds` for
@@ -68,7 +69,12 @@ function command(impl, dir) {
 /** Runs one command; resolves with its exit code, its parsed answer and its raw output. No server: no --url. */
 function run(impl, inst, server, args, env = {}) {
   const [cmd, base] = command(impl, inst.dir)
-  const child = spawn(cmd, [...base, ...args, ...(server ? ["--url", server.issuer] : [])], {
+  return start(impl, inst, cmd, [...base, ...args, ...(server ? ["--url", server.issuer] : [])], env)
+}
+
+/** Starts a process (the command, or a shell that runs it) with the environment of `impl` and `inst`. */
+function start(impl, inst, cmd, args, env = {}) {
+  const child = spawn(cmd, args, {
     env: {
       ...process.env,
       N8N_OPS_URL: "",
@@ -100,6 +106,73 @@ function run(impl, inst, server, args, env = {}) {
   })
   done.child = child
   return done
+}
+
+/**
+ * The shells an agent may run a printed hint in, here: each defines `n8n-ops` as the command under test and runs the
+ * hint's command as it is. bash with failglob and zsh refuse an unquoted file pattern, such as the brackets of an IPv6
+ * address. Returns the shells found and the ones missing.
+ */
+function hintShells() {
+  const works = (cmd, args) => {
+    try {
+      execFileSync(cmd, args, { stdio: "ignore" })
+      return true
+    } catch {
+      return false
+    }
+  }
+  const posix = (name, bin, opts) => ({
+    name,
+    bin,
+    args: (line, prefix) => [...opts, "-c", `pre=("$@"); n8n-ops() { "\${pre[@]}" "$@"; }; ${line}`, name, ...prefix],
+  })
+  const shells = []
+  const missing = []
+  // On Windows, Git's bash: the bash.exe in System32 is WSL's.
+  let bash = "bash"
+  if (win) {
+    try {
+      const exec = execFileSync("git", ["--exec-path"], { encoding: "utf8" }).trim()
+      bash = path.resolve(exec, "../../../bin/bash.exe")
+    } catch {
+      bash = ""
+    }
+  }
+  if (bash && works(bash, ["-O", "failglob", "-c", ":"])) shells.push(posix("bash", bash, ["-O", "failglob"]))
+  else missing.push("bash")
+  if (!win) {
+    if (works("zsh", ["-f", "-c", ":"])) shells.push(posix("zsh", "zsh", ["-f"]))
+    else missing.push("zsh")
+  }
+  if (win)
+    shells.push({
+      name: "powershell",
+      bin: "powershell.exe",
+      args: (line) => [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        `$pre = $env:N8N_OPS_HINT_PREFIX -split "\`n"; function n8n-ops { & $pre[0] $pre[1..($pre.Length - 1)] @args }; ${line}`,
+      ],
+      env: (prefix) => ({ N8N_OPS_HINT_PREFIX: prefix.join("\n") }),
+    })
+  return { shells, missing }
+}
+
+/** Runs the command a hint names (what follows `before` in it) in a shell, as an agent would. */
+function runHint(shell, impl, inst, text, before) {
+  const line = text.split(before)[1]
+  assert.ok(line?.startsWith("n8n-ops "), text)
+  const [cmd, base] = command(impl, inst.dir)
+  const prefix = [win && shell.name === "bash" ? cmd.replaceAll("\\", "/") : cmd, ...base]
+  return start(impl, inst, shell.bin, shell.args(line, prefix), {
+    // Git's bash would otherwise rewrite arguments that look like paths.
+    MSYS_NO_PATHCONV: "1",
+    MSYS2_ARG_CONV_EXCL: "*",
+    N8N_OPS_WAIT_SECONDS: "2",
+    ...shell.env?.(prefix),
+  })
 }
 
 /** Waits until a test hook was reached by a held process. */
@@ -182,7 +255,7 @@ for (const impl of impls) {
       const w = await run(impl, inst, server, ["connect", "--wait"], { N8N_OPS_WAIT_SECONDS: "3" })
       assert.equal(w.code, 0, w.out + w.err)
       assert.equal(w.json.status, "still_waiting")
-      assert.equal(w.json.next, `Not approved yet. Run again: n8n-ops connect --wait --url ${server.issuer}`)
+      assert.equal(w.json.next, waitNext(server.issuer))
       server.deny()
       const d = await run(impl, inst, server, ["connect", "--wait"])
       assert.equal(d.json.error, "denied")
@@ -429,6 +502,76 @@ for (const impl of impls) {
       fs.mkdirSync(kept)
       const folder = await run(impl, inst, null, ["status"])
       assert.equal(folder.json?.error, "insecure_credentials", folder.out + folder.err)
+    })
+
+    it("takes only an address that a shell reads as it is, given or kept", async () => {
+      const inst = fresh()
+      fs.mkdirSync(inst.creds, { recursive: true, mode: 0o700 })
+      const keep = (address) => fs.writeFileSync(path.join(inst.creds, "address"), `${address}\n`, { mode: 0o600 })
+      // The same origins as before.
+      for (const [given, origin] of [
+        ["https://ops.example.com/", "https://ops.example.com"],
+        ["https://OPS.Example.com", "https://ops.example.com"],
+        ["https://ops.example.com:443", "https://ops.example.com"],
+        ["https://ops.example.com:8443", "https://ops.example.com:8443"],
+        ["https://ops.example.com:65535", "https://ops.example.com:65535"],
+        ["http://127.0.0.1:8080/", "http://127.0.0.1:8080"],
+        ["http://localhost:8080", "http://localhost:8080"],
+        ["http://[::1]:8080", "http://[::1]:8080"],
+      ]) {
+        const r = await run(impl, inst, null, ["status", "--url", given])
+        assert.equal(r.json?.url, origin, `${given}: ${r.out}${r.err}`)
+        keep(given)
+        const k = await run(impl, inst, null, ["status"])
+        assert.equal(k.json?.url, origin, `kept ${given}: ${k.out}${k.err}`)
+      }
+      // Anything a shell could take as more than an address, and ports that are not 1 to 65535, are refused.
+      for (const bad of [
+        "https://$(id).example.com",
+        "https://a;b.example.com",
+        "https://a_b.example.com",
+        "https://x%60y.example.com",
+        "https://ops.example.com:12bad",
+        "https://ops.example.com:70000",
+        "https://ops.example.com:65536",
+        "https://ops.example.com:0",
+        "http://[::1]:12bad",
+        "http://[::1]:0",
+      ]) {
+        const r = await run(impl, inst, null, ["status", "--url", bad])
+        assert.equal(r.json?.error, "insecure_url", `${bad}: ${r.out}${r.err}`)
+        keep(bad)
+        const k = await run(impl, inst, null, ["status"])
+        assert.equal(k.json?.error, "no_url", `kept ${bad}: ${k.out}${k.err}`)
+        assert.match(k.json.message, /is not valid/)
+      }
+    })
+
+    it("prints hints that run in a shell as they are, even with an IPv6 address", async (t) => {
+      let v6
+      try {
+        v6 = await startFakeServer(0, "::1")
+      } catch (e) {
+        t.skip(`this computer has no IPv6 loopback (${e.code ?? e.message})`)
+        return
+      }
+      try {
+        const { shells, missing } = hintShells()
+        t.diagnostic(`shells: ${shells.map((s) => s.name).join(", ") || "none"}; missing: ${missing.join(", ") || "none"}`)
+        const inst = fresh()
+        const p = await run(impl, inst, v6, ["connect"])
+        assert.equal(p.json?.next, connectNext(v6.issuer), p.out + p.err)
+        assert.ok(shells.length, "no shell to run the hints in")
+        for (const shell of shells) {
+          const w = await runHint(shell, impl, inst, p.json.next, "run: ")
+          assert.equal(w.json?.status, "still_waiting", `${shell.name}: ${w.out}${w.err}`)
+          assert.equal(w.json.next, waitNext(v6.issuer))
+          const again = await runHint(shell, impl, inst, w.json.next, "Run again: ")
+          assert.equal(again.json?.status, "still_waiting", `${shell.name}: ${again.out}${again.err}`)
+        }
+      } finally {
+        await v6.close()
+      }
     })
 
     it("finishes a connection at the address it began with, even when another one is kept meanwhile", async () => {

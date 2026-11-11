@@ -94,7 +94,7 @@ setup() {
   KEPT=""
   [ -n "$raw" ] || kept_address
   [ -n "$raw" ] || raw=$KEPT
-  [ -n "$raw" ] || fail no_url "No n8n-ops address. Ask the person for it, then run: n8n-ops connect --url <address>"
+  [ -n "$raw" ] || fail no_url "No n8n-ops address. Ask the person for it, then run: n8n-ops connect --url \"<address>\""
   # A kept address is one line: anything else in the file makes it invalid, not a different address.
   if [ -n "$KEPT" ]; then case "$KEPT" in *[[:space:]]*) bad_url "" ;; esac fi
   raw=${raw%/}
@@ -109,7 +109,15 @@ setup() {
     "" | *[!a-z0-9.:-]* | :* | *:*:*) bad_url "Use the n8n-ops address alone, for example https://ops.example.com." ;;
     *) name=${hostpart%%:*} port=${hostpart#"$name"} ;;
   esac
-  case "$port" in "" | :[0-9]*) ;; *) bad_url "Use the n8n-ops address alone, for example https://ops.example.com." ;; esac
+  # A port is digits only, 1 to 65535. With the characters above, the address can hold nothing a shell treats
+  # specially, so the hints can print it in a command (quoted).
+  case "$port" in
+    "") ;;
+    :[1-9] | :[1-9][0-9] | :[1-9][0-9][0-9] | :[1-9][0-9][0-9][0-9] | :[1-9][0-9][0-9][0-9][0-9])
+      [ "${port#:}" -le 65535 ] || bad_url "Use the n8n-ops address alone, for example https://ops.example.com."
+      ;;
+    *) bad_url "Use the n8n-ops address alone, for example https://ops.example.com." ;;
+  esac
   if [ "$PROTO" = http ]; then
     case "$name" in 127.0.0.1 | localhost | "[::1]") ;; *) bad_url "The n8n-ops address must start with https:// (http only for this computer)." ;; esac
   fi
@@ -124,7 +132,7 @@ setup() {
 }
 
 bad_url() {
-  [ -z "$KEPT" ] || fail no_url "The address kept in $ADDRESS is not valid. Pass --url <address>."
+  [ -z "$KEPT" ] || fail no_url "The address kept in $ADDRESS is not valid. Pass --url \"<address>\"."
   fail insecure_url "$1"
 }
 
@@ -425,12 +433,13 @@ revoke_pending() {
 
 clear_pending() { R_deviceCode='' R_userCode='' R_link='' R_deviceExpiresAt=0 R_interval=0 R_nextPollAt=0; }
 
-# The hint names the address, so the wait asks the same n8n-ops even if the kept address changes meanwhile.
+# The hint names the address, so the wait asks the same n8n-ops even if the kept address changes meanwhile. Quoted:
+# a shell would take the brackets of an IPv6 address as a file pattern.
 print_pending() {
   left=$((R_deviceExpiresAt - $(now)))
   [ $left -lt 0 ] && left=0
   printf '{"status":"pending","link":"%s","code":"%s","expiresIn":%s,"next":"End your turn with a reply that shows the person the link and the code and asks them to reply once they approve. When they reply, run: n8n-ops connect --wait --url %s"}\n' \
-    "$(esc "$R_link")" "$(esc "$R_userCode")" "$left" "$ISSUER"
+    "$(esc "$R_link")" "$(esc "$R_userCode")" "$left" "$(esc "\"$ISSUER\"")"
 }
 
 print_connected() {
@@ -562,7 +571,7 @@ cmd_wait() {
     fi
     release
     if [ $(($(now) + wait)) -gt "$until" ]; then
-      printf '{"status":"still_waiting","next":"Not approved yet. Run again: n8n-ops connect --wait --url %s"}\n' "$ISSUER"
+      printf '{"status":"still_waiting","next":"Not approved yet. Run again: n8n-ops connect --wait --url %s"}\n' "$(esc "\"$ISSUER\"")"
       return 0
     fi
     sleep "$wait"

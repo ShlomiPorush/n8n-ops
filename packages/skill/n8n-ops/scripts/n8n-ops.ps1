@@ -24,6 +24,9 @@ if (-not $env:N8N_OPS_NO_NODE) {
 # Filled in with the n8n-ops address when the file is downloaded from n8n-ops.
 $DefaultUrl = '__N8N_OPS_URL__'
 $ClientId = 'n8n-ops-cli'
+# The only address shape accepted, after the parsing below: the hints print it in a command for a shell (quoted), so
+# no character a shell treats specially may reach it. The server serves the skill only for this shape too.
+$SafeOrigin = '^https?://(\[[0-9a-f:.]+\]|[a-z0-9.-]+)(:[1-9][0-9]{0,4})?$'
 $Scope = 'ops:read ops:access offline_access'
 $WaitSeconds = 90
 if ($env:N8N_OPS_WAIT_SECONDS) { $WaitSeconds = [int]$env:N8N_OPS_WAIT_SECONDS }
@@ -94,14 +97,14 @@ function Get-Context([string]$urlOption) {
   if (-not $raw -and -not $DefaultUrl.StartsWith('__')) { $raw = $DefaultUrl }
   $kept = ''
   if (-not $raw) { $kept = Get-KeptAddress $dir; $raw = $kept }
-  if (-not $raw) { Fail 'no_url' 'No n8n-ops address. Ask the person for it, then run: n8n-ops connect --url <address>' }
+  if (-not $raw) { Fail 'no_url' 'No n8n-ops address. Ask the person for it, then run: n8n-ops connect --url "<address>"' }
   try {
     # A kept address is one line: anything else in the file makes it invalid, not a different address.
     if ($kept -and $kept -match '\s') { Fail 'insecure_url' '' }
     $issuer = Get-Issuer $raw
   } catch [OpsFail] {
     if (-not $kept) { throw }
-    Fail 'no_url' "The address kept in $(Join-Path $dir $AddressFile) is not valid. Pass --url <address>."
+    Fail 'no_url' "The address kept in $(Join-Path $dir $AddressFile) is not valid. Pass --url `"<address>`"."
   }
   $sha = [Security.Cryptography.SHA256]::Create().ComputeHash($Utf8.GetBytes($issuer))
   $key = (-join ($sha | ForEach-Object { $_.ToString('x2') })).Substring(0, 32)
@@ -114,14 +117,21 @@ function Get-Context([string]$urlOption) {
 function Get-Issuer([string]$raw) {
   $u = $null
   if (-not [Uri]::TryCreate($raw, [UriKind]::Absolute, [ref]$u)) { Fail 'insecure_url' "`"$raw`" is not an address." }
-  $loopback = @('127.0.0.1', '[::1]', 'localhost') -contains $u.Host
+  # Windows PowerShell 5.1 writes [::1] out in full; the other versions, and browsers, write [::1].
+  $hostName = $u.Host
+  if ($hostName -eq '[0000:0000:0000:0000:0000:0000:0000:0001]') { $hostName = '[::1]' }
+  # The authority is the host and, unless it is the default one, the port.
+  $authority = $hostName + $u.Authority.Substring($u.Host.Length)
+  $loopback = @('127.0.0.1', '[::1]', 'localhost') -contains $hostName
   if (-not ($u.Scheme -eq 'https' -or ($u.Scheme -eq 'http' -and $loopback))) {
     Fail 'insecure_url' 'The n8n-ops address must start with https:// (http only for this computer).'
   }
   if ($u.UserInfo -or $u.Query -or $u.Fragment -or ($u.AbsolutePath -ne '/')) {
     Fail 'insecure_url' 'Use the n8n-ops address alone, for example https://ops.example.com.'
   }
-  "$($u.Scheme)://$($u.Authority)"
+  $issuer = "$($u.Scheme)://$authority"
+  if ($issuer -cnotmatch $SafeOrigin) { Fail 'insecure_url' 'Use the n8n-ops address alone, for example https://ops.example.com.' }
+  $issuer
 }
 
 # The file that keeps the address of the last connection, so a copy of the skill without one finds it.
@@ -533,11 +543,12 @@ function Show-Status($ctx) {
   Write-Json $out
 }
 
-# The hint names the address, so the wait asks the same n8n-ops even if the kept address changes meanwhile.
+# The hint names the address, so the wait asks the same n8n-ops even if the kept address changes meanwhile. Quoted:
+# a shell would take the brackets of an IPv6 address as a file pattern.
 function Get-Pending($ctx, $rec) {
   [ordered]@{
     status = 'pending'; link = $rec.link; code = $rec.userCode; expiresIn = [Math]::Max([long]0, $rec.deviceExpiresAt - (Now))
-    next = "End your turn with a reply that shows the person the link and the code and asks them to reply once they approve. When they reply, run: n8n-ops connect --wait --url $($ctx.issuer)"
+    next = 'End your turn with a reply that shows the person the link and the code and asks them to reply once they approve. When they reply, run: n8n-ops connect --wait --url "' + $ctx.issuer + '"'
   }
 }
 
@@ -637,7 +648,7 @@ function Invoke-Wait($ctx) {
     } finally { Exit-Lock $ctx $lock }
     if ($done) { Save-Address $ctx; return Write-Json $done }
     if ([DateTime]::UtcNow.AddSeconds($wait) -gt $until) {
-      return Write-Json ([ordered]@{ status = 'still_waiting'; next = "Not approved yet. Run again: n8n-ops connect --wait --url $($ctx.issuer)" })
+      return Write-Json ([ordered]@{ status = 'still_waiting'; next = 'Not approved yet. Run again: n8n-ops connect --wait --url "' + $ctx.issuer + '"' })
     }
     Start-Sleep -Seconds $wait
   }

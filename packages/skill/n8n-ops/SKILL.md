@@ -24,12 +24,12 @@ person the message as it is.
 
 1. Run `n8n-ops connect`. It answers `{"status": "pending", "link": "...", "code": "...", "next": "..."}`. If it
    answers `no_url` instead, ask the person for the address of their n8n-ops and run
-   `n8n-ops connect --url <address>`; once connected, the command keeps the address for the commands after.
+   `n8n-ops connect --url "<address>"`; once connected, the command keeps the address for the commands after.
 2. Show the person the link and the code exactly as printed in the reply that ends your turn, with the code on its
    own line: text written between commands is often folded away and never seen. Ask them to open the link, sign in,
    check that the page shows the same code, approve, and then reply to you. They decide whether the connection may
    also request access to n8n instances.
-3. When the person replies, run the command that `next` names: `n8n-ops connect --wait --url <address>`, with the
+3. When the person replies, run the command that `next` names: `n8n-ops connect --wait --url "<address>"`, with the
    address it gives. While it answers `still_waiting`, run it again. `connected` means done; `denied` or `expired`
    means start again only if the person wants to. If the person says the link or the code did not work,
    `n8n-ops connect --replace` gives a new one.

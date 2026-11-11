@@ -295,4 +295,29 @@ describe("serving the skill", () => {
     expect((await app("https://ops.example.com", "").request("/connect/skill/SKILL.md")).status).toBe(404)
     expect(servesSkill("http://127.0.0.1:8080")).toBe(true)
   })
+
+  it("serves nothing for an address with characters the scripts or a shell would run", async () => {
+    // The address goes into the scripts' source: in sh, $(id) would run as the script loads; in PowerShell, ' would
+    // end the string. Such a public URL gets no skill at all, not an install note, not a file.
+    expect(servesSkill("http://[::1]:8080")).toBe(true)
+    expect(servesSkill("http://localhost:8080")).toBe(true)
+    expect(servesSkill("https://ops.example.com:8443")).toBe(true)
+    for (const issuer of [
+      "https://$(id).example.com",
+      "https://a';whoami;'.example.com",
+      "https://a_b.example.com",
+      "https://a`id`b.example.com",
+      "https://ops.example.com:0",
+    ]) {
+      expect(new URL(issuer).origin, "Node keeps it in the origin").toBe(issuer)
+      expect(servesSkill(issuer), issuer).toBe(false)
+      for (const file of ["", "SKILL.md", "scripts/n8n-ops", "scripts/n8n-ops.mjs", "scripts/n8n-ops.ps1", "scripts/n8n-ops.sh"]) {
+        const res = await app(issuer).request(`/connect/skill/${file}`)
+        expect(res.status, `${issuer} ${file}`).toBe(404)
+        const body = await res.text()
+        expect(body).not.toContain(issuer)
+        expect(JSON.parse(body).error).toBe("not_configured")
+      }
+    }
+  })
 })

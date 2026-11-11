@@ -571,6 +571,14 @@ for (const impl of impls) {
           const again = await runHint(shell, impl, inst, w.json.next, "Run again: ")
           assert.equal(again.json?.status, "still_waiting", `${shell.name}: ${again.out}${again.err}`)
         }
+        // Once approved, the address works for the API too.
+        v6.approve()
+        const w = await run(impl, inst, v6, ["connect", "--wait"])
+        assert.equal(w.json?.status, "connected", w.out + w.err)
+        const g = await run(impl, inst, v6, ["get", "instances"])
+        assert.equal(g.json?.data?.path, "/api/v1/instances", g.out + g.err)
+        const r = await run(impl, inst, v6, ["post", "access-requests/x/release"])
+        assert.equal(r.json?.data?.method, "POST", r.out + r.err)
       } finally {
         await v6.close()
       }

@@ -114,22 +114,26 @@ function Get-Context([string]$urlOption) {
   }
 }
 
+# The host of an address as a browser writes it: Windows PowerShell 5.1 writes [::1] out in full.
+function Get-HostName([Uri]$u) {
+  if ($u.Host -eq '[0000:0000:0000:0000:0000:0000:0000:0001]') { return '[::1]' }
+  $u.Host
+}
+
+# The origin of an address: the scheme, the host and, unless it is the default one, the port.
+function Get-Origin([Uri]$u) { "$($u.Scheme)://$(Get-HostName $u)$($u.Authority.Substring($u.Host.Length))" }
+
 function Get-Issuer([string]$raw) {
   $u = $null
   if (-not [Uri]::TryCreate($raw, [UriKind]::Absolute, [ref]$u)) { Fail 'insecure_url' "`"$raw`" is not an address." }
-  # Windows PowerShell 5.1 writes [::1] out in full; the other versions, and browsers, write [::1].
-  $hostName = $u.Host
-  if ($hostName -eq '[0000:0000:0000:0000:0000:0000:0000:0001]') { $hostName = '[::1]' }
-  # The authority is the host and, unless it is the default one, the port.
-  $authority = $hostName + $u.Authority.Substring($u.Host.Length)
-  $loopback = @('127.0.0.1', '[::1]', 'localhost') -contains $hostName
+  $loopback = @('127.0.0.1', '[::1]', 'localhost') -contains (Get-HostName $u)
   if (-not ($u.Scheme -eq 'https' -or ($u.Scheme -eq 'http' -and $loopback))) {
     Fail 'insecure_url' 'The n8n-ops address must start with https:// (http only for this computer).'
   }
   if ($u.UserInfo -or $u.Query -or $u.Fragment -or ($u.AbsolutePath -ne '/')) {
     Fail 'insecure_url' 'Use the n8n-ops address alone, for example https://ops.example.com.'
   }
-  $issuer = "$($u.Scheme)://$authority"
+  $issuer = Get-Origin $u
   if ($issuer -cnotmatch $SafeOrigin) { Fail 'insecure_url' 'Use the n8n-ops address alone, for example https://ops.example.com.' }
   $issuer
 }
@@ -718,7 +722,7 @@ function Get-ApiUrl($ctx, [string]$p) {
   $sep = '/'; if ($p.StartsWith('/')) { $sep = '' }
   $u = $null
   if (-not [Uri]::TryCreate("$($ctx.issuer)/api/v1$sep$p", [UriKind]::Absolute, [ref]$u)) { Fail 'bad_path' $bad }
-  if ("$($u.Scheme)://$($u.Authority)" -ne $ctx.issuer -or -not $u.AbsolutePath.StartsWith('/api/v1/')) { Fail 'bad_path' $bad }
+  if ((Get-Origin $u) -ne $ctx.issuer -or -not $u.AbsolutePath.StartsWith('/api/v1/')) { Fail 'bad_path' $bad }
   $u.AbsoluteUri
 }
 

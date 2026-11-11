@@ -4,6 +4,11 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Changed
+
+- **The Problems filters are one short line: search, Sort, Status and Instance.** The Open, Muted, Resolved and All buttons are now one Status picker, such as Status: Open, after the search and Sort as on Workflows, and Instance shows in the line itself instead of behind the Filters button. Every list's filters now keep as much as fits on their line: where there is no room, the search becomes a button first, then a long instance name is cut short, and only then does Instance move behind Filters. On Workflows, Instance now stays in the line on a phone too.
+- **The section figures of the Problems list are tabs on its top edge.** They sit right on the list with no gap and no frame, and the one you chose is underlined like the console's other tabs.
+
 ## [0.16.1] - 2026-11-11
 
 ### Changed

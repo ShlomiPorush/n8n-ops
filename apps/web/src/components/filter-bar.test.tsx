@@ -1,14 +1,16 @@
 import { renderToStaticMarkup } from "react-dom/server"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { LIST_WAIT_MS, SEARCH_PAUSE_MS } from "@/lib/behavior"
-import { barMode, FilterBar, filterOptions, firstRowReset, searchDraft } from "./filter-bar.tsx"
+import { FilterBar, filterOptions, firstRowReset, roomiest, searchDraft } from "./filter-bar.tsx"
 
 describe("the layout of a filter bar by its width (FB-19)", () => {
-  it("is narrow under 740px with views and under 480px without, and phone under 420px", () => {
-    expect([419, 420, 739, 740].map((w) => barMode(w, true))).toEqual(["phone", "narrow", "narrow", "wide"])
-    expect([419, 420, 479, 480].map((w) => barMode(w, false))).toEqual(["phone", "narrow", "narrow", "wide"])
-    expect(barMode(419.5, true)).toBe("phone")
-    expect(barMode(739.5, true)).toBe("narrow")
+  it("goes back to the roomiest level whose noted width fits, and tries a level not measured yet", () => {
+    expect(roomiest([], 300)).toBe(0)
+    expect(roomiest([620], 619)).toBe(1)
+    expect(roomiest([620], 620)).toBe(0)
+    expect(roomiest([620, 440], 430)).toBe(2)
+    expect(roomiest([620, 440, 380], 300)).toBe(3)
+    expect(roomiest([620, undefined, 380], 300)).toBe(1)
   })
 })
 

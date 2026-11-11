@@ -31,6 +31,8 @@ import {
   BusyButton,
   Copyable,
   Empty,
+  FigureTab,
+  FigureTabs,
   Kpi,
   Kpis,
   KV,
@@ -526,28 +528,24 @@ function SectionFigures({
   link: (s: OpenSection | null) => string
 }) {
   return (
-    // One row at any width and one line per figure, so the rows stay in sight, also beside the reading pane (FB-17).
-    // What a section holds is said by its heading in the list. Each figure takes the width its line needs, so a
-    // narrow column fits more of them on one line; where it still cannot, a label goes under its count.
-    <nav aria-label="Sections">
-      <Kpis row className="auto-cols-auto">
-        {OPEN_SECTIONS.filter((s) => s !== "instance" || counts.instance > 0 || chosen === s).map((s) => {
-          const tone = statusOf("section", s).tone
-          return (
-            <Kpi
-              key={s}
-              inline
-              // "Instance", as its rows' tag says: the whole title does not fit four figures beside the pane.
-              label={s === "instance" ? statusOf("section", s).label : SECTION_TITLES[s].title}
-              value={counts[s]}
-              tone={counts[s] > 0 && (tone === "fail" || tone === "warn") ? tone : undefined}
-              to={link(chosen === s ? null : s)}
-              selected={chosen === s}
-            />
-          )
-        })}
-      </Kpis>
-    </nav>
+    // Tabs on the list's top edge, one line each, so the rows stay in sight, also beside the reading pane (FB-17).
+    // What a section holds is said by its heading in the list.
+    <FigureTabs label="Sections">
+      {OPEN_SECTIONS.filter((s) => s !== "instance" || counts.instance > 0 || chosen === s).map((s) => {
+        const tone = statusOf("section", s).tone
+        return (
+          <FigureTab
+            key={s}
+            // "Instance", as its rows' tag says: the whole title does not fit four figures beside the pane.
+            label={s === "instance" ? statusOf("section", s).label : SECTION_TITLES[s].title}
+            value={counts[s]}
+            tone={counts[s] > 0 && (tone === "fail" || tone === "warn") ? tone : undefined}
+            to={link(chosen === s ? null : s)}
+            selected={chosen === s}
+          />
+        )
+      })}
+    </FigureTabs>
   )
 }
 
@@ -615,6 +613,8 @@ export function ProblemsPage() {
       <FilterBar
         views={{
           label: "Status",
+          // A short picker after the search and Sort, as the other filters are, not toggles in front of them.
+          menu: true,
           value: status,
           onChange: (v) => setParam("status", v),
           options: [
@@ -665,47 +665,49 @@ export function ProblemsPage() {
             : undefined
         }
       />
-      {/* What each open section holds, above the rows they came with; none when nothing is open. */}
-      {status === "open" && rows.data?.sections && (section || OPEN_SECTIONS.some((s) => rows.data?.sections[s])) && (
-        <SectionFigures counts={rows.data.sections} chosen={section} link={sectionLink} />
-      )}
-      {view === "failed" ? (
-        <Panel>
-          <LoadError what="problems" error={rows.error} retry={() => rows.refetch()} />
-        </Panel>
-      ) : view === "loading" ? (
-        <Panel>
-          <Loading>Loading problems…</Loading>
-        </Panel>
-      ) : (
-        <Reloading busy={rows.isPlaceholderData || (rows.previous === "failed" && rows.isFetching)}>
-          <ProblemsTable
-            counts={rows.data?.sections}
-            rows={rows.data?.items ?? []}
-            sort={sort}
-            selected={id ? { problemId: id, workflow: params.get("workflow") } : undefined}
-            onOpen={open}
-            href={at}
-            items={items}
-            // In the order that puts what needs a look first, the list reads in sections (docs/adr/0003): the
-            // order the rows are in, so a new order that failed to load leaves them as they were.
-            sections={shownOrder[0] === null}
-            empty={
-              rows.previous === "failed"
-                ? "The previous list was empty."
-                : q
-                  ? `No ${noun} match "${q}".`
-                  : `No ${noun}.`
-            }
-          />
-          {/* The list holds the first 200 in its order; the count line counts them all (TB-18). */}
-          {shown !== undefined && shown < total && rows.previous !== "failed" && (
-            <p className="px-pad-x pt-2 text-small text-muted-foreground">
-              Showing the first {n(shown)} in this order. Search or filter to find the others.
-            </p>
-          )}
-        </Reloading>
-      )}
+      {/* What each open section holds, on the top edge of the rows they came with; none when nothing is open. */}
+      <div className="grid min-w-0">
+        {status === "open" && rows.data?.sections && (section || OPEN_SECTIONS.some((s) => rows.data?.sections[s])) && (
+          <SectionFigures counts={rows.data.sections} chosen={section} link={sectionLink} />
+        )}
+        {view === "failed" ? (
+          <Panel>
+            <LoadError what="problems" error={rows.error} retry={() => rows.refetch()} />
+          </Panel>
+        ) : view === "loading" ? (
+          <Panel>
+            <Loading>Loading problems…</Loading>
+          </Panel>
+        ) : (
+          <Reloading busy={rows.isPlaceholderData || (rows.previous === "failed" && rows.isFetching)}>
+            <ProblemsTable
+              counts={rows.data?.sections}
+              rows={rows.data?.items ?? []}
+              sort={sort}
+              selected={id ? { problemId: id, workflow: params.get("workflow") } : undefined}
+              onOpen={open}
+              href={at}
+              items={items}
+              // In the order that puts what needs a look first, the list reads in sections (docs/adr/0003): the
+              // order the rows are in, so a new order that failed to load leaves them as they were.
+              sections={shownOrder[0] === null}
+              empty={
+                rows.previous === "failed"
+                  ? "The previous list was empty."
+                  : q
+                    ? `No ${noun} match "${q}".`
+                    : `No ${noun}.`
+              }
+            />
+            {/* The list holds the first 200 in its order; the count line counts them all (TB-18). */}
+            {shown !== undefined && shown < total && rows.previous !== "failed" && (
+              <p className="px-pad-x pt-2 text-small text-muted-foreground">
+                Showing the first {n(shown)} in this order. Search or filter to find the others.
+              </p>
+            )}
+          </Reloading>
+        )}
+      </div>
     </>
   )
 

@@ -326,3 +326,22 @@ export function FullTime({ value }: { value: string | Date }) {
     </Tip>
   )
 }
+
+/**
+ * A time in a list cell as Occurrences shows it: the whole date and time on one line, its age under it. Lines
+ * follow the cell's alignment; a table stacked into rows puts them on its label's line (index.css). No time
+ * reads "never".
+ */
+export function FullWhen({ value }: { value: string | Date | null | undefined }) {
+  if (!value) return <span className="text-muted-foreground">never</span>
+  return (
+    <span data-slot="full-when" className="inline-flex flex-col">
+      <span>
+        <FullTime value={value} />
+      </span>
+      <span className="text-small text-muted-foreground">
+        <TimeAgo value={value} />
+      </span>
+    </span>
+  )
+}

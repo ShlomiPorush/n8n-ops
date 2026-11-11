@@ -2,19 +2,17 @@ import { useInfiniteQuery } from "@tanstack/react-query"
 import { useEffect, useRef, useState } from "react"
 import { Empty, LoadError, Loading, Page, Panel, TryAgain, UserText } from "@/components/kit"
 import { Initial, ViaIcon } from "@/components/skin/marks"
+import { FullWhen } from "@/components/status"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Tip } from "@/components/ui/tooltip"
 import { api } from "@/lib/api"
 import { auditAction, auditTarget } from "@/lib/audit-text"
 import { loadView } from "@/lib/load-state"
 import { n, plural } from "@/lib/numbers"
-import { formatTime, useTimeFormat } from "@/lib/time"
 
 type Entry = { id: number; at: string; actor: string; action: string; target: string; via: string }
 
 export function AuditPage() {
-  const w = useTimeFormat()
   const query = useInfiniteQuery({
     queryKey: ["/admin/audit", "pages"],
     // A page asks for the entries before the last one it has (a cursor). A newer load cancels an older one, whose
@@ -125,9 +123,7 @@ export function AuditPage() {
             {rows.map((a) => (
               <TableRow key={a.id}>
                 <TableCell className="text-muted-foreground">
-                  <Tip content={formatTime(a.at, w)}>
-                    <time dateTime={a.at}>{formatTime(a.at, w, { seconds: false })}</time>
-                  </Tip>
+                  <FullWhen value={a.at} />
                 </TableCell>
                 <TableCell>
                   {a.actor.startsWith("token:") ? (

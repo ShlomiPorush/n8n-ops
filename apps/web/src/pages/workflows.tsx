@@ -31,7 +31,7 @@ import {
 } from "@/components/kit"
 import { type ProxyFix, ProxyFixBlock, proxyFixOf } from "@/components/proxy-fix"
 import { RateBar } from "@/components/skin/marks"
-import { Code, TimeAgo, When } from "@/components/status"
+import { Code, FullWhen, TimeAgo } from "@/components/status"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -332,7 +332,7 @@ export function WorkflowsPage() {
                     )}
                   </TableCell>
                   <TableCell className="text-end text-muted-foreground">
-                    <When value={w.lastRunAt} />
+                    <FullWhen value={w.lastRunAt} />
                   </TableCell>
                   <TableCell className="text-end tabular-nums">{n(w.runs30d)}</TableCell>
                   <ErrorRateCell rate={rate(w)} errors={w.errors30d} runs={w.runs30d} />

@@ -789,6 +789,16 @@ html:not([data-design="regular"]) tr[data-state="selected"] > td:has(> [data-slo
     max-width: 100%;
     vertical-align: baseline;
   }
+  /* A whole date and its age (FullWhen) share that line: "When 16/10/2026, 14:05 · 3 h ago". */
+  [data-stack] > tbody > tr > td [data-slot="full-when"] {
+    flex-direction: row;
+    align-items: baseline;
+    flex-wrap: wrap;
+    column-gap: 0.3em;
+  }
+  [data-stack] > tbody > tr > td [data-slot="full-when"] > :last-child::before {
+    content: "· ";
+  }
   [data-stack] > tbody > tr:not(:has(> [data-primary])) > td:first-child::before,
   [data-stack] > tbody > tr > td:last-child:has([data-slot="button"])::before {
     content: none;

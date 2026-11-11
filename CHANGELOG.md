@@ -4,6 +4,11 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Changed
+
+- **The Sort button is at the start of every list.** On lists without a search, such as Instances, Backups and Agent Access, it now leads the line with the count instead of sitting at its far end, and in an instance's Open Problems it comes before the title, so it is in the same place as on Problems and Workflows.
+- **Backups, the Audit Log and Workflows show whole dates, as Recent Occurrences does.** Last success and each run of a backup, the time of each audit entry and a workflow's Last run show the date and time, such as 16/10/2026, 14:05, with how long ago under it; on a phone the two share one line. A restore on Backups also gives its whole date and age.
+
 ## [0.16.3] - 2026-11-11
 
 ### Fixed

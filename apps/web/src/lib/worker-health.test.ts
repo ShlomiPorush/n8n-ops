@@ -315,6 +315,14 @@ describe("describeHealth", () => {
     expect(unmeasured(notMeasuring({ summary: { ...empty.summary, failedCalls: 2 } }))).toBe(false)
     expect(unmeasured(notMeasuring({ summary: { ...empty.summary, rttSamples: 1 } }))).toBe(false)
   })
+  it("counts a Docker failure that a check before the range carries into it as measured", () => {
+    const empty = notMeasuring()
+    const h = notMeasuring({ summary: { ...empty.summary, dockerFailingMs: 80_000 } })
+    expect(h.summary.dockerChecks).toBe(0)
+    expect(h.coverage.dockerMs).toBe(0)
+    expect(hasMeasurements(h)).toBe(true)
+    expect(unmeasured(h)).toBe(false)
+  })
   it("never calls a Worker that sends heartbeats unmeasured, nor offers it the update, with no data at all", () => {
     const h = notMeasuring({ worker: { ...health().worker, heartbeat: true } })
     expect(hasMeasurements(h)).toBe(false)

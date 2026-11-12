@@ -186,6 +186,8 @@ export function hasMeasurements(h: Pick<WorkerHealth, "coverage" | "summary">): 
     s.rttSamples > 0 ||
     s.failedCalls > 0 ||
     s.dockerChecks > 0 ||
+    // A failing check made just before the range can cover time inside it.
+    s.dockerFailingMs > 0 ||
     s.restarts > 0
   )
 }

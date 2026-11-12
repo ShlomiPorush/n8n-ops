@@ -108,7 +108,7 @@ test("the queue workers are listed by name, summed up once, and each row says wh
   await expect(rows.nth(2)).toContainText("set by --concurrency")
   await expect(rows.nth(2)).toContainText("312 MB of 1 GB")
   await expect(rows.nth(2).getByRole("progressbar")).toHaveAccessibleName("Memory 30% of its limit")
-  await expect(rows.nth(1)).toContainText("n8n 2.43.0-a-long-build-label-for-the-test · the main runs 2.44.3")
+  await expect(rows.nth(1)).toContainText("n8n 2.43.0-a-long-build-label-for-the-test, the main runs 2.44.3")
   await expect(rows.nth(1)).toContainText("2 GB")
   await expect(rows.nth(1).getByRole("progressbar")).toHaveCount(0)
   await expect(rows.nth(1)).toContainText("n8n's default")

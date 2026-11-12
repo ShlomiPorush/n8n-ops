@@ -1,6 +1,6 @@
 import { CircleCheckIcon, CpuIcon, MemoryStickIcon, TagIcon } from "lucide-react"
 import { Kpi, Kpis } from "@/components/kit"
-import { Dot, Tone } from "@/components/status"
+import { Dot } from "@/components/status"
 import { Progress } from "@/components/ui/progress"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import {
@@ -40,9 +40,20 @@ export function QueueWorkers({
   const value = (f: WorkersFigure) => (
     <>
       {f.value}
-      {f.of && <span className="text-body font-medium text-muted-foreground"> of {f.of}</span>}
+      {f.of && <span className="text-body font-medium whitespace-nowrap text-muted-foreground"> of {f.of}</span>}
     </>
   )
+  // A long word in a line under a figure (N8N_CONCURRENCY_PRODUCTION_LIMIT) breaks rather than leave its card.
+  const hint = (f: WorkersFigure) => <span className="[overflow-wrap:anywhere]">{f.hint}</span>
+  // Ready alone says what the line above says already: the figures show when a check read more than that.
+  const shown = [figures.jobs, figures.memory, figures.version].filter(Boolean).length
+  // Two by two in a pane, all in one row where there is room; never three over one.
+  const columns =
+    shown === 3
+      ? "grid-cols-2 compact:grid-cols-2 @min-[48rem]/pane:grid-cols-4 compact:@min-[48rem]/pane:grid-cols-4"
+      : shown === 2
+        ? "grid-cols-3 compact:grid-cols-3"
+        : "grid-cols-2 compact:grid-cols-2"
   // Jobs at once are said per row only when they come from different places.
   const sources = new Set(sorted.flatMap((r) => (r.concurrency ? [r.concurrency.from] : [])))
 
@@ -51,32 +62,34 @@ export function QueueWorkers({
       <div className="border-t border-line px-pad-x py-pad-y font-semibold" data-testid="queue-workers-summary">
         {workersSummary(sorted, { found, past })}
       </div>
+      {shown > 0 && (
       <div className="px-pad-x pb-pad-y" data-testid="queue-workers-figures">
-        <Kpis>
+        <Kpis className={columns}>
           <Kpi
             label="Ready"
             icon={CircleCheckIcon}
             value={value(figures.ready)}
-            hint={figures.ready.hint}
+            hint={hint(figures.ready)}
             tone={tone(figures.ready)}
           />
           {figures.jobs && (
-            <Kpi label="Jobs at once" icon={CpuIcon} value={value(figures.jobs)} hint={figures.jobs.hint} />
+            <Kpi label="Jobs at once" icon={CpuIcon} value={value(figures.jobs)} hint={hint(figures.jobs)} />
           )}
           {figures.memory && (
-            <Kpi label="Memory" icon={MemoryStickIcon} value={value(figures.memory)} hint={figures.memory.hint} />
+            <Kpi label="Memory" icon={MemoryStickIcon} value={value(figures.memory)} hint={hint(figures.memory)} />
           )}
           {figures.version && (
             <Kpi
               label="n8n"
               icon={TagIcon}
               value={value(figures.version)}
-              hint={figures.version.hint}
+              hint={hint(figures.version)}
               tone={tone(figures.version)}
             />
           )}
         </Kpis>
       </div>
+      )}
       {/* No Sort button (TB-28): the workers stay in name order, worker2 before worker10. */}
       <Table bare>
         <TableHeader>
@@ -112,9 +125,14 @@ export function QueueWorkers({
                     </span>
                   )}
                   {c.version && (
-                    <Tone tone={past ? "muted" : "warn"} className="mt-1 max-w-full whitespace-normal break-words">
-                      n8n {c.version.version} · the main runs {c.version.main}
-                    </Tone>
+                    <span
+                      className={cn(
+                        "block text-small [overflow-wrap:anywhere]",
+                        past ? "text-muted-foreground" : "font-medium text-warn",
+                      )}
+                    >
+                      n8n {c.version.version}, the main runs {c.version.main}
+                    </span>
                   )}
                 </TableCell>
                 <TableCell className="align-top">
@@ -146,22 +164,22 @@ export function QueueWorkers({
                         <>
                           {c.jobs.value}
                           {sources.size > 1 && (
-                            <span className="block text-meta break-words text-muted-foreground">{c.jobs.from}</span>
+                            <span className="block text-meta text-muted-foreground [overflow-wrap:anywhere]">{c.jobs.from}</span>
                           )}
                         </>
                       )}
                     </TableCell>
                     <TableCell className="align-top">
                       {c.memory && (
-                        <span className="grid min-w-32 gap-1">
-                          <span className="whitespace-nowrap tabular-nums">
+                        <span className="grid min-w-24 gap-1">
+                          <span className="tabular-nums">
                             {c.memory.used}
                             {c.memory.limit && <span className="text-muted-foreground"> of {c.memory.limit}</span>}
                           </span>
                           {c.memory.percent !== undefined && (
                             <Progress
                               value={c.memory.percent}
-                              tone="ink"
+                              tone="muted"
                               aria-label={`Memory ${c.memory.percent}% of its limit`}
                             />
                           )}

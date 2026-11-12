@@ -4,9 +4,14 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+
+- **Two-factor can be reset from the Account page, for a new phone or a lost authenticator app.** Reset beside Two-factor asks for your password, signs out your other sessions, turns two-factor off and takes you straight to setting up a new code; then you are back on Account, without the optional setup steps. The Audit Log records it as Two-factor reset.
+
 ### Changed
 
 - **The Sort button is at the end of every list's line, on the right.** On Problems and Workflows it now ends the line of filters, after Status, Instance and Filters, instead of sitting beside the search; on lists without a search, such as Instances, Backups and Agent Access, it is back at the end of the line with the count, and in an instance's Open Problems it is back at the end of the head.
+- **The Account page shows the actions, not their forms.** Change password opens its fields in a dialog. "Locked Out?" is now "Forgot your password?", folded under the password, as only someone signed in elsewhere sees it. The name of a new passkey and Add passkey share one line.
 
 ### Fixed
 

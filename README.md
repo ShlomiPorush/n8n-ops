@@ -114,6 +114,8 @@ docker compose exec -u node server node dist/cli.js reset-password
 
 It prints a new password and turns two-factor off until you sign in and set it up again.
 
+A new phone or a lost authenticator app, while you are still signed in somewhere: **Account → Two-factor → Reset** signs out your other sessions, turns two-factor off with your password and sets up a new code right away. If turning it off stops halfway, for example when the database fails in the middle, `reset-password` above clears it.
+
 ## Development
 
 Requirements: WSL (or Linux) with Docker. Node.js and pnpm run in a container.

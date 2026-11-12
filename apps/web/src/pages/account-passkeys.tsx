@@ -136,7 +136,7 @@ export function PasskeysPanel() {
               <div className="flex flex-wrap items-center gap-2">
                 <Input
                   id="passkey-name"
-                  className="max-w-sm min-w-48 flex-1"
+                  className="max-w-sm min-w-36 flex-1"
                   value={name}
                   maxLength={64}
                   placeholder="Work laptop"

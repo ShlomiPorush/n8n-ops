@@ -45,7 +45,9 @@ export function QueueWorkers({
   const value = (f: WorkersFigure, wrap?: "words" | "anywhere") => (
     <>
       <span
-        className={wrap === "anywhere" ? "[overflow-wrap:anywhere]" : wrap === "words" ? undefined : "whitespace-nowrap"}
+        className={
+          wrap === "anywhere" ? "[overflow-wrap:anywhere]" : wrap === "words" ? undefined : "whitespace-nowrap"
+        }
       >
         {f.value}
       </span>

@@ -10,7 +10,8 @@ import { freshTotp } from "./totp.ts"
 let context: BrowserContext
 let page: Page
 
-test.describe.configure({ mode: "serial" })
+// A test may wait for the rate limit (above) and for a fresh two-factor time step (up to 30 seconds).
+test.describe.configure({ mode: "serial", timeout: 120_000 })
 
 test.beforeAll(async ({ browser }) => {
   context = await browser.newContext()
@@ -24,18 +25,18 @@ test.afterAll(async () => {
 
 const resetDialog = () => page.getByRole("dialog", { name: "Reset Two-Factor" })
 
-// Better Auth answers at most three requests to one two-factor path in ten seconds; this file sends four to
-// /two-factor/disable, so each waits until ten seconds have passed since the one before the last.
-const disables: number[] = []
+// Better Auth answers at most three requests to one two-factor path in ten seconds, and counts again only after ten
+// seconds without one; this file sends four to /two-factor/disable, so each waits ten seconds after the one before.
+let lastDisable = 0
 
 /** Opens Reset on the Account page and sends it with this password. */
 async function sendReset(withPassword: string) {
   await page.goto("/account")
   await page.getByRole("button", { name: "Reset", exact: true }).click()
   await resetDialog().getByLabel("Your password").fill(withPassword)
-  const wait = (disables.at(-2) ?? 0) + 10_500 - Date.now()
+  const wait = lastDisable + 10_500 - Date.now()
   if (wait > 0) await page.waitForTimeout(wait)
-  disables.push(Date.now())
+  lastDisable = Date.now()
   await resetDialog().getByRole("button", { name: "Reset two-factor" }).click()
 }
 

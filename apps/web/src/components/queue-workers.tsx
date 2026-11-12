@@ -92,7 +92,8 @@ export function QueueWorkers({
               <Kpi
                 label="n8n"
                 icon={TagIcon}
-                value={value(figures.version, true)}
+                // One version string (a long build label) may break anywhere; "2 versions" stays on one line.
+                value={value(figures.version, !figures.version.value.includes(" "))}
                 hint={hint(figures.version)}
                 tone={tone(figures.version)}
               />

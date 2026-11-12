@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.16.4] - 2026-11-12
+
 ### Changed
 
 - **The Sort button is at the start of every list.** On lists without a search, such as Instances, Backups and Agent Access, it now leads the line with the count instead of sitting at its far end, and in an instance's Open Problems it comes before the title, so it is in the same place as on Problems and Workflows.

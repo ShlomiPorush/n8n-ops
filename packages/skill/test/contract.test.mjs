@@ -746,9 +746,16 @@ for (const impl of impls) {
         await replaceWith(`${lock}.moved`, lock)
       } finally {
         // Never leave the process held, whatever failed above, and let it end before its folder is cleaned up.
-        fs.writeFileSync(`${hold}.go`, "")
-        fs.writeFileSync(`${busy}.go`, "")
-        r = await p
+        try {
+          fs.writeFileSync(`${hold}.go`, "")
+          fs.writeFileSync(`${busy}.go`, "")
+        } catch (e) {
+          // Without the release it would wait in the hook: end it instead.
+          p.child.kill("SIGKILL")
+          throw e
+        } finally {
+          r = await p
+        }
       }
       assert.equal(r.code, 0, r.out + r.err)
       const refreshes = server.counts.refresh

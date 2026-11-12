@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-11-12
+
 ### Added
 
 - **Two-factor can be reset from the Account page, for a new phone or a lost authenticator app.** Reset beside Two-factor asks for your password, signs out your other sessions, turns two-factor off and takes you straight to setting up a new code; then you are back on Account, without the optional setup steps. The Audit Log records it as Two-factor reset.

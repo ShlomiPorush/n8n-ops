@@ -312,7 +312,9 @@ export function workerCells(w: QueueWorkerRow, mainVersion?: string, mixed = fal
     // "Running, health not verified" is what that state says already.
     error: w.error && w.state !== "not-verified" ? w.error : undefined,
     version:
-      w.version && (mainVersion ? w.version !== mainVersion : mixed) ? { version: w.version, main: mainVersion } : undefined,
+      w.version && (mainVersion ? w.version !== mainVersion : mixed)
+        ? { version: w.version, main: mainVersion }
+        : undefined,
     uptime: w.uptimeSec !== undefined ? uptimeWords(w.uptimeSec) : undefined,
     jobs: w.concurrency ? { value: w.concurrency.value, from: FROM_WORDS[w.concurrency.from] } : undefined,
     memory: w.memory

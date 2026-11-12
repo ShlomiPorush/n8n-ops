@@ -100,7 +100,9 @@ export function QueueWorkers({
           </Kpis>
           {/* The list was cut (the worker checks at most 50): the figures are of the workers shown. */}
           {cut && (
-            <p className="mt-2 text-small text-muted-foreground">These figures count the {sorted.length} workers shown.</p>
+            <p className="mt-2 text-small text-muted-foreground">
+              These figures count the {sorted.length} workers shown.
+            </p>
           )}
         </div>
       )}
@@ -124,13 +126,15 @@ export function QueueWorkers({
             const c = workerCells(w, mainVersion, mixed)
             const read = c.uptime || c.jobs || c.memory
             // A ready worker on another n8n warns too.
-            const tint = past ? undefined : c.health === "down" ? "bg-fail/6" : c.health === "warn" || c.version ? "bg-warn/6" : undefined
+            const tint = past
+              ? undefined
+              : c.health === "down"
+                ? "bg-fail/6"
+                : c.health === "warn" || c.version
+                  ? "bg-warn/6"
+                  : undefined
             return (
-              <TableRow
-                key={w.url}
-                data-testid="queue-worker"
-                className={tint}
-              >
+              <TableRow key={w.url} data-testid="queue-worker" className={tint}>
                 <TableCell data-primary className="align-top whitespace-normal">
                   <span className="block font-semibold break-words">{w.name ?? w.url}</span>
                   {c.error && (

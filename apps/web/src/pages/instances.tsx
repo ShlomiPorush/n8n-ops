@@ -58,7 +58,7 @@ import {
 import { ListWithPanel } from "@/components/list-panel"
 import { type PaneTabItem, PaneTabPanel, PaneTabs, usePaneTab } from "@/components/pane-tabs"
 import { type ProxyFix, ProxyFixBlock } from "@/components/proxy-fix"
-import { QueueWorkers } from "@/components/queue-workers"
+import { fourFigures, QueueWorkers } from "@/components/queue-workers"
 import { Dot, type HealthState, StatusTag, statusOf, type statusTable, TimeAgo, Tone, When } from "@/components/status"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -859,7 +859,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
             />
             {hd?.queue && (
               <div className="border-t border-line p-pad-x">
-                <Kpis>
+                <Kpis className={fourFigures}>
                   <Kpi
                     label="Waiting"
                     icon={HourglassIcon}

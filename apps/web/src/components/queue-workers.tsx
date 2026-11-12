@@ -13,6 +13,10 @@ import {
 } from "@/lib/queue-workers"
 import { cn } from "@/lib/utils"
 
+/** Four figures in a pane: two by two, all in one row where there is room, never three over one. */
+export const fourFigures =
+  "grid-cols-2 compact:grid-cols-2 @min-[48rem]/pane:grid-cols-4 compact:@min-[48rem]/pane:grid-cols-4"
+
 /*
  * The queue workers of an instance on its Health tab. What is the same on all of them is said once, in the figures
  * above them (ready, jobs at once, memory, n8n), and the table keeps what differs between them, one row each, so a
@@ -47,13 +51,7 @@ export function QueueWorkers({
   const hint = (f: WorkersFigure) => <span className="[overflow-wrap:anywhere]">{f.hint}</span>
   // Ready alone says what the line above says already: the figures show when a check read more than that.
   const shown = [figures.jobs, figures.memory, figures.version].filter(Boolean).length
-  // Two by two in a pane, all in one row where there is room; never three over one.
-  const columns =
-    shown === 3
-      ? "grid-cols-2 compact:grid-cols-2 @min-[48rem]/pane:grid-cols-4 compact:@min-[48rem]/pane:grid-cols-4"
-      : shown === 2
-        ? "grid-cols-3 compact:grid-cols-3"
-        : "grid-cols-2 compact:grid-cols-2"
+  const columns = shown === 3 ? fourFigures : shown === 2 ? "grid-cols-3 compact:grid-cols-3" : "grid-cols-2 compact:grid-cols-2"
   // Jobs at once are said per row only when they come from different places.
   const sources = new Set(sorted.flatMap((r) => (r.concurrency ? [r.concurrency.from] : [])))
 
@@ -112,7 +110,7 @@ export function QueueWorkers({
                 data-testid="queue-worker"
                 className={cn(bad && (c.health === "down" ? "bg-fail/6" : "bg-warn/6"))}
               >
-                <TableCell className="align-top">
+                <TableCell className="align-top whitespace-normal">
                   <span className="block font-semibold break-words">{w.name ?? w.url}</span>
                   {c.error && (
                     <span
@@ -135,7 +133,7 @@ export function QueueWorkers({
                     </span>
                   )}
                 </TableCell>
-                <TableCell className="align-top">
+                <TableCell className="align-top whitespace-normal">
                   <span
                     className={cn(
                       "inline-flex items-center gap-2 whitespace-nowrap",
@@ -159,7 +157,7 @@ export function QueueWorkers({
                     <TableCell className="text-end align-top whitespace-nowrap tabular-nums">
                       {c.uptime ?? ""}
                     </TableCell>
-                    <TableCell className="text-end align-top tabular-nums">
+                    <TableCell className="text-end align-top whitespace-normal tabular-nums">
                       {c.jobs && (
                         <>
                           {c.jobs.value}
@@ -171,7 +169,7 @@ export function QueueWorkers({
                         </>
                       )}
                     </TableCell>
-                    <TableCell className="align-top">
+                    <TableCell className="align-top whitespace-normal">
                       {c.memory && (
                         <span className="grid min-w-24 gap-1">
                           <span className="tabular-nums">

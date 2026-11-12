@@ -175,6 +175,23 @@ function runHint(shell, impl, inst, text, before) {
   })
 }
 
+/**
+ * Replaces a file by renaming another onto it, in one step, so the name is never free. A Windows runner once failed
+ * such a rename with EPERM; a likely cause is another process that still had the file open (the PowerShell version
+ * reads with delete sharing, and a virus scanner may open a new file), so on Windows it tries again for about a second
+ * on EPERM, or on EBUSY, which a sharing violation gives.
+ */
+async function replaceWith(from, to) {
+  for (let i = 0; ; i++) {
+    try {
+      return fs.renameSync(from, to)
+    } catch (e) {
+      if (!win || !["EPERM", "EBUSY"].includes(e.code) || i >= 50) throw e
+      await sleep(20)
+    }
+  }
+}
+
 /** Waits until a test hook was reached by a held process. */
 async function reached(file) {
   for (let i = 0; i < 400; i++) {
@@ -720,9 +737,8 @@ for (const impl of impls) {
       )
       fs.writeFileSync(`${hold}.go`, "")
       await sleep(1000)
-      // ...then the third lets go, and the first lock is put back.
-      fs.rmSync(lock)
-      fs.renameSync(`${lock}.moved`, lock)
+      // ...then the first lock is put back in the third's place, with no moment without a lock.
+      await replaceWith(`${lock}.moved`, lock)
       const r = await p
       assert.equal(r.code, 0, r.out + r.err)
       const refreshes = server.counts.refresh

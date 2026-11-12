@@ -5,6 +5,7 @@ import {
   bigint,
   bigserial,
   boolean,
+  doublePrecision,
   index,
   integer,
   jsonb,
@@ -705,6 +706,79 @@ export const workerJobs = pgTable(
     finishedAt: ts("finished_at"),
   },
   (t) => [index("worker_jobs_queue_idx").on(t.workerId, t.status)],
+)
+
+// ---------------------------------------------------------------------------
+// Worker health history (services/worker-health.ts): observations with their own times, periods derived on read
+// ---------------------------------------------------------------------------
+
+/** A job of the Worker that was running when an offline period began: a hint, never the cause. */
+export type OfflineJob = { kind: JobKind; instance: string | null; startedAt: string }
+
+/**
+ * An ended time the Worker was offline: from when its status turned Offline (last call + 90 s) to the call that ended
+ * it. An ongoing one is derived from `workers.last_seen_at` when reading.
+ */
+export const workerOffline = pgTable(
+  "worker_offline",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    workerId: uuid("worker_id")
+      .notNull()
+      .references(() => workers.id, { onDelete: "cascade" }),
+    from: ts("from").notNull(),
+    to: ts("to").notNull(),
+    job: jsonb("job").$type<OfflineJob>(),
+  },
+  (t) => [index("worker_offline_worker_to_idx").on(t.workerId, t.to)],
+)
+
+/**
+ * Stretches of time in which this server recorded continuously; time covered by none of them is when n8n-ops was not
+ * recording. Written only by `markAlive`.
+ */
+export const serverRecording = pgTable("server_recording", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  startedAt: ts("started_at").notNull(),
+  aliveAt: ts("alive_at").notNull(),
+})
+
+/** Instants the history may start at, by data kind: the first recording, and the cutoff the last prune applied. */
+export const historyMarks = pgTable("history_marks", {
+  key: text("key").primaryKey(),
+  before: ts("before").notNull(),
+})
+
+/**
+ * One heartbeat of a Worker, as it reported it. The unique key makes a resend or a replay store nothing; times are
+ * the server's receipt minus the ages the Worker measured on its monotonic clock.
+ */
+export const workerBeats = pgTable(
+  "worker_beats",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    workerId: uuid("worker_id")
+      .notNull()
+      .references(() => workers.id, { onDelete: "cascade" }),
+    bootId: text("boot_id").notNull(),
+    seq: integer("seq").notNull(),
+    receivedAt: ts("received_at").notNull(),
+    uptimeSec: doublePrecision("uptime_sec").notNull(),
+    rttMs: integer("rtt_ms"),
+    rttAt: ts("rtt_at"),
+    failedCalls: integer("failed_calls"),
+    lastCallError: text("last_call_error"),
+    dockerCheckedAt: ts("docker_checked_at"),
+    dockerOk: boolean("docker_ok"),
+    dockerMs: integer("docker_ms"),
+    dockerError: text("docker_error"),
+    dockerChecks: integer("docker_checks"),
+    dockerFailed: integer("docker_failed"),
+  },
+  (t) => [
+    uniqueIndex("worker_beats_boot_seq_idx").on(t.workerId, t.bootId, t.seq),
+    index("worker_beats_worker_received_idx").on(t.workerId, t.receivedAt),
+  ],
 )
 
 /** ok: every copy was written and verified; partial: some were; failed: none was. */

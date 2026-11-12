@@ -22,6 +22,7 @@ import { watchCollectors } from "./services/collection.ts"
 import { sweepRestores } from "./services/restore.ts"
 import { type Job, startScheduler } from "./services/scheduler.ts"
 import { sweepSessions } from "./services/session-policy.ts"
+import { startRecording } from "./services/worker-presence.ts"
 
 type Mount = { path: string; router: Hono<Env> }
 
@@ -67,5 +68,16 @@ export function features(ctx: Ctx, extra: { mounts?: Mount[]; jobs?: Job[] } = {
     // The workflow map runs per instance in the scheduler, as often as its settings say.
     ...(extra.jobs ?? []),
   ]
-  return { mounts, start: () => startScheduler(ctx, jobs) }
+  return {
+    mounts,
+    start: () => {
+      const scheduler = startScheduler(ctx, jobs)
+      // On its own timer, so a busy scheduler never looks like the server was not recording.
+      const recording = startRecording(ctx)
+      return () => {
+        scheduler()
+        recording()
+      }
+    },
+  }
 }

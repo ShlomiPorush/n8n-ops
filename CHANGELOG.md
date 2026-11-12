@@ -4,6 +4,11 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+
+- **Each Worker has a health history.** Health beside Settings on a Worker's card shows, for the last 24 hours, 7 days or 30 days, how much of the time it was online, when it was offline and for how long, and when n8n-ops itself was not running or could not record, which is not counted against the Worker. A Worker that runs this release also shows how fast its calls to n8n-ops are, calls that failed on the way, whether it reaches Docker, and when it restarted; one that runs an earlier release shows the image line to update it. Next to a time offline the list names a job that was running then. Agents read the same history: `GET /api/v1/workers`, `GET /api/v1/worker-health?worker=<name>` and the MCP tools `get_workers` and `get_worker_health_history`. Keep health history (days) in Settings → Defaults keeps it too.
+- **An updated Worker stays online during a long backup.** It now reports to n8n-ops every 30 seconds on its own, also while a job runs, so a backup that takes minutes no longer shows it Offline, sends a "Worker is offline" alert, or marks its container unhealthy. Update the Worker's image on each host to get this.
+
 ## [0.17.0] - 2026-11-12
 
 ### Added

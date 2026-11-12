@@ -232,7 +232,7 @@ export const forms: Record<string, { title: string; description: string; fields:
       {
         name: "healthHistoryDays",
         label: "Keep health history (days)",
-        hint: "1 to 30. Every health check of the main, for the response-time chart and what agents read about past outages.",
+        hint: "1 to 30. Every health check of the main and every Worker's calls, for the charts and what agents read about past outages.",
         type: "number",
       },
       { name: "autoResolveDays", label: "Auto-resolve after days without failures", type: "number" },

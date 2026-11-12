@@ -33,6 +33,7 @@ import {
   OFFSET_MAX,
   RUNS_MAX,
 } from "../services/health-history.ts"
+import { agentWorkers, refusal, WorkerHealthError, workerHealth } from "../services/worker-health.ts"
 
 const isUuid = (value: string) => z.string().uuid().safeParse(value).success
 
@@ -98,6 +99,23 @@ export function restRoutes(ctx: Ctx) {
     } catch (e) {
       if (!(e instanceof HistoryError)) throw e
       return c.json({ error: e.code, message: e.message }, e.code === "not_found" ? 404 : 400)
+    }
+  })
+  app.get("/workers", async (c) => c.json({ data: await agentWorkers(ctx) }))
+  app.get("/worker-health", async (c) => {
+    const worker = c.req.query("worker")
+    const id = c.req.query("id")
+    if (!worker === !id)
+      return c.json({ error: "invalid", message: "Give either worker (its name) or id (its id)." }, 400)
+    const parsed = historyQuery.safeParse(c.req.query())
+    if (!parsed.success) return c.json({ error: "invalid", issues: parsed.error.issues }, 400)
+    try {
+      const { events, ...rest } = await workerHealth(ctx, id ? { id } : { name: worker }, parsed.data)
+      return c.json({ data: events, ...rest })
+    } catch (e) {
+      if (!(e instanceof WorkerHealthError)) throw e
+      const [body, status] = refusal(e)
+      return c.json(body, status)
     }
   })
   app.get("/queues", async (c) => c.json({ data: await agentQueues(ctx) }))
@@ -344,6 +362,35 @@ export function buildMcpServer(
         if (!(e instanceof HistoryError)) throw e
         if (e.code === "not_found") return null
         throw new Error(e.message)
+      }
+    },
+  )
+  tool(
+    "get_workers",
+    "The n8n-ops Workers (the agent n8n-ops runs on each n8n Docker host; not n8n queue workers): name, id, online (it called the server within the last 90 s), lastSeenAt, version, heartbeat (it reports round-trip time, failed calls, Docker checks and restarts) and the instances it serves. Names are not unique; use the id when two share one.",
+    {},
+    () => agentWorkers(ctx),
+  )
+  tool(
+    "get_worker_health_history",
+    `The health history of one n8n-ops Worker, to explain why it was offline or why its instances' health went unknown. Name it by worker (its name) or id. worker: online now, lastSeenAt, version, update (the image line when it runs an earlier release). check: how the history is made (description). historyStartsAt: time before it is not measured. summary: availability (online share of the time observed, which excludes time n8n-ops itself was not recording), offline time and periods, notRecordingMs (n8n-ops was not running or could not record; never the Worker's fault), restarts, Docker failing time, round-trip avg/max and failed calls as reported by the Worker. coverage: how much of the online time had round-trip and Docker measurements; heartbeat false means the Worker must be updated to report them. series: buckets (5 minutes up to 48 hours, 1 hour beyond). periods: the same, as spans for a chart. docker: the last Docker check (current when under 3 minutes old and the Worker is online). events, newest first: offline (with notRecordingMs and job: a job that was running then, a hint, never the cause), not-recording, restart (uptimeSecBefore: a lower bound of the earlier process's uptime) and docker (endUnknown: no check followed). to null: still going on. Paged: limit (default 50, up to ${RUNS_MAX}), offset, total, nextOffset; pass the returned window.to as to for the next pages, and start again when latestIds changes.`,
+    {
+      worker: z.string().min(1).optional(),
+      id: z.string().uuid().optional(),
+      hours: z.number().int().min(1).max(HOURS_MAX).optional(),
+      limit: z.number().int().min(1).max(RUNS_MAX).optional(),
+      offset: z.number().int().min(0).max(OFFSET_MAX).optional(),
+      to: z.string().datetime({ offset: true }).optional(),
+    },
+    async (a) => {
+      if (!a.worker === !a.id) throw new Error("Give either worker (its name) or id (its id).")
+      const parsed = historyQuery.parse({ hours: a.hours, limit: a.limit, offset: a.offset, to: a.to })
+      try {
+        return await workerHealth(ctx, a.id ? { id: a.id } : { name: a.worker }, parsed)
+      } catch (e) {
+        if (!(e instanceof WorkerHealthError)) throw e
+        if (e.code === "not_found") return null
+        throw new Error(e.code === "ambiguous" ? `${e.message} Ids: ${e.ids.join(", ")}.` : e.message)
       }
     },
   )

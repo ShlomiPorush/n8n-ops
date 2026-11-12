@@ -33,7 +33,10 @@ export function AccountPage() {
     >
       <Panel>
         <PanelHead title="Sign-In" />
-        <SettingRow label="Two-factor (TOTP)" hint="Required for this installation. Reset it for a new authenticator app.">
+        <SettingRow
+          label="Two-factor (TOTP)"
+          hint="Required for this installation. Reset it for a new authenticator app."
+        >
           <span className="flex items-center gap-2 font-semibold text-ok">
             <ShieldCheck className="size-4" /> On
           </span>
@@ -72,8 +75,8 @@ function ForgotPassword() {
       <div className="grid gap-3 px-pad-x pb-4">
         <p className="max-w-[75ch] text-muted-foreground">
           Run this on the server, in the n8n-ops folder. It prints a new password, signs out every session and turns
-          two-factor off; you set it up again at the next sign-in. Your passkeys stay, and sign in again once
-          two-factor is set up.
+          two-factor off; you set it up again at the next sign-in. Your passkeys stay, and sign in again once two-factor
+          is set up.
         </p>
         <Command value="docker compose exec -u node server node dist/cli.js reset-password" label="Copy the command" />
       </div>

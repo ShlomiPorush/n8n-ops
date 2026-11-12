@@ -41,10 +41,14 @@ export function QueueWorkers({
   const sorted = [...rows].sort(byName)
   const figures = workersOverview(sorted, mainVersion)
   const tone = (f: WorkersFigure) => (past ? undefined : f.tone)
-  // A figure keeps its number and unit together; a version (with a long build label) may break anywhere.
-  const value = (f: WorkersFigure, wrap = false) => (
+  // A figure keeps its number and unit together; the version figure says how it may break.
+  const value = (f: WorkersFigure, wrap?: "words" | "anywhere") => (
     <>
-      <span className={wrap ? "[overflow-wrap:anywhere]" : "whitespace-nowrap"}>{f.value}</span>
+      <span
+        className={wrap === "anywhere" ? "[overflow-wrap:anywhere]" : wrap === "words" ? undefined : "whitespace-nowrap"}
+      >
+        {f.value}
+      </span>
       {f.of && (
         <>
           {" "}
@@ -92,8 +96,8 @@ export function QueueWorkers({
               <Kpi
                 label="n8n"
                 icon={TagIcon}
-                // One version string (a long build label) may break anywhere; "2 versions" stays on one line.
-                value={value(figures.version, !figures.version.value.includes(" "))}
+                // One version string (a long build label) may break anywhere, "2 versions" between its words.
+                value={value(figures.version, figures.version.value.includes(" ") ? "words" : "anywhere")}
                 hint={hint(figures.version)}
                 tone={tone(figures.version)}
               />

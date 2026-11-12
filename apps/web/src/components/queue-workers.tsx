@@ -51,7 +51,8 @@ export function QueueWorkers({
   const hint = (f: WorkersFigure) => <span className="[overflow-wrap:anywhere]">{f.hint}</span>
   // Ready alone says what the line above says already: the figures show when a check read more than that.
   const shown = [figures.jobs, figures.memory, figures.version].filter(Boolean).length
-  const columns = shown === 3 ? fourFigures : shown === 2 ? "grid-cols-3 compact:grid-cols-3" : "grid-cols-2 compact:grid-cols-2"
+  const columns =
+    shown === 3 ? fourFigures : shown === 2 ? "grid-cols-3 compact:grid-cols-3" : "grid-cols-2 compact:grid-cols-2"
   // Jobs at once are said per row only when they come from different places.
   const sources = new Set(sorted.flatMap((r) => (r.concurrency ? [r.concurrency.from] : [])))
 

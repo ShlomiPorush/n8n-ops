@@ -116,7 +116,7 @@ test("the queue workers are listed by name, summed up once, and each row says wh
   await expect(rows.nth(0)).toContainText("No figures read")
 })
 
-test("on a phone the figures wrap inside the panel", async () => {
+test("on a phone each worker wraps inside the panel", async () => {
   await page.setViewportSize({ width: 390, height: 844 })
   try {
     await page.goto(`/instances/${instanceId}?tab=health`)

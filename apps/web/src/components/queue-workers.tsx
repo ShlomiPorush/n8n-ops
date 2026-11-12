@@ -87,11 +87,11 @@ export function QueueWorkers({
             return (
               <TableRow key={w.url} data-testid="queue-worker" className={tint}>
                 <TableCell data-primary className="align-top whitespace-normal">
-                  <span className="block font-semibold break-words">{w.name ?? w.url}</span>
+                  <span className="block font-semibold [overflow-wrap:anywhere]">{w.name ?? w.url}</span>
                   {c.error && (
                     <span
                       className={cn(
-                        "block text-small break-words",
+                        "block text-small [overflow-wrap:anywhere]",
                         past ? "text-muted-foreground" : c.health === "down" ? "text-fail" : "text-warn",
                       )}
                     >

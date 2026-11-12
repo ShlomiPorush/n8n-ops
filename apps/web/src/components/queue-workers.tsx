@@ -1,28 +1,15 @@
-import { CircleCheckIcon, CpuIcon, MemoryStickIcon, TagIcon } from "lucide-react"
-import { Kpi, Kpis } from "@/components/kit"
 import { Dot } from "@/components/status"
 import { Progress } from "@/components/ui/progress"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import {
-  byName,
-  type QueueWorkerRow,
-  type WorkersFigure,
-  workerCells,
-  workersOverview,
-  workersSummary,
-} from "@/lib/queue-workers"
+import { byName, type QueueWorkerRow, workerCells, workersFacts, workersSummary } from "@/lib/queue-workers"
 import { cn } from "@/lib/utils"
 
-/** Four figures in a pane: two by two, all in one row where there is room, never three over one. */
-export const fourFigures =
-  "grid-cols-2 compact:grid-cols-2 @min-[48rem]/pane:grid-cols-4 compact:@min-[48rem]/pane:grid-cols-4"
-
 /*
- * The queue workers of an instance on its Health tab. What is the same on all of them is said once, in the figures
- * above them (ready, jobs at once, memory, n8n), and the table keeps what differs between them, one row each, so a
- * worker that stands out is seen down a column. Where something is wrong the row says it under the worker's name.
- * In a narrow pane or on a phone the table stacks, as every table does, each value labelled with its column.
- * `past` shows what the last check read: no tones, and the dots grey.
+ * The queue workers of an instance on its Health tab. Two lines say once what is the same on all of them (how many
+ * are ready, then the jobs they run at once, the n8n they run and the memory limit), and the table keeps what
+ * differs between them, one row each, so a worker that stands out is seen down a column. Where something is wrong the
+ * row says it under the worker's name. In a narrow pane or on a phone the table stacks, as every table does, each
+ * value labelled with its column. `past` shows what the last check read: no tones, and the dots grey.
  */
 export function QueueWorkers({
   rows,
@@ -39,80 +26,34 @@ export function QueueWorkers({
 }) {
   if (rows.length === 0) return null
   const sorted = [...rows].sort(byName)
-  const figures = workersOverview(sorted, mainVersion)
-  const tone = (f: WorkersFigure) => (past ? undefined : f.tone)
-  // A figure keeps its number and unit together; the version figure says how it may break.
-  const value = (f: WorkersFigure, wrap?: "words" | "anywhere") => (
-    <>
-      <span
-        className={
-          wrap === "anywhere" ? "[overflow-wrap:anywhere]" : wrap === "words" ? undefined : "whitespace-nowrap"
-        }
-      >
-        {f.value}
-      </span>
-      {f.of && (
-        <>
-          {" "}
-          <span className="text-body font-medium whitespace-nowrap text-muted-foreground">of {f.of}</span>
-        </>
-      )}
-    </>
-  )
-  // A long word in a line under a figure (N8N_CONCURRENCY_PRODUCTION_LIMIT) breaks rather than leave its card.
-  const hint = (f: WorkersFigure) => <span className="[overflow-wrap:anywhere]">{f.hint}</span>
-  // Ready alone says what the line above says already: the figures show when a check read more than that.
-  const shown = [figures.jobs, figures.memory, figures.version].filter(Boolean).length
-  const columns =
-    shown === 3 ? fourFigures : shown === 2 ? "grid-cols-3 compact:grid-cols-3" : "grid-cols-2 compact:grid-cols-2"
+  const facts = workersFacts(sorted, mainVersion)
+  // The list was cut (the worker checks at most 50): the facts are of the workers shown.
+  const cut = found !== undefined && found > sorted.length
   // Jobs at once are said per row only when they come from different places.
+  const sources = new Set(sorted.flatMap((r) => (r.concurrency ? [r.concurrency.from] : [])))
   // Health URLs typed by hand answer health only: without a figure on any row, there are no columns for them.
   const anyRead = sorted.some((r) => r.uptimeSec !== undefined || r.concurrency || r.memory)
   // The main's version not read: a worker's own stands out when they run more than one.
   const mixed = new Set(sorted.flatMap((r) => (r.version ? [r.version] : []))).size > 1
-  const cut = found !== undefined && found > sorted.length
-  const sources = new Set(sorted.flatMap((r) => (r.concurrency ? [r.concurrency.from] : [])))
 
   return (
     <>
-      <div className="border-t border-line px-pad-x py-pad-y font-semibold" data-testid="queue-workers-summary">
-        {workersSummary(sorted, { found, past })}
+      <div className="grid min-w-0 gap-0.5 border-t border-line px-pad-x py-pad-y">
+        <p className="font-semibold" data-testid="queue-workers-summary">
+          {workersSummary(sorted, { found, past })}
+        </p>
+        {facts.length > 0 && (
+          <p className="text-small break-words text-muted-foreground" data-testid="queue-workers-facts">
+            {cut && `The ${sorted.length} shown: `}
+            {facts.map((f, i) => (
+              <span key={f.text}>
+                {i > 0 && " · "}
+                <span className={cn(f.warn && !past && "font-medium text-warn")}>{f.text}</span>
+              </span>
+            ))}
+          </p>
+        )}
       </div>
-      {shown > 0 && (
-        <div className="px-pad-x pb-pad-y" data-testid="queue-workers-figures">
-          <Kpis className={columns}>
-            <Kpi
-              label="Ready"
-              icon={CircleCheckIcon}
-              value={value(figures.ready)}
-              hint={hint(figures.ready)}
-              tone={tone(figures.ready)}
-            />
-            {figures.jobs && (
-              <Kpi label="Jobs at once" icon={CpuIcon} value={value(figures.jobs)} hint={hint(figures.jobs)} />
-            )}
-            {figures.memory && (
-              <Kpi label="Memory" icon={MemoryStickIcon} value={value(figures.memory)} hint={hint(figures.memory)} />
-            )}
-            {figures.version && (
-              <Kpi
-                label="n8n"
-                icon={TagIcon}
-                // One version string (a long build label) may break anywhere, "2 versions" between its words.
-                value={value(figures.version, figures.version.value.includes(" ") ? "words" : "anywhere")}
-                hint={hint(figures.version)}
-                tone={tone(figures.version)}
-              />
-            )}
-          </Kpis>
-          {/* The list was cut (the worker checks at most 50): the figures are of the workers shown. */}
-          {cut && (
-            <p className="mt-2 text-small text-muted-foreground">
-              These figures count the {sorted.length} workers shown.
-            </p>
-          )}
-        </div>
-      )}
       {/* No Sort button (TB-28): the workers stay in name order, worker2 before worker10. */}
       <Table bare>
         <TableHeader>

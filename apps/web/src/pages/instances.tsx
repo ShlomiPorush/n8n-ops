@@ -3,19 +3,15 @@ import {
   Activity as ActivityIcon,
   Archive as ArchiveIcon,
   Bug as BugIcon,
-  CircleCheck as CircleCheckIcon,
-  CircleX as CircleXIcon,
   Container as ContainerIcon,
   Download,
   Ellipsis,
   ExternalLink,
   Globe as GlobeIcon,
   HeartPulse as HeartPulseIcon,
-  Hourglass as HourglassIcon,
   KeyRound as KeyRoundIcon,
   LayoutDashboard as LayoutDashboardIcon,
   ListChecks as ListChecksIcon,
-  Loader as LoaderIcon,
   Pencil,
   Plus,
   RefreshCw,
@@ -58,7 +54,7 @@ import {
 import { ListWithPanel } from "@/components/list-panel"
 import { type PaneTabItem, PaneTabPanel, PaneTabs, usePaneTab } from "@/components/pane-tabs"
 import { type ProxyFix, ProxyFixBlock } from "@/components/proxy-fix"
-import { fourFigures, QueueWorkers } from "@/components/queue-workers"
+import { QueueWorkers } from "@/components/queue-workers"
 import { Dot, type HealthState, StatusTag, statusOf, type statusTable, TimeAgo, Tone, When } from "@/components/status"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -857,19 +853,19 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
               found={hd?.discovery?.found}
               past={pastWorkers}
             />
+            {/* What the queue holds now; its completed and failed counts only add up over time, so they are left out. */}
             {hd?.queue && (
-              <div className="border-t border-line p-pad-x">
-                <Kpis className={fourFigures}>
-                  <Kpi
-                    label="Waiting"
-                    icon={HourglassIcon}
-                    value={hd.queue.waiting}
-                    tone={hd.backlogActive && !past ? "fail" : undefined}
-                  />
-                  <Kpi label="Active" icon={LoaderIcon} value={hd.queue.active} />
-                  <Kpi label="Completed" icon={CircleCheckIcon} value={hd.queue.completed} />
-                  <Kpi label="Failed" icon={CircleXIcon} value={hd.queue.failed} />
-                </Kpis>
+              <div
+                className="flex min-w-0 flex-wrap items-center gap-x-2.5 border-t border-line px-pad-x py-pad-y"
+                data-testid="queue-line"
+              >
+                <span className="min-w-0">Queue</span>
+                <span className="ms-auto text-end text-muted-foreground">
+                  <span className={cn(hd.backlogActive && !past && "font-semibold text-fail")}>
+                    {n(hd.queue.waiting)} waiting
+                  </span>{" "}
+                  · {n(hd.queue.active)} active
+                </span>
               </div>
             )}
             {hd?.metricsError && (

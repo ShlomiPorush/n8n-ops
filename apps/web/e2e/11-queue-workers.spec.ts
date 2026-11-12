@@ -2,7 +2,7 @@ import { expect, type Page, test } from "@playwright/test"
 import postgres from "postgres"
 import { signIn } from "./helpers.ts"
 
-// The queue workers of an instance on its Health tab: a line that sums their states, figures that say once what is
+// The queue workers of an instance on its Health tab: a line that sums their states, a line that says once what is
 // the same on all of them, and a row each, listed by name, with what the check in it read (version against the
 // main's, how long its container is up, jobs at once, memory). The test adds an instance with such a report in the
 // database (E2E_DATABASE_URL) and removes it again.
@@ -90,15 +90,12 @@ test("the queue workers are listed by name, summed up once, and each row says wh
     "2 of 3 queue workers ready, 1 health not verified",
   )
   // What is the same on all of them, said once.
-  const figures = panel.getByTestId("queue-workers-figures")
-  await expect(figures).toContainText("Ready")
-  await expect(figures).toContainText("2 of 3")
-  await expect(figures).toContainText("Jobs at once")
-  await expect(figures).toContainText("15")
-  await expect(figures).toContainText("not the same on each · set differently on each")
-  await expect(figures).toContainText("read on 2 of 3 workers, a limit on 1 of 2")
-  await expect(figures).toContainText("1 differs")
-  await expect(figures).toContainText("the main runs 2.44.3")
+  const facts = panel.getByTestId("queue-workers-facts")
+  await expect(facts).toContainText("15 jobs at once (not the same on each, set differently on each)")
+  await expect(facts).toContainText("e2e-queue-worker-2 runs n8n 2.43.0-a-long-build-label-for-the-test, the main 2.44.3")
+  await expect(facts).toContainText("a memory limit on 1 of the 2 containers read, of 3")
+  // The queue: what it holds now.
+  await expect(panel.getByTestId("queue-line")).toContainText("0 waiting · 1 active")
   const rows = panel.getByTestId("queue-worker")
   await expect(rows).toHaveCount(3)
   await expect(rows.nth(0)).toContainText("e2e-queue-worker-1")

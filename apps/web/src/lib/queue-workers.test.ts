@@ -5,7 +5,7 @@ import {
   type WorkerState,
   workerCells,
   workerHealth,
-  workersOverview,
+  workersFacts,
   workersSummary,
   workerWords,
 } from "./queue-workers.ts"
@@ -158,71 +158,45 @@ describe("the queue worker list", () => {
   it("says once what is the same on every worker", () => {
     const same = { version: "2.40.5", memory: { used: 450 * 1024 * 1024, limit: null } }
     const rows = [1, 2, 3].map((n) => row(`w${n}`, "ready", { ...same, concurrency: { value: 10, from: "default" } }))
-    expect(workersOverview(rows, "2.40.5")).toEqual({
-      ready: { value: "3", of: "3", hint: "every worker answers ready", tone: undefined },
-      jobs: { value: "30", of: undefined, hint: "10 each · n8n's default" },
-      memory: { value: "1.3 GB", of: undefined, hint: "no limit set on any container" },
-      version: { value: "2.40.5", hint: "on every worker, same as the main" },
-    })
+    expect(workersFacts(rows, "2.40.5")).toEqual([
+      { text: "30 jobs at once (10 each, n8n's default)" },
+      { text: "n8n 2.40.5 on every worker, same as the main" },
+      { text: "no memory limit on any container" },
+    ])
     // Read inside the main or not, the workers alone agree.
-    expect(workersOverview(rows).version).toEqual({ value: "2.40.5", hint: "on every worker" })
+    expect(workersFacts(rows)[1]).toEqual({ text: "n8n 2.40.5 on every worker" })
+    // Nothing read: nothing to say beyond how many are ready.
+    expect(workersFacts([row("w7", "ready")])).toEqual([])
   })
 
-  it("counts the jobs of ready workers only, and points at what stands out", () => {
+  it("counts the jobs of ready workers only, says what was read on some only, and points at what stands out", () => {
     const gb = 1024 * 1024 * 1024
-    const first = row("w1", "ready", {
-      version: "2.40.5",
-      memory: { used: 0.5 * gb, limit: gb },
-      concurrency: { value: 10, from: "env" },
-    })
     const rows = [
-      first,
+      row("w1", "ready", { version: "2.40.5", memory: { used: gb / 2, limit: gb }, concurrency: { value: 10, from: "env" } }),
       row("w2", "not-ready", {
         error: "x",
         version: "2.40.5",
-        memory: { used: 0.25 * gb, limit: gb },
+        memory: { used: gb / 4, limit: gb },
         concurrency: { value: 10, from: "env" },
       }),
-      row("w3", "ready", {
-        version: "2.39.1",
-        memory: { used: 0.75 * gb, limit: gb },
-        concurrency: { value: 5, from: "flag" },
-      }),
+      row("w3", "ready", { version: "2.39.1", memory: { used: gb, limit: gb }, concurrency: { value: 5, from: "flag" } }),
       row("w4", "unreachable"),
     ]
-    const o = workersOverview(rows, "2.40.5")
-    expect(o.ready).toEqual({ value: "2", of: "4", hint: "1 not ready, 1 no answer", tone: "fail" })
-    expect(o.jobs).toEqual({
-      value: "15",
-      of: "25",
-      hint: "on the ready workers · not the same on each · set differently on each",
-    })
-    expect(o.memory).toEqual({ value: "1.5 GB", of: "3 GB", hint: "read on 3 of 4 workers, a limit on each" })
-    expect(o.version).toEqual({ value: "1 differs", hint: "w3 runs 2.39.1; the main runs 2.40.5", tone: "warn" })
-    // Some containers without a limit: no total to be out of.
-    const mixed = workersOverview([first, row("w5", "ready", { memory: { used: gb, limit: null } })])
-    expect(mixed.memory).toEqual({ value: "1.5 GB", of: undefined, hint: "in all, a limit on 1 of 2" })
-    // Without the main's version, workers that disagree are still pointed at.
-    expect(workersOverview(rows).version).toEqual({
-      value: "2 versions",
-      hint: "2.40.5 on 2, 2.39.1 on 1",
-      tone: "warn",
-    })
-    // Read on some workers only: the figures say so.
-    const partial = workersOverview([
-      row("w8", "ready", { memory: { used: gb, limit: null }, concurrency: { value: 10, from: "default" } }),
-      row("w9", "ready"),
+    expect(workersFacts(rows, "2.40.5")).toEqual([
+      { text: "15 jobs at once on the ready workers, of 25 (not the same on each, set differently on each)" },
+      { text: "w3 runs n8n 2.39.1, the main 2.40.5", warn: true },
+      { text: "a memory limit on the 3 containers read, of 4" },
     ])
-    expect(partial.jobs?.hint).toBe("10 each · n8n's default · not read on 1 ready")
-    expect(partial.memory?.hint).toBe("read on 1 of 2 workers, no limit set")
-    // A state not known is a warning, not a failure.
-    expect(workersOverview([row("w6", "not-verified")]).ready.tone).toBe("warn")
-    // Nothing read: only how many are ready.
-    expect(workersOverview([row("w7", "ready")])).toEqual({
-      ready: { value: "1", of: "1", hint: "every worker answers ready", tone: undefined },
-      jobs: undefined,
-      memory: undefined,
-      version: undefined,
-    })
+    // Without the main's version, workers that disagree are still pointed at.
+    expect(workersFacts(rows)[1]).toEqual({ text: "n8n 2.40.5 on 2, 2.39.1 on 1", warn: true })
+    const partial = workersFacts([
+      row("w8", "ready", { memory: { used: gb, limit: null }, concurrency: { value: 10, from: "default" } }),
+      row("w9", "ready", { memory: { used: gb, limit: gb } }),
+      row("w10", "ready"),
+    ])
+    expect(partial).toEqual([
+      { text: "10 jobs at once (10 each, n8n's default, not read on 2 ready)" },
+      { text: "a memory limit on 1 of the 2 containers read, of 3" },
+    ])
   })
 })

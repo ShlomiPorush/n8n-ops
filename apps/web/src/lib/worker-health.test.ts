@@ -322,6 +322,9 @@ describe("describeHealth", () => {
     expect(h.coverage.dockerMs).toBe(0)
     expect(hasMeasurements(h)).toBe(true)
     expect(unmeasured(h)).toBe(false)
+    expect(describeHealth(h, 24)).toBe(
+      "Online 99.6% of the last 24 hours. No round-trip measurements in this range. Docker failing 1 min in this range, from a check made before it.",
+    )
   })
   it("never calls a Worker that sends heartbeats unmeasured, nor offers it the update, with no data at all", () => {
     const h = notMeasuring({ worker: { ...health().worker, heartbeat: true } })

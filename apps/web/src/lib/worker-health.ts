@@ -221,7 +221,11 @@ export function describeHealth(h: WorkerHealth, hours: number): string {
         : "No round-trip measurements in this range.",
     )
     parts.push(
-      docker ? `Docker checked in ${share(h.coverage.dockerMs)} of this range.` : "No Docker checks in this range.",
+      docker
+        ? `Docker checked in ${share(h.coverage.dockerMs)} of this range.`
+        : s.dockerFailingMs > 0
+          ? `Docker failing ${durationText(s.dockerFailingMs)} in this range, from a check made before it.`
+          : "No Docker checks in this range.",
     )
   }
   return parts.join(" ")

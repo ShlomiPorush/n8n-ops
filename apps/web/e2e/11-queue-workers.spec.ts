@@ -96,7 +96,7 @@ test("the queue workers are listed by name, summed up once, and each row says wh
   await expect(figures).toContainText("Jobs at once")
   await expect(figures).toContainText("15")
   await expect(figures).toContainText("not the same on each · set differently on each")
-  await expect(figures).toContainText("in all, a limit on 1 of 2")
+  await expect(figures).toContainText("read on 2 of 3 workers, a limit on 1 of 2")
   await expect(figures).toContainText("1 differs")
   await expect(figures).toContainText("the main runs 2.44.3")
   const rows = panel.getByTestId("queue-worker")

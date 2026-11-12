@@ -148,6 +148,9 @@ describe("the queue worker list", () => {
     const down = workerCells(row("b", "not-ready", { error: "Redis connection refused" }))
     expect(down).toMatchObject({ health: "down", state: "not ready", error: "Redis connection refused" })
     expect(down.uptime ?? down.jobs ?? down.memory).toBeUndefined()
+    // The main's version not read: a worker's own shows when the workers run more than one.
+    expect(workerCells(w, undefined, true).version).toEqual({ version: "2.44.2", main: undefined })
+    expect(workerCells(w, undefined, false).version).toBeUndefined()
     // That state says it already.
     expect(workerCells(row("c", "not-verified", { error: "running, health not verified" })).error).toBeUndefined()
   })
@@ -194,7 +197,7 @@ describe("the queue worker list", () => {
       of: "25",
       hint: "on the ready workers · not the same on each · set differently on each",
     })
-    expect(o.memory).toEqual({ value: "1.5 GB", of: "3 GB", hint: "in all, a limit on 3 of 4 workers" })
+    expect(o.memory).toEqual({ value: "1.5 GB", of: "3 GB", hint: "read on 3 of 4 workers, a limit on each" })
     expect(o.version).toEqual({ value: "1 differs", hint: "w3 runs 2.39.1; the main runs 2.40.5", tone: "warn" })
     // Some containers without a limit: no total to be out of.
     const mixed = workersOverview([first, row("w5", "ready", { memory: { used: gb, limit: null } })])
@@ -205,6 +208,13 @@ describe("the queue worker list", () => {
       hint: "2.40.5 on 2, 2.39.1 on 1",
       tone: "warn",
     })
+    // Read on some workers only: the figures say so.
+    const partial = workersOverview([
+      row("w8", "ready", { memory: { used: gb, limit: null }, concurrency: { value: 10, from: "default" } }),
+      row("w9", "ready"),
+    ])
+    expect(partial.jobs?.hint).toBe("10 each · n8n's default · not read on 1 ready")
+    expect(partial.memory?.hint).toBe("read on 1 of 2 workers, no limit set")
     // A state not known is a warning, not a failure.
     expect(workersOverview([row("w6", "not-verified")]).ready.tone).toBe("warn")
     // Nothing read: only how many are ready.

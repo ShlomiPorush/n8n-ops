@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Changed
+
+- **The queue workers on an instance's Health tab are figures and a table instead of a line of text each.** Four figures say once what is the same on all of them: how many are ready, how many jobs the ready ones run at once, the memory they hold and the n8n they run. Below them each worker is one row with its state, how long it is up, its jobs at once and its memory, with a bar when its container has a memory limit. A worker that is not ready or runs another n8n than the main says so in its row. In a narrow pane or on a phone each worker is a small card. The queue's Waiting, Active, Completed and Failed figures are laid out two by two in a pane, as these are.
+
 ## [0.17.0] - 2026-11-12
 
 ### Added

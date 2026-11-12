@@ -206,7 +206,7 @@ export type WorkersFigure = { value: string; of?: string; hint: string; tone?: T
  * differs: how many are ready, how many jobs they run at once, the memory they hold, and the n8n they run. Each
  * figure but the first is there only when a check read it on some worker. Jobs count the ready workers only, since
  * the others take none. The version is compared with the main's only when it was read inside the main in the same
- * check (`mainVersion`), else only between the workers.
+ * check (`mainVersion`), else only between the workers. A figure read on some workers only says on how many.
  */
 export function workersOverview(
   rows: QueueWorkerRow[],
@@ -229,6 +229,8 @@ export function workersOverview(
   const from = new Set(withJobs.map((r) => r.concurrency?.from))
   const [one] = each
   const [source] = from
+  // Ready workers whose figure was not read take jobs too: their part is missing from the count.
+  const unread = ready.filter((r) => !r.concurrency).length
 
   const withMemory = rows.filter((r) => r.memory)
   const used = withMemory.reduce((total, r) => total + (r.memory?.used ?? 0), 0)
@@ -257,6 +259,7 @@ export function workersOverview(
             readyJobs === allJobs ? "" : "on the ready workers",
             each.size === 1 ? `${one} each` : "not the same on each",
             from.size === 1 && source ? FROM_WORDS[source] : "set differently on each",
+            unread ? `not read on ${unread} ready` : "",
           ]
             .filter(Boolean)
             .join(" · "),
@@ -267,11 +270,15 @@ export function workersOverview(
           value: bytesWords(used),
           of: limited.length === withMemory.length ? bytesWords(limit) : undefined,
           hint:
-            limited.length === 0
+            limited.length === 0 && withMemory.length === rows.length
               ? "no limit set on any container"
-              : limited.length === withMemory.length
-                ? `in all, a limit on ${every(withMemory.length)}`
-                : `in all, a limit on ${limited.length} of ${withMemory.length}`,
+              : `${withMemory.length === rows.length ? "in all" : `read on ${every(withMemory.length)}`}, ${
+                  limited.length === 0
+                    ? "no limit set"
+                    : limited.length === withMemory.length
+                      ? "a limit on each"
+                      : `a limit on ${limited.length} of ${withMemory.length}`
+                }`,
         }
       : undefined,
     version: !withVersion.length
@@ -293,10 +300,11 @@ export function workersOverview(
 }
 
 /**
- * One queue worker's row: its state in a word, what went wrong when something did, a version that differs from the
- * main's, and each figure only when the check read it.
+ * One queue worker's row: its state in a word, what went wrong when something did, its version when it stands out
+ * (it differs from the main's, or, the main's not read, the workers run more than one), and each figure only when
+ * the check read it.
  */
-export function workerCells(w: QueueWorkerRow, mainVersion?: string) {
+export function workerCells(w: QueueWorkerRow, mainVersion?: string, mixed = false) {
   const health = workerHealth(w.state, w.ok)
   return {
     health,
@@ -304,7 +312,7 @@ export function workerCells(w: QueueWorkerRow, mainVersion?: string) {
     // "Running, health not verified" is what that state says already.
     error: w.error && w.state !== "not-verified" ? w.error : undefined,
     version:
-      w.version && mainVersion && w.version !== mainVersion ? { version: w.version, main: mainVersion } : undefined,
+      w.version && (mainVersion ? w.version !== mainVersion : mixed) ? { version: w.version, main: mainVersion } : undefined,
     uptime: w.uptimeSec !== undefined ? uptimeWords(w.uptimeSec) : undefined,
     jobs: w.concurrency ? { value: w.concurrency.value, from: FROM_WORDS[w.concurrency.from] } : undefined,
     memory: w.memory

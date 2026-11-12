@@ -41,9 +41,10 @@ export function QueueWorkers({
   const sorted = [...rows].sort(byName)
   const figures = workersOverview(sorted, mainVersion)
   const tone = (f: WorkersFigure) => (past ? undefined : f.tone)
-  const value = (f: WorkersFigure) => (
+  // A figure keeps its number and unit together; a version (with a long build label) may break anywhere.
+  const value = (f: WorkersFigure, wrap = false) => (
     <>
-      <span className="whitespace-nowrap">{f.value}</span>
+      <span className={wrap ? "[overflow-wrap:anywhere]" : "whitespace-nowrap"}>{f.value}</span>
       {f.of && (
         <>
           {" "}
@@ -61,6 +62,9 @@ export function QueueWorkers({
   // Jobs at once are said per row only when they come from different places.
   // Health URLs typed by hand answer health only: without a figure on any row, there are no columns for them.
   const anyRead = sorted.some((r) => r.uptimeSec !== undefined || r.concurrency || r.memory)
+  // The main's version not read: a worker's own stands out when they run more than one.
+  const mixed = new Set(sorted.flatMap((r) => (r.version ? [r.version] : []))).size > 1
+  const cut = found !== undefined && found > sorted.length
   const sources = new Set(sorted.flatMap((r) => (r.concurrency ? [r.concurrency.from] : [])))
 
   return (
@@ -88,12 +92,16 @@ export function QueueWorkers({
               <Kpi
                 label="n8n"
                 icon={TagIcon}
-                value={value(figures.version)}
+                value={value(figures.version, true)}
                 hint={hint(figures.version)}
                 tone={tone(figures.version)}
               />
             )}
           </Kpis>
+          {/* The list was cut (the worker checks at most 50): the figures are of the workers shown. */}
+          {cut && (
+            <p className="mt-2 text-small text-muted-foreground">These figures count the {sorted.length} workers shown.</p>
+          )}
         </div>
       )}
       {/* No Sort button (TB-28): the workers stay in name order, worker2 before worker10. */}
@@ -113,14 +121,15 @@ export function QueueWorkers({
         </TableHeader>
         <TableBody>
           {sorted.map((w) => {
-            const c = workerCells(w, mainVersion)
+            const c = workerCells(w, mainVersion, mixed)
             const read = c.uptime || c.jobs || c.memory
-            const bad = !past && c.health !== "ok"
+            // A ready worker on another n8n warns too.
+            const tint = past ? undefined : c.health === "down" ? "bg-fail/6" : c.health === "warn" || c.version ? "bg-warn/6" : undefined
             return (
               <TableRow
                 key={w.url}
                 data-testid="queue-worker"
-                className={cn(bad && (c.health === "down" ? "bg-fail/6" : "bg-warn/6"))}
+                className={tint}
               >
                 <TableCell data-primary className="align-top whitespace-normal">
                   <span className="block font-semibold break-words">{w.name ?? w.url}</span>
@@ -141,7 +150,8 @@ export function QueueWorkers({
                         past ? "text-muted-foreground" : "font-medium text-warn",
                       )}
                     >
-                      n8n {c.version.version}, the main runs {c.version.main}
+                      n8n {c.version.version}
+                      {c.version.main && `, the main runs ${c.version.main}`}
                     </span>
                   )}
                 </TableCell>

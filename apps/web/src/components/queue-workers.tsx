@@ -43,7 +43,7 @@ export function QueueWorkers({
   const tone = (f: WorkersFigure) => (past ? undefined : f.tone)
   const value = (f: WorkersFigure) => (
     <>
-      {f.value}
+      <span className="whitespace-nowrap">{f.value}</span>
       {f.of && <span className="text-body font-medium whitespace-nowrap text-muted-foreground"> of {f.of}</span>}
     </>
   )
@@ -111,7 +111,7 @@ export function QueueWorkers({
                 data-testid="queue-worker"
                 className={cn(bad && (c.health === "down" ? "bg-fail/6" : "bg-warn/6"))}
               >
-                <TableCell className="align-top whitespace-normal">
+                <TableCell data-primary className="align-top whitespace-normal">
                   <span className="block font-semibold break-words">{w.name ?? w.url}</span>
                   {c.error && (
                     <span
@@ -170,12 +170,15 @@ export function QueueWorkers({
                         </>
                       )}
                     </TableCell>
-                    <TableCell className="align-top whitespace-normal">
+                    {/* Stacked, the memory and its bar take a line of their own. */}
+                    <TableCell data-wide className="align-top whitespace-normal">
                       {c.memory && (
-                        <span className="grid min-w-24 gap-1">
+                        <span className="inline-grid min-w-24 gap-1 align-top">
                           <span className="tabular-nums">
-                            {c.memory.used}
-                            {c.memory.limit && <span className="text-muted-foreground"> of {c.memory.limit}</span>}
+                            <span className="whitespace-nowrap">{c.memory.used}</span>
+                            {c.memory.limit && (
+                              <span className="whitespace-nowrap text-muted-foreground"> of {c.memory.limit}</span>
+                            )}
                           </span>
                           {c.memory.percent !== undefined && (
                             <Progress

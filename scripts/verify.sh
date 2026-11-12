@@ -267,8 +267,12 @@ start_stack() {
   }
   check_non_root "$PROJECT" server postgres worker
   check_socket_proxy "$PROJECT"
-  # The worker never gets database credentials (only the names are read, never printed).
-  if stack exec -T worker env | grep -qE '^(DATABASE_URL|POSTGRES_PASSWORD|POSTGRES_USER)='; then
+  # The worker never gets database credentials. Only the names are read, never the values (one may span lines), and a
+  # failed read fails the check: in a pipe, grep -q could end the reading with SIGPIPE, which pipefail reads as no match.
+  local names
+  names="$(stack exec -T worker node -e 'console.log(Object.keys(process.env).join("\n"))')" ||
+    die "could not read the names in the worker's environment"
+  if grep -qxE '(DATABASE_URL|POSTGRES_PASSWORD|POSTGRES_USER)' <<<"$names"; then
     die "the worker has database credentials"
   fi
 }
@@ -642,6 +646,8 @@ main() {
 
   if [ -n "$CHANGED_BASE" ]; then
     mapfile -d '' -t files < <(changed_files)
+    # mapfile does not see the status of the process substitution: a failed merge-base would read as no changes.
+    wait $! || die "could not list the files changed since $CHANGED_BASE"
     if [ ${#files[@]} -eq 0 ]; then
       info "No changes since $CHANGED_BASE"
       CHECKS=0 INTEGRATION=0 E2E=0

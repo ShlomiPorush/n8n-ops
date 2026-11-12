@@ -14,6 +14,7 @@ import { ApiError, api, describeError, UNREACHABLE_TEXT, useApi } from "@/lib/ap
 import { authClient, authErrorText } from "@/lib/auth-client"
 import { download } from "@/lib/download"
 import { loginPath, sessionStarted } from "@/lib/session"
+import { clearTwoFactorReset, twoFactorResetPending } from "@/lib/two-factor-reset"
 import { cn } from "@/lib/utils"
 import { DestinationFields, type DestinationForm, destinationBody, destinationForm } from "../destinations"
 import { AuthFrame, type TotpAnswer, TotpInput, totpAnswer } from "./shared"
@@ -27,6 +28,9 @@ export function SetupPage() {
   const checklist = useApi<Checklist>(status.data?.hasUser ? "/setup/checklist" : null)
   const [password, setPassword] = useState("")
   const [skipped, setSkipped] = useState<Step[]>([])
+  // A two-factor reset from Account (lib/two-factor-reset.ts): a new code, then back to Account, without the
+  // optional steps. Read once, when the page opens; the steps it skips are decided only from a checklist that loaded.
+  const [resetting] = useState(twoFactorResetPending)
   const navigate = useNavigate()
   const client = useQueryClient()
   // Signed in before two-factor is set up: the session clocks apply here too, and a session that ends goes to
@@ -50,9 +54,9 @@ export function SetupPage() {
   if (!status.data?.hasUser) step = "Account"
   else if (c && !c.twoFactor) step = "Two-Factor"
   else if (c && !c.backupKey) step = "Backup Key"
-  else if (c && !c.telegram && !skipped.includes("Telegram")) step = "Telegram"
-  else if (c && !c.storage && !skipped.includes("Destination")) step = "Destination"
-  if (step === "done") return <Navigate to="/" replace />
+  else if (c && !c.telegram && !skipped.includes("Telegram") && !resetting) step = "Telegram"
+  else if (c && !c.storage && !skipped.includes("Destination") && !resetting) step = "Destination"
+  if (step === "done") return <Navigate to={resetting ? "/account" : "/"} replace />
 
   const refresh = async () => {
     await client.invalidateQueries({ queryKey: ["/setup/status"] })
@@ -96,7 +100,16 @@ export function SetupPage() {
           }}
         />
       )}
-      {step === "Two-Factor" && <TwoFactorStep password={password} onDone={refresh} />}
+      {step === "Two-Factor" && (
+        <TwoFactorStep
+          password={password}
+          onDone={async () => {
+            // The new code is set up: the reset is over, and this page still skips what it skipped for it.
+            if (resetting) clearTwoFactorReset()
+            await refresh()
+          }}
+        />
+      )}
       {step === "Backup Key" && <BackupKeyStep onDone={refresh} />}
       {step === "Telegram" && <TelegramStep onDone={refresh} onSkip={() => skip("Telegram")} />}
       {step === "Destination" && (

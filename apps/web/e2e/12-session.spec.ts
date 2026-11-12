@@ -5,7 +5,7 @@ import { signIn } from "./helpers.ts"
 // The session clocks of Settings > Sign-in security, as a person meets them: the settings, the question before an
 // idle sign-out and the answer to it, input in another tab, the note before the maximum length, and the sign-in
 // page that says why a session ended. The server's clocks cannot be moved, so the test moves the session's times
-// in the database instead (E2E_DATABASE_URL, set by scripts/verify.sh). Last in the suite: it ends the session.
+// in the database instead (E2E_DATABASE_URL, set by scripts/verify.sh). Near the end of the suite: it ends the session.
 
 const databaseUrl = process.env.E2E_DATABASE_URL
 let sql: postgres.Sql

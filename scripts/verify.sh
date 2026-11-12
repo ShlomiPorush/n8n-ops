@@ -110,11 +110,12 @@ esac
 changed_files() {
   local base
   base="$(git -C "$REPO_ROOT" merge-base "$CHANGED_BASE" HEAD)" || die "cannot find a merge base with $CHANGED_BASE"
+  # Without renames, a file moved out of a directory still counts as a change there. NUL-separated, so git does not
+  # quote a path with other than plain characters, which would hide where it is.
   {
-    # Without renames, a file moved out of a directory still counts as a change there.
-    git -C "$REPO_ROOT" diff --name-only --no-renames "$base"
-    git -C "$REPO_ROOT" ls-files --others --exclude-standard
-  } | sort -u
+    git -C "$REPO_ROOT" diff --name-only --no-renames -z "$base"
+    git -C "$REPO_ROOT" ls-files --others --exclude-standard -z
+  } | sort -zu
 }
 
 run_guards() {
@@ -640,7 +641,7 @@ main() {
   trap 'exit 143' TERM
 
   if [ -n "$CHANGED_BASE" ]; then
-    mapfile -t files < <(changed_files)
+    mapfile -d '' -t files < <(changed_files)
     if [ ${#files[@]} -eq 0 ]; then
       info "No changes since $CHANGED_BASE"
       CHECKS=0 INTEGRATION=0 E2E=0

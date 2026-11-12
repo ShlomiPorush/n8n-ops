@@ -728,7 +728,7 @@ for (const impl of impls) {
         N8N_OPS_TEST_HOLD_LOCK_BUSY: busy,
         N8N_OPS_LOCK_WAIT_MS: "8000",
       })
-      let r
+      let failed
       try {
         await reached(hold)
         const lock = path.join(inst.creds, fs.readdirSync(inst.creds).find((f) => f.endsWith(".lock")) ?? "")
@@ -744,19 +744,20 @@ for (const impl of impls) {
         await reached(busy)
         // ...then the first lock is put back in the third's place, with no moment without a lock.
         await replaceWith(`${lock}.moved`, lock)
-      } finally {
-        // Never leave the process held, whatever failed above, and let it end before its folder is cleaned up.
-        try {
-          fs.writeFileSync(`${hold}.go`, "")
-          fs.writeFileSync(`${busy}.go`, "")
-        } catch (e) {
-          // Without the release it would wait in the hook: end it instead.
-          p.child.kill("SIGKILL")
-          throw e
-        } finally {
-          r = await p
-        }
+      } catch (e) {
+        failed = e
       }
+      // Never leave the process held, whatever failed above, and let it end before its folder is cleaned up.
+      try {
+        fs.writeFileSync(`${hold}.go`, "")
+        fs.writeFileSync(`${busy}.go`, "")
+      } catch (e) {
+        // Without the release it would wait in the hook: end it instead.
+        p.child.kill("SIGKILL")
+        failed ??= e
+      }
+      const r = await p
+      if (failed) throw failed
       assert.equal(r.code, 0, r.out + r.err)
       const refreshes = server.counts.refresh
       assert.equal((await run(impl, inst, server, ["get", "instances"])).code, 0)

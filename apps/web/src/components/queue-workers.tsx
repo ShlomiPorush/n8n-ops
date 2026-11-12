@@ -63,32 +63,32 @@ export function QueueWorkers({
         {workersSummary(sorted, { found, past })}
       </div>
       {shown > 0 && (
-      <div className="px-pad-x pb-pad-y" data-testid="queue-workers-figures">
-        <Kpis className={columns}>
-          <Kpi
-            label="Ready"
-            icon={CircleCheckIcon}
-            value={value(figures.ready)}
-            hint={hint(figures.ready)}
-            tone={tone(figures.ready)}
-          />
-          {figures.jobs && (
-            <Kpi label="Jobs at once" icon={CpuIcon} value={value(figures.jobs)} hint={hint(figures.jobs)} />
-          )}
-          {figures.memory && (
-            <Kpi label="Memory" icon={MemoryStickIcon} value={value(figures.memory)} hint={hint(figures.memory)} />
-          )}
-          {figures.version && (
+        <div className="px-pad-x pb-pad-y" data-testid="queue-workers-figures">
+          <Kpis className={columns}>
             <Kpi
-              label="n8n"
-              icon={TagIcon}
-              value={value(figures.version)}
-              hint={hint(figures.version)}
-              tone={tone(figures.version)}
+              label="Ready"
+              icon={CircleCheckIcon}
+              value={value(figures.ready)}
+              hint={hint(figures.ready)}
+              tone={tone(figures.ready)}
             />
-          )}
-        </Kpis>
-      </div>
+            {figures.jobs && (
+              <Kpi label="Jobs at once" icon={CpuIcon} value={value(figures.jobs)} hint={hint(figures.jobs)} />
+            )}
+            {figures.memory && (
+              <Kpi label="Memory" icon={MemoryStickIcon} value={value(figures.memory)} hint={hint(figures.memory)} />
+            )}
+            {figures.version && (
+              <Kpi
+                label="n8n"
+                icon={TagIcon}
+                value={value(figures.version)}
+                hint={hint(figures.version)}
+                tone={tone(figures.version)}
+              />
+            )}
+          </Kpis>
+        </div>
       )}
       {/* No Sort button (TB-28): the workers stay in name order, worker2 before worker10. */}
       <Table bare>
@@ -164,7 +164,9 @@ export function QueueWorkers({
                         <>
                           {c.jobs.value}
                           {sources.size > 1 && (
-                            <span className="block text-meta text-muted-foreground [overflow-wrap:anywhere]">{c.jobs.from}</span>
+                            <span className="block text-meta text-muted-foreground [overflow-wrap:anywhere]">
+                              {c.jobs.from}
+                            </span>
                           )}
                         </>
                       )}

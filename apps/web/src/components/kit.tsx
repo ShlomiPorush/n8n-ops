@@ -256,7 +256,6 @@ export function PanelHead({
   count,
   more,
   action,
-  sort,
   description,
   className,
   icon: Icon,
@@ -266,8 +265,6 @@ export function PanelHead({
   count?: React.ReactNode
   more?: { to: string; label: string }
   action?: React.ReactNode
-  /** The list's Sort button (TB-28), at the start of the head, before the title, as on every list. */
-  sort?: React.ReactNode
   description?: React.ReactNode
   className?: string
   /**
@@ -302,7 +299,6 @@ export function PanelHead({
           Icon && "regular:flex-col regular:items-start regular:gap-y-1",
         )}
       >
-        {sort}
         <h2 className={cn("text-head", Icon && "regular:text-body regular:font-normal regular:text-muted-foreground")}>
           {title}
         </h2>

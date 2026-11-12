@@ -422,7 +422,7 @@ export function useSort<T>(
 
 /**
  * The frame the Sort and Filters buttons share (TB-28, MP-6): a square as tall as the search, a 1px line and no
- * fill, with line and icon ink while open or while set. `small` is the 30px square at the start of a count line or
+ * fill, with line and icon ink while open or while set. `small` is the 30px square at the end of a count line or
  * a panel head. Regular keeps its own raised button, as tall as its search. Toggles clicked again and again
  * select no text (AX-10).
  */
@@ -462,10 +462,10 @@ function SortChoice({
 }
 
 /**
- * The one Sort button of a list, at every size (TB-28): beside the list's search, or at the start of its count
- * line or panel head. It opens a small dialog with two groups of radios, Sort by (Default order and the columns)
- * and Order (worded by the column's kind); a choice applies at once and the menu stays open. It sets the same
- * order as the column headers, so the two never disagree (TB-3). A dot marks an order that is not the default.
+ * The one Sort button of a list, at every size (TB-28): at the end of its line, the one with the list's search,
+ * the count line or the panel head. It opens a small dialog with two groups of radios, Sort by (Default order and
+ * the columns) and Order (worded by the column's kind); a choice applies at once and the menu stays open. It sets
+ * the same order as the column headers, so the two never disagree (TB-3). A dot marks an order that is not the default.
  *
  * Lists that do not sort have no Sort button and say so where they are drawn: the audit log (paged on the
  * server, newest first), the runs of a backup, the agent tokens, the calls of an access request and the Recent

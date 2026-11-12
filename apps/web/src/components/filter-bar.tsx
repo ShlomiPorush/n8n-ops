@@ -9,11 +9,11 @@ import { scrollerFor } from "@/lib/scroller"
 import { cn } from "@/lib/utils"
 
 /*
- * The shared filter bar of every list (MP-1, MP-3, MP-6, TB-17): a search with the list's Sort button beside
- * it, the common pickers, and the rarely used filters behind a Filters button at every size, whose badge counts
- * those in use. Where the bar is narrow it keeps one line (FB-19). Under the bar one line holds the Sort button
- * of a list with no search, first, then the count and "Clear filters": on every list the Sort button is at the
- * start, never at the end. The bar stays in sight wherever its list
+ * The shared filter bar of every list (MP-1, MP-3, MP-6, TB-17): a search, the common pickers, the rarely used
+ * filters behind a Filters button at every size, whose badge counts those in use, and the list's Sort button at
+ * the end of the line. Where the bar is narrow it keeps one line (FB-19). Under the bar one line holds the count,
+ * "Clear filters", and at its end the Sort button of a list with no search: on every list the Sort button is at
+ * the end of its line, never at the start. The bar stays in sight wherever its list
  * scrolls, at every width (NL-16, index.css), and a new filter or search starts the list at its first row (TB-7).
  */
 
@@ -486,8 +486,8 @@ export type FilterViews = {
   /** `text` is the plain label the short picker shows, with a count where the label has one. */
   options: { value: string; label: React.ReactNode; text: string }[]
   /**
-   * A short picker at every width ("Status: Open"), after the search and Sort, instead of toggles in front of
-   * them: for a choice that narrows one list rather than switching between lists.
+   * A short picker at every width ("Status: Open"), after the search, instead of toggles in front of
+   * it: for a choice that narrows one list rather than switching between lists.
    */
   menu?: boolean
 }
@@ -536,9 +536,9 @@ const shortBy = (line: HTMLElement | null) => {
 const inPopover = (el: Element | null) => el?.closest('[data-slot="picker-content"]') != null
 
 /**
- * The bar: an optional view switch (Open, Muted, Resolved), the search and the list's Sort button, the common
- * pickers, and a Filters button for the rare ones. Under it one line holds the count and, while any filter
- * differs from its start value, "Clear filters". It keeps one line (FB-19): where that line has no room, the
+ * The bar: an optional view switch (Open, Muted, Resolved), the search, the common pickers, a Filters button for
+ * the rare ones, and the list's Sort button at the end of the line. Under it one line holds the count and, while
+ * any filter differs from its start value, "Clear filters". It keeps one line (FB-19): where that line has no room, the
  * search is a button that opens into the field, the toggle views turn into a short picker while it is open, a
  * long picker value is cut, and then the common pickers join the rare ones behind Filters, whose badge counts
  * them too.
@@ -558,7 +558,7 @@ export function FilterBar({
 }: {
   views?: FilterViews
   search?: React.ReactNode
-  /** The list's Sort button (TB-28): beside the search, else at the start of the count line. */
+  /** The list's Sort button (TB-28): at the end of the bar's line with a search, else of the count line. */
   sort?: { control: SortControl; name: string }
   /** The filters most people use: in the row where there is room, else behind Filters. */
   pickers?: React.ReactNode
@@ -861,7 +861,6 @@ export function FilterBar({
               </SearchTextContext.Provider>
             </div>
           )}
-          {search && sortButton}
           {views?.menu && viewsControl}
           {(more || pickersInPanel) && (
             <button
@@ -898,6 +897,8 @@ export function FilterBar({
               {pickers}
             </div>
           )}
+          {/* Last, at the end of the line, in the order it is seen and reached. */}
+          {search && sortButton && <span className="ms-auto flex">{sortButton}</span>}
         </div>
       )}
       {(more || pickersInPanel) && (
@@ -917,7 +918,6 @@ export function FilterBar({
       )}
       {(count !== undefined || onClear || (sortButton && !search)) && (
         <p className="flex flex-wrap items-center gap-x-3 text-small text-muted-foreground">
-          {!search && sortButton}
           {count !== undefined && (
             <span data-slot="list-count" className="font-semibold text-ink">
               {count}
@@ -936,6 +936,7 @@ export function FilterBar({
               Clear filters
             </button>
           )}
+          {!search && sortButton && <span className="ms-auto">{sortButton}</span>}
         </p>
       )}
     </div>

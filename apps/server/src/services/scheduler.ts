@@ -6,7 +6,7 @@ import { pruneHealthHistory } from "./health-history.ts"
 import { activeOnly, can, refreshInstanceMeta, unsupportedVersion } from "./instances.ts"
 import { housekeeping, pollInstance } from "./problems.ts"
 import { maybeSendReports } from "./reports.ts"
-import { pruneWorkerHistory } from "./worker-presence.ts"
+import { pruneWorkerHistory, pruneWorkerJobs } from "./worker-presence.ts"
 import { lastWorkflowSync, syncWorkflows, workflowSyncBusy } from "./workflows.ts"
 
 export type Job = { name: string; everyMs: number; run: (ctx: Ctx) => Promise<unknown> }
@@ -52,6 +52,8 @@ export function startScheduler(ctx: Ctx, extraJobs: Job[] = []): () => void {
         await pruneWorkerHistory(c)
       },
     },
+    // Apart, so a long first prune of a large table holds back nothing else.
+    { name: "worker-jobs", everyMs: 3600_000, run: pruneWorkerJobs },
     ...extraJobs,
   ]
 

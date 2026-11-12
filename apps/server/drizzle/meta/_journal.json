@@ -204,6 +204,13 @@
       "when": 1794506379436,
       "tag": "0028_worker_health",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1794521154331,
+      "tag": "0029_worker_jobs_finished",
+      "breakpoints": true
     }
   ]
 }

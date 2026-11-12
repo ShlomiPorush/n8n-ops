@@ -705,7 +705,13 @@ export const workerJobs = pgTable(
     startedAt: ts("started_at"),
     finishedAt: ts("finished_at"),
   },
-  (t) => [index("worker_jobs_queue_idx").on(t.workerId, t.status)],
+  (t) => [
+    index("worker_jobs_queue_idx").on(t.workerId, t.status),
+    // pruneWorkerJobs: finished jobs by age. Backup jobs are never pruned, so they are left out.
+    index("worker_jobs_finished_idx")
+      .on(t.finishedAt)
+      .where(sql`${t.status} in ('done', 'failed') and ${t.kind} <> 'backup'`),
+  ],
 )
 
 // ---------------------------------------------------------------------------

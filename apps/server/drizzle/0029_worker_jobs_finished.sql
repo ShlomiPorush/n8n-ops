@@ -1,0 +1,1 @@
+CREATE INDEX "worker_jobs_finished_idx" ON "worker_jobs" USING btree ("finished_at") WHERE "worker_jobs"."status" in ('done', 'failed') and "worker_jobs"."kind" <> 'backup';

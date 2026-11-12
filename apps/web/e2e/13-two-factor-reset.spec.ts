@@ -1,5 +1,5 @@
-import { type BrowserContext, expect, type Page, test } from "@playwright/test"
-import { password, saveSecret, saveSession, signIn, username } from "./helpers.ts"
+import { type BrowserContext, expect, type Page, request, test } from "@playwright/test"
+import { discardChanges, password, saveSecret, saveSession, signIn, username } from "./helpers.ts"
 import { freshTotp } from "./totp.ts"
 
 // The Account page's sign-in panel, and Reset of two-factor as a person meets it: the other sessions are signed
@@ -24,11 +24,18 @@ test.afterAll(async () => {
 
 const resetDialog = () => page.getByRole("dialog", { name: "Reset Two-Factor" })
 
+// Better Auth answers at most three requests to one two-factor path in ten seconds; this file sends four to
+// /two-factor/disable, so each waits until ten seconds have passed since the one before the last.
+const disables: number[] = []
+
 /** Opens Reset on the Account page and sends it with this password. */
 async function sendReset(withPassword: string) {
   await page.goto("/account")
   await page.getByRole("button", { name: "Reset", exact: true }).click()
   await resetDialog().getByLabel("Your password").fill(withPassword)
+  const wait = (disables.at(-2) ?? 0) + 10_500 - Date.now()
+  if (wait > 0) await page.waitForTimeout(wait)
+  disables.push(Date.now())
   await resetDialog().getByRole("button", { name: "Reset two-factor" }).click()
 }
 
@@ -66,6 +73,11 @@ test("the password is changed in a dialog, and the way back without one is folde
   await expect(dialog.getByText(/^Password not changed:/)).toBeVisible()
   // A failure keeps what was typed for another try.
   await expect(dialog.getByLabel("Current password")).toHaveValue(`${password}x`)
+  // Closed, the focus is back on the button that opened it.
+  await dialog.getByRole("button", { name: "Cancel" }).click()
+  await discardChanges(page)
+  await expect(dialog).toHaveCount(0)
+  await expect(panel.getByRole("button", { name: "Change password" })).toBeFocused()
 })
 
 test("Reset with a wrong password leaves two-factor on and says so", async () => {
@@ -96,9 +108,24 @@ test("Reset takes a new code on /setup and goes back to Account, past the option
 })
 
 test("when the answer is lost after two-factor was turned off, sign-in leads to the new code", async () => {
-  // The server turns it off and replaces the session; the page never hears it, and keeps the old cookie.
+  // The server turns it off and replaces the session; the page never hears it, and keeps the old cookie. The
+  // request goes out apart from the browser: route.fetch() would give the browser the new cookie.
   await page.route("**/api/auth/two-factor/disable", async (route) => {
-    await route.fetch()
+    const sent = route.request()
+    const apart = await request.newContext()
+    try {
+      const res = await apart.fetch(sent.url(), {
+        method: "POST",
+        // With its cookie and origin; the length is set again for the body.
+        headers: Object.fromEntries(
+          Object.entries(await sent.allHeaders()).filter(([k]) => k !== "content-length" && !k.startsWith(":")),
+        ),
+        data: sent.postData() ?? "",
+      })
+      expect(res.status()).toBe(200)
+    } finally {
+      await apart.dispose()
+    }
     await route.abort("failed")
   })
   try {

@@ -1,5 +1,5 @@
 import { ChevronRight, KeyRound, RotateCcw, ShieldCheck } from "lucide-react"
-import { useState } from "react"
+import { type RefObject, useRef, useState } from "react"
 import { useDiscardGuard } from "@/components/discard-guard"
 import { BusyButton, Command, Page, Panel, PanelHead } from "@/components/kit"
 import { Button } from "@/components/ui/button"
@@ -24,6 +24,9 @@ export function AccountPage() {
   const session = authClient.useSession()
   const [changing, setChanging] = useState(false)
   const [resetting, setResetting] = useState(false)
+  // The dialogs have no trigger of their own, so each gives the focus back to the button that opened it.
+  const resetButton = useRef<HTMLButtonElement>(null)
+  const changeButton = useRef<HTMLButtonElement>(null)
   const username = (session.data?.user as { username?: string } | undefined)?.username
   return (
     <Page
@@ -40,20 +43,20 @@ export function AccountPage() {
           <span className="flex items-center gap-2 font-semibold text-ok">
             <ShieldCheck className="size-4" /> On
           </span>
-          <Button size="sm" className="ms-2" onClick={() => setResetting(true)}>
+          <Button ref={resetButton} size="sm" className="ms-2" onClick={() => setResetting(true)}>
             <RotateCcw aria-hidden /> Reset
           </Button>
         </SettingRow>
         <SettingRow label="Password" hint="At least 12 characters. Changing it signs out your other sessions.">
-          <Button size="sm" onClick={() => setChanging(true)}>
+          <Button ref={changeButton} size="sm" onClick={() => setChanging(true)}>
             <KeyRound aria-hidden /> Change password
           </Button>
         </SettingRow>
         <ForgotPassword />
       </Panel>
       <PasskeysPanel />
-      {changing && <ChangePasswordDialog onClose={() => setChanging(false)} />}
-      {resetting && <ResetTwoFactorDialog onClose={() => setResetting(false)} />}
+      {changing && <ChangePasswordDialog opener={changeButton} onClose={() => setChanging(false)} />}
+      {resetting && <ResetTwoFactorDialog opener={resetButton} onClose={() => setResetting(false)} />}
     </Page>
   )
 }
@@ -84,11 +87,20 @@ function ForgotPassword() {
   )
 }
 
+/** A dialog of this page and the button that opened it. */
+type Opened = { opener: RefObject<HTMLButtonElement | null>; onClose: () => void }
+
+/** Closed, the focus goes back to the button that opened the dialog, where a keyboard user left off. */
+const backTo = (opener: Opened["opener"]) => (e: Event) => {
+  e.preventDefault()
+  opener.current?.focus()
+}
+
 /**
  * The fields are emptied only once the change worked: a failure keeps what was typed for another try, and the
  * button comes back also when the request never reached the server (FS-23).
  */
-function ChangePasswordDialog({ onClose }: { onClose: () => void }) {
+function ChangePasswordDialog({ opener, onClose }: Opened) {
   const [current, setCurrent] = useState("")
   const [next, setNext] = useState("")
   const [busy, setBusy] = useState(false)
@@ -114,7 +126,7 @@ function ChangePasswordDialog({ onClose }: { onClose: () => void }) {
   }
   return (
     <Dialog open onOpenChange={guard.onOpenChange}>
-      <DialogContent keepOnBackdrop className="md:max-w-[480px]">
+      <DialogContent keepOnBackdrop className="md:max-w-[480px]" onCloseAutoFocus={backTo(opener)}>
         <DialogHeader icon={KeyRound}>
           <DialogTitle>Change Password</DialogTitle>
           <DialogDescription>Your other sessions are signed out; this one stays.</DialogDescription>
@@ -170,7 +182,7 @@ function ChangePasswordDialog({ onClose }: { onClose: () => void }) {
  * next. Turned off, the person sets up a new code there and comes back to this page (lib/two-factor-reset.ts);
  * still on, they stay in the console; a session that was lost on the way goes to sign-in.
  */
-function ResetTwoFactorDialog({ onClose }: { onClose: () => void }) {
+function ResetTwoFactorDialog({ opener, onClose }: Opened) {
   const [password, setPassword] = useState("")
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
@@ -210,7 +222,7 @@ function ResetTwoFactorDialog({ onClose }: { onClose: () => void }) {
   }
   return (
     <Dialog open onOpenChange={guard.onOpenChange}>
-      <DialogContent keepOnBackdrop className="md:max-w-[480px]">
+      <DialogContent keepOnBackdrop className="md:max-w-[480px]" onCloseAutoFocus={backTo(opener)}>
         <DialogHeader icon={RotateCcw}>
           <DialogTitle>Reset Two-Factor</DialogTitle>
           <DialogDescription>

@@ -601,15 +601,20 @@ export function FilterBar({
   const needs = React.useRef({ open: [] as (number | undefined)[], closed: [] as (number | undefined)[] })
   const live = React.useRef({ hasText, level, searchOpen })
   live.current = { hasText, level, searchOpen }
-  // Which part of the bar held the focus when a new level moved it (views, search, pickers), to give it back once
-  // the bar has settled.
-  const moved = React.useRef<string | null>(null)
+  // Which part of the bar held the focus when a new level moved it (views, search, pickers), and the level it moved
+  // to, to give the focus back once that level is drawn. Another render can come first, such as new rows, while the
+  // control is still in place; it leaves the note for the render that shows the level.
+  const moved = React.useRef<{ part: string; level: BarLevel } | null>(null)
   // The part that holds the focus, also through an open picker list, which Radix puts outside the bar: its
   // trigger names the list in aria-controls.
-  const noteMoved = React.useCallback(() => {
+  const noteMoved = React.useCallback((to: BarLevel) => {
+    if (moved.current) {
+      moved.current.level = to
+      return
+    }
     const el = bar.current
     const focused = document.activeElement
-    if (!el || !focused || moved.current !== null) return
+    if (!el || !focused) return
     let owner: Element | null = el.contains(focused) ? focused : null
     const list = focused.closest('[data-slot="picker-content"]')
     if (!owner && list)
@@ -619,13 +624,14 @@ export function FilterBar({
           const controlled = id ? document.getElementById(id) : null
           return controlled !== null && list.contains(controlled)
         }) ?? null
-    moved.current = owner?.closest("[data-part]")?.getAttribute("data-part") ?? null
+    const part = owner?.closest("[data-part]")?.getAttribute("data-part")
+    moved.current = part ? { part, level: to } : null
   }, [])
   /** Moves to a level, after noting where the focus is. */
   const goTo = React.useCallback(
     (to: BarLevel) => {
       if (to === live.current.level) return
-      noteMoved()
+      noteMoved(to)
       setLevel(to)
     },
     [noteMoved],
@@ -694,7 +700,9 @@ export function FilterBar({
     }
     if (stepDown()) return
     const el = bar.current
-    const part = moved.current
+    // A render before the one that shows the new level keeps the note.
+    if (moved.current && moved.current.level !== level) return
+    const part = moved.current?.part
     moved.current = null
     // Only focus that was lost: a control that stayed, or its list that is still open, keeps it.
     const focused = document.activeElement

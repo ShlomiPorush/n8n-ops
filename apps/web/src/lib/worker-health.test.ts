@@ -3,6 +3,7 @@ import {
   bucketLines,
   chartLabel,
   describeHealth,
+  dockerHint,
   dockerParts,
   durationText,
   hasMeasurements,
@@ -329,6 +330,19 @@ describe("describeHealth", () => {
     expect(describeHealth(h, 24)).toBe(
       "Online 99.6% of the last 24 hours. No round-trip measurements in this range. Docker failing 1 min in this range.",
     )
+  })
+  it("names failed Docker checks that left no failing time, before saying there was no failure", () => {
+    const empty = notMeasuring()
+    // A failure and recovery between two delivered heartbeats: the latest check is ok, one of two failed.
+    const h = notMeasuring({ summary: { ...empty.summary, dockerChecks: 2, dockerFailed: 1 } })
+    expect(dockerHint(h)).toBe("1 failed check in this range")
+    expect(dockerHint(notMeasuring({ summary: { ...empty.summary, dockerChecks: 2 } }))).toBe(
+      "No failure in this range",
+    )
+    expect(dockerHint(notMeasuring({ summary: { ...empty.summary, dockerFailingMs: 80_000, dockerFailed: 1 } }))).toBe(
+      "failing 1 min in this range",
+    )
+    expect(dockerHint(empty)).toBe("No Docker checks in this range")
   })
   it("names measurements made while the Worker was offline, which cover no online time", () => {
     const empty = notMeasuring()

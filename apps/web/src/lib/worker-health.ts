@@ -192,6 +192,18 @@ export function hasMeasurements(h: Pick<WorkerHealth, "coverage" | "summary">): 
   )
 }
 
+/**
+ * The Docker figure's hint for the range. A failure and recovery between two delivered heartbeats leaves no failing
+ * time, only failed checks counted, so those are named too.
+ */
+export function dockerHint(h: Pick<WorkerHealth, "coverage" | "summary">): string {
+  const s = h.summary
+  if (s.dockerFailingMs > 0) return `failing ${durationText(s.dockerFailingMs)} in this range`
+  if (s.dockerFailed > 0) return `${plural(s.dockerFailed, "failed check")} in this range`
+  if (s.dockerChecks === 0 && h.coverage.dockerMs === 0) return "No Docker checks in this range"
+  return "No failure in this range"
+}
+
 /** Whether to offer the Worker's update: it does not send heartbeats now, so it reports no new measurements. */
 export function needsUpdate(h: Pick<WorkerHealth, "worker">): boolean {
   return !h.worker.heartbeat

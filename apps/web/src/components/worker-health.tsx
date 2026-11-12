@@ -11,6 +11,7 @@ import {
   bucketLines,
   chartLabel,
   describeHealth,
+  dockerHint,
   dockerParts,
   durationText,
   type WorkerHealth as Health,
@@ -169,11 +170,7 @@ function Figures({ health: h }: { health: Health }) {
         tone={d?.current && !d.ok ? "fail" : undefined}
         hint={
           <>
-            {s.dockerFailingMs > 0
-              ? `failing ${durationText(s.dockerFailingMs)} in this range`
-              : s.dockerChecks === 0 && h.coverage.dockerMs === 0
-                ? "No Docker checks in this range"
-                : "No failure in this range"}
+            {dockerHint(h)}
             {d ? (
               <>
                 , checked <TimeAgo value={d.checkedAt} />

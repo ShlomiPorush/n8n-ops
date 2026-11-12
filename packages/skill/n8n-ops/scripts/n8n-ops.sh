@@ -340,6 +340,7 @@ acquire() {
       fi
       fail busy "Another n8n-ops command is using this connection. Nothing was sent; run it again."
     fi
+    hook lock-busy
     nap 0.2
     waited=$((waited + 200))
   done

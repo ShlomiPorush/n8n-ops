@@ -722,23 +722,32 @@ for (const impl of impls) {
       server.refreshAccessTtl = 900
       await connected(impl, inst, server)
       const hold = path.join(inst.base, "hold-write")
+      const busy = path.join(inst.base, "hold-busy")
       const p = run(impl, inst, server, ["get", "instances"], {
         N8N_OPS_TEST_HOLD_BEFORE_WRITE: hold,
+        N8N_OPS_TEST_HOLD_LOCK_BUSY: busy,
         N8N_OPS_LOCK_WAIT_MS: "8000",
       })
-      await reached(hold)
-      const lock = path.join(inst.creds, fs.readdirSync(inst.creds).find((f) => f.endsWith(".lock")) ?? "")
-      // As a mistaken breaker would: it moves the lock away, and a live third process takes the place...
-      fs.renameSync(lock, `${lock}.moved`)
-      const host = win ? process.env.COMPUTERNAME : os.hostname()
-      fs.writeFileSync(
-        lock,
-        JSON.stringify({ pid: process.pid, host, token: "third", startedAt: Math.floor(Date.now() / 1000) }),
-      )
-      fs.writeFileSync(`${hold}.go`, "")
-      await sleep(1000)
-      // ...then the first lock is put back in the third's place, with no moment without a lock.
-      await replaceWith(`${lock}.moved`, lock)
+      try {
+        await reached(hold)
+        const lock = path.join(inst.creds, fs.readdirSync(inst.creds).find((f) => f.endsWith(".lock")) ?? "")
+        // As a mistaken breaker would: it moves the lock away, and a live third process takes the place...
+        fs.renameSync(lock, `${lock}.moved`)
+        const host = win ? process.env.COMPUTERNAME : os.hostname()
+        fs.writeFileSync(
+          lock,
+          JSON.stringify({ pid: process.pid, host, token: "third", startedAt: Math.floor(Date.now() / 1000) }),
+        )
+        fs.writeFileSync(`${hold}.go`, "")
+        // The process found the third's lock and waits for it...
+        await reached(busy)
+        // ...then the first lock is put back in the third's place, with no moment without a lock.
+        await replaceWith(`${lock}.moved`, lock)
+      } finally {
+        // Never leave the process held, whatever failed above.
+        fs.writeFileSync(`${hold}.go`, "")
+        fs.writeFileSync(`${busy}.go`, "")
+      }
       const r = await p
       assert.equal(r.code, 0, r.out + r.err)
       const refreshes = server.counts.refresh

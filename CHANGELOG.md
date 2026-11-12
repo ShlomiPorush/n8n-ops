@@ -9,6 +9,10 @@ All notable changes to this project are documented here. The format follows [Kee
 - **Each Worker has a health history.** Health beside Settings on a Worker's card shows, for the last 24 hours, 7 days or 30 days, how much of the time it was online, when it was offline and for how long, and when n8n-ops itself was not running or could not record, which is not counted against the Worker. A Worker that runs this release also shows how fast its calls to n8n-ops are, calls that failed on the way, whether it reaches Docker, and when it restarted; one that runs an earlier release shows the image line to update it. Next to a time offline the list names a job that was running then. Agents read the same history: `GET /api/v1/workers`, `GET /api/v1/worker-health?worker=<name>` and the MCP tools `get_workers` and `get_worker_health_history`. Keep health history (days) in Settings → Defaults keeps it too.
 - **An updated Worker stays online during a long backup.** It now reports to n8n-ops every 30 seconds on its own, also while a job runs, so a backup that takes minutes no longer shows it Offline, sends a "Worker is offline" alert, or marks its container unhealthy. Update the Worker's image on each host to get this.
 
+### Changed
+
+- **The queue workers on an instance's Health tab are a table instead of a line of text each.** A line above it says once what is the same on all of them: the jobs the ready ones run at once, the n8n they run and whether their containers have a memory limit. Below it each worker is one row with its state, how long it is up, its jobs at once and its memory, with a bar when its container has a memory limit. A worker that is not ready or runs another n8n than the main says so in its row. In a narrow pane or on a phone each worker is a small card. The queue's figures are one line, with what it holds now: waiting and active.
+
 ## [0.17.0] - 2026-11-12
 
 ### Added

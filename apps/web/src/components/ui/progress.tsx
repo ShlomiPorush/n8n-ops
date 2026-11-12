@@ -8,7 +8,7 @@ function Progress({
   value,
   tone = "ok",
   ...props
-}: React.ComponentProps<typeof ProgressPrimitive.Root> & { tone?: "ok" | "warn" | "fail" | "ink" }) {
+}: React.ComponentProps<typeof ProgressPrimitive.Root> & { tone?: "ok" | "warn" | "fail" | "ink" | "muted" }) {
   return (
     <ProgressPrimitive.Root
       data-slot="progress"
@@ -24,6 +24,7 @@ function Progress({
           tone === "warn" && "bg-warn",
           tone === "fail" && "bg-fail",
           tone === "ink" && "bg-ink",
+          tone === "muted" && "bg-muted-foreground",
         )}
         style={{ width: `${Math.max(0, Math.min(100, value || 0))}%` }}
       />

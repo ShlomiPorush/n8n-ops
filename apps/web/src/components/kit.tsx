@@ -250,12 +250,16 @@ export function Panel({ className, ...props }: React.ComponentProps<"section">) 
   )
 }
 
-/** A panel header: a short noun, a muted count beside it, and a "more" link or an action on the far side. */
+/**
+ * A panel header: a short noun, a muted count beside it, and a "more" link or an action on the far side, with the
+ * list's Sort button last, at the very end, as on every list.
+ */
 export function PanelHead({
   title,
   count,
   more,
   action,
+  sort,
   description,
   className,
   icon: Icon,
@@ -265,6 +269,8 @@ export function PanelHead({
   count?: React.ReactNode
   more?: { to: string; label: string }
   action?: React.ReactNode
+  /** The list's Sort button (TB-28), at the end of the head, after the "more" link. */
+  sort?: React.ReactNode
   description?: React.ReactNode
   className?: string
   /**
@@ -307,7 +313,7 @@ export function PanelHead({
             {count}
           </span>
         )}
-        {(more || action) && (
+        {(more || action || sort) && (
           <div className="ms-auto flex items-center gap-2">
             {action}
             {more && (
@@ -315,6 +321,7 @@ export function PanelHead({
                 {more.label}
               </Link>
             )}
+            {sort}
           </div>
         )}
       </div>

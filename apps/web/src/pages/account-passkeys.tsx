@@ -12,7 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
+import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { UNREACHABLE_TEXT, useApi } from "@/lib/api"
 import { authClient, authErrorText } from "@/lib/auth-client"
@@ -125,30 +125,30 @@ export function PasskeysPanel() {
             {block}
           </p>
         ) : (
+          // The name and its button on one line; on a narrow screen the button goes under the field.
           <form
-            className="grid gap-3"
             onSubmit={(e) => {
               e.preventDefault()
             }}
           >
-            <FieldGroup className="max-w-sm gap-3">
-              <Field>
-                <FieldLabel htmlFor="passkey-name">Name</FieldLabel>
+            <Field>
+              <FieldLabel htmlFor="passkey-name">Name</FieldLabel>
+              <div className="flex flex-wrap items-center gap-2">
                 <Input
                   id="passkey-name"
+                  className="max-w-sm min-w-36 flex-1"
                   value={name}
                   maxLength={64}
                   placeholder="Work laptop"
+                  aria-describedby="passkey-name-hint"
                   onChange={(e) => setName(e.target.value)}
                 />
-                <FieldDescription>So you can tell your passkeys apart.</FieldDescription>
-              </Field>
-            </FieldGroup>
-            <div>
-              <BusyButton type="submit" run={add} busyLabel="Adding…" icon={Fingerprint} disabled={!status.data}>
-                Add passkey
-              </BusyButton>
-            </div>
+                <BusyButton type="submit" run={add} busyLabel="Adding…" icon={Fingerprint} disabled={!status.data}>
+                  Add passkey
+                </BusyButton>
+              </div>
+              <FieldDescription id="passkey-name-hint">So you can tell your passkeys apart.</FieldDescription>
+            </Field>
           </form>
         )}
       </div>

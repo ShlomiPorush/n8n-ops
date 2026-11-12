@@ -22,11 +22,15 @@ export const LOGIN_DOMAIN = "n8n-ops.local"
 /** The path of a passkey sign-in; it completes a sign-in on its own, without the two-factor step. */
 export const PASSKEY_SIGN_IN = "/passkey/verify-authentication"
 
-/** Passkey changes the audit log records, by Better Auth path. */
-const passkeyChanges: Record<string, string> = {
+/**
+ * Sign-in changes the audit log records, by Better Auth path. Turning two-factor off is a reset: the console turns it
+ * off only on the way to setting up a new code (Account > Reset), and the new code is required before anything else.
+ */
+const signInChanges: Record<string, string> = {
   "/passkey/verify-registration": "Passkey added",
   "/passkey/update-passkey": "Passkey renamed",
   "/passkey/delete-passkey": "Passkey deleted",
+  "/two-factor/disable": "Two-factor reset",
 }
 
 /**
@@ -99,11 +103,12 @@ export function createAuth(db: Db, appKey: Buffer, publicUrl?: string, passkeyUr
     // passkey sign-in completes at once.
     hooks: {
       after: createAuthMiddleware(async (ctx) => {
-        const change = passkeyChanges[ctx.path]
+        const change = signInChanges[ctx.path]
         // The after hook also runs when the endpoint refused; only a change that was made is recorded.
         if (change && !(ctx.context.returned instanceof APIError)) {
           const actor = ctx.context.session?.user as { username?: string | null; name?: string } | undefined
-          const body = (ctx.body ?? {}) as { name?: unknown; id?: unknown }
+          // A passkey by its name or id; never anything else from the body, which holds the password of a reset.
+          const body = (ctx.path.startsWith("/passkey/") ? (ctx.body ?? {}) : {}) as { name?: unknown; id?: unknown }
           await audit({
             actor: actor?.username ?? actor?.name ?? "",
             action: change,

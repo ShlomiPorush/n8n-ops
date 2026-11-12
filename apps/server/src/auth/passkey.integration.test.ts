@@ -528,3 +528,71 @@ describe("passkeys at the public URL", () => {
     }
   })
 })
+
+// Account > Reset: the page signs out the other sessions, turns two-factor off with the password, and the person
+// sets up a new code on /setup. The audit log has one "Two-factor reset" for it, without the password.
+describe("a two-factor reset from the Account page", () => {
+  it("signs out the other sessions, turns two-factor off once with the password, audits it, and takes a new code", async () => {
+    const [u] = await database.db.select().from(user)
+    if (!u) throw new Error("no user")
+    // From a known state: two-factor set up again, as the setup wizard leaves it.
+    await database.db.delete(twoFactor).where(eq(twoFactor.userId, u.id))
+    await database.db.update(user).set({ twoFactorEnabled: false }).where(eq(user.id, u.id))
+    await database.db.delete(session).where(eq(session.userId, u.id))
+    let cookie = await signIn()
+    const enabled = await call("POST", "/api/auth/two-factor/enable", { json: { password }, cookie })
+    expect(enabled.status).toBe(200)
+    cookie = cookies(cookie, enabled)
+    totpSecret = new URL(((await enabled.json()) as { totpURI: string }).totpURI).searchParams.get("secret") ?? ""
+    const enrolled = await call("POST", "/api/auth/two-factor/verify-totp", {
+      json: { code: await freshTotp(totpSecret) },
+      cookie,
+    })
+    expect(enrolled.status).toBe(200)
+    cookie = cookies(cookie, enrolled)
+    const other = await signIn()
+    const logins = await auditCount("Login")
+
+    // 1. The other sessions are signed out first.
+    expect((await call("POST", "/api/auth/revoke-other-sessions", { json: {}, cookie })).status).toBe(200)
+    expect((await call("GET", "/api/overview/summary", { cookie: other })).status).toBe(401)
+    expect((await call("GET", "/api/overview/summary", { cookie })).status).toBe(200)
+
+    // 2. A wrong password changes nothing and audits nothing.
+    const refused = await call("POST", "/api/auth/two-factor/disable", { json: { password: `${password}x` }, cookie })
+    expect(refused.status).toBe(400)
+    expect(await auditCount("Two-factor reset")).toBe(0)
+    expect((await call("GET", "/api/overview/summary", { cookie })).status).toBe(200)
+
+    // The right one turns it off, with one audit row that holds no password.
+    const off = await call("POST", "/api/auth/two-factor/disable", { json: { password }, cookie })
+    expect(off.status).toBe(200)
+    cookie = cookies(cookie, off)
+    const rows = await database.db.select().from(auditLog).where(eq(auditLog.action, "Two-factor reset"))
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ actor: USERNAME, target: "", via: "web" })
+    expect(JSON.stringify(rows[0])).not.toContain(password)
+    // Until a new code is set up, the session reaches setup only.
+    expect(await (await call("GET", "/api/setup/checklist", { cookie })).json()).toMatchObject({ twoFactor: false })
+    const blocked = await call("GET", "/api/overview/summary", { cookie })
+    expect(blocked.status).toBe(403)
+    expect(await blocked.json()).toMatchObject({ error: "totp_required" })
+
+    // 3. The new code, set up as /setup does: an enrolment, not a Login.
+    const again = await call("POST", "/api/auth/two-factor/enable", { json: { password }, cookie })
+    expect(again.status).toBe(200)
+    cookie = cookies(cookie, again)
+    const fresh = new URL(((await again.json()) as { totpURI: string }).totpURI).searchParams.get("secret") ?? ""
+    expect(fresh).not.toBe(totpSecret)
+    totpSecret = fresh
+    const verified = await call("POST", "/api/auth/two-factor/verify-totp", {
+      json: { code: await freshTotp(totpSecret) },
+      cookie,
+    })
+    expect(verified.status).toBe(200)
+    cookie = cookies(cookie, verified)
+    expect((await call("GET", "/api/overview/summary", { cookie })).status).toBe(200)
+    expect(await auditCount("Login")).toBe(logins)
+    expect(await auditCount("Two-factor reset")).toBe(1)
+  })
+})

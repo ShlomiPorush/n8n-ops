@@ -15,6 +15,7 @@ import {
   durationText,
   type WorkerHealth as Health,
   jobText,
+  needsUpdate,
   percentText,
   rangeText,
   rttRuns,
@@ -84,7 +85,7 @@ export function WorkerHealth({ workerId }: { workerId: string }) {
             </p>
             <Figures health={h} />
             <Chart health={h} range={rangeText(Number(hours))} />
-            {unmeasured(h) && <UpdateAdvice update={h.worker.update} />}
+            {needsUpdate(h) && <UpdateAdvice update={h.worker.update} stored={!unmeasured(h)} />}
           </>
         )}
       </section>
@@ -168,9 +169,11 @@ function Figures({ health: h }: { health: Health }) {
         tone={d?.current && !d.ok ? "fail" : undefined}
         hint={
           <>
-            {s.dockerFailingMs > 0
-              ? `failing ${durationText(s.dockerFailingMs)} in this range`
-              : "No failure in this range"}
+            {s.dockerChecks === 0 && h.coverage.dockerMs === 0
+              ? "No Docker checks in this range"
+              : s.dockerFailingMs > 0
+                ? `failing ${durationText(s.dockerFailingMs)} in this range`
+                : "No failure in this range"}
             {d ? (
               <>
                 , checked <TimeAgo value={d.checkedAt} />
@@ -185,11 +188,15 @@ function Figures({ health: h }: { health: Health }) {
   )
 }
 
-function UpdateAdvice({ update }: { update: string | null }) {
+/** The update a Worker without heartbeats needs; `stored` when the range still shows what it measured before. */
+function UpdateAdvice({ update, stored }: { update: string | null; stored: boolean }) {
   return (
     <div className="grid min-w-0 gap-1.5 rounded-sm bg-bg p-3 regular:bg-panel">
       <p>
-        <b className="font-title">Update this Worker</b> to see round trip, Docker and restarts.
+        <b className="font-title">Update this Worker</b>{" "}
+        {stored
+          ? "to measure round trip, Docker and restarts again; this range shows only what it measured before."
+          : "to see round trip, Docker and restarts."}
         {update && " Its image line in docker-compose.yml:"}
       </p>
       {update && <Command value={update} label="Copy the image line" />}

@@ -99,8 +99,12 @@ async function handle(identity: string, job: Job): Promise<JobResult> {
     case "probe":
       return probeJob(job.payload, docker)
     case "backup":
-      return backupJob(docker, job.payload, (size, sha256) =>
-        api(identity, "POST", `/jobs/${job.id}/upload-url`, { size, sha256 }),
+      return backupJob(
+        docker,
+        job.payload,
+        (size, sha256) => api(identity, "POST", `/jobs/${job.id}/upload-url`, { size, sha256 }),
+        // The archive goes to the server too: a failed upload is a failed call like any other.
+        (url, init) => failures.track(fetch(url, init)),
       )
     case "export-credentials":
       return exportCredentialsJob(docker, job.payload)

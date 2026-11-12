@@ -5,7 +5,9 @@ import {
   describeHealth,
   dockerParts,
   durationText,
+  hasMeasurements,
   jobText,
+  needsUpdate,
   percentText,
   rangeText,
   rttRuns,
@@ -71,6 +73,27 @@ function health(more: Partial<WorkerHealth> = {}): WorkerHealth {
     nextOffset: null,
     ...more,
   }
+}
+
+/** A Worker of an earlier release, without heartbeats, and nothing of its own measured in the range. */
+function notMeasuring(more: Partial<WorkerHealth> = {}): WorkerHealth {
+  const base = health()
+  return health({
+    worker: { ...base.worker, heartbeat: false, version: "0.17.0" },
+    coverage: { observedMs: 24 * H, onlineMs: 24 * H, rttMs: 0, dockerMs: 0 },
+    summary: {
+      ...base.summary,
+      restarts: 0,
+      dockerChecks: 0,
+      dockerFailed: 0,
+      dockerFailingMs: 0,
+      rttAvgMs: null,
+      rttMaxMs: null,
+      rttSamples: 0,
+      failedCalls: 0,
+    },
+    ...more,
+  })
 }
 
 describe("percentText", () => {
@@ -255,17 +278,48 @@ describe("describeHealth", () => {
       "Online 99.6% of the last 7 days. No round-trip measurements in this range. No Docker checks in this range.",
     )
   })
-  it("gives only the share online for a Worker that does not measure", () => {
-    const h = health({
-      worker: { ...health().worker, heartbeat: false, version: "0.17.0" },
-      coverage: { observedMs: 24 * H, onlineMs: 24 * H, rttMs: 0, dockerMs: 0 },
-    })
+  it("gives only the share online for a Worker that does not measure and has no measurement in the range", () => {
+    const h = notMeasuring()
     expect(unmeasured(h)).toBe(true)
+    expect(hasMeasurements(h)).toBe(false)
+    expect(needsUpdate(h)).toBe(true)
     expect(describeHealth(h, 24)).toBe("Online 99.6% of the last 24 hours.")
   })
   it("still shows measurements stored before a downgrade", () => {
     const h = health({ worker: { ...health().worker, heartbeat: false } })
     expect(unmeasured(h)).toBe(false)
+    expect(needsUpdate(h)).toBe(true)
+  })
+  it("counts Docker checks alone, stored before a downgrade, as measured, and says round trip has none", () => {
+    const empty = notMeasuring()
+    const h = notMeasuring({
+      coverage: { ...empty.coverage, dockerMs: 3 * 60_000 },
+      summary: { ...empty.summary, dockerChecks: 1 },
+    })
+    expect(unmeasured(h)).toBe(false)
+    expect(needsUpdate(h)).toBe(true)
+    expect(describeHealth(h, 24)).toBe(
+      "Online 99.6% of the last 24 hours. No round-trip measurements in this range. Docker checked in 0.2% of this range.",
+    )
+  })
+  it("counts a restart alone as measured", () => {
+    const empty = notMeasuring()
+    const h = notMeasuring({ summary: { ...empty.summary, restarts: 1 } })
+    expect(unmeasured(h)).toBe(false)
+    expect(describeHealth(h, 24)).toBe(
+      "Online 99.6% of the last 24 hours. No round-trip measurements in this range. No Docker checks in this range.",
+    )
+  })
+  it("counts failed calls or round-trip samples alone as measured", () => {
+    const empty = notMeasuring()
+    expect(unmeasured(notMeasuring({ summary: { ...empty.summary, failedCalls: 2 } }))).toBe(false)
+    expect(unmeasured(notMeasuring({ summary: { ...empty.summary, rttSamples: 1 } }))).toBe(false)
+  })
+  it("never calls a Worker that sends heartbeats unmeasured, nor offers it the update, with no data at all", () => {
+    const h = notMeasuring({ worker: { ...health().worker, heartbeat: true } })
+    expect(hasMeasurements(h)).toBe(false)
+    expect(unmeasured(h)).toBe(false)
+    expect(needsUpdate(h)).toBe(false)
   })
   it("says when nothing was measured", () => {
     const h = health({ summary: { ...health().summary, availability: null } })

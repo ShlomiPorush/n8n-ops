@@ -105,7 +105,7 @@ export async function historyStartsAt(db: DbLike, createdAt: Date): Promise<Date
 }
 
 /** A job of the Worker that was running and claimed before `from`: a hint of what was going on, never the cause. */
-async function runningJob(db: DbLike, workerId: string, from: Date): Promise<OfflineJob | null> {
+export async function runningJob(db: DbLike, workerId: string, from: Date): Promise<OfflineJob | null> {
   const [job] = await db
     .select({ kind: workerJobs.kind, startedAt: workerJobs.startedAt, instance: instances.name })
     .from(workerJobs)

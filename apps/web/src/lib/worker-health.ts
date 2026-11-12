@@ -170,8 +170,29 @@ export function bucketLines(b: WorkerBucket, bucketMs: number): TipLine[] {
 }
 
 /** Whether a Worker has never reported the measurements of its own (round trip, Docker, restarts). */
-export function unmeasured(h: Pick<WorkerHealth, "coverage" | "worker">): boolean {
-  return h.coverage.rttMs === 0 && !h.worker.heartbeat
+export function unmeasured(h: Pick<WorkerHealth, "coverage" | "summary" | "worker">): boolean {
+  return !h.worker.heartbeat && !hasMeasurements(h)
+}
+
+/**
+ * Whether the range holds any measurement the Worker reported itself (round trip, failed calls, Docker checks,
+ * restarts), also one stored before the Worker was downgraded.
+ */
+export function hasMeasurements(h: Pick<WorkerHealth, "coverage" | "summary">): boolean {
+  const s = h.summary
+  return (
+    h.coverage.rttMs > 0 ||
+    h.coverage.dockerMs > 0 ||
+    s.rttSamples > 0 ||
+    s.failedCalls > 0 ||
+    s.dockerChecks > 0 ||
+    s.restarts > 0
+  )
+}
+
+/** Whether to offer the Worker's update: it does not send heartbeats now, so it reports no new measurements. */
+export function needsUpdate(h: Pick<WorkerHealth, "worker">): boolean {
+  return !h.worker.heartbeat
 }
 
 /** The description line: the share online in the range, then how much of it each measure covered. */

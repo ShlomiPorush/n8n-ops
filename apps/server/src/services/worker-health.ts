@@ -27,7 +27,7 @@ import {
   total,
   union,
 } from "./worker-periods.ts"
-import { historyStartsAt } from "./worker-presence.ts"
+import { historyStartsAt, runningJob } from "./worker-presence.ts"
 
 /**
  * The health history of a Worker (the n8n-ops agent on a Docker host, not an n8n queue worker): when it was online
@@ -380,11 +380,17 @@ export async function workerHealth(
           (select coalesce(max(id), 0) from worker_offline where worker_id = ${id}) as offline,
           (select coalesce(max(id), 0) from worker_beats where worker_id = ${id}) as beats,
           (select coalesce(max(id), 0) from server_recording) as recording`)) as unknown as Row[]
+      // The latest check made at or before now, by when it was made (a late report of an older check never wins);
+      // its cover contains now when it is under the cover time old. A check dated after now (the server clock moved
+      // back) is shown only when there is no other.
       const [docker] = (await tx.execute(sql`
         select docker_checked_at, docker_ok, docker_ms, docker_error from worker_beats
         where worker_id = ${id} and docker_checked_at is not null
-        order by received_at desc, id desc limit 1`)) as unknown as Row[]
-      const base = { worker, startsAt, latest, docker }
+        order by (docker_checked_at <= ${at(now)}) desc, docker_checked_at desc, id desc limit 1`)) as unknown as Row[]
+      // The ongoing offline period, with the same hint the write side records: a job running since before it.
+      const ongoing = offlineGap(worker.lastSeenAt?.getTime() ?? null, now.getTime(), startsAt?.getTime() ?? null)
+      const ongoingJob = ongoing ? await runningJob(tx, id, new Date(ongoing.from)) : null
+      const base = { worker, startsAt, latest, docker, ongoing, ongoingJob }
       if (!startsAt)
         return {
           ...base,
@@ -421,10 +427,12 @@ export async function workerHealth(
           ),
         )
       // A boot starts at its earliest receipt minus uptime; every kept row counts, the anchor too.
+      // Heartbeats are read by their own times in the half-open window [from, to), so every row falls in exactly one
+      // bucket and the series always adds up to the summary.
       const boots = (await tx.execute(sql`
         select boot_id, min(extract(epoch from received_at) * 1000 - uptime_sec * 1000) as start,
           max(uptime_sec) as uptime
-        from worker_beats where worker_id = ${id} and received_at <= ${toAt}
+        from worker_beats where worker_id = ${id} and received_at < ${toAt}
         group by boot_id`)) as unknown as Row[]
       // A check before the measured start can cover time after it; receipt is never before the check.
       const coverFrom = at(new Date(measured.getTime() - DOCKER_CHECK_COVER_MS))
@@ -432,15 +440,15 @@ export async function workerHealth(
         select extract(epoch from docker_checked_at) * 1000 as at, docker_ok as ok, docker_error as error
         from worker_beats
         where worker_id = ${id} and received_at >= ${coverFrom} and received_at <= ${lateAt}
-          and docker_checked_at >= ${coverFrom} and docker_checked_at <= ${toAt}`)) as unknown as Row[]
+          and docker_checked_at >= ${coverFrom} and docker_checked_at < ${toAt}`)) as unknown as Row[]
       const sums = (await tx.execute(sql`
         select ${bucket(sql`received_at`)} as i, coalesce(sum(failed_calls), 0) as failed_calls,
           coalesce(sum(docker_checks), 0) as docker_checks, coalesce(sum(docker_failed), 0) as docker_failed
         from worker_beats
-        where worker_id = ${id} and received_at >= ${measuredAt} and received_at <= ${toAt}
+        where worker_id = ${id} and received_at >= ${measuredAt} and received_at < ${toAt}
         group by 1`)) as unknown as Row[]
       const inRtt = sql`worker_id = ${id} and received_at >= ${measuredAt} and received_at <= ${lateAt}
-        and rtt_at >= ${measuredAt} and rtt_at <= ${toAt}`
+        and rtt_at >= ${measuredAt} and rtt_at < ${toAt}`
       const rtt = (await tx.execute(sql`
         select ${bucket(sql`rtt_at`)} as i, count(rtt_ms) as samples, coalesce(sum(rtt_ms), 0) as sum_ms,
           max(rtt_ms) as max_ms
@@ -456,11 +464,8 @@ export async function workerHealth(
   const { worker } = read
   const nowMs = now.getTime()
   const startsAt = read.startsAt?.getTime() ?? null
-  const lastSeenAt = worker.lastSeenAt?.getTime() ?? null
-  const ongoing = offlineGap(lastSeenAt, nowMs, startsAt)
-  const lastBucket = Math.round((to.getTime() - from.getTime()) / bucketMs) - 1
-  // A row at the window's very end belongs to its last bucket.
-  const index = (v: Row[string] | undefined) => Math.min(num(v as number), lastBucket)
+  const { ongoing } = read
+  const index = (v: Row[string] | undefined) => num(v as number)
   const derived = derive({
     now: nowMs,
     from: from.getTime(),
@@ -471,7 +476,7 @@ export async function workerHealth(
     newestAliveAt: read.newest ? ms(read.newest.alive_at) : null,
     offline: [
       ...read.offline.map((o) => ({ from: o.from.getTime(), to: o.to.getTime(), job: o.job })),
-      ...(ongoing ? [{ from: ongoing.from, to: null, job: null }] : []),
+      ...(ongoing ? [{ from: ongoing.from, to: null, job: read.ongoingJob }] : []),
     ],
     boots: read.boots.map((b) => ({
       bootId: String(b.boot_id),

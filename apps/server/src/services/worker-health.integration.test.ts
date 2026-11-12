@@ -426,6 +426,60 @@ describe("the read", () => {
     await expect(workerHealth(ctx, { id: w.id }, query(), NOW)).rejects.toBeInstanceOf(WorkerHealthError)
   })
 
+  it("shows the Docker check that covers now, whatever order the reports came in", async () => {
+    const w = await recorded()
+    const sec = (n: number) => ago(NOW, n * SEC)
+    const rows = [
+      // A newer passing check, received first.
+      { seq: 1, receivedAt: sec(10), dockerCheckedAt: sec(20), dockerOk: true },
+      // A late report of an older failing check, received after it.
+      { seq: 2, receivedAt: sec(5), dockerCheckedAt: sec(200), dockerOk: false, dockerError: "timeout" },
+      // A check dated after now (the server clock moved back since).
+      { seq: 3, receivedAt: sec(1), dockerCheckedAt: new Date(NOW.getTime() + 3_600_000), dockerOk: false },
+    ]
+    for (const r of rows)
+      await ctx.db.insert(workerBeats).values({ workerId: w.id, bootId: "boot-one-aaaaaaaaaaa", uptimeSec: 60, ...r })
+    const h = await workerHealth(ctx, { name: "w1" }, query({ hours: 1 }), NOW)
+    expect(h.docker).toMatchObject({ checkedAt: sec(20).toISOString(), ok: true, current: true })
+    // Three minutes later nothing covers now: the latest check is still shown, as not current.
+    const later = await workerHealth(ctx, { name: "w1" }, query({ hours: 1 }), new Date(NOW.getTime() + 3 * MIN))
+    expect(later.docker).toMatchObject({ checkedAt: sec(20).toISOString(), current: false })
+  })
+
+  it("gives an ongoing offline period the job that was running since before it", async () => {
+    const w = await recorded()
+    await ctx.db
+      .update(workers)
+      .set({ lastSeenAt: at(10) })
+      .where(eq(workers.id, w.id))
+    await ctx.db.insert(workerJobs).values({ workerId: w.id, kind: "backup", status: "running", startedAt: at(11) })
+    const h = await workerHealth(ctx, { name: "w1" }, query({ hours: 1 }), NOW)
+    expect(h.events[0]).toMatchObject({
+      kind: "offline",
+      to: null,
+      job: { kind: "backup", instance: null, startedAt: at(11).toISOString() },
+    })
+  })
+
+  it("reads heartbeats in [from, to), so the series adds up to the summary", async () => {
+    const w = await recorded()
+    const to = at(60)
+    const beats = [
+      // Exactly at the window's end: outside it.
+      { seq: 1, receivedAt: to, failedCalls: 5, rttMs: 90, rttAt: to },
+      // Inside the last bucket.
+      { seq: 2, receivedAt: at(61), failedCalls: 2, rttMs: 30, rttAt: at(61) },
+    ]
+    for (const b of beats)
+      await ctx.db.insert(workerBeats).values({ workerId: w.id, bootId: "boot-one-aaaaaaaaaaa", uptimeSec: 60, ...b })
+    const h = await workerHealth(ctx, { name: "w1" }, query({ hours: 1, to: to.toISOString() }), NOW)
+    const sum = (key: "failedCalls" | "rttSamples") => h.series.reduce((n, b) => n + b[key], 0)
+    expect(h.summary).toMatchObject({ failedCalls: 2, rttSamples: 1, rttMaxMs: 30 })
+    expect(sum("failedCalls")).toBe(h.summary.failedCalls)
+    expect(sum("rttSamples")).toBe(h.summary.rttSamples)
+    expect(h.series.at(-1)).toMatchObject({ failedCalls: 2, rttSamples: 1 })
+  })
+
   it("answers agents: the Worker list, an ambiguous name with its ids, and no answer without a REST token", async () => {
     const a = await recorded("twin")
     const b = await recorded("twin")

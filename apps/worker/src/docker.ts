@@ -42,6 +42,9 @@ export class DockerError extends Error {
   }
 }
 
+/** The result of one check that Docker answers (`Docker.pingDetail`). */
+export type DockerPing = { ok: boolean; ms: number; error: string | null }
+
 /** A refusal of the socket proxy, as a report carries it. */
 export type Refusal = { call: DockerCall; container?: string }
 
@@ -205,6 +208,25 @@ export class Docker {
       return (await call(this.endpoint, "GET", "/_ping")).status === 200
     } catch {
       return false
+    }
+  }
+
+  /**
+   * One check that Docker answers, for the Worker's health: how long it took and, when it failed, a short code
+   * (`timeout`, `refused` for the socket proxy's 403, `HTTP <status>`, or the system error code). Never a piece of
+   * the answer.
+   */
+  async pingDetail(signal?: AbortSignal): Promise<DockerPing> {
+    const started = performance.now()
+    const ms = () => Math.round(performance.now() - started)
+    try {
+      const { status } = await call(this.endpoint, "GET", "/_ping", undefined, { signal, maxBytes: 1024 })
+      if (status === 200) return { ok: true, ms: ms(), error: null }
+      return { ok: false, ms: ms(), error: status === 403 ? "refused" : `HTTP ${status}` }
+    } catch (error) {
+      if (signal?.aborted) return { ok: false, ms: ms(), error: "timeout" }
+      const code = (error as NodeJS.ErrnoException).code
+      return { ok: false, ms: ms(), error: typeof code === "string" && code ? code.slice(0, 40) : "error" }
     }
   }
 }

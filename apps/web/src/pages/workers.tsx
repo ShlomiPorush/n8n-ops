@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/dialog"
 import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { WorkerHealth } from "@/components/worker-health"
 import { useApi, useApiMutation } from "@/lib/api"
 import { loadView } from "@/lib/load-state"
 import { n, plural } from "@/lib/numbers"
@@ -105,6 +106,7 @@ export function WorkersPage() {
           list.map((w) => (
             <div
               key={w.id}
+              data-testid="worker"
               className={cn(
                 "grid gap-x-4 gap-y-1.5 border-t border-s-3 border-line px-pad-x py-3 md:grid-cols-[minmax(0,1fr)_auto]",
                 "regular:max-w-3xl regular:rounded-lg regular:border-0 regular:bg-panel regular:p-5 regular:shadow-card regular:ring-1 regular:ring-ink/10",
@@ -147,7 +149,7 @@ export function WorkersPage() {
                   </span>
                 </p>
               </div>
-              <WorkerSettings worker={w} />
+              <WorkerToggles worker={w} />
             </div>
           ))
         )}
@@ -157,50 +159,66 @@ export function WorkersPage() {
   )
 }
 
-/** A worker's settings: as entered, as recorded now, and the lines its socket proxy needs, behind one toggle. */
-function WorkerSettings({ worker: w }: { worker: Worker }) {
+/**
+ * A worker's Health and Settings, each behind its own toggle: its health over a range (components/worker-health.tsx),
+ * and its settings as entered, as recorded now, and the lines its socket proxy needs. Settings opens by itself when
+ * the socket proxy refuses something.
+ */
+function WorkerToggles({ worker: w }: { worker: Worker }) {
   const refused = w.proxy.refused.length > 0
-  const [open, setOpen] = useState(refused)
+  const [health, setHealth] = useState(false)
+  const [settings, setSettings] = useState(refused)
+  return (
+    <div className="grid min-w-0 gap-2 md:col-span-2">
+      <div className="-ms-2 flex flex-wrap items-center gap-1">
+        <Button size="sm" variant="ghost" aria-expanded={health} onClick={() => setHealth((o) => !o)}>
+          <ChevronDown className={cn("transition-transform", health && "rotate-180")} /> Health
+        </Button>
+        <Button size="sm" variant="ghost" aria-expanded={settings} onClick={() => setSettings((o) => !o)}>
+          <ChevronDown className={cn("transition-transform", settings && "rotate-180")} /> Settings
+          {refused && <span className="text-warn">(the socket proxy refuses something)</span>}
+        </Button>
+      </div>
+      {health && <WorkerHealth workerId={w.id} />}
+      {settings && <WorkerSettings worker={w} />}
+    </div>
+  )
+}
+
+/** A worker's settings: as entered, as recorded now, and the lines its socket proxy needs. */
+function WorkerSettings({ worker: w }: { worker: Worker }) {
   const entered = w.install
     ? w.install.socketProxy
       ? `Socket proxy, commands allowed in: ${w.install.containers.join(", ")}`
       : "The whole Docker socket, no socket proxy"
     : "Not recorded: this worker was added before n8n-ops recorded its settings"
   return (
-    <div className="min-w-0 md:col-span-2">
-      <Button size="sm" variant="ghost" aria-expanded={open} onClick={() => setOpen((o) => !o)} className="-ms-2">
-        <ChevronDown className={cn("transition-transform", open && "rotate-180")} /> Settings
-        {refused && <span className="text-warn">(the socket proxy refuses something)</span>}
-      </Button>
-      {open && (
-        <div className="mt-2 grid min-w-0 gap-4" data-testid={`worker-settings-${w.id}`}>
-          <dl className="grid min-w-0 gap-x-4 gap-y-1.5 md:grid-cols-[max-content_minmax(0,1fr)]">
-            <dt className="font-semibold">As entered</dt>
-            <dd className="min-w-0 break-words">{entered}</dd>
-            <dt className="font-semibold">Allowed now</dt>
-            <dd className="min-w-0 break-words">
-              {w.allowed ? `${w.allowed.containers.join(", ")}, as you recorded` : "Not recorded"}
-            </dd>
-          </dl>
-          {w.proxy.refused.map((r) => (
-            <p key={r.instance} className="text-warn">
-              The socket proxy refuses {r.refused.join(", ")} for <UserText>{r.instance}</UserText>.
-            </p>
-          ))}
-          {w.proxy.socketProxy === false ? (
-            <p className="text-muted-foreground">Without a socket proxy there are no lines to keep up to date.</p>
-          ) : (
-            <div className="grid min-w-0 gap-2">
-              <p className="font-semibold">What its socket proxy needs now</p>
-              <RuleLines rule={w.proxy.rule} workerId={w.id} recorded={w.proxy.recorded} />
-            </div>
-          )}
-          {w.proxy.update && (
-            <div className="grid min-w-0 gap-1.5">
-              <p>This worker runs an earlier release than the server. Its image line in docker-compose.yml:</p>
-              <Command value={w.proxy.update} label="Copy the image line" />
-            </div>
-          )}
+    <div className="grid min-w-0 gap-4" data-testid={`worker-settings-${w.id}`}>
+      <dl className="grid min-w-0 gap-x-4 gap-y-1.5 md:grid-cols-[max-content_minmax(0,1fr)]">
+        <dt className="font-semibold">As entered</dt>
+        <dd className="min-w-0 break-words">{entered}</dd>
+        <dt className="font-semibold">Allowed now</dt>
+        <dd className="min-w-0 break-words">
+          {w.allowed ? `${w.allowed.containers.join(", ")}, as you recorded` : "Not recorded"}
+        </dd>
+      </dl>
+      {w.proxy.refused.map((r) => (
+        <p key={r.instance} className="text-warn">
+          The socket proxy refuses {r.refused.join(", ")} for <UserText>{r.instance}</UserText>.
+        </p>
+      ))}
+      {w.proxy.socketProxy === false ? (
+        <p className="text-muted-foreground">Without a socket proxy there are no lines to keep up to date.</p>
+      ) : (
+        <div className="grid min-w-0 gap-2">
+          <p className="font-semibold">What its socket proxy needs now</p>
+          <RuleLines rule={w.proxy.rule} workerId={w.id} recorded={w.proxy.recorded} />
+        </div>
+      )}
+      {w.proxy.update && (
+        <div className="grid min-w-0 gap-1.5">
+          <p>This worker runs an earlier release than the server. Its image line in docker-compose.yml:</p>
+          <Command value={w.proxy.update} label="Copy the image line" />
         </div>
       )}
     </div>

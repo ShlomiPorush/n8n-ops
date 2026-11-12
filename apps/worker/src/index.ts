@@ -1,6 +1,8 @@
 import { readFile, rm } from "node:fs/promises"
+import { HEARTBEAT_FEATURE } from "@n8n-ops/shared"
 import { Docker } from "./docker.ts"
 import { DEFAULT_HEARTBEAT_FILE, recordContact } from "./heartbeat.ts"
+import { CallFailures, DockerChecks, Heartbeats } from "./heartbeat-loop.ts"
 import { backupJob, exportCredentialsJob, type Job, type JobResult, probeJob } from "./jobs.ts"
 import { Pairing } from "./pairing.ts"
 
@@ -21,19 +23,41 @@ const log = (msg: string, extra: Record<string, unknown> = {}) => console.log(JS
 
 const url = (path: string) => new URL(path, serverUrl).toString()
 
+const headers = (identity: string) => ({
+  authorization: `Bearer ${identity}`,
+  "x-worker-version": version,
+  // What this release supports, so the server sends only jobs it can run and knows it sends heartbeats.
+  "x-worker-features": `compose-target,${HEARTBEAT_FEATURE}`,
+})
+
+const failures = new CallFailures()
+const dockerChecks = new DockerChecks({ ping: (signal) => docker.pingDetail(signal) })
+const heartbeats = new Heartbeats({
+  send: (identity, body, signal) =>
+    fetch(url("/api/worker/heartbeat"), {
+      method: "POST",
+      headers: { ...headers(identity), "content-type": "application/json" },
+      body: JSON.stringify(body),
+      signal,
+    }),
+  failures,
+  docker: dockerChecks,
+  contact: () => recordContact(heartbeatFile),
+  log,
+})
+
 async function api<T>(identity: string, method: string, path: string, body?: unknown): Promise<T> {
-  const res = await fetch(url(`/api/worker${path}`), {
-    method,
-    headers: {
-      authorization: `Bearer ${identity}`,
-      "x-worker-version": version,
-      // What this release supports, so the server sends only jobs it can run.
-      "x-worker-features": "compose-target",
-      ...(body !== undefined ? { "content-type": "application/json" } : {}),
-    },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-    signal: AbortSignal.timeout(30_000),
-  })
+  const res = await failures.track(
+    fetch(url(`/api/worker${path}`), {
+      method,
+      headers: {
+        ...headers(identity),
+        ...(body !== undefined ? { "content-type": "application/json" } : {}),
+      },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(30_000),
+    }),
+  )
   if (res.status === 401)
     throw Object.assign(new Error("This worker was revoked or its identity is unknown."), { revoked: true })
   if (!res.ok) throw new Error(`server answered ${res.status} for ${path}`)
@@ -87,8 +111,11 @@ async function handle(identity: string, job: Job): Promise<JobResult> {
 
 async function main() {
   log("n8n-ops worker starting", { version, server: serverUrl })
-  if (!(await docker.ping())) log("Docker is not reachable (socket or socket proxy); backups and exports will fail")
+  // Both run on timers of their own, so a long job or a stuck Docker call never holds them up.
+  dockerChecks.start()
   let identity = await loadIdentity()
+  heartbeats.use(identity)
+  if (!(await docker.ping())) log("Docker is not reachable (socket or socket proxy); backups and exports will fail")
   for (;;) {
     try {
       if (!identity) {
@@ -99,10 +126,13 @@ async function main() {
         identity = await pairing.attempt(token)
         // The token is spent now; a file that cannot be removed (a read-only mount) does no harm.
         if (identity) await rm(pairingFile, { force: true }).catch(() => {})
+        heartbeats.use(identity)
         await sleep(5_000)
         continue
       }
       const { job } = await api<{ job: Job | null }>(identity, "GET", "/jobs/next")
+      // The server took this identity, so a heartbeat stopped by a 401 may resume.
+      heartbeats.use(identity)
       await recordContact(heartbeatFile)
       if (!job) {
         await sleep(5_000)
@@ -117,6 +147,7 @@ async function main() {
         log("identity rejected; pair again with a new token")
         await rm(identityFile, { force: true })
         identity = null
+        heartbeats.use(null)
       } else {
         log("cannot reach the server", { error: (error as Error).message })
       }

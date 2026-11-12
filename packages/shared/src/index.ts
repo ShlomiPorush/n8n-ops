@@ -102,3 +102,15 @@ export {
   valueProblem,
 } from "./settings-fields.ts"
 export { createTar, entryText, readTar, type TarEntry, textEntry } from "./tar.ts"
+export {
+  DOCKER_CHECK_COVER_MS,
+  DOCKER_CHECK_DEADLINE_MS,
+  DOCKER_CHECK_INTERVAL_MS,
+  HEARTBEAT_FEATURE,
+  HEARTBEAT_INTERVAL_MS,
+  HEARTBEAT_MIN_GAP_MS,
+  HEARTBEAT_RETRY_MISSING_MS,
+  HEARTBEAT_TIMEOUT_MS,
+  type HeartbeatBody,
+  heartbeatBody,
+} from "./worker-heartbeat.ts"

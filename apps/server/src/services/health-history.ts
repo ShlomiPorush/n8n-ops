@@ -126,7 +126,7 @@ export async function recordCheck(
 }
 
 /** An instant as a raw SQL value: the driver takes a Date only where the query builder knows the column. */
-const at = (d: Date) => sql`${d.toISOString()}::timestamptz`
+export const at = (d: Date) => sql`${d.toISOString()}::timestamptz`
 
 /**
  * Deletes an instance's checks older than its Keep health history (days), a batch at a time. What goes is always the
@@ -203,7 +203,7 @@ type RunRow = {
   alerted: string | number
 }
 
-const asDate = (v: Date | string) => (v instanceof Date ? v : new Date(v))
+export const asDate = (v: Date | string) => (v instanceof Date ? v : new Date(v))
 const num = (v: string | number | null) => (v === null ? null : Number(v))
 
 /**

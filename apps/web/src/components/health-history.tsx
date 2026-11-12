@@ -1,11 +1,18 @@
-import { useEffect, useRef, useState } from "react"
+import { useState } from "react"
+import {
+  ChartTip,
+  chartTick,
+  msText as ms,
+  niceMax,
+  RangeToggle,
+  TimeTicks,
+  useWidth,
+} from "@/components/history-chart"
 import { Empty, LoadError, Loading, Panel, PanelHead, RefreshLine } from "@/components/kit"
 import { Code, Tone, When } from "@/components/status"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useApi } from "@/lib/api"
 import { n, plural } from "@/lib/numbers"
-import { formatClock, formatDayMonth, formatTime, useTimeFormat } from "@/lib/time"
-import { cn } from "@/lib/utils"
+import { formatTime, useTimeFormat } from "@/lib/time"
 
 /**
  * The Health tab's history of the main: response times over a range, with failed checks marked, and the runs of
@@ -60,12 +67,6 @@ type History = {
   total: number
 }
 
-const RANGES = [
-  { value: "24", label: "24 h" },
-  { value: "168", label: "7 d" },
-  { value: "720", label: "30 d" },
-]
-
 const KIND: Record<string, string> = {
   timeout: "No answer in time",
   refused: "Connection refused",
@@ -74,8 +75,6 @@ const KIND: Record<string, string> = {
   http: "Error status",
   other: "Failed",
 }
-
-const ms = (v: number | null) => (v === null ? "-" : `${n(Math.round(v))} ms`)
 
 /** Reads only while its tab is shown: the pane keeps every tab mounted. */
 export function HealthHistory({ instanceId, active }: { instanceId: string; active: boolean }) {
@@ -93,21 +92,7 @@ export function HealthHistory({ instanceId, active }: { instanceId: string; acti
         <RefreshLine live={history} what="this range" />
         <PanelHead
           title="Response times"
-          action={
-            <ToggleGroup
-              type="single"
-              segmented
-              aria-label="Range"
-              value={hours}
-              onValueChange={(v) => v && setHours(v)}
-            >
-              {RANGES.map((r) => (
-                <ToggleGroupItem key={r.value} value={r.value}>
-                  {r.label}
-                </ToggleGroupItem>
-              ))}
-            </ToggleGroup>
-          }
+          action={<RangeToggle value={hours} onChange={setHours} />}
           description={
             s && s.checks + s.notCollected > 0 ? (
               <>
@@ -190,26 +175,6 @@ function RunRow({ run }: { run: Run }) {
 const HEIGHT = 180
 const PAD = { top: 12, right: 12, bottom: 26, left: 52 }
 
-/** A round top for the time axis: the largest time shown, rounded up to 1, 2 or 5 times a power of ten. */
-function niceMax(v: number) {
-  const top = Math.max(v, 50)
-  const p = 10 ** Math.floor(Math.log10(top))
-  return [1, 2, 5, 10].map((m) => m * p).find((m) => m >= top) ?? top
-}
-
-function useWidth() {
-  const ref = useRef<HTMLDivElement>(null)
-  const [width, setWidth] = useState(0)
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
-    const observer = new ResizeObserver(([entry]) => setWidth(Math.round(entry?.contentRect.width ?? 0)))
-    observer.observe(el)
-    return () => observer.disconnect()
-  }, [])
-  return [ref, width] as const
-}
-
 function Chart({ history }: { history: History }) {
   const w = useTimeFormat()
   const [ref, width] = useWidth()
@@ -245,7 +210,7 @@ function Chart({ history }: { history: History }) {
       .reverse()
       .map((b) => `L${x(mid(b)).toFixed(1)},${y(b.minMs ?? 0).toFixed(1)}`)
       .join("")}Z`
-  const tick = (t: number) => (span > 2 * 86_400_000 ? formatDayMonth(t, w) : formatClock(t, w, { seconds: false }))
+  const tick = (t: number) => chartTick(t, span, w)
   const hovered = hover === null ? undefined : history.series[hover]
 
   const pick = (clientX: number, rect: DOMRect) => {
@@ -283,17 +248,7 @@ function Chart({ history }: { history: History }) {
               </text>
             </g>
           ))}
-          {[from, from + span / 2, to].map((t, i) => (
-            <text
-              key={t}
-              x={x(t)}
-              y={HEIGHT - 6}
-              textAnchor={i === 0 ? "start" : i === 2 ? "end" : "middle"}
-              className="fill-muted-foreground text-meta"
-            >
-              {tick(t)}
-            </text>
-          ))}
+          <TimeTicks from={from} to={to} x={x} y={HEIGHT - 6} w={w} />
           <g className="text-ink">
             {segments.map((seg) => (
               <path key={`band-${seg[0]?.at}`} d={band(seg)} fill="currentColor" opacity={0.12} />
@@ -349,13 +304,7 @@ function Chart({ history }: { history: History }) {
         </svg>
       )}
       {hovered && (
-        <div
-          className={cn(
-            "pointer-events-none absolute top-2 z-10 w-max max-w-[min(18rem,calc(100%-1rem))] rounded-sm bg-popover px-2.5 py-1.5 text-small shadow-float ring-1 ring-ink/10",
-            x(mid(hovered)) > width / 2 ? "-translate-x-full" : "",
-          )}
-          style={{ left: x(mid(hovered)) + (x(mid(hovered)) > width / 2 ? -10 : 10) }}
-        >
+        <ChartTip at={x(mid(hovered))} width={width}>
           <div className="text-muted-foreground">{formatTime(hovered.at, w, { seconds: false })}</div>
           {hovered.avgMs !== null ? (
             <div>
@@ -373,7 +322,7 @@ function Chart({ history }: { history: History }) {
           {hovered.notCollected > 0 && (
             <div className="text-muted-foreground">{plural(hovered.notCollected, "check")} could not be made</div>
           )}
-        </div>
+        </ChartTip>
       )}
     </div>
   )

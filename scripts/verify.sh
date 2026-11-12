@@ -270,7 +270,7 @@ start_stack() {
   # The worker never gets database credentials. Only the names are read, never the values (one may span lines), and a
   # failed read fails the check: in a pipe, grep -q could end the reading with SIGPIPE, which pipefail reads as no match.
   local names
-  names="$(stack exec -T worker node -e 'console.log(Object.keys(process.env).join("\n"))')" ||
+  names="$(stack exec -T -u node worker node -e 'console.log(Object.keys(process.env).join("\n"))')" ||
     die "could not read the names in the worker's environment"
   if grep -qxE '(DATABASE_URL|POSTGRES_PASSWORD|POSTGRES_USER)' <<<"$names"; then
     die "the worker has database credentials"

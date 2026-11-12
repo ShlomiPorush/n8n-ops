@@ -484,6 +484,7 @@ async function acquire(ctx, own) {
           : "Another n8n-ops command is using this connection. Nothing was sent; run it again.",
       )
     }
+    await hook("lock-busy")
     await sleep(100 + Math.random() * 200)
   }
 }

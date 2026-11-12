@@ -404,6 +404,7 @@ function Enter-Lock($ctx, [string]$own) {
       }
       Fail 'busy' 'Another n8n-ops command is using this connection. Nothing was sent; run it again.'
     }
+    Invoke-Hook 'lock-busy'
     Start-Sleep -Milliseconds (100 + (Get-Random -Maximum 200))
   }
 }

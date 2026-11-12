@@ -92,8 +92,8 @@ Agents connect by approval: nothing to create or paste by hand. Set the public U
 - **What a connection holds**: an access token good for 15 minutes and for one resource only (`/mcp` or `/api/v1`), and a refresh token that is replaced on every use (`grant_type=refresh_token`). A refresh token used a second time ends the connection, since a copy is out. A connection lasts until you disconnect it and ends by itself after 90 days without use, or when the public URL changes. Scopes: `ops:read` (always) and `ops:access` (may ask for temporary access to n8n instances, below).
 - **A token made by hand** stays on Connected Agents, under Advanced → New token, for a program that cannot open the approval link. It lasts until revoked.
 
-- **MCP** (Streamable HTTP): `https://<your n8n-ops>/mcp` with the header `Authorization: Bearer <access token>`. Tools: `list_open_problems`, `get_problem`, `get_failed_execution`, `get_instance_health`, `get_queue_status`, `get_backup_status`, `search_workflows` (by name, workflow ID, webhook path or tag; each result says whether access to its instance can be requested).
-- **REST**: `GET /api/v1/problems`, `/api/v1/problems/{id}`, `/api/v1/problems/{id}/execution`, `/api/v1/instances`, `/api/v1/queues`, `/api/v1/backups`, `/api/v1/workflows?q=&limit=100&offset=0` with `Authorization: Bearer <access token>`.
+- **MCP** (Streamable HTTP): `https://<your n8n-ops>/mcp` with the header `Authorization: Bearer <access token>`. Tools: `list_open_problems`, `get_problem`, `get_failed_execution`, `get_instance_health`, `get_health_history`, `get_workers`, `get_worker_health_history`, `get_queue_status`, `get_backup_status`, `search_workflows` (by name, workflow ID, webhook path or tag; each result says whether access to its instance can be requested).
+- **REST**: `GET /api/v1/problems`, `/api/v1/problems/{id}`, `/api/v1/problems/{id}/execution`, `/api/v1/instances`, `/api/v1/health?instance=`, `/api/v1/workers`, `/api/v1/worker-health?worker=`, `/api/v1/queues`, `/api/v1/backups`, `/api/v1/workflows?q=&limit=100&offset=0` with `Authorization: Bearer <access token>`.
 
 ### Temporary access to n8n instances
 

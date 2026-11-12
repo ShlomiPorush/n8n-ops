@@ -6,6 +6,7 @@ import { pruneHealthHistory } from "./health-history.ts"
 import { activeOnly, can, refreshInstanceMeta, unsupportedVersion } from "./instances.ts"
 import { housekeeping, pollInstance } from "./problems.ts"
 import { maybeSendReports } from "./reports.ts"
+import { pruneWorkerHistory } from "./worker-presence.ts"
 import { lastWorkflowSync, syncWorkflows, workflowSyncBusy } from "./workflows.ts"
 
 export type Job = { name: string; everyMs: number; run: (ctx: Ctx) => Promise<unknown> }
@@ -42,7 +43,15 @@ export function startScheduler(ctx: Ctx, extraJobs: Job[] = []): () => void {
     { name: "telegram-webhook", everyMs: 60_000, run: syncTelegramWebhook },
     { name: "reports", everyMs: 60_000, run: maybeSendReports },
     { name: "housekeeping", everyMs: 3600_000, run: housekeeping },
-    { name: "health-history", everyMs: 3600_000, run: pruneHealthHistory },
+    // Instances first, by their own Keep health history; then the Workers', by the Defaults.
+    {
+      name: "health-history",
+      everyMs: 3600_000,
+      run: async (c) => {
+        await pruneHealthHistory(c)
+        await pruneWorkerHistory(c)
+      },
+    },
     ...extraJobs,
   ]
 

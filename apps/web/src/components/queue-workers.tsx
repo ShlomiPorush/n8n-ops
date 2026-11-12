@@ -44,7 +44,12 @@ export function QueueWorkers({
   const value = (f: WorkersFigure) => (
     <>
       <span className="whitespace-nowrap">{f.value}</span>
-      {f.of && <span className="text-body font-medium whitespace-nowrap text-muted-foreground"> of {f.of}</span>}
+      {f.of && (
+        <>
+          {" "}
+          <span className="text-body font-medium whitespace-nowrap text-muted-foreground">of {f.of}</span>
+        </>
+      )}
     </>
   )
   // A long word in a line under a figure (N8N_CONCURRENCY_PRODUCTION_LIMIT) breaks rather than leave its card.
@@ -54,6 +59,8 @@ export function QueueWorkers({
   const columns =
     shown === 3 ? fourFigures : shown === 2 ? "grid-cols-3 compact:grid-cols-3" : "grid-cols-2 compact:grid-cols-2"
   // Jobs at once are said per row only when they come from different places.
+  // Health URLs typed by hand answer health only: without a figure on any row, there are no columns for them.
+  const anyRead = sorted.some((r) => r.uptimeSec !== undefined || r.concurrency || r.memory)
   const sources = new Set(sorted.flatMap((r) => (r.concurrency ? [r.concurrency.from] : [])))
 
   return (
@@ -95,9 +102,13 @@ export function QueueWorkers({
           <TableRow>
             <TableHead>Worker</TableHead>
             <TableHead>State</TableHead>
-            <TableHead className="text-end">Up for</TableHead>
-            <TableHead className="text-end">Jobs at once</TableHead>
-            <TableHead>Memory</TableHead>
+            {anyRead && (
+              <>
+                <TableHead className="text-end">Up for</TableHead>
+                <TableHead className="text-end">Jobs at once</TableHead>
+                <TableHead>Memory</TableHead>
+              </>
+            )}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -192,9 +203,11 @@ export function QueueWorkers({
                     </TableCell>
                   </>
                 ) : (
+                  anyRead && (
                   <TableCell colSpan={3} className="align-top text-muted-foreground">
                     No figures read
                   </TableCell>
+                  )
                 )}
               </TableRow>
             )

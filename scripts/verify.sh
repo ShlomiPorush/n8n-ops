@@ -110,10 +110,12 @@ esac
 changed_files() {
   local base
   base="$(git -C "$REPO_ROOT" merge-base "$CHANGED_BASE" HEAD)" || die "cannot find a merge base with $CHANGED_BASE"
+  # Without renames, a file moved out of a directory still counts as a change there. NUL-separated, so git does not
+  # quote a path with other than plain characters, which would hide where it is.
   {
-    git -C "$REPO_ROOT" diff --name-only "$base"
-    git -C "$REPO_ROOT" ls-files --others --exclude-standard
-  } | sort -u
+    git -C "$REPO_ROOT" diff --name-only --no-renames -z "$base"
+    git -C "$REPO_ROOT" ls-files --others --exclude-standard -z
+  } | sort -zu
 }
 
 run_guards() {
@@ -178,6 +180,12 @@ run_checks() {
     # CHANGELOG.md would build apps/web twice at once into the same dist. Shared root files already
     # force a full sweep (main), so nothing is left unchecked.
     filter=(--filter "...[$CHANGED_BASE]" --filter "!n8n-ops")
+    # The server's tests run the skill's files (apps/server/src/oauth/skill.test.ts), though the server does not
+    # depend on the skill as a package. The files come from main. grep without -q reads all of its input, so its
+    # producer never fails with SIGPIPE, which pipefail would turn into no match.
+    if printf '%s\n' "${files[@]}" | grep '^packages/skill/' >/dev/null; then
+      filter+=(--filter @n8n-ops/server)
+    fi
   fi
   info "Install"
   install_deps
@@ -633,13 +641,15 @@ main() {
   trap 'exit 143' TERM
 
   if [ -n "$CHANGED_BASE" ]; then
-    mapfile -t files < <(changed_files)
+    mapfile -d '' -t files < <(changed_files)
     if [ ${#files[@]} -eq 0 ]; then
       info "No changes since $CHANGED_BASE"
       CHECKS=0 INTEGRATION=0 E2E=0
-    elif printf '%s\n' "${files[@]}" | grep -qvE '^(docs/|README\.md$|AGENTS\.md$|CHANGELOG\.md$|LICENSE$)'; then
+    # grep without -q, as in run_checks: with -q a long list could fail with SIGPIPE and read as no match.
+    elif printf '%s\n' "${files[@]}" | grep -vE '^(docs/|README\.md$|AGENTS\.md$|CHANGELOG\.md$|LICENSE$)' >/dev/null; then
       # Shared root files, config or images: the package filter cannot see their consumers, so run everything.
-      if printf '%s\n' "${files[@]}" | grep -qE '^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|biome\.json|config/|docker/|docker-compose\.yml|scripts/lib/)'; then
+      if printf '%s\n' "${files[@]}" |
+        grep -E '^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|biome\.json|config/|docker/|docker-compose\.yml|scripts/lib/)' >/dev/null; then
         info "Shared files changed: full sweep"
         CHANGED_BASE=""
       fi

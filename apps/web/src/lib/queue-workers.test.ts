@@ -172,14 +172,22 @@ describe("the queue worker list", () => {
   it("counts the jobs of ready workers only, says what was read on some only, and points at what stands out", () => {
     const gb = 1024 * 1024 * 1024
     const rows = [
-      row("w1", "ready", { version: "2.40.5", memory: { used: gb / 2, limit: gb }, concurrency: { value: 10, from: "env" } }),
+      row("w1", "ready", {
+        version: "2.40.5",
+        memory: { used: gb / 2, limit: gb },
+        concurrency: { value: 10, from: "env" },
+      }),
       row("w2", "not-ready", {
         error: "x",
         version: "2.40.5",
         memory: { used: gb / 4, limit: gb },
         concurrency: { value: 10, from: "env" },
       }),
-      row("w3", "ready", { version: "2.39.1", memory: { used: gb, limit: gb }, concurrency: { value: 5, from: "flag" } }),
+      row("w3", "ready", {
+        version: "2.39.1",
+        memory: { used: gb, limit: gb },
+        concurrency: { value: 5, from: "flag" },
+      }),
       row("w4", "unreachable"),
     ]
     expect(workersFacts(rows, "2.40.5")).toEqual([

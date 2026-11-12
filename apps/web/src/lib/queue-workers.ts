@@ -232,7 +232,10 @@ export function workersFacts(rows: QueueWorkerRow[], mainVersion?: string): Work
       .filter(Boolean)
       .join(", ")
     facts.push({
-      text: ready === all ? `${all} jobs at once (${why})` : `${ready} jobs at once on the ready workers, of ${all} (${why})`,
+      text:
+        ready === all
+          ? `${all} jobs at once (${why})`
+          : `${ready} jobs at once on the ready workers, of ${all} (${why})`,
     })
   }
 

@@ -92,7 +92,9 @@ test("the queue workers are listed by name, summed up once, and each row says wh
   // What is the same on all of them, said once.
   const facts = panel.getByTestId("queue-workers-facts")
   await expect(facts).toContainText("15 jobs at once (not the same on each, set differently on each)")
-  await expect(facts).toContainText("e2e-queue-worker-2 runs n8n 2.43.0-a-long-build-label-for-the-test, the main 2.44.3")
+  await expect(facts).toContainText(
+    "e2e-queue-worker-2 runs n8n 2.43.0-a-long-build-label-for-the-test, the main 2.44.3",
+  )
   await expect(facts).toContainText("a memory limit on 1 of the 2 containers read, of 3")
   // The queue: what it holds now.
   await expect(panel.getByTestId("queue-line")).toContainText("0 waiting · 1 active")

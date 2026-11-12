@@ -58,6 +58,7 @@ import {
 import { ListWithPanel } from "@/components/list-panel"
 import { type PaneTabItem, PaneTabPanel, PaneTabs, usePaneTab } from "@/components/pane-tabs"
 import { type ProxyFix, ProxyFixBlock } from "@/components/proxy-fix"
+import { QueueWorkers } from "@/components/queue-workers"
 import { Dot, type HealthState, StatusTag, statusOf, type statusTable, TimeAgo, Tone, When } from "@/components/status"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -108,15 +109,7 @@ import { loadView } from "@/lib/load-state"
 import { healthCounts, n, plural } from "@/lib/numbers"
 import { useNavigateFromOverlay } from "@/lib/overlay-history"
 import { problemPath } from "@/lib/problems"
-import {
-  byName,
-  type QueueWorkerRow,
-  queueWorkersNote,
-  workerFigures,
-  workerHealth,
-  workersSummary,
-  workerWords,
-} from "@/lib/queue-workers"
+import { type QueueWorkerRow, queueWorkersNote, workerHealth } from "@/lib/queue-workers"
 import { formatTime, useTimeFormat } from "@/lib/time"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
@@ -858,58 +851,12 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
                 <span className="ms-auto text-end text-muted-foreground">{metricsWords[hd.metricsState]}</span>
               </div>
             )}
-            {(hd?.workers ?? []).length > 0 && (
-              <div className="border-t border-line px-pad-x py-pad-y font-semibold" data-testid="queue-workers-summary">
-                {workersSummary(hd?.workers ?? [], { found: hd?.discovery?.found, past: pastWorkers })}
-              </div>
-            )}
-            {[...(hd?.workers ?? [])].sort(byName).map((w) => {
-              // The main's version read inside in the same check, the only one a worker's is compared with.
-              const figures = workerFigures(w, hd?.source === "inside" ? hd.version : undefined)
-              const parts = [figures.uptime, figures.jobs, figures.memory].filter(Boolean)
-              return (
-                <div
-                  key={w.url}
-                  className="grid min-w-0 gap-1 border-t border-line px-pad-x py-pad-y"
-                  data-testid="queue-worker"
-                >
-                  <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
-                    {pastWorkers ? (
-                      <Dot health="unknown" label={`${workerWords(w.state, w.ok, w.error)} at the last check`} />
-                    ) : (
-                      <Dot health={workerHealth(w.state, w.ok)} />
-                    )}
-                    <span className="min-w-0 break-words">Queue worker {w.name ?? w.url}</span>
-                    <span
-                      className={cn(
-                        "ms-auto min-w-0 text-end break-words",
-                        pastWorkers
-                          ? "text-muted-foreground"
-                          : workerHealth(w.state, w.ok) === "down"
-                            ? "font-semibold text-fail"
-                            : workerHealth(w.state, w.ok) === "warn"
-                              ? "text-warn"
-                              : "text-muted-foreground",
-                      )}
-                    >
-                      {workerWords(w.state, w.ok, w.error)}
-                    </span>
-                  </div>
-                  {(figures.version || parts.length > 0) && (
-                    <p className="min-w-0 ps-5 text-small break-words text-muted-foreground">
-                      {figures.version && (
-                        <span className={cn(figures.version.differs && !pastWorkers && "font-semibold text-warn")}>
-                          {figures.version.text}
-                          {figures.version.differs && ` (differs from the main, ${figures.version.main})`}
-                        </span>
-                      )}
-                      {figures.version && parts.length > 0 && " · "}
-                      {parts.join(" · ")}
-                    </p>
-                  )}
-                </div>
-              )
-            })}
+            <QueueWorkers
+              rows={hd?.workers ?? []}
+              mainVersion={hd?.source === "inside" ? hd.version : undefined}
+              found={hd?.discovery?.found}
+              past={pastWorkers}
+            />
             {hd?.queue && (
               <div className="border-t border-line p-pad-x">
                 <Kpis>

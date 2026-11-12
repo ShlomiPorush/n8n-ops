@@ -3,8 +3,9 @@ import {
   byName,
   queueWorkersNote,
   type WorkerState,
-  workerFigures,
+  workerCells,
   workerHealth,
+  workersOverview,
   workersSummary,
   workerWords,
 } from "./queue-workers.ts"
@@ -121,28 +122,81 @@ describe("the queue worker list", () => {
     expect(workersSummary(rows.slice(0, 2), { past: true })).toBe("At the last check: 2 of 2 queue workers ready")
   })
 
-  it("words the figures, and marks a version only against the main's", () => {
+  it("words a row: its state, what went wrong, a version that differs, and the figures read", () => {
     const w = row("a", "ready", {
       version: "2.44.2",
       uptimeSec: 3 * 86_400 + 4 * 3600 + 59,
       memory: { used: 312 * 1024 * 1024, limit: 1024 * 1024 * 1024 },
       concurrency: { value: 5, from: "flag" },
     })
-    expect(workerFigures(w, "2.44.3")).toEqual({
-      version: { text: "n8n 2.44.2", differs: true, main: "2.44.3" },
-      uptime: "container up for 3 d 4 h",
-      jobs: "runs 5 jobs at once (set by --concurrency)",
-      memory: "memory 312 MB of 1 GB",
+    expect(workerCells(w, "2.44.3")).toEqual({
+      health: "ok",
+      state: "ready",
+      error: undefined,
+      version: { version: "2.44.2", main: "2.44.3" },
+      uptime: "3 d 4 h",
+      jobs: { value: 5, from: "set by --concurrency" },
+      memory: { used: "312 MB", limit: "1 GB", percent: 30 },
     })
-    expect(workerFigures(w).version?.differs).toBe(false)
-    expect(workerFigures({ ...w, memory: { used: 2048 * 1024 * 1024, limit: null } }).memory).toBe(
-      "memory 2 GB, no limit set on the container",
+    // Without the main's version read in the same check, nothing is marked.
+    expect(workerCells(w).version).toBeUndefined()
+    expect(workerCells({ ...w, memory: { used: 2048 * 1024 * 1024, limit: null } }).memory).toEqual({
+      used: "2 GB",
+      limit: undefined,
+      percent: undefined,
+    })
+    const down = workerCells(row("b", "not-ready", { error: "Redis connection refused" }))
+    expect(down).toMatchObject({ health: "down", state: "not ready", error: "Redis connection refused" })
+    expect(down.uptime ?? down.jobs ?? down.memory).toBeUndefined()
+    // That state says it already.
+    expect(workerCells(row("c", "not-verified", { error: "running, health not verified" })).error).toBeUndefined()
+  })
+
+  it("says once what is the same on every worker", () => {
+    const same = { version: "2.40.5", memory: { used: 450 * 1024 * 1024, limit: null } }
+    const rows = [1, 2, 3].map((n) =>
+      row(`w${n}`, "ready", { ...same, concurrency: { value: 10, from: "default" } }),
     )
-    expect(workerFigures(row("b", "not-checked"))).toEqual({
-      version: undefined,
-      uptime: undefined,
+    expect(workersOverview(rows, "2.40.5")).toEqual({
+      ready: { value: "3", of: "3", hint: "every worker answers ready", tone: undefined },
+      jobs: { value: "30", of: undefined, hint: "10 each · n8n's default" },
+      memory: { value: "1.3 GB", of: undefined, hint: "no limit set on any container" },
+      version: { value: "2.40.5", hint: "on every worker, same as the main" },
+    })
+    // Read inside the main or not, the workers alone agree.
+    expect(workersOverview(rows).version).toEqual({ value: "2.40.5", hint: "on every worker" })
+  })
+
+  it("counts the jobs of ready workers only, and points at what stands out", () => {
+    const gb = 1024 * 1024 * 1024
+    const rows = [
+      row("w1", "ready", { version: "2.40.5", memory: { used: 0.5 * gb, limit: gb }, concurrency: { value: 10, from: "env" } }),
+      row("w2", "not-ready", { error: "x", version: "2.40.5", memory: { used: 0.25 * gb, limit: gb }, concurrency: { value: 10, from: "env" } }),
+      row("w3", "ready", { version: "2.39.1", memory: { used: 0.75 * gb, limit: gb }, concurrency: { value: 5, from: "flag" } }),
+      row("w4", "unreachable"),
+    ]
+    const o = workersOverview(rows, "2.40.5")
+    expect(o.ready).toEqual({ value: "2", of: "4", hint: "1 not ready, 1 no answer", tone: "fail" })
+    expect(o.jobs).toEqual({
+      value: "15",
+      of: "25",
+      hint: "on the ready workers · not the same on each · set differently on each",
+    })
+    expect(o.memory).toEqual({ value: "1.5 GB", of: "3 GB", hint: "in all, a limit on 3 of 4 workers" })
+    expect(o.version).toEqual({ value: "1 differs", hint: "w3 runs 2.39.1; the main runs 2.40.5", tone: "warn" })
+    // Some containers without a limit: no total to be out of.
+    const mixed = workersOverview([rows[0], row("w5", "ready", { memory: { used: gb, limit: null } })])
+    expect(mixed.memory).toEqual({ value: "1.5 GB", of: undefined, hint: "in all, a limit on 1 of 2" })
+    // Without the main's version, workers that disagree are still pointed at.
+    expect(workersOverview(rows).version).toEqual({ value: "2 versions", hint: "2.40.5 on 2, 2.39.1 on 1", tone: "warn" })
+    // A state not known is a warning, not a failure.
+    expect(workersOverview([row("w6", "not-verified")]).ready.tone).toBe("warn")
+    // Nothing read: only how many are ready.
+    expect(workersOverview([row("w7", "ready")])).toEqual({
+      ready: { value: "1", of: "1", hint: "every worker answers ready", tone: undefined },
       jobs: undefined,
       memory: undefined,
+      version: undefined,
     })
   })
 })

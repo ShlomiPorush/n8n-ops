@@ -2,9 +2,10 @@ import { expect, type Page, test } from "@playwright/test"
 import postgres from "postgres"
 import { signIn } from "./helpers.ts"
 
-// The queue workers of an instance on its Health tab: listed by name, a line that sums their states, and what the
-// check in each read (version against the main's, how long its container is up, jobs at once, memory). The test
-// adds an instance with such a report in the database (E2E_DATABASE_URL) and removes it again.
+// The queue workers of an instance on its Health tab: a line that sums their states, figures that say once what is
+// the same on all of them, and a row each, listed by name, with what the check in it read (version against the
+// main's, how long its container is up, jobs at once, memory). The test adds an instance with such a report in the
+// database (E2E_DATABASE_URL) and removes it again.
 
 const databaseUrl = process.env.E2E_DATABASE_URL
 const workerName = "e2e-queue-host"
@@ -82,25 +83,38 @@ test.afterAll(async () => {
   }
 })
 
-test("the queue workers are listed by name, summed up, and say what their check read", async () => {
+test("the queue workers are listed by name, summed up once, and each row says what differs", async () => {
   await page.goto(`/instances/${instanceId}?tab=health`)
   const panel = page.getByRole("tabpanel", { name: "Health" })
   await expect(panel.getByTestId("queue-workers-summary")).toContainText(
     "2 of 3 queue workers ready, 1 health not verified",
   )
+  // What is the same on all of them, said once.
+  const figures = panel.getByTestId("queue-workers-figures")
+  await expect(figures).toContainText("Ready")
+  await expect(figures).toContainText("2 of 3")
+  await expect(figures).toContainText("Jobs at once")
+  await expect(figures).toContainText("15")
+  await expect(figures).toContainText("not the same on each · set differently on each")
+  await expect(figures).toContainText("in all, a limit on 1 of 2")
+  await expect(figures).toContainText("1 differs")
+  await expect(figures).toContainText("the main runs 2.44.3")
   const rows = panel.getByTestId("queue-worker")
   await expect(rows).toHaveCount(3)
-  await expect(rows.nth(0)).toContainText("Queue worker e2e-queue-worker-1")
-  await expect(rows.nth(1)).toContainText("Queue worker e2e-queue-worker-2")
-  await expect(rows.nth(2)).toContainText("Queue worker e2e-queue-worker-10")
-  await expect(rows.nth(2)).toContainText(
-    "n8n 2.44.3 · container up for 3 d 4 h · runs 5 jobs at once (set by --concurrency) · memory 312 MB of 1 GB",
-  )
-  await expect(rows.nth(1)).toContainText("n8n 2.43.0-a-long-build-label-for-the-test (differs from the main, 2.44.3)")
-  await expect(rows.nth(1)).toContainText("memory 2 GB, no limit set on the container")
-  await expect(rows.nth(1)).toContainText("runs 10 jobs at once (n8n's default)")
-  // Nothing read: no figures under it.
-  await expect(rows.nth(0)).not.toContainText("container up for")
+  await expect(rows.nth(0)).toContainText("e2e-queue-worker-1")
+  await expect(rows.nth(1)).toContainText("e2e-queue-worker-2")
+  await expect(rows.nth(2)).toContainText("e2e-queue-worker-10")
+  await expect(rows.nth(2)).toContainText("3 d 4 h")
+  await expect(rows.nth(2)).toContainText("set by --concurrency")
+  await expect(rows.nth(2)).toContainText("312 MB of 1 GB")
+  await expect(rows.nth(2).getByRole("progressbar")).toHaveAccessibleName("Memory 30% of its limit")
+  await expect(rows.nth(1)).toContainText("n8n 2.43.0-a-long-build-label-for-the-test · the main runs 2.44.3")
+  await expect(rows.nth(1)).toContainText("2 GB")
+  await expect(rows.nth(1).getByRole("progressbar")).toHaveCount(0)
+  await expect(rows.nth(1)).toContainText("n8n's default")
+  // Nothing read: the row says so instead of empty columns.
+  await expect(rows.nth(0)).toContainText("health not verified")
+  await expect(rows.nth(0)).toContainText("No figures read")
 })
 
 test("on a phone the figures wrap inside the panel", async () => {

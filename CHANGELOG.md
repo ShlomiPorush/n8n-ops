@@ -15,7 +15,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Fixed
 
-- **The database no longer grows with every health check made through a Worker.** n8n-ops kept a row for every job it gave a Worker, including a health check of each instance every 30 seconds, and never deleted it. Finished jobs are now deleted a day after they end, except backups, which stay with their run. The first update on a large database adds an index while the server starts, and the first cleanup runs in the background during the next hour; the space it frees is reused, so the database stops growing but does not shrink on disk by itself.
+- **The database no longer grows with every health check made through a Worker.** n8n-ops kept a row for every job it gave a Worker, including a health check of each instance every 30 seconds, and never deleted it. Once an hour it now deletes the jobs that finished more than a day before. It keeps backup jobs, which stay with their run, and the job of a worker check in an instance's setup while that check is running. The first update on a large database adds an index while the server starts, and the first cleanup runs in the background during the next hour; the space it frees is reused for new jobs, so the database file does not shrink by itself.
 
 ## [0.17.0] - 2026-11-12
 

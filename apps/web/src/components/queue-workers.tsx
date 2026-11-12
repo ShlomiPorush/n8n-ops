@@ -43,7 +43,7 @@ export function QueueWorkers({
           {workersSummary(sorted, { found, past })}
         </p>
         {facts.length > 0 && (
-          <p className="text-small break-words text-muted-foreground" data-testid="queue-workers-facts">
+          <p className="min-w-0 text-small text-muted-foreground [overflow-wrap:anywhere]" data-testid="queue-workers-facts">
             {cut && `The ${sorted.length} shown: `}
             {facts.map((f, i) => (
               <span key={f.text}>

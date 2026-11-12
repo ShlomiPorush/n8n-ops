@@ -176,11 +176,11 @@ function runHint(shell, impl, inst, text, before) {
 }
 
 /**
- * Renames a file onto a name that was just deleted. On Windows a deleted file that another process still has open
- * (the PowerShell version reads with delete sharing; a virus scanner may open a new file too) can keep its name until
- * that process closes it, and a rename onto that name fails with EPERM meanwhile, as seen on a Windows runner.
+ * Replaces a file by renaming another onto it, in one step, so the name is never free. A Windows runner once failed
+ * such a rename with EPERM; a likely cause is another process that still had the file open (the PowerShell version
+ * reads with delete sharing, and a virus scanner may open a new file), so on Windows it tries again for about a second.
  */
-async function renameOnto(from, to) {
+async function replaceWith(from, to) {
   for (let i = 0; ; i++) {
     try {
       return fs.renameSync(from, to)
@@ -736,9 +736,8 @@ for (const impl of impls) {
       )
       fs.writeFileSync(`${hold}.go`, "")
       await sleep(1000)
-      // ...then the third lets go, and the first lock is put back.
-      fs.rmSync(lock)
-      await renameOnto(`${lock}.moved`, lock)
+      // ...then the first lock is put back in the third's place, with no moment without a lock.
+      await replaceWith(`${lock}.moved`, lock)
       const r = await p
       assert.equal(r.code, 0, r.out + r.err)
       const refreshes = server.counts.refresh

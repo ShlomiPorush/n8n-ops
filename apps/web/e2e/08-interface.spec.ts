@@ -982,7 +982,7 @@ test("Connected agents and Account are pages of their own, and their old Setting
   await expect(page.getByRole("heading", { name: "Connect an agent" })).toBeVisible()
   await page.goto("/settings/account")
   await expect(page).toHaveURL(/\/account$/)
-  await expect(page.getByRole("heading", { name: "Locked out?" })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Sign-In" })).toBeVisible()
   await expect(page).toHaveTitle("Account · n8n-ops")
 
   const sections = page.getByRole("navigation", { name: "Settings categories" })

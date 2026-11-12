@@ -92,8 +92,13 @@ test("Reset with a wrong password leaves two-factor on and says so", async () =>
 test("Reset takes a new code on /setup and goes back to Account, past the optional steps, and is audited", async () => {
   // Telegram and the backup destination as not set up, so /setup would ask for them after a first setup.
   await page.route("**/api/setup/checklist", async (route) => {
-    const res = await route.fetch()
-    await route.fulfill({ response: res, json: { ...(await res.json()), telegram: false, storage: false } })
+    try {
+      const res = await route.fetch()
+      await route.fulfill({ response: res, json: { ...(await res.json()), telegram: false, storage: false } })
+    } catch (e) {
+      // A request of the Account page, dropped when the reset loads /setup, is already gone.
+      if (!String(e).includes("Route is already handled")) throw e
+    }
   })
   // That the other sessions are signed out first is in auth/passkey.integration.test.ts: one more here would need a
   // sign-in of its own, and sign-in is rate limited.

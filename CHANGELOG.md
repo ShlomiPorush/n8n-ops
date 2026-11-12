@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Fixed
+
+- **The search field takes the focus from the search button when a list's filters get room for it.** With the focus on the search button of Problems or Workflows, widening the window or the list showed the field but left the focus nowhere when the list redrew its rows at the same moment; the field now gets it, as it does without new rows.
+
 ## [0.16.4] - 2026-11-12
 
 ### Changed

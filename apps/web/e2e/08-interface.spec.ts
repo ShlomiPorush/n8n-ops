@@ -1993,7 +1993,7 @@ test("a new filter starts the list at its first row, and the filter bar stays in
   }
 })
 
-test("beside the pane the filters keep one line: search and Sort first, then Status and Instance (FB-19)", async () => {
+test("beside the pane the filters keep one line: search first, then Status and Instance, and Sort at its end (FB-19)", async () => {
   await page.goto("/problems?status=open")
   const bar = page.locator('[data-slot="filter-bar"]').first()
   const searchButton = bar.getByRole("button", { name: "Search problems", exact: true })
@@ -2015,18 +2015,29 @@ test("beside the pane the filters keep one line: search and Sort first, then Sta
     for (let i = 1; i < boxes.length; i++)
       expect(boxes[i]?.x ?? 0).toBeGreaterThan((boxes[i - 1]?.x ?? 0) + (boxes[i - 1]?.width ?? 0) - 1)
   }
-  // Closed: the search button, Sort, Status and Instance, in that order on one line; no Filters button.
+  // Closed: the search button, Status, Instance and Sort, in that order on one line, Sort at its end; no Filters
+  // button.
   await expect(box).toBeHidden()
   await expect(bar).toHaveAttribute("data-pickers", "row")
   await expect(filters).toHaveCount(0)
   await expect(status).toHaveText(/Open/)
-  await inOrder(searchButton, sort, status, instance)
+  await inOrder(searchButton, status, instance, sort)
   // Open: the field takes the room, focused, and Instance goes behind Filters; still one line.
   await searchButton.click()
   await expect(box).toBeFocused()
   await expect(bar).toHaveAttribute("data-pickers", "panel")
-  await inOrder(box, sort, status, filters)
+  await inOrder(box, status, filters, sort)
+  // Sort ends the line: its end is the bar's.
+  const end = async (l: ReturnType<typeof page.locator>) => {
+    const b = await place(l)
+    return b.x + b.width
+  }
+  expect(Math.abs((await end(sort)) - (await end(bar)))).toBeLessThan(2)
   // Moving on inside the bar keeps the empty search open; Escape in it closes it and goes back to the button.
+  await page.keyboard.press("Tab")
+  await expect(status).toBeFocused()
+  await page.keyboard.press("Tab")
+  await expect(filters).toBeFocused()
   await page.keyboard.press("Tab")
   await expect(sort).toBeFocused()
   await expect(box).toBeVisible()
@@ -2037,14 +2048,14 @@ test("beside the pane the filters keep one line: search and Sort first, then Sta
   await page.keyboard.press("Escape")
   await expect(sort).toBeFocused()
   await expect(box).toBeVisible()
-  await page.keyboard.press("Shift+Tab")
+  for (let i = 0; i < 3; i++) await page.keyboard.press("Shift+Tab")
   await expect(box).toBeFocused()
   await page.keyboard.press("Escape")
   await expect(searchButton).toBeFocused()
   await expect(box).toBeHidden()
   // Closed again, Instance is back in the row.
   await expect(bar).toHaveAttribute("data-pickers", "row")
-  await inOrder(searchButton, sort, status, instance)
+  await inOrder(searchButton, status, instance, sort)
   // A status chosen while searching keeps the search open; Escape in the picker closes only the picker.
   await searchButton.click()
   await status.click()
@@ -2057,7 +2068,7 @@ test("beside the pane the filters keep one line: search and Sort first, then Sta
   // The longest status still leaves one line, and the status is a view, not a filter: nothing to clear.
   await chooseStatus("Resolved")
   await expect(status).toHaveText(/Resolved/)
-  await inOrder(box, sort, status, filters)
+  await inOrder(box, status, filters, sort)
   await expect(bar.getByRole("button", { name: "Clear filters" })).toHaveCount(0)
   // Leaving the bar closes an empty search, and the focus stays where it went.
   const elsewhere = page.getByRole("link", { name: "Overview", exact: true }).first()
@@ -2065,7 +2076,7 @@ test("beside the pane the filters keep one line: search and Sort first, then Sta
   await expect(box).toBeHidden()
   await expect(elsewhere).toBeFocused()
   await expect(status).toHaveText(/Resolved/)
-  await inOrder(searchButton, sort, status, instance)
+  await inOrder(searchButton, status, instance, sort)
   // A search from the address shows the field, without taking the focus; Instance waits behind Filters, whose
   // badge counts it, and Clear filters clears both.
   await page.goto("/problems?status=open&q=ERP")

@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Changed
+
+- **The Sort button is at the end of every list's line, on the right.** On Problems and Workflows it now ends the line of filters, after Status, Instance and Filters, instead of sitting beside the search; on lists without a search, such as Instances, Backups and Agent Access, it is back at the end of the line with the count, and in an instance's Open Problems it is back at the end of the head.
+
 ### Fixed
 
 - **The search field takes the focus from the search button when a list's filters get room for it.** With the focus on the search button of Problems or Workflows, widening the window or the list showed the field but left the focus nowhere when the list redrew its rows at the same moment; the field now gets it, as it does without new rows.

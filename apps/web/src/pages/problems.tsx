@@ -613,7 +613,7 @@ export function ProblemsPage() {
       <FilterBar
         views={{
           label: "Status",
-          // A short picker after the search and Sort, as the other filters are, not toggles in front of them.
+          // A short picker after the search, as the other filters are, not toggles in front of them.
           menu: true,
           value: status,
           onChange: (v) => setParam("status", v),

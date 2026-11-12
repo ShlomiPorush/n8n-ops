@@ -1395,7 +1395,7 @@ const noOrder: SortOrder = [null, () => {}]
 /**
  * The open problems of the instance, what needs a look first unless another order is picked. The server sends
  * the first 200 and how many there are in all; a preview shows the first few. The full list has its Sort
- * button at the start of its panel head, before the title (TB-28).
+ * button at the end of its panel head, after the link to Problems (TB-28).
  */
 function InstanceProblems({
   instanceId,

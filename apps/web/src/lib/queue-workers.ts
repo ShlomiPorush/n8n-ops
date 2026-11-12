@@ -239,7 +239,8 @@ export function workersOverview(
   const versions = new Set(withVersion.map((r) => r.version))
   const differ = mainVersion ? withVersion.filter((r) => r.version !== mainVersion) : []
   const [only] = versions
-  const named = (list: string[]) => (list.length > 3 ? `${list.slice(0, 3).join(", ")} and ${list.length - 3} more` : list.join(", "))
+  const named = (list: string[]) =>
+    list.length > 3 ? `${list.slice(0, 3).join(", ")} and ${list.length - 3} more` : list.join(", ")
 
   return {
     ready: {
@@ -285,9 +286,7 @@ export function workersOverview(
           ? { value: only, hint: `on ${every(withVersion.length)}${mainVersion ? ", same as the main" : ""}` }
           : {
               value: `${versions.size} versions`,
-              hint: named(
-                [...versions].map((v) => `${v} on ${withVersion.filter((r) => r.version === v).length}`),
-              ),
+              hint: named([...versions].map((v) => `${v} on ${withVersion.filter((r) => r.version === v).length}`)),
               tone: "warn",
             },
   }

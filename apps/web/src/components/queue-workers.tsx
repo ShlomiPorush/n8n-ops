@@ -60,7 +60,9 @@ export function QueueWorkers({
             hint={figures.ready.hint}
             tone={tone(figures.ready)}
           />
-          {figures.jobs && <Kpi label="Jobs at once" icon={CpuIcon} value={value(figures.jobs)} hint={figures.jobs.hint} />}
+          {figures.jobs && (
+            <Kpi label="Jobs at once" icon={CpuIcon} value={value(figures.jobs)} hint={figures.jobs.hint} />
+          )}
           {figures.memory && (
             <Kpi label="Memory" icon={MemoryStickIcon} value={value(figures.memory)} hint={figures.memory.hint} />
           )}
@@ -136,7 +138,9 @@ export function QueueWorkers({
                 </TableCell>
                 {read ? (
                   <>
-                    <TableCell className="text-end align-top whitespace-nowrap tabular-nums">{c.uptime ?? ""}</TableCell>
+                    <TableCell className="text-end align-top whitespace-nowrap tabular-nums">
+                      {c.uptime ?? ""}
+                    </TableCell>
                     <TableCell className="text-end align-top tabular-nums">
                       {c.jobs && (
                         <>
@@ -155,7 +159,11 @@ export function QueueWorkers({
                             {c.memory.limit && <span className="text-muted-foreground"> of {c.memory.limit}</span>}
                           </span>
                           {c.memory.percent !== undefined && (
-                            <Progress value={c.memory.percent} tone="ink" aria-label={`Memory ${c.memory.percent}% of its limit`} />
+                            <Progress
+                              value={c.memory.percent}
+                              tone="ink"
+                              aria-label={`Memory ${c.memory.percent}% of its limit`}
+                            />
                           )}
                         </span>
                       )}

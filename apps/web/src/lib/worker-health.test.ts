@@ -273,7 +273,11 @@ describe("describeHealth", () => {
     )
   })
   it("says which measure has no data in the range, without update advice, when the Worker sends heartbeats", () => {
-    const h = health({ coverage: { observedMs: 24 * H, onlineMs: 24 * H, rttMs: 0, dockerMs: 0 } })
+    const base = health()
+    const h = health({
+      coverage: { observedMs: 24 * H, onlineMs: 24 * H, rttMs: 0, dockerMs: 0 },
+      summary: { ...base.summary, rttSamples: 0, dockerChecks: 0, dockerFailed: 0, dockerFailingMs: 0 },
+    })
     expect(describeHealth(h, 168)).toBe(
       "Online 99.6% of the last 7 days. No round-trip measurements in this range. No Docker checks in this range.",
     )
@@ -323,7 +327,16 @@ describe("describeHealth", () => {
     expect(hasMeasurements(h)).toBe(true)
     expect(unmeasured(h)).toBe(false)
     expect(describeHealth(h, 24)).toBe(
-      "Online 99.6% of the last 24 hours. No round-trip measurements in this range. Docker failing 1 min in this range, from a check made before it.",
+      "Online 99.6% of the last 24 hours. No round-trip measurements in this range. Docker failing 1 min in this range.",
+    )
+  })
+  it("names measurements made while the Worker was offline, which cover no online time", () => {
+    const empty = notMeasuring()
+    const h = notMeasuring({ summary: { ...empty.summary, rttSamples: 3, dockerChecks: 2 } })
+    expect(h.coverage.rttMs).toBe(0)
+    expect(h.coverage.dockerMs).toBe(0)
+    expect(describeHealth(h, 24)).toBe(
+      "Online 99.6% of the last 24 hours. 3 round-trip measurements in this range. 2 Docker checks in this range.",
     )
   })
   it("never calls a Worker that sends heartbeats unmeasured, nor offers it the update, with no data at all", () => {

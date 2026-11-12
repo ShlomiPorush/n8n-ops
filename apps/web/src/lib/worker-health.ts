@@ -215,17 +215,23 @@ export function describeHealth(h: WorkerHealth, hours: number): string {
       `Round trip measured in ${share(h.coverage.rttMs)} of this range, Docker checked in ${share(h.coverage.dockerMs)}.`,
     )
   else {
+    // Coverage counts only time the Worker was online, so a range can hold measurements with no coverage: say what
+    // it holds instead of "none".
     parts.push(
       rtt
         ? `Round trip measured in ${share(h.coverage.rttMs)} of this range.`
-        : "No round-trip measurements in this range.",
+        : s.rttSamples > 0
+          ? `${plural(s.rttSamples, "round-trip measurement")} in this range.`
+          : "No round-trip measurements in this range.",
     )
     parts.push(
       docker
         ? `Docker checked in ${share(h.coverage.dockerMs)} of this range.`
         : s.dockerFailingMs > 0
-          ? `Docker failing ${durationText(s.dockerFailingMs)} in this range, from a check made before it.`
-          : "No Docker checks in this range.",
+          ? `Docker failing ${durationText(s.dockerFailingMs)} in this range.`
+          : s.dockerChecks > 0
+            ? `${plural(s.dockerChecks, "Docker check")} in this range.`
+            : "No Docker checks in this range.",
     )
   }
   return parts.join(" ")

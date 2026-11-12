@@ -204,9 +204,9 @@ export function QueueWorkers({
                   </>
                 ) : (
                   anyRead && (
-                  <TableCell colSpan={3} className="align-top text-muted-foreground">
-                    No figures read
-                  </TableCell>
+                    <TableCell colSpan={3} className="align-top text-muted-foreground">
+                      No figures read
+                    </TableCell>
                   )
                 )}
               </TableRow>

@@ -59,6 +59,7 @@ import { createTestRuns, type TestOutcome, type TestView } from "@/lib/test-run"
 import { type DateWriting, formatClock, formatDay, formatListTime, formatTime, useTimeFormat } from "@/lib/time"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
+import { DatabaseSection } from "@/pages/database"
 import { DestinationsSection } from "@/pages/destinations"
 import { routesFromForm, routesProblem, routesToForm, TopicRoutes } from "@/pages/topic-routes"
 
@@ -335,6 +336,8 @@ const weekdays = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Frida
 /** What each section is for, under its title. Forms take theirs from their definition. */
 const sectionDescriptions: Record<string, string> = {
   keys: "Keys that protect backups and the secrets n8n-ops stores.",
+  database:
+    "How much room the n8n-ops database takes, and compacting a table to give free space inside it back to the disk.",
   destinations:
     "Where encrypted backups are written: S3, a folder on this server, SFTP or WebDAV. Each keeps its own retention. Instances use the default destinations unless they choose others.",
 }
@@ -439,6 +442,8 @@ export function SettingsPage() {
               <SettingsForm key={k} section={k} active={k === section} />
             ) : k === "destinations" ? (
               <DestinationsSection key={k} hidden={k !== section} />
+            ) : k === "database" ? (
+              <DatabaseSection key={k} hidden={k !== section} />
             ) : k === "keys" ? (
               <KeysCard key={k} />
             ) : null,

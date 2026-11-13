@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.18.1] - 2026-11-13
+
 ### Changed
 
 - **The version n8n-ops and its Worker report is part of their images.** Each image keeps a `VERSION` file and reports what it says, on `/healthz`, in the sidebar, to agents and to the server. `N8N_OPS_VERSION` in a container's environment no longer changes it. Images built outside a release, such as a development stack, report the last release's number.

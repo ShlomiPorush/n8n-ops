@@ -1,6 +1,6 @@
-import { eq, sql } from "drizzle-orm"
+import { eq, inArray, lt, sql } from "drizzle-orm"
 import type { Db } from "../db/client.ts"
-import { agentState } from "../db/schema.ts"
+import { agentResets, agentState } from "../db/schema.ts"
 
 /** A transaction, or the database outside one: what the gate's statements run on. */
 export type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0]
@@ -43,18 +43,27 @@ export async function nextGeneration(tx: Tx): Promise<number> {
   return row?.generation ?? 0
 }
 
-/** Whether a two-factor reset is under way: no approval is answered meanwhile. */
+/** Whether any two-factor reset is under way: no approval is answered meanwhile. */
 export async function resetting(db: Runner): Promise<boolean> {
-  const [row] = await db.select({ resetting: agentState.resetting }).from(agentState).where(eq(agentState.id, 1))
-  return row?.resetting ?? false
+  const [row] = await db.select({ id: agentResets.id }).from(agentResets).limit(1)
+  return Boolean(row)
 }
 
-/** Marks a two-factor reset as under way or finished; in the transaction that ends every connection. */
-export async function markResetting(tx: Tx, on: boolean) {
-  await tx
-    .insert(agentState)
-    .values({ id: 1, generation: 0, resetting: on })
-    .onConflictDoUpdate({ target: agentState.id, set: { resetting: on } })
+/** Records a reset as under way, or done; in the transaction that ends every connection. Each reset has its own row. */
+export async function addReset(tx: Tx, id: string) {
+  await tx.insert(agentResets).values({ id })
+}
+export async function removeResets(tx: Tx, ids: string[]) {
+  if (ids.length) await tx.delete(agentResets).where(inArray(agentResets.id, ids))
+}
+
+/** Resets under way for longer than ms milliseconds: left by a process that stopped, since a reset takes seconds. */
+export async function abandonedResets(db: Runner, ms: number): Promise<string[]> {
+  const rows = await db
+    .select({ id: agentResets.id })
+    .from(agentResets)
+    .where(lt(agentResets.createdAt, new Date(Date.now() - ms)))
+  return rows.map((r) => r.id)
 }
 
 /** The public URL connections were last made under, or null before the first start that recorded one. */

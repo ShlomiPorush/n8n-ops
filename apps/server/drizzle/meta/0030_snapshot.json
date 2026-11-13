@@ -1,5 +1,5 @@
 {
-  "id": "66436a4c-f7bb-4926-bf1d-75e4c82aaf2f",
+  "id": "f507cfac-4ff4-4e3b-bea1-84cbba004189",
   "prevId": "6f7dcda0-071d-46d2-ba9f-3f3f0b2b3a65",
   "version": "7",
   "dialect": "postgresql",
@@ -982,6 +982,32 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.agent_resets": {
+      "name": "agent_resets",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.agent_state": {
       "name": "agent_state",
       "schema": "",
@@ -1004,13 +1030,6 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false
-        },
-        "resetting": {
-          "name": "resetting",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
         }
       },
       "indexes": {},

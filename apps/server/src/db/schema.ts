@@ -235,8 +235,16 @@ export const agentState = pgTable("agent_state", {
   id: integer("id").primaryKey(),
   generation: integer("generation").notNull().default(0),
   issuer: text("issuer"),
-  /** A two-factor reset is under way: no approval is answered until it has finished and ended every connection. */
-  resetting: boolean("resetting").notNull().default(false),
+})
+
+/**
+ * Two-factor resets under way (oauth/agents.ts): while any row is here, no approval is answered. Each reset adds its own
+ * row when it ends every connection and removes it when it is done; a row older than ten minutes was left by a reset
+ * that stopped, and the start and the sweep remove it.
+ */
+export const agentResets = pgTable("agent_resets", {
+  id: text("id").primaryKey(),
+  createdAt: created(),
 })
 
 /**

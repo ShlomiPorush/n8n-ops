@@ -49,7 +49,7 @@ if (!u) {
 // next run, or by the server when it starts).
 const agentCtx = { db, audit: createAudit(db), events: new EventEmitter() } as unknown as Ctx
 const operator = { by: "operator", via: "cli" } as const
-await beginIdentityReset(agentCtx, operator)
+const reset = await beginIdentityReset(agentCtx, operator)
 
 const password = randomBytes(18).toString("base64url")
 const hash = await (await auth.$context).password.hash(password)
@@ -64,7 +64,7 @@ await createAudit(db)({
   via: "cli",
 })
 
-await finishIdentityReset(agentCtx, operator)
+await finishIdentityReset(agentCtx, operator, [reset])
 
 console.log(`Username: ${u.username ?? u.name}`)
 console.log(`New password: ${password}`)

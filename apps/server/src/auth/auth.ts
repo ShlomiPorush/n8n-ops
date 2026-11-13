@@ -65,13 +65,13 @@ const notVerified = () =>
  * was made or refused (oauth/agents.ts, set by index.ts). Only a request from a signed-in session begins one, so a
  * request without a session ends nothing. The reset from the server does the same in cli.ts.
  */
-type ResetHooks = { begin(actor: string): Promise<unknown>; finish(actor: string): Promise<unknown> }
+type ResetHooks = { begin(actor: string): Promise<string>; finish(actor: string, id: string): Promise<unknown> }
 let twoFactorReset: ResetHooks | null = null
 export function onTwoFactorReset(hooks: ResetHooks) {
   twoFactorReset = hooks
 }
-/** The requests whose reset began, so that only they finish one. */
-const resets = new WeakSet<Request>()
+/** The requests whose reset began, each with its reset, so that only they finish one, and only their own. */
+const resets = new WeakMap<Request, string>()
 
 export function createAuth(db: Db, appKey: Buffer, publicUrl?: string, passkeyUrl: URL | null = null) {
   const audit = createAudit(db)
@@ -121,17 +121,19 @@ export function createAuth(db: Db, appKey: Buffer, publicUrl?: string, passkeyUr
       before: createAuthMiddleware(async (ctx) => {
         if (ctx.path !== "/two-factor/disable" || !twoFactorReset || !ctx.request) return
         // Better Auth checks the session after this hook; read it here through its own interface.
+        // No session, or one that could not be read: the reset does not run at all (it would be refused anyway, and
+        // must never run with the agents still connected).
         const session = await getSessionFromCtx(ctx)
-        if (!session) return
+        if (!session) throw new APIError("UNAUTHORIZED", { message: "Sign in again, then reset two-factor." })
         const actor = session.user as { username?: string | null; name?: string }
-        await twoFactorReset.begin(actor.username ?? actor.name ?? "")
-        resets.add(ctx.request)
+        resets.set(ctx.request, await twoFactorReset.begin(actor.username ?? actor.name ?? ""))
       }),
       after: createAuthMiddleware(async (ctx) => {
-        if (ctx.request && resets.has(ctx.request)) {
+        const reset = ctx.request ? resets.get(ctx.request) : undefined
+        if (ctx.request && reset) {
           resets.delete(ctx.request)
           const actor = ctx.context.session?.user as { username?: string | null; name?: string } | undefined
-          await twoFactorReset?.finish(actor?.username ?? actor?.name ?? "")
+          await twoFactorReset?.finish(actor?.username ?? actor?.name ?? "", reset)
         }
         const change = signInChanges[ctx.path]
         // The after hook also runs when the endpoint refused; only a change that was made is recorded.

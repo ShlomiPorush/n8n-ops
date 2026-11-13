@@ -64,7 +64,7 @@ ctx.agents = createAgentConnect(ctx, {
 // A two-factor reset ends every agent connection: whoever reset it may not be the person who approved them.
 onTwoFactorReset({
   begin: (actor) => beginIdentityReset(ctx, { by: actor, via: "web" }),
-  finish: (actor) => finishIdentityReset(ctx, { by: actor, via: "web" }),
+  finish: (actor, id) => finishIdentityReset(ctx, { by: actor, via: "web" }, [id]),
 })
 // Connections made under a public URL that has since changed end before the server takes a request.
 await ctx.agents.reconcile()

@@ -6,15 +6,31 @@ import { join } from "node:path"
 import { and, eq, isNull, sql } from "drizzle-orm"
 import postgres from "postgres"
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest"
+import { createAuth, onTwoFactorReset } from "../auth/auth.ts"
 import type { Ctx } from "../context.ts"
 import { createDatabase, type Database } from "../db/client.ts"
-import { accessRequests, agentConsent, agentState, apiTokens, auditLog, oauthStore, user } from "../db/schema.ts"
+import {
+  accessRequests,
+  agentConsent,
+  agentResets,
+  agentState,
+  apiTokens,
+  auditLog,
+  oauthStore,
+  user,
+} from "../db/schema.ts"
 import { createAudit } from "../lib/audit.ts"
 import { createSecrets, sha256 } from "../lib/crypto.ts"
 import { createSettings } from "../lib/settings.ts"
 import { HEADERS, restRoutes } from "../routes/agent.ts"
 import { OPEN, REVISION } from "../routes/agent-policy.ts"
-import { beginIdentityReset, createAgentConnect, endEveryConnection, finishIdentityReset } from "./agents.ts"
+import {
+  ABANDONED_RESET_MS,
+  beginIdentityReset,
+  createAgentConnect,
+  endEveryConnection,
+  finishIdentityReset,
+} from "./agents.ts"
 import { generation } from "./gate.ts"
 import { CLI_CLIENT, createAgentProvider, resources } from "./provider.ts"
 import { storeAdapter } from "./store.ts"
@@ -729,18 +745,33 @@ describe("making and ending connections, in each order", () => {
   it("answers no approval while a two-factor reset is under way, and again once it is done", async () => {
     const s = await setUp()
     expect((await s.decide(value())).kind).toBe("approved")
-    await beginIdentityReset(s.ctx, { by: "owner", via: "web" })
+    const reset = await beginIdentityReset(s.ctx, { by: "owner", via: "web" })
     expect(await s.live()).toBe(0)
     expect((await s.decide(value())).kind).toBe("gone")
-    await finishIdentityReset(s.ctx, { by: "owner", via: "web" })
+    // The sweep (and a start) leave a reset that is under way alone.
+    await s.agents.reconcile()
+    expect((await s.decide(value())).kind).toBe("gone")
+    await finishIdentityReset(s.ctx, { by: "owner", via: "web" }, [reset])
     expect((await s.decide(value())).kind).toBe("approved")
   })
 
-  it("finishes at start a two-factor reset that stopped halfway", async () => {
+  it("waits for every reset under way: one that finishes first does not open approvals for another", async () => {
+    const s = await setUp()
+    const first = await beginIdentityReset(s.ctx, { by: "owner", via: "web" })
+    const second = await beginIdentityReset(s.ctx, { by: "operator", via: "cli" })
+    await finishIdentityReset(s.ctx, { by: "owner", via: "web" }, [first])
+    expect((await s.decide(value())).kind).toBe("gone")
+    await finishIdentityReset(s.ctx, { by: "operator", via: "cli" }, [second])
+    expect((await s.decide(value())).kind).toBe("approved")
+  })
+
+  it("finishes a two-factor reset left halfway by a process that stopped, once it is clearly abandoned", async () => {
     const s = await setUp()
     await beginIdentityReset(s.ctx, { by: "operator", via: "cli" })
-    // The reset stopped here; a new server process starts.
+    // The reset stopped here; later, a new server process starts.
+    await s.ctx.db.update(agentResets).set({ createdAt: new Date(Date.now() - ABANDONED_RESET_MS - 60_000) })
     await s.agents.reconcile()
+    expect(await s.ctx.db.select().from(agentResets)).toEqual([])
     expect((await s.decide(value())).kind).toBe("approved")
   })
 
@@ -769,8 +800,37 @@ describe("making and ending connections, in each order", () => {
     expect(await s.live()).toBe(1)
     expect((await s.ctx.db.select().from(accessRequests))[0]?.status).toBe("pending")
     expect((await s.ctx.db.select().from(oauthStore)).length).toBe(before.length)
-    expect(
-      (await s.ctx.db.select().from(oauthStore).where(eq(oauthStore.grantId, row.grantId))).length,
-    ).toBeGreaterThan(0)
+    // The grant itself (a Grant record has no grant_id of its own: its id is the grant).
+    const grant = await s.ctx.db
+      .select()
+      .from(oauthStore)
+      .where(and(eq(oauthStore.type, "Grant"), eq(oauthStore.id, row.grantId)))
+    expect(grant).toHaveLength(1)
+  })
+})
+
+describe("the two-factor reset hooks", () => {
+  it("begin nothing, and stop the reset, for a request without a session", async () => {
+    const database = await freshDatabase()
+    const calls: string[] = []
+    onTwoFactorReset({
+      begin: async () => {
+        calls.push("begin")
+        return "reset"
+      },
+      finish: async () => {
+        calls.push("finish")
+      },
+    })
+    const auth = createAuth(database.db, randomBytes(32), issuer)
+    const res = await auth.handler(
+      new Request(`${issuer}/api/auth/two-factor/disable`, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: issuer },
+        body: JSON.stringify({ password: value() }),
+      }),
+    )
+    expect(res.status).toBe(401)
+    expect(calls).toEqual([])
   })
 })

@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto"
+import { randomBytes, randomUUID } from "node:crypto"
 import type { IncomingMessage } from "node:http"
 import { and, eq, isNotNull, isNull, lt, ne, or, sql } from "drizzle-orm"
 import { type Ctx, changed } from "../context.ts"
@@ -10,13 +10,15 @@ import { sha256 } from "../lib/crypto.ts"
 import type { Design } from "../lib/settings.ts"
 import { revokeAccessOfToken } from "../services/access.ts"
 import {
+  abandonedResets,
+  addReset,
   gateExclusive,
   gateShared,
   generation,
   lastIssuer,
-  markResetting,
   nextGeneration,
   rememberIssuer,
+  removeResets,
   resetting,
   type Tx,
 } from "./gate.ts"
@@ -140,16 +142,19 @@ export async function endEveryConnection(ctx: Ctx, reason: EndReason, who: Who, 
 }
 
 /**
- * A two-factor reset ends every connection on both sides of the change (D6): first, in the transaction that marks the
- * reset as under way, so no approval is answered until it is over; then again once it is done, which also clears the
- * mark. If the process stops in between, the start ends everything again and clears it (reconcile). The account page
- * (auth/auth.ts) and the CLI (cli.ts) call both.
+ * A two-factor reset ends every connection on both sides of the change (D6): first, in the transaction that records the
+ * reset as under way (a row of its own), so no approval is answered until every reset under way is over; then again
+ * once it is done, which removes only its own row. A row left by a process that stopped is removed, with everything
+ * ended once more, after ABANDONED_RESET_MS (reconcile). The account page (auth/auth.ts) and the CLI (cli.ts) call both.
  */
-export async function beginIdentityReset(ctx: Ctx, who: Who) {
-  return endEveryConnection(ctx, "identity", who, (tx) => markResetting(tx, true))
+export const ABANDONED_RESET_MS = 10 * 60_000
+export async function beginIdentityReset(ctx: Ctx, who: Who): Promise<string> {
+  const id = randomUUID()
+  await endEveryConnection(ctx, "identity", who, (tx) => addReset(tx, id))
+  return id
 }
-export async function finishIdentityReset(ctx: Ctx, who: Who) {
-  return endEveryConnection(ctx, "identity", who, (tx) => markResetting(tx, false))
+export async function finishIdentityReset(ctx: Ctx, who: Who, ids: string[]) {
+  return endEveryConnection(ctx, "identity", who, (tx) => removeResets(tx, ids))
 }
 
 export type AgentConnect = ReturnType<typeof createAgentConnect>
@@ -461,8 +466,9 @@ export function createAgentConnect(
    * while agents are off (one that an interrupted turn-off left behind never works again).
    */
   async function reconcile() {
-    // A two-factor reset that stopped halfway: end everything again, and let approvals be answered once more.
-    if (await resetting(ctx.db)) await finishIdentityReset(ctx, SYSTEM)
+    // Two-factor resets that stopped halfway: end everything again, and remove them (approvals wait for no other).
+    const abandoned = await abandonedResets(ctx.db, ABANDONED_RESET_MS)
+    if (abandoned.length) await finishIdentityReset(ctx, SYSTEM, abandoned)
     await reconcileIssuer(issuerOf((await ctx.settings.get("general")).publicUrl))
     if (!(await enabled())) {
       const [live] = await ctx.db

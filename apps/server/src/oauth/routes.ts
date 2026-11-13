@@ -314,15 +314,13 @@ export function agentConnectRoutes(ctx: Ctx, agents: AgentConnect) {
           : null
     if (capped) {
       const release = await capped.lock()
-      // A request still unhandled after a minute (a client sending its body slowly) is cut off, so it can no longer
-      // store anything; the provider then fails it and gives the lock back. Five minutes is the last resort.
+      // A request still unhandled after a minute (a client sending its body slowly) is cut off. The lock is given
+      // back only when the provider is done with the request, never on a timer: while a store may still be on its way
+      // the cap stays closed (the safe side), so no two requests fill the last place.
       const cutOff = setTimeout(() => n.incoming.destroy(), 60_000)
-      const lastResort = setTimeout(release, 300_000)
       cutOff.unref?.()
-      lastResort.unref?.()
       const done = () => {
         clearTimeout(cutOff)
-        clearTimeout(lastResort)
         release()
       }
       if (!(await capped.room().catch(() => false))) {

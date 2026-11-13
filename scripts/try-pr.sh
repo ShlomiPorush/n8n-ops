@@ -39,7 +39,7 @@ db_env() {
 affected_services() {
   local range="$1" files
   files="$(git -C "$REPO_ROOT" diff --name-only "$range")"
-  local shared='^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|config/|packages/)'
+  local shared='^(VERSION$|package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|config/|packages/)'
   grep -qE "$shared|^(apps/server/|apps/web/|docker/server\.)" <<<"$files" && echo server
   grep -qE "$shared|^(apps/worker/|docker/worker\.)" <<<"$files" && echo worker
   return 0
@@ -99,7 +99,7 @@ try_pr() {
 
   for service in "${services[@]}"; do
     info "Building n8n-ops-$service:dev from #$pr ($commit)"
-    docker build -f "$worktree/docker/$service.Dockerfile" --build-arg "VERSION=pr$pr-$commit" \
+    docker build -f "$worktree/docker/$service.Dockerfile" \
       -t "n8n-ops-$service:dev" "$worktree" || die "build failed; run: scripts/try-pr.sh restore"
   done
 

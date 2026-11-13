@@ -1,3 +1,5 @@
+import { readVersion } from "./version.ts"
+
 export type ServerConfig = {
   port: number
   databaseUrl: string
@@ -41,7 +43,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   return {
     port,
     databaseUrl,
-    version: env.N8N_OPS_VERSION ?? "dev",
+    version: readVersion(),
     webDir: env.WEB_DIR || undefined,
     skillDir: env.SKILL_DIR || undefined,
     migrationsDir: env.MIGRATIONS_DIR ?? "drizzle",

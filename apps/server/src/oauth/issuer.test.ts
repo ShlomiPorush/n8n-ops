@@ -8,12 +8,17 @@ describe("the verification stack's plain-http host", () => {
     vi.stubEnv("N8N_OPS_TEST_HTTP_ISSUER_HOST", "server")
     vi.stubEnv("N8N_OPS_VERSION", "verify-20bc4fe")
     expect(issuerOf("http://server:8080")).toBe("http://server:8080")
+    vi.stubEnv("N8N_OPS_VERSION", `verify-${"a".repeat(40)}`)
+    expect(issuerOf("http://server:8080")).toBe("http://server:8080")
     expect(issuerOf("http://other:8080")).toBeNull()
   })
 
   it("is ignored in a release, a dev image and a build without a version", () => {
     vi.stubEnv("N8N_OPS_TEST_HTTP_ISSUER_HOST", "server,ops.example.com")
-    for (const version of ["0.18.0", "dev-20bc4fe", "dev", "verify-", "verify-latest", "0.18.0-verify-20bc4fe"]) {
+    const versions = ["0.18.0", "dev-20bc4fe", "dev", "verify-", "verify-latest", "0.18.0-verify-20bc4fe"]
+    // A verification image carries 7 to 40 hex digits of its commit (scripts/verify.sh, rev-parse --short=7).
+    versions.push("verify-20bc4f", `verify-${"a".repeat(41)}`)
+    for (const version of versions) {
       vi.stubEnv("N8N_OPS_VERSION", version)
       expect(issuerOf("http://server:8080"), version).toBeNull()
       expect(issuerOf("http://ops.example.com"), version).toBeNull()

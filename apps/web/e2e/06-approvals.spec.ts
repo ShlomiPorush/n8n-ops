@@ -396,7 +396,10 @@ test("a request for two instances is changed in Telegram, then approved as shown
     expect((await mcp(request, "release_instance_access", { requestId: id })).status).toBe("released")
   } finally {
     // Closed again, as the specs that follow expect.
-    expect((await page.request.delete(`/api/instances/${other.id}/capabilities/agents`)).ok()).toBe(true)
+    const own = { origin: new URL(page.url()).origin }
+    expect((await page.request.delete(`/api/instances/${other.id}/capabilities/agents`, { headers: own })).ok()).toBe(
+      true,
+    )
     expect((await agentAccess({ enabled: false, scopes: [] })).ok()).toBe(true)
   }
 })

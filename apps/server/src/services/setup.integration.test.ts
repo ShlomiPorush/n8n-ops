@@ -107,9 +107,12 @@ beforeAll(async () => {
     }),
   } as unknown as Ctx
   await database.db.insert(user).values({ id: "u1", name: "operator", email: "operator@n8n-ops.local" })
-  await database.db
-    .insert(session)
-    .values({ id: "s1", token: "t1", userId: "u1", expiresAt: new Date(Date.now() + 86_400_000) })
+  await database.db.insert(session).values({
+    id: "s1",
+    token: randomBytes(24).toString("hex"),
+    userId: "u1",
+    expiresAt: new Date(Date.now() + 86_400_000),
+  })
   server = createServer(async (req, res) => {
     const send = (status: number, body?: unknown) => {
       res.writeHead(status, { "content-type": "application/json" })
@@ -873,7 +876,11 @@ describe("POST /instances/:id/refresh", () => {
   const refresh = async (id: string) => {
     const res = await new Hono<Env>()
       .route("/api/instances", instanceRoutes(ctx))
-      .request(`/api/instances/${id}/refresh`, { method: "POST" })
+      .request(`http://ops.example.com/api/instances/${id}/refresh`, {
+        method: "POST",
+        // A bodiless change, as the page sends it: from its own origin.
+        headers: { origin: "http://ops.example.com" },
+      })
     expect(res.status).toBe(200)
     return (await res.json()) as { map: unknown; skipped: string[] }
   }

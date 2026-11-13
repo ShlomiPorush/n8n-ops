@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Security
+
+- **Changes are accepted only from n8n-ops' own pages.** What a signed-in page changes (settings, backup and app keys, API tokens, instances, problems, Workers, backup destinations, agent access, compacting a table) and creating the first account are refused with "Changes are accepted only from n8n-ops' own pages." when the request comes from a page of another site, such as another app on a subdomain of the same domain, which could otherwise act with the signed-in person's session. Signing in and out keep the checks of the sign-in library.
+
 ### Added
 
 - **Settings → Database shows how much room the database takes, and compacts a table.** It lists every table with its size, the room its indexes take, and the free space inside its data as PostgreSQL measures it. Compact rewrites one table to the rows it still holds, so the space that deleted rows left behind goes back to the disk, after a question that says what waits while it runs and how much disk room the copy may need. One table is compacted at a time, the page follows it as it runs, and the Audit Log records who started it and how it ended. Tables that every page reads cannot be compacted from here. The update installs the PostgreSQL extension that measures free space (pgstattuple) where the database allows it; elsewhere the page shows the sizes and says why free space is missing.

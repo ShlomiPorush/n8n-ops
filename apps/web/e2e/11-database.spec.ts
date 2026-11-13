@@ -39,7 +39,8 @@ test("compacts a table after the question, shows how it ended and records it", a
   await expect(question).toContainText("everything that reads or writes audit_log waits")
   await expect(question).toContainText("n8n-ops cannot check that space")
   await question.getByRole("button", { name: "Compact table" }).click()
-  await expect(page.getByText("Compacting audit_log")).toBeVisible()
+  // One toast at a time (FB-2): a quick compaction replaces "Compacting" with how it ended before the check looks.
+  await expect(page.getByText(/^(Compacting audit_log|audit_log compacted: .+)$/)).toBeVisible()
   await expect(row("audit_log")).toContainText(/Compacted .+: .+ to .+/, { timeout: 30_000 })
 
   await page.goto("/audit")

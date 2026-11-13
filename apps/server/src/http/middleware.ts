@@ -4,15 +4,20 @@ import type { Ctx } from "../context.ts"
 import { apiTokens } from "../db/schema.ts"
 import { sha256 } from "../lib/crypto.ts"
 import { type CheckMode, checkSession } from "../services/session-policy.ts"
+import { fromAnotherPage } from "./origin.ts"
 import type { Env } from "./types.ts"
 
 /**
  * Requires a signed-in user whose session the clocks under Sign-in security still allow; a session that ended is
  * answered with `session_ended` and the reason, so the page can say why. Unless allowWithoutTotp is set, the user
- * must also have TOTP enabled. `mode` is what the request counts as (services/session-policy.ts).
+ * must also have TOTP enabled. `mode` is what the request counts as (services/session-policy.ts). A change a page
+ * of another site could send with the person's cookie is refused first (`fromAnotherPage`), before the session is
+ * read.
  */
 export function requireUser(ctx: Ctx, options: { allowWithoutTotp?: boolean; mode?: CheckMode } = {}) {
   return createMiddleware<Env>(async (c, next) => {
+    const refused = await fromAnotherPage(ctx, c)
+    if (refused) return refused
     const { auth } = await ctx.auth()
     const result = await auth.api.getSession({ headers: c.req.raw.headers })
     if (!result) return c.json({ error: "unauthorized" }, 401)

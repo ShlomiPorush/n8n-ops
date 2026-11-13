@@ -166,11 +166,13 @@ describe("a refused save names the field and the entry in words (SV-1, SV-12)", 
 })
 
 describe("Email and Telegram tests with the values on screen (FS-19, FS-5)", () => {
+  const storedPassword = randomBytes(16).toString("hex")
+  const storedToken = `123:${randomBytes(16).toString("hex")}`
   const storedEmail = {
     smtpHost: "smtp.example.com",
     smtpPort: 587,
     smtpUser: "reports",
-    smtpPasswordEnc: "enc:stored-secret",
+    smtpPasswordEnc: `enc:${storedPassword}`,
     recipients: ["ops@example.com"],
   }
   beforeEach(() => {
@@ -196,7 +198,7 @@ describe("Email and Telegram tests with the values on screen (FS-19, FS-5)", () 
       ok: true,
       recipients: ["new@example.com"],
     })
-    expect(mail.transports[0]).toMatchObject({ host: "SMTP.Example.com", auth: { pass: "stored-secret" } })
+    expect(mail.transports[0]).toMatchObject({ host: "SMTP.Example.com", auth: { pass: storedPassword } })
     expect(mail.sent[0]).toMatchObject({ to: "new@example.com" })
 
     const typed = randomBytes(24).toString("hex")
@@ -209,7 +211,7 @@ describe("Email and Telegram tests with the values on screen (FS-19, FS-5)", () 
   it("tests the stored settings when no values are sent, as before", async () => {
     const test = send(alertTestRoutes(fakeCtx({ email: { ...storedEmail } })), "/test/email")
     expect((await test("POST")).body).toEqual({ ok: true, recipients: ["ops@example.com"] })
-    expect(mail.transports[0]).toMatchObject({ host: "smtp.example.com", auth: { pass: "stored-secret" } })
+    expect(mail.transports[0]).toMatchObject({ host: "smtp.example.com", auth: { pass: storedPassword } })
     // The daily report, made now, with the footer of a test.
     expect(reports.built.at(-1)).toEqual(["daily", expect.any(Date), { test: true }])
   })
@@ -233,12 +235,15 @@ describe("Email and Telegram tests with the values on screen (FS-19, FS-5)", () 
       })
     })
     afterEach(() => vi.unstubAllGlobals())
-    const ctx = () => fakeCtx({ telegram: { botTokenEnc: "enc:stored-token", chatId: "4242", webhookSecret: "s" } })
+    const ctx = () =>
+      fakeCtx({
+        telegram: { botTokenEnc: `enc:${storedToken}`, chatId: "4242", webhookSecret: randomBytes(16).toString("hex") },
+      })
 
     it("sends to the chat on screen with the stored token while no new token is typed", async () => {
       const test = send(alertTestRoutes(ctx()), "/test/telegram")
       expect((await test("POST", { chatId: "-1001234" })).status).toBe(200)
-      expect(calls[0]?.url).toContain("/botstored-token/sendMessage")
+      expect(calls[0]?.url).toContain(`/bot${storedToken}/sendMessage`)
       expect(calls[0]?.body.chat_id).toBe("-1001234")
       const botToken = `123:${randomBytes(16).toString("hex")}`
       await test("POST", { botToken, chatId: "4242" })

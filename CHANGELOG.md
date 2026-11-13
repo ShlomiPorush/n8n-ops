@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Security
+
+- **Agents connect over plain http only on this computer, with no exception.** `N8N_OPS_TEST_HTTP_ISSUER_HOST`, a setting the verification stack used so its tests could connect agents to `http://server:8080`, also let a released server take agents over plain http on the names it listed, so agent tokens and codes could travel without TLS. The setting is gone: the tests now reach the server on `localhost`, and plain http is allowed only on `localhost`, `127.0.0.1` and `[::1]`, whatever the environment says.
+
 ## [0.18.0] - 2026-11-13
 
 ### Added

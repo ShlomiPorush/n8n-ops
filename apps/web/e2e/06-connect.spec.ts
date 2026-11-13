@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto"
 import { createServer, type Server } from "node:http"
+import type { AddressInfo } from "node:net"
 import { expect, type Page, test } from "@playwright/test"
 import { dialogClosed, signIn } from "./helpers.ts"
 
@@ -10,8 +11,10 @@ import { dialogClosed, signIn } from "./helpers.ts"
  */
 test.describe.configure({ mode: "serial" })
 
-const base = process.env.E2E_BASE_URL ?? "http://server:8080"
-const redirect = "http://127.0.0.1:33418/callback"
+const base = process.env.E2E_BASE_URL ?? "http://localhost:8080"
+// The callback listens on a port the system picks, set once it listens.
+let callbackHost = ""
+let redirect = ""
 let page: Page
 let callback: Server
 
@@ -20,7 +23,9 @@ test.beforeAll(async ({ browser }) => {
   await signIn(page)
   // The agent listens on its computer for the browser to come back, as an MCP client does.
   callback = createServer((_req, res) => res.end("back in the agent"))
-  await new Promise<void>((resolve) => callback.listen(33418, "127.0.0.1", resolve))
+  await new Promise<void>((resolve) => callback.listen(0, "127.0.0.1", resolve))
+  callbackHost = `127.0.0.1:${(callback.address() as AddressInfo).port}`
+  redirect = `http://${callbackHost}/callback`
 })
 
 test.afterAll(async () => {
@@ -165,7 +170,7 @@ test("an MCP client connects through the browser, with only the rights the perso
   await expect(page).toHaveURL(/\/connect\/approve\//)
   await expect(page.getByRole("heading", { name: "Connect an agent" })).toBeVisible()
   await expect(page.getByText("e2e agent asks to use n8n-ops.")).toBeVisible()
-  await expect(page.getByText("127.0.0.1:33418")).toBeVisible()
+  await expect(page.getByText(callbackHost)).toBeVisible()
   await expect(page.getByText("Any program can give itself this name.")).toBeVisible()
   // The agent asked to request instance access; the person does not give it.
   await page.getByLabel("May request access to n8n instances").uncheck()
@@ -283,10 +288,12 @@ test("a script that names itself is shown by that name, and its reads are in the
   await expect(page.getByRole("row").filter({ hasText: "API read" }).filter({ hasText: label }).first()).toBeVisible()
 })
 
-test("the skill is not served over the stack's plain http address", async () => {
-  const res = await fetch(`${base}/connect/skill/SKILL.md`)
-  expect(res.status).toBe(404)
-  expect(((await res.json()) as { error: string }).error).toBe("not_configured")
+test("the skill is served on this computer's plain http address, with that address filled in", async () => {
+  const res = await fetch(`${base}/connect/skill/scripts/n8n-ops.mjs`)
+  expect(res.status).toBe(200)
+  const text = await res.text()
+  expect(text).toContain(`const DEFAULT_URL = "${base}"`)
+  expect(text).not.toContain("__N8N_OPS_URL__")
 })
 
 test("a script the person denies is told so", async () => {
@@ -311,7 +318,7 @@ test("Connected agents lists both, and a disconnected agent loses access at once
   await page.goto("/agents")
   await expect(page.getByRole("heading", { name: "Agents and tokens" })).toBeVisible()
   const agentRow = page.getByRole("row").filter({ hasText: "e2e agent" })
-  await expect(agentRow).toContainText("through the browser · 127.0.0.1:33418")
+  await expect(agentRow).toContainText(`through the browser · ${callbackHost}`)
   await expect(page.getByRole("row").filter({ hasText: "Script" }).first()).toContainText("with a code")
 
   // The refresh token rotates and still works before the disconnect.

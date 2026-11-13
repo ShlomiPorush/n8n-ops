@@ -45,15 +45,10 @@ type Who = { by: string; via: AuditVia }
 const SYSTEM: Who = { by: "n8n-ops", via: "system" }
 
 /**
- * Names on which plain http is allowed: the loopback names, for trying n8n-ops on this computer, and the host name
- * the verification stack's end-to-end tests use (N8N_OPS_TEST_HTTP_ISSUER_HOST, set only by scripts/verify.sh).
+ * Names on which plain http is allowed: the loopback names only, for trying n8n-ops on this computer. Nothing adds
+ * to them, not even for tests: the verification stack's end-to-end tests reach the server on localhost.
  */
-const httpHosts = () => [
-  "localhost",
-  "127.0.0.1",
-  "[::1]",
-  ...(process.env.N8N_OPS_TEST_HTTP_ISSUER_HOST || "").split(",").filter(Boolean),
-]
+const HTTP_HOSTS = ["localhost", "127.0.0.1", "[::1]"]
 
 /**
  * The installation's public address as an OAuth issuer: an absolute https origin with nothing after it, or http on
@@ -62,7 +57,7 @@ const httpHosts = () => [
 export function issuerOf(publicUrl: string): string | null {
   try {
     const url = new URL(publicUrl)
-    if (url.protocol !== "https:" && !(url.protocol === "http:" && httpHosts().includes(url.hostname))) return null
+    if (url.protocol !== "https:" && !(url.protocol === "http:" && HTTP_HOSTS.includes(url.hostname))) return null
     if (url.username || url.password || url.search || url.hash || (url.pathname !== "/" && url.pathname !== ""))
       return null
     return url.origin

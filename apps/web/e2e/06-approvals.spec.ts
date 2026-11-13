@@ -16,7 +16,7 @@ let token = ""
 let secret = ""
 const chatId = "4242"
 const mailApi = process.env.E2E_MAIL_URL ?? "http://mail:8025"
-const publicUrl = process.env.E2E_BASE_URL ?? "http://server:8080"
+const publicUrl = process.env.E2E_BASE_URL ?? "http://localhost:8080"
 
 test.beforeAll(async ({ browser }) => {
   let messageId = 100

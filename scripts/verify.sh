@@ -566,11 +566,17 @@ run_round() {
 run_e2e() {
   local design="$1" app="$2"
   wait_for_pulls "$PLAYWRIGHT_IMAGE"
-  # The alias lets the server reach the stand-in Telegram Bot API that the tests run (TELEGRAM_API_URL). The
-  # session spec moves its session's clocks in the database, since the server's clock cannot be moved.
-  docker run --rm --network "${PROJECT}_default" --network-alias e2e-runner \
+  # The tests run in the server container's network, as a browser on the server's own computer would: they reach it
+  # at http://localhost:8080, where agents may connect over plain http with no exception for tests, and the server
+  # reaches the stand-in Telegram Bot API they run at localhost:8099 (TELEGRAM_API_URL). The stack's other services
+  # keep their names. The session spec moves its session's clocks in the database, since the server's clock cannot
+  # be moved.
+  local server
+  server="$(stack ps -q server)"
+  [ -n "$server" ] || die "the server container is not running"
+  docker run --rm --network "container:$server" \
     --user "$(id -u):$(id -g)" -e HOME=/tmp -e CI="${CI:-}" -e E2E_DESIGN="$design" \
-    -e E2E_BASE_URL=http://server:8080 -e E2E_N8N_CONTAINER="${PROJECT}-n8n-1" \
+    -e E2E_BASE_URL=http://localhost:8080 -e E2E_N8N_CONTAINER="${PROJECT}-n8n-1" \
     --env-file "$RUN_ENV_DIR/tests.env" \
     -v "$N8N_OPS_DATA_DIR/pairing:/worker-data" -v "$N8N_OPS_DATA_DIR/backups:/backups-data:ro" \
     -v "$REPO_ROOT:/repo" -w "/repo/$app" \
@@ -585,14 +591,10 @@ run_e2e() {
 # checks run in the first round only, except those on the stack itself, which run in each round.
 run_integration() {
   info "Integration: images and stack"
-  # At least 7 hex digits whatever core.abbrev says: the server honours N8N_OPS_TEST_HTTP_ISSUER_HOST only in an
-  # image whose version is verify-<7 to 40 hex digits> (oauth/agents.ts testHttpHosts).
-  build_images verify "verify-$(git -C "$REPO_ROOT" rev-parse --short=7 HEAD)"
-  # Telegram calls go to the stand-in Bot API inside the end-to-end test runner, never to Telegram.
-  export TELEGRAM_API_URL="http://e2e-runner:8099"
-  # The end-to-end tests reach the server as http://server:8080; agents connect over plain http only on this host
-  # name besides localhost (oauth/agents.ts issuerOf). Only these images, versioned verify-<commit>, honour it.
-  export N8N_OPS_TEST_HTTP_ISSUER_HOST="server"
+  build_images verify "verify-$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
+  # Telegram calls go to the stand-in Bot API inside the end-to-end test runner, never to Telegram. The runner shares
+  # the server's network (run_e2e), so the stand-in is on the server's localhost.
+  export TELEGRAM_API_URL="http://localhost:8099"
   STACK_USED=1
   local design
   for design in "${DESIGNS[@]}"; do

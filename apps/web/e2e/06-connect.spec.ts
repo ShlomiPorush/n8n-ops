@@ -10,7 +10,7 @@ import { dialogClosed, signIn } from "./helpers.ts"
  */
 test.describe.configure({ mode: "serial" })
 
-const base = process.env.E2E_BASE_URL ?? "http://server:8080"
+const base = process.env.E2E_BASE_URL ?? "http://localhost:8080"
 const redirect = "http://127.0.0.1:33418/callback"
 let page: Page
 let callback: Server

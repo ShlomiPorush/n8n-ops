@@ -4,8 +4,8 @@ import { signIn } from "./helpers.ts"
 // Passkeys as a person uses them, with Chromium's virtual authenticator: added on the Account page, a sign-in with
 // the passkey alone (no password, no code), none from a device that cannot check the person, then renamed and
 // deleted.
-// The stack answers at plain http://server:8080, the public URL 06-approvals stores; browsers offer passkeys only
-// on a secure page, so this file runs full Chromium told to treat that address as secure.
+// The stack answers at plain http, at the public URL 06-approvals stores; browsers offer passkeys only on a secure
+// page, so this file runs full Chromium told to treat that address as secure (localhost already is).
 
 const baseURL = process.env.E2E_BASE_URL ?? "http://localhost:8080"
 test.use({ channel: "chromium", launchOptions: { args: [`--unsafely-treat-insecure-origin-as-secure=${baseURL}`] } })

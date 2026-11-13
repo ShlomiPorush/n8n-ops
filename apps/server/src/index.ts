@@ -14,7 +14,7 @@ import { features } from "./features.ts"
 import { createAudit } from "./lib/audit.ts"
 import { createSecrets, loadOrCreateAppKey } from "./lib/crypto.ts"
 import { createSettings } from "./lib/settings.ts"
-import { createAgentConnect, ignoredTestHttpHosts } from "./oauth/agents.ts"
+import { createAgentConnect } from "./oauth/agents.ts"
 import { UPLOAD_DEADLINE_MS } from "./routes/worker-api.ts"
 import { settleCompactions } from "./services/database.ts"
 import { regroupByCause } from "./services/regroup.ts"
@@ -51,11 +51,6 @@ const ctx: Ctx = {
   log,
   events: new EventEmitter().setMaxListeners(100),
 }
-
-if (ignoredTestHttpHosts())
-  log.warn(
-    "N8N_OPS_TEST_HTTP_ISSUER_HOST is ignored: only the verification stack's images allow agents over plain http on other hosts. Remove it from the environment.",
-  )
 
 // The authorization server for agents signs its cookies with a key derived from the app key. Its records go through
 // a small pool of their own: an approval holds a transaction of the main pool while the provider stores its grant.

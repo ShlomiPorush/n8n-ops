@@ -6,7 +6,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Security
 
-- **Changes are accepted only from n8n-ops' own pages.** What a signed-in page changes (settings, backup and app keys, API tokens, instances, problems, Workers, backup destinations, agent access, compacting a table) and creating the first account are refused with "Changes are accepted only from n8n-ops' own pages." when the request comes from a page of another site, such as another app on a subdomain of the same domain, which could otherwise act with the signed-in person's session. Signing in and out keep the checks of the sign-in library.
+- **Changes are accepted only from n8n-ops' own pages.** What a signed-in page changes (settings, the backup key, API tokens, instances, problems, Workers, backup destinations, agent access, compacting a table) and creating the first account are refused with "Changes are accepted only from n8n-ops' own pages." when the request comes from a page of another site, such as another app on a subdomain of the same domain, which could otherwise act with the signed-in person's session. Signing in and out keep the checks of the sign-in library.
 
 ### Added
 

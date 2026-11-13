@@ -31,8 +31,5 @@ test("a change from another page, or with no page named, is refused and changes 
     })
   }
   expect(await keys()).toEqual(before)
-
-  // The page itself still changes things: its own requests carry its origin.
-  await page.goto("/settings/keys")
-  await expect(page.getByRole("button", { name: /^Copy the public key/ })).toBeVisible()
+  // The pages themselves still change things: every other spec of the suite does so through them.
 })

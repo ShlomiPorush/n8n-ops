@@ -1,9 +1,10 @@
 import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js"
 import { migrate } from "drizzle-orm/postgres-js/migrator"
-import postgres from "postgres"
+import postgres, { type Sql } from "postgres"
 import * as schema from "./schema.ts"
 
-export type Db = PostgresJsDatabase<typeof schema>
+/** The database, with its postgres.js client for what must hold one connection (`$client.reserve()`). */
+export type Db = PostgresJsDatabase<typeof schema> & { $client: Sql }
 
 export type Database = {
   db: Db

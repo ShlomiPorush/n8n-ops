@@ -211,6 +211,20 @@
       "when": 1794521154331,
       "tag": "0029_worker_jobs_finished",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1794530581505,
+      "tag": "0030_db_compactions",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1794530582040,
+      "tag": "0031_pgstattuple",
+      "breakpoints": true
     }
   ]
 }

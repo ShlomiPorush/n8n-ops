@@ -169,6 +169,7 @@ for (const [name, path, ready] of [
   ["Account", "/account", () => page.getByRole("heading", { name: "Sign-In" })],
   ["Settings, General", "/settings/general", () => field("Public URL")],
   ["Settings, Instance Defaults", "/settings/defaults", () => field("Check for failures every (seconds)")],
+  ["Settings, Database", "/settings/database", () => page.getByTestId("table-audit_log")],
   ["Settings, Alerts", "/settings/alerts", () => field("New problem")],
   ["Settings, Telegram", "/settings/telegram", () => field("Bot token")],
   ["Settings, Email Reports", "/settings/email", () => field("Daily report")],

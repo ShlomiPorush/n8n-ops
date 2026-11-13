@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto"
-import { readFileSync } from "node:fs"
 import { EventEmitter } from "node:events"
+import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { eq, sql } from "drizzle-orm"
 import { drizzle } from "drizzle-orm/postgres-js"
@@ -13,7 +13,7 @@ import { auditLog, dbCompactions } from "../db/schema.ts"
 import { createAudit } from "../lib/audit.ts"
 import {
   compactStatus,
-  DatabaseMaintenanceError,
+  type DatabaseMaintenanceError,
   databaseSizes,
   forgetFreeSpace,
   freeSpace,
@@ -262,7 +262,9 @@ describe("compacting", () => {
           const [settings] = await session`
             select current_setting('lock_timeout') as lock, current_setting('statement_timeout') as statement`
           expect(settings).toEqual({ lock: "0", statement: "0" })
-          expect(await session`select 1 from pg_locks where locktype = 'advisory' and pid = pg_backend_pid()`).toHaveLength(0)
+          expect(
+            await session`select 1 from pg_locks where locktype = 'advisory' and pid = pg_backend_pid()`,
+          ).toHaveLength(0)
         }
       } finally {
         a.release()

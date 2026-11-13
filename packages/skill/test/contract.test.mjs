@@ -533,7 +533,11 @@ for (const impl of impls) {
         const r = await run(impl, inst, server, ["get", p])
         assert.equal(r.json?.error, "bad_path", `${p}: ${r.out}`)
       }
-      assert.equal([...server.arrivalCounts.values()].reduce((a, b) => a + b, 0), 0, "nothing reached the API")
+      assert.equal(
+        [...server.arrivalCounts.values()].reduce((a, b) => a + b, 0),
+        0,
+        "nothing reached the API",
+      )
     })
 
     it("refuses an escape in the path that a server would decode into another call, and sends nothing", async () => {

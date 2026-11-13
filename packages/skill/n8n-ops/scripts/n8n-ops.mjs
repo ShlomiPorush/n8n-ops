@@ -703,8 +703,7 @@ async function request(ctx, method, url, { form, bearer, json, policy, kind, tim
   return { status: res.status, text, json: parsed, isJson, challenge: res.headers.get("www-authenticate") ?? "" }
 }
 
-const oauth = (ctx, p, form) =>
-  request(ctx, "POST", `${ctx.issuer}${p}`, { form: { ...form, client_id: CLIENT_ID } })
+const oauth = (ctx, p, form) => request(ctx, "POST", `${ctx.issuer}${p}`, { form: { ...form, client_id: CLIENT_ID } })
 
 function httpFail(r, what) {
   const body = r.json !== null && typeof r.json === "object" ? r.json : null

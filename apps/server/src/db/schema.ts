@@ -235,6 +235,8 @@ export const agentState = pgTable("agent_state", {
   id: integer("id").primaryKey(),
   generation: integer("generation").notNull().default(0),
   issuer: text("issuer"),
+  /** A two-factor reset is under way: no approval is answered until it has finished and ended every connection. */
+  resetting: boolean("resetting").notNull().default(false),
 })
 
 /**

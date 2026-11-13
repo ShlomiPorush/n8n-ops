@@ -15,7 +15,7 @@ import { createDatabase } from "./db/client.ts"
 import { account, session, twoFactor, user } from "./db/schema.ts"
 import { createAudit } from "./lib/audit.ts"
 import { loadOrCreateAppKey } from "./lib/crypto.ts"
-import { endEveryConnection } from "./oauth/agents.ts"
+import { beginIdentityReset, finishIdentityReset } from "./oauth/agents.ts"
 import { regroupByCause } from "./services/regroup.ts"
 
 const command = process.argv[2]
@@ -44,10 +44,12 @@ if (!u) {
   process.exit(1)
 }
 
-// Whoever resets the account may not be the person who approved its agents: every connection ends first, so the
-// reset never takes effect with them still working (run again, it finishes a reset that stopped halfway).
+// Whoever resets the account may not be the person who approved its agents: every connection ends before the reset,
+// no approval is answered during it, and everything ends again after it (a run that stops halfway is finished by the
+// next run, or by the server when it starts).
 const agentCtx = { db, audit: createAudit(db), events: new EventEmitter() } as unknown as Ctx
-await endEveryConnection(agentCtx, "identity", { by: "operator", via: "cli" })
+const operator = { by: "operator", via: "cli" } as const
+await beginIdentityReset(agentCtx, operator)
 
 const password = randomBytes(18).toString("base64url")
 const hash = await (await auth.$context).password.hash(password)
@@ -61,6 +63,8 @@ await createAudit(db)({
   target: u.username ?? u.name,
   via: "cli",
 })
+
+await finishIdentityReset(agentCtx, operator)
 
 console.log(`Username: ${u.username ?? u.name}`)
 console.log(`New password: ${password}`)

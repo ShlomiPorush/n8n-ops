@@ -156,7 +156,7 @@ async function accessAnswer(ctx: Ctx, who: TokenActor, skillHeader: string | und
  * are a separate channel without the client skill: they skip the headers. Then the route runs within the deadline,
  * its answer within the cap, and every call leaves an audit entry with its outcome.
  */
-function policy(ctx: Ctx, route: OpenRoute): MiddlewareHandler<Env> {
+export function policy(ctx: Ctx, route: OpenRoute): MiddlewareHandler<Env> {
   return async (c, next) => {
     const who = c.get("actor") as TokenActor
     const url = new URL(c.req.url)

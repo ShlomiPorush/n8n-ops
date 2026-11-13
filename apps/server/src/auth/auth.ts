@@ -2,7 +2,7 @@ import { hkdfSync } from "node:crypto"
 import { passkey } from "@better-auth/passkey"
 import { betterAuth } from "better-auth"
 import { drizzleAdapter } from "better-auth/adapters/drizzle"
-import { APIError, createAuthMiddleware } from "better-auth/api"
+import { APIError, createAuthMiddleware, getSessionFromCtx } from "better-auth/api"
 import { twoFactor, username } from "better-auth/plugins"
 import type { Db } from "../db/client.ts"
 import {
@@ -60,13 +60,18 @@ const notVerified = () =>
  * effect, which may come from the settings (auth/current.ts builds a new instance when it changes).
  */
 /**
- * Runs before two-factor sign-in is reset (Account → Reset): the person may have lost control of the account, so
- * every agent connection ends first (oauth/agents.ts, set by index.ts). The reset from the server ends them in cli.ts.
+ * A two-factor reset (Account → Reset) ends every agent connection, since the person may have lost control of the
+ * account: `begin` before the reset runs (and no approval is answered until `finish`), `finish` after it, whether it
+ * was made or refused (oauth/agents.ts, set by index.ts). Only a request from a signed-in session begins one, so a
+ * request without a session ends nothing. The reset from the server does the same in cli.ts.
  */
-let twoFactorReset: ((actor: string) => Promise<unknown>) | null = null
-export function onTwoFactorReset(run: (actor: string) => Promise<unknown>) {
-  twoFactorReset = run
+type ResetHooks = { begin(actor: string): Promise<unknown>; finish(actor: string): Promise<unknown> }
+let twoFactorReset: ResetHooks | null = null
+export function onTwoFactorReset(hooks: ResetHooks) {
+  twoFactorReset = hooks
 }
+/** The requests whose reset began, so that only they finish one. */
+const resets = new WeakSet<Request>()
 
 export function createAuth(db: Db, appKey: Buffer, publicUrl?: string, passkeyUrl: URL | null = null) {
   const audit = createAudit(db)
@@ -114,11 +119,20 @@ export function createAuth(db: Db, appKey: Buffer, publicUrl?: string, passkeyUr
       // Before the reset, so that it never takes effect while the agents approved under the earlier sign-in still work
       // (a reset that is then refused, such as for a wrong password, has still ended them: the safe side).
       before: createAuthMiddleware(async (ctx) => {
-        if (ctx.path !== "/two-factor/disable" || !twoFactorReset) return
-        const actor = ctx.context.session?.user as { username?: string | null; name?: string } | undefined
-        await twoFactorReset(actor?.username ?? actor?.name ?? "")
+        if (ctx.path !== "/two-factor/disable" || !twoFactorReset || !ctx.request) return
+        // Better Auth checks the session after this hook; read it here through its own interface.
+        const session = await getSessionFromCtx(ctx)
+        if (!session) return
+        const actor = session.user as { username?: string | null; name?: string }
+        await twoFactorReset.begin(actor.username ?? actor.name ?? "")
+        resets.add(ctx.request)
       }),
       after: createAuthMiddleware(async (ctx) => {
+        if (ctx.request && resets.has(ctx.request)) {
+          resets.delete(ctx.request)
+          const actor = ctx.context.session?.user as { username?: string | null; name?: string } | undefined
+          await twoFactorReset?.finish(actor?.username ?? actor?.name ?? "")
+        }
         const change = signInChanges[ctx.path]
         // The after hook also runs when the endpoint refused; only a change that was made is recorded.
         if (change && !(ctx.context.returned instanceof APIError)) {

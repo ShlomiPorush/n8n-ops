@@ -9,7 +9,8 @@ CREATE TABLE "agent_consent" (
 CREATE TABLE "agent_state" (
 	"id" integer PRIMARY KEY NOT NULL,
 	"generation" integer DEFAULT 0 NOT NULL,
-	"issuer" text
+	"issuer" text,
+	"resetting" boolean DEFAULT false NOT NULL
 );
 --> statement-breakpoint
 CREATE INDEX "agent_consent_created_idx" ON "agent_consent" USING btree ("created_at");--> statement-breakpoint

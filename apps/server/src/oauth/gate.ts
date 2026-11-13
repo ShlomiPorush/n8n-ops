@@ -43,6 +43,20 @@ export async function nextGeneration(tx: Tx): Promise<number> {
   return row?.generation ?? 0
 }
 
+/** Whether a two-factor reset is under way: no approval is answered meanwhile. */
+export async function resetting(db: Runner): Promise<boolean> {
+  const [row] = await db.select({ resetting: agentState.resetting }).from(agentState).where(eq(agentState.id, 1))
+  return row?.resetting ?? false
+}
+
+/** Marks a two-factor reset as under way or finished; in the transaction that ends every connection. */
+export async function markResetting(tx: Tx, on: boolean) {
+  await tx
+    .insert(agentState)
+    .values({ id: 1, generation: 0, resetting: on })
+    .onConflictDoUpdate({ target: agentState.id, set: { resetting: on } })
+}
+
 /** The public URL connections were last made under, or null before the first start that recorded one. */
 export async function lastIssuer(db: Runner): Promise<string | null> {
   const [row] = await db.select({ issuer: agentState.issuer }).from(agentState).where(eq(agentState.id, 1))

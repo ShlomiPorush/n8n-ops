@@ -85,6 +85,8 @@ export function agentConnectRoutes(ctx: Ctx, agents: AgentConnect) {
     verifySession: limiter(30, 600_000),
   }
   agents.hooks.devicePollAnswered = (req) => limits.token.refund(addressOf(req))
+  // Codes typed on the code page count per provider session too, so one session cannot try them from many addresses.
+  agents.hooks.codeAttempt = (session, req) => limits.verifySession(session ? `s:${sha256(session)}` : addressOf(req))
   /** The lock of a capped request, given back when the provider has handled it. */
   const handled = new WeakMap<IncomingMessage, () => void>()
   agents.hooks.providerDone = (req) => {
@@ -301,12 +303,6 @@ export function agentConnectRoutes(ctx: Ctx, agents: AgentConnect) {
         })
       return tooMany(c)
     }
-    // Codes typed on the code page count per provider session too (its own cookie), so one session cannot try them
-    // from many addresses. A request without that cookie has no session the provider would accept a code in.
-    if (path.startsWith("/connect/device") && c.req.method === "POST") {
-      const session = /(?:^|;\s*)_session=([^;]+)/.exec(c.req.header("cookie") ?? "")?.[1]
-      if (!limits.verifySession(session ? sha256(session) : address)) return tooMany(c)
-    }
     // A cap is counted and filled one request at a time: the lock is given back once the provider has handled the
     // request (its middleware, oauth/agents.ts), whether it stored the record, failed, or its client left meanwhile,
     // and after a minute at the latest.
@@ -318,10 +314,15 @@ export function agentConnectRoutes(ctx: Ctx, agents: AgentConnect) {
           : null
     if (capped) {
       const release = await capped.lock()
-      const fallback = setTimeout(release, 60_000)
-      fallback.unref?.()
+      // A request still unhandled after a minute (a client sending its body slowly) is cut off, so it can no longer
+      // store anything; the provider then fails it and gives the lock back. Five minutes is the last resort.
+      const cutOff = setTimeout(() => n.incoming.destroy(), 60_000)
+      const lastResort = setTimeout(release, 300_000)
+      cutOff.unref?.()
+      lastResort.unref?.()
       const done = () => {
-        clearTimeout(fallback)
+        clearTimeout(cutOff)
+        clearTimeout(lastResort)
         release()
       }
       if (!(await capped.room().catch(() => false))) {

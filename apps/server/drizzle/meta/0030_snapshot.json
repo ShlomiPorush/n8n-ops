@@ -1004,6 +1004,13 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false
+        },
+        "resetting": {
+          "name": "resetting",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
         }
       },
       "indexes": {},

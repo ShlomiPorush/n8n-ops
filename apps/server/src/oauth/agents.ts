@@ -9,7 +9,17 @@ import type { AuditVia } from "../lib/audit.ts"
 import { sha256 } from "../lib/crypto.ts"
 import type { Design } from "../lib/settings.ts"
 import { revokeAccessOfToken } from "../services/access.ts"
-import { gateExclusive, gateShared, generation, lastIssuer, nextGeneration, rememberIssuer, type Tx } from "./gate.ts"
+import {
+  gateExclusive,
+  gateShared,
+  generation,
+  lastIssuer,
+  markResetting,
+  nextGeneration,
+  rememberIssuer,
+  resetting,
+  type Tx,
+} from "./gate.ts"
 import { providerPages } from "./pages.ts"
 import { type AgentProvider, createAgentProvider, resources, SCOPES } from "./provider.ts"
 import { servedSkillVersion } from "./skill.ts"
@@ -129,6 +139,19 @@ export async function endEveryConnection(ctx: Ctx, reason: EndReason, who: Who, 
   return ended
 }
 
+/**
+ * A two-factor reset ends every connection on both sides of the change (D6): first, in the transaction that marks the
+ * reset as under way, so no approval is answered until it is over; then again once it is done, which also clears the
+ * mark. If the process stops in between, the start ends everything again and clears it (reconcile). The account page
+ * (auth/auth.ts) and the CLI (cli.ts) call both.
+ */
+export async function beginIdentityReset(ctx: Ctx, who: Who) {
+  return endEveryConnection(ctx, "identity", who, (tx) => markResetting(tx, true))
+}
+export async function finishIdentityReset(ctx: Ctx, who: Who) {
+  return endEveryConnection(ctx, "identity", who, (tx) => markResetting(tx, false))
+}
+
 export type AgentConnect = ReturnType<typeof createAgentConnect>
 
 /** Agents connected by approval: the authorization server for the current public URL, and their records. */
@@ -147,6 +170,8 @@ export function createAgentConnect(
     devicePollAnswered?: (req: IncomingMessage) => void
     /** The provider has handled a request: a capped request gives its lock back (oauth/routes.ts). */
     providerDone?: (req: IncomingMessage) => void
+    /** A code typed on the code page, in this provider session (its signed cookie) or none: false when over the limit. */
+    codeAttempt?: (session: string | undefined, req: IncomingMessage) => boolean
   } = {}
 
   async function enabled() {
@@ -208,7 +233,7 @@ export function createAgentConnect(
         )
         .returning({ generation: agentConsent.generation })
       const now = await generation(tx)
-      if (!taken || taken.generation !== now) return { kind: "gone" as const }
+      if (!taken || taken.generation !== now || (await resetting(tx))) return { kind: "gone" as const }
       if (input.deviceCode) {
         const [device] = await tx
           .select({ generation: agentConsent.generation })
@@ -258,8 +283,17 @@ export function createAgentConnect(
         const opens = /^\/(oauth\/authorize|connect\/device|oauth\/device$)/.test(path)
         const gen = opens ? await generation(ctx.db) : 0
         let failure: unknown
+        // The session is the provider's own, read with its own signed-cookie parser, so a made-up cookie is no session.
+        const limited =
+          path.startsWith("/connect/device") &&
+          k.method === "POST" &&
+          hooks.codeAttempt?.(k.cookies.get("_session", { signed: true }), k.req) === false
         try {
-          await next()
+          if (limited) {
+            k.status = 429
+            k.set("Retry-After", "600")
+            k.body = { error: "slow_down", error_description: "Too many codes tried. Wait a few minutes." }
+          } else await next()
         } catch (e) {
           failure = e
         }
@@ -427,6 +461,8 @@ export function createAgentConnect(
    * while agents are off (one that an interrupted turn-off left behind never works again).
    */
   async function reconcile() {
+    // A two-factor reset that stopped halfway: end everything again, and let approvals be answered once more.
+    if (await resetting(ctx.db)) await finishIdentityReset(ctx, SYSTEM)
     await reconcileIssuer(issuerOf((await ctx.settings.get("general")).publicUrl))
     if (!(await enabled())) {
       const [live] = await ctx.db

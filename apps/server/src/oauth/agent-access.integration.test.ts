@@ -14,7 +14,7 @@ import { createSecrets, sha256 } from "../lib/crypto.ts"
 import { createSettings } from "../lib/settings.ts"
 import { HEADERS, restRoutes } from "../routes/agent.ts"
 import { OPEN, REVISION } from "../routes/agent-policy.ts"
-import { createAgentConnect, endEveryConnection } from "./agents.ts"
+import { beginIdentityReset, createAgentConnect, endEveryConnection, finishIdentityReset } from "./agents.ts"
 import { generation } from "./gate.ts"
 import { CLI_CLIENT, createAgentProvider, resources } from "./provider.ts"
 import { storeAdapter } from "./store.ts"
@@ -666,5 +666,111 @@ describe("the REST API's limits", () => {
       body: JSON.stringify({ reason: "x".repeat(300 * 1024) }),
     })
     expect(res.status).toBe(413)
+  })
+})
+
+describe("making and ending connections, in each order", () => {
+  async function setUp() {
+    const database = await freshDatabase()
+    const ctx = contextOf(database)
+    await ctx.settings.set("general", { ...(await ctx.settings.get("general")), publicUrl: issuer })
+    await ctx.settings.set("agents", { enabled: true, idleDays: 90 })
+    await ctx.db.insert(user).values({ id: "u1", name: "owner", email: "owner@n8n-ops.local" })
+    const agents = createAgentConnect(ctx, { cookieKeys: [value()] })
+    ctx.agents = agents
+    const p = await agents.provider()
+    if (!p) throw new Error("no provider")
+    const decide = async (session: string, gen?: number) => {
+      const uid = value()
+      await ctx.db
+        .insert(agentConsent)
+        .values({ key: `i:${uid}`, generation: gen ?? (await generation(ctx.db)), sessionId: session })
+      return agents.decide({
+        uid,
+        sessionId: session,
+        deviceCode: null,
+        approve: true,
+        accountId: "u1",
+        issuer,
+        record: { name: "order", scopes: ["ops:read"], via: "code", redirectHost: null, approvedBy: "owner" },
+        makeGrant: () => {
+          const grant = new p.provider.Grant({ accountId: "u1", clientId: CLI_CLIENT })
+          grant.addResourceScope(resources(issuer).rest, "ops:read")
+          return grant.save()
+        },
+      })
+    }
+    const live = async () =>
+      (
+        await ctx.db
+          .select({ id: apiTokens.id })
+          .from(apiTokens)
+          .where(and(eq(apiTokens.kind, "agent"), isNull(apiTokens.revokedAt)))
+      ).length
+    return { ctx, agents, decide, live }
+  }
+
+  it("ends a connection made just before Disconnect all", async () => {
+    const s = await setUp()
+    expect((await s.decide(value())).kind).toBe("approved")
+    expect(await s.live()).toBe(1)
+    await endEveryConnection(s.ctx, "all", { by: "owner", via: "web" })
+    expect(await s.live()).toBe(0)
+  })
+
+  it("refuses a request opened before Disconnect all and answered after it", async () => {
+    const s = await setUp()
+    const before = await generation(s.ctx.db)
+    await endEveryConnection(s.ctx, "all", { by: "owner", via: "web" })
+    expect((await s.decide(value(), before)).kind).toBe("gone")
+    expect(await s.live()).toBe(0)
+  })
+
+  it("answers no approval while a two-factor reset is under way, and again once it is done", async () => {
+    const s = await setUp()
+    expect((await s.decide(value())).kind).toBe("approved")
+    await beginIdentityReset(s.ctx, { by: "owner", via: "web" })
+    expect(await s.live()).toBe(0)
+    expect((await s.decide(value())).kind).toBe("gone")
+    await finishIdentityReset(s.ctx, { by: "owner", via: "web" })
+    expect((await s.decide(value())).kind).toBe("approved")
+  })
+
+  it("finishes at start a two-factor reset that stopped halfway", async () => {
+    const s = await setUp()
+    await beginIdentityReset(s.ctx, { by: "operator", via: "cli" })
+    // The reset stopped here; a new server process starts.
+    await s.agents.reconcile()
+    expect((await s.decide(value())).kind).toBe("approved")
+  })
+
+  it("rolls back every part of an end that fails: tokens, instance access and waiting requests stay", async () => {
+    const s = await setUp()
+    expect((await s.decide(value())).kind).toBe("approved")
+    const [row] = await s.ctx.db.select().from(apiTokens).where(eq(apiTokens.kind, "agent"))
+    if (!row?.grantId) throw new Error("no connection")
+    await s.ctx.db.insert(accessRequests).values({
+      tokenId: row.id,
+      reason: "Fix the sync workflow",
+      requestedMinutes: 15,
+      minutes: 15,
+      decideBy: new Date(Date.now() + 600_000),
+    })
+    await s.ctx.db.insert(oauthStore).values({ type: "DeviceCode", id: value(), payload: {} })
+    const before = await s.ctx.db.select().from(oauthStore)
+    const failing = {
+      ...s.ctx,
+      audit: async (entry: { action: string }, tx?: unknown) => {
+        if (entry.action === "All agent connections ended") throw new Error("stopped here")
+        return s.ctx.audit(entry as never, tx as never)
+      },
+    } as Ctx
+    await expect(endEveryConnection(failing, "all", { by: "owner", via: "web" })).rejects.toThrow("stopped here")
+    expect(await s.live()).toBe(1)
+    expect((await s.ctx.db.select().from(accessRequests))[0]?.status).toBe("pending")
+    expect((await s.ctx.db.select().from(oauthStore)).length).toBe(before.length)
+    expect(
+      (await s.ctx.db.select().from(oauthStore).where(eq(oauthStore.grantId, row.grantId))).length,
+    ).toBeGreaterThan(0)
   })
 })

@@ -14,7 +14,7 @@ import { features } from "./features.ts"
 import { createAudit } from "./lib/audit.ts"
 import { createSecrets, loadOrCreateAppKey } from "./lib/crypto.ts"
 import { createSettings } from "./lib/settings.ts"
-import { createAgentConnect } from "./oauth/agents.ts"
+import { beginIdentityReset, createAgentConnect, finishIdentityReset } from "./oauth/agents.ts"
 import { UPLOAD_DEADLINE_MS } from "./routes/worker-api.ts"
 import { regroupByCause } from "./services/regroup.ts"
 
@@ -62,7 +62,10 @@ ctx.agents = createAgentConnect(ctx, {
   storeDb: storeDatabase.db,
 })
 // A two-factor reset ends every agent connection: whoever reset it may not be the person who approved them.
-onTwoFactorReset((actor) => (ctx.agents as NonNullable<Ctx["agents"]>).endAll("identity", { by: actor, via: "web" }))
+onTwoFactorReset({
+  begin: (actor) => beginIdentityReset(ctx, { by: actor, via: "web" }),
+  finish: (actor) => finishIdentityReset(ctx, { by: actor, via: "web" }),
+})
 // Connections made under a public URL that has since changed end before the server takes a request.
 await ctx.agents.reconcile()
 

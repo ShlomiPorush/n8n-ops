@@ -237,7 +237,9 @@ describe("the endpoints listing", () => {
     expect(readOnly.endpoints.some((e) => e.area === "access")).toBe(false)
     expect(readOnly.count).toBe(readOnly.endpoints.length)
     expect(listing(["read", "access"]).endpoints.some((e) => e.path === "/api/v1/access-requests")).toBe(true)
-    expect(listing(["read", "access"], "access").endpoints.every((e) => e.area === "access" || e.area === "any")).toBe(true)
+    expect(listing(["read", "access"], "access").endpoints.every((e) => e.area === "access" || e.area === "any")).toBe(
+      true,
+    )
   })
 })
 

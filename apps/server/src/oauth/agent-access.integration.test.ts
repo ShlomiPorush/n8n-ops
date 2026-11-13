@@ -153,6 +153,7 @@ describe("the token store", () => {
     const Adapter = storeAdapter(database.db)
     const id = value()
     await expect(new Adapter("AccessToken").upsert(id, { jti: value(), kind: "AccessToken" }, 60)).rejects.toThrow()
+    await expect(new Adapter("AccessToken").upsert(id, { kind: "AccessToken" }, 60)).rejects.toThrow()
     expect(await new Adapter("AccessToken").find(id)).toBeUndefined()
   })
 
@@ -471,5 +472,199 @@ describe("the requests an approval checks", () => {
     } finally {
       server.close()
     }
+  })
+})
+
+describe("making and ending connections against each other", () => {
+  /** A database of its own, with a main pool of `max` connections and the adapter's own pool of two. */
+  async function setUp(max = 10) {
+    const name = `n8n_ops_agent_race_${randomBytes(4).toString("hex")}`
+    await admin.unsafe(`CREATE DATABASE "${name}"`)
+    made.push(name)
+    const url = new URL(adminUrl as string)
+    url.pathname = `/${name}`
+    const main = createDatabase(url.toString(), { max })
+    const store = createDatabase(url.toString(), { max: 2 })
+    open.push(main, store)
+    await main.migrate(folder)
+    const ctx = contextOf(main)
+    await ctx.settings.set("general", { ...(await ctx.settings.get("general")), publicUrl: issuer })
+    await ctx.settings.set("agents", { enabled: true, idleDays: 90 })
+    await ctx.db.insert(user).values({ id: "u1", name: "owner", email: "owner@n8n-ops.local" })
+    const agents = createAgentConnect(ctx, { cookieKeys: [value()], storeDb: store.db })
+    ctx.agents = agents
+    const p = await agents.provider()
+    if (!p) throw new Error("no provider")
+    return { ctx, agents, provider: p.provider }
+  }
+
+  /** A request opened in the current generation and bound to `session`, as the provider and the page leave it. */
+  async function opened(ctx: Ctx, session: string, gen?: number) {
+    const uid = value()
+    await ctx.db
+      .insert(agentConsent)
+      .values({ key: `i:${uid}`, generation: gen ?? (await generation(ctx.db)), sessionId: session })
+    return uid
+  }
+
+  function decision(
+    s: Awaited<ReturnType<typeof setUp>>,
+    uid: string,
+    session: string,
+    extra: { approve?: boolean; deviceCode?: string } = {},
+  ) {
+    return s.agents.decide({
+      uid,
+      sessionId: session,
+      deviceCode: extra.deviceCode ?? null,
+      approve: extra.approve ?? true,
+      accountId: "u1",
+      issuer,
+      record: { name: "race", scopes: ["ops:read"], via: "code", redirectHost: null, approvedBy: "owner" },
+      makeGrant: () => {
+        const grant = new s.provider.Grant({ accountId: "u1", clientId: CLI_CLIENT })
+        grant.addResourceScope(resources(issuer).rest, "ops:read")
+        return grant.save()
+      },
+    })
+  }
+
+  const live = async (ctx: Ctx) =>
+    (
+      await ctx.db
+        .select({ id: apiTokens.id })
+        .from(apiTokens)
+        .where(and(eq(apiTokens.kind, "agent"), isNull(apiTokens.revokedAt)))
+    ).length
+
+  it("never leaves a connection live after Disconnect all, whichever runs first", async () => {
+    const s = await setUp()
+    for (let i = 0; i < 25; i++) {
+      const session = value()
+      const uid = await opened(s.ctx, session)
+      const [result] = await Promise.all([
+        decision(s, uid, session),
+        endEveryConnection(s.ctx, "all", { by: "owner", via: "web" }),
+      ])
+      expect(["approved", "gone"]).toContain(result.kind)
+      expect(await live(s.ctx), `round ${i}`).toBe(0)
+    }
+  }, 120_000)
+
+  it("answers a request once, approve or deny, also when both arrive at once", async () => {
+    const s = await setUp()
+    const session = value()
+    const uid = await opened(s.ctx, session)
+    const answers = await Promise.all([
+      decision(s, uid, session),
+      decision(s, uid, session, { approve: false }),
+      decision(s, uid, session),
+    ])
+    expect(answers.filter((a) => a.kind !== "gone")).toHaveLength(1)
+    expect(await live(s.ctx)).toBeLessThanOrEqual(1)
+  })
+
+  it("binds a request to the session that first opened it, also across a restart", async () => {
+    const s = await setUp()
+    const uid = value()
+    await s.ctx.db.insert(agentConsent).values({ key: `i:${uid}`, generation: await generation(s.ctx.db) })
+    const mine = value()
+    expect(await s.agents.bindRequest(uid, mine)).toBe(true)
+    expect(await s.agents.bindRequest(uid, value())).toBe(false)
+    expect((await decision(s, uid, value())).kind).toBe("gone")
+    // A new server process: the binding is in the database, not in memory.
+    const again = createAgentConnect(s.ctx, { cookieKeys: [value()] })
+    expect(await again.bindRequest(uid, mine)).toBe(true)
+    expect((await decision(s, uid, mine)).kind).toBe("approved")
+    // A request with no record (it began without one) is no request.
+    expect(await s.agents.bindRequest(value(), mine)).toBe(false)
+  })
+
+  it("refuses a request, or its device code, that began before everything last ended", async () => {
+    const s = await setUp()
+    const session = value()
+    const before = await generation(s.ctx.db)
+    const stale = await opened(s.ctx, session, before)
+    const device = value()
+    await s.ctx.db.insert(agentConsent).values({ key: `d:${sha256(device)}`, generation: before })
+    await endEveryConnection(s.ctx, "all", { by: "owner", via: "web" })
+    // Ending everything drops the waiting records; put back the ones the provider might store after it.
+    await s.ctx.db.insert(agentConsent).values([
+      { key: `i:${stale}`, generation: before, sessionId: session },
+      { key: `d:${sha256(device)}`, generation: before },
+    ])
+    expect((await decision(s, stale, session)).kind).toBe("gone")
+    const fresh = await opened(s.ctx, session)
+    expect((await decision(s, fresh, session, { deviceCode: device })).kind).toBe("gone")
+    expect(await live(s.ctx)).toBe(0)
+  })
+
+  it("does not stall when approvals and ends fill the main pool", async () => {
+    const s = await setUp(3)
+    const sessions = Array.from({ length: 4 }, () => value())
+    const uids = await Promise.all(sessions.map((x) => opened(s.ctx, x)))
+    const all = Promise.all([
+      ...uids.map((uid, i) => decision(s, uid, sessions[i] as string)),
+      ...Array.from({ length: 4 }, () => endEveryConnection(s.ctx, "all", { by: "owner", via: "web" })),
+    ])
+    const stalled = new Promise((_, reject) => setTimeout(() => reject(new Error("stalled")), 30_000).unref())
+    await Promise.race([all, stalled])
+    expect(await live(s.ctx)).toBeLessThanOrEqual(4)
+  }, 60_000)
+
+  it("ends a connection all or nothing: a failure in the middle leaves it as it was", async () => {
+    const s = await setUp()
+    const row = await connection(s.ctx)
+    const before = await generation(s.ctx.db)
+    const failing = {
+      ...s.ctx,
+      audit: async (entry: { action: string }, tx?: unknown) => {
+        if (entry.action === "Agent disconnected") throw new Error("stopped here")
+        return s.ctx.audit(entry as never, tx as never)
+      },
+    } as Ctx
+    await expect(endEveryConnection(failing, "all", { by: "owner", via: "web" })).rejects.toThrow("stopped here")
+    expect((await s.ctx.db.select().from(apiTokens).where(eq(apiTokens.id, row.id)))[0]?.revokedAt).toBeNull()
+    expect(await generation(s.ctx.db)).toBe(before)
+  })
+
+  it("ends at start every connection a turn-off left behind", async () => {
+    const s = await setUp()
+    await connection(s.ctx)
+    // As if the server stopped between storing the switch and ending connections.
+    await s.ctx.settings.set("agents", { enabled: false, idleDays: 90 })
+    await s.agents.reconcile()
+    expect(await live(s.ctx)).toBe(0)
+  })
+
+  it("keeps a connection used while the idle sweep was on its way to it", async () => {
+    const s = await setUp()
+    const row = await connection(s.ctx, { lastUsedAt: new Date(Date.now() - 100 * 86_400_000) })
+    // The sweep picked it; a call came in before it ended it.
+    await s.ctx.db.update(apiTokens).set({ lastUsedAt: new Date() }).where(eq(apiTokens.id, row.id))
+    const cutoff = new Date(Date.now() - 86_400_000)
+    expect(await s.agents.end({ id: row.id }, "unused", { by: "n8n-ops", via: "system" }, cutoff)).toBeNull()
+    expect(await live(s.ctx)).toBe(1)
+  })
+})
+
+describe("the REST API's limits", () => {
+  it("refuses a body over 256 KB before the route runs", async () => {
+    const database = await freshDatabase()
+    const ctx = contextOf(database)
+    const secret = `nops_api_${value()}`
+    await ctx.db.insert(apiTokens).values({
+      name: "script",
+      kind: "rest",
+      prefix: "nops_api",
+      tokenHash: sha256(secret),
+      canRequestAccess: true,
+    })
+    const res = await restRoutes(ctx).request("/access-requests", {
+      method: "POST",
+      headers: { authorization: `Bearer ${secret}`, "content-type": "application/json" },
+      body: JSON.stringify({ reason: "x".repeat(300 * 1024) }),
+    })
+    expect(res.status).toBe(413)
   })
 })

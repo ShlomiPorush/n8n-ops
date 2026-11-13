@@ -45,8 +45,7 @@ export function storeAdapter(db: Db, { onReuse }: { onReuse?: (grantId: string) 
     async upsert(id: string, payload: Payload, expiresIn?: number) {
       let stored = payload
       if (this.hashed) {
-        if (payload.jti !== undefined && payload.jti !== id)
-          throw new Error(`${this.name}: the record's id is not its jti`)
+        if (payload.jti !== id) throw new Error(`${this.name}: the record's id is not its jti`)
         const { jti: _jti, ...rest } = payload
         stored = rest
       }

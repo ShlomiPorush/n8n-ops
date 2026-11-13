@@ -14,6 +14,7 @@ import {
   sections,
   smtpPasswordNeeded,
   wordedIssues,
+  writeSection,
 } from "../lib/settings.ts"
 import { syncTelegramWebhook } from "../services/alerts.ts"
 
@@ -116,12 +117,14 @@ export function settingsRoutes(ctx: Ctx) {
     // A longer idle period revives nothing: connections past the old one end before it is stored.
     if (agentsBefore && agentsAfter && agentsAfter.idleDays > agentsBefore.idleDays)
       await ctx.agents?.endIdle(agentsBefore.idleDays, who)
-    await ctx.settings.set(section, parsed.data as never)
+    // Agents turned off: stored in the transaction that ends every connection and waiting request, so the switch is
+    // never off while a connection lives on to work again when it is turned back on (start-up ends any left anyway).
+    if (agentsAfter && !agentsAfter.enabled && ctx.agents)
+      await ctx.agents.endAll("off", who, (tx) => writeSection(tx, "agents", agentsAfter))
+    else await ctx.settings.set(section, parsed.data as never)
     // A shorter one applies at once: stored first, so no call is let through under the old one meanwhile.
     if (agentsBefore && agentsAfter && agentsAfter.idleDays < agentsBefore.idleDays)
       await ctx.agents?.endIdle(agentsAfter.idleDays, who)
-    // Agents turned off: every connection and waiting request ends (calls are refused from the save on).
-    if (agentsBefore?.enabled && agentsAfter && !agentsAfter.enabled) await ctx.agents?.endAll("off", who)
     await ctx.audit({
       actor: actorName(c.get("actor")),
       action: "Settings changed",

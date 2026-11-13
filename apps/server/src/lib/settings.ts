@@ -318,6 +318,22 @@ export const defaults: { [K in SectionName]: Section<K> } = {
   keys: {},
 }
 
+/**
+ * Stores a section that holds nothing in memory, on the database or in the caller's transaction: a change that must
+ * commit with others (agents turned off, with the end of every connection). The store's set does the same otherwise.
+ */
+export async function writeSection<K extends Exclude<SectionName, "general">>(
+  db: Pick<Db, "insert">,
+  key: K,
+  value: Section<K>,
+) {
+  const parsed = sections[key].parse(value)
+  await db
+    .insert(settingsTable)
+    .values({ key, value: parsed, updatedAt: new Date() })
+    .onConflictDoUpdate({ target: settingsTable.key, set: { value: parsed, updatedAt: new Date() } })
+}
+
 /** The range of each number setting of a section, read from its schema, so the UI checks the same (SV-1). */
 export function numberLimits(section: SectionName): Record<string, NumberLimits> {
   const out: Record<string, NumberLimits> = {}

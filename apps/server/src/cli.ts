@@ -44,6 +44,11 @@ if (!u) {
   process.exit(1)
 }
 
+// Whoever resets the account may not be the person who approved its agents: every connection ends first, so the
+// reset never takes effect with them still working (run again, it finishes a reset that stopped halfway).
+const agentCtx = { db, audit: createAudit(db), events: new EventEmitter() } as unknown as Ctx
+await endEveryConnection(agentCtx, "identity", { by: "operator", via: "cli" })
+
 const password = randomBytes(18).toString("base64url")
 const hash = await (await auth.$context).password.hash(password)
 await db.update(account).set({ password: hash, updatedAt: new Date() }).where(eq(account.userId, u.id))
@@ -56,9 +61,6 @@ await createAudit(db)({
   target: u.username ?? u.name,
   via: "cli",
 })
-// Whoever reset the account may not be the person who approved its agents: every connection ends.
-const agentCtx = { db, audit: createAudit(db), events: new EventEmitter() } as unknown as Ctx
-await endEveryConnection(agentCtx, "identity", { by: "operator", via: "cli" })
 
 console.log(`Username: ${u.username ?? u.name}`)
 console.log(`New password: ${password}`)

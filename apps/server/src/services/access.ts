@@ -9,6 +9,7 @@ import {
   accessRequests,
   apiTokens,
   instances,
+  oauthStore,
   workflows,
 } from "../db/schema.ts"
 import { tokenActor } from "../http/types.ts"
@@ -961,12 +962,26 @@ export async function expireAccess(ctx: Ctx) {
 export async function grantForKey(ctx: Ctx, key: string, ref: string) {
   if (!key.startsWith(`${KEY_PREFIX}_`)) return null
   const [row] = await ctx.db
-    .select({ r: accessRequests, tokenRevokedAt: apiTokens.revokedAt })
+    .select({
+      r: accessRequests,
+      tokenRevokedAt: apiTokens.revokedAt,
+      tokenKind: apiTokens.kind,
+      grantId: apiTokens.grantId,
+    })
     .from(accessRequests)
     .innerJoin(apiTokens, eq(accessRequests.tokenId, apiTokens.id))
     .where(eq(accessRequests.keyHash, sha256(key)))
   if (row?.r.status !== "approved" || row.tokenRevokedAt) return null
   if (!row.r.expiresAt || row.r.expiresAt < new Date()) return null
+  // An agent connected by approval holds its access only while its grant does: the grant goes first when the agent
+  // revokes a token, and its connection ends right after (oauth/agents.ts); no key works in between.
+  if (row.tokenKind === "agent") {
+    const [grant] = await ctx.db
+      .select({ id: oauthStore.id })
+      .from(oauthStore)
+      .where(and(eq(oauthStore.type, "Grant"), eq(oauthStore.id, row.grantId ?? "")))
+    if (!grant) return null
+  }
   const matches = await ctx.db
     .select({ grant: accessRequestInstances, instance: instances })
     .from(accessRequestInstances)

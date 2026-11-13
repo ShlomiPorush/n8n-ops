@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto"
 import type { IncomingMessage } from "node:http"
-import { and, eq, isNotNull, isNull, lt, ne, or } from "drizzle-orm"
+import { and, eq, isNotNull, isNull, lt, ne, or, sql } from "drizzle-orm"
 import { type Ctx, changed } from "../context.ts"
 import type { Db } from "../db/client.ts"
 import { agentConsent, apiTokens, user } from "../db/schema.ts"
@@ -9,7 +9,7 @@ import type { AuditVia } from "../lib/audit.ts"
 import { sha256 } from "../lib/crypto.ts"
 import type { Design } from "../lib/settings.ts"
 import { revokeAccessOfToken } from "../services/access.ts"
-import { gateExclusive, generation, lastIssuer, nextGeneration, rememberIssuer, type Tx } from "./gate.ts"
+import { gateExclusive, gateShared, generation, lastIssuer, nextGeneration, rememberIssuer, type Tx } from "./gate.ts"
 import { providerPages } from "./pages.ts"
 import { type AgentProvider, createAgentProvider, resources, SCOPES } from "./provider.ts"
 import { servedSkillVersion } from "./skill.ts"
@@ -100,11 +100,13 @@ async function endIn(ctx: Ctx, tx: Tx, which: { id: string } | { grantId: string
 /**
  * Ends every connection and every request still waiting (codes, device requests, approvals), and starts a new
  * generation so a request that began before cannot be approved after. Under the exclusive gate, in one transaction.
- * Needs no authorization server: the CLI runs it for a two-factor reset made from the server.
+ * Needs no authorization server: the CLI runs it for a two-factor reset made from the server. `alsoIn` runs in the same
+ * transaction first, for a change that must hold exactly when everything ended (agents turned off).
  */
-export async function endEveryConnection(ctx: Ctx, reason: EndReason, who: Who) {
+export async function endEveryConnection(ctx: Ctx, reason: EndReason, who: Who, alsoIn?: (tx: Tx) => Promise<void>) {
   const ended = await ctx.db.transaction(async (tx) => {
     await gateExclusive(tx)
+    await alsoIn?.(tx)
     await nextGeneration(tx)
     const rows = await tx
       .select({ id: apiTokens.id })
@@ -141,7 +143,11 @@ export function createAgentConnect(
   const pages = providerPages(webDir, (): Design => ctx.settings.design())
   let current: { issuer: string; provider: AgentProvider } | null = null
   /** Set by the routes: a device-code poll that was counted, and turned out to be waiting or approved. */
-  const hooks: { devicePollAnswered?: (req: IncomingMessage) => void } = {}
+  const hooks: {
+    devicePollAnswered?: (req: IncomingMessage) => void
+    /** The provider has handled a request: a capped request gives its lock back (oauth/routes.ts). */
+    providerDone?: (req: IncomingMessage) => void
+  } = {}
 
   async function enabled() {
     return (await ctx.settings.get("agents")).enabled
@@ -150,6 +156,81 @@ export function createAgentConnect(
   /** Records the generation a request began under, for the approval (`agent_consent`). */
   async function recordRequest(key: string, gen: number) {
     await ctx.db.insert(agentConsent).values({ key, generation: gen }).onConflictDoNothing()
+  }
+
+  /**
+   * Binds a request to the browser session that first opens it: the first open fills the session only while it is
+   * empty, and every later open or answer must come from that session. Another browser, or the same person after
+   * signing in again, never sees or answers it. No record (a request that began without one) is no request. Kept in
+   * the database, so a restart keeps the binding.
+   */
+  async function bindRequest(uid: string, sessionId: string) {
+    const key = `i:${uid}`
+    await ctx.db
+      .update(agentConsent)
+      .set({ sessionId })
+      .where(and(eq(agentConsent.key, key), isNull(agentConsent.sessionId)))
+    const [row] = await ctx.db.select().from(agentConsent).where(eq(agentConsent.key, key))
+    return Boolean(row && row.sessionId === sessionId && !row.decidedAt)
+  }
+
+  /**
+   * Answers a request, once, under the shared gate and in one transaction: an end that began first has finished and
+   * moved the generation; one that begins now waits until this connection is recorded, and then ends it. The request
+   * is taken by its session (approve or deny), and only while it and its device code began in the current generation.
+   * Whether agents are on and the issuer are read before the transaction (any change of them ends everything and moves
+   * the generation, which is checked inside), so the transaction holds one connection of the main pool and nothing
+   * else of it. `makeGrant` stores the grant through the provider, on its own pool.
+   */
+  async function decide(input: {
+    uid: string
+    sessionId: string
+    deviceCode: string | null
+    approve: boolean
+    accountId: string
+    issuer: string
+    record: Omit<Parameters<typeof connected>[1], "grantId" | "issuer">
+    makeGrant: () => Promise<string>
+  }): Promise<{ kind: "gone" } | { kind: "denied" } | { kind: "approved"; grantId: string }> {
+    const on = await enabled()
+    const issuer = issuerOf((await ctx.settings.get("general")).publicUrl)
+    return ctx.db.transaction(async (tx) => {
+      await gateShared(tx)
+      const [taken] = await tx
+        .update(agentConsent)
+        .set({ decidedAt: new Date() })
+        .where(
+          and(
+            eq(agentConsent.key, `i:${input.uid}`),
+            eq(agentConsent.sessionId, input.sessionId),
+            isNull(agentConsent.decidedAt),
+          ),
+        )
+        .returning({ generation: agentConsent.generation })
+      const now = await generation(tx)
+      if (!taken || taken.generation !== now) return { kind: "gone" as const }
+      if (input.deviceCode) {
+        const [device] = await tx
+          .select({ generation: agentConsent.generation })
+          .from(agentConsent)
+          .where(eq(agentConsent.key, `d:${sha256(input.deviceCode)}`))
+        if (!device || device.generation !== now) return { kind: "gone" as const }
+      }
+      if (!input.approve) {
+        await ctx.audit(
+          { actor: input.record.approvedBy, action: "Agent connection denied", target: input.record.name, via: "web" },
+          tx,
+        )
+        return { kind: "denied" as const }
+      }
+      if (!on || issuer !== input.issuer) return { kind: "gone" as const }
+      const [account] = await tx.select({ id: user.id }).from(user).where(eq(user.id, input.accountId))
+      if (!account) return { kind: "gone" as const }
+      // If this transaction fails after the grant is stored, the sweep removes the grant.
+      const grantId = await input.makeGrant()
+      await connected(tx, { ...input.record, issuer: input.issuer, grantId })
+      return { kind: "approved" as const, grantId }
+    })
   }
 
   async function provider() {
@@ -182,20 +263,24 @@ export function createAgentConnect(
         } catch (e) {
           failure = e
         }
-        if (opens && !failure) {
-          const uid = /\/connect\/approve\/([\w-]+)/.exec(String(k.response.get("location") ?? ""))?.[1]
-          if (uid) await recordRequest(`i:${uid}`, gen)
-          const body = k.body as { device_code?: unknown } | undefined
-          if (path === "/oauth/device" && typeof body?.device_code === "string")
-            await recordRequest(`d:${sha256(body.device_code)}`, gen)
-        }
-        if (path === "/oauth/token") {
-          const oidc = k.oidc as { params?: { grant_type?: unknown } } | undefined
-          const error =
-            (failure as { error?: unknown } | undefined)?.error ?? (k.body as { error?: unknown } | undefined)?.error
-          const answered = k.status === 200 || error === "authorization_pending" || error === "slow_down"
-          if (oidc?.params?.grant_type === "urn:ietf:params:oauth:grant-type:device_code" && answered)
-            hooks.devicePollAnswered?.(k.req)
+        try {
+          if (opens && !failure) {
+            const uid = /\/connect\/approve\/([\w-]+)/.exec(String(k.response.get("location") ?? ""))?.[1]
+            if (uid) await recordRequest(`i:${uid}`, gen)
+            const body = k.body as { device_code?: unknown } | undefined
+            if (path === "/oauth/device" && typeof body?.device_code === "string")
+              await recordRequest(`d:${sha256(body.device_code)}`, gen)
+          }
+          if (path === "/oauth/token") {
+            const oidc = k.oidc as { params?: { grant_type?: unknown } } | undefined
+            const error =
+              (failure as { error?: unknown } | undefined)?.error ?? (k.body as { error?: unknown } | undefined)?.error
+            const answered = k.status === 200 || error === "authorization_pending" || error === "slow_down"
+            if (oidc?.params?.grant_type === "urn:ietf:params:oauth:grant-type:device_code" && answered)
+              hooks.devicePollAnswered?.(k.req)
+          }
+        } finally {
+          hooks.providerDone?.(k.req)
         }
         if (failure) throw failure
       })
@@ -291,10 +376,20 @@ export function createAgentConnect(
     return row
   }
 
-  /** Ends one connected agent for good, under the exclusive gate, in one transaction. */
-  async function end(which: { id: string } | { grantId: string }, reason: EndReason, who: Who) {
+  /**
+   * Ends one connected agent for good, under the exclusive gate, in one transaction. With `unusedSince`, only while it
+   * still has not been used since then, checked under the gate: a call that came in meanwhile keeps it.
+   */
+  async function end(which: { id: string } | { grantId: string }, reason: EndReason, who: Who, unusedSince?: Date) {
     const row = await ctx.db.transaction(async (tx) => {
       await gateExclusive(tx)
+      if (unusedSince && "id" in which) {
+        const [still] = await tx
+          .select({ id: apiTokens.id })
+          .from(apiTokens)
+          .where(and(eq(apiTokens.id, which.id), idleBefore(unusedSince)))
+        if (!still) return null
+      }
       return endIn(ctx, tx, which, reason, who)
     })
     if (row) changed(ctx, "access", "overview")
@@ -327,16 +422,28 @@ export function createAgentConnect(
   }
 
   /**
-   * Brings connections in line with the public URL as it is now; run at start, before any request, and by the
-   * sweep. A connection whose URL changed or went away ends with its instance access.
+   * Brings connections in line with the settings as they are now; run at start, before any request, and by the
+   * sweep. A connection whose URL changed or went away ends with its instance access, and so does every connection
+   * while agents are off (one that an interrupted turn-off left behind never works again).
    */
   async function reconcile() {
     await reconcileIssuer(issuerOf((await ctx.settings.get("general")).publicUrl))
+    if (!(await enabled())) {
+      const [live] = await ctx.db
+        .select({ id: apiTokens.id })
+        .from(apiTokens)
+        .where(and(eq(apiTokens.kind, "agent"), isNull(apiTokens.revokedAt)))
+        .limit(1)
+      if (live) await endEveryConnection(ctx, "off", SYSTEM)
+    }
   }
 
-  /** Ends every connected agent: disconnect all, agents turned off, a new public URL, a two-factor reset. */
-  async function endAll(reason: EndReason, who: Who) {
-    return endEveryConnection(ctx, reason, who)
+  /**
+   * Ends every connected agent: disconnect all, a new public URL, a two-factor reset. `alsoIn` makes a change in the
+   * same transaction (turning agents off is stored with the end it causes, or not at all).
+   */
+  async function endAll(reason: EndReason, who: Who, alsoIn?: (tx: Tx) => Promise<void>) {
+    return endEveryConnection(ctx, reason, who, alsoIn)
   }
 
   /** Ends every connection not used within `days`, under the exclusive gate (a new idle period, the sweep). */
@@ -345,15 +452,10 @@ export function createAgentConnect(
     const rows = await ctx.db
       .select({ id: apiTokens.id })
       .from(apiTokens)
-      .where(
-        and(
-          eq(apiTokens.kind, "agent"),
-          isNull(apiTokens.revokedAt),
-          or(lt(apiTokens.lastUsedAt, cutoff), and(isNull(apiTokens.lastUsedAt), lt(apiTokens.createdAt, cutoff))),
-        ),
-      )
-    for (const r of rows) await end({ id: r.id }, "unused", who)
-    return rows.length
+      .where(and(eq(apiTokens.kind, "agent"), isNull(apiTokens.revokedAt), idleBefore(cutoff)))
+    let ended = 0
+    for (const r of rows) if (await end({ id: r.id }, "unused", who, cutoff)) ended++
+    return ended
   }
 
   /**
@@ -383,6 +485,20 @@ export function createAgentConnect(
       if (await grantAlive(ctx.db, row.grantId as string)) continue
       await end({ id: row.id }, row.lastUsedAt ? "unused" : "unfinished", SYSTEM)
     }
+    // A connection whose grant the authorization server removed (the agent revoked a token) and that its event did not
+    // end, for example when the server stopped in between.
+    const orphans = await ctx.db
+      .select({ id: apiTokens.id })
+      .from(apiTokens)
+      .where(
+        and(
+          eq(apiTokens.kind, "agent"),
+          isNull(apiTokens.revokedAt),
+          isNotNull(apiTokens.grantId),
+          sql`not exists (select 1 from oauth_store g where g.type = 'Grant' and g.id = ${apiTokens.grantId})`,
+        ),
+      )
+    for (const r of orphans) await end({ id: r.id }, "cut", SYSTEM)
     await ctx.db.transaction(async (tx) => {
       await gateExclusive(tx)
       await sweepOrphanGrants(tx)
@@ -395,6 +511,8 @@ export function createAgentConnect(
     enabled,
     verify,
     stillLive,
+    bindRequest,
+    decide,
     connected,
     end,
     endAll,
@@ -407,6 +525,10 @@ export function createAgentConnect(
     skillVersion: servedSkillVersion(skillDir),
   }
 }
+
+/** A connection not used since `cutoff` (or never used, and approved before it). */
+const idleBefore = (cutoff: Date) =>
+  or(lt(apiTokens.lastUsedAt, cutoff), and(isNull(apiTokens.lastUsedAt), lt(apiTokens.createdAt, cutoff)))
 
 /** When a connection was last used, or approved when never used: the idle period counts from there. */
 export function idleSince(row: { lastUsedAt: Date | null; createdAt: Date }) {

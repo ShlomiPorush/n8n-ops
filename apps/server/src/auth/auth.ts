@@ -60,8 +60,8 @@ const notVerified = () =>
  * effect, which may come from the settings (auth/current.ts builds a new instance when it changes).
  */
 /**
- * Runs after two-factor sign-in was reset (Account → Reset): the person may have lost control of the account, so
- * every agent connection ends (oauth/agents.ts, set by index.ts). The reset from the server ends them in cli.ts.
+ * Runs before two-factor sign-in is reset (Account → Reset): the person may have lost control of the account, so
+ * every agent connection ends first (oauth/agents.ts, set by index.ts). The reset from the server ends them in cli.ts.
  */
 let twoFactorReset: ((actor: string) => Promise<unknown>) | null = null
 export function onTwoFactorReset(run: (actor: string) => Promise<unknown>) {
@@ -111,6 +111,13 @@ export function createAuth(db: Db, appKey: Buffer, publicUrl?: string, passkeyUr
     // two-factor plugin deletes again while the code is pending; the real session comes from verify-totp. A
     // passkey sign-in completes at once.
     hooks: {
+      // Before the reset, so that it never takes effect while the agents approved under the earlier sign-in still work
+      // (a reset that is then refused, such as for a wrong password, has still ended them: the safe side).
+      before: createAuthMiddleware(async (ctx) => {
+        if (ctx.path !== "/two-factor/disable" || !twoFactorReset) return
+        const actor = ctx.context.session?.user as { username?: string | null; name?: string } | undefined
+        await twoFactorReset(actor?.username ?? actor?.name ?? "")
+      }),
       after: createAuthMiddleware(async (ctx) => {
         const change = signInChanges[ctx.path]
         // The after hook also runs when the endpoint refused; only a change that was made is recorded.
@@ -124,7 +131,6 @@ export function createAuth(db: Db, appKey: Buffer, publicUrl?: string, passkeyUr
             target: String(body.name ?? body.id ?? ""),
             via: "web",
           })
-          if (ctx.path === "/two-factor/disable") await twoFactorReset?.(actor?.username ?? actor?.name ?? "")
         }
         // Adding a passkey may also create a session (createSession); like any session made from a live one, it
         // keeps that one's clocks below.

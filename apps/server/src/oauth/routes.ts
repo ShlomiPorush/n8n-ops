@@ -1,17 +1,14 @@
 import type { IncomingMessage, ServerResponse } from "node:http"
 import { RESPONSE_ALREADY_SENT } from "@hono/node-server/utils/response"
-import { and, eq, isNull } from "drizzle-orm"
 import type { Context } from "hono"
 import { Hono } from "hono"
 import { z } from "zod"
 import type { Ctx } from "../context.ts"
-import { agentConsent, user } from "../db/schema.ts"
 import { addressOf, incomingOf, limiter } from "../http/address.ts"
 import { requireUser } from "../http/middleware.ts"
 import { actorName, type Env } from "../http/types.ts"
 import { sha256 } from "../lib/crypto.ts"
 import { type AgentConnect, issuerOf } from "./agents.ts"
-import { gateShared, generation } from "./gate.ts"
 import { cleanLabel } from "./label.ts"
 import { CLI_CLIENT, resources, SCOPES } from "./provider.ts"
 import { skillRoutes } from "./skill.ts"
@@ -88,6 +85,12 @@ export function agentConnectRoutes(ctx: Ctx, agents: AgentConnect) {
     verifySession: limiter(30, 600_000),
   }
   agents.hooks.devicePollAnswered = (req) => limits.token.refund(addressOf(req))
+  /** The lock of a capped request, given back when the provider has handled it. */
+  const handled = new WeakMap<IncomingMessage, () => void>()
+  agents.hooks.providerDone = (req) => {
+    handled.get(req)?.()
+    handled.delete(req)
+  }
   const registering = mutex()
   const requesting = mutex()
   const deciding = semaphore(DECISIONS_AT_ONCE)
@@ -178,21 +181,6 @@ export function agentConnectRoutes(ctx: Ctx, agents: AgentConnect) {
     }
   }
 
-  /**
-   * The request's record (`agent_consent`), bound to the browser session that first opened it: the first page load
-   * of this session fills it, and another session (another browser, or the same person after signing in again)
-   * never sees or answers it. No record means the request began without one, or every connection ended since.
-   */
-  async function bound(uid: string, sessionId: string) {
-    const key = `i:${uid}`
-    await ctx.db
-      .update(agentConsent)
-      .set({ sessionId })
-      .where(and(eq(agentConsent.key, key), isNull(agentConsent.sessionId)))
-    const [row] = await ctx.db.select().from(agentConsent).where(eq(agentConsent.key, key))
-    return row && row.sessionId === sessionId && !row.decidedAt ? row : null
-  }
-
   const sessionOf = (c: Context<Env>) => {
     const who = c.get("actor")
     return who.kind === "user" ? who.sessionId : null
@@ -201,7 +189,7 @@ export function agentConnectRoutes(ctx: Ctx, agents: AgentConnect) {
   app.get("/connect/approve/:uid/request", noStore, peopleOnly, requireUser(ctx), async (c) => {
     const it = await interaction(c)
     const sessionId = sessionOf(c)
-    if (!it || !sessionId || !(await bound(it.details.uid, sessionId))) return c.json(gone, 410)
+    if (!it || !sessionId || !(await agents.bindRequest(it.details.uid, sessionId))) return c.json(gone, 410)
     const loopback = it.redirect ? ["127.0.0.1", "[::1]", "localhost"].includes(it.redirect.hostname) : false
     return c.json({
       flow: it.redirect ? "browser" : "code",
@@ -233,60 +221,30 @@ export function agentConnectRoutes(ctx: Ctx, agents: AgentConnect) {
       ...(body.data.scopes.includes(SCOPES.access) && it.asked.includes(SCOPES.access) ? [SCOPES.access] : []),
     ]
 
-    /*
-     * One transaction under the shared gate: an end that began first has finished (and moved the generation), one
-     * that begins now waits until this connection is recorded and then ends it. The request is taken once, by this
-     * session, approve or deny, and only while it began in the current generation, as did its device code.
-     */
+    const refused = it.asked.filter((s) => !granted.includes(s))
+    const resource = resources(it.p.issuer)[it.resource]
     const outcome = await deciding(() =>
-      ctx.db.transaction(async (tx) => {
-        await gateShared(tx)
-        const [taken] = await tx
-          .update(agentConsent)
-          .set({ decidedAt: new Date() })
-          .where(
-            and(
-              eq(agentConsent.key, `i:${it.details.uid}`),
-              eq(agentConsent.sessionId, sessionId),
-              isNull(agentConsent.decidedAt),
-            ),
-          )
-          .returning({ generation: agentConsent.generation })
-        const now = await generation(tx)
-        if (!taken || taken.generation !== now) return { kind: "gone" as const }
-        if (it.deviceCode) {
-          const [device] = await tx
-            .select({ generation: agentConsent.generation })
-            .from(agentConsent)
-            .where(eq(agentConsent.key, `d:${sha256(it.deviceCode)}`))
-          if (!device || device.generation !== now) return { kind: "gone" as const }
-        }
-        if (!body.data.approve) {
-          await ctx.audit({ actor: actorName(who), action: "Agent connection denied", target: name, via: "web" }, tx)
-          return { kind: "denied" as const }
-        }
-        const issuer = issuerOf((await ctx.settings.get("general")).publicUrl)
-        if (!(await agents.enabled()) || issuer !== it.p.issuer) return { kind: "gone" as const }
-        const [account] = await tx.select({ id: user.id }).from(user).where(eq(user.id, who.id))
-        if (!account) return { kind: "gone" as const }
-        const refused = it.asked.filter((s) => !granted.includes(s))
-        const resource = resources(it.p.issuer)[it.resource]
-        const grant = new it.p.provider.Grant({ accountId: who.id, clientId: it.client.clientId })
-        grant.addResourceScope(resource, granted.join(" "))
-        if (refused.length) grant.rejectResourceScope(resource, refused.join(" "))
-        grant.addOIDCScope("offline_access")
-        // Stored by the provider on its own pool; if this transaction fails after, the sweep removes the grant.
-        const grantId = await grant.save()
-        await agents.connected(tx, {
-          issuer: it.p.issuer,
-          grantId,
+      agents.decide({
+        uid: it.details.uid,
+        sessionId,
+        deviceCode: it.deviceCode,
+        approve: body.data.approve,
+        accountId: who.id,
+        issuer: it.p.issuer,
+        record: {
           name,
           scopes: granted,
           via: it.redirect ? "browser" : "code",
           redirectHost: it.redirect?.host ?? null,
           approvedBy: actorName(who),
-        })
-        return { kind: "approved" as const, grantId }
+        },
+        makeGrant: () => {
+          const grant = new it.p.provider.Grant({ accountId: who.id, clientId: it.client.clientId })
+          grant.addResourceScope(resource, granted.join(" "))
+          if (refused.length) grant.rejectResourceScope(resource, refused.join(" "))
+          grant.addOIDCScope("offline_access")
+          return grant.save()
+        },
       }),
     )
     if (outcome.kind === "gone") return c.json(gone, 410)
@@ -343,12 +301,15 @@ export function agentConnectRoutes(ctx: Ctx, agents: AgentConnect) {
         })
       return tooMany(c)
     }
-    // Codes typed on the code page count per browser session too, so one session cannot try them from many addresses.
+    // Codes typed on the code page count per provider session too (its own cookie), so one session cannot try them
+    // from many addresses. A request without that cookie has no session the provider would accept a code in.
     if (path.startsWith("/connect/device") && c.req.method === "POST") {
-      const session = sha256(c.req.header("cookie") ?? address)
-      if (!limits.verifySession(session)) return tooMany(c)
+      const session = /(?:^|;\s*)_session=([^;]+)/.exec(c.req.header("cookie") ?? "")?.[1]
+      if (!limits.verifySession(session ? sha256(session) : address)) return tooMany(c)
     }
-    // A cap is counted and filled one request at a time, until the provider stored the new record.
+    // A cap is counted and filled one request at a time: the lock is given back once the provider has handled the
+    // request (its middleware, oauth/agents.ts), whether it stored the record, failed, or its client left meanwhile,
+    // and after a minute at the latest.
     const capped =
       c.req.method === "POST" && path === "/oauth/register"
         ? { lock: registering, room: () => roomForClient(ctx.db, MAX_CLIENTS) }
@@ -357,11 +318,17 @@ export function agentConnectRoutes(ctx: Ctx, agents: AgentConnect) {
           : null
     if (capped) {
       const release = await capped.lock()
-      n.outgoing.once("close", release)
-      if (!(await capped.room().catch(() => false))) {
+      const fallback = setTimeout(release, 60_000)
+      fallback.unref?.()
+      const done = () => {
+        clearTimeout(fallback)
         release()
+      }
+      if (!(await capped.room().catch(() => false))) {
+        done()
         return tooMany(c)
       }
+      handled.set(n.incoming, done)
     }
     n.outgoing.setHeader("X-Frame-Options", "DENY")
     n.outgoing.setHeader("Content-Security-Policy", "frame-ancestors 'none'")

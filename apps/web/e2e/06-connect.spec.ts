@@ -68,10 +68,11 @@ const toolNames = async (token: string) => {
 async function api(token: string, path: string) {
   const list = (await (
     await fetch(`${base}/api/v1/agent/endpoints`, { headers: { authorization: `Bearer ${token}` } })
-  ).json()) as { revision: string; endpoints: { method: string; path: string; kind: string }[] }
-  const kind = list.endpoints.find((e) => e.method === "GET" && e.path === path)?.kind ?? "read"
+  ).json()) as { revision?: string; endpoints?: { method: string; path: string; kind: string }[] }
+  // A token that no longer works gets no list: the call then shows how it is refused.
+  const kind = list.endpoints?.find((e) => e.method === "GET" && e.path === path)?.kind ?? "read"
   return fetch(`${base}${path}`, {
-    headers: { authorization: `Bearer ${token}`, "x-n8n-ops-policy": list.revision, "x-n8n-ops-kind": kind },
+    headers: { authorization: `Bearer ${token}`, "x-n8n-ops-policy": list.revision ?? "", "x-n8n-ops-kind": kind },
   })
 }
 

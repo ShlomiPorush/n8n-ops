@@ -21,7 +21,8 @@ test.afterAll(async () => {
 test("a change from another page, or with no page named, is refused and changes nothing", async () => {
   const keys = async () => (await (await page.request.get("/api/admin/keys")).json()) as { backupRecipient: string }
   const before = await keys()
-  for (const headers of [{ origin: "https://evil.example.net" }, {}]) {
+  const others: Record<string, string>[] = [{ origin: "https://evil.example.net" }, {}]
+  for (const headers of others) {
     const res = await page.request.post("/api/admin/keys/backup", { headers })
     expect(res.status()).toBe(403)
     expect(await res.json()).toEqual({

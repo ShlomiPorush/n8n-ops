@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-11-13
+
 ### Added
 
 - **Settings → Agent Connections turns agents on or off and sets how long an unused connection lasts.** Turning agents off disconnects every agent at once. The idle period is 90 days by default and can be 1 to 365 days; a shorter one applies at once, and a longer one does not bring back agents already disconnected. An installation that already has its account keeps agents on after the update; a new installation starts with them off.

@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks"
 import { hkdfSync } from "node:crypto"
 import { passkey } from "@better-auth/passkey"
 import { betterAuth } from "better-auth"
@@ -61,8 +62,8 @@ const notVerified = () =>
  */
 /**
  * A two-factor reset (Account → Reset) ends every agent connection, since the person may have lost control of the
- * account: `begin` before the reset runs (and no approval is answered until `finish`), `finish` after it, whether it
- * was made or refused (oauth/agents.ts, set by index.ts). Only a request from a signed-in session begins one, so a
+ * account: `begin` before the reset runs (and no approval is answered until `finish`), `finish` once the call has
+ * ended, whether the reset was made, refused or failed (oauth/agents.ts, set by index.ts). Only a request from a signed-in session begins one, so a
  * request without a session ends nothing. The reset from the server does the same in cli.ts.
  */
 type ResetHooks = { begin(actor: string): Promise<string>; finish(actor: string, id: string): Promise<unknown> }
@@ -70,8 +71,32 @@ let twoFactorReset: ResetHooks | null = null
 export function onTwoFactorReset(hooks: ResetHooks) {
   twoFactorReset = hooks
 }
-/** The requests whose reset began, each with its reset, so that only they finish one, and only their own. */
-const resets = new WeakMap<Request, string>()
+/**
+ * The resets begun within one call into Better Auth. http/auth-guard.ts runs every call in its own scope and finishes
+ * the resets begun in it when the call ends, however it ends: Better Auth runs no after hook when its endpoint throws
+ * an error of its own, and a reset left unfinished would keep approvals closed.
+ */
+type Begun = { id: string; actor: string }
+const resetScope = new AsyncLocalStorage<Begun[]>()
+
+/** Runs one call into Better Auth, and finishes every reset begun in it once the call has ended. */
+export async function withResetScope<T>(run: () => Promise<T>): Promise<T> {
+  const begun: Begun[] = []
+  try {
+    return await resetScope.run(begun, run)
+  } finally {
+    // A finish that fails leaves its row; the sweep finishes it (oauth/agents.ts reconcile).
+    for (const b of begun.splice(0)) await twoFactorReset?.finish(b.actor, b.id).catch(() => undefined)
+  }
+}
+
+/** Begins a reset for the call under way; refused outside a scope, where nothing would finish it. */
+export async function beginScopedReset(actor: string) {
+  const begun = resetScope.getStore()
+  if (!begun || !twoFactorReset)
+    throw new APIError("FORBIDDEN", { message: "Two-factor can be reset only from the Account page." })
+  begun.push({ id: await twoFactorReset.begin(actor), actor })
+}
 
 export function createAuth(db: Db, appKey: Buffer, publicUrl?: string, passkeyUrl: URL | null = null) {
   const audit = createAudit(db)
@@ -119,22 +144,16 @@ export function createAuth(db: Db, appKey: Buffer, publicUrl?: string, passkeyUr
       // Before the reset, so that it never takes effect while the agents approved under the earlier sign-in still work
       // (a reset that is then refused, such as for a wrong password, has still ended them: the safe side).
       before: createAuthMiddleware(async (ctx) => {
-        if (ctx.path !== "/two-factor/disable" || !twoFactorReset || !ctx.request) return
+        if (ctx.path !== "/two-factor/disable" || !twoFactorReset) return
         // Better Auth checks the session after this hook; read it here through its own interface.
         // No session, or one that could not be read: the reset does not run at all (it would be refused anyway, and
         // must never run with the agents still connected).
         const session = await getSessionFromCtx(ctx)
         if (!session) throw new APIError("UNAUTHORIZED", { message: "Sign in again, then reset two-factor." })
         const actor = session.user as { username?: string | null; name?: string }
-        resets.set(ctx.request, await twoFactorReset.begin(actor.username ?? actor.name ?? ""))
+        await beginScopedReset(actor.username ?? actor.name ?? "")
       }),
       after: createAuthMiddleware(async (ctx) => {
-        const reset = ctx.request ? resets.get(ctx.request) : undefined
-        if (ctx.request && reset) {
-          resets.delete(ctx.request)
-          const actor = ctx.context.session?.user as { username?: string | null; name?: string } | undefined
-          await twoFactorReset?.finish(actor?.username ?? actor?.name ?? "", reset)
-        }
         const change = signInChanges[ctx.path]
         // The after hook also runs when the endpoint refused; only a change that was made is recorded.
         if (change && !(ctx.context.returned instanceof APIError)) {

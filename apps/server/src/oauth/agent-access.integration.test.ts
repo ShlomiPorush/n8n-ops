@@ -6,7 +6,7 @@ import { join } from "node:path"
 import { and, eq, isNull, sql } from "drizzle-orm"
 import postgres from "postgres"
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest"
-import { createAuth, onTwoFactorReset } from "../auth/auth.ts"
+import { beginScopedReset, createAuth, onTwoFactorReset, withResetScope } from "../auth/auth.ts"
 import type { Ctx } from "../context.ts"
 import { createDatabase, type Database } from "../db/client.ts"
 import {
@@ -856,5 +856,35 @@ describe("the two-factor reset hooks", () => {
     )
     expect(res.status).toBe(401)
     expect(calls).toEqual([])
+  })
+})
+
+describe("a two-factor reset whose call fails", () => {
+  it("is finished when the call ends, also with an error that is not Better Auth's, and approvals open again", async () => {
+    const database = await freshDatabase()
+    const ctx = contextOf(database)
+    await ctx.settings.set("general", { ...(await ctx.settings.get("general")), publicUrl: issuer })
+    await ctx.settings.set("agents", { enabled: true, idleDays: 90 })
+    const agents = createAgentConnect(ctx, { cookieKeys: [value()] })
+    ctx.agents = agents
+    const who = { by: "owner", via: "web" as const }
+    onTwoFactorReset({ begin: () => agents.beginReset(who), finish: (_actor, id) => agents.finishReset(who, id) })
+
+    await expect(
+      withResetScope(async () => {
+        await beginScopedReset("owner")
+        expect(await ctx.db.select().from(agentResets)).toHaveLength(1)
+        throw new Error("the database dropped the update")
+      }),
+    ).rejects.toThrow("the database dropped the update")
+    expect(await ctx.db.select().from(agentResets)).toEqual([])
+    // Nothing in this process still counts it as running: the sweep has nothing left to wait for.
+    await agents.reconcile()
+    expect(await ctx.db.select().from(agentResets)).toEqual([])
+  })
+
+  it("is refused outside a call into Better Auth, where nothing would finish it", async () => {
+    onTwoFactorReset({ begin: async () => "reset", finish: async () => {} })
+    await expect(beginScopedReset("owner")).rejects.toThrow()
   })
 })

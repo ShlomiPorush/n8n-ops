@@ -166,11 +166,23 @@ describe("free space", () => {
     }
   })
 
-  it("keeps no measurement that started before a compaction changed a table", async () => {
+  it("keeps no measurement that started before a compaction ended, also one another process ran", async () => {
     const before = freeSpace(ctx, { refresh: true })
     forgetFreeSpace()
     const stale = await before
     expect(await freeSpace(ctx)).not.toBe(stale)
+
+    // Kept, then a compaction ends that this process did not run (another server process): measured again.
+    const kept = await freeSpace(ctx, { refresh: true })
+    expect(await freeSpace(ctx)).toBe(kept)
+    await ctx.db.insert(dbCompactions).values({
+      tableName: "bloat",
+      relationId: 1,
+      startedBy: "admin",
+      status: "done",
+      finishedAt: new Date(Date.now() + 1_000),
+    })
+    expect(await freeSpace(ctx)).not.toBe(kept)
   })
 
   it("measures again only when asked or after ten minutes", async () => {

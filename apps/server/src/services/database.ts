@@ -58,7 +58,6 @@ async function activeHolder(ctx: Pick<Ctx, "db">): Promise<number | null> {
 export type TableSize = {
   name: string
   totalBytes: number | null
-  tableBytes: number | null
   indexBytes: number | null
   compactable: boolean
   compacting: boolean
@@ -83,17 +82,16 @@ export async function databaseSizes(ctx: Pick<Ctx, "db">) {
       const [database] = rows<{ size: number }>(
         await tx.execute(sql`select pg_database_size(current_database())::float8 as size`),
       )
-      const measured = rows<{ name: string; total: number; table: number; indexes: number }>(
+      const measured = rows<{ name: string; total: number; indexes: number }>(
         await tx.execute(sql`
           select c.relname as name, pg_total_relation_size(c.oid)::float8 as total,
-            pg_table_size(c.oid)::float8 as "table", pg_indexes_size(c.oid)::float8 as indexes
+            pg_indexes_size(c.oid)::float8 as indexes
           from pg_class c join pg_namespace n on n.oid = c.relnamespace
           where n.nspname = 'public' and c.relkind = 'r' and c.oid <> ${skip}::oid`),
       )
       const tables: TableSize[] = measured.map((t) => ({
         name: t.name,
         totalBytes: t.total,
-        tableBytes: t.table,
         indexBytes: t.indexes,
         compactable: !UNCOMPACTABLE.includes(t.name),
         compacting: false,
@@ -102,7 +100,6 @@ export async function databaseSizes(ctx: Pick<Ctx, "db">) {
         tables.push({
           name: running.tableName,
           totalBytes: null,
-          tableBytes: null,
           indexBytes: null,
           compactable: false,
           compacting: true,
@@ -124,23 +121,30 @@ export type FreeSpace = {
   tables: Record<string, TableFreeSpace>
 }
 
+/** The kept measurement, with when it started: a compaction that ended after that makes it stale. */
 let cached: { at: number; value: FreeSpace } | null = null
 let measuring: Promise<FreeSpace> | null = null
-/** Moves on when a compaction changed a table: a measurement that started before it is not kept. */
-let generation = 0
 
 /**
  * Free space of each table's data (heap and TOAST) from PostgreSQL's pgstattuple_approx: space it can reuse now, and
  * apart from it the space of deleted rows a vacuum has not cleared. Indexes are not measured. One measurement at a
- * time per process, kept for 10 minutes; each table in its own transaction with its own time limits.
+ * time per process, kept for 10 minutes and never past a compaction that ended after it started (also one another
+ * server process ran); each table in its own transaction with its own time limits.
  */
-export function freeSpace(ctx: Pick<Ctx, "db">, options: { refresh?: boolean } = {}): Promise<FreeSpace> {
-  if (!options.refresh && cached && Date.now() - cached.at < FREE_SPACE_TTL_MS) return Promise.resolve(cached.value)
+export async function freeSpace(ctx: Pick<Ctx, "db">, options: { refresh?: boolean } = {}): Promise<FreeSpace> {
+  if (!options.refresh && cached && Date.now() - cached.at < FREE_SPACE_TTL_MS) {
+    const [last] = rows<{ at: number | null }>(
+      await ctx.db.execute(sql`
+        select extract(epoch from max(finished_at)) * 1000 as at from db_compactions where status <> 'running'`),
+    )
+    if (!last?.at || Number(last.at) < cached.at) return cached.value
+  }
   if (measuring) return measuring
-  const started = generation
+  const started = Date.now()
   const run: Promise<FreeSpace> = measureFreeSpace(ctx)
     .then((value) => {
-      if (started === generation) cached = { at: Date.now(), value }
+      // Not kept when forgotten meanwhile (a compaction ended): it may hold a table from before.
+      if (measuring === run) cached = { at: started, value }
       return value
     })
     .finally(() => {
@@ -154,7 +158,6 @@ export function freeSpace(ctx: Pick<Ctx, "db">, options: { refresh?: boolean } =
 export function forgetFreeSpace() {
   cached = null
   measuring = null
-  generation++
 }
 
 async function measureFreeSpace(ctx: Pick<Ctx, "db">): Promise<FreeSpace> {
@@ -186,7 +189,10 @@ async function measureFreeSpace(ctx: Pick<Ctx, "db">): Promise<FreeSpace> {
   )
   const tables: Record<string, TableFreeSpace> = {}
   for (const t of list) {
-    if (running && t.oid === running.relationId) continue
+    if (running && t.oid === running.relationId) {
+      tables[t.name] = { error: "Not measured: it is being compacted." }
+      continue
+    }
     try {
       tables[t.name] = await ctx.db.transaction(async (tx) => {
         await tx.execute(sql`set local statement_timeout = '10s'`)
@@ -357,12 +363,13 @@ async function runCompact(ctx: Ctx, reserved: ReservedSql, row: Compaction, targ
   } finally {
     notices.stop()
   }
-  // The outcome is written while the lock is still held, so a status read never settles this run meanwhile.
+  // Measurements from before are dropped before the end is published. The outcome is written while the lock is still
+  // held, so a status read never settles this run meanwhile.
+  forgetFreeSpace()
   try {
     if (outcome) await finish(ctx, row, outcome, Date.now() - started)
   } finally {
     await cleanUp(ctx, reserved, true, pid)
-    forgetFreeSpace()
   }
 }
 

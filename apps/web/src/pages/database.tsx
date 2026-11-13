@@ -17,7 +17,6 @@ import { toast } from "@/lib/toast"
 type TableSize = {
   name: string
   totalBytes: number | null
-  tableBytes: number | null
   indexBytes: number | null
   compactable: boolean
   compacting: boolean
@@ -88,6 +87,13 @@ export function DatabaseSection({ hidden = false }: { hidden?: boolean }) {
     else toast.error(`Unknown how compacting ${ended.tableName} ended`)
     void client.invalidateQueries({ queryKey: [REPORT] })
   }, [lastEnded, status.data, client])
+
+  // A report read while a compaction ran (a table "Being compacted", or sizes busy) is read again once status says
+  // none runs, also when the run ended before this page first read the status.
+  const stale = Boolean(report.data && (report.data.busy || report.data.tables.some((t) => t.compacting)))
+  useEffect(() => {
+    if (status.data && !status.data.running && stale) void client.invalidateQueries({ queryKey: [REPORT] })
+  }, [status.data, stale, client])
 
   async function measure() {
     try {

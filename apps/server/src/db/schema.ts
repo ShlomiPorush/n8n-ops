@@ -200,7 +200,9 @@ export const apiTokens = pgTable("api_tokens", {
 
 /**
  * The authorization server's own records (oidc-provider): grants, codes, access and refresh tokens, clients
- * registered by agents, sessions and interactions. Opaque values, looked up by id; never shown in the UI.
+ * registered by agents, sessions and interactions. Looked up by id; never shown in the UI. Access tokens, refresh
+ * tokens and authorization codes are kept by the SHA-256 of their value only (`oauth/store.ts`), so this table
+ * holds none of them in a usable form.
  */
 export const oauthStore = pgTable(
   "oauth_store",
@@ -221,6 +223,35 @@ export const oauthStore = pgTable(
     index("oauth_store_uid_idx").on(t.uid),
     index("oauth_store_expires_idx").on(t.expiresAt),
   ],
+)
+
+/**
+ * The one row of agent connection state (`oauth/gate.ts`). `generation` goes up by one whenever every connection or
+ * every waiting request ends (disconnect all, agents turned off, a two-factor reset, a new public URL): a request
+ * that began under an earlier generation can no longer be approved. `issuer` is the public URL connections were last
+ * made under, so a change while the server was down is seen at start.
+ */
+export const agentState = pgTable("agent_state", {
+  id: integer("id").primaryKey(),
+  generation: integer("generation").notNull().default(0),
+  issuer: text("issuer"),
+})
+
+/**
+ * What an approval needs to know about a request the authorization server opened (`oauth/routes.ts`): the
+ * generation it began under, the browser session that first opened it, and whether it was answered. `key` is
+ * `i:<interaction uid>` or `d:<SHA-256 of a device code>`. Rows go once their request has run out.
+ */
+export const agentConsent = pgTable(
+  "agent_consent",
+  {
+    key: text("key").primaryKey(),
+    generation: integer("generation").notNull(),
+    sessionId: text("session_id"),
+    decidedAt: ts("decided_at"),
+    createdAt: created(),
+  },
+  (t) => [index("agent_consent_created_idx").on(t.createdAt)],
 )
 
 // ---------------------------------------------------------------------------

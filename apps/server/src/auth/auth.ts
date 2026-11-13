@@ -59,6 +59,15 @@ const notVerified = () =>
  * `publicUrl` is N8N_OPS_PUBLIC_URL (Better Auth's base URL and secure cookies); `passkeyUrl` is the public URL in
  * effect, which may come from the settings (auth/current.ts builds a new instance when it changes).
  */
+/**
+ * Runs after two-factor sign-in was reset (Account → Reset): the person may have lost control of the account, so
+ * every agent connection ends (oauth/agents.ts, set by index.ts). The reset from the server ends them in cli.ts.
+ */
+let twoFactorReset: ((actor: string) => Promise<unknown>) | null = null
+export function onTwoFactorReset(run: (actor: string) => Promise<unknown>) {
+  twoFactorReset = run
+}
+
 export function createAuth(db: Db, appKey: Buffer, publicUrl?: string, passkeyUrl: URL | null = null) {
   const audit = createAudit(db)
   const secret = Buffer.from(hkdfSync("sha256", appKey, "n8n-ops", "better-auth", 32)).toString("base64")
@@ -115,6 +124,7 @@ export function createAuth(db: Db, appKey: Buffer, publicUrl?: string, passkeyUr
             target: String(body.name ?? body.id ?? ""),
             via: "web",
           })
+          if (ctx.path === "/two-factor/disable") await twoFactorReset?.(actor?.username ?? actor?.name ?? "")
         }
         // Adding a passkey may also create a session (createSession); like any session made from a live one, it
         // keeps that one's clocks below.

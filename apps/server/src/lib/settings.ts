@@ -142,6 +142,12 @@ export const smtpPasswordNeeded = (
   newPassword !== null &&
   smtpAccount(current) !== smtpAccount(next)
 
+/**
+ * The longest the agents' idle period may be set to. Refresh tokens are issued for one day longer
+ * (oauth/provider.ts), so the authorization server never ends a connection before n8n-ops does.
+ */
+export const AGENT_IDLE_MAX_DAYS = 365
+
 export const sections = {
   general: z.object({
     /** Public URL of this n8n-ops installation, used in links sent by Telegram and email. */
@@ -225,6 +231,13 @@ export const sections = {
      */
     telegramApprovers: z.array(z.string()),
   }),
+  /** Agents connected by approval (oauth/agents.ts). */
+  agents: z.object({
+    /** Agents may connect and keep working. Turning it off ends every connection. */
+    enabled: z.boolean(),
+    /** A connection not used for this many days ends. A shorter value applies at once; a longer one revives none. */
+    idleDays: z.number().int().min(1).max(AGENT_IDLE_MAX_DAYS),
+  }),
   /** How long a browser session lasts (services/session-policy.ts). Applies to sessions already open. */
   security: z.object({
     /** A session nothing uses, not even an open page, ends this long after its last request. */
@@ -300,6 +313,7 @@ export const defaults: { [K in SectionName]: Section<K> } = {
     defaultNotify: ["telegram", "email"],
     telegramApprovers: [],
   },
+  agents: { enabled: false, idleDays: 90 },
   security: { lifetimeHours: 24, idleTimeout: true, idleMinutes: 60, maxHours: 12 },
   keys: {},
 }

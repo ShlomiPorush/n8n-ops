@@ -101,7 +101,7 @@ A program, such as an AI assistant or a script, that uses n8n-ops through MCP or
 _Avoid_: client, bot
 
 **Connection**:
-An Agent's standing link to n8n-ops, made when a person approves it. Each Connection is its own identity and ends when it is disconnected or unused for 90 days.
+An Agent's standing link to n8n-ops, made when a person approves it. Each Connection is its own identity and ends when it is disconnected, unused for the idle period set in Settings (90 days by default), or when agents are turned off, the public URL changes or two-factor sign-in is reset.
 _Avoid_: grant, session, authorization
 
 **Token**:

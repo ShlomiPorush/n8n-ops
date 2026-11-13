@@ -4,6 +4,7 @@ import { writeSync } from "node:fs"
 import type { Server } from "node:http"
 import { serve } from "@hono/node-server"
 import { createApp } from "./app.ts"
+import { onTwoFactorReset } from "./auth/auth.ts"
 import { createAuthSource } from "./auth/current.ts"
 import { loadConfig } from "./config.ts"
 import { type Ctx, consoleLogger } from "./context.ts"
@@ -50,9 +51,18 @@ const ctx: Ctx = {
   events: new EventEmitter().setMaxListeners(100),
 }
 
-// The authorization server for agents signs its cookies with a key derived from the app key.
+// The authorization server for agents signs its cookies with a key derived from the app key. Its records go through
+// a small pool of their own: an approval holds a transaction of the main pool while the provider stores its grant.
 const cookieKey = Buffer.from(hkdfSync("sha256", key, "n8n-ops", "agent-connect-cookies", 32)).toString("base64")
-ctx.agents = createAgentConnect(ctx, { cookieKeys: [cookieKey], webDir: config.webDir, skillDir: config.skillDir })
+const storeDatabase = createDatabase(config.databaseUrl, { max: 4 })
+ctx.agents = createAgentConnect(ctx, {
+  cookieKeys: [cookieKey],
+  webDir: config.webDir,
+  skillDir: config.skillDir,
+  storeDb: storeDatabase.db,
+})
+// A two-factor reset ends every agent connection: whoever reset it may not be the person who approved them.
+onTwoFactorReset((actor) => (ctx.agents as NonNullable<Ctx["agents"]>).endAll("identity", { by: actor, via: "web" }))
 // Connections made under a public URL that has since changed end before the server takes a request.
 await ctx.agents.reconcile()
 
@@ -80,7 +90,7 @@ const shutdown = (signal: string) => {
   log.info("shutting down", { signal })
   stop()
   server.close(() => {
-    void database.close().then(() => process.exit(0))
+    void Promise.all([database.close(), storeDatabase.close()]).then(() => process.exit(0))
   })
 }
 process.on("SIGTERM", () => shutdown("SIGTERM"))

@@ -7,6 +7,7 @@ import {
   LockKeyhole,
   type LucideIcon,
   Mail,
+  Plug,
   Send,
   SlidersHorizontal,
 } from "lucide-react"
@@ -39,6 +40,7 @@ export const settingsGroups = [
     label: "Access",
     items: [
       ["security", "Sign-in Security"],
+      ["agents", "Agent Connections"],
       ["access", "Agent Access"],
     ],
   },
@@ -62,5 +64,6 @@ export const settingsIcons: Record<SettingsSection, LucideIcon> = {
   destinations: HardDrive,
   keys: KeyRound,
   security: LockKeyhole,
+  agents: Plug,
   access: Bot,
 }

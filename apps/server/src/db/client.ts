@@ -12,8 +12,8 @@ export type Database = {
   close(): Promise<void>
 }
 
-export function createDatabase(url: string): Database {
-  const sql = postgres(url, { max: 10, onnotice: () => {} })
+export function createDatabase(url: string, { max = 10 }: { max?: number } = {}): Database {
+  const sql = postgres(url, { max, onnotice: () => {} })
   const db = drizzle(sql, { schema })
   return {
     db,

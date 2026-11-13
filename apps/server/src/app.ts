@@ -1,6 +1,7 @@
 import type { Health } from "@n8n-ops/shared"
 import { Hono } from "hono"
 import type { Ctx } from "./context.ts"
+import { agentGuard } from "./http/agent-guard.ts"
 import { authRoute } from "./http/auth-guard.ts"
 import type { Env } from "./http/types.ts"
 import { serveWeb } from "./http/web.ts"
@@ -19,6 +20,8 @@ export type AppOptions = {
 
 export function createApp(ctx: Ctx, { webDir, mounts = [] }: AppOptions = {}) {
   const app = new Hono<Env>()
+  // Agent tokens only where they are taken; never on the console's routes.
+  app.use("*", agentGuard)
 
   app.get("/healthz/live", (c) => c.json<Health>({ status: "ok", version: ctx.version, checks: {} }))
 

@@ -51,7 +51,7 @@ const MAX_WORKFLOWS = 200
 const MAX_WORKFLOW_ID = 200
 
 type Db = Ctx["db"]
-type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0]
+export type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0]
 type Reader = Db | Tx
 
 export type AccessInstanceRow = typeof accessRequestInstances.$inferSelect
@@ -749,26 +749,36 @@ export async function denyAccess(ctx: Ctx, id: string, who: Decider) {
 /** Ends access now: a pending request cannot be approved any more, an approved key stops working. */
 export async function revokeAccess(ctx: Ctx, id: string, who: Decider) {
   const updated = await ctx.db.transaction(async (tx) => {
-    const [row] = await tx
-      .update(accessRequests)
-      .set({ status: "revoked", endedAt: new Date(), keyEnc: null, ...messageOutdated })
-      .where(and(eq(accessRequests.id, id), inArray(accessRequests.status, ["pending", "approved"])))
-      .returning()
+    const row = await revokeIn(ctx, tx, id, who)
     if (!row) throw new AccessError("not_active", "The request is not pending or active.")
-    await auditDecision(ctx, tx, id, "Instance access revoked", who)
     return row
   })
   changed(ctx, "access", "overview")
   return updated
 }
 
-/** Revokes everything a token asked for or holds; used when the token itself is revoked. */
-export async function revokeAccessOfToken(ctx: Ctx, tokenId: string, who: Decider) {
-  const rows = await ctx.db
+/** Ends one request in the caller's transaction, with its audit entry; null when it was not pending or active. */
+async function revokeIn(ctx: Ctx, tx: Tx, id: string, who: Decider) {
+  const [row] = await tx
+    .update(accessRequests)
+    .set({ status: "revoked", endedAt: new Date(), keyEnc: null, ...messageOutdated })
+    .where(and(eq(accessRequests.id, id), inArray(accessRequests.status, ["pending", "approved"])))
+    .returning()
+  if (row) await auditDecision(ctx, tx, id, "Instance access revoked", who)
+  return row ?? null
+}
+
+/**
+ * Revokes everything a token asked for or holds, in the caller's transaction; used when the token itself is
+ * revoked, so the token and its access end together or not at all. The caller announces the change after commit.
+ */
+export async function revokeAccessOfToken(ctx: Ctx, tokenId: string, who: Decider, tx: Tx) {
+  const rows = await tx
     .select({ id: accessRequests.id })
     .from(accessRequests)
     .where(and(eq(accessRequests.tokenId, tokenId), inArray(accessRequests.status, ["pending", "approved"])))
-  for (const r of rows) await revokeAccess(ctx, r.id, who).catch(() => undefined)
+  for (const r of rows) await revokeIn(ctx, tx, r.id, who)
+  return rows.length
 }
 
 /** The audit entry of a decision or an end, written in the transaction that made it. */

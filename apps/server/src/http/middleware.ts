@@ -4,6 +4,7 @@ import type { Ctx } from "../context.ts"
 import { apiTokens } from "../db/schema.ts"
 import { sha256 } from "../lib/crypto.ts"
 import { type CheckMode, checkSession } from "../services/session-policy.ts"
+import { addressOf, headerCount, incomingOf, limiter } from "./address.ts"
 import type { Env } from "./types.ts"
 
 /**
@@ -36,14 +37,20 @@ export const sessionEndedAnswer = (reason: string) => ({
   message: "Your session ended. Sign in again.",
 })
 
+/** Invalid tokens per address, on /mcp and /api/v1: a block is logged once per window. */
+const badTokens = limiter(60, 600_000)
+/** One Bearer token, exactly: the scheme, one space, and a token of RFC 6750 characters. */
+const BEARER = /^Bearer ([A-Za-z0-9\-._~+/]+=*)$/
+
 /**
  * Requires a bearer token for /mcp (kind "mcp") or /api/v1 (kind "rest"): a token made by hand of that kind, or
  * an access token of an agent connected by approval, issued for that resource. Without one the answer says,
- * as MCP clients expect (RFC 9728), where to find how to get one.
+ * as MCP clients expect (RFC 9728), where to find how to get one. A request needs exactly one well-formed
+ * `Authorization: Bearer` header; anything else is invalid_request, and it never falls back to a browser session.
  */
 export function requireToken(ctx: Ctx, kind: "mcp" | "rest") {
   return createMiddleware<Env>(async (c, next) => {
-    const challenge = async (error?: "invalid_token" | "insufficient_scope") => {
+    const challenge = async (error?: "invalid_token" | "insufficient_scope" | "invalid_request") => {
       const p = await ctx.agents?.provider().catch(() => null)
       const metadata = p
         ? `${p.issuer}/.well-known/oauth-protected-resource${kind === "mcp" ? "/mcp" : "/api/v1"}`
@@ -57,13 +64,35 @@ export function requireToken(ctx: Ctx, kind: "mcp" | "rest") {
       ].filter(Boolean)
       c.header("WWW-Authenticate", `Bearer ${parts.join(", ")}`)
       c.header("Access-Control-Expose-Headers", "WWW-Authenticate")
-      return error === "insufficient_scope"
-        ? c.json({ error: "insufficient_scope" }, 403)
-        : c.json({ error: "unauthorized" }, 401)
+      if (error === "insufficient_scope") return c.json({ error: "insufficient_scope" }, 403)
+      return c.json(
+        error === "invalid_request"
+          ? { error: "invalid_request", message: "Send exactly one Authorization: Bearer <token> header." }
+          : { error: "unauthorized", message: "The token is not valid here, or the connection has ended." },
+        401,
+      )
     }
-    const header = c.req.header("authorization") ?? ""
-    const token = header.startsWith("Bearer ") ? header.slice(7).trim() : ""
-    if (!token) return challenge()
+    const header = c.req.header("authorization")
+    if (header === undefined) return challenge()
+    const match = BEARER.exec(header)
+    if (!match || headerCount(c, "authorization") !== 1) return challenge("invalid_request")
+    const token = match[1] as string
+    const address = addressOf(incomingOf(c))
+    const refuse = async () => {
+      if (!badTokens(address)) {
+        if (badTokens.firstOver(address))
+          await ctx.audit({
+            actor: "n8n-ops",
+            action: "Blocked after too many attempts",
+            target: `invalid agent tokens from ${address}`,
+            via: "system",
+          })
+        return c.json({ error: "too_many_attempts", message: "Too many invalid tokens. Wait a few minutes." }, 429, {
+          "Retry-After": "600",
+        })
+      }
+      return challenge("invalid_token")
+    }
 
     const [row] = await ctx.db
       .select()
@@ -77,13 +106,14 @@ export function requireToken(ctx: Ctx, kind: "mcp" | "rest") {
         name: row.name,
         tokenKind: kind,
         canRequestAccess: row.canRequestAccess,
+        manual: true,
       })
       return next()
     }
-    if (row || !ctx.agents) return challenge("invalid_token")
+    if (row || !ctx.agents) return refuse()
 
     const agent = await ctx.agents.verify(token, kind)
-    if (!agent.ok) return challenge(agent.reason === "insufficient" ? "insufficient_scope" : "invalid_token")
+    if (!agent.ok) return agent.reason === "insufficient" ? challenge("insufficient_scope") : refuse()
     await touch(ctx, agent.row.id, agent.row.lastUsedAt)
     c.set("actor", {
       kind: "token",
@@ -91,6 +121,7 @@ export function requireToken(ctx: Ctx, kind: "mcp" | "rest") {
       name: agent.row.name,
       tokenKind: kind,
       canRequestAccess: agent.canRequestAccess && agent.row.canRequestAccess,
+      manual: false,
     })
     return next()
   })

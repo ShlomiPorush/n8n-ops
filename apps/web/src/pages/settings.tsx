@@ -283,6 +283,26 @@ export const forms: Record<string, { title: string; description: string; fields:
       },
     ],
   },
+  agents: {
+    title: "Agent Connections",
+    description:
+      "Whether agents may connect by approval, and how long a connection lasts without use. See and disconnect them under Connected Agents.",
+    fields: [
+      {
+        name: "enabled",
+        label: "Agents can connect",
+        hint: "MCP clients and the n8n-ops skill connect after you approve them in this browser. Turning it off disconnects every agent at once; they must be approved again.",
+        type: "switch",
+      },
+      {
+        name: "idleDays",
+        label: "Disconnect an unused agent after (days)",
+        hint: "Counted from its last call. A shorter value applies at once; a longer one does not bring back agents already disconnected.",
+        type: "number",
+        needs: "enabled",
+      },
+    ],
+  },
   access: {
     title: "Agent Access",
     description:

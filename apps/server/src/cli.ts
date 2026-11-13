@@ -1,18 +1,21 @@
 // Operator commands, run inside the server container:
 //   node dist/cli.js reset-password
 // Sets a new random password, turns two-factor off (it must be set up again at the next sign-in)
-// and signs out every session.
+// and signs out every session. Every agent connection ends with it.
 //   node dist/cli.js regroup-dry-run
 // Applies the migrations, then shows how the recorded Problems would be regrouped by cause (docs/adr/0003) and
 // changes nothing else: the regroup runs in a transaction that is rolled back. Meant for a copy of a database.
 import { randomBytes } from "node:crypto"
+import { EventEmitter } from "node:events"
 import { eq } from "drizzle-orm"
 import { createAuth } from "./auth/auth.ts"
 import { loadConfig } from "./config.ts"
+import type { Ctx } from "./context.ts"
 import { createDatabase } from "./db/client.ts"
 import { account, session, twoFactor, user } from "./db/schema.ts"
 import { createAudit } from "./lib/audit.ts"
 import { loadOrCreateAppKey } from "./lib/crypto.ts"
+import { endEveryConnection } from "./oauth/agents.ts"
 import { regroupByCause } from "./services/regroup.ts"
 
 const command = process.argv[2]
@@ -53,6 +56,9 @@ await createAudit(db)({
   target: u.username ?? u.name,
   via: "cli",
 })
+// Whoever reset the account may not be the person who approved its agents: every connection ends.
+const agentCtx = { db, audit: createAudit(db), events: new EventEmitter() } as unknown as Ctx
+await endEveryConnection(agentCtx, "identity", { by: "operator", via: "cli" })
 
 console.log(`Username: ${u.username ?? u.name}`)
 console.log(`New password: ${password}`)

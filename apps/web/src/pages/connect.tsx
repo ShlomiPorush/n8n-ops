@@ -17,6 +17,8 @@ type ConnectRequest = {
   redirect: { host: string; loopback: boolean } | null
   resource: "mcp" | "rest"
   asked: ("ops:read" | "ops:access")[]
+  /** A connection not used for this many days ends (Settings → Agent Connections). */
+  idleDays: number
 }
 
 /** The approval page's own API sits under the request's address, where its cookie is sent. */
@@ -130,7 +132,9 @@ export function ConnectApprovePage() {
               </KV>
             )}
             <KV label="Uses">{r.resource === "mcp" ? "The MCP server" : "The REST API"}</KV>
-            <KV label="Lasts">Until you disconnect it, or after 90 days unused</KV>
+            <KV label="Lasts">
+              Until you disconnect it, or after {r.idleDays === 1 ? "1 day" : `${r.idleDays} days`} unused
+            </KV>
           </Panel>
 
           <Alert variant="warn">

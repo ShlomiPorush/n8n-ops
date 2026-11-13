@@ -3,11 +3,13 @@ import { generateX25519Identity, identityToRecipient } from "age-encryption"
 import { and, desc, eq, isNull, lt, ne } from "drizzle-orm"
 import { Hono } from "hono"
 import { z } from "zod"
-import type { Ctx } from "../context.ts"
+import { type Ctx, changed } from "../context.ts"
 import { apiTokens, auditLog } from "../db/schema.ts"
 import { requireUser } from "../http/middleware.ts"
+import { fromOwnPage } from "../http/origin.ts"
 import { actorName, type Env } from "../http/types.ts"
 import { newToken, sha256 } from "../lib/crypto.ts"
+import { issuerProblem } from "../oauth/agents.ts"
 import { revokeAccessOfToken } from "../services/access.ts"
 
 export function adminRoutes(ctx: Ctx) {
@@ -86,16 +88,35 @@ export function adminRoutes(ctx: Ctx) {
       const ended = await ctx.agents?.end({ id: agent.id }, "revoked", { by: actorName(c.get("actor")), via: "web" })
       return ended ? c.json({ ok: true }) : c.json({ error: "not_found" }, 404)
     }
-    const [row] = await ctx.db
-      .update(apiTokens)
-      .set({ revokedAt: new Date() })
-      .where(and(eq(apiTokens.id, c.req.param("id")), isNull(apiTokens.revokedAt), ne(apiTokens.kind, "agent")))
-      .returning({ id: apiTokens.id, name: apiTokens.name })
+    const who = { by: actorName(c.get("actor")), via: "web" as const }
+    // The token, the access it asked for or holds, and the audit entries end together or not at all.
+    const row = await ctx.db.transaction(async (tx) => {
+      const [revoked] = await tx
+        .update(apiTokens)
+        .set({ revokedAt: new Date() })
+        .where(and(eq(apiTokens.id, c.req.param("id")), isNull(apiTokens.revokedAt), ne(apiTokens.kind, "agent")))
+        .returning({ id: apiTokens.id, name: apiTokens.name })
+      if (!revoked) return null
+      await ctx.audit({ actor: who.by, action: "API token revoked", target: revoked.name, via: "web" }, tx)
+      await revokeAccessOfToken(ctx, revoked.id, who, tx)
+      return revoked
+    })
     if (!row) return c.json({ error: "not_found" }, 404)
-    await ctx.audit({ actor: actorName(c.get("actor")), action: "API token revoked", target: row.name, via: "web" })
-    // Access the token asked for or holds ends with it.
-    await revokeAccessOfToken(ctx, row.id, { by: actorName(c.get("actor")), via: "web" })
+    changed(ctx, "access", "overview")
     return c.json({ ok: true })
+  })
+
+  // --- Agents connected by approval: why they cannot connect, and ending all of them.
+  app.get("/agents", async (c) => {
+    const { publicUrl } = await ctx.settings.get("general")
+    return c.json({ problem: issuerProblem(publicUrl), skillServed: Boolean(ctx.agents?.skillVersion) })
+  })
+
+  // Ends every connection and every waiting code, device request and approval; available with none connected.
+  app.post("/agents/disconnect-all", async (c) => {
+    if (!fromOwnPage(c, (await ctx.settings.get("general")).publicUrl)) return c.json({ error: "forbidden" }, 403)
+    const ended = (await ctx.agents?.endAll("all", { by: actorName(c.get("actor")), via: "web" })) ?? 0
+    return c.json({ ended })
   })
 
   // --- Audit log, newest first, keyset pagination by id.

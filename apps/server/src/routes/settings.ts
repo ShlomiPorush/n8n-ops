@@ -9,6 +9,7 @@ import {
   invalidAnswer,
   mayStoreTimeZone,
   numberLimits,
+  type Section,
   type SectionName,
   sections,
   smtpPasswordNeeded,
@@ -22,7 +23,17 @@ const secretFields: Partial<Record<SectionName, string[]>> = {
   email: ["smtpPassword"],
 }
 
-const editable: SectionName[] = ["general", "defaults", "alerts", "telegram", "email", "backups", "access", "security"]
+const editable: SectionName[] = [
+  "general",
+  "defaults",
+  "alerts",
+  "telegram",
+  "email",
+  "backups",
+  "access",
+  "security",
+  "agents",
+]
 
 /** The variable each value from the environment comes from, for the note under its field (FS-6). */
 const envVariables = { publicUrl: "N8N_OPS_PUBLIC_URL" } as const
@@ -99,7 +110,18 @@ export function settingsRoutes(ctx: Ctx) {
       issues.push({ path: ["timezone"], message: "choose a time zone from the list" })
     if (issues.length) return c.json(invalidAnswer(section, issues), 400)
     const before = section === "general" ? (await ctx.settings.get("general")).publicUrl : null
+    const who = { by: actorName(c.get("actor")), via: "web" as const }
+    const agentsBefore = section === "agents" ? await ctx.settings.get("agents") : null
+    const agentsAfter = section === "agents" ? (parsed.data as Section<"agents">) : null
+    // A longer idle period revives nothing: connections past the old one end before it is stored.
+    if (agentsBefore && agentsAfter && agentsAfter.idleDays > agentsBefore.idleDays)
+      await ctx.agents?.endIdle(agentsBefore.idleDays, who)
     await ctx.settings.set(section, parsed.data as never)
+    // A shorter one applies at once: stored first, so no call is let through under the old one meanwhile.
+    if (agentsBefore && agentsAfter && agentsAfter.idleDays < agentsBefore.idleDays)
+      await ctx.agents?.endIdle(agentsAfter.idleDays, who)
+    // Agents turned off: every connection and waiting request ends (calls are refused from the save on).
+    if (agentsBefore?.enabled && agentsAfter && !agentsAfter.enabled) await ctx.agents?.endAll("off", who)
     await ctx.audit({
       actor: actorName(c.get("actor")),
       action: "Settings changed",

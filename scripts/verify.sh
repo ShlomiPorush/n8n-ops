@@ -585,7 +585,9 @@ run_e2e() {
 # checks run in the first round only, except those on the stack itself, which run in each round.
 run_integration() {
   info "Integration: images and stack"
-  build_images verify "verify-$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
+  # At least 7 hex digits whatever core.abbrev says: the server honours N8N_OPS_TEST_HTTP_ISSUER_HOST only in an
+  # image whose version is verify-<7 to 40 hex digits> (oauth/agents.ts testHttpHosts).
+  build_images verify "verify-$(git -C "$REPO_ROOT" rev-parse --short=7 HEAD)"
   # Telegram calls go to the stand-in Bot API inside the end-to-end test runner, never to Telegram.
   export TELEGRAM_API_URL="http://e2e-runner:8099"
   # The end-to-end tests reach the server as http://server:8080; agents connect over plain http only on this host

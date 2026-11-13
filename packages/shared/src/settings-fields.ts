@@ -66,6 +66,10 @@ export const settingLabels = {
     defaultNotify: "Default channels",
     telegramApprovers: "Who may approve in Telegram",
   },
+  agents: {
+    enabled: "Agents can connect",
+    idleDays: "Disconnect an unused agent after (days)",
+  },
   security: {
     lifetimeHours: "Sign out an unused session after (hours)",
     idleTimeout: "Sign out after inactivity",

@@ -67,15 +67,23 @@ export function AgentsPage() {
   )
 }
 
-/** How an agent connects, one tab per kind of agent. Needs the public URL. */
+/** How an agent connects, one tab per kind of agent. Needs agents on and a public URL agents can use. */
 function ConnectCard() {
   const general = useApi<{ publicUrl: string }>("/settings/general")
+  const agents = useApi<{ enabled: boolean; idleDays: number }>("/settings/agents")
+  const state = useApi<{ problem: string | null }>("/admin/agents")
   const base = (general.data?.publicUrl ?? "").replace(/\/+$/, "")
-  if (general.isLoading) return null
-  if (!base)
+  if (general.isLoading || agents.isLoading || state.isLoading) return null
+  if (agents.data && !agents.data.enabled)
     return (
-      <Locked title="Set the public URL first" to="/settings/general" action="Open General">
-        Agents connect to the address people open. Set it in Settings → General, then come back here.
+      <Locked title="Agents are off" to="/settings/agents" action="Open Agent Connections">
+        No agent can connect or use n8n-ops while agents are off. Turn them on in Settings → Agent Connections.
+      </Locked>
+    )
+  if (!base || state.data?.problem)
+    return (
+      <Locked title="Set a public URL agents can use" to="/settings/general" action="Open General">
+        {state.data?.problem ?? "Agents connect to the address people open. Set it in Settings → General."}
       </Locked>
     )
   return (
@@ -151,6 +159,23 @@ function Labelled({ label, children }: { label: string; children: React.ReactNod
 function AgentsCard() {
   const tokens = useApi<Token[]>("/admin/tokens")
   const confirm = useConfirm()
+  const endAll = useApiMutation<void, { ended: number }>("POST", "/admin/agents/disconnect-all", {
+    invalidate: ["/admin/tokens"],
+    failed: () => "disconnect every agent",
+  })
+  async function askEndAll() {
+    const ok = await confirm({
+      title: "Disconnect Every Agent?",
+      message:
+        "Every agent connected by approval loses access at once, with any temporary access it holds, and codes and approvals still waiting end too. Each agent can connect again only with a new approval. Tokens made by hand are kept.",
+      confirmLabel: "Disconnect all",
+      danger: true,
+    })
+    if (ok)
+      endAll.mutate(undefined, {
+        onSuccess: (r) => toast.success(r.ended === 1 ? "1 agent disconnected" : `${r.ended} agents disconnected`),
+      })
+  }
   const revoke = useApiMutation<string>("DELETE", (id) => `/admin/tokens/${id}`, {
     invalidate: ["/admin/tokens"],
     failed: (id) => {
@@ -181,6 +206,12 @@ function AgentsCard() {
           title="Agents and Tokens"
           count={tokens.data ? list.length : undefined}
           description="Each can read n8n-ops; some may also ask for temporary access to an n8n instance, which a person approves each time."
+          action={
+            // Also with none connected: it ends codes and approvals still waiting.
+            <Button size="sm" variant="danger" disabled={endAll.isPending} onClick={() => void askEndAll()}>
+              <Trash2 /> Disconnect all
+            </Button>
+          }
         />
         {loadView(tokens) === "failed" ? (
           <LoadError what="agents and tokens" error={tokens.error} retry={() => tokens.refetch()} />

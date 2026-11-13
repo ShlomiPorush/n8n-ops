@@ -10,9 +10,11 @@ import { serve } from "@hono/node-server"
 import { RESPONSE_ALREADY_SENT } from "@hono/node-server/utils/response"
 import { Hono } from "hono"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
+import { HEADERS } from "../routes/agent.ts"
+import { areasOf, listing, OPEN, REVISION } from "../routes/agent-policy.ts"
 import { cleanLabel } from "./label.ts"
 import { type AgentProvider, createAgentProvider, resources, SCOPES } from "./provider.ts"
-import { servesSkill, skillRoutes } from "./skill.ts"
+import { servedSkillVersion, servesSkill, skillRoutes } from "./skill.ts"
 
 /*
  * The skill's command (every version this computer runs) against the real authorization server, over loopback:
@@ -68,12 +70,29 @@ beforeAll(async () => {
     )
     return c.json({ redirectTo, grantId, label: cleanLabel(params.client_label) })
   })
-  // The REST API, stripped to its token check; a token marked stale answers 401 once more, as an expired one would.
+  /*
+   * The REST API, stripped to its token check and its policy check (routes/agent.ts): the listing and access answer
+   * without the headers; every other call must carry the revision and the kind of its route in the open table. A
+   * token marked stale answers 401 once more, as an expired one would.
+   */
   app.all("/api/v1/*", async (c) => {
     const token = (c.req.header("authorization") ?? "").replace(/^Bearer /, "")
     const at = await provider.AccessToken.find(token)
-    if (!at || at.aud !== resources(base).rest || stale.has(token)) return c.json({ error: "unauthorized" }, 401)
-    return c.json({ data: { path: new URL(c.req.url).pathname, scope: at.scope } })
+    if (!at || at.aud !== resources(base).rest || stale.has(token)) {
+      c.header("WWW-Authenticate", 'Bearer error="invalid_token"')
+      return c.json({ error: "unauthorized" }, 401)
+    }
+    const areas = areasOf(String(at.scope).split(" ").includes(SCOPES.access))
+    const p = new URL(c.req.url).pathname
+    if (p === "/api/v1/agent/endpoints") return c.json(listing(areas))
+    if (p === "/api/v1/agent/access") return c.json({ name: "test", areas })
+    const route = OPEN.find(
+      (r) => r.method === c.req.method && new RegExp(`^${r.path.replace(/\{\w+\}/g, "[^/]+")}$`).test(p),
+    )
+    if (!route) return c.json({ error: "not_found" }, 404)
+    if (c.req.header(HEADERS.policy) !== REVISION || c.req.header(HEADERS.kind) !== route.kind)
+      return c.json({ error: "policy_changed", message: "Run endpoints again." }, 409)
+    return c.json({ data: { path: p, scope: at.scope } })
   })
   app.all("*", (c) => {
     provider.callback()(c.env.incoming, c.env.outgoing)
@@ -207,13 +226,14 @@ for (const impl of impls) {
       const w = await run(impl, inst, ["connect", "--wait"])
       expect(w.json, w.out).toMatchObject({ status: "connected", scope: "ops:read ops:access" })
 
-      const r = await run(impl, inst, ["get", "problems"])
-      expect(r.json?.data, r.out).toMatchObject({ path: "/api/v1/problems", scope: "ops:read ops:access" })
+      const r = await run(impl, inst, ["get", "/api/v1/problems"])
+      expect(r.json, r.out).toMatchObject({ status: 200, data: { data: { path: "/api/v1/problems" } } })
+      expect(r.json.data.data.scope).toBe("ops:read ops:access")
 
       // The access token stops working: ten commands at once refresh it once, and none replays the old token.
       stale.add(record(inst).accessToken)
       const before = refreshes
-      const all = await Promise.all(Array.from({ length: 10 }, () => run(impl, inst, ["get", "instances"])))
+      const all = await Promise.all(Array.from({ length: 10 }, () => run(impl, inst, ["get", "/api/v1/instances"])))
       for (const one of all) expect(one.code, one.out).toBe(0)
       expect(refreshes - before).toBe(1)
       expect(revoked).toBe(0)
@@ -225,7 +245,7 @@ for (const impl of impls) {
       })
       expect(thief.status).toBe(200)
       stale.add(record(inst).accessToken)
-      const after = await run(impl, inst, ["get", "instances"])
+      const after = await run(impl, inst, ["get", "/api/v1/instances"])
       expect(after.json?.error, after.out).toBe("connection_ended")
       expect(revoked).toBe(1)
       revoked = 0
@@ -285,6 +305,25 @@ describe("serving the skill", () => {
     expect(note).toContain("https://ops.example.com/connect/skill/scripts/n8n-ops.ps1 → n8n-ops/scripts/n8n-ops.ps1")
     // Text between commands is often folded away, so the link and the code must close the agent's turn.
     expect(note).toContain("prints in the reply that ends your turn")
+  })
+
+  it("fills in the served version, makes line ends LF, and installs only over a copy from this address", async () => {
+    const dir = fs.mkdtempSync(path.join(root, "served-"))
+    fs.cpSync(skill, dir, { recursive: true })
+    const sh = path.join(dir, "scripts/n8n-ops.sh")
+    fs.writeFileSync(sh, fs.readFileSync(sh, "utf8").replace(/\n/g, "\r\n"))
+    const version = servedSkillVersion(dir)
+    expect(version).toMatch(/^[0-9a-f]{12}$/)
+    // A checkout with CRLF serves the same skill as one with LF.
+    expect(version).toBe(servedSkillVersion(skill))
+    const served = await (await app("https://ops.example.com", dir).request("/connect/skill/scripts/n8n-ops.sh")).text()
+    expect(served).not.toContain("\r")
+    const mjs = await (await app("https://ops.example.com").request("/connect/skill/scripts/n8n-ops.mjs")).text()
+    expect(mjs).toContain(version as string)
+    expect(mjs).not.toContain("__N8N_OPS_SKILL_VERSION__")
+    const note = await (await app("https://ops.example.com").request("/connect/skill/")).text()
+    expect(note).toContain("only when an agent installed it from this address")
+    expect(note).toContain('n8n-ops connect --url "https://ops.example.com"')
   })
 
   it("serves nothing over plain http to another computer, nor other files", async () => {

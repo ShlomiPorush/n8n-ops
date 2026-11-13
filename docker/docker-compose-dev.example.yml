@@ -15,6 +15,8 @@ services:
     environment:
       # Empty except in scripts/verify.sh, which points it at the end-to-end tests' stand-in Bot API.
       TELEGRAM_API_URL: ${TELEGRAM_API_URL:-}
+      # Empty except in scripts/verify.sh, where the end-to-end tests reach the server as http://server:8080.
+      N8N_OPS_TEST_HTTP_ISSUER_HOST: ${N8N_OPS_TEST_HTTP_ISSUER_HOST:-}
     depends_on:
       postgres:
         condition: service_healthy

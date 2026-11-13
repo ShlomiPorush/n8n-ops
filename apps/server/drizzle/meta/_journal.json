@@ -225,6 +225,13 @@
       "when": 1794530582040,
       "tag": "0031_pgstattuple",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1794539740111,
+      "tag": "0032_agent_access_standard",
+      "breakpoints": true
     }
   ]
 }

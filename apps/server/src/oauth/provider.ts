@@ -1,19 +1,22 @@
 import Provider, { type Configuration, errors } from "oidc-provider"
+import { AGENT_IDLE_MAX_DAYS } from "../lib/settings.ts"
 import { cleanLabel } from "./label.ts"
 
 /*
  * The authorization server through which agents connect (OAuth 2.1 as used by MCP): MCP clients by the
  * authorization code flow with PKCE, scripts by the device flow. A person approves every connection on our own
  * page; each approval is a grant of its own. Access tokens are opaque, last 15 minutes and are good for one
- * resource only (/mcp or /api/v1). Refresh tokens rotate on every use and run out after 90 days without one; a
- * refresh token used twice ends the whole grant. Nothing depends on the browser session that approved it.
+ * resource only (/mcp or /api/v1). Refresh tokens rotate on every use; a refresh token used twice ends the whole
+ * grant. n8n-ops itself ends a connection after the idle period set in Settings (oauth/agents.ts); refresh tokens
+ * last one day longer than the longest idle period, so they never end a connection first. Nothing depends on the
+ * browser session that approved it.
  */
 
 export const SCOPES = { read: "ops:read", access: "ops:access" } as const
 export const CLI_CLIENT = "n8n-ops-cli"
 export const DAY = 86_400
 export const ACCESS_TOKEN_TTL = 900
-export const REFRESH_TOKEN_TTL = 90 * DAY
+export const REFRESH_TOKEN_TTL = (AGENT_IDLE_MAX_DAYS + 1) * DAY
 
 /** The two resources an agent may be given: the MCP server and the REST API. */
 export function resources(issuer: string) {
@@ -29,6 +32,48 @@ export type ProviderPages = {
   success(clientName: string, label: string | null): string
   /** Any error page of the provider. */
   error(code: string, description?: string): string
+}
+
+/** A redirect an agent may register: https anywhere, or http back to this computer only (RFC 8252). */
+export function allowedRedirect(value: unknown) {
+  if (typeof value !== "string" || value.length > 500) return false
+  try {
+    const url = new URL(value)
+    if (url.hash || url.username || url.password) return false
+    if (url.protocol === "https:") return true
+    return url.protocol === "http:" && ["127.0.0.1", "[::1]", "localhost"].includes(url.hostname)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * The product's rules for agents that register themselves (RFC 7591), run by the provider's documented
+ * `extraClientMetadata.validator` on every registration and every client it builds: public clients that come back to
+ * https or to this computer, with a few redirect URIs, the authorization code grant and nothing more. Scopes a client
+ * asks for are dropped: the person who approves decides what it may do. The built-in client of the skill (device
+ * flow, no redirect) is left to the provider's own checks.
+ */
+const REGISTRATION_RULE = "x_n8n_ops"
+function registrationRules(_ctx: unknown, key: string, _value: unknown, metadata: Record<string, unknown>) {
+  if (key !== REGISTRATION_RULE) return
+  delete metadata[REGISTRATION_RULE]
+  if (metadata.client_id === CLI_CLIENT) return
+  const fail = (message: string) => {
+    throw new errors.InvalidClientMetadata(message)
+  }
+  const uris = metadata.redirect_uris
+  if (!Array.isArray(uris) || uris.length < 1 || uris.length > 5 || !uris.every(allowedRedirect))
+    fail("Public clients only, with one to five https or loopback redirect URIs.")
+  const name = metadata.client_name
+  if (name !== undefined && (typeof name !== "string" || name.length < 1 || name.length > 100))
+    fail("client_name must be 1 to 100 characters.")
+  const grants = metadata.grant_types
+  if (Array.isArray(grants) && !grants.every((g) => g === "authorization_code" || g === "refresh_token"))
+    fail("Only the authorization_code and refresh_token grants.")
+  const responses = metadata.response_types
+  if (Array.isArray(responses) && !responses.every((r) => r === "code")) fail("Only the code response type.")
+  delete metadata.scope
 }
 
 export type AgentProviderOptions = {
@@ -53,6 +98,9 @@ export function createAgentProvider({ issuer, adapter, cookieKeys, pages }: Agen
         redirect_uris: [],
       },
     ],
+    // Agents are public clients: no secret, no key.
+    clientAuthMethods: ["none"],
+    extraClientMetadata: { properties: [REGISTRATION_RULE], validator: registrationRules },
     clientDefaults: {
       token_endpoint_auth_method: "none",
       grant_types: ["authorization_code", "refresh_token"],
@@ -140,7 +188,7 @@ export function createAgentProvider({ issuer, adapter, cookieKeys, pages }: Agen
       Interaction: 600,
       Session: 600,
       RefreshToken: REFRESH_TOKEN_TTL,
-      // Until revoked: refresh tokens, renewed on every use, decide when a connection ends.
+      // Until revoked or ended by n8n-ops (idle period, oauth/agents.ts).
       Grant: 3650 * DAY,
     },
     interactions: { url: (_ctx, interaction) => `/connect/approve/${interaction.uid}` },

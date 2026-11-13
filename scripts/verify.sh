@@ -589,7 +589,7 @@ run_integration() {
   # Telegram calls go to the stand-in Bot API inside the end-to-end test runner, never to Telegram.
   export TELEGRAM_API_URL="http://e2e-runner:8099"
   # The end-to-end tests reach the server as http://server:8080; agents connect over plain http only on this host
-  # name besides localhost (oauth/agents.ts issuerOf). Never set in production.
+  # name besides localhost (oauth/agents.ts issuerOf). Only these images, versioned verify-<commit>, honour it.
   export N8N_OPS_TEST_HTTP_ISSUER_HOST="server"
   STACK_USED=1
   local design

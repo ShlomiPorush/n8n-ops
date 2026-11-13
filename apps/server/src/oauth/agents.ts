@@ -44,16 +44,29 @@ const endText: Record<EndReason, string> = {
 type Who = { by: string; via: AuditVia }
 const SYSTEM: Who = { by: "n8n-ops", via: "system" }
 
+/** The version of an image that scripts/verify.sh built (`verify-<commit>`); releases are numbered, dev images `dev-`. */
+const VERIFY_BUILD = /^verify-[0-9a-f]{7,40}$/
+
 /**
- * Names on which plain http is allowed: the loopback names, for trying n8n-ops on this computer, and the host name
- * the verification stack's end-to-end tests use (N8N_OPS_TEST_HTTP_ISSUER_HOST, set only by scripts/verify.sh).
+ * The host names the verification stack's end-to-end tests add to plain http (N8N_OPS_TEST_HTTP_ISSUER_HOST, which
+ * scripts/verify.sh sets). They count only in an image that scripts/verify.sh built: any other build, a release
+ * above all, ignores them, so the variable copied into a production environment never lets an issuer be plain
+ * http. The server says so when it starts (`ignoredTestHttpHosts`).
  */
-const httpHosts = () => [
-  "localhost",
-  "127.0.0.1",
-  "[::1]",
-  ...(process.env.N8N_OPS_TEST_HTTP_ISSUER_HOST || "").split(",").filter(Boolean),
-]
+export function testHttpHosts(env: NodeJS.ProcessEnv = process.env): string[] {
+  if (!VERIFY_BUILD.test(env.N8N_OPS_VERSION ?? "")) return []
+  return (env.N8N_OPS_TEST_HTTP_ISSUER_HOST ?? "")
+    .split(",")
+    .map((name) => name.trim())
+    .filter(Boolean)
+}
+
+/** Whether N8N_OPS_TEST_HTTP_ISSUER_HOST is set in a build that ignores it, for a warning when the server starts. */
+export const ignoredTestHttpHosts = (env: NodeJS.ProcessEnv = process.env): boolean =>
+  Boolean(env.N8N_OPS_TEST_HTTP_ISSUER_HOST?.trim()) && testHttpHosts(env).length === 0
+
+/** Names on which plain http is allowed: the loopback names, for trying n8n-ops on this computer, and the tests'. */
+const httpHosts = () => ["localhost", "127.0.0.1", "[::1]", ...testHttpHosts()]
 
 /**
  * The installation's public address as an OAuth issuer: an absolute https origin with nothing after it, or http on

@@ -1,4 +1,4 @@
-import { eq, inArray, lt, sql } from "drizzle-orm"
+import { eq, inArray, sql } from "drizzle-orm"
 import type { Db } from "../db/client.ts"
 import { agentResets, agentState } from "../db/schema.ts"
 
@@ -57,13 +57,9 @@ export async function removeResets(tx: Tx, ids: string[]) {
   if (ids.length) await tx.delete(agentResets).where(inArray(agentResets.id, ids))
 }
 
-/** Resets under way for longer than ms milliseconds: left by a process that stopped, since a reset takes seconds. */
-export async function abandonedResets(db: Runner, ms: number): Promise<string[]> {
-  const rows = await db
-    .select({ id: agentResets.id })
-    .from(agentResets)
-    .where(lt(agentResets.createdAt, new Date(Date.now() - ms)))
-  return rows.map((r) => r.id)
+/** Every reset recorded as under way. */
+export async function resetIds(db: Runner): Promise<string[]> {
+  return (await db.select({ id: agentResets.id }).from(agentResets)).map((r) => r.id)
 }
 
 /** The public URL connections were last made under, or null before the first start that recorded one. */

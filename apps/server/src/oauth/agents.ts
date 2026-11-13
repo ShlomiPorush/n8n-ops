@@ -10,7 +10,6 @@ import { sha256 } from "../lib/crypto.ts"
 import type { Design } from "../lib/settings.ts"
 import { revokeAccessOfToken } from "../services/access.ts"
 import {
-  abandonedResets,
   addReset,
   gateExclusive,
   gateShared,
@@ -19,6 +18,7 @@ import {
   nextGeneration,
   rememberIssuer,
   removeResets,
+  resetIds,
   resetting,
   type Tx,
 } from "./gate.ts"
@@ -142,16 +142,16 @@ export async function endEveryConnection(ctx: Ctx, reason: EndReason, who: Who, 
 }
 
 /**
- * A two-factor reset ends every connection on both sides of the change (D6): first, in the transaction that records the
- * reset as under way (a row of its own), so no approval is answered until every reset under way is over; then again
- * once it is done, which removes only its own row. A row left by a process that stopped is removed, with everything
- * ended once more, after ABANDONED_RESET_MS (reconcile). The account page (auth/auth.ts) and the CLI (cli.ts) call both.
+ * A two-factor reset made on the account page ends every connection on both sides of the change (D6): first, in the
+ * transaction that records the reset as under way (a row of its own, agent_resets), so no approval is answered while
+ * any reset is under way; then again once it is done, which removes only its own row. Better Auth makes the change
+ * between the two, outside these transactions. The server process knows which rows are its own resets still running
+ * (createAgentConnect: beginReset, finishReset); any other row was left by a process that stopped, and reconcile
+ * finishes it. The reset from the server (cli.ts) needs no row: it makes its change inside endEveryConnection's
+ * transaction, under the exclusive gate.
  */
-export const ABANDONED_RESET_MS = 10 * 60_000
-export async function beginIdentityReset(ctx: Ctx, who: Who): Promise<string> {
-  const id = randomUUID()
+export async function beginIdentityReset(ctx: Ctx, who: Who, id: string) {
   await endEveryConnection(ctx, "identity", who, (tx) => addReset(tx, id))
-  return id
 }
 export async function finishIdentityReset(ctx: Ctx, who: Who, ids: string[]) {
   return endEveryConnection(ctx, "identity", who, (tx) => removeResets(tx, ids))
@@ -178,6 +178,31 @@ export function createAgentConnect(
     /** A code typed on the code page, in this provider session (its signed cookie) or none: false when over the limit. */
     codeAttempt?: (session: string | undefined, req: IncomingMessage) => boolean
   } = {}
+
+  /** The two-factor resets this process began and whose request still runs; see beginIdentityReset. */
+  const runningResets = new Set<string>()
+
+  /** Begins a reset of the account page: returns its id, for finishReset. */
+  async function beginReset(who: Who) {
+    const id = randomUUID()
+    runningResets.add(id)
+    try {
+      await beginIdentityReset(ctx, who, id)
+    } catch (e) {
+      runningResets.delete(id)
+      throw e
+    }
+    return id
+  }
+
+  /** Finishes it, made or refused. If that fails, its row stays and the sweep finishes it (it no longer runs). */
+  async function finishReset(who: Who, id: string) {
+    try {
+      await finishIdentityReset(ctx, who, [id])
+    } finally {
+      runningResets.delete(id)
+    }
+  }
 
   async function enabled() {
     return (await ctx.settings.get("agents")).enabled
@@ -284,6 +309,14 @@ export function createAgentConnect(
        * record, an approval is refused.
        */
       created.use(async (k, next) => {
+        try {
+          await handle(k, next)
+        } finally {
+          // Whatever happened above, a capped request gives its lock back once the provider is done with it.
+          hooks.providerDone?.(k.req)
+        }
+      })
+      async function handle(k: Parameters<Parameters<typeof created.use>[0]>[0], next: () => Promise<unknown>) {
         const path = k.path
         const opens = /^\/(oauth\/authorize|connect\/device|oauth\/device$)/.test(path)
         const gen = opens ? await generation(ctx.db) : 0
@@ -302,27 +335,23 @@ export function createAgentConnect(
         } catch (e) {
           failure = e
         }
-        try {
-          if (opens && !failure) {
-            const uid = /\/connect\/approve\/([\w-]+)/.exec(String(k.response.get("location") ?? ""))?.[1]
-            if (uid) await recordRequest(`i:${uid}`, gen)
-            const body = k.body as { device_code?: unknown } | undefined
-            if (path === "/oauth/device" && typeof body?.device_code === "string")
-              await recordRequest(`d:${sha256(body.device_code)}`, gen)
-          }
-          if (path === "/oauth/token") {
-            const oidc = k.oidc as { params?: { grant_type?: unknown } } | undefined
-            const error =
-              (failure as { error?: unknown } | undefined)?.error ?? (k.body as { error?: unknown } | undefined)?.error
-            const answered = k.status === 200 || error === "authorization_pending" || error === "slow_down"
-            if (oidc?.params?.grant_type === "urn:ietf:params:oauth:grant-type:device_code" && answered)
-              hooks.devicePollAnswered?.(k.req)
-          }
-        } finally {
-          hooks.providerDone?.(k.req)
+        if (opens && !failure) {
+          const uid = /\/connect\/approve\/([\w-]+)/.exec(String(k.response.get("location") ?? ""))?.[1]
+          if (uid) await recordRequest(`i:${uid}`, gen)
+          const body = k.body as { device_code?: unknown } | undefined
+          if (path === "/oauth/device" && typeof body?.device_code === "string")
+            await recordRequest(`d:${sha256(body.device_code)}`, gen)
+        }
+        if (path === "/oauth/token") {
+          const oidc = k.oidc as { params?: { grant_type?: unknown } } | undefined
+          const error =
+            (failure as { error?: unknown } | undefined)?.error ?? (k.body as { error?: unknown } | undefined)?.error
+          const answered = k.status === 200 || error === "authorization_pending" || error === "slow_down"
+          if (oidc?.params?.grant_type === "urn:ietf:params:oauth:grant-type:device_code" && answered)
+            hooks.devicePollAnswered?.(k.req)
         }
         if (failure) throw failure
-      })
+      }
       current = { issuer, provider: created }
     }
     return current
@@ -466,8 +495,9 @@ export function createAgentConnect(
    * while agents are off (one that an interrupted turn-off left behind never works again).
    */
   async function reconcile() {
-    // Two-factor resets that stopped halfway: end everything again, and remove them (approvals wait for no other).
-    const abandoned = await abandonedResets(ctx.db, ABANDONED_RESET_MS)
+    // Two-factor resets that are not this process's own still running were left by a process that stopped (or by a
+    // finish of this one that failed): end everything again, and remove them.
+    const abandoned = (await resetIds(ctx.db)).filter((id) => !runningResets.has(id))
     if (abandoned.length) await finishIdentityReset(ctx, SYSTEM, abandoned)
     await reconcileIssuer(issuerOf((await ctx.settings.get("general")).publicUrl))
     if (!(await enabled())) {
@@ -555,6 +585,8 @@ export function createAgentConnect(
     stillLive,
     bindRequest,
     decide,
+    beginReset,
+    finishReset,
     connected,
     end,
     endAll,

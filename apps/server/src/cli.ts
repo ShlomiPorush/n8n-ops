@@ -15,7 +15,7 @@ import { createDatabase } from "./db/client.ts"
 import { account, session, twoFactor, user } from "./db/schema.ts"
 import { createAudit } from "./lib/audit.ts"
 import { loadOrCreateAppKey } from "./lib/crypto.ts"
-import { beginIdentityReset, finishIdentityReset } from "./oauth/agents.ts"
+import { endEveryConnection } from "./oauth/agents.ts"
 import { regroupByCause } from "./services/regroup.ts"
 
 const command = process.argv[2]
@@ -44,27 +44,22 @@ if (!u) {
   process.exit(1)
 }
 
-// Whoever resets the account may not be the person who approved its agents: every connection ends before the reset,
-// no approval is answered during it, and everything ends again after it (a run that stops halfway is finished by the
-// next run, or by the server when it starts).
-const agentCtx = { db, audit: createAudit(db), events: new EventEmitter() } as unknown as Ctx
-const operator = { by: "operator", via: "cli" } as const
-const reset = await beginIdentityReset(agentCtx, operator)
-
 const password = randomBytes(18).toString("base64url")
 const hash = await (await auth.$context).password.hash(password)
-await db.update(account).set({ password: hash, updatedAt: new Date() }).where(eq(account.userId, u.id))
-await db.delete(twoFactor).where(eq(twoFactor.userId, u.id))
-await db.update(user).set({ twoFactorEnabled: false, updatedAt: new Date() }).where(eq(user.id, u.id))
-await db.delete(session).where(eq(session.userId, u.id))
-await createAudit(db)({
-  actor: "operator",
-  action: "Password reset from the server",
-  target: u.username ?? u.name,
-  via: "cli",
+// Whoever resets the account may not be the person who approved its agents. The reset and the end of every agent
+// connection are one transaction, under the gate approvals take too: none is answered in between, and a run that
+// stops changes nothing.
+const agentCtx = { db, audit: createAudit(db), events: new EventEmitter() } as unknown as Ctx
+await endEveryConnection(agentCtx, "identity", { by: "operator", via: "cli" }, async (tx) => {
+  await tx.update(account).set({ password: hash, updatedAt: new Date() }).where(eq(account.userId, u.id))
+  await tx.delete(twoFactor).where(eq(twoFactor.userId, u.id))
+  await tx.update(user).set({ twoFactorEnabled: false, updatedAt: new Date() }).where(eq(user.id, u.id))
+  await tx.delete(session).where(eq(session.userId, u.id))
+  await createAudit(db)(
+    { actor: "operator", action: "Password reset from the server", target: u.username ?? u.name, via: "cli" },
+    tx,
+  )
 })
-
-await finishIdentityReset(agentCtx, operator, [reset])
 
 console.log(`Username: ${u.username ?? u.name}`)
 console.log(`New password: ${password}`)

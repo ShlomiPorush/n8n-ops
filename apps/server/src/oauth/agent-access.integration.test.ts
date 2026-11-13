@@ -24,13 +24,7 @@ import { createSecrets, sha256 } from "../lib/crypto.ts"
 import { createSettings } from "../lib/settings.ts"
 import { HEADERS, restRoutes } from "../routes/agent.ts"
 import { OPEN, REVISION } from "../routes/agent-policy.ts"
-import {
-  ABANDONED_RESET_MS,
-  beginIdentityReset,
-  createAgentConnect,
-  endEveryConnection,
-  finishIdentityReset,
-} from "./agents.ts"
+import { createAgentConnect, endEveryConnection } from "./agents.ts"
 import { generation } from "./gate.ts"
 import { CLI_CLIENT, createAgentProvider, resources } from "./provider.ts"
 import { storeAdapter } from "./store.ts"
@@ -467,15 +461,17 @@ describe("the requests an approval checks", () => {
     const port = (server.address() as { port: number }).port
     try {
       // The issuer is http://localhost:8080; the provider takes requests on any port it is given.
-      const res = await fetch(`http://127.0.0.1:${port}/oauth/device`, {
-        method: "POST",
-        headers: { "content-type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          client_id: CLI_CLIENT,
-          scope: "ops:read offline_access",
-          resource: resources(issuer).rest,
-        }),
-      })
+      const device = () =>
+        fetch(`http://127.0.0.1:${port}/oauth/device`, {
+          method: "POST",
+          headers: { "content-type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            client_id: CLI_CLIENT,
+            scope: "ops:read offline_access",
+            resource: resources(issuer).rest,
+          }),
+        })
+      const res = await device()
       expect(res.status).toBe(200)
       const { device_code } = (await res.json()) as { device_code: string }
       const [row] = await ctx.db
@@ -485,6 +481,17 @@ describe("the requests an approval checks", () => {
       expect(row?.generation).toBe(await generation(ctx.db))
       await endEveryConnection(ctx, "all", { by: "owner", via: "web" })
       expect(await generation(ctx.db)).toBe((row?.generation ?? 0) + 1)
+
+      // The generation cannot be read for one request: it fails, and the next device request is not held up by it.
+      await ctx.db.execute(sql`alter table agent_state rename to agent_state_away`)
+      const failed = await device()
+      await ctx.db.execute(sql`alter table agent_state_away rename to agent_state`)
+      expect(failed.status).toBeGreaterThanOrEqual(500)
+      const next = await Promise.race([
+        device(),
+        new Promise<Response>((_, reject) => setTimeout(() => reject(new Error("held up")), 10_000)),
+      ])
+      expect(next.status).toBe(200)
     } finally {
       server.close()
     }
@@ -742,37 +749,54 @@ describe("making and ending connections, in each order", () => {
     expect(await s.live()).toBe(0)
   })
 
-  it("answers no approval while a two-factor reset is under way, and again once it is done", async () => {
+  it("answers no approval while a two-factor reset is under way, however long, and again once it is done", async () => {
     const s = await setUp()
     expect((await s.decide(value())).kind).toBe("approved")
-    const reset = await beginIdentityReset(s.ctx, { by: "owner", via: "web" })
+    const reset = await s.agents.beginReset({ by: "owner", via: "web" as const })
     expect(await s.live()).toBe(0)
     expect((await s.decide(value())).kind).toBe("gone")
-    // The sweep (and a start) leave a reset that is under way alone.
+    // However long it takes, the sweep leaves a reset this process still runs alone.
+    await s.ctx.db.update(agentResets).set({ createdAt: new Date(Date.now() - 86_400_000) })
     await s.agents.reconcile()
     expect((await s.decide(value())).kind).toBe("gone")
-    await finishIdentityReset(s.ctx, { by: "owner", via: "web" }, [reset])
+    await s.agents.finishReset({ by: "owner", via: "web" as const }, reset)
     expect((await s.decide(value())).kind).toBe("approved")
   })
 
   it("waits for every reset under way: one that finishes first does not open approvals for another", async () => {
     const s = await setUp()
-    const first = await beginIdentityReset(s.ctx, { by: "owner", via: "web" })
-    const second = await beginIdentityReset(s.ctx, { by: "operator", via: "cli" })
-    await finishIdentityReset(s.ctx, { by: "owner", via: "web" }, [first])
+    const first = await s.agents.beginReset({ by: "owner", via: "web" as const })
+    const second = await s.agents.beginReset({ by: "owner", via: "web" as const })
+    await s.agents.finishReset({ by: "owner", via: "web" as const }, first)
     expect((await s.decide(value())).kind).toBe("gone")
-    await finishIdentityReset(s.ctx, { by: "operator", via: "cli" }, [second])
+    await s.agents.finishReset({ by: "owner", via: "web" as const }, second)
     expect((await s.decide(value())).kind).toBe("approved")
   })
 
-  it("finishes a two-factor reset left halfway by a process that stopped, once it is clearly abandoned", async () => {
+  it("finishes a two-factor reset that another process began and left", async () => {
     const s = await setUp()
-    await beginIdentityReset(s.ctx, { by: "operator", via: "cli" })
-    // The reset stopped here; later, a new server process starts.
-    await s.ctx.db.update(agentResets).set({ createdAt: new Date(Date.now() - ABANDONED_RESET_MS - 60_000) })
+    // An earlier server process began a reset and stopped; this one starts.
+    const earlier = createAgentConnect(s.ctx, { cookieKeys: [value()] })
+    await earlier.beginReset({ by: "owner", via: "web" as const })
+    expect((await s.decide(value())).kind).toBe("gone")
     await s.agents.reconcile()
     expect(await s.ctx.db.select().from(agentResets)).toEqual([])
     expect((await s.decide(value())).kind).toBe("approved")
+  })
+
+  it("ends every connection with the reset from the server, in one transaction, or neither", async () => {
+    const s = await setUp()
+    expect((await s.decide(value())).kind).toBe("approved")
+    await expect(
+      endEveryConnection(s.ctx, "identity", { by: "operator", via: "cli" }, async () => {
+        throw new Error("the reset failed")
+      }),
+    ).rejects.toThrow("the reset failed")
+    expect(await s.live()).toBe(1)
+    await endEveryConnection(s.ctx, "identity", { by: "operator", via: "cli" }, async (tx) => {
+      await tx.update(user).set({ twoFactorEnabled: false }).where(eq(user.id, "u1"))
+    })
+    expect(await s.live()).toBe(0)
   })
 
   it("rolls back every part of an end that fails: tokens, instance access and waiting requests stay", async () => {

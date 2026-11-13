@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Security
+
+- **Changes are accepted only from n8n-ops' own pages.** What a signed-in page changes (settings, the backup key, API tokens, instances, problems, Workers, backup destinations, agent access, compacting a table) and creating the first account are refused with "Changes are accepted only from n8n-ops' own pages." when the request comes from a page of another site, such as another app on a subdomain of the same domain, which could otherwise act with the signed-in person's session. Signing in and out keep the checks of the sign-in library.
+
 ### Added
 
 - **Settings → Agent Connections turns agents on or off and sets how long an unused connection lasts.** Turning agents off disconnects every agent at once. The idle period is 90 days by default and can be 1 to 365 days; a shorter one applies at once, and a longer one does not bring back agents already disconnected. An installation that already has its account keeps agents on after the update; a new installation starts with them off.

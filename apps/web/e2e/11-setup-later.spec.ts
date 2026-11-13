@@ -1,5 +1,5 @@
 import { expect, type Page, test } from "@playwright/test"
-import { currentApiKey, n8nUrl, signIn } from "./helpers.ts"
+import { currentApiKey, n8nUrl, ownPage, signIn } from "./helpers.ts"
 
 // The setup of an instance (docs/adr/0002) beyond the first registration: Finish later keeps it as Setup
 // incomplete (the pill in the list, nothing on Overview), Continue setup goes on where it stopped, a saved change
@@ -19,7 +19,7 @@ async function removeOurs() {
     instances: { id: string; name: string }[]
   }
   for (const i of instances.filter((x) => [later, apiOnly, phone, sayingWhy].includes(x.name)))
-    expect((await page.request.delete(`/api/instances/${i.id}`)).ok()).toBe(true)
+    expect((await page.request.delete(`/api/instances/${i.id}`, ownPage)).ok()).toBe(true)
 }
 
 test.beforeAll(async ({ browser }) => {
@@ -154,7 +154,7 @@ test("a capability that is not chosen shows as off, and what it did before as hi
   await page.screenshot({ path: test.info().outputPath("overview-health-off.png") })
 
   // Backup turned off too: its last run is history, not a diagnosis.
-  expect((await page.request.delete(`/api/instances/${id}/capabilities/backup`)).ok()).toBe(true)
+  expect((await page.request.delete(`/api/instances/${id}/capabilities/backup`, ownPage)).ok()).toBe(true)
   await page.goto(`/instances/${id}`)
   await expect(page.getByText("Backup is not chosen").filter({ visible: true }).first()).toBeVisible()
   await expect(page.getByText("Health off", { exact: true }).filter({ visible: true }).first()).toBeVisible()

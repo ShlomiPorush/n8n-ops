@@ -295,10 +295,15 @@ seed_design() {
 # round of a full sweep, and in CI in the Integration job only.
 run_checks_on_stack() {
   info "Integration: health endpoint"
-  TOOLCHAIN_EXTRA_ARGS=(--network "${PROJECT}_default")
+  # The version the server reports is the image's VERSION file, read as node: the repository's VERSION.
+  local version
+  version="$(head -n 1 "$REPO_ROOT/VERSION")"
+  TOOLCHAIN_EXTRA_ARGS=(--network "${PROJECT}_default" -e "WANT_VERSION=$version")
   # shellcheck disable=SC2016 # expands inside the container
-  in_toolchain 'body="$(node -e "fetch(\"http://server:8080/healthz/ready\").then(async r => { console.log(r.status, await r.text()); process.exit(r.ok ? 0 : 1) })")" && echo "    $body" && grep -q "\"database\":\"ok\"" <<<"$body"' ||
-    die "server is not ready"
+  in_toolchain 'body="$(node -e "fetch(\"http://server:8080/healthz/ready\").then(async r => { console.log(r.status, await r.text()); process.exit(r.ok ? 0 : 1) })")" && echo "    $body" && grep -q "\"database\":\"ok\"" <<<"$body" && grep -qF "\"version\":\"$WANT_VERSION\"" <<<"$body"' ||
+    die "server is not ready, or does not report the version in VERSION ($version)"
+  [ "$(stack exec -T -u node worker head -n 1 /app/VERSION)" = "$version" ] ||
+    die "the worker image's VERSION is not readable as node or is not $version"
   TOOLCHAIN_EXTRA_ARGS=()
 
   info "Integration: the socket proxy allows only what the worker needs"
@@ -591,7 +596,7 @@ run_e2e() {
 # checks run in the first round only, except those on the stack itself, which run in each round.
 run_integration() {
   info "Integration: images and stack"
-  build_images verify "verify-$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
+  build_images verify
   # Telegram calls go to the stand-in Bot API inside the end-to-end test runner, never to Telegram. The runner shares
   # the server's network (run_e2e), so the stand-in is on the server's localhost.
   export TELEGRAM_API_URL="http://localhost:8099"
@@ -662,7 +667,7 @@ main() {
     elif printf '%s\n' "${files[@]}" | grep -vE '^(docs/|README\.md$|AGENTS\.md$|CHANGELOG\.md$|LICENSE$)' >/dev/null; then
       # Shared root files, config or images: the package filter cannot see their consumers, so run everything.
       if printf '%s\n' "${files[@]}" |
-        grep -E '^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|biome\.json|config/|docker/|docker-compose\.yml|scripts/lib/)' >/dev/null; then
+        grep -E '^(VERSION$|package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|biome\.json|config/|docker/|docker-compose\.yml|scripts/lib/)' >/dev/null; then
         info "Shared files changed: full sweep"
         CHANGED_BASE=""
       fi

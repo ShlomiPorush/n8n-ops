@@ -49,16 +49,19 @@ if [ "$1 $2" = "imagetools create" ]; then
   exit 0
 fi
 if [ "$1" = build ]; then
-  rev="" ref=""
+  rev="" ref="" args=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --label) case "$2" in org.opencontainers.image.revision=*) rev="${2#*=}" ;; esac; shift ;;
+      --build-arg) args="$args $2"; shift ;;
       -t) ref="$2"; shift ;;
     esac
     shift
   done
   case "$ref" in *"${MOCK_FAIL_BUILD:-no-such-image}"*) echo "push failed" >&2; exit 1 ;; esac
   printf '%s' "$rev" >"$STATE/images/$(key "$ref")"
+  # The build arguments each image got, for the cases that check how the version goes in.
+  printf '%s' "$args" >"$STATE/buildargs/$(key "$ref")"
   exit 0
 fi
 echo "unexpected docker buildx $*" >&2
@@ -101,7 +104,7 @@ chmod +x "$WORK/bin/docker" "$WORK/bin/gh"
 # A fresh origin with one commit on main and a fresh registry and Releases; prints nothing.
 sandbox() {
   rm -rf "$WORK/case"
-  mkdir -p "$WORK/case/images" "$WORK/case/releases"
+  mkdir -p "$WORK/case/images" "$WORK/case/releases" "$WORK/case/buildargs"
   export STATE="$WORK/case"
   git init --quiet --bare --initial-branch=main "$WORK/case/origin.git"
   local seed="$WORK/case/seed"
@@ -111,7 +114,13 @@ sandbox() {
   cp "$REPO/scripts/lib/common.sh" "$seed/scripts/lib/"
   : >"$seed/docker/server.Dockerfile"
   : >"$seed/docker/worker.Dockerfile"
-  printf '{\n  "name": "n8n-ops",\n  "version": "0.0.0",\n  "private": true\n}\n' >"$seed/package.json"
+  if [ "${OLD_LAYOUT:-}" = 1 ]; then
+    # Before VERSION existed: the version in package.json.
+    printf '{\n  "name": "n8n-ops",\n  "version": "0.0.0",\n  "private": true\n}\n' >"$seed/package.json"
+  else
+    printf '{\n  "name": "n8n-ops",\n  "private": true\n}\n' >"$seed/package.json"
+    printf '0.0.0\n' >"$seed/VERSION"
+  fi
   printf '# Changelog\n\n## [Unreleased]\n\n### Added\n\n- The first feature.\n' >"$seed/CHANGELOG.md"
   git -C "$seed" add -A
   git -C "$seed" commit --quiet -m "Initial"
@@ -161,7 +170,11 @@ check "a release succeeds" [ $? -eq 0 ]
 check "it releases 0.1.0 from 0.0.0 with --bump minor" complete 0.1.0
 check "origin main is the release commit" [ "$(git -C "$WORK/case/origin.git" log -1 --format=%s main)" = "Release v0.1.0" ]
 check "the tag is on the release commit" [ "$(tag_rev v0.1.0)" = "$(origin_head)" ]
-check "package.json says 0.1.0" grep -q '"version": "0.1.0"' <(git -C "$WORK/case/origin.git" show main:package.json)
+check "VERSION says 0.1.0" [ "$(git -C "$WORK/case/origin.git" show main:VERSION)" = 0.1.0 ]
+check "the release commit changes exactly VERSION and CHANGELOG.md" \
+  [ "$(git -C "$WORK/case/origin.git" diff --name-only main~1 main | tr '\n' ' ')" = "CHANGELOG.md VERSION " ]
+check "the images take the version from VERSION, not from a build argument" \
+  [ -z "$(cat "$STATE/buildargs/ghcr.io_shlomiporush_n8n-ops_0.1.0" "$STATE/buildargs/ghcr.io_shlomiporush_n8n-ops-worker_0.1.0")" ]
 check "the CHANGELOG keeps an empty Unreleased above the dated section" \
   grep -qzP '## \[Unreleased\]\n\n## \[0\.1\.0\] - \d{4}-\d{2}-\d{2}\n' <(git -C "$WORK/case/origin.git" show main:CHANGELOG.md)
 check "the GitHub Release has the title and the section's notes" \
@@ -242,6 +255,34 @@ MOCK_FAIL_BUILD=n8n-ops-worker release
 MOCK_GH_DOWN=1 release
 check "GitHub that cannot be read stops the run" [ $? -ne 0 ]
 check "  and starts no new version" lacks_tag v0.2.0
+
+# A release tagged before VERSION existed, left unfinished with one image published, then VERSION added on main.
+OLD_LAYOUT=1 sandbox
+dir="$(checkout)"
+sed -i 's/"version": "0.0.0"/"version": "0.1.0"/' "$dir/package.json"
+sed -i 's/^## \[Unreleased\]$/## [Unreleased]\n\n## [0.1.0] - 2026-01-01/' "$dir/CHANGELOG.md"
+git -C "$dir" commit --quiet -am "Release v0.1.0" && git -C "$dir" tag -a v0.1.0 -m v0.1.0
+git -C "$dir" push --quiet --atomic origin main refs/tags/v0.1.0
+printf '%s' "$(tag_rev v0.1.0)" >"$STATE/images/ghcr.io_shlomiporush_n8n-ops_0.1.0"
+sed -i '/"version"/d' "$dir/package.json" && printf '0.1.0\n' >"$dir/VERSION"
+git -C "$dir" add -A && git -C "$dir" commit --quiet -m "Keep the version in VERSION" && git -C "$dir" push --quiet origin main
+release
+check "an unfinished release tagged before VERSION existed is finished" complete 0.1.0
+check "  with its version from package.json at the tag" said "v0.1.0 was not finished"
+check "  building the missing image the way that tag was made" \
+  [ "$(cat "$STATE/buildargs/ghcr.io_shlomiporush_n8n-ops-worker_0.1.0")" = " VERSION=0.1.0" ]
+check "  and not the image already published" [ "$(grep -c "buildx build.*n8n-ops:0.1.0" "$STATE/calls")" = 0 ]
+
+for bad in "1.2" "v1.2.3" "1.2.3 1.2.4" "$(printf '1.2.3\n1.2.4')"; do
+  sandbox
+  dir="$(checkout)"
+  printf '%s\n' "$bad" >"$dir/VERSION"
+  git -C "$dir" commit --quiet -am "Bad version" && git -C "$dir" push --quiet origin main
+  release
+  check "VERSION holding '$bad' stops the run" [ $? -ne 0 ]
+  check "  with a clear reason" said "VERSION must hold one version"
+  check "  before tagging" [ -z "$(git -C "$WORK/case/origin.git" tag)" ]
+done
 
 sandbox
 dir="$(checkout)"

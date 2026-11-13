@@ -15,11 +15,12 @@ COPY apps/worker apps/worker
 RUN pnpm --filter @n8n-ops/worker run build
 
 FROM node:24.22.2-bookworm-slim
-ARG VERSION=dev
 ENV NODE_ENV=production \
-    N8N_OPS_VERSION=${VERSION} \
     HEARTBEAT_FILE=/tmp/n8n-ops-worker-heartbeat
 WORKDIR /app
+# The version the worker reports is this file (apps/worker/src/version.ts), never an environment variable. Readable
+# by node whatever the checkout's permissions.
+COPY --chmod=0644 VERSION ./VERSION
 COPY --from=build /src/apps/worker/dist ./dist
 RUN mkdir -p /data && chown node:node /data
 # Starts as root to hand /data to node and, with the Docker socket mounted, to give node the socket's

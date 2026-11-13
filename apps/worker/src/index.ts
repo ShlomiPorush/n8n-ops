@@ -5,6 +5,7 @@ import { DEFAULT_HEARTBEAT_FILE, recordContact } from "./heartbeat.ts"
 import { CallFailures, DockerChecks, Heartbeats } from "./heartbeat-loop.ts"
 import { backupJob, exportCredentialsJob, type Job, type JobResult, probeJob } from "./jobs.ts"
 import { Pairing } from "./pairing.ts"
+import { readVersion } from "./version.ts"
 
 // Outbound-only agent for an n8n Docker host. It pairs once with a one-time token, then polls the
 // server for jobs. It opens no ports.
@@ -13,7 +14,7 @@ if (!serverUrl) {
   console.error("N8N_OPS_SERVER_URL is required")
   process.exit(1)
 }
-const version = process.env.N8N_OPS_VERSION ?? "dev"
+const version = readVersion()
 const dataDir = process.env.WORKER_DATA_DIR ?? "/data"
 const identityFile = `${dataDir}/identity.json`
 const pairingFile = process.env.PAIRING_TOKEN_FILE ?? `${dataDir}/pairing-token`

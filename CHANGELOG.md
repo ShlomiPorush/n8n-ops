@@ -4,10 +4,6 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
-### Security
-
-- **Changes are accepted only from n8n-ops' own pages.** What a signed-in page changes (settings, the backup key, API tokens, instances, problems, Workers, backup destinations, agent access, compacting a table) and creating the first account are refused with "Changes are accepted only from n8n-ops' own pages." when the request comes from a page of another site, such as another app on a subdomain of the same domain, which could otherwise act with the signed-in person's session. Signing in and out keep the checks of the sign-in library.
-
 ### Added
 
 - **Settings → Agent Connections turns agents on or off and sets how long an unused connection lasts.** Turning agents off disconnects every agent at once. The idle period is 90 days by default and can be 1 to 365 days; a shorter one applies at once, and a longer one does not bring back agents already disconnected. An installation that already has its account keeps agents on after the update; a new installation starts with them off.
@@ -28,6 +24,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Security
 
+- **Changes are accepted only from n8n-ops' own pages.** What a signed-in page changes (settings, the backup key, API tokens, instances, problems, Workers, backup destinations, agent access, compacting a table) and creating the first account are refused with "Changes are accepted only from n8n-ops' own pages." when the request comes from a page of another site, such as another app on a subdomain of the same domain, which could otherwise act with the signed-in person's session. Signing in and out keep the checks of the sign-in library.
 - **The database no longer holds working agent tokens.** Access tokens, refresh tokens and authorization codes of agents were stored as they are, so a copy of the database or of a backup of it could be used to act as a connected agent. They are now kept only as a hash; the update converts the stored ones, so no agent has to connect again. Device codes, which last 10 minutes, are still kept as they are. Copies of the database made before the update still hold the refresh tokens current then, until each is next used.
 - **An approval can be answered only once, and only from the browser session that opened it.** Two answers to one request, sent at once or again after a lost answer, could each make a connection. A request that began before Disconnect all, before agents were turned off or before two-factor was reset can no longer be approved after it.
 - **Agent tokens are refused outside the agent routes.** A request with a Bearer token and a browser session cookie could reach the console's own API through the cookie. Now any request with a Bearer token is refused on every route except `/api/v1`, `/mcp` and the channels that take their own tokens, and approval pages refuse a request that carries any token or key.

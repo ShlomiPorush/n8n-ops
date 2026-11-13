@@ -379,6 +379,12 @@ export function createAgentConnect(
       .from(apiTokens)
       .where(and(eq(apiTokens.grantId, String(at.grantId)), isNull(apiTokens.revokedAt)))
     if (!row || row.issuer !== p.issuer) return invalid
+    // The provider removes the grant before it answers a reused refresh token or a revocation, and ends the connection
+    // only afterwards (its grant.revoked event): a token issued meanwhile, or not yet removed, is refused here at once.
+    if (!(await p.provider.Grant.find(String(at.grantId)))) {
+      await end({ id: row.id }, "cut", SYSTEM)
+      return invalid
+    }
     const [account] = await ctx.db
       .select({ id: user.id })
       .from(user)

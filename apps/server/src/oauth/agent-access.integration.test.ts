@@ -280,6 +280,14 @@ describe("the check on every call", () => {
     expect((await agents.verify(token, "mcp")).ok).toBe(false)
   })
 
+  it("refuses at once a token whose grant the provider removed, before its revoke event ends the connection", async () => {
+    const { token, row } = await connected()
+    // As the provider does on a reused refresh token or a revocation: the grant goes first, the event comes later.
+    await ctx.db.delete(oauthStore).where(and(eq(oauthStore.type, "Grant"), eq(oauthStore.id, row.grantId ?? "")))
+    expect((await agents.verify(token, "rest")).ok).toBe(false)
+    expect((await ctx.db.select().from(apiTokens).where(eq(apiTokens.id, row.id)))[0]?.endReason).toBe("cut")
+  })
+
   it("refuses every call while agents are off", async () => {
     const { token } = await connected()
     await ctx.settings.set("agents", { enabled: false, idleDays: 30 })

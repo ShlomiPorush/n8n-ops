@@ -1124,3 +1124,27 @@ export const accessCalls = pgTable(
   },
   (t) => [index("access_calls_request_idx").on(t.requestId, t.at)],
 )
+
+// ---------------------------------------------------------------------------
+// Database maintenance (services/database.ts)
+// ---------------------------------------------------------------------------
+
+export type CompactionStatus = "running" | "done" | "failed" | "unknown"
+
+/**
+ * One compaction of a table (VACUUM FULL) started from Settings → Database. Its outcome is only what PostgreSQL
+ * answered; a run whose answer was lost ends as "unknown". Which run is active is the holder of its advisory lock,
+ * never this row alone.
+ */
+export const dbCompactions = pgTable("db_compactions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tableName: text("table_name").notNull(),
+  relationId: bigint("relation_id", { mode: "number" }).notNull(),
+  status: text("status").$type<CompactionStatus>().notNull().default("running"),
+  sizeBefore: bigint("size_before", { mode: "number" }),
+  sizeAfter: bigint("size_after", { mode: "number" }),
+  error: text("error"),
+  startedBy: text("started_by").notNull(),
+  startedAt: ts("started_at").notNull().defaultNow(),
+  finishedAt: ts("finished_at"),
+})

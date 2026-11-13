@@ -16,6 +16,7 @@ import { createSecrets, loadOrCreateAppKey } from "./lib/crypto.ts"
 import { createSettings } from "./lib/settings.ts"
 import { createAgentConnect } from "./oauth/agents.ts"
 import { UPLOAD_DEADLINE_MS } from "./routes/worker-api.ts"
+import { settleCompactions } from "./services/database.ts"
 import { regroupByCause } from "./services/regroup.ts"
 
 const config = loadConfig()
@@ -70,6 +71,8 @@ onTwoFactorReset({
 await ctx.agents.reconcile()
 
 await ctx.settings.loadDesign(log)
+// A table compaction whose answer was lost when the server stopped ends as unknown (services/database.ts).
+await settleCompactions(ctx)
 // Once, after the migrations and before any request or job: Problems recorded before become one per cause
 // (docs/adr/0003). A failure here stops the start with everything as it was, and the next start tries again.
 const regrouped = await regroupByCause(ctx)

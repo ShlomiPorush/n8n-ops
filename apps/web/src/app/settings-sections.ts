@@ -1,6 +1,7 @@
 import {
   Bell,
   Bot,
+  Database,
   Globe,
   HardDrive,
   KeyRound,
@@ -19,6 +20,7 @@ export const settingsGroups = [
     items: [
       ["general", "General"],
       ["defaults", "Instance Defaults"],
+      ["database", "Database"],
     ],
   },
   {
@@ -58,6 +60,7 @@ export const settingsSectionLabel = (section: string): string | undefined => sec
 export const settingsIcons: Record<SettingsSection, LucideIcon> = {
   general: Globe,
   defaults: SlidersHorizontal,
+  database: Database,
   alerts: Bell,
   telegram: Send,
   email: Mail,

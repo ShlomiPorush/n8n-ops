@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises"
 import { generateX25519Identity, identityToRecipient } from "age-encryption"
 import { and, desc, eq, isNull, lt, ne } from "drizzle-orm"
-import { Hono } from "hono"
+import { type Context, Hono } from "hono"
 import { z } from "zod"
 import { type Ctx, changed } from "../context.ts"
 import { apiTokens, auditLog } from "../db/schema.ts"
@@ -11,6 +11,13 @@ import { actorName, type Env } from "../http/types.ts"
 import { newToken, sha256 } from "../lib/crypto.ts"
 import { issuerProblem } from "../oauth/agents.ts"
 import { revokeAccessOfToken } from "../services/access.ts"
+import {
+  compactStatus,
+  DatabaseMaintenanceError,
+  databaseSizes,
+  freeSpace,
+  startCompact,
+} from "../services/database.ts"
 
 export function adminRoutes(ctx: Ctx) {
   const app = new Hono<Env>()
@@ -129,6 +136,38 @@ export function adminRoutes(ctx: Ctx) {
       .orderBy(desc(auditLog.id))
       .limit(100)
     return c.json(rows)
+  })
+
+  // --- Database: sizes, free space and compacting a table (Settings → Database).
+  app.get("/database", async (c) => {
+    const [sizes, free] = await Promise.all([databaseSizes(ctx), freeSpace(ctx)])
+    return c.json({ ...sizes, freeSpace: free })
+  })
+
+  app.get("/database/status", async (c) => c.json(await compactStatus(ctx)))
+
+  // Changes start only from a page of this installation, sent as JSON (a form or another site cannot).
+  const ownPage = async (c: Context<Env>) =>
+    fromOwnPage(c, (await ctx.settings.get("general")).publicUrl) &&
+    (c.req.header("content-type") ?? "").startsWith("application/json")
+
+  app.post("/database/measure", async (c) => {
+    if (!(await ownPage(c))) return c.json({ error: "forbidden" }, 403)
+    return c.json(await freeSpace(ctx, { refresh: true }))
+  })
+
+  app.post("/database/compact", async (c) => {
+    if (!(await ownPage(c))) return c.json({ error: "forbidden" }, 403)
+    const parsed = z.object({ table: z.string().min(1).max(63) }).safeParse(await c.req.json().catch(() => ({})))
+    if (!parsed.success) return c.json({ error: "invalid" }, 400)
+    try {
+      const run = await startCompact(ctx, parsed.data.table, actorName(c.get("actor")))
+      return c.json(run, 202)
+    } catch (error) {
+      if (error instanceof DatabaseMaintenanceError)
+        return c.json({ error: error.code, message: error.message }, error.code === "busy" ? 409 : 400)
+      throw error
+    }
   })
 
   return app

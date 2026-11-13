@@ -80,7 +80,7 @@ let browserClient = ""
 
 test("agents are off on a new installation until a person turns them on", async () => {
   await page.goto("/agents")
-  await expect(page.getByText("Agents are off")).toBeVisible()
+  await expect(page.getByText("Agents are off", { exact: true })).toBeVisible()
   const closed = await fetch(`${base}/.well-known/oauth-authorization-server`)
   expect(closed.status).toBe(404)
 

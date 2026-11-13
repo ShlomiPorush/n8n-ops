@@ -252,10 +252,12 @@ export function restRoutes(ctx: Ctx) {
           ? 403
           : e.code === "request_in_progress"
             ? 409
-            : e.code === "busy"
-              ? 503
+            : // Nothing was stored in either case: a 4xx, so the client knows the request did not happen (a 5xx after an
+              // action reads as an outcome unknown). Not 429: that is the limits layer's reserved busy.
+              e.code === "busy"
+              ? 409
               : e.code.startsWith("spec")
-                ? 502
+                ? 424
                 : 400
     return [{ error: e.code, message: e.message }, status] as const
   }

@@ -189,7 +189,7 @@ export const areasOf = (canRequestAccess: boolean): Area[] => (canRequestAccess 
 
 /** The open routes a connection may call, for the endpoints listing. */
 export function listing(areas: Area[], only?: string) {
-  const endpoints = OPEN.filter((r) => (r.area === null || areas.includes(r.area)) && (!only || r.area === only)).map(
+  const endpoints = OPEN.filter((r) => (r.area === null || areas.includes(r.area)) && (!only || r.area === only || r.area === null)).map(
     ({ method, path, kind, area, description }) => ({ method, path, kind, area: area ?? "any", description }),
   )
   return {

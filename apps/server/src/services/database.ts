@@ -132,12 +132,14 @@ let measuring: Promise<FreeSpace> | null = null
  * server process ran); each table in its own transaction with its own time limits.
  */
 export async function freeSpace(ctx: Pick<Ctx, "db">, options: { refresh?: boolean } = {}): Promise<FreeSpace> {
-  if (!options.refresh && cached && Date.now() - cached.at < FREE_SPACE_TTL_MS) {
+  // The one checked, held here: a compaction that ends while the check runs forgets it, and then it is not used.
+  const kept = cached
+  if (!options.refresh && kept && Date.now() - kept.at < FREE_SPACE_TTL_MS) {
     const [last] = rows<{ at: number | null }>(
       await ctx.db.execute(sql`
         select extract(epoch from max(finished_at)) * 1000 as at from db_compactions where status <> 'running'`),
     )
-    if (!last?.at || Number(last.at) < cached.at) return cached.value
+    if (cached === kept && (!last?.at || Number(last.at) < kept.at)) return kept.value
   }
   if (measuring) return measuring
   const started = Date.now()

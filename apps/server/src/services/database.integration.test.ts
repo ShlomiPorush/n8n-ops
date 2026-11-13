@@ -185,6 +185,26 @@ describe("free space", () => {
     expect(await freeSpace(ctx)).not.toBe(kept)
   })
 
+  it("measures again, without failing, when a compaction ends while it checks the kept one", async () => {
+    const kept = await freeSpace(ctx, { refresh: true })
+    // Every query of this context first forgets the kept measurement, as a compaction ending right then would.
+    const racing = {
+      ...ctx,
+      db: new Proxy(ctx.db, {
+        get: (target, key, receiver) =>
+          key === "execute"
+            ? (query: Parameters<Db["execute"]>[0]) => {
+                forgetFreeSpace()
+                return target.execute(query)
+              }
+            : Reflect.get(target, key, receiver),
+      }),
+    } as Ctx
+    const again = await freeSpace(racing)
+    expect(again).not.toBe(kept)
+    expect(again.unavailable).toBeNull()
+  })
+
   it("measures again only when asked or after ten minutes", async () => {
     const first = await freeSpace(ctx, { refresh: true })
     expect(await freeSpace(ctx)).toBe(first)

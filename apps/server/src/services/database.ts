@@ -1,3 +1,4 @@
+import dc from "node:diagnostics_channel"
 import { and, desc, eq, sql } from "drizzle-orm"
 import type { ReservedSql } from "postgres"
 import type { Ctx } from "../context.ts"
@@ -125,6 +126,8 @@ export type FreeSpace = {
 
 let cached: { at: number; value: FreeSpace } | null = null
 let measuring: Promise<FreeSpace> | null = null
+/** Moves on when a compaction changed a table: a measurement that started before it is not kept. */
+let generation = 0
 
 /**
  * Free space of each table's data (heap and TOAST) from PostgreSQL's pgstattuple_approx: space it can reuse now, and
@@ -133,21 +136,25 @@ let measuring: Promise<FreeSpace> | null = null
  */
 export function freeSpace(ctx: Pick<Ctx, "db">, options: { refresh?: boolean } = {}): Promise<FreeSpace> {
   if (!options.refresh && cached && Date.now() - cached.at < FREE_SPACE_TTL_MS) return Promise.resolve(cached.value)
-  if (!measuring)
-    measuring = measureFreeSpace(ctx)
-      .then((value) => {
-        cached = { at: Date.now(), value }
-        return value
-      })
-      .finally(() => {
-        measuring = null
-      })
-  return measuring
+  if (measuring) return measuring
+  const started = generation
+  const run: Promise<FreeSpace> = measureFreeSpace(ctx)
+    .then((value) => {
+      if (started === generation) cached = { at: Date.now(), value }
+      return value
+    })
+    .finally(() => {
+      if (measuring === run) measuring = null
+    })
+  measuring = run
+  return run
 }
 
 /** Forgets the kept measurement (tests, and after a compaction changed a table). */
 export function forgetFreeSpace() {
   cached = null
+  measuring = null
+  generation++
 }
 
 async function measureFreeSpace(ctx: Pick<Ctx, "db">): Promise<FreeSpace> {
@@ -230,14 +237,21 @@ export async function startCompact(ctx: Ctx, table: string, actor: string): Prom
   )
   if (!target) throw new DatabaseMaintenanceError("unknown_table", "There is no such table.")
   if (UNCOMPACTABLE.includes(target.name))
-    throw new DatabaseMaintenanceError("excluded", "Every page reads this table; it cannot be compacted from here.")
+    throw new DatabaseMaintenanceError(
+      "excluded",
+      target.name === "db_compactions"
+        ? "n8n-ops records compactions in this table; it cannot be compacted from here."
+        : "Every page reads this table; it cannot be compacted from here.",
+    )
 
   const reserved = await ctx.db.$client.reserve()
   let locked = false
+  let pid: number | null = null
   try {
     const [lock] = await reserved<{ locked: boolean; pid: number }[]>`
       select pg_try_advisory_lock(${COMPACT_LOCK}::bigint) as locked, pg_backend_pid() as pid`
     locked = Boolean(lock?.locked)
+    pid = lock?.pid ?? null
     if (!locked) throw new DatabaseMaintenanceError("busy", "Another table is being compacted. Try again when it ends.")
     const row = await ctx.db.transaction(async (tx) => {
       const [inserted] = await tx
@@ -248,35 +262,81 @@ export async function startCompact(ctx: Ctx, table: string, actor: string): Prom
       await ctx.audit({ actor, action: "Database table compact started", target: target.name, via: "web" }, tx)
       return inserted
     })
-    const pid = lock?.pid ?? null
     void runCompact(ctx, reserved, row, target.target, pid).catch((error: Error) =>
       ctx.log.error("database compact failed to finish", { table: target.name, error: error.message }),
     )
     return row
   } catch (error) {
-    await cleanUp(ctx, reserved, locked, null)
+    await cleanUp(ctx, reserved, locked, pid)
     throw error
   }
 }
 
 type Outcome = { status: "done" | "failed"; error?: string; sizeBefore?: number | null; sizeAfter?: number | null }
 
+/**
+ * Collects the WARNINGs PostgreSQL sends on the run's own connection while the VACUUM runs, through postgres.js's
+ * documented diagnostics channels: a query with a marker tells which connection is the run's, and every notice names
+ * its connection. VACUUM answers a table it skipped (gone, or not the role's to maintain) with a WARNING, not an error.
+ */
+function vacuumWarnings(marker: string) {
+  let connection: unknown
+  let watching = false
+  const warnings: string[] = []
+  const onQuery = (message: unknown) => {
+    const m = message as { query?: string; connection?: unknown }
+    if (connection === undefined && m.query?.includes(marker)) connection = m.connection
+  }
+  const onNotice = (message: unknown) => {
+    const m = message as { notice?: { severity?: string; message?: string }; connection?: unknown }
+    if (watching && connection !== undefined && m.connection === connection && m.notice?.severity === "WARNING")
+      warnings.push(m.notice.message ?? "PostgreSQL warned")
+  }
+  dc.subscribe("tracing:postgres:query:asyncEnd", onQuery)
+  dc.subscribe("postgres:notice", onNotice)
+  return {
+    warnings,
+    known: () => connection !== undefined,
+    watch: (on: boolean) => {
+      watching = on
+    },
+    stop: () => {
+      dc.unsubscribe("tracing:postgres:query:asyncEnd", onQuery)
+      dc.unsubscribe("postgres:notice", onNotice)
+    },
+  }
+}
+
 async function runCompact(ctx: Ctx, reserved: ReservedSql, row: Compaction, target: string, pid: number | null) {
   let outcome: Outcome | null = null
   const started = Date.now()
   let sizeBefore: number | null = null
+  const marker = `n8n-ops compact ${row.id}`
+  const notices = vacuumWarnings(marker)
   try {
+    await reserved.unsafe(`select 1 /* ${marker} */`)
+    if (!notices.known())
+      throw new Error("n8n-ops could not follow the compaction's connection, so it did not start it.")
     // VACUUM cannot run in a transaction, so SET LOCAL is not available: the setting is reset before release.
     await reserved.unsafe(`set lock_timeout = '${COMPACT_WAIT}'`)
     const [before] = await reserved<{ node: string | null; size: number }[]>`
       select pg_relation_filenode(${row.relationId}::oid)::text as node,
         pg_total_relation_size(${row.relationId}::oid)::float8 as size`
     sizeBefore = before?.size ?? null
+    notices.watch(true)
     await reserved.unsafe(`vacuum (full) ${target}`)
+    notices.watch(false)
     const [after] = await reserved<{ node: string | null }[]>`
       select pg_relation_filenode(${row.relationId}::oid)::text as node`
-    // VACUUM answers a table it skipped with a warning, not an error; a table it rewrote has new files.
-    if (!after?.node || after.node === before?.node)
+    // Done only without a warning and with new files: a warning means it skipped the table, and unchanged files
+    // that it did not rewrite it.
+    if (notices.warnings.length)
+      outcome = {
+        status: "failed",
+        error: `PostgreSQL skipped the table: ${notices.warnings[0]}`.slice(0, 500),
+        sizeBefore,
+      }
+    else if (!after?.node || after.node === before?.node)
       outcome = { status: "failed", error: "PostgreSQL skipped the table, so it was not compacted.", sizeBefore }
     else {
       let sizeAfter: number | null = null
@@ -294,6 +354,8 @@ async function runCompact(ctx: Ctx, reserved: ReservedSql, row: Compaction, targ
     else if (pgCode(error) === "55P03")
       outcome = { status: "failed", error: `${row.tableName} was in use, so it was not compacted.`, sizeBefore }
     else outcome = { status: "failed", error: (error as Error).message.slice(0, 500), sizeBefore }
+  } finally {
+    notices.stop()
   }
   // The outcome is written while the lock is still held, so a status read never settles this run meanwhile.
   try {
@@ -304,19 +366,32 @@ async function runCompact(ctx: Ctx, reserved: ReservedSql, row: Compaction, targ
   }
 }
 
-/** Resets the session and drops the lock before the connection goes back to the pool; ends the session if that fails. */
+/**
+ * Resets the session and drops the lock before the connection goes back to the pool. If that fails, the session may
+ * still hold either, so it never goes back as it is: it is ended (PostgreSQL waits up to 5 s for it) and released
+ * only once it is gone, so the pool drops the closed connection; one that cannot be ended stays out of the pool.
+ */
 async function cleanUp(ctx: Pick<Ctx, "db" | "log">, reserved: ReservedSql, locked: boolean, pid: number | null) {
   try {
     await reserved.unsafe("reset lock_timeout")
     if (locked) await reserved`select pg_advisory_unlock(${COMPACT_LOCK}::bigint)`
-  } catch {
-    if (pid)
-      await ctx.db.execute(sql`select pg_terminate_backend(${pid})`).catch((error: Error) => {
-        ctx.log.warn("could not end the compaction session", { error: error.message })
-      })
-  } finally {
     reserved.release()
+    return
+  } catch {
+    // Ended below.
   }
+  if (pid === null) {
+    // The first query failed: nothing ran on the session, so it holds no setting and no lock.
+    reserved.release()
+    return
+  }
+  await ctx.db.execute(sql`select pg_terminate_backend(${pid}, 5000)`).catch(() => {})
+  const alive = await ctx.db
+    .execute(sql`select 1 from pg_stat_activity where pid = ${pid}`)
+    .then((r) => (r as unknown[]).length > 0)
+    .catch(() => true)
+  if (alive) ctx.log.error("a compaction session could not be ended; it is kept out of the pool", { pid })
+  else reserved.release()
 }
 
 async function finish(ctx: Ctx, row: Compaction, outcome: Outcome, ms: number) {
@@ -424,9 +499,14 @@ function phaseLabel(phase: string) {
   }
 }
 
+/** The SQLSTATE or postgres.js code of an error, also when Drizzle wrapped it (as its `cause`). */
 function pgCode(error: unknown): string | undefined {
-  const code = (error as { code?: unknown })?.code
-  return typeof code === "string" ? code : undefined
+  let e = error as { code?: unknown; cause?: unknown } | undefined
+  for (let depth = 0; e && depth < 3; depth++) {
+    if (typeof e.code === "string") return e.code
+    e = e.cause as typeof e
+  }
+  return undefined
 }
 
 /** The connection went away before PostgreSQL's answer arrived: the outcome is unknown. */

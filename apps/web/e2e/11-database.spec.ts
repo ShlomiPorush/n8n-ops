@@ -35,7 +35,7 @@ test("lists the tables with their sizes and free space", async () => {
 test("compacts a table after the question, shows how it ended and records it", async () => {
   await page.goto("/settings/database")
   await row("audit_log").getByRole("button", { name: "Compact" }).click()
-  const question = page.getByRole("dialog", { name: "Compact audit_log?" })
+  const question = page.getByRole("alertdialog", { name: "Compact audit_log?" })
   await expect(question).toContainText("everything that reads or writes audit_log waits")
   await expect(question).toContainText("n8n-ops cannot check that space")
   await question.getByRole("button", { name: "Compact table" }).click()
@@ -50,8 +50,8 @@ test("compacts a table after the question, shows how it ended and records it", a
 test("cancelling the question compacts nothing", async () => {
   await page.goto("/settings/database")
   await row("problems").getByRole("button", { name: "Compact" }).click()
-  await page.getByRole("dialog", { name: "Compact problems?" }).getByRole("button", { name: "Cancel" }).click()
-  await expect(page.getByRole("dialog")).toHaveCount(0)
+  await page.getByRole("alertdialog", { name: "Compact problems?" }).getByRole("button", { name: "Cancel" }).click()
+  await expect(page.getByRole("alertdialog")).toHaveCount(0)
   await expect(row("problems")).not.toContainText("Compacted")
 })
 

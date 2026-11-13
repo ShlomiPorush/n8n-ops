@@ -70,21 +70,24 @@ export function DatabaseSection({ hidden = false }: { hidden?: boolean }) {
   })
   const running = status.data?.running ?? null
 
-  // A compaction that ended, here or in another tab: say how it went and measure again.
-  const seen = useRef<string | null>(null)
+  // A compaction that ended since the page last looked, here or in another tab, however short: say how it went
+  // and measure again. The newest ended run when the page opens is only remembered.
+  const lastEnded = status.data?.recent.find((r) => r.status !== "running") ?? null
+  const seen = useRef<string | null | undefined>(undefined)
   useEffect(() => {
+    if (!status.data) return
     const was = seen.current
-    seen.current = running?.id ?? null
-    if (!was || running?.id === was) return
-    const ended = status.data?.recent.find((r) => r.id === was)
-    if (ended?.status === "done")
+    seen.current = lastEnded?.id ?? null
+    if (was === undefined || !lastEnded || lastEnded.id === was) return
+    const ended = lastEnded
+    if (ended.status === "done")
       toast.success(
         `${ended.tableName} compacted: ${formatSize(ended.sizeBefore ?? 0)} to ${sizeOrUnknown(ended.sizeAfter)}`,
       )
-    else if (ended?.status === "failed") toast.error(`${ended.tableName} was not compacted: ${ended.error ?? ""}`)
-    else if (ended?.status === "unknown") toast.error(`Unknown how compacting ${ended.tableName} ended`)
+    else if (ended.status === "failed") toast.error(`${ended.tableName} was not compacted: ${ended.error ?? ""}`)
+    else toast.error(`Unknown how compacting ${ended.tableName} ended`)
     void client.invalidateQueries({ queryKey: [REPORT] })
-  }, [running?.id, status.data, client])
+  }, [lastEnded, status.data, client])
 
   async function measure() {
     try {
@@ -135,7 +138,7 @@ export function DatabaseSection({ hidden = false }: { hidden?: boolean }) {
 
   const data = report.data
   const free = data?.freeSpace
-  const freeTotal = free && !free.unavailable ? sumFree(free.tables) : null
+  const measured = free && !free.unavailable ? sumFree(free.tables) : null
   const lastOf = (table: string) => status.data?.recent.find((r) => r.tableName === table && r.status !== "running")
 
   return (
@@ -160,7 +163,8 @@ export function DatabaseSection({ hidden = false }: { hidden?: boolean }) {
               <Kpi
                 icon={HardDrive}
                 label="Free space in tables"
-                value={freeTotal === null ? "Not measured" : formatSize(freeTotal)}
+                value={!measured || measured.tables === 0 ? "Not measured" : formatSize(measured.bytes)}
+                hint={measured?.missing ? `${measured.missing} not measured` : undefined}
               />
               <Kpi label="Measured" value={<When value={free?.measuredAt} />} />
             </Kpis>
@@ -217,9 +221,7 @@ export function DatabaseSection({ hidden = false }: { hidden?: boolean }) {
                       Compact
                     </BusyButton>
                   ) : t.compacting ? null : (
-                    <span className="max-w-[28ch] text-small text-muted-foreground">
-                      Every page reads this table; it cannot be compacted from here.
-                    </span>
+                    <span className="max-w-[28ch] text-small text-muted-foreground">{excludedReason(t.name)}</span>
                   )}
                 </div>
               </div>
@@ -240,7 +242,7 @@ function LastRun({ run }: { run: Run }) {
   if (run.status === "done")
     return (
       <div className="mt-1 text-small text-ok">
-        Compacted {when}: {sizeOrUnknown(run.sizeBefore)} to {sizeOrUnknown(run.sizeAfter)}
+        Compacted {when} in {took(run)}: {sizeOrUnknown(run.sizeBefore)} to {sizeOrUnknown(run.sizeAfter)}
       </div>
     )
   if (run.status === "unknown")
@@ -256,8 +258,27 @@ function LastRun({ run }: { run: Run }) {
   )
 }
 
+/** The free space of the tables that were measured, and how many were not. */
 function sumFree(tables: Record<string, TableFreeSpace>) {
-  return Object.values(tables).reduce((sum, t) => sum + ("free" in t ? t.free : 0), 0)
+  const all = Object.values(tables)
+  const ok = all.filter((t): t is { free: number; dead: number } => "free" in t)
+  const missing = all.length - ok.length
+  return {
+    bytes: ok.reduce((sum, t) => sum + t.free, 0),
+    tables: ok.length,
+    missing: missing ? `${missing} ${missing === 1 ? "table" : "tables"}` : null,
+  }
+}
+
+function took(run: Run) {
+  const ms = run.finishedAt ? Date.parse(run.finishedAt) - Date.parse(run.startedAt) : 0
+  return ms < 1000 ? "under a second" : `${Math.round(ms / 1000)} s`
+}
+
+function excludedReason(table: string) {
+  return table === "db_compactions"
+    ? "n8n-ops records compactions in this table; it cannot be compacted from here."
+    : "Every page reads this table; it cannot be compacted from here."
 }
 
 function sizeOrUnknown(bytes: number | null) {

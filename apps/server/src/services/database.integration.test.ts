@@ -103,6 +103,26 @@ describe("sizes", () => {
   })
 })
 
+describe("sizes while a table is held", () => {
+  it("says the sizes are busy after a second, not an error", async () => {
+    const holder = other()
+    try {
+      const held = holder.begin(async (tx) => {
+        await tx`lock table bloat in access exclusive mode`
+        await new Promise((r) => setTimeout(r, 2_500))
+      })
+      await new Promise((r) => setTimeout(r, 200))
+      const t = Date.now()
+      const sizes = await databaseSizes(ctx)
+      expect(sizes.busy).toBe(true)
+      expect(Date.now() - t).toBeLessThan(2_000)
+      await held
+    } finally {
+      await holder.end()
+    }
+  })
+})
+
 describe("free space", () => {
   it("shows the space of deleted rows before a vacuum, and free space after it", async () => {
     await ctx.db.execute(sql`delete from bloat where id % 10 <> 0`)
@@ -144,6 +164,13 @@ describe("free space", () => {
       await client.end()
       await ctx.db.execute(sql.raw(`drop role ${role}`))
     }
+  })
+
+  it("keeps no measurement that started before a compaction changed a table", async () => {
+    const before = freeSpace(ctx, { refresh: true })
+    forgetFreeSpace()
+    const stale = await before
+    expect(await freeSpace(ctx)).not.toBe(stale)
   })
 
   it("measures again only when asked or after ten minutes", async () => {
@@ -244,6 +271,33 @@ describe("compacting", () => {
       expect(status.recent[0]?.error).toMatch(/skipped|does not exist/)
     } finally {
       await holder.end()
+    }
+  })
+
+  it("fails with PostgreSQL's warning when VACUUM skips a table the role may not maintain", async () => {
+    const role = `n8n_ops_maint_${randomBytes(4).toString("hex")}`
+    const password = randomBytes(24).toString("hex")
+    await ctx.db.execute(sql.raw(`create role ${role} login password '${password}'`))
+    await ctx.db.execute(sql.raw(`grant select, insert, update on db_compactions, audit_log to ${role}`))
+    await ctx.db.execute(sql.raw(`grant usage on all sequences in schema public to ${role}`))
+    const u = new URL(url)
+    u.username = role
+    u.password = password
+    const client = postgres(u.toString(), { max: 2, onnotice: () => {} })
+    const theirs = ctxFor(drizzle(client, { schema }) as unknown as Db)
+    try {
+      const [before] = await ctx.db.execute(sql`select pg_relation_filenode('bloat') as node`)
+      await startCompact(theirs, "bloat", "admin")
+      const status = await settled(20_000, theirs)
+      expect(status.recent[0]?.status).toBe("failed")
+      // The warning's own words, not the unchanged-files fallback.
+      expect(status.recent[0]?.error).toMatch(/^PostgreSQL skipped the table: .*bloat/)
+      const [after] = await ctx.db.execute(sql`select pg_relation_filenode('bloat') as node`)
+      expect(after).toEqual(before)
+    } finally {
+      await client.end()
+      await ctx.db.execute(sql.raw(`drop owned by ${role}`))
+      await ctx.db.execute(sql.raw(`drop role ${role}`))
     }
   })
 

@@ -79,7 +79,7 @@ export function LoginPage() {
       if (error) {
         const e = error as { code?: string; status?: number; message?: string }
         if (passkeyCancelled(e.code)) return setError("Passkey sign-in was cancelled or timed out.")
-        if (e.code === "USER_NOT_VERIFIED" || e.status === 429 || !e.status) return setError(authErrorText(e))
+        if (e.status === 429 || !e.status) return setError(authErrorText(e))
         if (e.status >= 500) return setError("Could not sign in. Try again in a moment.")
         return setError("This passkey did not sign you in. Try another one, or your password.")
       }

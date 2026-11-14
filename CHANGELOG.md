@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.18.4] - 2026-11-14
+
 ### Changed
 
 - **The server carries better-auth 1.7.21 and oidc-provider 9.14.0**, the libraries behind sign-in and behind the agents' connections. Neither needs a change to the installation.

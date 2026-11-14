@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.18.3] - 2026-11-14
+
 ### Changed
 
 - **A passkey that does not check who you are is refused with the sign-in library's own message.** Signing in with it says "This passkey did not sign you in. Try another one, or your password.", and adding one says "Passkey not added: Failed to verify registration", where both used to name the missing PIN or biometrics. Such a passkey is still refused, and the browser usually stops it before it reaches n8n-ops.

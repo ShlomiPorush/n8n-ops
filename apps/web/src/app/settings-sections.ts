@@ -1,12 +1,14 @@
 import {
   Bell,
   Bot,
+  Database,
   Globe,
   HardDrive,
   KeyRound,
   LockKeyhole,
   type LucideIcon,
   Mail,
+  Plug,
   Send,
   SlidersHorizontal,
 } from "lucide-react"
@@ -18,6 +20,7 @@ export const settingsGroups = [
     items: [
       ["general", "General"],
       ["defaults", "Instance Defaults"],
+      ["database", "Database"],
     ],
   },
   {
@@ -39,6 +42,7 @@ export const settingsGroups = [
     label: "Access",
     items: [
       ["security", "Sign-in Security"],
+      ["agents", "Agent Connections"],
       ["access", "Agent Access"],
     ],
   },
@@ -56,11 +60,13 @@ export const settingsSectionLabel = (section: string): string | undefined => sec
 export const settingsIcons: Record<SettingsSection, LucideIcon> = {
   general: Globe,
   defaults: SlidersHorizontal,
+  database: Database,
   alerts: Bell,
   telegram: Send,
   email: Mail,
   destinations: HardDrive,
   keys: KeyRound,
   security: LockKeyhole,
+  agents: Plug,
   access: Bot,
 }

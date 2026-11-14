@@ -195,21 +195,31 @@ export function AccessPage() {
         }
       />
       <FilterBar
-        views={
-          <ToggleGroup
-            type="single"
-            aria-label="Show"
-            value={view}
-            onValueChange={(v) => v && setParams(v === "all" ? { view: "all" } : {}, { replace: true })}
-          >
-            <ToggleGroupItem value="open">
-              Waiting and Active <small>{n(waiting + active)}</small>
-            </ToggleGroupItem>
-            <ToggleGroupItem value="all">
-              All <small>{n(all.length)}</small>
-            </ToggleGroupItem>
-          </ToggleGroup>
-        }
+        views={{
+          label: "Show",
+          value: view,
+          onChange: (v) => setParams(v === "all" ? { view: "all" } : {}, { replace: true }),
+          options: [
+            {
+              value: "open",
+              label: (
+                <>
+                  Waiting and Active <small>{n(waiting + active)}</small>
+                </>
+              ),
+              text: `Waiting and Active ${n(waiting + active)}`,
+            },
+            {
+              value: "all",
+              label: (
+                <>
+                  All <small>{n(all.length)}</small>
+                </>
+              ),
+              text: `All ${n(all.length)}`,
+            },
+          ],
+        }}
         count={rows.data && shown.length > 0 ? plural(shown.length, "request") : undefined}
         sort={shown.length > 0 ? { control: sort.control, name: "access requests" } : undefined}
         listKey={view}

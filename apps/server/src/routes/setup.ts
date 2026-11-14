@@ -5,6 +5,7 @@ import { LOGIN_DOMAIN } from "../auth/auth.ts"
 import type { Ctx } from "../context.ts"
 import { backupDestinations, instances, user } from "../db/schema.ts"
 import { requireUser } from "../http/middleware.ts"
+import { fromAnotherPage } from "../http/origin.ts"
 import type { Env } from "../http/types.ts"
 
 const accountSchema = z.object({
@@ -25,8 +26,10 @@ export function setupRoutes(ctx: Ctx) {
     return c.json({ hasUser: (row?.n ?? 0) > 0, passkeys: passkeyUrl?.origin ?? null })
   })
 
-  // Public, but only until the single account exists.
+  // Public, but only until the single account exists, and only from n8n-ops' own setup page.
   app.post("/account", async (c) => {
+    const refused = await fromAnotherPage(ctx, c)
+    if (refused) return refused
     const [row] = await ctx.db.select({ n: count() }).from(user)
     if ((row?.n ?? 0) > 0) return c.json({ error: "already_set_up" }, 409)
     const parsed = accountSchema.safeParse(await c.req.json().catch(() => ({})))

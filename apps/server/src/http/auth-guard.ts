@@ -1,5 +1,5 @@
 import type { Context } from "hono"
-import { PASSKEY_SIGN_IN } from "../auth/auth.ts"
+import { PASSKEY_SIGN_IN, withResetScope } from "../auth/auth.ts"
 import type { Ctx } from "../context.ts"
 import { checkSession, withInheritedClocks } from "../services/session-policy.ts"
 import { sessionEndedAnswer } from "./middleware.ts"
@@ -16,7 +16,12 @@ export const PASSKEYS_OFF_TEXT = "Passkeys need a public URL. Set one under Sett
  * code step of a sign-in, which runs on its own short-lived cookie. Passkeys are off while no public URL is in
  * effect (auth/auth.ts passkeyAddress).
  */
-export async function authRoute(ctx: Ctx, c: Context): Promise<Response> {
+export function authRoute(ctx: Ctx, c: Context): Promise<Response> {
+  // A two-factor reset begun in this call is finished when it ends, however it ends (auth/auth.ts).
+  return withResetScope(() => route(ctx, c))
+}
+
+async function route(ctx: Ctx, c: Context): Promise<Response> {
   const { auth, passkeyUrl } = await ctx.auth()
   const path = c.req.path.slice("/api/auth".length)
   // Off, a passkey neither signs in nor is added; the ones kept can still be listed, renamed and deleted, so a

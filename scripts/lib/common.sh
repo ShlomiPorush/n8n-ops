@@ -50,14 +50,15 @@ install_deps() {
   in_toolchain "pnpm install --frozen-lockfile --reporter=append-only"
 }
 
-# Builds the server and worker images with the given tag. Stops on the first failure.
+# Builds the server and worker images with the given tag; each reports the version in VERSION. Stops on the first
+# failure.
 build_images() {
-  local tag="$1" version="${2:-$1}"
+  local tag="$1"
   require_docker
   local app
   for app in server worker; do
     info "Building n8n-ops-$app:$tag"
-    docker build -f "$REPO_ROOT/docker/$app.Dockerfile" --build-arg "VERSION=$version" -t "n8n-ops-$app:$tag" "$REPO_ROOT" ||
+    docker build -f "$REPO_ROOT/docker/$app.Dockerfile" -t "n8n-ops-$app:$tag" "$REPO_ROOT" ||
       die "building n8n-ops-$app:$tag failed"
   done
 }

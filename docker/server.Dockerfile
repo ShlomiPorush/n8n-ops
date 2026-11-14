@@ -37,14 +37,15 @@ RUN apt-get update \
   && apt-get purge -y curl \
   && apt-get autoremove -y \
   && rm -rf /var/lib/apt/lists/*
-ARG VERSION=dev
 ENV NODE_ENV=production \
-    N8N_OPS_VERSION=${VERSION} \
     PORT=8080 \
     WEB_DIR=web \
     SKILL_DIR=skill \
     MIGRATIONS_DIR=drizzle
 WORKDIR /app
+# The version the server reports is this file (apps/server/src/version.ts), never an environment variable. Readable
+# by node whatever the checkout's permissions.
+COPY --chmod=0644 VERSION ./VERSION
 COPY --from=build /src/apps/server/dist ./dist
 COPY --from=build /src/apps/server/drizzle ./drizzle
 COPY --from=web /src/apps/web/dist ./web

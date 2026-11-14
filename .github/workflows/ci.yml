@@ -21,26 +21,58 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # On a pull request, which areas it changes, so the jobs that cannot be affected are skipped. The documentation
+  # paths are those scripts/verify.sh treats as documentation. A file outside the known areas sets "other", which
+  # runs every job.
   changes:
     name: Detect changes
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: read
     outputs:
       code: ${{ steps.filter.outputs.code }}
+      server: ${{ steps.filter.outputs.server }}
+      worker: ${{ steps.filter.outputs.worker }}
+      shared: ${{ steps.filter.outputs.shared }}
+      skill: ${{ steps.filter.outputs.skill }}
+      other: ${{ steps.filter.outputs.other }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - id: filter
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         with:
+          # No token: the files come from a git diff between the pull request's base and the commit this run checks,
+          # not from the API, whose list follows later pushes on a re-run and stops at 3000 files.
+          token: ""
           predicate-quantifier: every
           filters: |
             code:
               - '**'
               - '!docs/**'
-              - '!**/*.md'
+              - '!README.md'
+              - '!AGENTS.md'
+              - '!CHANGELOG.md'
               - '!LICENSE'
+            server:
+              - 'apps/server/**'
+            worker:
+              - 'apps/worker/**'
+            shared:
+              - 'packages/shared/**'
+            skill:
+              - 'packages/skill/**'
+            other:
+              - '**'
+              - '!docs/**'
+              - '!README.md'
+              - '!AGENTS.md'
+              - '!CHANGELOG.md'
+              - '!LICENSE'
+              - '!apps/web/**'
+              - '!apps/server/**'
+              - '!apps/worker/**'
+              - '!packages/shared/**'
+              - '!packages/skill/**'
 
   guards:
     name: Guards
@@ -71,9 +103,14 @@ jobs:
         run: scripts/verify.sh --skip-guards --only checks
 
   integration:
+    # The stack, the database and the worker: a change to the web app or the skill alone cannot affect it, and the
+    # end-to-end jobs build the same images.
     name: Integration
     needs: changes
-    if: needs.changes.outputs.code == 'true' || github.event_name != 'pull_request'
+    if: >-
+      github.event_name != 'pull_request' || needs.changes.outputs.server == 'true' ||
+      needs.changes.outputs.worker == 'true' || needs.changes.outputs.shared == 'true' ||
+      needs.changes.outputs.other == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -113,7 +150,9 @@ jobs:
     # The skill runs on the agent's computer: its three versions are checked where they run (Linux runs in Checks).
     name: Skill (${{ matrix.os }})
     needs: changes
-    if: needs.changes.outputs.code == 'true' || github.event_name != 'pull_request'
+    if: >-
+      github.event_name != 'pull_request' || needs.changes.outputs.skill == 'true' ||
+      needs.changes.outputs.other == 'true'
     strategy:
       fail-fast: false
       matrix:

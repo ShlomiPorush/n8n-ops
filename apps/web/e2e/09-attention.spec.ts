@@ -1,5 +1,5 @@
 import { expect, type Page, test } from "@playwright/test"
-import { dialogOpened, signIn } from "./helpers.ts"
+import { dialogOpened, ownPage, signIn } from "./helpers.ts"
 
 // Needs attention from every page (NL-19, FB-10, FB-17) and the phone shell around it (NL-9, NL-10): the bell and its
 // window, a row's action with Undo, the capped list on Overview, the phone sheet and the More sheet.
@@ -49,8 +49,8 @@ async function syncProblem(): Promise<string> {
 /** Puts the problem back to open, should a test stop between its action and its Undo. */
 async function keepOpen(id: string) {
   const { status } = (await (await page.request.get(`/api/problems/${id}`)).json()) as Problem
-  if (status === "resolved") await page.request.post(`/api/problems/${id}/reopen`)
-  if (status === "muted") await page.request.post(`/api/problems/${id}/unmute`)
+  if (status === "resolved") expect((await page.request.post(`/api/problems/${id}/reopen`, ownPage)).ok()).toBe(true)
+  if (status === "muted") expect((await page.request.post(`/api/problems/${id}/unmute`, ownPage)).ok()).toBe(true)
 }
 
 /** Answers Needs attention with `answer` instead of the server, until the returned function is called. */

@@ -57,7 +57,8 @@ export function ListWithPanel({
   const listRef = useRef<HTMLDivElement | null>(null)
   const [narrow, setNarrow] = useState(false)
 
-  // Measure the width the rows get (the content box), and again whenever the list column is swapped.
+  // Measure the width the rows get (the content box), and again whenever the list column is swapped. Beside the
+  // pane the scroller's side padding is outside the measured element.
   const measure = useCallback((el: HTMLDivElement | null) => {
     listRef.current = el
     if (!el) return
@@ -145,13 +146,16 @@ export function ListWithPanel({
       <ResizablePanelGroup orientation="horizontal" className="short:h-auto! short:overflow-visible!">
         <ResizablePanel defaultSize="40%" minSize="360px" className="short:overflow-visible!">
           <div
-            ref={measure}
             data-scroll-pane="list"
-            // Rows keep their full height (auto-rows-max): in a grid of fixed height a scrolling table would
-            // otherwise shrink to nothing once the column is taller than the screen.
-            className="grid h-full min-w-0 auto-rows-max content-start gap-gap overflow-y-auto overscroll-contain py-[22px] ps-[22px] pe-4 [scrollbar-gutter:stable] short:h-auto short:overflow-visible lg:ps-7"
+            className="h-full min-w-0 overflow-y-auto overscroll-contain ps-[22px] pe-4 [scrollbar-gutter:stable] short:h-auto short:overflow-visible lg:ps-7"
           >
-            {content}
+            {/*
+             * The room above and below is on the content, not on the scroller, so the filter bar sticks at the very
+             * top of the column with no rows showing above it (NL-16). Rows keep their full height (auto-rows-max).
+             */}
+            <div ref={measure} className="grid min-w-0 auto-rows-max content-start gap-gap py-[22px]">
+              {content}
+            </div>
           </div>
         </ResizablePanel>
         <ResizableHandle withHandle />

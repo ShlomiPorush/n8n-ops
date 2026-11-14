@@ -196,23 +196,115 @@ const FROM_WORDS = {
   default: "n8n's default",
 } as const
 
+/** One fact in the line under the queue workers' summary; `warn` when it stands out. */
+export type WorkersFact = { text: string; warn?: boolean }
+
 /**
- * The figures of a queue worker in words, each only when the check read it. The version is marked when it differs
- * from the main's, and only against a version read inside the main in the same check (`mainVersion`).
+ * The line under the queue workers' summary: what is the same on all of them, said once, so the rows keep only what
+ * differs. How many jobs the ready ones run at once (the others take none), the n8n they run, and whether their
+ * containers have a memory limit, each only when a check read it on some worker and saying so when it was read on
+ * some only. The version is compared with the main's only when it was read inside the main in the same check
+ * (`mainVersion`), else only between the workers.
  */
-export function workerFigures(w: QueueWorkerRow, mainVersion?: string) {
+export function workersFacts(rows: QueueWorkerRow[], mainVersion?: string): WorkersFact[] {
+  const isReady = (r: QueueWorkerRow) => bucketOf(r) === "ready"
+  const every = (read: number) => (read === rows.length ? "every worker" : `${read} of ${rows.length} workers`)
+  const named = (list: string[]) =>
+    list.length > 3 ? `${list.slice(0, 3).join(", ")} and ${list.length - 3} more` : list.join(", ")
+  const facts: WorkersFact[] = []
+
+  const withJobs = rows.filter((r) => r.concurrency)
+  if (withJobs.length) {
+    const sum = (list: QueueWorkerRow[]) => list.reduce((total, r) => total + (r.concurrency?.value ?? 0), 0)
+    const all = sum(withJobs)
+    const ready = sum(withJobs.filter(isReady))
+    const each = new Set(withJobs.map((r) => r.concurrency?.value))
+    const from = new Set(withJobs.map((r) => r.concurrency?.from))
+    const [one] = each
+    const [source] = from
+    // Ready workers whose figure was not read take jobs too: their part is missing from the count.
+    const unread = rows.filter((r) => isReady(r) && !r.concurrency).length
+    const why = [
+      each.size === 1 ? `${one} each` : "not the same on each",
+      from.size === 1 && source ? FROM_WORDS[source] : "set differently on each",
+      unread ? `not read on ${unread} ready` : "",
+    ]
+      .filter(Boolean)
+      .join(", ")
+    facts.push({
+      text:
+        ready === all
+          ? `${all} jobs at once (${why})`
+          : `${ready} jobs at once on the ready workers, of ${all} (${why})`,
+    })
+  }
+
+  const withVersion = rows.filter((r) => r.version)
+  if (withVersion.length) {
+    const versions = new Set(withVersion.map((r) => r.version))
+    const differ = mainVersion ? withVersion.filter((r) => r.version !== mainVersion) : []
+    const [only] = versions
+    facts.push(
+      differ.length
+        ? {
+            text: `${named(differ.map((r) => `${r.name ?? r.url} runs n8n ${r.version}`))}, the main ${mainVersion}`,
+            warn: true,
+          }
+        : versions.size === 1
+          ? { text: `n8n ${only} on ${every(withVersion.length)}${mainVersion ? ", same as the main" : ""}` }
+          : {
+              text: `n8n ${named([...versions].map((v) => `${v} on ${withVersion.filter((r) => r.version === v).length}`))}`,
+              warn: true,
+            },
+    )
+  }
+
+  const withMemory = rows.filter((r) => r.memory)
+  if (withMemory.length) {
+    const limited = withMemory.filter((r) => r.memory?.limit !== null).length
+    const read = withMemory.length
+    // Read on some workers only: say of how many containers, and how many there are.
+    const of = read === rows.length ? "" : ` read, of ${rows.length}`
+    facts.push({
+      text:
+        limited === 0
+          ? of
+            ? `no memory limit on the ${read} containers${of}`
+            : "no memory limit on any container"
+          : limited === read
+            ? of
+              ? `a memory limit on the ${read} containers${of}`
+              : "a memory limit on each container"
+            : `a memory limit on ${limited} of the ${read} containers${of}`,
+    })
+  }
+  return facts
+}
+
+/**
+ * One queue worker's row: its state in a word, what went wrong when something did, its version when it stands out
+ * (it differs from the main's, or, the main's not read, the workers run more than one), and each figure only when
+ * the check read it.
+ */
+export function workerCells(w: QueueWorkerRow, mainVersion?: string, mixed = false) {
+  const health = workerHealth(w.state, w.ok)
   return {
-    version: w.version
-      ? { text: `n8n ${w.version}`, differs: Boolean(mainVersion && mainVersion !== w.version), main: mainVersion }
-      : undefined,
-    uptime: w.uptimeSec !== undefined ? `container up for ${uptimeWords(w.uptimeSec)}` : undefined,
-    jobs: w.concurrency
-      ? `runs ${w.concurrency.value} ${w.concurrency.value === 1 ? "job" : "jobs"} at once (${FROM_WORDS[w.concurrency.from]})`
-      : undefined,
+    health,
+    state: workerWords(w.state, w.ok),
+    // "Running, health not verified" is what that state says already.
+    error: w.error && w.state !== "not-verified" ? w.error : undefined,
+    version:
+      w.version && (mainVersion ? w.version !== mainVersion : mixed)
+        ? { version: w.version, main: mainVersion }
+        : undefined,
+    uptime: w.uptimeSec !== undefined ? uptimeWords(w.uptimeSec) : undefined,
+    jobs: w.concurrency ? { value: w.concurrency.value, from: FROM_WORDS[w.concurrency.from] } : undefined,
     memory: w.memory
-      ? w.memory.limit === null
-        ? `memory ${bytesWords(w.memory.used)}, no limit set on the container`
-        : `memory ${bytesWords(w.memory.used)} of ${bytesWords(w.memory.limit)}`
+      ? {
+          used: bytesWords(w.memory.used),
+          limit: w.memory.limit === null ? undefined : bytesWords(w.memory.limit),
+          percent: w.memory.limit ? Math.round((w.memory.used / w.memory.limit) * 100) : undefined,
+        }
       : undefined,
   }
 }

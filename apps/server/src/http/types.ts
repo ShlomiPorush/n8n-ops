@@ -3,7 +3,15 @@ import type { SessionStatus } from "../services/session-policy.ts"
 
 export type Actor =
   | { kind: "user"; id: string; username: string; twoFactorEnabled: boolean; sessionId: string }
-  | { kind: "token"; id: string; name: string; tokenKind: "mcp" | "rest"; canRequestAccess: boolean }
+  | {
+      kind: "token"
+      id: string
+      name: string
+      tokenKind: "mcp" | "rest"
+      canRequestAccess: boolean
+      /** A token made by hand in Settings, not an agent connected by approval. */
+      manual: boolean
+    }
 
 export type Env = { Variables: { actor: Actor; ctx: Ctx; session: SessionStatus } }
 

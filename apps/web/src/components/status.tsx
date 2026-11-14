@@ -27,6 +27,15 @@ export const statusTable = {
     muted: { label: "Muted", tone: "muted" },
     resolved: { label: "Resolved", tone: "ok" },
   },
+  /** The section of the Problems list a row sits in (lib/problems.ts), as the row's own tag. */
+  section: {
+    instance: { label: "Instance", tone: "fail" },
+    now: { label: "Failing now", tone: "fail" },
+    quiet: { label: "Quiet", tone: "muted" },
+    alerts: { label: "Your alert", tone: "warn" },
+    muted: { label: "Muted", tone: "muted" },
+    resolved: { label: "Resolved", tone: "ok" },
+  },
   access: {
     pending: { label: "Waiting for you", tone: "warn" },
     approved: { label: "Active", tone: "ok" },
@@ -315,5 +324,24 @@ export function FullTime({ value }: { value: string | Date }) {
         {formatTime(value, w, { seconds: false })}
       </time>
     </Tip>
+  )
+}
+
+/**
+ * A time in a list cell as Occurrences shows it: the whole date and time on one line, its age under it. Lines
+ * follow the cell's alignment; a table stacked into rows puts them on its label's line (index.css). No time
+ * reads "never".
+ */
+export function FullWhen({ value }: { value: string | Date | null | undefined }) {
+  if (!value) return <span className="text-muted-foreground">never</span>
+  return (
+    <span data-slot="full-when" className="inline-flex flex-col">
+      <span>
+        <FullTime value={value} />
+      </span>
+      <span className="text-small text-muted-foreground">
+        <TimeAgo value={value} />
+      </span>
+    </span>
   )
 }

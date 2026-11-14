@@ -250,12 +250,16 @@ export function Panel({ className, ...props }: React.ComponentProps<"section">) 
   )
 }
 
-/** A panel header: a short noun, a muted count beside it, and a "more" link or an action on the far side. */
+/**
+ * A panel header: a short noun, a muted count beside it, and a "more" link or an action on the far side, with the
+ * list's Sort button last, at the very end, as on every list.
+ */
 export function PanelHead({
   title,
   count,
   more,
   action,
+  sort,
   description,
   className,
   icon: Icon,
@@ -265,6 +269,8 @@ export function PanelHead({
   count?: React.ReactNode
   more?: { to: string; label: string }
   action?: React.ReactNode
+  /** The list's Sort button (TB-28), at the end of the head, after the "more" link. */
+  sort?: React.ReactNode
   description?: React.ReactNode
   className?: string
   /**
@@ -307,7 +313,7 @@ export function PanelHead({
             {count}
           </span>
         )}
-        {(more || action) && (
+        {(more || action || sort) && (
           <div className="ms-auto flex items-center gap-2">
             {action}
             {more && (
@@ -315,6 +321,7 @@ export function PanelHead({
                 {more.label}
               </Link>
             )}
+            {sort}
           </div>
         )}
       </div>
@@ -600,6 +607,55 @@ export function Kpi({
     <div data-slot="kpi" className={cls}>
       {inner}
     </div>
+  )
+}
+
+/**
+ * Figures that cut the list right under them, drawn as tabs on its top edge (FB-17): each a count and its name on
+ * one line, the one on screen now underlined as the app's tabs are, so they cost the list as little height as they
+ * can. A column too narrow for all of them scrolls them sideways, as tabs do.
+ */
+export function FigureTabs({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <nav aria-label={label} className="flex min-w-0 gap-5 overflow-x-auto overflow-y-hidden [scrollbar-width:none]">
+      {children}
+    </nav>
+  )
+}
+
+export function FigureTab({
+  label,
+  value,
+  tone,
+  to,
+  selected,
+}: {
+  label: string
+  value: number
+  tone?: "fail" | "warn"
+  /** The list cut to what the figure counts, or back to all of it. */
+  to: string
+  /** The list on screen now is what this figure counts: marked, and said to assistive technology. */
+  selected: boolean
+}) {
+  return (
+    <Link
+      to={to}
+      data-slot="figure-tab"
+      aria-current={selected ? "true" : undefined}
+      className={cn(
+        "inline-flex shrink-0 items-baseline gap-1.5 border-b-2 border-transparent pt-1 pb-2 text-ctl font-semibold whitespace-nowrap text-muted-foreground transition-colors duration-150 hover:text-ink focus-visible:-outline-offset-2",
+        selected && "border-primary text-ink",
+      )}
+    >
+      <b
+        data-slot="kpi-figure"
+        className={cn("text-h2", tone === "fail" && "text-fail", tone === "warn" && "text-warn")}
+      >
+        <Figure value={value} />
+      </b>
+      <span>{label}</span>
+    </Link>
   )
 }
 

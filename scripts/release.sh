@@ -41,9 +41,21 @@ EOF
 
 git_() { git -C "$REPO_ROOT" "$@"; }
 
-# Reads the version from package.json content on stdin.
+# The version in VERSION content on stdin: one line holding only MAJOR.MINOR.PATCH, or nothing.
 version_in() {
-  sed -nE 's/^  "version": "([0-9]+\.[0-9]+\.[0-9]+)",$/\1/p' | head -1
+  local text
+  text="$(cat)"
+  [[ "$text" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && echo "$text"
+  return 0
+}
+
+# The version a tag was released as: its VERSION, or for a tag made before VERSION existed, package.json's version.
+tag_version() {
+  if git_ cat-file -e "$1:VERSION" 2>/dev/null; then
+    git_ show "$1:VERSION" | version_in
+  else
+    git_ show "$1:package.json" | sed -nE 's/^  "version": "([0-9]+\.[0-9]+\.[0-9]+)",$/\1/p' | head -1
+  fi
 }
 
 next_version() {
@@ -136,7 +148,7 @@ preflight() {
     if [ "$state" = missing ]; then
       RESUME=1 TAG="$newest" VERSION="${newest#v}"
       git_ merge-base --is-ancestor "$TAG" HEAD || die "$TAG is not on main"
-      [ "$(git_ show "$TAG:package.json" | version_in)" = "$VERSION" ] || die "package.json at $TAG is not $VERSION"
+      [ "$(tag_version "$TAG")" = "$VERSION" ] || die "the version at $TAG is not $VERSION"
       echo "    $TAG was not finished: this run finishes it and ignores --bump $BUMP. Run again for the next version."
       return
     fi
@@ -144,8 +156,8 @@ preflight() {
 
   [ -n "$(unreleased_notes)" ] || die "CHANGELOG.md has no entries under [Unreleased]"
   local current pair
-  current="$(version_in <"$REPO_ROOT/package.json")"
-  [ -n "$current" ] || die "cannot read the version from package.json"
+  current="$(version_in <"$REPO_ROOT/VERSION")"
+  [ -n "$current" ] || die "VERSION must hold one version, such as 1.2.3, and nothing else"
   VERSION="$(next_version "$current")"
   TAG="v$VERSION"
   git_ rev-parse -q --verify "refs/tags/$TAG" >/dev/null && die "tag $TAG already exists"
@@ -162,10 +174,10 @@ create_tag() {
     "$REPO_ROOT/scripts/verify.sh"
   fi
   info "Updating version and changelog"
-  sed -i -E "0,/^  \"version\": \"[0-9.]+\",$/s//  \"version\": \"$VERSION\",/" "$REPO_ROOT/package.json"
+  printf '%s\n' "$VERSION" >"$REPO_ROOT/VERSION"
   sed -i "s/^## \[Unreleased\]$/## [Unreleased]\n\n## [$VERSION] - $(date -u +%Y-%m-%d)/" "$REPO_ROOT/CHANGELOG.md"
   release_notes "$VERSION" <"$REPO_ROOT/CHANGELOG.md" >/dev/null
-  git_ add package.json CHANGELOG.md
+  git_ add VERSION CHANGELOG.md
   git_ commit --quiet -m "Release $TAG"
   git_ tag -a "$TAG" -m "$TAG"
   info "Pushing the release commit and $TAG"
@@ -181,6 +193,10 @@ publish_images() {
   # shellcheck disable=SC2064 # expand now: the path is fixed
   trap "rm -rf '$src'" EXIT
   git_ archive "$TAG" | tar -x -C "$src"
+  # The images read the version from the tag's VERSION file. A tag made before that file existed has Dockerfiles that
+  # take it as a build argument instead, so finishing such a release builds it the way it was made.
+  local version_arg=()
+  [ -f "$src/VERSION" ] || version_arg=(--build-arg "VERSION=$VERSION")
   for pair in "${IMAGES[@]}"; do
     app="${pair%%:*}" name="${pair#*:}" ref="$REGISTRY/${pair#*:}:$VERSION"
     state="$(image_state "$ref" "$revision")"
@@ -190,7 +206,7 @@ publish_images() {
       missing)
         info "Building and pushing $ref"
         docker buildx build --push --provenance=mode=max --sbom=true \
-          -f "$src/docker/$app.Dockerfile" --build-arg "VERSION=$VERSION" \
+          -f "$src/docker/$app.Dockerfile" "${version_arg[@]}" \
           --label "org.opencontainers.image.revision=$revision" \
           --label "org.opencontainers.image.source=$SOURCE_URL" \
           --label "org.opencontainers.image.version=$VERSION" \
@@ -267,7 +283,7 @@ main() {
     else
       info "Dry run. Release notes for $TAG:"
       unreleased_notes | sed 's/^/    /'
-      info "Would commit package.json and CHANGELOG.md, push them with $TAG, then publish:"
+      info "Would commit VERSION and CHANGELOG.md, push them with $TAG, then publish:"
     fi
     local pair
     for pair in "${IMAGES[@]}"; do

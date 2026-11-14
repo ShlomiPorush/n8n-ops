@@ -59,6 +59,7 @@ import { createTestRuns, type TestOutcome, type TestView } from "@/lib/test-run"
 import { type DateWriting, formatClock, formatDay, formatListTime, formatTime, useTimeFormat } from "@/lib/time"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
+import { DatabaseSection } from "@/pages/database"
 import { DestinationsSection } from "@/pages/destinations"
 import { routesFromForm, routesProblem, routesToForm, TopicRoutes } from "@/pages/topic-routes"
 
@@ -232,7 +233,7 @@ export const forms: Record<string, { title: string; description: string; fields:
       {
         name: "healthHistoryDays",
         label: "Keep health history (days)",
-        hint: "1 to 30. Every health check of the main, for the response-time chart and what agents read about past outages.",
+        hint: "1 to 30. Every health check of the main and every Worker's calls, for the charts and what agents read about past outages.",
         type: "number",
       },
       { name: "autoResolveDays", label: "Auto-resolve after days without failures", type: "number" },
@@ -280,6 +281,26 @@ export const forms: Record<string, { title: string; description: string; fields:
         label: "Sign out an unused session after (hours)",
         hint: "A session no page has used for this long ends, such as after the browser was closed.",
         type: "number",
+      },
+    ],
+  },
+  agents: {
+    title: "Agent Connections",
+    description:
+      "Whether agents may connect by approval, and how long a connection lasts without use. See and disconnect them under Connected Agents.",
+    fields: [
+      {
+        name: "enabled",
+        label: "Agents can connect",
+        hint: "MCP clients and the n8n-ops skill connect after you approve them in this browser. Turning it off disconnects every agent at once; they must be approved again.",
+        type: "switch",
+      },
+      {
+        name: "idleDays",
+        label: "Disconnect an unused agent after (days)",
+        hint: "Counted from its last call. A shorter value applies at once; a longer one does not bring back agents already disconnected.",
+        type: "number",
+        needs: "enabled",
       },
     ],
   },
@@ -335,6 +356,8 @@ const weekdays = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Frida
 /** What each section is for, under its title. Forms take theirs from their definition. */
 const sectionDescriptions: Record<string, string> = {
   keys: "Keys that protect backups and the secrets n8n-ops stores.",
+  database:
+    "How much room the n8n-ops database takes, and compacting a table to give free space inside it back to the disk.",
   destinations:
     "Where encrypted backups are written: S3, a folder on this server, SFTP or WebDAV. Each keeps its own retention. Instances use the default destinations unless they choose others.",
 }
@@ -439,6 +462,8 @@ export function SettingsPage() {
               <SettingsForm key={k} section={k} active={k === section} />
             ) : k === "destinations" ? (
               <DestinationsSection key={k} hidden={k !== section} />
+            ) : k === "database" ? (
+              <DatabaseSection key={k} hidden={k !== section} />
             ) : k === "keys" ? (
               <KeysCard key={k} />
             ) : null,

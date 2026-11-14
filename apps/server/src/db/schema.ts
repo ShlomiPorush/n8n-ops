@@ -5,6 +5,7 @@ import {
   bigint,
   bigserial,
   boolean,
+  doublePrecision,
   index,
   integer,
   jsonb,
@@ -199,7 +200,9 @@ export const apiTokens = pgTable("api_tokens", {
 
 /**
  * The authorization server's own records (oidc-provider): grants, codes, access and refresh tokens, clients
- * registered by agents, sessions and interactions. Opaque values, looked up by id; never shown in the UI.
+ * registered by agents, sessions and interactions. Looked up by id; never shown in the UI. Access tokens, refresh
+ * tokens and authorization codes are kept by the SHA-256 of their value only (`oauth/store.ts`), so this table
+ * holds none of them in a usable form.
  */
 export const oauthStore = pgTable(
   "oauth_store",
@@ -220,6 +223,45 @@ export const oauthStore = pgTable(
     index("oauth_store_uid_idx").on(t.uid),
     index("oauth_store_expires_idx").on(t.expiresAt),
   ],
+)
+
+/**
+ * The one row of agent connection state (`oauth/gate.ts`). `generation` goes up by one whenever every connection or
+ * every waiting request ends (disconnect all, agents turned off, a two-factor reset, a new public URL): a request
+ * that began under an earlier generation can no longer be approved. `issuer` is the public URL connections were last
+ * made under, so a change while the server was down is seen at start.
+ */
+export const agentState = pgTable("agent_state", {
+  id: integer("id").primaryKey(),
+  generation: integer("generation").notNull().default(0),
+  issuer: text("issuer"),
+})
+
+/**
+ * Two-factor resets under way (oauth/agents.ts): while any row is here, no approval is answered. Each reset adds its own
+ * row when it ends every connection and removes it when it is done; a row older than ten minutes was left by a reset
+ * that stopped, and the start and the sweep remove it.
+ */
+export const agentResets = pgTable("agent_resets", {
+  id: text("id").primaryKey(),
+  createdAt: created(),
+})
+
+/**
+ * What an approval needs to know about a request the authorization server opened (`oauth/routes.ts`): the
+ * generation it began under, the browser session that first opened it, and whether it was answered. `key` is
+ * `i:<interaction uid>` or `d:<SHA-256 of a device code>`. Rows go once their request has run out.
+ */
+export const agentConsent = pgTable(
+  "agent_consent",
+  {
+    key: text("key").primaryKey(),
+    generation: integer("generation").notNull(),
+    sessionId: text("session_id"),
+    decidedAt: ts("decided_at"),
+    createdAt: created(),
+  },
+  (t) => [index("agent_consent_created_idx").on(t.createdAt)],
 )
 
 // ---------------------------------------------------------------------------
@@ -704,7 +746,86 @@ export const workerJobs = pgTable(
     startedAt: ts("started_at"),
     finishedAt: ts("finished_at"),
   },
-  (t) => [index("worker_jobs_queue_idx").on(t.workerId, t.status)],
+  (t) => [
+    index("worker_jobs_queue_idx").on(t.workerId, t.status),
+    // pruneWorkerJobs: finished jobs by age. Backup jobs are never pruned, so they are left out.
+    index("worker_jobs_finished_idx")
+      .on(t.finishedAt)
+      .where(sql`${t.status} in ('done', 'failed') and ${t.kind} <> 'backup'`),
+  ],
+)
+
+// ---------------------------------------------------------------------------
+// Worker health history (services/worker-health.ts): observations with their own times, periods derived on read
+// ---------------------------------------------------------------------------
+
+/** A job of the Worker that was running when an offline period began: a hint, never the cause. */
+export type OfflineJob = { kind: JobKind; instance: string | null; startedAt: string }
+
+/**
+ * An ended time the Worker was offline: from when its status turned Offline (last call + 90 s) to the call that ended
+ * it. An ongoing one is derived from `workers.last_seen_at` when reading.
+ */
+export const workerOffline = pgTable(
+  "worker_offline",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    workerId: uuid("worker_id")
+      .notNull()
+      .references(() => workers.id, { onDelete: "cascade" }),
+    from: ts("from").notNull(),
+    to: ts("to").notNull(),
+    job: jsonb("job").$type<OfflineJob>(),
+  },
+  (t) => [index("worker_offline_worker_to_idx").on(t.workerId, t.to)],
+)
+
+/**
+ * Stretches of time in which this server recorded continuously; time covered by none of them is when n8n-ops was not
+ * recording. Written only by `markAlive`.
+ */
+export const serverRecording = pgTable("server_recording", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  startedAt: ts("started_at").notNull(),
+  aliveAt: ts("alive_at").notNull(),
+})
+
+/** Instants the history may start at, by data kind: the first recording, and the cutoff the last prune applied. */
+export const historyMarks = pgTable("history_marks", {
+  key: text("key").primaryKey(),
+  before: ts("before").notNull(),
+})
+
+/**
+ * One heartbeat of a Worker, as it reported it. The unique key makes a resend or a replay store nothing; times are
+ * the server's receipt minus the ages the Worker measured on its monotonic clock.
+ */
+export const workerBeats = pgTable(
+  "worker_beats",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    workerId: uuid("worker_id")
+      .notNull()
+      .references(() => workers.id, { onDelete: "cascade" }),
+    bootId: text("boot_id").notNull(),
+    seq: integer("seq").notNull(),
+    receivedAt: ts("received_at").notNull(),
+    uptimeSec: doublePrecision("uptime_sec").notNull(),
+    rttMs: integer("rtt_ms"),
+    rttAt: ts("rtt_at"),
+    failedCalls: integer("failed_calls"),
+    lastCallError: text("last_call_error"),
+    dockerCheckedAt: ts("docker_checked_at"),
+    dockerOk: boolean("docker_ok"),
+    dockerMs: integer("docker_ms"),
+    dockerError: text("docker_error"),
+    dockerChecks: integer("docker_checks"),
+    dockerFailed: integer("docker_failed"),
+  },
+  (t) => [
+    uniqueIndex("worker_beats_boot_seq_idx").on(t.workerId, t.bootId, t.seq),
+    index("worker_beats_worker_received_idx").on(t.workerId, t.receivedAt),
+  ],
 )
 
 /** ok: every copy was written and verified; partial: some were; failed: none was. */
@@ -1003,3 +1124,27 @@ export const accessCalls = pgTable(
   },
   (t) => [index("access_calls_request_idx").on(t.requestId, t.at)],
 )
+
+// ---------------------------------------------------------------------------
+// Database maintenance (services/database.ts)
+// ---------------------------------------------------------------------------
+
+export type CompactionStatus = "running" | "done" | "failed" | "unknown"
+
+/**
+ * One compaction of a table (VACUUM FULL) started from Settings → Database. Its outcome is only what PostgreSQL
+ * answered; a run whose answer was lost ends as "unknown". Which run is active is the holder of its advisory lock,
+ * never this row alone.
+ */
+export const dbCompactions = pgTable("db_compactions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tableName: text("table_name").notNull(),
+  relationId: bigint("relation_id", { mode: "number" }).notNull(),
+  status: text("status").$type<CompactionStatus>().notNull().default("running"),
+  sizeBefore: bigint("size_before", { mode: "number" }),
+  sizeAfter: bigint("size_after", { mode: "number" }),
+  error: text("error"),
+  startedBy: text("started_by").notNull(),
+  startedAt: ts("started_at").notNull().defaultNow(),
+  finishedAt: ts("finished_at"),
+})

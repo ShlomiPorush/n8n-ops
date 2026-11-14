@@ -428,6 +428,38 @@ test("a credential is restored on its own as a new credential", async () => {
   await dialogClosed(page)
 })
 
+test("beside the pane the archive's views turn into a short picker while its search is open, and the focus follows (FB-19)", async () => {
+  await openArchive(loadPrivateKey())
+  const bar = page.locator('[data-slot="filter-bar"]').first()
+  const workflows = bar.getByRole("radio", { name: /^Workflows/ })
+  const show = bar.getByRole("button", { name: /^Show:/ })
+  const searchButton = bar.getByRole("button", { name: "Search this list", exact: true })
+  const box = bar.getByLabel("Search workflows")
+  // Closed: the toggles and the search button on one line.
+  await expect(workflows).toBeChecked()
+  await expect(box).toBeHidden()
+  // Open: the field, focused, and the views as a short picker that names the chosen one.
+  await searchButton.click()
+  await expect(box).toBeFocused()
+  await expect(workflows).toHaveCount(0)
+  await expect(show).toHaveText(/Workflows/)
+  // Escape in the empty field closes it and gives the toggles back.
+  await page.keyboard.press("Escape")
+  await expect(searchButton).toBeFocused()
+  await expect(workflows).toBeVisible()
+  // A bar wide enough for everything turns the short picker back into the toggles, with the chosen one focused.
+  await searchButton.click()
+  await show.focus()
+  try {
+    await page.setViewportSize({ width: 2600, height: 900 })
+    await expect(bar).toHaveAttribute("data-mode", "wide")
+    await expect(workflows).toBeFocused()
+    await expect(box).toBeVisible()
+  } finally {
+    await page.setViewportSize({ width: 1440, height: 900 })
+  }
+})
+
 type LiveWorkflow = {
   name: string
   nodes: { name: string; notes?: string }[]

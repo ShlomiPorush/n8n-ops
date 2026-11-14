@@ -4,8 +4,8 @@ import { signIn } from "./helpers.ts"
 // Passkeys as a person uses them, with Chromium's virtual authenticator: added on the Account page, a sign-in with
 // the passkey alone (no password, no code), none from a device that cannot check the person, then renamed and
 // deleted.
-// The stack answers at plain http://server:8080, the public URL 06-approvals stores; browsers offer passkeys only
-// on a secure page, so this file runs full Chromium told to treat that address as secure.
+// The stack answers at plain http, at the public URL 06-approvals stores; browsers offer passkeys only on a secure
+// page, so this file runs full Chromium told to treat that address as secure (localhost already is).
 
 const baseURL = process.env.E2E_BASE_URL ?? "http://localhost:8080"
 test.use({ channel: "chromium", launchOptions: { args: [`--unsafely-treat-insecure-origin-as-secure=${baseURL}`] } })
@@ -46,6 +46,12 @@ test("a passkey is added on the Account page", async () => {
   await page.goto("/account")
   const panel = page.locator("section").filter({ has: page.getByRole("heading", { name: "Passkeys" }) })
   await expect(panel.getByText("No passkeys yet")).toBeVisible()
+  // The name and its button share one line.
+  const field = await panel.getByLabel("Name").boundingBox()
+  const button = await panel.getByRole("button", { name: "Add passkey" }).boundingBox()
+  if (!field || !button) throw new Error("the name or its button is not shown")
+  expect(Math.abs(field.y + field.height / 2 - (button.y + button.height / 2))).toBeLessThan(2)
+  expect(button.x).toBeGreaterThan(field.x + field.width - 1)
   await panel.getByLabel("Name").fill("E2E laptop")
   await panel.getByRole("button", { name: "Add passkey" }).click()
   await expect(page.getByText("Passkey added. You can sign in with it now.")).toBeVisible()

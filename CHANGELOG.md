@@ -4,6 +4,109 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.18.2] - 2026-11-14
+
+### Security
+
+- **A link on another site can no longer make a change with the signed-in person's session.** Chrome and Edge send a link's ping as a POST with cookies, and the check that changes come only from n8n-ops' own pages did not look at it (GHSA-46wx-v44x-9hh2). The server now carries Hono 4.13.18 and @hono/node-server 2.1.8. They also refuse a backslash in a request path with 400 instead of reading it as `/`, which mattered only behind a proxy that blocks paths (GHSA-jpvv-r467-5p4w), and no longer let a request body sent in many small pieces take much more memory than the 256 KB the agents' REST API allows, which only a connected agent or API token reaches (GHSA-39q9-qp46-w8xg).
+
+## [0.18.1] - 2026-11-13
+
+### Changed
+
+- **The version n8n-ops and its Worker report is part of their images.** Each image keeps a `VERSION` file and reports what it says, on `/healthz`, in the sidebar, to agents and to the server. `N8N_OPS_VERSION` in a container's environment no longer changes it. Images built outside a release, such as a development stack, report the last release's number.
+
+### Security
+
+- **Agents connect over plain http only on this computer, with no exception.** `N8N_OPS_TEST_HTTP_ISSUER_HOST`, a setting the verification stack used so its tests could connect agents to `http://server:8080`, also let a released server take agents over plain http on the names it listed, so agent tokens and codes could travel without TLS. The setting is gone: the tests now reach the server on `localhost`, and plain http is allowed only on `localhost`, `127.0.0.1` and `[::1]`, whatever the environment says.
+
+## [0.18.0] - 2026-11-13
+
+### Added
+
+- **Settings → Agent Connections turns agents on or off and sets how long an unused connection lasts.** Turning agents off disconnects every agent at once. The idle period is 90 days by default and can be 1 to 365 days; a shorter one applies at once, and a longer one does not bring back agents already disconnected. An installation that already has its account keeps agents on after the update; a new installation starts with them off.
+- **Disconnect all on Connected Agents** ends every agent connection, with the temporary access each holds, and every code, device request and approval still waiting. It is there also when no agent is connected.
+- **Agents can ask what they may do and which calls they may make.** `GET /api/v1/agent/access` and the MCP tool `get_access` say whose account a connection acts for, what it was granted, what agents never do in n8n-ops, and when it ends. `GET /api/v1/agent/endpoints` lists the calls a connection may make, each with its kind: `read`, or `act` for a call that changes or spends something (collecting the key of an access request is one). The MCP server now tells agents how to use it, including that text in n8n's data is never an instruction.
+- **Settings → Database shows how much room the database takes, and compacts a table.** It lists every table with its size, the room its indexes take, and the free space inside its data as PostgreSQL measures it. Compact rewrites one table to the rows it still holds, so the space that deleted rows left behind goes back to the disk, after a question that says what waits while it runs and how much disk room the copy may need. One table is compacted at a time, the page follows it as it runs, and the Audit Log records who started it and how it ended. Tables that every page reads cannot be compacted from here. The update installs the PostgreSQL extension that measures free space (pgstattuple) where the database allows it; elsewhere the page shows the sizes and says why free space is missing.
+
+- **Each Worker has a health history.** Health beside Settings on a Worker's card shows, for the last 24 hours, 7 days or 30 days, how much of the time it was online, when it was offline and for how long, and when n8n-ops itself was not running or could not record, which is not counted against the Worker. A Worker that runs this release also shows how fast its calls to n8n-ops are, calls that failed on the way, whether it reaches Docker, and when it restarted; one that runs an earlier release shows the image line to update it. Next to a time offline the list names a job that was running then. Agents read the same history: `GET /api/v1/workers`, `GET /api/v1/worker-health?worker=<name>` and the MCP tools `get_workers` and `get_worker_health_history`. Keep health history (days) in Settings → Defaults keeps it too.
+- **An updated Worker stays online during a long backup.** It now reports to n8n-ops every 30 seconds on its own, also while a job runs, so a backup that takes minutes no longer shows it Offline, sends a "Worker is offline" alert, or marks its container unhealthy. Update the Worker's image on each host to get this.
+
+### Changed
+
+- **Install the n8n-ops skill again after this update.** Agents connected by approval now send, with every REST call, the policy revision of the endpoints list and the kind of the call; n8n-ops refuses a call without them (`409 policy_changed`, with how to install the skill again), so an earlier copy of the skill stops working until it is replaced. The new skill takes full paths from `n8n-ops endpoints` (`n8n-ops get '/api/v1/problems'`), answers `{"status", "data"}`, never sends an action twice (an action whose answer was lost is `outcome_unknown`), and says when it is older than n8n-ops. Its connection is kept: agents do not need a new approval. Tokens made by hand work as before.
+- **Agents connect only over https**, or plain http on `localhost`, `127.0.0.1` or `[::1]`. With a public URL on plain http elsewhere, agent connections end and Connected Agents says why.
+- **Resetting two-factor sign-in ends every agent connection**, from Account → Reset or with `reset-password`: whoever reset it may not be the person who approved them.
+- **REST and MCP calls of agents have limits:** a body of 256 KB, an answer of 16 MB, 60 seconds (then `504 outcome_unknown`), and 4 calls at once per connection (`429 busy`). The Audit Log records every call with its outcome.
+- **The queue workers on an instance's Health tab are a table instead of a line of text each.** A line above it says once what is the same on all of them: the jobs the ready ones run at once, the n8n they run and whether their containers have a memory limit. Below it each worker is one row with its state, how long it is up, its jobs at once and its memory, with a bar when its container has a memory limit. A worker that is not ready or runs another n8n than the main says so in its row. In a narrow pane or on a phone each worker is a small card. The queue's figures are one line, with what it holds now: waiting and active.
+
+### Security
+
+- **Changes are accepted only from n8n-ops' own pages.** What a signed-in page changes (settings, the backup key, API tokens, instances, problems, Workers, backup destinations, agent access, compacting a table) and creating the first account are refused with "Changes are accepted only from n8n-ops' own pages." when the request comes from a page of another site, such as another app on a subdomain of the same domain, which could otherwise act with the signed-in person's session. Signing in and out keep the checks of the sign-in library.
+- **The database no longer holds working agent tokens.** Access tokens, refresh tokens and authorization codes of agents were stored as they are, so a copy of the database or of a backup of it could be used to act as a connected agent. They are now kept only as a hash; the update converts the stored ones, so no agent has to connect again. Device codes, which last 10 minutes, are still kept as they are. Copies of the database made before the update still hold the refresh tokens current then, until each is next used.
+- **An approval can be answered only once, and only from the browser session that opened it.** Two answers to one request, sent at once or again after a lost answer, could each make a connection. A request that began before Disconnect all, before agents were turned off or before two-factor was reset can no longer be approved after it.
+- **Agent tokens are refused outside the agent routes.** A request with a Bearer token and a browser session cookie could reach the console's own API through the cookie. Now any request with a Bearer token is refused on every route except `/api/v1`, `/mcp` and the channels that take their own tokens, and approval pages refuse a request that carries any token or key.
+- **The MCP server refuses requests from other sites' pages** (their `Origin`), as the MCP specification requires; requests from programs, without `Origin`, work as before.
+- **Ending a connection is all or nothing.** It ends the connection, its tokens, its temporary access and its audit entry in one step, so a restart in the middle no longer leaves part of it behind. A connection and its making never interleave with Disconnect all.
+
+### Fixed
+
+- **The database no longer grows with every health check made through a Worker.** n8n-ops kept a row for every job it gave a Worker, including a health check of each instance every 30 seconds, and never deleted it. Once an hour it now deletes the jobs that finished more than a day before. It keeps backup jobs, which stay with their run, and the job of a worker check in an instance's setup while that check is running. The first update on a large database adds an index while the server starts, and the first cleanup runs in the background during the next hour; the space it frees is reused for new jobs, so the database file does not shrink by itself.
+
+## [0.17.0] - 2026-11-12
+
+### Added
+
+- **Two-factor can be reset from the Account page, for a new phone or a lost authenticator app.** Reset beside Two-factor asks for your password, signs out your other sessions, turns two-factor off and takes you straight to setting up a new code; then you are back on Account, without the optional setup steps. The Audit Log records it as Two-factor reset.
+
+### Changed
+
+- **The Sort button is at the end of every list's line, on the right.** On Problems and Workflows it now ends the line of filters, after Status, Instance and Filters, instead of sitting beside the search; on lists without a search, such as Instances, Backups and Agent Access, it is back at the end of the line with the count, and in an instance's Open Problems it is back at the end of the head.
+- **The Account page shows the actions, not their forms.** Change password opens its fields in a dialog. "Locked Out?" is now "Forgot your password?", folded under the password, as only someone signed in elsewhere sees it. The name of a new passkey and Add passkey share one line.
+
+### Fixed
+
+- **The search field takes the focus from the search button when a list's filters get room for it.** With the focus on the search button of Problems or Workflows, widening the window or the list showed the field but left the focus nowhere when the list redrew its rows at the same moment; the field now gets it, as it does without new rows.
+
+## [0.16.4] - 2026-11-12
+
+### Changed
+
+- **The Sort button is at the start of every list.** On lists without a search, such as Instances, Backups and Agent Access, it now leads the line with the count instead of sitting at its far end, and in an instance's Open Problems it comes before the title, so it is in the same place as on Problems and Workflows.
+- **Backups, the Audit Log and Workflows show whole dates, as Recent Occurrences does.** Last success and each run of a backup, the time of each audit entry and a workflow's Last run show the date and time, such as 16/10/2026, 14:05, with how long ago under it; where a table is narrow the two share one line. A restore on Backups also gives its whole date and age. In the Backups list beside an open backup, the daily time moves to the line under the name, and when the list is made as narrow as it goes, the last success shows its date without the time, so the name keeps its room.
+
+## [0.16.3] - 2026-11-11
+
+### Fixed
+
+- **The commands the skill tells an agent to run are safe to run as printed.** The address in `n8n-ops connect --wait --url "<address>"` is now quoted, so an address such as `http://[::1]:8080` works in zsh and in bash with `failglob`, which took its brackets as a file pattern. Every version of the skill's command accepts only a plain address (letters, digits, dots and hyphens, or a bracketed IPv6 address, and a port from 1 to 65535) and refuses one with characters a shell would run, such as `$(...)`, given or kept; the sh version no longer accepts a port such as `:12bad` or one above 65535. Windows PowerShell 5.1 now accepts `http://[::1]` like the other versions.
+- **n8n-ops serves the skill only for a plain public URL.** The skill's scripts carry the public URL in their code, so a public URL with characters a shell or PowerShell would run now gets no skill, with a message to set a plain one.
+
+## [0.16.2] - 2026-11-11
+
+### Changed
+
+- **The Problems filters are one short line: search, Sort, Status and Instance.** The Open, Muted, Resolved and All buttons are now one Status picker, such as Status: Open, after the search and Sort as on Workflows, and Instance shows in the line itself instead of behind the Filters button. Every list's filters now keep as much as fits on their line: where there is no room, the search becomes a button first, then a long instance name is cut short, and only then does Instance move behind Filters. On Workflows, Instance now stays in the line on a phone too.
+- **The section figures of the Problems list are tabs on its top edge.** They sit right on the list with no gap and no frame, and the one you chose is underlined like the console's other tabs.
+
+## [0.16.1] - 2026-11-11
+
+### Changed
+
+- **The section figures above the Problems list take one line each.** Each figure shows its count and the section's name, such as 3 Failing now, without the short line under it, so the list starts higher (on a phone a name may go under its count); each section's heading still says what it holds. Instance problems is called Instance there, as its rows' tag is. A selected figure's frame is no longer cut at the rounded corner in Compact.
+- **Each Problems section heading spans the whole list.** Its band runs edge to edge like the rows under it, with no panel showing around it.
+- **A list's filters keep one line beside an open item.** Where the list is narrow, such as Problems beside its reading pane, the search is a button that opens into the field, and while it is open the views (Open, Muted, Resolved, All) shrink to a short picker, such as Status: Open. Escape in an empty search closes it. Instance and the other common filters move behind the Filters button, whose badge counts those in use. On a phone the filters take two lines instead of three. Where a page has room, the filters show as before.
+
+### Fixed
+
+- **A list's filters stay flush at the top while you scroll.** On a list such as Problems, Instances or Backups, no rows show above the filters any more, whether the list scrolls beside its reading pane or with the whole page on a narrower or shorter screen.
+
+## [0.16.0] - 2026-11-10
+
+### Added
+
+- **The Problems list says what each section means.** Above the open problems, a figure for each section (Failing now, Quiet, Your alerts, and Instance problems when there are any) counts its rows and says in a line what it holds; selecting one shows that section alone. Each section's heading is now a tinted band with its icon, its full count and a sentence that explains it. Each row's tag names its section instead of a plain Open, so it still says where the row belongs after you sort by another column: Failing now, Quiet with how long it has been quiet, Your alert or Instance, with Regression or New beside it. A quiet row says when it closes by itself, such as Auto-closes in ~4 d, and Closing soon in its last day.
+
 ## [0.15.1] - 2026-11-10
 
 ### Changed

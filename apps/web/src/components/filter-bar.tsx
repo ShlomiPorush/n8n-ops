@@ -2,17 +2,19 @@ import { ChevronDown, Funnel, Search } from "lucide-react"
 import { Popover as PopoverPrimitive } from "radix-ui"
 import * as React from "react"
 import { SortButton, type SortControl, toolButton } from "@/components/ui/table"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { LIST_WAIT_MS, SEARCH_PAUSE_MS, touchOnly } from "@/lib/behavior"
 import { usePopoverRoom } from "@/lib/popover-room"
 import { scrollerFor } from "@/lib/scroller"
 import { cn } from "@/lib/utils"
 
 /*
- * The shared filter bar of every list (MP-1, MP-3, MP-6, TB-17): a search with the list's Sort button beside
- * it, the common pickers, and the rarely used filters behind a Filters button at every size, whose badge counts
- * those in use. Under the bar one line holds the count, "Clear filters", and the Sort button of a list with no
- * search. The bar stays in sight wherever its list scrolls, at every width (NL-16, index.css), and a new filter
- * or search starts the list at its first row (TB-7).
+ * The shared filter bar of every list (MP-1, MP-3, MP-6, TB-17): a search, the common pickers, the rarely used
+ * filters behind a Filters button at every size, whose badge counts those in use, and the list's Sort button at
+ * the end of the line. Where the bar is narrow it keeps one line (FB-19). Under the bar one line holds the count,
+ * "Clear filters", and at its end the Sort button of a list with no search: on every list the Sort button is at
+ * the end of its line, never at the start. The bar stays in sight wherever its list
+ * scrolls, at every width (NL-16, index.css), and a new filter or search starts the list at its first row (TB-7).
  */
 
 export type PickerOption = {
@@ -79,7 +81,9 @@ export function Picker({
           )}
         >
           <span className="font-medium opacity-75">{label}:</span>
-          <span className="min-w-0 truncate">{selected?.label ?? value}</span>
+          <span data-slot="picker-value" className="min-w-0 truncate">
+            {selected?.label ?? value}
+          </span>
           <ChevronDown
             aria-hidden
             className={cn(
@@ -159,6 +163,8 @@ export function PickerContent({
         sideOffset={6}
         collisionPadding={room}
         aria-label={label}
+        // Part of the filter bar it opened from while it is open (FB-19).
+        data-slot="picker-content"
         onOpenAutoFocus={(e) => {
           e.preventDefault()
           if (searchable && !touchOnly()) {
@@ -295,6 +301,9 @@ export function searchDraft(initial: string, show: (text: string) => void, send:
 /** Counts the clicks on a filter bar's "Clear filters", so its search drops what was typed (SR-9). */
 const ClearsContext = React.createContext(0)
 
+/** Where a list's search tells its bar whether it shows any text, so a narrow bar keeps it open (FB-19). */
+const SearchTextContext = React.createContext<((has: boolean) => void) | null>(null)
+
 /**
  * A list search: the whole box focuses its field and turns ink while typing (FS-1). With `debounce` (a list
  * searched on the server) what is typed shows at once and `onChange` follows once typing pauses for 300ms, so a
@@ -331,6 +340,10 @@ export function SearchBox({
     seenClears.current = clears
     draft.reset(latest.current)
   }, [draft, clears])
+  // The bar learns whether the box shows any text, typed or set from outside, so a narrow bar keeps it open.
+  const shown = debounce ? text : value
+  const report = React.useContext(SearchTextContext)
+  React.useLayoutEffect(() => report?.(shown !== ""), [report, shown])
   return (
     <label
       className={cn(
@@ -464,16 +477,78 @@ function useFirstRowOnChange(bar: React.RefObject<HTMLElement | null>, key: stri
 const firstControl = (el: HTMLElement | null) =>
   el?.querySelector<HTMLElement>("button, input, select, textarea, [tabindex]:not([tabindex='-1'])")
 
+/** A view switch of a list (Open, Muted, Resolved): one choice always made. */
+export type FilterViews = {
+  /** What the views choose, such as "Status"; names the group and its short picker. */
+  label: string
+  value: string
+  onChange: (value: string) => void
+  /** `text` is the plain label the short picker shows, with a count where the label has one. */
+  options: { value: string; label: React.ReactNode; text: string }[]
+  /**
+   * A short picker at every width ("Status: Open"), after the search, instead of toggles in front of
+   * it: for a choice that narrows one list rather than switching between lists.
+   */
+  menu?: boolean
+}
+
+/*
+ * How the bar lays out (FB-19): on one line, as roomy as that line allows, found by measuring it. Each level
+ * gives up a little more room: 0 shows the search field; 1 puts the search behind a button that opens the field
+ * (toggle views turn into a short picker while it is open); 2 puts the pickers behind Filters as well; 3 lets
+ * the bar wrap, with toggle views on a line of their own (a phone).
+ */
+export type BarLevel = 0 | 1 | 2 | 3
+const LAST: BarLevel = 3
+
 /**
- * The bar: an optional view switch that always shows (Open, Muted, Resolved), the search and the list's Sort
- * button, the common pickers, and a Filters button for the rare ones. Under it one line holds the count and,
- * while any filter differs from its start value, "Clear filters".
+ * The roomiest level that fits a width. A level that did not fit noted the width it needed; one not measured yet
+ * is tried.
+ */
+export const roomiest = (needs: readonly (number | undefined)[], width: number): BarLevel => {
+  for (let level = 0; level < LAST; level++) {
+    const need = needs[level]
+    if (need === undefined || need <= width) return level as BarLevel
+  }
+  return LAST
+}
+
+/**
+ * How much wider the line must be to hold what it shows: what spills past its end, and what a picker in it is
+ * squeezed under its name and the first letters of its value. 0 when it holds it all.
+ */
+const shortBy = (line: HTMLElement | null) => {
+  if (!line) return 0
+  // How far the controls themselves reach past the line's end (what a squeezed picker spills is counted below).
+  const edge = line.getBoundingClientRect()
+  const rtl = getComputedStyle(line).direction === "rtl"
+  let short = 0
+  for (const control of Array.from(line.children)) {
+    const box = control.getBoundingClientRect()
+    if (box.width > 0) short = Math.max(short, rtl ? edge.left - box.left : box.right - edge.right)
+  }
+  for (const picker of line.querySelectorAll<HTMLElement>('[data-part="pickers"] > button'))
+    short += Math.max(0, picker.scrollWidth - picker.clientWidth)
+  return short > 1 ? short : 0
+}
+
+/** A popover opened from the bar (a picker's list) is part of it while it is open. */
+const inPopover = (el: Element | null) => el?.closest('[data-slot="picker-content"]') != null
+
+/**
+ * The bar: an optional view switch (Open, Muted, Resolved), the search, the common pickers, a Filters button for
+ * the rare ones, and the list's Sort button at the end of the line. Under it one line holds the count and, while
+ * any filter differs from its start value, "Clear filters". It keeps one line (FB-19): where that line has no room, the
+ * search is a button that opens into the field, the toggle views turn into a short picker while it is open, a
+ * long picker value is cut, and then the common pickers join the rare ones behind Filters, whose badge counts
+ * them too.
  */
 export function FilterBar({
   views,
   search,
   sort,
   pickers,
+  pickersActive = 0,
   more,
   active = 0,
   count,
@@ -481,12 +556,14 @@ export function FilterBar({
   listKey,
   loading = false,
 }: {
-  views?: React.ReactNode
+  views?: FilterViews
   search?: React.ReactNode
-  /** The list's Sort button (TB-28): beside the search, else at the end of the count line. */
+  /** The list's Sort button (TB-28): at the end of the bar's line with a search, else of the count line. */
   sort?: { control: SortControl; name: string }
-  /** The filters most people use, shown at every size. */
+  /** The filters most people use: in the row where there is room, else behind Filters. */
   pickers?: React.ReactNode
+  /** How many of the `pickers` are not at their default, for the Filters badge where they sit behind it. */
+  pickersActive?: number
   /** The rarely used filters, behind a Filters button at every size (MP-6). */
   more?: React.ReactNode
   /** How many of the `more` filters are not at their default, for the Filters badge. */
@@ -504,35 +581,291 @@ export function FilterBar({
 }) {
   const [open, setOpen] = React.useState(false)
   const [clears, setClears] = React.useState(0)
+  const [level, setLevel] = React.useState<BarLevel>(0)
+  const [expanded, setExpanded] = React.useState(false)
+  const [hasText, setHasText] = React.useState(false)
   const panelId = React.useId()
+  const fieldId = React.useId()
   const bar = React.useRef<HTMLDivElement>(null)
+  const row = React.useRef<HTMLDivElement>(null)
   const panel = React.useRef<HTMLDivElement>(null)
+  const field = React.useRef<HTMLDivElement>(null)
+  const searchButton = React.useRef<HTMLButtonElement>(null)
   const opened = React.useRef(false)
+  const focusNext = React.useRef<"field" | "button" | null>(null)
   useFirstRowOnChange(bar, listKey, loading)
+  // The search is opened (or holds text, typed or from the address): it shows at any level.
+  const searchOpen = expanded || hasText
+  // The width each level needed when it did not fit, apart for an open and a closed search, so a wider bar or a
+  // closed search goes back to the roomiest level that fits without trying each one on screen.
+  const needs = React.useRef({ open: [] as (number | undefined)[], closed: [] as (number | undefined)[] })
+  const live = React.useRef({ hasText, level, searchOpen })
+  live.current = { hasText, level, searchOpen }
+  // Which part of the bar held the focus when a new level moved it (views, search, pickers), and the level it moved
+  // to, to give the focus back once that level is drawn. Another render can come first, such as new rows, while the
+  // control is still in place; it leaves the note for the render that shows the level.
+  const moved = React.useRef<{ part: string; level: BarLevel } | null>(null)
+  // The part that holds the focus, also through an open picker list, which Radix puts outside the bar: its
+  // trigger names the list in aria-controls.
+  const noteMoved = React.useCallback((to: BarLevel) => {
+    if (moved.current) {
+      moved.current.level = to
+      return
+    }
+    const el = bar.current
+    const focused = document.activeElement
+    if (!el || !focused) return
+    let owner: Element | null = el.contains(focused) ? focused : null
+    const list = focused.closest('[data-slot="picker-content"]')
+    if (!owner && list)
+      owner =
+        [...el.querySelectorAll("[aria-controls]")].find((c) => {
+          const id = c.getAttribute("aria-controls")
+          const controlled = id ? document.getElementById(id) : null
+          return controlled !== null && list.contains(controlled)
+        }) ?? null
+    const part = owner?.closest("[data-part]")?.getAttribute("data-part")
+    moved.current = part ? { part, level: to } : null
+  }, [])
+  /** Moves to a level, after noting where the focus is. */
+  const goTo = React.useCallback(
+    (to: BarLevel) => {
+      if (to === live.current.level) return
+      noteMoved(to)
+      setLevel(to)
+    },
+    [noteMoved],
+  )
+  /** Notes what this level needs and steps down, while the line does not hold what it shows. */
+  const stepDown = React.useCallback(() => {
+    const { searchOpen: isOpen, level: now } = live.current
+    const short = shortBy(row.current)
+    if (now === LAST || short === 0) return false
+    ;(isOpen ? needs.current.open : needs.current.closed)[now] = (row.current?.clientWidth ?? 0) + short
+    goTo((now + 1) as BarLevel)
+    return true
+  }, [goTo])
+  const observer = React.useRef<ResizeObserver | null>(null)
+  // A wider bar steps back up to the roomiest level known to fit. A narrower one, or a control in the line that
+  // grew (a font that loaded, the other design), steps down while the line does not hold it.
+  React.useLayoutEffect(() => {
+    const el = bar.current
+    if (!el) return
+    let width = el.clientWidth
+    const check = () => {
+      const wider = el.clientWidth > width
+      width = el.clientWidth
+      const { searchOpen: isOpen, level: now } = live.current
+      const best = roomiest(isOpen ? needs.current.open : needs.current.closed, width)
+      if (wider && best < now) goTo(best)
+      else stepDown()
+    }
+    observer.current = new ResizeObserver(check)
+    return () => {
+      observer.current?.disconnect()
+      observer.current = null
+    }
+  }, [goTo, stepDown])
+  // Opening or closing the search changes what the line holds: back to the roomiest level known to fit it.
+  React.useLayoutEffect(() => {
+    const el = bar.current
+    if (!el) return
+    goTo(roomiest(searchOpen ? needs.current.open : needs.current.closed, el.clientWidth))
+  }, [searchOpen, goTo])
+  // What the views and pickers say, wherever they are: a new value, such as a shorter instance name or status,
+  // changes what the line holds. A search does not, so a picker list open while it updates stays open.
+  const shownValues = React.useRef<string | null>(null)
+  // After each render: the bar and the controls now in its line are watched, and a line that does not hold them
+  // steps down before it is painted. Once the bar has settled, a control that a move took away gives the focus to
+  // the one in its place: the views to the chosen view (or the views picker), the search button to the field and
+  // back, a picker or the Filters button to the pickers where they are now (the row, or the open Filters panel)
+  // or to the Filters button they went behind.
+  React.useLayoutEffect(() => {
+    const watch = observer.current
+    if (watch && bar.current) {
+      watch.disconnect()
+      watch.observe(bar.current)
+      for (const control of Array.from(row.current?.children ?? [])) watch.observe(control)
+    }
+    // New values: each level is measured again, from the roomiest.
+    const values = `${views?.value ?? ""}|${bar.current?.querySelector('[data-part="pickers"]')?.textContent ?? ""}`
+    const changed = shownValues.current !== null && shownValues.current !== values
+    shownValues.current = values
+    if (changed) {
+      needs.current = { open: [], closed: [] }
+      if (live.current.level > 0) {
+        goTo(0)
+        return
+      }
+    }
+    if (stepDown()) return
+    const el = bar.current
+    // A render before the one that shows the new level keeps the note.
+    if (moved.current && moved.current.level !== level) return
+    const part = moved.current?.part
+    moved.current = null
+    // Only focus that was lost: a control that stayed, or its list that is still open, keeps it.
+    const focused = document.activeElement
+    if (!el || !part || (focused && focused !== document.body && focused.isConnected)) return
+    const find = (selector: string) => el.querySelector<HTMLElement>(selector)
+    const target =
+      part === "views"
+        ? (find('[data-part="views"] [aria-checked="true"]') ?? find('[data-part="views"] button'))
+        : part === "search"
+          ? (find('[data-part="search"]:not([hidden]) input') ?? find('button[data-part="search"]'))
+          : part === "pickers" || part === "filters"
+            ? (find(level < 2 || open ? '[data-part="pickers"] button' : '[data-part="filters"]') ??
+              find('[data-part="filters"]'))
+            : null
+    target?.focus()
+  })
   // Opening the rare filters moves the focus to the first of them (MP-6).
   React.useEffect(() => {
     if (!open || !opened.current) return
     opened.current = false
     firstControl(panel.current)?.focus()
   }, [open])
-  const filtersLabel = active > 0 ? `Filters, ${active} in use` : "Filters"
+  // The search button opens the field and moves the focus into it; Escape in an empty field goes back.
+  React.useEffect(() => {
+    const to = focusNext.current
+    focusNext.current = null
+    if (to === "field") field.current?.querySelector("input")?.focus()
+    else if (to === "button") searchButton.current?.focus()
+  })
+  // Focus in the field keeps it open at any level, so a focused field never disappears when the bar narrows.
+  // Escape in an empty field closes it and goes back to the search button. An empty field closes once the focus
+  // leaves the bar, unless it went into a list opened from it (a picker): choosing a status while searching
+  // keeps the search open, and focus goes where the person sent it (FB-19).
+  React.useEffect(() => {
+    const el = bar.current
+    if (!el) return
+    const inField = (t: EventTarget | null) => t instanceof Node && field.current?.contains(t) === true
+    const onIn = (e: FocusEvent) => inField(e.target) && setExpanded(true)
+    // What a control of the bar opened, such as the Sort menu, which Radix puts outside it: the control names it
+    // in aria-controls.
+    const openedFromBar = (to: Element) =>
+      [...el.querySelectorAll("[aria-controls]")].some((c) => {
+        const id = c.getAttribute("aria-controls")
+        return id ? document.getElementById(id)?.contains(to) === true : false
+      })
+    const outside = (to: Element | null) => !(to && (el.contains(to) || inPopover(to) || openedFromBar(to)))
+    const onOut = (e: FocusEvent) => {
+      if (outside(e.relatedTarget instanceof Element ? e.relatedTarget : null) && !live.current.hasText)
+        setExpanded(false)
+    }
+    // Focus that lands outside from where the bar does not see it leave, such as a picker's closed list.
+    const onFocusElsewhere = (e: FocusEvent) => {
+      if (e.target instanceof Element && outside(e.target) && !live.current.hasText) setExpanded(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || live.current.level === 0 || !inField(e.target)) return
+      if ((e.target as HTMLInputElement).value !== "") return
+      setExpanded(false)
+      focusNext.current = "button"
+    }
+    el.addEventListener("focusin", onIn)
+    el.addEventListener("focusout", onOut)
+    el.addEventListener("keydown", onKey)
+    document.addEventListener("focusin", onFocusElsewhere)
+    return () => {
+      el.removeEventListener("focusin", onIn)
+      el.removeEventListener("focusout", onOut)
+      el.removeEventListener("keydown", onKey)
+      document.removeEventListener("focusin", onFocusElsewhere)
+    }
+  }, [])
+  const fieldShown = level === 0 || searchOpen
+  const pickersInPanel = pickers !== undefined && level >= 2
+  // Toggle views on a line of their own (a phone), or a short picker beside an open search.
+  const viewsOwnLine = level === LAST
+  const viewsShort = views !== undefined && (views.menu || (level > 0 && !viewsOwnLine && fieldShown))
+  const badge = active + (pickersInPanel ? pickersActive : 0)
+  const filtersLabel = badge > 0 ? `Filters, ${badge} in use` : "Filters"
   const sortButton = sort && <SortButton control={sort.control} name={sort.name} small={!search} />
   const top = views || search || pickers || more
+  // Named for its list, so it is not taken for the search of the whole console.
+  const searchName = sort ? `Search ${sort.name}` : "Search this list"
+  const viewsControl =
+    views &&
+    (viewsShort ? (
+      <div data-part="views" className="shrink-0">
+        <Picker
+          label={views.label}
+          value={views.value}
+          // A view is always chosen, so the picker never shows as a filter in use.
+          defaultValue={views.value}
+          onChange={views.onChange}
+          options={views.options.map((o) => ({ value: o.value, label: o.text }))}
+        />
+      </div>
+    ) : (
+      <div data-part="views" className={cn("shrink-0", viewsOwnLine && "basis-full")}>
+        <ToggleGroup
+          type="single"
+          value={views.value}
+          onValueChange={(v) => v && views.onChange(v)}
+          aria-label={views.label}
+        >
+          {views.options.map((o) => (
+            <ToggleGroupItem key={o.value} value={o.value}>
+              {o.label}
+            </ToggleGroupItem>
+          ))}
+        </ToggleGroup>
+      </div>
+    ))
   return (
-    <div ref={bar} data-slot="filter-bar" className="grid gap-2">
+    <div
+      ref={bar}
+      data-slot="filter-bar"
+      data-mode={level === 0 ? "wide" : level === LAST ? "phone" : "narrow"}
+      data-pickers={pickers === undefined ? undefined : pickersInPanel ? "panel" : "row"}
+      className="grid min-w-0 gap-2"
+    >
       {top && (
-        <div className="flex flex-wrap items-center gap-2">
-          {views && <div className="max-md:basis-full">{views}</div>}
-          {/* On a phone the search keeps its line with Sort and Filters (MP-6). */}
+        // One line, measured: it wraps only at the last level (FB-19).
+        <div
+          ref={row}
+          className={cn("flex min-w-0 items-center gap-2 [&>*]:shrink-0", level === LAST ? "flex-wrap" : "flex-nowrap")}
+        >
+          {views && !views.menu && viewsControl}
+          {search && !fieldShown && (
+            <button
+              ref={searchButton}
+              type="button"
+              data-part="search"
+              aria-expanded={false}
+              aria-controls={fieldId}
+              aria-label={searchName}
+              title={searchName}
+              onClick={() => {
+                focusNext.current = "field"
+                setExpanded(true)
+              }}
+              className={toolButton()}
+            >
+              <Search aria-hidden className="size-4" />
+            </button>
+          )}
           {search && (
-            <div className="w-64 max-md:min-w-0 max-md:flex-1 max-md:basis-0">
-              <ClearsContext.Provider value={clears}>{search}</ClearsContext.Provider>
+            // One field at every level, hidden while the search is behind its button, so what is typed stays.
+            <div
+              ref={field}
+              id={fieldId}
+              data-part="search"
+              hidden={!fieldShown}
+              className={level === 0 ? "w-64" : "min-w-32 flex-1 basis-0 shrink!"}
+            >
+              <SearchTextContext.Provider value={setHasText}>
+                <ClearsContext.Provider value={clears}>{search}</ClearsContext.Provider>
+              </SearchTextContext.Provider>
             </div>
           )}
-          {search && sortButton}
-          {more && (
+          {views?.menu && viewsControl}
+          {(more || pickersInPanel) && (
             <button
               type="button"
+              data-part="filters"
               aria-expanded={open}
               aria-controls={panelId}
               aria-label={filtersLabel}
@@ -544,31 +877,43 @@ export function FilterBar({
               className={toolButton()}
             >
               <Funnel aria-hidden className="size-4" />
-              {active > 0 && (
+              {badge > 0 && (
                 <span
                   aria-hidden
                   className="absolute -end-1.5 -top-1.5 grid h-[18px] min-w-[18px] place-items-center rounded-full bg-primary px-1 text-meta font-bold text-primary-foreground tabular-nums"
                 >
-                  {active}
+                  {badge}
                 </span>
               )}
             </button>
           )}
-          {pickers && (
-            <div className="flex flex-wrap items-center gap-2 max-md:basis-full max-md:[&>*]:min-w-0 max-md:[&>*]:flex-1 max-md:[&>*]:basis-[calc(50%-4px)]">
+          {pickers && !pickersInPanel && (
+            // A long value is cut before the pickers go behind Filters: a picker keeps its name and a few letters,
+            // or the line counts as too short (shortBy).
+            <div
+              data-part="pickers"
+              className="flex min-w-0 shrink! items-center gap-2 [&>button]:shrink [&_[data-slot=picker-value]]:min-w-[3ch]"
+            >
               {pickers}
             </div>
           )}
-          {more && (
-            <div
-              ref={panel}
-              id={panelId}
-              hidden={!open}
-              className="grid basis-full grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-2"
-            >
-              {more}
+          {/* Last, at the end of the line, in the order it is seen and reached. */}
+          {search && sortButton && <span className="ms-auto flex">{sortButton}</span>}
+        </div>
+      )}
+      {(more || pickersInPanel) && (
+        <div
+          ref={panel}
+          id={panelId}
+          hidden={!open}
+          className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-2"
+        >
+          {pickersInPanel && (
+            <div data-part="pickers" className="contents">
+              {pickers}
             </div>
           )}
+          {more}
         </div>
       )}
       {(count !== undefined || onClear || (sortButton && !search)) && (

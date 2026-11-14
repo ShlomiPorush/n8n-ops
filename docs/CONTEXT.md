@@ -70,6 +70,24 @@ _Avoid_: stale, n/a
 The health from the last collection that read the instance, shown beside Unknown with the time it was read. It is never shown as the current health.
 _Avoid_: cached health, previous health
 
+### Worker health
+
+**Offline period**:
+A time a Worker was offline: from 90 s after its last call to the n8n-ops server until its next call. The parts when n8n-ops was not recording are cut out of it. A job that was running then is shown as a hint, never as the cause.
+_Avoid_: outage, downtime, disconnect
+
+**n8n-ops not recording**:
+Time when the n8n-ops server was not running or could not record: its process stopped or was blocked, or its database was unreachable. Nothing about a Worker could be observed then, so it is never shown as the Worker offline and never counts in its availability.
+_Avoid_: server down, gap, maintenance
+
+**Heartbeat**:
+A call a Worker makes on its own timer, also while a job runs, that keeps it online and reports what only it can measure: the round trip of its previous heartbeat, calls to the server that failed, and its latest Docker check. Workers of earlier releases send none.
+_Avoid_: ping, keepalive
+
+**Boot**:
+One start of a Worker process, known from its heartbeats. A Boot after an earlier one is a restart; the first Boot ever seen is not.
+_Avoid_: session, run
+
 ### Signing in
 
 **Passkey**:
@@ -83,7 +101,7 @@ A program, such as an AI assistant or a script, that uses n8n-ops through MCP or
 _Avoid_: client, bot
 
 **Connection**:
-An Agent's standing link to n8n-ops, made when a person approves it. Each Connection is its own identity and ends when it is disconnected or unused for 90 days.
+An Agent's standing link to n8n-ops, made when a person approves it. Each Connection is its own identity and ends when it is disconnected, unused for the idle period set in Settings (90 days by default), or when agents are turned off, the public URL changes or two-factor sign-in is reset.
 _Avoid_: grant, session, authorization
 
 **Token**:

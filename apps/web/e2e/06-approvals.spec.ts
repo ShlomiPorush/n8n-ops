@@ -1,6 +1,6 @@
 import { createServer, type Server } from "node:http"
 import { type APIRequestContext, expect, type Page, test } from "@playwright/test"
-import { design, dialogClosed, openNewToken, randomSecret, signIn } from "./helpers.ts"
+import { design, dialogClosed, openNewToken, ownPage, randomSecret, signIn } from "./helpers.ts"
 
 // Approving access requests from Telegram and email. The server's Telegram calls go to a stand-in Bot API run
 // here (verify.sh points TELEGRAM_API_URL at this runner); email goes to Mailpit in the test stack.
@@ -16,7 +16,7 @@ let token = ""
 let secret = ""
 const chatId = "4242"
 const mailApi = process.env.E2E_MAIL_URL ?? "http://mail:8025"
-const publicUrl = process.env.E2E_BASE_URL ?? "http://server:8080"
+const publicUrl = process.env.E2E_BASE_URL ?? "http://localhost:8080"
 
 test.beforeAll(async ({ browser }) => {
   let messageId = 100
@@ -396,7 +396,7 @@ test("a request for two instances is changed in Telegram, then approved as shown
     expect((await mcp(request, "release_instance_access", { requestId: id })).status).toBe("released")
   } finally {
     // Closed again, as the specs that follow expect.
-    expect((await page.request.delete(`/api/instances/${other.id}/capabilities/agents`)).ok()).toBe(true)
+    expect((await page.request.delete(`/api/instances/${other.id}/capabilities/agents`, ownPage)).ok()).toBe(true)
     expect((await agentAccess({ enabled: false, scopes: [] })).ok()).toBe(true)
   }
 })

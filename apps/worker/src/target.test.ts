@@ -2,6 +2,7 @@ import { generateX25519Identity, identityToRecipient } from "age-encryption"
 import { describe, expect, it } from "vitest"
 import { discover, type ListedContainer } from "./discovery.ts"
 import { type Docker, DockerError } from "./docker.ts"
+import { CallFailures } from "./heartbeat-loop.ts"
 import { backupJob } from "./jobs.ts"
 import { pickReplica, replicasClean, targetOf } from "./target.ts"
 
@@ -198,6 +199,47 @@ describe("each export of a backup by its own output", () => {
       "No workflows found\n__WF_FAILED__\n__CREDENTIALS_EXPORT__\nError: decryption failed\n__CRED_FAILED__\n",
     )
     expect(result.error).toMatch(/^credential export failed: [\s\S]*decryption failed/)
+  })
+})
+
+describe("the archive upload", () => {
+  // A backup of an empty instance, uploaded through the counting PUT the Worker gives it.
+  const backupPut = async (failures: CallFailures, answer: () => Promise<Response>) => {
+    const recipient = await identityToRecipient(await generateX25519Identity())
+    const docker = {
+      exec: async () => ({ exitCode: 0, stdout: Buffer.alloc(1024), stderr: "__CREDENTIALS_EXPORT__\n" }),
+    } as unknown as Docker
+    let sent = 0
+    const result = await backupJob(
+      docker,
+      { container: "n8n", recipient },
+      async () => ({ url: "http://server.invalid/api/worker/jobs/j1/archive", headers: {} }),
+      (_url, init) => {
+        sent++
+        expect(init.method).toBe("PUT")
+        return failures.track(answer())
+      },
+    )
+    expect(sent).toBe(1)
+    return result
+  }
+
+  it("counts an upload that fails on the network or with a 5xx as a failed call, not one the server refused", async () => {
+    const failures = new CallFailures()
+    const refused = await backupPut(failures, async () => new Response("too large", { status: 413 }))
+    expect(refused).toMatchObject({ ok: false })
+    expect(failures.take()).toEqual({ count: 0, last: undefined })
+    const cut = await backupPut(failures, () =>
+      Promise.reject(Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } })),
+    )
+    expect(cut).toMatchObject({ ok: false })
+    expect(failures.take()).toEqual({ count: 1, last: "ECONNRESET" })
+    const proxy = await backupPut(failures, async () => new Response("bad gateway", { status: 502 }))
+    expect(proxy).toMatchObject({ ok: false })
+    expect(failures.take()).toEqual({ count: 1, last: "HTTP 502" })
+    const stored = await backupPut(failures, async () => new Response(null, { status: 201 }))
+    expect(stored).toMatchObject({ ok: true })
+    expect(failures.take()).toEqual({ count: 0, last: undefined })
   })
 })
 

@@ -1,5 +1,6 @@
 import { Readable } from "node:stream"
 import type { ReadableStream as WebStream } from "node:stream/web"
+import { HEARTBEAT_MIN_GAP_MS, heartbeatBody } from "@n8n-ops/shared"
 import { and, eq, isNull } from "drizzle-orm"
 import { Hono } from "hono"
 import { createMiddleware } from "hono/factory"
@@ -15,6 +16,7 @@ import { credentialExportRefusal } from "../services/moves.ts"
 import { setupWorkerResult } from "../services/setup.ts"
 import { removeSpool, reserve, SpoolError, spoolDir, writeSpool } from "../services/spool.ts"
 import { readUpload, signUpload } from "../services/upload-token.ts"
+import { recordBeat, recordWorkerCall } from "../services/worker-presence.ts"
 import { claimJob, deliverToWaiter, pairWorker, workerByIdentity } from "../services/workers.ts"
 
 /** The features a worker names in x-worker-features: short words only, at most 20. */
@@ -25,7 +27,7 @@ export const featuresOf = (header: string | undefined) =>
     .filter((w) => /^[a-z0-9-]{1,40}$/.test(w))
     .slice(0, 20)
 
-type WorkerEnv = { Variables: { worker: typeof workers.$inferSelect } }
+type WorkerEnv = { Variables: { worker: typeof workers.$inferSelect; seenAt: Date } }
 
 /** The longest an archive upload may take once it has started. */
 export const UPLOAD_DEADLINE_MS = 30 * 60_000
@@ -53,17 +55,37 @@ export function workerApiRoutes(ctx: Ctx) {
     const worker = header.startsWith("Bearer ") ? await workerByIdentity(ctx, header.slice(7).trim()) : null
     if (!worker) return c.json({ error: "unauthorized" }, 401)
     workerSeen(worker)
-    await ctx.db
-      .update(workers)
-      .set({
-        lastSeenAt: new Date(),
-        version: c.req.header("x-worker-version") ?? worker.version,
-        // What it supports; a worker of an earlier release sends none, and none is what it supports.
-        features: featuresOf(c.req.header("x-worker-features")),
-      })
-      .where(eq(workers.id, worker.id))
+    // Committed before the handler runs: the offline period this call ends, the presence, and that this server is
+    // recording, with the time the call was recorded at.
+    const seenAt = await recordWorkerCall(ctx, worker.id, {
+      version: c.req.header("x-worker-version") ?? worker.version,
+      // What it supports; a worker of an earlier release sends none, and none is what it supports.
+      features: featuresOf(c.req.header("x-worker-features")),
+    })
     c.set("worker", worker)
+    c.set("seenAt", seenAt)
     await next()
+  })
+
+  /** When each Worker's last heartbeat was let through to the insert, on this process's monotonic clock. */
+  const beatLetThrough = new Map<string, number>()
+
+  /**
+   * The Worker's heartbeat, on its own timer. Presence is recorded by `auth` whatever the answer; the body is stored
+   * once per (bootId, seq), and at most once per HEARTBEAT_MIN_GAP_MS per Worker.
+   */
+  app.post("/heartbeat", auth, async (c) => {
+    const body = heartbeatBody.safeParse(await c.req.json().catch(() => null))
+    if (!body.success) return c.json({ error: "invalid" }, 400)
+    const worker = c.get("worker")
+    // Checked and set with no await in between, so concurrent heartbeats cannot both pass. The monotonic clock is
+    // not moved by the wall clock, so a clock correction never blocks heartbeats.
+    const now = performance.now()
+    const last = beatLetThrough.get(worker.id)
+    if (last !== undefined && now - last < HEARTBEAT_MIN_GAP_MS) return c.json({ error: "too_soon" }, 429)
+    beatLetThrough.set(worker.id, now)
+    await recordBeat(ctx, worker.id, c.get("seenAt"), body.data)
+    return c.json({ ok: true })
   })
 
   /**

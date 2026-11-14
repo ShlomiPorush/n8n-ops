@@ -385,11 +385,13 @@ test("the list stays in place while its first item opens by itself, so focus is 
   })
   try {
     await page.goto("/problems")
+    // Beside the pane the search is a button that opens into the field (FB-19).
+    await page.locator('[data-slot="filter-bar"]').getByRole("button", { name: "Search problems", exact: true }).click()
     const box = page.getByLabel("Search workflow, target or error")
     await expect(box).toBeVisible()
     await expect(page.locator("tbody tr")).toHaveCount(0)
     await expect(page).toHaveURL(/\/problems$/)
-    await box.focus()
+    await expect(box).toBeFocused()
     const field = await box.elementHandle()
     release()
     await expect(page).toHaveURL(/\/problems\/[^/?]+/)
@@ -980,7 +982,7 @@ test("Connected agents and Account are pages of their own, and their old Setting
   await expect(page.getByRole("heading", { name: "Connect an agent" })).toBeVisible()
   await page.goto("/settings/account")
   await expect(page).toHaveURL(/\/account$/)
-  await expect(page.getByRole("heading", { name: "Locked out?" })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Sign-In" })).toBeVisible()
   await expect(page).toHaveTitle("Account · n8n-ops")
 
   const sections = page.getByRole("navigation", { name: "Settings categories" })
@@ -1111,6 +1113,16 @@ test("the 12-hour Time format writes the daily backup time that way as soon as i
 
 /** Opens the second test instance and returns its id. */
 /** A stand-in Problem in one workflow, as the server sends it. */
+/** Chooses a status of the Problems list in its Status picker (FB-19). */
+async function chooseStatus(name: string) {
+  await page
+    .locator('[data-slot="filter-bar"]')
+    .first()
+    .getByRole("button", { name: /^Status:/ })
+    .click()
+  await page.getByRole("option", { name, exact: true }).click()
+}
+
 function standInProblem(id: string, workflowName: string, errorMessage: string, more: Record<string, unknown> = {}) {
   const at = new Date(Date.now() - 3 * 86_400_000).toISOString()
   const state = { status: "open", regression: false, count: 1, firstSeen: at, lastSeen: at, mutedUntil: null }
@@ -1835,7 +1847,7 @@ test("new filters whose list fails to load keep the previous rows, and the filte
   const note = page.getByRole("status").filter({ hasText: "Could not load muted problems; showing the previous list" })
   const countLine = page.locator('[data-slot="list-count"]')
   try {
-    await page.getByRole("radio", { name: "Muted" }).click()
+    await chooseStatus("Muted")
     await expect(page).toHaveURL(/[?&]status=muted/)
     // It is asked again twice before it counts as failed, which takes a few seconds.
     await expect(note).toBeVisible({ timeout: 15_000 })
@@ -1958,14 +1970,274 @@ test("a new filter starts the list at its first row, and the filter bar stays in
         el.scrollTop = el.scrollHeight
       })
       await expect(rows.first()).not.toBeInViewport()
-      // The filters stuck at the top of where the list scrolls.
-      await expect(page.getByRole("radio", { name: "Open", exact: true })).toBeInViewport()
-      await page.getByRole("radio", { name: "Open", exact: true }).click()
+      // The filters stuck at the very top of where the list scrolls, with no rows showing above them.
+      await expect(page.getByRole("button", { name: /^Status:/ })).toBeInViewport()
+      await expect
+        .poll(() =>
+          page
+            .locator(scroller)
+            .first()
+            .evaluate((el) => {
+              const bar = el.querySelector('[data-slot="filter-bar"]')
+              return bar ? Math.round(bar.getBoundingClientRect().top - el.getBoundingClientRect().top) : null
+            }),
+        )
+        .toBe(0)
+      await chooseStatus("Open")
       await expect(page).not.toHaveURL(/status=all/)
       await expect(rows.first()).toBeInViewport()
     }
   } finally {
     await page.unroute(list)
+    await page.setViewportSize({ width: 1440, height: 900 })
+  }
+})
+
+test("beside the pane the filters keep one line: search first, then Status and Instance, and Sort at its end (FB-19)", async () => {
+  await page.goto("/problems?status=open")
+  const bar = page.locator('[data-slot="filter-bar"]').first()
+  const searchButton = bar.getByRole("button", { name: "Search problems", exact: true })
+  const box = bar.getByLabel("Search workflow, target or error")
+  const sort = bar.getByRole("button", { name: /^Sort:/ })
+  const filters = bar.getByRole("button", { name: /^Filters/ })
+  const status = bar.getByRole("button", { name: /^Status:/ })
+  const instance = bar.getByRole("button", { name: /^Instance:/ })
+  const place = async (l: ReturnType<typeof page.locator>) => {
+    const b = await l.boundingBox()
+    if (!b) throw new Error("not on screen")
+    return b
+  }
+  /** One line, in this order from the start. */
+  const inOrder = async (...parts: ReturnType<typeof page.locator>[]) => {
+    const boxes = await Promise.all(parts.map(place))
+    const ys = boxes.map((b) => b.y + b.height / 2)
+    expect(Math.max(...ys) - Math.min(...ys)).toBeLessThan(4)
+    for (let i = 1; i < boxes.length; i++)
+      expect(boxes[i]?.x ?? 0).toBeGreaterThan((boxes[i - 1]?.x ?? 0) + (boxes[i - 1]?.width ?? 0) - 1)
+  }
+  // Closed: the search button, Status, Instance and Sort, in that order on one line, Sort at its end; no Filters
+  // button.
+  await expect(box).toBeHidden()
+  await expect(bar).toHaveAttribute("data-pickers", "row")
+  await expect(filters).toHaveCount(0)
+  await expect(status).toHaveText(/Open/)
+  await inOrder(searchButton, status, instance, sort)
+  // Open: the field takes the room, focused, and Instance goes behind Filters; still one line.
+  await searchButton.click()
+  await expect(box).toBeFocused()
+  await expect(bar).toHaveAttribute("data-pickers", "panel")
+  await inOrder(box, status, filters, sort)
+  // Sort ends the line: its end is the bar's.
+  const end = async (l: ReturnType<typeof page.locator>) => {
+    const b = await place(l)
+    return b.x + b.width
+  }
+  expect(Math.abs((await end(sort)) - (await end(bar)))).toBeLessThan(2)
+  // Moving on inside the bar keeps the empty search open; Escape in it closes it and goes back to the button.
+  await page.keyboard.press("Tab")
+  await expect(status).toBeFocused()
+  await page.keyboard.press("Tab")
+  await expect(filters).toBeFocused()
+  await page.keyboard.press("Tab")
+  await expect(sort).toBeFocused()
+  await expect(box).toBeVisible()
+  // Its Sort menu opens outside the bar, and is still part of it (R1).
+  await page.keyboard.press("Enter")
+  await expect(page.getByRole("dialog", { name: "Sort problems" })).toBeVisible()
+  await expect(box).toBeVisible()
+  await page.keyboard.press("Escape")
+  await expect(sort).toBeFocused()
+  await expect(box).toBeVisible()
+  for (let i = 0; i < 3; i++) await page.keyboard.press("Shift+Tab")
+  await expect(box).toBeFocused()
+  await page.keyboard.press("Escape")
+  await expect(searchButton).toBeFocused()
+  await expect(box).toBeHidden()
+  // Closed again, Instance is back in the row.
+  await expect(bar).toHaveAttribute("data-pickers", "row")
+  await inOrder(searchButton, status, instance, sort)
+  // A status chosen while searching keeps the search open; Escape in the picker closes only the picker.
+  await searchButton.click()
+  await status.click()
+  await page.keyboard.press("Escape")
+  await expect(status).toBeFocused()
+  await expect(box).toBeVisible()
+  await chooseStatus("Muted")
+  await expect(page).toHaveURL(/status=muted/)
+  await expect(box).toBeVisible()
+  // The longest status still leaves one line, and the status is a view, not a filter: nothing to clear.
+  await chooseStatus("Resolved")
+  await expect(status).toHaveText(/Resolved/)
+  await inOrder(box, status, filters, sort)
+  await expect(bar.getByRole("button", { name: "Clear filters" })).toHaveCount(0)
+  // Leaving the bar closes an empty search, and the focus stays where it went.
+  const elsewhere = page.getByRole("link", { name: "Overview", exact: true }).first()
+  await elsewhere.focus()
+  await expect(box).toBeHidden()
+  await expect(elsewhere).toBeFocused()
+  await expect(status).toHaveText(/Resolved/)
+  await inOrder(searchButton, status, instance, sort)
+  // A search from the address shows the field, without taking the focus; Instance waits behind Filters, whose
+  // badge counts it, and Clear filters clears both.
+  await page.goto("/problems?status=open&q=ERP")
+  await expect(box).toHaveValue("ERP")
+  await expect(box).toBeVisible()
+  await expect(box).not.toBeFocused()
+  await filters.click()
+  await instance.click()
+  await page.getByRole("option", { name: "e2e-n8n", exact: true }).click()
+  await expect(page).toHaveURL(/instance=/)
+  await expect(filters).toHaveAccessibleName("Filters, 1 in use")
+  await bar.getByRole("button", { name: "Clear filters" }).click()
+  await expect(page).not.toHaveURL(/instance=|q=/)
+  await expect(box).toBeHidden()
+  await expect(filters).toHaveCount(0)
+  await expect(instance).toHaveText(/All/)
+})
+
+test("an instance with a long name is cut in the row before it goes behind Filters (FB-19)", async () => {
+  const long = "e2e-n8n-production-europe-west-primary"
+  const instances = (url: URL) => url.pathname === "/api/instances"
+  await page.route(instances, async (route) => {
+    const res = await route.fetch()
+    const body = (await res.json()) as { instances: { name: string }[] }
+    await route.fulfill({
+      response: res,
+      json: { ...body, instances: body.instances.map((i) => (i.name === "e2e-n8n" ? { ...i, name: long } : i)) },
+    })
+  })
+  try {
+    await page.goto("/problems?status=open")
+    const bar = page.locator('[data-slot="filter-bar"]').first()
+    const instance = bar.getByRole("button", { name: /^Instance:/ })
+    await instance.click()
+    await page.getByRole("option", { name: long, exact: true }).click()
+    await expect(page).toHaveURL(/instance=/)
+    // Still in the row and on one line, its value cut short.
+    await expect(bar).toHaveAttribute("data-pickers", "row")
+    await expect(instance).toContainText("e2e")
+    expect(await instance.locator('[data-slot="picker-value"]').evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(
+      true,
+    )
+    const status = await bar.getByRole("button", { name: /^Status:/ }).boundingBox()
+    const picked = await instance.boundingBox()
+    expect(Math.abs((status?.y ?? 0) - (picked?.y ?? 1))).toBeLessThan(4)
+  } finally {
+    await page.unroute(instances)
+  }
+})
+
+test("a shorter value at the same width brings Instance back into the row (FB-19, R2)", async () => {
+  try {
+    await page.goto("/problems?status=resolved")
+    const bar = page.locator('[data-slot="filter-bar"]').first()
+    const status = bar.getByRole("button", { name: /^Status:/ })
+    await expect(status).toHaveText(/Resolved/)
+    /** The bar's width at a window width. */
+    const barAt = async (width: number) => {
+      await page.setViewportSize({ width, height: 900 })
+      await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(width)
+      return bar.evaluate((el) => el.clientWidth)
+    }
+    /** The width the line needs with everything it shows now. */
+    const need = () =>
+      bar.evaluate((el) => {
+        const shown = [...(el.firstElementChild?.children ?? [])].filter((c) => !(c as HTMLElement).hidden)
+        return shown.reduce((sum, c) => sum + c.getBoundingClientRect().width, 0) + 8 * (shown.length - 1)
+      })
+    const narrow = await barAt(1440)
+    const wide = await barAt(1920)
+    await barAt(1440)
+    await expect(bar).toHaveAttribute("data-pickers", "row")
+    const withResolved = await need()
+    await chooseStatus("Open")
+    await expect(status).toHaveText(/Open/)
+    const withOpen = await need()
+    expect(withResolved - withOpen).toBeGreaterThan(10)
+    /** The window width that gives the bar this width. */
+    const windowFor = (barWidth: number) => Math.round(1440 + ((barWidth - narrow) * 480) / (wide - narrow))
+    // A window where the line holds Instance beside Open but not beside Resolved.
+    await barAt(windowFor((withOpen + withResolved) / 2))
+    await expect(bar).toHaveAttribute("data-pickers", "row")
+    await chooseStatus("Resolved")
+    await expect(bar).toHaveAttribute("data-pickers", "panel")
+    await chooseStatus("Open")
+    await expect(bar).toHaveAttribute("data-pickers", "row")
+    // Just wide enough for Resolved, Instance is back in the row: the width it was short by is not counted twice
+    // (R5).
+    await chooseStatus("Resolved")
+    await expect(bar).toHaveAttribute("data-pickers", "panel")
+    await barAt(windowFor(withResolved + 4))
+    await expect(bar).toHaveAttribute("data-pickers", "row")
+  } finally {
+    await page.setViewportSize({ width: 1440, height: 900 })
+  }
+})
+
+test("an Instance list opened behind Filters stays open while the search updates the list (FB-19, R4)", async () => {
+  await page.setViewportSize({ width: 1000, height: 900 })
+  try {
+    await page.goto("/problems?status=open")
+    const bar = page.locator('[data-slot="filter-bar"]').first()
+    await expect(bar).toHaveAttribute("data-pickers", "panel")
+    await bar.getByRole("button", { name: "Search problems", exact: true }).click()
+    await page.keyboard.type("Sync")
+    // Before the typed search is sent: Instance opened behind Filters.
+    await bar.getByRole("button", { name: /^Filters/ }).click()
+    await bar.getByRole("button", { name: /^Instance:/ }).click()
+    const option = page.getByRole("option", { name: "All", exact: true })
+    await expect(option).toBeFocused()
+    await expect(page).toHaveURL(/q=Sync/)
+    await expect(option).toBeFocused()
+    await page.keyboard.press("Escape")
+  } finally {
+    await page.setViewportSize({ width: 1440, height: 900 })
+  }
+})
+
+test("a control that a new width moves gives the focus to the one in its place (FB-19)", async () => {
+  // Beside the pane at 1440 Instance fits beside Status; at 1000 the column is too narrow and it goes behind
+  // Filters.
+  try {
+    await page.goto("/problems?status=open")
+    const bar = page.locator('[data-slot="filter-bar"]').first()
+    const instance = bar.getByRole("button", { name: /^Instance:/ })
+    const filters = bar.getByRole("button", { name: /^Filters/ })
+    await expect(bar).toHaveAttribute("data-pickers", "row")
+    await instance.focus()
+    await page.setViewportSize({ width: 1000, height: 900 })
+    await expect(bar).toHaveAttribute("data-pickers", "panel")
+    await expect(filters).toBeFocused()
+    // And back: the Filters button goes, and Instance in the row takes the focus.
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await expect(bar).toHaveAttribute("data-pickers", "row")
+    await expect(instance).toBeFocused()
+    // An option of an open Instance list hands the focus to the Filters button that Instance went behind (R5).
+    await instance.click()
+    await expect(page.getByRole("option", { name: "All", exact: true })).toBeFocused()
+    await page.setViewportSize({ width: 1000, height: 900 })
+    await expect(bar).toHaveAttribute("data-pickers", "panel")
+    await expect(filters).toBeFocused()
+    // The search button hands the focus to the field that takes its place (R5).
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.goto("/problems?status=open")
+    const searchButton = bar.getByRole("button", { name: "Search problems", exact: true })
+    await searchButton.focus()
+    await page.setViewportSize({ width: 2600, height: 900 })
+    await expect(bar).toHaveAttribute("data-mode", "wide")
+    await expect(bar.getByLabel("Search workflow, target or error")).toBeFocused()
+    // A picker that stays where it is keeps its open list and the focus in it (R6): Status, while Instance goes
+    // behind Filters.
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.goto("/problems?status=open")
+    await bar.getByRole("button", { name: /^Status:/ }).click()
+    const option = page.getByRole("option", { name: "Open", exact: true })
+    await expect(option).toBeFocused()
+    await page.setViewportSize({ width: 1000, height: 900 })
+    await expect(bar).toHaveAttribute("data-pickers", "panel")
+    await expect(option).toBeFocused()
+    await page.keyboard.press("Escape")
+  } finally {
     await page.setViewportSize({ width: 1440, height: 900 })
   }
 })
@@ -2014,7 +2286,15 @@ test("the open problems of an instance say when a new order or a refresh failed,
     const p = standInProblem(`00000000-0000-4000-8000-00000000000${n}`, `E2E stand-in ${n}`, "ERP refused")
     const lastSeen = new Date(Date.now() - n * 60_000).toISOString()
     // A row of the list: the problem's one workflow, on e2e-n8n-b.
-    return { ...p.affectedWorkflows[0], problemId: p.id, section: "now", problemTotal: 1, count, lastSeen }
+    return {
+      ...p.affectedWorkflows[0],
+      problemId: p.id,
+      section: "now",
+      problemTotal: 1,
+      count,
+      lastSeen,
+      closesAt: null,
+    }
   }
   const [few, many] = [problem(1, 2), problem(2, 9)]
   let sortFails = true
@@ -2023,7 +2303,8 @@ test("the open problems of an instance say when a new order or a refresh failed,
   await page.route(list, (route) => {
     const sort = new URL(route.request().url()).searchParams.get("sort")
     if (fails || (sort && sortFails)) return route.fulfill({ status: 500, json: { error: "internal_error" } })
-    return route.fulfill({ json: { items: sort === "failures" ? [many, few] : [few, many], total: 2 } })
+    const sections = { instance: 0, now: 2, quiet: 0, alerts: 0, muted: 0, resolved: 0 }
+    return route.fulfill({ json: { items: sort === "failures" ? [many, few] : [few, many], total: 2, sections } })
   })
   try {
     await page.goto(`/instances/${id}?tab=problems`)
@@ -2075,6 +2356,148 @@ test("the open problems of an instance say when a new order or a refresh failed,
     await expect(button).not.toHaveAttribute("data-set")
   } finally {
     await page.unroute(list)
+  }
+})
+
+test("the Problems list says what each section holds, cuts to one, and tags every row with its section", async () => {
+  // Stand-in rows, one per open section, and a muted alert, so the test does not depend on what the run recorded.
+  const day = 86_400_000
+  const row = (n: number, workflowName: string, section: string, more: Record<string, unknown> = {}) => {
+    const p = standInProblem(`00000000-0000-4000-8000-0000000001${n}0`, workflowName, "ERP refused")
+    return {
+      ...p.affectedWorkflows[0],
+      problemId: p.id,
+      section,
+      problemTotal: 1,
+      mergedByHand: false,
+      closesAt: null,
+      ...more,
+    }
+  }
+  const quietSince = new Date(Date.now() - 3 * day).toISOString()
+  const failing = row(1, "E2E failing", "now", {
+    regression: true,
+    count: 4,
+    lastSeen: new Date(Date.now() - 5 * 60_000).toISOString(),
+  })
+  const quiet = row(2, "E2E quiet", "quiet", {
+    count: 2,
+    lastSeen: quietSince,
+    closesAt: new Date(Date.now() + 4 * day + 3_600_000).toISOString(),
+  })
+  const alert = { kind: "alert", title: "Stock below minimum", target: null, reason: "Stock below minimum" }
+  const raised = row(3, "E2E alert", "alerts", { ...alert, count: 9, lastSeen: quietSince, closesAt: quietSince })
+  const muted = row(4, "E2E muted alert", "muted", { ...alert, status: "muted", mutedUntil: quietSince })
+  const open = [failing, quiet, raised]
+  // Quiet holds more than the list sends: the figure and the heading count the section in all, not the rows shown.
+  const counts = { instance: 0, now: 1, quiet: 240, alerts: 1, muted: 0, resolved: 0 }
+  const asked: string[] = []
+  const list = (url: URL) => url.pathname === "/api/problems/rows" && !url.searchParams.has("instance")
+  await page.route(list, (route) => {
+    const params = new URL(route.request().url()).searchParams
+    asked.push(params.get("section") ?? "")
+    const all = params.get("status") === "all"
+    const section = params.get("section")
+    let items = all ? [...open, muted] : open.filter((r) => !section || r.section === section)
+    if (params.get("sort") === "failures") items = [...items].sort((x, y) => Number(y.count) - Number(x.count))
+    const sections = all ? { ...counts, muted: 1 } : counts
+    return route.fulfill({ json: { items, total: items.length, sections } })
+  })
+  const strip = page.getByRole("navigation", { name: "Sections" })
+  const figure = (name: string) => strip.getByRole("link").filter({ hasText: name })
+  const column = page.locator('[data-scroll-pane="list"]')
+  const item = (name: string) => column.getByRole("row", { name: new RegExp(name) })
+  try {
+    await page.goto("/problems?status=open")
+    // A figure per open section with its count on one line (its heading says what it holds); Instance problems
+    // only when there are some.
+    await expect(figure("Failing now")).toBeVisible()
+    await expect(figure("Quiet")).toContainText("240")
+    await expect(figure("Your alerts")).not.toContainText("Stop and Error")
+    for (const name of ["Failing now", "Quiet", "Your alerts"]) {
+      const [count, label] = await Promise.all([
+        figure(name).locator("[data-slot=kpi-figure]").boundingBox(),
+        figure(name).getByText(name, { exact: true }).boundingBox(),
+      ])
+      // The label sits beside its count on the count's line, and takes one line itself.
+      expect(count && label).toBeTruthy()
+      if (!count || !label) continue
+      expect(label.x).toBeGreaterThan(count.x + count.width - 1)
+      expect(label.y).toBeGreaterThanOrEqual(count.y - 1)
+      expect(label.y + label.height).toBeLessThanOrEqual(count.y + count.height + 1)
+    }
+    await expect(figure("Instance")).toHaveCount(0)
+    // The figures are tabs on the list's top edge: no room between them and the rows, and none marked yet.
+    expect(
+      await strip.evaluate((el) => {
+        const next = el.nextElementSibling
+        return next ? Math.round(next.getBoundingClientRect().top - el.getBoundingClientRect().bottom) : null
+      }),
+    ).toBe(0)
+    await expect(strip.locator('[aria-current="true"]')).toHaveCount(0)
+    // Each heading counts its section in all and says what it holds.
+    const quietHeading = column.locator('[data-section="quiet"]')
+    await expect(quietHeading).toContainText("240")
+    await expect(quietHeading).toContainText("closes by itself")
+    // Each row's tag names its section, never a plain Open; a quiet one says how long and when it closes.
+    await expect(item("E2E failing")).toContainText("Failing now")
+    await expect(item("E2E failing")).toContainText("Regression")
+    await expect(item("E2E quiet")).toContainText("Quiet 3 d")
+    await expect(item("E2E quiet")).toContainText("Auto-closes in ~4 d")
+    // An alert says so once: its tag, not a kind badge as well.
+    await expect(item("E2E alert").getByText("Your alert", { exact: true })).toHaveCount(1)
+    for (const name of ["E2E failing", "E2E quiet", "E2E alert"])
+      await expect(item(name).getByText("Open", { exact: true })).toHaveCount(0)
+
+    // A figure shows its section alone and is marked; again, all of them.
+    await figure("Quiet").click()
+    await expect(page).toHaveURL(/section=quiet/)
+    await expect(figure("Quiet")).toHaveAttribute("aria-current", "true")
+    await expect(column.locator("[data-href]")).toHaveCount(1)
+    await expect(page.getByText(/\b1 quiet row\b/).first()).toBeVisible()
+    expect(asked).toContain("quiet")
+    // The section shown alone keeps its full count, in its figure and its heading.
+    await expect(figure("Quiet")).toContainText("240")
+    await expect(quietHeading).toContainText("240")
+    await figure("Quiet").click()
+    await expect(page).not.toHaveURL(/section=/)
+    await expect(column.locator("[data-href]")).toHaveCount(3)
+
+    // Another status leaves the section, and the figures go: they count the open sections.
+    await figure("Quiet").click()
+    await expect(page).toHaveURL(/section=quiet/)
+    await chooseStatus("All")
+    await expect(page).not.toHaveURL(/section=/)
+    await expect(strip).toHaveCount(0)
+    // A muted alert keeps its kind: its tag says Muted.
+    await expect(item("E2E muted alert")).toContainText("Muted")
+    await expect(item("E2E muted alert").getByText("Your alert", { exact: true })).toHaveCount(1)
+
+    // Sorted by another column, the headings go and each row's tag still says its section.
+    await chooseStatus("Open")
+    const button = page.getByRole("button", { name: /^Sort:/ })
+    await button.click()
+    await page.getByRole("radio", { name: "Failures" }).check()
+    await page.keyboard.press("Escape")
+    await expect(column.locator("[data-href]").first()).toContainText("E2E alert")
+    await expect(column.locator("[data-section]")).toHaveCount(0)
+    await expect(item("E2E alert")).toContainText("Your alert")
+    await expect(item("E2E quiet")).toContainText("Quiet 3 d")
+    await button.click()
+    await page.getByRole("radio", { name: "Default order" }).check()
+    await page.keyboard.press("Escape")
+    await expect(column.locator("[data-section]").first()).toBeVisible()
+
+    // The wide table, at a width with no reading pane, tags its rows the same way.
+    await page.setViewportSize({ width: 900, height: 900 })
+    await page.goto("/problems?status=open")
+    const quietRow = page.getByRole("row", { name: /E2E quiet/ })
+    await expect(quietRow).toContainText("Quiet 3 d")
+    await expect(quietRow).toContainText("Auto-closes in ~4 d")
+    await expect(page.getByRole("row", { name: /E2E failing/ })).toContainText("Failing now")
+  } finally {
+    await page.unroute(list)
+    await page.setViewportSize({ width: 1440, height: 900 })
   }
 })
 

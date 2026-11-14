@@ -16,6 +16,13 @@ function fromRun(name: string): string {
 /** A new random value, for a password or key the tests make and use in one place. */
 export const randomSecret = () => randomBytes(24).toString("hex")
 
+/**
+ * The Origin n8n-ops' own pages send. A direct API call with no JSON body (a bodiless POST or DELETE) needs it, as the
+ * server refuses such a change from any other page; calls with a JSON body need nothing (they cannot come from
+ * another page without a CORS preflight).
+ */
+export const ownPage = { headers: { origin: new URL(process.env.E2E_BASE_URL ?? "http://localhost:8080").origin } }
+
 export const username = "operator"
 export const password = fromRun("E2E_ADMIN_PASSWORD")
 const stateFile = "test-results/e2e-state.json"

@@ -38,7 +38,7 @@ prepare_data_dir() {
 }
 
 build() {
-  build_images dev "dev-$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo local)"
+  build_images dev
 }
 
 status() {

@@ -7,6 +7,7 @@ import { instances, workers } from "../db/schema.ts"
 import { requireUser } from "../http/middleware.ts"
 import { actorName, type Env } from "../http/types.ts"
 import { CONTAINER_PATTERN, workerInstall } from "../lib/worker-install.ts"
+import { historyQuery } from "../services/health-history.ts"
 import { detachWorker } from "../services/instance-update.ts"
 import {
   allowedContainers,
@@ -17,6 +18,7 @@ import {
   workerRule,
   workerUpdate,
 } from "../services/proxy-fix.ts"
+import { refusal, WorkerHealthError, workerHealth } from "../services/worker-health.ts"
 import { createPairingToken, PAIRING_TTL_MS } from "../services/workers.ts"
 import { WORKER_ONLINE_MS } from "./overview.ts"
 
@@ -57,6 +59,19 @@ export function workerRoutes(ctx: Ctx) {
         }),
     )
     return c.json(listed.sort(offlineFirst))
+  })
+
+  /** The Worker's health history for its Health panel: the same answer agents get from /api/v1/worker-health. */
+  app.get("/:id/health", async (c) => {
+    const parsed = historyQuery.safeParse(c.req.query())
+    if (!parsed.success) return c.json({ error: "invalid", message: "Choose a range of 1 to 720 hours." }, 400)
+    try {
+      return c.json(await workerHealth(ctx, { id: c.req.param("id") }, parsed.data))
+    } catch (e) {
+      if (!(e instanceof WorkerHealthError)) throw e
+      const [body, status] = refusal(e)
+      return c.json(body, status)
+    }
   })
 
   /**

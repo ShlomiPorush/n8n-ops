@@ -5,6 +5,7 @@ import { serve } from "@hono/node-server"
 import { RESPONSE_ALREADY_SENT } from "@hono/node-server/utils/response"
 import { Hono } from "hono"
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest"
+import { AGENT_IDLE_MAX_DAYS } from "../lib/settings.ts"
 import { type AgentProvider, CLI_CLIENT, createAgentProvider, resources, SCOPES } from "./provider.ts"
 
 /*
@@ -159,7 +160,39 @@ describe("agents connecting through the browser (MCP)", () => {
       device_authorization_endpoint: `${base}/oauth/device`,
       registration_endpoint: `${base}/oauth/register`,
       code_challenge_methods_supported: ["S256"],
+      token_endpoint_auth_methods_supported: ["none"],
+      authorization_response_iss_parameter_supported: true,
     })
+  })
+
+  it("registers public clients that come back to https or this computer, and drops the scopes they ask for", async () => {
+    const go = browser()
+    const ok = await go("/oauth/register", {
+      json: { redirect_uris: ["http://127.0.0.1:3000/cb", "https://app.example.com/cb"], scope: "ops:read ops:access" },
+    })
+    expect(ok.status).toBe(201)
+    expect(ok.data.scope).toBeUndefined()
+    expect(ok.data.token_endpoint_auth_method).toBe("none")
+    for (const redirect_uris of [
+      ["http://app.example.com/cb"],
+      ["https://app.example.com/cb#frag"],
+      ["https://user:pw@app.example.com/cb"],
+      [],
+      Array.from({ length: 6 }, (_, i) => `https://app.example.com/${i}`),
+    ]) {
+      const bad = await go("/oauth/register", { json: { redirect_uris } })
+      expect(bad.status, JSON.stringify(redirect_uris)).toBe(400)
+      expect(bad.data.error).toBe("invalid_client_metadata")
+    }
+    const secret = await go("/oauth/register", {
+      json: { redirect_uris: ["https://app.example.com/cb"], token_endpoint_auth_method: "client_secret_basic" },
+    })
+    expect(secret.status).toBe(400)
+    // The skill's built-in client has no redirect and keeps working.
+    const device = await go("/oauth/device", {
+      form: { client_id: CLI_CLIENT, scope: "ops:read offline_access", resource: resources(base).rest },
+    })
+    expect(device.status).toBe(200)
   })
 
   it("issues no sender-constrained tokens, which the resources would not check", async () => {
@@ -264,22 +297,24 @@ describe("agents connecting through the browser (MCP)", () => {
     expect(await check(tokens.access_token)).toBeTruthy()
   })
 
-  it("lapses after 90 days without a refresh, not after 89", async () => {
+  // n8n-ops ends a connection after the idle period it is set to (oauth/agents.ts); the refresh token lasts a day
+  // longer than the longest idle period, so the authorization server never ends a connection first.
+  it("keeps a refresh token one day longer than the longest idle period, and no longer", async () => {
     const { tokens, clientId } = await connectMcp([SCOPES.read])
-    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 89 * 86_400_000 })
-    const day89 = await tokenRequest({
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + AGENT_IDLE_MAX_DAYS * 86_400_000 })
+    const atMax = await tokenRequest({
       grant_type: "refresh_token",
       refresh_token: tokens.refresh_token,
       client_id: clientId,
     })
-    expect(day89.status).toBe(200)
-    vi.setSystemTime(Date.now() + 91 * 86_400_000)
-    const day180 = await tokenRequest({
+    expect(atMax.status).toBe(200)
+    vi.setSystemTime(Date.now() + (AGENT_IDLE_MAX_DAYS + 2) * 86_400_000)
+    const past = await tokenRequest({
       grant_type: "refresh_token",
-      refresh_token: day89.data.refresh_token,
+      refresh_token: atMax.data.refresh_token,
       client_id: clientId,
     })
-    expect(day180.status).toBe(400)
+    expect(past.status).toBe(400)
   })
 })
 

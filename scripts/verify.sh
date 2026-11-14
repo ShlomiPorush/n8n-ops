@@ -110,10 +110,12 @@ esac
 changed_files() {
   local base
   base="$(git -C "$REPO_ROOT" merge-base "$CHANGED_BASE" HEAD)" || die "cannot find a merge base with $CHANGED_BASE"
+  # Without renames, a file moved out of a directory still counts as a change there. NUL-separated, so git does not
+  # quote a path with other than plain characters, which would hide where it is.
   {
-    git -C "$REPO_ROOT" diff --name-only "$base"
-    git -C "$REPO_ROOT" ls-files --others --exclude-standard
-  } | sort -u
+    git -C "$REPO_ROOT" diff --name-only --no-renames -z "$base"
+    git -C "$REPO_ROOT" ls-files --others --exclude-standard -z
+  } | sort -zu
 }
 
 run_guards() {
@@ -178,6 +180,12 @@ run_checks() {
     # CHANGELOG.md would build apps/web twice at once into the same dist. Shared root files already
     # force a full sweep (main), so nothing is left unchecked.
     filter=(--filter "...[$CHANGED_BASE]" --filter "!n8n-ops")
+    # The server's tests run the skill's files (apps/server/src/oauth/skill.test.ts), though the server does not
+    # depend on the skill as a package. The files come from main. grep without -q reads all of its input, so its
+    # producer never fails with SIGPIPE, which pipefail would turn into no match.
+    if printf '%s\n' "${files[@]}" | grep '^packages/skill/' >/dev/null; then
+      filter+=(--filter @n8n-ops/server)
+    fi
   fi
   info "Install"
   install_deps
@@ -259,8 +267,12 @@ start_stack() {
   }
   check_non_root "$PROJECT" server postgres worker
   check_socket_proxy "$PROJECT"
-  # The worker never gets database credentials (only the names are read, never printed).
-  if stack exec -T worker env | grep -qE '^(DATABASE_URL|POSTGRES_PASSWORD|POSTGRES_USER)='; then
+  # The worker never gets database credentials. Only the names are read, never the values (one may span lines), and a
+  # failed read fails the check: in a pipe, grep -q could end the reading with SIGPIPE, which pipefail reads as no match.
+  local names
+  names="$(stack exec -T -u node worker node -e 'console.log(Object.keys(process.env).join("\n"))')" ||
+    die "could not read the names in the worker's environment"
+  if grep -qxE '(DATABASE_URL|POSTGRES_PASSWORD|POSTGRES_USER)' <<<"$names"; then
     die "the worker has database credentials"
   fi
 }
@@ -283,10 +295,15 @@ seed_design() {
 # round of a full sweep, and in CI in the Integration job only.
 run_checks_on_stack() {
   info "Integration: health endpoint"
-  TOOLCHAIN_EXTRA_ARGS=(--network "${PROJECT}_default")
+  # The version the server reports is the image's VERSION file, read as node: the repository's VERSION.
+  local version
+  version="$(head -n 1 "$REPO_ROOT/VERSION")"
+  TOOLCHAIN_EXTRA_ARGS=(--network "${PROJECT}_default" -e "WANT_VERSION=$version")
   # shellcheck disable=SC2016 # expands inside the container
-  in_toolchain 'body="$(node -e "fetch(\"http://server:8080/healthz/ready\").then(async r => { console.log(r.status, await r.text()); process.exit(r.ok ? 0 : 1) })")" && echo "    $body" && grep -q "\"database\":\"ok\"" <<<"$body"' ||
-    die "server is not ready"
+  in_toolchain 'body="$(node -e "fetch(\"http://server:8080/healthz/ready\").then(async r => { console.log(r.status, await r.text()); process.exit(r.ok ? 0 : 1) })")" && echo "    $body" && grep -q "\"database\":\"ok\"" <<<"$body" && grep -qF "\"version\":\"$WANT_VERSION\"" <<<"$body"' ||
+    die "server is not ready, or does not report the version in VERSION ($version)"
+  [ "$(stack exec -T -u node worker head -n 1 /app/VERSION)" = "$version" ] ||
+    die "the worker image's VERSION is not readable as node or is not $version"
   TOOLCHAIN_EXTRA_ARGS=()
 
   info "Integration: the socket proxy allows only what the worker needs"
@@ -554,11 +571,17 @@ run_round() {
 run_e2e() {
   local design="$1" app="$2"
   wait_for_pulls "$PLAYWRIGHT_IMAGE"
-  # The alias lets the server reach the stand-in Telegram Bot API that the tests run (TELEGRAM_API_URL). The
-  # session spec moves its session's clocks in the database, since the server's clock cannot be moved.
-  docker run --rm --network "${PROJECT}_default" --network-alias e2e-runner \
+  # The tests run in the server container's network, as a browser on the server's own computer would: they reach it
+  # at http://localhost:8080, where agents may connect over plain http with no exception for tests, and the server
+  # reaches the stand-in Telegram Bot API they run at localhost:8099 (TELEGRAM_API_URL). The stack's other services
+  # keep their names. The session spec moves its session's clocks in the database, since the server's clock cannot
+  # be moved.
+  local server
+  server="$(stack ps -q server)"
+  [ -n "$server" ] || die "the server container is not running"
+  docker run --rm --network "container:$server" \
     --user "$(id -u):$(id -g)" -e HOME=/tmp -e CI="${CI:-}" -e E2E_DESIGN="$design" \
-    -e E2E_BASE_URL=http://server:8080 -e E2E_N8N_CONTAINER="${PROJECT}-n8n-1" \
+    -e E2E_BASE_URL=http://localhost:8080 -e E2E_N8N_CONTAINER="${PROJECT}-n8n-1" \
     --env-file "$RUN_ENV_DIR/tests.env" \
     -v "$N8N_OPS_DATA_DIR/pairing:/worker-data" -v "$N8N_OPS_DATA_DIR/backups:/backups-data:ro" \
     -v "$REPO_ROOT:/repo" -w "/repo/$app" \
@@ -573,9 +596,10 @@ run_e2e() {
 # checks run in the first round only, except those on the stack itself, which run in each round.
 run_integration() {
   info "Integration: images and stack"
-  build_images verify "verify-$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
-  # Telegram calls go to the stand-in Bot API inside the end-to-end test runner, never to Telegram.
-  export TELEGRAM_API_URL="http://e2e-runner:8099"
+  build_images verify
+  # Telegram calls go to the stand-in Bot API inside the end-to-end test runner, never to Telegram. The runner shares
+  # the server's network (run_e2e), so the stand-in is on the server's localhost.
+  export TELEGRAM_API_URL="http://localhost:8099"
   STACK_USED=1
   local design
   for design in "${DESIGNS[@]}"; do
@@ -633,13 +657,17 @@ main() {
   trap 'exit 143' TERM
 
   if [ -n "$CHANGED_BASE" ]; then
-    mapfile -t files < <(changed_files)
+    mapfile -d '' -t files < <(changed_files)
+    # mapfile does not see the status of the process substitution: a failed merge-base would read as no changes.
+    wait $! || die "could not list the files changed since $CHANGED_BASE"
     if [ ${#files[@]} -eq 0 ]; then
       info "No changes since $CHANGED_BASE"
       CHECKS=0 INTEGRATION=0 E2E=0
-    elif printf '%s\n' "${files[@]}" | grep -qvE '^(docs/|README\.md$|AGENTS\.md$|CHANGELOG\.md$|LICENSE$)'; then
+    # grep without -q, as in run_checks: with -q a long list could fail with SIGPIPE and read as no match.
+    elif printf '%s\n' "${files[@]}" | grep -vE '^(docs/|README\.md$|AGENTS\.md$|CHANGELOG\.md$|LICENSE$)' >/dev/null; then
       # Shared root files, config or images: the package filter cannot see their consumers, so run everything.
-      if printf '%s\n' "${files[@]}" | grep -qE '^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|biome\.json|config/|docker/|docker-compose\.yml|scripts/lib/)'; then
+      if printf '%s\n' "${files[@]}" |
+        grep -E '^(VERSION$|package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|biome\.json|config/|docker/|docker-compose\.yml|scripts/lib/)' >/dev/null; then
         info "Shared files changed: full sweep"
         CHANGED_BASE=""
       fi

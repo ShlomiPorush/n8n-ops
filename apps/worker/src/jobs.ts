@@ -61,6 +61,8 @@ function replaced(
 }
 
 export type Uploader = (size: number, sha256: string) => Promise<{ url: string; headers: Record<string, string> }>
+/** Sends the archive to the server; the Worker passes one that counts a failed upload as a failed call. */
+export type Put = (url: string, init: RequestInit) => Promise<Response>
 
 const WORK = "/tmp/n8n-ops-export"
 /** Printed between the two exports of a backup, so each one is judged by its own output. */
@@ -279,6 +281,7 @@ export async function backupJob(
   docker: Docker,
   payload: Record<string, unknown>,
   upload: Uploader,
+  put: Put = (url, init) => fetch(url, init),
 ): Promise<JobResult> {
   const recipient = String(payload.recipient)
   if (!recipient.startsWith("age1"))
@@ -328,7 +331,7 @@ cat ${WORK}.tar`,
       recipient,
     )
     const target = await upload(sealed.size, sealed.sha256Base64)
-    const res = await fetch(target.url, { method: "PUT", headers: target.headers, body: sealed.bytes })
+    const res = await put(target.url, { method: "PUT", headers: target.headers, body: sealed.bytes })
     if (!res.ok) throw new Error(`upload failed: HTTP ${res.status} ${(await res.text()).slice(0, 300)}`)
     return { ok: true, result: { size: sealed.size, sha256: sealed.sha256Base64, workflows, credentials } }
   } catch (error) {

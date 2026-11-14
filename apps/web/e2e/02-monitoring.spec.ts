@@ -146,6 +146,10 @@ test("the first sync imports existing failures as a problem", async () => {
   await page.goto("/problems")
   const row = page.getByRole("row", { name: /Sync orders to ERP/ })
   await expect(row).toBeVisible()
+  // It failed minutes ago: its tag says Failing now, and the figure above the list counts it.
+  await expect(row).toContainText("Failing now")
+  const sections = page.getByRole("navigation", { name: "Sections" })
+  await expect(sections.getByRole("link").filter({ hasText: "Failing now" })).toContainText("1")
   await row.click()
   await expect(page.getByText(message).first()).toBeVisible()
   await expect(page.getByText("failed here")).toBeVisible()

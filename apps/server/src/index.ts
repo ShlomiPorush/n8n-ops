@@ -4,6 +4,7 @@ import { writeSync } from "node:fs"
 import type { Server } from "node:http"
 import { serve } from "@hono/node-server"
 import { createApp } from "./app.ts"
+import { onTwoFactorReset } from "./auth/auth.ts"
 import { createAuthSource } from "./auth/current.ts"
 import { loadConfig } from "./config.ts"
 import { type Ctx, consoleLogger } from "./context.ts"
@@ -15,6 +16,7 @@ import { createSecrets, loadOrCreateAppKey } from "./lib/crypto.ts"
 import { createSettings } from "./lib/settings.ts"
 import { createAgentConnect } from "./oauth/agents.ts"
 import { UPLOAD_DEADLINE_MS } from "./routes/worker-api.ts"
+import { settleCompactions } from "./services/database.ts"
 import { regroupByCause } from "./services/regroup.ts"
 
 const config = loadConfig()
@@ -50,13 +52,27 @@ const ctx: Ctx = {
   events: new EventEmitter().setMaxListeners(100),
 }
 
-// The authorization server for agents signs its cookies with a key derived from the app key.
+// The authorization server for agents signs its cookies with a key derived from the app key. Its records go through
+// a small pool of their own: an approval holds a transaction of the main pool while the provider stores its grant.
 const cookieKey = Buffer.from(hkdfSync("sha256", key, "n8n-ops", "agent-connect-cookies", 32)).toString("base64")
-ctx.agents = createAgentConnect(ctx, { cookieKeys: [cookieKey], webDir: config.webDir, skillDir: config.skillDir })
+const storeDatabase = createDatabase(config.databaseUrl, { max: 4 })
+ctx.agents = createAgentConnect(ctx, {
+  cookieKeys: [cookieKey],
+  webDir: config.webDir,
+  skillDir: config.skillDir,
+  storeDb: storeDatabase.db,
+})
+// A two-factor reset ends every agent connection: whoever reset it may not be the person who approved them.
+onTwoFactorReset({
+  begin: (actor) => (ctx.agents as NonNullable<Ctx["agents"]>).beginReset({ by: actor, via: "web" }),
+  finish: (actor, id) => (ctx.agents as NonNullable<Ctx["agents"]>).finishReset({ by: actor, via: "web" }, id),
+})
 // Connections made under a public URL that has since changed end before the server takes a request.
 await ctx.agents.reconcile()
 
 await ctx.settings.loadDesign(log)
+// A table compaction whose answer was lost when the server stopped ends as unknown (services/database.ts).
+await settleCompactions(ctx)
 // Once, after the migrations and before any request or job: Problems recorded before become one per cause
 // (docs/adr/0003). A failure here stops the start with everything as it was, and the next start tries again.
 const regrouped = await regroupByCause(ctx)
@@ -80,7 +96,7 @@ const shutdown = (signal: string) => {
   log.info("shutting down", { signal })
   stop()
   server.close(() => {
-    void database.close().then(() => process.exit(0))
+    void Promise.all([database.close(), storeDatabase.close()]).then(() => process.exit(0))
   })
 }
 process.on("SIGTERM", () => shutdown("SIGTERM"))

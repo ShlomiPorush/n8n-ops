@@ -32,9 +32,9 @@ export const OTHER_PAGE = "Changes are accepted only from n8n-ops' own pages."
 
 /**
  * Refuses a change a browser could send from another page without asking the server first: Hono's csrf middleware
- * (a method other than GET or HEAD with a form-like or missing Content-Type, from a page that is not this
- * installation's by Sec-Fetch-Site or by `fromOwnPage`). Other changes need a CORS preflight, which no cookie route
- * grants. Returns the 403 answer, or null when the request may go on.
+ * (a method other than GET or HEAD with a form-like, `text/ping` or missing Content-Type, from a page that is not
+ * this installation's by Sec-Fetch-Site or by `fromOwnPage`). Other changes need a CORS preflight, which no cookie
+ * route grants. Returns the 403 answer, or null when the request may go on.
  */
 export async function fromAnotherPage(ctx: Pick<Ctx, "settings">, c: Context): Promise<Response | null> {
   const guard = csrf({ origin: async (_origin, cc) => fromOwnPage(cc, (await ctx.settings.get("general")).publicUrl) })

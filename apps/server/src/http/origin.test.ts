@@ -104,6 +104,8 @@ describe("requireUser", () => {
       expect(
         (await call("POST", { ...headers, "content-type": "application/x-www-form-urlencoded" }, "a=1")).status,
       ).toBe(403)
+      // A link's ping (Chromium's hyperlink auditing) is a POST with cookies that no preflight asks about.
+      expect((await call("POST", { ...headers, "content-type": "text/ping" }, "PING")).status).toBe(403)
     }
     expect(sessions.read).toBe(0)
   })

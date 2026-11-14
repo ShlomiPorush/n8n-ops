@@ -350,7 +350,7 @@ describe("passkeys at the public URL", () => {
     const before = await passkeyCount()
     const { res } = await register(await signIn(), { verified: false })
     expect(res.status).toBe(400)
-    expect(await res.json()).toMatchObject({ code: "USER_NOT_VERIFIED" })
+    expect(await res.json()).toMatchObject({ code: "FAILED_TO_VERIFY_REGISTRATION" })
     expect(await passkeyCount()).toBe(before)
   })
 
@@ -382,7 +382,7 @@ describe("passkeys at the public URL", () => {
     const logins = await auditCount("Login")
     const { res, cookie } = await passkeySignIn(laptop, { verified: false })
     expect(res.status).toBe(400)
-    expect(await res.json()).toMatchObject({ code: "USER_NOT_VERIFIED" })
+    expect(await res.json()).toMatchObject({ code: "AUTHENTICATION_FAILED" })
     expect(hasSession(cookie)).toBe(false)
     expect(await auditCount("Login")).toBe(logins)
   })

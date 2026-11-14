@@ -49,12 +49,6 @@ export function passkeyAddress(publicUrl: string | undefined): URL | null {
   }
 }
 
-const notVerified = () =>
-  new APIError("BAD_REQUEST", {
-    code: "USER_NOT_VERIFIED",
-    message: "The passkey did not confirm it was you (PIN or biometrics). Use one that asks for it.",
-  })
-
 /**
  * Better Auth: one local user; username and password with TOTP enforced by the API middleware, or a passkey.
  * `publicUrl` is N8N_OPS_PUBLIC_URL (Better Auth's base URL and secure cookies); `passkeyUrl` is the public URL in
@@ -199,19 +193,9 @@ export function createAuth(db: Db, appKey: Buffer, publicUrl?: string, passkeyUr
         rpName: "n8n-ops",
         ...(passkeyUrl ? { rpID: passkeyUrl.hostname, origin: passkeyUrl.origin } : {}),
         // Discoverable, so it signs in without a username, and user verification (PIN or biometrics), so one
-        // passkey counts as two factors. The plugin asks for verification only as "preferred" when signing in and
-        // does not require it, so both checks below refuse a passkey that did not verify the person.
+        // passkey counts as two factors. With userVerification "required" the plugin asks for it and refuses a
+        // registration or a sign-in that did not verify the person.
         authenticatorSelection: { residentKey: "required", userVerification: "required" },
-        registration: {
-          afterVerification: ({ verification }) => {
-            if (!verification.registrationInfo?.userVerified) throw notVerified()
-          },
-        },
-        authentication: {
-          afterVerification: ({ verification }) => {
-            if (!verification.authenticationInfo.userVerified) throw notVerified()
-          },
-        },
       }),
     ],
   })

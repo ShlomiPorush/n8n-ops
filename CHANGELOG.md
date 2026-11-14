@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Changed
+
+- **A passkey that does not check who you are is refused with the sign-in library's own message.** Signing in with it says "This passkey did not sign you in. Try another one, or your password.", and adding one says "Passkey not added: Failed to verify registration", where both used to name the missing PIN or biometrics. Such a passkey is still refused, and the browser usually stops it before it reaches n8n-ops.
+
+### Security
+
+- **The server carries Nodemailer 10.5.0**, which includes the fixes of 10.4.1 for two cases where the domain a message was delivered to could differ from the one an application had checked. In n8n-ops the recipients come only from Settings → Email, which only a signed-in person can change.
+
 ## [0.18.2] - 2026-11-14
 
 ### Security

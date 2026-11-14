@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Security
+
+- **A link on another site can no longer make a change with the signed-in person's session.** Chrome and Edge send a link's ping as a POST with cookies, and the check that changes come only from n8n-ops' own pages did not look at it (GHSA-46wx-v44x-9hh2). The server now carries Hono 4.13.18 and @hono/node-server 2.1.8, which also fix: a request path with an encoded line break reached the not-found answer without the server's checks that apply to every path (GHSA-h7mg-cq63-vhpq), and a backslash in a path is refused with 400 instead of read as `/`, which mattered only behind a proxy that blocks paths (GHSA-jpvv-r467-5p4w). Other fixes in these releases are in parts n8n-ops does not use.
+
 ## [0.18.1] - 2026-11-13
 
 ### Changed

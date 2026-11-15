@@ -737,3 +737,57 @@ describe("the instance setup (0015)", () => {
     }
   })
 })
+
+describe("the single account (0033)", () => {
+  const singleIndex = async (sql: postgres.Sql) => {
+    const [row] = await sql<
+      { n: number }[]
+    >`select count(*)::int as n from pg_indexes where indexname = 'auth_user_single'`
+    return row?.n === 1
+  }
+  const addAccount = (sql: postgres.Sql, name: string) =>
+    sql`insert into auth_user (id, name, email, username) values (${name}, ${name}, ${`${name}@n8n-ops.local`}, ${name})`
+
+  it("allows at most one account on a new installation and on one that has its account", async () => {
+    for (const existing of [[], ["operator"]]) {
+      const { sql, db, close } = await freshDatabase()
+      try {
+        await migrate(db, { migrationsFolder: migrationsUpTo("0032_agent_access_standard") })
+        for (const name of existing) await addAccount(sql, name)
+        await migrate(db, { migrationsFolder: migrationsUpTo(null) })
+        expect(await singleIndex(sql)).toBe(true)
+        if (!existing.length) await addAccount(sql, "operator")
+        const [kept] = await sql<{ username: string }[]>`select username from auth_user`
+        expect(kept?.username).toBe("operator")
+        await expect(addAccount(sql, "second")).rejects.toMatchObject({
+          code: "23505",
+          constraint_name: "auth_user_single",
+        })
+      } finally {
+        await close()
+      }
+    }
+  })
+
+  it("stops the upgrade, changing nothing, when an installation holds more than one account", async () => {
+    const { sql, db, close } = await freshDatabase()
+    try {
+      await migrate(db, { migrationsFolder: migrationsUpTo("0032_agent_access_standard") })
+      await addAccount(sql, "operator")
+      await addAccount(sql, "second")
+      const failure = await migrate(db, { migrationsFolder: migrationsUpTo(null) }).then(
+        () => null,
+        (error: unknown) => error,
+      )
+      const messages: string[] = []
+      for (let e = failure, depth = 0; e && depth < 5; e = (e as { cause?: unknown }).cause, depth++)
+        messages.push(String((e as { message?: unknown }).message))
+      expect(messages.join("\n")).toMatch(/holds 2 accounts/)
+      expect(await singleIndex(sql)).toBe(false)
+      const rows = await sql<{ username: string }[]>`select username from auth_user order by username`
+      expect(rows.map((r) => r.username)).toEqual(["operator", "second"])
+    } finally {
+      await close()
+    }
+  })
+})

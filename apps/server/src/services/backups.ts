@@ -393,27 +393,155 @@ async function maybeSelfBackup(ctx: Ctx, local: { date: string; time: string }) 
 }
 
 export async function runSelfBackup(ctx: Ctx) {
-  const destinations = await destinationsFor(ctx, null)
-  if (!destinations.length) throw new NoDestinationError("The n8n-ops database")
-  const created = await createRun(ctx, null, destinations)
-  if (!created) throw new Error("could not record the backup run")
-  const { run } = created
+  const url = process.env.DATABASE_URL ?? ""
+  const connection = connectionSecrets(url)
+  let run: Run
+  try {
+    const destinations = await destinationsFor(ctx, null)
+    if (!destinations.length) throw new NoDestinationError("The n8n-ops database")
+    const created = await createRun(ctx, null, destinations)
+    if (!created) throw new Error("could not record the backup run")
+    run = created.run
+  } catch (error) {
+    if (error instanceof NoDestinationError) throw error
+    throw new Error(cleanFailure(errorText(error), connection))
+  }
   void (async () => {
     try {
       const recipient = await backupRecipient(ctx)
-      const url = process.env.DATABASE_URL
       if (!url) throw new Error("DATABASE_URL is not set")
-      const { stdout } = await exec("pg_dump", ["--format=custom", "--no-owner", url], {
-        encoding: "buffer",
-        maxBuffer: await maxArchiveBytes(ctx),
-      })
+      let stdout: Buffer
+      try {
+        ;({ stdout } = await exec("pg_dump", ["--format=custom", "--no-owner", url], {
+          encoding: "buffer",
+          maxBuffer: await maxArchiveBytes(ctx),
+        }))
+      } catch (error) {
+        throw new Error(dumpFailure(error))
+      }
       const sealed = await sealBytes(new Uint8Array(stdout), recipient)
       await spoolSealed(ctx, run.id, sealed.bytes)
     } catch (error) {
-      await failRun(ctx, run.id, (error as Error).message)
+      await recordSelfFailure(ctx, run.id, errorText(error), connection)
     }
   })()
   return run
+}
+
+/** Shown instead of a failure whose text would show the database connection or a piece of its password. */
+export const CONNECTION_HIDDEN =
+  "The backup failed. Its details are not shown because they would show the database connection."
+
+export type ConnectionSecrets = {
+  url: string
+  /** Every form of the password a failure text could repeat. */
+  passwords: string[]
+  /** The password holds an "@" as written: libpq then reads part of it as the host and may quote it. */
+  atInPassword: boolean
+}
+
+const withoutBlanks = (text: string) => text.replace(/[\s\p{Cc}]/gu, "")
+const decodedOrSame = (text: string) => {
+  try {
+    return decodeURIComponent(text)
+  } catch {
+    return text
+  }
+}
+
+/**
+ * What a failure of the n8n-ops database's own backup must never show, from `DATABASE_URL`: the password as written
+ * in it, as the URL standard reads it, decoded, without blanks, and the same for each parameter after "?" or "#"
+ * whose name holds "password". It only decides what is hidden; pg_dump always gets `DATABASE_URL` as it is.
+ */
+export function connectionSecrets(url: string): ConnectionSecrets {
+  const passwords = new Set<string>()
+  const add = (value: string) => {
+    for (const form of [value, decodedOrSame(value)])
+      for (const f of [form, withoutBlanks(form)]) if (f) passwords.add(f)
+  }
+  let atInPassword = false
+  const start = url.indexOf("//")
+  if (start >= 0) {
+    // As written: the authority ends at the first "/", "?" or "#"; the user part ends at its last "@", and the
+    // password follows the first ":" in it.
+    const rest = url.slice(start + 2)
+    const end = rest.search(/[/?#]/)
+    const authority = end < 0 ? rest : rest.slice(0, end)
+    const at = authority.lastIndexOf("@")
+    const colon = at < 0 ? -1 : authority.indexOf(":")
+    if (colon >= 0 && colon < at) {
+      const written = authority.slice(colon + 1, at)
+      add(written)
+      atInPassword = written.includes("@")
+    }
+    const tail = end < 0 ? "" : rest.slice(end)
+    const params = tail.search(/[?#]/)
+    if (params >= 0)
+      for (const segment of tail.slice(params + 1).split(/[?&#]/)) {
+        const eq = segment.indexOf("=")
+        if (
+          eq >= 0 &&
+          withoutBlanks(decodedOrSame(segment.slice(0, eq)))
+            .toLowerCase()
+            .includes("password")
+        )
+          add(segment.slice(eq + 1))
+      }
+  }
+  try {
+    const parsed = new URL(url)
+    add(parsed.password)
+    for (const [name, value] of [...parsed.searchParams, ...new URLSearchParams(parsed.hash.slice(1))])
+      if (name.toLowerCase().includes("password")) add(value)
+  } catch {
+    // Not a URL the standard reads: the forms as written above are all there is.
+  }
+  return { url, passwords: [...passwords], atInPassword }
+}
+
+/**
+ * A failure text fit to store, log and send: the URL itself becomes "[database URL]", and a text that would still
+ * show any form of the password, or 8 characters of one, is replaced as a whole.
+ */
+export function cleanFailure(text: string, { url, passwords, atInPassword }: ConnectionSecrets) {
+  if (atInPassword) return CONNECTION_HIDDEN
+  const cleaned = url ? text.split(url).join("[database URL]") : text
+  for (const password of passwords) {
+    const size = Math.min(8, password.length)
+    for (let i = 0; i + size <= password.length; i++)
+      if (cleaned.includes(password.slice(i, i + size))) return CONNECTION_HIDDEN
+  }
+  return cleaned
+}
+
+/** How pg_dump ended and what it wrote to stderr; never its command line, which holds the connection. */
+export function dumpFailure(error: unknown) {
+  const { code, signal, stderr } = (error ?? {}) as { code?: unknown; signal?: unknown; stderr?: unknown }
+  const how = signal
+    ? `pg_dump was stopped by ${String(signal)}.`
+    : typeof code === "number"
+      ? `pg_dump ended with exit code ${code}.`
+      : `pg_dump failed (${typeof code === "string" ? code : "unknown error"}).`
+  const said = (Buffer.isBuffer(stderr) ? stderr.toString("utf8") : typeof stderr === "string" ? stderr : "").trim()
+  return said ? `${how}\n${said}` : how
+}
+
+const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error))
+
+/** Records a failed run of the database's own backup with a cleaned text; never throws, never logs the error itself. */
+export async function recordSelfFailure(
+  ctx: Ctx,
+  runId: string,
+  text: string,
+  connection: ConnectionSecrets,
+  record: typeof failRun = failRun,
+) {
+  try {
+    await record(ctx, runId, cleanFailure(text, connection))
+  } catch (error) {
+    ctx.log.error("could not record the failed backup", { error: cleanFailure(errorText(error), connection) })
+  }
 }
 
 // ---------------------------------------------------------------------------

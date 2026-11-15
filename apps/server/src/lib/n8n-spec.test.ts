@@ -47,6 +47,9 @@ paths:
   /workflows/{workflowId}/dependencies:
     get:
       x-required-scope: workflow:read
+  /workflows/{workflowId}/{workflowVersionId}:
+    get:
+      x-required-scope: workflow:read
   /n8n-packages/export:
     post:
       x-required-scope: project:export,workflow:export
@@ -131,6 +134,11 @@ describe("n8n API description", () => {
 
   it("prefers a literal path over a parameter", () => {
     expect(matchOperation(spec, "POST", "/executions/stop")?.op.template).toBe("/executions/stop")
+  })
+
+  it("matches paths without regard to case, as n8n routes them, and keeps the values as sent", () => {
+    expect(matchOperation(spec, "POST", "/Executions/STOP")?.op.template).toBe("/executions/stop")
+    expect(matchOperation(spec, "GET", "/WORKFLOWS/AbC")?.params).toEqual({ workflowId: "AbC" })
   })
 
   it("knows nothing outside the description", () => {
@@ -229,6 +237,7 @@ describe("access checks", () => {
       ["DELETE", "/projects/p1"],
       ["PUT", "/tags/t1"],
       ["GET", "/workflows/w1/dependencies"],
+      ["GET", "/workflows/w1/Dependencies/"],
       ["GET", "/credentials/c1/dependencies"],
       ["POST", "/archive/w1"],
       ["GET", "/discover"],
@@ -252,6 +261,7 @@ describe("access checks", () => {
         expect(!d.allowed && d.reason, `${method} ${path}`).toContain("whole instance")
       }
       expect(checkCall(wideSpec, wide, "GET", "/workflows/w1", none).allowed).toBe(true)
+      expect(checkCall(wideSpec, wide, "GET", "/workflows/w1/v3", none).allowed).toBe(true)
     })
 
     it("reaches the instance's credentials", () => {

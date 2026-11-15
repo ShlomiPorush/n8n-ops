@@ -62,6 +62,9 @@ export class N8nError extends Error {
 
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>
 
+/** n8n gives at most 250 workflows a page, so this reads up to 100,000 workflows. */
+export const MAX_WORKFLOW_PAGES = 400
+
 export class N8nClient {
   constructor(
     readonly baseUrl: string,
@@ -79,8 +82,13 @@ export class N8nClient {
   private async api<T>(
     method: string,
     path: string,
-    { query, body }: { query?: Record<string, string | number | boolean | undefined>; body?: unknown } = {},
+    {
+      query,
+      body,
+      signal,
+    }: { query?: Record<string, string | number | boolean | undefined>; body?: unknown; signal?: AbortSignal } = {},
   ): Promise<T> {
+    const timeout = AbortSignal.timeout(this.timeoutMs)
     const res = await this.fetchImpl(this.url(`/api/v1${path}`, query), {
       method,
       headers: {
@@ -89,7 +97,7 @@ export class N8nClient {
         ...(body !== undefined ? { "content-type": "application/json" } : {}),
       },
       body: body !== undefined ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(this.timeoutMs),
+      signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
     })
     const text = await res.text()
     if (!res.ok) throw new N8nError(`n8n answered ${res.status} for ${method} ${path}`, res.status, text.slice(0, 500))
@@ -114,32 +122,44 @@ export class N8nClient {
     })
   }
 
-  listExecutions(query: {
-    status?: string
-    workflowId?: string
-    limit?: number
-    cursor?: string
-    startedAfter?: string
-  }) {
-    return this.api<{ data: N8nExecution[]; nextCursor: string | null }>("GET", "/executions", { query })
+  listExecutions(
+    query: {
+      status?: string
+      workflowId?: string
+      limit?: number
+      cursor?: string
+      startedAfter?: string
+    },
+    signal?: AbortSignal,
+  ) {
+    return this.api<{ data: N8nExecution[]; nextCursor: string | null }>("GET", "/executions", { query, signal })
   }
 
   getExecution(id: string) {
     return this.api<N8nExecution>("GET", `/executions/${encodeURIComponent(id)}`, { query: { includeData: true } })
   }
 
-  /** Every workflow, or those n8n finds by `name` (callers still compare the name exactly). */
-  async listWorkflows(name?: string): Promise<N8nWorkflow[]> {
+  /**
+   * Every workflow, or those n8n finds by `name` (callers still compare the name exactly). Throws rather than return
+   * part of the list when n8n gives a cursor it gave before, or more than MAX_WORKFLOW_PAGES pages, or `signal` aborts.
+   */
+  async listWorkflows(name?: string, signal?: AbortSignal): Promise<N8nWorkflow[]> {
     const all: N8nWorkflow[] = []
+    const seen = new Set<string>()
     let cursor: string | undefined
-    do {
+    for (let pages = 1; ; pages++) {
+      signal?.throwIfAborted()
       const page = await this.api<{ data: N8nWorkflow[]; nextCursor: string | null }>("GET", "/workflows", {
         query: { limit: 250, cursor, name },
+        signal,
       })
       all.push(...page.data)
       cursor = page.nextCursor ?? undefined
-    } while (cursor)
-    return all
+      if (!cursor) return all
+      if (seen.has(cursor)) throw new Error("n8n repeated a page cursor while listing workflows")
+      if (pages >= MAX_WORKFLOW_PAGES) throw new Error(`n8n listed more than ${MAX_WORKFLOW_PAGES} pages of workflows`)
+      seen.add(cursor)
+    }
   }
 
   getWorkflow(id: string) {

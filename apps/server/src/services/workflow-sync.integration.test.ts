@@ -12,8 +12,10 @@ import { createSecrets } from "../lib/crypto.ts"
 import { lastWorkflowSync, syncWorkflows, syncWorkflowsSoon, workflowSyncBusy } from "./workflows.ts"
 
 // Syncs of the workflow map against a real PostgreSQL and a stand-in n8n that holds each workflow list until the
-// test lets it go: requests for an instance join the one waiting, few instances sync at once, and a sync that
-// waited reads the instance again when it starts.
+// test lets it go: requests for an instance join the one waiting, few instances sync at once, a sync that
+// waited reads the instance again when it starts, and a sync of an n8n whose lists never end gives its slot back.
+// The stand-in answers under a path prefix of the instance's address: `/endless` gives a new workflow cursor on
+// every page, `/slow-runs` lists one workflow at once and runs a page at a time with no end.
 const adminUrl = process.env.MIGRATION_DATABASE_URL
 if (!adminUrl) throw new Error("MIGRATION_DATABASE_URL is required (scripts/verify.sh sets it)")
 
@@ -25,14 +27,14 @@ let server: Server
 let baseUrl: string
 
 const KEY = randomBytes(24).toString("hex")
-const n8n = { reads: 0, open: 0, mostOpen: 0, held: [] as (() => void)[] }
+const n8n = { reads: 0, open: 0, mostOpen: 0, runPages: 0, held: [] as (() => void)[] }
 
 /** Lets every workflow list that is waiting go, and waits until the next one asks, if any. */
 const release = () => {
   for (const go of n8n.held.splice(0)) go()
 }
-const until = async (check: () => boolean) => {
-  for (let i = 0; i < 200 && !check(); i++) await new Promise((r) => setTimeout(r, 10))
+const until = async (check: () => boolean, tries = 200) => {
+  for (let i = 0; i < tries && !check(); i++) await new Promise((r) => setTimeout(r, 10))
   expect(check()).toBe(true)
 }
 
@@ -53,7 +55,18 @@ beforeAll(async () => {
       res.writeHead(200, { "content-type": "application/json" })
       res.end(JSON.stringify(body))
     }
-    const path = (req.url ?? "").split("?")[0]
+    const url = new URL(req.url ?? "", "http://n8n")
+    const page = Number(url.searchParams.get("cursor") ?? 0) + 1
+    const trigger = { name: "Start", type: "n8n-nodes-base.manualTrigger", parameters: {} }
+    if (url.pathname === "/endless/api/v1/workflows") return send({ data: [], nextCursor: String(page) })
+    if (url.pathname === "/slow-runs/api/v1/workflows")
+      return send({ data: [{ id: "wf-1", name: "Mapped", active: true, nodes: [trigger], connections: {} }] })
+    if (url.pathname === "/slow-runs/api/v1/executions") {
+      n8n.runPages += 1
+      await new Promise((r) => setTimeout(r, 50))
+      return send({ data: [], nextCursor: String(page) })
+    }
+    const path = url.pathname
     if (path === "/api/v1/executions") return send({ data: [], nextCursor: null })
     if (path !== "/api/v1/workflows") {
       res.writeHead(404)
@@ -64,7 +77,6 @@ beforeAll(async () => {
     n8n.mostOpen = Math.max(n8n.mostOpen, n8n.open)
     await new Promise<void>((go) => n8n.held.push(go))
     n8n.open -= 1
-    const trigger = { name: "Start", type: "n8n-nodes-base.manualTrigger", parameters: {} }
     send({ data: [{ id: "wf-1", name: "Mapped", active: true, nodes: [trigger], connections: {} }], nextCursor: null })
   })
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
@@ -82,17 +94,17 @@ afterAll(async () => {
 
 beforeEach(() => {
   release()
-  Object.assign(n8n, { reads: 0, open: 0, mostOpen: 0 })
+  Object.assign(n8n, { reads: 0, open: 0, mostOpen: 0, runPages: 0 })
 })
 
 let seq = 0
-async function instance() {
+async function instance(prefix = "") {
   seq += 1
   const [row] = await ctx.db
     .insert(instances)
     .values({
       name: `sync-${seq}`,
-      baseUrl,
+      baseUrl: `${baseUrl}${prefix}`,
       apiKeyEnc: ctx.secrets.encrypt(KEY),
       scopes: ["workflow:list", "workflow:read", "execution:list"],
       scopesCheckedAt: new Date(),
@@ -158,5 +170,46 @@ describe("workflow map syncs", () => {
     expect(n8n.reads).toBe(1)
     const rows = await ctx.db.select().from(workflows).where(eq(workflows.instanceId, i.id))
     expect(rows.map((w) => w.workflowId)).toEqual(["wf-1"])
+  })
+
+  it("give their slot back when an n8n never ends its workflow list, so other instances still sync", async () => {
+    const endless = await Promise.all([instance("/endless"), instance("/endless")])
+    const failed = endless.map((i) =>
+      syncWorkflows(ctx, i).then(
+        () => "synced",
+        (e: Error) => e.message,
+      ),
+    )
+    const other = await instance()
+    const synced = syncWorkflows(ctx, other)
+    // It starts once the two endless lists have each failed at their page limit.
+    await until(() => n8n.reads === 1, 3_000)
+    release()
+    expect(await synced).toEqual({ workflows: 1 })
+    expect(await Promise.all(failed)).toEqual([
+      "n8n listed more than 400 pages of workflows",
+      "n8n listed more than 400 pages of workflows",
+    ])
+    // Both slots are free again: two instances sync at once.
+    const next = await Promise.all([instance(), instance()])
+    const both = next.map((i) => syncWorkflows(ctx, i))
+    await until(() => n8n.open === 2)
+    release()
+    expect(await Promise.all(both)).toEqual([{ workflows: 1 }, { workflows: 1 }])
+  })
+
+  it("stop reading at the deadline and keep the workflow map of the last complete sync", async () => {
+    const i = await instance("/slow-runs")
+    const kept = { name: "Kept", active: true, triggerType: "manual", structureHash: "h", nodeCount: 1 }
+    await ctx.db.insert(workflows).values({ instanceId: i.id, workflowId: "wf-kept", ...kept })
+    const started = Date.now()
+    await expect(syncWorkflows(ctx, i, { readDeadlineMs: 300 })).rejects.toThrow(
+      `The workflow sync of ${i.name} stopped: reading it from n8n took longer than`,
+    )
+    expect(Date.now() - started).toBeLessThan(5_000)
+    expect(n8n.runPages).toBeGreaterThan(0)
+    expect(workflowSyncBusy(i.id)).toBe(false)
+    const rows = await ctx.db.select().from(workflows).where(eq(workflows.instanceId, i.id))
+    expect(rows.map((w) => w.workflowId)).toEqual(["wf-kept"])
   })
 })

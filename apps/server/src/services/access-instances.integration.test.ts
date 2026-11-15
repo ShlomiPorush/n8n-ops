@@ -5,7 +5,7 @@ import { createServer, type Server } from "node:http"
 import type { AddressInfo } from "node:net"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { and, desc, eq, sql } from "drizzle-orm"
+import { and, desc, eq, inArray, sql } from "drizzle-orm"
 import postgres from "postgres"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import type { Ctx } from "../context.ts"
@@ -19,10 +19,12 @@ import {
   type AccessRequestInput,
   approveAccess,
   collectAccess,
+  denyAccess,
   editDraft,
   getAccess,
   grantForKey,
   instancesOf,
+  releaseAccess,
   requestAccess,
   revokeAccess,
 } from "./access.ts"
@@ -822,5 +824,42 @@ describe("the upgrade to requests for several instances", () => {
           .where(eq(accessRequests.id, ids[0] as string))
       )[0]?.status,
     ).toBe("approved")
+  })
+})
+
+describe("the limit on requests waiting for a decision", () => {
+  it("counts a request the agent released before a decision until the time it would have expired", async () => {
+    const token = await agent()
+    const a = await openInstance()
+    const released: string[] = []
+    for (let i = 0; i < 3; i++) {
+      const { id } = await requestAccess(ctx, token, ask([a.name]))
+      await releaseAccess(ctx, token, id)
+      released.push(id)
+    }
+    await expect(requestAccess(ctx, token, ask([a.name]))).rejects.toMatchObject({ code: "too_many_pending" })
+
+    await ctx.db
+      .update(accessRequests)
+      .set({ decideBy: new Date(Date.now() - 1_000) })
+      .where(inArray(accessRequests.id, released))
+    const next = await requestAccess(ctx, token, ask([a.name]))
+    expect(next.status).toBe("pending")
+  })
+
+  it("frees the place of a request a person decided or ended", async () => {
+    const token = await agent()
+    const a = await openInstance()
+    const approved = await requestAccess(ctx, token, ask([a.name]))
+    await approveAccess(ctx, approved.id, who, { revision: 0 })
+    await releaseAccess(ctx, token, approved.id)
+    const denied = await requestAccess(ctx, token, ask([a.name]))
+    await denyAccess(ctx, denied.id, who)
+    const revoked = await requestAccess(ctx, token, ask([a.name]))
+    await revokeAccess(ctx, revoked.id, who)
+
+    // All three places are free again, and a fourth request waits for one.
+    for (let i = 0; i < 3; i++) await requestAccess(ctx, token, ask([a.name]))
+    await expect(requestAccess(ctx, token, ask([a.name]))).rejects.toMatchObject({ code: "too_many_pending" })
   })
 })

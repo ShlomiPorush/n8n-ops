@@ -307,8 +307,10 @@ test("the default channels and the agent's choice decide where a request goes", 
     expect((await mcp(request, "get_access_request", { requestId: asked.id })).notifiedVia).toEqual(["telegram"])
   }).toPass({ timeout: 15_000 })
 
+  // A person denies them, which frees their places at once; a request the agent released before a decision would
+  // keep its place until it expired, and the specs that follow ask again with the same agent.
   for (const id of [quietId, asked.id])
-    expect((await mcp(request, "release_instance_access", { requestId: id })).status).toBe("released")
+    expect((await page.request.post(`/api/access/${id}/deny`, ownPage)).ok()).toBe(true)
   await page.goto("/settings/access")
   await channels.getByRole("button", { name: "Add to Default channels" }).click()
   await page.getByRole("menuitem", { name: "Telegram" }).click()

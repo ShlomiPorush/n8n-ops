@@ -39,18 +39,23 @@ const causeColumns = () => ({
 // Better Auth (property names must match Better Auth field names)
 // ---------------------------------------------------------------------------
 
-export const user = pgTable("auth_user", {
-  id: text("id").primaryKey(),
-  name: text("name").notNull(),
-  email: text("email").notNull().unique(),
-  emailVerified: boolean("email_verified").notNull().default(false),
-  image: text("image"),
-  username: text("username").unique(),
-  displayUsername: text("display_username"),
-  twoFactorEnabled: boolean("two_factor_enabled").default(false),
-  createdAt: created(),
-  updatedAt: updated(),
-})
+export const user = pgTable(
+  "auth_user",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    email: text("email").notNull().unique(),
+    emailVerified: boolean("email_verified").notNull().default(false),
+    image: text("image"),
+    username: text("username").unique(),
+    displayUsername: text("display_username"),
+    twoFactorEnabled: boolean("two_factor_enabled").default(false),
+    createdAt: created(),
+    updatedAt: updated(),
+  },
+  // n8n-ops has exactly one account: the database refuses a second row, however it is written.
+  () => [uniqueIndex("auth_user_single").on(sql`(true)`)],
+)
 
 export const session = pgTable("auth_session", {
   id: text("id").primaryKey(),

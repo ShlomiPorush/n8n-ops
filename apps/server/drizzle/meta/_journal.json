@@ -239,6 +239,13 @@
       "when": 1794703760426,
       "tag": "0033_single_account",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1794738546084,
+      "tag": "0034_session_two_factor",
+      "breakpoints": true
     }
   ]
 }

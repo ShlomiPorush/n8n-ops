@@ -10,8 +10,8 @@ import type { Env } from "./types.ts"
 
 /**
  * Requires a signed-in user whose session the clocks under Sign-in security still allow; a session that ended is
- * answered with `session_ended` and the reason, so the page can say why. Unless allowWithoutTotp is set, the user
- * must also have TOTP enabled. `mode` is what the request counts as (services/session-policy.ts). A change a page
+ * answered with `session_ended` and the reason, so the page can say why. While the account has TOTP on, the session
+ * must have completed it itself (`signedIn`). Unless allowWithoutTotp is set, the user must also have TOTP enabled. `mode` is what the request counts as (services/session-policy.ts). A change a page
  * of another site could send with the person's cookie is refused first (`fromAnotherPage`), before the session is
  * read.
  */
@@ -26,12 +26,28 @@ export function requireUser(ctx: Ctx, options: { allowWithoutTotp?: boolean; mod
     const username = u.username ?? u.name
     const check = await checkSession(ctx, result.session.id, { mode: options.mode ?? "request", actor: username })
     if (!check.ok) return c.json(sessionEndedAnswer(check.reason), 401)
+    if (!signedIn(u, check)) return c.json(notSignedInAnswer, 401)
     const twoFactorEnabled = Boolean(u.twoFactorEnabled)
     if (!twoFactorEnabled && !options.allowWithoutTotp) return c.json({ error: "totp_required" }, 403)
     c.set("actor", { kind: "user", id: u.id, username, twoFactorEnabled, sessionId: result.session.id })
     c.set("session", check.status)
     await next()
   })
+}
+
+/**
+ * Whether a live session is signed in. While the account has two-factor on, only a session that completed it itself
+ * is: the code or a backup code at sign-in, the code that set two-factor up, or a passkey (auth/auth.ts). A session
+ * signed in with the password while two-factor was off never becomes one when two-factor is turned on later.
+ */
+export const signedIn = (user: { twoFactorEnabled?: boolean | null }, session: { twoFactorVerified: boolean }) =>
+  user.twoFactorEnabled !== true || session.twoFactorVerified
+
+/** The answer to a request from a session that is not signed in with two-factor; the page then signs in again. */
+export const notSignedInAnswer = {
+  error: "unauthorized",
+  code: "UNAUTHORIZED",
+  message: "Sign in again with your two-factor code.",
 }
 
 /** The answer to a request from a session that ended; `code` and `message` are what the Better Auth client reads. */

@@ -80,6 +80,13 @@ export const session = pgTable("auth_session", {
   /** Why the session ended (lifetime, idle, max); it then answers every request with this until it is removed. */
   endedReason: text("ended_reason"),
   endedAt: ts("ended_at"),
+  /**
+   * Whether this session completed two-factor itself: the code or a backup code at sign-in, the code that set
+   * two-factor up, or a passkey. Better Auth knows it as a session field it never takes from a request
+   * (auth/auth.ts); a session that replaces another one keeps its value. While the account has two-factor on, only
+   * a session with it is signed in.
+   */
+  twoFactorVerified: boolean("two_factor_verified").notNull().default(false),
 })
 
 export const account = pgTable("auth_account", {

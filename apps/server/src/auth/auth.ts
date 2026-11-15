@@ -23,6 +23,13 @@ export const LOGIN_DOMAIN = "n8n-ops.local"
 /** The path of a passkey sign-in; it completes a sign-in on its own, without the two-factor step. */
 export const PASSKEY_SIGN_IN = "/passkey/verify-authentication"
 
+/**
+ * The paths whose new session completed two-factor itself: the authenticator code or a backup code, at sign-in or
+ * when two-factor is set up, and a passkey, which verifies the person. No other session counts as signed in while
+ * the account has two-factor on (http/middleware.ts signedIn).
+ */
+const SECOND_FACTOR_DONE = new Set(["/two-factor/verify-totp", "/two-factor/verify-backup-code", PASSKEY_SIGN_IN])
+
 /** The paths that add a passkey: its options, then its verification, which stores it. */
 const PASSKEY_REGISTRATION = new Set(["/passkey/generate-register-options", "/passkey/verify-registration"])
 
@@ -118,7 +125,15 @@ export function createAuth(db: Db, appKey: Buffer, publicUrl?: string, passkeyUr
     // Better Auth keeps each one, and its cookie, a day longer than the longest maximum length allows, and never
     // extends it: the maximum length (counted from a sign-in no later than the session's creation) always ends a
     // session first, with its reason, and polling never keeps a session alive.
-    session: { expiresIn: (maxSessionHours + 24) * 3600, disableSessionRefresh: true },
+    session: {
+      expiresIn: (maxSessionHours + 24) * 3600,
+      disableSessionRefresh: true,
+      // Whether the session completed two-factor itself (db/schema.ts). Every new session starts without it, no
+      // request may set it, and only the after hook below gives it, to a session that completed two-factor.
+      additionalFields: {
+        twoFactorVerified: { type: "boolean", required: false, defaultValue: false, input: false, returned: false },
+      },
+    },
     rateLimit: {
       enabled: true,
       window: 60,
@@ -182,8 +197,13 @@ export function createAuth(db: Db, appKey: Buffer, publicUrl?: string, passkeyUr
         const created = ctx.context.newSession
         if (!created) return
         const passkeySignIn = ctx.path === PASSKEY_SIGN_IN
-        // A session that replaces a live one (password change, two-factor enrolment) keeps its sign-in time.
+        // A session that replaces a live one (password change, two-factor enrolment) keeps its sign-in time, and
+        // whether that one completed two-factor.
         if (!ctx.path.startsWith("/sign-in") && !passkeySignIn) await inheritClocks({ db }, created.session.id)
+        // A session made by completing two-factor has it, whatever it replaced: the code or a backup code at
+        // sign-in, the code that sets two-factor up (verify-totp from a live session), and a passkey sign-in.
+        if (SECOND_FACTOR_DONE.has(ctx.path) && !(ctx.context.returned instanceof APIError))
+          await ctx.context.internalAdapter.updateSession(created.session.token, { twoFactorVerified: true })
         const u = created.user as { username?: string | null; name?: string; twoFactorEnabled?: boolean | null }
         // verify-totp with a session already open is enrolment (setup), not a sign-in.
         const completed =

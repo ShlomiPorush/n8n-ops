@@ -75,7 +75,7 @@ function statusOf(clocks: Clocks, policy: Policy, now: Date): SessionStatus {
 export type CheckMode = "request" | "activity" | "peek"
 
 export type CheckResult =
-  | { ok: true; clocks: Clocks; status: SessionStatus }
+  | { ok: true; clocks: Clocks; status: SessionStatus; twoFactorVerified: boolean }
   | { ok: false; reason: EndReason | "revoked" }
 
 /**
@@ -97,6 +97,7 @@ export async function checkSession(
         activeAt: session.activeAt,
         endedReason: session.endedReason,
         ipAddress: session.ipAddress,
+        twoFactorVerified: session.twoFactorVerified,
       })
       .from(session)
       .where(eq(session.id, sessionId))
@@ -130,26 +131,35 @@ export async function checkSession(
       await tx.update(session).set(touch).where(eq(session.id, sessionId))
       Object.assign(clocks, touch)
     }
-    return { ok: true, clocks, status: statusOf(clocks, policy, now) } as const
+    return {
+      ok: true,
+      clocks,
+      status: statusOf(clocks, policy, now),
+      twoFactorVerified: row.twoFactorVerified,
+    } as const
   })
 }
 
 /*
- * A session that replaces another one keeps its clocks. Better Auth deletes the old row before it creates the
- * new one (a password change that signs out the other sessions, two-factor enrolment), so the times are read
- * before its handler runs, held for the request, and written on the new row from the after hook.
+ * A session that replaces another one keeps its clocks, and whether it completed two-factor. Better Auth deletes
+ * the old row before it creates the new one (a password change that signs out the other sessions, two-factor
+ * enrolment), so they are read before its handler runs, held for the request, and written on the new row from the
+ * after hook.
  */
-const inherited = new AsyncLocalStorage<Pick<Clocks, "authenticatedAt" | "activeAt">>()
+type Kept = Pick<Clocks, "authenticatedAt" | "activeAt"> & { twoFactorVerified: boolean }
+const inherited = new AsyncLocalStorage<Kept>()
 
-/** Runs a Better Auth request made from a live session, holding that session's clocks for a replacement. */
-export const withInheritedClocks = <T>(clocks: Clocks, run: () => T): T =>
-  inherited.run({ authenticatedAt: clocks.authenticatedAt, activeAt: clocks.activeAt }, run)
+/** Runs a Better Auth request made from a live session, holding what a replacement of it keeps. */
+export const withInheritedClocks = <T>(
+  { clocks, twoFactorVerified }: { clocks: Clocks; twoFactorVerified: boolean },
+  run: () => T,
+): T => inherited.run({ authenticatedAt: clocks.authenticatedAt, activeAt: clocks.activeAt, twoFactorVerified }, run)
 
-/** Gives a session created during this request the clocks of the one it replaces, if there was one. */
+/** Gives a session created during this request what the one it replaces had, if there was one. */
 export async function inheritClocks(ctx: Pick<Ctx, "db">, newSessionId: string) {
-  const clocks = inherited.getStore()
-  if (!clocks) return
-  await ctx.db.update(session).set(clocks).where(eq(session.id, newSessionId))
+  const kept = inherited.getStore()
+  if (!kept) return
+  await ctx.db.update(session).set(kept).where(eq(session.id, newSessionId))
 }
 
 /** Removes sessions that ended a day ago or more, and those past Better Auth's own expiry. */

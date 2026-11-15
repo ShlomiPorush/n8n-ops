@@ -20,7 +20,7 @@ vi.mock("../services/database.ts", async (importOriginal) => {
 })
 vi.mock("../services/session-policy.ts", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../services/session-policy.ts")>()),
-  checkSession: async () => ({ ok: true, clocks: {}, status: {} }),
+  checkSession: async () => ({ ok: true, clocks: {}, status: {}, twoFactorVerified: true }),
 }))
 
 function fakeCtx() {

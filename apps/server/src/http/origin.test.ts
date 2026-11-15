@@ -12,7 +12,7 @@ import type { Env } from "./types.ts"
 
 vi.mock("../services/session-policy.ts", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../services/session-policy.ts")>()),
-  checkSession: async () => ({ ok: true, clocks: {}, status: {} }),
+  checkSession: async () => ({ ok: true, clocks: {}, status: {}, twoFactorVerified: true }),
 }))
 
 function own(publicUrl: string | null) {

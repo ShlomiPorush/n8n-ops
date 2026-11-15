@@ -24,10 +24,10 @@ vi.mock("../services/reports.ts", async (importOriginal) => ({
   },
 }))
 
-// The session clocks have their own tests; here every session is live.
+// The session clocks have their own tests; here every session is live and completed two-factor.
 vi.mock("../services/session-policy.ts", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../services/session-policy.ts")>()),
-  checkSession: async () => ({ ok: true, clocks: {}, status: {} }),
+  checkSession: async () => ({ ok: true, clocks: {}, status: {}, twoFactorVerified: true }),
 }))
 
 type Stored = Partial<Record<SectionName, Record<string, unknown>>>

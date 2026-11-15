@@ -49,7 +49,10 @@ export function historyOptions<T>() {
  * Older ended requests for the All view of Agent Access, loaded as the end of the list comes into view (`auto`), or
  * a page at a time with `loadOnce`. `rows` is the live answer with the history's requests added.
  */
-export function useAccessHistory<T extends Listed>(live: T[] | undefined, { active, auto }: { active: boolean; auto: boolean }) {
+export function useAccessHistory<T extends Listed>(
+  live: T[] | undefined,
+  { active, auto }: { active: boolean; auto: boolean },
+) {
   const query = useInfiniteQuery(historyOptions<T>())
   const history = query.data?.pages.flatMap((p) => p.requests) ?? []
   const hasData = query.data !== undefined

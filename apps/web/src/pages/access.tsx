@@ -227,7 +227,8 @@ export function AccessPage() {
               value: "all",
               label: (
                 <>
-                  All <small>
+                  All{" "}
+                  <small>
                     {n(all.length)}
                     {orMore}
                   </small>

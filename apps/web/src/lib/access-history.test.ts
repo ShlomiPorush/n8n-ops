@@ -112,7 +112,10 @@ describe("whether older requests must be read again", () => {
 
   it("when the live answer's oldest request and the history's newest share a millisecond", () => {
     const newest = row("h", "released", at(0, 100))
-    const live = [...Array.from({ length: ENDED_PAGE - 1 }, (_, i) => row(`n${i}`, "released", at(-1 - i))), row("m", "released", at(0, 100))]
+    const live = [
+      ...Array.from({ length: ENDED_PAGE - 1 }, (_, i) => row(`n${i}`, "released", at(-1 - i))),
+      row("m", "released", at(0, 100)),
+    ]
     expect(historyMisses([], live, [newest, ...ended(1, 10)])).toBe(true)
     // Older than the history's newest: they overlap, nothing can be between.
     const older = [...live.slice(0, -1), row("m", "released", at(1, 100))]

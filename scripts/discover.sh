@@ -48,13 +48,13 @@ show_command() {
   while IFS= read -r line; do
     argv+=("$line")
   done <<<"$out"
-  unset 'argv[-1]'
+  unset "argv[$((${#argv[@]} - 1))]"
   if [ ${#argv[@]} -eq 0 ]; then
     echo "Command: (none)"
     return
   fi
   if [[ "${argv[0]}" =~ ^\"[A-Za-z0-9_./][A-Za-z0-9_./-]*\"$ ]]; then
-    program="${argv[0]:1:-1}"
+    program="${argv[0]:1:${#argv[0]}-2}"
   else
     program="(name not shown)"
   fi

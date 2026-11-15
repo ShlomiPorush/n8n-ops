@@ -1078,10 +1078,10 @@ export async function logCall(
 ) {
   // One transaction: the call and its count are kept together. A call that ends after the access did (it started
   // before) marks the Telegram message as outdated, so the next run shows it in the count. A call to an instance
-  // deleted meanwhile is kept without it, as the calls made before the deletion are.
+  // deleted meanwhile is kept without it, as the calls made before the deletion are; one being deleted is waited for.
   await ctx.db.transaction(async (tx) => {
     const instanceId = call.instanceId
-      ? sql`(select ${instances.id} from ${instances} where ${instances.id} = ${call.instanceId})`
+      ? sql`(select ${instances.id} from ${instances} where ${instances.id} = ${call.instanceId} for key share)`
       : null
     await tx.insert(accessCalls).values({ requestId, ...call, instanceId, refused: call.refused ?? null })
     await tx

@@ -37,7 +37,13 @@ const editable: SectionName[] = [
 ]
 
 /** The variable each value from the environment comes from, for the note under its field (FS-6). */
-const envVariables = { publicUrl: "N8N_OPS_PUBLIC_URL" } as const
+const envVariables = {
+  publicUrl: "N8N_OPS_PUBLIC_URL",
+  smtpAllowUnencrypted: "N8N_OPS_SMTP_ALLOW_UNENCRYPTED",
+} as const
+
+/** A value from the environment: `inUse` while it applies, `locked` when the field cannot be changed here. */
+type EnvValue = { variable: string; value: string; inUse: boolean; locked?: boolean }
 
 export function settingsRoutes(ctx: Ctx) {
   const app = new Hono<Env>()
@@ -45,7 +51,7 @@ export function settingsRoutes(ctx: Ctx) {
 
   /**
    * The settings in effect, for every reader, and under `meta` what a form needs beside them (FS-6, SV-1): the
-   * defaults, the range of each number, and which values come from the environment while none is stored.
+   * defaults, the range of each number, and which values come from the environment.
    */
   app.get("/:section", async (c) => {
     const section = c.req.param("section") as SectionName
@@ -56,7 +62,7 @@ export function settingsRoutes(ctx: Ctx) {
       delete value[`${field}Enc`]
     }
     if (section === "telegram") delete value.webhookSecret
-    const env: Record<string, { variable: string; value: string; inUse: boolean }> = {}
+    const env: Record<string, EnvValue> = {}
     if (section === "general") {
       const { publicUrl } = ctx.settings.fromEnv()
       if (publicUrl)
@@ -66,6 +72,14 @@ export function settingsRoutes(ctx: Ctx) {
           inUse: !(await ctx.settings.stored("general")).publicUrl,
         }
     }
+    const { smtpAllowUnencrypted } = ctx.settings.fromEnv()
+    if (section === "email" && smtpAllowUnencrypted !== undefined)
+      env.smtpAllowUnencrypted = {
+        variable: envVariables.smtpAllowUnencrypted,
+        value: String(smtpAllowUnencrypted),
+        inUse: true,
+        locked: true,
+      }
     return c.json({ ...value, meta: { defaults: defaults[section], limits: numberLimits(section), env } })
   })
 
@@ -84,13 +98,26 @@ export function settingsRoutes(ctx: Ctx) {
     // A client that sends back the whole section it read sends the value in effect: that is not a change.
     const envUrl = ctx.settings.fromEnv().publicUrl
     if (section === "general" && !current.publicUrl && envUrl && next.publicUrl === envUrl) next.publicUrl = ""
+    // "Allow sending without encryption" set by the environment is locked: the value in effect sent back changes
+    // nothing, any other value is refused.
+    const envPlain = ctx.settings.fromEnv().smtpAllowUnencrypted
+    if (section === "email" && envPlain !== undefined && "smtpAllowUnencrypted" in body) {
+      if (body.smtpAllowUnencrypted !== envPlain)
+        return c.json(
+          invalidAnswer(section, [
+            { path: ["smtpAllowUnencrypted"], message: `set by ${envVariables.smtpAllowUnencrypted}` },
+          ]),
+          400,
+        )
+      next.smtpAllowUnencrypted = current.smtpAllowUnencrypted
+    }
     // The stored SMTP password is never sent to a server it was not given for (FS-5).
     if (section === "email" && smtpPasswordNeeded(current, next, body.smtpPassword))
       return c.json(
         {
           error: "password_needed",
           message:
-            "The SMTP server or user changed. Enter the SMTP password again, so the stored one is not sent to it.",
+            "The SMTP server, user or encryption changed. Enter the SMTP password again, so the stored one is not sent under them.",
           issues: [{ path: ["smtpPassword"], message: "enter it again for the new server" }],
         },
         400,

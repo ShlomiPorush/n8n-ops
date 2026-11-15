@@ -259,6 +259,8 @@ start_stack() {
   N8N_OPS_DATA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/n8n-ops-verify.XXXXXX")"
   export N8N_OPS_DATA_DIR
   prepare_data_dirs "$N8N_OPS_DATA_DIR"
+  # A new certificate for the mail server each run, in the run's data directory.
+  make_mail_tls "$N8N_OPS_DATA_DIR"
   wait_for_pulls "${STACK_IMAGES[@]}"
   stack up -d --remove-orphans --wait --wait-timeout 180 || {
     stack ps

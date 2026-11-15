@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { Ctx } from "../context.ts"
-import { defaults, type SectionName, sections } from "../lib/settings.ts"
+import { defaults, type Section, type SectionName, type SettingsEnv, sections, withEmailEnv } from "../lib/settings.ts"
 import { alertTestRoutes } from "./alerts.ts"
 import { settingsRoutes } from "./settings.ts"
 
@@ -34,17 +34,18 @@ type Stored = Partial<Record<SectionName, Record<string, unknown>>>
 
 /**
  * A signed-in context over settings kept in memory. Like the real store, `stored` is what was saved and `get` adds
- * the public URL from the environment while none is saved.
+ * the public URL from the environment while none is saved, and the environment's Email switch over the stored one.
  */
-function fakeCtx(data: Stored, env: { publicUrl?: string } = {}) {
+function fakeCtx(data: Stored, env: SettingsEnv = {}) {
   const stored = async (key: SectionName) => sections[key].parse({ ...defaults[key], ...(data[key] ?? {}) })
   const settings = {
     stored,
     get: async (key: SectionName) => {
       const value = (await stored(key)) as Record<string, unknown>
+      if (key === "email") return withEmailEnv(value as Section<"email">, env)
       return key === "general" && env.publicUrl && !value.publicUrl ? { ...value, publicUrl: env.publicUrl } : value
     },
-    fromEnv: () => (env.publicUrl ? { publicUrl: env.publicUrl } : {}),
+    fromEnv: () => env,
     set: async (key: SectionName, value: Record<string, unknown>) => {
       data[key] = value
     },
@@ -112,6 +113,41 @@ describe("a save keeps the public URL from the environment out of the database (
     await general("PUT", { publicUrl: "" })
     read = (await general("GET")).body
     expect(read.publicUrl).toBe("https://env.example.com")
+  })
+
+  it("shows sending without encryption locked when the environment sets it, and keeps it out of saves", async () => {
+    for (const envValue of [true, false]) {
+      const data: Stored = { email: { smtpAllowUnencrypted: !envValue } }
+      const email = send(settingsRoutes(fakeCtx(data, { smtpAllowUnencrypted: envValue })), "/email")
+      const read = (await email("GET")).body as { smtpAllowUnencrypted: boolean; meta: { env: unknown } }
+      expect(read.smtpAllowUnencrypted).toBe(envValue)
+      expect(read.meta.env).toEqual({
+        smtpAllowUnencrypted: {
+          variable: "N8N_OPS_SMTP_ALLOW_UNENCRYPTED",
+          value: String(envValue),
+          inUse: true,
+          locked: true,
+        },
+      })
+      // The value in effect sent back with the rest changes nothing; another one is refused.
+      const { meta: _, ...form } = read
+      expect((await email("PUT", { ...form, from: "ops@example.com" })).status).toBe(200)
+      expect(data.email).toMatchObject({ smtpAllowUnencrypted: !envValue, from: "ops@example.com" })
+      const refused = await email("PUT", { smtpAllowUnencrypted: !envValue })
+      expect(refused.status).toBe(400)
+      expect(refused.body.issues).toEqual([
+        { path: ["smtpAllowUnencrypted"], message: "set by N8N_OPS_SMTP_ALLOW_UNENCRYPTED" },
+      ])
+      expect(data.email?.smtpAllowUnencrypted).toBe(!envValue)
+    }
+  })
+
+  it("lets Settings change sending without encryption when the environment leaves it", async () => {
+    const data: Stored = {}
+    const email = send(settingsRoutes(fakeCtx(data)), "/email")
+    expect(((await email("GET")).body as { meta: { env: unknown } }).meta.env).toEqual({})
+    expect((await email("PUT", { smtpAllowUnencrypted: true })).status).toBe(200)
+    expect(data.email?.smtpAllowUnencrypted).toBe(true)
   })
 
   it("gives a form the defaults and the range of each number", async () => {
@@ -183,10 +219,16 @@ describe("Email and Telegram tests with the values on screen (FS-19, FS-5)", () 
   it("never sends the stored password to a server the screen changed", async () => {
     const data: Stored = { email: { ...storedEmail } }
     const test = send(alertTestRoutes(fakeCtx(data)), "/test/email")
-    for (const draft of [{ smtpHost: "smtp.elsewhere.example" }, { smtpPort: 2525 }, { smtpUser: "someone-else" }]) {
+    for (const draft of [
+      { smtpHost: "smtp.elsewhere.example" },
+      { smtpPort: 2525 },
+      { smtpUser: "someone-else" },
+      { smtpSecure: true },
+      { smtpAllowUnencrypted: true },
+    ]) {
       const res = await test("POST", draft)
       expect(res.status).toBe(400)
-      expect(res.body.message).toMatch(/^The SMTP server or user changed\. Enter the SMTP password to test it/)
+      expect(res.body.message).toMatch(/^The SMTP server, user or encryption changed\. Enter the SMTP password to test/)
     }
     expect(mail.transports).toEqual([])
   })
@@ -211,7 +253,12 @@ describe("Email and Telegram tests with the values on screen (FS-19, FS-5)", () 
   it("tests the stored settings when no values are sent, as before", async () => {
     const test = send(alertTestRoutes(fakeCtx({ email: { ...storedEmail } })), "/test/email")
     expect((await test("POST")).body).toEqual({ ok: true, recipients: ["ops@example.com"] })
-    expect(mail.transports[0]).toMatchObject({ host: "smtp.example.com", auth: { pass: storedPassword } })
+    expect(mail.transports[0]).toMatchObject({
+      host: "smtp.example.com",
+      secure: false,
+      requireTLS: true,
+      auth: { pass: storedPassword },
+    })
     // The daily report, made now, with the footer of a test.
     expect(reports.built.at(-1)).toEqual(["daily", expect.any(Date), { test: true }])
   })

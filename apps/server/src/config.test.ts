@@ -16,6 +16,18 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ DATABASE_URL: "postgres://n8n_ops@postgres:5432/n8n_ops" })).toThrow(/no password/)
   })
 
+  it("reads N8N_OPS_SMTP_ALLOW_UNENCRYPTED as true, false or unset, and refuses anything else", () => {
+    const base = { DATABASE_URL: url(randomBytes(32).toString("hex")) }
+    const read = (value?: string) => loadConfig({ ...base, N8N_OPS_SMTP_ALLOW_UNENCRYPTED: value }).smtpAllowUnencrypted
+    expect(read("true")).toBe(true)
+    expect(read("false")).toBe(false)
+    expect(read(" true ")).toBe(true)
+    expect(read("")).toBeUndefined()
+    expect(read()).toBeUndefined()
+    for (const value of ["1", "yes", "TRUE", "on"])
+      expect(() => read(value)).toThrow(/N8N_OPS_SMTP_ALLOW_UNENCRYPTED must be true or false/)
+  })
+
   it("refuses a missing or unreadable database URL", () => {
     expect(() => loadConfig({})).toThrow(/DATABASE_URL is required/)
     expect(() => loadConfig({ DATABASE_URL: "not a url" })).toThrow(/not a valid URL/)

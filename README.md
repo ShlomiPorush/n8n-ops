@@ -28,6 +28,8 @@ Open `https://<DOMAIN>`. The first visit runs the setup: your account, two-facto
 
 `N8N_OPS_PUBLIC_URL` (`https://<DOMAIN>` by default) must be the HTTPS address users open. It enables secure cookies, is trusted for sign-in, and is used in links sent by Telegram and email.
 
+Email goes over TLS from the start (port 465) or STARTTLS, and a mail server that offers neither is refused. Only for a relay you trust on a private network, turn on Settings → Email → "Allow sending without encryption", or set `N8N_OPS_SMTP_ALLOW_UNENCRYPTED=true` in `.env`, which locks that switch.
+
 The compose file pulls the `ghcr.io/shlomiporush/n8n-ops` image of the release set in `VERSION`; the [releases](https://github.com/ShlomiPorush/n8n-ops/releases) list them.
 
 To upgrade, set the new `VERSION` and run `docker compose up -d`; the database is migrated on start. An earlier release cannot run against a database a later one migrated, so before upgrading make sure n8n-ops's own database backup (Backups → n8n-ops database) is recent. To go back, restore that backup into the earlier release.
@@ -125,6 +127,8 @@ cp docker/docker-compose-dev.example.yml docker-compose-dev.yml   # once per mac
 scripts/local.sh start     # server, PostgreSQL, worker, a disposable n8n, S3Mock and Mailpit on http://localhost:8080
 scripts/verify.sh          # everything CI checks, including end-to-end tests against real n8n
 ```
+
+Mailpit in the development stack requires STARTTLS, with a certificate `scripts/local.sh` makes once in the data directory (`mail-tls/`, key readable by you only). A `docker-compose-dev.yml` copied before that needs the `mail` service's `command` and `volumes`, and the `server` service's `NODE_EXTRA_CA_CERTS` and `mail-tls/cert.pem` volume, from the template, or a new copy; without them its mail is refused with "No encrypted connection could be made".
 
 `scripts/discover.sh` is a read-only helper that inventories an n8n Docker host (containers, versions, environment with secrets masked) for planning an installation.
 

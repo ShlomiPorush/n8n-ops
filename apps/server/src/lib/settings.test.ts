@@ -12,6 +12,7 @@ import {
   resolveInstanceSettings,
   sections,
   smtpPasswordNeeded,
+  withEmailEnv,
   wordedIssues,
 } from "./settings.ts"
 
@@ -41,6 +42,55 @@ describe("SMTP password and server", () => {
   it("has nothing to protect when no password is stored", () => {
     const { smtpPasswordEnc: _, ...none } = stored
     expect(smtpPasswordNeeded(none, { smtpHost: "mail.other.example", smtpPort: 587 }, undefined)).toBe(false)
+  })
+
+  it("asks for it again when the encryption changes", () => {
+    const secure = { ...stored, smtpPort: 465, smtpSecure: true }
+    expect(smtpPasswordNeeded(secure, { ...secure, smtpSecure: false }, undefined)).toBe(true)
+    expect(smtpPasswordNeeded(stored, { ...stored, smtpAllowUnencrypted: true }, undefined)).toBe(true)
+    expect(smtpPasswordNeeded(stored, { ...stored, smtpAllowUnencrypted: true }, "secret")).toBe(false)
+  })
+
+  it("lets a row stored before the encryption switch through unchanged", () => {
+    const merged = { ...defaults.email, ...stored }
+    const next = { ...merged, recipients: ["ops@example.com"] }
+    expect(smtpPasswordNeeded(merged, next, undefined)).toBe(false)
+  })
+})
+
+describe("sending email without encryption", () => {
+  const dbWith = (stored?: object) =>
+    ({ select: () => ({ from: () => ({ where: async () => (stored ? [{ value: stored }] : []) }) }) }) as unknown as Db
+
+  it("is off by default", () => {
+    expect(defaults.email.smtpAllowUnencrypted).toBe(false)
+  })
+
+  it("follows N8N_OPS_SMTP_ALLOW_UNENCRYPTED over the stored value, both ways", async () => {
+    for (const [env, stored] of [
+      [true, false],
+      [false, true],
+    ] as const) {
+      const settings = createSettings(dbWith({ smtpAllowUnencrypted: stored }), { smtpAllowUnencrypted: env })
+      expect((await settings.get("email")).smtpAllowUnencrypted).toBe(env)
+      // What is stored, which a save starts from, stays as it was.
+      expect((await settings.stored("email")).smtpAllowUnencrypted).toBe(stored)
+      expect(settings.fromEnv()).toEqual({ smtpAllowUnencrypted: env })
+    }
+  })
+
+  it("keeps the stored value when the environment leaves it to Settings", async () => {
+    const settings = createSettings(dbWith({ smtpAllowUnencrypted: true }), {})
+    expect((await settings.get("email")).smtpAllowUnencrypted).toBe(true)
+    expect(settings.fromEnv()).toEqual({})
+    expect((await createSettings(dbWith({ smtpHost: "smtp.example.com" })).get("email")).smtpAllowUnencrypted).toBe(
+      false,
+    )
+  })
+
+  it("is replaced by the environment in a section given to withEmailEnv", () => {
+    expect(withEmailEnv(defaults.email, { smtpAllowUnencrypted: true }).smtpAllowUnencrypted).toBe(true)
+    expect(withEmailEnv({ ...defaults.email, smtpAllowUnencrypted: true }, {}).smtpAllowUnencrypted).toBe(true)
   })
 })
 

@@ -12,7 +12,8 @@ import { TelegramError } from "./telegram.ts"
 /*
  * Telegram and Email tests run with the values on screen, before they are saved (FS-19). The typed values go
  * over the stored ones for this one send and are never stored. A stored secret goes only where it was given
- * for: the SMTP password only to the same host, port and user (FS-5), the bot token unless a new one is typed.
+ * for: the SMTP password only to the same host, port, user and encryption (FS-5), the bot token unless a new one is
+ * typed.
  */
 
 /** A test that cannot run with these values; its message says why and what to do. */
@@ -21,12 +22,22 @@ export class TestRefused extends Error {}
 type Decrypt = (encrypted: string) => string
 
 /** The values of the Email section a test may take from the screen. */
-const emailFields = ["recipients", "from", "smtpHost", "smtpPort", "smtpSecure", "smtpUser"] as const
+const emailFields = [
+  "recipients",
+  "from",
+  "smtpHost",
+  "smtpPort",
+  "smtpSecure",
+  "smtpAllowUnencrypted",
+  "smtpUser",
+] as const
 
 export type EmailAccount = {
   host: string
   port: number
   secure: boolean
+  /** Without TLS from the start, send only after STARTTLS succeeds, unless sending without encryption is allowed. */
+  requireTLS: boolean
   auth?: { user: string; pass: string }
   from: string
   recipients: string[]
@@ -52,7 +63,7 @@ export function emailAccount(stored: Section<"email">, draft: Record<string, unk
   else if (typed !== null && stored.smtpPasswordEnc) {
     if (smtpPasswordNeeded(stored, v, undefined))
       throw new TestRefused(
-        "The SMTP server or user changed. Enter the SMTP password to test it, so the stored one is not sent to the new server.",
+        "The SMTP server, user or encryption changed. Enter the SMTP password to test it, so the stored one is not sent under them.",
       )
     pass = decrypt(stored.smtpPasswordEnc)
   }
@@ -60,6 +71,7 @@ export function emailAccount(stored: Section<"email">, draft: Record<string, unk
     host: v.smtpHost,
     port: v.smtpPort,
     secure: v.smtpSecure,
+    requireTLS: !v.smtpSecure && !v.smtpAllowUnencrypted,
     auth: v.smtpUser ? { user: v.smtpUser, pass } : undefined,
     from: v.from || v.smtpUser,
     recipients: v.recipients,
@@ -90,12 +102,17 @@ export function telegramTarget(
   return { token, chatId, threadId: topic ? Number(topic) : null }
 }
 
+/** Why an email was not sent when no encrypted connection could be made (Nodemailer's ETLS). */
+export const noEncryption =
+  "No encrypted connection could be made with the SMTP server, so nothing was sent. Check that the server offers STARTTLS on this port, or turn on TLS from the start for port 465."
+
 /** Why a test email was not sent, and what to check (SV-5). */
 export function emailFailureText(error: unknown): string {
   if (error instanceof TestRefused) return error.message
   const { code, message } = error as { code?: string; message?: string }
   if (code === "EAUTH") return "The SMTP server refused the user or password. Check them and test again."
-  if (code && ["ECONNECTION", "ESOCKET", "ETIMEDOUT", "EDNS", "ENOTFOUND", "ECONNREFUSED", "ETLS"].includes(code))
+  if (code === "ETLS") return noEncryption
+  if (code && ["ECONNECTION", "ESOCKET", "ETIMEDOUT", "EDNS", "ENOTFOUND", "ECONNREFUSED"].includes(code))
     return "Could not reach the SMTP server. Check the server, the port and the TLS setting, then test again."
   if (code === "EENVELOPE") return `The SMTP server refused a recipient: ${message ?? "no reason given"}`
   return `The SMTP server did not take the email: ${message ?? "no reason given"}`

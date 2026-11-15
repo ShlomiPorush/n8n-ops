@@ -12,7 +12,11 @@ FIXTURES="$WORK/containers"
 REPORT="$WORK/report.txt"
 FAILED=0
 PASSED=0
-HIDDEN=()
+# Values the report must not show, new for each run: H[1] to H[15].
+H=()
+for i in $(seq 15); do
+  H[i]="v$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
+done
 
 check() {
   local what="$1"
@@ -25,13 +29,8 @@ check() {
   fi
 }
 
-# hide VAR...: set each VAR to a new random value that the report must not show.
-hide() {
-  local name
-  for name in "$@"; do
-    printf -v "$name" 'v%s' "$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
-    HIDDEN+=("${!name}")
-  done
+absent() {
+  ! grep -qF -- "$1" "$REPORT"
 }
 
 # container NAME IMAGE ENTRYPOINT CMD [MODE]: ENTRYPOINT and CMD hold one JSON-encoded element per
@@ -104,23 +103,22 @@ chmod +x "$WORK/bin/docker"
 
 # --- containers ------------------------------------------------------------------------------
 
-hide h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15
 container queue-redis redis:7-alpine '"docker-entrypoint.sh"' \
-  "$(printf '"redis-server"\n"--requirepass"\n"%s"\n"--masterauth=%s"\n"-a%s"' "$h1" "$h2" "$h3")"
-printf 'REDIS_PASSWORD=%s\nTZ=UTC\n' "$h4" >"$FIXTURES/queue-redis/env"
-container custom-n8n example/n8n:1 "$(printf '"/entry.sh"\n"--password"')" "\"$h5\""
+  "$(printf '"redis-server"\n"--requirepass"\n"%s"\n"--masterauth=%s"\n"-a%s"' "${H[1]}" "${H[2]}" "${H[3]}")"
+printf 'REDIS_PASSWORD=%s\nTZ=UTC\n' "${H[4]}" >"$FIXTURES/queue-redis/env"
+container custom-n8n example/n8n:1 "$(printf '"/entry.sh"\n"--password"')" "\"${H[5]}\""
 container flag-shaped postgres:16 null \
-  "$(printf '"postgres"\n"--requirepass"\n"--%s"\n"-c"\n"key=%s"' "$h6" "$h7")"
+  "$(printf '"postgres"\n"--requirepass"\n"--%s"\n"-c"\n"key=%s"' "${H[6]}" "${H[7]}")"
 container shell-string n8nio/n8n:2 '' \
-  "$(printf '"sh"\n"-c"\n"line1\\n--x %s \\"q\\" \\\\ \xc3\xa9 redis://u:%s@h"' "$h8" "$h9")"
+  "$(printf '"sh"\n"-c"\n"line1\\n--x %s \\"q\\" \\\\ \xc3\xa9 redis://u:%s@h"' "${H[8]}" "${H[9]}")"
 container empty-name redis:7 null '""'
-container spaced-name redis:7 null "$(printf '"my %s"\n"a"' "$h10")"
-container dash-name redis:7 null "\"-$h11\""
+container spaced-name redis:7 null "$(printf '"my %s"\n"a"' "${H[10]}")"
+container dash-name redis:7 null "\"-${H[11]}\""
 container no-command redis:7 '' null
-container gone-partial redis:7 null "$(printf '"redis-server"\n"%s"' "$h12")" fail-partial
-container gone-no-end redis:7 null "$(printf '"redis-server"\n"%s"' "$h13")" no-end
-container gone-complete redis:7 null "$(printf '"redis-server"\n"%s"' "$h14")" fail-complete
-container other-app nginx:1 null "$(printf '"nginx"\n"%s"' "$h15")"
+container gone-partial redis:7 null "$(printf '"redis-server"\n"%s"' "${H[12]}")" fail-partial
+container gone-no-end redis:7 null "$(printf '"redis-server"\n"%s"' "${H[13]}")" no-end
+container gone-complete redis:7 null "$(printf '"redis-server"\n"%s"' "${H[14]}")" fail-complete
+container other-app nginx:1 null "$(printf '"nginx"\n"%s"' "${H[15]}")"
 
 # --- run ---------------------------------------------------------------------------------------
 
@@ -129,8 +127,8 @@ check "discover.sh writes a report" test -s "$REPORT"
 check "the report has a section per n8n, Postgres and Redis container" \
   test "$(grep -c '^===== Container: ' "$REPORT")" -eq 11
 
-for value in "${HIDDEN[@]}"; do
-  check "the report does not show the value $value" bash -c '! grep -qF -- "$1" "$2"' _ "$value" "$REPORT"
+for value in "${H[@]}"; do
+  check "the report does not show the value $value" absent "$value"
 done
 
 # command_is NAME LINE: the Command line in the section of container NAME.

@@ -210,10 +210,17 @@ function authData(rpId: string, flags: number, count: number, attested?: Buffer)
 const clientData = (type: string, challenge: string, origin: string) =>
   Buffer.from(JSON.stringify({ type, challenge, origin, crossOrigin: false }))
 
-/** Adds a passkey from a session: the plugin's options, a new key, and its verification. */
-async function register(cookie: string, opts: { verified?: boolean; name?: string; createSession?: boolean } = {}) {
+/**
+ * Adds a passkey from a session: the plugin's options, a new key, and its verification. `beforeVerify` runs between
+ * the two, as a change made while the person's browser asks the authenticator.
+ */
+async function register(
+  cookie: string,
+  opts: { verified?: boolean; name?: string; createSession?: boolean; beforeVerify?: () => Promise<void> } = {},
+) {
   const optionsRes = await call("GET", "/api/auth/passkey/generate-register-options", { cookie })
   if (optionsRes.status !== 200) return { res: optionsRes, authenticator: null }
+  await opts.beforeVerify?.()
   const options = (await optionsRes.json()) as { challenge: string; rp: { id: string }; user: { id: string } }
   const held = cookies(cookie, optionsRes)
   const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" })
@@ -437,6 +444,54 @@ describe("passkeys at the public URL", () => {
       await ctx.settings.set("security", defaults.security)
     }
     expect(await passkeyCount()).toBe(1)
+  })
+
+  it("adds a passkey only while two-factor is on, from any kind of session", async () => {
+    const [u] = await database.db.select().from(user)
+    if (!u) throw new Error("no user")
+    const [kept] = await database.db.select().from(twoFactor).where(eq(twoFactor.userId, u.id))
+    if (!kept) throw new Error("no two-factor")
+    const turnOff = async () => {
+      await database.db.delete(twoFactor).where(eq(twoFactor.userId, u.id))
+      await database.db.update(user).set({ twoFactorEnabled: false }).where(eq(user.id, u.id))
+    }
+    const sessionCount = async () => (await database.db.select().from(session).where(eq(session.userId, u.id))).length
+    const passkeys = await passkeyCount()
+    const added = await auditCount("Passkey added")
+    try {
+      // Options taken while two-factor was on, sent after it was turned off: nothing is added, no session made.
+      const cookie = await signIn()
+      let sessions = 0
+      const late = await register(cookie, {
+        createSession: true,
+        beforeVerify: async () => {
+          await turnOff()
+          sessions = await sessionCount()
+        },
+      })
+      expect(late.res.status).toBe(403)
+      expect(await late.res.json()).toMatchObject({ code: "TWO_FACTOR_REQUIRED" })
+      expect(await sessionCount()).toBe(sessions)
+
+      // A password sign-in, which has no two-factor step now, cannot begin adding one.
+      const passwordOnly = await signIn()
+      const early = await register(passwordOnly)
+      expect(early.res.status).toBe(403)
+      expect(await early.res.json()).toMatchObject({ code: "TWO_FACTOR_REQUIRED" })
+
+      // Nor can a session signed in with a passkey.
+      const { res, cookie: viaPasskey } = await passkeySignIn(laptop)
+      expect(res.status).toBe(200)
+      expect((await register(viaPasskey)).res.status).toBe(403)
+    } finally {
+      await database.db.insert(twoFactor).values(kept).onConflictDoNothing()
+      await database.db.update(user).set({ twoFactorEnabled: true }).where(eq(user.id, u.id))
+    }
+    expect(await passkeyCount()).toBe(passkeys)
+    expect(await auditCount("Passkey added")).toBe(added)
+    // Two-factor is on again: adding works as before.
+    expect((await register(await signIn(), { name: "Desk" })).res.status).toBe(200)
+    await database.db.delete(passkey).where(eq(passkey.name, "Desk"))
   })
 
   it("renames and deletes a passkey from a live session, and audits both", async () => {

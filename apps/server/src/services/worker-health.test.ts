@@ -77,6 +77,37 @@ describe("n8n-ops not recording", () => {
     ])
   })
 
+  it("cuts one offline period across several times n8n-ops was not recording and the settle time after each", () => {
+    const d = derive(
+      facts({
+        recording: [
+          { from: m(-600), to: m(20) },
+          { from: m(30), to: m(50) },
+          { from: m(60), to: m(120) - 5000 },
+        ],
+        offline: [{ from: m(10), to: m(70), job: null }],
+      }),
+    )
+    expect(d.periods.notRecording).toEqual([
+      { from: iso(20), to: iso(30) },
+      { from: iso(50), to: iso(60) },
+    ])
+    expect(d.periods.offline).toEqual([
+      { from: iso(10), to: iso(20) },
+      { from: iso(31.5), to: iso(50) },
+      { from: iso(61.5), to: iso(70) },
+    ])
+    expect(d.events.find((e) => e.kind === "offline")).toEqual({
+      kind: "offline",
+      from: iso(10),
+      to: iso(70),
+      durationMs: min(37),
+      notRecordingMs: min(20),
+      job: null,
+    })
+    expect(d.summary).toMatchObject({ offlineMs: min(37), offlinePeriods: 1, notRecordingMs: min(20) })
+  })
+
   it("shows no Worker offline event for a period that lies wholly in time n8n-ops was not recording", () => {
     const d = derive(
       facts({
@@ -223,5 +254,68 @@ describe("measurements", () => {
       durationMs: min(1),
       error: "timeout",
     })
+  })
+})
+
+describe("a long history", () => {
+  // Wide of the time these take, so a slow machine passes; work that grows with the square of the rows takes far longer.
+  const LIMIT_MS = 2000
+  const HOUR = 3_600_000
+  const month = (patch: Partial<HealthFacts>): HealthFacts => {
+    const to = m(720 * 60)
+    return facts({ now: to, to, bucketMs: HOUR, startsAt: m(-60), newestAliveAt: to - 5000, ...patch })
+  }
+  const every = (stepMs: number, make: (t: number) => number) => {
+    const out: number[] = []
+    for (let t = m(0); t < m(720 * 60); t += stepMs) out.push(make(t))
+    return out
+  }
+  /** Recording rows from before the window to now, with a break of a minute between them. */
+  const breaks = (rows: number) => {
+    const step = (m(720 * 60) - m(-60)) / rows
+    return Array.from({ length: rows }, (_, k) => ({
+      from: m(-60) + k * step,
+      to: k === rows - 1 ? m(720 * 60) - 5000 : m(-60) + (k + 1) * step - min(1),
+    }))
+  }
+  const timed = (f: HealthFacts) => {
+    const started = performance.now()
+    const d = derive(f)
+    return { d, ms: performance.now() - started }
+  }
+
+  it("reads 30 days of a Worker that went offline every few minutes, with a Docker check every 10 s", () => {
+    const { d, ms } = timed(
+      month({
+        recording: breaks(1),
+        offline: every(min(3), (t) => t).map((t) => ({ from: t + min(1), to: t + min(1) + 70_000, job: null })),
+        checks: every(10_000, (t) => t).map((at) => ({ at, ok: true, error: null })),
+        rttSlots: every(min(5), (t) => t),
+      }),
+    )
+    expect(d.summary.offlinePeriods).toBe(14_400)
+    expect(d.coverage.dockerMs).toBe(d.coverage.onlineMs)
+    expect(d.coverage.rttMs).toBe(d.coverage.onlineMs)
+    expect(ms).toBeLessThan(LIMIT_MS)
+  })
+
+  it("reads 30 days of frequent offline periods while n8n-ops itself stopped recording many times", () => {
+    const { d, ms } = timed(
+      month({
+        recording: breaks(10_000),
+        offline: every(min(3), (t) => t).map((t) => ({ from: t + min(1), to: t + min(1) + 70_000, job: null })),
+      }),
+    )
+    expect(d.summary.notRecordingMs).toBeGreaterThan(0)
+    expect(ms).toBeLessThan(LIMIT_MS)
+  })
+
+  it("reads 30 days of one long offline period while n8n-ops itself stopped recording many times", () => {
+    const { d, ms } = timed(
+      month({ recording: breaks(15_000), offline: [{ from: m(0), to: m(720 * 60 - 10), job: null }] }),
+    )
+    expect(d.summary.offlinePeriods).toBe(1)
+    expect(d.periods.offline.length).toBeGreaterThan(14_000)
+    expect(ms).toBeLessThan(LIMIT_MS)
   })
 })

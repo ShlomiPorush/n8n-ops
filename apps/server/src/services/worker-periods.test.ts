@@ -11,6 +11,7 @@ import {
   subtract,
   total,
   union,
+  within,
 } from "./worker-periods.ts"
 
 const s = (n: number) => n * 1000
@@ -54,6 +55,68 @@ describe("spans", () => {
         ),
       ),
     ).toBe(4)
+  })
+
+  it("intersects and subtracts like a minute-by-minute count, whatever the order, overlaps or empty spans", () => {
+    // Spans on a grid of 0 to 60; the reference marks each unit one by one.
+    let seed = 1
+    const next = (n: number) => {
+      seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648
+      return seed % n
+    }
+    const spans = () =>
+      Array.from({ length: next(8) }, () => {
+        const from = next(60)
+        return { from, to: from + next(12) - 2 }
+      })
+    const marks = (list: { from: number; to: number }[]) => {
+      const on = new Array<boolean>(80).fill(false)
+      for (const x of list) for (let i = Math.max(0, x.from); i < x.to; i++) on[i] = true
+      return on
+    }
+    const toSpans = (on: boolean[]) => {
+      const out: { from: number; to: number }[] = []
+      on.forEach((v, i) => {
+        const last = out.at(-1)
+        if (!v) return
+        if (last && last.to === i) last.to = i + 1
+        else out.push({ from: i, to: i + 1 })
+      })
+      return out
+    }
+    for (let run = 0; run < 2000; run++) {
+      const a = spans()
+      const b = spans()
+      const ma = marks(a)
+      const mb = marks(b)
+      expect(intersect(a, b)).toEqual(toSpans(ma.map((v, i) => v && (mb[i] ?? false))))
+      expect(subtract(a, b)).toEqual(toSpans(ma.map((v, i) => v && !mb[i])))
+    }
+  })
+
+  it("subtracts and intersects long lists in time that grows with their length", () => {
+    // Wide of the time this takes, so a slow machine passes; work that grows with the square of the lists takes far longer.
+    const LIMIT_MS = 1000
+    const spans = Array.from({ length: 50_000 }, (_, i) => ({ from: i * 10, to: i * 10 + 6 }))
+    const holes = Array.from({ length: 50_000 }, (_, i) => ({ from: i * 10 + 2, to: i * 10 + 4 }))
+    const started = performance.now()
+    expect(total(subtract(spans, holes))).toBe(50_000 * 4)
+    expect(total(intersect(spans, holes))).toBe(50_000 * 2)
+    expect(performance.now() - started).toBeLessThan(LIMIT_MS)
+  })
+
+  it("finds the joined spans that overlap a span, touching ones left out", () => {
+    const joined = [
+      { from: 0, to: 10 },
+      { from: 20, to: 30 },
+      { from: 40, to: 50 },
+    ]
+    expect(within(joined, { from: 10, to: 20 })).toEqual([])
+    expect(within(joined, { from: 9, to: 21 })).toEqual(joined.slice(0, 2))
+    expect(within(joined, { from: 25, to: 100 })).toEqual(joined.slice(1))
+    expect(within(joined, { from: -5, to: 0 })).toEqual([])
+    expect(within(joined, { from: 60, to: 70 })).toEqual([])
+    expect(within([], { from: 0, to: 10 })).toEqual([])
   })
 
   it("spreads spans over buckets, also across a bucket edge, and ignores what lies outside", () => {

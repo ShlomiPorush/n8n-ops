@@ -26,6 +26,7 @@ import {
   subtract,
   total,
   union,
+  within,
 } from "./worker-periods.ts"
 import { historyStartsAt, runningJob } from "./worker-presence.ts"
 
@@ -219,12 +220,14 @@ export function derive(f: HealthFacts): Derived {
   const offlineParts: Span[] = []
   for (const o of f.offline) {
     const span = { from: Math.max(o.from, f.startsAt ?? o.from), to: Math.min(o.to ?? f.now, end) }
-    // A period that ends inside the settle time is gone; a longer one keeps its part after it.
-    const kept = subtract([span], settle)
-    const inWindow = intersect(subtract(kept, notRecording), observed)
+    // A period that ends inside the settle time is gone; a longer one keeps its part after it. Only the settle and
+    // not-recording spans that meet the period take part, so each period costs what lies inside it.
+    const kept = subtract([span], within(settle, span))
+    const cut = within(notRecording, span)
+    const inWindow = intersect(subtract(kept, cut), observed)
     if (!inWindow.length) continue
     offlineParts.push(...inWindow)
-    const notRecordingMs = total(intersect(kept, notRecording))
+    const notRecordingMs = total(intersect(kept, cut))
     events.push({
       kind: "offline",
       from: iso(kept[0]?.from ?? span.from),

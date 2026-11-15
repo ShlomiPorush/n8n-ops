@@ -26,14 +26,19 @@ export function union(spans: Span[]): Span[] {
   return out
 }
 
-/** The time in `spans` that no span of `holes` covers. */
+/**
+ * The time in `spans` that no span of `holes` covers. Both are joined once and walked together, so the cost stays
+ * linear in their length after sorting.
+ */
 export function subtract(spans: Span[], holes: Span[]): Span[] {
   const cut = union(holes)
   const out: Span[] = []
+  let first = 0
   for (const s of union(spans)) {
+    while (first < cut.length && (cut[first] as Span).to <= s.from) first++
     let from = s.from
-    for (const h of cut) {
-      if (h.to <= from || h.from >= s.to) continue
+    for (let i = first; i < cut.length && (cut[i] as Span).from < s.to; i++) {
+      const h = cut[i] as Span
       if (h.from > from) out.push({ from, to: h.from })
       from = Math.max(from, h.to)
     }
@@ -42,15 +47,40 @@ export function subtract(spans: Span[], holes: Span[]): Span[] {
   return out
 }
 
-/** The time both sets of spans cover. */
+/**
+ * The time both sets of spans cover: one walk over the two joined lists. Their common parts are already ordered and
+ * neither overlap nor touch, so they need no joining.
+ */
 export function intersect(a: Span[], b: Span[]): Span[] {
+  const xs = union(a)
+  const ys = union(b)
   const out: Span[] = []
-  for (const x of union(a))
-    for (const y of union(b)) {
-      const s = { from: Math.max(x.from, y.from), to: Math.min(x.to, y.to) }
-      if (s.to > s.from) out.push(s)
-    }
-  return union(out)
+  let i = 0
+  let j = 0
+  while (i < xs.length && j < ys.length) {
+    const x = xs[i] as Span
+    const y = ys[j] as Span
+    const from = Math.max(x.from, y.from)
+    const to = Math.min(x.to, y.to)
+    if (to > from) out.push({ from, to })
+    if (x.to < y.to) i++
+    else j++
+  }
+  return out
+}
+
+/** The spans of `joined` (as union returns them: ordered, apart) that overlap `s`, found by binary search. */
+export function within(joined: Span[], s: Span): Span[] {
+  let lo = 0
+  let hi = joined.length
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1
+    if ((joined[mid] as Span).to <= s.from) lo = mid + 1
+    else hi = mid
+  }
+  let end = lo
+  while (end < joined.length && (joined[end] as Span).from < s.to) end++
+  return joined.slice(lo, end)
 }
 
 export const total = (spans: Span[]) => union(spans).reduce((n, s) => n + len(s), 0)

@@ -237,7 +237,7 @@ describe("a worker's health report", () => {
     return { ctx: { log: { warn, info }, db: { select } } as unknown as Ctx, warn, info, select, where }
   }
   const instance = { id: "i1", name: "prod", overrides: {} } as unknown as Instance
-  const payload = { check: { seq: 3, revision: 1 } }
+  const payload = { check: { seq: 3, revision: 1 }, workers: ["http://w1/healthz"] }
 
   it("reaches the health alerts when it fits", async () => {
     const { ctx, warn } = fakeCtx()

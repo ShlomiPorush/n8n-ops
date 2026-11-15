@@ -730,7 +730,9 @@ describe("the number of found queue workers an instance keeps conditions for", (
     const other = `worker:00000000-0000-4000-8000-000000000000:docker://x`
     await pending(["w-1", "w-2"])
     await ctx.db.insert(alertState).values({ key: other, active: true, since: new Date() })
-    await deleteInstance(ctx, id)
+    // The instance is found by its ID in any letter case.
+    await deleteInstance(ctx, id.toUpperCase())
+    expect(await row()).toBeUndefined()
     const keys = (await ctx.db.select().from(alertState)).map((a) => a.key)
     expect(keys).toEqual([other])
   })

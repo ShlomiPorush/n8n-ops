@@ -451,7 +451,7 @@ export async function deleteInstance(ctx: Pick<Ctx, "db">, id: string) {
       }
       await tx.delete(instances).where(eq(instances.id, id))
       // The instance's queue worker conditions go with it.
-      await tx.delete(alertState).where(like(alertState.key, `worker:${id}:%`))
+      await tx.delete(alertState).where(like(alertState.key, `worker:${instance.id}:%`))
       const ids = [...locked]
       if (ids.length) {
         const empty = sql`not exists (select 1 from ${affectedWorkflows} where ${affectedWorkflows.problemId} = ${problems.id})`

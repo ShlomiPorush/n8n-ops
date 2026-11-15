@@ -3,6 +3,9 @@ import {
   dockerCovers,
   dockerFailing,
   intersect,
+  leave,
+  measure,
+  measured,
   offlineGap,
   overlap,
   perBucket,
@@ -11,7 +14,6 @@ import {
   subtract,
   total,
   union,
-  within,
 } from "./worker-periods.ts"
 
 const s = (n: number) => n * 1000
@@ -57,13 +59,14 @@ describe("spans", () => {
     ).toBe(4)
   })
 
-  it("intersects and subtracts like a minute-by-minute count, whatever the order, overlaps or empty spans", () => {
-    // Spans on a grid of 0 to 60; the reference marks each unit one by one.
+  it("intersects, subtracts and measures like a minute-by-minute count, whatever the order, overlaps or empty spans", () => {
+    // Spans on a grid of 0 to 60; the reference marks each unit one by one. The generator's products stay exact.
     let seed = 1
     const next = (n: number) => {
-      seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648
+      seed = (seed * 48_271) % 2_147_483_647
       return seed % n
     }
+    let overlapping = 0
     const spans = () =>
       Array.from({ length: next(8) }, () => {
         const from = next(60)
@@ -89,9 +92,14 @@ describe("spans", () => {
       const b = spans()
       const ma = marks(a)
       const mb = marks(b)
-      expect(intersect(a, b)).toEqual(toSpans(ma.map((v, i) => v && (mb[i] ?? false))))
+      const both = toSpans(ma.map((v, i) => v && (mb[i] ?? false)))
+      if (both.length) overlapping++
+      expect(intersect(a, b)).toEqual(both)
       expect(subtract(a, b)).toEqual(toSpans(ma.map((v, i) => v && !mb[i])))
+      for (const s of b) expect(measure(measured(a), s)).toBe(total(intersect(a, [s])))
     }
+    // The pairs overlap often enough for the comparison to mean something.
+    expect(overlapping).toBeGreaterThan(500)
   })
 
   it("subtracts and intersects long lists in time that grows with their length", () => {
@@ -105,18 +113,30 @@ describe("spans", () => {
     expect(performance.now() - started).toBeLessThan(LIMIT_MS)
   })
 
-  it("finds the joined spans that overlap a span, touching ones left out", () => {
-    const joined = [
+  it("measures the time joined spans cover in a span, and where a span leaves the one it starts in", () => {
+    const m = measured([
+      { from: 40, to: 50 },
+      { from: 0, to: 10 },
+      { from: 45, to: 48 },
+      { from: 20, to: 30 },
+      { from: 60, to: 60 },
+    ])
+    expect(m.spans).toEqual([
       { from: 0, to: 10 },
       { from: 20, to: 30 },
       { from: 40, to: 50 },
-    ]
-    expect(within(joined, { from: 10, to: 20 })).toEqual([])
-    expect(within(joined, { from: 9, to: 21 })).toEqual(joined.slice(0, 2))
-    expect(within(joined, { from: 25, to: 100 })).toEqual(joined.slice(1))
-    expect(within(joined, { from: -5, to: 0 })).toEqual([])
-    expect(within(joined, { from: 60, to: 70 })).toEqual([])
-    expect(within([], { from: 0, to: 10 })).toEqual([])
+    ])
+    expect(measure(m, { from: 5, to: 25 })).toBe(10)
+    expect(measure(m, { from: 22, to: 24 })).toBe(2)
+    expect(measure(m, { from: -5, to: 100 })).toBe(30)
+    expect(measure(m, { from: 10, to: 20 })).toBe(0)
+    expect(measure(m, { from: 25, to: 15 })).toBe(0)
+    expect(measure(measured([]), { from: 0, to: 10 })).toBe(0)
+    expect(leave(m, { from: 5, to: 8 })).toBe(10)
+    expect(leave(m, { from: 20, to: 21 })).toBe(30)
+    expect(leave(m, { from: 10, to: 15 })).toBe(10)
+    expect(leave(m, { from: 15, to: 25 })).toBe(15)
+    expect(leave(measured([]), { from: 3, to: 4 })).toBe(3)
   })
 
   it("spreads spans over buckets, also across a bucket edge, and ignores what lies outside", () => {

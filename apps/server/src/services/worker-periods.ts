@@ -69,18 +69,44 @@ export function intersect(a: Span[], b: Span[]): Span[] {
   return out
 }
 
-/** The spans of `joined` (as union returns them: ordered, apart) that overlap `s`, found by binary search. */
-export function within(joined: Span[], s: Span): Span[] {
+/** Joined spans with the running total of their lengths, so the time they cover in any span takes a binary search. */
+export type Measured = { spans: Span[]; before: number[] }
+
+export function measured(spans: Span[]): Measured {
+  const joined = union(spans)
+  const before = [0]
+  for (const s of joined) before.push((before.at(-1) ?? 0) + len(s))
+  return { spans: joined, before }
+}
+
+/** The index of the first span of `m` that ends after `at`. */
+function firstEndingAfter(m: Measured, at: number) {
   let lo = 0
-  let hi = joined.length
+  let hi = m.spans.length
   while (lo < hi) {
     const mid = (lo + hi) >> 1
-    if ((joined[mid] as Span).to <= s.from) lo = mid + 1
+    if ((m.spans[mid] as Span).to <= at) lo = mid + 1
     else hi = mid
   }
-  let end = lo
-  while (end < joined.length && (joined[end] as Span).from < s.to) end++
-  return joined.slice(lo, end)
+  return lo
+}
+
+/** The milliseconds of `m` that fall in `s`. */
+export function measure(m: Measured, s: Span): number {
+  if (s.to <= s.from) return 0
+  const first = firstEndingAfter(m, s.from)
+  let end = firstEndingAfter(m, s.to)
+  if (end < m.spans.length && (m.spans[end] as Span).from < s.to) end++
+  if (first >= end) return 0
+  const head = m.spans[first] as Span
+  const tail = m.spans[end - 1] as Span
+  return (m.before[end] ?? 0) - (m.before[first] ?? 0) - Math.max(0, s.from - head.from) - Math.max(0, tail.to - s.to)
+}
+
+/** Where `s` leaves the span of `m` it starts in, or `s.from` when it starts outside them. */
+export function leave(m: Measured, s: Span): number {
+  const at = m.spans[firstEndingAfter(m, s.from)]
+  return at && at.from <= s.from ? at.to : s.from
 }
 
 export const total = (spans: Span[]) => union(spans).reduce((n, s) => n + len(s), 0)

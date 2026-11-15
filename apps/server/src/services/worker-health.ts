@@ -17,6 +17,9 @@ import {
   dockerCovers,
   dockerFailing,
   intersect,
+  leave,
+  measure,
+  measured,
   offlineGap,
   perBucket,
   RECORDING_GAP_MS,
@@ -26,7 +29,6 @@ import {
   subtract,
   total,
   union,
-  within,
 } from "./worker-periods.ts"
 import { historyStartsAt, runningJob } from "./worker-presence.ts"
 
@@ -216,23 +218,29 @@ export function derive(f: HealthFacts): Derived {
   // Right after recording starts again Workers have not had time to call: that time counts as online.
   const settle = settling(f.recording.map((r) => r.from))
 
+  // A period keeps what lies outside the settle time (one that ends inside it is gone; a longer one keeps its part
+  // after it); of that, the Worker was offline where n8n-ops was recording. Each period's times are measured with
+  // running totals, so a period costs the same however many other periods and recording breaks it overlaps.
+  const settleM = measured(settle)
+  const notRecordingM = measured(notRecording)
+  const bothM = measured(intersect(settle, notRecording))
+  const cutM = measured([...settle, ...notRecording])
+  const seen = observed[0]
   const events: WorkerEvent[] = []
-  const offlineParts: Span[] = []
+  const periodSpans: Span[] = []
   for (const o of f.offline) {
     const span = { from: Math.max(o.from, f.startsAt ?? o.from), to: Math.min(o.to ?? f.now, end) }
-    // A period that ends inside the settle time is gone; a longer one keeps its part after it. Only the settle and
-    // not-recording spans that meet the period take part, so each period costs what lies inside it.
-    const kept = subtract([span], within(settle, span))
-    const cut = within(notRecording, span)
-    const inWindow = intersect(subtract(kept, cut), observed)
-    if (!inWindow.length) continue
-    offlineParts.push(...inWindow)
-    const notRecordingMs = total(intersect(kept, cut))
+    periodSpans.push(span)
+    const shown = seen ? { from: Math.max(span.from, seen.from), to: Math.min(span.to, seen.to) } : null
+    if (!shown || shown.to - shown.from - measure(cutM, shown) <= 0) continue
+    const keptMs = span.to - span.from - measure(settleM, span)
+    const notRecordingMs = measure(notRecordingM, span) - measure(bothM, span)
+    const keptFrom = leave(settleM, span)
     events.push({
       kind: "offline",
-      from: iso(kept[0]?.from ?? span.from),
+      from: iso(keptFrom < span.to ? keptFrom : span.from),
       to: o.to !== null && o.to <= end ? iso(o.to) : null,
-      durationMs: total(kept) - notRecordingMs,
+      durationMs: keptMs - notRecordingMs,
       notRecordingMs,
       job: o.job,
     })
@@ -262,7 +270,7 @@ export function derive(f: HealthFacts): Derived {
   const time = (e: WorkerEvent) => Date.parse(e.kind === "restart" ? e.at : e.from)
   events.sort((a, b) => time(b) - time(a) || a.kind.localeCompare(b.kind))
 
-  const offline = union(offlineParts)
+  const offline = intersect(subtract(periodSpans, [...settle, ...notRecording]), observed)
   const notRecordingSeen = intersect(notRecording, observed)
   const failingSeen = intersect(failing, observed)
   const online = subtract(observed, [...notRecording, ...offline])

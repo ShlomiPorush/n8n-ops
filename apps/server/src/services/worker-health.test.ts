@@ -318,4 +318,15 @@ describe("a long history", () => {
     expect(d.periods.offline.length).toBeGreaterThan(14_000)
     expect(ms).toBeLessThan(LIMIT_MS)
   })
+
+  it("reads 30 days of many offline periods recorded over each other while n8n-ops stopped recording many times", () => {
+    const { d, ms } = timed(
+      month({
+        recording: breaks(15_000),
+        offline: Array.from({ length: 600 }, (_, k) => ({ from: m(k), to: m(720 * 60 - 10 - k), job: null })),
+      }),
+    )
+    expect(d.summary.offlinePeriods).toBe(600)
+    expect(ms).toBeLessThan(LIMIT_MS)
+  })
 })

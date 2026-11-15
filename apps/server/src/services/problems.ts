@@ -16,6 +16,7 @@ import {
 } from "../db/schema.ts"
 import type { AuditEntry } from "../lib/audit.ts"
 import { sha256 } from "../lib/crypto.ts"
+import { cutToBytes, makeStorable, storableText } from "../lib/storable.ts"
 import type { N8nExecution } from "../n8n/client.ts"
 import { extractFailure } from "../n8n/execution.ts"
 import { enqueueProblemAlert, type ProblemAlertReason, problemAlertSettings } from "./alerts.ts"
@@ -87,7 +88,10 @@ export type IngestResult = {
 /**
  * Records one failed execution: finds or makes its Problem and Affected workflow, stores the failure, changes the
  * state and queues the alert, all in one transaction, so a stop anywhere leaves nothing and the next poll reads the
- * execution again. Null when it was already stored or its instance is gone. Alerts unless silent.
+ * execution again. Null when it was already stored or its instance is gone. Alerts unless silent. First removes, in
+ * place, the characters PostgreSQL cannot keep from the execution's text. When PostgreSQL still refuses a value, the
+ * failure is recorded again without the execution's data and the node's input, and with each text of its error cut
+ * to FALLBACK_ERROR_BYTES, so that data does not stop a poll.
  *
  * Locks, in the order every writer takes them: the instance (so a deletion waits or goes first), then the Problem
  * when a workflow joins it, then the Affected workflow, whose state is read and changed under its lock.
@@ -98,6 +102,7 @@ export async function ingestExecution(
   execution: N8nExecution,
   { silent }: { silent: boolean },
 ): Promise<IngestResult | null> {
+  makeStorable(execution)
   const failure = extractFailure(execution)
   const workflowName = execution.workflowData?.name ?? `Workflow ${execution.workflowId}`
   // Read before the transaction: inside it, only the transaction's own connection is used.
@@ -125,130 +130,157 @@ export async function ingestExecution(
   const seenAt = new Date(execution.stoppedAt ?? execution.startedAt ?? Date.now())
   const alertSettings = silent ? undefined : await problemAlertSettings(ctx)
 
-  return retrying(() =>
-    ctx.db.transaction(async (tx) => {
-      const [alive] = await tx
-        .select({ id: instances.id })
-        .from(instances)
-        .where(eq(instances.id, instance.id))
-        .for("key share")
-      if (!alive) return null
-      const [stored] = await tx
-        .select({ id: failures.id })
-        .from(failures)
-        .where(and(eq(failures.instanceId, instance.id), eq(failures.executionId, execution.id)))
-      if (stored) return null
+  const record = (withData: boolean) =>
+    retrying(() =>
+      ctx.db.transaction(async (tx) => {
+        const [alive] = await tx
+          .select({ id: instances.id })
+          .from(instances)
+          .where(eq(instances.id, instance.id))
+          .for("key share")
+        if (!alive) return null
+        const [stored] = await tx
+          .select({ id: failures.id })
+          .from(failures)
+          .where(and(eq(failures.instanceId, instance.id), eq(failures.executionId, execution.id)))
+        if (stored) return null
 
-      const now = new Date()
-      let reason: ProblemAlertReason | null = null
-      let row: AffectedWorkflow
-      const [existing] = await tx
-        .select()
-        .from(affectedWorkflows)
-        .where(eq(affectedWorkflows.fingerprint, rowFingerprint))
-        .for("update")
-      if (existing) {
-        const regression = existing.status === "resolved"
-        const unmute = existing.status === "muted" && !muteActive(existing, now)
-        if (regression) reason = "regression"
-        const [updated] = await tx
-          .update(affectedWorkflows)
-          .set({
-            workflowName,
-            // The latest failure names the row: n8n's text and the target's current label.
-            ...(seenAt >= existing.lastSeen ? { errorMessage: failure.message, ...causeValues(cause) } : {}),
-            count: sql`${affectedWorkflows.count} + 1`,
-            // A page comes newest first, so an older failure can arrive after a newer one.
-            firstSeen: seenAt < existing.firstSeen ? seenAt : existing.firstSeen,
-            lastSeen: seenAt > existing.lastSeen ? seenAt : existing.lastSeen,
-            ...(regression ? { status: "open" as const, regression: true, resolvedAt: null } : {}),
-            ...(unmute ? { status: "open" as const, mutedUntil: null } : {}),
-          })
-          .where(eq(affectedWorkflows.id, existing.id))
-          .returning()
-        if (!updated) throw new Error("the affected workflow went away")
-        row = updated
-        await followLatestLabel(tx, updated.problemId, cause, seenAt)
-      } else {
-        const values = {
-          instanceId: instance.id,
-          workflowId: execution.workflowId,
-          workflowName,
-          nodeName: failure.nodeName,
-          errorMessage: failure.message,
-          fingerprint: rowFingerprint,
-          ...causeValues(cause),
-          count: 1,
-          firstSeen: seenAt,
-          lastSeen: seenAt,
-        }
-        const problem = await joinableProblem(tx, cause.key)
-        if (problem) {
-          // A workflow joining a Problem takes its state: a resolved Problem regresses, a muted one stays muted
-          // until its mute ends and does not alert (the owner's decision), an open one alerts that it spread.
-          const peers = await tx
-            .select({ status: affectedWorkflows.status, mutedUntil: affectedWorkflows.mutedUntil })
-            .from(affectedWorkflows)
-            .where(eq(affectedWorkflows.problemId, problem.id))
-          const status = peers.length ? problemStatus(peers, now) : "open"
-          const mutedUntil = peers
-            .filter((p) => muteActive(p, now) && p.mutedUntil)
-            .reduce<Date | null>((end, p) => (!end || (p.mutedUntil as Date) > end ? p.mutedUntil : end), null)
-          const [created] = await tx
-            .insert(affectedWorkflows)
-            .values({
-              ...values,
-              problemId: problem.id,
-              ...(status === "resolved" ? { regression: true } : {}),
-              ...(status === "muted" ? { status: "muted" as const, mutedUntil } : {}),
+        const now = new Date()
+        let reason: ProblemAlertReason | null = null
+        let row: AffectedWorkflow
+        const [existing] = await tx
+          .select()
+          .from(affectedWorkflows)
+          .where(eq(affectedWorkflows.fingerprint, rowFingerprint))
+          .for("update")
+        if (existing) {
+          const regression = existing.status === "resolved"
+          const unmute = existing.status === "muted" && !muteActive(existing, now)
+          if (regression) reason = "regression"
+          const [updated] = await tx
+            .update(affectedWorkflows)
+            .set({
+              workflowName,
+              // The latest failure names the row: n8n's text and the target's current label.
+              ...(seenAt >= existing.lastSeen ? { errorMessage: failure.message, ...causeValues(cause) } : {}),
+              count: sql`${affectedWorkflows.count} + 1`,
+              // A page comes newest first, so an older failure can arrive after a newer one.
+              firstSeen: seenAt < existing.firstSeen ? seenAt : existing.firstSeen,
+              lastSeen: seenAt > existing.lastSeen ? seenAt : existing.lastSeen,
+              ...(regression ? { status: "open" as const, regression: true, resolvedAt: null } : {}),
+              ...(unmute ? { status: "open" as const, mutedUntil: null } : {}),
             })
+            .where(eq(affectedWorkflows.id, existing.id))
             .returning()
-          if (!created) throw new Error("could not record the affected workflow")
-          await tx
-            .update(problems)
-            .set({ version: sql`${problems.version} + 1` })
-            .where(eq(problems.id, problem.id))
-          await followLatestLabel(tx, problem.id, cause, seenAt)
-          row = created
-          reason = !peers.length ? "new" : status === "resolved" ? "regression" : status === "open" ? "joined" : null
+          if (!updated) throw new Error("the affected workflow went away")
+          row = updated
+          await followLatestLabel(tx, updated.problemId, cause, seenAt)
         } else {
-          const [made] = await tx
-            .insert(problems)
-            .values({ errorMessage: failure.message, fingerprint: cause.key, ...causeValues(cause) })
-            .returning()
-          if (!made) throw new Error("could not record the problem")
-          const [created] = await tx
-            .insert(affectedWorkflows)
-            .values({ ...values, problemId: made.id })
-            .returning()
-          if (!created) throw new Error("could not record the affected workflow")
-          row = created
-          reason = "new"
+          const values = {
+            instanceId: instance.id,
+            workflowId: execution.workflowId,
+            workflowName,
+            nodeName: failure.nodeName,
+            errorMessage: failure.message,
+            fingerprint: rowFingerprint,
+            ...causeValues(cause),
+            count: 1,
+            firstSeen: seenAt,
+            lastSeen: seenAt,
+          }
+          const problem = await joinableProblem(tx, cause.key)
+          if (problem) {
+            // A workflow joining a Problem takes its state: a resolved Problem regresses, a muted one stays muted
+            // until its mute ends and does not alert (the owner's decision), an open one alerts that it spread.
+            const peers = await tx
+              .select({ status: affectedWorkflows.status, mutedUntil: affectedWorkflows.mutedUntil })
+              .from(affectedWorkflows)
+              .where(eq(affectedWorkflows.problemId, problem.id))
+            const status = peers.length ? problemStatus(peers, now) : "open"
+            const mutedUntil = peers
+              .filter((p) => muteActive(p, now) && p.mutedUntil)
+              .reduce<Date | null>((end, p) => (!end || (p.mutedUntil as Date) > end ? p.mutedUntil : end), null)
+            const [created] = await tx
+              .insert(affectedWorkflows)
+              .values({
+                ...values,
+                problemId: problem.id,
+                ...(status === "resolved" ? { regression: true } : {}),
+                ...(status === "muted" ? { status: "muted" as const, mutedUntil } : {}),
+              })
+              .returning()
+            if (!created) throw new Error("could not record the affected workflow")
+            await tx
+              .update(problems)
+              .set({ version: sql`${problems.version} + 1` })
+              .where(eq(problems.id, problem.id))
+            await followLatestLabel(tx, problem.id, cause, seenAt)
+            row = created
+            reason = !peers.length ? "new" : status === "resolved" ? "regression" : status === "open" ? "joined" : null
+          } else {
+            const [made] = await tx
+              .insert(problems)
+              .values({ errorMessage: failure.message, fingerprint: cause.key, ...causeValues(cause) })
+              .returning()
+            if (!made) throw new Error("could not record the problem")
+            const [created] = await tx
+              .insert(affectedWorkflows)
+              .values({ ...values, problemId: made.id })
+              .returning()
+            if (!created) throw new Error("could not record the affected workflow")
+            row = created
+            reason = "new"
+          }
         }
-      }
 
-      await tx.insert(failures).values({
-        affectedWorkflowId: row.id,
-        instanceId: instance.id,
-        executionId: execution.id,
-        workflowId: execution.workflowId,
-        mode: execution.mode ?? null,
-        startedAt: execution.startedAt ? new Date(execution.startedAt) : null,
-        stoppedAt: execution.stoppedAt ? new Date(execution.stoppedAt) : null,
-        error: {
-          message: failure.message,
-          description: failure.description,
-          stack: failure.stack,
-          nodeType: failure.nodeType,
-        },
-        nodeInput: failure.input,
-        data: { data: execution.data ?? null, workflowData: execution.workflowData ?? null },
-      })
-      if (alertSettings && reason) await enqueueProblemAlert(ctx, tx, row, reason, alertSettings)
-      return { problemId: row.problemId, affectedWorkflowId: row.id, reason }
-    }),
-  )
+        await tx.insert(failures).values({
+          affectedWorkflowId: row.id,
+          instanceId: instance.id,
+          executionId: execution.id,
+          workflowId: execution.workflowId,
+          mode: execution.mode ?? null,
+          startedAt: execution.startedAt ? new Date(execution.startedAt) : null,
+          stoppedAt: execution.stoppedAt ? new Date(execution.stoppedAt) : null,
+          error: withData
+            ? {
+                message: failure.message,
+                description: failure.description,
+                stack: failure.stack,
+                nodeType: failure.nodeType,
+              }
+            : {
+                message: cutToBytes(failure.message, FALLBACK_ERROR_BYTES),
+                description: failure.description && cutToBytes(failure.description, FALLBACK_ERROR_BYTES),
+                stack: failure.stack && cutToBytes(failure.stack, FALLBACK_ERROR_BYTES),
+                nodeType: failure.nodeType && cutToBytes(failure.nodeType, FALLBACK_ERROR_BYTES),
+              },
+          nodeInput: withData ? failure.input : null,
+          data: withData ? { data: execution.data ?? null, workflowData: execution.workflowData ?? null } : null,
+        })
+        if (alertSettings && reason) await enqueueProblemAlert(ctx, tx, row, reason, alertSettings)
+        return { problemId: row.problemId, affectedWorkflowId: row.id, reason }
+      }),
+    )
+
+  try {
+    return await record(true)
+  } catch (error) {
+    if (!unstorableData(error)) throw error
+    // Nothing of the first attempt was kept, so the failure is recorded once: without its data, its error cut short.
+    ctx.log.warn("a failed execution's data could not be stored; it is recorded without its data and input", {
+      instance: instance.name,
+      execution: execution.id,
+      code: errorCode(error),
+    })
+    return record(false)
+  }
 }
+
+/** The most UTF-8 bytes each text of a failure's error keeps when its data could not be stored. */
+const FALLBACK_ERROR_BYTES = 64 * 1024
+
+/** A data exception or a program limit (SQLSTATE classes 22 and 54): PostgreSQL refused a value as it is. */
+const unstorableData = (error: unknown) => /^(22|54)[0-9A-Z]{3}$/.test(errorCode(error) ?? "")
 
 /**
  * The Problem's label follows its latest failure, over all its workflows (a credential renamed, a workflow name
@@ -333,7 +365,7 @@ export async function pollInstance(ctx: Ctx, instance: Instance) {
   } catch (error) {
     await ctx.db
       .update(instances)
-      .set({ lastPollAt: new Date(), lastPollError: (error as Error).message.slice(0, 500) })
+      .set({ lastPollAt: new Date(), lastPollError: storableText((error as Error).message).slice(0, 500) })
       .where(eq(instances.id, instance.id))
     throw error
   }

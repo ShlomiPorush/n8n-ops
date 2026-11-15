@@ -1,12 +1,20 @@
 import { randomBytes } from "node:crypto"
 import { EventEmitter } from "node:events"
 import { join } from "node:path"
-import { and, eq } from "drizzle-orm"
+import { and, eq, inArray, sql } from "drizzle-orm"
 import postgres from "postgres"
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest"
 import type { Ctx } from "../context.ts"
 import { createDatabase, type Database } from "../db/client.ts"
-import { affectedWorkflows, auditLog, failures, instances, problemReceipts, problems } from "../db/schema.ts"
+import {
+  affectedWorkflows,
+  alertOutbox,
+  auditLog,
+  failures,
+  instances,
+  problemReceipts,
+  problems,
+} from "../db/schema.ts"
 import { createAudit } from "../lib/audit.ts"
 import type { N8nExecution } from "../n8n/client.ts"
 import { causeOf } from "./cause.ts"
@@ -55,6 +63,7 @@ beforeAll(async () => {
     events: new EventEmitter(),
     settings,
     secrets: { decrypt: () => "key" },
+    log: { info: () => {}, warn: () => {}, error: () => {} },
   } as unknown as Ctx
   instance = await newInstance("undo-n8n")
 })
@@ -447,6 +456,282 @@ describe("a failed execution", () => {
     expect(stored.map((f) => f.executionId).sort()).toEqual(["101", "102", "103"])
     const [after] = await ctx.db.select().from(instances).where(eq(instances.id, polled.id))
     expect(after?.executionCursor).toBe("103")
+  })
+})
+
+type Content = { message?: string; description?: string; input?: Record<string, unknown> }
+
+/** A failed execution at node N whose message, description and input item are the given ones. */
+function failed(id: string, workflowId: string, content: Content): N8nExecution {
+  const base = execution(id, workflowId, "N", content.message ?? `Refused (${workflowId})`)
+  return {
+    ...base,
+    data: {
+      resultData: {
+        error: {
+          message: content.message ?? `Refused (${workflowId})`,
+          description: content.description,
+          node: { name: "N" },
+        },
+        runData: { N: [{ inputOverride: { main: [[{ json: content.input ?? { ok: true } }]] } }] },
+      },
+    },
+  }
+}
+
+/** n8n answers every page with these executions. */
+function serve(executions: N8nExecution[]) {
+  vi.stubGlobal(
+    "fetch",
+    async () =>
+      new Response(JSON.stringify({ data: executions, nextCursor: null }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+  )
+}
+
+const stored = async (instanceId: string, executionId: string) => {
+  const [failure] = await ctx.db
+    .select()
+    .from(failures)
+    .where(and(eq(failures.instanceId, instanceId), eq(failures.executionId, executionId)))
+  if (!failure) throw new Error(`execution ${executionId} not stored`)
+  return { failure, affected: await read(failure.affectedWorkflowId) }
+}
+
+/** The test context with new-problem and regression alerts on, routed to the chat's General topic. */
+const alertingCtx = () =>
+  ({
+    ...ctx,
+    settings: {
+      ...ctx.settings,
+      get: async (section: string) =>
+        section === "alerts"
+          ? { newProblem: true, regression: true, groupingWindowSec: 60 }
+          : { routes: [], defaultThreadId: null },
+    },
+  }) as unknown as Ctx
+
+describe("a poll over executions with text the database cannot keep", () => {
+  it.each([
+    { name: "U+0000 in the error message", content: { message: "Bad\u0000 value" }, message: "Bad value" },
+    {
+      name: "an unpaired surrogate in the error message",
+      content: { message: "Bad\uD800 value" },
+      message: "Bad value",
+    },
+    {
+      name: "U+0000 in an input value",
+      content: { input: { body: { name: "first\u0000last" } } },
+      input: [{ body: { name: "firstlast" } }],
+    },
+    { name: "U+0000 in an input key", content: { input: { "na\u0000me": "v" } }, input: [{ name: "v" }] },
+    {
+      name: "an unpaired surrogate in an input value",
+      content: { input: { name: "x\uDC00y" } },
+      input: [{ name: "xy" }],
+    },
+    {
+      name: "U+0000 in a JSON answer inside the description",
+      content: { description: `400 - ${JSON.stringify({ message: "before\u0000after" })}` },
+      reason: "HTTP 400 · beforeafter",
+    },
+  ])("$name: the first sync stores every failure without those characters and ends", async (c) => {
+    const polled = await newInstance(`text-${randomBytes(3).toString("hex")}`)
+    const tag = randomBytes(3).toString("hex")
+    serve([failed("3", `before-${tag}`, {}), failed("2", `odd-${tag}`, c.content), failed("1", `after-${tag}`, {})])
+    const [fresh] = await ctx.db.select().from(instances).where(eq(instances.id, polled.id))
+    if (!fresh) throw new Error("no instance")
+    await expect(pollInstance(ctx, fresh)).resolves.toEqual({ read: 3, silent: true })
+    const [after] = await ctx.db.select().from(instances).where(eq(instances.id, polled.id))
+    expect(after).toMatchObject({ firstSyncDone: true, executionCursor: "3", lastPollError: null })
+    const all = await ctx.db.select().from(failures).where(eq(failures.instanceId, polled.id))
+    expect(all.map((f) => f.executionId).sort()).toEqual(["1", "2", "3"])
+    const odd = await stored(polled.id, "2")
+    if (c.message) {
+      expect(odd.affected.errorMessage).toBe(c.message)
+      expect(odd.failure.error).toMatchObject({ message: c.message })
+    }
+    if (c.input) expect(odd.failure.nodeInput).toEqual(c.input)
+    if (c.reason) expect(odd.affected.reason).toBe(c.reason)
+  })
+
+  it("a later poll stores and alerts every new failure around one with such text", async () => {
+    const polled = await newInstance(`alerts-${randomBytes(3).toString("hex")}`)
+    await ctx.db
+      .update(instances)
+      .set({ firstSyncDone: true, executionCursor: "100" })
+      .where(eq(instances.id, polled.id))
+    const alerting = alertingCtx()
+    const tag = randomBytes(3).toString("hex")
+    serve([
+      failed("103", `newer-${tag}`, {}),
+      failed("102", `odd-${tag}`, { message: `Bad\u0000 value (${tag})`, input: { "k\u0000": "v\uD800" } }),
+      failed("101", `older-${tag}`, {}),
+    ])
+    const [fresh] = await ctx.db.select().from(instances).where(eq(instances.id, polled.id))
+    if (!fresh) throw new Error("no instance")
+    await expect(pollInstance(alerting, fresh)).resolves.toEqual({ read: 3, silent: false })
+    const [after] = await ctx.db.select().from(instances).where(eq(instances.id, polled.id))
+    expect(after).toMatchObject({ executionCursor: "103", lastPollError: null })
+    const rows = await Promise.all(["101", "102", "103"].map((id) => stored(polled.id, id)))
+    expect(rows[1]?.failure.nodeInput).toEqual([{ k: "v" }])
+    const queued = await ctx.db
+      .select({ affectedWorkflowId: alertOutbox.affectedWorkflowId })
+      .from(alertOutbox)
+      .where(
+        inArray(
+          alertOutbox.affectedWorkflowId,
+          rows.map((r) => r.affected.id),
+        ),
+      )
+    expect(queued.map((q) => q.affectedWorkflowId).sort()).toEqual(rows.map((r) => r.affected.id).sort())
+  })
+
+  it("records the poll error even when the error quotes such text", async () => {
+    const polled = await newInstance(`error-${randomBytes(3).toString("hex")}`)
+    // An execution id the database cannot keep makes saving the cursor fail with an error that quotes it.
+    serve([failed("7\u0000", `id-${randomBytes(3).toString("hex")}`, {})])
+    const [fresh] = await ctx.db.select().from(instances).where(eq(instances.id, polled.id))
+    if (!fresh) throw new Error("no instance")
+    await expect(pollInstance(ctx, fresh)).rejects.toThrow()
+    const [after] = await ctx.db.select().from(instances).where(eq(instances.id, polled.id))
+    expect(after?.lastPollError).toMatch(/^Failed query/)
+    expect(after?.lastPollError).not.toContain("\u0000")
+  })
+})
+
+describe("a poll over an execution whose data PostgreSQL refuses", () => {
+  // Stands in for a value over PostgreSQL's limits: the database refuses a failure's data that holds a marker,
+  // with a program limit (class 54) or with an error of another class.
+  beforeAll(async () => {
+    await database.db.execute(
+      sql.raw(`
+        CREATE FUNCTION refuse_marked_failure() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          IF NEW.data::text LIKE '%over-the-limit%' THEN
+            RAISE EXCEPTION 'value over the limit' USING ERRCODE = '54000';
+          END IF;
+          IF NEW.data::text LIKE '%refused-otherwise%' THEN
+            RAISE EXCEPTION 'refused' USING ERRCODE = 'P0001';
+          END IF;
+          IF octet_length(NEW.error::text) > 500000 THEN
+            RAISE EXCEPTION 'error over the limit' USING ERRCODE = '54000';
+          END IF;
+          RETURN NEW;
+        END $$
+      `),
+    )
+    await database.db.execute(
+      sql.raw(
+        "CREATE TRIGGER refuse_marked_failure BEFORE INSERT ON failures FOR EACH ROW EXECUTE FUNCTION refuse_marked_failure()",
+      ),
+    )
+  })
+
+  afterAll(async () => {
+    await database.db.execute(sql.raw("DROP TRIGGER refuse_marked_failure ON failures"))
+    await database.db.execute(sql.raw("DROP FUNCTION refuse_marked_failure()"))
+  })
+
+  async function pollOver(marker: string, { established }: { established: boolean }) {
+    const polled = await newInstance(`limit-${randomBytes(3).toString("hex")}`)
+    if (established)
+      await ctx.db
+        .update(instances)
+        .set({ firstSyncDone: true, executionCursor: "200" })
+        .where(eq(instances.id, polled.id))
+    const tag = randomBytes(3).toString("hex")
+    serve([
+      failed("203", `newer-${tag}`, {}),
+      failed("202", `big-${tag}`, { message: `Too big (${tag})`, input: { note: marker } }),
+      failed("201", `older-${tag}`, {}),
+    ])
+    const [fresh] = await ctx.db.select().from(instances).where(eq(instances.id, polled.id))
+    if (!fresh) throw new Error("no instance")
+    return { polled, fresh, result: pollInstance(alertingCtx(), fresh) }
+  }
+
+  it("stores that failure with its error but without its data and input, alerts, and moves on", async () => {
+    const { polled, fresh, result } = await pollOver("over-the-limit", { established: true })
+    await expect(result).resolves.toEqual({ read: 3, silent: false })
+    const [after] = await ctx.db.select().from(instances).where(eq(instances.id, polled.id))
+    expect(after).toMatchObject({ executionCursor: "203", lastPollError: null })
+    const rows = await Promise.all(["201", "202", "203"].map((id) => stored(polled.id, id)))
+    const big = rows[1]
+    expect(big?.failure).toMatchObject({ nodeInput: null, data: null })
+    expect(big?.failure.error).toMatchObject({ message: big?.affected.errorMessage })
+    expect(big?.affected.count).toBe(1)
+    expect(rows[0]?.failure.data).not.toBeNull()
+    const queued = await ctx.db
+      .select({ affectedWorkflowId: alertOutbox.affectedWorkflowId })
+      .from(alertOutbox)
+      .where(
+        inArray(
+          alertOutbox.affectedWorkflowId,
+          rows.map((r) => r.affected.id),
+        ),
+      )
+    expect(queued.map((q) => q.affectedWorkflowId).sort()).toEqual(rows.map((r) => r.affected.id).sort())
+    // Read again from the earlier cursor: nothing is stored, counted or alerted twice.
+    await expect(pollInstance(alertingCtx(), fresh)).resolves.toEqual({ read: 3, silent: false })
+    expect(await ctx.db.select().from(failures).where(eq(failures.instanceId, fresh.id))).toHaveLength(3)
+    expect((await stored(polled.id, "202")).affected.count).toBe(1)
+    const again = await ctx.db
+      .select({ id: alertOutbox.id })
+      .from(alertOutbox)
+      .where(
+        inArray(
+          alertOutbox.affectedWorkflowId,
+          rows.map((r) => r.affected.id),
+        ),
+      )
+    expect(again).toHaveLength(3)
+  })
+
+  it("lets the first sync end", async () => {
+    const { polled, result } = await pollOver("over-the-limit", { established: false })
+    await expect(result).resolves.toEqual({ read: 3, silent: true })
+    const [after] = await ctx.db.select().from(instances).where(eq(instances.id, polled.id))
+    expect(after).toMatchObject({ firstSyncDone: true, executionCursor: "203", lastPollError: null })
+    expect((await stored(polled.id, "202")).failure).toMatchObject({ nodeInput: null, data: null })
+  })
+
+  it("cuts each text of the error short when the error is too large as well", async () => {
+    const polled = await newInstance(`huge-${randomBytes(3).toString("hex")}`)
+    const tag = randomBytes(3).toString("hex")
+    const huge = failed("302", `huge-${tag}`, { message: `Huge (${tag}) ${"m".repeat(300_000)}` })
+    const error = (huge.data as { resultData: { error: Record<string, unknown> } }).resultData.error
+    error.description = "é".repeat(200_000)
+    error.stack = "s".repeat(300_000)
+    error.node = { name: "N", type: "t".repeat(600_000) }
+    serve([failed("303", `newer-${tag}`, {}), huge, failed("301", `older-${tag}`, {})])
+    const [fresh] = await ctx.db.select().from(instances).where(eq(instances.id, polled.id))
+    if (!fresh) throw new Error("no instance")
+    await expect(pollInstance(alertingCtx(), fresh)).resolves.toEqual({ read: 3, silent: true })
+    const [after] = await ctx.db.select().from(instances).where(eq(instances.id, polled.id))
+    expect(after).toMatchObject({ firstSyncDone: true, executionCursor: "303", lastPollError: null })
+    const { failure, affected } = await stored(polled.id, "302")
+    expect(failure).toMatchObject({ nodeInput: null, data: null })
+    const kept = failure.error as { message: string; description: string; stack: string; nodeType: string }
+    expect(Buffer.byteLength(kept.message)).toBe(64 * 1024)
+    expect(kept.message.startsWith(`Huge (${tag}) mmm`)).toBe(true)
+    expect(kept.description).toBe("é".repeat(32 * 1024))
+    expect(kept.stack).toBe("s".repeat(64 * 1024))
+    expect(kept.nodeType).toBe("t".repeat(64 * 1024))
+    // The Problem keeps the whole text.
+    expect(affected.errorMessage).toHaveLength(`Huge (${tag}) `.length + 300_000)
+  })
+
+  it("stops the poll as before on any other error", async () => {
+    const { polled, result } = await pollOver("refused-otherwise", { established: true })
+    await expect(result).rejects.toThrow()
+    const [after] = await ctx.db.select().from(instances).where(eq(instances.id, polled.id))
+    expect(after?.executionCursor).toBe("200")
+    expect(after?.lastPollError).toMatch(/^Failed query/)
+    const kept = await ctx.db.select().from(failures).where(eq(failures.instanceId, polled.id))
+    expect(kept.map((f) => f.executionId)).toEqual(["203"])
   })
 })
 

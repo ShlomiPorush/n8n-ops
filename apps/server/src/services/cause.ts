@@ -1,4 +1,5 @@
 import { sha256 } from "../lib/crypto.ts"
+import { storableText } from "../lib/storable.ts"
 
 /**
  * The cause of a failed execution: what the failing node talked to (the target) and what went wrong there (the
@@ -158,9 +159,15 @@ function stripTags(s: string): string {
 
 /**
  * The service's own answer in n8n's error description: plain text, the text of a JSON body (n8n writes "NNN - body"),
- * the Code and Message of an XML error, or the title of an HTML page. Null when it holds nothing usable.
+ * the Code and Message of an XML error, or the title of an HTML page. Null when it holds nothing usable. Decoding the
+ * JSON can bring back characters PostgreSQL cannot keep, so the answer is made storable.
  */
 export function serviceAnswer(description: string | null): string | null {
+  const answer = readAnswer(description)
+  return answer === null ? null : storableText(answer) || null
+}
+
+function readAnswer(description: string | null): string | null {
   if (typeof description !== "string") return null
   let s = description.slice(0, LIMITS.description).trim()
   const body = s.match(/^\d{3} - ([\s\S]*)$/)

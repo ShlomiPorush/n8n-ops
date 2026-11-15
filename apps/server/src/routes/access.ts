@@ -50,7 +50,11 @@ const approveBody = z.object({
  */
 const endedQuery = z
   .object({
-    before: z.iso.datetime().optional(),
+    // PostgreSQL has no year 0, which the ISO format allows.
+    before: z.iso
+      .datetime()
+      .refine((at) => !at.startsWith("0000-"))
+      .optional(),
     beforeId: z.string().uuid().optional(),
   })
   .strict()

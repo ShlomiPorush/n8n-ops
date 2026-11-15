@@ -59,6 +59,7 @@ describe("pages of ended access requests", () => {
     ["only an id", `?beforeId=${id}`],
     ["a time that is not one", `?before=yesterday&beforeId=${id}`],
     ["a day the calendar does not have", `?before=2026-02-30T08:15:30Z&beforeId=${id}`],
+    ["a year the database does not have", `?before=0000-01-01T00:00:00Z&beforeId=${id}`],
     ["a time with an offset", `?before=2026-11-16T10:15:30%2B02:00&beforeId=${id}`],
     ["an id that is not one", "?before=2026-11-16T08:15:30Z&beforeId=42"],
     ["anything else", `?before=2026-11-16T08:15:30Z&beforeId=${id}&limit=5000`],

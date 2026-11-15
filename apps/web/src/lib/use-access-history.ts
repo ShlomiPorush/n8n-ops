@@ -62,8 +62,19 @@ export function useAccessHistory<T extends Listed>(
   const [inView, setInView] = useState(false)
   const [reread, setReread] = useState(false)
   const [once, setOnce] = useState(false)
-  const [failed, setFailed] = useState<HistoryRead | null>(null)
+  // The time of the failure Try again answered; a later failure is kept again.
+  const [answered, setAnswered] = useState(0)
   const [retrying, setRetrying] = useState(false)
+  // A failure, read from the query as it stands, so no render between the failure and its notice starts a read.
+  // Kept until Try again: nothing is read by itself after it.
+  const failed: HistoryRead | null =
+    query.status === "error" && query.errorUpdatedAt !== answered
+      ? query.isFetchNextPageError
+        ? "next"
+        : hasData
+          ? "again"
+          : "first"
+      : null
 
   // The end of the list, wherever it scrolls (the list's own pane beside an item, or the page): its probe reaches
   // above it, so older requests are asked for before the reader gets there.
@@ -105,18 +116,19 @@ export function useAccessHistory<T extends Listed>(
     // The first page holds the live answer's ended requests again, so a press is answered by the page after it.
     if (read === "again") setReread(false)
     else if (read === "next") setOnce(false)
-    void (read === "next" ? fetchNextPage() : refetch()).then((result) => {
-      if (!result.isError) return
-      // Kept until Try again, with what asked for the read put back, so Try again reads it again.
-      setFailed(read)
-      if (read === "again") setReread(true)
-    })
+    void (read === "next" ? fetchNextPage() : refetch())
   }, [read, fetchNextPage, refetch])
+  // A page asked for is answered by the end of the history too, so it is not read later by itself.
+  useEffect(() => {
+    if (once && hasData && !query.hasNextPage && !reading && !failed) setOnce(false)
+  }, [once, hasData, query.hasNextPage, reading, failed])
   useEffect(() => {
     if (retrying && !reading && read === null) setRetrying(false)
   }, [retrying, reading, read])
 
-  const more = liveFull && !(hasData && !query.hasNextPage && !reread)
+  // The history is complete only when it reached its end and nothing is owed: no re-read waiting, running or failed.
+  const rereading = reading && hasData && !query.isFetchingNextPage
+  const more = liveFull && !(hasData && !query.hasNextPage && !reread && !rereading && !failed)
   return {
     rows: live ? mergeHistory(live, history) : undefined,
     /** Older requests than those listed may exist. */
@@ -136,9 +148,12 @@ export function useAccessHistory<T extends Listed>(
     reading,
     endRef: setEnd,
     loadOnce: () => setOnce(true),
+    /** Reads again what failed, with what asked for it: a re-read, or one page. */
     tryAgain: () => {
-      if (failed !== "again") setOnce(true)
-      setFailed(null)
+      if (!failed) return
+      if (failed === "again") setReread(true)
+      else setOnce(true)
+      setAnswered(query.errorUpdatedAt)
       setRetrying(true)
     },
   }

@@ -1,4 +1,4 @@
-import { type MainCheckOutput, mainCheckOutput } from "@n8n-ops/shared"
+import { METRIC_GAP, METRIC_LABELS, METRICS_MAX_BYTES, type MainCheckOutput, mainCheckOutput } from "@n8n-ops/shared"
 import { type Docker, DockerError, type Refusal, refusalOf } from "./docker.ts"
 
 /**
@@ -124,15 +124,19 @@ const main = { host: loopback(address.value), port: port.value, tls: tls }
   else if (prefix.unknown) out.metrics = { state: "failed", reason: "cannot read N8N_METRICS_PREFIX" }
   else if (!metricsOn.value) out.metrics = { state: typed ? "skipped" : "off" }
   else {
-    const m = await get(main, "/metrics", 4 * 1024 * 1024)
+    const m = await get(main, "/metrics", ${METRICS_MAX_BYTES})
     if (m.error) out.metrics = { state: "failed", reason: m.error }
     else if (m.status === 404) out.metrics = { state: "404" }
     else if (m.status !== 200) out.metrics = { state: "failed", reason: "HTTP " + m.status }
     else {
+      // Each sample within its own line, as the shared parser reads it, so a parse takes time in proportion to the
+      // text; only the prefix is the configured one here.
       const p = escape(prefix.value)
+      const labels = ${JSON.stringify(METRIC_LABELS)}
+      const gap = ${JSON.stringify(METRIC_GAP)}
       const read = (name) => {
         const found = m.body.match(new RegExp("^" + p + "scaling_mode_queue_jobs_" + name +
-          "(?:_total)?(?:\\{[^}]*\\})?\\s+([0-9.eE+-]+)$", "m"))
+          "(?:_total)?(?:" + labels + ")?" + gap + "([0-9.eE+-]+)$", "m"))
         return found ? Number(found[1]) : null
       }
       const waiting = read("waiting")
@@ -143,7 +147,7 @@ const main = { host: loopback(address.value), port: port.value, tls: tls }
         out.queue = { waiting: waiting, active: read("active") || 0, completed: read("completed") || 0,
           failed: read("failed") || 0 }
       }
-      const info = m.body.match(new RegExp("^" + p + "version_info\\{([^}]*)\\}", "m"))
+      const info = m.body.match(new RegExp("^" + p + "version_info(" + labels + ")", "m"))
       const version = info && info[1].match(/version="v?([^"]{1,40})"/)
       if (version) out.version = version[1]
     }

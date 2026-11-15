@@ -31,6 +31,13 @@ export async function readMetricsText(res: Response): Promise<string> {
  * the text, whatever the text holds.
  */
 
+/**
+ * Pattern sources for the parts of a sample line, each within one line: a label set, and the space between the name
+ * (or its labels) and the value. The check inside the main container builds its patterns from them too.
+ */
+export const METRIC_LABELS = String.raw`\{[^}\r\n  ]*\}`
+export const METRIC_GAP = String.raw`[ \t]+`
+
 /** The version from n8n's version_info metric (any prefix), without the leading "v". */
 export function parseVersionMetric(text: string): string | null {
   const match = text.match(/^[a-zA-Z0-9_]*version_info\{[^}\r\n\u2028\u2029]*\bversion="v?([^"\r\n\u2028\u2029]+)"/m)
@@ -41,7 +48,7 @@ export function parseVersionMetric(text: string): string | null {
 export function parseQueueMetrics(text: string): QueueMetrics | null {
   const read = (name: string) => {
     // The prefix is configurable in n8n (N8N_METRICS_PREFIX, default "n8n_"); counters may end in _total.
-    const pattern = `^[a-zA-Z0-9_]*scaling_mode_queue_jobs_${name}(?:_total)?(?:\\{[^}\\r\\n\\u2028\\u2029]*\\})?[ \\t]+([0-9.eE+-]+)$`
+    const pattern = `^[a-zA-Z0-9_]*scaling_mode_queue_jobs_${name}(?:_total)?(?:${METRIC_LABELS})?${METRIC_GAP}([0-9.eE+-]+)$`
     const match = text.match(new RegExp(pattern, "m"))
     return match ? Number(match[1]) : null
   }

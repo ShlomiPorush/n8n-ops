@@ -12,7 +12,6 @@ import {
   editDraft,
   instancesOf,
   nameIn,
-  refusedCounts,
 } from "./access.ts"
 import { availableChannels, channelsFor, dueChannels } from "./access-channels.ts"
 import { sendRouted, topicGoneNote } from "./alert-routing.ts"
@@ -759,21 +758,13 @@ async function closeOutdated(ctx: Ctx) {
       isNull(accessRequests.telegramClosedAt),
     ),
   )
-  const refused = await refusedCounts(
-    ctx,
-    outdated.map(({ r }) => r.id),
-  )
   for (const { r, info } of outdated) {
     try {
-      const text = renderAccessTelegram(
-        info,
-        dates,
-        accessOutcome({ ...r, refusedCount: refused.get(r.id) ?? 0, changed: info.changed }, dates),
-      )
+      const text = renderAccessTelegram(info, dates, accessOutcome({ ...r, changed: info.changed }, dates))
       const note = r.telegramMissingTopic ? topicGoneNote(r.telegramMissingTopic) : undefined
       await tg.api.edit(tg.chatId, r.telegramMessageId ?? 0, note ? TelegramHtml.join([note, text]) : text)
-      // Marked as shown only if the status and the call count are still the ones shown; if either changed meanwhile,
-      // the next run edits again. A call logged now holds the row, and this update then checks the count it left.
+      // Marked as shown only if the status and the counts are still the ones shown; if any changed meanwhile, the
+      // next run edits again. A call logged now holds the row, and this update then checks the counts it left.
       await ctx.db
         .update(accessRequests)
         .set({ telegramClosedAt: new Date() })
@@ -782,6 +773,7 @@ async function closeOutdated(ctx: Ctx) {
             eq(accessRequests.id, r.id),
             eq(accessRequests.status, r.status),
             eq(accessRequests.callCount, r.callCount),
+            eq(accessRequests.refusedCount, r.refusedCount),
           ),
         )
     } catch (e) {

@@ -12,7 +12,7 @@ import { accessCalls, accessRequestInstances, accessRequests, apiTokens, instanc
 import { createSecrets, sha256 } from "../lib/crypto.ts"
 import { createSettings } from "../lib/settings.ts"
 import { restRoutes } from "../routes/agent.ts"
-import { getAccess, grantForKey, logCall, releaseAccess, revokeAccess } from "./access.ts"
+import { getAccess, grantForKey, logCall, refuseChange, releaseAccess, reserveChange, revokeAccess } from "./access.ts"
 import { closeTelegramMessages } from "./access-notify.ts"
 
 // Releasing temporary access with what the agent did, and the calls it made, against a real PostgreSQL: the summary
@@ -290,6 +290,29 @@ describe("calls made with the access", () => {
     expect((await stored(id)).telegramClosedAt).toBeNull()
     await closeTelegramMessages(ctx)
     expect(edits.at(-1)).toContain("1 call through n8n-ops")
+    expect((await stored(id)).telegramClosedAt).not.toBeNull()
+  })
+
+  it("refused after they were recorded while the message is being edited leave it to be edited again", async () => {
+    const { id } = await approved()
+    await releaseAccess(ctx, tokenId, id)
+    // A change recorded before it is sent, then refused before it was sent: the call count stays, the refused one not.
+    const change = await reserveChange(ctx, id, { instanceId, method: "PUT", path: "/workflows/w1" })
+    if (!change) throw new Error("not recorded")
+    let release = () => {}
+    editGate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const closing = closeTelegramMessages(ctx)
+    await vi.waitFor(() => expect(editGate).toBeNull())
+    await refuseChange(ctx, id, change, 401, "The access key is unknown, expired, released or revoked.")
+    release()
+    await closing
+    expect(edits.at(-1)).toContain("1 call through n8n-ops")
+    expect(edits.at(-1)).not.toContain("1 refused")
+    expect((await stored(id)).telegramClosedAt).toBeNull()
+    await closeTelegramMessages(ctx)
+    expect(edits.at(-1)).toContain("1 call through n8n-ops, 1 refused")
     expect((await stored(id)).telegramClosedAt).not.toBeNull()
   })
 

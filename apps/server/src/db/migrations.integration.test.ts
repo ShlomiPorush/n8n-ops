@@ -791,3 +791,96 @@ describe("the single account (0033)", () => {
     }
   })
 })
+
+describe("the bounded access call history (0035)", () => {
+  const DID_NOT_ANSWER = "The n8n instance did not answer."
+  // Characters outside the BMP take two UTF-16 units: the cut counts characters, as PostgreSQL does.
+  const wide = "\u{1F600}"
+  const longPath = `/${wide.repeat(10)}${"a".repeat(2000)}`
+  const longReason = wide.repeat(600)
+  const cut = (text: string, max: number) =>
+    `${Array.from(text)
+      .slice(0, max - 1)
+      .join("")}…`
+
+  /** An ended request with a Telegram message shown as current, and its calls as earlier releases stored them. */
+  async function seedCalls(sql: postgres.Sql) {
+    const [token] = await sql`insert into api_tokens (name, kind, prefix, token_hash)
+      values ('old-bot', 'rest', 'nops_x', 'old-calls') returning id`
+    const [instance] = await sql`insert into instances (name, base_url, api_key_enc)
+      values ('old-n8n', 'http://n8n:5678', 'x') returning id`
+    const [request] = await sql`insert into access_requests
+      (token_id, reason, requested_minutes, minutes, status, decide_by, telegram_message_id, telegram_closed_at, call_count)
+      values (${token?.id}, 'Old request', 30, 30, 'released', now(), 7, now(), 605) returning id`
+    const id = request?.id as string
+    const call = (seconds: number, method: string, path: string, status: number, refused: string | null) => {
+      const at = new Date(Date.UTC(2026, 10, 1) + seconds * 1000).toISOString()
+      return sql`insert into access_calls (request_id, instance_id, created_at, method, path, status, refused)
+        values (${id}, ${instance?.id}, ${at}::timestamptz, ${method}, ${path}, ${status}, ${refused})`
+    }
+    await call(0, "PUT", "/workflows/w1", 200, null)
+    await call(1, "PUT", "/variables/v1", 502, DID_NOT_ANSWER)
+    await call(2, "DELETE", "/tags/t1", 502, DID_NOT_ANSWER)
+    await call(3, "GET", "/workflows", 502, DID_NOT_ANSWER)
+    // Six calls made at the same moment where the latest 500 end: the ID decides which of them stay.
+    for (let i = 0; i < 600; i++)
+      await call(i >= 100 && i <= 105 ? 110 : 10 + i, "GET", `/nothing/${i}`, 403, "GET /nothing is not an operation.")
+    await call(1000, "GET", longPath, 403, longReason)
+    return id
+  }
+
+  it("keeps every change, counts every refusal, keeps the latest 500 other calls and cuts long text", async () => {
+    const { sql, db, close } = await freshDatabase()
+    try {
+      await migrate(db, { migrationsFolder: migrationsUpTo("0034_session_two_factor") })
+      const id = await seedCalls(sql)
+      const tied = await sql`select id from access_calls
+        where request_id = ${id} and created_at = ${new Date(Date.UTC(2026, 10, 1) + 110_000).toISOString()}::timestamptz
+        order by id desc`
+      expect(tied).toHaveLength(6)
+      await migrate(db, { migrationsFolder: migrationsUpTo(null) })
+
+      const [request] = await sql`select call_count, refused_count, telegram_closed_at from access_requests
+        where id = ${id}`
+      // Every refused call counted, the possibly applied changes no longer among them; the message is edited again.
+      expect(request).toMatchObject({ call_count: 605, refused_count: 602, telegram_closed_at: null })
+      const changes = await sql`select method, path, status, refused from access_calls
+        where request_id = ${id} and change order by created_at`
+      expect(changes).toEqual([
+        { method: "PUT", path: "/workflows/w1", status: 200, refused: null },
+        { method: "PUT", path: "/variables/v1", status: null, refused: null },
+        { method: "DELETE", path: "/tags/t1", status: null, refused: null },
+      ])
+      const others = await sql`select id, path, refused from access_calls
+        where request_id = ${id} and not change order by created_at desc, id desc`
+      expect(others).toHaveLength(500)
+      expect(others[0]?.path).toBe(cut(longPath, 1024))
+      expect(Array.from(others[0]?.path as string)).toHaveLength(1024)
+      expect(others[0]?.refused).toBe(cut(longReason, 500))
+      // The latest 494 with their own moment, then the five tied calls with the highest IDs.
+      expect(others[494]?.path).toBe("/nothing/106")
+      expect(others.slice(495).map((o) => o.id)).toEqual(tied.slice(0, 5).map((t) => t.id))
+    } finally {
+      await close()
+    }
+  })
+
+  it("leaves the calls as they were when a later step fails, and runs again", async () => {
+    const { sql, db, close } = await freshDatabase()
+    try {
+      await migrate(db, { migrationsFolder: migrationsUpTo("0034_session_two_factor") })
+      const id = await seedCalls(sql)
+      await expect(migrate(db, { migrationsFolder: migrationsUpTo(null, "SELECT 1 / 0;") })).rejects.toThrow()
+      const [column] = await sql`select count(*)::int as n from information_schema.columns
+        where table_name = 'access_calls' and column_name = 'change'`
+      expect(column?.n).toBe(0)
+      const [kept] = await sql`select count(*)::int as n from access_calls where request_id = ${id}`
+      expect(kept?.n).toBe(605)
+      await migrate(db, { migrationsFolder: migrationsUpTo(null) })
+      const [after] = await sql`select count(*)::int as n from access_calls where request_id = ${id}`
+      expect(after?.n).toBe(503)
+    } finally {
+      await close()
+    }
+  })
+})

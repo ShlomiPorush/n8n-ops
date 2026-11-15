@@ -15,8 +15,11 @@ import { createSettings } from "../lib/settings.ts"
 import {
   approveAccess,
   collectAccess,
+  getAccess,
   logCall,
+  refuseChange,
   requestAccess,
+  reserveChange,
   revokeAccess,
   revokeAccessOfToken,
 } from "../services/access.ts"
@@ -44,11 +47,19 @@ const KEY = randomBytes(24).toString("hex")
 const SPEC = `
 openapi: 3.0.0
 paths:
+  /variables:
+    get:
+      x-required-scope: variable:list
   /variables/{id}:
     put:
       x-required-scope: variable:update
 `
-const SCOPES = ["variable:update"]
+const SCOPES = ["variable:update", "variable:list"]
+/** A variable whose change the stand-in n8n receives and never answers. */
+const UNANSWERED = "unanswered"
+/** The stand-in n8n answers a change of a variable named so only once `answer` resolves. */
+const HELD = "held"
+let held: { arrived: () => void; answer: Promise<void> } | null = null
 const who = { by: "shlomi", via: "web" as const }
 /** What the stand-in n8n received, other than its API description. */
 const received: { method: string; url: string; key: string; body: string }[] = []
@@ -76,13 +87,18 @@ beforeAll(async () => {
     }
     const chunks: Buffer[] = []
     req.on("data", (chunk: Buffer) => chunks.push(chunk))
-    req.on("end", () => {
+    req.on("end", async () => {
       received.push({
         method: req.method ?? "",
         url: req.url ?? "",
         key: String(req.headers["x-n8n-api-key"] ?? ""),
         body: Buffer.concat(chunks).toString("utf8"),
       })
+      if (req.url?.includes(UNANSWERED)) return req.socket.destroy()
+      if (req.url?.includes(HELD) && held) {
+        held.arrived()
+        await held.answer
+      }
       res.writeHead(200, { "content-type": "application/json" })
       res.end(JSON.stringify({}))
     })
@@ -366,5 +382,287 @@ describe("a call through the access proxy is recorded", () => {
     await removal
     await logging
     expect(await callsOf(requestId)).toEqual([expect.objectContaining({ instanceId: null, status: 401 })])
+  })
+
+  it("as a change without its instance when the instance is being deleted while it is recorded", async () => {
+    const instance = await openInstance()
+    const { requestId } = await access([instance.name])
+    let commit!: () => void
+    const committing = new Promise<void>((resolve) => {
+      commit = resolve
+    })
+    let deleted!: () => void
+    const deleting = new Promise<void>((resolve) => {
+      deleted = resolve
+    })
+    const removal = locker.begin(async (tx) => {
+      await tx`delete from instances where id = ${instance.id}`
+      deleted()
+      await committing
+    })
+    await Promise.race([deleting, removal])
+    const recording = reserveChange(ctx, requestId, { instanceId: instance.id, method: "PUT", path: "/variables/v1" })
+    try {
+      expect(await waitingForLock()).toBe(true)
+    } finally {
+      commit()
+    }
+    await removal
+    expect(await recording).not.toBeNull()
+    expect(await callsOf(requestId)).toEqual([
+      expect.objectContaining({ instanceId: null, status: null, change: true }),
+    ])
+  })
+
+  it("with n8n's answer when its instance is deleted while n8n answers", async () => {
+    const instance = await openInstance()
+    const { key, requestId } = await access([instance.name])
+    const variable = named(HELD)
+    let arrived!: () => void
+    const arriving = new Promise<void>((resolve) => {
+      arrived = resolve
+    })
+    let answer!: () => void
+    const answering = new Promise<void>((resolve) => {
+      answer = resolve
+    })
+    held = { arrived, answer: answering }
+    try {
+      const pending = send(instance.name, key, "PUT", `/variables/${variable}`)
+      await arriving
+      await deleteInstance(ctx, instance.id)
+      answer()
+      expect((await pending).status).toBe(200)
+    } finally {
+      held = null
+    }
+    expect(sentTo([variable])).toHaveLength(1)
+    expect(await callsOf(requestId)).toEqual([
+      expect.objectContaining({ instanceId: null, method: "PUT", status: 200, refused: null }),
+    ])
+  })
+})
+
+/** One call through the proxy, with an empty JSON body unless it reads. */
+const send = (address: string, key: string, method: string, path: string) =>
+  app.request(`/${address}/api/v1${path}`, {
+    method,
+    headers: { "x-n8n-api-key": key, "content-type": "application/json" },
+    ...(method === "GET" ? {} : { body: "{}" }),
+  })
+const sentTo = (variables: string[]) =>
+  received.filter((r) => variables.some((v) => r.url === `/api/v1/variables/${v}`))
+const named = (name: string) => `${name}-${randomBytes(4).toString("hex")}`
+
+/**
+ * Holds the access request's row in another session until `whileHeld` has run, as a change of the access being
+ * saved does; `whileHeld` runs once the proxy waits for the row.
+ */
+async function sendWhileRequestHeld(
+  instance: Instance,
+  key: string,
+  requestId: string,
+  variable: string,
+  whileHeld: (tx: postgres.TransactionSql) => Promise<void>,
+) {
+  let held!: () => void
+  const holding = new Promise<void>((resolve) => {
+    held = resolve
+  })
+  let commit!: () => void
+  const committing = new Promise<void>((resolve) => {
+    commit = resolve
+  })
+  const holder = locker.begin(async (tx) => {
+    await tx`select id from access_requests where id = ${requestId} for update`
+    held()
+    await committing
+    await whileHeld(tx)
+  })
+  await Promise.race([holding, holder])
+  const pending = send(instance.name, key, "PUT", `/variables/${variable}`)
+  let waited = false
+  try {
+    waited = await waitingForLock()
+  } finally {
+    commit()
+  }
+  await holder
+  return { res: await pending, waited }
+}
+
+describe("the calls of an access", () => {
+  it("list every change sent to n8n, however many other calls come after it", async () => {
+    const instance = await openInstance()
+    const { key, requestId } = await access([instance.name])
+    expect((await send(instance.name, key, "PUT", "/variables/kept")).status).toBe(200)
+    for (let i = 0; i < 520; i++) expect((await send(instance.name, key, "GET", `/nothing/${i}`)).status).toBe(403)
+    for (let i = 0; i < 20; i++) expect((await send(instance.name, key, "GET", "/variables")).status).toBe(200)
+
+    const detail = await getAccess(ctx, requestId)
+    expect(detail).toMatchObject({ callCount: 541, refusedCount: 520 })
+    // The change, and of the other calls the latest 500: the 20 reads and the last 480 refused calls.
+    expect(detail?.calls).toHaveLength(501)
+    expect(detail?.calls.at(-1)).toMatchObject({ method: "PUT", path: "/variables/kept", status: 200 })
+    expect(detail?.calls.at(-2)).toMatchObject({ method: "GET", path: "/nothing/40" })
+    expect(await callsOf(requestId)).toHaveLength(501)
+  })
+
+  it("keep a long path and refusal reason to their first characters, and answer the agent in full", async () => {
+    const instance = await openInstance()
+    const { key, requestId } = await access([instance.name])
+    const path = `/${"x".repeat(3000)}`
+    const res = await send(instance.name, key, "GET", path)
+    expect(res.status).toBe(403)
+    expect(((await res.json()) as { message: string }).message).toContain(path)
+    const [row] = await callsOf(requestId)
+    expect(row?.path).toBe(`${path.slice(0, 1023)}…`)
+    expect(row?.refused).toHaveLength(500)
+    expect(row?.refused?.endsWith("…")).toBe(true)
+  })
+
+  it("keep a change n8n never answered, as one with no answer", async () => {
+    const instance = await openInstance()
+    const { key, requestId } = await access([instance.name])
+    const variable = named(UNANSWERED)
+    const res = await send(instance.name, key, "PUT", `/variables/${variable}`)
+    expect(res.status).toBe(502)
+    expect(sentTo([variable])).toHaveLength(1)
+    expect(await callsOf(requestId)).toEqual([
+      expect.objectContaining({ method: "PUT", status: null, refused: null, change: true }),
+    ])
+    expect(await getAccess(ctx, requestId)).toMatchObject({ callCount: 1, refusedCount: 0 })
+  })
+
+  it("keep a change n8n made when its answer cannot be recorded", async () => {
+    const instance = await openInstance()
+    const { key, requestId } = await access([instance.name])
+    const variable = named("made")
+    // The database refuses to record the answer of this request's calls.
+    await locker.unsafe(
+      `create function refuse_answer() returns trigger language plpgsql as $$ begin raise exception 'not recorded'; end $$`,
+    )
+    await locker.unsafe(`create trigger refuse_answer before update on access_calls for each row
+      when (new.request_id = '${requestId}' and new.status is not null) execute function refuse_answer()`)
+    try {
+      expect((await send(instance.name, key, "PUT", `/variables/${variable}`)).status).toBe(500)
+    } finally {
+      await locker.unsafe("drop trigger refuse_answer on access_calls")
+      await locker.unsafe("drop function refuse_answer()")
+    }
+    expect(sentTo([variable])).toHaveLength(1)
+    expect(await callsOf(requestId)).toEqual([expect.objectContaining({ method: "PUT", status: null, refused: null })])
+  })
+
+  it("refuse a change beyond the most one access may make, before it reaches n8n", async () => {
+    const instance = await openInstance()
+    const { key, requestId } = await access([instance.name])
+    await ctx.db.execute(sql`insert into access_calls (request_id, instance_id, method, path, status)
+      select ${requestId}, ${instance.id}, 'PUT', '/variables/earlier', 200 from generate_series(1, 999)`)
+    const variables = [named("last"), named("last")]
+    const answers = await Promise.all(variables.map((v) => send(instance.name, key, "PUT", `/variables/${v}`)))
+    expect(answers.map((r) => r.status).sort()).toEqual([200, 403])
+    const refused = answers.find((r) => r.status === 403)
+    if (!refused) throw new Error("no change refused")
+    expect(((await refused.json()) as { message: string }).message).toContain("1,000 changes")
+    expect(sentTo(variables)).toHaveLength(1)
+    const [made] = await ctx.db.execute<{ n: number }>(
+      sql`select count(*)::int as n from access_calls where request_id = ${requestId} and method = 'PUT' and refused is null`,
+    )
+    expect(made?.n).toBe(1000)
+    expect(await getAccess(ctx, requestId)).toMatchObject({ callCount: 2, refusedCount: 1 })
+  })
+
+  it("list every change of an access that made more than the most before the limit, and refuse another", async () => {
+    const instance = await openInstance()
+    const { key, requestId } = await access([instance.name])
+    await ctx.db.execute(sql`insert into access_calls (request_id, instance_id, method, path, status)
+      select ${requestId}, ${instance.id}, 'PUT', '/variables/earlier', 200 from generate_series(1, 1005)`)
+    const variable = named("over")
+    expect((await send(instance.name, key, "PUT", `/variables/${variable}`)).status).toBe(403)
+    expect(sentTo([variable])).toEqual([])
+    const detail = await getAccess(ctx, requestId)
+    expect(detail?.calls.filter((c) => c.change)).toHaveLength(1005)
+    expect(detail?.calls[0]).toMatchObject({ method: "PUT", status: 403, change: false })
+  })
+
+  it("refuse a change whose access was revoked while it waited, counted once as refused", async () => {
+    const instance = await openInstance()
+    const { key, requestId } = await access([instance.name])
+    const variable = named("revoked")
+    const { res, waited } = await sendWhileRequestHeld(instance, key, requestId, variable, async (tx) => {
+      await tx`update access_requests set status = 'revoked', ended_at = now(), key_enc = null where id = ${requestId}`
+    })
+    expect(waited).toBe(true)
+    expect(res.status).toBe(401)
+    expect(sentTo([variable])).toEqual([])
+    expect(await callsOf(requestId)).toEqual([
+      expect.objectContaining({ method: "PUT", status: 401, refused: expect.any(String), change: false }),
+    ])
+    expect(await getAccess(ctx, requestId)).toMatchObject({ callCount: 1, refusedCount: 1 })
+  })
+
+  it("refuse a change while its instance's calls are being set to no instance, holding rows in another order", async () => {
+    const instance = await openInstance()
+    const { requestId } = await access([instance.name])
+    await ctx.db.execute(sql`insert into access_calls (request_id, instance_id, created_at, method, path, status, refused)
+      select ${requestId}, ${instance.id}, now() - make_interval(secs => 1000 - g), 'GET', '/nothing', 403, 'Refused.'
+      from generate_series(1, 500) g`)
+    const change = await reserveChange(ctx, requestId, { instanceId: instance.id, method: "PUT", path: "/variables/v" })
+    if (!change) throw new Error("not recorded")
+    const [oldest] = await ctx.db.execute<{ id: string }>(
+      sql`select id from access_calls where request_id = ${requestId} and not change order by created_at, id limit 1`,
+    )
+    // As deleting the instance does: one of its calls held first, then the change.
+    let held!: () => void
+    const holding = new Promise<void>((resolve) => {
+      held = resolve
+    })
+    let next!: () => void
+    const going = new Promise<void>((resolve) => {
+      next = resolve
+    })
+    const removal = locker.begin(async (tx) => {
+      await tx`update access_calls set instance_id = null where id = ${oldest?.id ?? ""}`
+      held()
+      await going
+      await tx`update access_calls set instance_id = null where id = ${change}`
+    })
+    await Promise.race([holding, removal])
+    // The refusal holds the change and waits for the oldest call, which it removes as the 501st other call.
+    const refusing = refuseChange(ctx, requestId, change, 401, "Ended.")
+    try {
+      expect(await waitingForLock()).toBe(true)
+    } finally {
+      next()
+    }
+    // The refusal waited first, so PostgreSQL ends it, and it runs again once the other session is done.
+    await refusing
+    await removal
+    const calls = await callsOf(requestId)
+    expect(calls.filter((c) => !c.change)).toHaveLength(500)
+    expect(calls.find((c) => c.id === change)).toMatchObject({
+      instanceId: null,
+      status: 401,
+      refused: "Ended.",
+      change: false,
+    })
+    expect(calls.find((c) => c.id === oldest?.id)).toBeUndefined()
+    expect(await getAccess(ctx, requestId)).toMatchObject({ callCount: 1, refusedCount: 1 })
+  })
+
+  it("refuse a change when its instance is closed to agents while it waits", async () => {
+    const instance = await openInstance()
+    const { key, requestId } = await access([instance.name])
+    const variable = named("closed")
+    const { res, waited } = await sendWhileRequestHeld(instance, key, requestId, variable, async () => {
+      await ctx.db.update(instances).set({ chosenCapabilities: [] }).where(eq(instances.id, instance.id))
+    })
+    expect(waited).toBe(true)
+    expect(res.status).toBe(403)
+    expect(sentTo([variable])).toEqual([])
+    expect(await callsOf(requestId)).toEqual([
+      expect.objectContaining({ method: "PUT", status: 403, refused: expect.any(String), change: false }),
+    ])
   })
 })

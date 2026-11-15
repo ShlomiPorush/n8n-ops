@@ -7,6 +7,7 @@ All notable changes to this project are documented here. The format follows [Kee
 ### Security
 
 - **Access limited to some workflows now reaches only those workflows, their executions and the instance's credentials.** Every other n8n operation is refused with a message that it needs access to the whole instance, whatever scopes were granted. Access to the whole instance is unchanged.
+- **A backup archive with a malformed entry fails to open with a clear error.** Opening an archive in the archive browser, and a worker's backup reading the export from n8n, refuse an entry whose size is not a valid number or whose data runs past the end of the archive. Only that request fails; well-formed archives open as before.
 
 ## [0.18.4] - 2026-11-14
 

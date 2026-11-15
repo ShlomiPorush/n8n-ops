@@ -410,12 +410,10 @@ export async function runSelfBackup(ctx: Ctx) {
     try {
       const recipient = await backupRecipient(ctx)
       if (!url) throw new Error("DATABASE_URL is not set")
+      const maxBuffer = await maxArchiveBytes(ctx)
       let stdout: Buffer
       try {
-        ;({ stdout } = await exec("pg_dump", ["--format=custom", "--no-owner", url], {
-          encoding: "buffer",
-          maxBuffer: await maxArchiveBytes(ctx),
-        }))
+        ;({ stdout } = await exec("pg_dump", ["--format=custom", "--no-owner", url], { encoding: "buffer", maxBuffer }))
       } catch (error) {
         throw new Error(dumpFailure(error))
       }

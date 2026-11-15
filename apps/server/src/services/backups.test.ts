@@ -134,6 +134,59 @@ describe("cleanFailure", () => {
   })
 })
 
+describe("cleanFailure, one form of the password at a time", () => {
+  /** Three hex characters per piece, so no 8 characters of one form are found in another. */
+  const pieces = () => Array.from({ length: 6 }, () => made(2).slice(0, 3))
+  const kept = "pg_dump got no output."
+
+  it("hides the form the URL standard writes when only that form shows", () => {
+    const parts = pieces()
+    const written = parts.join(" ")
+    const connection = connectionSecrets(`postgres://u:${written}@db/n8n_ops`)
+    expect(cleanFailure(`"${parts.join("%20")}"`, connection)).toBe(CONNECTION_HIDDEN)
+    expect(cleanFailure(kept, connection)).toBe(kept)
+  })
+
+  it("hides the form without blanks when only that form shows", () => {
+    const parts = pieces()
+    const connection = connectionSecrets(`postgres://u:${parts.join(" ")}@db/n8n_ops`)
+    expect(cleanFailure(`"${parts.join("")}"`, connection)).toBe(CONNECTION_HIDDEN)
+  })
+
+  it("hides a password parameter after '#' when only it shows", () => {
+    const value = made()
+    const connection = connectionSecrets(`postgres://u:${made()}@db/n8n_ops#?password=${value}`)
+    expect(cleanFailure(`"${value}"`, connection)).toBe(CONNECTION_HIDDEN)
+  })
+
+  it("hides an sslpassword parameter when only it shows", () => {
+    const value = made()
+    const connection = connectionSecrets(`postgres://u:${made()}@db/n8n_ops?sslpassword=${value}`)
+    expect(cleanFailure(`"${value}"`, connection)).toBe(CONNECTION_HIDDEN)
+  })
+
+  it("hides any 8 characters of the password, the last ones too, and keeps 7", () => {
+    const password = made(24)
+    const connection = connectionSecrets(`postgres://u:${password}@db/n8n_ops`)
+    expect(cleanFailure(`"${password.slice(20, 28)}"`, connection)).toBe(CONNECTION_HIDDEN)
+    expect(cleanFailure(`"${password.slice(-8)}"`, connection)).toBe(CONNECTION_HIDDEN)
+    expect(cleanFailure(`"${password.slice(-7)}"`, connection)).toBe(`"${password.slice(-7)}"`)
+  })
+
+  it("hides a password shorter than 8 characters wherever it shows", () => {
+    const short = made(2).slice(0, 3)
+    const connection = connectionSecrets(`postgres://u:${short}@db/n8n_ops`)
+    expect(cleanFailure(`for "${short}"`, connection)).toBe(CONNECTION_HIDDEN)
+    expect(cleanFailure(kept, connection)).toBe(kept)
+  })
+
+  it("takes an empty password parameter as nothing to hide", () => {
+    const connection = connectionSecrets(`postgres://u:${made()}@db/n8n_ops?password=&sslmode=require`)
+    expect(connection.passwords).not.toContain("")
+    expect(cleanFailure(kept, connection)).toBe(kept)
+  })
+})
+
 describe("dumpFailure", () => {
   const url = `postgres://u:${made()}@db/n8n_ops`
   const failed = (fields: Record<string, unknown>) =>

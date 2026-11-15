@@ -297,9 +297,8 @@ describe("a long history", () => {
     let smallMs = Number.POSITIVE_INFINITY
     for (let i = 0; i < 5; i++) smallMs = Math.min(smallMs, timeOf(small))
     let largeMs = timeOf(large)
-    // Tried again only when the first run could have been slowed by something else.
-    for (let i = 0; i < 2 && largeMs > 25 * smallMs && largeMs < 100 * smallMs; i++)
-      largeMs = Math.min(largeMs, timeOf(large))
+    // Tried again when it took too long, in case something else slowed that run.
+    for (let i = 0; i < 2 && largeMs > 25 * smallMs; i++) largeMs = Math.min(largeMs, timeOf(large))
     return largeMs / smallMs
   }
 

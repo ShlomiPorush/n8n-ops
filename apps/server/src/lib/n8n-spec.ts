@@ -45,7 +45,8 @@ export function parseSpec(text: string): SpecOperation[] {
           return "([^/]+)"
         })
         .join("/")
-      ops.push({ method: method.toUpperCase(), template, pattern: new RegExp(`^${source}$`), params, scopes })
+      // n8n routes paths without regard to case, so a call is matched the same way; parameter values keep theirs.
+      ops.push({ method: method.toUpperCase(), template, pattern: new RegExp(`^${source}$`, "i"), params, scopes })
     }
   }
   // Literal segments win over parameters: /executions/stop before /executions/{executionId}.

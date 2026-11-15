@@ -6,7 +6,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Security
 
-- **Access limited to some workflows now reaches only those workflows, their executions and the instance's credentials.** Every other n8n operation is refused with a message that it needs access to the whole instance, whatever scopes were granted: packages, source control, promotions, projects and their folders, tags, users, roles, variables, data tables, the security audit, insights, instance settings and policies, `/discover`, the list of workflows that use a workflow or a credential, and any operation n8n adds later. The workflow or execution in the path is found by its place, so this holds on every supported n8n version, including those that name the parameter `{id}`. Access to the whole instance is unchanged.
+- **Access limited to some workflows now reaches only those workflows, their executions and the instance's credentials.** Every other n8n operation is refused with a message that it needs access to the whole instance, whatever scopes were granted. Access to the whole instance is unchanged.
 
 ## [0.18.4] - 2026-11-14
 

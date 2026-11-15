@@ -6,6 +6,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Security
 
+- **A passkey can be added only while two-factor is on.** Adding one now needs a session on an account with two-factor set up, as every other part of the console does, so a passkey always joins an account that already has both factors. While two-factor is off, such as right after Account → Reset Two-Factor or a password reset from the server, set it up again first; passkeys already added are kept and still sign in.
 - **Access limited to some workflows now reaches only those workflows, their executions and the instance's credentials.** Every other n8n operation is refused with a message that it needs access to the whole instance, whatever scopes were granted. Access to the whole instance is unchanged.
 
 ## [0.18.4] - 2026-11-14

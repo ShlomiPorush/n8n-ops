@@ -1,4 +1,4 @@
-import { requestOnce } from "@n8n-ops/shared"
+import { parseVersionMetric, readMetricsText, requestOnce } from "@n8n-ops/shared"
 
 /** Minimal client for the n8n public API (v1) and the unauthenticated health endpoints. */
 
@@ -206,7 +206,7 @@ export class N8nClient {
       const res = await this.fetchImpl(metricsUrl || this.url("/metrics"), {
         signal: AbortSignal.timeout(this.timeoutMs),
       })
-      return res.ok ? parseVersionMetric(await res.text()) : null
+      return res.ok ? parseVersionMetric(await readMetricsText(res)) : null
     } catch {
       return null
     }
@@ -216,25 +216,4 @@ export class N8nClient {
 /** Probes a health URL: true when it answers 2xx. */
 export function probe(url: string, fetchImpl: FetchLike = fetch, timeoutMs = 10_000) {
   return requestOnce(url, AbortSignal.timeout(timeoutMs), fetchImpl)
-}
-
-export type QueueMetrics = { waiting: number; active: number; completed: number; failed: number }
-
-/** The version from n8n's version_info metric (any prefix), without the leading "v". */
-export function parseVersionMetric(text: string): string | null {
-  const match = text.match(/^[a-zA-Z0-9_]*version_info\{[^}]*\bversion="v?([^"]+)"/m)
-  return match?.[1] ?? null
-}
-
-/** Reads queue gauges from n8n's Prometheus /metrics output. */
-export function parseQueueMetrics(text: string): QueueMetrics | null {
-  const read = (name: string) => {
-    // The prefix is configurable in n8n (N8N_METRICS_PREFIX, default "n8n_"); counters may end in _total.
-    const pattern = `^[a-zA-Z0-9_]*scaling_mode_queue_jobs_${name}(?:_total)?(?:\\{[^}]*\\})?\\s+([0-9.eE+-]+)$`
-    const match = text.match(new RegExp(pattern, "m"))
-    return match ? Number(match[1]) : null
-  }
-  const waiting = read("waiting")
-  if (waiting === null) return null
-  return { waiting, active: read("active") ?? 0, completed: read("completed") ?? 0, failed: read("failed") ?? 0 }
 }

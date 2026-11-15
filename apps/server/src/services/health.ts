@@ -1,10 +1,10 @@
-import { workerDetails } from "@n8n-ops/shared"
+import { parseQueueMetrics, type QueueMetrics, readMetricsText, workerDetails } from "@n8n-ops/shared"
 import { and, eq, gt, like, or, sql } from "drizzle-orm"
 import { z } from "zod"
 import { type Ctx, changed } from "../context.ts"
 import { alertState, type Health, instances } from "../db/schema.ts"
 import { oneAtATime } from "../lib/one-at-a-time.ts"
-import { parseQueueMetrics, probe, type QueueMetrics } from "../n8n/client.ts"
+import { probe } from "../n8n/client.ts"
 import { conditionSettings, type Streak, setConditionIn } from "./alerts.ts"
 import { recordCheck } from "./health-history.ts"
 import { healthTurn, type Instance, metricsUrlOf } from "./instances.ts"
@@ -173,7 +173,7 @@ export async function collectDirect(instance: Instance): Promise<HealthReport> {
   if (metricsUrl) {
     try {
       const res = await fetch(metricsUrl, { signal: AbortSignal.timeout(10_000) })
-      queue = res.ok ? parseQueueMetrics(await res.text()) : null
+      queue = res.ok ? parseQueueMetrics(await readMetricsText(res)) : null
       if (!res.ok) metricsError = metricsAnswer(res.status)
       else if (!queue) metricsError = "no queue metrics; set N8N_METRICS_INCLUDE_QUEUE_METRICS=true"
     } catch (error) {

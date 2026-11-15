@@ -54,6 +54,13 @@ export {
   workerDetails,
 } from "./main-check.ts"
 export {
+  METRICS_MAX_BYTES,
+  parseQueueMetrics,
+  parseVersionMetric,
+  type QueueMetrics,
+  readMetricsText,
+} from "./metrics.ts"
+export {
   ALLOWED_LIMITS,
   CONTAINER_PATTERN,
   DOCKER_NAME,

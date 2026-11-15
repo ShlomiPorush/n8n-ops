@@ -26,6 +26,7 @@ import {
   requestAccess,
   revokeAccess,
 } from "./access.ts"
+import { handleAccessCallback } from "./access-notify.ts"
 import type { Instance } from "./instances.ts"
 import { deleteInstance } from "./problems.ts"
 
@@ -674,6 +675,67 @@ describe("the draft", () => {
     await approving
     const { list } = await stored(id)
     expect(list[0]).toMatchObject({ scopes: ["workflow:read"], droppedScopes: ["workflow:update"] })
+  })
+})
+
+describe("Approve in Telegram", () => {
+  const answers: string[] = []
+  // Only the answer to the press is recorded; with Telegram not set up, nothing else is sent.
+  const tg = {
+    chatId: "2002",
+    api: {
+      answerCallback: async (_id: string, text: string) => {
+        answers.push(text)
+      },
+    },
+  } as unknown as Parameters<typeof handleAccessCallback>[1]
+  const pressed = async (data: string) => {
+    answers.length = 0
+    expect(await handleAccessCallback(ctx, tg, { id: "cb", data, from: { id: 2002 } })).toBe(true)
+    return answers.at(-1)
+  }
+  const status = async (id: string) => (await stored(id)).row.status
+
+  it("approves a request its message names in full", async () => {
+    const a = await openInstance()
+    const { id } = await requestAccess(ctx, await agent(), ask([a.name]))
+    expect(await pressed(`xa:${id}:0:f`)).toBe("Access approved")
+    expect(await status(id)).toBe("approved")
+  })
+
+  it("approves nothing from a message sent before Approve required a complete message", async () => {
+    const a = await openInstance()
+    const { id } = await requestAccess(ctx, await agent(), ask([a.name]))
+    for (const old of [`xa:${id}`, `xa:${id}:0`]) {
+      expect(await pressed(old)).toBe("This message was out of date. Look at it again, then decide.")
+      expect(await status(id)).toBe("pending")
+    }
+  })
+
+  it("approves nothing when the request is too long for its message to name everything", async () => {
+    const a = await openInstance()
+    const workflowIds = Array.from({ length: 50 }, (_, n) => `${n}`.padEnd(120, "w"))
+    const { id } = await requestAccess(ctx, await agent(), {
+      ...ask([]),
+      instances: [{ instance: a.name, scopes: ["workflow:read"], workflowIds }],
+    })
+    expect(await pressed(`xa:${id}:0:f`)).toBe(
+      "Too long to approve in Telegram. Open the request in n8n-ops to approve it.",
+    )
+    expect(await status(id)).toBe("pending")
+    // The request page still approves it.
+    await approveAccess(ctx, id, who, { revision: 0 })
+    expect(await status(id)).toBe("approved")
+  })
+
+  it("approves nothing from a view older than the draft", async () => {
+    const [a, b] = [await openInstance(), await openInstance()]
+    const { id } = await requestAccess(ctx, await agent(), ask([a.name, b.name]))
+    await editDraft(ctx, id, 0, { minutes: 15 })
+    for (const old of [`xa:${id}:0:f`, `xa:${id}:0`])
+      expect(await pressed(old)).toBe("The request was changed since you looked at it. Look at it again, then decide.")
+    expect(await status(id)).toBe("pending")
+    expect(await pressed(`xa:${id}:1:f`)).toBe("Access approved")
   })
 })
 

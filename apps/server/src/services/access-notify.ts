@@ -152,8 +152,12 @@ export function accessOutcome(r: Outcome, dates: DateWriting): { icon: string; l
   return { icon: "✅", lines }
 }
 
-/** A list within about `max` characters, so the message stays under Telegram's limit; the rest is counted. */
-function listWithin(items: string[], max: number) {
+/**
+ * A list within about `max` characters, so the message stays under Telegram's limit; the rest is counted. Without
+ * `max`, every item in full.
+ */
+function listWithin(items: string[], max?: number) {
+  if (max === undefined) return { shown: items, rest: 0 }
   const shown: string[] = []
   let length = 0
   for (const item of items) {
@@ -167,9 +171,9 @@ function listWithin(items: string[], max: number) {
 
 /**
  * The workflows of an instance by name, one line each when there are several; a workflow whose name is not known is
- * shown by its ID, in code font. Within about `max` characters; the rest is counted.
+ * shown by its ID, in code font. Within about `max` characters, the rest counted; without `max`, all in full.
  */
-function workflowLines(i: InstanceInfo, max: number): TelegramHtml[] {
+function workflowLines(i: InstanceInfo, max?: number): TelegramHtml[] {
   if (!i.workflowIds.length) return [html`Workflows: the whole instance`]
   const named = workflowsOf(i)
   const { shown, rest } = listWithin(
@@ -185,7 +189,7 @@ function workflowLines(i: InstanceInfo, max: number): TelegramHtml[] {
   ]
 }
 
-function scopesLine(i: InstanceInfo, max: number) {
+function scopesLine(i: InstanceInfo, max?: number) {
   const scopes = listWithin(i.scopes, max)
   return html`Scopes: <code>${scopes.shown.join(", ")}</code>${scopes.rest ? ` and ${scopes.rest} more` : ""}`
 }
@@ -196,18 +200,27 @@ const dropText: Record<AccessDropReason, string> = {
   no_scopes: "allows none of these scopes any more",
 }
 
-/** The first line of an instance: its name, and whether it is left out, added, or deleted. */
-function instanceTitle(i: InstanceInfo) {
-  const name = clip(i.name, 100)
+/**
+ * The first line of an instance: its name (in full, or within 100 characters), and whether it is left out, added,
+ * or deleted.
+ */
+function instanceTitle(i: InstanceInfo, full = false) {
+  const name = full ? i.name : clip(i.name, 100)
   if (i.droppedReason) return html`⬜ <b>${name}</b> · left out: ${dropText[i.droppedReason]}`
   if (i.included === false) return html`⬜ <s>${name}</s> · left out`
   const marks = [...(i.requested === false ? ["added"] : []), ...(i.deleted ? ["deleted"] : [])]
   return html`<b>${name}</b>${marks.length ? ` · ${marks.join(", ")}` : ""}`
 }
 
-/** One instance with everything: its scopes and workflows. */
-function instanceBlock(i: InstanceInfo): TelegramHtml[] {
-  const out = [instanceTitle(i), scopesLine(i, 300), ...workflowLines(i, 400)]
+/**
+ * One instance with everything: its scopes and workflows, within a length each, or with `full` (for an instance that
+ * Approve would grant) every one of them in full.
+ */
+function instanceBlock(i: InstanceInfo, full = false): TelegramHtml[] {
+  const all = full && isIncluded(i)
+  const out = all
+    ? [instanceTitle(i, true), scopesLine(i), ...workflowLines(i)]
+    : [instanceTitle(i), scopesLine(i, 300), ...workflowLines(i, 400)]
   if (i.droppedScopes?.length)
     out.push(html`Left out, no longer allowed: <code>${listWithin(i.droppedScopes, 200).shown.join(", ")}</code>`)
   return out
@@ -237,16 +250,48 @@ function forLine(r: RequestInfo) {
   return html`For <b>${formatDuration(r.minutes)}</b>${asked}`
 }
 
-/**
- * The request message. With one instance as asked, its scopes and workflows follow the reason; with several (or one
- * left out), each instance has its own block, and when they do not all fit, each takes one line, and then only as
- * many lines as fit, with the rest counted; the request page has every detail.
- */
+/** The text of a request message, without its buttons. */
 export function renderAccessTelegram(
   r: RequestInfo,
   dates: DateWriting,
   outcome?: { icon: string; lines: TelegramHtml[] },
 ): TelegramHtml {
+  return telegramRequest(r, dates, outcome).text
+}
+
+/**
+ * Whether these instances' names, scopes and workflows could fit in one message in full: false when their length
+ * alone, at two UTF-16 units a character at most, is past the budget, so a message is never drawn in full to find
+ * out.
+ */
+function mayFit(list: InstanceInfo[]) {
+  let length = 0
+  for (const i of list) {
+    length += i.name.length + i.scopes.reduce((sum, s) => sum + s.length, 0)
+    for (const w of workflowsOf(i)) length += (w.name ?? w.id).length
+    if (length / 2 > TELEGRAM_BUDGET) return false
+  }
+  return true
+}
+
+/** What a waiting request's message says when it cannot name everything Approve would grant. */
+const TOO_LONG = "Too long to approve in Telegram. Open the request in n8n-ops to approve it."
+
+/**
+ * The request message, and whether it names in full every instance, scope and workflow that approving it as it
+ * stands would grant (`complete`); only then does its keyboard offer Approve. With one instance as asked, its scopes
+ * and workflows follow the reason; with several (or one left out), each instance has its own block. When everything
+ * does not fit in full, the lists are cut to a length each and the rest counted; when the blocks still do not fit,
+ * each instance takes one line, and then only as many lines as fit, with the rest counted. The request page has
+ * every detail.
+ */
+export function telegramRequest(
+  r: RequestInfo,
+  dates: DateWriting,
+  outcome?: { icon: string; lines: TelegramHtml[] },
+): { text: TelegramHtml; complete: boolean } {
+  const size = (parts: TelegramHtml[]) => [...telegramPlainText(TelegramHtml.join(parts))].length
+  const fits = (parts: TelegramHtml[]) => size(parts) <= TELEGRAM_BUDGET
   const head = [
     html`${outcome?.icon ?? "🔐"} <b>Access request</b> · ${instancesLabel(r.instances)}`,
     html`<b>${clip(r.token, 200)}</b>: ${clip(r.reason, 500)}`,
@@ -258,15 +303,38 @@ export function renderAccessTelegram(
     ...(outcome ? [] : [html`Request expires at ${formatStamp(r.decideBy, dates, { zone: false })}`]),
     ...(outcome?.lines.length ? [html``, ...outcome.lines] : []),
   ]
+  // Only a waiting request is approved from its message.
+  const cut = outcome ? [] : [html`${TOO_LONG}`, html``]
   const only = r.instances[0]
-  if (r.instances.length === 1 && only && isIncluded(only) && only.requested !== false && !only.droppedScopes?.length)
-    return TelegramHtml.join([...head, scopesLine(only, 600), ...workflowLines(only, 1200), ...tail])
+  if (r.instances.length === 1 && only && isIncluded(only) && only.requested !== false && !only.droppedScopes?.length) {
+    // The first line is the only place this layout names the instance.
+    if (instancesLabel(r.instances) === only.name && mayFit([only])) {
+      const full = [...head, scopesLine(only), ...workflowLines(only), ...tail]
+      if (fits(full)) return { text: TelegramHtml.join(full), complete: true }
+    }
+    const lists = [scopesLine(only, 600), ...workflowLines(only, 1200)]
+    return {
+      text: TelegramHtml.join([...head, ...lists, ...(cut.length ? [html``, ...cut] : []), ...tail]),
+      complete: false,
+    }
+  }
 
+  const blocks = (full: boolean) => r.instances.flatMap((i, n) => [...(n ? [html``] : []), ...instanceBlock(i, full)])
+  if (mayFit(r.instances.filter(isIncluded))) {
+    const full = [...head, ...blocks(true), html``, ...tail]
+    if (fits(full)) return { text: TelegramHtml.join(full), complete: true }
+  }
+  const within = [...head, ...blocks(false), html``, ...cut, ...tail]
+  if (fits(within)) return { text: TelegramHtml.join(within), complete: false }
+  return {
+    text: compactLines(r, head, tail, outcome ? html`Full details in n8n-ops.` : html`${TOO_LONG}`),
+    complete: false,
+  }
+}
+
+/** Each instance on one line, and only as many lines as fit, with the rest counted. */
+function compactLines(r: RequestInfo, head: TelegramHtml[], tail: TelegramHtml[], more: TelegramHtml) {
   const size = (parts: TelegramHtml[]) => [...telegramPlainText(TelegramHtml.join(parts))].length
-  const full = r.instances.flatMap((i, n) => [...(n ? [html``] : []), ...instanceBlock(i)])
-  if (size([...head, ...full, html``, ...tail]) <= TELEGRAM_BUDGET)
-    return TelegramHtml.join([...head, ...full, html``, ...tail])
-  const more = html`Full details in n8n-ops.`
   const lines: TelegramHtml[] = []
   for (const [n, i] of r.instances.entries()) {
     const rest = r.instances.length - n
@@ -410,12 +478,20 @@ async function publicLink(ctx: Ctx, id: string) {
 const openButton = (link: string | null): InlineButton[][] =>
   link?.startsWith("https://") ? [[{ text: "Open in n8n-ops", url: link }]] : []
 
-/** The keyboard of a waiting request: decide, or switch to editing. Approve names the revision shown. */
-export function decideButtons(r: Pick<RequestInfo, "id" | "revision">, link: string | null): InlineButton[][] {
+/**
+ * The keyboard of a waiting request: decide, or switch to editing. Approve is offered only when the message names
+ * everything it grants (`complete`, from `telegramRequest`); it names the revision shown, and ends in `:f`, which
+ * only such a message carries.
+ */
+export function decideButtons(
+  r: Pick<RequestInfo, "id" | "revision">,
+  link: string | null,
+  complete: boolean,
+): InlineButton[][] {
   const rev = r.revision ?? 0
   return [
     [
-      { text: "✅ Approve", callback_data: `xa:${r.id}:${rev}` },
+      ...(complete ? [{ text: "✅ Approve", callback_data: `xa:${r.id}:${rev}:f` }] : []),
       { text: "❌ Deny", callback_data: `xd:${r.id}` },
     ],
     [{ text: "✏️ Edit", callback_data: `xe:${r.id}` }],
@@ -532,13 +608,13 @@ export async function notifyAccess(ctx: Ctx) {
     const patch: Partial<typeof accessRequests.$inferInsert> = { notifyAttemptAt: new Date() }
     if (due.includes("telegram") && tg) {
       try {
-        const text = renderAccessTelegram(info, dates)
+        const { text, complete } = telegramRequest(info, dates)
         const sent = await sendRouted(
           tg.api,
           tg.chatId,
           tg.accessThreadId,
           (note) => (note ? TelegramHtml.join([note, text]) : text),
-          decideButtons(info, link),
+          decideButtons(info, link, complete),
         )
         if (sent.fellBack) ctx.log.warn("Telegram topic not found; the access request went to General")
         patch.telegramMessageId = sent.messageId
@@ -597,9 +673,9 @@ function redrawWaiting(ctx: Ctx, id: string, mode: "decide" | "edit") {
     const dates = messageWriting(await ctx.settings.get("general"))
     const link = await publicLink(ctx, id)
     const { maxMinutes } = await ctx.settings.get("access")
-    const text = renderAccessTelegram(info, dates)
+    const { text, complete } = telegramRequest(info, dates)
     const note = r.telegramMissingTopic ? topicGoneNote(r.telegramMissingTopic) : undefined
-    const keyboard = mode === "edit" ? editButtons(info, maxMinutes, link) : decideButtons(info, link)
+    const keyboard = mode === "edit" ? editButtons(info, maxMinutes, link) : decideButtons(info, link, complete)
     try {
       await tg.api.edit(tg.chatId, r.telegramMessageId ?? 0, note ? TelegramHtml.join([note, text]) : text, keyboard)
     } catch (e) {
@@ -669,7 +745,8 @@ export function isApprover(
 
 /** A button press on a request message, as its callback data says it. */
 export type AccessPress =
-  | { action: "approve"; id: string; revision: number }
+  /** `full`: pressed on a message that named everything Approve grants. */
+  | { action: "approve"; id: string; revision: number; full: boolean }
   | { action: "deny"; id: string }
   | { action: "edit" | "done"; id: string }
   | { action: "change"; id: string; revision: number; change: DraftChange }
@@ -678,17 +755,18 @@ const UUID = /^[0-9a-f-]{36}$/i
 const NUMBER = /^\d{1,9}$/
 
 /**
- * Reads callback data: `xa:<id>:<revision>` (and `xa:<id>` from messages sent before edits existed, which approves only
- * an unedited request), `xd:<id>`, `xe:<id>`, `xv:<id>`, `xt:<id>:<position>:<0|1>:<revision>`,
- * `xm:<id>:<minutes>:<revision>`. Anything else is not an access request press.
+ * Reads callback data: `xa:<id>:<revision>:f` (and, from messages sent before Approve required a complete message,
+ * `xa:<id>:<revision>` and `xa:<id>`, read as revision 0, which approve nothing), `xd:<id>`, `xe:<id>`, `xv:<id>`,
+ * `xt:<id>:<position>:<0|1>:<revision>`, `xm:<id>:<minutes>:<revision>`. Anything else is not an access request press.
  */
 export function parsePress(data: string | undefined): AccessPress | null {
   const [action, id, a, b, c, ...extra] = (data ?? "").split(":")
   if (!action || !id || !UUID.test(id) || extra.length) return null
   const num = (v: string | undefined) => (v !== undefined && NUMBER.test(v) ? Number(v) : null)
-  if (action === "xa" && b === undefined) {
+  if (action === "xa") {
+    if (c !== undefined || (b !== undefined && b !== "f")) return null
     const revision = a === undefined ? 0 : num(a)
-    return revision === null ? null : { action: "approve", id, revision }
+    return revision === null ? null : { action: "approve", id, revision, full: b === "f" }
   }
   if (a !== undefined && (action === "xd" || action === "xe" || action === "xv")) return null
   if (action === "xd") return { action: "deny", id }
@@ -707,6 +785,20 @@ export function parsePress(data: string | undefined): AccessPress | null {
     return { action: "change", id, revision, change: { minutes } }
   }
   return null
+}
+
+/**
+ * Why an Approve press approves nothing, if it does not: it came from a message that did not name everything Approve
+ * grants (an Approve without `:f`, sent before Approve required that), or the request at the revision pressed is too
+ * long for its message to name everything. A request no longer waiting, or at another revision, is left to
+ * `approveAccess`, which says so. The revision is checked again when the approval is stored.
+ */
+async function approveRefusal(ctx: Ctx, press: Extract<AccessPress, { action: "approve" }>) {
+  const [found] = await requestsWith(ctx, eq(accessRequests.id, press.id))
+  if (found?.r.status !== "pending" || found.r.decideBy < new Date() || found.r.revision !== press.revision) return null
+  if (!press.full) return "This message was out of date. Look at it again, then decide."
+  const dates = messageWriting(await ctx.settings.get("general"))
+  return telegramRequest(found.info, dates).complete ? null : TOO_LONG
 }
 
 /** A button pressed on a request message. Returns false if the update is not about an access request. */
@@ -747,6 +839,14 @@ export async function handleAccessCallback(
     await redrawWaiting(ctx, press.id, "edit")
     await closeTelegramMessages(ctx)
     return true
+  }
+  if (press.action === "approve") {
+    const refused = await approveRefusal(ctx, press)
+    if (refused) {
+      await tg.api.answerCallback(cb.id, refused)
+      await redrawWaiting(ctx, press.id, "decide")
+      return true
+    }
   }
   try {
     if (press.action === "approve") await approveAccess(ctx, press.id, decider, { revision: press.revision })

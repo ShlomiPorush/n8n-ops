@@ -4,15 +4,20 @@ import {
   accessOutcome,
   decideButtons,
   editButtons,
+  type InstanceInfo,
   isApprover,
   parsePress,
   presetMinutes,
   type RequestInfo,
   renderAccessEmail,
   renderAccessTelegram,
+  telegramRequest,
 } from "./access-notify.ts"
 import { topicGoneNote } from "./alert-routing.ts"
 import { TelegramHtml, telegramPlainText } from "./telegram.ts"
+
+/** What a waiting request's message says when Approve is not offered. */
+const TOO_LONG = "Too long to approve in Telegram. Open the request in n8n-ops to approve it."
 
 const request = {
   id: "3f2a9c10-0000-4000-8000-000000000001",
@@ -336,14 +341,17 @@ describe("requests for several instances", () => {
       const text = renderAccessTelegram(many, zone, outcome)
       const sent = TelegramHtml.join([topicGoneNote(2147483647), text])
       expect([...telegramPlainText(sent)].length).toBeLessThan(4096)
-      expect(String(text)).toMatch(/\nand \d+ more instances\nFull details in n8n-ops\.\n/)
+      // While it waits, the message says where to approve it; once decided, where the details are.
+      const more = outcome ? "Full details in n8n-ops." : TOO_LONG
+      expect(String(text)).toMatch(/\nand \d+ more instances\n/)
+      expect(String(text)).toContain(`more instances\n${more}\n`)
     }
     // A few instances that fit only on one line each.
     const six = { ...many, instances: many.instances.slice(0, 6) }
     const text = String(renderAccessTelegram(six, zone))
     expect([...telegramPlainText(text)].length).toBeLessThan(4096)
     expect(text).toMatch(/: 30 scopes, 50 workflows\n/)
-    expect(text).toContain("\nFull details in n8n-ops.\n")
+    expect(text).toContain(`\n${TOO_LONG}\n`)
   })
 
   it("email every instance with its own scopes and workflows", () => {
@@ -385,14 +393,16 @@ describe("request message buttons", () => {
     rows.flat().map((b) => b.callback_data ?? b.url)
 
   it("approve the revision shown, and open the edit keyboard", () => {
-    expect(data(decideButtons(several, "https://ops.example.com/access/1"))).toEqual([
-      `xa:${request.id}:7`,
+    expect(data(decideButtons(several, "https://ops.example.com/access/1", true))).toEqual([
+      `xa:${request.id}:7:f`,
       `xd:${request.id}`,
       `xe:${request.id}`,
       "https://ops.example.com/access/1",
     ])
     // Telegram takes only https links.
-    expect(data(decideButtons(several, "http://ops.local/access/1"))).toHaveLength(3)
+    expect(data(decideButtons(several, "http://ops.local/access/1", true))).toHaveLength(3)
+    // Only a message that names everything Approve grants offers it.
+    expect(data(decideButtons(several, null, false))).toEqual([`xd:${request.id}`, `xe:${request.id}`])
   })
 
   it("switch only the instances the agent asked for to the state shown, with the minutes and Done", () => {
@@ -425,9 +435,10 @@ describe("request message buttons", () => {
 
   it("read every press, and nothing that is not one", () => {
     const id = request.id
-    expect(parsePress(`xa:${id}:7`)).toEqual({ action: "approve", id, revision: 7 })
-    // A message sent before edits existed approves only a request nobody edited.
-    expect(parsePress(`xa:${id}`)).toEqual({ action: "approve", id, revision: 0 })
+    expect(parsePress(`xa:${id}:7:f`)).toEqual({ action: "approve", id, revision: 7, full: true })
+    // Messages sent before Approve required a complete message; the one from before edits existed is revision 0.
+    expect(parsePress(`xa:${id}:7`)).toEqual({ action: "approve", id, revision: 7, full: false })
+    expect(parsePress(`xa:${id}`)).toEqual({ action: "approve", id, revision: 0, full: false })
     expect(parsePress(`xd:${id}`)).toEqual({ action: "deny", id })
     expect(parsePress(`xe:${id}`)).toEqual({ action: "edit", id })
     expect(parsePress(`xv:${id}`)).toEqual({ action: "done", id })
@@ -444,6 +455,9 @@ describe("request message buttons", () => {
       "r:abc",
       `xa:${id}:x`,
       `xa:${id}:1:2`,
+      `xa:${id}:1:f:f`,
+      `xa:${id}::f`,
+      `xa:${id}:f`,
       "xa:not-an-id",
       `xd:${id}:1`,
       `xt:${id}:4:2:7`,
@@ -454,5 +468,125 @@ describe("request message buttons", () => {
       `xq:${id}`,
     ])
       expect(parsePress(bad), bad).toBeNull()
+  })
+})
+
+describe("one-tap Approve in Telegram", () => {
+  const scopes = (n: number) => Array.from({ length: n }, (_, i) => `resource${i}:update`)
+  const ids = (n: number) => Array.from({ length: n }, (_, i) => `wf-${i}`)
+  const base: RequestInfo = {
+    id: request.id,
+    token: "claude-code",
+    reason: "Fix the sync",
+    minutes: 30,
+    decideBy: request.decideBy,
+    revision: 2,
+    instances: [],
+  }
+  const single = (i: Partial<InstanceInfo>): RequestInfo => ({
+    ...base,
+    instances: [{ position: 0, name: "flow", scopes: scopes(2), workflowIds: [], ...i }],
+  })
+  const longName = "n".repeat(120)
+  /** Each case, and whether its message can name everything. */
+  const cases: [string, RequestInfo, boolean][] = [
+    ["one instance, two scopes", single({}), true],
+    ["one instance, 40 scopes", single({ scopes: scopes(40) }), true],
+    ["one instance, 300 scopes", single({ scopes: scopes(300) }), false],
+    ["one instance, 50 workflows", single({ workflowIds: ids(50) }), true],
+    [
+      "names that differ only after 100 characters",
+      single({ workflowIds: ["a", "b"], workflowNames: { a: `${longName}1`, b: `${longName}2` } }),
+      true,
+    ],
+    ["a long workflow ID without a name", single({ workflowIds: ["i".repeat(150)] }), true],
+    ["50 long workflow IDs without names", single({ workflowIds: ids(50).map((w) => w.padEnd(120, "i")) }), false],
+    ["a long instance name", single({ name: "f".repeat(250) }), false],
+    [
+      "two instances, 30 scopes each",
+      {
+        ...base,
+        instances: [0, 1].map((n) => ({ position: n, name: `flow${n}`, scopes: scopes(30), workflowIds: [] })),
+      },
+      true,
+    ],
+    [
+      "two instances, one left out",
+      {
+        ...base,
+        instances: [
+          { position: 0, name: "flow", scopes: scopes(30), workflowIds: ids(3) },
+          { position: 1, name: "n8n13", scopes: scopes(300), workflowIds: [], included: false },
+        ],
+      },
+      true,
+    ],
+    [
+      "40 instances",
+      {
+        ...base,
+        instances: Array.from({ length: 40 }, (_, n) => ({
+          position: n,
+          name: `instance-${n}`.padEnd(60, "x"),
+          scopes: scopes(5),
+          workflowIds: ids(3),
+        })),
+      },
+      false,
+    ],
+  ]
+
+  /** The lines that name, in full and in order, what Approve grants on an instance. */
+  const grantLines = (i: InstanceInfo) => {
+    const name = (w: string) => i.workflowNames?.[w] ?? w
+    const workflows =
+      i.workflowIds.length === 0
+        ? ["Workflows: the whole instance"]
+        : i.workflowIds.length === 1
+          ? [`Workflow: ${name(i.workflowIds[0] ?? "")}`]
+          : ["Workflows:", ...i.workflowIds.map((w) => `• ${name(w)}`)]
+    return [`Scopes: ${i.scopes.join(", ")}`, ...workflows]
+  }
+
+  /** Whether the message names each instance Approve grants, and under it, everything granted there. */
+  const namesEverything = (r: RequestInfo, text: TelegramHtml) => {
+    const lines = String(text).split("\n").map(telegramPlainText)
+    return r.instances
+      .filter((i) => i.included !== false)
+      .every((i) => {
+        let section = lines
+        if (r.instances.length === 1) {
+          if (lines[0] !== `🔐 Access request · ${i.name}`) return false
+        } else {
+          const at = lines.indexOf(i.name)
+          if (at < 0) return false
+          const end = lines.indexOf("", at)
+          section = lines.slice(at, end < 0 ? undefined : end)
+        }
+        const want = grantLines(i)
+        const start = section.indexOf(want[0] ?? "")
+        return start >= 0 && want.every((line, n) => section[start + n] === line)
+      })
+  }
+
+  it.each(cases)("is offered only when the message names everything it grants: %s", (_, r, fits) => {
+    const { text, complete } = telegramRequest(r, zone)
+    const plain = telegramPlainText(text)
+    const approve = decideButtons(r, null, complete)
+      .flat()
+      .filter((b) => b.callback_data?.startsWith("xa:"))
+    expect(approve.map((b) => b.callback_data)).toEqual(fits ? [`xa:${r.id}:2:f`] : [])
+    expect(namesEverything(r, text)).toBe(fits)
+    // Either way the message fits in Telegram, also with the note that the topic was gone.
+    expect([...telegramPlainText(TelegramHtml.join([topicGoneNote(2147483647), text]))].length).toBeLessThan(4096)
+    // A waiting request that cannot be approved here says where it can be.
+    expect(plain.includes(TOO_LONG)).toBe(!fits)
+  })
+
+  it("says nothing about approving once the request is decided", () => {
+    const [, long] = cases.find(([name]) => name === "40 instances") ?? []
+    const decided = telegramRequest(long as RequestInfo, zone, accessOutcome(approved, zone))
+    expect(telegramPlainText(decided.text)).not.toContain(TOO_LONG)
+    expect(telegramPlainText(decided.text)).toContain("Full details in n8n-ops.")
   })
 })

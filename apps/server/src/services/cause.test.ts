@@ -154,6 +154,13 @@ describe("reason", () => {
     expect(serviceAnswer("404 - <Error><Code>NoSuchKey</Code><Message>Gone</Message></Error>")).toBe("NoSuchKey: Gone")
   })
 
+  it("answers with text the database can keep, also from a JSON body", () => {
+    const body = JSON.stringify({ message: "before\u0000after\uD800" })
+    expect(serviceAnswer(`400 - ${body}`)).toBe("beforeafter")
+    expect(serviceAnswer(`400 - ${JSON.stringify(body)}`)).toBe("beforeafter")
+    expect(serviceAnswer(`400 - ${JSON.stringify("text\u0000 answer")}`)).toBe("text answer")
+  })
+
   it("is n8n's message when there is no answer, and the answer alone without an HTTP status", () => {
     expect(cause({ message: "connect ENETUNREACH 192.0.2.10:25" }).reason).toBe("connect ENETUNREACH 192.0.2.10:25")
     expect(cause({ message: "Error executing workflow", description: "Access Denied" }).reason).toBe("Access Denied")

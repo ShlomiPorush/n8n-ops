@@ -1,4 +1,11 @@
-import { type RequestReading, readTar, requestOnce, textEntry } from "@n8n-ops/shared"
+import {
+  parseQueueMetrics,
+  type RequestReading,
+  readMetricsText,
+  readTar,
+  requestOnce,
+  textEntry,
+} from "@n8n-ops/shared"
 import { type Manifest, sealArchive } from "@n8n-ops/shared/archive"
 import { type Docker, DockerError, type Refusal, refusalOf } from "./docker.ts"
 import { checkInside } from "./inside.ts"
@@ -102,18 +109,7 @@ async function metricsOver(
           ? "metrics are off (404); set N8N_METRICS=true and N8N_METRICS_INCLUDE_QUEUE_METRICS=true on the main process"
           : `metrics answered ${res.status}`,
       )
-    const text = await res.text()
-    const read = (name: string) => {
-      const m = text.match(
-        new RegExp(`^[a-zA-Z0-9_]*scaling_mode_queue_jobs_${name}(?:_total)?(?:\\{[^}]*\\})?\\s+([0-9.eE+-]+)$`, "m"),
-      )
-      return m ? Number(m[1]) : null
-    }
-    const waiting = read("waiting")
-    const queue =
-      waiting === null
-        ? null
-        : { waiting, active: read("active") ?? 0, completed: read("completed") ?? 0, failed: read("failed") ?? 0 }
+    const queue = parseQueueMetrics(await readMetricsText(res))
     // What this read found replaces what the check in the main said about the queue, an error included.
     return queue
       ? { queue, metricsError: undefined }

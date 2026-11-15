@@ -3,6 +3,9 @@ import {
   dockerCovers,
   dockerFailing,
   intersect,
+  leave,
+  measure,
+  measured,
   offlineGap,
   overlap,
   perBucket,
@@ -54,6 +57,75 @@ describe("spans", () => {
         ),
       ),
     ).toBe(4)
+  })
+
+  it("intersects, subtracts and measures like a minute-by-minute count, whatever the order, overlaps or empty spans", () => {
+    // Spans on a grid of 0 to 60; the reference marks each unit one by one. The generator's products stay exact.
+    let seed = 1
+    const next = (n: number) => {
+      seed = (seed * 48_271) % 2_147_483_647
+      return seed % n
+    }
+    let overlapping = 0
+    const spans = () =>
+      Array.from({ length: next(8) }, () => {
+        const from = next(60)
+        return { from, to: from + next(12) - 2 }
+      })
+    const marks = (list: { from: number; to: number }[]) => {
+      const on = new Array<boolean>(80).fill(false)
+      for (const x of list) for (let i = Math.max(0, x.from); i < x.to; i++) on[i] = true
+      return on
+    }
+    const toSpans = (on: boolean[]) => {
+      const out: { from: number; to: number }[] = []
+      on.forEach((v, i) => {
+        const last = out.at(-1)
+        if (!v) return
+        if (last && last.to === i) last.to = i + 1
+        else out.push({ from: i, to: i + 1 })
+      })
+      return out
+    }
+    for (let run = 0; run < 2000; run++) {
+      const a = spans()
+      const b = spans()
+      const ma = marks(a)
+      const mb = marks(b)
+      const both = toSpans(ma.map((v, i) => v && (mb[i] ?? false)))
+      if (both.length) overlapping++
+      expect(intersect(a, b)).toEqual(both)
+      expect(subtract(a, b)).toEqual(toSpans(ma.map((v, i) => v && !mb[i])))
+      for (const s of b) expect(measure(measured(a), s)).toBe(total(intersect(a, [s])))
+    }
+    // The pairs overlap often enough for the comparison to mean something.
+    expect(overlapping).toBeGreaterThan(500)
+  })
+
+  it("measures the time joined spans cover in a span, and where a span leaves the one it starts in", () => {
+    const m = measured([
+      { from: 40, to: 50 },
+      { from: 0, to: 10 },
+      { from: 45, to: 48 },
+      { from: 20, to: 30 },
+      { from: 60, to: 60 },
+    ])
+    expect(m.spans).toEqual([
+      { from: 0, to: 10 },
+      { from: 20, to: 30 },
+      { from: 40, to: 50 },
+    ])
+    expect(measure(m, { from: 5, to: 25 })).toBe(10)
+    expect(measure(m, { from: 22, to: 24 })).toBe(2)
+    expect(measure(m, { from: -5, to: 100 })).toBe(30)
+    expect(measure(m, { from: 10, to: 20 })).toBe(0)
+    expect(measure(m, { from: 25, to: 15 })).toBe(0)
+    expect(measure(measured([]), { from: 0, to: 10 })).toBe(0)
+    expect(leave(m, { from: 5, to: 8 })).toBe(10)
+    expect(leave(m, { from: 20, to: 21 })).toBe(30)
+    expect(leave(m, { from: 10, to: 15 })).toBe(10)
+    expect(leave(m, { from: 15, to: 25 })).toBe(15)
+    expect(leave(measured([]), { from: 3, to: 4 })).toBe(3)
   })
 
   it("spreads spans over buckets, also across a bucket edge, and ignores what lies outside", () => {

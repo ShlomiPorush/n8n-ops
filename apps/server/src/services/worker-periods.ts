@@ -26,14 +26,19 @@ export function union(spans: Span[]): Span[] {
   return out
 }
 
-/** The time in `spans` that no span of `holes` covers. */
+/**
+ * The time in `spans` that no span of `holes` covers. Both are joined once and walked together, so the cost stays
+ * linear in their length after sorting.
+ */
 export function subtract(spans: Span[], holes: Span[]): Span[] {
   const cut = union(holes)
   const out: Span[] = []
+  let first = 0
   for (const s of union(spans)) {
+    while (first < cut.length && (cut[first] as Span).to <= s.from) first++
     let from = s.from
-    for (const h of cut) {
-      if (h.to <= from || h.from >= s.to) continue
+    for (let i = first; i < cut.length && (cut[i] as Span).from < s.to; i++) {
+      const h = cut[i] as Span
       if (h.from > from) out.push({ from, to: h.from })
       from = Math.max(from, h.to)
     }
@@ -42,15 +47,66 @@ export function subtract(spans: Span[], holes: Span[]): Span[] {
   return out
 }
 
-/** The time both sets of spans cover. */
+/**
+ * The time both sets of spans cover: one walk over the two joined lists. Their common parts are already ordered and
+ * neither overlap nor touch, so they need no joining.
+ */
 export function intersect(a: Span[], b: Span[]): Span[] {
+  const xs = union(a)
+  const ys = union(b)
   const out: Span[] = []
-  for (const x of union(a))
-    for (const y of union(b)) {
-      const s = { from: Math.max(x.from, y.from), to: Math.min(x.to, y.to) }
-      if (s.to > s.from) out.push(s)
-    }
-  return union(out)
+  let i = 0
+  let j = 0
+  while (i < xs.length && j < ys.length) {
+    const x = xs[i] as Span
+    const y = ys[j] as Span
+    const from = Math.max(x.from, y.from)
+    const to = Math.min(x.to, y.to)
+    if (to > from) out.push({ from, to })
+    if (x.to < y.to) i++
+    else j++
+  }
+  return out
+}
+
+/** Joined spans with the running total of their lengths, so the time they cover in any span takes a binary search. */
+export type Measured = { spans: Span[]; before: number[] }
+
+export function measured(spans: Span[]): Measured {
+  const joined = union(spans)
+  const before = [0]
+  for (const s of joined) before.push((before.at(-1) ?? 0) + len(s))
+  return { spans: joined, before }
+}
+
+/** The index of the first span of `m` that ends after `at`. */
+function firstEndingAfter(m: Measured, at: number) {
+  let lo = 0
+  let hi = m.spans.length
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1
+    if ((m.spans[mid] as Span).to <= at) lo = mid + 1
+    else hi = mid
+  }
+  return lo
+}
+
+/** The milliseconds of `m` that fall in `s`. */
+export function measure(m: Measured, s: Span): number {
+  if (s.to <= s.from) return 0
+  const first = firstEndingAfter(m, s.from)
+  let end = firstEndingAfter(m, s.to)
+  if (end < m.spans.length && (m.spans[end] as Span).from < s.to) end++
+  if (first >= end) return 0
+  const head = m.spans[first] as Span
+  const tail = m.spans[end - 1] as Span
+  return (m.before[end] ?? 0) - (m.before[first] ?? 0) - Math.max(0, s.from - head.from) - Math.max(0, tail.to - s.to)
+}
+
+/** Where `s` leaves the span of `m` it starts in, or `s.from` when it starts outside them. */
+export function leave(m: Measured, s: Span): number {
+  const at = m.spans[firstEndingAfter(m, s.from)]
+  return at && at.from <= s.from ? at.to : s.from
 }
 
 export const total = (spans: Span[]) => union(spans).reduce((n, s) => n + len(s), 0)

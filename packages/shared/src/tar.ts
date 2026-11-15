@@ -68,7 +68,10 @@ function readString(block: Uint8Array, offset: number, length: number): string {
   return decoder.decode(end === -1 ? slice : slice.subarray(0, end))
 }
 
-/** Reads regular files from a tar archive. Paths are normalised (no leading "./"). */
+/**
+ * Reads regular files from a tar archive. Paths are normalised (no leading "./"). Throws on an entry whose size is not
+ * an octal number or whose data runs past the end of the archive, so every step moves forward and the read ends.
+ */
 export function readTar(archive: Uint8Array): TarEntry[] {
   const entries: TarEntry[] = []
   let offset = 0
@@ -76,7 +79,11 @@ export function readTar(archive: Uint8Array): TarEntry[] {
   while (offset + BLOCK <= archive.length) {
     const block = archive.subarray(offset, offset + BLOCK)
     if (block.every((b) => b === 0)) break
-    const size = Number.parseInt(readString(block, 124, 12).trim() || "0", 8)
+    const field = readString(block, 124, 12).trim()
+    if (!/^[0-7]*$/.test(field)) throw new Error(`tar: the entry at byte ${offset} has an invalid size`)
+    const size = field ? Number.parseInt(field, 8) : 0
+    if (offset + BLOCK + size > archive.length)
+      throw new Error(`tar: the entry at byte ${offset} runs past the end of the archive`)
     const type = String.fromCharCode(block[156] ?? 0)
     const prefix = readString(block, 345, 155)
     const name = longName ?? (prefix ? `${prefix}/${readString(block, 0, 100)}` : readString(block, 0, 100))

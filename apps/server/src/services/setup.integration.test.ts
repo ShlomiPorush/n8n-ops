@@ -112,6 +112,7 @@ beforeAll(async () => {
     token: randomBytes(24).toString("hex"),
     userId: "u1",
     expiresAt: new Date(Date.now() + 86_400_000),
+    twoFactorVerified: true,
   })
   server = createServer(async (req, res) => {
     const send = (status: number, body?: unknown) => {

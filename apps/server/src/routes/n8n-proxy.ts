@@ -12,7 +12,7 @@ import { syncWorkflowsSoon } from "../services/workflows.ts"
 export function changesWorkflowMap(method: string, path: string, status: number) {
   if (method === "GET" || method === "HEAD" || method === "OPTIONS") return false
   if (status < 200 || status > 299) return false
-  return /^\/(workflows|tags|executions)(\/|$)/.test(path)
+  return /^\/(workflows|tags|executions)(\/|$)/i.test(path)
 }
 
 /**

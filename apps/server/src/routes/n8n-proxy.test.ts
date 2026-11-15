@@ -15,6 +15,7 @@ describe("a call through the access proxy refreshes the workflow map", () => {
       ["DELETE", "/tags/t1"],
       ["DELETE", "/executions/1"],
       ["POST", "/executions/1/retry"],
+      ["POST", "/Workflows/abc/activate"],
     ])
       expect(changesWorkflowMap(method as string, path as string, 200), `${method} ${path}`).toBe(true)
   })

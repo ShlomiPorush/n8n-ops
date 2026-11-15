@@ -399,7 +399,9 @@ make_mail_tls() {
   require_owner_only "$tmp/key.pem" 600
   if ! mv -T "$tmp" "$dir" 2>/dev/null; then
     rm -rf "$tmp"
-    [ -s "$dir/cert.pem" ] && [ -s "$dir/key.pem" ] || die "could not put the mail server's certificate in $dir"
+    if [ ! -s "$dir/cert.pem" ] || [ ! -s "$dir/key.pem" ]; then
+      die "could not put the mail server's certificate in $dir"
+    fi
   fi
   check_mail_tls "$dir"
 }
@@ -407,8 +409,9 @@ make_mail_tls() {
 # A published mail certificate is used only when it is complete and its key is the owner's alone.
 check_mail_tls() {
   local dir="$1"
-  [ -s "$dir/cert.pem" ] && [ -s "$dir/key.pem" ] ||
+  if [ ! -s "$dir/cert.pem" ] || [ ! -s "$dir/key.pem" ]; then
     die "$dir does not hold a complete mail certificate (cert.pem and key.pem). Remove the folder; the next start makes a new one."
+  fi
   require_owner_only "$dir" 700
   require_owner_only "$dir/key.pem" 600
 }

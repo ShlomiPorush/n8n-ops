@@ -102,8 +102,9 @@ export function useAccessHistory<T extends Listed>(
   const { fetchNextPage, refetch } = query
   useEffect(() => {
     if (!read) return
+    // The first page holds the live answer's ended requests again, so a press is answered by the page after it.
     if (read === "again") setReread(false)
-    else setOnce(false)
+    else if (read === "next") setOnce(false)
     void (read === "next" ? fetchNextPage() : refetch()).then((result) => {
       if (!result.isError) return
       // Kept until Try again, with what asked for the read put back, so Try again reads it again.

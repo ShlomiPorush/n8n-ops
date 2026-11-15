@@ -1,4 +1,4 @@
-import { ALLOWED_LIMITS, type WorkerCheckOutput, workerCheckOutput } from "@n8n-ops/shared"
+import { ALLOWED_LIMITS, QUEUE_WORKERS_PER_PROBE, type WorkerCheckOutput, workerCheckOutput } from "@n8n-ops/shared"
 import {
   type ConcurrencyFlag,
   type ContainerState,
@@ -84,7 +84,7 @@ export type DiscoveryResult = {
 /** Limits of one probe: Docker's answers, how many workers, how many at once, and how long in all. */
 export const LIMITS = {
   listBytes: 2 * 1024 * 1024,
-  workers: 50,
+  workers: QUEUE_WORKERS_PER_PROBE,
   names: 500,
   together: 4,
   callMs: 10_000,

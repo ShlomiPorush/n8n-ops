@@ -3,14 +3,16 @@ import { EventEmitter } from "node:events"
 import { join } from "node:path"
 import { eq } from "drizzle-orm"
 import postgres from "postgres"
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest"
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 import type { Ctx } from "../context.ts"
 import { createDatabase, type Database } from "../db/client.ts"
 import { alertOutbox, alertState, instances, workers } from "../db/schema.ts"
 import { createSettings } from "../lib/settings.ts"
 import { agentQueues } from "./agent.ts"
+import { probePayload } from "./backups.ts"
 import { applyHealth, applyWorkerReport, type HealthReport, startCheck } from "./health.ts"
 import { detachWorker, updateInstance } from "./instance-update.ts"
+import { deleteInstance } from "./problems.ts"
 import { removeCapability } from "./setup.ts"
 
 // Applying health reports against a real PostgreSQL: a check that started earlier never overwrites a later one,
@@ -161,7 +163,10 @@ describe("applyHealth", () => {
   })
 
   it("closes the queue alerts quietly when the instance leaves queue mode", async () => {
-    await ctx.db.update(instances).set({ queueMode: true }).where(eq(instances.id, id))
+    await ctx.db
+      .update(instances)
+      .set({ queueMode: true, workerHealthUrls: ["http://worker:5678/healthz"] })
+      .where(eq(instances.id, id))
     const down = { url: "http://worker:5678/healthz", ok: false, status: 0, ms: 1, error: "refused" }
     await thrice(report({ workers: [down] }))
     expect((await conditions()).filter((c) => c.active)).toHaveLength(1)
@@ -254,7 +259,10 @@ describe("applyHealth", () => {
   })
 
   it("ends the alerts of the other source when the workers start being found, and back", async () => {
-    await ctx.db.update(instances).set({ queueMode: true }).where(eq(instances.id, id))
+    await ctx.db
+      .update(instances)
+      .set({ queueMode: true, workerHealthUrls: ["http://w:5678/healthz"] })
+      .where(eq(instances.id, id))
     const typed = { url: "http://w:5678/healthz", ok: false, status: 0, ms: 1, error: "refused" }
     await thrice(report({ workers: [typed] }))
     const foundDown = { url: "docker://acme-w-1", name: "acme-w-1", state: "down", ok: false, status: 0, ms: 1 }
@@ -310,7 +318,10 @@ describe("applyHealth", () => {
   })
 
   it("applies typed worker URLs when the main could not be collected, and ends found-worker alerts for them", async () => {
-    await ctx.db.update(instances).set({ queueMode: true }).where(eq(instances.id, id))
+    await ctx.db
+      .update(instances)
+      .set({ queueMode: true, workerHealthUrls: ["http://w:5678/healthz"] })
+      .where(eq(instances.id, id))
     const found = { url: "docker://acme-w-1", name: "acme-w-1", state: "down", ok: false, status: 0, ms: 1 }
     await applyHealth(
       ctx,
@@ -369,7 +380,7 @@ describe("applyHealth", () => {
     await applyWorkerReport(
       ctx,
       { id, name: "queue-n8n" },
-      { check: t },
+      { check: t, discover: true },
       {
         main: ok,
         readiness: ok,
@@ -500,5 +511,229 @@ describe("down alerts after failed checks in a row", () => {
     await ctx.db.update(instances).set({ queueMode: true, queueModeSource: "manual" }).where(eq(instances.id, id))
     await apply(report({ workers: [worker] }))
     expect(await sent()).toEqual([])
+  })
+})
+
+const typedDown = (url: string) => ({ url, ok: false, status: 0, ms: 1, error: "refused" })
+const foundDown = (name: string) => ({ url: `docker://${name}`, name, state: "down", ok: false, status: 0, ms: 1 })
+const foundReady = (name: string) => ({ url: `docker://${name}`, name, state: "ready", ok: true, status: 200, ms: 1 })
+const workerDownSent = async () => (await sent()).filter((t) => t.includes("Queue worker down"))
+const workerRows = async () => (await conditions()).filter((c) => c.key.startsWith(`worker:${id}:`))
+const names = (n: number, prefix: string) => Array.from({ length: n }, (_, i) => `${prefix}-${i}`)
+
+describe("queue workers a health check asked about", () => {
+  /** A probe job for the instance as it is now, answered with `result`, as the worker API applies it. */
+  const answer = async (
+    result: Record<string, unknown>,
+    payload?: (check: Awaited<ReturnType<typeof ticket>>) => Record<string, unknown>,
+  ) => {
+    const t = await ticket()
+    const instance = await row()
+    if (!instance) throw new Error("no instance")
+    const job = payload ? payload(t) : probePayload(instance, t, true)
+    return applyWorkerReport(ctx, { id, name: "queue-n8n" }, job, result, "w")
+  }
+  const inside = (workers: unknown[], extra: Record<string, unknown> = {}) => ({
+    main: ok,
+    readiness: ok,
+    queue: null,
+    checkedAt: new Date().toISOString(),
+    source: "inside",
+    mode: "queue",
+    workers,
+    ...extra,
+  })
+
+  it("counts at most the number of queue workers a check finds next to the main", async () => {
+    await ctx.db.update(instances).set({ queueMode: true, queueModeSource: "found" }).where(eq(instances.id, id))
+    const found = names(120, "acme-w").map(foundDown)
+    const result = inside(found, { discovery: { status: "partial", found: 120 } })
+    await answer(result)
+    await answer(result)
+    expect(await workerDownSent()).toEqual([])
+    const stored = await answer(result)
+    expect(await workerDownSent()).toHaveLength(50)
+    expect((await workerRows()).map((c) => c.key).sort()).toEqual(
+      names(50, "acme-w")
+        .map((n) => `worker:${id}:docker://${n}`)
+        .sort(),
+    )
+    expect((stored.workers as unknown[]).length).toBe(50)
+    expect(((await row())?.healthDetail as { workers?: unknown[] } | undefined)?.workers).toHaveLength(50)
+  })
+
+  it("counts only the typed worker URLs the check carried", async () => {
+    const typed = "http://w-1:5678/healthz"
+    await ctx.db
+      .update(instances)
+      .set({ queueMode: true, workerHealthUrls: [typed] })
+      .where(eq(instances.id, id))
+    const result = inside([typedDown(typed), ...names(100, "http://other").map((u) => typedDown(`${u}/healthz`))])
+    await answer(result)
+    await answer(result)
+    expect(await workerDownSent()).toEqual([])
+    await answer(result)
+    expect(await workerDownSent()).toHaveLength(1)
+    expect((await workerRows()).map((c) => c.key)).toEqual([`worker:${id}:${typed}`])
+    expect(((await row())?.healthDetail as { workers?: unknown[] } | undefined)?.workers).toHaveLength(1)
+  })
+
+  it("counts no queue worker for a check made while the instance was not in queue mode", async () => {
+    await answer(inside(names(20, "acme-w").map(foundDown), { discovery: { status: "ok", found: 20 } }))
+    expect((await row())?.queueMode).toBe(true)
+    expect(await workerRows()).toEqual([])
+  })
+
+  it("alerts on every typed worker URL, however many the owner typed", async () => {
+    const typed = names(600, "http://w").map((u) => `${u}:5678/healthz`)
+    await ctx.db.update(instances).set({ queueMode: true, workerHealthUrls: typed }).where(eq(instances.id, id))
+    const result = inside(typed.map(typedDown))
+    await answer(result)
+    await answer(result)
+    await answer(result)
+    expect(await workerDownSent()).toHaveLength(600)
+  }, 60_000)
+
+  it("alerts on typed worker URLs reported by workers of earlier releases", async () => {
+    const typed = "http://w-1:5678/healthz"
+    await ctx.db
+      .update(instances)
+      .set({ queueMode: true, workerHealthUrls: [typed] })
+      .where(eq(instances.id, id))
+    const result = {
+      main: ok,
+      readiness: ok,
+      queue: null,
+      checkedAt: new Date().toISOString(),
+      workers: [typedDown(typed)],
+    }
+    for (let i = 0; i < 3; i++) await answer(result, (check) => ({ workers: [typed], check }))
+    expect(await workerDownSent()).toHaveLength(1)
+  })
+})
+
+describe("the number of found queue workers an instance keeps conditions for", () => {
+  const BOUND = 500
+  /** Found queue workers that have failed once and not alerted yet. */
+  const pending = (list: string[], extra: Partial<typeof alertState.$inferInsert> = {}) =>
+    ctx.db.insert(alertState).values(
+      list.map((n) => ({
+        key: `worker:${id}:docker://${n}`,
+        active: false,
+        since: new Date(),
+        failures: 1,
+        failingSince: new Date(),
+        ...extra,
+      })),
+    )
+  // A list read only in part leaves the conditions of workers it does not show as they were.
+  const partial = (workers: unknown[]) =>
+    report({ source: "inside", workers, discovery: { status: "partial", found: 999 } } as Partial<HealthReport>)
+  const apply = async (r: HealthReport) => applyHealth(ctx, id, r, await ticket())
+  const atLimit = (warn: ReturnType<typeof vi.fn>) =>
+    warn.mock.calls.filter(([message]) => String(message).includes("queue worker alerts are at their limit"))
+
+  beforeEach(async () => {
+    await ctx.db.update(instances).set({ queueMode: true }).where(eq(instances.id, id))
+  })
+
+  it("gives a new found worker no condition at the limit, and keeps counting the ones it has", async () => {
+    await pending(names(BOUND, "seed"))
+    await thrice(partial([foundDown("new-1"), foundDown("seed-0")]))
+    const sentDown = await workerDownSent()
+    expect(sentDown).toHaveLength(1)
+    expect(sentDown[0]).toContain("seed-0")
+    expect((await workerRows()).some((c) => c.key.endsWith("docker://new-1"))).toBe(false)
+  })
+
+  it("lets no pending found worker alert while more than the limit are kept, and still clears an open one", async () => {
+    await pending(names(BOUND + 5, "seed"))
+    await pending(["open-0", "open-1"], { active: true, failures: 3 })
+    await thrice(partial([foundDown("seed-0"), foundReady("open-0")]))
+    expect(await workerDownSent()).toEqual([])
+    expect((await sent()).filter((t) => t.includes("Queue worker back"))).toHaveLength(1)
+    const rows = await workerRows()
+    expect(rows.find((c) => c.key.endsWith("docker://seed-0"))).toMatchObject({ failures: 1, active: false })
+    expect(rows.some((c) => c.key.endsWith("docker://open-0"))).toBe(false)
+  })
+
+  for (const order of ["recovered first", "new first"]) {
+    it(`makes room for a new found worker when another recovers in the same check (${order})`, async () => {
+      await pending(names(BOUND, "seed"))
+      const both = [foundReady("seed-0"), foundDown("new-1")]
+      await thrice(partial(order === "new first" ? both.reverse() : both))
+      const sentDown = await workerDownSent()
+      expect(sentDown).toHaveLength(1)
+      expect(sentDown[0]).toContain("new-1")
+      expect((await workerRows()).length).toBe(BOUND)
+    })
+  }
+
+  it("says once that the limit is reached, and again only after it was left", async () => {
+    const warn = vi.fn()
+    ctx.log.warn = warn
+    try {
+      await pending(names(BOUND - 1, "seed"))
+      await apply(partial([foundDown("new-1")]))
+      expect(atLimit(warn)).toHaveLength(1)
+      await apply(partial([foundDown("new-1")]))
+      await apply(partial([foundDown("new-2")]))
+      await apply(partial([foundDown("seed-1")]))
+      expect(atLimit(warn)).toHaveLength(1)
+      await apply(partial([foundReady("seed-0")]))
+      await apply(partial([foundDown("new-3")]))
+      expect(atLimit(warn)).toHaveLength(2)
+    } finally {
+      ctx.log.warn = () => {}
+    }
+  })
+
+  it("keeps no row for a found worker that recovered or was removed", async () => {
+    const full = (workers: unknown[]) =>
+      report({
+        source: "inside",
+        workers,
+        discovery: { status: "ok", found: workers.length },
+      } as Partial<HealthReport>)
+    await thrice(full([foundDown("w-1"), foundDown("w-2")]))
+    expect(await workerDownSent()).toHaveLength(2)
+    await apply(full([foundReady("w-1"), foundDown("w-2")]))
+    expect((await workerRows()).map((c) => c.key)).toEqual([`worker:${id}:docker://w-2`])
+    await apply(full([foundReady("w-1")]))
+    expect(await workerRows()).toEqual([])
+    // A new streak starts from one: it alerts again on its third failed check.
+    await apply(full([foundDown("w-1")]))
+    await apply(full([foundDown("w-1")]))
+    expect(await workerDownSent()).toHaveLength(2)
+    await apply(full([foundDown("w-1")]))
+    expect(await workerDownSent()).toHaveLength(3)
+    expect((await sent()).filter((t) => t.includes("Queue worker back"))).toHaveLength(1)
+  })
+
+  it("ends quietly the conditions of typed worker URLs no longer in the list", async () => {
+    const old = names(3, "http://old").map((u) => `${u}:5678/healthz`)
+    await ctx.db.update(instances).set({ workerHealthUrls: old }).where(eq(instances.id, id))
+    await thrice(report({ workers: old.map(typedDown) }))
+    expect((await workerRows()).filter((c) => c.active)).toHaveLength(3)
+    const fresh = "http://new:5678/healthz"
+    await updateInstance(ctx, id, { workerHealthUrls: [fresh] })
+    const before = (await sent()).length
+    await apply(report({ workers: [typedDown(fresh)] }))
+    expect((await workerRows()).map((c) => c.key)).toEqual([`worker:${id}:${fresh}`])
+    expect((await sent()).length).toBe(before)
+    await apply(report({ workers: [typedDown(fresh)] }))
+    await apply(report({ workers: [typedDown(fresh)] }))
+    expect((await sent()).slice(before)).toEqual([expect.stringContaining("new:5678")])
+  })
+
+  it("removes an instance's queue worker conditions with the instance", async () => {
+    const other = `worker:00000000-0000-4000-8000-000000000000:docker://x`
+    await pending(["w-1", "w-2"])
+    await ctx.db.insert(alertState).values({ key: other, active: true, since: new Date() })
+    // The instance is found by its ID in any letter case.
+    await deleteInstance(ctx, id.toUpperCase())
+    expect(await row()).toBeUndefined()
+    const keys = (await ctx.db.select().from(alertState)).map((a) => a.key)
+    expect(keys).toEqual([other])
   })
 })

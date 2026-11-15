@@ -49,6 +49,7 @@ export {
 export {
   type MainCheckOutput,
   mainCheckOutput,
+  QUEUE_WORKERS_PER_PROBE,
   type WorkerCheckOutput,
   workerCheckOutput,
   workerDetails,

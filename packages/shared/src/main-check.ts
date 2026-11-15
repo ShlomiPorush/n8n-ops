@@ -34,6 +34,12 @@ export const mainCheckOutput = z.object({
 
 export type MainCheckOutput = z.infer<typeof mainCheckOutput>
 
+/**
+ * The most queue workers found next to a main that one health check checks and reports. The server counts no more
+ * than this from one report.
+ */
+export const QUEUE_WORKERS_PER_PROBE = 50
+
 /** What the worker's check inside an n8n queue worker container prints (apps/worker/src/inside.ts, WORKER_CHECK). */
 /** A queue worker's figures, each bounded and each dropped alone when it does not fit. */
 export const workerDetails = {

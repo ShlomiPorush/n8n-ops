@@ -15,6 +15,8 @@ services:
     environment:
       # Empty except in scripts/verify.sh, which points it at the end-to-end tests' stand-in Bot API.
       TELEGRAM_API_URL: ${TELEGRAM_API_URL:-}
+      # Trusts the mail server's certificate, so mail goes over STARTTLS with the certificate checked.
+      NODE_EXTRA_CA_CERTS: /mail-tls/cert.pem
     depends_on:
       postgres:
         condition: service_healthy
@@ -24,6 +26,8 @@ services:
       - ${N8N_OPS_DATA_DIR:?N8N_OPS_DATA_DIR is set by the scripts}/server:/data
       # The folder for local backup destinations.
       - ${N8N_OPS_DATA_DIR:?N8N_OPS_DATA_DIR is set by the scripts}/backups:/backups
+      # The mail server's certificate only, never its key.
+      - ${N8N_OPS_DATA_DIR:?N8N_OPS_DATA_DIR is set by the scripts}/mail-tls/cert.pem:/mail-tls/cert.pem:ro
 
   postgres:
     image: postgres:18.6-bookworm
@@ -105,8 +109,12 @@ services:
         required: false
 
   # SMTP for development and the end-to-end tests (Mailpit): catches every email, read through its API on :8025.
+  # STARTTLS with the certificate the scripts make in <data dir>/mail-tls; a client that does not upgrade is refused.
   mail:
     image: axllent/mailpit:v1.33.0
+    command: ["--smtp-tls-cert", "/tls/cert.pem", "--smtp-tls-key", "/tls/key.pem", "--smtp-require-starttls"]
+    volumes:
+      - ${N8N_OPS_DATA_DIR:?N8N_OPS_DATA_DIR is set by the scripts}/mail-tls:/tls:ro
 
 networks:
   docker-proxy:

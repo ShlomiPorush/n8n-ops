@@ -41,6 +41,7 @@ export const settingLabels = {
     smtpHost: "SMTP server",
     smtpPort: "SMTP port",
     smtpSecure: "TLS from the start (port 465)",
+    smtpAllowUnencrypted: "Allow sending without encryption",
     smtpUser: "SMTP user",
     smtpPassword: "SMTP password",
   },

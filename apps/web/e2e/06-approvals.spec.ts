@@ -561,7 +561,7 @@ test("a new SMTP server needs the password again, so the stored one is not sent 
     await page.getByRole("button", { name: "Save" }).click()
     // Found before anything is sent: the password field opens for the new value, is marked and takes the focus.
     await expect(
-      page.getByText(/^SMTP password: the SMTP server or user changed\. Enter the SMTP password again/),
+      page.getByText(/^SMTP password: the SMTP server, user or encryption changed\. Enter the SMTP password again/),
     ).toBeVisible()
     const password = page.getByPlaceholder("New value")
     await expect(password).toBeFocused()

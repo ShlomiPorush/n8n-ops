@@ -65,7 +65,7 @@ On a pull request, CI runs the guards, the unit tests of the changed packages an
 - Vitest in `apps/web` only includes `src/**/*.test.ts(x)`; the Playwright specs in `e2e` run through `scripts/verify.sh` against the container stack, once per design.
 - The repository uses the GitHub noreply address as the local `user.email`; GitHub rejects pushes that expose the private address.
 - Sign-in is rate limited (5 per 5 minutes). End-to-end spec files sign in through `signIn()`, which reuses the previous file's session; a new spec that signs in with a password on its own will hit the limit.
-- In the verification stack the server sends Telegram calls to a stand-in Bot API inside the Playwright runner, which shares the server container's network (`TELEGRAM_API_URL=http://localhost:8099`) and email to Mailpit (`mail:1025`, API on `mail:8025`). Never point `TELEGRAM_API_URL` anywhere in production.
+- In the verification stack the server sends Telegram calls to a stand-in Bot API inside the Playwright runner, which shares the server container's network (`TELEGRAM_API_URL=http://localhost:8099`) and email to Mailpit (`mail:1025`, API on `mail:8025`). Mailpit requires STARTTLS with a certificate the scripts make in the data directory (`make_mail_tls`, new for each `verify.sh` run), and the server trusts it through `NODE_EXTRA_CA_CERTS`, so tests send mail the way production must: never enable "Allow sending without encryption" to make a test pass. Never point `TELEGRAM_API_URL` anywhere in production.
 
 ## Docker
 

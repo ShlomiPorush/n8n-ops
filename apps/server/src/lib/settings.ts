@@ -116,9 +116,18 @@ export const telegramRouteSchema = z
   .refine((r) => Boolean(r.instanceId || r.workflow || r.tag), routeWords.condition)
 export type TelegramRoute = z.infer<typeof telegramRouteSchema>
 
-type SmtpAccount = { smtpHost?: unknown; smtpPort?: unknown; smtpUser?: unknown }
+type SmtpAccount = {
+  smtpHost?: unknown
+  smtpPort?: unknown
+  smtpUser?: unknown
+  smtpSecure?: unknown
+  smtpAllowUnencrypted?: unknown
+}
 
-/** The SMTP account as a comparable text: host without case or spaces, the port as a number, the user trimmed. */
+/**
+ * The SMTP account as a comparable text: host without case or spaces, the port as a number, the user trimmed, and
+ * how the connection is protected.
+ */
 const smtpAccount = (v: SmtpAccount) =>
   JSON.stringify([
     String(v.smtpHost ?? "")
@@ -126,11 +135,14 @@ const smtpAccount = (v: SmtpAccount) =>
       .toLowerCase(),
     Number(v.smtpPort ?? 0),
     String(v.smtpUser ?? "").trim(),
+    Boolean(v.smtpSecure),
+    Boolean(v.smtpAllowUnencrypted),
   ])
 
 /**
  * Whether an Email save would send the stored SMTP password where it was not given: the host, port or user
- * really changed (case, spaces and "587" against 587 do not count) and the save brings no new password (FS-5).
+ * really changed (case, spaces and "587" against 587 do not count) or how the connection is encrypted changed, and
+ * the save brings no new password (FS-5).
  */
 export const smtpPasswordNeeded = (
   current: SmtpAccount & { smtpPasswordEnc?: unknown },
@@ -193,6 +205,12 @@ export const sections = {
     smtpHost: z.string(),
     smtpPort: z.number().int().min(1).max(65535),
     smtpSecure: z.boolean(),
+    /**
+     * Off: without TLS from the start, mail goes only after STARTTLS succeeds (Nodemailer's requireTLS). On: the
+     * password and the mail may go in clear text to a server that offers no encryption. N8N_OPS_SMTP_ALLOW_UNENCRYPTED
+     * overrides it.
+     */
+    smtpAllowUnencrypted: z.boolean(),
     smtpUser: z.string(),
     smtpPasswordEnc: z.string().optional(),
   }),
@@ -302,6 +320,7 @@ export const defaults: { [K in SectionName]: Section<K> } = {
     smtpHost: "",
     smtpPort: 587,
     smtpSecure: false,
+    smtpAllowUnencrypted: false,
     smtpUser: "",
   },
   backups: { selfDestinations: "default", selfDestinationIds: [], maxArchiveMb: 2048 },
@@ -399,10 +418,17 @@ export function invalidAnswer(section: SectionName, issues: Issue[]) {
   }
 }
 
+/** Values the environment provides: N8N_OPS_PUBLIC_URL and N8N_OPS_SMTP_ALLOW_UNENCRYPTED. */
+export type SettingsEnv = { publicUrl?: string; smtpAllowUnencrypted?: boolean }
+
+/** The Email section in effect: N8N_OPS_SMTP_ALLOW_UNENCRYPTED, when set, over the stored switch. */
+export const withEmailEnv = (email: Section<"email">, env: SettingsEnv): Section<"email"> =>
+  env.smtpAllowUnencrypted === undefined ? email : { ...email, smtpAllowUnencrypted: env.smtpAllowUnencrypted }
+
 export type SettingsStore = {
   /**
-   * The settings in effect: stored values over the defaults, and the public URL from N8N_OPS_PUBLIC_URL while
-   * none is stored.
+   * The settings in effect: stored values over the defaults, the public URL from N8N_OPS_PUBLIC_URL while none is
+   * stored, and N8N_OPS_SMTP_ALLOW_UNENCRYPTED over the stored switch.
    */
   get<K extends SectionName>(key: K): Promise<Section<K>>
   /**
@@ -410,8 +436,11 @@ export type SettingsStore = {
    * a value from the environment is never written by a save that did not change it (FS-6).
    */
   stored<K extends SectionName>(key: K): Promise<Section<K>>
-  /** Values the environment provides when none is stored: N8N_OPS_PUBLIC_URL. */
-  fromEnv(): { publicUrl?: string }
+  /**
+   * Values the environment provides: N8N_OPS_PUBLIC_URL (used while none is stored) and
+   * N8N_OPS_SMTP_ALLOW_UNENCRYPTED (always used; the field is locked).
+   */
+  fromEnv(): SettingsEnv
   set<K extends SectionName>(key: K, value: Section<K>): Promise<void>
   /** Effective settings for one instance: global defaults with its overrides applied. */
   forInstance(overrides: Record<string, unknown>): Promise<InstanceSettings>
@@ -432,8 +461,9 @@ type Logger = { info(msg: string, meta?: object): void; warn(msg: string, meta?:
 /**
  * `env.publicUrl` (N8N_OPS_PUBLIC_URL) stands in for the public URL while Settings > General leaves it empty,
  * so links in alerts, the Telegram webhook and worker install commands use the address users open.
+ * `env.smtpAllowUnencrypted` (N8N_OPS_SMTP_ALLOW_UNENCRYPTED) decides the Email switch whatever is stored.
  */
-export function createSettings(db: Db, env: { publicUrl?: string } = {}): SettingsStore {
+export function createSettings(db: Db, env: SettingsEnv = {}): SettingsStore {
   let currentDesign: Design = defaults.general.design
   // General is written one at a time, so the design in memory always ends as the last one stored.
   let generalWrites: Promise<unknown> = Promise.resolve()
@@ -445,6 +475,7 @@ export function createSettings(db: Db, env: { publicUrl?: string } = {}): Settin
       const general = value as Section<"general">
       if (!general.publicUrl) return { ...general, publicUrl: env.publicUrl } as Section<K>
     }
+    if (key === "email") return withEmailEnv(value as Section<"email">, env) as Section<K>
     return value
   }
 
@@ -477,7 +508,10 @@ export function createSettings(db: Db, env: { publicUrl?: string } = {}): Settin
   return {
     get,
     stored,
-    fromEnv: () => (env.publicUrl ? { publicUrl: env.publicUrl } : {}),
+    fromEnv: () => ({
+      ...(env.publicUrl ? { publicUrl: env.publicUrl } : {}),
+      ...(env.smtpAllowUnencrypted === undefined ? {} : { smtpAllowUnencrypted: env.smtpAllowUnencrypted }),
+    }),
     async set(key, value) {
       const parsed = sections[key].parse(value) as typeof value
       if (key !== "general") return write(key, parsed)

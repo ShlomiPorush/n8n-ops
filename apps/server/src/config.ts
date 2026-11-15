@@ -13,6 +13,8 @@ export type ServerConfig = {
   appKeyPath: string
   /** Public URL of this installation, used for auth and for links in alerts. Optional. */
   publicUrl?: string
+  /** N8N_OPS_SMTP_ALLOW_UNENCRYPTED: decides Settings → Email's "Allow sending without encryption" when set. */
+  smtpAllowUnencrypted?: boolean
 }
 
 /**
@@ -28,6 +30,15 @@ function passwordOf(url: string): string | null {
   } catch {
     return null
   }
+}
+
+/** An optional true or false; anything else is refused at start, so a typo never allows clear text. */
+function optionalBoolean(env: NodeJS.ProcessEnv, name: string): boolean | undefined {
+  const value = env[name]?.trim()
+  if (!value) return undefined
+  if (value === "true") return true
+  if (value === "false") return false
+  throw new Error(`${name} must be true or false, or left empty`)
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
@@ -52,5 +63,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     migrationsDir: env.MIGRATIONS_DIR ?? "drizzle",
     appKeyPath: env.APP_KEY_FILE ?? "/data/app.key",
     publicUrl: env.N8N_OPS_PUBLIC_URL || undefined,
+    smtpAllowUnencrypted: optionalBoolean(env, "N8N_OPS_SMTP_ALLOW_UNENCRYPTED"),
   }
 }

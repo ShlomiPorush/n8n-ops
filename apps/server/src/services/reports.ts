@@ -3,7 +3,7 @@ import { and, count, desc, eq, gt, lte } from "drizzle-orm"
 import nodemailer from "nodemailer"
 import type { Ctx } from "../context.ts"
 import { affectedWorkflows, alertOutbox, alertState, backupRuns, failures, instances } from "../db/schema.ts"
-import { emailAccount } from "./draft-tests.ts"
+import { emailAccount, noEncryption } from "./draft-tests.ts"
 import { type Email, formatDate, panel, plural, render, stats, type Tone, table, tag } from "./email-layout.ts"
 import { activeOnly, can, compareVersions, latestN8nVersion } from "./instances.ts"
 import { openProblemCount, openProblemsByInstance } from "./problem-view.ts"
@@ -241,10 +241,19 @@ export async function buildReport(
  * FS-19; see emailAccount for which password goes where). Returns who it was sent to.
  */
 export async function sendEmail(ctx: Ctx, report: Report, draft: Record<string, unknown> = {}) {
-  const account = emailAccount(await ctx.settings.get("email"), draft, (enc) => ctx.secrets.decrypt(enc))
+  // While the environment decides "Allow sending without encryption", a test cannot change it.
+  const { smtpAllowUnencrypted: _, ...screen } = draft
+  const typed = ctx.settings.fromEnv().smtpAllowUnencrypted === undefined ? draft : screen
+  const account = emailAccount(await ctx.settings.get("email"), typed, (enc) => ctx.secrets.decrypt(enc))
   const { from, recipients, ...server } = account
   const transport = nodemailer.createTransport(server)
-  await transport.sendMail(mailOptions(report, from, recipients))
+  try {
+    await transport.sendMail(mailOptions(report, from, recipients))
+  } catch (error) {
+    // The failure is shown for reports and access requests as well as tests: say why in words, keep the rest.
+    if ((error as { code?: string }).code === "ETLS") (error as Error).message = noEncryption
+    throw error
+  }
   return recipients
 }
 

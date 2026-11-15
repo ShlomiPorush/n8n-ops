@@ -38,7 +38,10 @@ if (created)
     path: config.appKeyPath,
   })
 
-const settings = createSettings(database.db, { publicUrl: config.publicUrl })
+const settings = createSettings(database.db, {
+  publicUrl: config.publicUrl,
+  smtpAllowUnencrypted: config.smtpAllowUnencrypted,
+})
 const ctx: Ctx = {
   db: database.db,
   auth: createAuthSource(database.db, key, config.publicUrl, settings),

@@ -211,6 +211,12 @@ export const forms: Record<string, { title: string; description: string; fields:
       { name: "smtpHost", label: "SMTP server", clear: true },
       { name: "smtpPort", label: "SMTP port", type: "number" },
       { name: "smtpSecure", label: "TLS from the start (port 465)", type: "switch" },
+      {
+        name: "smtpAllowUnencrypted",
+        label: "Allow sending without encryption",
+        hint: "Off: mail goes only over TLS from the start or STARTTLS, and a server that offers neither is refused. On: the SMTP password and every email may cross the network in clear text. Only for a relay you trust on a private network.",
+        type: "switch",
+      },
       { name: "smtpUser", label: "SMTP user", clear: true },
       { name: "smtpPassword", label: "SMTP password", type: "password" },
     ],
@@ -621,11 +627,14 @@ function useRevealField(ready: boolean) {
   }, [field, ready, navigate])
 }
 
-/** What a section's answer carries beside its values: defaults, number ranges, values from the environment. */
+/**
+ * What a section's answer carries beside its values: defaults, number ranges, values from the environment. A
+ * locked value from the environment cannot be changed here; the others stand in while nothing is stored.
+ */
 type Meta = {
   defaults?: Record<string, unknown>
   limits?: Record<string, NumberLimits>
-  env?: Record<string, { variable: string; value: string; inUse: boolean }>
+  env?: Record<string, { variable: string; value: string; inUse: boolean; locked?: boolean }>
 }
 const metaOf = (data: Record<string, unknown> | undefined) => (data?.meta ?? {}) as Meta
 
@@ -738,8 +747,8 @@ const resettable = (f: FieldDef, fallback: unknown) =>
   f.type !== "list"
 
 /**
- * Whether the SMTP host, port or user really differs from the stored one: case and spaces in the host, spaces
- * in the user and "587" against 587 do not count. The server checks the same.
+ * Whether the SMTP host, port, user or encryption really differs from the stored one: case and spaces in the host,
+ * spaces in the user and "587" against 587 do not count. The server checks the same.
  */
 export const smtpServerChanged = (stored: Record<string, unknown>, next: Record<string, unknown>) => {
   const account = (v: Record<string, unknown>) =>
@@ -749,9 +758,14 @@ export const smtpServerChanged = (stored: Record<string, unknown>, next: Record<
         .toLowerCase(),
       Number(v.smtpPort ?? 0),
       String(v.smtpUser ?? "").trim(),
+      Boolean(v.smtpSecure),
+      Boolean(v.smtpAllowUnencrypted),
     ])
   return account(stored) !== account(next)
 }
+
+/** The note under a field the environment sets and this page cannot change. */
+export const lockedNote = (variable: string) => `Set by ${variable}.`
 
 /**
  * One section's form. It stays mounted while another section shows and it holds unsaved changes, so they are kept
@@ -842,8 +856,8 @@ export function SettingsForm({ section, active = true }: { section: string; acti
       const problem = fieldProblem(section, f, current[f.name], meta.limits)
       if (problem) found[f.name] = problem
     }
-    // The stored SMTP password is never sent to another server: a new host, port or user needs it again, unless
-    // it is being removed (FS-5). The field opens for it.
+    // The stored SMTP password is never sent to another server: a new host, port, user or encryption needs it
+    // again, unless it is being removed (FS-5). The field opens for it.
     const password = values.smtpPassword
     if (
       section === "email" &&
@@ -853,7 +867,7 @@ export function SettingsForm({ section, active = true }: { section: string; acti
       password !== null
     ) {
       found.smtpPassword =
-        "the SMTP server or user changed. Enter the SMTP password again, so the stored one is not sent to it."
+        "the SMTP server, user or encryption changed. Enter the SMTP password again, so the stored one is not sent under them."
       if (password === undefined) setValues((v) => ({ ...v, smtpPassword: "" }))
     }
     setProblems(found)
@@ -919,6 +933,7 @@ export function SettingsForm({ section, active = true }: { section: string; acti
   function source(f: FieldDef) {
     const value = values[f.name]
     const env = meta.env?.[f.name]
+    if (env?.locked) return { note: lockedNote(env.variable) }
     if (env)
       return {
         note: text(value)
@@ -992,7 +1007,12 @@ export function SettingsForm({ section, active = true }: { section: string; acti
                     issue={routeIssue}
                   />
                 ) : f.type === "switch" ? (
-                  <Switch id={f.name} checked={Boolean(values[f.name])} onCheckedChange={(v) => set(f.name, v)} />
+                  <Switch
+                    id={f.name}
+                    checked={Boolean(values[f.name])}
+                    disabled={env?.locked}
+                    onCheckedChange={(v) => set(f.name, v)}
+                  />
                 ) : f.type === "password" ? (
                   <SecretField
                     id={f.name}
@@ -1139,6 +1159,7 @@ export function testDraft(section: keyof typeof tests, values: Record<string, un
     smtpHost: text(values.smtpHost),
     smtpPort: Number(values.smtpPort),
     smtpSecure: Boolean(values.smtpSecure),
+    smtpAllowUnencrypted: Boolean(values.smtpAllowUnencrypted),
     smtpUser: text(values.smtpUser),
     ...secret("smtpPassword"),
   }

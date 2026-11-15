@@ -10,6 +10,8 @@ import {
   fieldProblem,
   formatExample,
   forms,
+  lockedNote,
+  smtpServerChanged,
   testDraft,
   testIdentity,
   testMissing,
@@ -134,6 +136,7 @@ describe("a connection test with the values on screen (FS-19)", () => {
       smtpHost: "mail.example.com",
       smtpPort: 2525,
       smtpSecure: false,
+      smtpAllowUnencrypted: false,
       smtpUser: "reports",
     })
     expect(testDraft("email", { ...values, smtpPassword: "" })).not.toHaveProperty("smtpPassword")
@@ -202,5 +205,28 @@ describe("a connection test with the values on screen (FS-19)", () => {
     expect(telegram({ chatId: "4242", botToken: null }, { botTokenSet: true })).toBe("the bot token and the chat ID")
     expect(telegram({ chatId: "4242", botToken: "123:abc" }, {})).toBeNull()
     expect(telegram({ chatId: "" }, { botTokenSet: true })).toBe("the bot token and the chat ID")
+  })
+})
+
+describe("the stored SMTP password and the encryption (FS-5)", () => {
+  const stored = { smtpHost: "smtp.example.com", smtpPort: 587, smtpUser: "reports", smtpSecure: false }
+
+  it("counts a change of either encryption switch as another server, as the server does", () => {
+    expect(smtpServerChanged(stored, { ...stored, smtpPort: "587" })).toBe(false)
+    expect(smtpServerChanged(stored, { ...stored, smtpSecure: true })).toBe(true)
+    expect(smtpServerChanged(stored, { ...stored, smtpAllowUnencrypted: true })).toBe(true)
+    expect(smtpServerChanged({ ...stored, smtpAllowUnencrypted: false }, stored)).toBe(false)
+  })
+
+  it("names the variable that sets a locked field", () => {
+    expect(lockedNote("N8N_OPS_SMTP_ALLOW_UNENCRYPTED")).toBe("Set by N8N_OPS_SMTP_ALLOW_UNENCRYPTED.")
+  })
+
+  it("shows a switch set by the environment with its value, true or false", () => {
+    const def = forms.email as { fields: FieldDef[] }
+    for (const value of [true, false]) {
+      const env = { smtpAllowUnencrypted: { variable: "N8N_OPS_SMTP_ALLOW_UNENCRYPTED", value: String(value), inUse: true, locked: true } }
+      expect(toForm(def, { smtpAllowUnencrypted: value, meta: { env } }).smtpAllowUnencrypted).toBe(value)
+    }
   })
 })

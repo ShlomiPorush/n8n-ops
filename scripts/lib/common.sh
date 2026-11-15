@@ -373,6 +373,44 @@ Put $env back, or start over with scripts/local.sh nuke (deletes the development
   fi
   write_stack_env "$env"
   check_stack_env "$env"
+  make_mail_tls "$data"
+}
+
+# The mail server of the development and verification stacks (Mailpit) offers STARTTLS with a certificate made here,
+# and the server trusts it (NODE_EXTRA_CA_CERTS), so their mail is encrypted and checked as the server requires.
+# Made once per data directory in <data dir>/mail-tls (cert.pem, and key.pem for the owner only): both files are
+# made in a private folder beside it and published by one rename of the whole folder, which never replaces a folder
+# that holds anything, so a pair is never half made or replaced. A run that loses a race to another uses its pair.
+make_mail_tls() {
+  local data="$1" dir="$1/mail-tls" tmp
+  if [ -d "$dir" ] && [ -n "$(ls -A "$dir" 2>/dev/null)" ]; then
+    check_mail_tls "$dir"
+    return
+  fi
+  tmp="$(mktemp -d "$data/.mail-tls.XXXXXX")" || die "could not make a folder for the mail certificate in $data"
+  require_owner_only "$tmp" 700
+  build_toolchain
+  if ! (TOOLCHAIN_EXTRA_ARGS=(-v "$tmp:/tls") && in_toolchain "openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+    -subj /CN=mail -addext subjectAltName=DNS:mail -keyout /tls/key.pem -out /tls/cert.pem 2>/dev/null") ||
+    ! chmod 0600 "$tmp/key.pem" || ! chmod 0644 "$tmp/cert.pem" || [ ! -s "$tmp/key.pem" ] || [ ! -s "$tmp/cert.pem" ]; then
+    rm -rf "$tmp"
+    die "could not make the mail server's certificate"
+  fi
+  require_owner_only "$tmp/key.pem" 600
+  if ! mv -T "$tmp" "$dir" 2>/dev/null; then
+    rm -rf "$tmp"
+    [ -s "$dir/cert.pem" ] && [ -s "$dir/key.pem" ] || die "could not put the mail server's certificate in $dir"
+  fi
+  check_mail_tls "$dir"
+}
+
+# A published mail certificate is used only when it is complete and its key is the owner's alone.
+check_mail_tls() {
+  local dir="$1"
+  [ -s "$dir/cert.pem" ] && [ -s "$dir/key.pem" ] ||
+    die "$dir does not hold a complete mail certificate (cert.pem and key.pem). Remove the folder; the next start makes a new one."
+  require_owner_only "$dir" 700
+  require_owner_only "$dir/key.pem" 600
 }
 
 # Creates the stack's data directories. The server and worker images hand their own directories to

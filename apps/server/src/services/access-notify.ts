@@ -75,8 +75,53 @@ export type RequestInfo = {
 
 const isIncluded = (i: InstanceInfo) => i.included !== false && !i.droppedReason
 
-/** The requested workflows of an instance, each with its name when the request has one. */
-const workflowsOf = (i: InstanceInfo) => i.workflowIds.map((id) => ({ id, name: nameIn(i.workflowNames, id) }))
+/** Control characters (line breaks among them), line and paragraph separators, and direction marks and overrides. */
+const BREAKS = /[\p{Cc}\p{Zl}\p{Zp}؜‎‏‪-‮⁦-⁩]/gu
+
+/**
+ * What an agent wrote (its name, its reason, what it says it did), on one line: every line break, control character
+ * or direction mark, and every run of spaces, becomes one space. Messages show it set apart from their own lines.
+ */
+export const oneLine = (text: string) => text.replace(BREAKS, " ").replace(/\s+/g, " ").trim()
+
+/** A workflow name or ID on one line: each line break, control character or direction mark becomes a space. */
+const unbroken = (text: string) => text.replace(BREAKS, " ")
+
+/** The requested workflows of an instance, each with its name when the request has one, as messages show them. */
+const workflowsOf = (i: InstanceInfo) =>
+  i.workflowIds.map((id) => {
+    const name = nameIn(i.workflowNames, id)
+    return { id: unbroken(id), name: name === undefined ? undefined : unbroken(name) }
+  })
+
+/** Whether messages show every workflow of the instances Approve would grant exactly as stored. */
+const shownAsStored = (list: InstanceInfo[]) =>
+  list.filter(isIncluded).every((i) =>
+    i.workflowIds.every((id) => {
+      const name = nameIn(i.workflowNames, id)
+      return unbroken(id) === id && (name === undefined || unbroken(name) === name)
+    }),
+  )
+
+/** Width of a quoted line of the email's text part, in characters, after its "> ". */
+const QUOTE_WIDTH = 60
+
+/**
+ * Text from outside the request's own facts, for the email's text part: lines of at most QUOTE_WIDTH characters,
+ * broken at a space where one is near, each starting with "> ".
+ */
+function quoted(text: string) {
+  const lines: string[] = []
+  let rest = [...text]
+  while (rest.length > QUOTE_WIDTH) {
+    const space = rest.lastIndexOf(" ", QUOTE_WIDTH)
+    const cut = space > 0 ? space : QUOTE_WIDTH
+    lines.push(rest.slice(0, cut).join(""))
+    rest = rest.slice(space > 0 ? cut + 1 : cut)
+  }
+  lines.push(rest.join(""))
+  return lines.map((line) => `> ${line}`)
+}
 
 /**
  * A workflow as email text: its name, or its ID when the name is not known, within 60 characters. Word (Outlook for
@@ -147,7 +192,7 @@ export function accessOutcome(r: Outcome, dates: DateWriting): { icon: string; l
   const used = usedMinutes(r)
   if (used !== null) lines.push(html`${formatUsed(used, r.minutes)}`)
   lines.push(html``)
-  if (r.summary) lines.push(html`What was done:`, html`${clip(r.summary, TELEGRAM_SUMMARY_MAX)}`)
+  if (r.summary) lines.push(html`What was done:`, html`<i>${clip(oneLine(r.summary), TELEGRAM_SUMMARY_MAX)}</i>`)
   lines.push(callsLine(r.callCount, r.refusedCount))
   return { icon: "✅", lines }
 }
@@ -276,6 +321,9 @@ function mayFit(list: InstanceInfo[]) {
 
 /** What a waiting request's message says when it cannot name everything Approve would grant. */
 const TOO_LONG = "Too long to approve in Telegram. Open the request in n8n-ops to approve it."
+/** What it says when a workflow name or ID could not be shown exactly as it is stored. */
+const UNSHOWN =
+  "A workflow name or ID here has a line break or control character. Open the request in n8n-ops to approve it."
 
 /**
  * The request message, and whether it names in full every instance, scope and workflow that approving it as it
@@ -283,7 +331,8 @@ const TOO_LONG = "Too long to approve in Telegram. Open the request in n8n-ops t
  * and workflows follow the reason; with several (or one left out), each instance has its own block. When everything
  * does not fit in full, the lists are cut to a length each and the rest counted; when the blocks still do not fit,
  * each instance takes one line, and then only as many lines as fit, with the rest counted. The request page has
- * every detail.
+ * every detail. What the agent wrote is one line of its own, in italics after "Agent", so it never reads as one of
+ * the message's own lines; a workflow name or ID that had to be put on one line withholds Approve.
  */
 export function telegramRequest(
   r: RequestInfo,
@@ -294,9 +343,11 @@ export function telegramRequest(
   const fits = (parts: TelegramHtml[]) => size(parts) <= TELEGRAM_BUDGET
   const head = [
     html`${outcome?.icon ?? "🔐"} <b>Access request</b> · ${instancesLabel(r.instances)}`,
-    html`<b>${clip(r.token, 200)}</b>: ${clip(r.reason, 500)}`,
+    html`Agent <b>${clip(oneLine(r.token), 200)}</b>: <i>${clip(oneLine(r.reason), 500)}</i>`,
     html``,
   ]
+  const exact = shownAsStored(r.instances)
+  const tooLong = exact ? TOO_LONG : UNSHOWN
   const tail = [
     forLine(r),
     // Only while it waits for a decision; once decided, the outcome says what follows.
@@ -304,11 +355,11 @@ export function telegramRequest(
     ...(outcome?.lines.length ? [html``, ...outcome.lines] : []),
   ]
   // Only a waiting request is approved from its message.
-  const cut = outcome ? [] : [html`${TOO_LONG}`, html``]
+  const cut = outcome ? [] : [html`${tooLong}`, html``]
   const only = r.instances[0]
   if (r.instances.length === 1 && only && isIncluded(only) && only.requested !== false && !only.droppedScopes?.length) {
     // The first line is the only place this layout names the instance.
-    if (instancesLabel(r.instances) === only.name && mayFit([only])) {
+    if (exact && instancesLabel(r.instances) === only.name && mayFit([only])) {
       const full = [...head, scopesLine(only), ...workflowLines(only), ...tail]
       if (fits(full)) return { text: TelegramHtml.join(full), complete: true }
     }
@@ -320,14 +371,14 @@ export function telegramRequest(
   }
 
   const blocks = (full: boolean) => r.instances.flatMap((i, n) => [...(n ? [html``] : []), ...instanceBlock(i, full)])
-  if (mayFit(r.instances.filter(isIncluded))) {
+  if (exact && mayFit(r.instances.filter(isIncluded))) {
     const full = [...head, ...blocks(true), html``, ...tail]
     if (fits(full)) return { text: TelegramHtml.join(full), complete: true }
   }
   const within = [...head, ...blocks(false), html``, ...cut, ...tail]
   if (fits(within)) return { text: TelegramHtml.join(within), complete: false }
   return {
-    text: compactLines(r, head, tail, outcome ? html`Full details in n8n-ops.` : html`${TOO_LONG}`),
+    text: compactLines(r, head, tail, outcome ? html`Full details in n8n-ops.` : html`${tooLong}`),
     complete: false,
   }
 }
@@ -356,10 +407,26 @@ function emailWorkflows(i: InstanceInfo) {
 }
 
 /**
+ * The text-part lines of one instance's workflows, a single one on the label's line unless `list`; one known only by
+ * its ID is quoted.
+ */
+function textWorkflows(named: ReturnType<typeof emailWorkflows>["named"], list = false) {
+  const [first] = named
+  if (!first) return ["Workflows: the whole instance"]
+  if (named.length === 1 && !list)
+    return first.name === undefined ? ["Workflow, by its ID:", ...quoted(first.shown)] : [`Workflow: ${first.shown}`]
+  return [
+    "Workflows:",
+    ...named.flatMap((w) => (w.name === undefined ? ["• by its ID:", ...quoted(w.shown)] : [`• ${w.shown}`])),
+  ]
+}
+
+/**
  * The email for a waiting request: who asks, for how long, for what, and one button to decide in n8n-ops.
  * Workflows are named as in Telegram: without their IDs, one line each when there are several, and an ID in code
  * font only when the name is not known. Times follow Settings → General, without the zone (EM-6). Several
- * instances each get a panel of their own.
+ * instances each get a panel of their own. In the text part, what the agent wrote (its name and reason) and a
+ * workflow known only by its ID are quoted, so none of it reads as one of the email's own lines.
  */
 export function renderAccessEmail(
   r: RequestInfo,
@@ -368,6 +435,7 @@ export function renderAccessEmail(
 ): Email {
   const expires = formatDate(r.decideBy, dates, true)
   const length = formatDuration(r.minutes)
+  const agent = oneLine(r.token)
   const list = r.instances.filter(isIncluded)
   const target = list.length === 1 ? (list[0]?.name ?? "?") : `${list.length} instances`
   const decide = link
@@ -386,16 +454,11 @@ export function renderAccessEmail(
     const workflowRow: [string, Safe | string] = named[0]
       ? ["Workflow", value(named[0])]
       : ["Workflows", "The whole instance"]
-    text = [
-      `Scopes: ${only.scopes.join(", ")}`,
-      ...(several
-        ? ["Workflows:", ...named.map((w) => `• ${w.shown}`)]
-        : [`Workflow${named.length ? "" : "s"}: ${named[0]?.shown ?? "the whole instance"}`]),
-    ]
+    text = [`Scopes: ${only.scopes.join(", ")}`, ...textWorkflows(named)]
     blocks = [
       panel("What it asks for", [
         kv([
-          ["Agent", r.token],
+          ["Agent", agent],
           ["Instance", only.name],
           ["Scopes", mono(only.scopes.join(", "))],
           ...(several ? [] : [workflowRow]),
@@ -408,17 +471,12 @@ export function renderAccessEmail(
   } else {
     text = list.flatMap((i) => {
       const { named } = emailWorkflows(i)
-      return [
-        "",
-        i.name,
-        `Scopes: ${i.scopes.join(", ")}`,
-        ...(named.length ? ["Workflows:", ...named.map((w) => `• ${w.shown}`)] : ["Workflows: the whole instance"]),
-      ]
+      return ["", i.name, `Scopes: ${i.scopes.join(", ")}`, ...textWorkflows(named, true)]
     })
     blocks = [
       panel("What it asks for", [
         kv([
-          ["Agent", r.token],
+          ["Agent", agent],
           ["Instances", String(list.length)],
           ["For", length],
           ["Request expires", expires],
@@ -438,9 +496,12 @@ export function renderAccessEmail(
   }
 
   const lines = [
-    `${r.token} asks for ${length} of access to ${target}.`,
+    `An agent asks for ${length} of access to ${target}.`,
     "",
-    `Reason: ${r.reason}`,
+    "Agent:",
+    ...quoted(agent),
+    "Reason:",
+    ...quoted(oneLine(r.reason)),
     ...text,
     ...(list.length === 1 ? [] : [""]),
     `For: ${length}`,
@@ -449,7 +510,7 @@ export function renderAccessEmail(
     decide,
   ]
   const body = render({
-    title: `${r.token} asks for ${length} of access to ${target}`,
+    title: `${agent} asks for ${length} of access to ${target}`,
     topic: "Access request",
     tone: "warn",
     intro: `Nothing is granted until someone approves it. Without a decision, the request expires at ${expires}.`,
@@ -463,7 +524,7 @@ export function renderAccessEmail(
     footer: "You get this because Email requests is on in Settings → Agent Access.",
   })
   return {
-    subject: `n8n-ops: ${r.token} asks for ${length} of access to ${target}`,
+    subject: `n8n-ops: ${agent} asks for ${length} of access to ${target}`,
     text: lines.join("\n"),
     html: body,
   }
@@ -480,8 +541,8 @@ const openButton = (link: string | null): InlineButton[][] =>
 
 /**
  * The keyboard of a waiting request: decide, or switch to editing. Approve is offered only when the message names
- * everything it grants (`complete`, from `telegramRequest`); it names the revision shown, and ends in `:f`, which
- * only such a message carries.
+ * everything it grants (`complete`, from `telegramRequest`); it names the revision shown, and ends in `:g`, which
+ * only such a message drawn with the agent's words set apart carries.
  */
 export function decideButtons(
   r: Pick<RequestInfo, "id" | "revision">,
@@ -491,7 +552,7 @@ export function decideButtons(
   const rev = r.revision ?? 0
   return [
     [
-      ...(complete ? [{ text: "✅ Approve", callback_data: `xa:${r.id}:${rev}:f` }] : []),
+      ...(complete ? [{ text: "✅ Approve", callback_data: `xa:${r.id}:${rev}:g` }] : []),
       { text: "❌ Deny", callback_data: `xd:${r.id}` },
     ],
     [{ text: "✏️ Edit", callback_data: `xe:${r.id}` }],
@@ -755,8 +816,9 @@ const UUID = /^[0-9a-f-]{36}$/i
 const NUMBER = /^\d{1,9}$/
 
 /**
- * Reads callback data: `xa:<id>:<revision>:f` (and, from messages sent before Approve required a complete message,
- * `xa:<id>:<revision>` and `xa:<id>`, read as revision 0, which approve nothing), `xd:<id>`, `xe:<id>`, `xv:<id>`,
+ * Reads callback data: `xa:<id>:<revision>:g` (and, from messages drawn before the agent's words were set apart,
+ * `xa:<id>:<revision>:f`, and from those sent before Approve required a complete message, `xa:<id>:<revision>` and
+ * `xa:<id>`, read as revision 0, all of which approve nothing), `xd:<id>`, `xe:<id>`, `xv:<id>`,
  * `xt:<id>:<position>:<0|1>:<revision>`, `xm:<id>:<minutes>:<revision>`. Anything else is not an access request press.
  */
 export function parsePress(data: string | undefined): AccessPress | null {
@@ -764,9 +826,9 @@ export function parsePress(data: string | undefined): AccessPress | null {
   if (!action || !id || !UUID.test(id) || extra.length) return null
   const num = (v: string | undefined) => (v !== undefined && NUMBER.test(v) ? Number(v) : null)
   if (action === "xa") {
-    if (c !== undefined || (b !== undefined && b !== "f")) return null
+    if (c !== undefined || (b !== undefined && b !== "f" && b !== "g")) return null
     const revision = a === undefined ? 0 : num(a)
-    return revision === null ? null : { action: "approve", id, revision, full: b === "f" }
+    return revision === null ? null : { action: "approve", id, revision, full: b === "g" }
   }
   if (a !== undefined && (action === "xd" || action === "xe" || action === "xv")) return null
   if (action === "xd") return { action: "deny", id }
@@ -789,8 +851,9 @@ export function parsePress(data: string | undefined): AccessPress | null {
 
 /**
  * Why an Approve press approves nothing, if it does not: it came from a message that did not name everything Approve
- * grants (an Approve without `:f`, sent before Approve required that), or the request at the revision pressed is too
- * long for its message to name everything. A request no longer waiting, or at another revision, is left to
+ * grants (an Approve without `:g`, drawn before its message set the agent's words apart), or the request at the
+ * revision pressed is too long for its message to name everything, or has a workflow name or ID that the message
+ * could not show exactly as it is stored. A request no longer waiting, or at another revision, is left to
  * `approveAccess`, which says so. The revision is checked again when the approval is stored.
  */
 async function approveRefusal(ctx: Ctx, press: Extract<AccessPress, { action: "approve" }>) {
@@ -798,7 +861,8 @@ async function approveRefusal(ctx: Ctx, press: Extract<AccessPress, { action: "a
   if (found?.r.status !== "pending" || found.r.decideBy < new Date() || found.r.revision !== press.revision) return null
   if (!press.full) return "This message was out of date. Look at it again, then decide."
   const dates = messageWriting(await ctx.settings.get("general"))
-  return telegramRequest(found.info, dates).complete ? null : TOO_LONG
+  if (telegramRequest(found.info, dates).complete) return null
+  return shownAsStored(found.info.instances) ? TOO_LONG : UNSHOWN
 }
 
 /** A button pressed on a request message. Returns false if the update is not about an access request. */

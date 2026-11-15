@@ -144,7 +144,7 @@ test("a new request reaches Telegram with buttons and email with a link", async 
   const message = await announcement(reason)
   const keyboard = (message.body.reply_markup as { inline_keyboard: { text: string; callback_data?: string }[][] })
     .inline_keyboard
-  expect(keyboard[0]?.map((b) => b.callback_data)).toEqual([`xa:${id}:0:f`, `xd:${id}`])
+  expect(keyboard[0]?.map((b) => b.callback_data)).toEqual([`xa:${id}:0:g`, `xd:${id}`])
   expect(keyboard[1]?.map((b) => b.callback_data)).toEqual([`xe:${id}`])
 
   let mail: { ID: string } | undefined
@@ -170,7 +170,7 @@ test("only an approver can approve from Telegram, and the message shows the outc
   const requests = (await (await page.request.get("/api/access")).json()) as { id: string; reason: string }[]
   const id = requests.find((r) => r.reason === reason)?.id ?? ""
 
-  await press(request, `xa:${id}:0:f`, 999, messageId)
+  await press(request, `xa:${id}:0:g`, 999, messageId)
   await expect(async () => {
     const refused = calls.find(
       (c) => c.method === "answerCallbackQuery" && String(c.body.text).includes("Only approvers"),
@@ -179,19 +179,19 @@ test("only an approver can approve from Telegram, and the message shows the outc
   }).toPass({ timeout: 10_000 })
   expect((await mcp(request, "get_access_request", { requestId: id })).status).toBe("pending")
 
-  // Approve as a message sent before Approve required a complete message has it approves nothing; the message is
+  // Approve as messages drawn before today's have it approves nothing; the message is
   // drawn again with today's buttons.
   const redrawn = () =>
     calls.filter((c) => c.method === "editMessageText" && c.body.message_id === messageId && c.body.reply_markup)
-  for (const old of [`xa:${id}`, `xa:${id}:0`]) {
+  for (const old of [`xa:${id}`, `xa:${id}:0`, `xa:${id}:0:f`]) {
     const before = redrawn().length
     await press(request, old, Number(chatId), messageId)
     await expect.poll(() => redrawn().length).toBeGreaterThan(before)
-    expect(JSON.stringify(redrawn().at(-1)?.body.reply_markup)).toContain(`"xa:${id}:0:f"`)
+    expect(JSON.stringify(redrawn().at(-1)?.body.reply_markup)).toContain(`"xa:${id}:0:g"`)
     expect((await mcp(request, "get_access_request", { requestId: id })).status).toBe("pending")
   }
 
-  await press(request, `xa:${id}:0:f`, Number(chatId), messageId)
+  await press(request, `xa:${id}:0:g`, Number(chatId), messageId)
   const approved = await mcp(request, "get_access_request", { requestId: id })
   expect(approved.status).toBe("approved")
   expect(approved.decidedBy).toBe(`telegram:${chatId}`)
@@ -384,8 +384,8 @@ test("a request for two instances is changed in Telegram, then approved as shown
 
     // Done brings back Approve, for the revision now shown.
     await press(request, `xv:${id}`, Number(chatId), messageId)
-    await expect.poll(() => buttons().map((b) => b.callback_data)).toContain(`xa:${id}:2:f`)
-    await press(request, `xa:${id}:2:f`, Number(chatId), messageId)
+    await expect.poll(() => buttons().map((b) => b.callback_data)).toContain(`xa:${id}:2:g`)
+    await press(request, `xa:${id}:2:g`, Number(chatId), messageId)
     const got = await mcp(request, "get_access_request", { requestId: id })
     expect(got).toMatchObject({ status: "approved", changed: true, minutes: 30, instance: "e2e-n8n" })
     expect(got.instances.map((i: { instance: string }) => i.instance)).toEqual(["e2e-n8n"])

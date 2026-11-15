@@ -957,43 +957,47 @@ export async function expireAccess(ctx: Ctx) {
 
 /**
  * The grant a key gives on the instance a call names (by name or ID): null when the key is unknown or no longer
- * works; `grant` null when the key works but not on that instance.
+ * works; `grant` null when the key works but not on that instance. One statement reads the request, its token, the
+ * agent's grant and the instance, so it answers with the access as it stands when PostgreSQL runs it (after any wait
+ * for a lock), and the expiry is compared with the time it returned.
  */
 export async function grantForKey(ctx: Ctx, key: string, ref: string) {
   if (!key.startsWith(`${KEY_PREFIX}_`)) return null
-  const [row] = await ctx.db
+  const rows = await ctx.db
     .select({
       r: accessRequests,
       tokenRevokedAt: apiTokens.revokedAt,
       tokenKind: apiTokens.kind,
-      grantId: apiTokens.grantId,
+      agentGrant: oauthStore.id,
+      grant: accessRequestInstances,
+      instance: instances,
     })
     .from(accessRequests)
     .innerJoin(apiTokens, eq(accessRequests.tokenId, apiTokens.id))
+    .leftJoin(oauthStore, and(eq(oauthStore.type, "Grant"), eq(oauthStore.id, apiTokens.grantId)))
+    .leftJoin(
+      accessRequestInstances,
+      and(
+        eq(accessRequestInstances.requestId, accessRequests.id),
+        eq(accessRequestInstances.included, true),
+        sql`${accessRequestInstances.droppedReason} is null`,
+      ),
+    )
+    .leftJoin(
+      instances,
+      and(
+        eq(accessRequestInstances.instanceId, instances.id),
+        isUuid(ref) ? or(eq(instances.id, ref), eq(instances.name, ref)) : eq(instances.name, ref),
+      ),
+    )
     .where(eq(accessRequests.keyHash, sha256(key)))
+  const row = rows[0]
   if (row?.r.status !== "approved" || row.tokenRevokedAt) return null
   if (!row.r.expiresAt || row.r.expiresAt < new Date()) return null
   // An agent connected by approval holds its access only while its grant does: the grant goes first when the agent
   // revokes a token, and its connection ends right after (oauth/agents.ts); no key works in between.
-  if (row.tokenKind === "agent") {
-    const [grant] = await ctx.db
-      .select({ id: oauthStore.id })
-      .from(oauthStore)
-      .where(and(eq(oauthStore.type, "Grant"), eq(oauthStore.id, row.grantId ?? "")))
-    if (!grant) return null
-  }
-  const matches = await ctx.db
-    .select({ grant: accessRequestInstances, instance: instances })
-    .from(accessRequestInstances)
-    .innerJoin(instances, eq(accessRequestInstances.instanceId, instances.id))
-    .where(
-      and(
-        eq(accessRequestInstances.requestId, row.r.id),
-        eq(accessRequestInstances.included, true),
-        sql`${accessRequestInstances.droppedReason} is null`,
-        isUuid(ref) ? or(eq(instances.id, ref), eq(instances.name, ref)) : eq(instances.name, ref),
-      ),
-    )
+  if (row.tokenKind === "agent" && !row.agentGrant) return null
+  const matches = rows.flatMap((m) => (m.grant && m.instance ? [{ grant: m.grant, instance: m.instance }] : []))
   // The name first: the addresses given to the agent use names, and one key opens several instances, so an instance
   // named like another one's ID must still get the calls sent to its own address.
   const found = matches.find((m) => m.instance.name === ref) ?? matches.find((m) => m.instance.id === ref.toLowerCase())
@@ -1073,9 +1077,13 @@ export async function logCall(
   call: { instanceId: string | null; method: string; path: string; status: number; refused?: string },
 ) {
   // One transaction: the call and its count are kept together. A call that ends after the access did (it started
-  // before) marks the Telegram message as outdated, so the next run shows it in the count.
+  // before) marks the Telegram message as outdated, so the next run shows it in the count. A call to an instance
+  // deleted meanwhile is kept without it, as the calls made before the deletion are.
   await ctx.db.transaction(async (tx) => {
-    await tx.insert(accessCalls).values({ requestId, ...call, refused: call.refused ?? null })
+    const instanceId = call.instanceId
+      ? sql`(select ${instances.id} from ${instances} where ${instances.id} = ${call.instanceId})`
+      : null
+    await tx.insert(accessCalls).values({ requestId, ...call, instanceId, refused: call.refused ?? null })
     await tx
       .update(accessRequests)
       .set({

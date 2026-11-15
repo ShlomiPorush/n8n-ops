@@ -15,24 +15,35 @@ export function changesWorkflowMap(method: string, path: string, status: number)
   return /^\/(workflows|tags|executions)(\/|$)/i.test(path)
 }
 
+/** The access a key gives on the instance a call names, as it stands now, or why it gives none. */
+async function accessFor(ctx: Ctx, key: string, ref: string) {
+  const found = await grantForKey(ctx, key, ref)
+  if (!found) return { refused: 401, message: "The access key is unknown, expired, released or revoked." } as const
+  const { request, grant, instance } = found
+  if (!grant || !instance) return { refused: 403, message: `This key is not for ${ref}.` } as const
+  // Temporary access turned off on the instance (or its key removed) ends every call not yet forwarded through it.
+  if (!openToAgents(instance) || !instance.apiKeyEnc)
+    return { refused: 403, message: `Temporary access to ${instance.name} is turned off.` } as const
+  return { refused: null, request, grant, instance, apiKeyEnc: instance.apiKeyEnc } as const
+}
+
 /**
  * The access proxy: /n8n/<instance>/api/v1/... with a temporary key in X-N8N-API-KEY, the same header n8n uses,
  * so n8n API clients work by pointing their base URL here. Every call is checked against the grant and the
- * instance's own API description, forwarded with the instance's key, and recorded on the request.
+ * instance's own API description, forwarded with the instance's key, and recorded on the request. The access is
+ * read again as the last step before a call is forwarded, so a call whose access ended while it was still arriving
+ * never reaches n8n.
  */
 export function n8nProxyRoutes(ctx: Ctx) {
   const app = new Hono<Env>()
   app.all("/:instance/api/v1/*", async (c) => {
     const header = c.req.header("x-n8n-api-key") ?? ""
     const bearer = c.req.header("authorization")?.replace(/^Bearer\s+/i, "") ?? ""
+    const key = header || bearer
     const ref = c.req.param("instance")
-    const found = await grantForKey(ctx, header || bearer, ref)
-    if (!found) return c.json({ message: "The access key is unknown, expired, released or revoked." }, 401)
-    const { request, grant, instance } = found
-    if (!grant || !instance) return c.json({ message: `This key is not for ${ref}.` }, 403)
-    // Temporary access turned off on the instance (or its key removed) ends every call through it at once.
-    if (!openToAgents(instance) || !instance.apiKeyEnc)
-      return c.json({ message: `Temporary access to ${instance.name} is turned off.` }, 403)
+    const access = await accessFor(ctx, key, ref)
+    if (access.refused !== null) return c.json({ message: access.message }, access.refused)
+    const { request, grant, instance } = access
 
     const url = new URL(c.req.url)
     const prefix = url.pathname.indexOf("/api/v1")
@@ -52,7 +63,7 @@ export function n8nProxyRoutes(ctx: Ctx) {
     const decision = checkCall(ops, grant, method, path, url.searchParams)
     if (!decision.allowed) return refuse(403, decision.reason)
 
-    const apiKey = ctx.secrets.decrypt(instance.apiKeyEnc)
+    const apiKey = ctx.secrets.decrypt(access.apiKeyEnc)
     const target = `${instance.baseUrl.replace(/\/+$/, "")}/api/v1${path}${url.search}`
     const n8n = (m: string, u: string, body?: ArrayBuffer) =>
       fetch(u, {
@@ -83,6 +94,12 @@ export function n8nProxyRoutes(ctx: Ctx) {
     }
 
     const body = method === "GET" || method === "HEAD" ? undefined : await c.req.arrayBuffer()
+    // The access may have ended, or the instance closed, while the call arrived: n8n sees the call only if it still
+    // holds, for the same instance.
+    const now = await accessFor(ctx, key, ref)
+    if (now.refused !== null) return refuse(now.refused, now.message)
+    if (now.request.id !== request.id || now.instance.id !== instance.id)
+      return refuse(403, `This key is not for ${ref}.`)
     let res: Response
     try {
       res = await n8n(method, target, body)

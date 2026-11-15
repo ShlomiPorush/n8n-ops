@@ -1002,6 +1002,25 @@ export async function grantForKey(ctx: Ctx, key: string, ref: string) {
 
 export type Decision = { allowed: true } | { allowed: false; reason: string }
 
+/**
+ * The credential operations a grant limited to workflows still reaches, with their parameters written {}: the
+ * workflow list does not limit credentials. Their dependencies stay out, since that answer lists other workflows.
+ */
+const CREDENTIAL_OPERATIONS = new Set([
+  "/credentials",
+  "/credentials/{}",
+  "/credentials/{}/test",
+  "/credentials/{}/transfer",
+  "/credentials/schema/{}",
+])
+
+/** The value of the parameter right after /<resource>/ in the operation's path, whatever n8n names it. */
+function idAfter(match: { op: SpecOperation; params: Record<string, string> }, resource: string) {
+  const [, first, second] = match.op.template.split("/")
+  const name = first === resource ? second?.match(/^\{(.+)\}$/)?.[1] : undefined
+  return name === undefined ? undefined : match.params[name]
+}
+
 /** Whether a call fits the grant: a known operation, inside the scopes, and on an allowed workflow. */
 export function checkCall(
   ops: SpecOperation[],
@@ -1016,25 +1035,36 @@ export function checkCall(
   if (missing.length)
     return { allowed: false, reason: `Needs ${missing.join(", ")}, which this access does not include.` }
   if (!grant.workflowIds.length) return { allowed: true }
+  // A grant limited to workflows reaches only operations on one of them, their executions and credentials.
+  // Anything else may choose workflows in its body, or act on a whole project or instance.
+  const beyond: Decision = {
+    allowed: false,
+    reason: `${method} ${match.op.template} is not limited to the workflows of this access; it needs access to the whole instance.`,
+  }
   const allowed = new Set(grant.workflowIds)
-  const workflowId = match.params.workflowId
-  if (workflowId !== undefined)
+  const template = match.op.template.replace(/\{[^}]*\}/g, "{}")
+  const workflowId = idAfter(match, "workflows")
+  if (workflowId !== undefined) {
+    if (template === "/workflows/{}/dependencies") return beyond
     return allowed.has(workflowId)
       ? { allowed: true }
       : { allowed: false, reason: `Workflow ${workflowId} is outside this access.` }
-  if (match.op.template === "/workflows" && method === "GET") return { allowed: true, workflowFilter: true }
-  if (match.op.template === "/workflows" && method === "POST")
+  }
+  if (template === "/workflows" && method === "GET") return { allowed: true, workflowFilter: true }
+  if (template === "/workflows" && method === "POST")
     return { allowed: false, reason: "This access is limited to its workflows; it cannot create new ones." }
-  if (match.op.template === "/executions" && method === "GET") {
+  if (template === "/executions" && method === "GET") {
     const w = query.get("workflowId")
     return w && allowed.has(w)
       ? { allowed: true }
       : { allowed: false, reason: "Pass workflowId with one of the workflows of this access." }
   }
-  if (match.params.executionId !== undefined) return { allowed: true, executionId: match.params.executionId }
-  if (match.op.template.startsWith("/executions"))
+  const executionId = idAfter(match, "executions")
+  if (executionId !== undefined) return { allowed: true, executionId }
+  if (template.startsWith("/executions"))
     return { allowed: false, reason: "This operation spans executions of other workflows." }
-  return { allowed: true }
+  if (CREDENTIAL_OPERATIONS.has(template)) return { allowed: true }
+  return beyond
 }
 
 export async function logCall(

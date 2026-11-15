@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Security
+
+- **Access limited to some workflows now reaches only those workflows, their executions and the instance's credentials.** Every other n8n operation is refused with a message that it needs access to the whole instance, whatever scopes were granted. Access to the whole instance is unchanged.
+
 ## [0.18.4] - 2026-11-14
 
 ### Changed

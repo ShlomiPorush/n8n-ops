@@ -1,5 +1,5 @@
 import { type AccessChannel, accessChannels } from "@n8n-ops/shared"
-import { and, asc, count, desc, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm"
+import { and, asc, count, desc, eq, gt, inArray, isNull, lt, notInArray, or, sql } from "drizzle-orm"
 import { type Ctx, changed } from "../context.ts"
 import {
   type AccessDropReason,
@@ -54,6 +54,8 @@ const KEY_PREFIX = "nops_n8n"
 /** The most workflows an approver may name on one instance, and the longest workflow ID taken. */
 const MAX_WORKFLOWS = 200
 const MAX_WORKFLOW_ID = 200
+/** The Access list shows every request waiting or approved, and this many of the latest that ended. */
+export const MAX_ENDED_LISTED = 200
 
 type Db = Ctx["db"]
 export type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0]
@@ -1244,12 +1246,21 @@ function publicInstance(c: AccessInstanceRow, current: Map<string, string>) {
 }
 
 export async function listAccess(ctx: Ctx) {
+  // Every request waiting for a decision or approved, however many have ended since, and the latest ended ones.
+  const live = ["pending", "approved"] as const
+  const newest = [desc(accessRequests.requestedAt), desc(accessRequests.id)]
+  const ended = ctx.db
+    .select({ id: accessRequests.id })
+    .from(accessRequests)
+    .where(notInArray(accessRequests.status, [...live]))
+    .orderBy(...newest)
+    .limit(MAX_ENDED_LISTED)
   const rows = await ctx.db
     .select({ r: accessRequests, tokenName: apiTokens.name })
     .from(accessRequests)
     .innerJoin(apiTokens, eq(accessRequests.tokenId, apiTokens.id))
-    .orderBy(desc(accessRequests.requestedAt))
-    .limit(200)
+    .where(or(inArray(accessRequests.status, [...live]), inArray(accessRequests.id, ended)))
+    .orderBy(...newest)
   const children = await instancesOf(
     ctx.db,
     rows.map((x) => x.r.id),

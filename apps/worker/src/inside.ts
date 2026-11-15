@@ -1,4 +1,4 @@
-import { METRIC_GAP, METRIC_LABELS, METRICS_MAX_BYTES, type MainCheckOutput, mainCheckOutput } from "@n8n-ops/shared"
+import { type MainCheckOutput, METRIC_GAP, METRIC_LABELS, METRICS_MAX_BYTES, mainCheckOutput } from "@n8n-ops/shared"
 import { type Docker, DockerError, type Refusal, refusalOf } from "./docker.ts"
 
 /**

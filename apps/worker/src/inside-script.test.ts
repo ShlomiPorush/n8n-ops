@@ -311,7 +311,10 @@ describe("the check in the main", () => {
 
   it("reads the queue figures quickly after many unclosed version_info label sets", { timeout: 30_000 }, async () => {
     const out = await quickly(`${"n8n_version_info{a\n".repeat(MALFORMED_LINES * 2)}${gauges}\n`)
-    expect(out).toMatchObject({ metrics: { state: "read" }, queue: { waiting: 3, active: 1, completed: 450, failed: 2 } })
+    expect(out).toMatchObject({
+      metrics: { state: "read" },
+      queue: { waiting: 3, active: 1, completed: 450, failed: 2 },
+    })
     expect(out.version).toBeUndefined()
   })
 

@@ -38,6 +38,83 @@ paths:
       x-required-scope: none
 `)
 
+// The operations a grant limited to workflows meets beyond them, as n8n describes them.
+const wideSpec = parseSpec(`
+paths:
+  /workflows/{workflowId}:
+    get:
+      x-required-scope: workflow:read
+  /workflows/{workflowId}/dependencies:
+    get:
+      x-required-scope: workflow:read
+  /n8n-packages/export:
+    post:
+      x-required-scope: project:export,workflow:export
+  /n8n-packages/import:
+    post:
+      x-required-scope: workflow:import
+  /source-control/pull:
+    post:
+      x-required-scope: sourceControl:pull
+  /promotions/projects/{projectId}/apply:
+    post:
+      x-required-scope: promotions:apply
+  /projects/{projectId}:
+    delete:
+      x-required-scope: project:delete
+  /tags/{tagId}:
+    put:
+      x-required-scope: tag:update
+  /archive/{workflowId}:
+    post:
+      x-required-scope: workflow:delete
+  /credentials:
+    get:
+      x-required-scope: credential:list
+    post:
+      x-required-scope: credential:create
+  /credentials/{credentialId}:
+    get:
+      x-required-scope: credential:read
+    patch:
+      x-required-scope: credential:update
+    delete:
+      x-required-scope: credential:delete
+  /credentials/{credentialId}/test:
+    post:
+      x-required-scope: credential:read
+  /credentials/{credentialId}/transfer:
+    put:
+      x-required-scope: credential:move
+  /credentials/{credentialId}/dependencies:
+    get:
+      x-required-scope: credential:read
+  /credentials/schema/{credentialTypeName}:
+    get: {}
+  /discover:
+    get:
+      x-required-scope: none
+`)
+
+// Earlier n8n versions name the path parameters {id}.
+const idSpec = parseSpec(`
+paths:
+  /workflows/{id}:
+    get:
+      x-required-scope: workflow:read
+    put:
+      x-required-scope: workflow:update
+  /workflows/{id}/{versionId}:
+    get:
+      x-required-scope: workflow:read
+  /executions/{id}:
+    get:
+      x-required-scope: execution:read
+  /executions/{id}/retry:
+    post:
+      x-required-scope: execution:retry
+`)
+
 const none = new URLSearchParams()
 
 describe("n8n API description", () => {
@@ -125,6 +202,85 @@ describe("access checks", () => {
         executionId: "77",
       })
       expect(checkCall(spec, limited, "POST", "/executions/stop", none).allowed).toBe(false)
+    })
+
+    const everyScope = [
+      "workflow:read",
+      "workflow:delete",
+      "workflow:import",
+      "project:export",
+      "workflow:export",
+      "project:delete",
+      "sourceControl:pull",
+      "promotions:apply",
+      "tag:update",
+      "credential:list",
+      "credential:create",
+      "credential:read",
+      "credential:update",
+      "credential:delete",
+      "credential:move",
+    ]
+    const beyondWorkflows: [string, string][] = [
+      ["POST", "/n8n-packages/export"],
+      ["POST", "/n8n-packages/import"],
+      ["POST", "/source-control/pull"],
+      ["POST", "/promotions/projects/p1/apply"],
+      ["DELETE", "/projects/p1"],
+      ["PUT", "/tags/t1"],
+      ["GET", "/workflows/w1/dependencies"],
+      ["GET", "/credentials/c1/dependencies"],
+      ["POST", "/archive/w1"],
+      ["GET", "/discover"],
+    ]
+    const credentialCalls: [string, string][] = [
+      ["GET", "/credentials"],
+      ["POST", "/credentials"],
+      ["GET", "/credentials/c1"],
+      ["PATCH", "/credentials/c1"],
+      ["DELETE", "/credentials/c1"],
+      ["POST", "/credentials/c1/test"],
+      ["PUT", "/credentials/c1/transfer"],
+      ["GET", "/credentials/schema/slackApi"],
+    ]
+
+    it("refuses every operation that is not on its workflows, their executions or a credential", () => {
+      const wide = { scopes: everyScope, workflowIds: ["w1"] }
+      for (const [method, path] of beyondWorkflows) {
+        const d = checkCall(wideSpec, wide, method, path, none)
+        expect(d.allowed, `${method} ${path}`).toBe(false)
+        expect(!d.allowed && d.reason, `${method} ${path}`).toContain("whole instance")
+      }
+      expect(checkCall(wideSpec, wide, "GET", "/workflows/w1", none).allowed).toBe(true)
+    })
+
+    it("reaches the instance's credentials", () => {
+      const wide = { scopes: everyScope, workflowIds: ["w1"] }
+      for (const [method, path] of credentialCalls)
+        expect(checkCall(wideSpec, wide, method, path, none).allowed, `${method} ${path}`).toBe(true)
+    })
+
+    it("leaves access to the whole instance to its scopes", () => {
+      const whole = { scopes: everyScope, workflowIds: [] }
+      for (const [method, path] of [...beyondWorkflows, ...credentialCalls])
+        expect(checkCall(wideSpec, whole, method, path, none).allowed, `${method} ${path}`).toBe(true)
+    })
+
+    it("finds the workflow and the execution by their place in the path, whatever n8n names the parameter", () => {
+      const scopes = ["workflow:read", "workflow:update", "execution:read", "execution:retry"]
+      const limitedById = { scopes, workflowIds: ["w1"] }
+      expect(checkCall(idSpec, limitedById, "GET", "/workflows/w1", none).allowed).toBe(true)
+      expect(checkCall(idSpec, limitedById, "PUT", "/workflows/w2", none).allowed).toBe(false)
+      expect(checkCall(idSpec, limitedById, "GET", "/workflows/w1/v3", none).allowed).toBe(true)
+      expect(checkCall(idSpec, limitedById, "GET", "/workflows/w2/v3", none).allowed).toBe(false)
+      expect(checkCall(idSpec, limitedById, "GET", "/executions/77", none)).toMatchObject({
+        allowed: true,
+        executionId: "77",
+      })
+      expect(checkCall(idSpec, limitedById, "POST", "/executions/77/retry", none)).toMatchObject({
+        allowed: true,
+        executionId: "77",
+      })
     })
   })
 })

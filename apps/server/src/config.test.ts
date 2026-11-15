@@ -18,8 +18,7 @@ describe("loadConfig", () => {
 
   it("reads N8N_OPS_SMTP_ALLOW_UNENCRYPTED as true, false or unset, and refuses anything else", () => {
     const base = { DATABASE_URL: url(randomBytes(32).toString("hex")) }
-    const read = (value?: string) =>
-      loadConfig({ ...base, N8N_OPS_SMTP_ALLOW_UNENCRYPTED: value }).smtpAllowUnencrypted
+    const read = (value?: string) => loadConfig({ ...base, N8N_OPS_SMTP_ALLOW_UNENCRYPTED: value }).smtpAllowUnencrypted
     expect(read("true")).toBe(true)
     expect(read("false")).toBe(false)
     expect(read(" true ")).toBe(true)

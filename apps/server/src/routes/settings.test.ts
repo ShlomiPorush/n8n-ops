@@ -119,7 +119,7 @@ describe("a save keeps the public URL from the environment out of the database (
     for (const envValue of [true, false]) {
       const data: Stored = { email: { smtpAllowUnencrypted: !envValue } }
       const email = send(settingsRoutes(fakeCtx(data, { smtpAllowUnencrypted: envValue })), "/email")
-      const read = (await email("GET")).body
+      const read = (await email("GET")).body as { smtpAllowUnencrypted: boolean; meta: { env: unknown } }
       expect(read.smtpAllowUnencrypted).toBe(envValue)
       expect(read.meta.env).toEqual({
         smtpAllowUnencrypted: {
@@ -145,7 +145,7 @@ describe("a save keeps the public URL from the environment out of the database (
   it("lets Settings change sending without encryption when the environment leaves it", async () => {
     const data: Stored = {}
     const email = send(settingsRoutes(fakeCtx(data)), "/email")
-    expect((await email("GET")).body.meta.env).toEqual({})
+    expect(((await email("GET")).body as { meta: { env: unknown } }).meta.env).toEqual({})
     expect((await email("PUT", { smtpAllowUnencrypted: true })).status).toBe(200)
     expect(data.email?.smtpAllowUnencrypted).toBe(true)
   })

@@ -53,7 +53,8 @@ describe("SMTP password and server", () => {
 
   it("lets a row stored before the encryption switch through unchanged", () => {
     const merged = { ...defaults.email, ...stored }
-    expect(smtpPasswordNeeded(merged, { ...merged, recipients: ["ops@example.com"] }, undefined)).toBe(false)
+    const next = { ...merged, recipients: ["ops@example.com"] }
+    expect(smtpPasswordNeeded(merged, next, undefined)).toBe(false)
   })
 })
 

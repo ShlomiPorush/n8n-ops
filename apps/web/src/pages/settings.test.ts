@@ -225,7 +225,14 @@ describe("the stored SMTP password and the encryption (FS-5)", () => {
   it("shows a switch set by the environment with its value, true or false", () => {
     const def = forms.email as { fields: FieldDef[] }
     for (const value of [true, false]) {
-      const env = { smtpAllowUnencrypted: { variable: "N8N_OPS_SMTP_ALLOW_UNENCRYPTED", value: String(value), inUse: true, locked: true } }
+      const env = {
+        smtpAllowUnencrypted: {
+          variable: "N8N_OPS_SMTP_ALLOW_UNENCRYPTED",
+          value: String(value),
+          inUse: true,
+          locked: true,
+        },
+      }
       expect(toForm(def, { smtpAllowUnencrypted: value, meta: { env } }).smtpAllowUnencrypted).toBe(value)
     }
   })

@@ -91,7 +91,9 @@ test("older ended requests load as the end of the list comes into view, wide and
     await expect(rows()).toHaveCount(total)
     await expect(page.getByText(`E2E older request ${SEEDED}`, { exact: true })).toBeVisible()
     // Every page once: the first from the newest ended request, then one per 200.
-    const ended = Number((await sql`select count(*)::int as n from access_requests where status not in ('pending', 'approved')`)[0]?.n)
+    const ended = Number(
+      (await sql`select count(*)::int as n from access_requests where status not in ('pending', 'approved')`)[0]?.n,
+    )
     expect(pages).toBe(Math.ceil(ended / 200))
   } finally {
     await page.unrouteAll()

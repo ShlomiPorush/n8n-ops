@@ -1,5 +1,5 @@
 import { type AccessChannel, accessChannels } from "@n8n-ops/shared"
-import { and, asc, count, desc, eq, gt, inArray, isNotNull, lt, or, sql } from "drizzle-orm"
+import { and, asc, count, desc, eq, gt, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm"
 import { type Ctx, changed } from "../context.ts"
 import {
   type AccessDropReason,
@@ -44,7 +44,10 @@ export class AccessError extends Error {
   }
 }
 
-/** At most this many open (pending) requests per token, so a looping agent cannot flood the approvers. */
+/**
+ * At most this many requests per token waiting for a decision, so a looping agent cannot flood the approvers. A
+ * request the agent released before anyone decided it counts until the time it would have expired.
+ */
 const MAX_PENDING_PER_TOKEN = 3
 const KEY_PREFIX = "nops_n8n"
 /** The most workflows an approver may name on one instance, and the longest workflow ID taken. */
@@ -324,11 +327,23 @@ async function requestAccessNow(ctx: Ctx, tokenId: string, input: AccessRequestI
       const [pending] = await tx
         .select({ n: count() })
         .from(accessRequests)
-        .where(and(eq(accessRequests.tokenId, tokenId), eq(accessRequests.status, "pending")))
+        .where(
+          and(
+            eq(accessRequests.tokenId, tokenId),
+            or(
+              eq(accessRequests.status, "pending"),
+              and(
+                eq(accessRequests.status, "released"),
+                isNull(accessRequests.decidedAt),
+                gt(accessRequests.decideBy, new Date()),
+              ),
+            ),
+          ),
+        )
       if ((pending?.n ?? 0) >= MAX_PENDING_PER_TOKEN)
         throw new AccessError(
           "too_many_pending",
-          "This agent has too many access requests waiting for a decision. Wait for one to be decided, or release one.",
+          "This agent has reached its limit of access requests waiting for a decision; a request it released before a decision counts until it would have expired. Wait for a decision, or ask again later.",
         )
       await within()
       const [created] = await tx

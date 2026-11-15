@@ -12,7 +12,7 @@ export const PASSKEYS_OFF_TEXT = "Passkeys need a public URL. Set one under Sett
  * made with a session the clocks ended is answered here, before it reaches Better Auth: get-session answers as
  * signed out, everything else with `session_ended`. Signing in and out always pass, so an ended session never
  * stands in the way of a new one; a passkey sign-in is a sign-in too. Adding and managing passkeys stays under the
- * clocks. A request with no regular session also passes: Better Auth then checks it itself, such as the two-factor
+ * clocks, and adding one also needs two-factor on (auth/auth.ts). A request with no regular session also passes: Better Auth then checks it itself, such as the two-factor
  * code step of a sign-in, which runs on its own short-lived cookie. Passkeys are off while no public URL is in
  * effect (auth/auth.ts passkeyAddress).
  */

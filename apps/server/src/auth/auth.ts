@@ -23,6 +23,9 @@ export const LOGIN_DOMAIN = "n8n-ops.local"
 /** The path of a passkey sign-in; it completes a sign-in on its own, without the two-factor step. */
 export const PASSKEY_SIGN_IN = "/passkey/verify-authentication"
 
+/** The paths that add a passkey: its options, then its verification, which stores it. */
+const PASSKEY_REGISTRATION = new Set(["/passkey/generate-register-options", "/passkey/verify-registration"])
+
 /**
  * Sign-in changes the audit log records, by Better Auth path. Turning two-factor off is a reset: the console turns it
  * off only on the way to setting up a new code (Account > Reset), and the new code is required before anything else.
@@ -135,9 +138,22 @@ export function createAuth(db: Db, appKey: Buffer, publicUrl?: string, passkeyUr
     // two-factor plugin deletes again while the code is pending; the real session comes from verify-totp. A
     // passkey sign-in completes at once.
     hooks: {
-      // Before the reset, so that it never takes effect while the agents approved under the earlier sign-in still work
-      // (a reset that is then refused, such as for a wrong password, has still ended them: the safe side).
       before: createAuthMiddleware(async (ctx) => {
+        // A passkey stands in for the password and the two-factor code together, so one is added only on an account
+        // with two-factor on, the same rule as every console route. Both steps check it: options taken while it was
+        // on cannot be used once it is off. A session that cannot be read here adds nothing either.
+        if (PASSKEY_REGISTRATION.has(ctx.path)) {
+          const found = await getSessionFromCtx(ctx)
+          if (!found) throw new APIError("UNAUTHORIZED", { message: "Sign in again to add a passkey." })
+          if ((found.user as { twoFactorEnabled?: boolean | null }).twoFactorEnabled !== true)
+            throw new APIError("FORBIDDEN", {
+              code: "TWO_FACTOR_REQUIRED",
+              message: "Set up two-factor authentication before adding a passkey.",
+            })
+          return
+        }
+        // Before the reset, so that it never takes effect while the agents approved under the earlier sign-in still
+        // work (a reset that is then refused, such as for a wrong password, has still ended them: the safe side).
         if (ctx.path !== "/two-factor/disable" || !twoFactorReset) return
         // Better Auth checks the session after this hook; read it here through its own interface.
         // No session, or one that could not be read: the reset does not run at all (it would be refused anyway, and

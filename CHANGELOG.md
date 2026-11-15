@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Security
+
+- **A passkey can be added only while two-factor is on.** Adding one now needs a session on an account with two-factor set up, as every other part of the console does, so a passkey always joins an account that already has both factors. While two-factor is off, such as right after Account → Reset Two-Factor or a password reset from the server, set it up again first; passkeys already added are kept and still sign in.
+
 ## [0.18.4] - 2026-11-14
 
 ### Changed

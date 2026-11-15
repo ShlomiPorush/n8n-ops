@@ -12,7 +12,14 @@ import { accessCalls, accessRequests, apiTokens, instances } from "../db/schema.
 import { createAudit } from "../lib/audit.ts"
 import { createSecrets } from "../lib/crypto.ts"
 import { createSettings } from "../lib/settings.ts"
-import { approveAccess, collectAccess, requestAccess, revokeAccess, revokeAccessOfToken } from "../services/access.ts"
+import {
+  approveAccess,
+  collectAccess,
+  logCall,
+  requestAccess,
+  revokeAccess,
+  revokeAccessOfToken,
+} from "../services/access.ts"
 import type { Instance } from "../services/instances.ts"
 import { deleteInstance } from "../services/problems.ts"
 import { n8nProxyRoutes } from "./n8n-proxy.ts"
@@ -178,13 +185,29 @@ async function callWhile(address: string, key: string, whileReading: () => Promi
     duplex: "half",
   } as RequestInit)
   await body.reading
-  await whileReading()
-  body.release()
+  try {
+    await whileReading()
+  } finally {
+    body.release()
+  }
   const res = await pending
   return { res, writes: received.filter((r) => r.url === `/api/v1/variables/${variable}`) }
 }
 
 const callsOf = (requestId: string) => ctx.db.select().from(accessCalls).where(eq(accessCalls.requestId, requestId))
+
+/** Whether a session of this database comes to wait for a lock within five seconds. */
+async function waitingForLock() {
+  for (let i = 0; i < 50; i++) {
+    const [waiting] = await ctx.db.execute<{ n: number }>(
+      sql`select count(*)::int as n from pg_stat_activity
+          where datname = current_database() and wait_event_type = 'Lock'`,
+    )
+    if (waiting?.n) return true
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+  return false
+}
 
 describe("the access proxy checks the access again right before it forwards a call", () => {
   it("forwards the whole body with the instance's key while the access holds", async () => {
@@ -237,6 +260,7 @@ describe("the access proxy checks the access again right before it forwards a ca
       held = resolve
     })
     let holding: Promise<unknown> = Promise.resolve()
+    let ending: Promise<boolean> = Promise.resolve(false)
     const { res, writes } = await callWhile(instance.name, key, async () => {
       // Another session holds the request's instances, as a compaction of that table does, until the access ends.
       holding = locker.begin(async (tx) => {
@@ -244,24 +268,22 @@ describe("the access proxy checks the access again right before it forwards a ca
         held()
         await unlocked
       })
-      await locked
-      setTimeout(async () => {
-        // The proxy's check is waiting for the lock, if it runs one; it reads the access only once it has it.
-        for (let i = 0; i < 50; i++) {
-          const [waiting] = await ctx.db.execute<{ n: number }>(
-            sql`select count(*)::int as n from pg_locks l join pg_class c on c.oid = l.relation
-                where c.relname = 'access_request_instances' and not l.granted`,
-          )
-          if (waiting?.n) break
-          await new Promise((resolve) => setTimeout(resolve, 100))
+      await Promise.race([locked, holding])
+      // Once the body is in, the proxy's check waits for the lock; it reads the access only once it has it.
+      ending = (async () => {
+        try {
+          const waited = await waitingForLock()
+          await ctx.db
+            .update(accessRequests)
+            .set({ expiresAt: new Date(Date.now() - 1000) })
+            .where(eq(accessRequests.id, requestId))
+          return waited
+        } finally {
+          unlock()
         }
-        await ctx.db
-          .update(accessRequests)
-          .set({ expiresAt: new Date(Date.now() - 1000) })
-          .where(eq(accessRequests.id, requestId))
-        unlock()
-      }, 0)
+      })()
     })
+    expect(await ending).toBe(true)
     await holding
     expect(res.status).toBe(401)
     expect(writes).toEqual([])
@@ -313,5 +335,36 @@ describe("the access proxy checks the access again right before it forwards a ca
         .from(accessCalls)
         .where(and(eq(accessCalls.requestId, requestId), eq(accessCalls.instanceId, first.id))),
     ).toEqual([])
+  })
+})
+
+describe("a call through the access proxy is recorded", () => {
+  it("without its instance when the instance is being deleted at the same time", async () => {
+    const instance = await openInstance()
+    const { requestId } = await access([instance.name])
+    let commit!: () => void
+    const committing = new Promise<void>((resolve) => {
+      commit = resolve
+    })
+    let deleted!: () => void
+    const deleting = new Promise<void>((resolve) => {
+      deleted = resolve
+    })
+    const removal = locker.begin(async (tx) => {
+      await tx`delete from instances where id = ${instance.id}`
+      deleted()
+      await committing
+    })
+    await Promise.race([deleting, removal])
+    const call = { instanceId: instance.id, method: "PUT", path: "/variables/v1", status: 401, refused: "Ended." }
+    const logging = logCall(ctx, requestId, call)
+    try {
+      expect(await waitingForLock()).toBe(true)
+    } finally {
+      commit()
+    }
+    await removal
+    await logging
+    expect(await callsOf(requestId)).toEqual([expect.objectContaining({ instanceId: null, status: 401 })])
   })
 })

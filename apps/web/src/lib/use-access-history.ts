@@ -118,10 +118,11 @@ export function useAccessHistory<T extends Listed>(
     else if (read === "next") setOnce(false)
     void (read === "next" ? fetchNextPage() : refetch())
   }, [read, fetchNextPage, refetch])
-  // A page asked for is answered by the end of the history too, so it is not read later by itself.
+  // A page asked for is answered by the end of the history too, so it is not read later by itself; not while a
+  // live answer waits to be compared or a re-read is owed, which may show that more exist.
   useEffect(() => {
-    if (once && hasData && !query.hasNextPage && !reading && !failed) setOnce(false)
-  }, [once, hasData, query.hasNextPage, reading, failed])
+    if (once && hasData && !query.hasNextPage && !reading && !failed && !reread && !left) setOnce(false)
+  }, [once, hasData, query.hasNextPage, reading, failed, reread, left])
   useEffect(() => {
     if (retrying && !reading && read === null) setRetrying(false)
   }, [retrying, reading, read])

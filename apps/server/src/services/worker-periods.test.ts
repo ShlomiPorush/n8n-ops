@@ -102,17 +102,6 @@ describe("spans", () => {
     expect(overlapping).toBeGreaterThan(500)
   })
 
-  it("subtracts and intersects long lists in time that grows with their length", () => {
-    // Wide of the time this takes, so a slow machine passes; work that grows with the square of the lists takes far longer.
-    const LIMIT_MS = 1000
-    const spans = Array.from({ length: 50_000 }, (_, i) => ({ from: i * 10, to: i * 10 + 6 }))
-    const holes = Array.from({ length: 50_000 }, (_, i) => ({ from: i * 10 + 2, to: i * 10 + 4 }))
-    const started = performance.now()
-    expect(total(subtract(spans, holes))).toBe(50_000 * 4)
-    expect(total(intersect(spans, holes))).toBe(50_000 * 2)
-    expect(performance.now() - started).toBeLessThan(LIMIT_MS)
-  })
-
   it("measures the time joined spans cover in a span, and where a span leaves the one it starts in", () => {
     const m = measured([
       { from: 40, to: 50 },

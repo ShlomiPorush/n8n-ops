@@ -258,75 +258,97 @@ describe("measurements", () => {
 })
 
 describe("a long history", () => {
-  // Wide of the time these take, so a slow machine passes; work that grows with the square of the rows takes far longer.
-  const LIMIT_MS = 2000
   const HOUR = 3_600_000
-  const month = (patch: Partial<HealthFacts>): HealthFacts => {
-    const to = m(720 * 60)
-    return facts({ now: to, to, bucketMs: HOUR, startsAt: m(-60), newestAliveAt: to - 5000, ...patch })
+  /** A window of 3.75 days times `scale`, ending now. */
+  const window = (scale: number) => {
+    const end = m(5400 * scale)
+    const read = (patch: Partial<HealthFacts>) =>
+      facts({ now: end, to: end, bucketMs: HOUR, startsAt: m(-60), newestAliveAt: end - 5000, ...patch })
+    const every = (stepMs: number) => {
+      const out: number[] = []
+      for (let t = m(0); t < end; t += stepMs) out.push(t)
+      return out
+    }
+    /** Recording rows from before the window to now, with a break of a minute between them. */
+    const breaks = (rows: number) => {
+      const step = (end - m(-60)) / rows
+      return Array.from({ length: rows }, (_, k) => ({
+        from: m(-60) + k * step,
+        to: k === rows - 1 ? end - 5000 : m(-60) + (k + 1) * step - min(1),
+      }))
+    }
+    const frequent = () => every(min(3)).map((t) => ({ from: t + min(1), to: t + min(1) + 70_000, job: null }))
+    return { end, read, every, breaks, frequent }
   }
-  const every = (stepMs: number, make: (t: number) => number) => {
-    const out: number[] = []
-    for (let t = m(0); t < m(720 * 60); t += stepMs) out.push(make(t))
-    return out
-  }
-  /** Recording rows from before the window to now, with a break of a minute between them. */
-  const breaks = (rows: number) => {
-    const step = (m(720 * 60) - m(-60)) / rows
-    return Array.from({ length: rows }, (_, k) => ({
-      from: m(-60) + k * step,
-      to: k === rows - 1 ? m(720 * 60) - 5000 : m(-60) + (k + 1) * step - min(1),
-    }))
-  }
-  const timed = (f: HealthFacts) => {
-    const started = performance.now()
-    const d = derive(f)
-    return { d, ms: performance.now() - started }
+  /**
+   * How many times longer a read of 30 days takes than one of 3.75 days with an eighth of the rows: about 8 when the
+   * work grows with the rows, about 64 when it grows with their square. Each side is the best of a few runs, so a busy
+   * machine slows both alike.
+   */
+  const growth = (make: (scale: number) => HealthFacts) => {
+    const timeOf = (f: HealthFacts) => {
+      const started = performance.now()
+      derive(f)
+      return performance.now() - started
+    }
+    const small = make(1)
+    const large = make(8)
+    timeOf(small)
+    let smallMs = Number.POSITIVE_INFINITY
+    for (let i = 0; i < 5; i++) smallMs = Math.min(smallMs, timeOf(small))
+    let largeMs = timeOf(large)
+    // Tried again only when the first run could have been slowed by something else.
+    for (let i = 0; i < 2 && largeMs > 25 * smallMs && largeMs < 100 * smallMs; i++)
+      largeMs = Math.min(largeMs, timeOf(large))
+    return largeMs / smallMs
   }
 
   it("reads 30 days of a Worker that went offline every few minutes, with a Docker check every 10 s", () => {
-    const { d, ms } = timed(
-      month({
-        recording: breaks(1),
-        offline: every(min(3), (t) => t).map((t) => ({ from: t + min(1), to: t + min(1) + 70_000, job: null })),
-        checks: every(10_000, (t) => t).map((at) => ({ at, ok: true, error: null })),
-        rttSlots: every(min(5), (t) => t),
-      }),
-    )
+    const make = (scale: number) => {
+      const w = window(scale)
+      return w.read({
+        recording: w.breaks(1),
+        offline: w.frequent(),
+        checks: w.every(10_000).map((at) => ({ at, ok: true, error: null })),
+        rttSlots: w.every(min(5)),
+      })
+    }
+    const d = derive(make(8))
     expect(d.summary.offlinePeriods).toBe(14_400)
     expect(d.coverage.dockerMs).toBe(d.coverage.onlineMs)
     expect(d.coverage.rttMs).toBe(d.coverage.onlineMs)
-    expect(ms).toBeLessThan(LIMIT_MS)
+    expect(growth(make)).toBeLessThan(25)
   })
 
   it("reads 30 days of frequent offline periods while n8n-ops itself stopped recording many times", () => {
-    const { d, ms } = timed(
-      month({
-        recording: breaks(10_000),
-        offline: every(min(3), (t) => t).map((t) => ({ from: t + min(1), to: t + min(1) + 70_000, job: null })),
-      }),
-    )
-    expect(d.summary.notRecordingMs).toBeGreaterThan(0)
-    expect(ms).toBeLessThan(LIMIT_MS)
+    const make = (scale: number) => {
+      const w = window(scale)
+      return w.read({ recording: w.breaks(1250 * scale), offline: w.frequent() })
+    }
+    expect(derive(make(8)).summary.notRecordingMs).toBeGreaterThan(0)
+    expect(growth(make)).toBeLessThan(25)
   })
 
   it("reads 30 days of one long offline period while n8n-ops itself stopped recording many times", () => {
-    const { d, ms } = timed(
-      month({ recording: breaks(15_000), offline: [{ from: m(0), to: m(720 * 60 - 10), job: null }] }),
-    )
+    const make = (scale: number) => {
+      const w = window(scale)
+      return w.read({ recording: w.breaks(1875 * scale), offline: [{ from: m(0), to: w.end - min(10), job: null }] })
+    }
+    const d = derive(make(8))
     expect(d.summary.offlinePeriods).toBe(1)
     expect(d.periods.offline.length).toBeGreaterThan(14_000)
-    expect(ms).toBeLessThan(LIMIT_MS)
+    expect(growth(make)).toBeLessThan(25)
   })
 
   it("reads 30 days of many offline periods recorded over each other while n8n-ops stopped recording many times", () => {
-    const { d, ms } = timed(
-      month({
-        recording: breaks(15_000),
-        offline: Array.from({ length: 600 }, (_, k) => ({ from: m(k), to: m(720 * 60 - 10 - k), job: null })),
-      }),
-    )
-    expect(d.summary.offlinePeriods).toBe(600)
-    expect(ms).toBeLessThan(LIMIT_MS)
+    const make = (scale: number) => {
+      const w = window(scale)
+      return w.read({
+        recording: w.breaks(1875 * scale),
+        offline: Array.from({ length: 75 * scale }, (_, k) => ({ from: m(k), to: w.end - min(10 + k), job: null })),
+      })
+    }
+    expect(derive(make(8)).summary.offlinePeriods).toBe(600)
+    expect(growth(make)).toBeLessThan(25)
   })
 })

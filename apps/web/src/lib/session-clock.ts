@@ -44,4 +44,5 @@ export const endedTexts: Record<string, string> = {
   max: "Your session reached its maximum length. Sign in again to continue.",
   lifetime: "Your session expired because it was not used for a while. Sign in again to continue.",
   revoked: "Your session ended. Sign in again to continue.",
+  signed_out: "Sign-in security changed, so this session was signed out. Sign in again to continue.",
 }

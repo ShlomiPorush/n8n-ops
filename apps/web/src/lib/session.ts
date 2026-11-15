@@ -12,7 +12,7 @@ let guardOff = false
 
 /**
  * Sign-in, and back to this address afterwards: `/login?next=<path+query>`, plain `/login` from `/`. `ended` is
- * why the server ended the session (idle, max, lifetime), for the sign-in page to say.
+ * why the server ended the session (idle, max, lifetime, signed_out), for the sign-in page to say.
  */
 export function loginPath(pathname: string, search = "", ended?: string): string {
   const params = new URLSearchParams()

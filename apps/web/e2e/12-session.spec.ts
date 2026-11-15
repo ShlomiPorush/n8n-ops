@@ -1,11 +1,12 @@
 import { type BrowserContext, expect, type Page, test } from "@playwright/test"
 import postgres from "postgres"
-import { signIn } from "./helpers.ts"
+import { signIn, signInWithPassword } from "./helpers.ts"
 
 // The session clocks of Settings > Sign-in security, as a person meets them: the settings, the question before an
-// idle sign-out and the answer to it, input in another tab, the note before the maximum length, and the sign-in
-// page that says why a session ended. The server's clocks cannot be moved, so the test moves the session's times
-// in the database instead (E2E_DATABASE_URL, set by scripts/verify.sh). Near the end of the suite: it ends the session.
+// idle sign-out and the answer to it, input in another tab, the note before the maximum length, the sign-in page
+// that says why a session ended, and a longer limit that signs out the other sessions. The server's clocks cannot be
+// moved, so the test moves the session's times in the database instead (E2E_DATABASE_URL, set by scripts/verify.sh).
+// Near the end of the suite: it ends the session.
 
 const databaseUrl = process.env.E2E_DATABASE_URL
 let sql: postgres.Sql
@@ -116,4 +117,42 @@ test("a session the idle timeout ended goes to sign-in, which says why, and back
   await signIn(page)
   await page.goto("/workers")
   await expect(page.getByRole("heading", { name: "Workers", exact: true })).toBeVisible()
+})
+
+test("a longer limit signs out the other sessions, which go to sign-in and say why", async ({ browser }) => {
+  // Another session, signed in from an address of its own so it does not spend this address's sign-in limit. The
+  // session this file has used saves the longer limit and stays signed in for the next spec file.
+  const otherContext = await browser.newContext({ extraHTTPHeaders: { "x-forwarded-for": "198.51.100.12" } })
+  const other = await otherContext.newPage()
+  const save = () =>
+    page.getByRole("region", { name: "Unsaved changes" }).getByRole("button", { name: "Save changes" }).click()
+  // Whatever happens below, the next spec files find the limits as they were.
+  const [stored] = await sql<{ value: unknown }[]>`select value from settings where key = 'security'`
+  try {
+    await signInWithPassword(other)
+    await page.goto("/settings/security")
+    const longest = page.getByLabel("Longest session (hours)")
+    await longest.fill("24")
+    await save()
+    await expect(page.getByText("Settings saved. Your other sessions were signed out.")).toBeVisible()
+
+    await other.goto("/workers")
+    await expect(other).toHaveURL(/\/login\?ended=signed_out&next=%2Fworkers$/)
+    await expect(other.getByText("Sign-in security changed, so this session was signed out.")).toBeVisible()
+
+    // Back to the default: a shorter limit signs nothing out, and the toast says only that it was saved.
+    await expect(page.getByRole("region", { name: "Unsaved changes" })).toHaveCount(0)
+    // Clicked as a person would, which also takes the pointer off the toast that waits over the save bar.
+    await longest.click()
+    await longest.fill("12")
+    await save()
+    await expect(page.getByText("Settings saved", { exact: true })).toBeVisible()
+    await page.goto("/workers")
+    await expect(page.getByRole("heading", { name: "Workers", exact: true })).toBeVisible()
+  } finally {
+    await otherContext.close()
+    if (stored)
+      await sql`update settings set value = ${sql.json(stored.value as postgres.JSONValue)} where key = 'security'`
+    else await sql`delete from settings where key = 'security'`
+  }
 })

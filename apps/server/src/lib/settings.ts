@@ -256,7 +256,10 @@ export const sections = {
     /** A connection not used for this many days ends. A shorter value applies at once; a longer one revives none. */
     idleDays: z.number().int().min(1).max(AGENT_IDLE_MAX_DAYS),
   }),
-  /** How long a browser session lasts (services/session-policy.ts). Applies to sessions already open. */
+  /**
+   * How long a browser session lasts (services/session-policy.ts). A shorter limit applies to sessions already open;
+   * a longer one, or the inactivity sign-out turned off, signs out every session but the one that saved it.
+   */
   security: z.object({
     /** A session nothing uses, not even an open page, ends this long after its last request. */
     lifetimeHours: z.number().int().min(1).max(maxSessionHours),
@@ -270,6 +273,14 @@ export const sections = {
     /** age public key used to encrypt every backup archive. */
     backupRecipient: z.string().optional(),
     privateKeySavedAt: z.string().optional(),
+  }),
+  /**
+   * Kept by services/session-policy.ts, never edited by hand: how many times longer sign-in limits signed out the
+   * other sessions, and the session that saved the latest of them.
+   */
+  sessionSignOuts: z.object({
+    generation: z.number().int().min(0),
+    keptSessionId: z.string().nullable(),
   }),
 } as const
 
@@ -335,6 +346,7 @@ export const defaults: { [K in SectionName]: Section<K> } = {
   agents: { enabled: false, idleDays: 90 },
   security: { lifetimeHours: 24, idleTimeout: true, idleMinutes: 60, maxHours: 12 },
   keys: {},
+  sessionSignOuts: { generation: 0, keptSessionId: null },
 }
 
 /**
@@ -351,6 +363,31 @@ export async function writeSection<K extends Exclude<SectionName, "general">>(
     .insert(settingsTable)
     .values({ key, value: parsed, updatedAt: new Date() })
     .onConflictDoUpdate({ target: settingsTable.key, set: { value: parsed, updatedAt: new Date() } })
+}
+
+/** What is stored for a section, over the defaults, on the database or in the caller's transaction. */
+export async function readSection<K extends SectionName>(db: Pick<Db, "select">, key: K): Promise<Section<K>> {
+  const [row] = await db.select().from(settingsTable).where(eq(settingsTable.key, key))
+  return storedValue(key, row?.value)
+}
+
+/** A stored value read as its section: over the defaults, with values this release does not take left out. */
+function storedValue<K extends SectionName>(key: K, value: unknown): Section<K> {
+  const stored = { ...((value as Record<string, unknown> | null | undefined) ?? {}) }
+  // An unknown stored design falls back on its own; it must not reset the rest of General.
+  if (key === "general" && "design" in stored && !isDesign(stored.design)) delete stored.design
+  // So does a time zone Intl does not know, saved before time zones were checked: it reads as UTC.
+  if (key === "general" && "timezone" in stored && stored.timezone !== "" && !isKnownZone(stored.timezone))
+    delete stored.timezone
+  // And a date or time format this release does not know: it reads as its default (FW-9).
+  if (key === "general" && "dateFormat" in stored && !isDateFormat(stored.dateFormat)) delete stored.dateFormat
+  if (key === "general" && "timeFormat" in stored && !isTimeFormat(stored.timeFormat)) delete stored.timeFormat
+  // A route that no longer passes is left out alone; the bot token and chat must not fall back with it.
+  if (key === "telegram" && Array.isArray(stored.routes))
+    stored.routes = stored.routes.filter((r) => telegramRouteSchema.safeParse(r).success).slice(0, maxRoutes)
+  const merged = { ...defaults[key], ...stored }
+  const parsed = sections[key].safeParse(merged)
+  return (parsed.success ? parsed.data : defaults[key]) as Section<K>
 }
 
 /** The range of each number setting of a section, read from its schema, so the UI checks the same (SV-1). */
@@ -480,22 +517,7 @@ export function createSettings(db: Db, env: SettingsEnv = {}): SettingsStore {
   }
 
   async function stored<K extends SectionName>(key: K): Promise<Section<K>> {
-    const [row] = await db.select().from(settingsTable).where(eq(settingsTable.key, key))
-    const stored = { ...((row?.value as Record<string, unknown>) ?? {}) }
-    // An unknown stored design falls back on its own; it must not reset the rest of General.
-    if (key === "general" && "design" in stored && !isDesign(stored.design)) delete stored.design
-    // So does a time zone Intl does not know, saved before time zones were checked: it reads as UTC.
-    if (key === "general" && "timezone" in stored && stored.timezone !== "" && !isKnownZone(stored.timezone))
-      delete stored.timezone
-    // And a date or time format this release does not know: it reads as its default (FW-9).
-    if (key === "general" && "dateFormat" in stored && !isDateFormat(stored.dateFormat)) delete stored.dateFormat
-    if (key === "general" && "timeFormat" in stored && !isTimeFormat(stored.timeFormat)) delete stored.timeFormat
-    // A route that no longer passes is left out alone; the bot token and chat must not fall back with it.
-    if (key === "telegram" && Array.isArray(stored.routes))
-      stored.routes = stored.routes.filter((r) => telegramRouteSchema.safeParse(r).success).slice(0, maxRoutes)
-    const merged = { ...defaults[key], ...stored }
-    const parsed = sections[key].safeParse(merged)
-    return (parsed.success ? parsed.data : defaults[key]) as Section<K>
+    return readSection(db, key)
   }
 
   async function write<K extends SectionName>(key: K, parsed: Section<K>) {

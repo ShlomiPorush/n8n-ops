@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { defaults } from "../lib/settings.ts"
-import { type Clocks, endedBy } from "./session-policy.ts"
+import { type Clocks, endedBy, lengthens } from "./session-policy.ts"
 
 const now = new Date("2026-10-26T12:00:00Z")
 const minute = 60_000
@@ -41,5 +41,27 @@ describe("which clock ends a session", () => {
     const clocks = { ...fresh, authenticatedAt: ago(3 * hour) }
     expect(endedBy(clocks, policy, now)).toBeNull()
     expect(endedBy(clocks, { ...policy, maxHours: 2 }, now)).toMatchObject({ reason: "max" })
+  })
+})
+
+describe("which changes of the clocks let a session last longer", () => {
+  it.each([
+    ["a longer lifetime", { lifetimeHours: 48 }, true],
+    ["a longer maximum length", { maxHours: 24 }, true],
+    ["a longer idle limit", { idleMinutes: 90 }, true],
+    ["the idle timeout turned off", { idleTimeout: false }, true],
+    ["a shorter lifetime", { lifetimeHours: 12 }, false],
+    ["a shorter maximum length", { maxHours: 6 }, false],
+    ["a shorter idle limit", { idleMinutes: 30 }, false],
+    ["the same clocks", {}, false],
+    ["a shorter maximum length with a longer lifetime", { maxHours: 6, lifetimeHours: 48 }, true],
+  ] as const)("%s", (_, change, longer) => {
+    expect(lengthens(policy, { ...policy, ...change })).toBe(longer)
+  })
+
+  it("counts the idle timeout turned on, or a new idle limit while it is off, as no longer", () => {
+    const off = { ...policy, idleTimeout: false }
+    expect(lengthens(off, policy)).toBe(false)
+    expect(lengthens(off, { ...off, idleMinutes: 600 })).toBe(false)
   })
 })

@@ -10,7 +10,7 @@ export class ApiError extends Error {
     readonly issues?: { path: (string | number)[]; message: string }[],
     /** Human explanation sent by the server, when it has one. */
     readonly detail?: string,
-    /** Why the server ended the session, on a 401 `session_ended` (idle, max, lifetime). */
+    /** Why the server ended the session, on a 401 `session_ended` (idle, max, lifetime, signed_out). */
     readonly reason?: string,
     /** The whole answer, for fields a page reads itself (the socket proxy fix of a failed export). */
     readonly body?: Record<string, unknown>,

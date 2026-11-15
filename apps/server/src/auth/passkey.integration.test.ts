@@ -1,7 +1,7 @@
 import { createHash, createHmac, generateKeyPairSync, type KeyObject, randomBytes, sign } from "node:crypto"
 import { EventEmitter } from "node:events"
 import { join } from "node:path"
-import { eq } from "drizzle-orm"
+import { eq, sql } from "drizzle-orm"
 import postgres from "postgres"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { createApp } from "../app.ts"
@@ -551,6 +551,85 @@ describe("passkeys at the public URL", () => {
     expect(res.status).toBe(200)
     const created = cookies(cookie, res)
     expect((await rowOf(created)).authenticatedAt.toISOString()).toBe(signedInAt.toISOString())
+  })
+
+  /**
+   * Adds a passkey with a new session from `from`, held just before Better Auth creates that session (at the
+   * passkey's own row) while `meanwhile` runs. Returns the new session's cookies.
+   */
+  async function addPasskeyAround(from: string, meanwhile: () => Promise<void>) {
+    let release = () => {}
+    const held = new Promise<void>((r) => {
+      release = r
+    })
+    let taken = () => {}
+    const lockTaken = new Promise<void>((r) => {
+      taken = r
+    })
+    const holder = database.db.transaction(async (tx) => {
+      await tx.execute(sql`lock table auth_passkey in exclusive mode`)
+      taken()
+      await held
+    })
+    let adding: ReturnType<typeof register> | undefined
+    try {
+      await lockTaken
+      adding = register(from, { name: "Phone", createSession: true })
+      const until = Date.now() + 10_000
+      for (;;) {
+        const rows = await database.db.execute<{ n: number }>(sql`
+          select count(*)::int as n from pg_locks l join pg_class c on c.oid = l.relation
+          where c.relname = 'auth_passkey' and not l.granted`)
+        if ((rows[0]?.n ?? 0) > 0) break
+        if (Date.now() > until) throw new Error("adding the passkey never reached its row")
+        await new Promise((r) => setTimeout(r, 50))
+      }
+      await meanwhile()
+    } finally {
+      release()
+      await holder
+    }
+    const { res } = await (adding as ReturnType<typeof register>)
+    expect(res.status).toBe(200)
+    return cookies(from, res)
+  }
+
+  const saveLonger = (cookie: string, maxHours: number) =>
+    call("PUT", "/api/settings/security", { json: { ...defaults.security, maxHours }, cookie })
+
+  it("ends a session that adding a passkey creates when longer limits signed its own session out meanwhile", async () => {
+    const saver = await signIn()
+    const other = await signIn()
+    try {
+      const created = await addPasskeyAround(other, async () => {
+        expect((await saveLonger(saver, 48)).status).toBe(200)
+      })
+      const row = await rowOf(created)
+      expect(row.id).not.toBe((await rowOf(other)).id)
+      const res = await call("GET", "/api/session", { cookie: created })
+      expect(res.status).toBe(401)
+      expect(await res.json()).toMatchObject({ error: "session_ended", reason: "signed_out" })
+      const ends = (await database.db.select().from(auditLog).where(eq(auditLog.action, "Session ended"))).filter(
+        (r) => r.target === (row.ipAddress ?? ""),
+      )
+      expect(ends).toHaveLength(1)
+    } finally {
+      await ctx.settings.set("security", defaults.security)
+    }
+  })
+
+  it("keeps a session that adding a passkey creates when its own session saved the longer limits meanwhile", async () => {
+    const own = await signIn()
+    try {
+      const created = await addPasskeyAround(own, async () => {
+        expect((await saveLonger(own, 48)).status).toBe(200)
+        expect((await saveLonger(own, 96)).status).toBe(200)
+      })
+      expect((await call("GET", "/api/session", { cookie: created })).status).toBe(200)
+      expect((await call("GET", "/api/session", { cookie: own })).status).toBe(200)
+    } finally {
+      await ctx.settings.set("security", defaults.security)
+    }
   })
 
   it("after a reset from the server, a passkey signs in but two-factor must be set up again first", async () => {

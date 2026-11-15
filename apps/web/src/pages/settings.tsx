@@ -262,7 +262,7 @@ export const forms: Record<string, { title: string; description: string; fields:
   security: {
     title: "Sign-in Security",
     description:
-      "When a browser session ends and you sign in again. Each limit applies to sessions already open. Agents and tokens are not affected.",
+      "When a browser session ends and you sign in again. A shorter limit applies to sessions already open; a longer one signs out your other sessions. Agents and tokens are not affected.",
     fields: [
       {
         name: "idleTimeout",
@@ -787,7 +787,7 @@ export function SettingsForm({ section, active = true }: { section: string; acti
   const shown = useRef(active)
   shown.current = active
   // The save bar says what failed, naming the section (SV-3).
-  const save = useApiMutation<Record<string, unknown>>("PUT", `/settings/${section}`, {
+  const save = useApiMutation<Record<string, unknown>, { signedOut?: boolean }>("PUT", `/settings/${section}`, {
     invalidate: [`/settings/${section}`, "/setup/checklist"],
     quiet: true,
   })
@@ -888,8 +888,9 @@ export function SettingsForm({ section, active = true }: { section: string; acti
     check,
     save: async () => {
       const sent = body()
+      let answer: { signedOut?: boolean } | undefined
       try {
-        await save.mutateAsync(sent)
+        answer = await save.mutateAsync(sent)
       } catch (e) {
         // A field the server refused is marked like one the check found (SV-1).
         if (e instanceof ApiError && e.issues?.length) {
@@ -912,6 +913,8 @@ export function SettingsForm({ section, active = true }: { section: string; acti
       if (def?.fields.some((f) => f.type === "password" && f.name in sent)) secretSaved()
       // A new design shows at once, without a reload.
       if (section === "general") afterGeneralSave(sent)
+      // Longer sign-in limits signed out the other sessions (Sign-in Security); said only when one was.
+      if (answer?.signedOut) return { note: "Your other sessions were signed out." }
     },
     discard: () => {
       setProblems({})

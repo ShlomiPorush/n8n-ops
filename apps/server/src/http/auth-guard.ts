@@ -61,5 +61,5 @@ async function route(ctx: Ctx, c: Context): Promise<Response> {
   if (!check.ok) return path === "/get-session" ? c.json(null) : c.json(sessionEndedAnswer(check.reason), 401)
   // While the account has two-factor on, a session that did not complete it is not signed in (http/middleware.ts).
   if (!signedIn(u, check)) return path === "/get-session" ? c.json(null) : c.json(notSignedInAnswer, 401)
-  return withInheritedClocks(check, () => auth.handler(c.req.raw))
+  return withInheritedClocks(found.session.id, check, () => auth.handler(c.req.raw))
 }

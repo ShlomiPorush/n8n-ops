@@ -121,6 +121,9 @@ export function createAuth(db: Db, appKey: Buffer, publicUrl?: string, passkeyUr
       schema: { user, session, account, verification, twoFactor: twoFactorTable, passkey: passkeyTable },
     }),
     emailAndPassword: { enabled: true, minPasswordLength: 12 },
+    // The console signs in by username only, so a password is checked on one route, under its limit below. Email and
+    // password stay enabled for the username sign-in and for the account the setup creates on the server.
+    disabledPaths: ["/sign-in/email"],
     // The session clocks under Settings > Sign-in security decide when a session ends (services/session-policy.ts).
     // Better Auth keeps each one, and its cookie, a day longer than the longest maximum length allows, and never
     // extends it: the maximum length (counted from a sign-in no later than the session's creation) always ends a

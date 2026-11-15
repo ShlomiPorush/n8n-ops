@@ -12,6 +12,7 @@ import { auditLog, session, user } from "../db/schema.ts"
 import { createAudit } from "../lib/audit.ts"
 import { createSettings, defaults } from "../lib/settings.ts"
 import { eventRoutes } from "../routes/events.ts"
+import { inheritClocks, withInheritedClocks } from "./session-policy.ts"
 
 // The session clocks against the real Better Auth and a real PostgreSQL: what each clock ends, that polling only
 // extends the lifetime, that Better Auth's own routes obey the clocks, that a replaced session keeps its sign-in
@@ -354,3 +355,161 @@ describe("the clocks", () => {
     }
   })
 })
+
+describe("longer clocks", () => {
+  const SIGN_OUTS_LOCK = 7_243_004
+  const saveFrom = (cookie: string, values: Partial<typeof defaults.security>) =>
+    call("PUT", "/api/settings/security", { json: { ...defaults.security, ...values }, cookie })
+  const endedRows = async (target: string | null) =>
+    (await database.db.select().from(auditLog).where(eq(auditLog.action, "Session ended"))).filter(
+      (r) => r.target === (target ?? ""),
+    )
+
+  it.each([
+    ["the idle timeout turned off", { idleTimeout: false }, { activeAt: ago(2 * hour) }],
+    ["a longer idle limit", { idleMinutes: 1440 }, { activeAt: ago(2 * hour) }],
+    ["a longer maximum length", { maxHours: 720 }, { authenticatedAt: ago(13 * hour) }],
+    ["a longer lifetime", { lifetimeHours: 720 }, { seenAt: ago(25 * hour) }],
+  ] as const)("sign out every other session after %s, also one that ended unnoticed", async (_, values, clocks) => {
+    const saver = await signIn()
+    const unused = await signIn()
+    const live = await signIn()
+    await setClocks((await rowOf(unused)).id, clocks)
+    try {
+      const res = await saveFrom(saver, values)
+      expect(res.status).toBe(200)
+      expect(await res.json()).toEqual({ ok: true, signedOut: true })
+      for (const other of [unused, live]) {
+        const answer = await call("GET", "/api/session", { cookie: other })
+        expect(answer.status).toBe(401)
+        expect(await answer.json()).toMatchObject({ error: "session_ended", reason: "signed_out" })
+        const row = await rowOf(other)
+        expect(row.endedReason).toBe("signed_out")
+        expect(await endedRows(row.ipAddress)).toHaveLength(1)
+      }
+      expect((await call("GET", "/api/session", { cookie: saver })).status).toBe(200)
+    } finally {
+      await saveSecurity({})
+    }
+  })
+
+  it("signs nothing out when the clocks get shorter or stay the same", async () => {
+    const saver = await signIn()
+    const other = await signIn()
+    try {
+      const shorter = [{ idleMinutes: 30 }, { idleMinutes: 30 }, { idleMinutes: 30, maxHours: 6, lifetimeHours: 12 }]
+      for (const values of shorter) {
+        const res = await saveFrom(saver, values)
+        expect(res.status).toBe(200)
+        expect(await res.json()).toEqual({ ok: true })
+      }
+      expect((await call("GET", "/api/session", { cookie: other })).status).toBe(200)
+    } finally {
+      await saveSecurity({})
+    }
+  })
+
+  it("says nothing was signed out when no other session was open", async () => {
+    const saver = await signIn()
+    try {
+      // The first save ends whatever the earlier tests left open; the second finds none.
+      expect((await saveFrom(saver, { maxHours: 24 })).status).toBe(200)
+      await saveSecurity({})
+      const res = await saveFrom(saver, { maxHours: 24 })
+      expect(res.status).toBe(200)
+      expect(await res.json()).toEqual({ ok: true })
+    } finally {
+      await saveSecurity({})
+    }
+  })
+
+  it("keeps the reason of a session that had already ended, and audits its end once", async () => {
+    const saver = await signIn()
+    const idle = await signIn()
+    const row = await rowOf(idle)
+    await setClocks(row.id, { activeAt: ago(2 * hour) })
+    expect(await (await call("GET", "/api/session", { cookie: idle })).json()).toMatchObject({ reason: "idle" })
+    try {
+      expect((await saveFrom(saver, { idleTimeout: false })).status).toBe(200)
+      expect((await rowOf(idle)).endedReason).toBe("idle")
+      expect(await endedRows(row.ipAddress)).toHaveLength(1)
+    } finally {
+      await saveSecurity({})
+    }
+  })
+
+  it("keeps the reason of a replacement that had already ended when it would be signed out, and audits it once", async () => {
+    const replacement = await signIn()
+    const row = await rowOf(replacement)
+    await setClocks(row.id, { activeAt: ago(2 * hour) })
+    expect(await (await call("GET", "/api/session", { cookie: replacement })).json()).toMatchObject({ reason: "idle" })
+    // As the after hook runs for a session made from one that longer clocks signed out since its check.
+    const checked = { clocks: { authenticatedAt: ago(hour), seenAt: ago(minute), activeAt: ago(minute) } }
+    await withInheritedClocks("signed-out-predecessor", { ...checked, twoFactorVerified: true, signOuts: -1 }, () =>
+      inheritClocks(ctx, row.id, USERNAME),
+    )
+    expect((await rowOf(replacement)).endedReason).toBe("idle")
+    expect(await endedRows(row.ipAddress)).toHaveLength(1)
+  })
+
+  it("lets only one of two sessions that save longer clocks at once go on", async () => {
+    const a = await signIn()
+    const b = await signIn()
+    let pending: Promise<Response>[] = []
+    try {
+      await sql.begin(async (tx) => {
+        // Holds the saves back until both have passed the session check and wait for the same lock.
+        await tx`select pg_advisory_xact_lock(${SIGN_OUTS_LOCK})`
+        pending = [saveFrom(a, { maxHours: 24 }), saveFrom(b, { maxHours: 48 })]
+        await waitFor(async () => (await waitingOn(SIGN_OUTS_LOCK)) >= 2)
+      })
+      const answers = await Promise.all(pending)
+      expect(answers.map((r) => r.status).sort()).toEqual([200, 401])
+      const refused = answers.find((r) => r.status === 401)
+      expect(await refused?.json()).toMatchObject({ error: "session_ended", reason: "signed_out" })
+      const statuses = await Promise.all(
+        [a, b].map(async (c) => (await call("GET", "/api/session", { cookie: c })).status),
+      )
+      expect(statuses.sort()).toEqual([200, 401])
+    } finally {
+      await saveSecurity({})
+    }
+  })
+
+  it("stores nothing and signs nothing out when the change cannot be audited", async () => {
+    const saver = await signIn()
+    const other = await signIn()
+    const audit = ctx.audit
+    ctx.audit = async (entry, tx) => {
+      if (entry.action === "Settings changed") throw new Error("audit log unavailable")
+      return audit(entry, tx)
+    }
+    try {
+      const res = await saveFrom(saver, { maxHours: 48 })
+      expect(res.status).toBe(500)
+    } finally {
+      ctx.audit = audit
+    }
+    expect((await ctx.settings.get("security")).maxHours).toBe(defaults.security.maxHours)
+    expect((await call("GET", "/api/session", { cookie: other })).status).toBe(200)
+    expect((await rowOf(other)).endedReason).toBeNull()
+  })
+})
+
+/** How many connections of this database wait for the advisory lock `key`. */
+async function waitingOn(key: number) {
+  const [row] = await sql<{ n: number }[]>`
+    select count(*)::int as n from pg_locks
+    where locktype = 'advisory' and not granted and objid = ${key}
+      and database = (select oid from pg_database where datname = current_database())`
+  return row?.n ?? 0
+}
+
+/** Waits until `ready` holds, checking every 50 ms, for at most 10 seconds. */
+async function waitFor(ready: () => Promise<boolean>) {
+  const until = Date.now() + 10_000
+  while (!(await ready())) {
+    if (Date.now() > until) throw new Error("timed out waiting")
+    await new Promise((r) => setTimeout(r, 50))
+  }
+}

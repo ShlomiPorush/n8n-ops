@@ -66,7 +66,10 @@ export type SaveSource = {
   /** The toast when only this area was saved: "Overrides saved". */
   saved: string
   count: number
-  /** Throws when the save failed; the error's message says why. Use a quiet mutation, the bar says what failed. */
+  /**
+   * Throws when the save failed; the error's message says why. Use a quiet mutation, the bar says what failed. It
+   * may resolve with a `note`: one more sentence for the toast, about something the save did besides saving.
+   */
   save: () => Promise<unknown>
   discard: () => void
   /** A path prefix, such as "/settings/": moves inside it keep these changes, so they do not ask. */
@@ -179,19 +182,21 @@ export function SaveBarHost() {
  * each area that failed with its reason, after what was saved.
  */
 export function saveOutcome(
-  saved: { label: string; saved: string }[],
+  saved: { label: string; saved: string; note?: string }[],
   failed: { label: string; detail: string }[],
 ): { tone: "success" | "error"; text: string } | null {
+  // A note says what a save did besides saving ("Your other sessions were signed out."), after what was saved.
+  const notes = saved.flatMap((s) => (s.note ? [` ${s.note}`] : [])).join("")
   if (failed.length === 0) {
     if (saved.length === 0) return null
-    if (saved.length === 1) return { tone: "success", text: saved[0]?.saved ?? "" }
-    return { tone: "success", text: `Saved ${joinWords(saved.map((s) => s.label))}` }
+    const what = saved.length === 1 ? (saved[0]?.saved ?? "") : `Saved ${joinWords(saved.map((s) => s.label))}`
+    return { tone: "success", text: notes ? `${what}.${notes}` : what }
   }
   const reasons = failed.map((f) => (failed.length === 1 ? `${f.label}: ${f.detail}` : `${f.label} (${f.detail})`))
   const failure = `Could not save ${joinWords(reasons)}`
   return {
     tone: "error",
-    text: saved.length ? `Saved ${joinWords(saved.map((s) => s.label))}. ${failure}` : failure,
+    text: saved.length ? `Saved ${joinWords(saved.map((s) => s.label))}.${notes} ${failure}` : failure,
   }
 }
 
@@ -227,13 +232,13 @@ export function SaveScope({ children }: { children: React.ReactNode }) {
       return
     }
     setSaving(true)
-    const saved: SaveSource[] = []
+    const saved: (SaveSource & { note?: string })[] = []
     const failed: { label: string; detail: string }[] = []
     for (const entry of list) {
       const source = entry.get()
       try {
-        await source.save()
-        saved.push(source)
+        const result = (await source.save()) as { note?: unknown } | undefined
+        saved.push(typeof result?.note === "string" ? { ...source, note: result.note } : source)
       } catch (e) {
         // Its changes stay, and the toast below says what failed.
         failed.push({ label: source.label, detail: describeError(e) })

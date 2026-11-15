@@ -116,7 +116,8 @@ export async function openNewToken(page: Page) {
   await page.getByRole("button", { name: "New token" }).click()
 }
 
-async function signInWithPassword(page: Page) {
+/** Signs in with the password and a two-factor code: a session of its own, not the one other specs reuse. */
+export async function signInWithPassword(page: Page) {
   await page.goto("/login")
   await page.getByLabel("Username").fill(username)
   await page.getByLabel("Password", { exact: true }).fill(password)

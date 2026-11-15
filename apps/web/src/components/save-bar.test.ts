@@ -361,6 +361,24 @@ describe("saveOutcome", () => {
     })
   })
 
+  it("adds what a save did besides saving after what was saved", () => {
+    const note = "Your other sessions were signed out."
+    expect(saveOutcome([{ ...general, note }], [])).toEqual({
+      tone: "success",
+      text: "Settings saved. Your other sessions were signed out.",
+    })
+    expect(saveOutcome([{ ...general, note }, alerts], [])).toEqual({
+      tone: "success",
+      text: "Saved the General settings and the Alerts settings. Your other sessions were signed out.",
+    })
+    expect(
+      saveOutcome([{ ...general, note }], [{ label: "the Alerts settings", detail: "retryMin: too big" }]),
+    ).toEqual({
+      tone: "error",
+      text: "Saved the General settings. Your other sessions were signed out. Could not save the Alerts settings: retryMin: too big",
+    })
+  })
+
   it("never covers a failure with a success: the failed area is named with its reason (SV-3)", () => {
     expect(saveOutcome([general], [{ label: "the Alerts settings", detail: "retryMin: too big" }])).toEqual({
       tone: "error",

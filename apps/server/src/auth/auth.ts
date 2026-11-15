@@ -201,13 +201,14 @@ export function createAuth(db: Db, appKey: Buffer, publicUrl?: string, passkeyUr
         if (!created) return
         const passkeySignIn = ctx.path === PASSKEY_SIGN_IN
         // A session that replaces a live one (password change, two-factor enrolment) keeps its sign-in time, and
-        // whether that one completed two-factor.
-        if (!ctx.path.startsWith("/sign-in") && !passkeySignIn) await inheritClocks({ db }, created.session.id)
+        // whether that one completed two-factor; it ends if longer clocks signed that one out meanwhile.
+        const u = created.user as { username?: string | null; name?: string; twoFactorEnabled?: boolean | null }
+        if (!ctx.path.startsWith("/sign-in") && !passkeySignIn)
+          await inheritClocks({ db, audit }, created.session.id, u.username ?? u.name ?? "")
         // A session made by completing two-factor has it, whatever it replaced: the code or a backup code at
         // sign-in, the code that sets two-factor up (verify-totp from a live session), and a passkey sign-in.
         if (SECOND_FACTOR_DONE.has(ctx.path) && !(ctx.context.returned instanceof APIError))
           await ctx.context.internalAdapter.updateSession(created.session.token, { twoFactorVerified: true })
-        const u = created.user as { username?: string | null; name?: string; twoFactorEnabled?: boolean | null }
         // verify-totp with a session already open is enrolment (setup), not a sign-in.
         const completed =
           passkeySignIn ||

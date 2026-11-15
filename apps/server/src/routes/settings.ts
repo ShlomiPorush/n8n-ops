@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto"
 import { Hono } from "hono"
 import type { Ctx } from "../context.ts"
-import { requireUser } from "../http/middleware.ts"
+import { requireUser, sessionEndedAnswer } from "../http/middleware.ts"
 import { actorName, type Env } from "../http/types.ts"
 import {
   changedValueIssues,
@@ -17,6 +17,7 @@ import {
   writeSection,
 } from "../lib/settings.ts"
 import { syncTelegramWebhook } from "../services/alerts.ts"
+import { storeClocks } from "../services/session-policy.ts"
 
 /** Secret fields: stored encrypted as <name>Enc, written as plain <name>, read back only as <name>Set. */
 const secretFields: Partial<Record<SectionName, string[]>> = {
@@ -141,6 +142,29 @@ export function settingsRoutes(ctx: Ctx) {
     const who = { by: actorName(c.get("actor")), via: "web" as const }
     const agentsBefore = section === "agents" ? await ctx.settings.get("agents") : null
     const agentsAfter = section === "agents" ? (parsed.data as Section<"agents">) : null
+    const changed = {
+      actor: actorName(c.get("actor")),
+      action: "Settings changed",
+      target: section,
+      via: "web" as const,
+      details: {
+        fields: Object.keys(body).filter((k) => !secretNames.includes(k)),
+        secretsChanged: Object.keys(body).filter((k) => secretNames.includes(k)),
+      },
+    }
+    // Longer sign-in clocks sign out the other sessions, stored and audited in one transaction with them.
+    if (section === "security") {
+      const actor = c.get("actor")
+      if (actor.kind !== "user") return c.json({ error: "unauthorized" }, 401)
+      const stored = await storeClocks(ctx, parsed.data as Section<"security">, {
+        sessionId: actor.sessionId,
+        userId: actor.id,
+        actor: actor.username,
+        changed,
+      })
+      if (!stored.ok) return c.json(sessionEndedAnswer(stored.reason), 401)
+      return c.json(stored.signedOut ? { ok: true, signedOut: true } : { ok: true })
+    }
     // A longer idle period revives nothing: connections past the old one end before it is stored.
     if (agentsBefore && agentsAfter && agentsAfter.idleDays > agentsBefore.idleDays)
       await ctx.agents?.endIdle(agentsBefore.idleDays, who)
@@ -152,16 +176,7 @@ export function settingsRoutes(ctx: Ctx) {
     // A shorter one applies at once: stored first, so no call is let through under the old one meanwhile.
     if (agentsBefore && agentsAfter && agentsAfter.idleDays < agentsBefore.idleDays)
       await ctx.agents?.endIdle(agentsAfter.idleDays, who)
-    await ctx.audit({
-      actor: actorName(c.get("actor")),
-      action: "Settings changed",
-      target: section,
-      via: "web",
-      details: {
-        fields: Object.keys(body).filter((k) => !secretNames.includes(k)),
-        secretsChanged: Object.keys(body).filter((k) => secretNames.includes(k)),
-      },
-    })
+    await ctx.audit(changed)
     // Agents connected to the old address hold tokens issued by it; they connect again at the new one.
     if (section === "general" && ctx.agents && before !== (await ctx.settings.get("general")).publicUrl)
       await ctx.agents.endAll("address", { by: actorName(c.get("actor")), via: "web" })

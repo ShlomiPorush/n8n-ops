@@ -78,15 +78,16 @@ type TokenActor = Extract<Env["Variables"]["actor"], { kind: "token" }>
 
 /**
  * Calls running now, per connection and in total. A call keeps its slot until its work ends, also after its answer
- * went out as outcome_unknown, so slow calls cannot pile up beyond the limits.
+ * went out as outcome_unknown, so slow calls cannot pile up beyond the limits. The limits are read at each call, so a
+ * change to them applies at once.
  */
-function slots() {
+export function slots(limits: Pick<typeof LIMITS, "perConnection" | "total"> = LIMITS) {
   const per = new Map<string, number>()
   let total = 0
   return {
     take(id: string) {
       const mine = per.get(id) ?? 0
-      if (mine >= LIMITS.perConnection || total >= LIMITS.total) return false
+      if (mine >= limits.perConnection || total >= limits.total) return false
       per.set(id, mine + 1)
       total++
       return true

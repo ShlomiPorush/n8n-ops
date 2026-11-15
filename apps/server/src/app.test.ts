@@ -1,6 +1,6 @@
 import { mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
-import { createApp } from "./app.ts"
+import { AUTH_BODY_BYTES, createApp } from "./app.ts"
 import type { Ctx } from "./context.ts"
 import { withDesign } from "./http/web.ts"
 
@@ -143,5 +143,88 @@ describe("withDesign", () => {
       '<html lang="en" data-design="compact">',
     )
     expect(withDesign('<html lang="en">', "compact")).toBe('<html data-design="compact" lang="en">')
+  })
+})
+
+describe("request bodies of the sign-in routes", () => {
+  /** A context whose sign-in library answers with the body it was given, and counts its calls. */
+  function echoCtx() {
+    const calls: string[] = []
+    const ctx = {
+      ...fakeCtx(true),
+      auth: async () => ({
+        auth: {
+          handler: async (req: Request) => {
+            const body = await req.text()
+            calls.push(body)
+            return new Response(body)
+          },
+          api: { getSession: async () => null },
+        },
+        passkeyUrl: null,
+      }),
+    } as unknown as Ctx
+    return { app: createApp(ctx), calls }
+  }
+  /** A JSON body of exactly `size` bytes. */
+  const jsonOf = (size: number, fields: Record<string, unknown> = {}) => {
+    const base = JSON.stringify({ ...fields, pad: "" })
+    return `${base.slice(0, -2)}${"x".repeat(size - base.length)}"}`
+  }
+  /** The body as a stream of chunks, with no length announced. */
+  const chunked = (text: string, chunk = 16 * 1024) =>
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        const bytes = new TextEncoder().encode(text)
+        for (let at = 0; at < bytes.length; at += chunk) controller.enqueue(bytes.slice(at, at + chunk))
+        controller.close()
+      },
+    })
+  const post = (app: ReturnType<typeof createApp>, path: string, body: string, how: "length" | "stream") =>
+    app.request(path, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(how === "length" ? { "content-length": String(new TextEncoder().encode(body).length) } : {}),
+      },
+      body: how === "length" ? body : chunked(body),
+      ...(how === "stream" ? { duplex: "half" } : {}),
+    } as RequestInit)
+
+  for (const how of ["length", "stream"] as const) {
+    it(`refuses a body over ${AUTH_BODY_BYTES / 1024} KiB before the sign-in library reads it (${how})`, async () => {
+      const { app, calls } = echoCtx()
+      const res = await post(app, "/api/auth/sign-in/username", jsonOf(AUTH_BODY_BYTES + 1), how)
+      expect(res.status).toBe(413)
+      expect(await res.json()).toMatchObject({ error: "too_large" })
+      expect(calls).toHaveLength(0)
+    })
+
+    it(`passes a body of up to ${AUTH_BODY_BYTES / 1024} KiB on whole (${how})`, async () => {
+      const { app, calls } = echoCtx()
+      const body = jsonOf(AUTH_BODY_BYTES, { username: "owner" })
+      const res = await post(app, "/api/auth/sign-in/username", body, how)
+      expect(res.status).toBe(200)
+      expect(await res.text()).toBe(body)
+      expect(calls).toEqual([body])
+    })
+
+    it(`still refuses "remember me" off and trusted devices within the limit (${how})`, async () => {
+      const { app, calls } = echoCtx()
+      const off = await post(app, "/api/auth/sign-in/username", jsonOf(1024, { rememberMe: false }), how)
+      expect(off.status).toBe(400)
+      expect(await off.json()).toMatchObject({ code: "REMEMBER_ME_UNSUPPORTED" })
+      const trust = await post(app, "/api/auth/two-factor/verify-totp", jsonOf(1024, { trustDevice: true }), how)
+      expect(trust.status).toBe(400)
+      expect(await trust.json()).toMatchObject({ code: "TRUST_DEVICE_UNSUPPORTED" })
+      expect(calls).toHaveLength(0)
+    })
+  }
+
+  it("limits every route of the sign-in library, not only sign-in", async () => {
+    const { app, calls } = echoCtx()
+    const res = await post(app, "/api/auth/update-user", jsonOf(AUTH_BODY_BYTES + 1), "stream")
+    expect(res.status).toBe(413)
+    expect(calls).toHaveLength(0)
   })
 })

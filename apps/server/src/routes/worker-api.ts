@@ -3,10 +3,12 @@ import type { ReadableStream as WebStream } from "node:stream/web"
 import { HEARTBEAT_MIN_GAP_MS, heartbeatBody } from "@n8n-ops/shared"
 import { and, eq, isNull } from "drizzle-orm"
 import { Hono } from "hono"
+import { bodyLimit } from "hono/body-limit"
 import { createMiddleware } from "hono/factory"
 import { z } from "zod"
 import type { Ctx } from "../context.ts"
 import { backupRuns, instances, workerJobs, workers } from "../db/schema.ts"
+import { sizeText, tooLarge } from "../http/body-limit.ts"
 import { BACKUP_TURNED_OFF, endRunsWithoutArchive, failRun } from "../services/backup-copies.ts"
 import { archiveReady, COMPOSE_TARGET, maxArchiveBytes, workerBackupResult } from "../services/backups.ts"
 import { reportsSince, workerSeen } from "../services/collection.ts"
@@ -27,16 +29,26 @@ export const featuresOf = (header: string | undefined) =>
     .filter((w) => /^[a-z0-9-]{1,40}$/.test(w))
     .slice(0, 20)
 
-type WorkerEnv = { Variables: { worker: typeof workers.$inferSelect; seenAt: Date } }
+type WorkerEnv = {
+  Variables: { worker: typeof workers.$inferSelect; seenAt: Date; job: typeof workerJobs.$inferSelect }
+}
 
 /** The longest an archive upload may take once it has started. */
 export const UPLOAD_DEADLINE_MS = 30 * 60_000
+
+/** The largest pairing request: a token and a version take a few hundred bytes. */
+export const PAIR_BODY_BYTES = 64 * 1024
+/**
+ * The largest job result a worker may send. The largest real one is a credential export, which carries every
+ * credential of the instance.
+ */
+export const RESULT_BODY_BYTES = 32 * 1024 * 1024
 
 /** The API the worker calls. Authenticated with the worker's identity token, never with a user session. */
 export function workerApiRoutes(ctx: Ctx) {
   const app = new Hono<WorkerEnv>()
 
-  app.post("/pair", async (c) => {
+  app.post("/pair", bodyLimit({ maxSize: PAIR_BODY_BYTES, onError: tooLarge(PAIR_BODY_BYTES) }), async (c) => {
     const body = z
       .object({ token: z.string().min(10), version: z.string().optional() })
       .safeParse(await c.req.json().catch(() => ({})))
@@ -106,12 +118,17 @@ export function workerApiRoutes(ctx: Ctx) {
     return null
   }
 
-  /** Ends a job here without handing it over; a backup's run ends with it, and a waiting export is told. */
+  /**
+   * Ends a running job here without handing it over or taking its result; a backup's run ends with it, and a
+   * waiting export is told. A job that ended meanwhile is left as it ended.
+   */
   async function dropJob(job: typeof workerJobs.$inferSelect, error: string, quiet: boolean) {
-    await ctx.db
+    const [ended] = await ctx.db
       .update(workerJobs)
       .set({ status: "failed", error, finishedAt: new Date() })
-      .where(eq(workerJobs.id, job.id))
+      .where(and(eq(workerJobs.id, job.id), eq(workerJobs.status, "running")))
+      .returning({ id: workerJobs.id })
+    if (!ended) return
     if (job.kind === "export-credentials") deliverToWaiter(job.id, { ok: false, error })
     if (job.kind !== "backup") return
     if (quiet) await endRunsWithoutArchive(ctx.db, { runId: String(job.payload.runId) }, error)
@@ -264,9 +281,26 @@ export function workerApiRoutes(ctx: Ctx) {
     }
   })
 
-  app.post("/jobs/:id/result", auth, async (c) => {
-    const job = await ownJob(c.get("worker").id, c.req.param("id"))
+  /** The worker's own running job the call names; its body is read only after this. */
+  const runningJob = createMiddleware<WorkerEnv>(async (c, next) => {
+    const job = await ownJob(c.get("worker").id, c.req.param("id") ?? "")
     if (!job) return c.json({ error: "not_found" }, 404)
+    c.set("job", job)
+    await next()
+  })
+
+  // A result over the limit is not taken: the job fails with that reason, as any failed job does.
+  const resultLimit = bodyLimit({
+    maxSize: RESULT_BODY_BYTES,
+    onError: async (c) => {
+      const message = `The job's result is larger than ${sizeText(RESULT_BODY_BYTES)}.`
+      await dropJob(c.get("job"), message, false)
+      return c.json({ error: "too_large", message }, 413)
+    },
+  })
+
+  app.post("/jobs/:id/result", auth, runningJob, resultLimit, async (c) => {
+    const job = c.get("job")
     const body = z
       .object({
         ok: z.boolean(),
@@ -283,6 +317,10 @@ export function workerApiRoutes(ctx: Ctx) {
       })
       .safeParse(await c.req.json().catch(() => ({})))
     if (!body.success) return c.json({ error: "invalid" }, 400)
+    // The job may have ended while its body arrived (another answer for it came first): that answer stands, and
+    // nothing of this one is applied.
+    if (!(await ownJob(job.workerId, job.id)))
+      return c.json({ error: "conflict", message: "This job has already ended." }, 409)
     const { ok, result = {}, error, refused, resolvedContainer, replicas } = body.data
     const seen = { ...(resolvedContainer ? { resolvedContainer } : {}), ...(replicas ? { replicas } : {}) }
 
@@ -305,7 +343,7 @@ export function workerApiRoutes(ctx: Ctx) {
       if (instance) stored = await applyWorkerReport(ctx, instance, job.payload, result, worker.name)
     }
     const why = job.kind === "backup" || job.kind === "export-credentials" ? await unwanted(job) : null
-    await ctx.db
+    const [ended] = await ctx.db
       .update(workerJobs)
       .set({
         status: ok ? "done" : "failed",
@@ -313,7 +351,10 @@ export function workerApiRoutes(ctx: Ctx) {
         error: error ? error.slice(0, 500) : null,
         finishedAt: new Date(),
       })
-      .where(eq(workerJobs.id, job.id))
+      .where(and(eq(workerJobs.id, job.id), eq(workerJobs.status, "running")))
+      .returning({ id: workerJobs.id })
+    // The job ended meanwhile (another answer for it came first): that answer stands.
+    if (!ended) return c.json({ error: "conflict", message: "This job has already ended." }, 409)
 
     // Secrets go to the waiting request only while the instance still allows their export; otherwise it is told
     // why, and the secrets are dropped here.

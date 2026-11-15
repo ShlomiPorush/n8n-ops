@@ -5,7 +5,7 @@ import type { AddressInfo } from "node:net"
 import { join } from "node:path"
 import { and, eq, sql } from "drizzle-orm"
 import postgres from "postgres"
-import { afterAll, beforeAll, describe, expect, it } from "vitest"
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest"
 import type { Ctx } from "../context.ts"
 import { createDatabase, type Database } from "../db/client.ts"
 import { accessCalls, accessRequests, apiTokens, instances } from "../db/schema.ts"
@@ -25,7 +25,7 @@ import {
 } from "../services/access.ts"
 import type { Instance } from "../services/instances.ts"
 import { deleteInstance } from "../services/problems.ts"
-import { n8nProxyRoutes } from "./n8n-proxy.ts"
+import { n8nProxyRoutes, PROXY_BODY_BYTES, PROXY_CALLS } from "./n8n-proxy.ts"
 
 // The access proxy against a real PostgreSQL and a stand-in n8n: a call is forwarded only while its access still
 // holds when it is about to be forwarded, which is after its whole body has arrived.
@@ -664,5 +664,202 @@ describe("the calls of an access", () => {
     expect(await callsOf(requestId)).toEqual([
       expect.objectContaining({ method: "PUT", status: 403, refused: expect.any(String), change: false }),
     ])
+  })
+})
+
+describe("the access proxy reads a body only for an allowed call, and up to its limit", () => {
+  const MiB = 1024 * 1024
+  /** A body of `size` spaces in 1 MiB parts, with no length announced; `pulled` tells whether any was read. */
+  function spaces(size: number) {
+    const state = { pulled: false }
+    let left = size
+    const stream = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          state.pulled = true
+          if (left <= 0) return controller.close()
+          const part = new Uint8Array(Math.min(MiB, left)).fill(0x20)
+          left -= part.length
+          controller.enqueue(part)
+        },
+      },
+      { highWaterMark: 0 },
+    )
+    return { stream, state }
+  }
+  const put = (address: string, key: string, variable: string, init: RequestInit) =>
+    app.request(`/${address}/api/v1/variables/${variable}`, {
+      method: "PUT",
+      ...init,
+      headers: { "x-n8n-api-key": key, "content-type": "application/json", ...init.headers },
+    } as RequestInit)
+
+  it(`refuses a body over ${PROXY_BODY_BYTES / MiB} MiB, announced or streamed, and sends n8n nothing`, async () => {
+    const instance = await openInstance()
+    const { key, requestId } = await access([instance.name])
+    const announced = randomBytes(4).toString("hex")
+    const first = await put(instance.name, key, announced, {
+      headers: { "content-length": String(PROXY_BODY_BYTES + 1) },
+      body: "{}",
+    })
+    expect(first.status).toBe(413)
+    expect(await first.json()).toMatchObject({ message: expect.stringContaining("16 MiB") })
+
+    const streamed = randomBytes(4).toString("hex")
+    const second = await put(instance.name, key, streamed, {
+      body: spaces(PROXY_BODY_BYTES + 1).stream,
+      duplex: "half",
+    } as RequestInit)
+    expect(second.status).toBe(413)
+
+    expect(received.filter((r) => r.url.includes(announced) || r.url.includes(streamed))).toEqual([])
+    expect(await callsOf(requestId)).toEqual([
+      expect.objectContaining({ method: "PUT", status: 413, refused: expect.any(String), change: false }),
+      expect.objectContaining({ method: "PUT", status: 413, refused: expect.any(String), change: false }),
+    ])
+  })
+
+  it(`forwards a body of exactly ${PROXY_BODY_BYTES / MiB} MiB whole`, async () => {
+    const instance = await openInstance()
+    const { key } = await access([instance.name])
+    const variable = randomBytes(4).toString("hex")
+    const res = await put(instance.name, key, variable, {
+      body: spaces(PROXY_BODY_BYTES).stream,
+      duplex: "half",
+    } as RequestInit)
+    expect(res.status).toBe(200)
+    const [write] = received.filter((r) => r.url === `/api/v1/variables/${variable}`)
+    expect(write?.body.length).toBe(PROXY_BODY_BYTES)
+  })
+
+  it("never reads the body of a call with an unknown key, or one its access does not allow", async () => {
+    const instance = await openInstance()
+    const { key } = await access([instance.name])
+    const unknown = spaces(PROXY_BODY_BYTES + 1)
+    const refused = await put(instance.name, `${key.slice(0, -4)}0000`, "v", {
+      body: unknown.stream,
+      duplex: "half",
+    } as RequestInit)
+    expect(refused.status).toBe(401)
+    expect(unknown.state.pulled).toBe(false)
+
+    // The operation is not one the access allows (DELETE is not granted).
+    const notAllowed = spaces(PROXY_BODY_BYTES + 1)
+    const forbidden = await app.request(`/${instance.name}/api/v1/variables/v`, {
+      method: "DELETE",
+      headers: { "x-n8n-api-key": key, "content-type": "application/json" },
+      body: notAllowed.stream,
+      duplex: "half",
+    } as RequestInit)
+    expect(forbidden.status).toBe(403)
+    expect(notAllowed.state.pulled).toBe(false)
+  })
+})
+
+describe("the access proxy runs a bounded number of calls at once", () => {
+  const saved = { ...PROXY_CALLS }
+  afterEach(() => Object.assign(PROXY_CALLS, saved))
+
+  /** Makes the stand-in n8n hold its answer to a variable named with HELD until `answer()`. */
+  function holdAnswer() {
+    let arrived!: () => void
+    const arriving = new Promise<void>((resolve) => {
+      arrived = resolve
+    })
+    let answer!: () => void
+    const answering = new Promise<void>((resolve) => {
+      answer = resolve
+    })
+    held = { arrived, answer: answering }
+    return { arriving, answer }
+  }
+
+  /** Runs `whileHeld` while a PUT with `key` waits for n8n's answer, then lets n8n answer and waits for the call. */
+  async function whileForwarding(address: string, key: string, whileHeld: () => Promise<void>) {
+    const { arriving, answer } = holdAnswer()
+    const pending = send(address, key, "PUT", `/variables/${named(HELD)}`)
+    try {
+      await arriving
+      await whileHeld()
+    } finally {
+      answer()
+      held = null
+      // The call ends before the next test starts, also when an assertion above failed.
+      await Promise.resolve(pending).catch(() => undefined)
+    }
+    return pending
+  }
+
+  it("refuses a call over the limit of an access key, and takes calls again once one ends", async () => {
+    PROXY_CALLS.perConnection = 1
+    const instance = await openInstance()
+    const { key, requestId } = await access([instance.name])
+    const second = named("second")
+    const first = await whileForwarding(instance.name, key, async () => {
+      const busy = await send(instance.name, key, "PUT", `/variables/${second}`)
+      expect(busy.status).toBe(429)
+      expect(await busy.json()).toMatchObject({ message: expect.stringContaining("too many calls at once") })
+      // An unknown key is refused as unknown, and is not counted.
+      expect((await send(instance.name, `${key.slice(0, -4)}0000`, "PUT", `/variables/${second}`)).status).toBe(401)
+    })
+    expect(first.status).toBe(200)
+    expect(sentTo([second])).toEqual([])
+    expect((await send(instance.name, key, "PUT", `/variables/${named("third")}`)).status).toBe(200)
+    expect((await callsOf(requestId)).filter((c) => c.status === 429)).toEqual([
+      expect.objectContaining({ method: "PUT", refused: expect.stringContaining("too many calls"), change: false }),
+    ])
+  })
+
+  it("refuses a call over the limit of the whole proxy, whatever its key", async () => {
+    PROXY_CALLS.total = 1
+    const instance = await openInstance()
+    const a = await access([instance.name])
+    const b = await access([instance.name])
+    const other = named("other")
+    const first = await whileForwarding(instance.name, a.key, async () => {
+      expect((await send(instance.name, b.key, "PUT", `/variables/${other}`)).status).toBe(429)
+    })
+    expect(first.status).toBe(200)
+    expect(sentTo([other])).toEqual([])
+    expect((await send(instance.name, b.key, "PUT", `/variables/${named("later")}`)).status).toBe(200)
+  })
+
+  it("frees the call's place however the call ends", async () => {
+    PROXY_CALLS.perConnection = 1
+    PROXY_CALLS.total = 1
+    const instance = await openInstance()
+    const { key, requestId } = await access([instance.name])
+    const ok = async () => expect((await send(instance.name, key, "PUT", `/variables/${named("ok")}`)).status).toBe(200)
+
+    // A body over the limit, announced or streamed.
+    const announced = await app.request(`/${instance.name}/api/v1/variables/v`, {
+      method: "PUT",
+      headers: { "x-n8n-api-key": key, "content-length": String(PROXY_BODY_BYTES + 1) },
+      body: "{}",
+    })
+    expect(announced.status).toBe(413)
+    await ok()
+    const bytes = new Uint8Array(PROXY_BODY_BYTES + 1).fill(0x20)
+    const streamed = await app.request(`/${instance.name}/api/v1/variables/v`, {
+      method: "PUT",
+      headers: { "x-n8n-api-key": key },
+      body: new Blob([bytes]).stream(),
+      duplex: "half",
+    } as RequestInit)
+    expect(streamed.status).toBe(413)
+    await ok()
+    // An operation the access does not allow.
+    expect((await send(instance.name, key, "DELETE", "/variables/v")).status).toBe(403)
+    await ok()
+    // n8n does not answer.
+    expect((await send(instance.name, key, "PUT", `/variables/${named(UNANSWERED)}`)).status).toBe(502)
+    await ok()
+    // The access ends while the call arrives: refused when it is checked again, and its place is free.
+    const other = await access([instance.name])
+    const { res } = await callWhile(instance.name, key, async () => {
+      await revokeAccess(ctx, requestId, who)
+    })
+    expect(res.status).toBe(401)
+    expect((await send(instance.name, other.key, "PUT", `/variables/${named("after")}`)).status).toBe(200)
   })
 })

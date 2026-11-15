@@ -1,3 +1,4 @@
+import { trustedProxies } from "./http/address.ts"
 import { readVersion } from "./version.ts"
 
 export type ServerConfig = {
@@ -40,6 +41,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     )
   const port = Number(env.PORT ?? 8080)
   if (!Number.isInteger(port) || port <= 0) throw new Error(`PORT must be a positive integer, got "${env.PORT}"`)
+  // A malformed list stops the start here, with the entry named, rather than the first request.
+  trustedProxies(env.N8N_OPS_TRUSTED_PROXIES)
   return {
     port,
     databaseUrl,

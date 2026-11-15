@@ -21,3 +21,18 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ DATABASE_URL: "not a url" })).toThrow(/not a valid URL/)
   })
 })
+
+describe("loadConfig and N8N_OPS_TRUSTED_PROXIES", () => {
+  const databaseUrl = url(randomBytes(32).toString("hex"))
+
+  it("starts with no list, a list of addresses and ranges, or one with spare commas and spaces", () => {
+    for (const value of [undefined, "", " , ", "172.18.0.5", "172.18.0.5,", " 172.18.0.0/16 , fd00::/8 "])
+      expect(() => loadConfig({ DATABASE_URL: databaseUrl, N8N_OPS_TRUSTED_PROXIES: value })).not.toThrow()
+  })
+
+  it("refuses to start with an entry that is not an address or a range", () => {
+    expect(() => loadConfig({ DATABASE_URL: databaseUrl, N8N_OPS_TRUSTED_PROXIES: "172.18.0.5, traefik" })).toThrow(
+      /N8N_OPS_TRUSTED_PROXIES: "traefik"/,
+    )
+  })
+})

@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto"
+import { APIError, BASE_ERROR_CODES } from "better-auth"
 import { describe, expect, it } from "vitest"
 import type { Ctx } from "../context.ts"
 import { OTHER_PAGE } from "../http/origin.ts"
@@ -7,6 +8,7 @@ import { setupRoutes } from "./setup.ts"
 
 // Creating the first account is public until it exists, but only from n8n-ops' own setup page: a page of another
 // site cannot create it on a fresh install before the owner does. The refusal comes before the database is read.
+// When Better Auth cannot create the account because one exists by then, the answer is already_set_up.
 
 function app() {
   const touched = { db: 0 }
@@ -39,5 +41,50 @@ describe("POST /api/setup/account", () => {
       expect(await res.json()).toEqual({ error: "forbidden", message: OTHER_PAGE })
     }
     expect(touched.db).toBe(0)
+  })
+})
+
+/** The setup with a database that answers the given account counts in turn, and Better Auth failing as given. */
+function failingSignUp(counts: number[], error: unknown) {
+  const ctx = {
+    settings: { get: async (key: SectionName) => sections[key].parse(defaults[key]) },
+    db: { select: () => ({ from: async () => [{ n: counts.shift() ?? 0 }] }) },
+    auth: async () => ({
+      auth: {
+        api: {
+          signUpEmail: async () => {
+            throw error
+          },
+        },
+      },
+    }),
+    audit: async () => {
+      throw new Error("audited a failed setup")
+    },
+  } as unknown as Ctx
+  return setupRoutes(ctx).request("http://ops.example.com/account", {
+    method: "POST",
+    headers: { origin: "http://ops.example.com", "content-type": "application/json" },
+    body: JSON.stringify({ username: "operator", password: randomBytes(24).toString("hex") }),
+  })
+}
+
+describe("POST /api/setup/account when Better Auth cannot create the account", () => {
+  const taken = APIError.from("UNPROCESSABLE_ENTITY", BASE_ERROR_CODES.FAILED_TO_CREATE_USER)
+
+  it("answers already_set_up when the account exists by then", async () => {
+    const res = await failingSignUp([0, 0, 1], taken)
+    expect(res.status).toBe(409)
+    expect(await res.json()).toEqual({ error: "already_set_up" })
+  })
+
+  it("is a server error when no account exists", async () => {
+    expect((await failingSignUp([0, 0, 0], taken)).status).toBe(500)
+  })
+
+  it("is a server error for any other failure, even once an account exists", async () => {
+    expect((await failingSignUp([0, 0, 1], new Error("connection lost"))).status).toBe(500)
+    const other = APIError.from("BAD_REQUEST", BASE_ERROR_CODES.FAILED_TO_CREATE_SESSION)
+    expect((await failingSignUp([0, 0, 1], other)).status).toBe(500)
   })
 })

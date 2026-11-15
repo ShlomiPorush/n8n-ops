@@ -84,8 +84,24 @@ describe("N8N_OPS_TRUSTED_PROXIES", () => {
     expect(addressOf(request("10.0.0.2", "192.0.2.7"))).toBe("192.0.2.7")
   })
 
+  it("matches an address with a zone only on that interface", () => {
+    process.env.N8N_OPS_TRUSTED_PROXIES = "fe80::1%eth0"
+    expect(addressOf(request("fe80::1%eth0", "192.0.2.7"))).toBe("192.0.2.7")
+    expect(addressOf(request("fe80::1%eth1", "192.0.2.7"))).toBe("fe80::1%eth1")
+    process.env.N8N_OPS_TRUSTED_PROXIES = "fe80::1, fe80::/10"
+    expect(addressOf(request("fe80::1%eth0", "192.0.2.7"))).toBe("fe80::1%eth0")
+  })
+
   it("refuses an entry that is not an address or a range", () => {
-    for (const value of ["nope", "10.0.0.0/33", "10.0.0.0/x", "10.0.0.0/", "fc00::/129", "10.0.0.1/8/8"])
+    for (const value of [
+      "nope",
+      "10.0.0.0/33",
+      "10.0.0.0/x",
+      "10.0.0.0/",
+      "fc00::/129",
+      "10.0.0.1/8/8",
+      "fe80::1%eth0/64",
+    ])
       expect(() => trustedProxies(value)).toThrow(/N8N_OPS_TRUSTED_PROXIES/)
   })
 })
@@ -100,6 +116,10 @@ describe("limiter", () => {
     expect(limit.firstOver("a")).toBe(true)
     vi.advanceTimersByTime(1001)
     expect([limit("a"), limit("a"), limit("a")]).toEqual([true, true, false])
+    const short = limiter(1, 100)
+    expect([short("b"), short("b")]).toEqual([true, false])
+    vi.advanceTimersByTime(101)
+    expect(short("b")).toBe(true)
   })
 
   it("forgets keys whose window ended, however many there were", () => {

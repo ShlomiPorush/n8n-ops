@@ -17,28 +17,37 @@ const DEFAULT_TRUSTED_PROXIES = ["127.0.0.0/8", "::1", "10.0.0.0/8", "172.16.0.0
 /**
  * The proxies whose X-Forwarded-For is believed: a comma-separated list of addresses and CIDR ranges, such as
  * "172.18.0.0/16, fd00::/8". Empty entries are skipped; no entry at all means the built-in list, and any entry
- * replaces it. Throws on an entry that is neither, naming it.
+ * replaces it. An IPv6 address with a zone (fe80::1%eth0) matches only that address on that interface, and a peer
+ * with a zone matches only such an entry. Throws on an entry that is none of these, naming it.
  */
-export function trustedProxies(value: string | undefined): BlockList {
+export function trustedProxies(value: string | undefined): (address: string) => boolean {
   const entries = (value ?? "")
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean)
   const list = new BlockList()
+  const zoned = new Set<string>()
   for (const entry of entries.length ? entries : DEFAULT_TRUSTED_PROXIES) {
     const [address = "", prefix, extra] = entry.split("/")
     const family = isIP(address)
     const bits = family === 4 ? 32 : 128
-    if (!family || extra !== undefined || (prefix !== undefined && !/^\d{1,3}$/.test(prefix)) || Number(prefix) > bits)
+    const zone = address.includes("%")
+    if (
+      !family ||
+      extra !== undefined ||
+      (prefix !== undefined && (zone || !/^\d{1,3}$/.test(prefix) || Number(prefix) > bits))
+    )
       throw new Error(`N8N_OPS_TRUSTED_PROXIES: "${entry}" is not an IP address or a CIDR range`)
     const type = family === 4 ? "ipv4" : "ipv6"
-    if (prefix === undefined) list.addAddress(address, type)
+    if (zone) zoned.add(address)
+    else if (prefix === undefined) list.addAddress(address, type)
     else list.addSubnet(address, Number(prefix), type)
   }
-  return list
+  return (address) =>
+    address.includes("%") ? zoned.has(address) : list.check(address, isIP(address) === 4 ? "ipv4" : "ipv6")
 }
 
-let cached: { value: string | undefined; list: BlockList } | undefined
+let cached: { value: string | undefined; trusts: (address: string) => boolean } | undefined
 
 /** An IPv4 address that reached a dual-stack socket as ::ffff:a.b.c.d, written as plain IPv4. */
 const plain = (address: string) =>
@@ -52,8 +61,8 @@ export function addressOf(req: IncomingMessage | null) {
   const socket = req?.socket?.remoteAddress
   if (!socket || !isIP(socket)) return socket ?? "unknown"
   const value = process.env.N8N_OPS_TRUSTED_PROXIES
-  if (!cached || cached.value !== value) cached = { value, list: trustedProxies(value) }
-  if (!cached.list.check(socket, isIP(socket) === 4 ? "ipv4" : "ipv6")) return plain(socket)
+  if (!cached || cached.value !== value) cached = { value, trusts: trustedProxies(value) }
+  if (!cached.trusts(socket)) return plain(socket)
   // The address the trusted proxy appended: the last one. Earlier entries come from the client and can be made up.
   const forwarded = req.headers["x-forwarded-for"]
   const last = (Array.isArray(forwarded) ? forwarded.join(",") : forwarded)?.split(",").at(-1)?.trim()
@@ -71,19 +80,25 @@ export function headerCount(c: Context, name: string) {
 
 /**
  * A small fixed-window limit per key. It counts before anything else runs; `refund` gives a counted one back.
- * Windows run on the monotonic clock. Keys stay in the order their windows started, so every check forgets the
- * ended ones from the front and stops at the first that is still running.
+ * Windows run on the monotonic clock. Keys stay in the order their windows started, so at most once a second a
+ * check forgets the ended ones from the front and stops at the first that is still running.
  */
 export function limiter(max: number, windowMs: number) {
   const hits = new Map<string, { at: number; n: number }>()
+  let swept = Number.NEGATIVE_INFINITY
   const check = (key: string) => {
     const now = performance.now()
-    for (const [k, v] of hits) {
-      if (now - v.at <= windowMs) break
-      hits.delete(k)
+    if (now - swept >= 1000) {
+      swept = now
+      for (const [k, v] of hits) {
+        if (now - v.at <= windowMs) break
+        hits.delete(k)
+      }
     }
     const hit = hits.get(key)
-    if (!hit) {
+    if (!hit || now - hit.at > windowMs) {
+      // A new window goes to the end, after every window that started before it.
+      hits.delete(key)
       hits.set(key, { at: now, n: 1 })
       return true
     }

@@ -97,7 +97,7 @@ export type AccessRow = {
   notifyError: string | null
   /** What the agent said it did when it released the access; null when it said nothing. */
   summary: string | null
-  /** Every call made with the access; the detail lists only the latest. */
+  /** Every call made with the access; the detail lists every change and the latest of the other calls. */
   callCount: number
 }
 
@@ -122,8 +122,11 @@ type AccessDetail = AccessRow & {
     instance: string | null
     method: string
     path: string
-    status: number
+    /** What n8n answered; null for a change sent to n8n whose answer never came. */
+    status: number | null
     refused: string | null
+    /** A call sent to n8n with a method that can change it; every one is listed. */
+    change: boolean
   }[]
   /** While the request waits: what the approver may grant on each instance, and other instances to add. */
   editor?: EditorChoices
@@ -571,7 +574,9 @@ function AccessDetailView({ r, detail }: { r: AccessDetail; detail: ReturnType<t
             <>
               Every call the agent made with this access, newest first.
               {r.refusedCount ? ` ${n(r.refusedCount)} refused.` : ""}
-              {r.callCount > r.calls.length ? ` The latest ${n(r.calls.length)} are listed.` : ""}
+              {r.callCount > r.calls.length
+                ? ` Every change sent to n8n is listed, with the latest ${n(r.calls.filter((call) => !call.change).length)} of the other calls.`
+                : ""}
             </>
           }
         />
@@ -602,8 +607,8 @@ function AccessDetailView({ r, detail }: { r: AccessDetail; detail: ReturnType<t
                     {call.refused && <div className="font-sans break-normal text-fail">{call.refused}</div>}
                   </TableCell>
                   <TableCell className="text-end">
-                    <Tone tone={call.refused ? "fail" : call.status < 400 ? "ok" : "warn"}>
-                      {call.refused ? "refused" : call.status}
+                    <Tone tone={call.refused ? "fail" : call.status !== null && call.status < 400 ? "ok" : "warn"}>
+                      {call.refused ? "refused" : (call.status ?? "No answer")}
                     </Tone>
                   </TableCell>
                 </TableRow>

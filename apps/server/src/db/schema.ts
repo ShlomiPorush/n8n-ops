@@ -1045,6 +1045,8 @@ export const accessRequests = pgTable(
      * as up to date only while it is the count shown.
      */
     callCount: integer("call_count").notNull().default(0),
+    /** Of those, the calls n8n-ops refused, counted the same way; only the latest refused calls are kept. */
+    refusedCount: integer("refused_count").notNull().default(0),
     keyPrefix: text("key_prefix"),
     keyHash: text("key_hash").unique(),
     /** The key, encrypted, until the agent collects it once; then cleared. */
@@ -1129,12 +1131,24 @@ export const accessCalls = pgTable(
     instanceId: uuid("instance_id").references(() => instances.id, { onDelete: "set null" }),
     at: created(),
     method: text("method").notNull(),
+    /** The path after /api/v1, cut to its first characters when longer (services/access.ts). */
     path: text("path").notNull(),
-    status: integer("status").notNull(),
+    /** What n8n answered; null for a change sent to n8n whose answer never came (it may have been made). */
+    status: integer("status"),
     /** Why n8n-ops refused the call, when it did. */
     refused: text("refused"),
+    /**
+     * A call n8n-ops let through with a method that can change n8n. Changes stay for as long as their request; of
+     * the other calls, only the latest are kept. Computed by the database, so every server that logs calls agrees.
+     */
+    change: boolean("change")
+      .notNull()
+      .generatedAlwaysAs(sql`method NOT IN ('GET', 'HEAD', 'OPTIONS') AND refused IS NULL`),
   },
-  (t) => [index("access_calls_request_idx").on(t.requestId, t.at)],
+  (t) => [
+    index("access_calls_request_idx").on(t.requestId, t.at),
+    index("access_calls_request_change_idx").on(t.requestId, t.change, t.at),
+  ],
 )
 
 // ---------------------------------------------------------------------------

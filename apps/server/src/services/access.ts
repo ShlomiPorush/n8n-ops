@@ -1,5 +1,5 @@
 import { type AccessChannel, accessChannels } from "@n8n-ops/shared"
-import { and, asc, count, desc, eq, gt, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm"
+import { and, asc, count, desc, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm"
 import { type Ctx, changed } from "../context.ts"
 import {
   type AccessDropReason,
@@ -26,6 +26,7 @@ import {
 import { type FetchLike, N8nClient } from "../n8n/client.ts"
 import { availableChannels, channelsFor } from "./access-channels.ts"
 import { can, effectiveScopes, type Instance, unsupportedVersion } from "./instances.ts"
+import { retrying } from "./problems.ts"
 
 /**
  * Temporary access for agents to n8n instances. An agent asks for one or more instances, each with scopes and
@@ -1086,40 +1087,139 @@ export function checkCall(
   return beyond
 }
 
-export async function logCall(
-  ctx: Ctx,
-  requestId: string,
-  call: { instanceId: string | null; method: string; path: string; status: number; refused?: string },
-) {
-  // One transaction: the call and its count are kept together. A call that ends after the access did (it started
-  // before) marks the Telegram message as outdated, so the next run shows it in the count. A call to an instance
-  // deleted meanwhile is kept without it, as the calls made before the deletion are; one being deleted is waited for.
-  await ctx.db.transaction(async (tx) => {
-    const instanceId = call.instanceId
+// --- The calls made with an access
+
+/** The most changes one access may send to n8n. Every one of them stays listed on its request. */
+export const MAX_CHANGES = 1000
+/** Of the other calls of an access (refused calls and reads), the latest this many are kept; all are counted. */
+export const MAX_OTHER_CALLS = 500
+/** The longest path and refusal reason kept with a call, in characters; a longer one is cut and ends with "…". */
+export const MAX_CALL_PATH = 1024
+export const MAX_CALL_REASON = 500
+/** Methods that read: a call with any other method that n8n-ops lets through is a change (schema.ts). */
+const READ_METHODS = new Set(["GET", "HEAD", "OPTIONS"])
+export const isChange = (method: string) => !READ_METHODS.has(method)
+
+/** The text cut to `max` characters (code points, as PostgreSQL counts them), ending with "…" when it was longer. */
+export function cutText(text: string, max: number) {
+  if (text.length <= max) return text
+  const chars = Array.from(text)
+  return chars.length <= max ? text : `${chars.slice(0, max - 1).join("")}…`
+}
+
+type CallTarget = { instanceId: string | null; method: string; path: string }
+
+/**
+ * The call's row as stored: path and reason cut to their bounds. A call to an instance deleted meanwhile is kept
+ * without it, as the calls made before the deletion are; one being deleted is waited for.
+ */
+function callRow(requestId: string, call: CallTarget & { status: number | null; refused?: string }) {
+  return {
+    requestId,
+    instanceId: call.instanceId
       ? sql`(select ${instances.id} from ${instances} where ${instances.id} = ${call.instanceId} for key share)`
-      : null
-    await tx.insert(accessCalls).values({ requestId, ...call, instanceId, refused: call.refused ?? null })
-    await tx
-      .update(accessRequests)
-      .set({
-        callCount: sql`${accessRequests.callCount} + 1`,
-        telegramClosedAt: sql`CASE WHEN ${accessRequests.status} IN ('released', 'expired', 'revoked') THEN NULL ELSE ${accessRequests.telegramClosedAt} END`,
-      })
-      .where(eq(accessRequests.id, requestId))
-  })
+      : null,
+    method: call.method,
+    path: cutText(call.path, MAX_CALL_PATH),
+    status: call.status,
+    refused: call.refused === undefined ? null : cutText(call.refused, MAX_CALL_REASON),
+  }
+}
+
+/**
+ * Counts calls on the request: the update holds its row, so the calls of one access are counted, limited and trimmed
+ * one at a time. A call that ends after the access did (it started before) marks the Telegram message as outdated, so
+ * the next run shows it in the counts.
+ */
+async function countCalls(tx: Tx, requestId: string, by: { calls: number; refused: number }) {
+  await tx
+    .update(accessRequests)
+    .set({
+      callCount: sql`${accessRequests.callCount} + ${by.calls}`,
+      refusedCount: sql`${accessRequests.refusedCount} + ${by.refused}`,
+      telegramClosedAt: sql`CASE WHEN ${accessRequests.status} IN ('released', 'expired', 'revoked') THEN NULL ELSE ${accessRequests.telegramClosedAt} END`,
+    })
+    .where(eq(accessRequests.id, requestId))
+}
+
+/**
+ * Keeps the latest MAX_OTHER_CALLS other calls of the request; changes are never removed. Deleting an instance sets
+ * the instance of its calls to null and can hold some of those rows while it waits for another: a transaction that
+ * trims runs again when PostgreSQL ends it as a deadlock (`retrying`).
+ */
+async function trimOtherCalls(tx: Tx, requestId: string) {
+  await tx.execute(sql`
+    DELETE FROM ${accessCalls} WHERE ${accessCalls.id} IN (
+      SELECT ${accessCalls.id} FROM ${accessCalls}
+      WHERE ${accessCalls.requestId} = ${requestId} AND NOT ${accessCalls.change}
+      ORDER BY ${accessCalls.at} DESC, ${accessCalls.id} DESC
+      OFFSET ${MAX_OTHER_CALLS}
+    )`)
+}
+
+/** Records a call n8n-ops refused, or a read it forwarded, once it ended. */
+export async function logCall(ctx: Ctx, requestId: string, call: CallTarget & { status: number; refused?: string }) {
+  // One transaction: the call and its counts are kept together. The insert comes first, so a call waits for an
+  // instance being deleted before it holds the request row.
+  await retrying(() =>
+    ctx.db.transaction(async (tx) => {
+      await tx.insert(accessCalls).values(callRow(requestId, call))
+      await countCalls(tx, requestId, { calls: 1, refused: call.refused === undefined ? 0 : 1 })
+      await trimOtherCalls(tx, requestId)
+    }),
+  )
   // An open request page shows the new call and count; the event stream sends at most one change a second.
   changed(ctx, "access")
 }
 
-/** Calls n8n-ops refused, by request; a request without any is left out. */
-export async function refusedCounts(ctx: Ctx, ids: string[]): Promise<Map<string, number>> {
-  if (!ids.length) return new Map()
-  const rows = await ctx.db
-    .select({ id: accessCalls.requestId, n: count() })
-    .from(accessCalls)
-    .where(and(inArray(accessCalls.requestId, ids), isNotNull(accessCalls.refused)))
-    .groupBy(accessCalls.requestId)
-  return new Map(rows.map((r) => [r.id, r.n]))
+/**
+ * Records a change before it is sent to n8n, with no answer yet, so it is listed even if its answer is never
+ * recorded. Null when the access has made MAX_CHANGES changes; nothing is recorded then.
+ */
+export async function reserveChange(ctx: Ctx, requestId: string, call: CallTarget): Promise<string | null> {
+  const id = await ctx.db.transaction(async (tx) => {
+    // The request row first: changes of one access wait here for each other, so the limit holds.
+    await tx
+      .select({ id: accessRequests.id })
+      .from(accessRequests)
+      .where(eq(accessRequests.id, requestId))
+      .for("update")
+    const [made] = await tx
+      .select({ n: count() })
+      .from(accessCalls)
+      .where(and(eq(accessCalls.requestId, requestId), eq(accessCalls.change, true)))
+    if ((made?.n ?? 0) >= MAX_CHANGES) return null
+    const [row] = await tx
+      .insert(accessCalls)
+      .values(callRow(requestId, { ...call, status: null }))
+      .returning({ id: accessCalls.id })
+    await countCalls(tx, requestId, { calls: 1, refused: 0 })
+    return row?.id ?? null
+  })
+  if (id) changed(ctx, "access")
+  return id
+}
+
+/** A recorded change that n8n-ops refused after all, before sending it: it no longer counts as a change. */
+export async function refuseChange(ctx: Ctx, requestId: string, id: string, status: number, reason: string) {
+  await retrying(() =>
+    ctx.db.transaction(async (tx) => {
+      // Already counted as a call when it was recorded; now as refused too.
+      await countCalls(tx, requestId, { calls: 0, refused: 1 })
+      await tx
+        .update(accessCalls)
+        .set({ status, refused: cutText(reason, MAX_CALL_REASON) })
+        .where(and(eq(accessCalls.id, id), eq(accessCalls.requestId, requestId)))
+      await trimOtherCalls(tx, requestId)
+    }),
+  )
+  changed(ctx, "access")
+}
+
+/** n8n's answer to a recorded change. */
+export async function finishChange(ctx: Ctx, id: string, status: number) {
+  await ctx.db.update(accessCalls).set({ status }).where(eq(accessCalls.id, id))
+  changed(ctx, "access")
 }
 
 // --- For the UI
@@ -1170,7 +1270,7 @@ export async function listAccess(ctx: Ctx) {
 }
 
 export async function getAccess(ctx: Ctx, id: string) {
-  // One snapshot, so the count, the refused count and the calls listed agree while calls are being logged.
+  // One snapshot, so the counts and the calls listed agree while calls are being logged.
   const read = await ctx.db.transaction(
     async (tx) => {
       const [row] = await tx
@@ -1180,22 +1280,25 @@ export async function getAccess(ctx: Ctx, id: string) {
         .where(eq(accessRequests.id, id))
       if (!row) return null
       const children = (await instancesOf(tx, [id])).get(id) ?? []
+      // Every change the access sent to n8n, and the latest of the other calls (no more are kept).
+      const newest = [desc(accessCalls.at), desc(accessCalls.id)]
+      const others = tx
+        .select({ id: accessCalls.id })
+        .from(accessCalls)
+        .where(and(eq(accessCalls.requestId, id), eq(accessCalls.change, false)))
+        .orderBy(...newest)
+        .limit(MAX_OTHER_CALLS)
       const calls = await tx
         .select()
         .from(accessCalls)
-        .where(eq(accessCalls.requestId, id))
-        .orderBy(desc(accessCalls.at))
-        .limit(500)
-      const [refused] = await tx
-        .select({ n: count() })
-        .from(accessCalls)
-        .where(and(eq(accessCalls.requestId, id), isNotNull(accessCalls.refused)))
-      return { row, children, calls, refusedCount: refused?.n ?? 0 }
+        .where(and(eq(accessCalls.requestId, id), or(eq(accessCalls.change, true), inArray(accessCalls.id, others))))
+        .orderBy(...newest)
+      return { row, children, calls }
     },
     { isolationLevel: "repeatable read", accessMode: "read only" },
   )
   if (!read) return null
-  const { row, children, calls, refusedCount } = read
+  const { row, children, calls } = read
   const current = await currentNames(
     ctx.db,
     children.flatMap((c) => (c.instanceId ? [c.instanceId] : [])),
@@ -1233,7 +1336,6 @@ export async function getAccess(ctx: Ctx, id: string) {
     changed: differsFromAsked(row.r, children),
     token: row.tokenName,
     calls: calls.map((c) => ({ ...c, instance: c.instanceId ? (callNames.get(c.instanceId) ?? null) : null })),
-    refusedCount,
     ...(editor ? { editor } : {}),
   }
 }

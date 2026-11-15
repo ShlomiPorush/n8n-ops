@@ -156,4 +156,33 @@ describe("executionsSince", () => {
     const later = { listExecutions: async (q: Query) => (q.cursor ? Promise.reject(rejected()) : first) }
     await expect(executionsSince(later, since)).rejects.toThrow("400")
   })
+
+  it("throws, without returning what it read, once its signal aborts", async () => {
+    const stop = new AbortController()
+    let calls = 0
+    const client = {
+      listExecutions: async (_q: Query, signal?: AbortSignal) => {
+        calls++
+        expect(signal).toBe(stop.signal)
+        if (calls === 3) stop.abort(new Error("deadline"))
+        return { data: [run("a", "2026-10-02T00:00:00.000Z")], nextCursor: `c${calls}` }
+      },
+    }
+    await expect(executionsSince(client, since, stop.signal)).rejects.toThrow("deadline")
+    expect(calls).toBe(3)
+  })
+
+  it("passes its signal on where n8n rejects the filter", async () => {
+    const stop = new AbortController()
+    const signals: (AbortSignal | undefined)[] = []
+    const client = {
+      listExecutions: async (q: Query, signal?: AbortSignal) => {
+        signals.push(signal)
+        if (q.startedAfter) throw rejected()
+        return { data: [], nextCursor: null }
+      },
+    }
+    await executionsSince(client, since, stop.signal)
+    expect(signals).toEqual([stop.signal, stop.signal])
+  })
 })

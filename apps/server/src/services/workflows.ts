@@ -43,7 +43,10 @@ export function calledWorkflowIds(workflow: Pick<N8nWorkflow, "nodes">): string[
 
 type ExecutionPage = { data: Pick<N8nExecution, "workflowId" | "status" | "startedAt">[]; nextCursor: string | null }
 type ExecutionLister = {
-  listExecutions(query: { limit?: number; cursor?: string; startedAfter?: string }): Promise<ExecutionPage>
+  listExecutions(
+    query: { limit?: number; cursor?: string; startedAfter?: string },
+    signal?: AbortSignal,
+  ): Promise<ExecutionPage>
 }
 
 /** Older n8n (2.30 among them) has no `startedAfter` filter on GET /executions and answers 400 to it. */
@@ -55,22 +58,23 @@ const rejectsStartedAfter = (error: unknown) =>
  * the end. When the instance does not know the `startedAfter` filter, it reads all executions and keeps those that
  * started in the window: n8n orders by ID, not by start, and a run that waited in the queue starts after newer ones,
  * so an older page can still hold one. A run that never started (cancelled while queued) is not counted, as with the
- * filter. It stops if n8n hands back a cursor it already gave.
+ * filter. It stops if n8n hands back a cursor it already gave, and throws once `signal` aborts.
  */
-export async function executionsSince(client: ExecutionLister, since: string) {
+export async function executionsSince(client: ExecutionLister, since: string, signal?: AbortSignal) {
   const sinceMs = Date.parse(since)
   const out: ExecutionPage["data"] = []
   const seen = new Set<string>()
   let filtered = true
   let cursor: string | undefined
   for (;;) {
+    signal?.throwIfAborted()
     let res: ExecutionPage
     try {
-      res = await client.listExecutions({ limit: 250, cursor, ...(filtered ? { startedAfter: since } : {}) })
+      res = await client.listExecutions({ limit: 250, cursor, ...(filtered ? { startedAfter: since } : {}) }, signal)
     } catch (error) {
       if (!filtered || cursor || !rejectsStartedAfter(error)) throw error
       filtered = false
-      res = await client.listExecutions({ limit: 250 })
+      res = await client.listExecutions({ limit: 250 }, signal)
     }
     for (const { workflowId, status, startedAt } of res.data)
       if (filtered || (startedAt && Date.parse(startedAt) >= sinceMs)) out.push({ workflowId, status, startedAt })
@@ -83,6 +87,9 @@ export async function executionsSince(client: ExecutionLister, since: string) {
 
 /** At most this many instances sync at once: each sync lists every workflow and pages through 30 days of runs. */
 const SYNCS_AT_ONCE = 2
+
+/** The longest a sync may spend reading an instance's workflows and runs from n8n, so it always gives its slot back. */
+const READ_DEADLINE_MS = 30 * 60_000
 let syncing = 0
 const slotWaiters: (() => void)[] = []
 
@@ -117,9 +124,13 @@ export const lastWorkflowSync = (instanceId: string) => startedAt.get(instanceId
  * instance: an earlier sync that read an older list would otherwise delete what a later one stored. A call while
  * one waits joins it, so a burst of requests costs one running sync and one after it. The instance is read again
  * when its sync starts, so a sync that waited follows a change made meanwhile (removed, map no longer chosen, a new
- * key or address).
+ * key or address). Reading from n8n stops after `readDeadlineMs`; the sync then fails before it writes anything.
  */
-export function syncWorkflows(ctx: Ctx, instance: Pick<Instance, "id">): Promise<{ workflows: number }> {
+export function syncWorkflows(
+  ctx: Ctx,
+  instance: Pick<Instance, "id">,
+  { readDeadlineMs = READ_DEADLINE_MS }: { readDeadlineMs?: number } = {},
+): Promise<{ workflows: number }> {
   const queued = waiting.get(instance.id)
   if (queued) return queued
   const run = oneAtATime(`workflows:${instance.id}`, async () => {
@@ -132,7 +143,7 @@ export function syncWorkflows(ctx: Ctx, instance: Pick<Instance, "id">): Promise
         if (!fresh) throw new Error("The instance was removed.")
         if (!can(fresh, "map")) throw new Error(`The workflow map is not chosen for ${fresh.name}.`)
         if (unsupportedVersion(fresh)) throw new Error(unsupportedVersionText)
-        return syncWorkflowsNow(ctx, fresh)
+        return syncWorkflowsNow(ctx, fresh, readDeadlineMs)
       })
     } finally {
       running.delete(instance.id)
@@ -142,12 +153,25 @@ export function syncWorkflows(ctx: Ctx, instance: Pick<Instance, "id">): Promise
   return run
 }
 
-async function syncWorkflowsNow(ctx: Ctx, instance: Instance) {
+async function syncWorkflowsNow(ctx: Ctx, instance: Instance, readDeadlineMs: number) {
   const client = clientFor(ctx, instance)
-  const all = await client.listWorkflows()
-  const stats = new Map<string, { runs: number; errors: number; last: Date | null }>()
   const since = new Date(Date.now() - 30 * 86_400_000).toISOString()
-  for (const e of await executionsSince(client, since)) {
+  const deadline = AbortSignal.timeout(readDeadlineMs)
+  let all: N8nWorkflow[]
+  let runs: Awaited<ReturnType<typeof executionsSince>>
+  try {
+    all = await client.listWorkflows(undefined, deadline)
+    runs = await executionsSince(client, since, deadline)
+    deadline.throwIfAborted()
+  } catch (error) {
+    if (!deadline.aborted) throw error
+    const minutes = Math.round(readDeadlineMs / 60_000)
+    throw new Error(
+      `The workflow sync of ${instance.name} stopped: reading it from n8n took longer than ${minutes} minutes. Its workflow map keeps the last complete sync.`,
+    )
+  }
+  const stats = new Map<string, { runs: number; errors: number; last: Date | null }>()
+  for (const e of runs) {
     const s = stats.get(e.workflowId) ?? { runs: 0, errors: 0, last: null }
     s.runs++
     if (e.status === "error" || e.status === "crashed") s.errors++

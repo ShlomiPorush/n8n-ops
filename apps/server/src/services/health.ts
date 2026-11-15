@@ -1,4 +1,10 @@
-import { parseQueueMetrics, type QueueMetrics, readMetricsText, workerDetails } from "@n8n-ops/shared"
+import {
+  parseQueueMetrics,
+  QUEUE_WORKERS_PER_PROBE,
+  type QueueMetrics,
+  readMetricsText,
+  workerDetails,
+} from "@n8n-ops/shared"
 import { and, eq, gt, like, or, sql } from "drizzle-orm"
 import { z } from "zod"
 import { type Ctx, changed } from "../context.ts"
@@ -301,12 +307,20 @@ async function closeWorkerAlerts(tx: DbLike, instanceId: string, ends: (key: str
 }
 
 /**
- * Keeps the worker conditions to the source of this report. Found next to the main: conditions of typed URLs end,
- * and a found worker that is gone ends as removed, but only after the container list was read in full. Typed
- * URLs, or no discovery: conditions of found workers end.
+ * Keeps the worker conditions to the source of this report. Typed URLs no longer in the instance's list are not
+ * checked any more, so their conditions end. Found next to the main: conditions of typed URLs end, and a found
+ * worker that is gone ends as removed, but only after the container list was read in full. Typed URLs, or no
+ * discovery: conditions of found workers end.
  */
-async function settleWorkerSources(tx: DbLike, instanceId: string, report: HealthReport) {
+async function settleWorkerSources(tx: DbLike, instanceId: string, report: HealthReport, typed: string[]) {
   const found = `worker:${instanceId}:docker://`
+  const stillTyped = new Set(typed.map((url) => `worker:${instanceId}:${url}`))
+  await closeWorkerAlerts(
+    tx,
+    instanceId,
+    (key) => !key.startsWith(found) && !stillTyped.has(key),
+    "Closed: the worker URL is no longer checked",
+  )
   const d = report.discovery
   if (!d) {
     // Only typed worker URLs end the conditions of found workers. A report without discovery for another reason
@@ -343,6 +357,16 @@ async function settleWorkerSources(tx: DbLike, instanceId: string, report: Healt
  * The reports of one instance are applied one at a time, alerts included, so an earlier check's alerts never come
  * after a later check's. The transaction uses only its own connection: settings are read before it.
  */
+/**
+ * The most found queue workers an instance keeps conditions for, open or counting failed checks: far above any real
+ * deployment. A failing found worker beyond it gets no condition until others recover or are removed. Typed worker
+ * URLs are the owner's own list and are not counted.
+ */
+const FOUND_WORKER_CONDITIONS = 500
+
+/** Instances at that limit, so it is logged once when reached, not on every check. */
+const foundWorkersAtLimit = new Set<string>()
+
 export function applyHealth(ctx: Ctx, instanceId: string, given: HealthReport, ticket: CheckTicket) {
   return oneAtATime(healthTurn(instanceId), () => applyHealthNow(ctx, instanceId, given, ticket))
 }
@@ -428,16 +452,36 @@ async function applyHealthNow(ctx: Ctx, instanceId: string, given: HealthReport,
       ))
     // The history keeps every applied check of the main, with the facts it was made with.
     await recordCheck(tx, current.id, report, { at: now, queueMode, alertAfter: after, alertQueued })
+    let atLimit: boolean | null = null
     if (queueMode) {
-      await settleWorkerSources(tx, current.id, report)
+      await settleWorkerSources(tx, current.id, report, current.workerHealthUrls)
       // A URL listed twice is one worker: its condition moves once per check, on its first verified result.
-      const moved = new Set<string>()
+      // Only a verified state moves an alert: a worker not checked, or running without its health check, keeps it.
+      const checked = new Map<string, (typeof report.workers)[number]>()
       for (const w of report.workers) {
-        // Only a verified state moves an alert: a worker not checked, or running without its health check, keeps it.
         if (w.state === "not-checked" || w.state === "not-verified") continue
         const key = `worker:${current.id}:${w.url}`
-        if (moved.has(key)) continue
-        moved.add(key)
+        if (!checked.has(key)) checked.set(key, w)
+      }
+      const found = `worker:${current.id}:docker://`
+      const kept = await tx
+        .select({ key: alertState.key, active: alertState.active })
+        .from(alertState)
+        .where(and(like(alertState.key, `${found}%`), openOrPending))
+      const open = new Set(kept.filter((k) => k.active).map((k) => k.key))
+      // Found workers that recover in this check make room before a new one takes it, whatever their order.
+      const held = new Set(kept.map((k) => k.key).filter((key) => !checked.get(key)?.ok))
+      let refused = false
+      for (const [key, w] of checked) {
+        // A failing found worker without an open alert counts toward the limit; an open alert always moves.
+        if (!w.ok && key.startsWith(found) && !open.has(key)) {
+          const fits = held.has(key) ? held.size <= FOUND_WORKER_CONDITIONS : held.size < FOUND_WORKER_CONDITIONS
+          if (!fits) {
+            refused = true
+            continue
+          }
+          held.add(key)
+        }
         await setConditionIn(
           tx,
           key,
@@ -452,6 +496,7 @@ async function applyHealthNow(ctx: Ctx, instanceId: string, given: HealthReport,
           alerting,
         )
       }
+      atLimit = refused || held.size >= FOUND_WORKER_CONDITIONS
       if (measured) {
         await setConditionIn(
           tx,
@@ -467,9 +512,25 @@ async function applyHealthNow(ctx: Ctx, instanceId: string, given: HealthReport,
         )
       }
     }
-    return { current, health }
+    // A closed queue worker condition counts like none, so it is not kept.
+    await tx
+      .delete(alertState)
+      .where(
+        and(like(alertState.key, `worker:${current.id}:%`), eq(alertState.active, false), eq(alertState.failures, 0)),
+      )
+    return { current, health, atLimit }
   })
   if (!applied) return null
+  if (applied.atLimit && !foundWorkersAtLimit.has(instanceId)) {
+    foundWorkersAtLimit.add(instanceId)
+    ctx.log.warn(
+      "queue worker alerts are at their limit: new queue workers get no alert until others recover or are removed",
+      {
+        instance: applied.current.name,
+        limit: FOUND_WORKER_CONDITIONS,
+      },
+    )
+  } else if (!applied.atLimit) foundWorkersAtLimit.delete(instanceId)
   if (applied.health !== applied.current.health) changed(ctx, "instances", "overview")
   return applied.health
 }
@@ -495,8 +556,34 @@ export async function applyWorkerReport(
     })
     return { invalid: true }
   }
+  const workers = askedWorkers(report.data.workers, payload)
+  if (workers.length < report.data.workers.length)
+    ctx.log.warn("worker reported queue workers its health check did not ask about; they are not counted", {
+      instance: instance.name,
+      worker,
+      count: report.data.workers.length - workers.length,
+    })
+  const data = { ...report.data, workers }
   const ticket = checkTicket.safeParse(payload.check)
-  if (ticket.success) await applyHealth(ctx, instance.id, { ...report.data, via: "worker" }, ticket.data)
+  if (ticket.success) await applyHealth(ctx, instance.id, { ...data, via: "worker" }, ticket.data)
   else ctx.log.info("health report of a probe made before this release not applied", { instance: instance.name })
-  return report.data
+  return data
+}
+
+const strings = (value: unknown) =>
+  Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : []
+
+/**
+ * The queue workers a probe job asked about: the worker URLs it carried, and, when it asked the worker to find them
+ * next to the main, as many found ones as one check reports. A report counts no others.
+ */
+function askedWorkers<W extends { url: string }>(workers: W[], payload: Record<string, unknown>) {
+  const overrides = (payload.overrides ?? {}) as { workerHealthUrls?: unknown }
+  const typed = new Set([...strings(payload.workers), ...strings(overrides.workerHealthUrls)])
+  let found = 0
+  return workers.filter(
+    (w) =>
+      typed.has(w.url) ||
+      (payload.discover === true && w.url.startsWith("docker://") && found++ < QUEUE_WORKERS_PER_PROBE),
+  )
 }

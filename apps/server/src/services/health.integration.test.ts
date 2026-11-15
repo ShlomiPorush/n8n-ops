@@ -163,7 +163,10 @@ describe("applyHealth", () => {
   })
 
   it("closes the queue alerts quietly when the instance leaves queue mode", async () => {
-    await ctx.db.update(instances).set({ queueMode: true }).where(eq(instances.id, id))
+    await ctx.db
+      .update(instances)
+      .set({ queueMode: true, workerHealthUrls: ["http://worker:5678/healthz"] })
+      .where(eq(instances.id, id))
     const down = { url: "http://worker:5678/healthz", ok: false, status: 0, ms: 1, error: "refused" }
     await thrice(report({ workers: [down] }))
     expect((await conditions()).filter((c) => c.active)).toHaveLength(1)
@@ -256,7 +259,10 @@ describe("applyHealth", () => {
   })
 
   it("ends the alerts of the other source when the workers start being found, and back", async () => {
-    await ctx.db.update(instances).set({ queueMode: true }).where(eq(instances.id, id))
+    await ctx.db
+      .update(instances)
+      .set({ queueMode: true, workerHealthUrls: ["http://w:5678/healthz"] })
+      .where(eq(instances.id, id))
     const typed = { url: "http://w:5678/healthz", ok: false, status: 0, ms: 1, error: "refused" }
     await thrice(report({ workers: [typed] }))
     const foundDown = { url: "docker://acme-w-1", name: "acme-w-1", state: "down", ok: false, status: 0, ms: 1 }
@@ -312,7 +318,10 @@ describe("applyHealth", () => {
   })
 
   it("applies typed worker URLs when the main could not be collected, and ends found-worker alerts for them", async () => {
-    await ctx.db.update(instances).set({ queueMode: true }).where(eq(instances.id, id))
+    await ctx.db
+      .update(instances)
+      .set({ queueMode: true, workerHealthUrls: ["http://w:5678/healthz"] })
+      .where(eq(instances.id, id))
     const found = { url: "docker://acme-w-1", name: "acme-w-1", state: "down", ok: false, status: 0, ms: 1 }
     await applyHealth(
       ctx,
@@ -550,12 +559,15 @@ describe("queue workers a health check asked about", () => {
         .sort(),
     )
     expect((stored.workers as unknown[]).length).toBe(50)
-    expect(((await row())?.healthDetail as { workers: unknown[] }).workers).toHaveLength(50)
+    expect(((await row())?.healthDetail as { workers?: unknown[] } | undefined)?.workers).toHaveLength(50)
   })
 
   it("counts only the typed worker URLs the check carried", async () => {
     const typed = "http://w-1:5678/healthz"
-    await ctx.db.update(instances).set({ queueMode: true, workerHealthUrls: [typed] }).where(eq(instances.id, id))
+    await ctx.db
+      .update(instances)
+      .set({ queueMode: true, workerHealthUrls: [typed] })
+      .where(eq(instances.id, id))
     const result = inside([typedDown(typed), ...names(100, "http://other").map((u) => typedDown(`${u}/healthz`))])
     await answer(result)
     await answer(result)
@@ -563,7 +575,7 @@ describe("queue workers a health check asked about", () => {
     await answer(result)
     expect(await workerDownSent()).toHaveLength(1)
     expect((await workerRows()).map((c) => c.key)).toEqual([`worker:${id}:${typed}`])
-    expect(((await row())?.healthDetail as { workers: unknown[] }).workers).toHaveLength(1)
+    expect(((await row())?.healthDetail as { workers?: unknown[] } | undefined)?.workers).toHaveLength(1)
   })
 
   it("counts no queue worker for a check made while the instance was not in queue mode", async () => {
@@ -584,8 +596,17 @@ describe("queue workers a health check asked about", () => {
 
   it("alerts on typed worker URLs reported by workers of earlier releases", async () => {
     const typed = "http://w-1:5678/healthz"
-    await ctx.db.update(instances).set({ queueMode: true, workerHealthUrls: [typed] }).where(eq(instances.id, id))
-    const result = { main: ok, readiness: ok, queue: null, checkedAt: new Date().toISOString(), workers: [typedDown(typed)] }
+    await ctx.db
+      .update(instances)
+      .set({ queueMode: true, workerHealthUrls: [typed] })
+      .where(eq(instances.id, id))
+    const result = {
+      main: ok,
+      readiness: ok,
+      queue: null,
+      checkedAt: new Date().toISOString(),
+      workers: [typedDown(typed)],
+    }
     for (let i = 0; i < 3; i++) await answer(result, (check) => ({ workers: [typed], check }))
     expect(await workerDownSent()).toHaveLength(1)
   })

@@ -1,10 +1,11 @@
-import { and, asc, eq, inArray, isNull, lt, lte, sql } from "drizzle-orm"
+import { and, asc, eq, inArray, isNull, like, lt, lte, sql } from "drizzle-orm"
 import { type Ctx, changed } from "../context.ts"
 import type { Db } from "../db/client.ts"
 import { errorCode } from "../db/errors.ts"
 import {
   affectedWorkflowAliases,
   affectedWorkflows,
+  alertState,
   failures,
   instances,
   type ProblemAction,
@@ -449,6 +450,8 @@ export async function deleteInstance(ctx: Pick<Ctx, "db">, id: string) {
         for (const p of more) locked.add(p)
       }
       await tx.delete(instances).where(eq(instances.id, id))
+      // The instance's queue worker conditions go with it.
+      await tx.delete(alertState).where(like(alertState.key, `worker:${id}:%`))
       const ids = [...locked]
       if (ids.length) {
         const empty = sql`not exists (select 1 from ${affectedWorkflows} where ${affectedWorkflows.problemId} = ${problems.id})`

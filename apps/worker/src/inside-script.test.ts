@@ -5,7 +5,7 @@ import { createServer as createHttps } from "node:https"
 import type { AddressInfo } from "node:net"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { mainCheckOutput } from "@n8n-ops/shared"
+import { METRICS_MAX_BYTES, mainCheckOutput } from "@n8n-ops/shared"
 import { afterEach, beforeAll, describe, expect, it } from "vitest"
 import { MAIN_CHECK } from "./inside.ts"
 
@@ -243,6 +243,79 @@ describe("the check in the main", () => {
       state: "failed",
       reason: "the answer is too large",
     })
+  })
+
+  it("reads gauges with labels, tabs and Windows line ends", async () => {
+    const text = [
+      'n8n_version_info{version="v2.44.3",major="2"} 1',
+      'n8n_scaling_mode_queue_jobs_waiting{queue="jobs"}\t3',
+      'n8n_scaling_mode_queue_jobs_active{queue="jobs"} 1',
+      "n8n_scaling_mode_queue_jobs_completed_total 450",
+      "n8n_scaling_mode_queue_jobs_failed_total 2",
+    ].join("\r\n")
+    const port = await listen(n8n({ ...healthy, "/metrics": answer(200, text) }))
+    expect(await output(at(port, { N8N_METRICS: "true" }))).toMatchObject({
+      metrics: { state: "read" },
+      queue: { waiting: 3, active: 1, completed: 450, failed: 2 },
+      version: "2.44.3",
+    })
+  })
+
+  it.each([
+    ["a new line", "\n"],
+    ["a carriage return", "\r"],
+    ["a line separator", " "],
+    ["a paragraph separator", " "],
+  ])("takes each figure and the version from its own line, with lines ended by %s", async (_, end) => {
+    const text = [
+      "n8n_version_info{a",
+      "n8n_scaling_mode_queue_jobs_waiting",
+      "5",
+      "n8n_scaling_mode_queue_jobs_waiting{a",
+      'n8n_scaling_mode_queue_jobs_active{queue="jobs",version="v9.9.9"} 7',
+    ].join(end)
+    const port = await listen(n8n({ ...healthy, "/metrics": answer(200, text) }))
+    const out = await output(at(port, { N8N_METRICS: "true", EXECUTIONS_MODE: "queue" }))
+    expect(out.metrics).toEqual({ state: "no-queue-figures" })
+    expect(out.queue).toBeUndefined()
+    expect(out.version).toBeUndefined()
+  })
+
+  // About 100,000 lines that open a label set and never close it, just under the 4 MiB the check reads.
+  const MALFORMED_LINES = 100_000
+  const gauges = [
+    "n8n_scaling_mode_queue_jobs_waiting 3",
+    "n8n_scaling_mode_queue_jobs_active 1",
+    "n8n_scaling_mode_queue_jobs_completed_total 450",
+    "n8n_scaling_mode_queue_jobs_failed_total 2",
+  ].join("\n")
+  /** Runs the check on a metrics text near the size limit; it must answer well within its 8 s deadline. */
+  const quickly = async (text: string) => {
+    expect(Buffer.byteLength(text)).toBeLessThan(METRICS_MAX_BYTES)
+    expect(Buffer.byteLength(text)).toBeGreaterThan(METRICS_MAX_BYTES * 0.8)
+    const port = await listen(n8n({ ...healthy, "/metrics": answer(200, text) }))
+    const result = await run(at(port, { N8N_METRICS: "true", EXECUTIONS_MODE: "queue" }))
+    expect(result.code).toBe(0)
+    expect(result.ms).toBeLessThan(5000)
+    return mainCheckOutput.parse(JSON.parse(result.stdout))
+  }
+
+  it("reads the queue figures quickly after many unclosed label sets", { timeout: 30_000 }, async () => {
+    const text = `n8n_version_info{version="v2.44.3"} 1\n${"n8n_scaling_mode_queue_jobs_waiting{a\n".repeat(MALFORMED_LINES)}${gauges}\n`
+    expect(await quickly(text)).toMatchObject({
+      metrics: { state: "read" },
+      queue: { waiting: 3, active: 1, completed: 450, failed: 2 },
+      version: "2.44.3",
+    })
+  })
+
+  it("reads the queue figures quickly after many unclosed version_info label sets", { timeout: 30_000 }, async () => {
+    const out = await quickly(`${"n8n_version_info{a\n".repeat(MALFORMED_LINES * 2)}${gauges}\n`)
+    expect(out).toMatchObject({
+      metrics: { state: "read" },
+      queue: { waiting: 3, active: 1, completed: 450, failed: 2 },
+    })
+    expect(out.version).toBeUndefined()
   })
 
   describe("HTTPS", () => {

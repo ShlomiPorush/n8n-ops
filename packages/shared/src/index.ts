@@ -55,6 +55,8 @@ export {
   workerDetails,
 } from "./main-check.ts"
 export {
+  METRIC_GAP,
+  METRIC_LABELS,
   METRICS_MAX_BYTES,
   parseQueueMetrics,
   parseVersionMetric,

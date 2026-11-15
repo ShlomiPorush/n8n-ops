@@ -1,6 +1,6 @@
 import { formatDuration, formatUsed, usedMinutes } from "@n8n-ops/shared"
 import { Ban, Check, KeyRound, Plug, Plus, X } from "lucide-react"
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Link, useNavigate, useParams, useSearchParams } from "react-router"
 import { useCrumb } from "@/app/chrome"
 import { useConfirm } from "@/components/confirm"
@@ -17,6 +17,7 @@ import {
   Panel,
   PanelHead,
   RefreshNote,
+  TryAgain,
   UserText,
 } from "@/components/kit"
 import { ListWithPanel } from "@/components/list-panel"
@@ -61,11 +62,13 @@ import {
   shortNames,
   workflowLabel,
 } from "@/lib/access-edit"
+import { loadsByScrolling } from "@/lib/access-history"
 import { ApiError, useApi, useApiMutation } from "@/lib/api"
 import { addEntries } from "@/lib/entries"
 import { loadView } from "@/lib/load-state"
 import { counts, n, plural } from "@/lib/numbers"
 import { formatTime, useTimeFormat } from "@/lib/time"
+import { useAccessHistory } from "@/lib/use-access-history"
 
 export type AccessStatus = "pending" | "approved" | "denied" | "expired" | "released" | "revoked"
 
@@ -138,9 +141,13 @@ export function AccessPage() {
   const [params, setParams] = useSearchParams()
   const view = params.get("view") === "all" ? "all" : "open"
   const rows = useApi<AccessRow[]>("/access", { refetchInterval: 30_000 })
+  // Older ended requests, in the All view: as its end comes into view, or a page per press in an order where they
+  // would not come last (set from the sort below).
+  const [byScrolling, setByScrolling] = useState(true)
+  const older = useAccessHistory(rows.data, { active: view === "all", auto: byScrolling })
   // A failed refresh keeps the rows; the head says so (TB-5, LD-12).
   const load = loadView(rows)
-  const all = rows.data ?? []
+  const all = older.rows ?? []
   const shown = all.filter((r) => view === "all" || r.status === "pending" || r.status === "approved")
   const waiting = all.filter((r) => r.status === "pending").length
   const active = all.filter((r) => r.status === "approved").length
@@ -163,6 +170,10 @@ export function AccessPage() {
       requested: { label: "Requested", kind: "date", value: (r) => new Date(r.requestedAt) },
     },
   })
+  const scrolls = loadsByScrolling(sort.control.isDefault, sort.control.state)
+  useEffect(() => setByScrolling(scrolls), [scrolls])
+  // While older requests may exist, the counts say so: "200+".
+  const orMore = older.more ? "+" : ""
   const rowProps = (r: AccessRow) => ({
     "data-state": r.id === id ? "selected" : undefined,
     "aria-current": r.id === id ? ("true" as const) : undefined,
@@ -216,14 +227,23 @@ export function AccessPage() {
               value: "all",
               label: (
                 <>
-                  All <small>{n(all.length)}</small>
+                  All <small>
+                    {n(all.length)}
+                    {orMore}
+                  </small>
                 </>
               ),
-              text: `All ${n(all.length)}`,
+              text: `All ${n(all.length)}${orMore}`,
             },
           ],
         }}
-        count={rows.data && shown.length > 0 ? plural(shown.length, "request") : undefined}
+        count={
+          rows.data && shown.length > 0
+            ? view === "all" && older.more
+              ? `${n(shown.length)}+ requests`
+              : plural(shown.length, "request")
+            : undefined
+        }
         sort={shown.length > 0 ? { control: sort.control, name: "access requests" } : undefined}
         listKey={view}
       />
@@ -308,6 +328,32 @@ export function AccessPage() {
             ))}
           </TableBody>
         </Table>
+      )}
+      {view === "all" && load === "ready" && shown.length > 0 && older.state && (
+        <p aria-live="polite" className="relative text-center text-small text-muted-foreground">
+          {/* Reaches above the end, so older requests are asked for before the reader gets there. */}
+          <span ref={older.endRef} aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 h-[400px]" />
+          {older.state === "failed" ? (
+            // Try again stays in place while it loads, so the focus stays on it (AX-6).
+            <>
+              {older.retrying ? null : "Could not load older requests. "}
+              <TryAgain busy={older.retrying} onClick={older.tryAgain} />
+            </>
+          ) : older.state === "loading" ? (
+            "Loading older requests…"
+          ) : older.state === "button" ? (
+            <Button
+              size="sm"
+              aria-busy={older.reading || undefined}
+              aria-disabled={older.reading || undefined}
+              onClick={() => !older.reading && older.loadOnce()}
+            >
+              Load older requests
+            </Button>
+          ) : (
+            `All ${plural(shown.length, "request")} shown`
+          )}
+        </p>
       )}
     </>
   )

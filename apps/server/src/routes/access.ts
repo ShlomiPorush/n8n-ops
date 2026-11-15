@@ -3,7 +3,15 @@ import { z } from "zod"
 import type { Ctx } from "../context.ts"
 import { requireUser } from "../http/middleware.ts"
 import { actorName, type Env } from "../http/types.ts"
-import { AccessError, approveAccess, denyAccess, getAccess, listAccess, revokeAccess } from "../services/access.ts"
+import {
+  AccessError,
+  approveAccess,
+  denyAccess,
+  getAccess,
+  listAccess,
+  listEndedAccess,
+  revokeAccess,
+} from "../services/access.ts"
 
 const STATUS: Record<string, 400 | 404 | 409> = {
   not_found: 404,
@@ -36,11 +44,29 @@ const approveBody = z.object({
     .optional(),
 })
 
+/**
+ * A page of ended requests: no cursor for the first page, or both parts of the one the previous page gave (a UTC
+ * time, and the request's id).
+ */
+const endedQuery = z
+  .object({
+    before: z.iso.datetime().optional(),
+    beforeId: z.string().uuid().optional(),
+  })
+  .strict()
+  .refine((q) => (q.before === undefined) === (q.beforeId === undefined))
+
 /** Access requests from agents, for people: list, details with every proxied call, approve, deny, revoke. */
 export function accessRoutes(ctx: Ctx) {
   const app = new Hono<Env>()
   app.use("*", requireUser(ctx))
   app.get("/", async (c) => c.json(await listAccess(ctx)))
+  app.get("/ended", async (c) => {
+    const parsed = endedQuery.safeParse(c.req.query())
+    if (!parsed.success) return c.json({ error: "invalid_cursor", message: "Reload the page and try again." }, 400)
+    const { before, beforeId } = parsed.data
+    return c.json(await listEndedAccess(ctx, before && beforeId ? { at: before, id: beforeId } : undefined))
+  })
   app.get("/:id", async (c) => {
     const row = await getAccess(ctx, c.req.param("id"))
     return row ? c.json(row) : c.json({ error: "not_found" }, 404)

@@ -699,14 +699,14 @@ describe("Approve in Telegram", () => {
   it("approves a request its message names in full", async () => {
     const a = await openInstance()
     const { id } = await requestAccess(ctx, await agent(), ask([a.name]))
-    expect(await pressed(`xa:${id}:0:f`)).toBe("Access approved")
+    expect(await pressed(`xa:${id}:0:g`)).toBe("Access approved")
     expect(await status(id)).toBe("approved")
   })
 
-  it("approves nothing from a message sent before Approve required a complete message", async () => {
+  it("approves nothing from a message drawn before today's", async () => {
     const a = await openInstance()
     const { id } = await requestAccess(ctx, await agent(), ask([a.name]))
-    for (const old of [`xa:${id}`, `xa:${id}:0`]) {
+    for (const old of [`xa:${id}`, `xa:${id}:0`, `xa:${id}:0:f`]) {
       expect(await pressed(old)).toBe("This message was out of date. Look at it again, then decide.")
       expect(await status(id)).toBe("pending")
     }
@@ -719,7 +719,7 @@ describe("Approve in Telegram", () => {
       ...ask([]),
       instances: [{ instance: a.name, scopes: ["workflow:read"], workflowIds }],
     })
-    expect(await pressed(`xa:${id}:0:f`)).toBe(
+    expect(await pressed(`xa:${id}:0:g`)).toBe(
       "Too long to approve in Telegram. Open the request in n8n-ops to approve it.",
     )
     expect(await status(id)).toBe("pending")
@@ -732,10 +732,10 @@ describe("Approve in Telegram", () => {
     const [a, b] = [await openInstance(), await openInstance()]
     const { id } = await requestAccess(ctx, await agent(), ask([a.name, b.name]))
     await editDraft(ctx, id, 0, { minutes: 15 })
-    for (const old of [`xa:${id}:0:f`, `xa:${id}:0`])
+    for (const old of [`xa:${id}:0:g`, `xa:${id}:0:f`, `xa:${id}:0`])
       expect(await pressed(old)).toBe("The request was changed since you looked at it. Look at it again, then decide.")
     expect(await status(id)).toBe("pending")
-    expect(await pressed(`xa:${id}:1:f`)).toBe("Access approved")
+    expect(await pressed(`xa:${id}:1:g`)).toBe("Access approved")
   })
 })
 

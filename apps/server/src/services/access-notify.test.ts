@@ -128,7 +128,7 @@ describe("request messages", () => {
     const sent = TelegramHtml.join([topicGoneNote(2147483647), text])
     expect([...telegramPlainText(sent)].length).toBeLessThan(4096)
     expect(String(text)).toMatch(/<\/code> and \d+ more\nWorkflows:\n(• n+…\n)+• and \d+ more\nFor /)
-    expect(String(text)).toContain(`\nWhat was done:\n${"s".repeat(499)}…\n`)
+    expect(String(text)).toContain(`\nWhat was done:\n<i>${"s".repeat(499)}…</i>\n`)
 
     // Only IDs, as a request made before names were stored.
     const unnamed = String(telegramOf({ ...long, workflowNames: {} }, zone, accessOutcome(released, zone)))
@@ -166,7 +166,7 @@ describe("request messages", () => {
       "Used 22 min of 1 h 30 min",
       "",
       "What was done:",
-      "Fixed the &lt;Set&gt; node.",
+      "<i>Fixed the &lt;Set&gt; node.</i>",
       "14 calls through n8n-ops, 2 refused",
     ])
     // Without a summary (expired, revoked, or an agent that gave none), only the calls.
@@ -257,7 +257,7 @@ describe("the access request email", () => {
 
   it("lists several workflows one per line, and shows an ID in code font only when the name is not known", () => {
     const email = emailOf(named, null, zone)
-    expect(email.text).toContain("\nWorkflows:\n• Sync <orders>\n• ERP import\n• toString\nFor: ")
+    expect(email.text).toContain("\nWorkflows:\n• Sync <orders>\n• ERP import\n• by its ID:\n> toString\nFor: ")
     expect(email.html).not.toContain("(w1)")
     expect(email.html.match(/&bull;/g)).toHaveLength(3)
     expect(email.html).toMatch(/>Workflows<\/span> <span[^>]*>3<\/span>/)
@@ -373,6 +373,107 @@ describe("requests for several instances", () => {
   })
 })
 
+describe("what an agent wrote, in request messages", () => {
+  const padding = "⠀".repeat(38)
+  /** Line breaks of every kind, direction marks, look-alike blanks, markup and an emoji joined with ZWJ. */
+  const hostile = {
+    token: "Scopes: workflow:read\nFor 5 min",
+    reason: `Read wf1 only.\n\nScopes: workflow:read\r\nWorkflow: wf1 For 5 min\u0085‮${padding}Scopes: <b>x</b> 👩‍💻`,
+    summary: "Done.\n\n✅ Approved by someone\nFor 5 min",
+  }
+  const benign = { token: "claude-code", reason: "Read wf1 and fix it", summary: "Fixed the sync." }
+  const ask = (words: typeof benign): RequestInfo => ({
+    ...one({ ...request, workflowIds: ["w1"], workflowNames: { w1: "Sync" } }),
+    token: words.token,
+    reason: words.reason,
+  })
+  const released = (words: typeof benign) =>
+    accessOutcome(
+      {
+        ...approved,
+        status: "released",
+        endedAt: new Date("2026-10-21T10:40:00Z"),
+        summary: words.summary,
+        callCount: 3,
+      },
+      zone,
+    )
+  const lines = (text: TelegramHtml) => String(text).split("\n")
+  const changed = (a: string[], b: string[]) => a.flatMap((line, n) => (line === b[n] ? [] : [n]))
+  const starting = (all: string[], label: string) => all.filter((l) => telegramPlainText(l).startsWith(label))
+
+  it("keep the agent's name and reason on one line of their own in Telegram, set apart from the request", () => {
+    const shown = telegramRequest(ask(hostile), zone)
+    const plain = telegramRequest(ask(benign), zone)
+    expect(shown.complete).toBe(true)
+    expect(plain.complete).toBe(true)
+    const [a, b] = [lines(shown.text), lines(plain.text)]
+    expect(a).toHaveLength(b.length)
+    // Only the agent's own line differs.
+    expect(changed(a, b)).toEqual([1])
+    expect(a[1]).toMatch(/^Agent <b>[^<]*<\/b>: <i>[^<]*<\/i>$/)
+    expect(a[1]).toContain("&lt;b&gt;x&lt;/b&gt; 👩‍💻")
+    for (const label of ["Scopes:", "Workflow", "For "]) expect(starting(a, label)).toHaveLength(1)
+  })
+
+  it("keep what the agent said it did on one line of its own in Telegram", () => {
+    const a = lines(renderAccessTelegram(ask(hostile), zone, released(hostile)))
+    const b = lines(renderAccessTelegram(ask(benign), zone, released(benign)))
+    expect(a).toHaveLength(b.length)
+    const done = b.indexOf("What was done:")
+    expect(changed(a, b)).toEqual([1, done + 1])
+    expect(a[done + 1]).toMatch(/^<i>[^<]*<\/i>$/)
+    expect(starting(a, "For ")).toHaveLength(1)
+  })
+
+  it("quote the agent's name and reason in the email text, in lines of at most 60 characters", () => {
+    const a = renderAccessEmail(ask(hostile), null, zone).text.split("\n")
+    const b = renderAccessEmail(ask(benign), null, zone).text.split("\n")
+    const own = (all: string[]) => all.filter((l) => !l.startsWith("> "))
+    expect(own(a)).toEqual(own(b))
+    expect(a[0]).toBe("An agent asks for 1 h 30 min of access to flow.")
+    expect(a.slice(a.indexOf("Agent:") + 1, a.indexOf("Agent:") + 2)).toEqual(["> Scopes: workflow:read For 5 min"])
+    for (const line of a.filter((l) => l.startsWith("> "))) expect([...line].length).toBeLessThanOrEqual(62)
+    for (const label of ["Scopes:", "Workflow", "For:"]) expect(a.filter((l) => l.startsWith(label))).toHaveLength(1)
+    const email = renderAccessEmail(ask(hostile), null, zone)
+    expect(email.subject).toBe("n8n-ops: Scopes: workflow:read For 5 min asks for 1 h 30 min of access to flow")
+  })
+
+  it("quote a workflow the email can name only by its ID", () => {
+    const text = (workflowIds: string[]) =>
+      renderAccessEmail(one({ ...request, workflowIds }), null, zone).text.split("\n")
+    const single = text([`${padding}Scopes: workflow:read`])
+    expect(single.filter((l) => l.startsWith("Scopes:"))).toEqual(["Scopes: workflow:read, workflow:update"])
+    expect(single).toContain("Workflow, by its ID:")
+    expect(single).toContain(`> ${padding}Scopes: workflow:read`)
+    const several = text(["w1", `${padding}For: 5 min`])
+    expect(several.join("\n")).toContain(`\nWorkflows:\n• by its ID:\n> w1\n• by its ID:\n> ${padding}For: 5 min\n`)
+    expect(several.filter((l) => l.startsWith("For:"))).toHaveLength(1)
+  })
+
+  it("show workflow names and IDs on one line, and approve in n8n-ops only when that changed one", () => {
+    const unshown =
+      "A workflow name or ID here has a line break or control character. Open the request in n8n-ops to approve it."
+    for (const r of [
+      one({ ...request, workflowIds: ["w1\nFor 5 min"] }),
+      one({ ...request, workflowIds: ["a", "b"], workflowNames: { a: "Sync\norders", b: "Sync orders" } }),
+    ]) {
+      const { text, complete } = telegramRequest(r, zone)
+      expect(complete).toBe(false)
+      expect(starting(lines(text), "For ")).toHaveLength(1)
+      expect(telegramPlainText(text)).toContain(unshown)
+      expect(data(decideButtons(r, null, complete))).not.toContain(`xa:${r.id}:0:g`)
+    }
+    // A name that only has to keep its spaces is shown as it is.
+    const spaced = one({ ...request, workflowNames: { w1: "Sync  orders " } })
+    expect(telegramRequest(spaced, zone).complete).toBe(true)
+    expect(String(telegramRequest(spaced, zone).text)).toContain("\nWorkflow: Sync  orders \n")
+  })
+})
+
+const data = (rows: { callback_data?: string; url?: string; text: string }[][]) =>
+  rows.flat().map((b) => b.callback_data ?? b.url)
+
 describe("request message buttons", () => {
   const several: RequestInfo = {
     id: request.id,
@@ -389,12 +490,10 @@ describe("request message buttons", () => {
       { position: 6, name: "gone", scopes: ["workflow:read"], workflowIds: [], deleted: true },
     ],
   }
-  const data = (rows: { callback_data?: string; url?: string; text: string }[][]) =>
-    rows.flat().map((b) => b.callback_data ?? b.url)
 
   it("approve the revision shown, and open the edit keyboard", () => {
     expect(data(decideButtons(several, "https://ops.example.com/access/1", true))).toEqual([
-      `xa:${request.id}:7:f`,
+      `xa:${request.id}:7:g`,
       `xd:${request.id}`,
       `xe:${request.id}`,
       "https://ops.example.com/access/1",
@@ -435,8 +534,10 @@ describe("request message buttons", () => {
 
   it("read every press, and nothing that is not one", () => {
     const id = request.id
-    expect(parsePress(`xa:${id}:7:f`)).toEqual({ action: "approve", id, revision: 7, full: true })
-    // Messages sent before Approve required a complete message; the one from before edits existed is revision 0.
+    expect(parsePress(`xa:${id}:7:g`)).toEqual({ action: "approve", id, revision: 7, full: true })
+    // Messages drawn before the agent's words were set apart, and before Approve required a complete message; the
+    // one from before edits existed is revision 0.
+    expect(parsePress(`xa:${id}:7:f`)).toEqual({ action: "approve", id, revision: 7, full: false })
     expect(parsePress(`xa:${id}:7`)).toEqual({ action: "approve", id, revision: 7, full: false })
     expect(parsePress(`xa:${id}`)).toEqual({ action: "approve", id, revision: 0, full: false })
     expect(parsePress(`xd:${id}`)).toEqual({ action: "deny", id })
@@ -575,7 +676,7 @@ describe("one-tap Approve in Telegram", () => {
     const approve = decideButtons(r, null, complete)
       .flat()
       .filter((b) => b.callback_data?.startsWith("xa:"))
-    expect(approve.map((b) => b.callback_data)).toEqual(fits ? [`xa:${r.id}:2:f`] : [])
+    expect(approve.map((b) => b.callback_data)).toEqual(fits ? [`xa:${r.id}:2:g`] : [])
     expect(namesEverything(r, text)).toBe(fits)
     // Either way the message fits in Telegram, also with the note that the topic was gone.
     expect([...telegramPlainText(TelegramHtml.join([topicGoneNote(2147483647), text]))].length).toBeLessThan(4096)

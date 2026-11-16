@@ -5,6 +5,7 @@ import {
   currentApiKey,
   dialogClosed,
   discardChanges,
+  holdBackupSchedule,
   loadPrivateKey,
   n8nApi,
   n8nUrl,
@@ -18,14 +19,23 @@ test.describe.configure({ mode: "serial" })
 
 const container = process.env.E2E_N8N_CONTAINER ?? "n8n-ops-verify-n8n-1"
 let page: Page
+let restoreSchedule: (() => Promise<void>) | undefined
 
 test.beforeAll(async ({ browser }) => {
   page = await browser.newPage()
   await signIn(page)
+  // The backups below are started by hand, each when its test needs it; none may come from the schedule in between.
+  await holdBackupSchedule(page, (restore) => {
+    restoreSchedule = restore
+  })
 })
 
 test.afterAll(async () => {
-  await page.close()
+  try {
+    await restoreSchedule?.()
+  } finally {
+    await page.close()
+  }
 })
 
 test("an S3 bucket and the mapped folder are added as destinations, each tested first", async () => {

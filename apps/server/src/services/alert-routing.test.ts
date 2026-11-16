@@ -51,9 +51,16 @@ describe("topic routes", () => {
 
   it("tries a pattern again when a pause of the server ran it out of time once, and keeps it", () => {
     const run = vm.Script.prototype.runInContext
-    const pause = vi.spyOn(vm.Script.prototype, "runInContext").mockImplementationOnce(() => {
-      throw Object.assign(new Error("Script execution timed out"), { code: "ERR_SCRIPT_EXECUTION_TIMEOUT" })
-    })
+    // Only the pause below runs out of time: the real runs get a clock a busy test machine cannot run out, so they
+    // do not add a pause of their own.
+    const pause = vi
+      .spyOn(vm.Script.prototype, "runInContext")
+      .mockImplementation(function (this: vm.Script, context, options) {
+        return run.call(this, context, { ...options, timeout: 10_000 })
+      })
+      .mockImplementationOnce(() => {
+        throw Object.assign(new Error("Script execution timed out"), { code: "ERR_SCRIPT_EXECUTION_TIMEOUT" })
+      })
     try {
       const slow: string[] = []
       const route = { workflow: "^paused once$", threadId: 1 }
@@ -61,7 +68,6 @@ describe("topic routes", () => {
       expect(slow).toEqual([])
       expect(pause).toHaveBeenCalledTimes(2)
       // Not set aside: it still matches later.
-      pause.mockImplementation(run)
       expect(routeMatches(route, { workflowName: "paused once" }, (p) => slow.push(p))).toBe(true)
     } finally {
       pause.mockRestore()

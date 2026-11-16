@@ -463,10 +463,13 @@ test("Disconnect all ends every connection and every code still waiting", async 
   })
   expect(waiting.status).toBe(200)
   await page.goto("/agents")
+  // The list has loaded with the connection, so the empty list below is the one after Disconnect all.
+  const connected = page.getByRole("row").filter({ hasText: "with a code" })
+  await expect(connected.first()).toBeVisible()
   await page.getByRole("button", { name: "Disconnect all" }).click()
   await page.getByRole("alertdialog").getByRole("button", { name: "Disconnect all" }).click()
   await dialogClosed(page)
-  await expect(page.getByRole("row").filter({ hasText: "with a code" })).toHaveCount(0)
+  await expect(connected).toHaveCount(0)
   expect((await api(tokens.access_token ?? "", "/api/v1/problems")).status).toBe(401)
   const poll = await post("/oauth/token", {
     grant_type: "urn:ietf:params:oauth:grant-type:device_code",

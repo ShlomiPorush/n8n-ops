@@ -1,5 +1,5 @@
 import { expect, type Page, test } from "@playwright/test"
-import { currentApiKey, n8nUrl, ownPage, signIn } from "./helpers.ts"
+import { currentApiKey, holdBackupSchedule, n8nUrl, ownPage, signIn } from "./helpers.ts"
 
 // The setup of an instance (docs/adr/0002) beyond the first registration: Finish later keeps it as Setup
 // incomplete (the pill in the list, nothing on Overview), Continue setup goes on where it stopped, a saved change
@@ -12,6 +12,7 @@ const apiOnly = "e2e-api-backup"
 const phone = "e2e-phone"
 const sayingWhy = "e2e-says-why"
 let page: Page
+let restoreSchedule: (() => Promise<void>) | undefined
 
 /** Removes the instances this file makes, also those a failed test left behind. */
 async function removeOurs() {
@@ -26,11 +27,23 @@ test.beforeAll(async ({ browser }) => {
   page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
   await signIn(page)
   await removeOurs()
+  // The backup of the instance added below is started by hand; none may come from the schedule in between.
+  await holdBackupSchedule(page, (restore) => {
+    restoreSchedule = restore
+  })
 })
 
+// The instances go first, so none of them is backed up by the schedule once it is back.
 test.afterAll(async () => {
-  await removeOurs()
-  await page.close()
+  try {
+    await removeOurs()
+  } finally {
+    try {
+      await restoreSchedule?.()
+    } finally {
+      await page.close()
+    }
+  }
 })
 
 /** Starts adding an instance of the test n8n: its name, its address, and the capabilities to click. */
@@ -243,5 +256,37 @@ test("every step of the setup fits a phone without sideways scrolling", async ()
     }
   } finally {
     await page.setViewportSize({ width: 1440, height: 900 })
+  }
+})
+
+test("Add instance opens the setup also when the window turns wide before the setup has drawn", async ({ browser }) => {
+  // Narrower than the split, the list opens no instance by itself. The split's media query answers through a
+  // stand-in here, so the window can turn wide in the same moment as the click: the list then draws once more, at
+  // the address it was at, before the setup page has drawn, and must not open its first instance over the setup.
+  const context = await browser.newContext({ viewport: { width: 900, height: 900 } })
+  const tab = await context.newPage()
+  try {
+    await tab.addInitScript((query) => {
+      const real = window.matchMedia.bind(window)
+      const split = Object.assign(new EventTarget(), { matches: false, media: query, onchange: null })
+      const widen = () => {
+        split.matches = true
+        split.dispatchEvent(new Event("change"))
+      }
+      Object.assign(window, { e2eWiden: widen })
+      window.matchMedia = (q: string) => (q === query ? (split as unknown as MediaQueryList) : real(q))
+    }, "(min-width: 1000px)")
+    await signIn(tab)
+    await tab.goto("/instances")
+    await expect(tab.locator("[data-href^='/instances/']").first()).toBeVisible()
+    await expect(tab).toHaveURL(/\/instances$/)
+    await tab.getByRole("button", { name: "Add instance" }).evaluate((button: HTMLElement) => {
+      button.click()
+      ;(window as unknown as { e2eWiden: () => void }).e2eWiden()
+    })
+    await expect(tab.getByRole("heading", { name: "Basics" })).toBeVisible()
+    await expect(tab).toHaveURL(/\/instances\/new$/)
+  } finally {
+    await context.close()
   }
 })

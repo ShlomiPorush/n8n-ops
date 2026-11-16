@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 # Read-only discovery of the n8n Docker host for n8n-ops.
 # Changes nothing: only runs docker inspect/ps/info and df.
-# Environment variables are filtered to n8n, database and queue names, and their values are
-# masked where the variable name looks secret (keys, passwords, tokens). For each container the
-# report shows only its program and the number of its arguments, never the arguments.
+# Environment variables are filtered to n8n, database and queue names, one line each (a line
+# break in a value shows as \n). Their values are masked where the variable name looks secret
+# (keys, passwords, tokens), and in every other value the user and password of a URL are masked.
+# For each container the report shows only its program and the number of its arguments, never
+# the arguments.
 #
 # Usage: ./discover.sh [output-file]
 
 set -u
+# Tracing stays off, so the report holds only the masked values.
+set +x
 
 OUTPUT="${1:-./n8n-discovery-$(date +%Y%m%d_%H%M%S).txt}"
 ENV_PATTERN='^(N8N_|DB_|QUEUE_|EXECUTIONS_|WEBHOOK_URL|GENERIC_TIMEZONE|TZ=|NODE_ENV|POSTGRES_|REDIS_)'
@@ -18,19 +22,41 @@ section() {
 }
 
 mask_env() {
-  # Print NAME=value, replacing the value of secret-looking names with ***
+  # Print NAME=value. The value of a secret-looking name becomes ***. In any other line, a URL's
+  # user and password become ***: everything after the first ":" that has an "@" after it (and the
+  # slashes right after that ":") up to the last "@". Other text with a colon before an "@" is
+  # masked too; masking too much is preferred to showing a password.
+  local line name rest
   while IFS= read -r line; do
-    local name="${line%%=*}"
+    name="${line%%=*}"
     if [[ "$name" =~ $SECRET_PATTERN ]]; then
       if [ -n "${line#*=}" ]; then
-        echo "$name=*** (set)"
+        printf '%s=*** (set)\n' "$name"
       else
-        echo "$name= (empty)"
+        printf '%s= (empty)\n' "$name"
       fi
-    else
-      echo "$line"
+      continue
     fi
+    if [[ "$line" == *:*@* ]]; then
+      rest="${line#*:}"
+      line="${line%%:*}:${rest%%[!/]*}***@${rest##*@}"
+    fi
+    printf '%s\n' "$line"
   done
+}
+
+show_env() {
+  # Print the filtered, masked environment of container $1, one variable per line. The variables
+  # come from one inspect call, each JSON-encoded on its own line and then "end", so a value with
+  # line breaks stays on one line (\n, with \" and \\ for quotes and backslashes) and an
+  # incomplete answer is recognised.
+  local out
+  if ! out=$(docker inspect -f '{{range .Config.Env}}{{json .}}{{"\n"}}{{end}}end' "$1" 2>/dev/null) ||
+    [ "${out##*$'\n'}" != end ]; then
+    echo "  (not available)"
+    return
+  fi
+  printf '%s\n' "$out" | sed -n 's/^"\(.*\)"$/\1/p' | grep -E "$ENV_PATTERN" | sort | mask_env | sed 's/^/  /'
 }
 
 show_command() {
@@ -98,9 +124,8 @@ Compose file: {{index .Config.Labels "com.docker.compose.project.config_files"}}
     echo "Mounts:"
     docker inspect -f '{{range .Mounts}}  {{.Type}} {{.Source}} -> {{.Destination}}{{"\n"}}{{end}}' "$c"
 
-    echo "Environment (filtered; values masked where the name looks secret):"
-    docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$c" |
-      grep -E "$ENV_PATTERN" | sort | mask_env | sed 's/^/  /'
+    echo "Environment (filtered; values masked where the name looks secret, URL users and passwords masked):"
+    show_env "$c"
 
     if [[ "$image" =~ n8n ]] && [ "$(docker inspect -f '{{.State.Running}}' "$c")" = "true" ]; then
       echo "n8n version: $(docker exec "$c" n8n --version 2>&1 | tail -1)"
@@ -112,4 +137,4 @@ Compose file: {{index .Config.Labels "com.docker.compose.project.config_files"}}
 } >"$OUTPUT" 2>&1
 
 echo "Discovery report written to: $OUTPUT"
-echo "Review it before sharing. Values are masked only where the variable name looks secret, and URLs and hostnames are included."
+echo "Review it before sharing. Environment values are masked where the variable name looks secret, and the user and password of URLs are masked; hostnames and other values are included."

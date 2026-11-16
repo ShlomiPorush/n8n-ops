@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto"
 import { execFile } from "node:child_process"
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http"
 import type { AddressInfo } from "node:net"
@@ -265,7 +266,7 @@ describe("discoverWorkers", () => {
   })
 
   it("lets no label, command or image of the list into what it reports", async () => {
-    const secret = "s3cret-in-a-label"
+    const secret = randomBytes(16).toString("hex")
     const withSecrets = [listed("acme-n8n-1", ENTRY), listed("acme-w-1", `${ENTRY} worker --token ${secret}`)].map(
       (x) => ({
         ...x,
@@ -323,7 +324,8 @@ describe("the check in a queue worker", () => {
   })
 
   it("sends figures only, and no setting, command or path of the worker", async () => {
-    const out = (await run({ N8N_CONCURRENCY_PRODUCTION_LIMIT: "7", SECRET_TOKEN: "s3cret" })) as {
+    const secret = randomBytes(16).toString("hex")
+    const out = (await run({ N8N_CONCURRENCY_PRODUCTION_LIMIT: "7", SECRET_TOKEN: secret })) as {
       details?: Record<string, unknown>
     }
     expect(
@@ -331,7 +333,7 @@ describe("the check in a queue worker", () => {
     ).toBe(true)
     expect(out.details?.concurrencyEnv).toBe(7)
     const text = JSON.stringify(out)
-    for (const word of ["s3cret", "SECRET_TOKEN", "N8N_CONCURRENCY", "/proc", "/sys", "node_modules"])
+    for (const word of [secret, "SECRET_TOKEN", "N8N_CONCURRENCY", "/proc", "/sys", "node_modules"])
       expect(text).not.toContain(word)
     // Unreadable, blank, not a number or n8n's -1: the variable decides nothing.
     expect(

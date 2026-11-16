@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto"
 import {
   DOCKER_CHECK_DEADLINE_MS,
   DOCKER_CHECK_INTERVAL_MS,
@@ -10,6 +11,10 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { DockerPing } from "./docker.ts"
 import { CallFailures, callError, DockerChecks, Heartbeats } from "./heartbeat-loop.ts"
+
+/** Two worker identities, new for each run. */
+const idA = `nops_worker_${randomBytes(16).toString("hex")}`
+const idB = `nops_worker_${randomBytes(16).toString("hex")}`
 
 /** What the stand-in server does with one heartbeat. */
 type Reply = (signal: AbortSignal) => Promise<Response>
@@ -83,11 +88,11 @@ afterEach(() => {
 describe("Heartbeats", () => {
   it("sends at once, then each one 30 s after the previous one finished, never two at once", async () => {
     const { beats, sent, mostOpen } = setup([delayed(8_000, ok)])
-    beats.use("id-a")
+    beats.use(idA)
     await run(0)
     expect(sent.map((s) => s.at)).toEqual([0])
     // Telling it the same identity while one is out starts nothing.
-    beats.use("id-a")
+    beats.use(idA)
     await run(8_000 + HEARTBEAT_INTERVAL_MS - 1)
     expect(sent).toHaveLength(1)
     await run(1)
@@ -96,21 +101,21 @@ describe("Heartbeats", () => {
     expect(sent.map((s) => s.at)).toEqual([0, 38_000, 68_000])
     expect(mostOpen()).toBe(1)
     expect(sent[0]?.body.bootId).toMatch(/^[A-Za-z0-9_-]{16,64}$/)
-    expect(sent.every((s) => s.identity === "id-a" && s.body.bootId === sent[0]?.body.bootId)).toBe(true)
+    expect(sent.every((s) => s.identity === idA && s.body.bootId === sent[0]?.body.bootId)).toBe(true)
   })
 
   it("starts no second attempt when the identity changes while one is out", async () => {
     const { beats, sent, mostOpen } = setup([delayed(5_000, ok)])
-    beats.use("id-a")
+    beats.use(idA)
     await run(1_000)
-    beats.use("id-b")
+    beats.use(idB)
     await run(1_000)
     expect(sent).toHaveLength(1)
-    // The answer for id-a comes at 5 s; only then does id-b's first heartbeat go.
+    // The answer for the first identity comes at 5 s; only then does the second one's first heartbeat go.
     await run(2_999)
     expect(sent).toHaveLength(1)
     await run(10)
-    expect(sent.map((s) => s.identity)).toEqual(["id-a", "id-b"])
+    expect(sent.map((s) => s.identity)).toEqual([idA, idB])
     expect(sent[1]?.at).toBeGreaterThanOrEqual(5_000)
     await run(HEARTBEAT_INTERVAL_MS)
     expect(sent).toHaveLength(3)
@@ -124,7 +129,7 @@ describe("Heartbeats", () => {
       return new Promise(() => {})
     })
     docker.start()
-    beats.use("id-a")
+    beats.use(idA)
     // A job that never ends, as the sequential job loop would have during a long backup.
     const job = new Promise(() => {})
     void job
@@ -142,7 +147,7 @@ describe("Heartbeats", () => {
 
   it("sends the same body again after a failure, a timeout, a 429 or a 5xx, and counts each failure in one seq", async () => {
     const { beats, failures, sent } = setup([down, hang, status(429), status(502), ok, ok, ok])
-    beats.use("id-a")
+    beats.use(idA)
     await run(0) // seq 1, refused
     await run(HEARTBEAT_INTERVAL_MS) // seq 1 again, no answer
     await run(HEARTBEAT_TIMEOUT_MS - 1)
@@ -168,7 +173,7 @@ describe("Heartbeats", () => {
 
   it("moves seq on only after a 2xx", async () => {
     const { beats, sent } = setup([status(503), status(429), down, ok])
-    beats.use("id-a")
+    beats.use(idA)
     await run(0)
     await run(3 * HEARTBEAT_INTERVAL_MS)
     expect(sent.map((s) => s.body.seq)).toEqual([1, 1, 1, 1])
@@ -178,7 +183,7 @@ describe("Heartbeats", () => {
 
   it("drops a body the server calls invalid, says so once, and goes on with the next seq", async () => {
     const { beats, sent, logged, contacts } = setup([status(400), status(400), ok])
-    beats.use("id-a")
+    beats.use(idA)
     await run(0)
     await run(2 * HEARTBEAT_INTERVAL_MS)
     expect(sent.map((s) => s.body.seq)).toEqual([1, 2, 3])
@@ -188,7 +193,7 @@ describe("Heartbeats", () => {
 
   it("asks a server without heartbeats again every 10 minutes and goes on once it answers", async () => {
     const { beats, sent, logged } = setup([status(404), status(404), ok])
-    beats.use("id-a")
+    beats.use(idA)
     await run(0)
     await run(HEARTBEAT_RETRY_MISSING_MS - 1)
     expect(sent).toHaveLength(1)
@@ -215,7 +220,7 @@ describe("Heartbeats", () => {
       const k = check++
       return [0, 1, 2, 11].includes(k) ? { ok: false, ms: 1, error: "refused" } : { ok: true, ms: 2, error: null }
     })
-    beats.use("id-a")
+    beats.use(idA)
     await run(1)
     // Checks at 1 ms, then every minute: ten before the 404 at 600 s, ten between it and the heartbeat at 1200 s.
     docker.start()
@@ -242,32 +247,32 @@ describe("Heartbeats", () => {
 
   it("stops on a 401 until the identity is proven again or changes", async () => {
     const { beats, sent, logged } = setup([status(401), status(401)])
-    beats.use("id-a")
+    beats.use(idA)
     await run(10 * 60_000)
     expect(sent).toHaveLength(1)
     expect(logged).toEqual(["heartbeats stopped: the server does not accept this identity"])
     // The job loop's call went through with this identity: the heartbeat resumes, with the same body.
-    beats.use("id-a")
+    beats.use(idA)
     await run(0)
     expect(sent.map((s) => [s.identity, s.body.seq])).toEqual([
-      ["id-a", 1],
-      ["id-a", 1],
+      [idA, 1],
+      [idA, 1],
     ])
     await run(10 * 60_000)
     expect(sent).toHaveLength(2)
     // Paired again: a new identity starts it, without the counts built for the old one.
-    beats.use("id-b")
+    beats.use(idB)
     await run(0)
     expect(sent.map((s) => [s.identity, s.body.seq])).toEqual([
-      ["id-a", 1],
-      ["id-a", 1],
-      ["id-b", 2],
+      [idA, 1],
+      [idA, 1],
+      [idB, 2],
     ])
   })
 
   it("stops when the identity is revoked", async () => {
     const { beats, sent } = setup()
-    beats.use("id-a")
+    beats.use(idA)
     await run(HEARTBEAT_INTERVAL_MS)
     expect(sent).toHaveLength(2)
     beats.use(null)
@@ -277,7 +282,7 @@ describe("Heartbeats", () => {
 
   it("writes the heartbeat file on 2xx and 429 only", async () => {
     const { beats, contacts } = setup([down, status(500), status(429), ok, status(400), status(404), hang])
-    beats.use("id-a")
+    beats.use(idA)
     await run(0)
     await run(4 * HEARTBEAT_INTERVAL_MS)
     expect(contacts).toEqual([60_000, 90_000])
@@ -295,7 +300,7 @@ describe("Heartbeats", () => {
       log: (msg) => logged.push(msg),
       timers,
     })
-    beats.use("id-a")
+    beats.use(idA)
     await run(3 * HEARTBEAT_INTERVAL_MS)
     expect(logged).toEqual(["cannot write the heartbeat file"])
     beats.use(null)
@@ -310,7 +315,7 @@ describe("Heartbeats", () => {
     const { beats, docker, sent } = setup([], async () => results.shift() ?? { ok: true, ms: 2, error: null })
     docker.start()
     await run(1)
-    beats.use("id-a")
+    beats.use(idA)
     await run(1)
     await run(3 * DOCKER_CHECK_INTERVAL_MS)
     // Checks at 0, 60, 120 and 180 s; heartbeats at 1 ms, then every 30 s.
@@ -334,7 +339,7 @@ describe("Heartbeats", () => {
       [down, down, down],
       async () => results.shift() ?? { ok: true, ms: 2, error: null },
     )
-    beats.use("id-a")
+    beats.use(idA)
     await run(1) // seq 1 built with no check, refused
     docker.start()
     // Checks at 1 ms and 60 s; seq 1 refused at 30 and 60 s, taken at 90 s; seq 2 built at 120 s.
@@ -349,7 +354,7 @@ describe("Heartbeats", () => {
     const { beats, docker, sent } = setup([delayed(250, ok), down, down, ok])
     docker.start()
     await run(1)
-    beats.use("id-a")
+    beats.use(idA)
     await run(0) // seq 1 with the check; acknowledged after 250 ms
     await run(250 + HEARTBEAT_INTERVAL_MS) // seq 2 built: check of 0 s is taken, none new; refused
     await run(HEARTBEAT_INTERVAL_MS) // seq 2 again, now with the check at 60 s waiting for seq 3; refused
@@ -367,7 +372,7 @@ describe("Heartbeats", () => {
     const { beats, docker, sent } = setup([down, ok])
     docker.start()
     await run(10_000)
-    beats.use("id-a")
+    beats.use(idA)
     await run(0)
     await run(HEARTBEAT_INTERVAL_MS)
     expect(sent.map((s) => [s.body.seq, s.body.docker?.ageSec])).toEqual([

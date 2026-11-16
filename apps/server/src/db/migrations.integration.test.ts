@@ -664,7 +664,7 @@ describe("the session clocks (0009)", () => {
       const created = new Date("2026-10-20T08:00:00Z")
       await sql`insert into auth_user (id, name, email) values ('u1', 'operator', 'operator@n8n-ops.local')`
       await sql`insert into auth_session (id, expires_at, token, user_id, created_at, updated_at)
-        values ('s1', now() + interval '7 days', 'token-1', 'u1', ${created.toISOString()}::timestamptz,
+        values ('s1', now() + interval '7 days', ${randomBytes(32).toString("base64url")}, 'u1', ${created.toISOString()}::timestamptz,
           ${created.toISOString()}::timestamptz)`
       await migrate(db, { migrationsFolder: migrationsUpTo(null) })
       // Compared in the database: the connection is drizzle's, which reads timestamps as text.

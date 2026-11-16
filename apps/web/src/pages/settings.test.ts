@@ -140,7 +140,8 @@ describe("a connection test with the values on screen (FS-19)", () => {
       smtpUser: "reports",
     })
     expect(testDraft("email", { ...values, smtpPassword: "" })).not.toHaveProperty("smtpPassword")
-    expect(testDraft("email", { ...values, smtpPassword: "typed" })).toMatchObject({ smtpPassword: "typed" })
+    const typed = crypto.randomUUID()
+    expect(testDraft("email", { ...values, smtpPassword: typed })).toMatchObject({ smtpPassword: typed })
     expect(testDraft("telegram", { chatId: " 4242 ", botToken: null })).toEqual({
       chatId: "4242",
       defaultThreadId: "",
@@ -203,7 +204,7 @@ describe("a connection test with the values on screen (FS-19)", () => {
       testMissing("telegram", testDraft("telegram", v), d)
     expect(telegram({ chatId: "4242" }, { botTokenSet: true })).toBeNull()
     expect(telegram({ chatId: "4242", botToken: null }, { botTokenSet: true })).toBe("the bot token and the chat ID")
-    expect(telegram({ chatId: "4242", botToken: "123:abc" }, {})).toBeNull()
+    expect(telegram({ chatId: "4242", botToken: crypto.randomUUID() }, {})).toBeNull()
     expect(telegram({ chatId: "" }, { botTokenSet: true })).toBe("the bot token and the chat ID")
   })
 })

@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto"
 import { describe, expect, it } from "vitest"
 import type { N8nExecution } from "../n8n/client.ts"
 import { extractFailure } from "../n8n/execution.ts"
@@ -33,7 +34,7 @@ describe("target", () => {
   })
 
   it("reads the host only from a literal authority", () => {
-    expect(hostOf("https://user:secret@api.example.com:8443/x")).toBe("api.example.com")
+    expect(hostOf(`https://user:${randomBytes(16).toString("hex")}@api.example.com:8443/x`)).toBe("api.example.com")
     expect(hostOf("https://[2001:db8::1]/x")).toBe("[2001:db8::1]")
     expect(hostOf("https://[2001:db9::2]:8443/x")).toBe("[2001:db9::2]")
     expect(hostOf("=https://api.{{ $json.region }}.example/x")).toBeNull()

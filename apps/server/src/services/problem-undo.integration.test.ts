@@ -42,6 +42,8 @@ if (!adminUrl) throw new Error("MIGRATION_DATABASE_URL is required (scripts/veri
 
 const admin = postgres(adminUrl, { max: 1, onnotice: () => {} })
 const name = `n8n_ops_undo_${randomBytes(4).toString("hex")}`
+/** The n8n API key the instance is read with, new for each run. */
+const apiKey = randomBytes(16).toString("hex")
 let database: Database
 let ctx: Ctx
 let instance: typeof instances.$inferSelect
@@ -62,7 +64,7 @@ beforeAll(async () => {
     audit: createAudit(database.db),
     events: new EventEmitter(),
     settings,
-    secrets: { decrypt: () => "key" },
+    secrets: { decrypt: () => apiKey },
     log: { info: () => {}, warn: () => {}, error: () => {} },
   } as unknown as Ctx
   instance = await newInstance("undo-n8n")

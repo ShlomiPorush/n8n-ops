@@ -70,9 +70,10 @@ beforeEach(async () => {
 })
 
 async function workerCollecting(names: string[], seenAgo: number) {
+  const identity = `nops_worker_${randomBytes(24).toString("hex")}`
   const [w] = await ctx.db
     .insert(workers)
-    .values({ name: "host-a", tokenHash: sha256(`identity-${names[0]}`), lastSeenAt: ago(seenAgo) })
+    .values({ name: "host-a", tokenHash: sha256(identity), lastSeenAt: ago(seenAgo) })
     .returning()
   if (!w) throw new Error("no worker")
   const rows = await ctx.db
@@ -91,7 +92,7 @@ async function workerCollecting(names: string[], seenAgo: number) {
       })),
     )
     .returning()
-  return { worker: w, instances: rows }
+  return { worker: w, instances: rows, identity }
 }
 
 const sent = async () =>
@@ -208,7 +209,7 @@ describe("a worker's probe result", () => {
     })
 
   it("counts only when the worker claimed the check after it was last offline", async () => {
-    const { worker, instances: rows } = await workerCollecting(["alpha"], 1_000)
+    const { worker, instances: rows, identity } = await workerCollecting(["alpha"], 1_000)
     const instance = rows[0]
     if (!instance) throw new Error("no instance")
     collectionClock.returnedAt.set(worker.id, ago(30_000))
@@ -229,13 +230,13 @@ describe("a worker's probe result", () => {
       .returning()
     if (!old || !fresh) throw new Error("no jobs")
 
-    expect((await post(old.id, "identity-alpha")).status).toBe(200)
+    expect((await post(old.id, identity)).status).toBe(200)
     const healthOf = async () => (await ctx.db.select().from(instances).where(eq(instances.id, instance.id)))[0]?.health
     expect(await healthOf()).toBe("ok")
     const [done] = await ctx.db.select().from(workerJobs).where(eq(workerJobs.id, old.id))
     expect(done?.status).toBe("done")
 
-    expect((await post(fresh.id, "identity-alpha")).status).toBe(200)
+    expect((await post(fresh.id, identity)).status).toBe(200)
     expect(await healthOf()).toBe("down")
   })
 })

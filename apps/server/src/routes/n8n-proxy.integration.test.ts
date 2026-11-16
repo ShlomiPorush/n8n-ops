@@ -60,6 +60,8 @@ const UNANSWERED = "unanswered"
 /** The stand-in n8n answers a change of a variable named so only once `answer` resolves. */
 const HELD = "held"
 let held: { arrived: () => void; answer: Promise<void> } | null = null
+/** A call whose path or query holds moved-<status> is answered with that redirect, to ELSEWHERE. */
+const ELSEWHERE = "/api/v1/variables/elsewhere"
 const who = { by: "shlomi", via: "web" as const }
 /** What the stand-in n8n received, other than its API description. */
 const received: { method: string; url: string; key: string; body: string }[] = []
@@ -95,6 +97,11 @@ beforeAll(async () => {
         body: Buffer.concat(chunks).toString("utf8"),
       })
       if (req.url?.includes(UNANSWERED)) return req.socket.destroy()
+      const moved = /moved-(\d{3})/.exec(req.url ?? "")
+      if (moved) {
+        res.writeHead(Number(moved[1]), { location: ELSEWHERE })
+        return res.end("{}")
+      }
       if (req.url?.includes(HELD) && held) {
         held.arrived()
         await held.answer
@@ -861,5 +868,83 @@ describe("the access proxy runs a bounded number of calls at once", () => {
     })
     expect(res.status).toBe(401)
     expect((await send(instance.name, other.key, "PUT", `/variables/${named("after")}`)).status).toBe(200)
+  })
+})
+
+describe("the access proxy sends n8n only the call it checked, and only to the instance's address", () => {
+  const elsewhere = () => received.filter((r) => r.url.startsWith(ELSEWHERE))
+
+  it("answers 502 for a change n8n answers with a redirect, follows nothing, and keeps the change", async () => {
+    const instance = await openInstance()
+    const { key, requestId } = await access([instance.name])
+    for (const status of [301, 307, 308]) {
+      const variable = named(`moved-${status}`)
+      const res = await send(instance.name, key, "PUT", `/variables/${variable}`)
+      expect(res.status, String(status)).toBe(502)
+      expect(((await res.json()) as { message: string }).message).toContain("redirect")
+      expect(sentTo([variable]), String(status)).toEqual([expect.objectContaining({ method: "PUT", key: KEY })])
+    }
+    expect(elsewhere()).toEqual([])
+    const calls = await callsOf(requestId)
+    expect(calls).toHaveLength(3)
+    for (const call of calls) expect(call).toMatchObject({ method: "PUT", status: 502, refused: null })
+  })
+
+  it("refuses a read n8n answers with a redirect, and follows nothing", async () => {
+    const instance = await openInstance()
+    const { key, requestId } = await access([instance.name])
+    const res = await send(instance.name, key, "GET", `/variables?cursor=${named("moved-302")}`)
+    expect(res.status).toBe(502)
+    expect(elsewhere()).toEqual([])
+    expect(await callsOf(requestId)).toEqual([
+      expect.objectContaining({ method: "GET", status: 502, refused: expect.stringContaining("redirect") }),
+    ])
+  })
+
+  it("sends the path and query as it read them, and refuses one n8n could read differently", async () => {
+    const instance = await openInstance()
+    const { key } = await access([instance.name])
+    const cursor = named("cursor")
+    expect((await send(instance.name, key, "GET", `/VARIABLES/?&&&&cursor=${cursor}&&`)).status).toBe(200)
+    expect(received.filter((r) => r.url.includes(cursor)).map((r) => r.url)).toEqual([
+      `/api/v1/variables?cursor=${cursor}`,
+    ])
+    const twice = named("twice")
+    expect((await send(instance.name, key, "GET", `/variables?cursor=${twice}&cursor=x`)).status).toBe(403)
+    const slash = named("slash")
+    expect((await send(instance.name, key, "PUT", `/variables/${slash}%2F..%2Fx`)).status).toBe(403)
+    expect(received.filter((r) => r.url.includes(twice) || r.url.includes(slash))).toEqual([])
+  })
+
+  it("refuses every call while the instance's API description is answered with a redirect", async () => {
+    // An address whose API description redirects to the instance's own; every other call it answers itself.
+    const asked: string[] = []
+    const redirecting = createServer((req, res) => {
+      asked.push(`${req.method} ${req.url}`)
+      if (req.url === "/api/v1/openapi.yml") {
+        res.writeHead(302, { location: `${baseUrl}/api/v1/openapi.yml` })
+        return res.end()
+      }
+      res.writeHead(200, { "content-type": "application/json" })
+      res.end("{}")
+    })
+    await new Promise<void>((resolve) => redirecting.listen(0, "127.0.0.1", resolve))
+    try {
+      const instance = await openInstance()
+      const { key, requestId } = await access([instance.name])
+      // The address moves, so the proxy reads the API description again, from the new address.
+      await ctx.db
+        .update(instances)
+        .set({ baseUrl: `http://127.0.0.1:${(redirecting.address() as AddressInfo).port}` })
+        .where(eq(instances.id, instance.id))
+      const res = await send(instance.name, key, "PUT", `/variables/${named("described")}`)
+      expect(res.status).toBe(502)
+      expect(((await res.json()) as { message: string }).message).toContain("redirects")
+      expect(asked).toEqual(["GET /api/v1/openapi.yml"])
+      expect(await callsOf(requestId)).toEqual([expect.objectContaining({ status: 502, refused: expect.any(String) })])
+    } finally {
+      redirecting.closeAllConnections()
+      redirecting.close()
+    }
   })
 })

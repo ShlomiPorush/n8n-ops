@@ -120,7 +120,10 @@ request.
    `instances`, what was granted on each instance with its `baseUrl`, and the key one time only: one key for every
    granted instance. Call the n8n public API at an instance's `baseUrl` with the key in the `X-N8N-API-KEY` header,
    exactly as with n8n. Work only within what was granted, not what you asked for; `changed` is true when the person
-   changed the request. If a read answers `outcome_unknown`, the key may have been handed out and lost: read the
+   changed the request. A call that answers 429 ran while the key had too many calls at once and was not sent to
+   n8n: wait a few seconds and send it again. Without `workflow:activate`, updating a published workflow saves the
+   change as a draft and the published version stays live; on an n8n version older than this option, the update is
+   refused. Ask for `workflow:activate` when the task must put a change live. If a read answers `outcome_unknown`, the key may have been handed out and lost: read the
    request once more to see its state. When it is approved but gives no key, release it and make a new request.
 4. Keep the access until the task is finished and checked. Check the result the task is about: reading a workflow
    back shows that it was saved, not that a failing run now succeeds. If you cannot check it yourself, ask the person.

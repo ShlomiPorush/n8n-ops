@@ -44,14 +44,18 @@ type Call = {
   request: Access["request"]
   grant: Access["grant"]
   instance: Access["instance"]
-  url: URL
   path: string
   method: string
-  decision: { workflowFilter?: boolean; executionId?: string }
+  decision: { path: string; query: string; workflowFilter?: boolean; executionId?: string }
   refuse: (status: number, message: string) => Promise<Response>
   n8n: (method: string, url: string, body?: ArrayBuffer) => Promise<Response>
 }
 type ProxyEnv = { Variables: Env["Variables"] & { call: Call } }
+
+/** What the proxy answers when n8n answers a call with a redirect, which it never follows. */
+const redirected = (status: number) =>
+  `n8n answered ${status}, a redirect. The access proxy does not follow redirects; ask the owner to set the address n8n answers at.`
+const isRedirect = (res: Response) => res.status >= 300 && res.status < 400
 
 /** Calls through the access proxy at once: per access key, and in total. The same numbers as the REST API and MCP. */
 export const PROXY_CALLS = { perConnection: 4, total: 16 }
@@ -85,6 +89,8 @@ async function accessFor(ctx: Ctx, key: string, ref: string) {
  * whose access ended while it was still arriving never reaches n8n. A body is read only once the call passed its
  * checks, and one larger than PROXY_BODY_BYTES is refused (413) and never sent. An access key runs at most
  * PROXY_CALLS.perConnection calls at once, and the proxy PROXY_CALLS.total; more are refused (429) and never sent.
+ * n8n is sent the path and query checkCall wrote out, not the call's own, and a redirect from n8n's side is answered
+ * 502, never followed.
  */
 export function n8nProxyRoutes(ctx: Ctx) {
   const app = new Hono<ProxyEnv>()
@@ -134,14 +140,17 @@ export function n8nProxyRoutes(ctx: Ctx) {
           },
           body,
           signal: AbortSignal.timeout(60_000),
+          // The instance's key and the call go only to the instance's own address: a redirect is never followed.
+          redirect: "manual",
         })
 
       // An execution of a limited grant must belong to one of its workflows; ask n8n first.
       if (decision.executionId) {
         const check = await n8n(
           "GET",
-          `${instance.baseUrl.replace(/\/+$/, "")}/api/v1/executions/${decision.executionId}`,
+          `${instance.baseUrl.replace(/\/+$/, "")}/api/v1/executions/${encodeURIComponent(decision.executionId)}`,
         )
+        if (!check.ok) await check.body?.cancel().catch(() => undefined)
         const execution = check.ok ? ((await check.json()) as { workflowId?: string }) : null
         if (!execution?.workflowId)
           return await refuse(
@@ -151,7 +160,7 @@ export function n8nProxyRoutes(ctx: Ctx) {
         if (!grant.workflowIds.includes(execution.workflowId))
           return await refuse(403, `Execution ${decision.executionId} is not of a workflow in this access.`)
       }
-      c.set("call", { key, ref, request, grant, instance, url, path, method, decision, refuse, n8n })
+      c.set("call", { key, ref, request, grant, instance, path, method, decision, refuse, n8n })
       await next()
     } finally {
       calls.give(request.id)
@@ -169,8 +178,8 @@ export function n8nProxyRoutes(ctx: Ctx) {
   })
 
   app.all("/:instance/api/v1/*", allowed, bounded, async (c) => {
-    const { key, ref, request, grant, instance, url, path, method, decision, refuse, n8n } = c.get("call")
-    const target = `${instance.baseUrl.replace(/\/+$/, "")}/api/v1${path}${url.search}`
+    const { key, ref, request, grant, instance, path, method, decision, refuse, n8n } = c.get("call")
+    const target = `${instance.baseUrl.replace(/\/+$/, "")}/api/v1${decision.path}${decision.query ? `?${decision.query}` : ""}`
     const body = method === "GET" || method === "HEAD" ? undefined : await c.req.arrayBuffer()
     let change: string | null = null
     if (isChange(method)) {
@@ -200,6 +209,13 @@ export function n8nProxyRoutes(ctx: Ctx) {
       // n8n may have made the change without answering: it stays recorded, with no answer.
       if (change) return c.json({ message: "The n8n instance did not answer." }, 502)
       return refuse(502, "The n8n instance did not answer.")
+    }
+    if (isRedirect(res)) {
+      await res.body?.cancel().catch(() => undefined)
+      if (!change) return refuse(502, redirected(res.status))
+      // The change was sent and stays recorded, with the answer the agent got.
+      await finishChange(ctx, change, 502)
+      return c.json({ message: redirected(res.status) }, 502)
     }
 
     if (decision.workflowFilter && res.ok) {

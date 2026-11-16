@@ -16,6 +16,11 @@ paths:
       x-required-scope: workflow:read
     put:
       x-required-scope: workflow:update
+      parameters:
+        - name: workflowId
+          in: path
+        - name: publishIfActive
+          in: query
     delete:
       x-required-scope: workflow:delete
   /workflows/{workflowId}/activate:
@@ -290,6 +295,183 @@ describe("access checks", () => {
       expect(checkCall(idSpec, limitedById, "POST", "/executions/77/retry", none)).toMatchObject({
         allowed: true,
         executionId: "77",
+      })
+    })
+  })
+})
+
+describe("what the access proxy sends to n8n", () => {
+  const whole = { scopes: ["workflow:list", "workflow:read", "execution:list", "execution:read"], workflowIds: [] }
+  const limited = { ...whole, workflowIds: ["w1"] }
+  const q = (text: string) => new URLSearchParams(text)
+
+  it("sends the operation's own path, with each parameter written out again", () => {
+    expect(checkCall(spec, whole, "GET", "/WORKFLOWS/AbC/", none)).toMatchObject({
+      allowed: true,
+      path: "/workflows/AbC",
+      query: "",
+    })
+    expect(checkCall(wideSpec, limited, "GET", "/workflows/w1/v3", none)).toMatchObject({
+      allowed: true,
+      path: "/workflows/w1/v3",
+    })
+  })
+
+  it("refuses a path parameter that a server or proxy could read as another path", () => {
+    for (const path of [
+      "/workflows/x%2F..%2F..%2Fusers",
+      "/workflows/a%2Fb",
+      "/workflows/w1%2Fdependencies",
+      "/workflows/a%2F%2Fb",
+      "/workflows/a%5Cb",
+      "/workflows/a%252Fb",
+      "/workflows/a%00b",
+      "/workflows/%2E%2E",
+      "/workflows/%E0%A4%A",
+    ])
+      expect(checkCall(wideSpec, whole, "GET", path, none).allowed, path).toBe(false)
+  })
+
+  it("refuses a path whose written-out form is another operation", () => {
+    for (const grant of [whole, limited]) {
+      expect(checkCall(wideSpec, grant, "GET", "/workflows/w1/%64ependencies", none).allowed).toBe(false)
+      expect(checkCall(wideSpec, grant, "GET", "/workflows/w1/%44EPENDENCIES/", none).allowed).toBe(false)
+    }
+  })
+
+  it("takes a slash only in the parameters n8n documents with one, whatever else the description lists", () => {
+    // A description without the operation the slash would lead to, as an older n8n's is.
+    const older = parseSpec(`
+paths:
+  /credentials/{credentialId}:
+    get:
+      x-required-scope: credential:read
+`)
+    const grant = { scopes: ["credential:read"], workflowIds: ["w1"] }
+    expect(checkCall(older, grant, "GET", "/credentials/c1", none).allowed).toBe(true)
+    expect(checkCall(older, grant, "GET", "/credentials/c1%2Fdependencies", none).allowed).toBe(false)
+    expect(checkCall(older, { ...grant, workflowIds: [] }, "GET", "/credentials/c1%2Fx", none).allowed).toBe(false)
+  })
+
+  it("takes a slash in a package name and a repository path", () => {
+    const slashes = parseSpec(`
+paths:
+  /community-packages/{name}:
+    patch:
+      x-required-scope: communityPackage:update
+  /promotions/providers/{promotionProviderId}/repositories/{repositoryId}/branches:
+    get:
+      x-required-scope: promotions:discover
+  /workflows/{workflowId}:
+    put:
+      x-required-scope: workflow:update
+      parameters:
+        - name: publishIfActive
+          in: query
+  /workflows/{workflowId}/transfer:
+    put:
+      x-required-scope: workflow:move
+`)
+    const grant = { scopes: ["communityPackage:update", "promotions:discover", "workflow:update"], workflowIds: [] }
+    expect(checkCall(slashes, grant, "PATCH", "/community-packages/%40scope%2Fnodes", none)).toMatchObject({
+      allowed: true,
+      path: "/community-packages/%40scope%2Fnodes",
+    })
+    expect(
+      checkCall(slashes, grant, "GET", "/promotions/providers/p1/repositories/group%2Fsub%2Frepo/branches", none),
+    ).toMatchObject({ allowed: true, path: "/promotions/providers/p1/repositories/group%2Fsub%2Frepo/branches" })
+    for (const name of ["%40scope%2F..", "%2Fnodes", "nodes%2F", "a%2F%2Fb"])
+      expect(checkCall(slashes, grant, "PATCH", `/community-packages/${name}`, none).allowed, name).toBe(false)
+    expect(
+      checkCall(slashes, grant, "GET", "/promotions/providers/p1%2Fx/repositories/group%2Frepo/branches", none).allowed,
+    ).toBe(false)
+    expect(checkCall(slashes, grant, "PUT", "/workflows/w1%2Ftransfer", none).allowed).toBe(false)
+  })
+
+  it("sends the query as n8n-ops read it", () => {
+    expect(checkCall(spec, whole, "GET", "/executions", q("status=error&limit=5&cursor=a+b%3D"))).toMatchObject({
+      allowed: true,
+      query: "status=error&limit=5&cursor=a+b%3D",
+    })
+    const padded = q(`${"&".repeat(1500)}workflowId=w1`)
+    expect(checkCall(spec, limited, "GET", "/executions", padded)).toMatchObject({
+      allowed: true,
+      query: "workflowId=w1",
+    })
+  })
+
+  it("refuses a query n8n could read differently", () => {
+    const many = Array.from({ length: 101 }, (_, i) => `p${i}=1`).join("&")
+    for (const text of [
+      `${many}&workflowId=w1`,
+      "workflowId=w1&workflowId=w2",
+      "workflow%49d=w2&workflowId=w1",
+      "workflowId[]=w2&workflowId=w1",
+      "workflowId=w1&a[b]=1",
+    ]) {
+      expect(checkCall(spec, limited, "GET", "/executions", q(text)).allowed, text).toBe(false)
+      expect(checkCall(spec, whole, "GET", "/executions", q(text)).allowed, text).toBe(false)
+    }
+    const hundred = Array.from({ length: 99 }, (_, i) => `p${i}=1`).join("&")
+    expect(checkCall(spec, limited, "GET", "/executions", q(`${hundred}&workflowId=w1`)).allowed).toBe(true)
+  })
+
+  describe("updating a workflow", () => {
+    const update = { scopes: ["workflow:update"], workflowIds: [] }
+    const publish = { scopes: ["workflow:update", "workflow:activate"], workflowIds: [] }
+
+    it("saves without publishing when the access does not include workflow:activate", () => {
+      expect(checkCall(spec, update, "PUT", "/workflows/w1", none)).toMatchObject({
+        allowed: true,
+        query: "publishIfActive=false",
+      })
+      expect(checkCall(spec, update, "PUT", "/workflows/w1", q("publishIfActive=false"))).toMatchObject({
+        allowed: true,
+        query: "publishIfActive=false",
+      })
+      expect(checkCall(spec, { ...update, workflowIds: ["w1"] }, "PUT", "/workflows/w1", none)).toMatchObject({
+        allowed: true,
+        query: "publishIfActive=false",
+      })
+      for (const asked of ["true", "TRUE", ""]) {
+        const d = checkCall(spec, update, "PUT", "/workflows/w1", q(`publishIfActive=${asked}`))
+        expect(d.allowed, asked).toBe(false)
+        expect(!d.allowed && d.reason).toContain("workflow:activate")
+      }
+    })
+
+    it("leaves publishing to n8n when the access includes workflow:activate", () => {
+      expect(checkCall(spec, publish, "PUT", "/workflows/w1", none)).toMatchObject({ allowed: true, query: "" })
+      expect(checkCall(spec, publish, "PUT", "/workflows/w1", q("publishIfActive=true"))).toMatchObject({
+        allowed: true,
+        query: "publishIfActive=true",
+      })
+    })
+
+    it("needs workflow:activate on an n8n version that publishes every update", () => {
+      const d = checkCall(idSpec, update, "PUT", "/workflows/w1", none)
+      expect(d.allowed).toBe(false)
+      expect(!d.allowed && d.reason).toContain("workflow:activate")
+      expect(checkCall(idSpec, publish, "PUT", "/workflows/w1", none).allowed).toBe(true)
+    })
+
+    it("finds the parameter where the description refers to it", () => {
+      const referred = parseSpec(`
+components:
+  parameters:
+    publish:
+      name: publishIfActive
+      in: query
+paths:
+  /workflows/{id}:
+    put:
+      x-required-scope: workflow:update
+      parameters:
+        - $ref: '#/components/parameters/publish'
+`)
+      expect(checkCall(referred, update, "PUT", "/workflows/w1", none)).toMatchObject({
+        allowed: true,
+        query: "publishIfActive=false",
       })
     })
   })

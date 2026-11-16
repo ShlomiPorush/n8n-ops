@@ -56,7 +56,7 @@ const DEFAULT_URL = "__N8N_OPS_URL__"
 // Filled in with the skill's version when the server serves this file; access then says when a newer one is out.
 const SKILL_VERSION = "__N8N_OPS_SKILL_VERSION__"
 // A copy that was not served (installed from Git) sends r<SKILL_REVISION> instead; raise it with the server's copy.
-const SKILL_REVISION = 1
+const SKILL_REVISION = 2
 /* ==== End of product constants. ==== */
 
 const env = (name) => process.env[`${ENV_PREFIX}${name}`]

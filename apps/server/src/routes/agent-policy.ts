@@ -201,7 +201,7 @@ export function listing(areas: Area[], only?: string) {
 }
 
 /** The skill's revision this server expects of a copy installed from Git (r<n>); raise it with the skill's scripts. */
-export const SKILL_REVISION = 1
+export const SKILL_REVISION = 2
 
 /**
  * The notice for a skill older than this server (distribution-and-versioning in the agent-access standard): a served

@@ -5,6 +5,7 @@ import {
   currentApiKey,
   dialogClosed,
   discardChanges,
+  holdBackupSchedule,
   loadPrivateKey,
   n8nApi,
   n8nUrl,
@@ -18,23 +19,17 @@ test.describe.configure({ mode: "serial" })
 
 const container = process.env.E2E_N8N_CONTAINER ?? "n8n-ops-verify-n8n-1"
 let page: Page
+let restoreSchedule: (() => Promise<void>) | undefined
 
 test.beforeAll(async ({ browser }) => {
   page = await browser.newPage()
   await signIn(page)
-  // The backups below are started by hand, each when its test needs it. The schedule starts one on its own once the
-  // daily backup time has passed on a day without one. So the installation's time zone is one where it is now
-  // between 10:00 and 12:59, and the daily backup time is 23:59: the run ends long before that time comes. Both stay
-  // so for the spec files after this one.
-  const hour = (zone: string) =>
-    Number(new Intl.DateTimeFormat("en-GB", { timeZone: zone, hour: "2-digit", hourCycle: "h23" }).format(new Date()))
-  const midday = Intl.supportedValuesOf("timeZone").find((zone) => hour(zone) >= 10 && hour(zone) < 13)
-  expect(midday).toBeDefined()
-  expect((await page.request.put("/api/settings/general", { data: { timezone: midday } })).ok()).toBe(true)
-  expect((await page.request.put("/api/settings/defaults", { data: { backupTime: "23:59" } })).ok()).toBe(true)
+  // The backups below are started by hand, each when its test needs it; none may come from the schedule in between.
+  restoreSchedule = await holdBackupSchedule(page)
 })
 
 test.afterAll(async () => {
+  await restoreSchedule?.()
   await page.close()
 })
 

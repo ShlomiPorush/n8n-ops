@@ -1,5 +1,5 @@
 import { expect, type Page, test } from "@playwright/test"
-import { currentApiKey, n8nUrl, ownPage, signIn } from "./helpers.ts"
+import { currentApiKey, holdBackupSchedule, n8nUrl, ownPage, signIn } from "./helpers.ts"
 
 // The setup of an instance (docs/adr/0002) beyond the first registration: Finish later keeps it as Setup
 // incomplete (the pill in the list, nothing on Overview), Continue setup goes on where it stopped, a saved change
@@ -12,6 +12,7 @@ const apiOnly = "e2e-api-backup"
 const phone = "e2e-phone"
 const sayingWhy = "e2e-says-why"
 let page: Page
+let restoreSchedule: (() => Promise<void>) | undefined
 
 /** Removes the instances this file makes, also those a failed test left behind. */
 async function removeOurs() {
@@ -26,9 +27,12 @@ test.beforeAll(async ({ browser }) => {
   page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
   await signIn(page)
   await removeOurs()
+  // The backup of the instance added below is started by hand; none may come from the schedule in between.
+  restoreSchedule = await holdBackupSchedule(page)
 })
 
 test.afterAll(async () => {
+  await restoreSchedule?.()
   await removeOurs()
   await page.close()
 })

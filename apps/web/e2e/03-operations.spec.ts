@@ -22,6 +22,10 @@ let page: Page
 test.beforeAll(async ({ browser }) => {
   page = await browser.newPage()
   await signIn(page)
+  // The backups below are started by hand, each when its test needs it. The schedule starts one on its own once the
+  // daily backup time has passed on a day without one, so the time is the day's last minute: a scheduled backup can
+  // then come in between only during that minute. It stays so for the spec files after this one.
+  expect((await page.request.put("/api/settings/defaults", { data: { backupTime: "23:59" } })).ok()).toBe(true)
 })
 
 test.afterAll(async () => {

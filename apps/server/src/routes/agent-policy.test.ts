@@ -55,6 +55,7 @@ const CLOSED: Record<string, string> = {
   "GET /.well-known/openid-configuration": OAUTH,
   "GET /api/access": "approving or ending temporary access is for people only",
   "GET /api/access/:id": "approving or ending temporary access is for people only",
+  "GET /api/access/ended": "approving or ending temporary access is for people only",
   "GET /api/admin/agents": "agent connections, tokens, keys and the audit log are for people only",
   "GET /api/admin/database": "measuring and compacting the database is for people only",
   "GET /api/admin/database/status": "measuring and compacting the database is for people only",

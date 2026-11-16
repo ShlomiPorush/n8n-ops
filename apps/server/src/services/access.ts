@@ -1261,6 +1261,47 @@ export async function listAccess(ctx: Ctx) {
     .innerJoin(apiTokens, eq(accessRequests.tokenId, apiTokens.id))
     .where(or(inArray(accessRequests.status, [...live]), inArray(accessRequests.id, ended)))
     .orderBy(...newest)
+  return listed(ctx, rows)
+}
+
+/** Where a page of ended requests continues: the last request's time, exact to the microsecond, and its id. */
+export type EndedCursor = { at: string; id: string }
+
+/**
+ * Requests that ended, newest first, a page at a time: the first page from the newest one, each next page after
+ * the cursor the previous one gave. The order is the Access list's, so the pages hold every ended request once.
+ */
+export async function listEndedAccess(ctx: Ctx, before?: EndedCursor) {
+  const live = ["pending", "approved"] as const
+  const rows = await ctx.db
+    .select({
+      r: accessRequests,
+      tokenName: apiTokens.name,
+      // The time as PostgreSQL keeps it: a JavaScript date holds milliseconds only.
+      at: sql<string>`to_char(${accessRequests.requestedAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
+    })
+    .from(accessRequests)
+    .innerJoin(apiTokens, eq(accessRequests.tokenId, apiTokens.id))
+    .where(
+      and(
+        notInArray(accessRequests.status, [...live]),
+        before
+          ? sql`(${accessRequests.requestedAt}, ${accessRequests.id}) < (${before.at}::timestamptz, ${before.id}::uuid)`
+          : undefined,
+      ),
+    )
+    .orderBy(desc(accessRequests.requestedAt), desc(accessRequests.id))
+    .limit(MAX_ENDED_LISTED + 1)
+  const page = rows.slice(0, MAX_ENDED_LISTED)
+  const last = page.at(-1)
+  return {
+    requests: await listed(ctx, page),
+    next: rows.length > MAX_ENDED_LISTED && last ? { at: last.at, id: last.r.id } : null,
+  }
+}
+
+/** Access list rows as people see them: each request with its instances under their current names. */
+async function listed(ctx: Ctx, rows: { r: typeof accessRequests.$inferSelect; tokenName: string }[]) {
   const children = await instancesOf(
     ctx.db,
     rows.map((x) => x.r.id),

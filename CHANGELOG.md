@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+
+- **Agent Access loads older ended requests as you scroll.** In the All view, beyond the latest 200 ended requests, older ones load as the end of the list comes into view, 200 at a time and newest first, until the list says that all requests are shown; while more may exist, the counts read "200+". In an order where older requests would not come last, such as Requested oldest first, Load older requests at the end of the list loads them a page at a time. A page that fails to load says so and waits for Try again. The list's first load is unchanged.
+
 ### Security
 
 - **Reading a Worker's health history stays quick however often the Worker went offline.** The Health panel, `GET /api/v1/worker-health` and the agents' Worker health tool now work out the history's online, offline, not-recording and Docker check time in one pass over its periods, so the time a read takes grows with the rows in its range instead of with their square, and other requests are no longer held up while it runs. The answer is unchanged.

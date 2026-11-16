@@ -13,8 +13,7 @@ const usedToken = made("nops_pair_")
 const newToken = made("nops_pair_")
 const identity = made("nops_worker_")
 
-const paired = () =>
-  new Response(JSON.stringify({ identity, workerId: "w1", name: "host-a" }), { status: 200 })
+const paired = () => new Response(JSON.stringify({ identity, workerId: "w1", name: "host-a" }), { status: 200 })
 const refused = () =>
   new Response(JSON.stringify({ error: "invalid_token", message: "The pairing token is wrong, used or expired." }), {
     status: 401,

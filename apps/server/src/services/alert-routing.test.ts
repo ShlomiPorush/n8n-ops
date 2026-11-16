@@ -88,7 +88,12 @@ describe("route validation", () => {
   })
 
   it("takes null topics and at most 50 routes", () => {
-    const base = { chatId: "-100", webhookSecret: randomBytes(16).toString("hex"), defaultThreadId: null, accessThreadId: null }
+    const base = {
+      chatId: "-100",
+      webhookSecret: randomBytes(16).toString("hex"),
+      defaultThreadId: null,
+      accessThreadId: null,
+    }
     expect(sections.telegram.safeParse({ ...base, routes: [] }).success).toBe(true)
     const many = Array.from({ length: 51 }, () => ({ tag: "x", threadId: 1 }))
     expect(sections.telegram.safeParse({ ...base, routes: many }).success).toBe(false)

@@ -19,7 +19,8 @@ describe("formChanged", () => {
   it("sees a change in a nested field, a switch and a typed secret", () => {
     expect(formChanged({ ...opened, retention: { daily: "8", weekly: "4" } }, opened)).toBe(true)
     expect(formChanged({ ...opened, enabled: false }, opened)).toBe(true)
-    expect(formChanged({ ...opened, credentials: { user: "backup", password: crypto.randomUUID() } }, opened)).toBe(true)
+    const password = crypto.randomUUID()
+    expect(formChanged({ ...opened, credentials: { user: "backup", password } }, opened)).toBe(true)
   })
 
   it("is false again when a field is changed back", () => {

@@ -28,13 +28,22 @@ test.beforeAll(async ({ browser }) => {
   await signIn(page)
   await removeOurs()
   // The backup of the instance added below is started by hand; none may come from the schedule in between.
-  restoreSchedule = await holdBackupSchedule(page)
+  await holdBackupSchedule(page, (restore) => {
+    restoreSchedule = restore
+  })
 })
 
+// The instances go first, so none of them is backed up by the schedule once it is back.
 test.afterAll(async () => {
-  await restoreSchedule?.()
-  await removeOurs()
-  await page.close()
+  try {
+    await removeOurs()
+  } finally {
+    try {
+      await restoreSchedule?.()
+    } finally {
+      await page.close()
+    }
+  }
 })
 
 /** Starts adding an instance of the test n8n: its name, its address, and the capabilities to click. */

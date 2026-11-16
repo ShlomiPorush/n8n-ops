@@ -112,22 +112,26 @@ export async function discardChanges(page: Page) {
 /**
  * Keeps the daily backup schedule away while a spec file adds backups and starts each one by hand. The schedule
  * starts a backup on its own once the daily backup time has passed on a day without one, so the installation's time
- * zone becomes one where it is now 10:00 to 12:59 and the daily backup time 23:59, more than 11 hours away. Returns
- * what puts both back, for the file's afterAll, so the files after it find them as they were.
+ * zone becomes one where it is now 10:00 to 12:59 and the daily backup time 23:59, more than 11 hours away. What
+ * puts both back is handed to `keep` before either changes, for the file's afterAll, so the files after it find them
+ * as they were also when this stops half-way. It puts back both, even when one of them fails.
  */
-export async function holdBackupSchedule(page: Page): Promise<() => Promise<void>> {
+export async function holdBackupSchedule(page: Page, keep: (restore: () => Promise<void>) => void) {
   const { timezone } = (await (await page.request.get("/api/settings/general")).json()) as { timezone: string }
   const { backupTime } = (await (await page.request.get("/api/settings/defaults")).json()) as { backupTime: string }
+  keep(async () => {
+    const answers = await Promise.allSettled([
+      page.request.put("/api/settings/general", { data: { timezone } }),
+      page.request.put("/api/settings/defaults", { data: { backupTime } }),
+    ])
+    expect(answers.map((a) => a.status === "fulfilled" && a.value.ok())).toEqual([true, true])
+  })
   const hour = (zone: string) =>
     Number(new Intl.DateTimeFormat("en-GB", { timeZone: zone, hour: "2-digit", hourCycle: "h23" }).format(new Date()))
   const midday = Intl.supportedValuesOf("timeZone").find((zone) => hour(zone) >= 10 && hour(zone) < 13)
   expect(midday).toBeDefined()
   expect((await page.request.put("/api/settings/general", { data: { timezone: midday } })).ok()).toBe(true)
   expect((await page.request.put("/api/settings/defaults", { data: { backupTime: "23:59" } })).ok()).toBe(true)
-  return async () => {
-    expect((await page.request.put("/api/settings/general", { data: { timezone } })).ok()).toBe(true)
-    expect((await page.request.put("/api/settings/defaults", { data: { backupTime } })).ok()).toBe(true)
-  }
 }
 
 /** Opens the New token dialog on Connected agents, where the token made by hand is folded away (a native fold). */

@@ -117,8 +117,12 @@ export async function discardChanges(page: Page) {
  * as they were also when this stops half-way. It puts back both, even when one of them fails.
  */
 export async function holdBackupSchedule(page: Page, keep: (restore: () => Promise<void>) => void) {
-  const { timezone } = (await (await page.request.get("/api/settings/general")).json()) as { timezone: string }
-  const { backupTime } = (await (await page.request.get("/api/settings/defaults")).json()) as { backupTime: string }
+  const general = await page.request.get("/api/settings/general")
+  const defaults = await page.request.get("/api/settings/defaults")
+  expect([general.ok(), defaults.ok()]).toEqual([true, true])
+  const { timezone } = (await general.json()) as { timezone: string }
+  const { backupTime } = (await defaults.json()) as { backupTime: string }
+  expect([typeof timezone, typeof backupTime]).toEqual(["string", "string"])
   keep(async () => {
     const answers = await Promise.allSettled([
       page.request.put("/api/settings/general", { data: { timezone } }),

@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto"
 import { describe, expect, it } from "vitest"
 import { concurrencyFlag, discover, type ListedContainer, roleOf } from "./discovery.ts"
 
@@ -107,7 +108,8 @@ describe("discover", () => {
   })
 
   it("lets only names and states out of the list", () => {
-    const withSecrets = project.map((x) => ({ ...x, Labels: { ...x.Labels, "traefik.auth": "user:$apr1$secret" } }))
-    expect(JSON.stringify(discover(withSecrets, "acme-n8n-1"))).not.toContain("secret")
+    const secret = randomBytes(16).toString("hex")
+    const withSecrets = project.map((x) => ({ ...x, Labels: { ...x.Labels, "traefik.auth": `user:$apr1$${secret}` } }))
+    expect(JSON.stringify(discover(withSecrets, "acme-n8n-1"))).not.toContain(secret)
   })
 })

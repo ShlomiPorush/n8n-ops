@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto"
 import vm from "node:vm"
 import { describe, expect, it, vi } from "vitest"
 import { sections, type TelegramRoute, telegramRouteSchema } from "../lib/settings.ts"
@@ -87,7 +88,12 @@ describe("route validation", () => {
   })
 
   it("takes null topics and at most 50 routes", () => {
-    const base = { chatId: "-100", webhookSecret: "s", defaultThreadId: null, accessThreadId: null }
+    const base = {
+      chatId: "-100",
+      webhookSecret: randomBytes(16).toString("hex"),
+      defaultThreadId: null,
+      accessThreadId: null,
+    }
     expect(sections.telegram.safeParse({ ...base, routes: [] }).success).toBe(true)
     const many = Array.from({ length: 51 }, () => ({ tag: "x", threadId: 1 }))
     expect(sections.telegram.safeParse({ ...base, routes: many }).success).toBe(false)
@@ -102,7 +108,7 @@ describe("sending into a topic", () => {
       bodies.push(body)
       return new Response(JSON.stringify(answer(body)))
     }) as never
-    return { bodies, api: new Telegram("t", fetchImpl) }
+    return { bodies, api: new Telegram(randomBytes(16).toString("hex"), fetchImpl) }
   }
   const sent = { ok: true, result: { message_id: 7 } }
   const render = (note?: unknown) => (note ? html`${String(note)}|text` : html`text`)

@@ -1,7 +1,9 @@
+import { randomBytes } from "node:crypto"
 import { describe, expect, it } from "vitest"
 import { describeDatabaseError } from "./errors.ts"
 
-const url = "postgres://n8n_ops:secret-pass@postgres:5432/n8n_ops"
+const password = randomBytes(16).toString("hex")
+const url = `postgres://n8n_ops:${password}@postgres:5432/n8n_ops`
 
 // The shape postgres.js and Drizzle produce: the code sits on the cause of the query error.
 function queryError(code: string) {
@@ -19,8 +21,8 @@ describe("describeDatabaseError", () => {
   })
 
   it("never repeats the password", () => {
-    expect(describeDatabaseError(queryError("28P01"), url)).not.toContain("secret-pass")
-    expect(describeDatabaseError(queryError("ECONNREFUSED"), url)).not.toContain("secret-pass")
+    expect(describeDatabaseError(queryError("28P01"), url)).not.toContain(password)
+    expect(describeDatabaseError(queryError("ECONNREFUSED"), url)).not.toContain(password)
   })
 
   it("names the host that cannot be reached", () => {

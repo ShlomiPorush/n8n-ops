@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto"
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http"
 import type { AddressInfo } from "node:net"
 import { afterEach, describe, expect, it } from "vitest"
@@ -117,10 +118,11 @@ describe("the Docker client in a probe", () => {
   it("classifies a refused exec inspection, and keeps no piece of a broken answer", async () => {
     const refused = await engine({ inspect: refuse(403, "Forbidden") })
     expect((await refused.docker.exec("n8n", ["true"]).catch((e) => e)).kind).toBe("refused")
-    const broken = await engine({ inspect: (res) => res.writeHead(200).end("token=s3cret not json") })
+    const secret = randomBytes(16).toString("hex")
+    const broken = await engine({ inspect: (res) => res.writeHead(200).end(`token=${secret} not json`) })
     const error = await broken.docker.exec("n8n", ["true"]).catch((e) => e)
     expect(error).toBeInstanceOf(DockerError)
-    expect(error.message).not.toContain("s3cret")
+    expect(error.message).not.toContain(secret)
   })
 
   it("keeps no limit for a backup's output", async () => {

@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto"
 import { describe, expect, it } from "vitest"
 import { parseWorkflowFields } from "../lib/n8n-spec.ts"
 import type { N8nNode, N8nWorkflow } from "../n8n/client.ts"
@@ -195,7 +196,8 @@ describe("more of the review", () => {
   })
 
   it("never keeps n8n's message for a credential, which could repeat its secret", () => {
-    const error = new N8nError("n8n answered 400 for POST /credentials", 400, '{"message":"bad value s3cr3t"}')
+    const secret = randomBytes(16).toString("hex")
+    const error = new N8nError("n8n answered 400 for POST /credentials", 400, `{"message":"bad value ${secret}"}`)
     expect(stepMessage({ kind: "credential" }, error)).toBe("n8n answered 400.")
     expect(stepMessage({ kind: "workflow" }, error)).toContain("bad value")
   })

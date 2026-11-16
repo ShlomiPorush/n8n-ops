@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto"
 import { neededRule } from "@n8n-ops/shared"
 import { describe, expect, it } from "vitest"
 import { parse } from "yaml"
@@ -45,13 +46,14 @@ describe("socket proxy rules", () => {
 })
 
 describe("worker install", () => {
-  const base = { serverUrl: "https://ops.example.com", token: "nops_pair_x", serverVersion: "0.2.0" }
+  const token = `nops_pair_${randomBytes(16).toString("hex")}`
+  const base = { serverUrl: "https://ops.example.com", token, serverVersion: "0.2.0" }
 
   it("is one compose file that holds everything, with nothing to fill in or run first", () => {
     const install = workerInstall({ ...base, socketProxy: true, containers: ["n8n"] })
     expect(Object.keys(install)).toEqual(["compose"])
     expect(install.compose).toContain('N8N_OPS_SERVER_URL: "https://ops.example.com"')
-    expect(install.compose).toContain('PAIRING_TOKEN: "nops_pair_x"')
+    expect(install.compose).toContain(`PAIRING_TOKEN: "${token}"`)
     expect(install.compose).not.toContain("env_file")
     expect(install.compose).not.toContain("DOCKER_SOCKET_GID")
     expect(install.compose).not.toMatch(/\$\{/)

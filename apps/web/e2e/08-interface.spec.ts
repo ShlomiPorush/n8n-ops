@@ -1,5 +1,5 @@
 import { expect, type Locator, type Page, type Request, test } from "@playwright/test"
-import { design, dialogClosed, dialogOpened, discardChanges, signIn } from "./helpers.ts"
+import { design, dialogClosed, dialogOpened, discardChanges, randomSecret, signIn } from "./helpers.ts"
 
 // The shared ways of moving around: search, sorting, filters in the address, the keyboard, Back, unsaved
 // changes, the sidebar and the links out to n8n.
@@ -2677,8 +2677,9 @@ test("sign-in says when n8n-ops cannot be reached, gives the button back and kee
       await route.abort("internetdisconnected")
     })
     await login.goto("/login")
+    const password = randomSecret()
     await login.getByLabel("Username").fill("nobody")
-    await login.getByLabel("Password", { exact: true }).fill("not the password")
+    await login.getByLabel("Password", { exact: true }).fill(password)
     await login.getByRole("button", { name: "Continue" }).click()
     const busy = login.getByRole("button", { name: "Signing in…" })
     await expect(busy).toBeDisabled()
@@ -2688,7 +2689,7 @@ test("sign-in says when n8n-ops cannot be reached, gives the button back and kee
     await expect(login.getByText("Could not reach n8n-ops. Check your connection and try again.")).toBeVisible()
     await expect(login.getByRole("button", { name: "Continue" })).toBeEnabled()
     await expect(login.getByLabel("Username")).toHaveValue("nobody")
-    await expect(login.getByLabel("Password", { exact: true })).toHaveValue("not the password")
+    await expect(login.getByLabel("Password", { exact: true })).toHaveValue(password)
   } finally {
     release()
     await context.close()
@@ -2711,7 +2712,7 @@ test("a two-factor code is kept when n8n-ops cannot be reached, and cleared when
     )
     await login.goto("/login")
     await login.getByLabel("Username").fill("nobody")
-    await login.getByLabel("Password", { exact: true }).fill("not the password")
+    await login.getByLabel("Password", { exact: true }).fill(randomSecret())
     await login.getByRole("button", { name: "Continue" }).click()
     await expect(login.getByRole("heading", { name: "Two-Factor Code" })).toBeVisible()
     const code = login.getByLabel("Two-factor code")
@@ -2752,8 +2753,9 @@ test("setup that made the account but could not sign in only signs in when tried
     })
     await setup.goto("/setup")
     await setup.getByLabel("Username").fill("first-run")
-    await setup.getByLabel("Password", { exact: true }).fill("a long enough password")
-    await setup.getByLabel("Repeat password").fill("a long enough password")
+    const password = randomSecret()
+    await setup.getByLabel("Password", { exact: true }).fill(password)
+    await setup.getByLabel("Repeat password").fill(password)
     await setup.getByRole("button", { name: "Create account" }).click()
     const unreachable = setup.getByText("Could not reach n8n-ops. Check your connection and try again.")
     await expect(unreachable).toBeVisible()

@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto"
 import { describe, expect, it, vi } from "vitest"
 import type { Db } from "../db/client.ts"
 import { TestRefused, telegramTarget } from "../services/draft-tests.ts"
@@ -15,6 +16,10 @@ import {
   withEmailEnv,
   wordedIssues,
 } from "./settings.ts"
+
+/** A new SMTP password and a Telegram bot token, new for each run. */
+const newPassword = randomBytes(16).toString("hex")
+const botToken = randomBytes(16).toString("hex")
 
 describe("SMTP password and server", () => {
   const stored = { smtpHost: "smtp.example.com", smtpPort: 587, smtpPasswordEnc: "enc" }
@@ -35,7 +40,7 @@ describe("SMTP password and server", () => {
   })
 
   it("takes a new server with a new password, or with the password removed", () => {
-    expect(smtpPasswordNeeded(stored, { smtpHost: "mail.other.example", smtpPort: 587 }, "secret")).toBe(false)
+    expect(smtpPasswordNeeded(stored, { smtpHost: "mail.other.example", smtpPort: 587 }, newPassword)).toBe(false)
     expect(smtpPasswordNeeded(stored, { smtpHost: "mail.other.example", smtpPort: 587 }, null)).toBe(false)
   })
 
@@ -48,7 +53,7 @@ describe("SMTP password and server", () => {
     const secure = { ...stored, smtpPort: 465, smtpSecure: true }
     expect(smtpPasswordNeeded(secure, { ...secure, smtpSecure: false }, undefined)).toBe(true)
     expect(smtpPasswordNeeded(stored, { ...stored, smtpAllowUnencrypted: true }, undefined)).toBe(true)
-    expect(smtpPasswordNeeded(stored, { ...stored, smtpAllowUnencrypted: true }, "secret")).toBe(false)
+    expect(smtpPasswordNeeded(stored, { ...stored, smtpAllowUnencrypted: true }, newPassword)).toBe(false)
   })
 
   it("lets a row stored before the encryption switch through unchanged", () => {
@@ -217,7 +222,7 @@ describe("checks before a value is stored", () => {
 
 describe("a Telegram test with the values on screen", () => {
   const stored = { ...defaults.telegram, botTokenEnc: "enc", chatId: "-100200", defaultThreadId: 12 }
-  const target = (draft: Record<string, unknown>) => telegramTarget(stored, draft, () => "token")
+  const target = (draft: Record<string, unknown>) => telegramTarget(stored, draft, () => botToken)
 
   it("goes to the stored default topic, or to the one on screen, empty being General", () => {
     expect(target({}).threadId).toBe(12)

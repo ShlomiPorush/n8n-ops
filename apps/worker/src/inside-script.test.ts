@@ -1,4 +1,5 @@
 import { execFile, execFileSync } from "node:child_process"
+import { randomBytes } from "node:crypto"
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { createServer as createHttp, type IncomingMessage, type Server, type ServerResponse } from "node:http"
 import { createServer as createHttps } from "node:https"
@@ -156,7 +157,7 @@ describe("the check in the main", () => {
 
   it("prints no setting value", async () => {
     const port = await listen(n8n({ ...healthy, "/metrics": answer(200, metricsText()) }))
-    const secret = "s3cret-value-9f2"
+    const secret = randomBytes(16).toString("hex")
     const result = await run(
       at(port, { N8N_METRICS: "true", N8N_SSL_KEY: secret, N8N_SSL_CERT: secret, N8N_ENCRYPTION_KEY: secret }),
     )

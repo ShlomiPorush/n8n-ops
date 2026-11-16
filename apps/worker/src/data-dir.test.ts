@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto"
 import { chmod, mkdtemp, readdir, readFile, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -31,8 +32,9 @@ describe("saveIdentity", () => {
   it("writes the identity readable by the worker only, and leaves no temporary file", async () => {
     const dir = await folder()
     const file = join(dir, "identity.json")
-    await saveIdentity(file, { identity: "nops_worker_x" })
-    expect(JSON.parse(await readFile(file, "utf8"))).toEqual({ identity: "nops_worker_x" })
+    const identity = `nops_worker_${randomBytes(16).toString("hex")}`
+    await saveIdentity(file, { identity })
+    expect(JSON.parse(await readFile(file, "utf8"))).toEqual({ identity })
     expect((await stat(file)).mode & 0o777).toBe(0o600)
     expect(await readdir(dir)).toEqual(["identity.json"])
   })
@@ -42,8 +44,9 @@ describe("saveIdentity", () => {
     const file = join(dir, "identity.json")
     await writeFile(file, "")
     await chmod(file, 0o400)
-    await saveIdentity(file, { identity: "new" })
-    expect(JSON.parse(await readFile(file, "utf8"))).toEqual({ identity: "new" })
+    const identity = `nops_worker_${randomBytes(16).toString("hex")}`
+    await saveIdentity(file, { identity })
+    expect(JSON.parse(await readFile(file, "utf8"))).toEqual({ identity })
   })
 
   it("fails when the folder is gone", async () => {

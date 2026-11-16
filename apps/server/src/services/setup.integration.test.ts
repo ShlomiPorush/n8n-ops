@@ -4,6 +4,7 @@ import { createServer, type Server } from "node:http"
 import type { AddressInfo } from "node:net"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { generateX25519Identity } from "age-encryption"
 import { and, eq } from "drizzle-orm"
 import { Hono } from "hono"
 import postgres from "postgres"
@@ -650,7 +651,7 @@ describe("backups", () => {
     await expect(
       previewRestore(ctx, {
         source: { runId: run?.id ?? "" },
-        privateKey: "AGE-SECRET-KEY-1X",
+        privateKey: await generateX25519Identity(),
         kind: "workflow",
         itemId: "1",
         targetInstanceId: older.id,
@@ -955,7 +956,7 @@ describe("a credential export", () => {
         headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
         body: JSON.stringify({
           ok: true,
-          result: { credentials: [{ id: "1", name: "CRM", data: { key: "s3cret" } }] },
+          result: { credentials: [{ id: "1", name: "CRM", data: { key: randomBytes(16).toString("hex") } }] },
         }),
       })
     expect(answer.status).toBe(200)

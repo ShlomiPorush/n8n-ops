@@ -53,7 +53,7 @@ export function ListWithPanel({
   const phone = useIsMobile()
   const [nav, setNav] = useState<HTMLDivElement | null>(null)
   const navigate = useNavigate()
-  const { pathname } = useLocation()
+  const { pathname, search, hash } = useLocation()
   const listRef = useRef<HTMLDivElement | null>(null)
   const [narrow, setNarrow] = useState(false)
 
@@ -73,9 +73,13 @@ export function ListWithPanel({
     return () => observer.disconnect()
   }, [])
 
-  // Open the first item on a wide screen. The address is corrected in place, so Back still leaves the page.
+  // Open the first item on a wide screen. The address is corrected in place, so Back still leaves the page. Only
+  // while the browser is still at the address this list was drawn for: a page the person asked for meanwhile, such
+  // as Add instance clicked as the list arrives, has already moved it, and the first item would replace that page.
   useEffect(() => {
     if (!wide || panel) return
+    const { location } = window
+    if (location.pathname !== pathname || location.search !== search || location.hash !== hash) return
     const first = listRef.current?.querySelector<HTMLElement>("[data-href]")?.dataset.href
     if (first) navigate(first, { replace: true })
   })

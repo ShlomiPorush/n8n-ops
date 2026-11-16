@@ -245,3 +245,35 @@ test("every step of the setup fits a phone without sideways scrolling", async ()
     await page.setViewportSize({ width: 1440, height: 900 })
   }
 })
+
+test("Add instance opens the setup also when the window turns wide before the setup has drawn", async ({ browser }) => {
+  // Narrower than the split, the list opens no instance by itself. The split's media query answers through a
+  // stand-in here, so the window can turn wide in the same moment as the click: the list then draws once more, at
+  // the address it was at, before the setup page has drawn, and must not open its first instance over the setup.
+  const context = await browser.newContext({ viewport: { width: 900, height: 900 } })
+  const tab = await context.newPage()
+  try {
+    await tab.addInitScript((query) => {
+      const real = window.matchMedia.bind(window)
+      const split = Object.assign(new EventTarget(), { matches: false, media: query, onchange: null })
+      const widen = () => {
+        split.matches = true
+        split.dispatchEvent(new Event("change"))
+      }
+      Object.assign(window, { e2eWiden: widen })
+      window.matchMedia = (q: string) => (q === query ? (split as unknown as MediaQueryList) : real(q))
+    }, "(min-width: 1000px)")
+    await signIn(tab)
+    await tab.goto("/instances")
+    await expect(tab.locator("[data-href^='/instances/']").first()).toBeVisible()
+    await expect(tab).toHaveURL(/\/instances$/)
+    await tab.getByRole("button", { name: "Add instance" }).evaluate((button: HTMLElement) => {
+      button.click()
+      ;(window as unknown as { e2eWiden: () => void }).e2eWiden()
+    })
+    await expect(tab.getByRole("heading", { name: "Basics" })).toBeVisible()
+    await expect(tab).toHaveURL(/\/instances\/new$/)
+  } finally {
+    await context.close()
+  }
+})

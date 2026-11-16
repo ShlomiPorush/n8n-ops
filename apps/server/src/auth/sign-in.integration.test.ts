@@ -7,7 +7,7 @@ import { createApp } from "../app.ts"
 import type { Ctx } from "../context.ts"
 import { createDatabase, type Database } from "../db/client.ts"
 import { createAudit } from "../lib/audit.ts"
-import { createSettings } from "../lib/settings.ts"
+import { createSettings, defaults } from "../lib/settings.ts"
 import { LOGIN_DOMAIN } from "./auth.ts"
 import { createAuthSource } from "./current.ts"
 
@@ -30,7 +30,7 @@ afterAll(async () => {
 })
 
 /** A new database with the single account, and a client that sends each request from the address it is given. */
-async function installation() {
+async function installation({ envPublicUrl }: { envPublicUrl?: string } = {}) {
   const name = `n8n_ops_sign_in_${randomBytes(4).toString("hex")}`
   await admin.unsafe(`CREATE DATABASE "${name}"`)
   const url = new URL(adminUrl as string)
@@ -38,10 +38,10 @@ async function installation() {
   const database = createDatabase(url.toString())
   databases.push({ name, database })
   await database.migrate(join(import.meta.dirname, "../../drizzle"))
-  const settings = createSettings(database.db)
+  const settings = createSettings(database.db, { publicUrl: envPublicUrl })
   const ctx = {
     db: database.db,
-    auth: createAuthSource(database.db, randomBytes(32), undefined, settings),
+    auth: createAuthSource(database.db, randomBytes(32), envPublicUrl, settings),
     settings,
     audit: createAudit(database.db),
     events: new EventEmitter(),
@@ -56,7 +56,7 @@ async function installation() {
     })
   const password = randomBytes(24).toString("hex")
   expect((await post("/api/setup/account", { username: USERNAME, password }, "10.3.0.1")).status).toBe(200)
-  return { post, password }
+  return { post, password, settings }
 }
 
 describe("password sign-in", () => {
@@ -89,5 +89,47 @@ describe("password sign-in", () => {
     const signedIn = await post("/api/auth/sign-in/username", { username: USERNAME, password }, "10.3.2.2")
     expect(signedIn.status).toBe(200)
     expect(signedIn.headers.getSetCookie().length).toBeGreaterThan(0)
+  })
+})
+
+describe("the session cookie", () => {
+  /** The session cookie a password sign-in sets, by name, with its attributes. */
+  async function sessionCookie(post: Awaited<ReturnType<typeof installation>>["post"], password: string, from: string) {
+    const res = await post("/api/auth/sign-in/username", { username: USERNAME, password }, from)
+    expect(res.status).toBe(200)
+    const line = res.headers.getSetCookie().find((c) => /^(__Secure-)?better-auth\.session_token=/.test(c)) ?? ""
+    return { name: line.slice(0, line.indexOf("=")), secure: /;\s*Secure(;|$)/i.test(line) }
+  }
+
+  it("is Secure, with the __Secure- name, when the public URL in Settings is HTTPS", async () => {
+    const { post, password, settings } = await installation()
+    await settings.set("general", { ...defaults.general, publicUrl: "https://ops.example.test" })
+    expect(await sessionCookie(post, password, "10.3.3.1")).toEqual({
+      name: "__Secure-better-auth.session_token",
+      secure: true,
+    })
+  })
+
+  it("follows a change of the public URL in Settings between HTTP and HTTPS", async () => {
+    const { post, password, settings } = await installation()
+    await settings.set("general", { ...defaults.general, publicUrl: "http://ops.example.test" })
+    expect(await sessionCookie(post, password, "10.3.4.1")).toEqual({
+      name: "better-auth.session_token",
+      secure: false,
+    })
+    await settings.set("general", { ...defaults.general, publicUrl: "https://ops.example.test" })
+    expect(await sessionCookie(post, password, "10.3.4.2")).toEqual({
+      name: "__Secure-better-auth.session_token",
+      secure: true,
+    })
+  })
+
+  it("stays Secure when N8N_OPS_PUBLIC_URL is HTTPS, whatever Settings stores", async () => {
+    const { post, password, settings } = await installation({ envPublicUrl: "https://ops.example.test" })
+    await settings.set("general", { ...defaults.general, publicUrl: "http://ops.example.test" })
+    expect(await sessionCookie(post, password, "10.3.5.1")).toEqual({
+      name: "__Secure-better-auth.session_token",
+      secure: true,
+    })
   })
 })

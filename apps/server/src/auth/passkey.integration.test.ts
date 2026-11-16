@@ -514,13 +514,14 @@ describe("passkeys at the public URL", () => {
   })
 
   it("lists, renames and deletes kept passkeys while passkeys are off, and neither adds nor signs in", async () => {
-    const cookie = await signIn()
-    const { authenticator } = await register(cookie, { name: "Lost phone" })
+    const { authenticator } = await register(await signIn(), { name: "Lost phone" })
     if (!authenticator) throw new Error("no authenticator")
     const [row] = await database.db.select().from(passkey).where(eq(passkey.name, "Lost phone"))
     if (!row) throw new Error("no passkey")
     await setPublicUrl("")
     try {
+      // Without an HTTPS public URL the session cookie is no longer the Secure one: the person signs in again.
+      const cookie = await signIn()
       const listed = await call("GET", "/api/auth/passkey/list-user-passkeys", { cookie })
       expect(listed.status).toBe(200)
       expect((await listed.json()) as unknown[]).toContainEqual(expect.objectContaining({ name: "Lost phone" }))

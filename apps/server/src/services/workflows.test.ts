@@ -51,6 +51,36 @@ describe("references", () => {
     expect(credentialIds(base)).toEqual(["c1", "c2"])
   })
 
+  it("leaves out a credential entry without an ID it can keep as given", () => {
+    const odd = {
+      ...base,
+      nodes: [
+        {
+          name: "A",
+          type: "n8n-nodes-base.httpRequest",
+          credentials: { a: null, b: { id: { nested: [1] } }, c: { id: 7 }, d: { id: "c\u00009" }, e: { id: "c9" } },
+        },
+      ],
+    } as unknown as N8nWorkflow
+    expect(credentialIds(odd)).toEqual(["c9"])
+  })
+
+  it("leaves out a called workflow ID it cannot keep as given", () => {
+    const caller: N8nWorkflow = {
+      ...base,
+      nodes: [
+        { name: "A", type: "n8n-nodes-base.executeWorkflow", parameters: { workflowId: "w\u00001" } },
+        { name: "B", type: "n8n-nodes-base.executeWorkflow", parameters: { workflowId: "w1" } },
+        { name: "C", type: "n8n-nodes-base.executeWorkflow", parameters: { workflowId: { value: 7 } } },
+        { name: "D", type: "n8n-nodes-base.executeWorkflow", parameters: { workflowId: { value: ["w2"] } } },
+        { name: "E", type: "n8n-nodes-base.executeWorkflow", parameters: { workflowId: { value: { id: "w3" } } } },
+        { name: "F", type: "n8n-nodes-base.executeWorkflow", parameters: { workflowId: 8 } },
+        { name: "G", type: "n8n-nodes-base.executeWorkflow", parameters: { workflowId: null } },
+      ],
+    }
+    expect(calledWorkflowIds(caller)).toEqual(["w1"])
+  })
+
   it("finds workflows called by id, in both parameter styles, and skips expressions", () => {
     const caller: N8nWorkflow = {
       ...base,

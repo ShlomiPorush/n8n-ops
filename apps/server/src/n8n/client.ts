@@ -98,7 +98,17 @@ export class N8nClient {
       },
       body: body !== undefined ? JSON.stringify(body) : undefined,
       signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+      // The API key and the body go only to the instance's own address: a redirect is an error, never followed.
+      redirect: "manual",
     })
+    // Decided by the status alone: a redirect's body is never read.
+    if (res.status >= 300 && res.status < 400) {
+      await res.body?.cancel().catch(() => undefined)
+      throw new N8nError(
+        `n8n answered ${res.status} for ${method} ${path}: the instance's address redirects, and n8n-ops does not follow redirects with the API key. Set the address n8n answers at.`,
+        res.status,
+      )
+    }
     const text = await res.text()
     if (!res.ok) throw new N8nError(`n8n answered ${res.status} for ${method} ${path}`, res.status, text.slice(0, 500))
     return (text ? JSON.parse(text) : null) as T

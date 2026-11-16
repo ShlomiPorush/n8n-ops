@@ -4,6 +4,7 @@ import { type Ctx, changed } from "../context.ts"
 import { instances, workflows } from "../db/schema.ts"
 import { sha256 } from "../lib/crypto.ts"
 import { oneAtATime } from "../lib/one-at-a-time.ts"
+import { makeStorable, storableText } from "../lib/storable.ts"
 import { N8nError, type N8nExecution, type N8nWorkflow } from "../n8n/client.ts"
 import { describeTrigger } from "../n8n/execution.ts"
 import { can, clientFor, type Instance, unsupportedVersion } from "./instances.ts"
@@ -24,10 +25,19 @@ export function structureHash(workflow: Pick<N8nWorkflow, "nodes" | "connections
   return sha256(JSON.stringify({ types, edges: edges.sort() }))
 }
 
+/**
+ * An identifier n8n-ops keeps exactly as n8n gave it: a non-empty string PostgreSQL can store unchanged. An
+ * identifier is never cleaned, since a cleaned one could name another workflow or credential.
+ */
+const storableId = (value: unknown): value is string =>
+  typeof value === "string" && value !== "" && storableText(value) === value
+
+/** The credentials the workflow's nodes use, by ID; an entry without a storable ID is left out. */
 export function credentialIds(workflow: Pick<N8nWorkflow, "nodes">): string[] {
-  return [...new Set(workflow.nodes.flatMap((n) => Object.values(n.credentials ?? {}).map((c) => c.id ?? "")))].filter(
-    Boolean,
+  const ids = workflow.nodes.flatMap((n) =>
+    Object.values(n.credentials ?? {}).map((c) => (c as { id?: unknown } | null)?.id),
   )
+  return [...new Set(ids)].filter(storableId)
 }
 
 /** Ids of workflows called with Execute Workflow nodes (by id, which breaks when moved). */
@@ -35,10 +45,11 @@ export function calledWorkflowIds(workflow: Pick<N8nWorkflow, "nodes">): string[
   const ids = workflow.nodes
     .filter((n) => /executeWorkflow$/i.test(n.type) && !n.disabled)
     .map((n) => {
-      const ref = n.parameters?.workflowId as string | { value?: string } | undefined
-      return typeof ref === "string" ? ref : (ref?.value ?? "")
+      const ref: unknown = n.parameters?.workflowId
+      const id = typeof ref === "string" ? ref : (ref as { value?: unknown } | null)?.value
+      return typeof id === "string" ? id.replace(/^=/, "") : ""
     })
-  return [...new Set(ids.map((id) => String(id).replace(/^=/, "")))].filter((id) => id && !id.includes("{{"))
+  return [...new Set(ids)].filter((id) => storableId(id) && !id.includes("{{"))
 }
 
 type ExecutionPage = { data: Pick<N8nExecution, "workflowId" | "status" | "startedAt">[]; nextCursor: string | null }
@@ -179,36 +190,71 @@ async function syncWorkflowsNow(ctx: Ctx, instance: Instance, readDeadlineMs: nu
     if (at && (!s.last || at > s.last)) s.last = at
     stats.set(e.workflowId, s)
   }
+  // A workflow n8n gives in a form the map cannot read is skipped, and the rest of the map still syncs. One with a
+  // storable ID keeps the row an earlier sync stored until n8n no longer lists it; one without cannot have a row.
+  const listed: string[] = []
+  const skipped: string[] = []
+  let skippedWithoutId = 0
   for (const w of all) {
-    const trigger = describeTrigger(w)
-    const s = stats.get(w.id)
-    const row = {
-      name: w.name,
-      active: w.active,
-      archived: Boolean(w.isArchived),
-      triggerType: trigger.type,
-      triggerDetail: trigger.detail,
-      structureHash: structureHash(w),
-      nodeCount: w.nodes.length,
-      credentialIds: credentialIds(w),
-      calledWorkflowIds: calledWorkflowIds(w),
-      tags: (w.tags ?? []).map((t) => t.name),
-      lastRunAt: s?.last ?? null,
-      runs30d: s?.runs ?? 0,
-      errors30d: s?.errors ?? 0,
-      syncedAt: new Date(),
+    const id: unknown = w?.id
+    if (!storableId(id)) {
+      skippedWithoutId += 1
+      continue
+    }
+    listed.push(id)
+    let row: ReturnType<typeof workflowRow>
+    try {
+      row = workflowRow(w, stats.get(id))
+    } catch {
+      skipped.push(id)
+      continue
     }
     await ctx.db
       .insert(workflows)
-      .values({ instanceId: instance.id, workflowId: w.id, ...row })
+      .values({ instanceId: instance.id, workflowId: id, ...row })
       .onConflictDoUpdate({ target: [workflows.instanceId, workflows.workflowId], set: row })
   }
-  const ids = all.map((w) => w.id)
+  if (skipped.length || skippedWithoutId)
+    ctx.log.warn("workflow map sync skipped workflows it could not read", {
+      instance: instance.name,
+      skipped: skipped.length + skippedWithoutId,
+      // At most 10 IDs, each to its first 100 characters, so the line stays short whatever n8n sends.
+      ids: skipped.slice(0, 10).map((id) => id.slice(0, 100)),
+    })
   await ctx.db
     .delete(workflows)
-    .where(and(eq(workflows.instanceId, instance.id), ids.length ? notInArray(workflows.workflowId, ids) : undefined))
+    .where(
+      and(eq(workflows.instanceId, instance.id), listed.length ? notInArray(workflows.workflowId, listed) : undefined),
+    )
   changed(ctx, "workflows", "instances")
   return { workflows: all.length }
+}
+
+/**
+ * The map's row for one workflow. Throws when n8n gave the workflow in a form it cannot read. Its text is made
+ * storable (lib/storable.ts); its IDs are kept only as n8n gave them.
+ */
+function workflowRow(w: N8nWorkflow, s: { runs: number; errors: number; last: Date | null } | undefined) {
+  if (typeof w.name !== "string" || !Array.isArray(w.nodes)) throw new Error("unexpected workflow form")
+  const trigger = describeTrigger(w)
+  const row = {
+    name: w.name,
+    active: w.active === true,
+    archived: w.isArchived === true,
+    triggerType: trigger.type,
+    triggerDetail: trigger.detail,
+    structureHash: structureHash(w),
+    nodeCount: w.nodes.length,
+    credentialIds: credentialIds(w),
+    calledWorkflowIds: calledWorkflowIds(w),
+    tags: (w.tags ?? []).map((t) => (t as { name?: unknown } | null)?.name).filter((t) => typeof t === "string"),
+    lastRunAt: s?.last ?? null,
+    runs30d: s?.runs ?? 0,
+    errors30d: s?.errors ?? 0,
+    syncedAt: new Date(),
+  }
+  makeStorable(row)
+  return row
 }
 
 /**

@@ -1,4 +1,7 @@
-import { describe, expect, it, vi } from "vitest"
+import { randomBytes } from "node:crypto"
+import { createServer, type Server } from "node:http"
+import type { AddressInfo } from "node:net"
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest"
 import { MAX_WORKFLOW_PAGES, N8nClient, N8nError } from "./client.ts"
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status })
@@ -108,5 +111,80 @@ describe("N8nClient", () => {
     expect(init.signal?.aborted).toBe(false)
     stop.abort()
     expect(init.signal?.aborted).toBe(true)
+  })
+})
+
+// Real HTTP on loopback, with the real fetch: the instance at `from` points elsewhere, and `to` records what reaches it.
+describe("N8nClient and redirects", () => {
+  const reached: { method?: string; key?: string | string[]; body: string }[] = []
+  let from: Server
+  let to: Server
+  let fromUrl = ""
+  let status = 307
+  let endless = false
+
+  beforeAll(async () => {
+    to = createServer((req, res) => {
+      let body = ""
+      req.on("data", (chunk) => {
+        body += chunk
+      })
+      req.on("end", () => {
+        reached.push({ method: req.method, key: req.headers["x-n8n-api-key"], body })
+        res.writeHead(200, { "content-type": "application/json" })
+        res.end(JSON.stringify({ id: "elsewhere", data: { scopes: ["workflow:read"] } }))
+      })
+    })
+    await new Promise<void>((resolve) => to.listen(0, "127.0.0.1", resolve))
+    const toUrl = `http://127.0.0.1:${(to.address() as AddressInfo).port}`
+    from = createServer((req, res) => {
+      res.writeHead(status, { location: `${toUrl}${req.url}` })
+      // A body that starts and never ends.
+      if (endless) res.write("Moved")
+      else res.end()
+    })
+    await new Promise<void>((resolve) => from.listen(0, "127.0.0.1", resolve))
+    fromUrl = `http://127.0.0.1:${(from.address() as AddressInfo).port}`
+  })
+
+  afterAll(() => {
+    from.closeAllConnections()
+    from.close()
+    to.closeAllConnections()
+    to.close()
+  })
+
+  it.each([301, 302, 303, 307, 308])(
+    "does not follow a %i: the API key and the body stay with the instance",
+    async (code) => {
+      status = code
+      reached.length = 0
+      const client = new N8nClient(fromUrl, randomBytes(16).toString("hex"))
+      const created = client.createCredential({ name: "c", type: "t", data: { value: "x" } })
+      await expect(created).rejects.toBeInstanceOf(N8nError)
+      await expect(created).rejects.toMatchObject({ status: code })
+      await expect(client.discoverScopes()).rejects.toMatchObject({ status: code })
+      await expect(client.listWorkflows()).rejects.toThrow(/redirects/)
+      expect(reached).toEqual([])
+    },
+  )
+
+  it("names the redirect at once, without waiting for the redirect's body", async () => {
+    status = 307
+    endless = true
+    reached.length = 0
+    try {
+      const client = new N8nClient(fromUrl, randomBytes(16).toString("hex"), fetch, 5_000)
+      const started = Date.now()
+      await expect(client.discoverScopes()).rejects.toMatchObject({
+        status: 307,
+        message: expect.stringMatching(/redirects/),
+      })
+      expect(Date.now() - started).toBeLessThan(2_000)
+      expect(reached).toEqual([])
+    } finally {
+      endless = false
+      from.closeAllConnections()
+    }
   })
 })

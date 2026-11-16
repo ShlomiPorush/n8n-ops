@@ -23,8 +23,14 @@ test.beforeAll(async ({ browser }) => {
   page = await browser.newPage()
   await signIn(page)
   // The backups below are started by hand, each when its test needs it. The schedule starts one on its own once the
-  // daily backup time has passed on a day without one, so the time is the day's last minute: a scheduled backup can
-  // then come in between only during that minute. It stays so for the spec files after this one.
+  // daily backup time has passed on a day without one. So the installation's time zone is one where it is now
+  // between 10:00 and 12:59, and the daily backup time is 23:59: the run ends long before that time comes. Both stay
+  // so for the spec files after this one.
+  const hour = (zone: string) =>
+    Number(new Intl.DateTimeFormat("en-GB", { timeZone: zone, hour: "2-digit", hourCycle: "h23" }).format(new Date()))
+  const midday = Intl.supportedValuesOf("timeZone").find((zone) => hour(zone) >= 10 && hour(zone) < 13)
+  expect(midday).toBeDefined()
+  expect((await page.request.put("/api/settings/general", { data: { timezone: midday } })).ok()).toBe(true)
   expect((await page.request.put("/api/settings/defaults", { data: { backupTime: "23:59" } })).ok()).toBe(true)
 })
 

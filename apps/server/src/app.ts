@@ -1,8 +1,10 @@
 import type { Health } from "@n8n-ops/shared"
 import { Hono } from "hono"
+import { bodyLimit } from "hono/body-limit"
 import type { Ctx } from "./context.ts"
 import { agentGuard } from "./http/agent-guard.ts"
 import { authRoute } from "./http/auth-guard.ts"
+import { tooLarge } from "./http/body-limit.ts"
 import type { Env } from "./http/types.ts"
 import { serveWeb } from "./http/web.ts"
 import { adminRoutes } from "./routes/admin.ts"
@@ -17,6 +19,9 @@ export type AppOptions = {
   /** Extra routers mounted under /api, added by later features. */
   mounts?: { path: string; router: Hono<Env> }[]
 }
+
+/** The largest request body the sign-in library's routes read (/api/auth/*). */
+export const AUTH_BODY_BYTES = 64 * 1024
 
 export function createApp(ctx: Ctx, { webDir, mounts = [] }: AppOptions = {}) {
   const app = new Hono<Env>()
@@ -33,7 +38,13 @@ export function createApp(ctx: Ctx, { webDir, mounts = [] }: AppOptions = {}) {
 
   // Self sign-up is closed: the single account is created by the setup endpoint.
   app.all("/api/auth/sign-up/*", (c) => c.json({ error: "sign_up_disabled" }, 403))
-  app.on(["GET", "POST"], "/api/auth/*", (c) => authRoute(ctx, c))
+  // Sign-in, two-factor and passkey bodies take a few KiB; nothing larger is read before anyone is signed in.
+  app.on(
+    ["GET", "POST"],
+    "/api/auth/*",
+    bodyLimit({ maxSize: AUTH_BODY_BYTES, onError: tooLarge(AUTH_BODY_BYTES) }),
+    (c) => authRoute(ctx, c),
+  )
 
   app.route("/api/setup", setupRoutes(ctx))
   app.route("/api/session", sessionRoutes(ctx))

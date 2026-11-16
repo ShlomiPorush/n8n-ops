@@ -43,7 +43,7 @@ export function features(ctx: Ctx, extra: { mounts?: Mount[]; jobs?: Job[] } = {
     { path: "/api/v1", router: restRoutes(ctx) },
     { path: "/mcp", router: mcpRoutes(ctx) },
     { path: "/api/access", router: accessRoutes(ctx) },
-    { path: "/n8n", router: n8nProxyRoutes(ctx) },
+    { path: "/n8n", router: n8nProxyRoutes(ctx) as unknown as Hono<Env> },
     ...(ctx.agents ? [{ path: "/", router: agentConnectRoutes(ctx, ctx.agents) }] : []),
     ...(extra.mounts ?? []),
   ]

@@ -130,7 +130,7 @@ scripts/verify.sh          # everything CI checks, including end-to-end tests ag
 
 Mailpit in the development stack requires STARTTLS, with a certificate `scripts/local.sh` makes once in the data directory (`mail-tls/`, key readable by you only). A `docker-compose-dev.yml` copied before that needs the `mail` service's `command` and `volumes`, and the `server` service's `NODE_EXTRA_CA_CERTS` and `mail-tls/cert.pem` volume, from the template, or a new copy; without them its mail is refused with "No encrypted connection could be made".
 
-`scripts/discover.sh` is a read-only helper that inventories an n8n Docker host (containers, versions, environment with values masked where the name looks secret, and each container's program without its arguments) for planning an installation.
+`scripts/discover.sh` is a read-only helper that inventories an n8n Docker host (containers, versions, environment with values masked where the name looks secret and the user and password of URLs masked, and each container's program without its arguments) for planning an installation.
 
 ## License
 

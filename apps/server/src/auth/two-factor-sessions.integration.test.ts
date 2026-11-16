@@ -91,16 +91,20 @@ async function freshAccount() {
   /** A request as the browser makes it, from n8n-ops' own page, with the cookies it holds. */
   const call = (method: string, path: string, { json, cookie = "" }: { json?: unknown; cookie?: string } = {}) => {
     ip += 1
-    return app.request(path, {
-      method,
-      headers: {
-        origin: ORIGIN,
-        ...(json !== undefined ? { "content-type": "application/json" } : {}),
-        "x-forwarded-for": `10.2.${Math.floor(ip / 250)}.${ip % 250}`,
-        cookie,
+    return app.request(
+      path,
+      {
+        method,
+        headers: {
+          origin: ORIGIN,
+          ...(json !== undefined ? { "content-type": "application/json" } : {}),
+          cookie,
+        },
+        body: json !== undefined ? JSON.stringify(json) : undefined,
       },
-      body: json !== undefined ? JSON.stringify(json) : undefined,
-    })
+      // Each request comes from a client address of its own, so the sign-in limits never add up across steps.
+      { incoming: { socket: { remoteAddress: `10.2.${Math.floor(ip / 250)}.${ip % 250}` }, headers: {} } },
+    )
   }
 
   const account = { password: randomBytes(24).toString("hex"), secret: "", backupCodes: [] as string[] }

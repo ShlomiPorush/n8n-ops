@@ -29,6 +29,9 @@ afterAll(async () => {
   await admin.end()
 })
 
+/** Where a request comes from: the address that connects, alone or with extra headers. */
+type From = string | { peer: string; headers?: [string, string][] }
+
 /** A new database with the single account, and a client that sends each request from the address it is given. */
 async function installation({ envPublicUrl }: { envPublicUrl?: string } = {}) {
   const name = `n8n_ops_sign_in_${randomBytes(4).toString("hex")}`
@@ -48,12 +51,21 @@ async function installation({ envPublicUrl }: { envPublicUrl?: string } = {}) {
     log: { info: () => {}, warn: () => {}, error: () => {} },
   } as unknown as Ctx
   const app = createApp(ctx, { mounts: [] })
-  const post = (path: string, json: unknown, from: string) =>
-    app.request(path, {
-      method: "POST",
-      headers: { origin: ORIGIN, "content-type": "application/json", "x-forwarded-for": from },
-      body: JSON.stringify(json),
-    })
+  const post = (path: string, json: unknown, from: From) => {
+    const { peer, headers = [] } = typeof from === "string" ? { peer: from } : from
+    const sent: [string, string][] = [["origin", ORIGIN], ["content-type", "application/json"], ...headers]
+    // The connection as Node gives it to the server: the peer's address and the headers, a repeated one joined.
+    const incoming: Record<string, string> = {}
+    for (const [name, value] of sent) {
+      const key = name.toLowerCase()
+      incoming[key] = incoming[key] === undefined ? value : `${incoming[key]}, ${value}`
+    }
+    return app.request(
+      path,
+      { method: "POST", headers: sent, body: JSON.stringify(json) },
+      { incoming: { socket: { remoteAddress: peer }, headers: incoming } },
+    )
+  }
   const password = randomBytes(24).toString("hex")
   expect((await post("/api/setup/account", { username: USERNAME, password }, "10.3.0.1")).status).toBe(200)
   return { post, password, settings }
@@ -89,6 +101,69 @@ describe("password sign-in", () => {
     const signedIn = await post("/api/auth/sign-in/username", { username: USERNAME, password }, "10.3.2.2")
     expect(signedIn.status).toBe(200)
     expect(signedIn.headers.getSetCookie().length).toBeGreaterThan(0)
+  })
+})
+
+describe("the sign-in limit counts the client address the server resolves", () => {
+  const PROXY = "172.18.0.5"
+  /** The answer to the right password once the client, as `from` sends each request, has used up its attempts. */
+  async function sixth(
+    post: Awaited<ReturnType<typeof installation>>["post"],
+    password: string,
+    from: (i: number) => From,
+  ) {
+    const wrong = randomBytes(24).toString("hex")
+    for (let i = 0; i < 5; i++)
+      expect((await post("/api/auth/sign-in/username", { username: USERNAME, password: wrong }, from(i))).status).toBe(
+        401,
+      )
+    return (await post("/api/auth/sign-in/username", { username: USERNAME, password }, from(5))).status
+  }
+
+  it("counts a peer that is not a trusted proxy by its own address, whatever X-Forwarded-For it sends", async () => {
+    const { post, password } = await installation()
+    const status = await sixth(post, password, (i) => ({
+      peer: "198.51.100.20",
+      headers: [["x-forwarded-for", `203.0.113.${i + 1}`]],
+    }))
+    expect(status).toBe(429)
+  })
+
+  it("counts a peer by its own address when it sends no X-Forwarded-For, apart from other peers", async () => {
+    const { post, password } = await installation()
+    expect(await sixth(post, password, () => "198.51.100.21")).toBe(429)
+    expect((await post("/api/auth/sign-in/username", { username: USERNAME, password }, "198.51.100.22")).status).toBe(
+      200,
+    )
+  })
+
+  it("counts each client behind a trusted proxy by the last X-Forwarded-For address", async () => {
+    const { post, password } = await installation()
+    const status = await sixth(post, password, (i) => ({
+      peer: PROXY,
+      headers: [["x-forwarded-for", `203.0.113.${i + 10}, 198.51.100.30`]],
+    }))
+    expect(status).toBe(429)
+    for (const forwarded of ["198.51.100.31", "203.0.113.30, 10.9.0.7"]) {
+      const res = await post(
+        "/api/auth/sign-in/username",
+        { username: USERNAME, password },
+        { peer: PROXY, headers: [["x-forwarded-for", forwarded]] },
+      )
+      expect({ forwarded, status: res.status }).toEqual({ forwarded, status: 200 })
+    }
+  })
+
+  it("ignores a client address header that the client sends itself", async () => {
+    const { post, password } = await installation()
+    const status = await sixth(post, password, (i) => ({
+      peer: "198.51.100.40",
+      headers: [
+        ["x-n8n-ops-client-address", `203.0.113.${i + 20}`],
+        ["X-N8n-Ops-Client-Address", `203.0.113.${i + 40}`],
+      ],
+    }))
+    expect(status).toBe(429)
   })
 })
 

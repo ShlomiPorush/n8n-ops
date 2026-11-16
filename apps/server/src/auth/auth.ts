@@ -14,6 +14,7 @@ import {
   user,
   verification,
 } from "../db/schema.ts"
+import { CLIENT_ADDRESS_HEADER } from "../http/address.ts"
 import { createAudit } from "../lib/audit.ts"
 import { maxSessionHours } from "../lib/settings.ts"
 import { inheritClocks } from "../services/session-policy.ts"
@@ -150,9 +151,15 @@ export function createAuth(db: Db, appKey: Buffer, publicUrl?: string, passkeyUr
         "/passkey/generate-authenticate-options": { window: 300, max: 20 },
       },
     },
-    // Secure cookies need HTTPS. They are on when N8N_OPS_PUBLIC_URL or the public URL in effect (Settings > General)
-    // is HTTPS; a plain HTTP install (local development, a private network) would otherwise never keep a session.
-    advanced: { useSecureCookies: publicUrl?.startsWith("https://") === true || passkeyUrl?.protocol === "https:" },
+    advanced: {
+      // Secure cookies need HTTPS. They are on when N8N_OPS_PUBLIC_URL or the public URL in effect (Settings >
+      // General) is HTTPS; a plain HTTP install (local development, a private network) would otherwise never keep a
+      // session.
+      useSecureCookies: publicUrl?.startsWith("https://") === true || passkeyUrl?.protocol === "https:",
+      // The limits above, and each session's address, count the client address the server resolved (http/address.ts
+      // addressOf: the socket, or a trusted proxy's X-Forwarded-For), which the server alone puts in this header.
+      ipAddress: { ipAddressHeaders: [CLIENT_ADDRESS_HEADER] },
+    },
     // Audit a login once, when it completes. With two-factor on, the password step creates a session that the
     // two-factor plugin deletes again while the code is pending; the real session comes from verify-totp. A
     // passkey sign-in completes at once.

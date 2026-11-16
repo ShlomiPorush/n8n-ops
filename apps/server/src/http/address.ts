@@ -69,6 +69,12 @@ export function addressOf(req: IncomingMessage | null) {
   return plain(last && isIP(last) ? last : socket)
 }
 
+/**
+ * The header Better Auth reads the client's address from (auth/auth.ts advanced.ipAddress). Only the server sets
+ * it, from addressOf; a value the client sent is removed first (http/auth-guard.ts).
+ */
+export const CLIENT_ADDRESS_HEADER = "x-n8n-ops-client-address"
+
 /** How many times a header was sent: Node keeps only the first Authorization, so count the raw headers. */
 export function headerCount(c: Context, name: string) {
   const req = incomingOf(c)

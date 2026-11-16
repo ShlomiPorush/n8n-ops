@@ -178,6 +178,32 @@ check_socket_proxy() {
   echo "    socket-proxy holds no capabilities, read-only, no new privileges, no published port"
 }
 
+# Succeeds when the project's running socket proxy was made from the socket-proxy service of the given Compose files:
+# its configuration hash, which Compose compares to decide whether a container is up to date, is the one those files
+# give. That covers every setting of the service (command, entrypoint, environment, user, mounts). Says why not on
+# stderr otherwise. Usage: check_socket_proxy_config PROJECT FILE...
+check_socket_proxy_config() {
+  local project="$1" file cid want got
+  shift
+  local files=()
+  for file in "$@"; do
+    files+=(-f "$file")
+  done
+  cid="$(docker ps -q --filter "label=com.docker.compose.project=$project" --filter "label=com.docker.compose.service=socket-proxy")"
+  if [ -z "$cid" ] || [ "$(wc -l <<<"$cid")" != 1 ]; then
+    echo "$project does not run exactly one socket-proxy" >&2
+    return 1
+  fi
+  # The template needs its data and env directories set; the socket proxy uses neither, so any value gives its hash.
+  want="$(N8N_OPS_DATA_DIR=/unused N8N_OPS_ENV_DIR=/unused docker compose -p "$project" --project-directory "$REPO_ROOT" \
+    "${files[@]}" config --hash socket-proxy | awk '$1 == "socket-proxy" { print $2 }')"
+  got="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.config-hash"}}' "$cid")"
+  if [ -z "$want" ] || [ "$want" != "$got" ]; then
+    echo "the socket-proxy of $project was not made from $*" >&2
+    return 1
+  fi
+}
+
 # Removes a project-owned data directory. Files written by containers may belong to other UIDs,
 # so the contents are deleted from a throwaway container.
 remove_data_dir() {

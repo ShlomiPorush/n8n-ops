@@ -153,6 +153,7 @@ run_guards() {
     bash scripts/test-release.sh || fail=1
     bash scripts/test-ci-result.sh || fail=1
     bash scripts/test-discover.sh || fail=1
+    bash scripts/test-try-pr.sh || fail=1
 
     # Scripts inside the images run with plain POSIX sh.
     mapfile -t image_scripts < <(git ls-files -co --exclude-standard "docker/*.sh")
@@ -206,9 +207,12 @@ run_checks() {
     die "the schema in apps/server/src/db/schema.ts has changes without a migration; run drizzle-kit generate"
 }
 
+# The development template, with a socket proxy that also allows the queue checks' n8n (docker/verify-proxy.yml).
+STACK_FILES=("$REPO_ROOT/docker/docker-compose-dev.example.yml" "$REPO_ROOT/docker/verify-proxy.yml")
+
 stack() {
   N8N_OPS_IMAGE_TAG=verify N8N_OPS_PORT=0 \
-    docker compose -p "$PROJECT" --project-directory "$REPO_ROOT" -f "$REPO_ROOT/docker/docker-compose-dev.example.yml" "$@"
+    docker compose -p "$PROJECT" --project-directory "$REPO_ROOT" -f "${STACK_FILES[0]}" -f "${STACK_FILES[1]}" "$@"
 }
 
 # The external images of the stack and of the queue checks, read from their Compose files; the n8n-ops images are
@@ -270,6 +274,7 @@ start_stack() {
   }
   check_non_root "$PROJECT" server postgres worker
   check_socket_proxy "$PROJECT"
+  check_socket_proxy_config "$PROJECT" "${STACK_FILES[@]}" || die "the socket proxy was not made from its Compose files"
   # The worker never gets database credentials. Only the names are read, never the values (one may span lines), and a
   # failed read fails the check: in a pipe, grep -q could end the reading with SIGPIPE, which pipefail reads as no match.
   local names
@@ -322,6 +327,35 @@ run_checks_on_stack() {
   process.exit(got[0] === 200 && got[1] === 200 && got[2] === 200 && got[3] === 403 && got[4] !== 200 && got[5] === 403 ? 0 : 1);
 })()'
   stack exec -T -u node worker node -e "$probe" || die "the socket proxy does not enforce its allowlist"
+
+  info "Integration: the socket proxy allows commands only in this stack's n8n and the queue checks' main"
+  # Other projects' names, another replica and another service, made for this run and checked absent first, are refused
+  # with 403. The stack's own n8n and the queue main are let through. No call carries a command.
+  local r=$((RANDOM * 32768 + RANDOM + 2)) name names refused allowed
+  refused=("other$r-n8n-1" "x$r$PROJECT-n8n-1" "$PROJECT$r-n8n-1" "$PROJECT-n8n-$r" "$PROJECT-n8n-worker-$r"
+    "$PROJECT-queue$r-n8n-1" "$PROJECT-queue-n8n-$r")
+  allowed=("$PROJECT-n8n-1" "$PROJECT-queue-n8n-1")
+  names="$(docker ps -a --format '{{.Names}}')"
+  for name in "${refused[@]}"; do
+    ! grep -qxF "$name" <<<"$names" || die "a container named $name exists on this host; run again"
+  done
+  # shellcheck disable=SC2016 # expands inside the container
+  stack exec -T -u node worker node -e '
+    const p = (name) => fetch("http://socket-proxy:2375/v1.43/containers/" + name + "/exec", { method: "POST",
+      headers: { "content-type": "application/json" }, body: "{}" }).then((r) => r.status);
+    (async () => {
+      const refused = await Promise.all(process.argv[1].split(" ").map(p));
+      const allowed = await Promise.all(process.argv[2].split(" ").map(p));
+      console.log("    other names: " + refused.join(", ") + "; own n8n, queue main: " + allowed.join(", "));
+      process.exit(refused.every((s) => s === 403) && allowed.every((s) => s !== 403) ? 0 : 1);
+    })()' "${refused[*]}" "${allowed[*]}" || die "the socket proxy allows commands in containers of other projects"
+
+  info "Integration: the socket proxy check refuses a proxy made from other settings"
+  # The stack's proxy was made with docker/verify-proxy.yml; the template alone gives other settings.
+  if (check_socket_proxy_config "$PROJECT" "${STACK_FILES[0]}") 2>/dev/null; then
+    die "check_socket_proxy_config accepts a socket proxy made from other settings"
+  fi
+  echo "    made from the template and docker/verify-proxy.yml, checked against the template alone: refused"
 
   info "Integration: the proxy check refuses a proxy that may gain privileges"
   # The same container with the setting on passes, so the refusal is for that setting alone.

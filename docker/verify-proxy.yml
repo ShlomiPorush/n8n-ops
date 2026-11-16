@@ -1,0 +1,11 @@
+# Added to docker/docker-compose-dev.example.yml by scripts/verify.sh only, never by the development stack. Its socket
+# proxy also allows exec in the queue-mode n8n that scripts/verify.sh starts beside the stack as the project
+# <project>-queue (docker/verify-queue.yml): its main and its queue workers. Otherwise the same lines as the template.
+services:
+  socket-proxy:
+    command:
+      - -listenip=0.0.0.0
+      - -allowfrom=worker
+      - -allowhealthcheck
+      - '-allowGET=(/v1\.[0-9]+)?/(_ping|exec/[0-9a-f]+/json|containers/json)'
+      - '-allowPOST=(/v1\.[0-9]+)?/(containers/(${COMPOSE_PROJECT_NAME}-n8n-1|${COMPOSE_PROJECT_NAME}-queue-n8n-1|${COMPOSE_PROJECT_NAME}-queue-n8n-worker-[0-9]+)/exec|exec/[0-9a-f]+/start)'

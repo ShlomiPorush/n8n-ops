@@ -61,8 +61,9 @@ export function passkeyAddress(publicUrl: string | undefined): URL | null {
 
 /**
  * Better Auth: one local user; username and password with TOTP enforced by the API middleware, or a passkey.
- * `publicUrl` is N8N_OPS_PUBLIC_URL (Better Auth's base URL and secure cookies); `passkeyUrl` is the public URL in
- * effect, which may come from the settings (auth/current.ts builds a new instance when it changes).
+ * `publicUrl` is N8N_OPS_PUBLIC_URL (Better Auth's base URL); `passkeyUrl` is the public URL in effect, which may
+ * come from the settings (auth/current.ts builds a new instance when it changes). Either one being HTTPS turns on
+ * secure cookies.
  */
 /**
  * A two-factor reset (Account → Reset) ends every agent connection, since the person may have lost control of the
@@ -149,9 +150,9 @@ export function createAuth(db: Db, appKey: Buffer, publicUrl?: string, passkeyUr
         "/passkey/generate-authenticate-options": { window: 300, max: 20 },
       },
     },
-    // Secure cookies need HTTPS. They are on when the public URL is HTTPS; a plain HTTP install
-    // (local development, a private network) would otherwise never keep a session.
-    advanced: { useSecureCookies: publicUrl?.startsWith("https://") ?? false },
+    // Secure cookies need HTTPS. They are on when N8N_OPS_PUBLIC_URL or the public URL in effect (Settings > General)
+    // is HTTPS; a plain HTTP install (local development, a private network) would otherwise never keep a session.
+    advanced: { useSecureCookies: publicUrl?.startsWith("https://") === true || passkeyUrl?.protocol === "https:" },
     // Audit a login once, when it completes. With two-factor on, the password step creates a session that the
     // two-factor plugin deletes again while the code is pending; the real session comes from verify-totp. A
     // passkey sign-in completes at once.

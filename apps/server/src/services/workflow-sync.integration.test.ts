@@ -28,6 +28,8 @@ let baseUrl: string
 
 const KEY = randomBytes(24).toString("hex")
 const n8n = { reads: 0, open: 0, mostOpen: 0, runPages: 0, held: [] as (() => void)[] }
+/** The workflows the stand-in lists under `/listed`, as n8n would give them. */
+let listed: unknown[] = []
 
 /** Lets every workflow list that is waiting go, and waits until the next one asks, if any. */
 const release = () => {
@@ -66,7 +68,8 @@ beforeAll(async () => {
       await new Promise((r) => setTimeout(r, 50))
       return send({ data: [], nextCursor: String(page) })
     }
-    const path = url.pathname
+    if (url.pathname === "/listed/api/v1/workflows") return send({ data: listed, nextCursor: null })
+    const path = url.pathname.replace(/^\/listed/, "")
     if (path === "/api/v1/executions") return send({ data: [], nextCursor: null })
     if (path !== "/api/v1/workflows") {
       res.writeHead(404)
@@ -211,5 +214,76 @@ describe("workflow map syncs", () => {
     expect(workflowSyncBusy(i.id)).toBe(false)
     const rows = await ctx.db.select().from(workflows).where(eq(workflows.instanceId, i.id))
     expect(rows.map((w) => w.workflowId)).toEqual(["wf-kept"])
+  })
+})
+
+describe("a workflow map sync of workflows in an unexpected form", () => {
+  const trigger = { name: "Start", type: "n8n-nodes-base.manualTrigger", parameters: {} }
+  const plain = (id: string, name = id) => ({ id, name, active: true, nodes: [trigger], connections: {} })
+  const rowsOf = async (instanceId: string) =>
+    new Map(
+      (await ctx.db.select().from(workflows).where(eq(workflows.instanceId, instanceId))).map((w) => [w.workflowId, w]),
+    )
+
+  it("stores what it can keep, skips the rest, and keeps the whole map current", async () => {
+    const i = await instance("/listed")
+    const stale = { name: "Gone", active: true, triggerType: "Manual", structureHash: "h", nodeCount: 1 }
+    await ctx.db.insert(workflows).values({ instanceId: i.id, workflowId: "wf-gone", ...stale })
+    listed = [
+      {
+        ...plain("wf-text", "Orders\u0000 import"),
+        nodes: [{ name: "Hook", type: "n8n-nodes-base.webhook", parameters: { path: "in\u0000box" } }],
+        tags: [{ name: "team\uD800" }, { name: { nested: true } }, null],
+      },
+      {
+        ...plain("wf-creds"),
+        nodes: [
+          {
+            ...trigger,
+            credentials: { a: null, b: { id: { nested: [1] } }, c: { id: "c\u00001" }, d: { id: "c1", name: "C" } },
+          },
+        ],
+      },
+      { ...plain("wf-untyped"), nodes: [{ name: "No type", parameters: {} }] },
+      { ...plain("wf-shapeless"), nodes: "none" },
+      plain("a\u0000b"),
+      { ...plain("x"), id: { nested: true } },
+      plain("ab"),
+      plain("wf-later"),
+    ]
+    expect(await syncWorkflows(ctx, i)).toEqual({ workflows: 8 })
+    const rows = await rowsOf(i.id)
+    expect([...rows.keys()].sort()).toEqual(["ab", "wf-creds", "wf-later", "wf-text"])
+    expect(rows.get("wf-text")).toMatchObject({
+      name: "Orders import",
+      triggerType: "Webhook",
+      triggerDetail: "/webhook/inbox",
+      tags: ["team"],
+    })
+    expect(rows.get("wf-creds")?.credentialIds).toEqual(["c1"])
+    expect(rows.get("ab")?.name).toBe("ab")
+  })
+
+  it("keeps the stored row of a workflow it cannot read, until n8n reads well again or no longer lists it", async () => {
+    const i = await instance("/listed")
+    listed = [plain("wf-1", "First")]
+    await syncWorkflows(ctx, i)
+    const before = (await rowsOf(i.id)).get("wf-1")
+    expect(before?.name).toBe("First")
+
+    listed = [{ ...plain("wf-1", "Changed"), nodes: [{ name: "No type" }] }, plain("wf-2")]
+    await syncWorkflows(ctx, i)
+    let rows = await rowsOf(i.id)
+    expect(rows.get("wf-1")).toEqual(before)
+    expect(rows.has("wf-2")).toBe(true)
+
+    listed = [plain("wf-1", "Changed"), plain("wf-2")]
+    await syncWorkflows(ctx, i)
+    expect((await rowsOf(i.id)).get("wf-1")?.name).toBe("Changed")
+
+    listed = [plain("wf-2")]
+    await syncWorkflows(ctx, i)
+    rows = await rowsOf(i.id)
+    expect([...rows.keys()]).toEqual(["wf-2"])
   })
 })

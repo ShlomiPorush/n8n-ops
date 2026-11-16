@@ -189,15 +189,17 @@ check_socket_proxy_config() {
   for file in "$@"; do
     files+=(-f "$file")
   done
-  cid="$(docker ps -q --filter "label=com.docker.compose.project=$project" --filter "label=com.docker.compose.service=socket-proxy")"
+  # Each step fails the check on its own: callers use || or if, where set -e does not stop a function.
+  cid="$(docker ps -q --filter "label=com.docker.compose.project=$project" --filter "label=com.docker.compose.service=socket-proxy")" ||
+    return 1
   if [ -z "$cid" ] || [ "$(wc -l <<<"$cid")" != 1 ]; then
     echo "$project does not run exactly one socket-proxy" >&2
     return 1
   fi
   # The template needs its data and env directories set; the socket proxy uses neither, so any value gives its hash.
   want="$(N8N_OPS_DATA_DIR=/unused N8N_OPS_ENV_DIR=/unused docker compose -p "$project" --project-directory "$REPO_ROOT" \
-    "${files[@]}" config --hash socket-proxy | awk '$1 == "socket-proxy" { print $2 }')"
-  got="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.config-hash"}}' "$cid")"
+    "${files[@]}" config --hash socket-proxy | awk '$1 == "socket-proxy" { print $2 }')" || return 1
+  got="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.config-hash"}}' "$cid")" || return 1
   if [ -z "$want" ] || [ "$want" != "$got" ]; then
     echo "the socket-proxy of $project was not made from $*" >&2
     return 1

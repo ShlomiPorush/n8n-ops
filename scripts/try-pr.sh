@@ -89,21 +89,21 @@ To run it anyway, after reading its code: scripts/try-pr.sh $pr --any-author"
 }
 
 # Pull request code runs in the server and worker, and reaches Docker only through the socket proxy, which lets it run
-# commands only in the stack's own n8n. So the server and worker of docker-compose-dev.yml must be the template's
-# (compared by Compose's configuration hash, with the stack's own settings), the running socket proxy must have been
-# made from the template, and the one container it allows must be this stack's n8n. Docker container names are unique,
-# so while that container exists no other can take its name.
+# commands only in the stack's own n8n. So the server, worker and socket proxy of docker-compose-dev.yml, with what
+# they depend on and their networks, must be the template's as Compose renders them with the stack's own settings; the
+# running socket proxy must have been made from the template; and the one container it allows must be this stack's
+# n8n. Docker container names are unique, so while that container exists no other can take its name.
 require_stack_as_template() {
   local template="$REPO_ROOT/docker/docker-compose-dev.example.yml" copy expected labels
-  local fix="Copy the server, worker and socket-proxy services from docker/docker-compose-dev.example.yml into
-docker-compose-dev.yml, then run: scripts/local.sh start"
-  copy="$(dev_compose config --hash server,worker | sort)" || die "could not read docker-compose-dev.yml"
+  local fix="Copy the server, worker and socket-proxy services and the networks from docker/docker-compose-dev.example.yml
+into docker-compose-dev.yml, then run: scripts/local.sh start"
+  copy="$(dev_compose config server worker socket-proxy)" || die "could not read docker-compose-dev.yml"
   expected="$(
     DEV_COMPOSE_FILE="$template"
-    dev_compose config --hash server,worker | sort
+    dev_compose config server worker socket-proxy
   )" || die "could not read docker/docker-compose-dev.example.yml"
-  [ "$(wc -l <<<"$expected")" = 2 ] || die "could not read the server and worker of docker/docker-compose-dev.example.yml"
-  [ "$copy" = "$expected" ] || die "the server or worker of docker-compose-dev.yml differ from the template's.
+  [ -n "$expected" ] || die "could not read docker/docker-compose-dev.example.yml"
+  [ "$copy" = "$expected" ] || die "the server, worker or socket-proxy of docker-compose-dev.yml differ from the template's.
 $fix"
   check_socket_proxy_config "$DEV_PROJECT" "$template" || die "the development stack's socket-proxy differs from the template's.
 $fix"

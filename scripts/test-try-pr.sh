@@ -6,7 +6,8 @@
 set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-WORK="$(mktemp -d "${TMPDIR:-/tmp}/n8n-ops-try-pr-test.XXXXXX")"
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/n8n-ops-try-pr-test.XXXXXX")" || exit 1
+[ -d "$WORK" ] || exit 1
 trap 'rm -rf "$WORK"' EXIT
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 REAL_GIT="$(command -v git)"
@@ -45,8 +46,8 @@ case "$1" in
       */docker-compose-dev.yml) side=copy ;;
       *) echo "unexpected compose file $file" >&2; exit 2 ;;
     esac
+    [ "${*: -4}" = "config server worker socket-proxy" ] && { cat "$STATE/$side-render"; exit 0; }
     case "${*: -3}" in
-      "config --hash server,worker") cat "$STATE/$side-hashes"; exit 0 ;;
       "config --hash socket-proxy") echo "socket-proxy $(cat "$STATE/$side-proxy")"; exit 0 ;;
       "running -q postgres") [ -f "$STATE/stack-up" ] && echo postgres-id; exit 0 ;;
     esac
@@ -55,7 +56,8 @@ case "$1" in
     [ "${*: -1}" = label=com.docker.compose.service=socket-proxy ] && { echo proxy-id; exit 0; }
     ;;
   inspect)
-    [ "${*: -1}" = proxy-id ] && { cat "$STATE/running-proxy"; exit 0; }
+    # With MOCK_INSPECT_FAIL the answer is printed, and the command still fails.
+    [ "${*: -1}" = proxy-id ] && { cat "$STATE/running-proxy"; [ -z "${MOCK_INSPECT_FAIL:-}" ]; exit; }
     ;;
   container)
     if [ "$2" = inspect ] && [ "${*: -1}" = n8n-ops-dev-n8n-1 ]; then
@@ -110,8 +112,9 @@ sandbox() {
   (umask 077 && echo key >"$WORK/case/data/mail-tls/key.pem")
   : >"$STATE/calls"
   touch "$STATE/stack-up"
-  printf 'server aaa\nworker bbb\n' >"$STATE/template-hashes"
-  printf 'worker bbb\nserver aaa\n' >"$STATE/copy-hashes"
+  printf 'services:\n  server: {}\n  socket-proxy: {}\n  worker: {}\nnetworks:\n  docker-proxy:\n    internal: true\n' \
+    >"$STATE/template-render"
+  cp "$STATE/template-render" "$STATE/copy-render"
   echo ccc >"$STATE/template-proxy"
   echo ccc >"$STATE/running-proxy"
   echo "n8n-ops-dev n8n" >"$STATE/n8n-labels"
@@ -209,21 +212,26 @@ check "  without asking GitHub" not_asked_github
 check "  before anything is fetched" not_fetched
 
 sandbox
-printf 'server aaa\nworker ddd\n' >"$STATE/copy-hashes"
+sed -i 's/  worker: {}/  worker: { volumes: [\/var\/run\/docker.sock:\/var\/run\/docker.sock] }/' "$STATE/copy-render"
 run_try 7
 check "a worker in docker-compose-dev.yml unlike the template's is refused" \
-  said "the server or worker of docker-compose-dev.yml differ from the template's"
+  said "the server, worker or socket-proxy of docker-compose-dev.yml differ from the template's"
 check "  and says how to fix it" said "then run: scripts/local.sh start"
 check "  before anything is fetched" not_fetched
 
 sandbox
-printf 'server eee\nworker bbb\n' >"$STATE/copy-hashes"
+sed -i 's/  server: {}/  server: { privileged: true }/' "$STATE/copy-render"
 run_try 7
 check "a server in docker-compose-dev.yml unlike the template's is refused" not_fetched
 
 sandbox
-: >"$STATE/template-hashes"
-: >"$STATE/copy-hashes"
+sed -i 's/internal: true/internal: false/' "$STATE/copy-render"
+run_try 7
+check "a socket proxy network in docker-compose-dev.yml unlike the template's is refused" not_fetched
+
+sandbox
+: >"$STATE/template-render"
+: >"$STATE/copy-render"
 run_try 7
 check "a template whose services cannot be read is refused" not_fetched
 
@@ -231,6 +239,12 @@ sandbox
 echo fff >"$STATE/running-proxy"
 run_try 7
 check "a running socket proxy not made from the template is refused" said "socket-proxy differs from the template's"
+check "  before anything is fetched" not_fetched
+
+sandbox
+MOCK_INSPECT_FAIL=1 run_try 7
+check "a socket proxy that cannot be inspected is refused, even when an answer was printed" \
+  said "socket-proxy differs from the template's"
 check "  before anything is fetched" not_fetched
 
 sandbox

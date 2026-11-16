@@ -130,6 +130,9 @@ test("a longer limit signs out the other sessions, which go to sign-in and say w
   const [stored] = await sql<{ value: unknown }[]>`select value from settings where key = 'security'`
   try {
     await signInWithPassword(other)
+    // The other session waits on an empty page, so its own request below is the first to meet the ended session,
+    // not a refresh of an open page that would go to sign-in from that page instead.
+    await other.goto("about:blank")
     await page.goto("/settings/security")
     const longest = page.getByLabel("Longest session (hours)")
     await longest.fill("24")

@@ -45,12 +45,11 @@ export function calledWorkflowIds(workflow: Pick<N8nWorkflow, "nodes">): string[
   const ids = workflow.nodes
     .filter((n) => /executeWorkflow$/i.test(n.type) && !n.disabled)
     .map((n) => {
-      const ref = n.parameters?.workflowId as string | { value?: string } | undefined
-      return typeof ref === "string" ? ref : (ref?.value ?? "")
+      const ref: unknown = n.parameters?.workflowId
+      const id = typeof ref === "string" ? ref : (ref as { value?: unknown } | null)?.value
+      return typeof id === "string" ? id.replace(/^=/, "") : ""
     })
-  return [...new Set(ids.map((id) => String(id).replace(/^=/, "")))].filter(
-    (id) => storableId(id) && !id.includes("{{"),
-  )
+  return [...new Set(ids)].filter((id) => storableId(id) && !id.includes("{{"))
 }
 
 type ExecutionPage = { data: Pick<N8nExecution, "workflowId" | "status" | "startedAt">[]; nextCursor: string | null }
@@ -219,7 +218,8 @@ async function syncWorkflowsNow(ctx: Ctx, instance: Instance, readDeadlineMs: nu
     ctx.log.warn("workflow map sync skipped workflows it could not read", {
       instance: instance.name,
       skipped: skipped.length + skippedWithoutId,
-      ids: skipped.slice(0, 10),
+      // At most 10 IDs, each to its first 100 characters, so the line stays short whatever n8n sends.
+      ids: skipped.slice(0, 10).map((id) => id.slice(0, 100)),
     })
   await ctx.db
     .delete(workflows)

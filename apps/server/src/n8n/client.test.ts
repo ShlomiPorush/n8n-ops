@@ -121,6 +121,7 @@ describe("N8nClient and redirects", () => {
   let to: Server
   let fromUrl = ""
   let status = 307
+  let endless = false
 
   beforeAll(async () => {
     to = createServer((req, res) => {
@@ -138,7 +139,9 @@ describe("N8nClient and redirects", () => {
     const toUrl = `http://127.0.0.1:${(to.address() as AddressInfo).port}`
     from = createServer((req, res) => {
       res.writeHead(status, { location: `${toUrl}${req.url}` })
-      res.end()
+      // A body that starts and never ends.
+      if (endless) res.write("Moved")
+      else res.end()
     })
     await new Promise<void>((resolve) => from.listen(0, "127.0.0.1", resolve))
     fromUrl = `http://127.0.0.1:${(from.address() as AddressInfo).port}`
@@ -165,4 +168,23 @@ describe("N8nClient and redirects", () => {
       expect(reached).toEqual([])
     },
   )
+
+  it("names the redirect at once, without waiting for the redirect's body", async () => {
+    status = 307
+    endless = true
+    reached.length = 0
+    try {
+      const client = new N8nClient(fromUrl, randomBytes(16).toString("hex"), fetch, 5_000)
+      const started = Date.now()
+      await expect(client.discoverScopes()).rejects.toMatchObject({
+        status: 307,
+        message: expect.stringMatching(/redirects/),
+      })
+      expect(Date.now() - started).toBeLessThan(2_000)
+      expect(reached).toEqual([])
+    } finally {
+      endless = false
+      from.closeAllConnections()
+    }
+  })
 })

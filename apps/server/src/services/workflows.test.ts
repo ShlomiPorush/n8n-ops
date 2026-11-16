@@ -71,6 +71,11 @@ describe("references", () => {
       nodes: [
         { name: "A", type: "n8n-nodes-base.executeWorkflow", parameters: { workflowId: "w\u00001" } },
         { name: "B", type: "n8n-nodes-base.executeWorkflow", parameters: { workflowId: "w1" } },
+        { name: "C", type: "n8n-nodes-base.executeWorkflow", parameters: { workflowId: { value: 7 } } },
+        { name: "D", type: "n8n-nodes-base.executeWorkflow", parameters: { workflowId: { value: ["w2"] } } },
+        { name: "E", type: "n8n-nodes-base.executeWorkflow", parameters: { workflowId: { value: { id: "w3" } } } },
+        { name: "F", type: "n8n-nodes-base.executeWorkflow", parameters: { workflowId: 8 } },
+        { name: "G", type: "n8n-nodes-base.executeWorkflow", parameters: { workflowId: null } },
       ],
     }
     expect(calledWorkflowIds(caller)).toEqual(["w1"])

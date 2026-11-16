@@ -225,6 +225,50 @@ describe("a workflow map sync of workflows in an unexpected form", () => {
       (await ctx.db.select().from(workflows).where(eq(workflows.instanceId, instanceId))).map((w) => [w.workflowId, w]),
     )
 
+  it("stores a workflow whose text the database cannot keep, with that text cleaned", async () => {
+    const i = await instance("/listed")
+    listed = [
+      {
+        ...plain("wf-text", "Orders\u0000 import"),
+        nodes: [{ name: "Hook", type: "n8n-nodes-base.webhook", parameters: { path: "in\u0000box" } }],
+        tags: [{ name: "team\uD800" }],
+      },
+      plain("wf-later"),
+    ]
+    expect(await syncWorkflows(ctx, i)).toEqual({ workflows: 2 })
+    const rows = await rowsOf(i.id)
+    expect(rows.get("wf-text")).toMatchObject({
+      name: "Orders import",
+      triggerDetail: "/webhook/inbox",
+      tags: ["team"],
+    })
+    expect(rows.has("wf-later")).toBe(true)
+  })
+
+  it("names at most 10 skipped workflows in one short log line", async () => {
+    const i = await instance("/listed")
+    const long = "w".repeat(500)
+    listed = [
+      ...Array.from({ length: 12 }, (_, n) => ({ ...plain(`${long}${n}`), nodes: "none" })),
+      { ...plain("x"), id: 5 },
+      plain("wf-ok"),
+    ]
+    const warnings: unknown[] = []
+    const log = ctx.log
+    ctx.log = { ...log, warn: (_msg: string, meta?: object) => void warnings.push(meta) } as Ctx["log"]
+    try {
+      await syncWorkflows(ctx, i)
+    } finally {
+      ctx.log = log
+    }
+    expect(warnings).toHaveLength(1)
+    const [meta] = warnings as { skipped: number; ids: string[] }[]
+    expect(meta?.skipped).toBe(13)
+    expect(meta?.ids).toHaveLength(10)
+    for (const id of meta?.ids ?? []) expect(id.length).toBeLessThanOrEqual(100)
+    expect([...(await rowsOf(i.id)).keys()]).toEqual(["wf-ok"])
+  })
+
   it("stores what it can keep, skips the rest, and keeps the whole map current", async () => {
     const i = await instance("/listed")
     const stale = { name: "Gone", active: true, triggerType: "Manual", structureHash: "h", nodeCount: 1 }

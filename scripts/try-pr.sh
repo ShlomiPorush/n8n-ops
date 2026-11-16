@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run a pull request on the development stack without touching your checkout.
-# Usage: scripts/try-pr.sh <number> | status | restore
+# Usage: scripts/try-pr.sh <number> [--any-author] | status | restore
 set -euo pipefail
 
 # shellcheck source=scripts/lib/common.sh
@@ -15,13 +15,18 @@ usage() {
   cat <<'EOF'
 Usage: scripts/try-pr.sh <command>
 
-  <number>  Check out the pull request in a disposable worktree, back up the development database,
+  <number> [--any-author]
+            Check out the pull request in a disposable worktree, back up the development database,
             rebuild only the affected images and restart only those services. PostgreSQL keeps running.
+            Only a pull request opened by the repository's owner runs (checked with gh on github.com);
+            --any-author runs one opened by someone else, after you have read its code.
   status    Show the active pull request and which images are running.
   restore   Put back the previous images and the database as it was before the pull request.
 
-The development stack must be running (scripts/local.sh start). Nothing is merged or pushed,
-and your working tree is never changed.
+The development stack must be running (scripts/local.sh start), with the server, worker and
+socket-proxy services of docker-compose-dev.yml as in docker/docker-compose-dev.example.yml.
+Keep its n8n running while a pull request is active. Nothing is merged or pushed, and your
+working tree is never changed.
 EOF
 }
 
@@ -56,12 +61,70 @@ running_image_id() {
   docker inspect -f '{{.Image}}' "$cid"
 }
 
+# "owner/name" of the GitHub repository origin points at, as git would fetch from it; empty for any other remote.
+github_repo() {
+  local url
+  url="$(git -C "$REPO_ROOT" remote get-url origin 2>/dev/null)" || return 0
+  if [[ "$url" =~ ^(https://github\.com/|git@github\.com:|ssh://git@github\.com/)([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)$ ]]; then
+    printf '%s/%s' "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]%.git}"
+  fi
+}
+
+# The pull request was opened by the owner of the repository it was opened in, as GitHub says.
+require_owner_author() {
+  local pr="$1" repo record author owner two_names=$'^([^\t]+)\t([^\t]+)$'
+  repo="$(github_repo)"
+  [ -n "$repo" ] || die "origin is not a github.com repository, so who opened pull request #$pr cannot be checked.
+To run it anyway, after reading its code: scripts/try-pr.sh $pr --any-author"
+  command -v gh >/dev/null 2>&1 || die "gh (the GitHub CLI) is needed to check who opened pull request #$pr"
+  # The host is named, so neither GH_HOST nor gh's default host can send the question to another server.
+  record="$(gh api --hostname github.com "repos/$repo/pulls/$pr" --jq '[.user.login, .base.repo.owner.login] | @tsv')" ||
+    die "could not read pull request #$pr of $repo from GitHub"
+  [[ "$record" =~ $two_names ]] || die "GitHub did not say who opened pull request #$pr of $repo"
+  author="${BASH_REMATCH[1]}" owner="${BASH_REMATCH[2]}"
+  if [ "$author" != "$owner" ]; then
+    die "pull request #$pr was opened by $author, not by the owner of $repo.
+To run it anyway, after reading its code: scripts/try-pr.sh $pr --any-author"
+  fi
+}
+
+# Pull request code runs in the server and worker, and reaches Docker only through the socket proxy, which lets it run
+# commands only in the stack's own n8n. So the server, worker and socket proxy of docker-compose-dev.yml, with what
+# they depend on and their networks, must be the template's as Compose renders them with the stack's own settings; the
+# running socket proxy must have been made from the template; and the one container it allows must be this stack's
+# n8n. Docker container names are unique, so while that container exists no other can take its name.
+require_stack_as_template() {
+  local template="$REPO_ROOT/docker/docker-compose-dev.example.yml" copy expected labels
+  local fix="Copy the server, worker and socket-proxy services and the networks from docker/docker-compose-dev.example.yml
+into docker-compose-dev.yml, then run: scripts/local.sh start"
+  copy="$(dev_compose config server worker socket-proxy)" || die "could not read docker-compose-dev.yml"
+  expected="$(
+    DEV_COMPOSE_FILE="$template"
+    dev_compose config server worker socket-proxy
+  )" || die "could not read docker/docker-compose-dev.example.yml"
+  [ -n "$expected" ] || die "could not read docker/docker-compose-dev.example.yml"
+  [ "$copy" = "$expected" ] || die "the server, worker or socket-proxy of docker-compose-dev.yml differ from the template's.
+$fix"
+  check_socket_proxy_config "$DEV_PROJECT" "$template" || die "the development stack's socket-proxy differs from the template's.
+$fix"
+  labels="$(docker container inspect -f '{{index .Config.Labels "com.docker.compose.project"}} {{index .Config.Labels "com.docker.compose.service"}}' \
+    "$DEV_PROJECT-n8n-1" 2>/dev/null)" || die "$DEV_PROJECT-n8n-1 is not there. Run: scripts/local.sh start"
+  [ "$labels" = "$DEV_PROJECT n8n" ] || die "$DEV_PROJECT-n8n-1 is not the development stack's n8n"
+}
+
 try_pr() {
-  local pr="$1"
+  local pr="$1" option="${2:-}"
   [[ "$pr" =~ ^[0-9]+$ ]] || die "pull request number expected, got: $pr"
-  require_dev_secrets
+  case "$option" in
+    "" | --any-author) ;;
+    *) die "unknown option: $option" ;;
+  esac
+  # Every check before anything is fetched or changed, so a refusal leaves nothing behind.
   [ ! -f "$STATE_FILE" ] || die "pull request $(grep '^PR=' "$STATE_FILE" | cut -d= -f2) is active. Run: scripts/try-pr.sh restore"
+  [ "$option" = --any-author ] || require_owner_author "$pr"
   dev_compose ps --status running -q postgres | grep -q . || die "the development stack is not running. Run: scripts/local.sh start"
+  require_stack_as_template
+  require_dev_secrets
 
   mkdir -p "$STATE_DIR"
   local ref="refs/n8n-ops/try-pr/$pr" worktree="$STATE_DIR/worktree-$pr"
@@ -166,7 +229,10 @@ main() {
     status) status ;;
     restore) restore ;;
     -h | --help | help | "") usage ;;
-    *) try_pr "$1" ;;
+    *)
+      [ $# -le 2 ] || die "too many arguments. Run: scripts/try-pr.sh --help"
+      try_pr "$@"
+      ;;
   esac
 }
 

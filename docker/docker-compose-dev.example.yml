@@ -64,8 +64,9 @@ services:
       - ${N8N_OPS_DATA_DIR:?N8N_OPS_DATA_DIR is set by the scripts}/worker:/data
       - ${N8N_OPS_DATA_DIR:?N8N_OPS_DATA_DIR is set by the scripts}/pairing:/pairing:ro
 
-  # Same rules and settings the server generates: ping, and exec only in this stack's n8n container;
-  # root only to open the Docker socket, with no capabilities.
+  # Rules of the kind the server generates: ping, listing containers, and exec only in this stack's own n8n container,
+  # named exactly <project>-n8n-1 (Compose fills in COMPOSE_PROJECT_NAME); root only to open the Docker socket, with no
+  # capabilities. scripts/try-pr.sh runs a pull request only while this service runs as written here.
   socket-proxy:
     image: wollomatic/socket-proxy:1.13.2
     user: "0:0"
@@ -77,7 +78,7 @@ services:
       - -allowfrom=worker
       - -allowhealthcheck
       - '-allowGET=(/v1\.[0-9]+)?/(_ping|exec/[0-9a-f]+/json|containers/json)'
-      - '-allowPOST=(/v1\.[0-9]+)?/(containers/([^/]*-n8n(-worker)?-[0-9]+)/exec|exec/[0-9a-f]+/start)'
+      - '-allowPOST=(/v1\.[0-9]+)?/(containers/${COMPOSE_PROJECT_NAME}-n8n-1/exec|exec/[0-9a-f]+/start)'
     healthcheck:
       test: ["CMD", "./healthcheck"]
       interval: 5s

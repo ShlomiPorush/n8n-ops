@@ -16,7 +16,7 @@ import { tokenActor } from "../http/types.ts"
 import type { AuditVia } from "../lib/audit.ts"
 import { newToken, sha256 } from "../lib/crypto.ts"
 import {
-  matchOperation,
+  operationToForward,
   parseSpec,
   parseWorkflowFields,
   type SpecOperation,
@@ -107,15 +107,37 @@ const timedOut = (e: unknown) => {
 
 const specs = new Map<
   string,
-  { version: string | null; ops: SpecOperation[]; workflowFields: WorkflowFields | null; at: number }
+  {
+    baseUrl: string
+    version: string | null
+    ops: SpecOperation[]
+    workflowFields: WorkflowFields | null
+    at: number
+  }
 >()
 
 async function loadSpec(ctx: Ctx, instance: Instance, fetchImpl: typeof fetch) {
   const cached = specs.get(instance.id)
-  if (cached && cached.version === instance.version && Date.now() - cached.at < 6 * 3600_000) return cached
+  // Read again when the instance moves to another address or n8n version, as it may describe other operations.
+  if (
+    cached &&
+    cached.baseUrl === instance.baseUrl &&
+    cached.version === instance.version &&
+    Date.now() - cached.at < 6 * 3600_000
+  )
+    return cached
   const res = await fetchImpl(`${instance.baseUrl.replace(/\/+$/, "")}/api/v1/openapi.yml`, {
     signal: AbortSignal.timeout(20_000),
+    // The rules come only from the instance's own address: a redirect is an error, never followed.
+    redirect: "manual",
   })
+  if (res.status >= 300 && res.status < 400) {
+    await res.body?.cancel().catch(() => undefined)
+    throw new AccessError(
+      "spec_unavailable",
+      `n8n answered ${res.status} for its API description: the instance's address redirects, and n8n-ops does not follow redirects. Set the address n8n answers at.`,
+    )
+  }
   if (!res.ok) throw new AccessError("spec_unavailable", `n8n did not return its API description (HTTP ${res.status}).`)
   const text = await res.text()
   const ops = parseSpec(text)
@@ -130,7 +152,7 @@ async function loadSpec(ctx: Ctx, instance: Instance, fetchImpl: typeof fetch) {
   } catch {
     // A document whose request bodies cannot be read still serves the access proxy.
   }
-  const entry = { version: instance.version, ops, workflowFields, at: Date.now() }
+  const entry = { baseUrl: instance.baseUrl, version: instance.version, ops, workflowFields, at: Date.now() }
   specs.set(instance.id, entry)
   ctx.log.info("n8n API description loaded", { instance: instance.name, operations: ops.length })
   return entry
@@ -1043,20 +1065,64 @@ function idAfter(match: { op: SpecOperation; params: Record<string, string> }, r
   return name === undefined ? undefined : match.params[name]
 }
 
-/** Whether a call fits the grant: a known operation, inside the scopes, and on an allowed workflow. */
+/** The most query parameters a call through the access proxy may carry; n8n's operations take far fewer. */
+export const MAX_QUERY_PARAMETERS = 100
+
+/** A call that fits its grant, with the path (relative to /api/v1) and the query n8n-ops sends to n8n. */
+type Forward = { allowed: true; path: string; query: string; workflowFilter?: boolean; executionId?: string }
+
+/**
+ * Whether a call fits the grant: a known operation, inside the scopes, and on an allowed workflow. An allowed call
+ * comes with the path and query to send, written out by n8n-ops, so n8n reads the same operation and parameters
+ * that were checked. Without workflow:activate, an update of a workflow never publishes it.
+ */
 export function checkCall(
   ops: SpecOperation[],
   grant: { scopes: string[]; workflowIds: string[] },
   method: string,
   path: string,
   query: URLSearchParams,
-): Decision & { workflowFilter?: boolean; executionId?: string } {
-  const match = matchOperation(ops, method, path)
+): Forward | { allowed: false; reason: string } {
+  const match = operationToForward(ops, method, path)
   if (!match) return { allowed: false, reason: `${method} ${path} is not an n8n public API operation.` }
   const missing = match.op.scopes.filter((s) => !grant.scopes.includes(s))
   if (missing.length)
     return { allowed: false, reason: `Needs ${missing.join(", ")}, which this access does not include.` }
-  if (!grant.workflowIds.length) return { allowed: true }
+
+  const names = [...query.keys()]
+  if (names.length > MAX_QUERY_PARAMETERS)
+    return { allowed: false, reason: `A call may have at most ${MAX_QUERY_PARAMETERS} query parameters.` }
+  if (new Set(names).size !== names.length) return { allowed: false, reason: "Give each query parameter once." }
+  if (names.some((name) => /[[\]]/.test(name)))
+    return { allowed: false, reason: "Query parameter names cannot contain [ or ]." }
+  const sent = new URLSearchParams(query)
+  const template = match.op.template.replace(/\{[^}]*\}/g, "{}")
+
+  if (template === "/workflows/{}" && match.op.method === "PUT" && !grant.scopes.includes("workflow:activate")) {
+    if (!match.op.query.includes("publishIfActive"))
+      return {
+        allowed: false,
+        reason:
+          "On this n8n version, updating a published workflow publishes it, which needs workflow:activate, which this access does not include.",
+      }
+    const asked = sent.get("publishIfActive")
+    if (asked !== null && asked !== "false")
+      return {
+        allowed: false,
+        reason:
+          "Publishing needs workflow:activate, which this access does not include. Leave out publishIfActive to save the update as a draft.",
+      }
+    // n8n saves the update; a published workflow keeps its published version live.
+    sent.set("publishIfActive", "false")
+  }
+  const allow = (extra: { workflowFilter?: boolean; executionId?: string } = {}): Forward => ({
+    allowed: true,
+    path: match.path,
+    query: sent.toString(),
+    ...extra,
+  })
+
+  if (!grant.workflowIds.length) return allow()
   // A grant limited to workflows reaches only operations on one of them, their executions and credentials.
   // Anything else may choose workflows in its body, or act on a whole project or instance.
   const beyond: Decision = {
@@ -1064,28 +1130,27 @@ export function checkCall(
     reason: `${method} ${match.op.template} is not limited to the workflows of this access; it needs access to the whole instance.`,
   }
   const allowed = new Set(grant.workflowIds)
-  const template = match.op.template.replace(/\{[^}]*\}/g, "{}")
   const workflowId = idAfter(match, "workflows")
   if (workflowId !== undefined) {
     if (template === "/workflows/{}/dependencies") return beyond
     return allowed.has(workflowId)
-      ? { allowed: true }
+      ? allow()
       : { allowed: false, reason: `Workflow ${workflowId} is outside this access.` }
   }
-  if (template === "/workflows" && method === "GET") return { allowed: true, workflowFilter: true }
+  if (template === "/workflows" && method === "GET") return allow({ workflowFilter: true })
   if (template === "/workflows" && method === "POST")
     return { allowed: false, reason: "This access is limited to its workflows; it cannot create new ones." }
   if (template === "/executions" && method === "GET") {
-    const w = query.get("workflowId")
+    const w = sent.get("workflowId")
     return w && allowed.has(w)
-      ? { allowed: true }
+      ? allow()
       : { allowed: false, reason: "Pass workflowId with one of the workflows of this access." }
   }
   const executionId = idAfter(match, "executions")
-  if (executionId !== undefined) return { allowed: true, executionId }
+  if (executionId !== undefined) return allow({ executionId })
   if (template.startsWith("/executions"))
     return { allowed: false, reason: "This operation spans executions of other workflows." }
-  if (CREDENTIAL_OPERATIONS.has(template)) return { allowed: true }
+  if (CREDENTIAL_OPERATIONS.has(template)) return allow()
   return beyond
 }
 

@@ -335,17 +335,23 @@ describe("the check in a queue worker", () => {
     const text = JSON.stringify(out)
     for (const word of [secret, "SECRET_TOKEN", "N8N_CONCURRENCY", "/proc", "/sys", "node_modules"])
       expect(text).not.toContain(word)
-    // Unreadable, blank, not a number or n8n's -1: the variable decides nothing.
+  })
+
+  // Each case starts a process of its own, so each is a test of its own with its own time limit.
+  it("says unknown for a concurrency the worker cannot read", async () => {
     expect(
       ((await run({ N8N_CONCURRENCY_PRODUCTION_LIMIT_FILE: "/missing" })) as { details: { concurrencyEnv: unknown } })
         .details.concurrencyEnv,
     ).toBe("unknown")
-    // As n8n reads a number: written with quotes, it is not one.
-    for (const value of ["", "-1", "many", '"7"'])
-      expect(
-        ((await run({ N8N_CONCURRENCY_PRODUCTION_LIMIT: value })) as { details: { concurrencyEnv: unknown } }).details
-          .concurrencyEnv,
-      ).toBe("absent")
+  })
+
+  // Blank, not a number or n8n's -1: the variable decides nothing. As n8n reads a number: written with quotes, it is
+  // not one.
+  it.each(["", "-1", "many", '"7"'])("says absent for the concurrency %j", async (value) => {
+    expect(
+      ((await run({ N8N_CONCURRENCY_PRODUCTION_LIMIT: value })) as { details: { concurrencyEnv: unknown } }).details
+        .concurrencyEnv,
+    ).toBe("absent")
   })
 
   it("reads health and readiness where the worker server listens", async () => {

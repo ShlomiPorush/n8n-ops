@@ -2,6 +2,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { AUTH_BODY_BYTES, createApp } from "./app.ts"
 import type { Ctx } from "./context.ts"
+import { CLIENT_ADDRESS_HEADER } from "./http/address.ts"
 import { withDesign } from "./http/web.ts"
 
 function fakeCtx(databaseUp: boolean): Ctx {
@@ -143,6 +144,51 @@ describe("withDesign", () => {
       '<html lang="en" data-design="compact">',
     )
     expect(withDesign('<html lang="en">', "compact")).toBe('<html data-design="compact" lang="en">')
+  })
+})
+
+describe("the client address the sign-in library gets", () => {
+  /** The address header Better Auth received for one request, connected from `peer` (none: no Node request). */
+  async function received(peer: string | null, headers: [string, string][] = []) {
+    let seen: string | null | undefined
+    const ctx = {
+      ...fakeCtx(true),
+      auth: async () => ({
+        auth: {
+          handler: async (req: Request) => {
+            seen = req.headers.get(CLIENT_ADDRESS_HEADER)
+            return new Response("auth")
+          },
+          api: { getSession: async () => null },
+        },
+        passkeyUrl: null,
+      }),
+    } as unknown as Ctx
+    const forwarded = headers.find(([name]) => name === "x-forwarded-for")?.[1]
+    const env =
+      peer === null
+        ? undefined
+        : {
+            incoming: { socket: { remoteAddress: peer }, headers: forwarded ? { "x-forwarded-for": forwarded } : {} },
+          }
+    await createApp(ctx).request("/api/auth/sign-in/username", { method: "POST", headers, body: "{}" }, env)
+    return seen
+  }
+
+  it("is the address the server resolved, never one the client sent", async () => {
+    const sent: [string, string][] = [
+      ["x-forwarded-for", "203.0.113.1"],
+      [CLIENT_ADDRESS_HEADER, "192.0.2.1"],
+    ]
+    expect(await received("198.51.100.7", sent)).toBe("198.51.100.7")
+    expect(await received("::ffff:198.51.100.7", sent)).toBe("198.51.100.7")
+    expect(await received("172.18.0.5", [["x-forwarded-for", "203.0.113.1, 198.51.100.8"]])).toBe("198.51.100.8")
+    expect(await received("2001:db8::7")).toBe("2001:db8::7")
+  })
+
+  it("leaves out an IPv6 zone, and is absent without a client address", async () => {
+    expect(await received("fe80::1%eth0")).toBe("fe80::1")
+    expect(await received(null, [[CLIENT_ADDRESS_HEADER, "192.0.2.1"]])).toBeNull()
   })
 })
 

@@ -86,17 +86,20 @@ async function call(
   { json, cookie = "", origin = pageOrigin }: { json?: unknown; cookie?: string; origin?: string } = {},
 ) {
   ip += 1
-  return app.request(path, {
-    method,
-    headers: {
-      origin,
-      ...(json !== undefined ? { "content-type": "application/json" } : {}),
-      // Better Auth limits sign-in per client address; each request here is a client of its own.
-      "x-forwarded-for": `10.1.${Math.floor(ip / 250)}.${ip % 250}`,
-      cookie,
+  return app.request(
+    path,
+    {
+      method,
+      headers: {
+        origin,
+        ...(json !== undefined ? { "content-type": "application/json" } : {}),
+        cookie,
+      },
+      body: json !== undefined ? JSON.stringify(json) : undefined,
     },
-    body: json !== undefined ? JSON.stringify(json) : undefined,
-  })
+    // Better Auth limits sign-in per client address; each request here is a client of its own.
+    { incoming: { socket: { remoteAddress: `10.1.${Math.floor(ip / 250)}.${ip % 250}` }, headers: {} } },
+  )
 }
 
 /** The cookies a response sets, merged into the ones held. */

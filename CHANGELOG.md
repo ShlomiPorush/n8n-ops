@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-11-16
+
 ### Added
 
 - **Agent Access loads older ended requests as you scroll.** In the All view, beyond the latest 200 ended requests, older ones load as the end of the list comes into view, 200 at a time and newest first, until the list says that all requests are shown; while more may exist, the counts read "200+". In an order where older requests would not come last, such as Requested oldest first, Load older requests at the end of the list loads them a page at a time. A page that fails to load says so and waits for Try again. The list's first load is unchanged.

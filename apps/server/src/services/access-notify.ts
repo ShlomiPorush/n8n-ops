@@ -2,6 +2,7 @@ import { type DateWriting, formatDuration, formatStamp, formatUsed, messageWriti
 import { and, eq, isNotNull, isNull, ne, type SQL } from "drizzle-orm"
 import type { Ctx } from "../context.ts"
 import { type AccessDropReason, type AccessStatus, accessRequests, apiTokens } from "../db/schema.ts"
+import { directionMark, readsRightToLeft } from "../lib/text-direction.ts"
 import {
   AccessError,
   type AccessInstanceRow,
@@ -29,7 +30,6 @@ import {
   render,
   type Safe,
 } from "./email-layout.ts"
-import { directionMark, readsRightToLeft } from "../lib/text-direction.ts"
 import { sendEmail } from "./reports.ts"
 import { clip, html, type InlineButton, TelegramHtml, telegramPlainText } from "./telegram.ts"
 

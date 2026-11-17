@@ -402,18 +402,42 @@ describe("what an agent wrote, in request messages", () => {
   const changed = (a: string[], b: string[]) => a.flatMap((line, n) => (line === b[n] ? [] : [n]))
   const starting = (all: string[], label: string) => all.filter((l) => telegramPlainText(l).startsWith(label))
 
-  it("keep the agent's name and reason on one line of their own in Telegram, set apart from the request", () => {
+  it("keep the agent's name and reason on a line of their own each in Telegram, set apart from the request", () => {
     const shown = telegramRequest(ask(hostile), zone)
     const plain = telegramRequest(ask(benign), zone)
     expect(shown.complete).toBe(true)
     expect(plain.complete).toBe(true)
     const [a, b] = [lines(shown.text), lines(plain.text)]
     expect(a).toHaveLength(b.length)
-    // Only the agent's own line differs.
-    expect(changed(a, b)).toEqual([1])
-    expect(a[1]).toMatch(/^Agent <b>[^<]*<\/b>: <i>[^<]*<\/i>$/)
-    expect(a[1]).toContain("&lt;b&gt;x&lt;/b&gt; 👩‍💻")
+    // Only the agent's own lines differ.
+    expect(changed(a, b)).toEqual([1, 2])
+    expect(a[1]).toMatch(/^Agent <b>[^<]*<\/b>:$/)
+    expect(a[2]).toMatch(/^💬 <i>[^<]*<\/i>$/)
+    expect(a[2]).toContain("&lt;b&gt;x&lt;/b&gt; 👩‍💻")
     for (const label of ["Scopes:", "Workflow", "For "]) expect(starting(a, label)).toHaveLength(1)
+  })
+
+  it("show a reason and a summary written right to left from the right in Telegram, also when they open in English", () => {
+    const hebrew = {
+      token: "Agents on SHLOMI",
+      reason: "Phase 0 של ה-CRM: workflow זמני אחד שמחזיר ספירות, בלי שינוי ב-workflows קיימים",
+      summary: "Read workflow אחד בלבד, קריאה בלבד, ולא שיניתי דבר",
+    }
+    const a = lines(renderAccessTelegram(ask(hebrew), zone, released(hebrew)))
+    expect(a[1]).toBe("Agent <b>Agents on SHLOMI</b>:")
+    expect(a[2]).toBe(`💬 ‏<i>${hebrew.reason}</i>`)
+    expect(a[a.indexOf("What was done:") + 1]).toBe(`‏<i>${hebrew.summary}</i>`)
+    // English stays as it was, without a mark.
+    const b = lines(renderAccessTelegram(ask(benign), zone, released(benign)))
+    expect(b[2]).toBe("💬 <i>Read wf1 and fix it</i>")
+    expect(b[b.indexOf("What was done:") + 1]).toBe("<i>Fixed the sync.</i>")
+  })
+
+  it("show a reason written right to left from the right in the email", () => {
+    const rtl = renderAccessEmail(ask({ ...benign, reason: "קריאה בלבד של workflow אחד" }), null, zone).html
+    expect(rtl).toContain('<td dir="rtl" align="right" class="m-ink m-cell"')
+    expect(rtl).toContain("text-align:right;")
+    expect(renderAccessEmail(ask(benign), null, zone).html).not.toContain('dir="rtl"')
   })
 
   it("keep what the agent said it did on one line of its own in Telegram", () => {

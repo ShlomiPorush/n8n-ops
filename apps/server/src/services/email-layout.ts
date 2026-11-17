@@ -382,10 +382,15 @@ export function panel(title: Text, blocks: Safe[], { count, note }: { count?: Te
   )
 }
 
-/** Free text inside a panel, with the panel padding. */
-export function panelText(text: Text): Safe {
+/**
+ * Free text inside a panel, with the panel padding. Text written right to left (`dir: "rtl"`) gets the direction and
+ * the alignment on its cell, as Word (Outlook for Windows) needs both; without it the cell keeps the email's own.
+ */
+export function panelText(text: Text, dir: "ltr" | "rtl" = "ltr"): Safe {
+  const rtl = dir === "rtl" ? ' dir="rtl" align="right"' : ""
+  const align = dir === "rtl" ? "text-align:right;" : ""
   return new Safe(
-    `<table ${TABLE}>${rule()}<tr><td class="m-ink m-cell" style="padding:10px 16px 12px;color:${INK};font-size:14px;line-height:1.55;">${lines(text)}</td></tr></table>`,
+    `<table ${TABLE}>${rule()}<tr><td${rtl} class="m-ink m-cell" style="padding:10px 16px 12px;color:${INK};font-size:14px;line-height:1.55;${align}">${lines(text)}</td></tr></table>`,
   )
 }
 

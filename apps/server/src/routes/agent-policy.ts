@@ -159,7 +159,7 @@ export const OPEN: OpenRoute[] = [
     area: "access",
     kind: "act",
     description:
-      "Ask for temporary access to the API of one or more n8n instances. Body: instances (each with instance, scopes, workflowIds), reason, minutes, notify. A person approves, changes or denies it. Write the reason in a few short, plain sentences in the language of your conversation, without IDs or technical words.",
+      "Ask for temporary access to the API of one or more n8n instances. Body: instances (each with instance, scopes, workflowIds), reason, minutes, notify. A person approves, changes or denies it. The reason, 10 to 500 characters, is for that person: a few short, plain sentences in the language of your conversation with the person who gave you the task, saying what you will do and why, which instance and what on each, whether you only read or also change something, and whether a change goes live, deletes something or affects other workflows. No IDs, tags, scope names, brackets or technical words, and never a secret.",
   },
   {
     method: "GET",
@@ -175,7 +175,7 @@ export const OPEN: OpenRoute[] = [
     area: "access",
     kind: "act",
     description:
-      "End the access once the task is finished and checked. Body: summary, what you did and the result in a few short, plain sentences in the language of your conversation, without IDs or technical words.",
+      "End the access once the task is finished and checked. Body: summary, for the person who approved it, up to 1000 characters: a few short, plain sentences in the language of your conversation with the person who gave you the task, saying what you did and the result, what you checked and, when you changed nothing or stopped, why. No IDs, tags, scope names, brackets or technical words, and never a secret.",
   },
 ]
 

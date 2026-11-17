@@ -102,11 +102,29 @@ The three calls of a request are actions. Before you ask, tell the person what y
 OK. That OK covers reading the request's answer and releasing the access when you are done; ask again before a new
 request.
 
+**Write the reason and the summary for a person.** The person who approves reads them, often on a phone, and may not
+know the words of n8n or n8n-ops. Write them in the language of your conversation with the person who gave you the
+task, as one person tells another: a few short, plain sentences.
+
+- The reason says what you will do and why, and what you will touch: which workflow, which credential or the whole
+  instance, and which instance when there are several, with what you do on each. Say whether you will only read or
+  also change something, and whether a change goes live, deletes something or affects other workflows. If all this
+  does not fit in 500 characters, never leave out what goes live, is deleted or affects other workflows: ask the person
+  how to split the request.
+- The summary says what you did and the result: what you checked and, when you changed nothing or stopped, why.
+- Leave out IDs, tags, scope names, brackets and technical words. When you cannot avoid a term, say in plain words what
+  it means. When a name alone could mean two things, such as two workflows with the same name, add a plain detail that
+  tells them apart, or the ID when nothing else does. Never write a secret.
+
+For example, the reason "Read the Disable User workflow on the sales instance to plan how to replace it. I will not
+change anything." and the summary "Read the Disable User workflow once. Changed nothing. The plan is ready for you to
+review."
+
 1. Find the instance with `workflows` if you do not know it.
 2. Ask: `n8n-ops post '/api/v1/access-requests' --json-file <file>` with a JSON body
-   `{"instances": [{"instance": "<name>", "scopes": ["workflow:read"], "workflowIds": ["<id>"]}], "reason": "<what you will do and why, 10-500 characters>", "minutes": 15}`.
+   `{"instances": [{"instance": "<name>", "scopes": ["workflow:read"], "workflowIds": ["<id>"]}], "reason": "<what you will do, in plain words as above, 10-500 characters>", "minutes": 15}`.
    When the task needs several instances, name them all in `instances` in one request, each with its own scopes and
-   workflows, instead of one request per instance. Ask for the fewest instances, scopes, workflows and minutes the
+   workflows, instead of one request per instance, unless the person chose to split it. Ask for the fewest instances, scopes, workflows and minutes the
    task needs; a person reads the reason and decides. Count in the minutes the time to check the result and to fix a
    failure, not only the change itself. If this answers `outcome_unknown`, the request may have been made: do not ask
    again; tell the person and let them check n8n-ops for it.
@@ -131,8 +149,8 @@ request.
    approved: holding the key does not widen what the person approved. It stops working by itself after the approved
    minutes. Release it as soon as the task no longer needs it, also when the task is cancelled or given up:
    `n8n-ops post '/api/v1/access-requests/<requestId>/release' --json-file <file>` with a JSON body
-   `{"summary": "<what you did with the access and the result, up to 1000 characters>"}`. The person who approved
-   reads it; say also when you changed nothing or gave up, and why. The key stops working at once. Once the access has
+   `{"summary": "<what you did and the result, in plain words as above, up to 1000 characters>"}`. The person who
+   approved reads it. The key stops working at once. Once the access has
    expired or was released, the same request gives no key again: if you still need access, make a new request.
 
 #### Credentials

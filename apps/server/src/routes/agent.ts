@@ -403,7 +403,7 @@ const releaseShape = {
     .string()
     .optional()
     .describe(
-      `What you did with the access and the result, for the person who approved it, up to ${SUMMARY_MAX} characters: a few short, plain sentences in the language of your conversation with the person who gave you the task. Say what you checked and, when you changed nothing or stopped, why. No IDs, tags, scope names, brackets or technical words; explain a term you cannot avoid. Never a secret.`,
+      `Always send it. What you did with the access and the result, for the person who approved it, up to ${SUMMARY_MAX} characters: a few short, plain sentences in the language of your conversation with the person who gave you the task. Say what you checked and, when you changed nothing or stopped, why. No IDs, tags, scope names, brackets or technical words; explain a term you cannot avoid. Never a secret.`,
     ),
 }
 
@@ -438,7 +438,7 @@ const accessRequestShape = {
     .min(10)
     .max(500)
     .describe(
-      "What you will do and why, for the person who approves it, in the language of your conversation with the person who gave you the task: a few short, plain sentences. Say what you will touch (which workflow, which credential or the whole instance, which instance, and what you do on each), whether you will only read or also change something, and whether a change goes live, deletes something or affects other workflows. No IDs, tags, scope names, brackets or technical words; explain a term you cannot avoid, and when a name alone could mean two things, add a plain detail that tells them apart. Never a secret.",
+      "What you will do and why, for the person who approves it, in the language of your conversation with the person who gave you the task: a few short, plain sentences. Say what you will touch (which workflow, which credential or the whole instance, which instance, and what you do on each), whether you will only read or also change something, and whether a change goes live, deletes something or affects other workflows. No IDs, tags, scope names, brackets or technical words; explain a term you cannot avoid, and when a name alone could mean two things, add a plain detail that tells them apart, or the ID when nothing else does. Never leave out what goes live, is deleted or affects other workflows to fit the length; ask the person how to split the request instead. Never a secret.",
     ),
   minutes: z.number().int().min(1).describe("How long you need the access. The approver sees it; keep it short."),
   notify: z

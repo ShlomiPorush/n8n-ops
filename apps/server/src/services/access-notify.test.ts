@@ -445,7 +445,7 @@ describe("what an agent wrote, in request messages", () => {
     const b = lines(renderAccessTelegram(ask(benign), zone, released(benign)))
     expect(a).toHaveLength(b.length)
     const done = b.indexOf("What was done:")
-    expect(changed(a, b)).toEqual([1, done + 1])
+    expect(changed(a, b)).toEqual([1, 2, done + 1])
     expect(a[done + 1]).toMatch(/^<i>[^<]*<\/i>$/)
     expect(starting(a, "For ")).toHaveLength(1)
   })

@@ -124,7 +124,7 @@ review."
 2. Ask: `n8n-ops post '/api/v1/access-requests' --json-file <file>` with a JSON body
    `{"instances": [{"instance": "<name>", "scopes": ["workflow:read"], "workflowIds": ["<id>"]}], "reason": "<what you will do, in plain words as above, 10-500 characters>", "minutes": 15}`.
    When the task needs several instances, name them all in `instances` in one request, each with its own scopes and
-   workflows, instead of one request per instance. Ask for the fewest instances, scopes, workflows and minutes the
+   workflows, instead of one request per instance, unless the person chose to split it. Ask for the fewest instances, scopes, workflows and minutes the
    task needs; a person reads the reason and decides. Count in the minutes the time to check the result and to fix a
    failure, not only the change itself. If this answers `outcome_unknown`, the request may have been made: do not ask
    again; tell the person and let them check n8n-ops for it.

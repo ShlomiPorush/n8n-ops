@@ -582,9 +582,9 @@ html[data-design="regular"].dark {
 /*
  * Motion explains a state change and nothing else (AX-8): .12s tooltips and flyouts; .15s switches, chevrons,
  * grips, folds, hover colours and the copy icon; .18s the sidebar fold; .2s sheets, dialogs, the More sheet and its
- * veil; .3s toast fade; 2s the search flash; spinners turn at 1s. Regular also counts its figures up (.9s) and
- * pulses a down instance's dot. Drags turn transitions off. Animations are part of the design and stay when the
- * system asks for reduced motion: there is no reduced-motion override.
+ * veil; .3s toast fade; 2s the search flash; spinners turn at 1s. Figures show their number at once, without
+ * counting up. Regular pulses a down instance's dot. Drags turn transitions off. Animations are part of the design
+ * and stay when the system asks for reduced motion: there is no reduced-motion override.
  */
 
 /* Thin themed scrollbars (OT-4). */

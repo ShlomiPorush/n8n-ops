@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Fixed
+
+- **An agent's reason in Hebrew or Arabic reads correctly in Telegram and email.** In the Telegram message of an access request, the reason now has a line of its own under "Agent", after 💬, instead of following the agent's name. Telegram took the direction of the whole line from "Agent", so a Hebrew reason with English terms in it showed its words out of order. A reason, or a summary of what was done, whose words are mostly in a right-to-left script now reads from the right, also when it opens with an English word. In the email, the Why panel shows such a reason right to left. English text is shown as before.
+
 ## [0.19.0] - 2026-11-16
 
 ### Added

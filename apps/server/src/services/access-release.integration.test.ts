@@ -260,7 +260,9 @@ describe("calls made with the access", () => {
 
     await releaseAccess(ctx, tokenId, id, "Read the workflow")
     await closeTelegramMessages(ctx)
-    expect(edits.at(-1)).toContain("What was done:\n\u{200E}<i>Read the workflow</i>\n2 calls through n8n-ops, 1 refused")
+    expect(edits.at(-1)).toContain(
+      "What was done:\n\u{200E}<i>Read the workflow</i>\n2 calls through n8n-ops, 1 refused",
+    )
     expect((await stored(id)).telegramClosedAt).not.toBeNull()
 
     // A call that started before the release and ends after it.

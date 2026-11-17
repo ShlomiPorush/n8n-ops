@@ -441,7 +441,8 @@ describe("what an agent wrote, in request messages", () => {
   })
 
   it("show a reason written right to left from the right in the email", () => {
-    const reason = "\u{5E7}\u{5E8}\u{5D9}\u{5D0}\u{5D4} \u{5D1}\u{5DC}\u{5D1}\u{5D3} \u{5E9}\u{5DC} workflow \u{5D0}\u{5D7}\u{5D3}"
+    const reason =
+      "\u{5E7}\u{5E8}\u{5D9}\u{5D0}\u{5D4} \u{5D1}\u{5DC}\u{5D1}\u{5D3} \u{5E9}\u{5DC} workflow \u{5D0}\u{5D7}\u{5D3}"
     const rtl = renderAccessEmail(ask({ ...benign, reason }), null, zone).html
     expect(rtl).toContain('<td dir="rtl" align="right" class="m-ink m-cell"')
     expect(rtl).toContain("text-align:right;")

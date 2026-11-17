@@ -9,8 +9,7 @@ const disable =
 const phase =
   "Phase 0 \u{5E9}\u{5DC} \u{5D4}-CRM: workflow \u{5D6}\u{5DE}\u{5E0}\u{5D9} \u{5D0}\u{5D7}\u{5D3} \u{5E9}\u{5DE}\u{5D7}\u{5D6}\u{5D9}\u{5E8} \u{5E1}\u{5E4}\u{5D9}\u{5E8}\u{5D5}\u{5EA}"
 /** Hebrew with two long English terms. */
-const terms =
-  "\u{5D1}\u{5DC}\u{5D9} \u{5E9}\u{5D9}\u{5E0}\u{5D5}\u{5D9} \u{5D1}-workflows \u{5D0}\u{5D5} credentials"
+const terms = "\u{5D1}\u{5DC}\u{5D9} \u{5E9}\u{5D9}\u{5E0}\u{5D5}\u{5D9} \u{5D1}-workflows \u{5D0}\u{5D5} credentials"
 /** English that opens with a Hebrew word. */
 const sync = "\u{5E1}\u{5E0}\u{5DB}\u{5E8}\u{5D5}\u{5DF}: Read the workflow and list its nodes."
 
@@ -32,13 +31,15 @@ describe("the direction of free text", () => {
 
   it("counts a word with Hebrew points, Arabic vowels or a Persian zero-width non-joiner once", () => {
     // One pointed Hebrew word.
-    expect(readsRightToLeft("Read only workflow \u{5D3}\u{5BC}\u{5D5}\u{5BC}\u{5D2}\u{5B0}\u{5DE}\u{5B8}\u{5D4}.")).toBe(
-      false,
-    )
+    expect(
+      readsRightToLeft("Read only workflow \u{5D3}\u{5BC}\u{5D5}\u{5BC}\u{5D2}\u{5B0}\u{5DE}\u{5B8}\u{5D4}."),
+    ).toBe(false)
     // Two pointed Hebrew words.
-    expect(readsRightToLeft("Read \u{5E9}\u{5B8}\u{5C1}\u{5DC}\u{5D5}\u{5B9}\u{5DD} \u{5E2}\u{5D5}\u{5B9}\u{5DC}\u{5B8}\u{5DD}")).toBe(
-      true,
-    )
+    expect(
+      readsRightToLeft(
+        "Read \u{5E9}\u{5B8}\u{5C1}\u{5DC}\u{5D5}\u{5B9}\u{5DD} \u{5E2}\u{5D5}\u{5B9}\u{5DC}\u{5B8}\u{5DD}",
+      ),
+    ).toBe(true)
     expect(readsRightToLeft("Read only workflow كَتَبَ")).toBe(false)
     // Three Persian words, each with a zero-width non-joiner inside, against four English ones.
     expect(readsRightToLeft("Please read this workflow می\u{200C}خواهم نمی\u{200C}دانم کتاب\u{200C}ها")).toBe(false)

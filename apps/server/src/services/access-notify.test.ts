@@ -128,7 +128,7 @@ describe("request messages", () => {
     const sent = TelegramHtml.join([topicGoneNote(2147483647), text])
     expect([...telegramPlainText(sent)].length).toBeLessThan(4096)
     expect(String(text)).toMatch(/<\/code> and \d+ more\nWorkflows:\n(• n+…\n)+• and \d+ more\nFor /)
-    expect(String(text)).toContain(`\nWhat was done:\n<i>${"s".repeat(499)}…</i>\n`)
+    expect(String(text)).toContain(`\nWhat was done:\n‎<i>${"s".repeat(499)}…</i>\n`)
 
     // Only IDs, as a request made before names were stored.
     const unnamed = String(telegramOf({ ...long, workflowNames: {} }, zone, accessOutcome(released, zone)))
@@ -166,7 +166,7 @@ describe("request messages", () => {
       "Used 22 min of 1 h 30 min",
       "",
       "What was done:",
-      "<i>Fixed the &lt;Set&gt; node.</i>",
+      "‎<i>Fixed the &lt;Set&gt; node.</i>",
       "14 calls through n8n-ops, 2 refused",
     ])
     // Without a summary (expired, revoked, or an agent that gave none), only the calls.
@@ -412,7 +412,7 @@ describe("what an agent wrote, in request messages", () => {
     // Only the agent's own lines differ.
     expect(changed(a, b)).toEqual([1, 2])
     expect(a[1]).toMatch(/^Agent <b>[^<]*<\/b>:$/)
-    expect(a[2]).toMatch(/^💬 <i>[^<]*<\/i>$/)
+    expect(a[2]).toMatch(/^💬 ‎<i>[^<]*<\/i>$/)
     expect(a[2]).toContain("&lt;b&gt;x&lt;/b&gt; 👩‍💻")
     for (const label of ["Scopes:", "Workflow", "For "]) expect(starting(a, label)).toHaveLength(1)
   })
@@ -427,10 +427,14 @@ describe("what an agent wrote, in request messages", () => {
     expect(a[1]).toBe("Agent <b>Agents on SHLOMI</b>:")
     expect(a[2]).toBe(`💬 ‏<i>${hebrew.reason}</i>`)
     expect(a[a.indexOf("What was done:") + 1]).toBe(`‏<i>${hebrew.summary}</i>`)
-    // English stays as it was, without a mark.
+    // English reads left to right, also when it opens with a Hebrew word.
     const b = lines(renderAccessTelegram(ask(benign), zone, released(benign)))
-    expect(b[2]).toBe("💬 <i>Read wf1 and fix it</i>")
-    expect(b[b.indexOf("What was done:") + 1]).toBe("<i>Fixed the sync.</i>")
+    expect(b[2]).toBe("💬 ‎<i>Read wf1 and fix it</i>")
+    expect(b[b.indexOf("What was done:") + 1]).toBe("‎<i>Fixed the sync.</i>")
+    const mixed = lines(
+      renderAccessTelegram(ask({ ...benign, reason: "סנכרון: Read the workflow and list its nodes." }), zone),
+    )
+    expect(mixed[2]).toBe("💬 ‎<i>סנכרון: Read the workflow and list its nodes.</i>")
   })
 
   it("show a reason written right to left from the right in the email", () => {
@@ -446,7 +450,7 @@ describe("what an agent wrote, in request messages", () => {
     expect(a).toHaveLength(b.length)
     const done = b.indexOf("What was done:")
     expect(changed(a, b)).toEqual([1, 2, done + 1])
-    expect(a[done + 1]).toMatch(/^<i>[^<]*<\/i>$/)
+    expect(a[done + 1]).toMatch(/^‎<i>[^<]*<\/i>$/)
     expect(starting(a, "For ")).toHaveLength(1)
   })
 

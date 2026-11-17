@@ -86,9 +86,10 @@ export const oneLine = (text: string) => text.replace(BREAKS, " ").replace(/\s+/
 
 /**
  * What an agent wrote, cleaned by `oneLine`, as a Telegram line of its own in italics, after `lead` when given.
- * Telegram takes a line's direction from its first letter, so text that reads right to left (Hebrew with English
- * terms in it) starts with a right-to-left mark and reads as a whole from the right, also when it opens with an
- * English word; on the line of a label it would be read left to right and its words shown out of order.
+ * Telegram takes a line's direction from its first letter, so the text starts with the mark of the direction most of
+ * its words read in (`directionMark`): Hebrew with English terms in it reads from the right also when it opens with
+ * an English word, and English from the left also when it opens with a Hebrew one. On the line of a label it would
+ * take the label's direction and show its words out of order.
  */
 function agentWords(text: string, lead = "") {
   return html`${lead}${directionMark(text)}<i>${text}</i>`

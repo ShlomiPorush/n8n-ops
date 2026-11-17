@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Changed
+
+- **Figures no longer count up in the Regular design.** The Overview's figures, the section figures above the Problems list and the other key figures show their number at once, as in Compact.
+
 ## [0.19.1] - 2026-11-17
 
 ### Changed

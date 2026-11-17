@@ -108,13 +108,13 @@ task, as one person tells another: a few short, plain sentences.
 
 - The reason says what you will do and why, and what you will touch: which workflow, which credential or the whole
   instance, and which instance when there are several, with what you do on each. Say whether you will only read or
-  also change something, and whether a change goes live, deletes something or affects other workflows. When a name
-  alone could mean two things, such as two workflows with the same name, add a plain detail that tells them apart, or
-  the ID when nothing else does. If all this does not fit in 500 characters, never leave out what goes live, is deleted
-  or affects other workflows: ask the person how to split the request.
+  also change something, and whether a change goes live, deletes something or affects other workflows. If all this
+  does not fit in 500 characters, never leave out what goes live, is deleted or affects other workflows: ask the person
+  how to split the request.
 - The summary says what you did and the result: what you checked and, when you changed nothing or stopped, why.
-- Otherwise leave out IDs, tags, scope names, brackets and technical words. When you cannot avoid a term, say in plain words what
-  it means. Never write a secret.
+- Leave out IDs, tags, scope names, brackets and technical words. When you cannot avoid a term, say in plain words what
+  it means. When a name alone could mean two things, such as two workflows with the same name, add a plain detail that
+  tells them apart, or the ID when nothing else does. Never write a secret.
 
 For example, the reason "Read the Disable User workflow on the sales instance to plan how to replace it. I will not
 change anything." and the summary "Read the Disable User workflow once. Changed nothing. The plan is ready for you to

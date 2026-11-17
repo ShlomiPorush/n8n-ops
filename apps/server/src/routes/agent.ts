@@ -403,7 +403,7 @@ const releaseShape = {
     .string()
     .optional()
     .describe(
-      `Always send it. What you did with the access and the result, for the person who approved it, up to ${SUMMARY_MAX} characters: a few short, plain sentences in the language of your conversation with the person who gave you the task. Say what you checked and, when you changed nothing or stopped, why. No IDs, tags, scope names, brackets or technical words; explain a term you cannot avoid. Never a secret.`,
+      `Always send it. What you did with the access and the result, for the person who approved it, up to ${SUMMARY_MAX} characters: a few short, plain sentences in the language of your conversation with the person who gave you the task. Say what you checked and, when you changed nothing or stopped, why. No IDs, tags, scope names, brackets or technical words; explain a term you cannot avoid, and when a name alone could mean two things, add a plain detail that tells them apart, or the ID when nothing else does. Never a secret.`,
     ),
 }
 

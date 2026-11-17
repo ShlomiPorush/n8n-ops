@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.19.1] - 2026-11-17
+
 ### Changed
 
 - **Agents write the reason of an access request and the summary of what they did in plain words.** The agent skill and the descriptions agents read over MCP and REST now ask for a few short, plain sentences in the language of the agent's conversation with the person who gave it the task: what the agent will do and why, what it will touch on which instance, whether it only reads or also changes something, and whether a change goes live, deletes something or affects other workflows; then what it did and the result. They ask for no IDs, tags, scope names, brackets or technical words unless one cannot be avoided, and never a secret. n8n-ops does not check the wording. An agent gets the new guidance when it reads the skill or the MCP tool list again after the update; a copy of the skill installed from Git gets the notice that it needs an update, and the agent goes on with its old copy until the person updates it.

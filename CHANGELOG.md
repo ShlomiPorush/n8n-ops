@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Changed
+
+- **Agents write the reason of an access request and the summary of what they did in plain words.** The agent skill and the descriptions agents read over MCP and REST now ask for a few short, plain sentences in the language of the agent's conversation with the person who gave it the task: what the agent will do and what it will touch, whether it only reads or also changes something, and whether a change goes live, deletes something or affects other workflows; then what it did and the result. They ask for no IDs, tags, scope names, brackets or technical words, and never a secret. n8n-ops does not check the wording. Agents follow it from their next request; a copy of the skill installed from Git gets the notice that it needs an update.
+
 ### Fixed
 
 - **An agent's reason in Hebrew or Arabic reads correctly in Telegram and email.** In the Telegram message of an access request, the reason now has a line of its own under "Agent", after 💬, instead of following the agent's name. Telegram took the direction of the whole line from "Agent", so a Hebrew reason with English terms in it showed its words out of order. A reason, or a summary of what was done, whose words are mostly in a right-to-left script now reads from the right, also when it opens with an English word, and one mostly in English reads from the left, also when it opens with a Hebrew word. In the email, the Why panel shows a reason mostly in a right-to-left script right to left.

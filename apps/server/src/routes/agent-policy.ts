@@ -159,7 +159,7 @@ export const OPEN: OpenRoute[] = [
     area: "access",
     kind: "act",
     description:
-      "Ask for temporary access to the API of one or more n8n instances. Body: instances (each with instance, scopes, workflowIds), reason, minutes, notify. A person approves, changes or denies it.",
+      "Ask for temporary access to the API of one or more n8n instances. Body: instances (each with instance, scopes, workflowIds), reason, minutes, notify. A person approves, changes or denies it. Write the reason in a few short, plain sentences in the language of your conversation, without IDs or technical words.",
   },
   {
     method: "GET",
@@ -174,7 +174,8 @@ export const OPEN: OpenRoute[] = [
     path: "/api/v1/access-requests/{id}/release",
     area: "access",
     kind: "act",
-    description: "End the access once the task is finished and checked. Body: summary.",
+    description:
+      "End the access once the task is finished and checked. Body: summary, what you did and the result in a few short, plain sentences in the language of your conversation, without IDs or technical words.",
   },
 ]
 
@@ -201,7 +202,7 @@ export function listing(areas: Area[], only?: string) {
 }
 
 /** The skill's revision this server expects of a copy installed from Git (r<n>); raise it with the skill's scripts. */
-export const SKILL_REVISION = 2
+export const SKILL_REVISION = 3
 
 /**
  * The notice for a skill older than this server (distribution-and-versioning in the agent-access standard): a served

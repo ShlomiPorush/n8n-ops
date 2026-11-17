@@ -41,7 +41,7 @@ $DefaultUrl = '__N8N_OPS_URL__'
 # Filled in with the skill's version when the server serves this file; access then says when a newer one is out.
 $SkillVersion = '__N8N_OPS_SKILL_VERSION__'
 # A copy that was not served (installed from Git) sends r<SkillRevision> instead; raise it with the server's copy.
-$SkillRevision = 2
+$SkillRevision = 3
 # ==== End of product constants. ====
 
 function Get-Env([string]$name) { [Environment]::GetEnvironmentVariable("$EnvPrefix$name") }

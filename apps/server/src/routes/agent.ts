@@ -403,7 +403,7 @@ const releaseShape = {
     .string()
     .optional()
     .describe(
-      `What you did with the access and the result, for the person who approved it; up to ${SUMMARY_MAX} characters.`,
+      `What you did with the access and the result, for the person who approved it, up to ${SUMMARY_MAX} characters: a few short, plain sentences in the language of your conversation with the person who gave you the task. Say what you checked and, when you changed nothing or stopped, why. No IDs, tags, scope names, brackets or technical words; explain a term you cannot avoid. Never a secret.`,
     ),
 }
 
@@ -433,7 +433,13 @@ const accessRequestShape = {
   instance: instanceName.optional().describe("For one instance only, instead of instances: its name."),
   scopes: scopesShape.optional().describe("With instance: the n8n API key scopes you need there."),
   workflowIds: workflowIdsShape.describe("With instance: limit the access to these workflows."),
-  reason: z.string().min(10).max(500).describe("What you will do and why; the approver reads this."),
+  reason: z
+    .string()
+    .min(10)
+    .max(500)
+    .describe(
+      "What you will do, for the person who approves it, in the language of your conversation with the person who gave you the task: a few short, plain sentences. Say what you will touch (which workflow, which credential or the whole instance, which instance), whether you will only read or also change something, and whether a change goes live, deletes something or affects other workflows. No IDs, tags, scope names, brackets or technical words; explain a term you cannot avoid. Never a secret.",
+    ),
   minutes: z.number().int().min(1).describe("How long you need the access. The approver sees it; keep it short."),
   notify: z
     .array(z.enum(accessChannels))
@@ -681,7 +687,7 @@ export function buildMcpServer(
   )
   accessTool(
     "release_instance_access",
-    "End your access once the task is finished and checked, or cancelled or given up; the key stops working at once. In summary, tell the person what you did with the access and the result, in a few sentences.",
+    "End your access once the task is finished and checked, or cancelled or given up; the key stops working at once. In summary, tell the person what you did and the result.",
     { requestId: z.string().uuid(), ...releaseShape },
     "act",
     (a) => releaseAccess(ctx, access.tokenId, a.requestId, a.summary),

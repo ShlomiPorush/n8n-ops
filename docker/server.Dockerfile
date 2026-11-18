@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # n8n-ops server: API, MCP, pollers, and the built UI. Build context: repository root.
 
-FROM node:24.22.2-bookworm-slim AS deps
+FROM node:24.22.3-bookworm-slim AS deps
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 RUN corepack enable
 WORKDIR /src
@@ -22,7 +22,7 @@ FROM deps AS build
 COPY apps/server apps/server
 RUN pnpm --filter @n8n-ops/server run build
 
-FROM node:24.22.2-bookworm-slim
+FROM node:24.22.3-bookworm-slim
 # pg_dump for the nightly backup of the n8n-ops database (must match the PostgreSQL 18 server).
 # The download of the signing key retries: a dropped connection to postgresql.org otherwise fails the whole build.
 RUN apt-get update \

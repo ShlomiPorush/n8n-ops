@@ -10,17 +10,17 @@
     "test:integration": "vitest run --config vitest.integration.config.ts"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "3.1169.0",
-    "@better-auth/passkey": "1.7.25",
-    "@hono/node-server": "2.1.8",
+    "@aws-sdk/client-s3": "3.1172.0",
+    "@better-auth/passkey": "1.7.26",
+    "@hono/node-server": "2.1.9",
     "@hono/zod-validator": "0.9.1",
     "@modelcontextprotocol/sdk": "1.32.2",
     "@n8n-ops/shared": "workspace:*",
     "age-encryption": "0.3.1",
-    "better-auth": "1.7.25",
+    "better-auth": "1.7.26",
     "drizzle-orm": "0.45.4",
-    "hono": "4.13.18",
-    "nodemailer": "10.5.0",
+    "hono": "4.13.19",
+    "nodemailer": "10.6.0",
     "oidc-provider": "9.15.0",
     "postgres": "4.1.1",
     "ssh2": "1.17.0",
@@ -34,6 +34,6 @@
     "@types/ssh2": "1.15.6",
     "drizzle-kit": "0.31.11",
     "esbuild": "0.28.2",
-    "vitest": "5.1.0"
+    "vitest": "5.1.1"
   }
 }

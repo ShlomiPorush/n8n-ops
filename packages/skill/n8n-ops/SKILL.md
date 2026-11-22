@@ -137,7 +137,9 @@ review."
    before approving it: leave out or add instances, change scopes, workflows or minutes. Once approved it returns, in
    `instances`, what was granted on each instance with its `baseUrl`, and the key one time only: one key for every
    granted instance. Call the n8n public API at an instance's `baseUrl` with the key in the `X-N8N-API-KEY` header,
-   exactly as with n8n. Work only within what was granted, not what you asked for; `changed` is true when the person
+   exactly as with n8n. In Git Bash on Windows, an argument that starts with `/` can reach a Windows program as a
+   Windows path (`/workflows/<id>` as `C:/Program Files/Git/workflows/<id>`), and the proxy answers 404 naming that
+   path: put `MSYS_NO_PATHCONV=1` before the command, or pass the whole URL when the tool takes one. Work only within what was granted, not what you asked for; `changed` is true when the person
    changed the request. A call that answers 429 ran while the key had too many calls at once and was not sent to
    n8n: wait a few seconds and send it again. Without `workflow:activate`, updating a published workflow saves the
    change as a draft and the published version stays live; on an n8n version older than this option, the update is

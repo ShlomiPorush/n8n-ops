@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # n8n-ops worker: outbound-only agent for an n8n Docker host. Build context: repository root.
 
-FROM node:24.22.2-bookworm-slim AS build
+FROM node:24.22.3-bookworm-slim AS build
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 RUN corepack enable
 WORKDIR /src
@@ -14,7 +14,7 @@ COPY packages/shared packages/shared
 COPY apps/worker apps/worker
 RUN pnpm --filter @n8n-ops/worker run build
 
-FROM node:24.22.2-bookworm-slim
+FROM node:24.22.3-bookworm-slim
 ENV NODE_ENV=production \
     HEARTBEAT_FILE=/tmp/n8n-ops-worker-heartbeat
 WORKDIR /app

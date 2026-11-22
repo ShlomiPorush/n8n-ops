@@ -159,7 +159,7 @@ export const OPEN: OpenRoute[] = [
     area: "access",
     kind: "act",
     description:
-      "Ask for temporary access to the API of one or more n8n instances. Body: instances (each with instance, scopes, workflowIds), reason, minutes, notify. A person approves, changes or denies it.",
+      "Ask for temporary access to the API of one or more n8n instances. Body: instances (each with instance, scopes, workflowIds), reason, minutes, notify. A person approves, changes or denies it. The reason, 10 to 500 characters, is for that person: a few short, plain sentences in the language of your conversation with the person who gave you the task, saying what you will do and why, what you will touch on each instance (which workflow, which credential or the whole instance) and what you do there, whether you only read or also change something, and whether a change goes live, deletes something or affects other workflows. No IDs, tags, scope names, brackets or technical words; when a name alone could mean two things, add a plain detail that tells them apart, or the ID when nothing else does. Never a secret. Never leave out what goes live, is deleted or affects other workflows to fit the length; ask the person how to split the request instead.",
   },
   {
     method: "GET",
@@ -174,7 +174,8 @@ export const OPEN: OpenRoute[] = [
     path: "/api/v1/access-requests/{id}/release",
     area: "access",
     kind: "act",
-    description: "End the access once the task is finished and checked. Body: summary.",
+    description:
+      "End the access once the task is finished and checked, or cancelled or given up; the key stops working at once. Body: summary (always send it), for the person who approved it, up to 1000 characters: a few short, plain sentences in the language of your conversation with the person who gave you the task, saying what you did and the result, what you checked and, when you changed nothing or stopped, why. No IDs, tags, scope names, brackets or technical words; when a name alone could mean two things, add a plain detail that tells them apart, or the ID when nothing else does. Never a secret.",
   },
 ]
 
@@ -201,7 +202,7 @@ export function listing(areas: Area[], only?: string) {
 }
 
 /** The skill's revision this server expects of a copy installed from Git (r<n>); raise it with the skill's scripts. */
-export const SKILL_REVISION = 2
+export const SKILL_REVISION = 3
 
 /**
  * The notice for a skill older than this server (distribution-and-versioning in the agent-access standard): a served

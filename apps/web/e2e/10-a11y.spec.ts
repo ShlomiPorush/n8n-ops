@@ -46,12 +46,6 @@ async function settled() {
   await expect(page.locator('[aria-busy="true"]')).toHaveCount(0, { timeout: 15_000 })
   // Nothing failed to load (LoadError, or a list's next page).
   await expect(page.getByText(/^Could not load /)).toHaveCount(0)
-  // Regular counts its figures up with frames, not CSS animations. While one counts, it draws the moving number
-  // aria-hidden beside the real one (skin/figure.tsx), and only the real one once it ends; checked on every frame.
-  // Compact never counts, so there this ends at once.
-  await page.waitForFunction(() => !document.querySelector('[data-slot="kpi-figure"] [aria-hidden]'), null, {
-    timeout: 15_000,
-  })
   // Finite animations only: a spinner or a pulse never ends.
   await page.evaluate(() =>
     Promise.all(

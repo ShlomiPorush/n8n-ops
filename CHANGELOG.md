@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Changed
+
+- **Figures no longer count up in the Regular design.** The Overview's figures, the section figures above the Problems list and the other key figures show their number at once, as in Compact.
+- **The access proxy says which path it could not serve.** A call to `/n8n/...` that is not `/n8n/<instance>/api/v1/...` is still answered 404, and the answer now names the path the proxy received (without its query, at most 200 characters). When the path looks rewritten by Git Bash on Windows, which turns an argument such as `/workflows/<id>` into `C:/Program Files/Git/workflows/<id>`, the answer says so and how to avoid it. The agent skill says the same where it explains how to call the proxy.
+
+## [0.19.1] - 2026-11-17
+
+### Changed
+
+- **Agents write the reason of an access request and the summary of what they did in plain words.** The agent skill and the descriptions agents read over MCP and REST now ask for a few short, plain sentences in the language of the agent's conversation with the person who gave it the task: what the agent will do and why, what it will touch on which instance, whether it only reads or also changes something, and whether a change goes live, deletes something or affects other workflows; then what it did and the result. They ask for no IDs, tags, scope names, brackets or technical words unless one cannot be avoided, and never a secret. n8n-ops does not check the wording. An agent gets the new guidance when it reads the skill or the MCP tool list again after the update; a copy of the skill installed from Git gets the notice that it needs an update, and the agent goes on with its old copy until the person updates it.
+
+### Fixed
+
+- **An agent's reason in Hebrew or Arabic reads correctly in Telegram and email.** In the Telegram message of an access request, the reason now has a line of its own under "Agent", after 💬, instead of following the agent's name. Telegram took the direction of the whole line from "Agent", so a Hebrew reason with English terms in it showed its words out of order. A reason, or a summary of what was done, whose words are mostly in a right-to-left script now reads from the right, also when it opens with an English word, and one mostly in English reads from the left, also when it opens with a Hebrew word. In the email, the Why panel shows a reason mostly in a right-to-left script right to left.
+
 ## [0.19.0] - 2026-11-16
 
 ### Added

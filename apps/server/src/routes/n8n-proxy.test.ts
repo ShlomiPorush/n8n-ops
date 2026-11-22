@@ -38,7 +38,7 @@ describe("the access proxy's 404 for a path it does not serve", () => {
 
   it("repeats at most the first 200 characters of a long path", async () => {
     const { message } = await call(`/n8n/inst/${"a".repeat(5000)}`)
-    expect(message).toContain(`for /n8n/inst/${"a".repeat(200 - "/n8n/inst/".length)}... Use`)
+    expect(message).toContain(`for /n8n/inst/${"a".repeat(200 - "/n8n/inst/".length)} (cut). Use`)
     expect(message.length).toBeLessThan(400)
   })
 })

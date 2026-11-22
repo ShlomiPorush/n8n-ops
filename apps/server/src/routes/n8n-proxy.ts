@@ -248,7 +248,7 @@ const SHOWN_PATH = 200
  * becoming C:/Program Files/Git/workflows/<id> when a script joins it to the base URL.
  */
 export function notAProxyPath(path: string) {
-  const shown = path.length > SHOWN_PATH ? `${path.slice(0, SHOWN_PATH)}...` : path
+  const shown = path.length > SHOWN_PATH ? `${path.slice(0, SHOWN_PATH)} (cut)` : path
   const rewritten = /\/api\/v1[A-Za-z]:\//.test(path)
     ? " The path may have been rewritten as a Windows path by a shell such as Git Bash, which does that to a program's argument that starts with /. Set MSYS_NO_PATHCONV=1 for the command, or pass the whole URL."
     : ""

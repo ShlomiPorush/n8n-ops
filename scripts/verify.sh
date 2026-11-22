@@ -8,7 +8,7 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
 PROJECT="n8n-ops-verify"
-PLAYWRIGHT_IMAGE="mcr.microsoft.com/playwright:v1.65.0-noble"
+PLAYWRIGHT_IMAGE="mcr.microsoft.com/playwright:v1.65.1-noble"
 # Real servers for the backup destination stores: OpenSSH for SFTP, rclone's WebDAV server over HTTPS.
 SFTP_IMAGE="lscr.io/linuxserver/openssh-server:10.3_p1-r1-ls239"
 WEBDAV_IMAGE="rclone/rclone:1.75.2"

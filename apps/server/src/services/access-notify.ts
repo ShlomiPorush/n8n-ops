@@ -2,6 +2,7 @@ import { type DateWriting, formatDuration, formatStamp, formatUsed, messageWriti
 import { and, eq, isNotNull, isNull, ne, type SQL } from "drizzle-orm"
 import type { Ctx } from "../context.ts"
 import { type AccessDropReason, type AccessStatus, accessRequests, apiTokens } from "../db/schema.ts"
+import { directionMark, readsRightToLeft } from "../lib/text-direction.ts"
 import {
   AccessError,
   type AccessInstanceRow,
@@ -82,6 +83,17 @@ const BREAKS = /[\p{Cc}\p{Zl}\p{Zp}؜‎‏‪-‮⁦-⁩]/gu
  * or direction mark, and every run of spaces, becomes one space. Messages show it set apart from their own lines.
  */
 export const oneLine = (text: string) => text.replace(BREAKS, " ").replace(/\s+/g, " ").trim()
+
+/**
+ * What an agent wrote, cleaned by `oneLine`, as a Telegram line of its own in italics, after `lead` when given.
+ * Telegram takes a line's direction from its first letter, so the text starts with the mark of the direction most of
+ * its words read in (`directionMark`): Hebrew with English terms in it reads from the right also when it opens with
+ * an English word, and English from the left also when it opens with a Hebrew one. On the line of a label it would
+ * take the label's direction and show its words out of order.
+ */
+function agentWords(text: string, lead = "") {
+  return html`${lead}${directionMark(text)}<i>${text}</i>`
+}
 
 /** A workflow name or ID on one line: each line break, control character or direction mark becomes a space. */
 const unbroken = (text: string) => text.replace(BREAKS, " ")
@@ -191,7 +203,7 @@ export function accessOutcome(r: Outcome, dates: DateWriting): { icon: string; l
   const used = usedMinutes(r)
   if (used !== null) lines.push(html`${formatUsed(used, r.minutes)}`)
   lines.push(html``)
-  if (r.summary) lines.push(html`What was done:`, html`<i>${clip(oneLine(r.summary), TELEGRAM_SUMMARY_MAX)}</i>`)
+  if (r.summary) lines.push(html`What was done:`, agentWords(clip(oneLine(r.summary), TELEGRAM_SUMMARY_MAX)))
   lines.push(callsLine(r.callCount, r.refusedCount))
   return { icon: "✅", lines }
 }
@@ -330,8 +342,9 @@ const UNSHOWN =
  * and workflows follow the reason; with several (or one left out), each instance has its own block. When everything
  * does not fit in full, the lists are cut to a length each and the rest counted; when the blocks still do not fit,
  * each instance takes one line, and then only as many lines as fit, with the rest counted. The request page has
- * every detail. What the agent wrote is one line of its own, in italics after "Agent", so it never reads as one of
- * the message's own lines; a workflow name or ID that had to be put on one line withholds Approve.
+ * every detail. The agent's name follows "Agent" on a line of its own, and its reason is the next line, in italics
+ * after a speech balloon, so neither reads as one of the message's own lines and the reason keeps its own direction
+ * (`agentWords`); a workflow name or ID that had to be put on one line withholds Approve.
  */
 export function telegramRequest(
   r: RequestInfo,
@@ -342,7 +355,8 @@ export function telegramRequest(
   const fits = (parts: TelegramHtml[]) => size(parts) <= TELEGRAM_BUDGET
   const head = [
     html`${outcome?.icon ?? "🔐"} <b>Access request</b> · ${instancesLabel(r.instances)}`,
-    html`Agent <b>${clip(oneLine(r.token), 200)}</b>: <i>${clip(oneLine(r.reason), 500)}</i>`,
+    html`Agent <b>${clip(oneLine(r.token), 200)}</b>:`,
+    agentWords(clip(oneLine(r.reason), 500), "💬 "),
     html``,
   ]
   const exact = shownAsStored(r.instances)
@@ -515,7 +529,7 @@ export function renderAccessEmail(
     intro: `Nothing is granted until someone approves it. Without a decision, the request expires at ${expires}.`,
     dates,
     blocks: [
-      panel("Why", [panelText(r.reason)]),
+      panel("Why", [panelText(r.reason, readsRightToLeft(r.reason) ? "rtl" : "ltr")]),
       ...blocks,
       action,
       ...(link ? [paragraph("You sign in with two-factor before deciding.", true)] : []),

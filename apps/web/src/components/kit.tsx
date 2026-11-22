@@ -3,7 +3,6 @@ import { useEffect, useState } from "react"
 import { Link, useLocation } from "react-router"
 import { PageActions, useTopBar } from "@/app/chrome"
 import { pageOf } from "@/app/nav"
-import { Figure } from "@/components/skin/figure"
 import { PageIcon, PageTitle } from "@/components/skin/page-title"
 import { timeAgo, useTick } from "@/components/status"
 import { Button } from "@/components/ui/button"
@@ -14,6 +13,7 @@ import { describeError } from "@/lib/api"
 import { COPIED_MS, DIM_AFTER_MS } from "@/lib/behavior"
 import { type BusyState, busyRun } from "@/lib/busy-run"
 import { filterFailed, type Live, refreshFailed } from "@/lib/load-state"
+import { n } from "@/lib/numbers"
 import { rowHeld } from "@/lib/row-held"
 import { formatTime, useTimeFormat } from "@/lib/time"
 import { toast } from "@/lib/toast"
@@ -573,7 +573,7 @@ export function Kpi({
             tone === "ok" && "text-ok",
           )}
         >
-          {typeof value === "number" ? <Figure value={value} /> : value}
+          {typeof value === "number" ? n(value) : value}
         </b>
         <span className="block text-small text-muted-foreground regular:-order-1 regular:mb-1">{label}</span>
         {hint && <span className="mt-0.5 block text-meta text-muted-foreground">{hint}</span>}
@@ -652,7 +652,7 @@ export function FigureTab({
         data-slot="kpi-figure"
         className={cn("text-h2", tone === "fail" && "text-fail", tone === "warn" && "text-warn")}
       >
-        <Figure value={value} />
+        {n(value)}
       </b>
       <span>{label}</span>
     </Link>

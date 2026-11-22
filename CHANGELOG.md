@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.19.3] - 2026-11-22
+
 ### Changed
 
 - **The server carries better-auth 1.7.26, hono 4.13.19 and nodemailer 10.6.0.** With better-auth 1.7.26, a two-factor challenge that has expired is refused before a code is sent or a failed attempt is counted. None of this needs a change to the installation.

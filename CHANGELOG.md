@@ -7,6 +7,7 @@ All notable changes to this project are documented here. The format follows [Kee
 ### Changed
 
 - **Figures no longer count up in the Regular design.** The Overview's figures, the section figures above the Problems list and the other key figures show their number at once, as in Compact.
+- **The access proxy says which path it could not serve.** A call to `/n8n/...` that is not `/n8n/<instance>/api/v1/...` is still answered 404, and the answer now names the path the proxy received (without its query, at most 200 characters). When the path looks rewritten by Git Bash on Windows, which turns an argument such as `/workflows/<id>` into `C:/Program Files/Git/workflows/<id>`, the answer says so and how to avoid it. The agent skill says the same where it explains how to call the proxy.
 
 ## [0.19.1] - 2026-11-17
 

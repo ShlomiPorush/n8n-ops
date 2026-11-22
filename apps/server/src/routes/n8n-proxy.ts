@@ -235,6 +235,22 @@ export function n8nProxyRoutes(ctx: Ctx) {
     if (disposition) headers.set("content-disposition", disposition)
     return new Response(res.body, { status: res.status, headers })
   })
-  app.all("/*", (c) => c.json({ message: "Use /n8n/<instance>/api/v1/... with the key in X-N8N-API-KEY." }, 404))
+  app.all("/*", (c) => c.json({ message: notAProxyPath(new URL(c.req.url).pathname) }, 404))
   return app
+}
+
+/** The longest part of a path the proxy's 404 repeats. */
+const SHOWN_PATH = 200
+
+/**
+ * The proxy's 404: the path it received (still percent-encoded, without the query) and where calls go. A drive letter
+ * right after /api/v1 is how Git Bash on Windows rewrites an argument that starts with /, such as /workflows/<id>
+ * becoming C:/Program Files/Git/workflows/<id> when a script joins it to the base URL.
+ */
+export function notAProxyPath(path: string) {
+  const shown = path.length > SHOWN_PATH ? `${path.slice(0, SHOWN_PATH)}...` : path
+  const rewritten = /\/api\/v1[A-Za-z]:\//.test(path)
+    ? " The path may have been rewritten as a Windows path by a shell such as Git Bash, which does that to a program's argument that starts with /. Set MSYS_NO_PATHCONV=1 for the command, or pass the whole URL."
+    : ""
+  return `No access proxy route for ${shown}. Use /n8n/<instance>/api/v1/... with the key in X-N8N-API-KEY.${rewritten}`
 }

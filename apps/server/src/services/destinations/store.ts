@@ -12,8 +12,6 @@ export type Expected = { size: number; sha256: string }
  * the folder, the SFTP path or the WebDAV URL. Every call takes a signal that ends it.
  */
 export interface Store {
-  /** The key of a new archive: the parts joined, under the S3 key prefix where there is one. */
-  key(parts: string[]): string
   /**
    * Writes the file under the key. The archive appears under its key only once complete (a temporary name and
    * a rename, or one atomic S3 PUT). Returns the S3 version when the bucket keeps versions.
@@ -24,8 +22,8 @@ export interface Store {
   read(key: string, signal: AbortSignal, versionId?: string | null): Promise<Readable>
   /** Removes the archive (that version, where there is one). An archive already gone is not an error. */
   remove(key: string, signal: AbortSignal, versionId?: string | null): Promise<void>
-  /** Writes, verifies, reads and removes a small file. Returns notes worth showing (none when all is plain). */
-  test(signal: AbortSignal): Promise<string[]>
+  /** Writes, verifies, reads and removes a small file under the key. Returns notes worth showing, if any. */
+  test(key: string, signal: AbortSignal): Promise<string[]>
   close(): Promise<void>
 }
 
@@ -62,14 +60,13 @@ export async function verifyByReading(
  * The test every destination runs: a small file written the way archives are, verified, then removed. The
  * file is made in the temporary folder, the one place outside /data the server may write.
  */
-export async function roundTrip(store: Store, signal: AbortSignal) {
+export async function roundTrip(store: Store, key: string, signal: AbortSignal) {
   const body = randomBytes(1024)
   const expected = { size: body.length, sha256: createHash("sha256").update(body).digest("base64") }
   const dir = await mkdtemp(join(tmpdir(), "n8n-ops-test-"))
   const file = join(dir, "test.bin")
   try {
     await writeFile(file, body)
-    const key = store.key(["_n8n-ops", `destination-test-${Date.now()}.bin`])
     const put = await store.put(key, file, expected, signal)
     await store.verify(key, expected, signal, put.versionId)
     await verifyByReading(store, key, expected, signal, put.versionId)
@@ -98,19 +95,13 @@ export function cleanFolder(value: string): string {
   return trimmed
 }
 
-/** Runs fn with a signal that also ends after ms, and says so in the error. */
-export async function withDeadline<T>(
-  ms: number,
-  what: string,
-  fn: (signal: AbortSignal) => Promise<T>,
-  outer?: AbortSignal,
-) {
-  const signal = outer ? AbortSignal.any([outer, AbortSignal.timeout(ms)]) : AbortSignal.timeout(ms)
+/** Runs fn with a signal that ends after ms, and says so in the error. */
+export async function withDeadline<T>(ms: number, what: string, fn: (signal: AbortSignal) => Promise<T>) {
+  const signal = AbortSignal.timeout(ms)
   try {
     return await fn(signal)
   } catch (error) {
-    if (signal.aborted && !outer?.aborted)
-      throw new StoreError(`${what} took longer than ${Math.round(ms / 60_000) || 1} min`)
+    if (signal.aborted) throw new StoreError(`${what} took longer than ${Math.round(ms / 60_000) || 1} min`)
     throw error
   }
 }

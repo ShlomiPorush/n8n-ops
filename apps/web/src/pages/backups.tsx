@@ -112,13 +112,12 @@ const backupRank = (row: BackupRow) => {
 /**
  * Why a failed run failed, when its copies do not already say it: a failure before the archive was ready (the
  * export, the upload, space or size) leaves every copy with the same general message, and the cause is here.
- * When the copies failed one by one, the run's error only repeats theirs, and is not shown twice.
+ * Once the archive was ready, the run's error only repeats what its copies say, and is not shown twice; copies that
+ * went with a deleted destination no longer say it.
  */
-export function runFailure(r: Pick<Run, "status" | "error" | "copies">) {
-  if (r.status !== "failed" || !r.error) return null
-  const copyErrors = (r.copies ?? []).map((c) => c.error).filter((e): e is string => Boolean(e))
-  const repeats = copyErrors.length > 0 && copyErrors.every((e) => r.error?.includes(e))
-  return repeats ? null : r.error
+export function runFailure(r: Pick<Run, "status" | "error" | "spooledAt" | "copies">) {
+  if (r.status !== "failed") return null
+  return r.spooledAt && r.copies?.length ? null : r.error
 }
 
 /** Archives that can still be restored: written and not expired, on at least one destination. */

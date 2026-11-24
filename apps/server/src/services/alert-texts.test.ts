@@ -75,13 +75,6 @@ describe("backup alert texts", () => {
   it("keep their wording for ordinary values", () => {
     expect(text(backupAlerts.failed("prod", "upload failed"))).toBe("<b>Backup failed on prod</b>\nupload failed")
     expect(text(backupAlerts.failed("prod"))).toBe("<b>Backup failed on prod</b>\n")
-    expect(text(backupAlerts.working("prod"))).toBe("<b>Backups of prod are working again</b>")
-    expect(text(backupAlerts.stale("prod", 26))).toBe(
-      "<b>No recent backup of prod</b>\nNo backup of prod from the last 26 hours succeeded.",
-    )
-    expect(text(backupAlerts.stale("prod", 1))).toBe(
-      "<b>No recent backup of prod</b>\nNo backup of prod from the last hour succeeded.",
-    )
   })
 
   it("name the destination when only its copies are concerned", () => {
@@ -94,12 +87,15 @@ describe("backup alert texts", () => {
     expect(text(backupAlerts.stale("prod", 26, "S3"))).toBe(
       "<b>No recent backup of prod on S3</b>\nNo backup of prod from the last 26 hours has been copied to S3.",
     )
+    expect(text(backupAlerts.stale("prod", 1, "S3"))).toBe(
+      "<b>No recent backup of prod on S3</b>\nNo backup of prod from the last hour has been copied to S3.",
+    )
   })
 
   it("escape the name and the worker's error, and shorten the error", () => {
     expect(text(backupAlerts.failed("R&D", link))).toBe(`<b>Backup failed on R&amp;D</b>\n${escapedLink}`)
-    expect(text(backupAlerts.working("<prod>"))).toBe("<b>Backups of &lt;prod&gt; are working again</b>")
-    expect(text(backupAlerts.stale("<prod>", 1))).toContain("backup of &lt;prod&gt;</b>")
+    expect(text(backupAlerts.working("<prod>", "NAS"))).toBe("<b>Backups of &lt;prod&gt; to NAS are working again</b>")
+    expect(text(backupAlerts.stale("<prod>", 1, "NAS"))).toContain("backup of &lt;prod&gt; on NAS</b>")
     expect(text(backupAlerts.failed("prod", "timeout", "<NAS>"))).toContain("copied to &lt;NAS&gt;</b>")
     expect(text(backupAlerts.failed("prod", "x".repeat(5000))).split("\n")[1]).toHaveLength(500)
   })
@@ -117,8 +113,8 @@ describe("alert texts", () => {
       healthAlerts.backlog(huge, 1, 1),
       healthAlerts.backlogCleared(huge),
       backupAlerts.failed(huge, huge),
-      backupAlerts.working(huge),
-      backupAlerts.stale(huge, 1),
+      backupAlerts.working(huge, huge),
+      backupAlerts.stale(huge, 1, huge),
     ]
     for (const alert of texts) expect(telegramPlainText(alert).length).toBeLessThan(4096)
   })
@@ -174,12 +170,13 @@ describe("telegramPlainText", () => {
 describe("the Overview's backup item", () => {
   it("shows the alert as written", () => {
     const since = new Date("2026-10-21T10:00:00Z")
-    const detail = String(backupAlerts.stale("R&D <prod>", 26))
+    const detail = String(backupAlerts.stale("R&D <prod>", 26, "S3"))
     expect(backupItem({ id: "i1", name: "R&D <prod>" }, { detail, since })).toEqual({
       kind: "backup",
       id: "i1",
       name: "R&D <prod>",
-      detail: "No recent backup of R&D <prod> · No backup of R&D <prod> from the last 26 hours succeeded.",
+      detail:
+        "No recent backup of R&D <prod> on S3 · No backup of R&D <prod> from the last 26 hours has been copied to S3.",
       at: since,
     })
   })

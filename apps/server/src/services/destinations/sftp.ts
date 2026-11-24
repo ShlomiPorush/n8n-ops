@@ -178,8 +178,6 @@ export function sftpStore(location: SftpLocation, credentials: SftpCredentials):
   }
 
   const store: Store = {
-    key: (parts) => parts.join("/"),
-
     async put(key, file, _expected, signal) {
       const { sftp } = await connect(signal)
       const target = pathOf(key)
@@ -208,7 +206,7 @@ export function sftpStore(location: SftpLocation, credentials: SftpCredentials):
       }
     },
 
-    async test(signal) {
+    async test(key, signal) {
       const { sftp } = await connect(signal)
       try {
         await call((cb) => sftp.stat(root, cb))
@@ -216,7 +214,7 @@ export function sftpStore(location: SftpLocation, credentials: SftpCredentials):
         if (code(error) === NO_SUCH_FILE) throw new StoreError(`the folder ${root} does not exist on the server`)
         throw error
       }
-      await roundTrip(store, signal)
+      await roundTrip(store, key, signal)
       return []
     },
 

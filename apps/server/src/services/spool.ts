@@ -11,16 +11,13 @@ import type { Ctx } from "../context.ts"
  * Space is reserved before a write starts, so two archives arriving together cannot both take the last of it.
  */
 export const KEEP_FREE = 1024 ** 3
-export const MAX_UPLOADS = 4
-export const UPLOAD_SLOT_WAIT_MS = 4 * 60_000
 
 export const spoolDir = (ctx: Pick<Ctx, "appKeyPath">) => join(dirname(ctx.appKeyPath), "spool")
 export const spoolFile = (dir: string, runId: string) => join(dir, `${runId}.age`)
 
 export class SpoolError extends Error {}
 
-type Budget = { reserved: number; uploads: number }
-const budgets = new Map<string, Budget>()
+const reserved = new Map<string, number>()
 
 async function freeSpace(dir: string) {
   const fs = await statfs(dir)
@@ -31,43 +28,22 @@ async function freeSpace(dir: string) {
 export async function reserve(
   dir: string,
   size: number,
-  {
-    upload = false,
-    free: measure = freeSpace,
-    waitMs = UPLOAD_SLOT_WAIT_MS,
-  }: { upload?: boolean; free?: (dir: string) => Promise<number>; waitMs?: number } = {},
+  { free: measure = freeSpace }: { free?: (dir: string) => Promise<number> } = {},
 ) {
   await mkdir(dir, { recursive: true })
-  const budget = budgets.get(dir) ?? { reserved: 0, uploads: 0 }
-  budgets.set(dir, budget)
-  // Many instances back up at the same time of night: an upload waits its turn rather than fail.
-  const until = Date.now() + waitMs
-  for (;;) {
-    const free = await measure(dir)
-    if (upload && budget.uploads >= MAX_UPLOADS) {
-      if (Date.now() >= until)
-        throw new SpoolError(`${MAX_UPLOADS} archives were being received for too long; the next backup tries again.`)
-      await new Promise((r) => setTimeout(r, 1_000))
-      continue
-    }
-    return take(budget, free, size, upload)
-  }
-}
-
-function take(budget: Budget, free: number, size: number, upload: boolean) {
+  const free = await measure(dir)
   // Checked and taken without an await in between, so concurrent callers see each other's reservations.
-  if (free - budget.reserved - size < KEEP_FREE)
+  const held = reserved.get(dir) ?? 0
+  if (free - held - size < KEEP_FREE)
     throw new SpoolError(
       `Not enough free space in the data directory for a ${Math.ceil(size / 1024 ** 2)} MiB archive (1 GiB is always kept free).`,
     )
-  budget.reserved += size
-  if (upload) budget.uploads += 1
+  reserved.set(dir, held + size)
   let released = false
   return () => {
     if (released) return
     released = true
-    budget.reserved -= size
-    if (upload) budget.uploads -= 1
+    reserved.set(dir, (reserved.get(dir) ?? 0) - size)
   }
 }
 

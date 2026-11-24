@@ -29,8 +29,6 @@ export const COPY_DEADLINE_MS = 30 * 60_000
 export const ARCHIVE_WAIT_MS = 45 * 60_000
 const MAX_WRITES = 3
 
-type Run = typeof backupRuns.$inferSelect
-
 /** Copies being written by this process, and the destinations they write to (one write per destination). */
 const writing = new Set<string>()
 const busy = new Set<string>()
@@ -140,7 +138,8 @@ async function copyPass(ctx: Ctx) {
     .where(and(eq(backupRuns.status, "running"), isNotNull(backupRuns.spooledAt)))
   for (const r of open) await settleRun(ctx, r.id)
   const dir = spoolDir(ctx)
-  const files = await spooledRuns(dir)
+  // Only names that are run ids: another file there would make the query fail, and nothing would be removed.
+  const files = (await spooledRuns(dir)).filter((name) => /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(name))
   if (files.length) {
     const live = new Set(
       (
@@ -338,7 +337,7 @@ async function untilStored(ctx: Ctx, write: () => Promise<unknown>) {
   }
 }
 
-/** When every copy of a run is done, the run is ok, partial or failed, and its spool file goes. */
+/** When every copy of a run is done, the run is ok, partial or failed. */
 export async function settleRun(ctx: Ctx, runId: string) {
   const copies = await ctx.db
     .select({ copy: backupCopies, destination: backupDestinations.name })
@@ -359,14 +358,13 @@ export async function settleRun(ctx: Ctx, runId: string) {
     .where(and(eq(backupRuns.id, runId), eq(backupRuns.status, "running"), isNotNull(backupRuns.spooledAt)))
     .returning()
   if (!run) return
-  await removeSpool(spoolDir(ctx), runId)
   ctx.log.info("backup finished", { run: runId, status, copies: copies.length, ok })
   changed(ctx, "backups", "overview", "instances")
 }
 
 /**
  * The run failed before its archive was ready (export, encryption or upload). Its copies end with it, and one
- * alert says why.
+ * alert says why. A run whose archive is in the spool is left to its copies.
  */
 export async function failRun(
   ctx: Ctx,
@@ -377,14 +375,13 @@ export async function failRun(
   const [run] = await ctx.db
     .update(backupRuns)
     .set({ status: "failed", error, finishedAt: new Date(), ...(refusal ? { refusal } : {}) })
-    .where(and(eq(backupRuns.id, runId), eq(backupRuns.status, "running")))
+    .where(and(eq(backupRuns.id, runId), eq(backupRuns.status, "running"), isNull(backupRuns.spooledAt)))
     .returning()
   if (!run) return
   await ctx.db
     .update(backupCopies)
     .set({ status: "failed", error: "The backup failed before this copy could be written.", finishedAt: new Date() })
     .where(and(eq(backupCopies.runId, runId), inArray(backupCopies.status, ["pending", "writing"])))
-  await removeSpool(spoolDir(ctx), runId)
   const name = await targetName(ctx, run.instanceId)
   ctx.log.warn("backup failed", { instance: name, error })
   await enqueueAlert(ctx, "backup", backupAlerts.failed(name, error), instanceSubject(run.instanceId))
@@ -535,5 +532,3 @@ export async function dropConditions(ctx: Ctx, keys: string[]) {
     .set({ active: false, since: new Date() })
     .where(and(inArray(alertState.key, keys), eq(alertState.active, true)))
 }
-
-export type { Run }

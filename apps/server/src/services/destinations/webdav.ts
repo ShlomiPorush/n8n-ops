@@ -90,8 +90,6 @@ export function webdavStore(
   }
 
   const store: Store = {
-    key: (parts) => parts.join("/"),
-
     async put(key, file, expected, signal) {
       const parts = checkKey(key)
       if (parts.length > 1) await folders(parts.slice(0, -1).join("/"), signal)
@@ -120,10 +118,10 @@ export function webdavStore(
       ;(await expect(answer, [200, 204, 404], `Deleting ${key}`)).body.resume()
     },
 
-    async test(signal) {
+    async test(key, signal) {
       if (!(await isCollection(base, signal)))
         throw new StoreError(`${base.pathname} is not a folder on the WebDAV server`)
-      await roundTrip(store, signal)
+      await roundTrip(store, key, signal)
       return []
     },
 

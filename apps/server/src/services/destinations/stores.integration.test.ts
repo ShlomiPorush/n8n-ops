@@ -4,6 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { CreateBucketCommand, GetObjectRetentionCommand, S3Client } from "@aws-sdk/client-s3"
 import { afterAll, describe, expect, it } from "vitest"
+import { keyFor } from "./index.ts"
 import { s3Store } from "./s3.ts"
 import { fetchHostKey, sftpStore } from "./sftp.ts"
 import { type Store, verifyByReading } from "./store.ts"
@@ -29,6 +30,7 @@ function archive(size: number) {
 }
 
 const signal = () => AbortSignal.timeout(60_000)
+const testKey = () => `_n8n-ops/destination-test-${Date.now()}.bin`
 
 /** The test servers start with the stack; this waits until one answers. */
 async function whenUp<T>(fn: () => Promise<T>, ms = 90_000): Promise<T> {
@@ -44,13 +46,13 @@ async function whenUp<T>(fn: () => Promise<T>, ms = 90_000): Promise<T> {
 }
 
 /** What every store must do, whatever its kind. */
-function contract(name: string, open: () => Store) {
+function contract(name: string, open: () => Store, keyOf = (parts: string[]) => parts.join("/")) {
   describe(`${name}: the store contract`, () => {
     it("writes an archive into new folders, verifies it, reads it back whole and removes it", async () => {
       const store = open()
       try {
         const { file, expected } = archive(3 * 1024 * 1024 + 17)
-        const key = store.key(["inst", "2026", "10", `inst-${Date.now()}.tar.gz.age`])
+        const key = keyOf(["inst", "2026", "10", `inst-${Date.now()}.tar.gz.age`])
         const put = await store.put(key, file, expected, signal())
         await store.verify(key, expected, signal(), put.versionId)
         await verifyByReading(store, key, expected, signal(), put.versionId)
@@ -69,8 +71,8 @@ function contract(name: string, open: () => Store) {
         const a = archive(1000)
         const b = archive(2000)
         const folder = ["inst", "same", String(Date.now())]
-        const ka = store.key([...folder, "a.age"])
-        const kb = store.key([...folder, "b.age"])
+        const ka = keyOf([...folder, "a.age"])
+        const kb = keyOf([...folder, "b.age"])
         const pa = await store.put(ka, a.file, a.expected, signal())
         const pb = await store.put(kb, b.file, b.expected, signal())
         await store.verify(kb, b.expected, signal(), pb.versionId)
@@ -86,7 +88,7 @@ function contract(name: string, open: () => Store) {
       try {
         const real = archive(4096)
         const other = archive(4096)
-        const key = store.key(["inst", `corrupt-${Date.now()}.age`])
+        const key = keyOf(["inst", `corrupt-${Date.now()}.age`])
         // The other bytes are stored under the key, and checked against the archive's checksum.
         const put = await store.put(key, other.file, other.expected, signal())
         await expect(store.verify(key, real.expected, signal(), put.versionId)).rejects.toThrow(/checksum/)
@@ -99,7 +101,7 @@ function contract(name: string, open: () => Store) {
     it("passes its own test", async () => {
       const store = open()
       try {
-        await store.test(signal())
+        await store.test(testKey(), signal())
       } finally {
         await store.close()
       }
@@ -119,7 +121,9 @@ const s3Location = (bucket: string) => ({
 // S3Mock takes any credentials; these are new for each run all the same.
 const s3Credentials = { accessKeyId: randomBytes(8).toString("hex"), secretAccessKey: randomBytes(24).toString("hex") }
 
-contract("S3", () => s3Store(s3Location("n8n-ops-backups"), s3Credentials, null))
+const s3Key = (parts: string[]) => keyFor({ kind: "s3", location: s3Location("n8n-ops-backups") }, parts)
+
+contract("S3", () => s3Store(s3Location("n8n-ops-backups"), s3Credentials, null), s3Key)
 
 describe("S3 Object Lock", () => {
   const client = new S3Client({
@@ -132,7 +136,7 @@ describe("S3 Object Lock", () => {
 
   it("is refused by the test on a bucket without Object Lock", async () => {
     const store = s3Store(s3Location("n8n-ops-backups"), s3Credentials, { mode: "COMPLIANCE", days: 30 })
-    await expect(store.test(signal())).rejects.toThrow(/Object Lock is not enabled/)
+    await expect(store.test(testKey(), signal())).rejects.toThrow(/Object Lock is not enabled/)
     await store.close()
   })
 
@@ -141,10 +145,10 @@ describe("S3 Object Lock", () => {
     await client.send(new CreateBucketCommand({ Bucket: bucket, ObjectLockEnabledForBucket: true }))
     const store = s3Store(s3Location(bucket), s3Credentials, { mode: "COMPLIANCE", days: 30 })
     try {
-      await store.test(signal())
+      await store.test(testKey(), signal())
       const { file, expected } = archive(2048)
       const until = new Date(Date.now() + 30 * 86_400_000)
-      const key = store.key(["inst", "locked.age"])
+      const key = s3Key(["inst", "locked.age"])
       const put = await store.put(key, file, expected, signal(), until)
       await store.verify(key, expected, signal(), put.versionId)
       const retention = await client.send(
@@ -171,7 +175,7 @@ const hostKey = await whenUp(() => fetchHostKey(sftpLocation.host, sftpLocation.
 await whenUp(async () => {
   const store = sftpStore(sftpLocation, { password: env("SFTP_PASSWORD"), hostKey })
   try {
-    await store.test(signal())
+    await store.test(testKey(), signal())
   } finally {
     await store.close()
   }
@@ -187,13 +191,13 @@ describe("SFTP host key", () => {
       password: env("SFTP_PASSWORD"),
       hostKey: "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
     })
-    await expect(store.test(signal())).rejects.toThrow(/host key is SHA256:/)
+    await expect(store.test(testKey(), signal())).rejects.toThrow(/host key is SHA256:/)
     await store.close()
   })
 
   it("refuses a wrong password", async () => {
     const store = sftpStore(sftpLocation, { password: "wrong", hostKey })
-    await expect(store.test(signal())).rejects.toThrow()
+    await expect(store.test(testKey(), signal())).rejects.toThrow()
     await store.close()
   })
 })
@@ -208,7 +212,7 @@ const webdav = (password = env("WEBDAV_PASSWORD")) =>
 
 await whenUp(async () => {
   const store = webdav()
-  await store.test(signal())
+  await store.test(testKey(), signal())
 })
 
 describe("WebDAV", () => {
@@ -218,7 +222,7 @@ describe("WebDAV", () => {
 
   it("says when the password is wrong", async () => {
     const store = webdav("wrong")
-    await expect(store.test(signal())).rejects.toThrow(/refused the user name or password/)
+    await expect(store.test(testKey(), signal())).rejects.toThrow(/refused the user name or password/)
   })
 })
 

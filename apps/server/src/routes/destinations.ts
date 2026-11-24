@@ -137,11 +137,8 @@ export function destinationRoutes(ctx: Ctx) {
     const lockedLocation = current?.lockedAt ? current.location : null
     let location: Record<string, unknown>
     if (lockedLocation) {
-      if (body.location && !sameFields(body.location, lockedLocation)) {
-        const asNew = locationSchemas[kind].safeParse(body.location)
-        if (!asNew.success || !sameFields(asNew.data, lockedLocation))
-          return fail(400, "Where archives go cannot change once set; add a new destination for a new location.")
-      }
+      if (body.location && !sameFields(body.location, lockedLocation))
+        return fail(400, "Where archives go cannot change once set; add a new destination for a new location.")
       location = lockedLocation
     } else {
       const parsedLocation = locationSchemas[kind].safeParse(body.location ?? current?.location ?? {})

@@ -79,8 +79,6 @@ export function localStore(location: LocalLocation, options: { root?: string; re
   }
 
   const store: Store = {
-    key: (parts) => parts.join("/"),
-
     async put(key, file, _expected, signal) {
       const target = await place(key, true)
       const part = `${target}.part`
@@ -108,9 +106,9 @@ export function localStore(location: LocalLocation, options: { root?: string; re
       await rm(await place(key, false), { force: true })
     },
 
-    async test(signal) {
+    async test(key, signal) {
       const root = await ready()
-      await roundTrip(store, signal)
+      await roundTrip(store, key, signal)
       const fs = await statfs(root)
       const freeGiB = (fs.bavail * fs.bsize) / 1024 ** 3
       return freeGiB < 5 ? [`Only ${freeGiB.toFixed(1)} GiB free in this folder.`] : []

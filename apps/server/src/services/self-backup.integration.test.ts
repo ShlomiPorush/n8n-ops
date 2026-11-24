@@ -1,10 +1,10 @@
 import { randomBytes } from "node:crypto"
 import { EventEmitter } from "node:events"
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { generateX25519Identity, identityToRecipient } from "age-encryption"
-import { eq } from "drizzle-orm"
+import { eq, sql } from "drizzle-orm"
 import postgres from "postgres"
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 import type { Ctx, Logger } from "../context.ts"
@@ -48,6 +48,9 @@ beforeAll(async () => {
     join(bin, "pg_dump"),
     [
       "#!/bin/sh",
+      `printf "%s\\n" "$@" > "${join(dir, "argv")}"`,
+      `printf "%s" "$PGPASSWORD" > "${join(dir, "password")}"`,
+      'if [ "$STUB_MODE" = large ]; then exec head -c 20000000 /dev/zero; fi',
       'if [ "$STUB_MODE" = signal ]; then kill -TERM $$; fi',
       'printf "%s\\n" "$STUB_STDERR" >&2',
       "exit 1",
@@ -97,6 +100,7 @@ afterAll(async () => {
 beforeEach(async () => {
   warnings.length = 0
   await database.db.delete(alertOutbox)
+  process.env.DATABASE_URL = url
   delete process.env.STUB_MODE
   delete process.env.STUB_STDERR
 })
@@ -134,11 +138,16 @@ describe("a failed backup of the n8n-ops database", () => {
     expect(alert).toContain("the database is starting up")
   })
 
-  it("shows none of the details when pg_dump's message repeats the password", async () => {
-    process.env.STUB_STDERR = `password ${decoded} as written ${password} and cut short ${decoded.slice(0, 63)}`
-    const { stored, alert, logged } = await failure()
-    for (const text of [stored, alert, logged]) expect(holdsConnection(text)).toBe(false)
-    expect(stored).toBe("The backup failed. Its details are not shown because they would show the database connection.")
+  it("gives pg_dump the password in PGPASSWORD, and none of it on the command line", async () => {
+    await failure()
+    const argv = readFileSync(join(dir, "argv"), "utf8")
+    expect(holdsConnection(argv)).toBe(false)
+    expect(argv.split("\n").slice(0, -1)).toEqual([
+      "--format=custom",
+      "--no-owner",
+      "postgres://n8n_ops@db.invalid:5432/n8n_ops",
+    ])
+    expect(readFileSync(join(dir, "password"), "utf8")).toBe(decoded)
   })
 
   it("records a pg_dump that was stopped without the database connection", async () => {
@@ -146,5 +155,44 @@ describe("a failed backup of the n8n-ops database", () => {
     const { stored, alert, logged } = await failure()
     for (const text of [stored, alert, logged]) expect(holdsConnection(text)).toBe(false)
     expect(stored).toMatch(/^pg_dump was stopped by SIGTERM\./)
+  })
+
+  it("records a dump larger than an archive may be as that", async () => {
+    await ctx.settings.set("backups", { ...(await ctx.settings.get("backups")), maxArchiveMb: 16 })
+    process.env.STUB_MODE = "large"
+    const { stored, alert, logged } = await failure()
+    for (const text of [stored, alert, logged]) expect(holdsConnection(text)).toBe(false)
+    expect(stored).toBe("pg_dump failed (ERR_CHILD_PROCESS_STDIO_MAXBUFFER).")
+  })
+
+  it("records a pg_dump that could not be started, without the value that stopped it", async () => {
+    process.env.DATABASE_URL = `postgres://n8n_ops:${password}%00@db.invalid:5432/n8n_ops`
+    const { stored, alert, logged } = await failure()
+    for (const text of [stored, alert, logged]) expect(holdsConnection(text)).toBe(false)
+    expect(stored).toBe("pg_dump failed (ERR_INVALID_ARG_VALUE).")
+  })
+
+  it("is logged when it cannot be recorded, without the database connection", async () => {
+    await database.db.execute(
+      sql.raw(`
+        CREATE FUNCTION refuse_write() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN RAISE EXCEPTION 'refused'; END $$;
+        CREATE TRIGGER refuse_write BEFORE UPDATE ON backup_runs FOR EACH ROW EXECUTE FUNCTION refuse_write();
+      `),
+    )
+    try {
+      await runSelfBackup(ctx)
+      const logged = await vi.waitFor(
+        () => {
+          const line = warnings.find((w) => w.message === "could not record the failed backup")
+          if (!line) throw new Error("not logged yet")
+          return String(line.extra?.error)
+        },
+        { timeout: 20_000, interval: 100 },
+      )
+      expect(holdsConnection(logged)).toBe(false)
+    } finally {
+      await database.db.execute(sql.raw("DROP TRIGGER refuse_write ON backup_runs; DROP FUNCTION refuse_write();"))
+    }
   })
 })

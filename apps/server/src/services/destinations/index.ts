@@ -12,7 +12,7 @@ import {
 import { localStore } from "./local.ts"
 import { s3Store } from "./s3.ts"
 import { sftpStore } from "./sftp.ts"
-import { cleanFolder, type Store, StoreError, withDeadline } from "./store.ts"
+import { cleanFolder, type Store, withDeadline } from "./store.ts"
 import { webdavBase, webdavStore } from "./webdav.ts"
 
 export type Destination = typeof backupDestinations.$inferSelect
@@ -180,8 +180,9 @@ export async function testDestination(
   d: Pick<Destination, "kind" | "location" | "credentials" | "objectLock">,
 ) {
   const store = openStore(ctx, d)
+  const key = keyFor(d, ["_n8n-ops", `destination-test-${Date.now()}.bin`])
   try {
-    return await withDeadline(TEST_MS, "The test", (signal) => store.test(signal))
+    return await withDeadline(TEST_MS, "The test", (signal) => store.test(key, signal))
   } finally {
     await store.close().catch(() => {})
   }
@@ -201,11 +202,6 @@ export function missingCredentials(kind: DestinationKind, credentials: Record<st
     case "webdav":
       return has("password") ? null : "the password"
   }
-}
-
-/** Retention is the newest daily, weekly and monthly archive; an Object Lock only applies to S3. */
-export function checkObjectLock(kind: DestinationKind, lock: ObjectLock | null) {
-  if (lock && kind !== "s3") throw new StoreError("Object Lock is only for S3 destinations")
 }
 
 /**

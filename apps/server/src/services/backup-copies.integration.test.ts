@@ -12,9 +12,9 @@ import { createDatabase, type Database } from "../db/client.ts"
 import { alertState, backupCopies, backupDestinations, backupRuns } from "../db/schema.ts"
 import { createSettings } from "../lib/settings.ts"
 import { backupCondition } from "./backup-alerts.ts"
-import { COPY_ATTEMPTS, kickCopies } from "./backup-copies.ts"
+import { COPY_ATTEMPTS, failRun, kickCopies } from "./backup-copies.ts"
 import type { Store } from "./destinations/store.ts"
-import { spoolDir, spoolFile } from "./spool.ts"
+import { spoolDir, spooledRuns, spoolFile } from "./spool.ts"
 
 // What happens to a copy once it is verified, on its last attempt, against a real PostgreSQL that refuses one write
 // after another. The destination is a stand-in that keeps what it holds in memory.
@@ -214,5 +214,50 @@ describe("a copy that was verified on its last attempt", () => {
       { timeout: 10_000, interval: 250 },
     )
     expect(await copyRow(copy.id)).toMatchObject({ status: "failed", error: "the destination is full" })
+  })
+})
+
+describe("a run that is said to have failed", () => {
+  const inSpool = async (id: string) => (await spooledRuns(spoolDir(ctx))).includes(id)
+
+  it("ends while it waits for its archive, and its file goes with the next pass", async () => {
+    const { run, copy } = await lastAttempt()
+    await ctx.db.update(backupRuns).set({ spooledAt: null }).where(eq(backupRuns.id, run.id))
+    await kickCopies(ctx)
+    expect(await inSpool(run.id)).toBe(true)
+    await failRun(ctx, run.id, "Upload failed: the connection ended")
+    expect(await runStatus(run.id)).toBe("failed")
+    expect((await copyRow(copy.id)).status).toBe("failed")
+    // A file that is no run's, such as a copy made by hand, holds nothing up and stays.
+    const other = spoolFile(spoolDir(ctx), `${run.id} (1)`)
+    writeFileSync(other, "x")
+    await kickCopies(ctx)
+    expect(await inSpool(run.id)).toBe(false)
+    expect(await inSpool(`${run.id} (1)`)).toBe(true)
+    rmSync(other)
+    expect(calls).toEqual([])
+  })
+
+  it("keeps its archive once it is in the spool, until its copy is written", async () => {
+    const { run, copy } = await lastAttempt()
+    await ctx.db
+      .update(backupCopies)
+      .set({ nextAttemptAt: new Date(Date.now() + 60_000) })
+      .where(eq(backupCopies.id, copy.id))
+    await failRun(ctx, run.id, "Upload failed: the database did not answer")
+    await kickCopies(ctx)
+    expect(await runStatus(run.id)).toBe("running")
+    expect((await copyRow(copy.id)).status).toBe("pending")
+    expect(await inSpool(run.id)).toBe(true)
+    await ctx.db.update(backupCopies).set({ nextAttemptAt: null }).where(eq(backupCopies.id, copy.id))
+    await vi.waitFor(
+      async () => {
+        await kickCopies(ctx)
+        expect(await runStatus(run.id)).toBe("ok")
+        expect(await inSpool(run.id)).toBe(false)
+      },
+      { timeout: 10_000, interval: 250 },
+    )
+    expect(held.has(copy.objectKey)).toBe(true)
   })
 })

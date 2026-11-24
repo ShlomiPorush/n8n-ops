@@ -41,7 +41,6 @@ export function s3Store(location: S3Location, credentials: S3Credentials, object
     responseChecksumValidation: "WHEN_REQUIRED",
   })
   const Bucket = location.bucket
-  const prefix = location.prefix.replace(/^\/+|\/+$/g, "")
 
   async function putBody(
     key: string,
@@ -93,8 +92,6 @@ export function s3Store(location: S3Location, credentials: S3Credentials, object
   }
 
   const store: Store = {
-    key: (parts) => [prefix, ...parts].filter(Boolean).join("/"),
-
     async put(key, file, expected, signal, retainUntil) {
       if (expected.size > S3_MAX_PUT) throw new StoreError("archives over 5 GiB cannot be written to S3 in one piece")
       // Object Lock asks for an MD5 of the body on many S3-compatible services, as AWS once did.
@@ -150,7 +147,7 @@ export function s3Store(location: S3Location, credentials: S3Credentials, object
       }
     },
 
-    async test(signal) {
+    async test(key, signal) {
       if (objectLock) {
         let enabled = false
         try {
@@ -165,7 +162,7 @@ export function s3Store(location: S3Location, credentials: S3Credentials, object
           )
       }
       // The test file carries no lock of its own; a bucket with a default retention still keeps it that long.
-      await roundTrip(store, signal)
+      await roundTrip(store, key, signal)
       if (!objectLock) return []
       const days = objectLock.days === 1 ? "1 day" : `${objectLock.days} days`
       return [`Object Lock is enabled; new archives are locked for ${days}.`]

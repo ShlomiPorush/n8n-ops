@@ -10,13 +10,13 @@ import type { Ctx } from "../context.ts"
 import { backupRuns, instances, workerJobs, workers } from "../db/schema.ts"
 import { sizeText, tooLarge } from "../http/body-limit.ts"
 import { BACKUP_TURNED_OFF, endRunsWithoutArchive, failRun } from "../services/backup-copies.ts"
-import { archiveReady, COMPOSE_TARGET, maxArchiveBytes, workerBackupResult } from "../services/backups.ts"
+import { archiveReady, maxArchiveBytes, workerBackupResult } from "../services/backups.ts"
 import { reportsSince, workerSeen } from "../services/collection.ts"
 import { applyWorkerReport, refusal } from "../services/health.ts"
 import { can } from "../services/instances.ts"
 import { credentialExportRefusal } from "../services/moves.ts"
 import { setupWorkerResult } from "../services/setup.ts"
-import { removeSpool, reserve, SpoolError, spoolDir, writeSpool } from "../services/spool.ts"
+import { reserve, SpoolError, spoolDir, writeSpool } from "../services/spool.ts"
 import { readUpload, signUpload } from "../services/upload-token.ts"
 import { recordBeat, recordWorkerCall } from "../services/worker-presence.ts"
 import { claimJob, deliverToWaiter, pairWorker, workerByIdentity } from "../services/workers.ts"
@@ -136,7 +136,6 @@ export function workerApiRoutes(ctx: Ctx) {
   }
 
   app.get("/jobs/next", auth, async (c) => {
-    const features = featuresOf(c.req.header("x-worker-features"))
     // Jobs no longer wanted end here, so the next one is handed over in the same call.
     for (;;) {
       const job = await claimJob(ctx, c.get("worker").id)
@@ -144,21 +143,6 @@ export function workerApiRoutes(ctx: Ctx) {
       const why = await unwanted(job)
       if (why) {
         await dropJob(job, why, true)
-        continue
-      }
-      // A backup or export of a Compose service, claimed by a worker that cannot follow one (an earlier image
-      // under the same identity): it would run in no container. It ends here, said as that, and is never handed
-      // over.
-      if (
-        (job.kind === "backup" || job.kind === "export-credentials") &&
-        job.payload.target &&
-        !features.includes(COMPOSE_TARGET)
-      ) {
-        await dropJob(
-          job,
-          "The worker on this host runs a release that cannot follow a Compose service. Update its image.",
-          false,
-        )
         continue
       }
       return c.json({ job: { id: job.id, kind: job.kind, payload: job.payload } })
@@ -254,25 +238,20 @@ export function workerApiRoutes(ctx: Ctx) {
     const dir = spoolDir(ctx)
     let release: (() => void) | null = null
     try {
-      release = await reserve(dir, grant.size, { upload: true })
+      release = await reserve(dir, grant.size)
       const body = c.req.raw.body
       if (!body) throw new SpoolError("The upload has no body.")
       const written = await writeSpool(dir, grant.run, Readable.fromWeb(body as WebStream<Uint8Array>), {
         limit: grant.size,
         signal: AbortSignal.timeout(UPLOAD_DEADLINE_MS),
       })
-      if (written.size !== grant.size || written.sha256 !== grant.sha256) {
-        await removeSpool(dir, grant.run)
+      if (written.size !== grant.size || written.sha256 !== grant.sha256)
         throw new SpoolError("The uploaded archive does not match the size and checksum the worker announced.")
-      }
       // The run ended while the archive came (backup turned off, or too late): the file is not kept.
-      if (!(await archiveReady(ctx, grant.run, written))) {
-        await removeSpool(dir, grant.run)
+      if (!(await archiveReady(ctx, grant.run, written)))
         return c.json({ error: "conflict", message: "This backup run no longer takes an archive." }, 409)
-      }
       return c.json({ ok: true })
     } catch (error) {
-      await removeSpool(dir, grant.run)
       const message = (error as Error).message || "The upload did not complete."
       await failRun(ctx, grant.run, `Upload failed: ${message}`)
       return c.json({ error: "upload_failed", message }, error instanceof SpoolError ? 507 : 400)

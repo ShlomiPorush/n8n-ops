@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Readable } from "node:stream"
 import { afterAll, describe, expect, it } from "vitest"
-import { KEEP_FREE, MAX_UPLOADS, removeSpool, reserve, spooledRuns, spoolFile, writeSpool } from "./spool.ts"
+import { KEEP_FREE, removeSpool, reserve, spooledRuns, spoolFile, writeSpool } from "./spool.ts"
 
 const work = mkdtempSync(join(tmpdir(), "n8n-ops-spool-"))
 afterAll(() => rmSync(work, { recursive: true, force: true }))
@@ -24,21 +24,6 @@ describe("spool space", () => {
     // Released (once, however often called): the room is there again.
     const again = await reserve(dir, 2 * GiB, { free })
     again()
-  })
-
-  it("lets an upload wait for a free slot, and says so when none comes", async () => {
-    const dir = join(work, "slots")
-    const free = async () => 100 * GiB
-    const held = await Promise.all(Array.from({ length: MAX_UPLOADS }, () => reserve(dir, 1, { upload: true, free })))
-    await expect(reserve(dir, 1, { upload: true, free, waitMs: 1_200 })).rejects.toThrow(/being received/)
-    const waiting = reserve(dir, 1, { upload: true, free, waitMs: 10_000 })
-    held[0]?.()
-    const turn = await waiting
-    turn()
-    for (const r of held) r()
-    // Archives made on the server need no upload slot.
-    const own = await reserve(dir, 1, { free })
-    own()
   })
 })
 

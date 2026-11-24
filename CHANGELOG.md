@@ -24,6 +24,9 @@ All notable changes to this project are documented here. The format follows [Kee
 - **The lines for a Worker's socket proxy are never the old ones after a save.** The server answers with the new lines when allowed containers are recorded or a suggestion was out of date. In the setup of an instance, "Saved. These are the lines as they are now." could stand above the old lines.
 - **The setup page shows how a Worker check ended also on a computer whose clock is ahead.**
 - **Saving a form no longer puts back what was changed elsewhere.** With unsaved changes on screen, the other fields of Settings, an instance's Overrides and the backup destinations kept the values they had when the page opened, and Save wrote them over what another tab or device had saved meanwhile. Fields without an edit now follow what is stored, as last read.
+- **The database password is no longer on pg_dump's command line.** The backup of the n8n-ops database gives it to pg_dump in its environment, so a failed backup always shows what pg_dump reported; details are no longer hidden.
+- **An archive that reached the server is kept when the database's answer to recording it is lost.** The backup was counted as failed and its archive removed.
+- **A backup no longer fails because four other archives are being received.**
 
 ## [0.19.4] - 2026-11-24
 

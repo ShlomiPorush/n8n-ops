@@ -614,6 +614,7 @@ function RecentRestores({ instanceId }: { instanceId: string }) {
   const list = restores.data ?? []
   // The restore whose details are open; read from the list, so a refresh shows it as it is now.
   const [openId, setOpenId] = useState<string | null>(null)
+  const [opening, setOpening] = useState(0)
   const opened = list.find((r) => r.id === openId) ?? null
   if (restores.error && !restores.data)
     return (
@@ -639,7 +640,10 @@ function RecentRestores({ instanceId }: { instanceId: string }) {
             <button
               type="button"
               aria-haspopup="dialog"
-              onClick={() => setOpenId(r.id)}
+              onClick={() => {
+                setOpening((count) => count + 1)
+                setOpenId(r.id)
+              }}
               className="min-w-0 text-start font-semibold break-words underline-offset-3 hover:underline"
             >
               <UserText>{r.itemName}</UserText>
@@ -668,7 +672,7 @@ function RecentRestores({ instanceId }: { instanceId: string }) {
           </li>
         ))}
       </ul>
-      <RestoreDetailsDialog restore={opened} onClose={() => setOpenId(null)} />
+      <RestoreDetailsDialog key={opening} restore={opened} onClose={() => setOpenId(null)} />
     </Panel>
   )
 }

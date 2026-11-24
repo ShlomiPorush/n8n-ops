@@ -54,7 +54,7 @@ export type ArchivedCredential = {
 export class RestoreError extends Error {
   constructor(
     message: string,
-    readonly code: "not_found" | "invalid" | "changed" = "invalid",
+    readonly code: "not_found" | "invalid" = "invalid",
   ) {
     super(message)
   }
@@ -1092,32 +1092,28 @@ export async function previewRestore(
   const target = await targetFor(ctx, input.targetInstanceId)
   const archive = await loadArchive(ctx, input.source, input.privateKey)
   const date = new Date().toISOString().slice(0, 10)
-  for (let attempt = 0; ; attempt++) {
-    const code = randomBytes(4).toString("hex")
-    const item = { kind: input.kind, id: input.itemId }
-    const { plan } = await buildPlan(ctx, archive, target, item, mode, code, date, null)
-    const [row] = await ctx.db
-      .insert(restores)
-      .values({
-        code,
-        actor: input.actor,
-        actorId: input.actorId,
-        via: input.via,
-        runId: archive.source.kind === "run" ? archive.source.id : null,
-        fromRestoreId: archive.source.kind === "version" ? archive.source.id : null,
-        targetInstanceId: target.id,
-        kind: input.kind,
-        itemId: input.itemId,
-        itemName: plan.item.name,
-        mode,
-        status: "previewed",
-        reviewed: plan,
-      })
-      .onConflictDoNothing({ target: restores.code })
-      .returning()
-    if (row) return view(row)
-    if (attempt >= 4) throw new Error("Could not reserve a restore code.")
-  }
+  const code = randomBytes(4).toString("hex")
+  const item = { kind: input.kind, id: input.itemId }
+  const { plan } = await buildPlan(ctx, archive, target, item, mode, code, date, null)
+  const [row] = await ctx.db
+    .insert(restores)
+    .values({
+      code,
+      actor: input.actor,
+      actorId: input.actorId,
+      via: input.via,
+      runId: archive.source.kind === "run" ? archive.source.id : null,
+      fromRestoreId: archive.source.kind === "version" ? archive.source.id : null,
+      targetInstanceId: target.id,
+      kind: input.kind,
+      itemId: input.itemId,
+      itemName: plan.item.name,
+      mode,
+      status: "previewed",
+      reviewed: plan,
+    })
+    .returning()
+  return view(row as Row)
 }
 
 // ---------------------------------------------------------------------------
@@ -1432,22 +1428,12 @@ function provenWritten(
   return landed(after, proof) && (!sameAsLive || (after.versionId ?? null) !== (versionBefore ?? null))
 }
 
-/** Restores this process is running now; a pending one that is not here was cut off (see `sweepRestores`). */
-const running = new Set<string>()
-
 /**
  * Runs a reviewed restore once. A second confirm, or one for a restore already running or ended, returns it as it
  * is. The person who confirms is the one the audit names.
  */
 export function confirmRestore(ctx: Ctx, restoreId: string, privateKey: string, by: RestoreActor) {
-  return oneAtATime(`restore:${restoreId}`, async () => {
-    running.add(restoreId)
-    try {
-      return await confirmNow(ctx, restoreId, privateKey, by)
-    } finally {
-      running.delete(restoreId)
-    }
-  })
+  return oneAtATime(`restore:${restoreId}`, () => confirmNow(ctx, restoreId, privateKey, by))
 }
 
 async function confirmNow(ctx: Ctx, restoreId: string, privateKey: string, by: RestoreActor) {
@@ -1458,7 +1444,7 @@ async function confirmNow(ctx: Ctx, restoreId: string, privateKey: string, by: R
     .returning()
   if (!row) {
     const [current] = await ctx.db.select().from(restores).where(eq(restores.id, restoreId))
-    if (!current) throw new RestoreError("This review has expired or was closed. Open the archive again.", "not_found")
+    if (!current) throw new RestoreError("This review has expired. Open the archive again.", "not_found")
     return view(current)
   }
   if (row.createdAt.getTime() + REVIEW_TTL_MS < Date.now())
@@ -1637,11 +1623,6 @@ export async function recentRestores(ctx: Ctx, targetInstanceId: string, limit =
   return rows.map(view)
 }
 
-/** Drops a review that was not confirmed (closing the page). Anything else stays. */
-export async function dropReview(ctx: Ctx, restoreId: string) {
-  await ctx.db.delete(restores).where(and(eq(restores.id, restoreId), eq(restores.status, "previewed")))
-}
-
 /**
  * Scheduled: reviews older than an hour leave (they never wrote anything), and restores this process is not running
  * but still pending (cut off by a restart, or by a failed database write) become unknown, with their audit entry.
@@ -1652,10 +1633,11 @@ export async function sweepRestores(ctx: Ctx) {
     .where(and(eq(restores.status, "previewed"), lt(restores.createdAt, new Date(Date.now() - REVIEW_TTL_MS))))
   const pending = await ctx.db.select({ id: restores.id }).from(restores).where(eq(restores.status, "pending"))
   for (const { id } of pending) {
-    // In the restore's own queue and read again there, so a confirm that ends meanwhile is never written over.
+    // In the restore's own queue and read again there: a confirm that runs now has ended by then, and what it ended
+    // as is never written over.
     await oneAtATime(`restore:${id}`, async () => {
       const [row] = await ctx.db.select().from(restores).where(eq(restores.id, id))
-      if (!row || row.status !== "pending" || running.has(id)) return
+      if (row?.status !== "pending") return
       const steps: RestoreStep[] = row.steps.length
         ? [...row.steps]
         : row.reviewed.steps.map((s) => ({ ...s, status: "todo" }))

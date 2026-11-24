@@ -6,7 +6,8 @@ import postgres from "postgres"
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 import type { Ctx } from "../context.ts"
 import { createDatabase, type Database } from "../db/client.ts"
-import { instances, moves, workerJobs, workers } from "../db/schema.ts"
+import { auditLog, instances, workerJobs, workers } from "../db/schema.ts"
+import { createAudit } from "../lib/audit.ts"
 import { createSettings } from "../lib/settings.ts"
 import { exportCredentials, runMove } from "./moves.ts"
 import { deliverToWaiter, type JobOutcome } from "./workers.ts"
@@ -87,8 +88,8 @@ async function move(outcome: JobOutcome) {
   )
   await answerExport(outcome)
   const { error } = await running
-  const [row] = await ctx.db.select().from(moves)
-  return { error, row }
+  const [entry] = await ctx.db.select().from(auditLog)
+  return { error, entry }
 }
 
 beforeAll(async () => {
@@ -103,7 +104,7 @@ beforeAll(async () => {
     log: { info: () => {}, warn: () => {}, error: () => {} },
     settings: createSettings(database.db),
     secrets: { decrypt: () => apiKey },
-    audit: async () => {},
+    audit: createAudit(database.db),
   } as unknown as Ctx
   const [worker] = await ctx.db
     .insert(workers)
@@ -131,7 +132,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await ctx.db.delete(workerJobs)
-  await ctx.db.delete(moves)
+  await ctx.db.delete(auditLog)
 })
 
 afterEach(() => {
@@ -150,10 +151,13 @@ describe("a move whose worker did not return every credential", () => {
     { what: "only some", credentials: exported.slice(0, 1), missing: "Mail" },
   ])("$what: changes neither instance and says which are missing", async ({ credentials, missing }) => {
     const { changes } = n8n([workflow(["c1", "c2"])])
-    const { error, row } = await move(answered(credentials))
+    const { error, entry } = await move(answered(credentials))
     expect(changes).toEqual([])
     expect(error?.message).toContain(`did not return these credentials: ${missing}.`)
-    expect(row).toMatchObject({ status: "failed", newWorkflowId: null })
+    expect(entry).toMatchObject({
+      action: "Workflow move failed",
+      details: { steps: [{ step: "Stopped", ok: false, detail: error?.message }] },
+    })
   })
 
   it("asks for the credentials of the workflow it copies, not of the one it reviewed", async () => {
@@ -165,7 +169,7 @@ describe("a move whose worker did not return every credential", () => {
 
   it("moves the workflow when every credential came, also from a worker of an earlier release", async () => {
     const { changes, bodies } = n8n([workflow(["c1", "c2"])])
-    const { error, row } = await move(answered(exported))
+    const { error, entry } = await move(answered(exported))
     expect(error).toBeNull()
     expect(changes).toEqual([
       "target.example.com POST /credentials",
@@ -176,7 +180,10 @@ describe("a move whose worker did not return every credential", () => {
     ])
     expect(JSON.stringify(bodies[2])).toContain('"id":"new-ERP"')
     expect(JSON.stringify(bodies[2])).not.toContain('"id":"c1"')
-    expect(row).toMatchObject({ status: "done", newWorkflowId: "copy" })
+    expect(entry).toMatchObject({
+      action: "Workflow moved",
+      details: { steps: expect.arrayContaining([{ step: "Created on target", ok: true, detail: "copy" }]) },
+    })
   })
 })
 

@@ -143,6 +143,7 @@ export function WorkflowsPage() {
     failed: "refresh the workflow map",
   })
   const [moving, setMoving] = useState<WorkflowRow | null>(null)
+  const [opening, setOpening] = useState(0)
   const ins = data.data?.insights
   const rows = data.data?.workflows ?? []
   const filtered = Boolean(q) || instance !== "all"
@@ -338,7 +339,13 @@ export function WorkflowsPage() {
                   <ErrorRateCell rate={rate(w)} errors={w.errors30d} runs={w.runs30d} />
                   <TableCell className="text-end">
                     {movable.has(w.instanceId) && (
-                      <Button size="sm" onClick={() => setMoving(w)}>
+                      <Button
+                        size="sm"
+                        onClick={() => {
+                          setOpening((count) => count + 1)
+                          setMoving(w)
+                        }}
+                      >
                         Move <ArrowRight />
                       </Button>
                     )}
@@ -349,7 +356,7 @@ export function WorkflowsPage() {
           </Table>
         </Reloading>
       )}
-      <MoveDialog workflow={moving} onClose={() => setMoving(null)} />
+      <MoveDialog key={opening} workflow={moving} onClose={() => setMoving(null)} />
     </Page>
   )
 }
@@ -365,6 +372,7 @@ type Preview = {
   blockers: string[]
 }
 
+/** Give it a new key for each opening: it starts empty, and an answer to an earlier one does not land on it. */
 function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClose: () => void }) {
   const instances = useApi<{ instances: PickedInstance[] }>(workflow ? "/instances" : null)
   const [target, setTarget] = useState("")
@@ -375,14 +383,9 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
   const [fix, setFix] = useState<ProxyFix | null>(null)
   const [busy, setBusy] = useState(false)
   // A chosen target is asked about before it is dropped, until the move has run (DS-9).
-  const guard = useDiscardGuard(!steps && target !== "", () => {
-    setTarget("")
-    setPreview(null)
-    setSteps(null)
-    setError("")
-    onClose()
-  })
-  const body = () => ({ sourceId: workflow?.instanceId, targetId: target, workflowId: workflow?.workflowId })
+  const guard = useDiscardGuard(workflow !== null && !steps && target !== "", onClose)
+  // A move runs once and is not called off; its result shows when it ends.
+  const moving = busy && preview !== null && !steps
   async function act(fn: () => Promise<void>) {
     setBusy(true)
     setError("")
@@ -397,7 +400,7 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
     }
   }
   return (
-    <Dialog open={workflow !== null} onOpenChange={guard.onOpenChange}>
+    <Dialog open={workflow !== null} onOpenChange={(open) => !moving && guard.onOpenChange(open)}>
       <DialogContent className="md:max-w-2xl" keepOnBackdrop>
         <DialogHeader icon={ArrowRightLeftIcon}>
           <DialogTitle>Move {workflow?.name}</DialogTitle>
@@ -428,10 +431,7 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
             listLabel="Instances"
             placeholder="Move to…"
             value={target}
-            onChange={(v) => {
-              setTarget(v)
-              setPreview(null)
-            }}
+            onChange={setTarget}
             options={activeWith(instances.data?.instances, "move")
               .filter((i) => i.id !== workflow?.instanceId)
               .map((i) => ({ value: i.id, label: i.name }))}
@@ -508,7 +508,12 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
                 busyLabel="Reviewing…"
                 onClick={() =>
                   act(async () =>
-                    setPreview(await api<Preview>("/workflows/moves/preview", { method: "POST", json: body() })),
+                    setPreview(
+                      await api<Preview>("/workflows/moves/preview", {
+                        method: "POST",
+                        json: { sourceId: workflow?.instanceId, targetId: target, workflowId: workflow?.workflowId },
+                      }),
+                    ),
                   )
                 }
               >
@@ -517,7 +522,9 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
             </>
           ) : (
             <>
-              <Button onClick={() => setPreview(null)}>Back</Button>
+              <Button disabled={busy} onClick={() => setPreview(null)}>
+                Back
+              </Button>
               <BusyButton
                 variant="primary"
                 disabled={preview.blockers.length > 0}
@@ -529,7 +536,12 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
                       "/workflows/moves",
                       {
                         method: "POST",
-                        json: body(),
+                        // What the review shows, also when another target was picked while it was being made.
+                        json: {
+                          sourceId: preview.source.id,
+                          targetId: preview.target.id,
+                          workflowId: preview.workflow.id,
+                        },
                       },
                     )
                     setSteps(res.steps)

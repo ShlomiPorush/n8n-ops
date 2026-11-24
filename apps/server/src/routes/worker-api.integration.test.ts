@@ -175,6 +175,18 @@ describe("a worker's job result", () => {
     expect(await jobRow(streamed.id)).toMatchObject({ status: "failed", error: TOO_LARGE })
   })
 
+  it("of a credential export reaches the waiting request and is stored only as a count", async () => {
+    const w = await addWorker()
+    const job = await addJob(w.id, "export-credentials")
+    const secret = randomBytes(16).toString("hex")
+    const result = { credentials: [{ id: "c1", name: "ERP", type: "httpHeaderAuth", data: { value: secret } }] }
+    const waiting = waitForJob(job.id, 5_000)
+    expect((await post(w.identity, job.id, { json: { ok: true, result } })).status).toBe(200)
+    expect(await waiting).toMatchObject({ ok: true, result })
+    expect(await jobRow(job.id)).toMatchObject({ status: "done", result: { credentials: 1 } })
+    expect(JSON.stringify(await jobRow(job.id))).not.toContain(secret)
+  })
+
   it("over the limit tells a waiting credential export at once", async () => {
     const w = await addWorker()
     const job = await addJob(w.id, "export-credentials")

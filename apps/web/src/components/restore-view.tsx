@@ -339,28 +339,23 @@ export function RestoreResult({ restore: r, stillUnknown = false }: { restore: R
   )
 }
 
-/** "Check and try again" for a restore whose outcome is unknown: checks n8n, then reads the restore as it is now. */
+/** "Check and try again" for a restore whose outcome is unknown: checks n8n and gives the restore as it is now. */
 export async function checkRestore(r: RestoreView): Promise<RestoreView> {
-  await api<RestoreView>(`/backups/restores/${r.id}/check`, { method: "POST" })
-  const now = await api<RestoreView>(`/backups/restores/${r.id}`)
+  const now = await api<RestoreView>(`/backups/restores/${r.id}/check`, { method: "POST" })
   void queryClient.invalidateQueries({ queryKey: [`/backups/${now.targetInstanceId}/restores`] })
   return now
 }
 
-/** A stored restore opened from a list, after a reload too: its result, and Check and try again while unknown. */
+/**
+ * A stored restore opened from a list, after a reload too: its result, and Check and try again while unknown. Give it
+ * a new key for each opening: it starts from what the list says, and a check that ends later lands on no other one.
+ */
 export function RestoreDetailsDialog({ restore, onClose }: { restore: RestoreView | null; onClose: () => void }) {
   const [shown, setShown] = useState<RestoreView | null>(null)
   const [stillUnknown, setStillUnknown] = useState(false)
   const [error, setError] = useState("")
   const [busy, setBusy] = useState(false)
-  // A restore read again after a check; another one opened starts from what the list says about it.
-  const r = shown?.id === restore?.id ? shown : restore
-  const close = () => {
-    setShown(null)
-    setStillUnknown(false)
-    setError("")
-    onClose()
-  }
+  const r = shown ?? restore
   const check = async (current: RestoreView) => {
     setBusy(true)
     setError("")
@@ -375,7 +370,7 @@ export function RestoreDetailsDialog({ restore, onClose }: { restore: RestoreVie
     }
   }
   return (
-    <Dialog open={restore !== null} onOpenChange={(o) => !o && close()}>
+    <Dialog open={restore !== null} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="md:max-w-2xl">
         <DialogHeader icon={ArchiveRestoreIcon}>
           <DialogTitle>Restore of {r?.itemName}</DialogTitle>
@@ -393,7 +388,7 @@ export function RestoreDetailsDialog({ restore, onClose }: { restore: RestoreVie
               Check and try again
             </BusyButton>
           )}
-          <Button variant="primary" onClick={close}>
+          <Button variant="primary" onClick={onClose}>
             Done
           </Button>
         </DialogFooter>

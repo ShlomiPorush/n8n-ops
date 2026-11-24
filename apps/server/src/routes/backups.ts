@@ -13,7 +13,6 @@ import {
   archivedWorkflow,
   checkRestore,
   confirmRestore,
-  dropReview,
   getRestore,
   inspectArchive,
   previewRestore,
@@ -140,10 +139,7 @@ export function backupRoutes(ctx: Ctx) {
   /** A refused restore call, with a status that says why. */
   const failed = (c: Context<Env>, error: unknown) => {
     if (error instanceof RestoreError)
-      return c.json(
-        { error: error.code, message: error.message },
-        error.code === "not_found" ? 404 : error.code === "changed" ? 409 : 400,
-      )
+      return c.json({ error: error.code, message: error.message }, error.code === "not_found" ? 404 : 400)
     if (error instanceof NoApiKey) return c.json({ error: "invalid", message: error.message }, 400)
     throw error
   }
@@ -242,11 +238,6 @@ export function backupRoutes(ctx: Ctx) {
     if (!uuid.safeParse(c.req.param("id")).success) return c.json({ error: "not_found" }, 404)
     const found = await getRestore(ctx, c.req.param("id"))
     return found ? c.json(found) : c.json({ error: "not_found" }, 404)
-  })
-
-  app.delete("/restores/:id", async (c) => {
-    if (uuid.safeParse(c.req.param("id")).success) await dropReview(ctx, c.req.param("id"))
-    return c.json({ ok: true })
   })
 
   app.get("/:instanceId/restores", async (c) => {

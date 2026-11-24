@@ -1,13 +1,13 @@
 import { hasCapability, unsupportedVersionText } from "@n8n-ops/shared"
 import { eq } from "drizzle-orm"
 import type { Ctx } from "../context.ts"
-import { instances, moves, workerJobs } from "../db/schema.ts"
+import { instances } from "../db/schema.ts"
 import type { N8nWorkflow } from "../n8n/client.ts"
 import { jobTarget, usableWorker } from "./backups.ts"
 import { can, clientFor, effectiveScopes, type Instance, unsupportedVersion } from "./instances.ts"
 import { jobProxyFix, type ProxyFix } from "./proxy-fix.ts"
 import { enqueueJob, waitForJob } from "./workers.ts"
-import { calledWorkflowIds, credentialIds } from "./workflows.ts"
+import { calledWorkflowIds } from "./workflows.ts"
 
 /** The socket proxy refused what a worker had to do; `proxyFix` has the exact lines that allow it. */
 export class ProxyRefusedError extends Error {
@@ -82,10 +82,6 @@ export async function exportCredentials(
     throw proxyFix ? new ProxyRefusedError(message, proxyFix) : new Error(message)
   }
   const credentials = (outcome.result?.credentials ?? []) as ExportedCredential[]
-  await ctx.db
-    .update(workerJobs)
-    .set({ result: { credentials: credentials.length } })
-    .where(eq(workerJobs.id, job.id))
   if (!wanted) {
     // A worker of an earlier release answers a failed export with an empty list, and never says `empty`.
     if (!credentials.length && outcome.result?.empty !== true)
@@ -145,7 +141,7 @@ export async function previewMove(ctx: Ctx, input: { sourceId: string; targetId:
   if (!hasCapability("moveFrom", effectiveScopes(source), Boolean(source.workerId)))
     blockers.push(`The API key of ${source.name} cannot read and deactivate workflows.`)
   return {
-    workflow: { id: workflow.id, name: workflow.name, active: workflow.active, credentialIds: credentialIds(workflow) },
+    workflow: { id: workflow.id, name: workflow.name, active: workflow.active },
     source: { id: source.id, name: source.name },
     target: { id: target.id, name: target.name },
     webhooks,
@@ -168,23 +164,6 @@ export async function runMove(
   const from = clientFor(ctx, source)
   const to = clientFor(ctx, target)
   const steps: { step: string; ok: boolean; detail?: string }[] = []
-  const [move] = await ctx.db
-    .insert(moves)
-    .values({
-      sourceInstanceId: source.id,
-      targetInstanceId: target.id,
-      workflowId: input.workflowId,
-      workflowName: preview.workflow.name,
-      status: "running",
-    })
-    .returning()
-  const record = async (status: "running" | "done" | "failed", newWorkflowId?: string) => {
-    if (move)
-      await ctx.db
-        .update(moves)
-        .set({ status, steps, ...(newWorkflowId ? { newWorkflowId } : {}) })
-        .where(eq(moves.id, move.id))
-  }
   try {
     const workflow = await from.getWorkflow(input.workflowId)
     const used = usedCredentials(workflow)
@@ -230,7 +209,6 @@ export async function runMove(
     } else {
       steps.push({ step: "The source was inactive, so the copy stays inactive", ok: true })
     }
-    await record("done", created.id)
     await ctx.audit({
       actor,
       action: "Workflow moved",
@@ -241,7 +219,6 @@ export async function runMove(
     return { newWorkflowId: created.id, steps }
   } catch (error) {
     steps.push({ step: "Stopped", ok: false, detail: (error as Error).message })
-    await record("failed")
     await ctx.audit({
       actor,
       action: "Workflow move failed",

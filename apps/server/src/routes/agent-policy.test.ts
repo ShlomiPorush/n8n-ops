@@ -42,7 +42,6 @@ const CLOSED: Record<string, string> = {
   "ALL /n8n/:instance/api/v1/*": "the temporary access proxy, with a key a person approved for one task",
   "ALL /oauth/*": OAUTH,
   "DELETE /api/admin/tokens/:id": "agent connections, tokens, keys and the audit log are for people only",
-  "DELETE /api/backups/restores/:id": PEOPLE,
   "DELETE /api/destinations/:id": PEOPLE,
   "DELETE /api/instances/:id{[0-9a-fA-F-]{36}}": PEOPLE,
   "DELETE /api/instances/:id{[0-9a-fA-F-]{36}}/capabilities/:capability": PEOPLE,

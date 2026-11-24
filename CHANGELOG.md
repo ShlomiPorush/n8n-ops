@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.19.4] - 2026-11-24
+
 ### Fixed
 
 - **A Worker's container no longer turns unhealthy when n8n-ops cannot be reached.** Its health check asked whether the Worker had reached n8n-ops in the last minute, so when n8n-ops or a proxy in front of it could not be reached, the container turned unhealthy although nothing in it was wrong and restarting it could not help. The health check now asks whether the Worker process is running. A paired Worker that cannot reach n8n-ops shows as offline in n8n-ops and says so in its log, as before. `update.sh` now replaces a Worker once its new container runs, without waiting for it to reach n8n-ops. Update the Worker's image on each host to get this.

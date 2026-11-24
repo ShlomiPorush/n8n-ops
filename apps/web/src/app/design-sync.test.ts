@@ -7,7 +7,6 @@ vi.mock("@/lib/design", () => ({ applyDesign: vi.fn() }))
 
 const GENERAL = "/settings/general"
 
-// readAgain runs at most once a second; each test starts a little later than the last.
 let clock = Date.now()
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] })
@@ -48,7 +47,6 @@ describe("the design in the cache", () => {
     )
     queryClient.setQueryData([GENERAL], { design: "regular", timezone: "UTC" })
     const late = read()
-    // The save: what the form sent goes into the cache at once, and the read on its way is called off.
     readAgain()
     afterGeneralSave({ design: "compact" })
     answer(new Response(JSON.stringify({ design: "regular", timezone: "UTC" })))

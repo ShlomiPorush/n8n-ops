@@ -81,7 +81,6 @@ type FieldDef = {
   type?: "text" | "number" | "switch" | "secret" | "key"
 }
 
-/** Each kind: its name, what it suits, where archives go and with what it connects. */
 export const kinds: Record<
   DestinationKind,
   { label: string; icon: LucideIcon; hint: string; location: FieldDef[]; credentials: FieldDef[] }
@@ -177,7 +176,6 @@ export function KindIcon({ kind, className }: { kind: DestinationKind; className
   return <Icon aria-hidden className={cn("size-4 shrink-0 text-muted-foreground", className)} />
 }
 
-/** Tags of a destination: off, default, Object Lock. */
 function Tags({ d }: { d: Destination }) {
   return (
     <>
@@ -188,14 +186,8 @@ function Tags({ d }: { d: Destination }) {
   )
 }
 
-// ---------------------------------------------------------------------------
-// Settings > Backup Destinations
-// ---------------------------------------------------------------------------
-
-/** Settings → Backup Destinations. `hidden` keeps it mounted out of sight while another section shows (SV-1). */
 export function DestinationsSection({ hidden = false }: { hidden?: boolean }) {
   const list = useApi<Destination[]>("/destinations")
-  // The destination stays while the dialog closes; a new one is null.
   const [dialog, setDialog] = useState({ open: false, opening: 0, destination: null as Destination | null })
   const openDialog = (destination: Destination | null) =>
     setDialog((d) => ({ open: true, opening: d.opening + 1, destination }))
@@ -213,7 +205,6 @@ export function DestinationsSection({ hidden = false }: { hidden?: boolean }) {
             list.data ? (
               <>
                 {n(data.length)}
-                {/* A failed refresh keeps what is shown and says so beside the title (TB-5, LD-12). */}
                 <RefreshNote live={list} separator=" · " />
               </>
             ) : undefined
@@ -290,7 +281,6 @@ export function DestinationsSection({ hidden = false }: { hidden?: boolean }) {
         key={dialog.opening}
         destination={dialog.destination}
         open={dialog.open}
-        // Only its own opening: a save that ends after it was closed never closes a later one.
         onOpenChange={(open) => setDialog((d) => (d.opening === dialog.opening ? { ...d, open } : d))}
       />
     </>
@@ -301,7 +291,6 @@ type Form = {
   name: string
   kind: DestinationKind
   location: Record<string, string | number | boolean>
-  /** Plain fields as typed; a secret is undefined while unchanged, a string when replaced, null to remove. */
   credentials: Record<string, string | null | undefined>
   retention: { daily: string; weekly: string; monthly: string }
   lock: boolean
@@ -334,7 +323,6 @@ function formOf(d: Destination | null, kind: DestinationKind = "s3"): Form {
   }
 }
 
-/** What to send: on an edit only what changed, so a rename does not test the connection again. */
 function bodyOf(form: Form, d: Destination | null) {
   const location = Object.fromEntries(
     kinds[form.kind].location.map((f) => {
@@ -364,7 +352,6 @@ function bodyOf(form: Form, d: Destination | null) {
   if (!d) return { ...body, kind: form.kind, location, credentials, objectLock }
   if (!d.lockedAt) body.location = location
   if (Object.keys(credentials).length) body.credentials = credentials
-  // Compared field by field: the stored lock may list its fields in another order.
   if (
     (objectLock?.mode ?? null) !== (d.objectLock?.mode ?? null) ||
     (objectLock?.days ?? null) !== (d.objectLock?.days ?? null)
@@ -373,10 +360,6 @@ function bodyOf(form: Form, d: Destination | null) {
   return body
 }
 
-/**
- * Adds or edits a destination. The server tests it before anything is stored. Give it a new key for each opening: it
- * is filled once, with what is stored then, and a refresh never replaces what is typed (SV-6).
- */
 export function DestinationDialog({
   destination,
   open,
@@ -393,7 +376,6 @@ export function DestinationDialog({
   const [busy, setBusy] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const locked = Boolean(destination?.lockedAt)
-  // Every close asks first while the form differs from how it opened (DS-9).
   const guard = useDiscardGuard(formChanged(form, opened), () => onOpenChange(false))
 
   async function submit() {
@@ -468,7 +450,6 @@ export function DestinationDialog({
   )
 }
 
-/** The fields of a destination, also used by the first-run setup. */
 export function DestinationFields({
   form,
   setForm,
@@ -480,7 +461,6 @@ export function DestinationFields({
   setForm: (update: (f: Form) => Form) => void
   destination: Destination | null
   locked: boolean
-  /** The kinds offered for a new destination. */
   only?: DestinationKind[]
 }) {
   const kind = kinds[form.kind]
@@ -591,8 +571,6 @@ export function DestinationFields({
                   onChange={(v) => setCredential(f.name, v)}
                 />
               ) : f.type === "key" ? (
-                // A stored key reads Stored, or "Removed when you save" with Keep while its removal waits (FS-3);
-                // Replace opens the field for the new key.
                 destination?.credentials[`${f.name}Set`] && typeof form.credentials[f.name] !== "string" ? (
                   <SecretField
                     id={`d-${f.name}`}
@@ -606,7 +584,6 @@ export function DestinationFields({
                       id={`d-${f.name}`}
                       className="font-mono text-small"
                       placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
-                      // The focus moves into the field the moment Replace is chosen.
                       autoFocus={Boolean(destination?.credentials[`${f.name}Set`])}
                       value={form.credentials[f.name] ?? ""}
                       onChange={(e) =>
@@ -754,7 +731,6 @@ export function DestinationFields({
 export type { Form as DestinationForm }
 export { bodyOf as destinationBody, formOf as destinationForm }
 
-/** Removing a destination: its archives stay where they are, or go with it. */
 function DeleteDestination({
   destination,
   open,
@@ -827,13 +803,8 @@ function DeleteDestination({
   )
 }
 
-// ---------------------------------------------------------------------------
-// Choosing destinations: an instance, or n8n-ops's own database
-// ---------------------------------------------------------------------------
-
 export type Choice = { mode: "default" | "custom"; ids: string[] }
 
-/** The default destinations, or a choice of them. The choice is kept while the defaults are used. */
 export function DestinationChoice({
   id,
   destinations,
@@ -904,17 +875,14 @@ export function DestinationChoice({
   )
 }
 
-/** How many changes a choice holds; chosen destinations count only while they are used. */
 const changes = (a: Choice, b: Choice) =>
   Number(a.mode !== b.mode) +
   (a.mode === "custom"
     ? a.ids.filter((x) => !b.ids.includes(x)).length + b.ids.filter((x) => !a.ids.includes(x)).length
     : 0)
 
-/** A panel's description is small text in Compact and body text in Regular (PanelHead); Try again in it matches. */
 const descriptionText = "text-small regular:text-body"
 
-/** On an instance: where its backups go. */
 export function InstanceBackupCard({
   instanceId,
   mode,
@@ -924,7 +892,6 @@ export function InstanceBackupCard({
   instanceId: string
   mode: "default" | "custom"
   destinationIds: string[]
-  /** When the instance was read. */
   readAt: number
 }) {
   const destinations = useApi<Destination[]>("/destinations")
@@ -956,7 +923,6 @@ export function InstanceBackupCard({
         description={
           <>
             Where this instance's encrypted backups are written.
-            {/* A failed refresh keeps what is shown and says so here (TB-5, LD-12). */}
             <RefreshNote live={destinations} separator=" " textClass={descriptionText} />
           </>
         }
@@ -986,7 +952,6 @@ type BackupSettings = {
   meta?: { limits?: Record<string, NumberLimits> }
 }
 
-/** Where the n8n-ops database backup goes, and the largest archive accepted. */
 function SelfBackupCard({ destinations, hidden }: { destinations: Destination[]; hidden: boolean }) {
   const query = useApi<BackupSettings>("/settings/backups")
   const navigate = useNavigate()
@@ -1002,7 +967,6 @@ function SelfBackupCard({ destinations, hidden }: { destinations: Destination[];
   const max = String(form.values.max ?? "")
   const choiceChanges = choice ? changes(choice, form.stored.choice as Choice) : 0
   const maxChanged = form.values.max !== form.stored.max
-  // What is wrong with a changed Largest archive, found before a save (SV-1); a new value clears it.
   const [maxProblem, setMaxProblem] = useState<string | null>(null)
   const shown = useRef(!hidden)
   shown.current = !hidden
@@ -1014,7 +978,6 @@ function SelfBackupCard({ destinations, hidden }: { destinations: Destination[];
     label: "the backup settings",
     saved: "Backup settings saved",
     count: choiceChanges + Number(maxChanged),
-    // Kept while another Settings section is open (SV-1).
     keepsOn: "/settings/",
     check: () => {
       const problem = maxChanged ? numberProblem(max, query.data?.meta?.limits?.maxArchiveMb ?? {}) : null
@@ -1036,7 +999,6 @@ function SelfBackupCard({ destinations, hidden }: { destinations: Destination[];
       return [{ label: "Largest archive (MiB)", problem, id: "max-archive", reveal }]
     },
     save: async () => {
-      // Only what changed is sent, so a save never writes back a value changed elsewhere.
       await save.mutateAsync({
         ...(choice && choiceChanges ? { selfDestinations: choice.mode, selfDestinationIds: choice.ids } : {}),
         ...(maxChanged ? { maxArchiveMb: Number(max) } : {}),
@@ -1055,7 +1017,6 @@ function SelfBackupCard({ destinations, hidden }: { destinations: Destination[];
         description={
           <>
             n8n-ops backs up its own database every day at the daily backup time, encrypted with the backup public key.
-            {/* A failed refresh keeps what is shown and says so here (TB-5, LD-12). */}
             <RefreshNote live={query} separator=" " textClass={descriptionText} />
           </>
         }

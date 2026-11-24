@@ -70,9 +70,7 @@ type Run = {
   startedAt: string
   finishedAt: string | null
   copies?: Copy[]
-  /** The socket proxy made it fail: the lines that allow it, for the worker and container it ran on. */
   proxyFix?: ProxyFix
-  /** The socket proxy made it fail, and the instance has moved since: where it ran. */
   ranOn?: { worker: string | null; container: string | null }
 }
 
@@ -87,7 +85,6 @@ type BackupRow = {
   backupTime: string
   staleBackupHours: number
   withSecrets: boolean
-  /** Backup is chosen and active for the instance; one without it keeps its history here, without Run now. */
   backup: boolean
 }
 
@@ -103,24 +100,16 @@ type Summary = {
 const stale = (row: BackupRow) =>
   !row.lastOk || Date.now() - new Date(row.lastOk.startedAt).getTime() > row.staleBackupHours * 3600_000
 
-/** What needs a look first (TB-11): backed up nowhere or the last run failed, then late or partly failed. */
 const backupRank = (row: BackupRow) => {
   if (row.destinations.length === 0 || row.lastRun?.status === "failed") return 2
   return stale(row) || row.lastRun?.status === "partial" ? 1 : 0
 }
 
-/**
- * Why a failed run failed, when its copies do not already say it: a failure before the archive was ready (the
- * export, the upload, space or size) leaves every copy with the same general message, and the cause is here.
- * Once the archive was ready, the run's error only repeats what its copies say, and is not shown twice; copies that
- * went with a deleted destination no longer say it.
- */
 export function runFailure(r: Pick<Run, "status" | "error" | "spooledAt" | "copies">) {
   if (r.status !== "failed") return null
   return r.spooledAt && r.copies?.length ? null : r.error
 }
 
-/** Archives that can still be restored: written and not expired, on at least one destination. */
 const restorable = (r: Run) =>
   (r.status === "ok" || r.status === "partial") && (r.copies ?? []).some((c) => c.status === "ok" && !c.deletedAt)
 
@@ -128,11 +117,8 @@ export function BackupsPage() {
   const { id } = useParams()
   const navigate = useNavigate()
   const data = useApi<Summary>("/backups", { refetchInterval: 10_000 })
-  // Where the list stands beside the reading pane (ListWithPanel).
   const beside = useMediaQuery(SPLIT_QUERY)
-  // A failed refresh keeps the rows; the head says so (TB-5, LD-12).
   const view = loadView(data)
-  // The daily time is stored as 24-hour HH:MM; only how it is shown follows the Time format (FW-9).
   const w = useTimeFormat()
   const target = (id: string) =>
     id === "self" ? "the n8n-ops database" : (data.data?.instances.find((i) => i.id === id)?.name ?? "the instance")
@@ -142,7 +128,6 @@ export function BackupsPage() {
     failed: (id) => `start the backup of ${target(id)}`,
   })
   const s = data.data
-  // Instances that back up, and those that did before Backup was removed (their history stays); not drafts.
   const instances = s?.instances.filter((i) => i.backup || i.lastRun) ?? []
   const backedUp = instances.filter((i) => i.backup && i.destinations.length)
   const okCount = backedUp.filter((i) => !stale(i)).length
@@ -165,7 +150,6 @@ export function BackupsPage() {
   const late = backedUp.length - okCount
   const none = instances.filter((i) => i.backup).length - backedUp.length
   const enabled = s?.destinations.filter((d) => d.enabled) ?? []
-  // Failed and late first, then by name as the server sends them, the n8n-ops database last (TB-11).
   const sort = useSort(rows, {
     id: "backups",
     rank: backupRank,
@@ -180,7 +164,6 @@ export function BackupsPage() {
         label: "Daily at",
         kind: "text",
         words: { ascending: "Earliest first", descending: "Latest first" },
-        // The stored 24-hour HH:MM, which orders by the time of day whatever the Time format shows.
         value: (r) => r.backupTime,
       },
     },
@@ -198,7 +181,6 @@ export function BackupsPage() {
         }
       />
       {s && !s.configured && (
-        // The action and the text name what is missing: a destination that is on, the backup key, or both.
         <Locked
           title="Backups are not set up"
           to={enabled.length ? "/settings/keys" : "/settings/destinations"}
@@ -235,8 +217,6 @@ export function BackupsPage() {
         </Locked>
       )}
       {s && (
-        // Beside the reading pane (from 1000px) one row of three that never stacks, so they never push the list
-        // out of sight in its narrow column (FB-17).
         <Kpis row={beside}>
           <Kpi
             label="Backed up on time"
@@ -312,7 +292,6 @@ export function BackupsPage() {
                     }
                   />
                 )
-                // The whole date of the last success, as Occurrences writes it; late is drawn in the warning colour.
                 const lateText = late && !nowhere && "font-semibold text-warn"
                 const lastOk = r.lastOk?.startedAt
                 const tag = nowhere ? (
@@ -331,7 +310,6 @@ export function BackupsPage() {
                       ? "workflows + credential secrets"
                       : "workflows, credentials without secrets"
                 const to = nowhere ? "no destination" : r.destinations.map((d) => d.name).join(", ")
-                // One click starts one run: the button is locked until the request ends (FB-7).
                 const button = (
                   <BusyButton
                     size="sm"
@@ -345,7 +323,6 @@ export function BackupsPage() {
                     {r.lastRun?.status === "running" ? "Running…" : "Run now"}
                   </BusyButton>
                 )
-                // A button that cannot run says why in words beside it, not in a tip (AX-9, FB-1).
                 const runNow =
                   s?.configured &&
                   (!r.backup ? (
@@ -379,8 +356,6 @@ export function BackupsPage() {
                             <Said>Last success</Said>
                             <span className={cn(lateText)}>
                               {lastOk ? (
-                                // The whole date and time, as FullTime writes it; the time goes where the list is
-                                // at its narrowest, so the name keeps its room (index.css).
                                 <time dateTime={isoTime(lastOk)}>
                                   {formatDay(lastOk, w)}
                                   <span data-part="clock">, {formatClock(lastOk, w, { seconds: false })}</span>
@@ -397,7 +372,6 @@ export function BackupsPage() {
                             daily at {formatClockAt(r.backupTime, w)} · {includes} · to {to}
                           </>
                         }
-                        // The age of the last success under its date, as on Occurrences.
                         subEnd={lastOk && <TimeAgo value={lastOk} />}
                         action={runNow || undefined}
                       />
@@ -446,7 +420,6 @@ export function BackupsPage() {
   )
 }
 
-/** Where each copy of a run is, and how it went. */
 function Copies({ copies }: { copies: Copy[] }) {
   const w = useTimeFormat()
   if (!copies.length) return null
@@ -493,10 +466,8 @@ function BackupHistory({ id, name }: { id: string; name: string }) {
         {runs.data && (
           <p className="mt-1 text-muted-foreground">
             {plural(list.length, "run")}
-            {/* Only failures that happened are counted (FW-3). */}
             {list.some((r) => r.status === "failed") &&
               ` · ${n(list.filter((r) => r.status === "failed").length)} failed`}
-            {/* A failed refresh keeps the history on screen and says so here (TB-5, LD-12). */}
             <RefreshNote live={runs} separator=" · " />
           </p>
         )}
@@ -510,7 +481,6 @@ function BackupHistory({ id, name }: { id: string; name: string }) {
           <Empty title="No backups yet.">The first one runs at the daily backup time, or use Run now.</Empty>
         </Panel>
       ) : (
-        // No Sort button (TB-28): the runs of one backup, newest first, read in that order.
         <Table>
           <TableHeader>
             <TableRow>
@@ -599,10 +569,6 @@ function BackupHistory({ id, name }: { id: string; name: string }) {
   )
 }
 
-/**
- * Restores into this instance, newest first (D6): what, how it ended, when and by whom. One whose outcome is unknown
- * is checked in n8n again from here; it is never tried again by itself.
- */
 function RecentRestores({ instanceId }: { instanceId: string }) {
   const path = `/backups/${instanceId}/restores`
   const restores = useApi<RestoreView[]>(path, { refetchInterval: 30_000 })
@@ -611,7 +577,6 @@ function RecentRestores({ instanceId }: { instanceId: string }) {
     failed: "check the restore",
   })
   const list = restores.data ?? []
-  // The restore whose details are open; read from the list, so a refresh shows it as it is now.
   const [openId, setOpenId] = useState<string | null>(null)
   const [opening, setOpening] = useState(0)
   const opened = list.find((r) => r.id === openId) ?? null

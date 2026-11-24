@@ -74,16 +74,12 @@ export type AccessStatus = "pending" | "approved" | "denied" | "expired" | "rele
 
 export type AccessRow = {
   id: string
-  /** Every instance on the request, in the order the agent named them; approvers' additions after. */
   instances: AccessInstance[]
   token: string
   reason: string
-  /** The draft while the request waits (an approver may change it), what was granted once approved. */
   minutes: number
   requestedMinutes: number
-  /** Moves on with every change to the draft; Approve sends the one the person saw. */
   revision: number
-  /** An approver changed what the agent asked for. */
   changed: boolean
   status: AccessStatus
   requestedAt: string
@@ -98,13 +94,10 @@ export type AccessRow = {
   telegramMessageId: number | null
   emailSentAt: string | null
   notifyError: string | null
-  /** What the agent said it did when it released the access; null when it said nothing. */
   summary: string | null
-  /** Every call made with the access; the detail lists every change and the latest of the other calls. */
   callCount: number
 }
 
-/** Who decided and where, as people know them: a Telegram user without the "telegram:" mark, as the messages say. */
 const decidedWhere: Record<string, string> = {
   web: "in n8n-ops",
   telegram: "on Telegram",
@@ -121,17 +114,13 @@ type AccessDetail = AccessRow & {
   calls: {
     id: string
     at: string
-    /** The instance called, by its name; null when it is not known (deleted since). */
     instance: string | null
     method: string
     path: string
-    /** What n8n answered; null for a change sent to n8n whose answer never came. */
     status: number | null
     refused: string | null
-    /** A call sent to n8n with a method that can change it; every one is listed. */
     change: boolean
   }[]
-  /** While the request waits: what the approver may grant on each instance, and other instances to add. */
   editor?: EditorChoices
 }
 
@@ -142,14 +131,12 @@ export function AccessPage() {
   const view = params.get("view") === "all" ? "all" : "open"
   const rows = useApi<AccessRow[]>("/access", { refetchInterval: 30_000 })
   const older = useAccessHistory(rows.data)
-  // A failed refresh keeps the rows; the head says so (TB-5, LD-12).
   const load = loadView(rows)
   const all = older.rows ?? []
   const shown = all.filter((r) => view === "all" || r.status === "pending" || r.status === "approved")
   const waiting = all.filter((r) => r.status === "pending").length
   const active = all.filter((r) => r.status === "approved").length
   const rank = (r: AccessRow) => (r.status === "pending" ? 2 : r.status === "approved" ? 1 : 0)
-  // Waiting for you first, then active, each newest first as the server sends them: Status high to low (TB-11).
   const sort = useSort(shown, {
     id: "access",
     rank: "status",
@@ -168,7 +155,6 @@ export function AccessPage() {
     },
   })
   const scrolls = loadsByScrolling(sort.control.isDefault, sort.control.state)
-  // While older requests may exist, the counts say so: "200+".
   const orMore = older.more ? "+" : ""
   const rowProps = (r: AccessRow) => ({
     "data-state": r.id === id ? "selected" : undefined,
@@ -328,7 +314,6 @@ export function AccessPage() {
       )}
       {view === "all" && load === "ready" && shown.length > 0 && older.full && (
         <p aria-live="polite" className="relative text-center text-small text-muted-foreground">
-          {/* Reaches above the end, so older requests are asked for before the reader gets there. */}
           {scrolls && (
             <span
               ref={older.endRef}
@@ -337,7 +322,6 @@ export function AccessPage() {
             />
           )}
           {older.failed ? (
-            // Try again stays in place while it loads, so the focus stays on it (AX-6).
             <>
               {older.reading ? null : "Could not load older requests. "}
               <TryAgain busy={older.reading} onClick={older.tryAgain} />
@@ -378,22 +362,15 @@ function AccessDetailPanel({ id }: { id: string }) {
   if (detail.error && !detail.data)
     return <LoadError what="this request" error={detail.error} retry={() => detail.refetch()} />
   if (!detail.data) return <Empty title="This request no longer exists." />
-  // Keyed by the request, so the editor of one request never carries over to the next one opened.
   return <AccessDetailView key={detail.data.id} r={detail.data} detail={detail} />
 }
 
-/**
- * The approval editor's state. It starts from the draft and follows it while the person has changed nothing; once
- * they have, a change made elsewhere (in Telegram) does not replace their edits, and Approve waits until they look
- * at it, since the revision sent must be the one the edits were made on.
- */
 function useApprovalEdit(r: AccessDetail) {
   const fresh = useMemo(() => initialEdit(r, r.editor), [r])
   const freshKey = `${r.revision}:${JSON.stringify(fresh)}`
   const [base, setBase] = useState({ key: freshKey, revision: r.revision, edit: fresh })
   const [edit, setEdit] = useState<EditState>(fresh)
   const changed = editChanged(edit, base.edit)
-  // Follows the request while nothing was changed here (adjusting state while rendering, as React documents).
   if (base.key !== freshKey && !changed) {
     setBase({ key: freshKey, revision: r.revision, edit: fresh })
     setEdit(fresh)
@@ -403,9 +380,7 @@ function useApprovalEdit(r: AccessDetail) {
     setEdit,
     base,
     changed,
-    /** The request was changed elsewhere after the person started changing it. */
     stale: changed && base.revision !== r.revision,
-    /** Drops the changes made here; the editor then shows the request as it is now. */
     discard: () => setEdit(base.edit),
   }
 }
@@ -416,7 +391,6 @@ function AccessDetailView({ r, detail }: { r: AccessDetail; detail: ReturnType<t
   const invalidate = ["/access", `/access/${id}`, "/overview", "/overview/summary", "/overview/attention"]
   const label = instanceLabel(r.instances)
   const granted = grantedNames(r.instances)
-  // Toasts name the agent and the instances (FB-4).
   const agent = r.token
   const editing = r.status === "pending" && r.editor !== undefined
   const editor = useApprovalEdit(r)
@@ -450,7 +424,6 @@ function AccessDetailView({ r, detail }: { r: AccessDetail; detail: ReturnType<t
     try {
       await approve.mutateAsync(body)
     } catch (e) {
-      // Changed meanwhile (in Telegram): the toast says so; the editor shows the request as it is now.
       if (e instanceof ApiError && e.code === "request_changed") {
         await detail.refetch()
         editor.discard()
@@ -471,7 +444,6 @@ function AccessDetailView({ r, detail }: { r: AccessDetail; detail: ReturnType<t
             Agent: <UserText>{r.token}</UserText>
           </Badge>
           {r.changed && <Badge variant="line">Changed by an approver</Badge>}
-          {/* A failed refresh keeps the request on screen and says so here (TB-5, LD-12). */}
           <span className="ms-auto text-small">
             <RefreshNote live={detail} small />
           </span>
@@ -521,7 +493,6 @@ function AccessDetailView({ r, detail }: { r: AccessDetail; detail: ReturnType<t
               >
                 Approve
               </BusyButton>
-              {/* A denial is final for this request, so it asks first and the request starts after the answer (DS-20). */}
               <BusyButton
                 icon={X}
                 busy={deny.isPending}
@@ -549,7 +520,6 @@ function AccessDetailView({ r, detail }: { r: AccessDetail; detail: ReturnType<t
             </>
           )}
           {r.status === "approved" && (
-            // It asks first, so the request starts only after the answer (DS-20).
             <BusyButton
               variant="danger"
               icon={Ban}
@@ -632,7 +602,6 @@ function AccessDetailView({ r, detail }: { r: AccessDetail; detail: ReturnType<t
         {r.calls.length === 0 ? (
           <Empty title="No calls yet." />
         ) : (
-          // No Sort button (TB-28): a log of the calls, newest first, read in that order.
           <Table bare>
             <TableHeader>
               <TableRow>
@@ -670,7 +639,6 @@ function AccessDetailView({ r, detail }: { r: AccessDetail; detail: ReturnType<t
   )
 }
 
-/** The workflows of an instance by name, each with its ID to copy; a workflow without a known name shows its ID. */
 function WorkflowList({ i, ids }: { i: Pick<AccessInstance, "workflowNames">; ids: string[] }) {
   return (
     <ul className="grid gap-1">
@@ -687,7 +655,6 @@ function WorkflowList({ i, ids }: { i: Pick<AccessInstance, "workflowNames">; id
   )
 }
 
-/** One instance of a decided request (or of a waiting one that can no longer be changed): what it grants, and what changed. */
 function InstanceGrant({ i }: { i: AccessInstance }) {
   const granted = isGranted(i)
   const notes = instanceNotes(i)
@@ -728,7 +695,6 @@ function InstanceGrant({ i }: { i: AccessInstance }) {
   )
 }
 
-/** What the agent asked for on an instance, in one plain line. */
 function askedLine(i: AccessInstance): string | null {
   if (!i.requested || !i.requestedScopes) return null
   const scopes = i.requestedScopes.join(", ") || "no scopes"
@@ -738,10 +704,6 @@ function askedLine(i: AccessInstance): string | null {
   return `The agent asked for ${scopes} on ${where}.`
 }
 
-/**
- * The editor of a waiting request: the person narrows or widens it before approving, within each instance's
- * policy. Approve sends what is set here; with nothing changed, it approves the request as it stands.
- */
 function ApprovalEditor({
   r,
   choices,
@@ -854,7 +816,6 @@ function ApprovalEditor({
   )
 }
 
-/** One instance in the editor: included or not, its scopes, and the whole instance or only some workflows. */
 function EditorInstance({
   i,
   source,
@@ -1000,7 +961,6 @@ function EditorInstance({
   )
 }
 
-/** Where approvers were told about a waiting request. */
 function Notified({ r }: { r: AccessRow }) {
   const sent = [r.telegramMessageId !== null && "Telegram", r.emailSentAt && "email"].filter(Boolean)
   return (

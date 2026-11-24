@@ -49,9 +49,7 @@ type Token = {
   approvedBy: string | null
 }
 
-/** The agents and scripts that use n8n-ops: how to connect one, the ones connected, and tokens made by hand. */
 export function AgentsPage() {
-  // The same query as the list below (one cache entry): a failed refresh is said under the title (LD-12).
   const tokens = useApi<Token[]>("/admin/tokens")
   return (
     <Page
@@ -67,7 +65,6 @@ export function AgentsPage() {
   )
 }
 
-/** How an agent connects, one tab per kind of agent. Needs agents on and a public URL agents can use. */
 function ConnectCard() {
   const general = useApi<{ publicUrl: string }>("/settings/general")
   const agents = useApi<{ enabled: boolean; idleDays: number }>("/settings/agents")
@@ -207,7 +204,6 @@ function AgentsCard() {
           count={tokens.data ? list.length : undefined}
           description="Each can read n8n-ops; some may also ask for temporary access to an n8n instance, which a person approves each time."
           action={
-            // Also with none connected: it ends codes and approvals still waiting.
             <Button size="sm" variant="danger" disabled={endAll.isPending} onClick={() => void askEndAll()}>
               <Trash2 /> Disconnect all
             </Button>
@@ -220,7 +216,6 @@ function AgentsCard() {
         ) : list.length === 0 ? (
           <Empty title="No agent is connected.">Connect one above; it appears here once you approve it.</Empty>
         ) : (
-          // No Sort button (TB-28): a short list of tokens, in the order they were made.
           <Table bare>
             <TableHeader>
               <TableRow>
@@ -291,16 +286,13 @@ function AgentsCard() {
   )
 }
 
-/** Advanced, and folded away: a long-lived token made by hand, for a program that cannot connect by approval. */
 function HandMadeToken() {
   const [open, setOpen] = useState(false)
   const [name, setName] = useState("")
   const [kind, setKind] = useState<"mcp" | "rest">("mcp")
-  // The kind the dialog opened with: it starts on the kind chosen last time.
   const [openedKind, setOpenedKind] = useState(kind)
   const [canRequestAccess, setCanRequestAccess] = useState(false)
   const [created, setCreated] = useState("")
-  // Until the token is made, anything typed or changed is asked about before it is dropped (DS-9).
   const dirty = !created && (name.trim() !== "" || kind !== openedKind || canRequestAccess)
   const guard = useDiscardGuard(dirty, () => setOpen(false))
   const create = useApiMutation<{ name: string; kind: string; canRequestAccess: boolean }, { token: string }>(
@@ -310,7 +302,6 @@ function HandMadeToken() {
   )
   return (
     <Panel>
-      {/* A native fold (AX-12): the browser gives it its keys and its state; no text is selected on a double click (AX-10). */}
       <details className="group/fold">
         <summary className="flex w-full cursor-pointer list-none items-center gap-2 px-pad-x py-3 text-start font-semibold select-none focus-visible:outline-offset-[-2px] [@media(hover:hover)]:hover:bg-accent [&::-webkit-details-marker]:hidden">
           <ChevronRight

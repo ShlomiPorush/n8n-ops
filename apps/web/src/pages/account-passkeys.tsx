@@ -22,7 +22,6 @@ import { toast } from "@/lib/toast"
 type Passkey = { id: string; name?: string | null; createdAt?: string | Date | null }
 type AuthError = { code?: string; status?: number; message?: string }
 
-/** The sentence for a passkey change that failed. */
 function failure(error: AuthError): string {
   if (error.code === "SESSION_NOT_FRESH") return "Sign in again to add a passkey: your sign-in is more than a day old."
   if (passkeyCancelled(error.code)) return "The passkey prompt was closed or timed out."
@@ -30,10 +29,6 @@ function failure(error: AuthError): string {
   return authErrorText(error)
 }
 
-/**
- * The signed-in person's passkeys: each one signs in alone, in place of the password and the two-factor code. A
- * passkey belongs to the public URL's host name, so the panel says when it cannot be added from this page.
- */
 export function PasskeysPanel() {
   const status = useApi<{ passkeys: string | null }>("/setup/status")
   const block = status.data ? passkeyBlock(status.data.passkeys) : null
@@ -43,7 +38,6 @@ export function PasskeysPanel() {
   const [renaming, setRenaming] = useState<Passkey | null>(null)
   const passkeys = (list.data ?? []) as Passkey[]
 
-  // The button shows how it went (FB-7); the toast says why it failed.
   async function add() {
     let error: AuthError | null = null
     try {
@@ -83,7 +77,6 @@ export function PasskeysPanel() {
         count={list.data ? passkeys.length : undefined}
         description="Sign in with your fingerprint, face or device PIN, in place of the password and the two-factor code."
       />
-      {/* "No passkeys" only from a list that loaded: a failed load is said, with a retry. */}
       {list.error && !list.data ? (
         <LoadError error={list.error} retry={() => void list.refetch()} what="your passkeys" />
       ) : passkeys.length === 0 ? (
@@ -125,7 +118,6 @@ export function PasskeysPanel() {
             {block}
           </p>
         ) : (
-          // The name and its button on one line; on a narrow screen the button goes under the field.
           <form
             onSubmit={(e) => {
               e.preventDefault()

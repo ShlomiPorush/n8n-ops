@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { problemsPath } from "./problems.tsx"
 
-// A Problems list asks the server for its order (TB-4), in the words the server takes (`sort`, `order`).
 describe("problemsPath", () => {
   it("sends no order while none is picked, so the server sends what needs a look first", () => {
     expect(problemsPath({ status: "open" })).toBe("/problems?status=open")

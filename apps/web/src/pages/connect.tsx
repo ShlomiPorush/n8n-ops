@@ -17,11 +17,9 @@ type ConnectRequest = {
   redirect: { host: string; loopback: boolean } | null
   resource: "mcp" | "rest"
   asked: ("ops:read" | "ops:access")[]
-  /** A connection not used for this many days ends (Settings → Agent Connections). */
   idleDays: number
 }
 
-/** The approval page's own API sits under the request's address, where its cookie is sent. */
 async function call<T>(uid: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(`/connect/approve/${encodeURIComponent(uid)}/${path}`, {
     method: body === undefined ? "GET" : "POST",
@@ -30,16 +28,11 @@ async function call<T>(uid: string, path: string, body?: unknown): Promise<T> {
     body: body === undefined ? undefined : JSON.stringify(body),
   })
   const data = await res.json().catch(() => ({}))
-  // The session ended while the page was open: sign in again and come back here.
   if (res.status === 401) sessionEnded(data.reason)
   if (!res.ok) throw new ApiError(res.status, data.error ?? `http_${res.status}`, undefined, data.message)
   return data as T
 }
 
-/**
- * An agent asks to connect (OAuth): the person sees who asks, where the browser goes back to, what it may do
- * and for how long, and approves or denies. The name is the agent's own word; the page says so.
- */
 export function ConnectApprovePage() {
   const { uid = "" } = useParams()
   const request = useQuery({
@@ -50,7 +43,6 @@ export function ConnectApprovePage() {
   const [access, setAccess] = useState(true)
   const [state, setState] = useState<"open" | "busy" | "approved" | "denied">("open")
   const [error, setError] = useState("")
-  // Which answer is being sent, so only its button shows that it is busy (FB-7).
   const [sending, setSending] = useState(true)
 
   async function decide(approve: boolean) {
@@ -85,13 +77,11 @@ export function ConnectApprovePage() {
         r ? (
           <>
             {name} asks to use n8n-ops.
-            {/* Any other failed refresh keeps the request on screen and says so here (TB-5, LD-12). */}
             {!ended && <RefreshNote live={request} separator=" " />}
           </>
         ) : undefined
       }
     >
-      {/* An ended request replaces what is shown; any other failed refresh keeps it (TB-5). */}
       {ended ? (
         <Alert variant="warn">
           <AlertTitle>This request is no longer open</AlertTitle>

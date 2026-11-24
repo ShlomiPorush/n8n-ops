@@ -13,7 +13,6 @@ import {
   SlidersHorizontal,
 } from "lucide-react"
 
-/** The settings sections, grouped as they appear beside the form, in the sidebar flyout and in the picker. */
 export const settingsGroups = [
   {
     label: "Installation",
@@ -56,7 +55,6 @@ const sections: readonly (readonly [string, string])[] = settingsGroups.flatMap(
 
 export const settingsSectionLabel = (section: string): string | undefined => sections.find(([k]) => k === section)?.[1]
 
-/** Each section's icon, drawn by Regular beside its name (#29). */
 export const settingsIcons: Record<SettingsSection, LucideIcon> = {
   general: Globe,
   defaults: SlidersHorizontal,

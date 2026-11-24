@@ -117,11 +117,6 @@ import { cn } from "@/lib/utils"
 
 export type { AffectedRow, ProblemList, ProblemRow, ProblemRowItem, ProblemRows } from "@/lib/problems"
 
-/**
- * The address of a Problems list: its filters and, for the rows, the order picked. The server sorts the rows before
- * it cuts the list at 200, so the order covers every problem (TB-4); with no order picked it sends what needs a look
- * first.
- */
 export function problemsPath(filters: Record<string, string>, order: SortState | null = null): string {
   const query = new URLSearchParams(filters)
   if (order) {
@@ -133,20 +128,12 @@ export function problemsPath(filters: Record<string, string>, order: SortState |
 
 const arrival: SortState = { key: "status", dir: "descending" }
 
-/** The address of the Problems list as rows (one per Affected workflow), with its filters and the order picked. */
 export function problemRowsPath(filters: Record<string, string>, order: SortState | null = null): string {
   return problemsPath(filters, order).replace(/^\/problems\?/, "/problems/rows?")
 }
 
-/** The sections high to low: what needs a look first. */
 const sectionRank: Record<Section, number> = { instance: 5, now: 4, quiet: 3, alerts: 2, muted: 1, resolved: 0 }
 
-/**
- * The order of a Problems list, shared by its headers and its Sort button: `shown` of `useSortOrder`, the order
- * the rows are in, while `asked` of the same `useSortOrder` is sent through `problemRowsPath`. The server sorts every
- * row before it sends the first 200, so the rows are drawn as they came, never sorted again here (TB-4). The keys are
- * the server's sort columns (`problemSortKeys` in services/problem-view.ts).
- */
 export function useProblemsSort(
   rows: ProblemRowItem[],
   order: SortOrder,
@@ -169,7 +156,6 @@ export function useProblemsSort(
   })
 }
 
-/** The workflow a Problem shows, with its latest failure: what broke there, its input and its runs. */
 type Selected = AffectedRow & {
   error: { message?: string; description?: string | null; stack?: string | null; nodeType?: string | null } | null
   nodeInput: unknown[]
@@ -186,14 +172,11 @@ type Selected = AffectedRow & {
   latestFailureId: string | null
 }
 
-/** When a failure ran, as the server orders them: stopped, else started, else when n8n-ops stored it. */
 const ranAt = (f: Selected["occurrences"][number]) => f.stoppedAt ?? f.startedAt ?? f.createdAt
-/** An execution number reads in the text's own font, not as monospace code beside it. */
 const RUN_ID = "font-sans"
 
 type ProblemDetailData = ProblemRow & {
   selected: Selected
-  /** Other Problems at the same target: another reason there, or split off by hand. */
   sameTarget: {
     id: string
     title: string
@@ -204,16 +187,13 @@ type ProblemDetailData = ProblemRow & {
     workflowName: string
     instanceName: string
   }[]
-  /** How many there are in all; `sameTarget` carries the 50 that matter most. */
   sameTargetTotal: number
 }
 
-/** What the raw data window shows: JSON, Loading while the execution is on its way, or why it could not load. */
 type RawView = { json: unknown } | { loading: true } | { failed: unknown }
 
 const statusWords: Record<string, string> = { open: "open", muted: "muted", resolved: "resolved" }
 
-/** The kind of a cause, as a small badge. */
 export function KindBadge({ kind }: { kind: CauseKind | null }) {
   if (!kind) return null
   return (
@@ -223,10 +203,6 @@ export function KindBadge({ kind }: { kind: CauseKind | null }) {
   )
 }
 
-/**
- * What went wrong at a workflow, "target · reason" with its kind, and the line for a known error under it. A row in
- * Your alerts leaves out its kind: its section tag already says it is an alert.
- */
 function CauseLine({ r }: { r: Pick<ProblemRowItem, "title" | "kind" | "hint" | "section"> }) {
   return (
     <>
@@ -245,7 +221,6 @@ function CauseLine({ r }: { r: Pick<ProblemRowItem, "title" | "kind" | "hint" | 
   )
 }
 
-/** A section's icon, in its heading and its figure above the list. */
 export const SECTION_ICONS: Record<Section, LucideIcon> = {
   instance: ServerIcon,
   now: ActivityIcon,
@@ -263,17 +238,11 @@ const TINTS: Record<ToneName, string> = {
   muted: "tint-muted",
 }
 
-/**
- * The heading of a section: a tinted band with the section's icon, its name, how many rows it holds in all (when
- * the list was given the counts) and what it means, so it never reads as one of the list's items.
- */
 function SectionRow({ section, count, columns }: { section: Section; count?: number; columns: number }) {
   const { title, note } = SECTION_TITLES[section]
   const Icon = SECTION_ICONS[section]
   return (
-    // The band takes the whole width of the list, edge to edge like the rows under it, so no panel shows around it.
     <TableRow role="presentation" data-section={section} className="hover:bg-transparent">
-      {/* The cell's own padding, also its first and last cell padding, gives way to the band's (`!`). */}
       <TableCell colSpan={columns} className="p-0! whitespace-normal">
         <div className={cn("px-pad-x py-2.5", TINTS[statusOf("section", section).tone])}>
           <span className="flex items-center gap-2 font-semibold">
@@ -288,10 +257,6 @@ function SectionRow({ section, count, columns }: { section: Section; count?: num
   )
 }
 
-/**
- * The tag that names the section a row sits in ("Quiet 3 d" with its age), and Regression or New beside it. The
- * age moves on by itself, also in a list that is not refreshed.
- */
 function SectionTag({ r, stacked = false }: { r: ProblemRowItem; stacked?: boolean }) {
   useTick()
   const status = problemStatus(r)
@@ -305,7 +270,6 @@ function SectionTag({ r, stacked = false }: { r: ProblemRowItem; stacked?: boole
       {statusOf("problem", status).label}
     </Badge>
   )
-  // In a table's Status column the second tag goes under the first, so the column stays as narrow as one tag.
   if (stacked)
     return (
       <span className="flex flex-col items-start gap-1">
@@ -321,13 +285,11 @@ function SectionTag({ r, stacked = false }: { r: ProblemRowItem; stacked?: boole
   )
 }
 
-/** When a quiet row may close by itself ("Auto-closes in ~4 d", then "Closing soon"), moving on by itself. */
 function Closes({ at }: { at: string }) {
   useTick()
   return <>{closesText(at)}</>
 }
 
-/** " · same cause in 3 workflows" when the same cause hit other workflows too; after a Merge, that it was merged. */
 const alsoIn = (r: ProblemRowItem) =>
   r.problemTotal <= 1
     ? ""
@@ -335,10 +297,6 @@ const alsoIn = (r: ProblemRowItem) =>
       ? ` · ${plural(r.problemTotal, "workflow")} merged by hand`
       : ` · same cause in ${plural(r.problemTotal, "workflow")}`
 
-/**
- * The Problems list, one row per workflow at one node with one cause (docs/adr/0003): where it broke, what went
- * wrong there, and how often. In the server's default order it reads in sections.
- */
 export function ProblemsTable({
   rows,
   selected,
@@ -353,26 +311,15 @@ export function ProblemsTable({
   counts,
 }: {
   rows: ProblemRowItem[]
-  /** The Problem open beside the list, and the workflow it shows. */
   selected?: { problemId: string; workflow?: string | null }
-  /** Opens a Problem on one of its workflows. */
   onOpen: (problemId: string, workflow: string) => void
-  /** The address of a row, for the list that opens its first item by itself. */
   href?: (problemId: string, workflow: string) => string
   showInstance?: boolean
   empty?: string
-  /** Inside a panel that has its own header. */
   bare?: boolean
-  /** Each row as an item of a few lines, for a list beside a reading pane. */
   items?: boolean
-  /** The list's order (`useProblemsSort`), which its Sort button shares. Without it the rows come as given. */
   sort?: Sorting<ProblemRowItem>
-  /** In the order the server sends by default: with a heading before each section. */
   sections?: boolean
-  /**
-   * How many rows each section holds in all, which its heading shows. Without them (a preview of a few rows) the
-   * headings show no count, as one of the rows on screen would not be the section's.
-   */
   counts?: SectionCounts
 }) {
   if (rows.length === 0) {
@@ -390,11 +337,8 @@ export function ProblemsTable({
     onClick: () => onOpen(r.problemId, r.id),
   })
   const columns = items ? 1 : showInstance ? 6 : 5
-  // Headings only over rows that are in the order of the sections: rows of another order kept while the default
-  // one loads are not.
   const rank = (r: ProblemRowItem) => SECTION_ORDER.indexOf(r.section)
   const inSections = sections && list.every((r, i) => i === 0 || rank(list[i - 1] as ProblemRowItem) <= rank(r))
-  /** The rows, with a heading before each section, in the order the server sent them. */
   const withHeadings = (draw: (r: ProblemRowItem) => React.ReactNode) =>
     list.map((r, i) => (
       <Fragment key={r.id}>
@@ -434,7 +378,6 @@ export function ProblemsTable({
                   </>
                 }
                 subEnd={
-                  // A quiet row's age is in its tag; what is left to know is when it closes by itself.
                   r.section === "quiet" && r.closesAt ? (
                     <Closes at={r.closesAt} />
                   ) : (
@@ -507,7 +450,6 @@ export function ProblemsTable({
   )
 }
 
-/** A section's rows in the count line and the empty list: "2 quiet rows", "No failing problems." */
 const SECTION_WORDS: Record<OpenSection, string> = {
   instance: "runner",
   now: "failing",
@@ -515,10 +457,6 @@ const SECTION_WORDS: Record<OpenSection, string> = {
   alerts: "alert",
 }
 
-/**
- * A figure for each open section above the list: how many rows it holds, what it means, and a link that shows that
- * section alone, or all of them again. The instance's own problems show only when there are some.
- */
 function SectionFigures({
   counts,
   chosen,
@@ -529,15 +467,12 @@ function SectionFigures({
   link: (s: OpenSection | null) => string
 }) {
   return (
-    // Tabs on the list's top edge, one line each, so the rows stay in sight, also beside the reading pane (FB-17).
-    // What a section holds is said by its heading in the list.
     <FigureTabs label="Sections">
       {OPEN_SECTIONS.filter((s) => s !== "instance" || counts.instance > 0 || chosen === s).map((s) => {
         const tone = statusOf("section", s).tone
         return (
           <FigureTab
             key={s}
-            // "Instance", as its rows' tag says: the whole title does not fit four figures beside the pane.
             label={s === "instance" ? statusOf("section", s).label : SECTION_TITLES[s].title}
             value={counts[s]}
             tone={counts[s] > 0 && (tone === "fail" || tone === "warn") ? tone : undefined}
@@ -557,12 +492,8 @@ export function ProblemsPage() {
   const status = params.get("status") ?? "open"
   const instance = params.get("instance") ?? "all"
   const q = params.get("q") ?? ""
-  // One open section, chosen by its figure above the list; it applies to the Open view only.
   const asked = params.get("section")
   const section = status === "open" && isOpenSection(asked) ? asked : null
-  // The order is asked of the server, so it covers every problem and not only the 200 sent (TB-4). An order whose
-  // rows failed to come leaves the rows, the headers and the Sort button in the order before it, and the filter
-  // line says so.
   const order = useSortOrder("problems")
   const filters = {
     status,
@@ -571,8 +502,6 @@ export function ProblemsPage() {
     ...(section ? { section } : {}),
   }
   const rows = useApi<ProblemRows>(problemRowsPath(filters, order.asked), { refetchInterval: 15_000, keepRows: true })
-  // A failed refresh keeps the rows and the head says so; new filters that failed keep the previous rows and the
-  // filter line says so (TB-5, LD-12).
   const view = loadView(rows)
   const shownOrder = order.shown(rows)
   const sort = useProblemsSort(rows.data?.items ?? [], shownOrder)
@@ -581,11 +510,9 @@ export function ProblemsPage() {
     const next = new URLSearchParams(params)
     if (v && !(k === "instance" && v === "all")) next.set(k, v)
     else next.delete(k)
-    // A section is a part of the open problems: another status leaves it.
     if (k === "status") next.delete("section")
     setParams(next, { replace: true })
   }
-  /** The list cut to one section, or to all of them again, with the other filters kept. */
   const sectionLink = (s: OpenSection | null) => {
     const next = new URLSearchParams(params)
     if (s) next.set("section", s)
@@ -593,14 +520,12 @@ export function ProblemsPage() {
     const search = next.toString()
     return search ? `?${search}` : "?"
   }
-  // The list's filters go with an opened problem, its open tab and workflow do not: each opening starts afresh.
   const listSearch = withoutTab(params)
   const at = (pid: string, workflow?: string) => problemPath(pid, listSearch, workflow)
   const open = (pid: string, workflow?: string) => navigate(at(pid, workflow))
   const shown = rows.data?.items.length
   const total = rows.data?.total ?? 0
   const filtered = instance !== "all" || q !== "" || section !== null
-  // "All" shows every status; the words then name no status. A section names its rows: "quiet problems".
   const what = section ? SECTION_WORDS[section] : statusWords[status]
   const noun = [what, "problems"].filter(Boolean).join(" ")
 
@@ -614,7 +539,6 @@ export function ProblemsPage() {
       <FilterBar
         views={{
           label: "Status",
-          // A short picker after the search, as the other filters are, not toggles in front of them.
           menu: true,
           value: status,
           onChange: (v) => setParam("status", v),
@@ -647,8 +571,6 @@ export function ProblemsPage() {
         count={
           shown === undefined ? undefined : (
             <>
-              {/* New filters that failed keep the previous rows, and this line says so instead of a count (TB-5).
-                  Above 200 it counts them all: "200 of 1,240 open problems" (TB-18). */}
               {rows.previous !== "failed" && countOf(shown, total, [what, "row"].filter(Boolean).join(" "))}
               <RefreshNote live={rows} what={noun} small />
             </>
@@ -666,7 +588,6 @@ export function ProblemsPage() {
             : undefined
         }
       />
-      {/* What each open section holds, on the top edge of the rows they came with; none when nothing is open. */}
       <div className="grid min-w-0">
         {status === "open" && rows.data?.sections && (section || OPEN_SECTIONS.some((s) => rows.data?.sections[s])) && (
           <SectionFigures counts={rows.data.sections} chosen={section} link={sectionLink} />
@@ -689,8 +610,6 @@ export function ProblemsPage() {
               onOpen={open}
               href={at}
               items={items}
-              // In the order that puts what needs a look first, the list reads in sections (docs/adr/0003): the
-              // order the rows are in, so a new order that failed to load leaves them as they were.
               sections={shownOrder[0] === null}
               empty={
                 rows.previous === "failed"
@@ -700,7 +619,6 @@ export function ProblemsPage() {
                     : `No ${noun}.`
               }
             />
-            {/* The list holds the first 200 in its order; the count line counts them all (TB-18). */}
             {shown !== undefined && shown < total && rows.previous !== "failed" && (
               <p className="px-pad-x pt-2 text-small text-muted-foreground">
                 Showing the first {n(shown)} in this order. Search or filter to find the others.
@@ -722,7 +640,6 @@ export function ProblemsPage() {
   )
 }
 
-/** The list's search without the workflow a Problem showed. */
 function withoutWorkflow(search: string) {
   const p = new URLSearchParams(search)
   p.delete("workflow")
@@ -738,21 +655,11 @@ function flatten(value: unknown): [string, string][] {
   ])
 }
 
-/*
- * The problem pane is split into tabs (components/pane-tabs.tsx). A Problem in one workflow reads as it always did:
- * what broke and where on one screen (Overview), the input, the runs and other problems at the same target one click away. A
- * Problem in several workflows opens on its Affected workflows; a row there chooses the workflow the other tabs show.
- */
-/*
- * Three figures share the pane's width, so in a narrow pane a card has no room for an icon beside its figure (the
- * icon only illustrates) and the figure is a size smaller, smaller again with less padding in a narrower one. On a
- * phone they go two to a line and the third takes the whole line (MO-8, kit.tsx Kpis).
- */
 const kpisInPane = cn(
   "grid-cols-3 max-md:grid-cols-2",
   "@max-[52rem]/pane:**:data-[slot=kpi-icon]:hidden!",
   "regular:@min-[36rem]/pane:@max-[52rem]/pane:**:data-[slot=kpi-figure]:text-h1",
-  // Regular's own rule for a figure in words (kit.tsx) is more specific than a plain one: both designs say it.
+  // One class without a design prefix would lose to Kpi's regular:text-h1, and Regular's figure would not shrink.
   "compact:@max-[36rem]/pane:**:data-[slot=kpi-figure]:text-h2",
   "regular:@max-[36rem]/pane:**:data-[slot=kpi-figure]:text-h2",
   "regular:@max-[36rem]/pane:gap-2 regular:@max-[36rem]/pane:**:data-[slot=kpi]:p-3",
@@ -774,11 +681,6 @@ export function ProblemDetail({ id }: { id: string }) {
   useCrumb(detail.data ? problemTitle(detail.data) : undefined)
   const w = useTimeFormat()
   const [raw, setRaw] = useState<RawView | null>(null)
-  /*
-   * Each opening of the raw data window owns the load it started: a new opening or a close aborts it, and its
-   * answer or failure is dropped once aborted, so a late answer never reopens a closed window or fills a newer
-   * one (DS-6).
-   */
   const rawLoad = useRef<AbortController | null>(null)
   const showRaw = (view: RawView | null) => {
     rawLoad.current?.abort()
@@ -797,11 +699,6 @@ export function ProblemDetail({ id }: { id: string }) {
     }
   }
   useEffect(() => () => rawLoad.current?.abort(), [])
-  /*
-   * An old address (a workflow's id from before Problems spanned workflows, an old Telegram button, a merged
-   * Problem) answers with the Problem it is in now: the address becomes the Problem's own, with that workflow
-   * chosen, before anything acts on it.
-   */
   const canonical = detail.data?.id
   const chosen = detail.data?.selected.id
   useEffect(() => {
@@ -824,9 +721,7 @@ export function ProblemDetail({ id }: { id: string }) {
     )
   }, [gone, workflow, setParams])
   const [merging, setMerging] = useState(false)
-  // Merge is opened from a menu item that is gone once the dialog closes: the focus goes back to the menu's button.
   const more = useRef<HTMLButtonElement>(null)
-  // Toasts name the problem by its workflow, or by its error when it hit several (FB-4), read when the request ends.
   const named = () => (detail.data ? clipped(problemTitle(detail.data)) : "the problem")
   const target = canonical ?? id
   const resolve = useProblemAction(target, "resolve", named)
@@ -845,7 +740,6 @@ export function ProblemDetail({ id }: { id: string }) {
   const s = p.selected
   const first = s.nodeInput[0]
   const latest = s.occurrences[0]
-  /** Chooses the workflow the Overview, Input and Occurrences show, and opens its Overview. */
   const choose = (aw: string) =>
     setParams((prev) => {
       const next = new URLSearchParams(prev)
@@ -873,7 +767,6 @@ export function ProblemDetail({ id }: { id: string }) {
       label: "Occurrences",
       count: { value: s.count, tone: "plain" as const },
     },
-    // Only when the same target failed for another reason, or a workflow was split off by hand.
     ...(p.sameTarget.length > 0
       ? [
           {
@@ -895,7 +788,6 @@ export function ProblemDetail({ id }: { id: string }) {
     </Button>
   ) : null
 
-  /** In a Problem of several workflows, which one the tab shows, and the way back to all of them. */
   const showing = single ? null : (
     <Panel>
       <p className="flex flex-wrap items-center gap-x-2 gap-y-1 px-pad-x py-pad-y">
@@ -939,12 +831,10 @@ export function ProblemDetail({ id }: { id: string }) {
               </span>
             </>
           )}
-          {/* A failed refresh keeps the problem on screen and says so here (TB-5, LD-12). */}
           <span className="ms-auto text-small">
             <RefreshNote live={detail} small />
           </span>
         </div>
-        {/* The title comes first; the actions sit beside it, or below it in a narrow pane. */}
         <div className="grid gap-2 @min-[40rem]/pane:grid-cols-[minmax(0,1fr)_auto] @min-[40rem]/pane:gap-x-2.5">
           <h2 className={cn("text-title", !single && "line-clamp-2 break-words")}>
             <UserText>{single ? s.workflowName : p.title}</UserText>
@@ -966,7 +856,6 @@ export function ProblemDetail({ id }: { id: string }) {
                 {single ? "Mark resolved" : "Resolve all"}
               </BusyButton>
             )}
-            {/* A muted problem has its way back where Mute was (FB-11). */}
             {p.status === "muted" ? (
               <BusyButton
                 key="unmute"
@@ -991,7 +880,6 @@ export function ProblemDetail({ id }: { id: string }) {
               </BusyButton>
             ) : null}
             {single && openInN8n}
-            {/* Not modal: the dialog that Merge opens would otherwise find the page still locked. */}
             <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild>
                 <Button ref={more} size="sm" aria-label="More actions">
@@ -1006,8 +894,6 @@ export function ProblemDetail({ id }: { id: string }) {
             </DropdownMenu>
           </div>
         </div>
-        {/* What went wrong in the workflow shown (docs/adr/0003): its cause, a line for a known error, why the
-            Problem's workflows are grouped, and n8n's own text. */}
         <div className="grid gap-1.5 rounded-sm bg-fill px-3 py-2">
           <p className="flex min-w-0 flex-wrap items-center gap-2">
             <KindBadge kind={s.kind} />
@@ -1027,7 +913,6 @@ export function ProblemDetail({ id }: { id: string }) {
           )}
           <p className="font-mono text-small break-words text-muted-foreground">{s.errorMessage}</p>
         </div>
-        {/* n8n's description, when the cause line above does not say it already. */}
         {single && s.error?.description && !s.title.includes(s.error.description) && (
           <p className="text-muted-foreground">{s.error.description}</p>
         )}
@@ -1143,7 +1028,6 @@ export function ProblemDetail({ id }: { id: string }) {
             <FlowGraph nodes={s.graph} />
           </Panel>
           {latest && (
-            // The run itself opens from the header (Open in n8n); this line says which one that is.
             <Panel>
               <p className="flex flex-wrap items-center gap-x-2 gap-y-1 px-pad-x py-pad-y">
                 <HistoryIcon aria-hidden className="size-4 text-muted-foreground" />
@@ -1184,7 +1068,6 @@ export function ProblemDetail({ id }: { id: string }) {
                 Show input and stack as JSON
               </Button>
               {s.latestFailureId && (
-                // The window opens at once and fills in when the execution arrives (DS-17).
                 <Button variant="link" onClick={() => s.latestFailureId && void loadExecution(s.latestFailureId)}>
                   Show full execution
                 </Button>
@@ -1210,7 +1093,6 @@ export function ProblemDetail({ id }: { id: string }) {
                 Failures older than "Keep failed executions" were removed. The count still includes them.
               </Empty>
             ) : (
-              // No Sort button (TB-28): the latest runs, newest first, are all this list is for.
               <Table bare items>
                 <ItemsHeader label="Execution" />
                 <TableBody>
@@ -1235,7 +1117,6 @@ export function ProblemDetail({ id }: { id: string }) {
                             )}
                           </span>
                         }
-                        // The pane has room for the whole time, and the age says how recent at a glance.
                         end={
                           <span className="font-normal text-muted-foreground">
                             <FullTime value={ranAt(o)} />
@@ -1300,7 +1181,6 @@ export function ProblemDetail({ id }: { id: string }) {
           {raw && "loading" in raw ? (
             <Loading>Loading the execution…</Loading>
           ) : raw && "failed" in raw ? (
-            // A failure is said in words in the same window, with the server's reason (DS-17, FB-3).
             <LoadError
               what="the execution"
               error={raw.failed}
@@ -1318,11 +1198,6 @@ export function ProblemDetail({ id }: { id: string }) {
   )
 }
 
-/** The actions of one Affected workflow: its own Resolve, Mute and Reopen, and Split. */
-/**
- * An old link to a Problem that the regroup by cause split up (docs/adr/0003): where its workflows went. It takes no
- * action of its own.
- */
 function Regrouped({ body }: { body?: Record<string, unknown> }) {
   const went = (Array.isArray(body?.problems) ? body.problems : []) as {
     id: string
@@ -1377,7 +1252,6 @@ function WorkflowActions({ problem, row }: { problem: ProblemDetailData; row: Af
     },
   )
   const run = (action: () => Promise<unknown>) => () => void action().catch(() => {})
-  // The workflow split away is no longer this Problem's: the page shows the Problem's own choice again.
   const splitOff = async () => {
     await split.mutateAsync()
     setParams((prev) => {
@@ -1388,7 +1262,6 @@ function WorkflowActions({ problem, row }: { problem: ProblemDetailData; row: Af
     })
   }
   return (
-    // Not modal, like the pane's own menu.
     <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
         <Button size="sm" variant="ghost" aria-label={`Actions for ${row.workflowName}`}>
@@ -1433,12 +1306,9 @@ function MergeDialog({
   problem: ProblemDetailData
   open: boolean
   onOpenChange: (o: boolean) => void
-  /** Where the focus goes when the dialog closes: what opened it may be gone (a menu item). */
   returnFocus: React.RefObject<HTMLElement | null>
 }) {
   const navigateOut = useNavigateFromOverlay()
-  // Any other Problem, in any state and on any instance: Merge is also the way back after a Split. The server
-  // searches them all.
   const [find, setFind] = useState("")
   const candidates = useApi<ProblemList>(open ? problemsPath({ status: "all", ...(find ? { q: find } : {}) }) : null, {
     keepRows: true,
@@ -1504,7 +1374,6 @@ function MergeDialog({
             busyLabel="Merging…"
             run={async () => {
               await merge.mutateAsync({ into })
-              // The problem merged into takes the dialog's Back entry, so Back returns to this one (DS-10).
               navigateOut(`/problems/${into}`)
               onOpenChange(false)
             }}

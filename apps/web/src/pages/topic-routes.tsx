@@ -7,19 +7,13 @@ import { Input } from "@/components/ui/input"
 import { useApi } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
-/** One route as the form holds it: every field as typed. */
 export type RouteRow = { instanceId: string; workflow: string; tag: string; threadId: string }
 
-/** The first route Save refuses: the field to mark and focus, and what is wrong, as "route 2: …". */
 export type RouteIssue = { id: string; message: string }
 
 const ANY = "any"
 const blank: RouteRow = { instanceId: "", workflow: "", tag: "", threadId: "" }
 
-/**
- * The routes in the form are one JSON text, so the save bar counts an edit or a new order as a change and Discard
- * and a refresh restore them like any other field.
- */
 export const routesToForm = (routes: unknown) =>
   JSON.stringify(
     (Array.isArray(routes) ? routes : []).map(
@@ -41,7 +35,6 @@ const parse = (text: unknown): RouteRow[] => {
   }
 }
 
-/** The routes to save. Empty fields are left out; the server reads them as not set. */
 export const routesFromForm = (text: unknown) =>
   parse(text).map((r) => ({
     ...(r.instanceId.trim() ? { instanceId: r.instanceId.trim() } : {}),
@@ -50,7 +43,6 @@ export const routesFromForm = (text: unknown) =>
     threadId: Number(r.threadId),
   }))
 
-/** What Save refuses in one route, in the server's words; null when it can be saved. */
 function rowIssue(r: RouteRow, n: number): RouteIssue | null {
   const at = (field: string, message: string) => ({ id: `route-${n}-${field}`, message: `route ${n}: ${message}` })
   if (!r.instanceId && !r.workflow.trim() && !r.tag.trim()) return at("instance", routeWords.condition)
@@ -62,7 +54,6 @@ function rowIssue(r: RouteRow, n: number): RouteIssue | null {
   return topic ? at("topic", topic) : null
 }
 
-/** The first route Save refuses, or null (SV-1). */
 export const routesProblem = (text: unknown): RouteIssue | null => {
   const rows = parse(text)
   for (const [i, r] of rows.entries()) {
@@ -72,10 +63,6 @@ export const routesProblem = (text: unknown): RouteIssue | null => {
   return null
 }
 
-/**
- * The ordered list of topic routes in Settings > Telegram: the first route that matches an alert wins. A route
- * Save refused is marked, with what is wrong under it, until the routes are edited.
- */
 export function TopicRoutes({
   id,
   value,
@@ -83,7 +70,6 @@ export function TopicRoutes({
   disabled,
   issue,
 }: {
-  /** The id of Add route, where the search brings the focus. */
   id: string
   value: unknown
   onChange: (text: string) => void
@@ -123,7 +109,6 @@ export function TopicRoutes({
           ]
           return (
             <li
-              // Index keys: the rows are plain values, so a moved row's fields move with it.
               // biome-ignore lint/suspicious/noArrayIndexKey: see above
               key={i}
               className={cn("grid gap-2 rounded-md border p-3", marked ? "border-fail" : "border-line")}
@@ -220,7 +205,6 @@ export function TopicRoutes({
         })}
       </ol>
       <div>
-        {/* aria-disabled, not disabled, so the search can still bring the focus here when the list is full. */}
         <Button
           id={id}
           onClick={() => write([...rows, blank])}

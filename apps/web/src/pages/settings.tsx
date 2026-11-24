@@ -64,7 +64,6 @@ import { DatabaseSection } from "@/pages/database"
 import { DestinationsSection } from "@/pages/destinations"
 import { routesFromForm, routesProblem, routesToForm, TopicRoutes } from "@/pages/topic-routes"
 
-/** What the two designs are; the same words in both apps. */
 const designHint =
   "How the console looks, for everyone. Both have the same pages and functions: Regular has white cards, icons and the Inter typeface; Compact fits more on each screen. It changes as soon as you save."
 
@@ -88,9 +87,7 @@ export type FieldDef = {
     | "topic"
     | "routes"
   placeholder?: string
-  /** The switch this field only matters with: while it is off, the field stays in place, greyed out (FS-4). */
   needs?: string
-  /** An address or a server: it gets Clear instead of Changed and Reset to default (FS-6). */
   clear?: boolean
 }
 
@@ -112,7 +109,6 @@ export const forms: Record<string, { title: string; description: string; fields:
         hint: "For report and backup schedules and every time shown here. Search by city, region or offset.",
         type: "timezone",
       },
-      // How every date and time is written, here and in emails (FW-9, EM-6); numbers only, never month names.
       {
         name: "dateFormat",
         label: "Date format",
@@ -360,7 +356,6 @@ export const forms: Record<string, { title: string; description: string; fields:
 
 const weekdays = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
 
-/** What each section is for, under its title. Forms take theirs from their definition. */
 const sectionDescriptions: Record<string, string> = {
   keys: "Keys that protect backups and the secrets n8n-ops stores.",
   database:
@@ -369,10 +364,8 @@ const sectionDescriptions: Record<string, string> = {
     "Where encrypted backups are written: S3, a folder on this server, SFTP or WebDAV. Each keeps its own retention. Instances use the default destinations unless they choose others.",
 }
 
-/** The section last open, so Settings reopens where it was left during this visit (NL-4). */
 let lastSection = "general"
 
-/** The save bar area that holds a section's unsaved changes. */
 const draftOf = (section: string) => (section === "destinations" ? "backup-settings" : `settings-${section}`)
 const sectionKeys: string[] = settingsGroups.flatMap((g) => g.items.map(([k]) => k))
 
@@ -382,18 +375,14 @@ export function SettingsPage() {
   const unsaved = useUnsavedIds()
   const label = section ? settingsSectionLabel(section) : undefined
   useCrumb(label)
-  // Backup Storage became Backup Destinations; links to the old section still arrive.
   if (section === "storage") return <Navigate to="/settings/destinations" replace />
   if (!section || !label) return <Navigate to={`/settings/${lastSection}`} replace />
   lastSection = section
   const holds = (k: string) => unsaved.has(draftOf(k))
-  // Changes are kept across the sections (SV-1): a section that holds some stays mounted, out of sight, after
-  // the one shown, so the shown one is drawn as before.
   const mounted = [section, ...sectionKeys.filter((k) => k !== section && holds(k))]
   return (
     <Page title="Settings" description="How n8n-ops reaches you, where backups go, and who may use its API.">
       <div className="grid items-start gap-gap min-[1024px]:grid-cols-[212px_minmax(0,1fr)] min-[1024px]:gap-7">
-        {/* Below 1024px the section list is one sticky picker (FS-10). */}
         <label className="sticky top-0 z-20 -mt-1 bg-bg py-2 min-[1024px]:hidden">
           <span className="sr-only">Settings category</span>
           <span className="relative block">
@@ -433,7 +422,6 @@ export function SettingsPage() {
                 >
                   <SectionIcon section={k} />
                   {l}
-                  {/* A section holding unsaved changes is marked (SV-1). */}
                   {holds(k) && (
                     <span
                       role="img"
@@ -447,12 +435,7 @@ export function SettingsPage() {
             </div>
           ))}
         </nav>
-        {/*
-         * Regular draws the section as one card with its title inside (#29); the forms in it lose their own
-         * card and the rows their lines.
-         */}
         <div className="grid min-w-0 max-w-3xl gap-gap regular:content-start regular:gap-0 regular:self-start regular:overflow-hidden regular:rounded-lg regular:bg-panel regular:shadow-card regular:ring-1 regular:ring-ink/10 regular:[&>section]:rounded-none regular:[&>section]:shadow-none regular:[&>section]:ring-0 regular:[&>section+section]:border-t regular:[&>section+section]:border-line">
-          {/* Each section opens with a large title and one paragraph about what it is for (FS-8). */}
           <div
             data-slot="settings-head"
             className="grid gap-1.5 regular:gap-1 regular:px-pad-x regular:pt-6 regular:pb-2"
@@ -481,10 +464,6 @@ export function SettingsPage() {
   )
 }
 
-/**
- * A settings row: the label and its explanation at the start, the control at the end. A wide control takes
- * its own line under the label and starts at the start of it, like the text.
- */
 export function SettingRow({
   htmlFor,
   label,
@@ -502,19 +481,12 @@ export function SettingRow({
   label: React.ReactNode
   hint?: React.ReactNode
   children: React.ReactNode
-  /** The control takes a full line under the label (long values). */
   wide?: boolean
-  /** A switch: the whole row is its label, and it stays at the end of the row, also on a phone (FS-1). */
   inline?: boolean
-  /** The value differs from its default: a Changed mark beside the label (FS-6). */
   changed?: boolean
-  /** Where the value comes from, such as the environment, under the explanation (FS-6). */
   note?: React.ReactNode
-  /** Reset to default or Clear, under the explanation (FS-6). */
   action?: React.ReactNode
-  /** What is wrong with the value, under the row; the control is marked with it (SV-1). */
   problem?: string
-  /** Why the field does nothing now: it stays in place, greyed out and out of reach (FS-4). */
   off?: string
 }) {
   const head = (
@@ -539,13 +511,11 @@ export function SettingRow({
       {off ? <div className="opacity-50">{head}</div> : head}
       {note && <span className="mt-0.5 block text-small text-muted-foreground">{note}</span>}
       {off && <span className="mt-0.5 block text-small text-muted-foreground">{off}</span>}
-      {/* A switch row draws its action once, outside its label (below). */}
       {action && !off && !inline && <span className="mt-1 block">{action}</span>}
     </div>
   )
   if (inline)
     return (
-      // The action sits outside the label, so pressing it never flips the switch.
       <div data-setting-row className="border-t border-line regular:border-t-0">
         <label
           htmlFor={htmlFor}
@@ -571,7 +541,6 @@ export function SettingRow({
       {text}
       <div
         inert={off ? true : undefined}
-        // Says to tools what inert already does: the field is inactive, so its dimmed label is exempt from contrast.
         aria-disabled={off ? true : undefined}
         className={cn("flex min-w-0 items-center gap-2", !wide && "md:justify-end", off && "opacity-50")}
       >
@@ -586,10 +555,8 @@ export function SettingRow({
   )
 }
 
-/** The id of the note that says what is wrong with a field, for its `aria-describedby`. */
 const problemId = (field: string) => `${field}-problem`
 
-/** A small text button under a setting's explanation: Reset to default in the info colour, or Clear (FS-6). */
 function RowAction({ children, onClick, clear }: { children: React.ReactNode; onClick: () => void; clear?: boolean }) {
   return (
     <button
@@ -605,10 +572,6 @@ function RowAction({ children, onClick, clear }: { children: React.ReactNode; on
   )
 }
 
-/**
- * A setting chosen in the search: once its section has drawn, its row comes into view, its field takes the
- * focus and the row flashes for a moment (SR-6). The request is then cleared, so a reload does not repeat it.
- */
 function useRevealField(ready: boolean) {
   const location = useLocation()
   const navigate = useNavigate()
@@ -628,10 +591,6 @@ function useRevealField(ready: boolean) {
   }, [field, ready, navigate])
 }
 
-/**
- * What a section's answer carries beside its values: defaults, number ranges, values from the environment. A
- * locked value from the environment cannot be changed here; the others stand in while nothing is stored.
- */
 type Meta = {
   defaults?: Record<string, unknown>
   limits?: Record<string, NumberLimits>
@@ -639,10 +598,6 @@ type Meta = {
 }
 const metaOf = (data: Record<string, unknown> | undefined) => (data?.meta ?? {}) as Meta
 
-/**
- * Form values as loaded. A secret is `undefined` until the user replaces or removes it, and then not sent. A value
- * the environment provides while none is stored shows as empty, so no save stores it (FS-6).
- */
 export const toForm = (def: { fields: FieldDef[] }, data: Record<string, unknown>) =>
   Object.fromEntries(
     def.fields.map((f) => {
@@ -658,10 +613,6 @@ export const toForm = (def: { fields: FieldDef[] }, data: Record<string, unknown
 
 const text = (v: unknown) => (v === null || v === undefined ? "" : String(v).trim())
 
-/**
- * The form's values with what is typed in a list's Add field and not yet a chip, as leaving the field would add
- * it. The save bar counts, checks and saves these, so typed text alone is a change (SV-1).
- */
 export function withPending(values: Record<string, unknown>, pending: Record<string, string>) {
   const out = { ...values }
   for (const [name, typed] of Object.entries(pending))
@@ -669,7 +620,6 @@ export function withPending(values: Record<string, unknown>, pending: Record<str
   return out
 }
 
-/** How many fields differ from how they were loaded (SV-1); a secret counts while it is replaced or removed. */
 export function changeCount(
   def: { fields: FieldDef[] },
   values: Record<string, unknown>,
@@ -683,11 +633,9 @@ export function changeCount(
   )
 }
 
-/** Whether a field differs from how it was loaded, compared as the save bar counts it (SV-2). */
 const fieldChanged = (values: Record<string, unknown>, initial: Record<string, unknown>, name: string) =>
   text(values[name]) !== text(initial[name])
 
-/** What is wrong with a field's value, in words that follow its label; null when it is fine (SV-1, SV-12). */
 export function fieldProblem(
   section: string,
   f: FieldDef,
@@ -701,7 +649,6 @@ export function fieldProblem(
   return kind ? valueProblem(kind, value) : null
 }
 
-/** Whether a value differs from its default: numbers as numbers, an empty time zone as UTC (FS-6). */
 export function differsFromDefault(f: FieldDef, value: unknown, fallback: unknown) {
   if (f.type === "number") return text(value) === "" || Number(value) !== Number(fallback)
   if (f.type === "switch") return Boolean(value) !== Boolean(fallback)
@@ -709,7 +656,6 @@ export function differsFromDefault(f: FieldDef, value: unknown, fallback: unknow
   return text(value) !== text(fallback)
 }
 
-/** The default as Reset names it: "60", "On", "Sunday", "Regular", "24-hour" (FS-6). */
 export function defaultText(f: FieldDef, fallback: unknown) {
   if (f.type === "switch") return fallback ? "On" : "Off"
   if (f.type === "weekday") return weekdays[Number(fallback)] ?? String(fallback)
@@ -719,11 +665,6 @@ export function defaultText(f: FieldDef, fallback: unknown) {
   return text(fallback) || "(empty)"
 }
 
-/**
- * Under Date format and Time format: now, written as the form's choices and time zone write it, before they are
- * saved (FW-9). Polite, so a screen reader hears the new example after a change; it is not redrawn on a timer,
- * which would announce it again and again.
- */
 export function formatExample(f: FieldDef, values: Record<string, unknown>): React.ReactNode {
   if (f.type !== "date-format" && f.type !== "time-format") return undefined
   const draft = writingOf({
@@ -739,7 +680,6 @@ export function formatExample(f: FieldDef, values: Record<string, unknown>): Rea
   )
 }
 
-/** Settings with a default worth naming get Changed and Reset; secrets, lists and addresses do not (FS-6). */
 const resettable = (f: FieldDef, fallback: unknown) =>
   fallback !== undefined &&
   fallback !== "" &&
@@ -748,10 +688,6 @@ const resettable = (f: FieldDef, fallback: unknown) =>
   f.type !== "password" &&
   f.type !== "list"
 
-/**
- * Whether the SMTP host, port, user or encryption really differs from the stored one: case and spaces in the host,
- * spaces in the user and "587" against 587 do not count. The server checks the same.
- */
 export const smtpServerChanged = (stored: Record<string, unknown>, next: Record<string, unknown>) => {
   const account = (v: Record<string, unknown>) =>
     JSON.stringify([
@@ -766,43 +702,30 @@ export const smtpServerChanged = (stored: Record<string, unknown>, next: Record<
   return account(stored) !== account(next)
 }
 
-/** The note under a field the environment sets and this page cannot change. */
 export const lockedNote = (variable: string) => `Set by ${variable}.`
 
-/**
- * One section's form. It stays mounted while another section shows and it holds unsaved changes, so they are kept
- * across the sections and one save bar saves them all (SV-1); `active` is false while it is out of sight. Before
- * a save its changed fields are checked; a field that fails is marked and named, and nothing is sent.
- */
 export function SettingsForm({ section, active = true }: { section: string; active?: boolean }) {
   const def = forms[section]
   const navigate = useNavigate()
   const query = useApi<Record<string, unknown>>(`/settings/${section}`)
   useRevealField(!query.isLoading && active)
-  // Fields that failed their check, with what is wrong (SV-1); editing a field, Discard or a save clears its mark.
   const [problems, setProblems] = useState<Record<string, string>>({})
-  // What is typed in a list's Add field and not yet a chip, by field: a change of its own (SV-1).
   const [pending, setPending] = useState<Record<string, string>>({})
-  // Moves on with each save that stored or removed a secret, so a test of the one before no longer counts (SV-5).
   const [secretsSaved, secretSaved] = useReducer((n: number) => n + 1, 0)
   const shown = useRef(active)
   shown.current = active
-  // The save bar says what failed, naming the section (SV-3).
   const save = useApiMutation<Record<string, unknown>, { signedOut?: boolean }>("PUT", `/settings/${section}`, {
     invalidate: [`/settings/${section}`, "/setup/checklist"],
     quiet: true,
   })
   const meta = metaOf(query.data)
-  // A secret is compared as it is: its empty field (`""`) or its removal (null) is not the same as leaving it alone.
   const differs = (a: unknown, b: unknown, name: string) =>
     def?.fields.some((f) => f.name === name && f.type === "password") ? a !== b : text(a) !== text(b)
   const form = useEdits(query.data && def ? toForm(def, query.data) : undefined, query.dataUpdatedAt, differs)
   const { values, stored: initial } = form
-  // What Save would send: the values with the typed text that is not yet a chip.
   const current = withPending(values, pending)
   const count = query.data && def ? changeCount(def, current, initial) : 0
 
-  /** The switch a field waits for, while it is off (FS-4). */
   const offOf = (f: FieldDef) => (f.needs && !values[f.needs] ? f.needs : null)
 
   function body() {
@@ -810,14 +733,10 @@ export function SettingsForm({ section, active = true }: { section: string; acti
     for (const f of def?.fields ?? []) {
       const v = current[f.name]
       if (f.type === "password") {
-        // An unchanged secret is never sent again; null removes it.
         if (v !== initial[f.name] && (v === null || (typeof v === "string" && v))) out[f.name] = v
         continue
       }
-      // Only what changed is sent, so a save never writes a value it did not change, such as one that comes
-      // from the environment (FS-6).
       if (!fieldChanged(current, initial, f.name)) continue
-      // A field whose switch is off is not checked; a value it cannot take is left unsent (FS-4).
       if (offOf(f) && fieldProblem(section, f, v, meta.limits)) continue
       if (f.type === "number") out[f.name] = Number(v)
       else if (f.type === "topic") out[f.name] = text(v) ? Number(text(v)) : null
@@ -828,7 +747,6 @@ export function SettingsForm({ section, active = true }: { section: string; acti
     return out
   }
 
-  /** Puts the focus in a field, opening this section first when another one is shown (SV-1). */
   function reveal(name: string) {
     if (!shown.current) navigate(`/settings/${section}`)
     whenDrawn(
@@ -843,7 +761,6 @@ export function SettingsForm({ section, active = true }: { section: string; acti
     )
   }
 
-  /** Checks every changed field and marks those that fail (SV-1). */
   function check(): FieldProblem[] {
     if (!def || !query.data) return []
     const found: Record<string, string> = {}
@@ -852,8 +769,6 @@ export function SettingsForm({ section, active = true }: { section: string; acti
       const problem = fieldProblem(section, f, current[f.name], meta.limits)
       if (problem) found[f.name] = problem
     }
-    // The stored SMTP password is never sent to another server: a new host, port, user or encryption needs it
-    // again, unless it is being removed (FS-5). The field opens for it.
     const password = values.smtpPassword
     if (
       section === "email" &&
@@ -870,7 +785,6 @@ export function SettingsForm({ section, active = true }: { section: string; acti
     return def.fields
       .filter((f) => f.name in found)
       .map((f) => {
-        // A refused route takes the focus to its own field.
         const at = f.type === "routes" ? (routesProblem(current[f.name])?.id ?? f.name) : f.name
         return { label: f.label, problem: found[f.name] ?? "", id: f.name, reveal: () => reveal(at) }
       })
@@ -888,7 +802,6 @@ export function SettingsForm({ section, active = true }: { section: string; acti
       try {
         answer = await save.mutateAsync(sent)
       } catch (e) {
-        // A field the server refused is marked like one the check found (SV-1).
         if (e instanceof ApiError && e.issues?.length) {
           const names = new Set(def?.fields.map((f) => f.name))
           setProblems(
@@ -900,15 +813,11 @@ export function SettingsForm({ section, active = true }: { section: string; acti
         throw e
       }
       setProblems({})
-      // Only after a successful save; a failed one keeps the edits (SV-3). What was sent stands as stored, typed text
-      // as part of its list; a secret is never kept on the page.
       const names = def?.fields.filter((f) => f.type !== "password" && f.name in sent).map((f) => f.name) ?? []
       form.saved(Object.fromEntries(names.map((k) => [k, current[k]])))
       setPending({})
       if (def?.fields.some((f) => f.type === "password" && f.name in sent)) secretSaved()
-      // A new design shows at once, without a reload.
       if (section === "general") afterGeneralSave(sent)
-      // Longer sign-in limits signed out the other sessions (Sign-in Security); said only when one was.
       if (answer?.signedOut) return { note: "Your other sessions were signed out." }
     },
     discard: () => {
@@ -927,7 +836,6 @@ export function SettingsForm({ section, active = true }: { section: string; acti
     })
   }
 
-  /** Where a value comes from and what puts it back (FS-6): the environment, Clear, or Changed with Reset. */
   function source(f: FieldDef) {
     const value = values[f.name]
     const env = meta.env?.[f.name]
@@ -963,14 +871,12 @@ export function SettingsForm({ section, active = true }: { section: string; acti
 
   return (
     <Panel hidden={!active}>
-      {/* A failed refresh keeps the form and what is typed in it, and says so above it (TB-5, LD-12, SV-1). */}
       <RefreshLine live={query} />
       {loadView(query) === "failed" ? (
         <LoadError what={def.title} error={query.error} retry={() => query.refetch()} />
       ) : loadView(query) === "loading" ? (
         <Loading>Loading the {def.title} settings…</Loading>
       ) : (
-        // Locked while a save is on its way, so nothing typed meanwhile is lost when the saved values come back.
         <fieldset disabled={save.isPending} className="contents">
           {def.fields.map((f) => {
             const problem = problems[f.name]
@@ -980,12 +886,10 @@ export function SettingsForm({ section, active = true }: { section: string; acti
             }
             const needs = offOf(f)
             const env = meta.env?.[f.name]
-            // A refused route is marked in the list, with its problem under it.
             const routeIssue = f.type === "routes" && problem ? routesProblem(values[f.name]) : null
             return (
               <SettingRow
                 key={f.name}
-                // The routes are several fields; their label names the list, not one of them.
                 htmlFor={f.type === "routes" || f.type === "channels" ? undefined : f.name}
                 label={f.label}
                 hint={f.hint}
@@ -1032,7 +936,6 @@ export function SettingsForm({ section, active = true }: { section: string; acti
                     <ToggleGroupItem value="compact">Compact</ToggleGroupItem>
                   </ToggleGroup>
                 ) : f.type === "time-format" ? (
-                  // Three short choices are a segmented control (FS-14).
                   <ToggleGroup
                     type="single"
                     segmented
@@ -1100,7 +1003,6 @@ export function SettingsForm({ section, active = true }: { section: string; acti
                 ) : (
                   <Input
                     id={f.name}
-                    // Times are typed as 24-hour HH:MM; a native time field would follow the browser's 12-hour clock.
                     type={f.type === "number" ? "number" : "text"}
                     inputMode={f.type === "time" || f.type === "topic" ? "numeric" : undefined}
                     placeholder={f.type === "time" ? "HH:MM" : (env?.value ?? f.placeholder)}
@@ -1137,13 +1039,8 @@ const tests = {
   },
 } as const
 
-/** A Telegram test that Telegram took, but in General: the default topic on screen is deleted or closed. */
 const topicGoneText = "The default topic was not found, so the test message went to General"
 
-/**
- * What a test sends: the values on screen, saved or not (FS-19). A secret goes only when it is typed, or as null
- * while it is being removed; otherwise the server uses the stored one, and only for the server it was stored for.
- */
 export function testDraft(section: keyof typeof tests, values: Record<string, unknown>): Record<string, unknown> {
   const secret = (name: string) => {
     const v = values[name]
@@ -1163,11 +1060,6 @@ export function testDraft(section: keyof typeof tests, values: Record<string, un
   }
 }
 
-/**
- * What a test result belongs to (SV-5): the values it sends, and how many times a secret was saved since the form
- * opened. A stored secret is left out of what is sent, so without the count a test of the password before a
- * replacement would still read Accepted once the new one is saved and the field is empty again.
- */
 export function testIdentity(section: keyof typeof tests, values: Record<string, unknown>, secretsSaved: number) {
   return JSON.stringify({ draft: testDraft(section, values), secretsSaved })
 }
@@ -1182,10 +1074,8 @@ type TestView =
   | { kind: "testing" }
   | { kind: "accepted"; detail?: string; at: number }
   | { kind: "failed"; message: string; at: number }
-  /** The values on screen are not the ones the last test ran with, changed during it or after it. */
   | { kind: "changed" }
 
-/** What to show beside the test button for the values on screen now, named by `testIdentity` (FS-19, SV-5). */
 export function testView(
   test: { isPending: boolean; data?: TestOutcome; variables?: { identity: string } },
   identity: string,
@@ -1203,7 +1093,6 @@ export function testView(
   return { kind: "accepted", detail, at: data.at }
 }
 
-/** What a test still needs on screen before it can run, or null (FB-1). */
 export function testMissing(
   section: keyof typeof tests,
   draft: Record<string, unknown>,
@@ -1218,11 +1107,6 @@ export function testMissing(
     : "the SMTP server and a recipient"
 }
 
-/**
- * A section's connection test. It sends the values on screen without saving them and shows the last result
- * beside the button: Accepted or the failure in words, with the time (SV-5). The result belongs to the values it
- * tested and to the stored secrets of then: after a change or a saved secret it says so instead (`testView`).
- */
 function TestRow({
   section,
   data,
@@ -1232,7 +1116,6 @@ function TestRow({
   section: keyof typeof tests
   data: Record<string, unknown>
   values: Record<string, unknown>
-  /** How many saves stored or removed a secret since the form opened (`testIdentity`). */
   secretsSaved: number
 }) {
   const t = tests[section]
@@ -1240,11 +1123,9 @@ function TestRow({
   const draft = testDraft(section, values)
   const identity = testIdentity(section, values, secretsSaved)
   const missing = testMissing(section, draft, data)
-  // What is on screen when an answer comes, which may differ from what the test sent or a secret saved meanwhile.
   const latest = useRef(identity)
   latest.current = identity
   const test = useMutation({
-    // Offline it fails at once, instead of waiting for the connection to come back.
     networkMode: "always",
     mutationFn: async (sent: { identity: string; draft: Record<string, unknown> }): Promise<TestOutcome> => {
       try {
@@ -1264,12 +1145,10 @@ function TestRow({
     },
   })
   async function run() {
-    // An answer to values changed meanwhile says nothing more (SV-5).
     const unchanged = () => latest.current === identity
     const outcome = await test.mutateAsync(
       { identity, draft },
       {
-        // Passed here, it is not called once the form is gone: the answer has nothing to show then.
         onSuccess: (outcome) => {
           if (!unchanged()) return
           if (!outcome.ok) toast.error(`${t.failed}: ${outcome.message}`)
@@ -1301,7 +1180,6 @@ function TestRow({
   )
 }
 
-/** The last test's result for the values on screen (SV-5). */
 function TestResult({ view, dates }: { view: TestView; dates: DateWriting }) {
   if (view.kind === "accepted" || view.kind === "failed")
     return (
@@ -1329,7 +1207,6 @@ function KeysCard() {
   const keys = useApi<{ backupRecipient: string | null; privateKeySavedAt: string | null }>("/admin/keys")
   const [rotate, setRotate] = useState(false)
   const [privateKey, setPrivateKey] = useState("")
-  // Each says what failed in a toast and rejects, so its button shows that it failed (FB-7).
   async function generate() {
     try {
       const res = await api<{ privateKey: string }>("/admin/keys/backup", { method: "POST" })
@@ -1362,7 +1239,6 @@ function KeysCard() {
   }
   return (
     <Panel>
-      {/* A failed refresh keeps what is shown and says so above it (TB-5, LD-12). */}
       <RefreshLine live={keys} />
       {loadView(keys) === "failed" ? (
         <LoadError what="the keys" error={keys.error} retry={() => keys.refetch()} />

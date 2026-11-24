@@ -78,10 +78,8 @@ type MapData = {
   }
 }
 
-/** Error rate above which a workflow's failures stand out (percent of its runs in 30 days). */
 const ERROR_RATE_FAIL = 3
 
-/** "12 workflows · 2 duplicated · 3 inactive", without a kind that has none (FW-3). */
 export function mapSummary(workflows: number, duplicated: number, inactive: number): string {
   const kinds = counts(
     [
@@ -93,7 +91,6 @@ export function mapSummary(workflows: number, duplicated: number, inactive: numb
   return kinds ? `${plural(workflows, "workflow")} · ${kinds}` : plural(workflows, "workflow")
 }
 
-/** The share of runs that failed in 30 days; without runs a muted "-", not 0% (FB-8). */
 function ErrorRateCell({ rate, errors, runs }: { rate: number | null; errors: number; runs: number }) {
   if (rate === null)
     return (
@@ -116,7 +113,6 @@ function ErrorRateCell({ rate, errors, runs }: { rate: number | null; errors: nu
   )
 }
 
-/** Regular: the insight panels are summary cards whose lines run without rules (#29). */
 const summary = "regular:pb-3 regular:[&>:not(header)]:border-t-0 regular:[&>:not(header)]:py-2"
 
 export function WorkflowsPage() {
@@ -131,11 +127,8 @@ export function WorkflowsPage() {
   }
   const query = new URLSearchParams({ ...(q ? { q } : {}), ...(instance !== "all" ? { instance } : {}) })
   const data = useApi<MapData>(`/workflows?${query}`, { keepRows: true })
-  // A failed refresh keeps the rows and the head says so; new filters that failed keep the previous rows and the
-  // filter line says so (TB-5, LD-12).
   const view = loadView(data)
   const instances = useApi<{ instances: PickedInstance[] }>("/instances")
-  // Moving needs Move workflows chosen on both instances; a workflow elsewhere has no Move.
   const movable = new Set(activeWith(instances.data?.instances, "move").map((i) => i.id))
   const sync = useApiMutation<void>("POST", "/workflows/sync", {
     invalidate: [`/workflows?${query}`],
@@ -250,7 +243,6 @@ export function WorkflowsPage() {
         count={
           data.data ? (
             <>
-              {/* New filters that failed keep the previous rows, and this line says so instead of a count (TB-5). */}
               {data.previous !== "failed" && plural(rows.length, "workflow")}
               <RefreshNote live={data} what="these workflows" small />
             </>
@@ -372,19 +364,15 @@ type Preview = {
   blockers: string[]
 }
 
-/** Give it a new key for each opening: it starts empty, and an answer to an earlier one does not land on it. */
 function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClose: () => void }) {
   const instances = useApi<{ instances: PickedInstance[] }>(workflow ? "/instances" : null)
   const [target, setTarget] = useState("")
   const [preview, setPreview] = useState<Preview | null>(null)
   const [steps, setSteps] = useState<{ step: string; ok: boolean; detail?: string }[] | null>(null)
   const [error, setError] = useState("")
-  // The socket proxy refused what the worker had to do: the lines that allow it, shown in the dialog.
   const [fix, setFix] = useState<ProxyFix | null>(null)
   const [busy, setBusy] = useState(false)
-  // A chosen target is asked about before it is dropped, until the move has run (DS-9).
   const guard = useDiscardGuard(workflow !== null && !steps && target !== "", onClose)
-  // A move runs once and is not called off; its result shows when it ends.
   const moving = busy && preview !== null && !steps
   async function act(fn: () => Promise<void>) {
     setBusy(true)
@@ -536,7 +524,6 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
                       "/workflows/moves",
                       {
                         method: "POST",
-                        // What the review shows, also when another target was picked while it was being made.
                         json: {
                           sourceId: preview.source.id,
                           targetId: preview.target.id,

@@ -461,6 +461,88 @@ describe("a failed execution", () => {
   })
 })
 
+describe("more new failures than one poll reads", () => {
+  /** n8n with the error executions 101 to `top`, newest first, its cursor naming the last one given. */
+  async function behind(top: number) {
+    const polled = await newInstance(`behind-${randomBytes(3).toString("hex")}`)
+    await ctx.db
+      .update(instances)
+      .set({ firstSyncDone: true, executionCursor: "100" })
+      .where(eq(instances.id, polled.id))
+    const tag = randomBytes(3).toString("hex")
+    const n8n = { top, requests: 0, failAt: 0 }
+    vi.stubGlobal("fetch", async (url: string) => {
+      n8n.requests += 1
+      const before = Number(new URL(url).searchParams.get("cursor") ?? n8n.top + 1)
+      if (n8n.failAt >= before - 50 && n8n.failAt < before) return new Response("boom", { status: 500 })
+      const ids = Array.from({ length: 50 }, (_, i) => before - 1 - i).filter((id) => id > 0)
+      // Each hundred is a workflow of its own, so the oldest failures are Affected workflows of their own too.
+      const data = ids.map((id) => execution(String(id), `wf-${tag}-${Math.floor(id / 100)}`, "N", `Behind (${tag})`))
+      return new Response(JSON.stringify({ data, nextCursor: ids.at(-1) === 1 ? null : String(ids.at(-1)) }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    })
+    const row = async () => {
+      const [r] = await ctx.db.select().from(instances).where(eq(instances.id, polled.id))
+      if (!r) throw new Error("no instance")
+      return r
+    }
+    const poll = async () => pollInstance(alertingCtx(), await row())
+    const storedIds = async () =>
+      (await ctx.db.select().from(failures).where(eq(failures.instanceId, polled.id)))
+        .map((f) => Number(f.executionId))
+        .sort((a, b) => a - b)
+    const alerts = async () =>
+      ctx.db
+        .select({ affectedWorkflowId: alertOutbox.affectedWorkflowId })
+        .from(alertOutbox)
+        .innerJoin(affectedWorkflows, eq(alertOutbox.affectedWorkflowId, affectedWorkflows.id))
+        .where(eq(affectedWorkflows.instanceId, polled.id))
+    return { n8n, row, poll, storedIds, alerts }
+  }
+  const from101 = (to: number) => Array.from({ length: to - 100 }, (_, i) => 101 + i)
+
+  it("the next polls read the older ones, each stored and alerted once, at most ten pages a poll", async () => {
+    const { n8n, row, poll, storedIds, alerts } = await behind(1250)
+    expect(await poll()).toEqual({ read: 500, silent: false })
+    expect(n8n.requests).toBe(10)
+    expect(await row()).toMatchObject({ executionCursor: "100", lastPollError: null })
+    // Failures that come meanwhile wait until the older ones are read.
+    n8n.top = 1300
+    expect(await poll()).toEqual({ read: 500, silent: false })
+    expect(await poll()).toEqual({ read: 150, silent: false })
+    expect(n8n.requests).toBe(24)
+    expect(await row()).toMatchObject({ executionCursor: "1250" })
+    expect(await storedIds()).toEqual(from101(1250))
+    expect(await poll()).toEqual({ read: 50, silent: false })
+    expect(await row()).toMatchObject({ executionCursor: "1300" })
+    expect(await storedIds()).toEqual(from101(1300))
+    const queued = (await alerts()).map((a) => a.affectedWorkflowId)
+    expect(queued).toHaveLength(13)
+    expect(new Set(queued).size).toBe(13)
+  })
+
+  it("starts again at the newest after a page fails, loses none and stores none twice", async () => {
+    const { n8n, row, poll, storedIds, alerts } = await behind(800)
+    expect(await poll()).toEqual({ read: 500, silent: false })
+    n8n.failAt = 200
+    await expect(poll()).rejects.toThrow()
+    expect(await row()).toMatchObject({ executionCursor: "100" })
+    // A failure newer than all of these is read although the older page still fails.
+    n8n.top = 801
+    expect(await poll()).toEqual({ read: 500, silent: false })
+    expect(await storedIds()).toContain(801)
+    n8n.failAt = 0
+    await poll()
+    expect(await row()).toMatchObject({ executionCursor: "801" })
+    expect(await storedIds()).toEqual(from101(801))
+    const queued = (await alerts()).map((a) => a.affectedWorkflowId)
+    expect(queued).toHaveLength(8)
+    expect(new Set(queued).size).toBe(8)
+  })
+})
+
 type Content = { message?: string; description?: string; input?: Record<string, unknown> }
 
 /** A failed execution at node N whose message, description and input item are the given ones. */

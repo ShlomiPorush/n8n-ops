@@ -346,6 +346,15 @@ cat ${WORK}.tar`,
   }
 }
 
+/** The parser's own message quotes the text around a fault, here a decrypted secret. */
+function parseCredentials(stdout: Buffer): { id: string }[] {
+  try {
+    return JSON.parse(stdout.toString()) as { id: string }[]
+  } catch {
+    throw new Error("n8n wrote a file that is not JSON. Try again.")
+  }
+}
+
 /** Decrypted credentials for a move or an export. Returned to the server over HTTPS and never written to disk here. */
 export async function exportCredentialsJob(docker: Docker, payload: Record<string, unknown>): Promise<JobResult> {
   const where = await jobContainer(docker, payload)
@@ -357,15 +366,22 @@ export async function exportCredentialsJob(docker: Docker, payload: Record<strin
     }
   const { container, fields } = where
   try {
+    // n8n says only in its log that it has no credentials, and the instance's own settings may keep that elsewhere.
     const res = await run(
       docker,
       container,
-      `n8n export:credentials --all --decrypted --output=${WORK}.json >/dev/null 2>&1 || true; cat ${WORK}.json 2>/dev/null || echo "[]"`,
+      `rm -f ${WORK}.json && N8N_LOG_OUTPUT=console N8N_LOG_LEVEL=error N8N_LOG_FORMAT=text n8n export:credentials --all --decrypted --output=${WORK}.json >&2 && cat ${WORK}.json`,
     )
-    let credentials = JSON.parse(res.stdout.toString().trim() || "[]") as { id: string }[]
+    const none = res.exitCode !== 0 && emptyExport(res.stderr, "")
+    // What n8n printed stays here: the error is stored and shown, and the export handles decrypted secrets.
+    if (res.exitCode !== 0 && !none)
+      throw new Error(
+        `n8n export:credentials failed in ${container} (exit code ${res.exitCode}). Run it there to see why, then try again.`,
+      )
+    const all = none ? [] : parseCredentials(res.stdout)
     const ids = payload.ids as string[] | null
-    if (ids?.length) credentials = credentials.filter((c) => ids.includes(c.id))
-    return { ok: true, result: { credentials } }
+    const credentials = ids?.length ? all.filter((c) => ids.includes(c.id)) : all
+    return { ok: true, result: { credentials, empty: all.length === 0 } }
   } catch (error) {
     const refused = refusalOf(error, container)
     const swapped = replaced(error, where, "export")

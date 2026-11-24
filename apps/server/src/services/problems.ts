@@ -329,17 +329,27 @@ async function joinableProblem(tx: Tx, textFingerprint: string): Promise<Problem
 
 /** Upper bound of executions read on the first, silent sync of an instance. */
 export const FIRST_SYNC_LIMIT = 2000
+/** Upper bound of executions one later poll reads; the next poll goes on from there. */
+const POLL_LIMIT = 500
+
+/**
+ * Where the next poll of an instance goes on when more failures waited than one poll reads: n8n's cursor of the next
+ * older page, and the newest execution read. Lost on a restart: that poll starts at the newest again, and a failure
+ * already stored changes nothing.
+ */
+const unfinished = new Map<string, { page: string; newest: string | null }>()
 
 /**
  * Reads new error executions of one instance (requirement B1). The first sync is silent (B6). The cursor is saved
- * only after the whole loop: pages come newest first, so saving it after one page would skip the older ones for good
- * when a later page fails.
+ * only once everything newer than the saved one was read: pages come newest first, so saving it earlier would skip
+ * the older ones for good.
  */
 export async function pollInstance(ctx: Ctx, instance: Instance) {
   const client = clientFor(ctx, instance)
   const silent = !instance.firstSyncDone
-  let cursor: string | undefined
-  let newest = instance.executionCursor
+  const goOn = unfinished.get(instance.id)
+  let cursor = goOn?.page
+  let newest = goOn?.newest ?? instance.executionCursor
   let read = 0
   let stop = false
   try {
@@ -354,16 +364,26 @@ export async function pollInstance(ctx: Ctx, instance: Instance) {
         await ingestExecution(ctx, instance, execution, { silent })
         read++
       }
-      if (!page.nextCursor || read >= (silent ? FIRST_SYNC_LIMIT : 500)) break
-      cursor = page.nextCursor
+      cursor = page.nextCursor ?? undefined
+      if (!cursor || read >= (silent ? FIRST_SYNC_LIMIT : POLL_LIMIT)) break
     }
+    const next = silent || stop ? undefined : cursor
     await ctx.db
       .update(instances)
-      .set({ executionCursor: newest, firstSyncDone: true, lastPollAt: new Date(), lastPollError: null })
+      .set({
+        ...(next ? {} : { executionCursor: newest }),
+        firstSyncDone: true,
+        lastPollAt: new Date(),
+        lastPollError: null,
+      })
       .where(eq(instances.id, instance.id))
+    if (next) unfinished.set(instance.id, { page: next, newest })
+    else unfinished.delete(instance.id)
     if (read > 0) changed(ctx, "problems", "overview", "instances")
     return { read, silent }
   } catch (error) {
+    // The next poll starts at the newest: a page n8n cannot give must not keep newer failures from being read.
+    unfinished.delete(instance.id)
     await ctx.db
       .update(instances)
       .set({ lastPollAt: new Date(), lastPollError: storableText((error as Error).message).slice(0, 500) })

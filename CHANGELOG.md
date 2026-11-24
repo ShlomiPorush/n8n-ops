@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Fixed
+
+- **A move stops when its credentials could not be read.** When n8n failed to export its credentials, the Worker reported an empty list, or a file an earlier run had left, as a success; the workflow was then created and activated on the target with the source's credential IDs, and the source was switched off. A failed export is now a failure, and a move that did not receive every credential the workflow uses stops before it creates, activates or switches off anything and names the missing ones, also with a Worker of an earlier release. The credential download fails as well instead of giving an empty file. An instance without credentials downloads an empty list as before; its Worker must be of this release, since an earlier one does not say whether an empty list is n8n's own answer. Update the Workers to get the export's own error instead of the list of missing credentials.
+- **A verified backup copy is never deleted or marked as failed by an error that comes after it.** On a copy's last attempt, a database error while it was being recorded, its alert cleared, old copies removed or the run ended removed the verified archive and counted the copy as failed.
+- **More than 500 new failures between two polls are all read.** A poll still reads at most 500, newest first, and the next polls now go on with the older ones instead of skipping them.
+
 ## [0.19.3] - 2026-11-22
 
 ### Changed

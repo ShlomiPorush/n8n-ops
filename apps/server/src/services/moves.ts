@@ -2,6 +2,7 @@ import { hasCapability, unsupportedVersionText } from "@n8n-ops/shared"
 import { eq } from "drizzle-orm"
 import type { Ctx } from "../context.ts"
 import { instances, moves, workerJobs } from "../db/schema.ts"
+import type { N8nWorkflow } from "../n8n/client.ts"
 import { jobTarget, usableWorker } from "./backups.ts"
 import { can, clientFor, effectiveScopes, type Instance, unsupportedVersion } from "./instances.ts"
 import { jobProxyFix, type ProxyFix } from "./proxy-fix.ts"
@@ -29,8 +30,15 @@ export function credentialExportRefusal(instance: Instance): string | null {
   return `Credentials of ${instance.name} are exported only for Move workflows or a backup through its worker. Add one of them to its capabilities.`
 }
 
-/** Decrypted credentials of an instance, read by its worker with n8n's CLI. Kept in memory only. */
-export async function exportCredentials(ctx: Ctx, instance: Instance, ids?: string[]): Promise<ExportedCredential[]> {
+/**
+ * Decrypted credentials of an instance, read by its worker with n8n's CLI: all of them, or every one of `wanted`.
+ * Kept in memory only.
+ */
+export async function exportCredentials(
+  ctx: Ctx,
+  instance: Instance,
+  wanted?: { id: string; name: string }[],
+): Promise<ExportedCredential[]> {
   const refusal = credentialExportRefusal(instance)
   if (refusal) throw new Error(refusal)
   const worker = await usableWorker(ctx, instance)
@@ -44,7 +52,7 @@ export async function exportCredentials(ctx: Ctx, instance: Instance, ids?: stri
     ctx,
     worker.id,
     "export-credentials",
-    { ...jobTarget(instance), ids: ids ?? null },
+    { ...jobTarget(instance), ids: wanted?.map((c) => c.id) ?? null },
     instance.id,
   )
   const outcome = await waitForJob(job.id)
@@ -78,7 +86,20 @@ export async function exportCredentials(ctx: Ctx, instance: Instance, ids?: stri
     .update(workerJobs)
     .set({ result: { credentials: credentials.length } })
     .where(eq(workerJobs.id, job.id))
-  return ids ? credentials.filter((c) => ids.includes(c.id)) : credentials
+  if (!wanted) {
+    // A worker of an earlier release answers a failed export with an empty list, and never says `empty`.
+    if (!credentials.length && outcome.result?.empty !== true)
+      throw new Error(
+        `The worker of ${instance.name} returned no credentials and did not say that n8n has none, so the export may have failed. Update the worker and try again.`,
+      )
+    return credentials
+  }
+  const missing = wanted.filter((w) => !credentials.some((c) => c.id === w.id))
+  if (missing.length)
+    throw new Error(
+      `The worker of ${instance.name} did not return these credentials: ${missing.map((c) => c.name).join(", ")}. Check that they still exist in n8n and that the worker is up to date, then try again.`,
+    )
+  return credentials.filter((c) => wanted.some((w) => w.id === c.id))
 }
 
 async function load(ctx: Ctx, id: string) {
@@ -88,6 +109,13 @@ async function load(ctx: Ctx, id: string) {
 }
 
 const join = (base: string, path: string) => `${base.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`
+
+function usedCredentials(workflow: Pick<N8nWorkflow, "nodes">) {
+  const creds = workflow.nodes.flatMap((n) =>
+    Object.entries(n.credentials ?? {}).map(([type, c]) => ({ id: c.id ?? "", name: c.name ?? type, type })),
+  )
+  return [...new Map(creds.map((c) => [c.id, c])).values()].filter((c) => c.id)
+}
 
 /** What a move will do and break, shown before every move (requirement F3). */
 export async function previewMove(ctx: Ctx, input: { sourceId: string; targetId: string; workflowId: string }) {
@@ -110,10 +138,6 @@ export async function previewMove(ctx: Ctx, input: { sourceId: string; targetId:
       }
     })
   const calls = calledWorkflowIds(workflow)
-  const creds = workflow.nodes.flatMap((n) =>
-    Object.entries(n.credentials ?? {}).map(([type, c]) => ({ id: c.id ?? "", name: c.name ?? type, type })),
-  )
-  const unique = [...new Map(creds.map((c) => [c.id, c])).values()].filter((c) => c.id)
   const worker = await usableWorker(ctx, source)
   const blockers: string[] = []
   if (!hasCapability("move", effectiveScopes(target), Boolean(target.workerId)))
@@ -126,7 +150,7 @@ export async function previewMove(ctx: Ctx, input: { sourceId: string; targetId:
     target: { id: target.id, name: target.name },
     webhooks,
     callsWorkflows: calls,
-    credentials: unique,
+    credentials: usedCredentials(workflow),
     credentialsWithSecrets: Boolean(worker),
     blockers,
   }
@@ -163,21 +187,17 @@ export async function runMove(
   }
   try {
     const workflow = await from.getWorkflow(input.workflowId)
+    const used = usedCredentials(workflow)
     const idMap = new Map<string, string>()
-    if (preview.credentials.length) {
+    if (used.length) {
       if (preview.credentialsWithSecrets) {
-        const exported = await exportCredentials(
-          ctx,
-          source,
-          preview.credentials.map((c) => c.id),
-        )
-        for (const cred of exported) {
+        for (const cred of await exportCredentials(ctx, source, used)) {
           const created = await to.createCredential({ name: cred.name, type: cred.type, data: cred.data })
           idMap.set(cred.id, created.id)
           steps.push({ step: `Credential ${cred.name} created`, ok: true, detail: created.id })
         }
       } else {
-        const names = preview.credentials.map((c) => c.name).join(", ")
+        const names = used.map((c) => c.name).join(", ")
         steps.push({
           step: "Credentials not copied",
           ok: false,

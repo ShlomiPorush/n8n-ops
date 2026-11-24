@@ -1,3 +1,4 @@
+import { setTimeout as sleep } from "node:timers/promises"
 import { and, asc, eq, inArray, isNotNull, isNull, lt, lte, or, sql } from "drizzle-orm"
 import { type Ctx, changed } from "../context.ts"
 import {
@@ -273,26 +274,6 @@ async function writeCopy(ctx: Ctx, copyId: string) {
         open.verify(claimed.objectKey, expected, s, version),
       )
     }
-    await ctx.db
-      .update(backupCopies)
-      .set({
-        status: "ok",
-        error: null,
-        ...current,
-        leftovers,
-        verifiedAt: new Date(),
-        finishedAt: new Date(),
-        nextAttemptAt: null,
-      })
-      .where(eq(backupCopies.id, copyId))
-    await setCondition(ctx, backupCondition(run.instanceId, destination.id), false, {
-      kind: "backup",
-      subject: instanceSubject(run.instanceId),
-      start: () => backupAlerts.stale(name, 0, destination.name),
-      clear: () => backupAlerts.working(name, destination.name),
-    })
-    await applyRetention(ctx, destination, run.instanceId, open)
-    await settleRun(ctx, run.id)
   } catch (error) {
     const final = attempt >= COPY_ATTEMPTS || Date.now() - run.startedAt.getTime() > COPY_WINDOW_MS
     if (final && store) {
@@ -309,8 +290,51 @@ async function writeCopy(ctx: Ctx, copyId: string) {
       retainUntil: current?.retainUntil ?? null,
       leftovers,
     })
+    return
   } finally {
     await store?.close().catch(() => {})
+  }
+
+  const verifiedAt = new Date()
+  await untilStored(ctx, () =>
+    ctx.db
+      .update(backupCopies)
+      .set({
+        status: "ok",
+        error: null,
+        ...current,
+        leftovers,
+        verifiedAt,
+        finishedAt: verifiedAt,
+        nextAttemptAt: null,
+      })
+      .where(eq(backupCopies.id, copyId)),
+  )
+  await setCondition(ctx, backupCondition(run.instanceId, destination.id), false, {
+    kind: "backup",
+    subject: instanceSubject(run.instanceId),
+    start: () => backupAlerts.stale(name, 0, destination.name),
+    clear: () => backupAlerts.working(name, destination.name),
+  })
+  await applyRetention(ctx, destination, run.instanceId)
+  await settleRun(ctx, run.id)
+}
+
+const STORE_AGAIN_MS = 2_000
+
+/**
+ * Writes until the database takes it. Only this process knows that the copy is verified: a copy left as being
+ * written is tried again, and that attempt could replace, remove or fail an archive that is good.
+ */
+async function untilStored(ctx: Ctx, write: () => Promise<unknown>) {
+  for (;;) {
+    try {
+      await write()
+      return
+    } catch (error) {
+      ctx.log.warn("a verified backup copy could not be recorded yet", { error: (error as Error).message })
+      await sleep(STORE_AGAIN_MS)
+    }
   }
 }
 

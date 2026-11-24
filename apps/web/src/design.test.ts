@@ -69,12 +69,7 @@ describe("one app, two looks", () => {
     expect(found).toEqual([])
   })
 
-  it("calls useDesign only in the skin components, which only draw", () => {
-    const found = sources
-      .filter(({ text }) => /\buseDesign\(/.test(text))
-      .map(({ path }) => rel(path))
-      .filter((path) => path !== "src/lib/design.ts" && !path.startsWith("src/components/skin/"))
-    expect(found).toEqual([])
+  it("lets the skin components only draw", () => {
     const acting = sources
       .filter(({ path }) => rel(path).startsWith("src/components/skin/"))
       .filter(({ text }) =>

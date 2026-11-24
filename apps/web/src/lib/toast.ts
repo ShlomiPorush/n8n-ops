@@ -157,29 +157,15 @@ export const toast = {
   act(key: number) {
     const item = current
     if (!item || item.key !== key || !item.action || item.running) return
-    const result = item.action.run()
-    const pending =
-      typeof (result as PromiseLike<unknown> | null | undefined)?.then === "function"
-        ? (result as PromiseLike<unknown>)
-        : undefined
-    if (current?.key !== key) {
-      // The action already showed what comes next, and that toast keeps its own clock. Its promise is still
-      // watched, so a rejection is handled, and a loading toast it showed ("Undoing…") does not stay for good
-      // when the action ends without a result.
-      const shown = current?.key
-      const settle = () => {
-        if (current?.key === shown && current?.tone === "loading") close()
-      }
-      pending?.then(settle, settle)
-      return
-    }
-    if (!pending) return close()
+    // Before the action runs, so what it shows takes over.
     stop()
     set({ ...item, running: true, leaving: false })
     const settle = () => {
       if (current?.key === key) close()
     }
-    pending.then(settle, settle)
+    const result = item.action.run() as PromiseLike<unknown> | null | undefined
+    if (typeof result?.then === "function") result.then(settle, settle)
+    else settle()
   },
 }
 

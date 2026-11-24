@@ -4,7 +4,7 @@ import { useEffect, useRef } from "react"
 import { useConfirm } from "@/components/confirm"
 import { BusyButton, Kpi, Kpis, LoadError, Loading, Panel, PanelHead } from "@/components/kit"
 import { When } from "@/components/status"
-import { ApiError, api, describeError, readFresh } from "@/lib/api"
+import { ApiError, api, describeError } from "@/lib/api"
 import { formatSize } from "@/lib/numbers"
 import { toast } from "@/lib/toast"
 
@@ -55,7 +55,7 @@ export function DatabaseSection({ hidden = false }: { hidden?: boolean }) {
   // Measuring reads every table: only on opening, after a compaction and on Measure again, never on focus or retry.
   const report = useQuery<Report>({
     queryKey: [REPORT],
-    queryFn: () => readFresh<Report>(REPORT),
+    queryFn: () => api<Report>(REPORT),
     enabled: !hidden,
     refetchOnWindowFocus: false,
     retry: false,
@@ -63,7 +63,7 @@ export function DatabaseSection({ hidden = false }: { hidden?: boolean }) {
   // Cheap, and answers during a compaction: followed while the section is open, faster while one runs.
   const status = useQuery<Status>({
     queryKey: [STATUS],
-    queryFn: () => readFresh<Status>(STATUS),
+    queryFn: () => api<Status>(STATUS),
     enabled: !hidden,
     refetchInterval: (q) => (q.state.data?.running ? 2_000 : 5_000),
   })

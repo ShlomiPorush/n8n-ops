@@ -281,7 +281,7 @@ function ExistingSetup({ id }: { id: string }) {
   }, [s, current, choosing])
 
   const reread = async () => {
-    // The instance and its setup (both under /instances/<id>), marked saved so an answer that left before is not used.
+    // The instance and its setup (both under /instances/<id>); an answer that left before is not used.
     await refreshAreas(`/instances/${id}`)
     const fresh = queryClient.getQueryData<SetupData>([path])
     if (!fresh) throw new Error("The setup could not be read again. Reload the page.")

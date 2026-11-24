@@ -1,6 +1,6 @@
 import { type DateWriting, writingOf } from "@n8n-ops/shared"
 import { useQuery } from "@tanstack/react-query"
-import { readFresh } from "./api"
+import { api } from "./api"
 
 /*
  * Every date and time on screen is written here (FW-9, FW-2): in the time zone set in Settings → General (UTC
@@ -28,7 +28,7 @@ type General = { timezone?: string; dateFormat?: string; timeFormat?: string }
 export function useTimeFormat(): DateWriting {
   const general = useQuery({
     queryKey: ["/settings/general"],
-    queryFn: () => readFresh<General>("/settings/general"),
+    queryFn: () => api<General>("/settings/general"),
     staleTime: 5 * 60_000,
   })
   return writingOf(general.data)

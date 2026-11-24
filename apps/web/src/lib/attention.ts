@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
-import { ApiError, queryClient, readFresh } from "@/lib/api"
+import { ApiError, api, queryClient } from "@/lib/api"
 import { ATTENTION_POLL_MS, ATTENTION_TIMEOUT_MS } from "@/lib/behavior"
 import { plural } from "@/lib/numbers"
 
@@ -161,16 +161,16 @@ export function attentionTarget(item: AttentionItem): string {
  * and reads again when it is shown (`refetchOnWindowFocus`); a change the server reports meanwhile only marks it
  * stale (`invalidateTopics` in lib/live.ts). A read without an answer in ATTENTION_TIMEOUT_MS fails,
  * and is tried once more, so a hung request never holds the next one. An answer read before an action on it is
- * dropped: the actions refresh "/overview" through `refreshAreas` or `invalidate`, which mark the path saved
- * (`readFresh`). A source the server could not read keeps what it showed (`keepFailed`).
+ * dropped: the actions refresh "/overview" through `refreshAreas` or `invalidate` (`readAfterSave`). A source the
+ * server could not read keeps what it showed (`keepFailed`).
  */
 export function useAttention() {
   return useQuery<Attention>({
     queryKey: [ATTENTION_PATH],
-    queryFn: async ({ signal }) =>
+    queryFn: async () =>
       keepFailed(
         queryClient.getQueryData<Attention>([ATTENTION_PATH]),
-        await readFresh<Attention>(ATTENTION_PATH, queryClient, { signal, timeout: ATTENTION_TIMEOUT_MS }),
+        await api<Attention>(ATTENTION_PATH, { signal: AbortSignal.timeout(ATTENTION_TIMEOUT_MS) }),
       ),
     refetchInterval: ATTENTION_POLL_MS,
     retry: (count, error) => !(error instanceof ApiError && error.status < 500) && count < 1,

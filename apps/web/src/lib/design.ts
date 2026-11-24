@@ -1,5 +1,3 @@
-import { useSyncExternalStore } from "react"
-
 /*
  * The two designs of the installation, chosen in Settings → General → Design. They differ only in how things
  * look: the server writes the choice on <html data-design> before the page draws, the CSS tokens and the
@@ -11,12 +9,6 @@ export type Design = (typeof designs)[number]
 
 const isDesign = (value: unknown): value is Design => designs.includes(value as Design)
 const root = () => document.documentElement
-
-/** The design on the page now; an unknown value counts as the default. */
-export function currentDesign(): Design {
-  const value = root().dataset.design
-  return isDesign(value) ? value : "regular"
-}
 
 let pinned = false
 
@@ -31,15 +23,4 @@ export function pinDesign(value: unknown) {
   if (!isDesign(value)) return
   applyDesign(value)
   pinned = true
-}
-
-function subscribe(onChange: () => void) {
-  const observer = new MutationObserver(onChange)
-  observer.observe(root(), { attributes: true, attributeFilter: ["data-design"] })
-  return () => observer.disconnect()
-}
-
-/** For the skin components only: which design to draw, re-rendering when it changes. */
-export function useDesign(): Design {
-  return useSyncExternalStore(subscribe, currentDesign, () => "regular")
 }

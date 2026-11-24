@@ -9,7 +9,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { api, deadline } from "@/lib/api"
+import { api } from "@/lib/api"
 import {
   ACTIVITY_REPORT_MS,
   SESSION_ASK_GAP_MS,
@@ -51,13 +51,10 @@ export function SessionGuard() {
   /** A request that gives up in time, so one that hangs never stops the next. */
   const send = useCallback(
     async (path: string, init: RequestInit = {}) => {
-      const limit = deadline(undefined, SESSION_TIMEOUT_MS)
       try {
-        take(await api<SessionStatus>(path, { ...init, signal: limit.signal }))
+        take(await api<SessionStatus>(path, { ...init, signal: AbortSignal.timeout(SESSION_TIMEOUT_MS) }))
       } catch {
         // Unreachable or too slow for now: the next poll or input tries again.
-      } finally {
-        limit.done()
       }
     },
     [take],

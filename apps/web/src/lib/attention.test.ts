@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { NetworkError, readFresh } from "./api.ts"
+import { api, NetworkError } from "./api.ts"
 import {
   type Attention,
   type AttentionItem,
@@ -128,7 +128,6 @@ describe("the list (FB-17)", () => {
 
 describe("a read with a time limit", () => {
   it("fails as unreached when no answer comes in time, and is not held by it", async () => {
-    vi.useFakeTimers()
     vi.stubGlobal(
       "fetch",
       vi.fn(
@@ -136,10 +135,8 @@ describe("a read with a time limit", () => {
           new Promise((_resolve, reject) => init?.signal?.addEventListener("abort", () => reject(init.signal?.reason))),
       ),
     )
-    const read = readFresh("/overview/attention", undefined, { timeout: 20_000 })
-    const settled = expect(read).rejects.toBeInstanceOf(NetworkError)
-    await vi.advanceTimersByTimeAsync(20_000)
-    await settled
+    const read = api("/overview/attention", { signal: AbortSignal.timeout(10) })
+    await expect(read).rejects.toBeInstanceOf(NetworkError)
   })
 
   it("stays an abort when the query called it off", async () => {
@@ -151,7 +148,7 @@ describe("a read with a time limit", () => {
       ),
     )
     const off = new AbortController()
-    const read = readFresh("/overview/attention", undefined, { signal: off.signal, timeout: 20_000 })
+    const read = api("/overview/attention", { signal: off.signal })
     off.abort()
     await expect(read).rejects.not.toBeInstanceOf(NetworkError)
   })

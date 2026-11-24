@@ -9,12 +9,12 @@ import { scrollerFor } from "@/lib/scroller"
 import { cn } from "@/lib/utils"
 
 /*
- * The shared filter bar of every list (MP-1, MP-3, MP-6, TB-17): a search, the common pickers, the rarely used
- * filters behind a Filters button at every size, whose badge counts those in use, and the list's Sort button at
- * the end of the line. Where the bar is narrow it keeps one line (FB-19). Under the bar one line holds the count,
- * "Clear filters", and at its end the Sort button of a list with no search: on every list the Sort button is at
- * the end of its line, never at the start. The bar stays in sight wherever its list
- * scrolls, at every width (NL-16, index.css), and a new filter or search starts the list at its first row (TB-7).
+ * The shared filter bar of every list (MP-1, MP-3, MP-6, TB-17): a search, the common pickers, and the list's Sort
+ * button at the end of the line. Where the bar is narrow it keeps one line (FB-19): the pickers go behind a Filters
+ * button, whose badge counts those in use. Under the bar one line holds the count, "Clear filters", and at its end
+ * the Sort button of a list with no search: on every list the Sort button is at the end of its line, never at the
+ * start. The bar stays in sight wherever its list scrolls, at every width (NL-16, index.css), and a new filter or
+ * search starts the list at its first row (TB-7).
  */
 
 export type PickerOption = {
@@ -271,11 +271,6 @@ export function searchDraft(initial: string, show: (text: string) => void, send:
     clearTimeout(timer)
     timer = undefined
   }
-  const reset = (value: string) => {
-    cancel()
-    sent = value
-    show(value)
-  }
   return {
     /** A key typed: the text shows at once and is asked for once typing pauses. */
     type(text: string) {
@@ -290,16 +285,15 @@ export function searchDraft(initial: string, show: (text: string) => void, send:
     },
     /** The value the list holds now: unless it is the one this box sent, it was set from outside and wins. */
     sync(value: string) {
-      if (value !== sent) reset(value)
+      if (value === sent) return
+      cancel()
+      sent = value
+      show(value)
     },
-    /** Clear filters: the value replaces what is typed and a search still on its way is dropped. */
-    reset,
+    /** The box is gone: a search still on its way is dropped. */
     cancel,
   }
 }
-
-/** Counts the clicks on a filter bar's "Clear filters", so its search drops what was typed (SR-9). */
-const ClearsContext = React.createContext(0)
 
 /** Where a list's search tells its bar whether it shows any text, so a narrow bar keeps it open (FB-19). */
 const SearchTextContext = React.createContext<((has: boolean) => void) | null>(null)
@@ -307,9 +301,8 @@ const SearchTextContext = React.createContext<((has: boolean) => void) | null>(n
 /**
  * A list search: the whole box focuses its field and turns ink while typing (FS-1). With `debounce` (a list
  * searched on the server) what is typed shows at once and `onChange` follows once typing pauses for 300ms, so a
- * word is one request and one address change, not one per key (SR-9). A value set from outside (a link) and
- * "Clear filters" replace what the box shows and drop a search still on its way, also when the value itself
- * does not change (nothing was sent yet).
+ * word is one request and one address change, not one per key (SR-9). A value set from outside (a link) replaces
+ * what the box shows and drops a search still on its way.
  */
 export function SearchBox({
   value,
@@ -331,15 +324,6 @@ export function SearchBox({
   const [draft] = React.useState(() => searchDraft(value, setText, (t) => send.current(t)))
   React.useEffect(() => draft.cancel, [draft])
   React.useEffect(() => draft.sync(value), [draft, value])
-  const clears = React.useContext(ClearsContext)
-  const seenClears = React.useRef(clears)
-  const latest = React.useRef(value)
-  latest.current = value
-  React.useEffect(() => {
-    if (clears === seenClears.current) return
-    seenClears.current = clears
-    draft.reset(latest.current)
-  }, [draft, clears])
   // The bar learns whether the box shows any text, typed or set from outside, so a narrow bar keeps it open.
   const shown = debounce ? text : value
   const report = React.useContext(SearchTextContext)
@@ -495,7 +479,7 @@ export type FilterViews = {
 /*
  * How the bar lays out (FB-19): on one line, as roomy as that line allows, found by measuring it. Each level
  * gives up a little more room: 0 shows the search field; 1 puts the search behind a button that opens the field
- * (toggle views turn into a short picker while it is open); 2 puts the pickers behind Filters as well; 3 lets
+ * (toggle views turn into a short picker while it is open); 2 puts the pickers behind a Filters button; 3 lets
  * the bar wrap, with toggle views on a line of their own (a phone).
  */
 export type BarLevel = 0 | 1 | 2 | 3
@@ -536,12 +520,11 @@ const shortBy = (line: HTMLElement | null) => {
 const inPopover = (el: Element | null) => el?.closest('[data-slot="picker-content"]') != null
 
 /**
- * The bar: an optional view switch (Open, Muted, Resolved), the search, the common pickers, a Filters button for
- * the rare ones, and the list's Sort button at the end of the line. Under it one line holds the count and, while
- * any filter differs from its start value, "Clear filters". It keeps one line (FB-19): where that line has no room, the
- * search is a button that opens into the field, the toggle views turn into a short picker while it is open, a
- * long picker value is cut, and then the common pickers join the rare ones behind Filters, whose badge counts
- * them too.
+ * The bar: an optional view switch (Open, Muted, Resolved), the search, the common pickers, and the list's Sort
+ * button at the end of the line. Under it one line holds the count and, while any filter differs from its start
+ * value, "Clear filters". It keeps one line (FB-19): where that line has no room, the search is a button that opens
+ * into the field, the toggle views turn into a short picker while it is open, a long picker value is cut, and then
+ * the common pickers go behind a Filters button, whose badge counts those in use.
  */
 export function FilterBar({
   views,
@@ -549,8 +532,6 @@ export function FilterBar({
   sort,
   pickers,
   pickersActive = 0,
-  more,
-  active = 0,
   count,
   onClear,
   listKey,
@@ -564,10 +545,6 @@ export function FilterBar({
   pickers?: React.ReactNode
   /** How many of the `pickers` are not at their default, for the Filters badge where they sit behind it. */
   pickersActive?: number
-  /** The rarely used filters, behind a Filters button at every size (MP-6). */
-  more?: React.ReactNode
-  /** How many of the `more` filters are not at their default, for the Filters badge. */
-  active?: number
   count?: React.ReactNode
   /** Shown as "Clear filters" while something differs from its start value. */
   onClear?: () => void
@@ -719,7 +696,7 @@ export function FilterBar({
             : null
     target?.focus()
   })
-  // Opening the rare filters moves the focus to the first of them (MP-6).
+  // Opening the filters behind the button moves the focus to the first of them (MP-6).
   React.useEffect(() => {
     if (!open || !opened.current) return
     opened.current = false
@@ -779,10 +756,9 @@ export function FilterBar({
   // Toggle views on a line of their own (a phone), or a short picker beside an open search.
   const viewsOwnLine = level === LAST
   const viewsShort = views !== undefined && (views.menu || (level > 0 && !viewsOwnLine && fieldShown))
-  const badge = active + (pickersInPanel ? pickersActive : 0)
-  const filtersLabel = badge > 0 ? `Filters, ${badge} in use` : "Filters"
+  const filtersLabel = pickersActive > 0 ? `Filters, ${pickersActive} in use` : "Filters"
   const sortButton = sort && <SortButton control={sort.control} name={sort.name} small={!search} />
-  const top = views || search || pickers || more
+  const top = views || search || pickers
   // Named for its list, so it is not taken for the search of the whole console.
   const searchName = sort ? `Search ${sort.name}` : "Search this list"
   const viewsControl =
@@ -857,12 +833,14 @@ export function FilterBar({
               className={level === 0 ? "w-64" : "min-w-32 flex-1 basis-0 shrink!"}
             >
               <SearchTextContext.Provider value={setHasText}>
-                <ClearsContext.Provider value={clears}>{search}</ClearsContext.Provider>
+                {/* A new search on each "Clear filters": it drops what is typed but not sent yet,
+                    which the address does not hold (SR-9). */}
+                <React.Fragment key={clears}>{search}</React.Fragment>
               </SearchTextContext.Provider>
             </div>
           )}
           {views?.menu && viewsControl}
-          {(more || pickersInPanel) && (
+          {pickersInPanel && (
             <button
               type="button"
               data-part="filters"
@@ -877,12 +855,12 @@ export function FilterBar({
               className={toolButton()}
             >
               <Funnel aria-hidden className="size-4" />
-              {badge > 0 && (
+              {pickersActive > 0 && (
                 <span
                   aria-hidden
                   className="absolute -end-1.5 -top-1.5 grid h-[18px] min-w-[18px] place-items-center rounded-full bg-primary px-1 text-meta font-bold text-primary-foreground tabular-nums"
                 >
-                  {badge}
+                  {pickersActive}
                 </span>
               )}
             </button>
@@ -901,19 +879,16 @@ export function FilterBar({
           {search && sortButton && <span className="ms-auto flex">{sortButton}</span>}
         </div>
       )}
-      {(more || pickersInPanel) && (
+      {pickersInPanel && (
         <div
           ref={panel}
           id={panelId}
           hidden={!open}
           className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-2"
         >
-          {pickersInPanel && (
-            <div data-part="pickers" className="contents">
-              {pickers}
-            </div>
-          )}
-          {more}
+          <div data-part="pickers" className="contents">
+            {pickers}
+          </div>
         </div>
       )}
       {(count !== undefined || onClear || (sortButton && !search)) && (
@@ -927,7 +902,6 @@ export function FilterBar({
             <button
               type="button"
               onClick={() => {
-                // The search drops what is typed but not sent yet, which the address does not hold (SR-9).
                 setClears((c) => c + 1)
                 onClear()
               }}

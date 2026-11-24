@@ -7,9 +7,8 @@ import { moveTracker } from "@/app/search-move"
 import { settingsGroups } from "@/app/settings-sections"
 import { api } from "@/lib/api"
 import { inertBeside } from "@/lib/inert"
-import { loadView } from "@/lib/load-state"
 import { n, plural } from "@/lib/numbers"
-import { onMoveKept, useNavigateFromOverlay, useOverlayHistory } from "@/lib/overlay-history"
+import { useNavigateFromOverlay, useOverlayHistory } from "@/lib/overlay-history"
 import { instancesText, isSingle, type ProblemRow, problemTitle } from "@/lib/problems"
 import { revealTarget } from "@/lib/reveal"
 import { cn } from "@/lib/utils"
@@ -109,115 +108,105 @@ function Marked({ text, q }: { text: string; q: string }) {
   )
 }
 
-function useServerSearch(q: string, enabled: boolean) {
-  const [found, setFound] = React.useState<Partial<Record<Kind, Found>>>({})
+/** A search answers what is typed now: nothing is kept, tried again or refreshed by itself. */
+const ONCE = {
+  gcTime: 0,
+  staleTime: Number.POSITIVE_INFINITY,
+  retry: false,
+  refetchOnWindowFocus: false,
+  // Offline, a search fails at once instead of waiting for the network.
+  networkMode: "always",
+} as const
+
+/** What one kind's search shows; undefined while it is not asked (the panel is closed, or too little is typed). */
+function foundBy<T>(
+  asked: boolean,
+  query: { data: T | undefined; error: unknown },
+  items: (data: T) => Omit<Found, "state">,
+): Found | undefined {
+  if (!asked) return
+  // What is on hand is searched even when its last refresh failed (TB-5).
+  if (query.data !== undefined) return { state: "ready", ...items(query.data) }
+  return { items: [], state: query.error ? "failed" : "loading", total: 0 }
+}
+
+function useServerSearch(q: string, enabled: boolean): Partial<Record<Kind, Found>> {
+  const text = q.trim()
+  const asked = enabled && text.length >= SERVER_FROM
+  const [paused, setPaused] = React.useState("")
+  React.useEffect(() => {
+    if (!asked) return
+    const timer = setTimeout(() => setPaused(text), DEBOUNCE_MS)
+    return () => clearTimeout(timer)
+  }, [asked, text])
+  const query = encodeURIComponent(text)
+  // Each keystroke changes the key and so cancels the previous question; the new one is asked after the pause.
+  const key = asked && text
+  const once = { ...ONCE, enabled: asked && paused === text }
+  const problems = useQuery({
+    ...once,
+    queryKey: ["search-problems", key],
+    // The total counts every match, not only the 200 the list sends (TB-18).
+    queryFn: ({ signal }) => api<{ items: ProblemHit[]; total: number }>(`/problems?status=all&q=${query}`, { signal }),
+  })
+  const workflows = useQuery({
+    ...once,
+    queryKey: ["search-workflows", key],
+    queryFn: ({ signal }) => api<{ workflows: WorkflowHit[] }>(`/workflows?q=${query}`, { signal }),
+  })
   const instances = useQuery({
     queryKey: ["/instances"],
     queryFn: () => api<{ instances: InstanceHit[] }>("/instances"),
     enabled,
     staleTime: 60_000,
   })
-  React.useEffect(() => {
-    const t = q.trim()
-    if (!enabled || t.length < SERVER_FROM) {
-      setFound({})
-      return
-    }
-    setFound({
-      problems: { items: [], state: "loading", total: 0 },
-      workflows: { items: [], state: "loading", total: 0 },
-    })
-    const abort = new AbortController()
-    const timer = setTimeout(() => {
-      const query = encodeURIComponent(t)
-      // The total counts every match, not only the 200 the list sends (TB-18).
-      api<{ items: ProblemHit[]; total: number }>(`/problems?status=all&q=${query}`, { signal: abort.signal })
-        .then((data) =>
-          setFound((f) => ({
-            ...f,
-            problems: {
-              state: "ready",
-              total: data.total,
-              all: `/problems?status=all&q=${query}`,
-              items: data.items.map((p) => ({
-                id: `problem:${p.id}`,
-                title: problemTitle(p),
-                subtitle: isSingle(p)
-                  ? `${p.affectedWorkflows[0]?.instanceName ?? ""} · ${p.title}`
-                  : `${plural(p.workflows, "workflow")} · ${instancesText(p)}`,
-                meta: p.status,
-                to: `/problems/${p.id}?status=all&q=${query}`,
-              })),
-            },
-          })),
-        )
-        .catch(
-          () =>
-            !abort.signal.aborted && setFound((f) => ({ ...f, problems: { items: [], state: "failed", total: 0 } })),
-        )
-      api<{ workflows: WorkflowHit[] }>(`/workflows?q=${query}`, { signal: abort.signal })
-        .then((data) =>
-          setFound((f) => ({
-            ...f,
-            workflows: {
-              state: "ready",
-              total: data.workflows.length,
-              all: `/workflows?q=${query}`,
-              items: data.workflows.map((w) => ({
-                id: `workflow:${w.instanceId}:${w.workflowId}`,
-                title: w.name,
-                subtitle: `${w.instanceName} · ${w.triggerType}`,
-                to: `/workflows?q=${encodeURIComponent(w.name)}&instance=${w.instanceId}`,
-                target: `workflow:${w.instanceId}:${w.workflowId}`,
-              })),
-            },
-          })),
-        )
-        .catch(
-          () =>
-            !abort.signal.aborted && setFound((f) => ({ ...f, workflows: { items: [], state: "failed", total: 0 } })),
-        )
-    }, DEBOUNCE_MS)
-    // Each keystroke cancels the previous question, so an older answer never replaces a newer one.
-    return () => {
-      clearTimeout(timer)
-      abort.abort()
-    }
-  }, [q, enabled])
 
-  const t = lower(q.trim())
-  const instanceItems: Found | undefined =
-    t.length >= SERVER_FROM
-      ? // The instances on hand are searched even when their last refresh failed (TB-5).
-        loadView(instances) === "failed"
-        ? { items: [], state: "failed", total: 0 }
-        : !instances.data
-          ? { items: [], state: "loading", total: 0 }
-          : (() => {
-              const items = instances.data.instances
-                .filter((i) => lower(i.name).includes(t) || lower(i.baseUrl).includes(t))
-                .map((i) => ({
-                  id: `instance:${i.id}`,
-                  title: i.name,
-                  subtitle: i.baseUrl,
-                  to: `/instances/${i.id}`,
-                  target: `instance:${i.id}`,
-                }))
-              return { items, state: "ready", total: items.length }
-            })()
-      : undefined
-  return { ...found, instances: instanceItems }
+  const t = lower(text)
+  return {
+    problems: foundBy(asked, problems, (data) => ({
+      total: data.total,
+      all: `/problems?status=all&q=${query}`,
+      items: data.items.map((p) => ({
+        id: `problem:${p.id}`,
+        title: problemTitle(p),
+        subtitle: isSingle(p)
+          ? `${p.affectedWorkflows[0]?.instanceName ?? ""} · ${p.title}`
+          : `${plural(p.workflows, "workflow")} · ${instancesText(p)}`,
+        meta: p.status,
+        to: `/problems/${p.id}?status=all&q=${query}`,
+      })),
+    })),
+    workflows: foundBy(asked, workflows, (data) => ({
+      total: data.workflows.length,
+      all: `/workflows?q=${query}`,
+      items: data.workflows.map((w) => ({
+        id: `workflow:${w.instanceId}:${w.workflowId}`,
+        title: w.name,
+        subtitle: `${w.instanceName} · ${w.triggerType}`,
+        to: `/workflows?q=${encodeURIComponent(w.name)}&instance=${w.instanceId}`,
+        target: `workflow:${w.instanceId}:${w.workflowId}`,
+      })),
+    })),
+    instances: foundBy(asked, instances, (data) => {
+      const items = data.instances
+        .filter((i) => lower(i.name).includes(t) || lower(i.baseUrl).includes(t))
+        .map((i) => ({
+          id: `instance:${i.id}`,
+          title: i.name,
+          subtitle: i.baseUrl,
+          to: `/instances/${i.id}`,
+          target: `instance:${i.id}`,
+        }))
+      return { items, total: items.length }
+    }),
+  }
 }
 
-type OpenResult = {
-  /** Goes to the result; `landed` runs once the result's page is reached, not when the move is kept or replaced. */
-  open: (item: Item, landed?: () => void) => void
-  /** Forgets a move that did not happen, so a later move does not count as it. */
-  forget: () => void
-}
+/** Goes to the result; `landed` runs once the result's page is reached, not when the move is kept or replaced. */
+type OpenResult = (item: Item, landed?: () => void) => void
 
 /**
- * Opens a result (SR-6). The move goes through the unsaved-changes guard; only once the result's own address
+ * Opens a result (SR-6). The move goes through the unsaved-changes guard; only once the result's page
  * is reached is the search cleared, so when the Leave question keeps the page, or the page moves elsewhere,
  * the query stays. A result with a target then marks its row for a moment. From the phone sheet the
  * destination takes the sheet's Back entry (DS-10).
@@ -227,23 +216,11 @@ function useOpenResult(): OpenResult {
   const location = useLocation()
   const [tracker] = React.useState(() => moveTracker(revealTarget))
   React.useEffect(() => tracker.moved(location), [tracker, location])
-  React.useEffect(() => {
-    const off = onMoveKept(() => tracker.forget())
-    return () => {
-      off()
-      tracker.stop()
-    }
-  }, [tracker])
-  return React.useMemo(
-    () => ({
-      open: (item, landed) => {
-        tracker.start({ to: item.to, landed, target: item.target })
-        navigate(item.to, { state: item.field ? { focusField: item.field } : undefined })
-      },
-      forget: () => tracker.forget(),
-    }),
-    [navigate, tracker],
-  )
+  React.useEffect(() => () => tracker.stop(), [tracker])
+  return (item, landed) => {
+    const move = tracker.start({ landed, target: item.target })
+    navigate(item.to, { state: item.field ? { ...move, focusField: item.field } : move })
+  }
 }
 
 /** What is typed and the kind shown. The phone search keeps it above its sheet, which closes on a choice. */
@@ -299,7 +276,7 @@ export function GlobalSearch({
   query?: Query
 }) {
   const own = useOpenResult()
-  const result = opener ?? own
+  const openResult = opener ?? own
   const ownQuery = useSearchQuery()
   const { q, setQ, kind, setKind } = query ?? ownQuery
   const sheet = variant === "sheet"
@@ -369,7 +346,7 @@ export function GlobalSearch({
     // (SR-6). On a phone it outlives the sheet, which closes at once.
     setFocused(false)
     input.current?.blur()
-    result.open(item, clear)
+    openResult(item, clear)
     onClose?.()
   }
   const tabs: (Kind | "all")[] = ["all", ...KINDS.map((k) => k.key)]
@@ -639,11 +616,7 @@ export function GlobalSearch({
         enterKeyHint="search"
         placeholder="Search pages, settings, problems…"
         value={q}
-        onChange={(e) => {
-          // Typing again: a move that the Leave question kept from happening is no longer awaited.
-          result.forget()
-          setQ(e.target.value)
-        }}
+        onChange={(e) => setQ(e.target.value)}
         onFocus={() => setFocused(true)}
         onBlur={onBlur}
         onKeyDown={onKeyDown}

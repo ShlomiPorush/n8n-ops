@@ -14,40 +14,12 @@ describe("the layout of a filter bar by its width (FB-19)", () => {
   })
 })
 
-// No list has a rarely used filter yet, so the Filters button is checked here, not on a page (MP-6).
 describe("the Filters button of a filter bar (MP-6)", () => {
-  const rare = (
-    <select aria-label="Trigger">
-      <option>All</option>
-    </select>
-  )
-
-  it("is there only when the bar has rare filters while the common pickers have room in the row", () => {
+  it("is not there while the common pickers have room in the row", () => {
     // A bar starts wide; a narrow one moves the pickers behind Filters once measured (FB-19, e2e).
     const html = renderToStaticMarkup(<FilterBar pickers={<button type="button">Instance: All</button>} />)
     expect(html).not.toContain("Filters")
     expect(html).toContain("Instance: All")
-  })
-
-  it("counts only its rare filters on the badge while the common pickers are in the row", () => {
-    const html = renderToStaticMarkup(
-      <FilterBar more={rare} active={1} pickers={<button type="button">Instance: e2e</button>} pickersActive={1} />,
-    )
-    expect(html).toContain('aria-label="Filters, 1 in use"')
-  })
-
-  it("is named Filters and keeps the rare filters hidden until opened", () => {
-    const html = renderToStaticMarkup(<FilterBar more={rare} />)
-    expect(html).toContain('aria-label="Filters"')
-    expect(html).toContain('title="Filters"')
-    expect(html).toContain('aria-expanded="false"')
-    expect(html).toMatch(/<div[^>]*hidden=""[^>]*><select aria-label="Trigger"/)
-  })
-
-  it("counts the rare filters in use in its name and on a badge", () => {
-    const html = renderToStaticMarkup(<FilterBar more={rare} active={2} />)
-    expect(html).toContain('aria-label="Filters, 2 in use"')
-    expect(html).toMatch(/<span aria-hidden="true"[^>]*>2<\/span>/)
   })
 })
 
@@ -107,14 +79,12 @@ describe("a search that waits for a pause (SR-9)", () => {
   })
 
   it("drops what is typed when Clear filters leaves the value as it was, as nothing was sent yet", () => {
-    const { draft, shown, sent } = box()
+    const { draft, sent } = box()
     draft.type("Sync")
-    // The value is still "" in the address, so only Clear filters itself says what happened.
-    draft.sync("")
-    draft.reset("")
+    // Clear filters draws a new box: this one is gone, and the new one starts from the value.
+    draft.cancel()
     vi.advanceTimersByTime(SEARCH_PAUSE_MS * 2)
     expect(sent).toEqual([])
-    expect(shown.at(-1)).toBe("")
   })
 
   it("lets a value set from outside replace what is typed and drop the search on its way", () => {

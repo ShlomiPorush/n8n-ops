@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 import { useEffect } from "react"
-import { markSaved, queryClient, readFresh } from "@/lib/api"
+import { api, queryClient, readAfterSave } from "@/lib/api"
 import { applyDesign } from "@/lib/design"
 
 /*
@@ -14,7 +14,7 @@ const GENERAL = "/settings/general"
 export function DesignSync() {
   const general = useQuery({
     queryKey: [GENERAL],
-    queryFn: () => readFresh<{ design?: string }>(GENERAL),
+    queryFn: () => api<{ design?: string }>(GENERAL),
     staleTime: 5 * 60_000,
     // Coming back to the tab is handled below, so it never joins a read that started before.
     refetchOnWindowFocus: false,
@@ -45,8 +45,7 @@ export function readAgain(now = Date.now()) {
   // Coming back to a tab fires focus and visibilitychange together; one read is enough.
   if (now - lastRead < 1000) return
   lastRead = now
-  markSaved(GENERAL)
-  void queryClient.invalidateQueries({ queryKey: [GENERAL] })
+  void readAfterSave({ queryKey: [GENERAL] })
 }
 
 /** A page restored from the back/forward cache reads General again; its design may have changed meanwhile. */

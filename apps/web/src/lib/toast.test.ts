@@ -215,24 +215,6 @@ describe("toast action (FB-2)", () => {
     expect(currentToast()?.leaving).toBe(true)
   })
 
-  it("handles a rejection after the action replaced the toast before its first await, and ends its loading toast", async () => {
-    const { toast, currentToast } = await load()
-    toast.success("Problem resolved: Sync orders", {
-      action: {
-        label: "Undo",
-        run: () => {
-          toast.loading("Undoing…")
-          return Promise.reject(new Error("Not found."))
-        },
-      },
-    })
-    // On the old code the rejection was never handled (Vitest fails the run on it) and "Undoing…" stayed for good.
-    toast.act(currentToast()?.key ?? 0)
-    expect(currentToast()?.message).toBe("Undoing…")
-    await wait(0)
-    expect(currentToast()).toBeNull()
-  })
-
   it("leaves a result its action showed before its first await on its own clock when the promise rejects", async () => {
     const { toast, currentToast } = await load()
     toast.success("Problem resolved: Sync orders", {

@@ -1,5 +1,6 @@
+import { QueryObserver } from "@tanstack/react-query"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { queryClient, readFresh } from "@/lib/api"
+import { api, queryClient } from "@/lib/api"
 import { afterGeneralSave, onPageShow, readAgain } from "./design-sync"
 
 vi.mock("@/lib/design", () => ({ applyDesign: vi.fn() }))
@@ -36,7 +37,8 @@ describe("onPageShow", () => {
 })
 
 describe("the design in the cache", () => {
-  const read = () => queryClient.fetchQuery({ queryKey: [GENERAL], queryFn: () => readFresh(GENERAL) })
+  const read = () => queryClient.fetchQuery({ queryKey: [GENERAL], queryFn: () => api(GENERAL) })
+  const onScreen = () => new QueryObserver(queryClient, { queryKey: [GENERAL], queryFn: () => api(GENERAL) })
 
   it("keeps a saved design when a read from before the save answers late, and when the next read fails", async () => {
     let answer: (r: Response) => void = () => {}
@@ -46,7 +48,7 @@ describe("the design in the cache", () => {
     )
     queryClient.setQueryData([GENERAL], { design: "regular", timezone: "UTC" })
     const late = read()
-    // The save: what the form sent goes into the cache at once, and the path is marked as saved.
+    // The save: what the form sent goes into the cache at once, and the read on its way is called off.
     readAgain()
     afterGeneralSave({ design: "compact" })
     answer(new Response(JSON.stringify({ design: "regular", timezone: "UTC" })))
@@ -71,11 +73,13 @@ describe("the design in the cache", () => {
       return Promise.resolve(new Response(JSON.stringify(body)))
     })
     vi.stubGlobal("fetch", fetch)
-    const before = readFresh(GENERAL)
+    const observer = onScreen()
+    const stop = observer.subscribe(() => {})
     readAgain()
     first(new Response(""))
-    expect(await before).toEqual({ design: "compact" })
+    await vi.waitFor(() => expect(observer.getCurrentResult().data).toEqual({ design: "compact" }))
     expect(fetch).toHaveBeenCalledTimes(2)
+    stop()
   })
 
   it("reads once when focus and visibility arrive together", () => {
@@ -92,9 +96,10 @@ describe("the design in the cache", () => {
       vi.fn(() => new Promise<Response>((done) => (answer = done))),
     )
     queryClient.setQueryData([GENERAL], { design: "compact" })
-    const before = readFresh(GENERAL)
+    const before = read().catch(() => {})
     readAgain()
     answer(new Response(JSON.stringify({ design: "regular" })))
-    expect(await before).toEqual({ design: "compact" })
+    await before
+    expect(queryClient.getQueryData([GENERAL])).toEqual({ design: "compact" })
   })
 })

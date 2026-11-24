@@ -1,4 +1,11 @@
-import { keepPreviousData, QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import {
+  keepPreviousData,
+  QueryClient,
+  type QueryFilters,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query"
 import { useKeptRows } from "@/lib/load-state"
 import { sessionEnded, sessionEnding } from "@/lib/session"
 import { toast } from "@/lib/toast"
@@ -34,7 +41,7 @@ export async function api<T>(path: string, init: RequestInit & { json?: unknown 
   const { json, headers, ...rest } = init
   // A request the page called off stays an abort; anything else got no whole answer from the server.
   const unreached = (e: unknown) => {
-    // A read that got no answer in its time (`readFresh` with `timeout`) got no answer at all.
+    // A read that got no answer in its time (`AbortSignal.timeout`) got no answer at all.
     if (rest.signal?.reason instanceof DOMException && rest.signal.reason.name === "TimeoutError")
       return new NetworkError()
     if (rest.signal?.aborted || (e instanceof DOMException && e.name === "AbortError")) return e
@@ -87,16 +94,14 @@ export const queryClient = new QueryClient({
   },
 })
 
-/*
- * A read that started before a save of the same path must not bring back what the save replaced: React Query
- * can still write such an answer after the save has invalidated the path. Each successful save moves the
- * path's epoch on; an answer to a read from an earlier epoch is dropped in favour of what the cache holds.
+/**
+ * Reads the matching queries on screen again after a save. A read on its way started before the save, so it is called
+ * off and its answer cannot bring back what the save replaced, also for a query that is not read again now.
+ * `silent`: whoever waits for the read called off waits for the new one.
  */
-const epochs = new Map<string, number>()
-
-/** Marks a path as just saved, so reads that started before are not trusted. */
-export function markSaved(path: string) {
-  epochs.set(path, (epochs.get(path) ?? 0) + 1)
+export function readAfterSave(filters: QueryFilters, client: QueryClient = queryClient): Promise<void> {
+  void client.cancelQueries(filters, { silent: true })
+  return client.invalidateQueries(filters)
 }
 
 /** A refresh after a change that left a read on screen with its old data, so the caller can offer Refresh (FB-16). */
@@ -108,77 +113,19 @@ export class RefreshError extends Error {
 
 /**
  * Refreshes every cached read under the given paths, lists with any filters included ("/problems" covers
- * "/problems?status=open" and "/problems/3f2a"), and marks them saved so an older answer cannot come back.
+ * "/problems?status=open" and "/problems/3f2a"), and drops their older answers (`readAfterSave`).
  * Settles once the reads on screen have answered; rejects with RefreshError when one of them failed, since React
  * Query keeps the old data then and does not reject by itself.
  */
 export async function refreshAreas(...prefixes: string[]): Promise<void> {
-  const under = (key: unknown): key is string => typeof key === "string" && prefixes.some((p) => key.startsWith(p))
-  for (const query of queryClient.getQueryCache().getAll()) {
-    const key = query.queryKey[0]
-    if (under(key)) markSaved(key)
-  }
-  const predicate = (q: { queryKey: readonly unknown[] }) => under(q.queryKey[0])
-  await queryClient.invalidateQueries({ predicate })
-  // Another invalidation meanwhile (a live update) replaces the request that was awaited; wait for the last one.
-  await new Promise<void>((resolve) => {
-    const cache = queryClient.getQueryCache()
-    const done = () => queryClient.isFetching({ predicate }) === 0
-    if (done()) return resolve()
-    const stop = cache.subscribe(() => {
-      if (!done()) return
-      stop()
-      resolve()
-    })
-  })
+  const predicate: QueryFilters["predicate"] = ({ queryKey: [key] }) =>
+    typeof key === "string" && prefixes.some((p) => key.startsWith(p))
+  await readAfterSave({ predicate })
   const failed = queryClient
     .getQueryCache()
-    .findAll({ predicate: (q) => under(q.queryKey[0]) && q.isActive() && q.state.status === "error" })
+    .findAll({ predicate, type: "active" })
+    .filter((q) => q.state.status === "error")
   if (failed.length > 0) throw new RefreshError()
-}
-
-/**
- * A signal that aborts with `signal`, or with a TimeoutError after `ms`, so a request that hangs fails in time and
- * never holds the next refresh (NL-19). `done` stops the clock once the answer is in.
- */
-export function deadline(signal: AbortSignal | undefined, ms: number): { signal: AbortSignal; done: () => void } {
-  const control = new AbortController()
-  const follow = () => control.abort(signal?.reason)
-  if (signal?.aborted) follow()
-  else signal?.addEventListener("abort", follow, { once: true })
-  const timer = setTimeout(() => control.abort(new DOMException("No answer in time", "TimeoutError")), ms)
-  return {
-    signal: control.signal,
-    done: () => {
-      clearTimeout(timer)
-      signal?.removeEventListener("abort", follow)
-    },
-  }
-}
-
-/**
- * Reads a path for the query cache, dropping an answer that a save overtook. With `timeout` (ms) a read without an
- * answer by then fails as unreached; `signal` is the query's own, which aborts it when it is called off.
- */
-export async function readFresh<T>(
-  path: string,
-  client: QueryClient = queryClient,
-  { signal, timeout }: { signal?: AbortSignal; timeout?: number } = {},
-): Promise<T> {
-  let data: T
-  // A few tries at most: an overtaken answer is replaced by the cache, or, with nothing cached yet, read again.
-  for (let attempt = 0; ; attempt++) {
-    const started = epochs.get(path) ?? 0
-    const ask = timeout ? deadline(signal, timeout) : { signal, done: () => {} }
-    try {
-      data = await api<T>(path, { signal: ask.signal })
-    } finally {
-      ask.done()
-    }
-    if ((epochs.get(path) ?? 0) === started || attempt === 2) return data
-    const cached = client.getQueryData<T>([path])
-    if (cached !== undefined) return cached
-  }
 }
 
 /**
@@ -190,7 +137,7 @@ export async function readFresh<T>(
 export function useApi<T>(path: string | null, options: { refetchInterval?: number; keepRows?: boolean } = {}) {
   const query = useQuery<T>({
     queryKey: [path],
-    queryFn: () => readFresh<T>(path as string),
+    queryFn: () => api<T>(path as string),
     enabled: path !== null,
     refetchInterval: options.refetchInterval,
     placeholderData: options.keepRows ? keepPreviousData : undefined,
@@ -231,10 +178,7 @@ export function useApiMutation<TBody, TResult = unknown>(
         json: method === "DELETE" ? undefined : body,
       }),
     onSuccess: (_, body) => {
-      for (const key of invalidate) {
-        markSaved(key)
-        void client.invalidateQueries({ queryKey: [key] })
-      }
+      for (const key of invalidate) void readAfterSave({ queryKey: [key] }, client)
       if (success) toast.success(typeof success === "function" ? success(body) : success)
     },
     // On the way to sign-in after the session ended, no error toast is shown (NL-18).

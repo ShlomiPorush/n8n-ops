@@ -3,20 +3,10 @@ import type { ReservedSql } from "postgres"
 import type { Ctx } from "../context.ts"
 import { dbCompactions } from "../db/schema.ts"
 
-/**
- * Settings → Database: how much room each table takes and how much of it is free, and compacting a table with
- * PostgreSQL's VACUUM FULL. One compaction runs at a time for the installation, held by a session advisory lock on a
- * connection of the run's own; the outcome is only PostgreSQL's answer, and a lost answer ends as "unknown".
- */
-
-/** Held by the session that runs a compaction, for the whole run. */
 const COMPACT_LOCK = 7_243_003
-/** How long a compaction waits for the table before it gives up without changing anything. */
 const COMPACT_WAIT_MS = 3_000
-/** Free space is measured again when the last measurement is older than this. */
 const FREE_SPACE_TTL_MS = 10 * 60_000
 
-/** Tables every page reads before it shows, and the record of compactions itself: never compacted from the page. */
 export const UNCOMPACTABLE: readonly string[] = [
   "auth_session",
   "auth_user",
@@ -38,7 +28,6 @@ export class DatabaseMaintenanceError extends Error {
 type Rows<T> = T[]
 const rows = <T>(result: unknown) => result as Rows<T>
 
-/** The holder of the compaction lock in this database, if a compaction runs now (on any process). */
 const lockHolder = sql`
   select pid from pg_locks
   where locktype = 'advisory' and granted
@@ -50,10 +39,6 @@ async function activeHolder(ctx: Pick<Ctx, "db">): Promise<number | null> {
   return held?.pid ?? null
 }
 
-// ---------------------------------------------------------------------------
-// Sizes and free space
-// ---------------------------------------------------------------------------
-
 export type TableSize = {
   name: string
   totalBytes: number | null
@@ -62,11 +47,6 @@ export type TableSize = {
   compacting: boolean
 }
 
-/**
- * Every ordinary table of the public schema with its size, largest first, and the database size. The table a
- * compaction holds is left out of the measurement (its size functions would wait behind it) and listed as compacting;
- * every lock wait is bounded to 1 s, and when that runs out (a compaction that just started) `busy` is set instead.
- */
 export async function databaseSizes(ctx: Pick<Ctx, "db">) {
   const [running] = await ctx.db
     .select({ tableName: dbCompactions.tableName, relationId: dbCompactions.relationId })
@@ -115,21 +95,13 @@ export async function databaseSizes(ctx: Pick<Ctx, "db">) {
 export type TableFreeSpace = { free: number; dead: number } | { error: string }
 export type FreeSpace = {
   measuredAt: string
-  /** Why free space is not measured at all; null when it is. */
   unavailable: string | null
   tables: Record<string, TableFreeSpace>
 }
 
-/** The kept measurement and the one that runs, each with when it started. */
 let kept: { startedAt: number; value: FreeSpace } | null = null
 let measuring: { startedAt: number; value: Promise<FreeSpace> } | null = null
 
-/**
- * Free space of each table's data (heap and TOAST) from PostgreSQL's pgstattuple_approx: space it can reuse now, and
- * apart from it the space of deleted rows a vacuum has not cleared. Indexes are not measured. One measurement at a
- * time per process, kept for 10 minutes and never past a compaction that ended after it started (also one another
- * server process ran); each table in its own transaction with its own time limits.
- */
 export async function freeSpace(ctx: Pick<Ctx, "db">, options: { refresh?: boolean } = {}): Promise<FreeSpace> {
   const [compaction] = rows<{ ended: number | null }>(
     await ctx.db.execute(sql`
@@ -212,17 +184,8 @@ async function measureFreeSpace(ctx: Pick<Ctx, "db">): Promise<FreeSpace> {
   return { measuredAt, unavailable: null, tables }
 }
 
-// ---------------------------------------------------------------------------
-// Compacting
-// ---------------------------------------------------------------------------
-
 type Compaction = typeof dbCompactions.$inferSelect
 
-/**
- * Starts compacting a table of the public schema. Throws `unknown_table` or `excluded` for a name it will not
- * compact, and `busy` while another compaction runs anywhere. Returns once the run is recorded; the VACUUM FULL goes
- * on in the background on the connection that holds the lock.
- */
 export async function startCompact(ctx: Ctx, table: string, actor: string): Promise<Compaction> {
   const [target] = rows<{ oid: number; name: string; target: string }>(
     await ctx.db.execute(sql`
@@ -247,7 +210,6 @@ export async function startCompact(ctx: Ctx, table: string, actor: string): Prom
       if (notice.severity === "WARNING") warnings.push(notice.message ?? "PostgreSQL warned")
     },
   })
-  // Reserved for the whole run: the client replaces a connection that drops, but the new one would not hold the lock.
   let session: ReservedSql | undefined
   const close = () => {
     session?.release()
@@ -255,7 +217,6 @@ export async function startCompact(ctx: Ctx, table: string, actor: string): Prom
   }
   try {
     session = await client.reserve()
-    // Set on the session, so no setting of DATABASE_URL or the role takes their place.
     await session.unsafe(`set lock_timeout = ${COMPACT_WAIT_MS}; set client_min_messages = warning`)
     const [lock] = await session<{ locked: boolean }[]>`
       select pg_try_advisory_lock(${COMPACT_LOCK}::bigint) as locked`
@@ -292,8 +253,6 @@ async function runCompact(ctx: Ctx, session: ReservedSql, warnings: string[], ro
     const [before] = await session<{ size: number }[]>`
       select pg_total_relation_size(${row.relationId}::oid)::float8 as size`
     sizeBefore = before?.size ?? null
-    // VACUUM answers a table it skipped (gone, or not the role's to maintain) with a WARNING, not an error. One from
-    // before it is not about the table: PostgreSQL may warn when a session starts (a collation's version).
     warnings.length = 0
     await session.unsafe(`vacuum (full) ${target}`)
     if (warnings.length)
@@ -308,9 +267,7 @@ async function runCompact(ctx: Ctx, session: ReservedSql, warnings: string[], ro
         const [size] = await session<{ size: number }[]>`
           select pg_total_relation_size(${row.relationId}::oid)::float8 as size`
         sizeAfter = size?.size ?? null
-      } catch {
-        // The compaction is done; only its size after is missing.
-      }
+      } catch {}
       outcome = { status: "done", sizeBefore, sizeAfter }
     }
   } catch (error) {
@@ -319,7 +276,6 @@ async function runCompact(ctx: Ctx, session: ReservedSql, warnings: string[], ro
       outcome = { status: "failed", error: `${row.tableName} was in use, so it was not compacted.`, sizeBefore }
     else outcome = { status: "failed", error: (error as Error).message.slice(0, 500), sizeBefore }
   }
-  // Written while the lock is still held, so a status read never settles this run meanwhile.
   if (outcome) await finish(ctx, row, outcome, Date.now() - started)
 }
 
@@ -356,11 +312,6 @@ async function finish(ctx: Ctx, row: Compaction, outcome: Outcome, ms: number) {
   })
 }
 
-/**
- * Ends every running compaction whose lock no session holds as "unknown": n8n-ops lost PostgreSQL's answer. One
- * statement checks the lock and updates, so a run that takes the lock meanwhile is never touched; only the caller
- * whose update returned the row writes its audit, in the same transaction.
- */
 export async function settleCompactions(ctx: Pick<Ctx, "db" | "audit">) {
   await ctx.db.transaction(async (tx) => {
     const ended = rows<{ table_name: string; started_by: string }>(
@@ -380,7 +331,6 @@ export async function settleCompactions(ctx: Pick<Ctx, "db" | "audit">) {
 
 export type CompactProgress = { phase: string; percent: number | null }
 
-/** The recent compactions, newest first, and what the running one does now. Reads no table size. */
 export async function compactStatus(ctx: Pick<Ctx, "db" | "audit">) {
   await settleCompactions(ctx)
   const recent = await ctx.db.select().from(dbCompactions).orderBy(desc(dbCompactions.startedAt)).limit(20)
@@ -428,7 +378,6 @@ function phaseLabel(phase: string) {
   }
 }
 
-/** The SQLSTATE or postgres.js code of an error, also when Drizzle wrapped it (as its `cause`). */
 function pgCode(error: unknown): string | undefined {
   let e = error as { code?: unknown; cause?: unknown } | undefined
   for (let depth = 0; e && depth < 3; depth++) {
@@ -438,7 +387,6 @@ function pgCode(error: unknown): string | undefined {
   return undefined
 }
 
-/** The connection went away before PostgreSQL's answer arrived: the outcome is unknown. */
 function lostAnswer(error: unknown) {
   const code = pgCode(error) ?? ""
   return code.startsWith("CONNECTION_") || code.startsWith("08") || code.startsWith("57P0")

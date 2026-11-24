@@ -232,7 +232,6 @@ describe("kind and known error", () => {
       "The provider no longer offers what the node asks for.",
     ],
     [{ message: "Something odd" }, "other", null],
-    // Precedence between rules.
     [
       { nodeType: "n8n-nodes-base.stopAndError", message: "certificate has expired" },
       "alert",

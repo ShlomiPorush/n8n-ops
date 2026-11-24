@@ -22,8 +22,6 @@ import {
 import { mergeProblems, splitAffectedWorkflow } from "./problems.ts"
 import { html } from "./telegram.ts"
 
-// Forum topics end to end against a real PostgreSQL: routing when an alert is queued, grouping and edits per topic,
-// the fallback to General when a topic is gone, and an upgrade from 0006 with alerts on their way.
 const adminUrl = process.env.MIGRATION_DATABASE_URL
 if (!adminUrl) throw new Error("MIGRATION_DATABASE_URL is required (scripts/verify.sh sets it)")
 
@@ -40,7 +38,6 @@ afterAll(async () => {
   rmSync(scratch, { recursive: true, force: true })
 })
 
-/** The migrations up to and including `tag`. */
 function migrationsUpTo(tag: string) {
   const dir = mkdtempSync(join(scratch, "m-"))
   cpSync(folder, dir, { recursive: true })
@@ -62,13 +59,11 @@ async function freshDatabase(upTo?: string) {
   return { database, url: url.toString() }
 }
 
-/** A stand-in Bot API: records calls, refuses gone topics and gone messages, fails the next N calls if asked. */
 type Call = { method: string; body: Record<string, unknown> }
 function botApi() {
   const calls: Call[] = []
   const goneTopics = new Set<number>()
   const goneMessages = new Set<number>()
-  /** Edits in the order Telegram applied them: the last one is what the message shows. */
   const applied: Call[] = []
   let failNext = 0
   let failNextSends = 0
@@ -110,7 +105,6 @@ function botApi() {
     failNextSends: (n: number) => {
       failNextSends = n
     },
-    /** Holds the next edit until the returned function is called. */
     holdNextEdit: () => {
       let release = () => {}
       editGate = new Promise<void>((resolve) => {
@@ -169,7 +163,6 @@ async function setup(
     .returning()
   if (!a || !b) throw new Error("no instances")
   let n = 0
-  /** An Affected workflow, in a Problem keyed here by its error text (made when it is the first). */
   const problem = async (instanceId: string, workflowName: string, errorMessage = "connect ECONNREFUSED") => {
     n++
     const fp = sha256(errorMessage)
@@ -194,7 +187,6 @@ async function setup(
     if (!p) throw new Error("no problem")
     return p
   }
-  // Alerts queued with the database clock are due to a dispatch in the same millisecond only by luck; make them due.
   const dispatch = async () => {
     await d.db
       .update(alertOutbox)
@@ -385,12 +377,10 @@ describe("Telegram forum topics", () => {
     bot.failNextSends(1)
     await t.dispatch()
     await t.dispatch()
-    // Its problem waits in the queue again, with the new one.
     const pending = await t.db.select().from(alertOutbox).where(eq(alertOutbox.status, "pending"))
     expect(pending).toHaveLength(2)
     expect(pending.map((r) => r.affectedWorkflowId)).toEqual(expect.arrayContaining(gone?.affectedWorkflowIds ?? []))
 
-    // The retry comes after the edit window, when the old message's group is no longer looked up.
     await t.db.update(alertGroups).set({ createdAt: new Date(Date.now() - 3 * 3600_000) })
     await t.dispatch()
     const last = bot.sends().at(-1)
@@ -434,7 +424,6 @@ describe("Telegram forum topics", () => {
     const [group] = await t.db.select().from(alertGroups)
     await t.enqueue(await t.problem(t.a.id, "Import leads"))
 
-    // The press starts first and its edit is slow; the dispatch comes in meanwhile.
     const release = bot.holdNextEdit()
     const press = handleTelegramCallback(t.ctx, {
       callback_query: {
@@ -458,7 +447,6 @@ describe("Telegram forum topics", () => {
   it("says when the test message went to General", async () => {
     const t = await setup({ defaultThreadId: 42 })
     expect(await sendTestTelegram(t.ctx)).toEqual({ topicNotFound: false })
-    // It says only that the chat can be reached, not where every alert goes: topic routes may send them elsewhere.
     expect(String(bot.sends().at(-1)?.body.text)).toBe("<b>n8n-ops test message</b>\nn8n-ops can send to this chat.")
     bot.goneTopics.add(42)
     expect(await sendTestTelegram(t.ctx)).toEqual({ topicNotFound: true })
@@ -480,7 +468,6 @@ describe("Telegram forum topics", () => {
     await sql.end()
     await database.migrate(folder)
 
-    // A message from before 0012 may list workflows of several Problems: it takes no later alerts.
     const t = await setup({}, database)
     await t.dispatch()
     expect(bot.edits()).toEqual([])
@@ -489,7 +476,6 @@ describe("Telegram forum topics", () => {
     expect(sent).toContainEqual([undefined, "old is down"])
     expect(sent.find(([, text]) => String(text).includes("Sync orders"))).toBeDefined()
 
-    // It names no Problem, so its buttons do not act, and say so.
     const [old] = await t.db.select().from(alertGroups).where(eq(alertGroups.telegramMessageId, 55))
     await handleTelegramCallback(t.ctx, {
       callback_query: {
@@ -515,7 +501,6 @@ describe("Telegram forum topics", () => {
     const audit = vi.fn(async () => {})
     t.ctx.audit = audit
     const row = await t.problem(t.a.id, "Sync orders")
-    // As release 0.8.0 left every message sent before it. Its Problem may even have kept its id.
     const [group] = await t.db
       .insert(alertGroups)
       .values({

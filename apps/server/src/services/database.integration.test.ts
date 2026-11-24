@@ -20,8 +20,6 @@ import {
   startCompact,
 } from "./database.ts"
 
-// Settings → Database against a real PostgreSQL: sizes and free space, and compacting a table with VACUUM FULL one
-// at a time, with its outcome only from PostgreSQL's answer.
 const adminUrl = process.env.MIGRATION_DATABASE_URL
 if (!adminUrl) throw new Error("MIGRATION_DATABASE_URL is required (scripts/verify.sh sets it)")
 
@@ -32,7 +30,6 @@ let database: Database
 let ctx: Ctx
 const LOCK = 7_243_003
 
-/** Every client a compaction opened, to check that each was closed. */
 const opened: Sql[] = []
 
 const ctxFor = (db: Db, at = url): Ctx =>
@@ -68,7 +65,6 @@ beforeEach(async () => {
   await ctx.db.execute(sql`insert into bloat select g, repeat('x', 400) from generate_series(1, 20000) g`)
 })
 
-// Closed at the end in every path: the run's session, with its lock and its settings, is gone.
 afterEach(async () => {
   for (const client of opened) {
     await vi.waitFor(() => expect(client.stats.connections).toBe(0))
@@ -82,13 +78,11 @@ afterAll(async () => {
   await admin.end()
 })
 
-/** A client on the test database with its own connections, standing in for another session. */
 const other = (max = 1) => postgres(url, { max, onnotice: () => {} })
 
 const lockHeld = async (c: Ctx) =>
   (await c.db.execute(sql`select 1 from pg_locks where locktype = 'advisory' and objid = ${LOCK}::oid`)).length > 0
 
-/** Waits until no compaction runs and its lock is released (the run releases it after recording its end). */
 async function settled(timeoutMs = 20_000, c: Ctx = ctx) {
   const until = Date.now() + timeoutMs
   for (;;) {
@@ -112,7 +106,6 @@ describe("sizes", () => {
     expect(bloat?.compactable).toBe(true)
     for (const excluded of ["auth_session", "auth_user", "settings", "instances", "backup_destinations"])
       expect(report.tables.find((t) => t.name === excluded)?.compactable).toBe(false)
-    // Largest first.
     const totals = report.tables.map((t) => t.totalBytes ?? 0)
     expect(totals).toEqual([...totals].sort((a, b) => b - a))
   })
@@ -197,7 +190,6 @@ describe("free space", () => {
     await compactionEnded()
     expect(await freeSpace(ctx)).not.toBe(kept)
 
-    // Nor one that still runs then: it is not joined.
     await ctx.db.delete(dbCompactions)
     const running = freeSpace(ctx, { refresh: true })
     await compactionEnded()
@@ -255,7 +247,6 @@ describe("compacting", () => {
     } finally {
       await holder.end()
     }
-    // Two starts at once: one runs, the other is told it is busy.
     const results = await Promise.allSettled([startCompact(ctx, "bloat", "a"), startCompact(ctx, "bloat", "b")])
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1)
     expect(results.filter((r) => r.status === "rejected")).toHaveLength(1)
@@ -391,7 +382,6 @@ describe("a lost answer", () => {
       await new Promise((r) => setTimeout(r, 200))
       const [before] = await ctx.db.execute(sql`select pg_relation_filenode('bloat') as node`)
       await startCompact(ctx, "bloat", "admin")
-      // The run waits for the table; its session is ended from outside.
       await ctx.db.execute(sql`
         select pg_terminate_backend(pid) from pg_locks
         where locktype = 'advisory' and granted and objid = ${LOCK}::oid

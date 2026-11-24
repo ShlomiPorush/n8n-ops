@@ -32,9 +32,6 @@ import { handleAccessCallback } from "./access-notify.ts"
 import type { Instance } from "./instances.ts"
 import { deleteInstance } from "./problems.ts"
 
-// Requests for several instances, and approvers who change them before approving, against a real PostgreSQL and a
-// stand-in n8n: what is stored, what the agent collects, which instances the key opens, and every way an approval
-// can meet a change made at the same time (an edit elsewhere, a policy saved, an instance closed or deleted).
 const adminUrl = process.env.MIGRATION_DATABASE_URL
 if (!adminUrl) throw new Error("MIGRATION_DATABASE_URL is required (scripts/verify.sh sets it)")
 
@@ -49,7 +46,6 @@ let server: Server
 let baseUrl: string
 
 const KEY = randomBytes(24).toString("hex")
-/** The REST token of the agent, made for this run. */
 const secret = `nops_r_${randomBytes(24).toString("hex")}`
 const SPEC = `
 openapi: 3.0.0
@@ -78,7 +74,6 @@ async function freshDatabase(migrations = folder) {
   return db
 }
 
-/** The migrations up to and including `tag`. */
 function migrationsUpTo(tag: string) {
   const dir = mkdtempSync(join(scratch, "m-"))
   cpSync(folder, dir, { recursive: true })
@@ -120,7 +115,6 @@ afterAll(async () => {
 })
 
 let seq = 0
-/** An instance open to agents, whose policy allows `allowed` (every scope its key holds by default). */
 async function openInstance(allowed = SCOPES): Promise<Instance> {
   seq += 1
   const [row] = await ctx.db
@@ -140,7 +134,6 @@ async function openInstance(allowed = SCOPES): Promise<Instance> {
   return row
 }
 
-/** A new agent allowed to request access, so the pending limit of one test never touches another. */
 async function agent() {
   seq += 1
   const [token] = await ctx.db
@@ -223,13 +216,11 @@ describe("a request for several instances", () => {
         baseUrl: `https://ops.example.com/n8n/${b.name}/api/v1`,
       },
     ])
-    // The key once only.
     expect(await collectAccess(ctx, token, made.id, "https://ops.example.com")).not.toHaveProperty("key")
 
     const onA = await grantForKey(ctx, got.key, a.name)
     expect(onA?.grant?.workflowIds).toEqual(["w1"])
     expect((await grantForKey(ctx, got.key, b.id))?.grant?.scopes).toEqual(["workflow:read", "workflow:update"])
-    // A working key on an instance it was not granted for: known, but no grant there.
     expect(await grantForKey(ctx, got.key, c.name)).toMatchObject({ grant: null, instance: null })
     expect(await grantForKey(ctx, `nops_n8n_${randomBytes(8).toString("hex")}`, a.name)).toBeNull()
   })
@@ -238,13 +229,11 @@ describe("a request for several instances", () => {
     const token = await agent()
     const a = await openInstance()
     const b = await openInstance()
-    // b is renamed to a's ID; one key opens both.
     await ctx.db.update(instances).set({ name: a.id }).where(eq(instances.id, b.id))
     const { id } = await requestAccess(ctx, token, {
       ...ask([]),
       instances: [
         { instance: a.name, scopes: ["workflow:read"] },
-        // By its name, as the instance list shows it, which is a's ID.
         { instance: a.id, scopes: ["workflow:read", "workflow:update"] },
       ],
     })
@@ -254,10 +243,8 @@ describe("a request for several instances", () => {
     if (!("key" in got) || !got.key) throw new Error("no key")
     const forB = got.instances.find((i) => i.scopes.includes("workflow:update"))
     expect(forB?.baseUrl).toBe(`https://ops.example.com/n8n/${a.id}/api/v1`)
-    // The address given for b reaches b, never a; a is still reached by its own name.
     expect((await grantForKey(ctx, got.key, a.id))?.instance?.id).toBe(b.id)
     expect((await grantForKey(ctx, got.key, a.name))?.instance?.id).toBe(a.id)
-    // An ID in capitals names the same instance, in a request and in an address.
     expect((await grantForKey(ctx, got.key, b.id.toUpperCase()))?.instance?.id).toBe(b.id)
     const upper = await requestAccess(ctx, await agent(), ask([b.id.toUpperCase()]))
     expect((await stored(upper.id)).list.map((i) => i.instanceId)).toEqual([b.id])
@@ -295,7 +282,6 @@ describe("a request for several instances", () => {
   it("is refused for an agent revoked while it was being made", async () => {
     const token = await agent()
     const a = await openInstance()
-    // The revoke holds the token row while the request is being made, and commits before the request stores it.
     let release = () => {}
     const gate = new Promise<void>((resolve) => {
       release = resolve
@@ -338,7 +324,6 @@ describe("a request for several instances", () => {
     await holding
     const started = Date.now()
     await expect(requestAccess(ctx, token, ask([a.name]))).rejects.toMatchObject({ code: "busy" })
-    // Answered inside the time the agent's command waits (15 seconds).
     expect(Date.now() - started).toBeLessThan(11_000)
     release()
     await holder
@@ -353,7 +338,6 @@ describe("a request for several instances", () => {
       .from(apiTokens)
       .where(eq(apiTokens.tokenHash, sha256(secret)))
     if (!mine) throw new Error("the first agent is the REST one")
-    // Earlier tests may have left requests of this agent waiting.
     await ctx.db
       .update(accessRequests)
       .set({ status: "denied" })
@@ -368,7 +352,6 @@ describe("a request for several instances", () => {
     const reason = "Look at the ERP sync workflow"
     const legacy = await post({ instance: a.name, scopes: ["workflow:read"], reason, minutes: 10 })
     expect(legacy.status).toBe(201)
-    // Agents of earlier skills read the instance's name where they always did.
     expect(((await legacy.json()) as { data: { instance: string; instances: string[] } }).data).toMatchObject({
       instance: a.name,
       instances: [a.name],
@@ -404,7 +387,6 @@ describe("approving with changes", () => {
       edit: {
         minutes: 15,
         instances: [
-          // a: wider (another scope) and limited to one workflow; b: left out; added: asked for by nobody.
           {
             instanceId: a.id,
             included: true,
@@ -428,7 +410,6 @@ describe("approving with changes", () => {
     expect(list.map((i) => [i.instanceName, i.included, i.scopes, i.workflowIds, i.droppedScopes])).toEqual([
       [a.name, true, ["workflow:read", "workflow:update"], ["w7"], []],
       [b.name, false, ["workflow:read"], [], []],
-      // The policy of the added instance does not allow workflow:update: left out, and said so.
       [added.name, true, ["workflow:read"], [], ["workflow:update"]],
     ])
     expect(list[2]?.requestedScopes).toBeNull()
@@ -498,7 +479,6 @@ describe("approving with changes", () => {
     const { id } = await requestAccess(ctx, token, ask([a.name, closed.name, gone.name]))
     await ctx.db.update(instances).set({ chosenCapabilities: [] }).where(eq(instances.id, closed.id))
     await deleteInstance(ctx, gone.id)
-    // The request outlives the deleted instance, with the name it had.
     const kept = (await stored(id)).list
     expect(kept.map((i) => [i.instanceName, i.instanceId])).toEqual([
       [a.name, a.id],
@@ -521,7 +501,6 @@ describe("approving with changes", () => {
     ])
     expect(detail?.changed).toBe(true)
 
-    // Nothing left: nothing is approved, and the request still waits.
     const other = await requestAccess(ctx, await agent(), ask([a.name]))
     await ctx.db
       .update(instances)
@@ -537,7 +516,6 @@ describe("approving with changes", () => {
     const token = await agent()
     const [a, gone, addedGone] = [await openInstance(), await openInstance(), await openInstance()]
     const { id } = await requestAccess(ctx, token, ask([a.name, gone.name]))
-    // The page was loaded with both; then both the instance asked for and the one the approver adds are deleted.
     await deleteInstance(ctx, gone.id)
     await deleteInstance(ctx, addedGone.id)
     const all = (instanceId: string) => ({
@@ -598,7 +576,6 @@ describe("approving with changes", () => {
         approveAccess(ctx, id, who, { revision: 0 }),
         revokeAccess(ctx, id, { by: "shlomi", via: "web" }),
       ])
-      // Either the revoke came first and nothing was approved, or it came second and ended the approval.
       const { row } = await stored(id)
       expect(row.status).toBe("revoked")
       expect(row.keyEnc).toBeNull()
@@ -613,15 +590,12 @@ describe("the draft", () => {
     const { id } = await requestAccess(ctx, token, ask([a.name, b.name]))
     await editDraft(ctx, id, 0, { position: 1, included: false })
     await editDraft(ctx, id, 1, { minutes: 15 })
-    // The same press sent again (a retried webhook) carries the old revision: refused, never flipped back.
     await expect(editDraft(ctx, id, 0, { position: 1, included: false })).rejects.toMatchObject({
       code: "request_changed",
     })
     await expect(editDraft(ctx, id, 2, { minutes: 100_000 })).rejects.toMatchObject({ code: "too_long" })
     await expect(editDraft(ctx, id, 2, { position: 9, included: true })).rejects.toMatchObject({ code: "not_found" })
-    // The failed change of a position that does not exist moved nothing on.
     expect((await stored(id)).row.revision).toBe(2)
-    // A page or card loaded before the edits.
     await expect(approveAccess(ctx, id, who, { revision: 0 })).rejects.toMatchObject({ code: "request_changed" })
     await approveAccess(ctx, id, who, { revision: 2 })
     const { row, list } = await stored(id)
@@ -655,7 +629,6 @@ describe("the draft", () => {
     const holding = new Promise<void>((resolve) => {
       locked = resolve
     })
-    // A policy save holds the instance row, as updateInstance does, and narrows the policy.
     const saving = database.db.transaction(async (tx) => {
       await tx.select().from(instances).where(eq(instances.id, a.id)).for("update")
       await tx
@@ -682,7 +655,6 @@ describe("the draft", () => {
 
 describe("Approve in Telegram", () => {
   const answers: string[] = []
-  // Only the answer to the press is recorded; with Telegram not set up, nothing else is sent.
   const tg = {
     chatId: "2002",
     api: {
@@ -725,7 +697,6 @@ describe("Approve in Telegram", () => {
       "Too long to approve in Telegram. Open the request in n8n-ops to approve it.",
     )
     expect(await status(id)).toBe("pending")
-    // The request page still approves it.
     await approveAccess(ctx, id, who, { revision: 0 })
     expect(await status(id)).toBe("approved")
   })
@@ -813,7 +784,6 @@ describe("the upgrade to requests for several instances", () => {
     expect(calls).toHaveLength(statuses.length)
     expect(calls.every((c) => c.instanceId === instance.id)).toBe(true)
 
-    // The pending request's message from before the upgrade has `xa:<id>`, read as revision 0.
     const upgraded = { ...ctx, db: old.db, audit: createAudit(old.db), settings: createSettings(old.db) } as Ctx
     await approveAccess(upgraded, ids[0] as string, who, { revision: 0 })
     expect(
@@ -858,7 +828,6 @@ describe("the limit on requests waiting for a decision", () => {
     const revoked = await requestAccess(ctx, token, ask([a.name]))
     await revokeAccess(ctx, revoked.id, who)
 
-    // All three places are free again, and a fourth request waits for one.
     for (let i = 0; i < 3; i++) await requestAccess(ctx, token, ask([a.name]))
     await expect(requestAccess(ctx, token, ask([a.name]))).rejects.toMatchObject({ code: "too_many_pending" })
   })

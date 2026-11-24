@@ -12,8 +12,6 @@ import { createSecrets } from "../lib/crypto.ts"
 import { getAccess, requestAccess, workflowNamesOf } from "./access.ts"
 import type { Instance } from "./instances.ts"
 
-// The names of the workflows an access request is limited to, against a real PostgreSQL and a stand-in n8n: read
-// from n8n when the key may, from the workflow map otherwise, stored on the request and shown from there.
 const adminUrl = process.env.MIGRATION_DATABASE_URL
 if (!adminUrl) throw new Error("MIGRATION_DATABASE_URL is required (scripts/verify.sh sets it)")
 
@@ -26,9 +24,7 @@ let baseUrl: string
 let tokenId: string
 
 const KEY = randomBytes(24).toString("hex")
-/** What the stand-in n8n has, by workflow ID; "slow" never answers. */
 const live: Record<string, string> = { "wf-renamed": "New name", "wf-live": "Only in n8n" }
-// An ID an agent may send that is also a name JavaScript gives objects; a literal would set the prototype instead.
 Object.defineProperty(live, "__proto__", { value: "Odd but real", enumerable: true })
 const asked: string[] = []
 
@@ -188,7 +184,6 @@ describe("workflow names on access requests", () => {
     const second = requestAccess(ctx, tokenId, input)
     await expect(second).rejects.toMatchObject({ code: "request_in_progress" })
     await expect(first).rejects.toMatchObject({ code: "unknown_instance" })
-    // Once the first is answered, the agent may ask again.
     await expect(requestAccess(ctx, tokenId, input)).rejects.toMatchObject({ code: "unknown_instance" })
   })
 })

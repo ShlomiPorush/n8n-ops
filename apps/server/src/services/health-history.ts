@@ -8,14 +8,6 @@ import type { HealthReport } from "./health.ts"
 import { activeOnly, type Instance } from "./instances.ts"
 import type { DbLike } from "./problems.ts"
 
-/**
- * The health history of an instance's main (requirement C1): every applied check, kept for Keep health history
- * (days), and what it tells about past outages. Agents read it through the REST API and MCP (`health`), the console
- * through the instance's Health tab. Failure runs are derived from the checks: a run is the failed checks in a row
- * between two passing ones; a check that was not collected neither extends nor ends one.
- */
-
-/** How long one request may take before the check gives up, by how the main was reached. */
 export const TIMEOUT_SEC = { inside: 3, network: 10 } as const
 
 const NETWORK_CODES = new Set([
@@ -35,10 +27,6 @@ const NETWORK_CODES = new Set([
   "ERR_TLS_CERT_ALTNAME_INVALID",
 ])
 
-/**
- * What made the main's check fail, from what the check recorded. Reports of workers that send no code are read
- * from their error text, as far as it says.
- */
 export function classifyFailure(report: Pick<HealthReport, "main" | "notCollected" | "mainState">): FailureKind | null {
   if (report.notCollected) return "not-collected"
   const main = report.main
@@ -63,10 +51,6 @@ type HintFacts = {
   code: string | null
 }
 
-/**
- * What a failed check means: first what was observed, then possible causes, which are only hypotheses. Built from
- * the check's own facts (its mode and how it was made), never from today's settings.
- */
 export function failureHint({ kind, source, mode, status, code }: HintFacts): string {
   const where = source === "inside" ? "from inside its container" : "over the network"
   const timeout = source === "inside" ? TIMEOUT_SEC.inside : TIMEOUT_SEC.network
@@ -97,7 +81,6 @@ export function failureHint({ kind, source, mode, status, code }: HintFacts): st
 const clip = (text: string | undefined, length: number) => (text ? text.slice(0, length) : null)
 const whole = (ms: number | undefined) => (ms === undefined ? null : Math.round(ms))
 
-/** Records one applied check, in the transaction that applied it. */
 export async function recordCheck(
   tx: DbLike,
   instanceId: string,
@@ -125,15 +108,8 @@ export async function recordCheck(
   })
 }
 
-/** An instant as a raw SQL value: the driver takes a Date only where the query builder knows the column. */
 export const at = (d: Date) => sql`${d.toISOString()}::timestamptz`
 
-/**
- * Deletes an instance's checks older than its Keep health history (days), a batch at a time. What goes is always the
- * first checks as they were applied, up to the last one older than the limit, so the history kept never has a hole:
- * a run read between two batches, after a stop, or after the clock went back, only lost its beginning, which
- * startTruncated then says. A check applied before that one is deleted with it even when its clock time is later.
- */
 export async function pruneChecks(ctx: Ctx, instanceId: string, days: number, now = Date.now()) {
   const before = at(new Date(now - days * 86_400_000))
   const [edge] = (await ctx.db.execute(sql`
@@ -150,7 +126,6 @@ export async function pruneChecks(ctx: Ctx, instanceId: string, days: number, no
   }
 }
 
-/** The facts of how an instance is checked now. They describe today's configuration, not past checks. */
 export function checkFacts(instance: Pick<Instance, "collection" | "queueMode">, s: InstanceSettings) {
   return {
     current: true,
@@ -169,13 +144,10 @@ export const HOURS_MAX = 720
 export const RUNS_MAX = 500
 export const OFFSET_MAX = 300_000
 
-/** One request for the health history, the same for the REST API, MCP and the console. */
 export const historyQuery = z.object({
   hours: z.coerce.number().int().min(1).max(HOURS_MAX).default(24),
   limit: z.coerce.number().int().min(1).max(RUNS_MAX).default(50),
-  // Above the most runs 30 days can hold (a check every 10 s, failing every other time), so every page is reachable.
   offset: z.coerce.number().int().min(0).max(OFFSET_MAX).default(0),
-  /** The window's end, to page with a fixed window; now when left out. */
   to: z.coerce.date().optional(),
 })
 export type HistoryQuery = z.infer<typeof historyQuery>
@@ -206,14 +178,7 @@ type RunRow = {
 export const asDate = (v: Date | string) => (v instanceof Date ? v : new Date(v))
 const num = (v: string | number | null) => (v === null ? null : Number(v))
 
-/**
- * The health history of one active instance, by name or id: what the check is now, a summary, the response times
- * by bucket and the failure runs, newest first and paged, all read from one snapshot. `to` fixes the window's end
- * for the next pages; history removed by retention between two calls can still shorten what they return.
- */
 export async function healthHistory(ctx: Ctx, ref: { name?: string; id?: string }, q: HistoryQuery, now = new Date()) {
-  // The defaults are read before the snapshot (they live behind the settings cache); the instance, its overrides
-  // and every check are read in it, so the answer is one picture.
   const defaults = await ctx.settings.get("defaults")
   const to = q.to ?? now
   if (to.getTime() > now.getTime() + 60_000) throw new HistoryError("invalid", "to is in the future.")
@@ -268,10 +233,6 @@ export async function healthHistory(ctx: Ctx, ref: { name?: string; id?: string 
         select failure_kind as kind, count(*) as n from health_checks
         where instance_id = ${id} and checked_at >= ${fromAt} and checked_at <= ${toAt} and main_ok = false
         group by 1`)) as unknown as { kind: FailureKind; n: string | number }[]
-      // The window in the order the checks were applied: from the first check at or after its start to the last one
-      // at or before its end, so a clock that went back never moves a check across it. Runs start after the last
-      // passing check before that; with none, from the oldest stored check, and a run there may have started before
-      // what is kept (startTruncated).
       const [edges] = (await tx.execute(sql`
         select
           (select min(id) from health_checks where instance_id = ${id} and checked_at >= ${fromAt}) as start_id,
@@ -285,9 +246,6 @@ export async function healthHistory(ctx: Ctx, ref: { name?: string; id?: string 
         select max(id) as id from health_checks
         where instance_id = ${id} and main_ok and id < ${startId}`)) as unknown as { id: string | number | null }[]
       const anchorId = Number(anchor?.id ?? 0)
-      // Each passing check starts a new group (grp), so a run is the failed checks of one group, and the passing
-      // check that ends it is the one row of the next group that passed. Times come from the rows the ids pick:
-      // the order of the checks is the order they were applied in, whatever the clock did.
       const runsSql = sql`
         with c as materialized (
           select id, checked_at, main_ok, alert_queued, failure_kind,
@@ -310,7 +268,6 @@ export async function healthHistory(ctx: Ctx, ref: { name?: string; id?: string 
         from ended where recovered_id is null or recovered_id >= ${startId}`
       const runs = (await tx.execute(sql`
         ${runsSql} order by first_id desc limit ${q.limit} offset ${q.offset}`)) as unknown as RunRow[]
-      // A page past the end has no row to carry the counts.
       const [counted] = runs.length
         ? [{ total: runs[0]?.total ?? 0, alerted: runs[0]?.alerted ?? 0 }]
         : ((await tx.execute(sql`
@@ -318,7 +275,6 @@ export async function healthHistory(ctx: Ctx, ref: { name?: string; id?: string 
             from (${runsSql}) x`)) as unknown as { total: string | number; alerted: string | number }[])
       const lastIds = runs.map((r) => Number(r.last_id))
       const last = lastIds.length ? await tx.select().from(healthChecks).where(inArray(healthChecks.id, lastIds)) : []
-      // The health now, from the same picture and the same settings as the rest of the answer.
       const [worker] =
         instance.collection === "worker" && instance.workerId
           ? await tx.select().from(workers).where(eq(workers.id, instance.workerId))
@@ -366,7 +322,6 @@ export async function healthHistory(ctx: Ctx, ref: { name?: string; id?: string 
       notCollected: Number(sum.not_collected ?? 0),
       measured: Number(sum.measured ?? 0),
       failedByKind: Object.fromEntries(read.byKind.map((k) => [k.kind ?? "other", Number(k.n)])),
-      // Whole milliseconds: the percentiles are interpolated, and a fraction of a millisecond says nothing here.
       p50Ms: whole(num(sum.p50 as string | number | null) ?? undefined),
       p95Ms: whole(num(sum.p95 as string | number | null) ?? undefined),
       maxMs: num(sum.max_ms as string | number | null),
@@ -393,10 +348,8 @@ export async function healthHistory(ctx: Ctx, ref: { name?: string; id?: string 
         startedBeforeWindow: Number(r.first_id) < read.startId,
         startTruncated,
         lastFailureAt: asDate(r.last_failure_at),
-        // The first passing check after the run: when the recovery was seen, not when n8n recovered.
         recoverySeenAt: recovered,
         recoverySeen: recovered !== null,
-        // With a window end given, checks after it are not read: a recovery may lie beyond it.
         endTruncated: recovered === null && q.to !== undefined,
         checks: Number(r.checks),
         checksAtLeast: startTruncated,
@@ -429,7 +382,6 @@ export async function healthHistory(ctx: Ctx, ref: { name?: string; id?: string 
   }
 }
 
-/** Deletes the checks of every instance older than its Keep health history (days). For the hourly housekeeping. */
 export async function pruneHealthHistory(ctx: Ctx, now = Date.now()) {
   const rows = await ctx.db.select({ id: instances.id, overrides: instances.overrides }).from(instances)
   for (const r of rows) {

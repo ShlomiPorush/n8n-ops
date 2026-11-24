@@ -51,11 +51,6 @@ function stamp(date = new Date()) {
     .replace(/\.\d+Z$/, "Z")
 }
 
-/**
- * Where a new archive goes under a destination: a folder per instance (named after it, or after its ID when the
- * name is only dots), then year and month. The copy's ID in the file name keeps two destinations that share a
- * place from ever writing the same file.
- */
 export function archiveParts(target: { id: string; name: string } | null, copyId: string, date = new Date()) {
   const d = date.toISOString()
   const short = copyId.replace(/-/g, "").slice(0, 8)
@@ -70,22 +65,15 @@ async function backupRecipient(ctx: Ctx) {
   return backupRecipient
 }
 
-/** Largest archive accepted, in bytes. */
 export async function maxArchiveBytes(ctx: Ctx) {
   return (await ctx.settings.get("backups")).maxArchiveMb * 1024 ** 2
 }
 
-/** The feature a worker names when it can follow a Compose service (x-worker-features). */
 const COMPOSE_TARGET = "compose-target"
 
-/** Whether a worker can run commands in the instance's main: any worker for a name, a recent one for a service. */
 export const canReach = (worker: Pick<typeof workers.$inferSelect, "features">, instance: Instance) =>
   !instance.composeProject || (worker.features ?? []).includes(COMPOSE_TARGET)
 
-/**
- * A worker can run the backup when one is assigned and where the main is known; for a Compose service, only a
- * worker of a release that follows one (an earlier one has no such job to run).
- */
 export async function usableWorker(ctx: Ctx, instance: Instance) {
   if (!instance.workerId || !mainTarget(instance)) return null
   const [worker] = await ctx.db
@@ -95,7 +83,6 @@ export async function usableWorker(ctx: Ctx, instance: Instance) {
   return worker && canReach(worker, instance) ? worker : null
 }
 
-/** Where a job finds the main: a container name, or the Compose service it resolves at the job's start. */
 export function jobTarget(instance: Instance) {
   const target = mainTarget(instance)
   if (!target) return {}
@@ -110,12 +97,6 @@ export class NoDestinationError extends Error {
   }
 }
 
-/**
- * A new run with one copy waiting per destination; the set is fixed now, whatever changes later. For an instance,
- * only while it still has backup, read with its row share-locked in the same transaction: turning backup off locks
- * the row before it ends the runs waiting for their archive, so a run is either made before and ended by it, or not
- * made. Returns the run and the instance as locked, or null.
- */
 async function createRun(ctx: Ctx, target: Instance | null, destinations: Destination[]) {
   return ctx.db.transaction(async (tx) => {
     const [now] = target ? await tx.select().from(instances).where(eq(instances.id, target.id)).for("share") : []
@@ -142,23 +123,17 @@ async function createRun(ctx: Ctx, target: Instance | null, destinations: Destin
   })
 }
 
-/**
- * Starts a backup of one instance (requirements D1 to D5). Never falls back to an unencrypted archive. Null when the
- * instance no longer has backup.
- */
 export async function startBackup(ctx: Ctx, instance: Instance, trigger: "schedule" | "manual"): Promise<Run | null> {
   const [running] = await ctx.db
     .select()
     .from(backupRuns)
     .where(and(eq(backupRuns.instanceId, instance.id), eq(backupRuns.status, "running")))
-  // A run still waiting for its archive, or writing its copies, is the backup in progress.
   if (running && (running.spooledAt || Date.now() - running.startedAt.getTime() < ARCHIVE_WAIT_MS)) return running
   const destinations = await destinationsFor(ctx, instance)
   if (!destinations.length) throw new NoDestinationError(instance.name)
   const created = await createRun(ctx, instance, destinations)
   if (!created?.instance) return null
   const { run, instance: now } = created
-  // Via the worker it is the worker or nothing: an API backup instead would drop the credential secrets unseen.
   const viaWorker = now.backupVia === "worker"
   const worker = viaWorker ? await usableWorker(ctx, now) : null
   try {
@@ -166,7 +141,6 @@ export async function startBackup(ctx: Ctx, instance: Instance, trigger: "schedu
       throw new Error(
         `The worker for ${now.name} is not available: assign a worker and set the main${now.composeProject ? ", and update the worker to a release that follows a Compose service" : ""}.`,
       )
-    // The API of n8n older than 2.14.0 is not used; a backup through the worker does not need it.
     if (!viaWorker && unsupportedVersion(now)) throw new Error(unsupportedVersionText)
     const recipient = await backupRecipient(ctx)
     if (worker) {
@@ -192,11 +166,6 @@ export async function startBackup(ctx: Ctx, instance: Instance, trigger: "schedu
   return run
 }
 
-/**
- * The encrypted archive of a run is complete in the spool with this size and checksum; its copies can be
- * written now. Only while the run still waits for it: false when it ended meanwhile (backup turned off, timed
- * out).
- */
 export async function archiveReady(ctx: Ctx, runId: string, archive: { size: number; sha256: string }) {
   const [applied] = await ctx.db
     .update(backupRuns)
@@ -207,7 +176,6 @@ export async function archiveReady(ctx: Ctx, runId: string, archive: { size: num
   return Boolean(applied)
 }
 
-/** An archive made on the server (API backup, self backup) goes into the spool the same way an upload does. */
 async function spoolSealed(ctx: Ctx, runId: string, bytes: Uint8Array) {
   const max = await maxArchiveBytes(ctx)
   if (bytes.length > max)
@@ -224,7 +192,6 @@ async function spoolSealed(ctx: Ctx, runId: string, bytes: Uint8Array) {
   }
 }
 
-/** Backup through the n8n API only: workflows in full, credentials without their secrets. */
 async function apiBackup(ctx: Ctx, instance: Instance, runId: string, recipient: string) {
   try {
     const client = clientFor(ctx, instance)
@@ -257,7 +224,6 @@ async function apiBackup(ctx: Ctx, instance: Instance, runId: string, recipient:
   }
 }
 
-/** What the worker said when its job ended. The archive itself arrived (or not) by upload, before this. */
 export async function workerBackupResult(
   ctx: Ctx,
   runId: string,
@@ -281,7 +247,6 @@ export async function workerBackupResult(
       await failRun(ctx, runId, "The worker reported success, but its archive did not arrive.")
     return
   }
-  // A failure after the archive arrived (a later step on the worker) does not undo the copies.
   const refusal = outcome.refused && {
     ...outcome.refused,
     ...(outcome.resolvedContainer ? { resolvedContainer: outcome.resolvedContainer } : {}),
@@ -290,7 +255,6 @@ export async function workerBackupResult(
   if (!run.spooledAt) await failRun(ctx, runId, outcome.error ?? "The worker reported a failure.", refusal)
 }
 
-/** Starts scheduled backups and raises stale-backup alerts per destination (D1, D7). Checked every few minutes. */
 export async function scheduleBackups(ctx: Ctx, now = new Date()) {
   const { timezone } = await ctx.settings.get("general")
   const local = zonedParts(now, timezone || "UTC")
@@ -304,7 +268,6 @@ export async function scheduleBackups(ctx: Ctx, now = new Date()) {
       .orderBy(desc(backupRuns.startedAt))
       .limit(1)
     const ranToday = last && zonedParts(last.startedAt, timezone || "UTC").date === local.date
-    // Through the API of n8n older than 2.14.0 nothing is backed up, and nothing fails every day for it either.
     const apiUnsupported = instance.backupVia === "api" && unsupportedVersion(instance)
     if (local.time >= s.backupTime && !ranToday && !apiUnsupported)
       await startBackup(ctx, instance, "schedule").catch((error: Error) => {
@@ -316,10 +279,6 @@ export async function scheduleBackups(ctx: Ctx, now = new Date()) {
   await maybeSelfBackup(ctx, local)
 }
 
-/**
- * One condition per destination an instance (or n8n-ops itself) backs up to: stale when that destination has
- * no verified copy for too long. Conditions of destinations it no longer uses end silently.
- */
 async function checkStale(ctx: Ctx, instance: Instance | null, hours: number, now: Date) {
   const destinations = await destinationsFor(ctx, instance)
   const name = instance?.name ?? "n8n-ops"
@@ -344,7 +303,6 @@ async function checkStale(ctx: Ctx, instance: Instance | null, hours: number, no
       )
       .orderBy(desc(backupRuns.startedAt))
       .limit(1)
-    // From when backup was turned on: an old draft, or an old instance adding backup, has missed nothing yet.
     const since = [
       instance ? (instance.backupSince ?? instance.createdAt) : undefined,
       d.createdAt,
@@ -352,8 +310,6 @@ async function checkStale(ctx: Ctx, instance: Instance | null, hours: number, no
     ]
       .filter((x): x is Date => Boolean(x))
       .reduce((a, b) => (a > b ? a : b), new Date(0))
-    // The later of the last good copy and when backup was turned on: a copy from before it was turned off and on
-    // again does not make the new start late at once.
     const reference = lastOk && lastOk.at > since ? lastOk.at : since
     await setCondition(
       ctx,
@@ -377,7 +333,6 @@ async function checkStale(ctx: Ctx, instance: Instance | null, hours: number, no
   )
 }
 
-/** Nightly backup of the n8n-ops database itself (requirement D8), with pg_dump, encrypted with the same key. */
 async function maybeSelfBackup(ctx: Ctx, local: { date: string; time: string }) {
   const defaults = await ctx.settings.get("defaults")
   if (local.time < defaults.backupTime) return
@@ -422,22 +377,12 @@ export async function runSelfBackup(ctx: Ctx) {
 
 const URL_PASSWORD = /(?<=^[^:]*:\/\/[^:/?]*):([^/?]*)(?=@)/
 
-/**
- * `DATABASE_URL` without its password, for pg_dump's command line, and the password, for its PGPASSWORD. Split where
- * postgres.js splits it, at the last "@" before "/" or "?": libpq splits at the first "@" and the URL standard ends
- * the host part at a "#", so either would leave a part of such a password in the URL. The fragment goes as well:
- * postgres.js ignores it, and libpq would read parameters from it.
- */
 export function dumpConnection(databaseUrl: string) {
   const password = URL_PASSWORD.exec(databaseUrl)?.[1] ?? ""
   const url = databaseUrl.replace(URL_PASSWORD, "").replace(/(:\/\/[^/?]*[/?][^#]*)#.*/s, "$1")
   return { url, password: decodeURIComponent(password) }
 }
 
-/**
- * How pg_dump ended and what it wrote to stderr; never the error's message: Node puts the command line in it, or the
- * value of a variable it refuses to pass on, such as a password with a NUL.
- */
 export function dumpFailure(error: unknown) {
   const { code, signal, stderr } = (error ?? {}) as { code?: unknown; signal?: unknown; stderr?: unknown }
   const how = signal
@@ -449,14 +394,8 @@ export function dumpFailure(error: unknown) {
   return said ? `${how}\n${said}` : how
 }
 
-// ---------------------------------------------------------------------------
-// Reading an archive back (restore, requirement D6, is in restore.ts)
-// ---------------------------------------------------------------------------
-
-/** Copies are read nearest first: the mapped folder, then remote file servers, then S3. */
 const readOrder: Record<string, number> = { local: 0, sftp: 1, webdav: 2, s3: 3 }
 
-/** The archive's bytes from the first copy that reads back whole and with the run's checksum. */
 export async function readArchive(ctx: Ctx, run: Run) {
   const copies = await ctx.db
     .select({ copy: backupCopies, destination: backupDestinations })
@@ -492,12 +431,6 @@ export async function readArchive(ctx: Ctx, run: Run) {
   throw new Error(`No copy of this archive could be read. ${errors.join("; ")}`)
 }
 
-/**
- * What a probe job asks of the worker. `inside` asks it to read the main from inside its container; `overrides`
- * carries only what the owner typed. The URL fields stay for workers of earlier releases and as the network
- * fallback; a worker of this release never takes them for overrides. Queue parts only in queue mode. A setup check
- * has no ticket and asks to read inside whatever the collection mode (`inside`).
- */
 export function probePayload(instance: Instance, check: CheckTicket | undefined, inside = readsInside(instance)) {
   const base = instance.baseUrl.replace(/\/+$/, "")
   const queue = instance.queueMode
@@ -507,12 +440,8 @@ export function probePayload(instance: Instance, check: CheckTicket | undefined,
     readiness: `${base}/healthz/readiness`,
     workers: typedWorkers ?? [],
     metrics: metricsUrlOf(instance),
-    // Workers of earlier releases read `inside.container` only: for a Compose service they get none and check over
-    // the network, and the page asks to update them.
     ...(inside ? { inside: jobTarget(instance) } : {}),
-    // Queue mode with no worker URLs typed: the worker finds the queue workers next to the main and checks them.
     ...(inside && queue && !typedWorkers ? { discover: true } : {}),
-    // A main the socket proxy refuses: the worker lists its queue workers anyway, for what the proxy must allow.
     ...(needsQueueWorkers(instance) ? { list: true } : {}),
     overrides: {
       ...(queue && instance.metricsUrl ? { metricsUrl: instance.metricsUrl } : {}),
@@ -522,16 +451,11 @@ export function probePayload(instance: Instance, check: CheckTicket | undefined,
   }
 }
 
-/** Instances whose worker-collected health is due get a probe job (collection mode "worker", health chosen). */
 export async function enqueueProbes(ctx: Ctx) {
   const all = await ctx.db
     .select()
     .from(instances)
     .where(and(eq(instances.collection, "worker"), isNotNull(instances.workerId), activeWith("health")))
-  // Only a probe its own worker has yet to answer holds an instance back. One left to a worker that was
-  // revoked, or to the worker it had before, is never answered and would stop its health for good. Nor does one
-  // claimed before the worker was last offline or this server started: its answer no longer counts. A setup check
-  // is not a health check and holds nothing back.
   const workerOf = new Map(all.map((i) => [i.id, i.workerId]))
   const busy = new Set(
     (
@@ -554,14 +478,12 @@ export async function enqueueProbes(ctx: Ctx) {
     if (busy.has(instance.id) || !instance.workerId) continue
     const s = await ctx.settings.forInstance(instance.overrides)
     const checked = instance.healthCheckedAt
-    // After the worker came back, or this server started, the first check is due at once.
     if (
       checked &&
       checked >= reportsSince(instance.workerId) &&
       Date.now() - checked.getTime() < s.healthIntervalSec * 1000
     )
       continue
-    // The probe is made from the row its ticket was taken with, so it asks for exactly that revision.
     const started = await startCheck(ctx, instance.id)
     const now = started?.instance
     if (!started || !now || now.collection !== "worker" || !now.workerId || !can(now, "health")) continue
@@ -569,7 +491,6 @@ export async function enqueueProbes(ctx: Ctx) {
   }
 }
 
-/** Recent runs of an instance (or of n8n-ops with null), each with its copies and where they are. */
 export async function recentRuns(ctx: Ctx, instanceId: string | null, limit = 30) {
   const runs = await ctx.db
     .select()
@@ -610,10 +531,6 @@ export async function recentRuns(ctx: Ctx, instanceId: string | null, limit = 30
   }))
 }
 
-/**
- * For a backup the socket proxy made fail: the exact lines that allow it, computed for the worker and container the
- * backup ran on, while the instance still uses them. When it has moved since, where the backup ran instead.
- */
 async function runFix(ctx: Ctx, run: typeof backupRuns.$inferSelect) {
   if (run.status !== "failed" || !run.instanceId) return {}
   const refused = run.refusal as Refusal | null

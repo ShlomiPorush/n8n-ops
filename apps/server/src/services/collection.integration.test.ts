@@ -15,9 +15,6 @@ import { enqueueProbes } from "./backups.ts"
 import { collectionClock, currentHealth, WORKER_ONLINE_MS, watchCollectors } from "./collection.ts"
 import { applyHealth, type HealthReport, startCheck } from "./health.ts"
 
-// When nothing collects an instance's health, against a real PostgreSQL: the alerts of a worker that stops
-// reporting, the checks that no longer count after a return or a restart, and reports read under a collection
-// mode or a worker that changed since.
 const adminUrl = process.env.MIGRATION_DATABASE_URL
 if (!adminUrl) throw new Error("MIGRATION_DATABASE_URL is required (scripts/verify.sh sets it)")
 
@@ -56,7 +53,6 @@ afterAll(async () => {
 
 beforeEach(async () => {
   alerts.health = true
-  // The server has run for a while, and no worker came back yet.
   collectionClock.startedAt = ago(60 * minute)
   collectionClock.returnedAt.clear()
   await ctx.db.delete(workerJobs)
@@ -121,7 +117,6 @@ describe("watchCollectors", () => {
   it("ends without a message when the worker is revoked or removed", async () => {
     const a = await workerCollecting(["alpha"], 5 * minute)
     await watchCollectors(ctx)
-    // Revoking also takes the worker off its instances (routes/workers.ts).
     await ctx.db.update(workers).set({ revokedAt: new Date(), tokenHash: null }).where(eq(workers.id, a.worker.id))
     await ctx.db.update(instances).set({ workerId: null }).where(eq(instances.workerId, a.worker.id))
     await watchCollectors(ctx)
@@ -210,7 +205,6 @@ describe("a worker's probe result", () => {
     const instance = rows[0]
     if (!instance) throw new Error("no instance")
     collectionClock.returnedAt.set(worker.id, ago(30_000))
-    // Both carry a valid ticket: only when the worker claimed them tells them apart.
     const first = await startCheck(ctx, instance.id)
     const second = await startCheck(ctx, instance.id)
     const job = (ticket: unknown, startedAt: Date) => ({
@@ -293,11 +287,9 @@ describe("enqueueProbes", () => {
     const { worker, instances: rows } = await workerCollecting(["alpha"], 1_000)
     const instance = rows[0]
     if (!instance) throw new Error("no instance")
-    // Checked a minute ago, once an hour: not due.
     await enqueueProbes(ctx)
     expect(await probes(instance.id)).toHaveLength(0)
 
-    // Claimed before the worker went offline, and its answer lost on the way.
     await ctx.db.insert(workerJobs).values({
       workerId: worker.id,
       instanceId: instance.id,

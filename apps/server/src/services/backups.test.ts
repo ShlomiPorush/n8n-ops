@@ -5,7 +5,6 @@ import type { Ctx } from "../context.ts"
 import { archiveParts, dumpConnection, dumpFailure, NoDestinationError, runSelfBackup } from "./backups.ts"
 import { checkKey } from "./destinations/store.ts"
 
-/** A value made for the test, never a working credential. */
 const made = (bytes = 12) => randomBytes(bytes).toString("hex")
 
 describe("archiveParts", () => {

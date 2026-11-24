@@ -8,16 +8,6 @@ import { checkFacts } from "./health-history.ts"
 import { activeOnly, effectiveScopes, latestN8nVersion } from "./instances.ts"
 import { problemDetail, problemFailure, problemPage, regroupedView } from "./problem-view.ts"
 
-/**
- * Read-only queries for agents (requirements E1 to E3). The REST API and the MCP server both use these,
- * so they always return the same picture.
- */
-
-/**
- * Problems for agents: one per cause (docs/adr/0003), with the workflows it hit (`affectedWorkflows`, most recently failed
- * first, at most AFFECTED_IN_LIST; `affectedTotal` counts them all). With an instance, a Problem is listed when it hit
- * that instance, its state is its state there, and that instance's workflows come first.
- */
 export async function agentProblems(
   ctx: Ctx,
   opts: { status?: string; instance?: string; q?: string; limit?: number },
@@ -33,25 +23,15 @@ export async function agentProblems(
     instanceId,
     q: opts.q,
     limit: Math.min(opts.limit ?? 50, 200),
-    // Most recently seen first, as it always was.
     order: "recent",
   })
   return items
 }
 
-/**
- * One Problem with all its workflows, and the chosen one's latest failure (`selected`). The id may be an Affected
- * workflow's (it is then the one chosen) or a merged Problem's; `affectedWorkflowId` chooses explicitly.
- */
 export async function agentProblem(ctx: Ctx, id: string, affectedWorkflowId?: string) {
-  // An id the regroup by cause replaced answers where its workflows went (docs/adr/0003).
   return (await regroupedView(ctx, id)) ?? problemDetail(ctx, id, affectedWorkflowId)
 }
 
-/**
- * A stored failed execution: error, stack, node input and n8n's full run data. The latest of the workflow an
- * Affected workflow id or `affectedWorkflowId` names, else of the whole Problem; a `failureId` must belong to both.
- */
 export async function agentFailure(ctx: Ctx, problemId: string, failureId?: string, affectedWorkflowId?: string) {
   return problemFailure(ctx, problemId, { failure: failureId, workflow: affectedWorkflowId })
 }
@@ -77,15 +57,11 @@ export async function agentInstances(ctx: Ctx) {
     baseUrl: i.baseUrl,
     version: i.version,
     latestVersion: latest,
-    // "unknown" when nothing collects it now; healthDetail and healthCheckedAt are then the last check, and
-    // lastKnownHealth and lastKnownAt the last check that read the instance.
     ...healthFields(i, now),
     healthDetail: i.healthDetail,
     healthCheckedAt: i.healthCheckedAt,
-    // How the instance is checked now and when a down alert is sent; past checks are in the health history.
     check: settings[n] ? checkFacts(i, settings[n]) : null,
     queueMode: i.queueMode,
-    // The main as a Compose project and service, when it is named so (both null otherwise).
     composeProject: i.composeProject,
     composeService: i.composeService,
     lastPollAt: i.lastPollAt,
@@ -104,7 +80,6 @@ export async function agentQueues(ctx: Ctx) {
     const d = i.healthDetail as { queue?: unknown; workers?: unknown; backlogActive?: boolean } | null
     return {
       name: i.name,
-      // "unknown" when nothing collects it now; the queue figures and checkedAt are then those of the last check.
       ...healthFields(i, now),
       queue: d?.queue ?? null,
       workers: d?.workers ?? [],
@@ -138,7 +113,6 @@ export async function agentBackups(ctx: Ctx) {
         .limit(1)
       return {
         instance: i.name,
-        // partial: some destinations have the archive, others failed (see error).
         lastRun: last ? { status: last.status, startedAt: last.startedAt, error: last.error } : null,
         lastSuccess: lastOk
           ? { at: lastOk.startedAt, includesSecrets: lastOk.includesSecrets, sizeBytes: lastOk.sizeBytes }
@@ -148,15 +122,9 @@ export async function agentBackups(ctx: Ctx) {
   )
 }
 
-/** The most workflows one call returns, and how many when the caller does not say. */
 export const WORKFLOWS_MAX = 500
 export const WORKFLOWS_DEFAULT = 100
 
-/**
- * One page of the workflows that match, by name, then instance, then ID, so the pages never overlap; `total` counts
- * every match and `nextOffset` is where the next page starts (null after the last). The page and the count are read
- * from one snapshot, so they always agree; a sync between two calls can still move workflows across pages.
- */
 export async function agentWorkflows(
   ctx: Ctx,
   opts: { q?: string; instance?: string; limit?: number; offset?: number },
@@ -165,14 +133,12 @@ export async function agentWorkflows(
   const offset = opts.offset ?? 0
   const where: SQL[] = []
   if (opts.q) {
-    // Agents often hold an ID, a webhook URL or a tag rather than the exact name.
     const like = likeContains(opts.q)
     const path = opts.q.replace(/^https?:\/\/[^/]+/, "").replace(/^\/webhook(-test)?\//, "")
     const match = or(
       ilike(workflows.name, like),
       eq(workflows.workflowId, opts.q),
       path.length >= 3 ? ilike(workflows.triggerDetail, likeContains(path)) : undefined,
-      // Each tag on its own: the JSON text of the list doubles backslashes and has quotes and commas of its own.
       sql`exists (select 1 from jsonb_array_elements_text(${workflows.tags}) as t(tag) where t.tag ilike ${like})`,
     )
     if (match) where.push(match)

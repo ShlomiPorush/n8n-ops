@@ -39,7 +39,6 @@ describe("health alert texts", () => {
     expect(text(healthAlerts.workerDown("prod", { ...failed(), url: "http://w1" }, streak, now))).toBe(
       "<b>Queue worker down on prod</b>\nhttp://w1: HTTP 503\n3 failed checks in a row over 1 min 5 s",
     )
-    // One failed check is the old text.
     expect(text(healthAlerts.down("prod", failed(), { failures: 1, since: now }, now))).toBe(
       "<b>prod is down</b>\nHTTP 503",
     )
@@ -136,8 +135,8 @@ describe("clip", () => {
   it("never cuts an emoji in half", () => {
     const clipped = clip(`${"a".repeat(498)}😀😀😀`, 500)
     expect(clipped).toBe(`${"a".repeat(498)}😀…`)
-    expect(clipped).not.toMatch(/\p{Cs}/u) // no lone surrogate
-    expect("😀".slice(0, 1)).toMatch(/\p{Cs}/u) // half an emoji is one
+    expect(clipped).not.toMatch(/\p{Cs}/u)
+    expect("😀".slice(0, 1)).toMatch(/\p{Cs}/u)
   })
 
   it("counts characters, not UTF-16 units", () => {
@@ -207,7 +206,6 @@ describe("a worker's health report", () => {
     const odd = { ...report, main: { ...probe, requestMs: -1, code: "x".repeat(41) } }
     const parsed = probeReport.parse(odd)
     expect(parsed.main).toEqual({ ok: true, status: 200, ms: 5 })
-    // A report of an earlier release has no request time at all.
     expect(probeReport.parse(report).main).not.toHaveProperty("requestMs")
   })
 
@@ -222,7 +220,6 @@ describe("a worker's health report", () => {
     expect(parsed.error?.issues.map((i) => i.path.join("."))).toEqual(["main.error", "workers.0.url"])
   })
 
-  // applyHealth stores the report in a transaction, so a call to it shows here as that transaction.
   const reached = new Error("applyHealth was called")
   const fakeCtx = () => {
     const warn = vi.fn()
@@ -243,7 +240,6 @@ describe("a worker's health report", () => {
 
   it("is stored as parsed, without fields the worker added", async () => {
     const { ctx, transaction } = fakeCtx()
-    // No instance found: nothing is applied, and what is stored is the parsed report.
     transaction.mockResolvedValueOnce(null)
     const stored = await applyWorkerReport(ctx, instance, payload, { ...report, labels: { secret: "x" } }, "w")
     expect(stored).not.toHaveProperty("labels")

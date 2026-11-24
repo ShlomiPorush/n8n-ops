@@ -1,36 +1,5 @@
 import { type DateWriting, formatDay, formatStamp, messageWriting } from "@n8n-ops/shared"
 
-/*
- * The HTML layout of every email n8n-ops sends, in the v3 design language of the console (EM-1, EM-2).
- *
- * Email clients ignore stylesheets, CSS variables and grid, so the blocks are tables with inline styles. The
- * colours follow the light theme of apps/web/src/index.css; a <style> block switches to the dark theme in the
- * clients that honour prefers-color-scheme (Apple Mail, iOS, Outlook for Mac, Outlook on the web).
- *
- * Outlook for Android and Outlook on the web recolour an email in dark mode after its own dark theme applied.
- * They flatten every near-grey surface with a faint tint into one mid grey, and keep neutral greys, so every
- * surface here (background, panels, lines, the dark tile) is a neutral grey, in both themes. Outlook marks each
- * element it recolours with data-ogsb; Outlook for Android honours rules under that mark, so the [data-ogsb]
- * rules give it the dark surfaces directly. Outlook on the web writes its colours inline, so there only the
- * colours themselves count. A light tinted fill turns muddy there, so status tags are outlined.
- *
- * The email declares its direction on the outer tables as well: Outlook on the web drops the dir of <html> and
- * <body>, and would show it right to left under a Hebrew interface. Clients turn dates into links of their own;
- * every link takes the colour of its text.
- *
- * Outlook for Windows draws email with Word, which ignores padding and margins outside table cells, rounded
- * corners, max-width and font fallbacks. So every gap is cell padding or a spacer row, divider lines are 1px
- * rows, the email is wrapped in a 600px table for Outlook, and a block never relies on margins. Panels and
- * cards stay square there: a VML shape that grows with its content does not push the next block down, so
- * blocks overlap. Only the topic tag, which has a fixed size, gets a rounded VML shape.
- *
- * Every value passed to a block is escaped. Only the output of another block (a Safe string) is inserted as
- * markup, so callers never escape by hand:
- *
- *   render({ title: "2 instances are down", topic: "Health", tone: "fail", blocks: [panel("Instances", table(...))] })
- */
-
-/** Markup produced by this module; inserted without escaping. */
 export class Safe {
   constructor(readonly html: string) {}
   toString() {
@@ -49,7 +18,6 @@ const escapeText = (value: string) =>
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;")
 
-/** Escape for an attribute or a place that takes no markup. */
 function attr(value: Text): string {
   if (value instanceof Safe) return value.html
   return escapeText(value === null || value === undefined ? "" : String(value))
@@ -58,13 +26,11 @@ function attr(value: Text): string {
 export const FONT = "Onest, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
 export const MONO = "'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
 
-// The light theme of the console, with neutral grey surfaces (see the top of this file).
 const BG = "#FFFFFF"
 const PANEL = "#EEEEEE"
 const INK = "#111814"
 const MUTED = "#5E6863"
 const LINE = "#E0E0E0"
-/** The dark tile of the mark and the button. */
 const SOLID = "#141414"
 
 const TONES: Record<Tone, string> = {
@@ -81,9 +47,6 @@ const CLASS_COLORS: Record<string, string> = {
   ...Object.fromEntries(Object.entries(TONES).map(([t, c]) => [`m-${t}`, c])),
 }
 
-// Runs of the characters an address is made of. The text can come from outside (workflow names, error
-// messages, an agent's reason), so the scan stays linear: one character class, no nested quantifiers;
-// whether a run is an address is decided by plain string checks (EM-4).
 const ADDRESS_RUN = /[A-Za-z0-9._%+@-]+/g
 const DOMAIN_LABEL = /^[A-Za-z0-9-]+$/
 
@@ -94,41 +57,28 @@ function isAddress(text: string): boolean {
   return labels.length >= 2 && labels.every((l) => DOMAIN_LABEL.test(l))
 }
 
-/**
- * Escape visible text whose colour class is `cls`. Gmail and Outlook turn every address into a blue link of
- * their own, and Outlook ignores color:inherit, so an address becomes a link of ours in the text colour.
- */
 function e(value: Text, cls = "m-ink"): string {
   if (value instanceof Safe) return value.html
   const color = CLASS_COLORS[cls] ?? INK
   return attr(value).replace(ADDRESS_RUN, (run) => {
-    const address = run.replace(/\.+$/, "") // the full stop of a sentence is not part of it
+    const address = run.replace(/\.+$/, "")
     if (!isAddress(address)) return run
     return `<a href="mailto:${address}" class="${cls}" style="color:${color};text-decoration:none;">${address}</a>${run.slice(address.length)}`
   })
 }
 
-/** Escape, then keep line breaks. */
 function lines(value: Text, cls = "m-ink"): string {
   if (value instanceof Safe) return value.html
   return e(value, cls).replace(/\n/g, "<br>")
 }
 
-/** A count with its word, singular or plural, with thousands separators: "1 problem", "1,920 failures". */
 export const plural = (count: number, one: string, many = `${one}s`) =>
   `${count.toLocaleString("en-US")} ${count === 1 ? one : many}`
 
-/**
- * A date in an email, written by the same code as the console's (`@n8n-ops/shared` dates.ts), so both read alike
- * (EM-6): in the app's time zone (an unknown one is UTC), in the Date format and Time format chosen in Settings →
- * General, where Browser, which an email cannot ask, is day/month/year and the 24-hour clock (`messageWriting`).
- * A time has no zone after it ("20/10/2026 13:00"): every time in an email is in the zone of Settings → General.
- */
 export function formatDate(when: Date, dates: DateWriting, time = false): string {
   return time ? formatStamp(when, dates, { zone: false }) : formatDay(when, dates)
 }
 
-// The tone classes set the border colour with the text colour, so an outlined tag switches both together.
 const DARK_CSS = `
 :root { color-scheme: light dark; supported-color-schemes: light dark; }
 .m-bg a { color: inherit !important; text-decoration: none !important; }
@@ -160,8 +110,6 @@ const DARK_CSS = `
 }
 `
 
-// Word knows only bold and normal, and takes the first font of a list even when it is not installed (then it
-// shows Times New Roman).
 const MSO_CSS = `<!--[if mso]><style>
 v\\:* { behavior: url(#default#VML); display: inline-block; }
 body, table, td, th, p, a, span, h1, div { font-family: 'Segoe UI', Arial, sans-serif !important; }
@@ -173,12 +121,9 @@ const TABLE = 'role="presentation" width="100%" cellpadding="0" cellspacing="0" 
 const spacer = (px: number) =>
   `<tr><td height="${px}" style="height:${px}px;font-size:1px;line-height:1px;">&nbsp;</td></tr>`
 
-/** A 1px divider row; Word draws cell borders unevenly. */
 const rule = (colspan = 1) =>
   `<tr><td class="m-rule" colspan="${colspan}" height="1" style="height:1px;font-size:1px;line-height:1px;mso-line-height-rule:exactly;background-color:${LINE};">&nbsp;</td></tr>`
 
-/** An outlined tag: no fill, a 1px border and the text in the tone colour. A light tinted fill turns into a
- * muddy chip in Outlook's dark mode; an outline keeps its colour. */
 function tagHtml(text: string, t: Tone, roundedInOutlook: boolean): string {
   const color = tone(t)
   const cell =
@@ -186,8 +131,6 @@ function tagHtml(text: string, t: Tone, roundedInOutlook: boolean): string {
     `<tr><td class="m-${t} m-b" style="padding:1px 7px;border:1px solid ${color};border-radius:6px;color:${color};font-size:12px;font-weight:700;line-height:1.4;white-space:nowrap;">` +
     `${e(text, `m-${t}`)}</td></tr></table>`
   if (!roundedInOutlook) return cell
-  // VML inside a table, followed by more VML, can make Word report the table as corrupt: only the topic tag
-  // gets this shape.
   const width = text.length * 7 + 18
   return (
     `<!--[if mso]><v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" arcsize="30%" filled="f" strokecolor="${color}" strokeweight="1px" ` +
@@ -198,13 +141,8 @@ function tagHtml(text: string, t: Tone, roundedInOutlook: boolean): string {
   )
 }
 
-/** A small status label, as in the console. A table cell, so Word keeps its padding. */
 export const tag = (text: string, t: Tone = "muted") => new Safe(tagHtml(text, t, false))
 
-/**
- * Technical values (IDs, scopes, keys). Long values without spaces may break anywhere instead of widening
- * the email; Word cannot break them at all, so maxLength shortens them in the middle.
- */
 export function mono(value: Text, maxLength?: number): Safe {
   let text = value instanceof Safe ? value.html : value === null || value === undefined ? "" : String(value)
   if (maxLength && text.length > maxLength) {
@@ -217,8 +155,6 @@ export function mono(value: Text, maxLength?: number): Safe {
   )
 }
 
-/** The one call to action of an email: a dark button that works in Outlook as a padded cell. The cell holds the
- * text colour, which the link inherits, so the dark theme switches both. Only http(s) addresses become links (OT-17). */
 export function button(text: string, url: string | null | undefined): Safe {
   if (!url || !/^https?:\/\//i.test(url)) return new Safe("")
   return new Safe(
@@ -236,11 +172,8 @@ export function paragraph(text: Text, muted = false): Safe {
   )
 }
 
-/** A key figure: label, value, and optionally a tone and a note under the value. */
 export type Stat = { label: string; value: Text; tone?: Tone; note?: string }
 
-/** Key figures in bordered cells, as the console's figures. One table per row, so a short last row keeps the
- * width of the others. */
 export function stats(items: Stat[], perRow = 3): Safe {
   const width = Math.floor(100 / perRow)
   const rows: string[] = []
@@ -267,18 +200,16 @@ export function stats(items: Stat[], perRow = 3): Safe {
     }
     rows.push(`<table ${TABLE}><tr>${cells.join("")}</tr></table>`)
   }
-  // Outlook drops the bottom border of cards in the last row of a table, so an empty 1px row closes it.
+  // Without the empty last row, Outlook drops the bottom border of the cards above it.
   return new Safe(
     `<table ${TABLE}>${rows.map((row, i) => `<tr><td style="padding:${i ? "8px" : "0"} 0 0;">${row}</td></tr>`).join("")}${spacer(1)}</table>`,
   )
 }
 
-/** Label on the left, value on the right, a line between rows. */
 export function kv(rows: [label: string, value: Text, tone?: Tone][]): Safe {
   const out = rows.map(([label, value, t]) => {
     const color = t ? tone(t) : INK
     const vcls = t ? `m-${t}` : "m-ink"
-    // Markup such as a tag must not sit inside <b>: Word then reports the table as corrupt.
     const shown = value instanceof Safe ? value.html : `<b style="font-weight:650;">${lines(value, vcls)}</b>`
     return (
       rule(2) +
@@ -289,7 +220,6 @@ export function kv(rows: [label: string, value: Text, tone?: Tone][]): Safe {
   return new Safe(`<table ${TABLE}>${out.join("")}</table>`)
 }
 
-/** A data table inside a panel. Columns are names, or [name, "right"] for numbers. */
 export function table(
   columns: (string | [string, "left" | "right"])[],
   rows: Text[][],
@@ -329,7 +259,6 @@ export function table(
   return new Safe(`<table ${TABLE}>${out.join("")}</table>`)
 }
 
-/** A grey panel with a heading, as a console panel. */
 export function panel(title: Text, blocks: Safe[], { count, note }: { count?: Text; note?: Text } = {}): Safe {
   const countHtml =
     count !== undefined && count !== null
@@ -347,10 +276,6 @@ export function panel(title: Text, blocks: Safe[], { count, note }: { count?: Te
   )
 }
 
-/**
- * Free text inside a panel, with the panel padding. Text written right to left (`dir: "rtl"`) gets the direction and
- * the alignment on its cell, as Word (Outlook for Windows) needs both; without it the cell keeps the email's own.
- */
 export function panelText(text: Text, dir: "ltr" | "rtl" = "ltr"): Safe {
   const rtl = dir === "rtl" ? ' dir="rtl" align="right"' : ""
   const align = dir === "rtl" ? "text-align:right;" : ""
@@ -359,10 +284,6 @@ export function panelText(text: Text, dir: "ltr" | "rtl" = "ltr"): Safe {
   )
 }
 
-/**
- * A list inside a panel, one item a line with a bullet before it. The bullet is a cell of its own, so a long item
- * wraps under its text, not under the bullet, in every client; Word ignores the margins of a <ul>.
- */
 export function bullets(items: Text[]): Safe {
   const cell = `color:${INK};font-size:14px;line-height:1.55;`
   const rows = items.map((item, i) => {
@@ -376,20 +297,10 @@ export function bullets(items: Text[]): Safe {
   return new Safe(`<table ${TABLE}>${rule(2)}${rows.join("")}</table>`)
 }
 
-/** The n8n-ops mark: the ink tile with an "n", as in the console. A plain cell, so every client draws it
- * without loading anything; Word draws it square. */
 const MARK = `<td class="m-mark m-b" width="26" height="26" align="center" valign="middle" bgcolor="${SOLID}" style="width:26px;height:26px;background-color:${SOLID};border-radius:7px;color:${BG};font-size:14px;font-weight:800;line-height:26px;text-align:center;">n</td>`
 
 export type Email = { subject: string; text: string; html: string }
 
-/**
- * A full email.
- * - title: the headline, a sentence that says what happened
- * - topic: what kind of email this is, shown as a tag above the title
- * - intro: one or two sentences under the title
- * - blocks: output of panel(), stats(), paragraph(), button()
- * - footer: why the reader gets this email and where to change it
- */
 export function render({
   title,
   topic,
@@ -409,7 +320,6 @@ export function render({
   footer?: string
   preheader?: string
   when?: Date
-  /** How dates are written: `messageWriting` of General; UTC, day/month/year and 24-hour when left out. */
   dates?: DateWriting
 }): string {
   const date = formatDate(when, dates, true)

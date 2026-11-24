@@ -83,7 +83,7 @@ describe("email layout", () => {
 
   it("gives Outlook a rounded shape only for the fixed-size topic tag", () => {
     const html = render({ title: "t", topic: "Test", blocks: [panel("p", [kv([["a", tag("b", "ok")]])])] })
-    expect(html.match(/v:roundrect/g)).toHaveLength(2) // the opening and closing tag of one shape
+    expect(html.match(/v:roundrect/g)).toHaveLength(2)
   })
 })
 
@@ -97,7 +97,6 @@ describe("email in Outlook's dark mode", () => {
   const style = html.slice(html.indexOf("<style>"), html.indexOf("</style>"))
 
   it("draws every surface in a neutral grey, which Outlook keeps, in both themes", () => {
-    // Outlook flattens near-grey surfaces with a faint tint (#F4F6F5, #0E1110, #171B19) into one mid grey.
     for (const tinted of ["#F4F6F5", "#E3E7E5", "#ECEEED", "#0E1110", "#171B19", "#262C29", "#232826"]) {
       expect(html).not.toContain(tinted)
     }
@@ -116,7 +115,6 @@ describe("email in Outlook's dark mode", () => {
     expect(marked).toContain("[data-ogsb] .m-panel { background-color: #202020 !important; }")
     expect(marked).toContain("[data-ogsb] .m-line { border-color: #333333 !important; }")
     expect(marked).toContain("[data-ogsb] .m-rule { background-color: #333333 !important; }")
-    // Outlook does not support an attribute joined to a class in one selector.
     expect(style).not.toMatch(/\[data-ogs[bc]\][.\w]/)
   })
 
@@ -141,7 +139,6 @@ describe("email in Outlook's dark mode", () => {
 
   it("keeps links the client makes in the text colour, and its own button as it is", () => {
     expect(style).toContain(".m-bg a { color: inherit !important; text-decoration: none !important; }")
-    // The button's link inherits its colour from the cell, which the dark theme switches.
     expect(html).toContain(
       '<td class="m-mark" bgcolor="#141414" style="padding:10px 18px;background-color:#141414;border-radius:8px;color:#FFFFFF;">',
     )
@@ -284,7 +281,6 @@ describe("emails", () => {
 
   it("keeps every line of the sent message under the SMTP limit of 998 characters", async () => {
     const r = report()
-    // One very long line in the HTML, as a table row can be.
     const html = r.html.replace("</body>", `<p>${"x".repeat(9_000)}</p></body>`)
     const transport = nodemailer.createTransport({ streamTransport: true, buffer: true })
     const sent = await transport.sendMail(mailOptions({ ...r, html }, "ops@example.com", ["a@example.com"]))

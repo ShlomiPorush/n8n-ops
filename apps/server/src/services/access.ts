@@ -28,14 +28,6 @@ import { availableChannels, channelsFor } from "./access-channels.ts"
 import { can, effectiveScopes, type Instance, unsupportedVersion } from "./instances.ts"
 import { retrying } from "./problems.ts"
 
-/**
- * Temporary access for agents to n8n instances. An agent asks for one or more instances, each with scopes and
- * optional workflows, and a duration with a reason; a person approves (as asked, or after changing it) or denies; an
- * approved request gets one key the agent collects once and uses against the n8n-ops proxy
- * (/n8n/<instance>/api/v1/...) of every granted instance, which checks every call and forwards it with the
- * instance's own key. The key stops working when the time is up, when the agent releases it, or on revoke.
- */
-
 export class AccessError extends Error {
   constructor(
     readonly code: string,
@@ -45,16 +37,10 @@ export class AccessError extends Error {
   }
 }
 
-/**
- * At most this many requests per token waiting for a decision, so a looping agent cannot flood the approvers. A
- * request the agent released before anyone decided it counts until the time it would have expired.
- */
 const MAX_PENDING_PER_TOKEN = 3
 const KEY_PREFIX = "nops_n8n"
-/** The most workflows an approver may name on one instance, and the longest workflow ID taken. */
 const MAX_WORKFLOWS = 200
 const MAX_WORKFLOW_ID = 200
-/** The Access list shows every request waiting or approved, and this many of the latest that ended. */
 export const MAX_ENDED_LISTED = 200
 
 type Db = Ctx["db"]
@@ -63,7 +49,6 @@ type Reader = Db | Tx
 
 export type AccessInstanceRow = typeof accessRequestInstances.$inferSelect
 
-/** Scopes the instance's policy allows that its API key holds, whether or not Temporary access is chosen. */
 export function policyScopes(instance: Pick<Instance, "agentAccess" | "scopes">) {
   if (!instance.agentAccess.enabled) return []
   const held = new Set(effectiveScopes(instance))
@@ -75,35 +60,28 @@ type AccessFields = Pick<
   "agentAccess" | "scopes" | "setupState" | "chosenCapabilities" | "apiKeyEnc" | "scopesCheckedAt" | "version"
 >
 
-/** Whether agents may use the instance's API now: active, chosen for Temporary access, with a key, n8n 2.14.0+. */
 export const openToAgents = (instance: AccessFields) =>
   can(instance, "agents") && Boolean(instance.apiKeyEnc) && !unsupportedVersion(instance)
 
-/** Scopes an agent may be granted on an instance: open to agents, allowed by its policy and held by its key. */
 export function grantableScopes(instance: AccessFields) {
   return openToAgents(instance) ? policyScopes(instance) : []
 }
 
 const isUuid = (ref: string) => /^[0-9a-f-]{36}$/i.test(ref)
 
-/** The instances an agent names, by name or ID, read at once; a ref without an instance is missing from the map. */
 async function findInstances(ctx: Ctx, refs: string[]) {
   const ids = refs.filter(isUuid)
   const rows = await ctx.db
     .select()
     .from(instances)
     .where(ids.length ? or(inArray(instances.name, refs), inArray(instances.id, ids)) : inArray(instances.name, refs))
-  // The name first, as the proxy does: agents name instances as the instance list does, and a name may look like an ID.
   return (ref: string) => rows.find((r) => r.name === ref) ?? rows.find((r) => r.id === ref.toLowerCase()) ?? null
 }
 
-/** PostgreSQL gave up waiting: a statement or lock timeout set for the transaction. */
 const timedOut = (e: unknown) => {
   const code = (e as { code?: string } | null)?.code ?? (e as { cause?: { code?: string } } | null)?.cause?.code
   return code === "57014" || code === "55P03"
 }
-
-// --- The instance's API description, cached per instance and version.
 
 const specs = new Map<
   string,
@@ -118,7 +96,6 @@ const specs = new Map<
 
 async function loadSpec(ctx: Ctx, instance: Instance, fetchImpl: typeof fetch) {
   const cached = specs.get(instance.id)
-  // Read again when the instance moves to another address or n8n version, as it may describe other operations.
   if (
     cached &&
     cached.baseUrl === instance.baseUrl &&
@@ -128,7 +105,6 @@ async function loadSpec(ctx: Ctx, instance: Instance, fetchImpl: typeof fetch) {
     return cached
   const res = await fetchImpl(`${instance.baseUrl.replace(/\/+$/, "")}/api/v1/openapi.yml`, {
     signal: AbortSignal.timeout(20_000),
-    // The rules come only from the instance's own address: a redirect is an error, never followed.
     redirect: "manual",
   })
   if (res.status >= 300 && res.status < 400) {
@@ -149,9 +125,7 @@ async function loadSpec(ctx: Ctx, instance: Instance, fetchImpl: typeof fetch) {
   let workflowFields: WorkflowFields | null = null
   try {
     workflowFields = parseWorkflowFields(text)
-  } catch {
-    // A document whose request bodies cannot be read still serves the access proxy.
-  }
+  } catch {}
   const entry = { baseUrl: instance.baseUrl, version: instance.version, ops, workflowFields, at: Date.now() }
   specs.set(instance.id, entry)
   ctx.log.info("n8n API description loaded", { instance: instance.name, operations: ops.length })
@@ -162,12 +136,9 @@ export async function instanceSpec(ctx: Ctx, instance: Instance, fetchImpl: type
   return (await loadSpec(ctx, instance, fetchImpl)).ops
 }
 
-/** The workflow fields the instance's API takes on create, or null when its description does not say. */
 export async function instanceWorkflowFields(ctx: Ctx, instance: Instance, fetchImpl: typeof fetch = fetch) {
   return (await loadSpec(ctx, instance, fetchImpl)).workflowFields
 }
-
-// --- Requests
 
 export type AccessInstanceInput = { instance: string; scopes: string[]; workflowIds?: string[] }
 
@@ -175,26 +146,15 @@ export type AccessRequestInput = {
   reason: string
   minutes: number
   instances: AccessInstanceInput[]
-  /** Where to tell approvers, when the person asked the agent for a channel; otherwise the default applies. */
   notify?: AccessChannel[]
 }
 
-/** How long a request waits for the names of its workflows; the ones not read by then show as their IDs. */
 const NAMES_WITHIN_MS = 5_000
 const NAMES_AT_ONCE = 5
-/**
- * A request is decided within this time, so the agent's command (which gives up after 15 seconds) always hears the
- * answer and never retries a request that was stored. API descriptions must load by SPECS_WITHIN_MS.
- */
 export const REQUEST_WITHIN_MS = 10_000
 const SPECS_WITHIN_MS = 7_000
 const SPECS_AT_ONCE = 5
 
-/**
- * The names of the requested workflows, as n8n has them now when the key may read workflows, otherwise as the
- * workflow map last saw them. Stored on the request, so the approver and the history see names even after a workflow
- * is renamed or deleted. Never fails: a name that cannot be read within the time is left out.
- */
 export async function workflowNamesOf(
   ctx: Ctx,
   instance: Instance,
@@ -213,7 +173,6 @@ export async function workflowNamesOf(
     const timed: FetchLike = (url, init) =>
       fetchImpl(url, { ...init, signal: init?.signal ? AbortSignal.any([init.signal, deadline]) : deadline })
     const client = new N8nClient(instance.baseUrl, ctx.secrets.decrypt(instance.apiKeyEnc), timed, withinMs)
-    // A segment of its own in the URL; "." and ".." would name another path.
     const queue = ids.filter((id) => id && id !== "." && id !== "..")
     const next = async (): Promise<void> => {
       const id = queue.shift()
@@ -230,11 +189,9 @@ export async function workflowNamesOf(
   return Object.fromEntries(names)
 }
 
-/** The stored name of a workflow on a request, never one inherited from Object. */
 export const nameIn = (names: Record<string, string> | undefined, id: string) =>
   names && Object.hasOwn(names, id) && typeof names[id] === "string" ? names[id] : undefined
 
-/** Runs `work` on every item, at most `limit` at a time. */
 async function eachAtMost<T>(items: T[], limit: number, work: (item: T) => Promise<void>) {
   const queue = [...items]
   const next = async (): Promise<void> => {
@@ -246,10 +203,8 @@ async function eachAtMost<T>(items: T[], limit: number, work: (item: T) => Promi
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, next))
 }
 
-/** Agents with a request being made now; one server process, as supported. */
 const requesting = new Set<string>()
 
-/** One request of an agent at a time, so parallel requests cannot pass the pending limit together or pile up. */
 export async function requestAccess(ctx: Ctx, tokenId: string, input: AccessRequestInput) {
   if (requesting.has(tokenId))
     throw new AccessError(
@@ -276,7 +231,6 @@ async function requestAccessNow(ctx: Ctx, tokenId: string, input: AccessRequestI
   if (!token?.canRequestAccess || token.revokedAt) throw notAllowed()
   if (!input.instances.length) throw new AccessError("no_instances", "Ask for at least one instance.")
 
-  // Every instance is checked before anything is stored; the first one that does not fit refuses the request.
   const asked: { instance: Instance; scopes: string[]; workflowIds: string[] }[] = []
   const find = await findInstances(
     ctx,
@@ -303,7 +257,6 @@ async function requestAccessNow(ctx: Ctx, tokenId: string, input: AccessRequestI
   if (input.minutes < 1 || input.minutes > maxMinutes)
     throw new AccessError("too_long", `Ask for 1 to ${maxMinutes} minutes.`)
 
-  // The API descriptions, in parallel, within one deadline: a request is answered in time or not stored at all.
   const specsBy = AbortSignal.timeout(SPECS_WITHIN_MS)
   const timed: typeof fetch = (url, init) =>
     fetchImpl(url, { ...init, signal: init?.signal ? AbortSignal.any([init.signal, specsBy]) : specsBy })
@@ -323,7 +276,6 @@ async function requestAccessNow(ctx: Ctx, tokenId: string, input: AccessRequestI
   if (failed[0]) throw failed[0]
 
   const notifyChoice = input.notify?.length ? accessChannels.filter((c) => input.notify?.includes(c)) : null
-  // Where it goes now; the notifier works it out again on each send, so a change in Settings still counts.
   const notify = channelsFor(notifyChoice, defaultNotify, await availableChannels(ctx))
 
   const namesWithin = Math.min(NAMES_WITHIN_MS, REQUEST_WITHIN_MS - 1_000 - (Date.now() - started))
@@ -331,8 +283,6 @@ async function requestAccessNow(ctx: Ctx, tokenId: string, input: AccessRequestI
     asked.map((a) => workflowNamesOf(ctx, a.instance, a.workflowIds, { withinMs: Math.max(0, namesWithin) })),
   )
 
-  // What is left of the time is the most the database may take, all statements together; past it, the transaction
-  // is rolled back and nothing is stored. Each statement may take only what the ones before it left.
   const deadline = started + REQUEST_WITHIN_MS - 500
   const busy = () =>
     new AccessError("busy", "n8n-ops could not store the request in time; nothing was stored. Ask again.")
@@ -345,7 +295,6 @@ async function requestAccessNow(ctx: Ctx, tokenId: string, input: AccessRequestI
         await tx.execute(sql.raw(`SET LOCAL lock_timeout = ${left}`))
       }
       await within()
-      // The token row is held while counting, so a revoke or another request cannot slip in between.
       const [held] = await tx.select().from(apiTokens).where(eq(apiTokens.id, tokenId)).for("update")
       if (!held?.canRequestAccess || held.revokedAt) throw notAllowed()
       await within()
@@ -413,7 +362,6 @@ async function requestAccessNow(ctx: Ctx, tokenId: string, input: AccessRequestI
         },
         tx,
       )
-      // A last statement that ended past the time is not committed: the agent has stopped waiting for its answer.
       if (Date.now() > deadline) throw busy()
       return created
     })
@@ -425,7 +373,6 @@ async function requestAccessNow(ctx: Ctx, tokenId: string, input: AccessRequestI
   return {
     id: row.id,
     status: row.status,
-    // Agents of earlier skills, which ask for one instance, read its name here.
     ...(asked.length === 1 ? { instance: asked[0]?.instance.name } : {}),
     instances: asked.map((a) => a.instance.name),
     decideBy: row.decideBy,
@@ -433,13 +380,11 @@ async function requestAccessNow(ctx: Ctx, tokenId: string, input: AccessRequestI
   }
 }
 
-/** Instance names for the audit log's target column. */
 const namesTarget = (names: string[]) => {
   const text = names.join(", ")
   return text.length <= 200 ? text : `${names[0]} and ${names.length - 1} more instances`
 }
 
-/** The instances of requests, in their order, by request. */
 export async function instancesOf(db: Reader, ids: string[]): Promise<Map<string, AccessInstanceRow[]>> {
   const by = new Map<string, AccessInstanceRow[]>()
   if (!ids.length) return by
@@ -452,13 +397,11 @@ export async function instancesOf(db: Reader, ids: string[]): Promise<Map<string
   return by
 }
 
-/** Whether the instance is granted by an approved request (or would be by approving the draft). */
 export const isGranted = (r: Pick<AccessInstanceRow, "included" | "droppedReason">) => r.included && !r.droppedReason
 
 const sameSet = (a: string[] | null, b: string[]) =>
   a !== null && a.length === b.length && new Set([...a, ...b]).size === a.length
 
-/** Whether the draft or the approval differs from what the agent asked for. */
 export function differsFromAsked(
   r: Pick<typeof accessRequests.$inferSelect, "minutes" | "requestedMinutes">,
   list: AccessInstanceRow[],
@@ -476,13 +419,8 @@ export function differsFromAsked(
 
 type Decider = { by: string; via: AuditVia }
 
-/**
- * Set with every change of status, in the same update: the request's Telegram message no longer shows its status,
- * so it is edited again (see closeTelegramMessages).
- */
 const messageOutdated = { telegramClosedAt: null }
 
-/** One instance as an approver sets it on the request page. `allWorkflows` false needs at least one workflow. */
 export type ApprovalInstance = {
   instanceId: string
   included: boolean
@@ -491,7 +429,6 @@ export type ApprovalInstance = {
   workflowIds: string[]
 }
 
-/** What an approver changed before approving: every instance to grant or leave out, and the minutes. */
 export type ApprovalEdit = { minutes: number; instances: ApprovalInstance[] }
 
 type Target = {
@@ -503,7 +440,6 @@ type Target = {
   workflowIds: string[]
 }
 
-/** Checks an edit's shape before anything is read: workflow lists, duplicates. */
 function checkEdit(edit: ApprovalEdit) {
   const seen = new Set<string>()
   for (const i of edit.instances) {
@@ -522,13 +458,6 @@ function checkEdit(edit: ApprovalEdit) {
   }
 }
 
-/**
- * Approves a pending request: as it stands (the draft, which Telegram edits), or with the edit an approver made on
- * the request page. `revision` is the revision the approver saw; if the request was edited since, nothing is
- * approved. The request and every instance involved are locked while the grant is decided, so a policy saved at the
- * same time either comes first and is applied, or waits until the approval is stored. An instance closed or deleted
- * by now is left out, and so are scopes its policy no longer allows; with nothing left, nothing is approved.
- */
 export async function approveAccess(
   ctx: Ctx,
   id: string,
@@ -541,7 +470,6 @@ export async function approveAccess(
   if (minutesWanted !== undefined && (minutesWanted < 1 || minutesWanted > maxMinutes))
     throw new AccessError("too_long", `Grant 1 to ${maxMinutes} minutes.`)
 
-  // Names of workflows an approver added are read before the transaction; reading them never fails.
   const before = await instancesOf(ctx.db, [id])
   const extraNames = new Map<string, Record<string, string>>()
   if (edit) {
@@ -573,7 +501,6 @@ export async function approveAccess(
 
     const targets: Target[] = edit
       ? edit.instances.map((i) => {
-          // An instance deleted since the page was loaded has lost its ID on the request; it is found by its row.
           const was = before.get(id)?.find((c) => c.instanceId === i.instanceId)
           const existing = children.find((c) => c.instanceId === i.instanceId || (was !== undefined && c.id === was.id))
           return {
@@ -593,8 +520,6 @@ export async function approveAccess(
           scopes: c.scopes,
           workflowIds: c.workflowIds,
         }))
-    // Instances of the request the edit does not name are left out. A deleted one can no longer be named: it keeps
-    // its place in the draft, so the approval says it was left out because it was deleted.
     if (edit)
       for (const c of children)
         if (!targets.some((t) => t.existing === c))
@@ -607,14 +532,13 @@ export async function approveAccess(
             workflowIds: c.workflowIds,
           })
 
-    // Locked in one order, the one updateInstance takes, so two approvals and a policy save never deadlock.
     const ids = [...new Set(targets.filter((t) => t.included && t.instanceId).map((t) => t.instanceId as string))]
+    // Without this order, two approvals that share instances can deadlock.
     const locked = ids.length
       ? await tx.select().from(instances).where(inArray(instances.id, ids)).orderBy(asc(instances.id)).for("update")
       : []
     const byId = new Map(locked.map((i) => [i.id, i]))
 
-    // An instance an approver added that was deleted before the approval is not part of the request at all.
     const kept = targets.filter((t) => t.existing || !t.included || (t.instanceId && byId.has(t.instanceId)))
     const decided = kept.map((t) => {
       const instance =
@@ -666,7 +590,6 @@ export async function approveAccess(
     let position = Math.max(-1, ...children.map((c) => c.position))
     for (const d of decided) {
       const added = d.instanceId ? extraNames.get(d.instanceId) : undefined
-      // The names of what was asked for stay with the request too, so its history keeps them after a change.
       const ids = [...new Set([...d.workflowIds, ...(d.existing?.requestedWorkflowIds ?? [])])]
       const workflowNames = Object.fromEntries(
         ids.flatMap((w) => {
@@ -725,13 +648,8 @@ export async function approveAccess(
   return updated
 }
 
-/** A change of the draft from Telegram: include or leave out one instance, or set the minutes. */
 export type DraftChange = { position: number; included: boolean } | { minutes: number }
 
-/**
- * Changes the draft of a pending request, only while it is still at the revision the approver saw, and moves it to
- * the next revision. The change sets a value (never flips one), so a press sent twice does not undo itself.
- */
 export async function editDraft(ctx: Ctx, id: string, revision: number, change: DraftChange) {
   const { maxMinutes } = await ctx.settings.get("access")
   if ("minutes" in change && (change.minutes < 1 || change.minutes > maxMinutes))
@@ -763,7 +681,6 @@ export async function editDraft(ctx: Ctx, id: string, revision: number, change: 
     }
     return row
   })
-  // Open request pages and cards load the new revision, so they show and approve what the message shows.
   changed(ctx, "access", "overview")
   return edited
 }
@@ -787,7 +704,6 @@ export async function denyAccess(ctx: Ctx, id: string, who: Decider) {
   return updated
 }
 
-/** Ends access now: a pending request cannot be approved any more, an approved key stops working. */
 export async function revokeAccess(ctx: Ctx, id: string, who: Decider) {
   const updated = await ctx.db.transaction(async (tx) => {
     const row = await revokeIn(ctx, tx, id, who)
@@ -798,7 +714,6 @@ export async function revokeAccess(ctx: Ctx, id: string, who: Decider) {
   return updated
 }
 
-/** Ends one request in the caller's transaction, with its audit entry; null when it was not pending or active. */
 async function revokeIn(ctx: Ctx, tx: Tx, id: string, who: Decider) {
   const [row] = await tx
     .update(accessRequests)
@@ -809,10 +724,6 @@ async function revokeIn(ctx: Ctx, tx: Tx, id: string, who: Decider) {
   return row ?? null
 }
 
-/**
- * Revokes everything a token asked for or holds, in the caller's transaction; used when the token itself is
- * revoked, so the token and its access end together or not at all. The caller announces the change after commit.
- */
 export async function revokeAccessOfToken(ctx: Ctx, tokenId: string, who: Decider, tx: Tx) {
   const rows = await tx
     .select({ id: accessRequests.id })
@@ -822,7 +733,6 @@ export async function revokeAccessOfToken(ctx: Ctx, tokenId: string, who: Decide
   return rows.length
 }
 
-/** The audit entry of a decision or an end, written in the transaction that made it. */
 async function auditDecision(
   ctx: Ctx,
   tx: Tx,
@@ -849,17 +759,9 @@ async function auditDecision(
   )
 }
 
-/** The proxy address of an instance for agents. */
 const proxyBase = (publicUrl: string, instanceName: string) =>
   `${publicUrl.replace(/\/+$/, "")}/n8n/${encodeURIComponent(instanceName)}/api/v1`
 
-/**
- * What the agent sees about its own request. The key is returned once, on the first look after approval,
- * together with how to use it; after that only its prefix. `instances` lists what was asked for while the request
- * waits, and what was granted once approved (an approver may have changed it). The single-instance fields
- * (`instance`, `scopes`, `workflowIds`, `baseUrl`) that agents of earlier skills read always describe one of them:
- * the first instance asked for that was granted, else the first granted.
- */
 export async function collectAccess(ctx: Ctx, tokenId: string, id: string, publicUrl: string) {
   const [r] = await ctx.db
     .select()
@@ -867,7 +769,6 @@ export async function collectAccess(ctx: Ctx, tokenId: string, id: string, publi
     .where(and(eq(accessRequests.id, id), eq(accessRequests.tokenId, tokenId)))
   if (!r) throw new AccessError("not_found", "This agent has no such access request.")
   const children = (await instancesOf(ctx.db, [id])).get(id) ?? []
-  // The name the instance has now, so the proxy address keeps working after a rename.
   const current = await currentNames(
     ctx.db,
     children.flatMap((c) => (c.instanceId ? [c.instanceId] : [])),
@@ -925,13 +826,8 @@ async function currentNames(db: Reader, ids: string[]) {
   return new Map(rows.map((r) => [r.id, r.name]))
 }
 
-/** The longest summary kept, in characters (code points). */
 export const SUMMARY_MAX = 1000
 
-/**
- * A summary as it is stored: without NUL, which PostgreSQL cannot keep in text, trimmed, and clipped on whole
- * characters. Never refused, so a summary cannot keep a key working by failing its release. Empty is none.
- */
 export function cleanSummary(summary: string | undefined): string | null {
   const chars = [...(summary ?? "").replaceAll("\u0000", "").trim()]
   if (!chars.length) return null
@@ -949,7 +845,6 @@ export async function releaseAccess(ctx: Ctx, tokenId: string, id: string, summa
     .innerJoin(apiTokens, eq(accessRequests.tokenId, apiTokens.id))
     .where(and(eq(accessRequests.id, id), eq(accessRequests.tokenId, tokenId)))
   if (!owner) throw new AccessError("not_found", "This agent has no such access request.")
-  // The summary is kept by the same update that ends the access, so a release that comes too late changes nothing.
   const updated = await ctx.db.transaction(async (tx) => {
     const [row] = await tx
       .update(accessRequests)
@@ -976,7 +871,6 @@ export async function releaseAccess(ctx: Ctx, tokenId: string, id: string, summa
   return { id, status: updated.status }
 }
 
-/** Background job: pending requests nobody decided, and approved access whose time is up. */
 export async function expireAccess(ctx: Ctx) {
   const now = new Date()
   const ended = await ctx.db
@@ -993,14 +887,6 @@ export async function expireAccess(ctx: Ctx) {
   return { expired: ended.length }
 }
 
-// --- The proxy's view of a key
-
-/**
- * The grant a key gives on the instance a call names (by name or ID): null when the key is unknown or no longer
- * works; `grant` null when the key works but not on that instance. One statement reads the request, its token, the
- * agent's grant and the instance, so it answers with the access as it stands when PostgreSQL runs it (after any wait
- * for a lock), and the expiry is compared with the time it returned.
- */
 export async function grantForKey(ctx: Ctx, key: string, ref: string) {
   if (!key.startsWith(`${KEY_PREFIX}_`)) return null
   const rows = await ctx.db
@@ -1034,22 +920,14 @@ export async function grantForKey(ctx: Ctx, key: string, ref: string) {
   const row = rows[0]
   if (row?.r.status !== "approved" || row.tokenRevokedAt) return null
   if (!row.r.expiresAt || row.r.expiresAt < new Date()) return null
-  // An agent connected by approval holds its access only while its grant does: the grant goes first when the agent
-  // revokes a token, and its connection ends right after (oauth/agents.ts); no key works in between.
   if (row.tokenKind === "agent" && !row.agentGrant) return null
   const matches = rows.flatMap((m) => (m.grant && m.instance ? [{ grant: m.grant, instance: m.instance }] : []))
-  // The name first: the addresses given to the agent use names, and one key opens several instances, so an instance
-  // named like another one's ID must still get the calls sent to its own address.
   const found = matches.find((m) => m.instance.name === ref) ?? matches.find((m) => m.instance.id === ref.toLowerCase())
   return { request: row.r, grant: found?.grant ?? null, instance: found?.instance ?? null }
 }
 
 export type Decision = { allowed: true } | { allowed: false; reason: string }
 
-/**
- * The credential operations a grant limited to workflows still reaches, with their parameters written {}: the
- * workflow list does not limit credentials. Their dependencies stay out, since that answer lists other workflows.
- */
 const CREDENTIAL_OPERATIONS = new Set([
   "/credentials",
   "/credentials/{}",
@@ -1058,24 +936,16 @@ const CREDENTIAL_OPERATIONS = new Set([
   "/credentials/schema/{}",
 ])
 
-/** The value of the parameter right after /<resource>/ in the operation's path, whatever n8n names it. */
 function idAfter(match: { op: SpecOperation; params: Record<string, string> }, resource: string) {
   const [, first, second] = match.op.template.split("/")
   const name = first === resource ? second?.match(/^\{(.+)\}$/)?.[1] : undefined
   return name === undefined ? undefined : match.params[name]
 }
 
-/** The most query parameters a call through the access proxy may carry; n8n's operations take far fewer. */
 export const MAX_QUERY_PARAMETERS = 100
 
-/** A call that fits its grant, with the path (relative to /api/v1) and the query n8n-ops sends to n8n. */
 type Forward = { allowed: true; path: string; query: string; workflowFilter?: boolean; executionId?: string }
 
-/**
- * Whether a call fits the grant: a known operation, inside the scopes, and on an allowed workflow. An allowed call
- * comes with the path and query to send, written out by n8n-ops, so n8n reads the same operation and parameters
- * that were checked. Without workflow:activate, an update of a workflow never publishes it.
- */
 export function checkCall(
   ops: SpecOperation[],
   grant: { scopes: string[]; workflowIds: string[] },
@@ -1112,7 +982,6 @@ export function checkCall(
         reason:
           "Publishing needs workflow:activate, which this access does not include. Leave out publishIfActive to save the update as a draft.",
       }
-    // n8n saves the update; a published workflow keeps its published version live.
     sent.set("publishIfActive", "false")
   }
   const allow = (extra: { workflowFilter?: boolean; executionId?: string } = {}): Forward => ({
@@ -1123,8 +992,6 @@ export function checkCall(
   })
 
   if (!grant.workflowIds.length) return allow()
-  // A grant limited to workflows reaches only operations on one of them, their executions and credentials.
-  // Anything else may choose workflows in its body, or act on a whole project or instance.
   const beyond: Decision = {
     allowed: false,
     reason: `${method} ${match.op.template} is not limited to the workflows of this access; it needs access to the whole instance.`,
@@ -1154,20 +1021,13 @@ export function checkCall(
   return beyond
 }
 
-// --- The calls made with an access
-
-/** The most changes one access may send to n8n. Every one of them stays listed on its request. */
 export const MAX_CHANGES = 1000
-/** Of the other calls of an access (refused calls and reads), the latest this many are kept; all are counted. */
 export const MAX_OTHER_CALLS = 500
-/** The longest path and refusal reason kept with a call, in characters; a longer one is cut and ends with "…". */
 export const MAX_CALL_PATH = 1024
 export const MAX_CALL_REASON = 500
-/** Methods that read: a call with any other method that n8n-ops lets through is a change (schema.ts). */
 const READ_METHODS = new Set(["GET", "HEAD", "OPTIONS"])
 export const isChange = (method: string) => !READ_METHODS.has(method)
 
-/** The text cut to `max` characters (code points, as PostgreSQL counts them), ending with "…" when it was longer. */
 export function cutText(text: string, max: number) {
   if (text.length <= max) return text
   const chars = Array.from(text)
@@ -1176,10 +1036,6 @@ export function cutText(text: string, max: number) {
 
 type CallTarget = { instanceId: string | null; method: string; path: string }
 
-/**
- * The call's row as stored: path and reason cut to their bounds. A call to an instance deleted meanwhile is kept
- * without it, as the calls made before the deletion are; one being deleted is waited for.
- */
 function callRow(requestId: string, call: CallTarget & { status: number | null; refused?: string }) {
   return {
     requestId,
@@ -1193,11 +1049,6 @@ function callRow(requestId: string, call: CallTarget & { status: number | null; 
   }
 }
 
-/**
- * Counts calls on the request: the update holds its row, so the calls of one access are counted, limited and trimmed
- * one at a time. A call that ends after the access did (it started before) marks the Telegram message as outdated, so
- * the next run shows it in the counts.
- */
 async function countCalls(tx: Tx, requestId: string, by: { calls: number; refused: number }) {
   await tx
     .update(accessRequests)
@@ -1209,11 +1060,6 @@ async function countCalls(tx: Tx, requestId: string, by: { calls: number; refuse
     .where(eq(accessRequests.id, requestId))
 }
 
-/**
- * Keeps the latest MAX_OTHER_CALLS other calls of the request; changes are never removed. Deleting an instance sets
- * the instance of its calls to null and can hold some of those rows while it waits for another: a transaction that
- * trims runs again when PostgreSQL ends it as a deadlock (`retrying`).
- */
 async function trimOtherCalls(tx: Tx, requestId: string) {
   await tx.execute(sql`
     DELETE FROM ${accessCalls} WHERE ${accessCalls.id} IN (
@@ -1224,10 +1070,7 @@ async function trimOtherCalls(tx: Tx, requestId: string) {
     )`)
 }
 
-/** Records a call n8n-ops refused, or a read it forwarded, once it ended. */
 export async function logCall(ctx: Ctx, requestId: string, call: CallTarget & { status: number; refused?: string }) {
-  // One transaction: the call and its counts are kept together. The insert comes first, so a call waits for an
-  // instance being deleted before it holds the request row.
   await retrying(() =>
     ctx.db.transaction(async (tx) => {
       await tx.insert(accessCalls).values(callRow(requestId, call))
@@ -1235,17 +1078,11 @@ export async function logCall(ctx: Ctx, requestId: string, call: CallTarget & { 
       await trimOtherCalls(tx, requestId)
     }),
   )
-  // An open request page shows the new call and count; the event stream sends at most one change a second.
   changed(ctx, "access")
 }
 
-/**
- * Records a change before it is sent to n8n, with no answer yet, so it is listed even if its answer is never
- * recorded. Null when the access has made MAX_CHANGES changes; nothing is recorded then.
- */
 export async function reserveChange(ctx: Ctx, requestId: string, call: CallTarget): Promise<string | null> {
   const id = await ctx.db.transaction(async (tx) => {
-    // The request row first: changes of one access wait here for each other, so the limit holds.
     await tx
       .select({ id: accessRequests.id })
       .from(accessRequests)
@@ -1267,11 +1104,9 @@ export async function reserveChange(ctx: Ctx, requestId: string, call: CallTarge
   return id
 }
 
-/** A recorded change that n8n-ops refused after all, before sending it: it no longer counts as a change. */
 export async function refuseChange(ctx: Ctx, requestId: string, id: string, status: number, reason: string) {
   await retrying(() =>
     ctx.db.transaction(async (tx) => {
-      // Already counted as a call when it was recorded; now as refused too.
       await countCalls(tx, requestId, { calls: 0, refused: 1 })
       await tx
         .update(accessCalls)
@@ -1283,15 +1118,11 @@ export async function refuseChange(ctx: Ctx, requestId: string, id: string, stat
   changed(ctx, "access")
 }
 
-/** n8n's answer to a recorded change. */
 export async function finishChange(ctx: Ctx, id: string, status: number) {
   await ctx.db.update(accessCalls).set({ status }).where(eq(accessCalls.id, id))
   changed(ctx, "access")
 }
 
-// --- For the UI
-
-/** An instance of a request as the UI shows it. */
 function publicInstance(c: AccessInstanceRow, current: Map<string, string>) {
   return {
     position: c.position,
@@ -1311,7 +1142,6 @@ function publicInstance(c: AccessInstanceRow, current: Map<string, string>) {
 }
 
 export async function listAccess(ctx: Ctx) {
-  // Every request waiting for a decision or approved, however many have ended since, and the latest ended ones.
   const live = ["pending", "approved"] as const
   const newest = [desc(accessRequests.requestedAt), desc(accessRequests.id)]
   const ended = ctx.db
@@ -1329,11 +1159,6 @@ export async function listAccess(ctx: Ctx) {
   return listed(ctx, rows)
 }
 
-/**
- * Requests that ended, newest first, a page at a time: the first page from the newest one, each next page after
- * the request the previous one ended with (`next`). The order is the Access list's, so the pages hold every ended
- * request once.
- */
 export async function listEndedAccess(ctx: Ctx, before?: string) {
   const live = ["pending", "approved"] as const
   const rows = await ctx.db
@@ -1343,7 +1168,6 @@ export async function listEndedAccess(ctx: Ctx, before?: string) {
     .where(
       and(
         notInArray(accessRequests.status, [...live]),
-        // Compared in the database: a JavaScript date holds milliseconds only, and PostgreSQL keeps microseconds.
         before
           ? sql`(${accessRequests.requestedAt}, ${accessRequests.id}) < ${ctx.db
               .select({ at: accessRequests.requestedAt, id: accessRequests.id })
@@ -1361,7 +1185,6 @@ export async function listEndedAccess(ctx: Ctx, before?: string) {
   }
 }
 
-/** Access list rows as people see them: each request with its instances under their current names. */
 async function listed(ctx: Ctx, rows: { r: typeof accessRequests.$inferSelect; tokenName: string }[]) {
   const children = await instancesOf(
     ctx.db,
@@ -1383,7 +1206,6 @@ async function listed(ctx: Ctx, rows: { r: typeof accessRequests.$inferSelect; t
 }
 
 export async function getAccess(ctx: Ctx, id: string) {
-  // One snapshot, so the counts and the calls listed agree while calls are being logged.
   const read = await ctx.db.transaction(
     async (tx) => {
       const [row] = await tx
@@ -1393,7 +1215,6 @@ export async function getAccess(ctx: Ctx, id: string) {
         .where(eq(accessRequests.id, id))
       if (!row) return null
       const children = (await instancesOf(tx, [id])).get(id) ?? []
-      // Every change the access sent to n8n, and the latest of the other calls (no more are kept).
       const newest = [desc(accessCalls.at), desc(accessCalls.id)]
       const others = tx
         .select({ id: accessCalls.id })
@@ -1416,7 +1237,6 @@ export async function getAccess(ctx: Ctx, id: string) {
     ctx.db,
     children.flatMap((c) => (c.instanceId ? [c.instanceId] : [])),
   )
-  // Requests made before names were stored take them from the workflow map, while it still lists the workflow.
   const list = await Promise.all(
     children.map(async (c) => {
       const shown = publicInstance(c, current)
@@ -1440,7 +1260,6 @@ export async function getAccess(ctx: Ctx, id: string) {
     }),
   )
   const pending = row.r.status === "pending" && row.r.decideBy > new Date()
-  // While it waits, the editor shows what each instance may be granted now, and the other instances it may add.
   const editor = pending ? await editorChoices(ctx, list) : undefined
   const callNames = new Map(list.flatMap((c) => (c.instanceId ? [[c.instanceId, c.name]] : [])))
   return {
@@ -1453,7 +1272,6 @@ export async function getAccess(ctx: Ctx, id: string) {
   }
 }
 
-/** The instances open to agents, each with the scopes it may grant now, for the approval editor. */
 async function editorChoices(ctx: Ctx, list: { instanceId: string | null }[]) {
   const all = await ctx.db.select().from(instances).orderBy(asc(instances.name))
   const open = all.filter((i) => i.agentAccess.enabled && openToAgents(i))

@@ -20,26 +20,18 @@ import type { DbLike } from "./problems.ts"
 import { selectExpired } from "./retention.ts"
 import { removeSpool, spoolDir, spoolExists, spooledRuns, spoolFile } from "./spool.ts"
 
-/** A copy is tried this many times within a day of its backup, then counted as failed. */
 export const COPY_ATTEMPTS = 3
 export const COPY_WINDOW_MS = 24 * 3600_000
-/** One write, or one verification, of one copy. */
 export const COPY_DEADLINE_MS = 30 * 60_000
-/** A run whose encrypted archive has not reached the spool by then has failed. */
 export const ARCHIVE_WAIT_MS = 45 * 60_000
 const MAX_WRITES = 3
 
-/** Copies being written by this process, and the destinations they write to (one write per destination). */
 const writing = new Set<string>()
 const busy = new Set<string>()
 
 let pass: Promise<void> | null = null
 let again = false
 
-/**
- * Starts writing the copies that are due, without waiting for them; each finished copy asks again. Repeated
- * calls while a pass runs lead to one more pass after it.
- */
 export function kickCopies(ctx: Ctx): Promise<void> {
   if (pass) {
     again = true
@@ -66,7 +58,6 @@ const targetName = async (ctx: Ctx, instanceId: string | null) => {
 
 async function copyPass(ctx: Ctx) {
   const now = new Date()
-  // A copy marked as being written that this process is not writing was cut off by a restart: try it again.
   const stuck = await ctx.db
     .select({ id: backupCopies.id })
     .from(backupCopies)
@@ -78,7 +69,6 @@ async function copyPass(ctx: Ctx) {
       .set({ status: "pending", nextAttemptAt: now })
       .where(and(inArray(backupCopies.id, cut), eq(backupCopies.status, "writing")))
 
-  // Archives that never arrived: the run has failed, and the worker's job is no longer wanted.
   const lost = await ctx.db
     .select()
     .from(backupRuns)
@@ -121,7 +111,6 @@ async function copyPass(ctx: Ctx) {
     if (writing.has(row.copy.id) || busy.has(row.destination.id)) continue
     writing.add(row.copy.id)
     busy.add(row.destination.id)
-    // A failure outside the copy's own handling (the database gone for a moment) leaves the copy to the next pass.
     void writeCopy(ctx, row.copy.id)
       .catch((error: Error) => ctx.log.warn("backup copy interrupted", { copy: row.copy.id, error: error.message }))
       .finally(() => {
@@ -131,14 +120,12 @@ async function copyPass(ctx: Ctx) {
       })
   }
 
-  // Runs whose copies are all done; and spool files no run needs any more.
   const open = await ctx.db
     .select({ id: backupRuns.id })
     .from(backupRuns)
     .where(and(eq(backupRuns.status, "running"), isNotNull(backupRuns.spooledAt)))
   for (const r of open) await settleRun(ctx, r.id)
   const dir = spoolDir(ctx)
-  // Only names that are run ids: another file there would make the query fail, and nothing would be removed.
   const files = (await spooledRuns(dir)).filter((name) => /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(name))
   if (files.length) {
     const live = new Set(
@@ -153,7 +140,6 @@ async function copyPass(ctx: Ctx) {
   }
 }
 
-/** Writes one copy and verifies it; on failure it is tried again later, up to COPY_ATTEMPTS within a day. */
 async function writeCopy(ctx: Ctx, copyId: string) {
   const [claimed] = await ctx.db
     .update(backupCopies)
@@ -199,8 +185,6 @@ async function writeCopy(ctx: Ctx, copyId: string) {
     await settleRun(ctx, run.id)
   }
 
-  // Given up before writing: whatever an earlier attempt wrote under the key stays listed for removal (removing
-  // an object that is not there is no error).
   const giveUp = (message: string) =>
     fail(message, true, {
       versionId: null,
@@ -219,10 +203,7 @@ async function writeCopy(ctx: Ctx, copyId: string) {
   const retainUntil = destination.objectLock
     ? new Date(Date.now() + destination.objectLock.days * 86_400_000)
     : undefined
-  // Everything written under this copy's key that it will not hold is listed, so nothing written is forgotten:
-  // it is removed now when it can be, otherwise once its lock ends (sweepRetention).
   const leftovers: Leftover[] = [...claimed.leftovers]
-  /** What the copy has written and still holds (an S3 version, or the object itself elsewhere). */
   let current: { versionId: string | null; retainUntil: Date | null } | null = claimed.versionId
     ? { versionId: claimed.versionId, retainUntil: claimed.retainUntil }
     : null
@@ -238,8 +219,6 @@ async function writeCopy(ctx: Ctx, copyId: string) {
   try {
     store = openStore(ctx, destination)
     const open = store
-    // A version an earlier attempt wrote (S3 keeping versions) is checked first; if it is not right it is
-    // removed, or kept listed while a lock holds it, and the archive is written again.
     if (current) {
       const earlier = current
       try {
@@ -262,7 +241,6 @@ async function writeCopy(ctx: Ctx, copyId: string) {
         if (written) current = { versionId: written.versionId, retainUntil: retainUntil ?? null }
         throw error
       } finally {
-        // Recorded before it is verified, so what was written is known whatever happens next.
         await ctx.db
           .update(backupCopies)
           .set({ versionId: current?.versionId ?? null, retainUntil: current?.retainUntil ?? null, leftovers })
@@ -276,7 +254,6 @@ async function writeCopy(ctx: Ctx, copyId: string) {
   } catch (error) {
     const final = attempt >= COPY_ATTEMPTS || Date.now() - run.startedAt.getTime() > COPY_WINDOW_MS
     if (final && store) {
-      // Given up: what it wrote under its key goes too (or waits for its lock), and a temporary file with it.
       if (current) await discard(store, current)
       if (destination.kind !== "s3")
         await withDeadline(60_000, "Removing a temporary file", (s) =>
@@ -321,10 +298,6 @@ async function writeCopy(ctx: Ctx, copyId: string) {
 
 const STORE_AGAIN_MS = 2_000
 
-/**
- * Writes until the database takes it. Only this process knows that the copy is verified: a copy left as being
- * written is tried again, and that attempt could replace, remove or fail an archive that is good.
- */
 async function untilStored(ctx: Ctx, write: () => Promise<unknown>) {
   for (;;) {
     try {
@@ -337,7 +310,6 @@ async function untilStored(ctx: Ctx, write: () => Promise<unknown>) {
   }
 }
 
-/** When every copy of a run is done, the run is ok, partial or failed. */
 export async function settleRun(ctx: Ctx, runId: string) {
   const copies = await ctx.db
     .select({ copy: backupCopies, destination: backupDestinations.name })
@@ -362,10 +334,6 @@ export async function settleRun(ctx: Ctx, runId: string) {
   changed(ctx, "backups", "overview", "instances")
 }
 
-/**
- * The run failed before its archive was ready (export, encryption or upload). Its copies end with it, and one
- * alert says why. A run whose archive is in the spool is left to its copies.
- */
 export async function failRun(
   ctx: Ctx,
   runId: string,
@@ -388,14 +356,8 @@ export async function failRun(
   changed(ctx, "backups", "overview", "instances")
 }
 
-/** Why runs end without an alert when backup is turned off for their instance. */
 export const BACKUP_TURNED_OFF = "Backup was turned off"
 
-/**
- * Ends runs still waiting for their archive as failed, without an alert: those of an instance whose backup was
- * turned off, or one run whose job is no longer wanted. Decided with `spooledAt IS NULL`, as archiveReady is, so
- * a run either gets its archive and finishes its copies or ends here. Their copies end with them.
- */
 export async function endRunsWithoutArchive(
   db: DbLike,
   which: { instanceId: string } | { runId: string },
@@ -428,10 +390,6 @@ export async function endRunsWithoutArchive(
   return ended.map((r) => r.id)
 }
 
-/**
- * Removes the copies on one destination that its retention no longer keeps, for one instance or for n8n-ops
- * itself. Copies under an Object Lock wait until it ends; a copy that cannot be removed is tried next time.
- */
 export async function applyRetention(ctx: Ctx, destination: Destination, instanceId: string | null, store?: Store) {
   const live = await ctx.db
     .select({ copy: backupCopies, at: backupRuns.startedAt })
@@ -471,10 +429,6 @@ export async function applyRetention(ctx: Ctx, destination: Destination, instanc
   }
 }
 
-/**
- * Retention on every destination for every instance (and n8n-ops) with archives there, also where no new copy is
- * written any more: a destination turned off, an instance that chose others, or a lock that has ended since.
- */
 export async function sweepRetention(ctx: Ctx) {
   const pairs = await ctx.db
     .selectDistinct({ destinationId: backupCopies.destinationId, instanceId: backupRuns.instanceId })
@@ -502,11 +456,9 @@ export async function sweepRetention(ctx: Ctx) {
   }
 }
 
-/** Removes the objects a copy wrote but does not hold, once no lock holds them; the rest stay listed. */
 export async function clearLeftovers(ctx: Ctx, copy: typeof backupCopies.$inferSelect, store: Store, now = new Date()) {
   const remaining: Leftover[] = []
   for (const l of copy.leftovers) {
-    // The object at the key itself (no version) belongs to the copy while the copy holds it.
     const held = !l.versionId && copy.status === "ok" && !copy.deletedAt
     if (held || (l.retainUntil && new Date(l.retainUntil) > now)) {
       if (!held) remaining.push(l)
@@ -524,7 +476,6 @@ export async function clearLeftovers(ctx: Ctx, copy: typeof backupCopies.$inferS
   return remaining
 }
 
-/** Ends the ongoing alerts of a destination or of an instance's copies there, without a message. */
 export async function dropConditions(ctx: Ctx, keys: string[]) {
   if (!keys.length) return
   await ctx.db

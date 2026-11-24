@@ -45,14 +45,11 @@ describe("topic routes", () => {
     expect(routeMatches(route, { workflowName: "aaa" }, (p) => slow.push(p))).toBe(false)
     expect(Date.now() - started).toBeLessThan(1000)
     expect(slow).toEqual(["^(a+)+$"])
-    // Other patterns still work in the same context.
     expect(routeMatches({ workflow: "^a+$", threadId: 1 }, { workflowName: "aaa" })).toBe(true)
   })
 
   it("tries a pattern again when a pause of the server ran it out of time once, and keeps it", () => {
     const run = vm.Script.prototype.runInContext
-    // Only the pause below runs out of time: the real runs get a clock a busy test machine cannot run out, so they
-    // do not add a pause of their own.
     const pause = vi
       .spyOn(vm.Script.prototype, "runInContext")
       .mockImplementation(function (this: vm.Script, context, options) {
@@ -67,7 +64,6 @@ describe("topic routes", () => {
       expect(routeMatches(route, { workflowName: "paused once" }, (p) => slow.push(p))).toBe(true)
       expect(slow).toEqual([])
       expect(pause).toHaveBeenCalledTimes(2)
-      // Not set aside: it still matches later.
       expect(routeMatches(route, { workflowName: "paused once" }, (p) => slow.push(p))).toBe(true)
     } finally {
       pause.mockRestore()

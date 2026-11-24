@@ -1,9 +1,5 @@
 import { clip, html } from "./telegram.ts"
 
-/**
- * Telegram texts of the backup alerts. The names and the error come from outside and are shortened. A failure
- * with a destination is about the copies on that destination only.
- */
 export const backupAlerts = {
   failed: (name: string, error?: string, destination?: string) => {
     const what = destination
@@ -22,6 +18,5 @@ No backup of ${n} from the last ${last} has been copied to ${d}.`
   },
 }
 
-/** The ongoing-condition key of backups of an instance (or of n8n-ops itself) on one destination. */
 export const backupCondition = (instanceId: string | null, destinationId: string) =>
   `backup:${instanceId ?? "self"}:${destinationId}`

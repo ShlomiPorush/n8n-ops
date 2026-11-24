@@ -9,8 +9,6 @@ import { type AccessStatus, accessRequests, apiTokens } from "../db/schema.ts"
 import { sha256 } from "../lib/crypto.ts"
 import { listAccess, listEndedAccess, MAX_ENDED_LISTED } from "./access.ts"
 
-// The operator's Access list against a real PostgreSQL: every request waiting for a decision or approved is listed
-// however many requests ended after it, with the latest ended ones.
 const adminUrl = process.env.MIGRATION_DATABASE_URL
 if (!adminUrl) throw new Error("MIGRATION_DATABASE_URL is required (scripts/verify.sh sets it)")
 
@@ -64,12 +62,10 @@ describe("the Access list", () => {
       decideBy: new Date(at + 30 * 60_000),
       expiresAt: status === "approved" ? new Date(now + 60 * 60_000) : null,
     })
-    // More live requests than ended ones are listed, all older than every ended one.
     const live = [
       ...Array.from({ length: MAX_ENDED_LISTED + 10 }, (_, i) => row("approved", now - 86_400_000 - i * 1000)),
       row("pending", now - 90_000_000),
     ]
-    // Ended requests, newer than every live one; the ones around the cut share one time.
     const endedKinds: AccessStatus[] = ["released", "expired", "denied", "revoked"]
     const cut = now - 3600_000 - MAX_ENDED_LISTED * 1000
     const ended = Array.from({ length: MAX_ENDED_LISTED + 50 }, (_, i) =>
@@ -100,7 +96,6 @@ describe("the Access list", () => {
 })
 
 describe("the pages of ended requests", () => {
-  // Every ended request, newest first to the microsecond, then by id, as PostgreSQL keeps them.
   const endedInOrder = async () => {
     const rows = await ctx.db.execute<{ id: string; at: string }>(
       sql`SELECT id, to_char(created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US') AS at
@@ -156,11 +151,8 @@ describe("the pages of ended requests", () => {
       .returning({ id: accessRequests.id, status: accessRequests.status, at: accessRequests.requestedAt })
     const ended = inserted.filter((r) => r.status !== "pending" && r.status !== "approved")
     ended.sort((a, b) => b.at.getTime() - a.at.getTime())
-    // Around the end of each full page, requests made within one millisecond (some at the same microsecond),
-    // which a time in milliseconds alone cannot tell apart.
     const micro = ["123999", "123500", "123500", "123001", "123000", "123999", "123001"]
     for (const end of [MAX_ENDED_LISTED, 2 * MAX_ENDED_LISTED]) {
-      // Its own second, so the group keeps its place between the requests a second newer and older.
       const second = ended[end]?.at.toISOString().slice(0, 19)
       for (const [k, us] of micro.entries()) {
         const row = ended[end - 3 + k]

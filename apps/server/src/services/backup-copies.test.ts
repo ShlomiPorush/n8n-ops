@@ -6,7 +6,6 @@ import type { Store } from "./destinations/store.ts"
 
 type Copy = typeof backupCopies.$inferSelect
 
-/** A store that records removals and refuses those of the versions listed as locked. */
 function fakeStore(locked: string[] = []) {
   const removed: (string | null)[] = []
   const store = {
@@ -18,7 +17,6 @@ function fakeStore(locked: string[] = []) {
   return { store, removed }
 }
 
-/** A database that keeps the last update of the copy's leftovers. */
 function fakeCtx() {
   const saved: { leftovers?: unknown } = {}
   const ctx = {

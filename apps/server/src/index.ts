@@ -51,6 +51,7 @@ const ctx: Ctx = {
   version: config.version,
   appKeyPath: config.appKeyPath,
   checkDatabase: database.ping,
+  connectDatabase: database.connect,
   log,
   events: new EventEmitter().setMaxListeners(100),
 }
@@ -73,7 +74,7 @@ onTwoFactorReset({
 // Connections made under a public URL that has since changed end before the server takes a request.
 await ctx.agents.reconcile()
 
-await ctx.settings.loadDesign(log)
+await ctx.settings.loadDesign()
 // A table compaction whose answer was lost when the server stopped ends as unknown (services/database.ts).
 await settleCompactions(ctx)
 // Mutes that ended while the server was down, before a request or a report reads them as muted.

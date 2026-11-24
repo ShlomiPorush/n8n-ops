@@ -4,8 +4,8 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { eq, sql } from "drizzle-orm"
 import { drizzle } from "drizzle-orm/postgres-js"
-import postgres from "postgres"
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest"
+import postgres, { type Sql } from "postgres"
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 import type { Ctx } from "../context.ts"
 import { createDatabase, type Database, type Db } from "../db/client.ts"
 import * as schema from "../db/schema.ts"
@@ -15,7 +15,6 @@ import {
   compactStatus,
   type DatabaseMaintenanceError,
   databaseSizes,
-  forgetFreeSpace,
   freeSpace,
   settleCompactions,
   startCompact,
@@ -33,9 +32,17 @@ let database: Database
 let ctx: Ctx
 const LOCK = 7_243_003
 
-const ctxFor = (db: Db): Ctx =>
+/** Every client a compaction opened, to check that each was closed. */
+const opened: Sql[] = []
+
+const ctxFor = (db: Db, at = url): Ctx =>
   ({
     db,
+    connectDatabase: (options: Parameters<Database["connect"]>[0]) => {
+      const client = postgres(at, options)
+      opened.push(client)
+      return client
+    },
     events: new EventEmitter(),
     log: { info: () => {}, warn: () => {}, error: () => {} },
     audit: createAudit(db),
@@ -53,12 +60,20 @@ beforeAll(async () => {
 })
 
 beforeEach(async () => {
-  forgetFreeSpace()
+  opened.length = 0
   await ctx.db.delete(dbCompactions)
   await ctx.db.delete(auditLog)
   await ctx.db.execute(sql`drop table if exists bloat, "We""ird"`)
   await ctx.db.execute(sql`create table bloat (id int primary key, pad text not null)`)
   await ctx.db.execute(sql`insert into bloat select g, repeat('x', 400) from generate_series(1, 20000) g`)
+})
+
+// Closed at the end in every path: the run's session, with its lock and its settings, is gone.
+afterEach(async () => {
+  for (const client of opened) {
+    await vi.waitFor(() => expect(client.stats.connections).toBe(0))
+    await expect(client`select 1`).rejects.toMatchObject({ code: "CONNECTION_ENDED" })
+  }
 })
 
 afterAll(async () => {
@@ -153,6 +168,7 @@ describe("free space", () => {
     const role = `n8n_ops_reader_${randomBytes(4).toString("hex")}`
     const password = randomBytes(24).toString("hex")
     await ctx.db.execute(sql.raw(`create role ${role} login password '${password}'`))
+    await ctx.db.execute(sql.raw(`grant select on db_compactions to ${role}`))
     const u = new URL(url)
     u.username = role
     u.password = password
@@ -162,47 +178,30 @@ describe("free space", () => {
       expect(space.unavailable).toMatch(/may not read free space/)
     } finally {
       await client.end()
+      await ctx.db.execute(sql.raw(`drop owned by ${role}`))
       await ctx.db.execute(sql.raw(`drop role ${role}`))
     }
   })
 
   it("keeps no measurement that started before a compaction ended, also one another process ran", async () => {
-    const before = freeSpace(ctx, { refresh: true })
-    forgetFreeSpace()
-    const stale = await before
-    expect(await freeSpace(ctx)).not.toBe(stale)
-
-    // Kept, then a compaction ends that this process did not run (another server process): measured again.
+    const compactionEnded = () =>
+      ctx.db.insert(dbCompactions).values({
+        tableName: "bloat",
+        relationId: 1,
+        startedBy: "admin",
+        status: "done",
+        finishedAt: new Date(Date.now() + 1_000),
+      })
     const kept = await freeSpace(ctx, { refresh: true })
     expect(await freeSpace(ctx)).toBe(kept)
-    await ctx.db.insert(dbCompactions).values({
-      tableName: "bloat",
-      relationId: 1,
-      startedBy: "admin",
-      status: "done",
-      finishedAt: new Date(Date.now() + 1_000),
-    })
+    await compactionEnded()
     expect(await freeSpace(ctx)).not.toBe(kept)
-  })
 
-  it("measures again, without failing, when a compaction ends while it checks the kept one", async () => {
-    const kept = await freeSpace(ctx, { refresh: true })
-    // Every query of this context first forgets the kept measurement, as a compaction ending right then would.
-    const racing = {
-      ...ctx,
-      db: new Proxy(ctx.db, {
-        get: (target, key, receiver) =>
-          key === "execute"
-            ? (query: Parameters<Db["execute"]>[0]) => {
-                forgetFreeSpace()
-                return target.execute(query)
-              }
-            : Reflect.get(target, key, receiver),
-      }),
-    } as Ctx
-    const again = await freeSpace(racing)
-    expect(again).not.toBe(kept)
-    expect(again.unavailable).toBeNull()
+    // Nor one that still runs then: it is not joined.
+    await ctx.db.delete(dbCompactions)
+    const running = freeSpace(ctx, { refresh: true })
+    await compactionEnded()
+    expect(await freeSpace(ctx)).not.toBe(await running)
   })
 
   it("measures again only when asked or after ten minutes", async () => {
@@ -316,13 +315,12 @@ describe("compacting", () => {
     u.username = role
     u.password = password
     const client = postgres(u.toString(), { max: 2, onnotice: () => {} })
-    const theirs = ctxFor(drizzle(client, { schema }) as unknown as Db)
+    const theirs = ctxFor(drizzle(client, { schema }) as unknown as Db, u.toString())
     try {
       const [before] = await ctx.db.execute(sql`select pg_relation_filenode('bloat') as node`)
       await startCompact(theirs, "bloat", "admin")
       const status = await settled(20_000, theirs)
       expect(status.recent[0]?.status).toBe("failed")
-      // The warning's own words, not the unchanged-files fallback.
       expect(status.recent[0]?.error).toMatch(/^PostgreSQL skipped the table: .*bloat/)
       const [after] = await ctx.db.execute(sql`select pg_relation_filenode('bloat') as node`)
       expect(after).toEqual(before)
@@ -333,8 +331,28 @@ describe("compacting", () => {
     }
   })
 
-  it("gives the connections back with default settings and no lock", async () => {
-    // Two connections: the run reserves one and records itself on the other. Both are checked after.
+  it("is done when PostgreSQL warned only about the session, as of a collation's version", async () => {
+    const [version] = await ctx.db.execute<{ v: string | null }>(
+      sql`select datcollversion as v from pg_database where datname = current_database()`,
+    )
+    const set = (v: string | null) =>
+      admin`update pg_database set datcollversion = ${v} where datname = ${name}`.then(() => {})
+    await set("0")
+    try {
+      const warned: string[] = []
+      const client = postgres(url, { max: 1, onnotice: (n) => warned.push(n.severity ?? "") })
+      await client`select 1`
+      await client.end()
+      expect(warned).toContain("WARNING")
+      await ctx.db.execute(sql`create table "We""ird" (id int)`)
+      await startCompact(ctx, 'We"ird', "admin")
+      expect((await settled()).recent[0]).toMatchObject({ status: "done", error: null })
+    } finally {
+      await set(version?.v ?? null)
+    }
+  })
+
+  it("leaves the pool's connections with default settings and no lock", async () => {
     const client = postgres(url, { max: 2, onnotice: () => {} })
     const two = ctxFor(drizzle(client, { schema }) as unknown as Db)
     try {

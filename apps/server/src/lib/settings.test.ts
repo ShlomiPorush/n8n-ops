@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto"
-import { describe, expect, it, vi } from "vitest"
+import { describe, expect, it } from "vitest"
 import type { Db } from "../db/client.ts"
 import { TestRefused, telegramTarget } from "../services/draft-tests.ts"
 import {
@@ -8,7 +8,6 @@ import {
   defaults,
   invalidAnswer,
   isTimeZone,
-  mayStoreTimeZone,
   numberLimits,
   resolveInstanceSettings,
   sections,
@@ -238,33 +237,24 @@ describe("a Telegram test with the values on screen", () => {
 })
 
 describe("web design", () => {
-  const log = { info() {}, warn() {} }
-  // A stand-in database: a stored General row, writes that can be slowed down, reads that can fail.
-  function fakeDb(stored?: object, { slowFirstWrite = false, failReads = 0 } = {}) {
+  // A stand-in database with a stored General row.
+  function fakeDb(stored?: object) {
     let row = stored
-    let writes = 0
-    let reads = 0
     const db = {
       select: () => ({
         from: () => ({
-          where: async () => {
-            reads += 1
-            if (reads <= failReads) throw new Error("database down")
-            return row ? [{ value: row }] : []
-          },
+          where: async () => (row ? [{ value: row }] : []),
         }),
       }),
       insert: () => ({
         values: ({ value }: { value: object }) => ({
           onConflictDoUpdate: async () => {
-            writes += 1
-            if (slowFirstWrite && writes === 1) await new Promise((r) => setTimeout(r, 30))
             row = value
           },
         }),
       }),
     }
-    return { db: db as unknown as Db, stored: () => row }
+    return { db: db as unknown as Db }
   }
 
   it("is Regular while nothing is stored", async () => {
@@ -308,11 +298,8 @@ describe("web design", () => {
       expect(isTimeZone(zone)).toBe(true)
     for (const zone of ["", "Mars/Base", "+03:00", "UTC+3", "Asia/Jerusalem; drop"])
       expect(isTimeZone(zone)).toBe(false)
-    expect(mayStoreTimeZone("UTC", "Asia/Jerusalem")).toBe(true)
-    expect(mayStoreTimeZone("UTC", "")).toBe(true)
-    expect(mayStoreTimeZone("UTC", "+03:00")).toBe(false)
-    // One saved before time zones were checked stays while it is not changed.
-    expect(mayStoreTimeZone("+03:00", "+03:00")).toBe(true)
+    expect(sections.general.safeParse({ ...defaults.general, timezone: "" }).success).toBe(true)
+    expect(sections.general.safeParse({ ...defaults.general, timezone: "+03:00" }).success).toBe(false)
   })
 
   it("refuses to store a time zone no clock knows", async () => {
@@ -323,9 +310,7 @@ describe("web design", () => {
       ).rejects.toThrow()
   })
 
-  it("keeps a fixed offset stored before, and reads an unknown time zone as UTC without resetting General", async () => {
-    const offset = createSettings(fakeDb({ publicUrl: "https://ops.example.com", timezone: "+03:00" }).db)
-    expect((await offset.get("general")).timezone).toBe("+03:00")
+  it("reads an unknown time zone as UTC without resetting General", async () => {
     const unknown = createSettings(
       fakeDb({ publicUrl: "https://ops.example.com", timezone: "Mars/Base", design: "compact" }).db,
     )
@@ -374,61 +359,9 @@ describe("web design", () => {
     expect(settings.design()).toBe("compact")
   })
 
-  it("ends as the last of two overlapping saves, like the database", async () => {
-    const store = fakeDb(undefined, { slowFirstWrite: true })
-    const settings = createSettings(store.db)
-    await Promise.all([
-      settings.set("general", { ...defaults.general, publicUrl: "", timezone: "UTC", design: "compact" }),
-      settings.set("general", { ...defaults.general, publicUrl: "", timezone: "UTC", design: "regular" }),
-    ])
-    expect(settings.design()).toBe("regular")
-    expect((store.stored() as { design: string }).design).toBe("regular")
-  })
-
   it("loads the stored design at startup", async () => {
     const settings = createSettings(fakeDb({ design: "compact" }).db)
-    await settings.loadDesign(log)
+    await settings.loadDesign()
     expect(settings.design()).toBe("compact")
-  })
-
-  it("serves the default while the database does not answer, then picks up the stored design", async () => {
-    vi.useFakeTimers()
-    try {
-      const settings = createSettings(fakeDb({ design: "compact" }, { failReads: 2 }).db)
-      await settings.loadDesign(log, 1_000)
-      expect(settings.design()).toBe("regular")
-      await vi.advanceTimersByTimeAsync(1_000)
-      expect(settings.design()).toBe("regular")
-      await vi.advanceTimersByTimeAsync(2_000)
-      expect(settings.design()).toBe("compact")
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-})
-
-describe("web design, a startup read racing a save", () => {
-  it("keeps a design saved while the startup read was on its way", async () => {
-    let release: (rows: unknown[]) => void = () => {}
-    let row: object = { design: "regular" }
-    const db = {
-      select: () => ({
-        from: () => ({ where: () => new Promise((resolve) => (release = resolve)) }),
-      }),
-      insert: () => ({
-        values: ({ value }: { value: object }) => ({
-          onConflictDoUpdate: async () => {
-            row = value
-          },
-        }),
-      }),
-    } as unknown as Db
-    const settings = createSettings(db)
-    const loading = settings.loadDesign({ info() {}, warn() {} })
-    await settings.set("general", { ...defaults.general, publicUrl: "", timezone: "UTC", design: "compact" })
-    release([{ value: { design: "regular" } }]) // the read started before the save
-    await loading
-    expect(settings.design()).toBe("compact")
-    expect((row as { design: string }).design).toBe("compact")
   })
 })

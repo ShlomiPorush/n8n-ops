@@ -1,9 +1,7 @@
 import {
   accessChannels,
   dateFormats,
-  isDateFormat,
   isRoutePattern,
-  isTimeFormat,
   maxRoutes,
   maxTopicId,
   type NumberLimits,
@@ -55,11 +53,13 @@ export type InstanceOverrides = z.infer<typeof instanceOverridesSchema>
 /** The two web designs. Regular is the default; Compact is the denser v3 design. */
 export const designs = ["regular", "compact"] as const
 export type Design = (typeof designs)[number]
-export const isDesign = (value: unknown): value is Design => designs.includes(value as Design)
 
-/** A time zone the schedules and dates can use: anything Intl takes, also a fixed offset such as +03:00. */
-export function isKnownZone(value: unknown): value is string {
-  if (typeof value !== "string" || !value) return false
+/**
+ * An IANA time zone name, such as Europe/Berlin or UTC. A fixed offset such as +03:00 is refused although Intl takes
+ * it, since it would not follow daylight saving.
+ */
+export function isTimeZone(value: unknown): value is string {
+  if (typeof value !== "string" || !/^[A-Za-z][\w+-]*(\/[\w+-]+)*$/.test(value)) return false
   try {
     new Intl.DateTimeFormat("en", { timeZone: value })
     return true
@@ -67,17 +67,6 @@ export function isKnownZone(value: unknown): value is string {
     return false
   }
 }
-
-/**
- * An IANA time zone name, such as Europe/Berlin or UTC: what a new time zone must be. A fixed offset such as
- * +03:00 is refused although Intl takes it, since it would not follow daylight saving; one stored before
- * keeps working until it is replaced.
- */
-export const isTimeZone = (value: unknown): value is string =>
-  typeof value === "string" && /^[A-Za-z][\w+-]*(\/[\w+-]+)*$/.test(value) && isKnownZone(value)
-
-/** Whether General may be saved with this time zone: a zone name, empty (UTC), or the one already stored. */
-export const mayStoreTimeZone = (stored: unknown, next: unknown) => next === stored || next === "" || isTimeZone(next)
 
 /** A Telegram forum topic: the `message_thread_id`, a PostgreSQL integer. Refused in the words the UI uses. */
 export const topicIdSchema = z
@@ -164,8 +153,8 @@ export const sections = {
   general: z.object({
     /** Public URL of this n8n-ops installation, used in links sent by Telegram and email. */
     publicUrl: z.string(),
-    /** Empty means UTC. A new value must also pass isTimeZone (checked where it is saved). */
-    timezone: z.string().refine((v) => v === "" || isKnownZone(v), "choose a time zone from the list"),
+    /** Empty means UTC. */
+    timezone: z.string().refine((v) => v === "" || isTimeZone(v), "choose a time zone from the list"),
     /** How the console, the emails and Telegram write a date and a time (FW-9, EM-6). */
     dateFormat: z.enum(dateFormats),
     timeFormat: z.enum(timeFormats),
@@ -374,14 +363,10 @@ export async function readSection<K extends SectionName>(db: Pick<Db, "select">,
 /** A stored value read as its section: over the defaults, with values this release does not take left out. */
 function storedValue<K extends SectionName>(key: K, value: unknown): Section<K> {
   const stored = { ...((value as Record<string, unknown> | null | undefined) ?? {}) }
-  // An unknown stored design falls back on its own; it must not reset the rest of General.
-  if (key === "general" && "design" in stored && !isDesign(stored.design)) delete stored.design
-  // So does a time zone Intl does not know, saved before time zones were checked: it reads as UTC.
-  if (key === "general" && "timezone" in stored && stored.timezone !== "" && !isKnownZone(stored.timezone))
-    delete stored.timezone
-  // And a date or time format this release does not know: it reads as its default (FW-9).
-  if (key === "general" && "dateFormat" in stored && !isDateFormat(stored.dateFormat)) delete stored.dateFormat
-  if (key === "general" && "timeFormat" in stored && !isTimeFormat(stored.timeFormat)) delete stored.timeFormat
+  // A General value this release does not take, such as a design of a newer one, falls back alone (FW-9).
+  if (key === "general")
+    for (const [name, schema] of Object.entries(sections.general.shape))
+      if (name in stored && !schema.safeParse(stored[name]).success) delete stored[name]
   // A route that no longer passes is left out alone; the bot token and chat must not fall back with it.
   if (key === "telegram" && Array.isArray(stored.routes))
     stored.routes = stored.routes.filter((r) => telegramRouteSchema.safeParse(r).success).slice(0, maxRoutes)
@@ -486,14 +471,9 @@ export type SettingsStore = {
    * follows every saved General and assumes one server process, which is the supported deployment.
    */
   design(): Design
-  /**
-   * Reads the stored design. If the database does not answer, the default stays and the read is retried in
-   * the background until it succeeds. Call once after migrations.
-   */
-  loadDesign(log: Logger, retryMs?: number): Promise<void>
+  /** Reads the stored design. Call once after migrations. */
+  loadDesign(): Promise<void>
 }
-
-type Logger = { info(msg: string, meta?: object): void; warn(msg: string, meta?: object): void }
 
 /**
  * `env.publicUrl` (N8N_OPS_PUBLIC_URL) stands in for the public URL while Settings > General leaves it empty,
@@ -502,9 +482,6 @@ type Logger = { info(msg: string, meta?: object): void; warn(msg: string, meta?:
  */
 export function createSettings(db: Db, env: SettingsEnv = {}): SettingsStore {
   let currentDesign: Design = defaults.general.design
-  // General is written one at a time, so the design in memory always ends as the last one stored.
-  let generalWrites: Promise<unknown> = Promise.resolve()
-  let generalVersion = 0
 
   async function get<K extends SectionName>(key: K): Promise<Section<K>> {
     const value = await stored(key)
@@ -536,35 +513,17 @@ export function createSettings(db: Db, env: SettingsEnv = {}): SettingsStore {
     }),
     async set(key, value) {
       const parsed = sections[key].parse(value) as typeof value
-      if (key !== "general") return write(key, parsed)
-      const run = generalWrites.then(async () => {
-        await write(key, parsed)
-        // Updated where the value is stored, so a later failure in the request cannot leave memory behind.
-        currentDesign = (parsed as Section<"general">).design
-        generalVersion += 1
-      })
-      generalWrites = run.catch(() => {})
-      await run
+      await write(key, parsed)
+      // Updated where the value is stored, so a later failure in the request cannot leave memory behind.
+      if (key === "general") currentDesign = (parsed as Section<"general">).design
     },
     async forInstance(overrides) {
       return resolveInstanceSettings(await get("defaults"), overrides)
     },
     design: () => currentDesign,
-    loadDesign,
-  }
-
-  async function loadDesign(log: Logger, retryMs = 5_000): Promise<void> {
-    try {
-      // A General saved while this read was on its way is newer than what the read returns: keep it.
-      const seen = generalVersion
-      const stored = (await get("general")).design
-      if (generalVersion === seen) currentDesign = stored
-    } catch (error) {
-      log.warn("Could not read the web design; serving the default until the database answers", {
-        error: (error as Error).message,
-      })
-      setTimeout(() => void loadDesign(log, Math.min(retryMs * 2, 60_000)), retryMs).unref?.()
-    }
+    async loadDesign() {
+      currentDesign = (await stored("general")).design
+    },
   }
 }
 

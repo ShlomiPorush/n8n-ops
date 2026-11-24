@@ -1,6 +1,6 @@
 import type { EventEmitter } from "node:events"
 import type { AuthSource } from "./auth/current.ts"
-import type { Db } from "./db/client.ts"
+import type { Database, Db } from "./db/client.ts"
 import type { Audit } from "./lib/audit.ts"
 import type { Secrets } from "./lib/crypto.ts"
 import type { SettingsStore } from "./lib/settings.ts"
@@ -17,6 +17,7 @@ export type Ctx = {
   version: string
   appKeyPath: string
   checkDatabase: () => Promise<boolean>
+  connectDatabase: Database["connect"]
   log: Logger
   /** "change" events carry the list of UI areas whose data changed, for live updates. */
   events: EventEmitter

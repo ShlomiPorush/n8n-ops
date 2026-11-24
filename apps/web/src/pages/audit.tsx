@@ -27,30 +27,25 @@ export function AuditPage() {
   const rows = query.data?.pages.flat() ?? []
   const { hasNextPage, isFetching, isFetchingNextPage, isFetchNextPageError, fetchNextPage, error, errorUpdatedAt } =
     query
-  // A failed page keeps its error on the query while a refresh runs, when the query no longer marks it as a page
-  // error, so the failure is remembered by its time: it is not a failed refresh of the list.
-  const pageError = useRef(0)
-  if (isFetchNextPageError) pageError.current = errorUpdatedAt
-  const pageErrorShown = Boolean(error) && errorUpdatedAt === pageError.current
   /*
    * A failed page waits for Try again and never asks again by itself (TB-6). React Query forgets the failure as
-   * soon as the list refreshes (on coming back to the window, for example), so the page remembers the cursor that
-   * failed until Try again. A refresh can move the cursor (new entries on top), and the page still waits: asking
-   * for the moved one by itself would be the automatic retry the rule forbids.
+   * soon as the list refreshes (on coming back to the window, for example), so its time is remembered until Try
+   * again. A refresh can move the list (new entries on top), and the page still waits: asking by itself would be the
+   * automatic retry the rule forbids.
    */
-  const lastPage = query.data?.pages.at(-1)
-  const cursor = lastPage?.at(-1)?.id ?? 0
-  const [failedCursor, setFailedCursor] = useState<number | null>(null)
-  // On every failure, not only the first: a Try again that fails right after one leaves `isFetchNextPageError` on
+  const [failedAt, setFailedAt] = useState<number | null>(null)
+  // On every failure, not only the first: a Try again that fails right after one leaves isFetchNextPageError on
   // throughout, and only the error's time moves.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: errorUpdatedAt marks each new failure
   useEffect(() => {
-    if (isFetchNextPageError) setFailedCursor(cursor)
-  }, [isFetchNextPageError, errorUpdatedAt, cursor])
+    if (isFetchNextPageError) setFailedAt(errorUpdatedAt)
+  }, [isFetchNextPageError, errorUpdatedAt])
   const [retrying, setRetrying] = useState(false)
-  const blocked = Boolean(hasNextPage) && (failedCursor !== null || isFetchNextPageError)
+  const blocked = Boolean(hasNextPage) && (failedAt !== null || isFetchNextPageError)
+  // The error of a failed page stays on the query while a refresh runs, when the query no longer marks it as a page
+  // error: it is not a failed refresh of the list.
+  const pageErrorShown = Boolean(error) && (isFetchNextPageError || retrying || errorUpdatedAt === failedAt)
   async function tryAgain() {
-    setFailedCursor(null)
+    setFailedAt(null)
     setRetrying(true)
     // Never cancels a refresh of the whole list that is on its way: the newer list wins, and the page is asked for
     // after it, as its end comes into view (SV-10).

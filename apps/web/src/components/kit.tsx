@@ -896,7 +896,6 @@ export function BusyButton({
 }) {
   const [state, setState] = useState<BusyState>("idle")
   const [clock] = useState(() => busyRun(setState))
-  useEffect(() => clock.mount(), [clock])
   const busy = held || state === "busy"
   const Shown = busy ? LoaderCircle : state === "done" ? Check : state === "failed" ? X : Icon
   // A filled button keeps its colours; the others take the result's tone.

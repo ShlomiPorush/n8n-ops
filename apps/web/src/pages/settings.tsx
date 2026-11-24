@@ -12,6 +12,7 @@ import {
   valueProblem,
   writingOf,
 } from "@n8n-ops/shared"
+import { useMutation } from "@tanstack/react-query"
 import { ChevronDown, Download, KeyRound, ShieldCheck } from "lucide-react"
 import { useEffect, useReducer, useRef, useState } from "react"
 import { Navigate, NavLink, useLocation, useNavigate, useParams } from "react-router"
@@ -52,10 +53,10 @@ import { Switch } from "@/components/ui/switch"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { ApiError, api, describeError, useApi, useApiMutation } from "@/lib/api"
 import { download } from "@/lib/download"
+import { useEdits } from "@/lib/edits"
 import { addEntries } from "@/lib/entries"
 import { loadView } from "@/lib/load-state"
 import { flash, whenDrawn } from "@/lib/reveal"
-import { createTestRuns, type TestOutcome, type TestView } from "@/lib/test-run"
 import { type DateWriting, formatClock, formatDay, formatListTime, formatTime, useTimeFormat } from "@/lib/time"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
@@ -677,7 +678,8 @@ export function changeCount(
   const plain = def.fields.filter((f) => f.type !== "password").map((f) => f.name)
   const secrets = def.fields.filter((f) => f.type === "password").map((f) => f.name)
   return (
-    countChanges(values, initial, plain) + secrets.filter((k) => values[k] !== undefined && values[k] !== "").length
+    countChanges(values, initial, plain) +
+    secrets.filter((k) => values[k] !== initial[k] && values[k] !== undefined && values[k] !== "").length
   )
 }
 
@@ -777,7 +779,6 @@ export function SettingsForm({ section, active = true }: { section: string; acti
   const navigate = useNavigate()
   const query = useApi<Record<string, unknown>>(`/settings/${section}`)
   useRevealField(!query.isLoading && active)
-  const [values, setValues] = useState<Record<string, unknown>>({})
   // Fields that failed their check, with what is wrong (SV-1); editing a field, Discard or a save clears its mark.
   const [problems, setProblems] = useState<Record<string, string>>({})
   // What is typed in a list's Add field and not yet a chip, by field: a change of its own (SV-1).
@@ -792,19 +793,14 @@ export function SettingsForm({ section, active = true }: { section: string; acti
     quiet: true,
   })
   const meta = metaOf(query.data)
-  const initial = query.data && def ? toForm(def, query.data) : {}
+  // A secret is compared as it is: its empty field (`""`) or its removal (null) is not the same as leaving it alone.
+  const differs = (a: unknown, b: unknown, name: string) =>
+    def?.fields.some((f) => f.name === name && f.type === "password") ? a !== b : text(a) !== text(b)
+  const form = useEdits(query.data && def ? toForm(def, query.data) : undefined, query.dataUpdatedAt, differs)
+  const { values, stored: initial } = form
   // What Save would send: the values with the typed text that is not yet a chip.
   const current = withPending(values, pending)
   const count = query.data && def ? changeCount(def, current, initial) : 0
-  // A refresh never overwrites what the user is typing (SV-6); after a save the form takes the saved values.
-  const reload = useRef(true)
-  // biome-ignore lint/correctness/useExhaustiveDependencies: only new data replaces the form
-  useEffect(() => {
-    if (query.data && def && (reload.current || count === 0)) {
-      setValues(toForm(def, query.data))
-      reload.current = false
-    }
-  }, [query.data, def])
 
   /** The switch a field waits for, while it is off (FS-4). */
   const offOf = (f: FieldDef) => (f.needs && !values[f.needs] ? f.needs : null)
@@ -815,7 +811,7 @@ export function SettingsForm({ section, active = true }: { section: string; acti
       const v = current[f.name]
       if (f.type === "password") {
         // An unchanged secret is never sent again; null removes it.
-        if (v === null || (typeof v === "string" && v)) out[f.name] = v
+        if (v !== initial[f.name] && (v === null || (typeof v === "string" && v))) out[f.name] = v
         continue
       }
       // Only what changed is sent, so a save never writes a value it did not change, such as one that comes
@@ -862,13 +858,13 @@ export function SettingsForm({ section, active = true }: { section: string; acti
     if (
       section === "email" &&
       query.data.smtpPasswordSet &&
-      smtpServerChanged(query.data, values) &&
+      smtpServerChanged(initial, values) &&
       !(typeof password === "string" && password) &&
       password !== null
     ) {
       found.smtpPassword =
         "the SMTP server, user or encryption changed. Enter the SMTP password again, so the stored one is not sent under them."
-      if (password === undefined) setValues((v) => ({ ...v, smtpPassword: "" }))
+      if (password === undefined) form.set("smtpPassword", "")
     }
     setProblems(found)
     return def.fields
@@ -903,12 +899,11 @@ export function SettingsForm({ section, active = true }: { section: string; acti
         }
         throw e
       }
-      // Only a successful save lets the next answer replace the form; a failed one keeps the edits (SV-3).
-      reload.current = true
       setProblems({})
-      // The typed text went out with the list it was added to: it stays on screen as part of that list, also
-      // when the next read fails.
-      setValues((v) => withPending(v, pending))
+      // Only after a successful save; a failed one keeps the edits (SV-3). What was sent stands as stored, typed text
+      // as part of its list; a secret is never kept on the page.
+      const names = def?.fields.filter((f) => f.type !== "password" && f.name in sent).map((f) => f.name) ?? []
+      form.saved(Object.fromEntries(names.map((k) => [k, current[k]])))
       setPending({})
       if (def?.fields.some((f) => f.type === "password" && f.name in sent)) secretSaved()
       // A new design shows at once, without a reload.
@@ -919,12 +914,12 @@ export function SettingsForm({ section, active = true }: { section: string; acti
     discard: () => {
       setProblems({})
       setPending({})
-      if (query.data && def) setValues(toForm(def, query.data))
+      form.discard()
     },
   })
   if (!def) return null
   const set = (name: string, value: unknown) => {
-    setValues((v) => ({ ...v, [name]: value }))
+    form.set(name, value)
     setProblems((p) => {
       if (!(name in p)) return p
       const { [name]: _, ...rest } = p
@@ -1177,6 +1172,37 @@ export function testIdentity(section: keyof typeof tests, values: Record<string,
   return JSON.stringify({ draft: testDraft(section, values), secretsSaved })
 }
 
+type TestOutcome = { at: number } & (
+  | { ok: true; recipients: string[]; topicGone: boolean }
+  | { ok: false; message: string }
+)
+
+type TestView =
+  | { kind: "none" }
+  | { kind: "testing" }
+  | { kind: "accepted"; detail?: string; at: number }
+  | { kind: "failed"; message: string; at: number }
+  /** The values on screen are not the ones the last test ran with, changed during it or after it. */
+  | { kind: "changed" }
+
+/** What to show beside the test button for the values on screen now, named by `testIdentity` (FS-19, SV-5). */
+export function testView(
+  test: { isPending: boolean; data?: TestOutcome; variables?: { identity: string } },
+  identity: string,
+): TestView {
+  const { data } = test
+  if (test.isPending) return { kind: "testing" }
+  if (!data) return { kind: "none" }
+  if (test.variables?.identity !== identity) return { kind: "changed" }
+  if (!data.ok) return { kind: "failed", message: data.message, at: data.at }
+  const detail = data.topicGone
+    ? topicGoneText
+    : data.recipients.length
+      ? `Sent to ${data.recipients.join(", ")}`
+      : undefined
+  return { kind: "accepted", detail, at: data.at }
+}
+
 /** What a test still needs on screen before it can run, or null (FB-1). */
 export function testMissing(
   section: keyof typeof tests,
@@ -1195,8 +1221,7 @@ export function testMissing(
 /**
  * A section's connection test. It sends the values on screen without saving them and shows the last result
  * beside the button: Accepted or the failure in words, with the time (SV-5). The result belongs to the values it
- * tested and to the stored secrets of then: after a change, a saved secret, or for an answer to an older test, it
- * says so instead (lib/test-run.ts).
+ * tested and to the stored secrets of then: after a change or a saved secret it says so instead (`testView`).
  */
 function TestRow({
   section,
@@ -1212,47 +1237,48 @@ function TestRow({
 }) {
   const t = tests[section]
   const w = useTimeFormat()
-  const [runs] = useState(createTestRuns)
-  const [, redraw] = useReducer((n: number) => n + 1, 0)
-  // A test still on its way when the form goes is forgotten: its answer has nothing to show.
-  useEffect(() => () => runs.drop(), [runs])
   const draft = testDraft(section, values)
-  const snapshot = testIdentity(section, values, secretsSaved)
+  const identity = testIdentity(section, values, secretsSaved)
   const missing = testMissing(section, draft, data)
   // What is on screen when an answer comes, which may differ from what the test sent or a secret saved meanwhile.
-  const latest = useRef(snapshot)
-  latest.current = snapshot
-  async function run() {
-    const started = runs.start(snapshot)
-    redraw()
-    let outcome: TestOutcome
-    let recipients: string[] = []
-    let topicGone = false
-    try {
-      const res = await api<{ recipients?: string[]; topicNotFound?: boolean } | null>(t.path, {
-        method: "POST",
-        json: draft,
-      })
-      recipients = res?.recipients ?? []
-      topicGone = Boolean(res?.topicNotFound)
-      outcome = {
-        ok: true,
-        detail: topicGone ? topicGoneText : recipients.length ? `Sent to ${recipients.join(", ")}` : undefined,
+  const latest = useRef(identity)
+  latest.current = identity
+  const test = useMutation({
+    // Offline it fails at once, instead of waiting for the connection to come back.
+    networkMode: "always",
+    mutationFn: async (sent: { identity: string; draft: Record<string, unknown> }): Promise<TestOutcome> => {
+      try {
+        const res = await api<{ recipients?: string[]; topicNotFound?: boolean } | null>(t.path, {
+          method: "POST",
+          json: sent.draft,
+        })
+        return {
+          ok: true,
+          recipients: res?.recipients ?? [],
+          topicGone: Boolean(res?.topicNotFound),
+          at: Date.now(),
+        }
+      } catch (e) {
+        return { ok: false, message: describeError(e), at: Date.now() }
       }
-    } catch (e) {
-      outcome = { ok: false, message: describeError(e) }
-    }
-    const current = runs.settle(started, outcome, Date.now())
-    redraw()
-    // An answer to an older test, or to values changed meanwhile, says nothing more (SV-5).
-    if (!current || runs.view(latest.current).kind === "changed") return
-    if (outcome.ok) {
-      if (topicGone) toast.warning(`${topicGoneText}.`)
-      else toast.success(t.done(recipients))
-    } else {
-      toast.error(`${t.failed}: ${outcome.message}`)
-      throw new Error(outcome.message)
-    }
+    },
+  })
+  async function run() {
+    // An answer to values changed meanwhile says nothing more (SV-5).
+    const unchanged = () => latest.current === identity
+    const outcome = await test.mutateAsync(
+      { identity, draft },
+      {
+        // Passed here, it is not called once the form is gone: the answer has nothing to show then.
+        onSuccess: (outcome) => {
+          if (!unchanged()) return
+          if (!outcome.ok) toast.error(`${t.failed}: ${outcome.message}`)
+          else if (outcome.topicGone) toast.warning(`${topicGoneText}.`)
+          else toast.success(t.done(outcome.recipients))
+        },
+      },
+    )
+    if (!outcome.ok && unchanged()) throw new Error(outcome.message)
   }
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-line px-pad-x py-3">
@@ -1268,7 +1294,7 @@ function TestRow({
         {missing ? (
           <span className="text-muted-foreground">Add {missing} first.</span>
         ) : (
-          <TestResult view={runs.view(snapshot)} dates={w} />
+          <TestResult view={testView(test, identity)} dates={w} />
         )}
       </div>
     </div>

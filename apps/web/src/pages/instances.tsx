@@ -20,7 +20,7 @@ import {
   Trash2,
   Workflow as WorkflowIcon,
 } from "lucide-react"
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { Link, useNavigate, useParams } from "react-router"
 import { useCrumb } from "@/app/chrome"
 import { AgentAccessCard } from "@/components/agent-access-card"
@@ -101,6 +101,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Tip } from "@/components/ui/tooltip"
 import { api, describeError, queryClient, useApi, useApiMutation } from "@/lib/api"
 import { type CollectionView, collectionView } from "@/lib/collection"
+import { useEdits } from "@/lib/edits"
 import { loadView } from "@/lib/load-state"
 import { healthCounts, n, plural } from "@/lib/numbers"
 import { useNavigateFromOverlay } from "@/lib/overlay-history"
@@ -537,7 +538,8 @@ function InstanceDetail({ id }: { id: string }) {
   const [tab, show] = usePaneTab("overview")
   const detail = useApi<InstanceDetailData>(`/instances/${id}`, { refetchInterval: 15_000 })
   useCrumb(detail.data?.name)
-  const [editing, setEditing] = useState(false)
+  const [editing, setEditing] = useState({ open: false, opening: 0 })
+  const edit = () => setEditing((e) => ({ open: true, opening: e.opening + 1 }))
   // A credential export the socket proxy refused: the lines that allow it, in a dialog.
   const [exportFix, setExportFix] = useState<ProxyFix | null>(null)
   const confirm = useConfirm()
@@ -680,7 +682,7 @@ function InstanceDetail({ id }: { id: string }) {
           >
             Check now
           </BusyButton>
-          <Button size="sm" onClick={() => setEditing(true)}>
+          <Button size="sm" onClick={edit}>
             <Pencil />
             <span className="@max-[34rem]/pane:sr-only">Edit</span>
           </Button>
@@ -890,7 +892,7 @@ function InstanceDetail({ id }: { id: string }) {
                   <AlertDescription>
                     <p>{workersNote.text}</p>
                     {workersNote.edit && (
-                      <Button size="sm" className="mt-3" onClick={() => setEditing(true)}>
+                      <Button size="sm" className="mt-3" onClick={edit}>
                         <Pencil /> Edit instance
                       </Button>
                     )}
@@ -909,6 +911,7 @@ function InstanceDetail({ id }: { id: string }) {
             instanceId={i.id}
             mode={i.backupDestinations}
             destinationIds={i.backupDestinationIds}
+            readAt={detail.dataUpdatedAt}
           />
         </PaneTabPanel>
 
@@ -952,15 +955,22 @@ function InstanceDetail({ id }: { id: string }) {
             unsupported={i.unsupportedVersion}
             keyScopes={i.effectiveScopes}
             agentAccess={i.agentAccess}
+            readAt={detail.dataUpdatedAt}
           />
         </PaneTabPanel>
 
         <PaneTabPanel value="settings">
-          <OverridesCard key={`overrides-${i.id}`} instance={i} />
+          <OverridesCard key={`overrides-${i.id}`} instance={i} readAt={detail.dataUpdatedAt} />
         </PaneTabPanel>
       </PaneTabs>
 
-      <InstanceDialog open={editing} onOpenChange={setEditing} instance={i} />
+      <InstanceDialog
+        key={`${i.id}-${editing.opening}`}
+        open={editing.open}
+        // Only its own opening: a save that ends after it was closed never closes a later one.
+        onOpenChange={(open) => setEditing((e) => (e.opening === editing.opening ? { ...e, open } : e))}
+        instance={i}
+      />
       <Dialog open={exportFix !== null} onOpenChange={(o) => !o && setExportFix(null)}>
         <DialogContent className="md:max-w-2xl">
           <DialogHeader icon={Download}>
@@ -1487,30 +1497,31 @@ const overrideFields: [string, string][] = [
   ["instanceCheckHours", "Check the n8n version and API key every (hours)"],
 ]
 
-function OverridesCard({ instance }: { instance: InstanceDetailData }) {
-  const stored = () => Object.fromEntries(Object.entries(instance.overrides).map(([k, v]) => [k, String(v)]))
-  const [values, setValues] = useState<Record<string, string>>(stored)
+function OverridesCard({ instance, readAt }: { instance: InstanceDetailData; readAt: number }) {
+  const form = useEdits(
+    Object.fromEntries(Object.entries(instance.overrides).map(([k, v]) => [k, String(v)])),
+    readAt,
+    (a, b, name) => countChanges({ [name]: a }, { [name]: b }) > 0,
+  )
+  const values = form.values as Record<string, string>
   const save = useApiMutation<{ overrides: Record<string, number | string> }>("PATCH", `/instances/${instance.id}`, {
     invalidate: [`/instances/${instance.id}`],
     quiet: true,
   })
-  const initial = stored()
   const count = countChanges(
     values,
-    initial,
+    form.stored,
     overrideFields.map(([k]) => k),
   )
-  // The 15-second refresh never overwrites what the user is typing (SV-6).
-  // biome-ignore lint/correctness/useExhaustiveDependencies: only new stored overrides replace the form
-  useEffect(() => {
-    if (count === 0) setValues(stored())
-  }, [instance.overrides])
   useSaveSource(`overrides-${instance.id}`, {
     label: "the overrides",
     saved: "Overrides saved",
     count,
-    save: () => save.mutateAsync({ overrides: payload() }),
-    discard: () => setValues(initial),
+    save: async () => {
+      await save.mutateAsync({ overrides: payload() })
+      form.saved(form.edited)
+    },
+    discard: form.discard,
   })
   function payload() {
     const overrides: Record<string, number | string> = {}
@@ -1532,7 +1543,7 @@ function OverridesCard({ instance }: { instance: InstanceDetailData }) {
               type={k === "backupTime" ? "text" : "number"}
               placeholder={String(instance.effectiveSettings[k] ?? "")}
               value={values[k] ?? ""}
-              onChange={(e) => setValues({ ...values, [k]: e.target.value })}
+              onChange={(e) => form.set(k, e.target.value)}
             />
           </Field>
         ))}
@@ -1732,7 +1743,8 @@ export function QueueFields({
 /**
  * Edits an instance's details. Adding an instance and its capabilities goes through its setup
  * (pages/instance-setup.tsx); this dialog never refuses because of them, and the instance's page shows what a
- * change leaves missing.
+ * change leaves missing. Give it a new key for each opening: it is filled once, with what is stored then, and the
+ * 15-second refresh never replaces what is typed (SV-6).
  */
 export function InstanceDialog({
   open,
@@ -1745,7 +1757,7 @@ export function InstanceDialog({
 }) {
   const workers = useApi<Worker[]>(open ? "/workers" : null)
   const navigateOut = useNavigateFromOverlay()
-  const start = () => ({
+  const [form, setForm] = useState(() => ({
     name: instance.name,
     baseUrl: instance.baseUrl,
     apiKey: undefined as string | null | undefined,
@@ -1753,21 +1765,10 @@ export function InstanceDialog({
     ...queueFormOf(instance),
     collection: instance.collection,
     workerId: instance.workerId ?? "",
-  })
-  const [form, setForm] = useState(start)
-  const [opened, setOpened] = useState(form)
+  }))
+  const [opened] = useState(form)
   const [error, setError] = useState("")
   const [busy, setBusy] = useState(false)
-  // Filled when the dialog opens or another instance is chosen, not when the 15-second refresh brings the same
-  // instance again: that would replace what is being typed.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: the stored values are read when it opens, not followed
-  useEffect(() => {
-    if (!open) return
-    setError("")
-    const values = start()
-    setForm(values)
-    setOpened(values)
-  }, [open, instance.id])
   const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }))
   const target = mainTargetBody(form)
   // The worker read the mode inside the main; it stays its value until the worker or the container changes.

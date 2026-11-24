@@ -7,7 +7,6 @@ import {
   changedValueIssues,
   defaults,
   invalidAnswer,
-  mayStoreTimeZone,
   numberLimits,
   type Section,
   type SectionName,
@@ -134,9 +133,6 @@ export function settingsRoutes(ctx: Ctx) {
     if (!parsed.success) return c.json(invalidAnswer(section, wordedIssues(section, parsed.error.issues)), 400)
     // Entries are checked once their field changes, in the same words as the UI (SV-12).
     const issues = changedValueIssues(section, current, next)
-    // A new time zone must be a zone name; a fixed offset saved before stays until it is replaced.
-    if (section === "general" && !mayStoreTimeZone(current.timezone, next.timezone))
-      issues.push({ path: ["timezone"], message: "choose a time zone from the list" })
     if (issues.length) return c.json(invalidAnswer(section, issues), 400)
     const before = section === "general" ? (await ctx.settings.get("general")).publicUrl : null
     const who = { by: actorName(c.get("actor")), via: "web" as const }

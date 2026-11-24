@@ -23,6 +23,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - **A report is sent once while an update replaces the server.** The old and the new server run together for a short time then, and when a daily or weekly report came due, both could send it. This holds from the update after this one, since both servers must have it.
 - **The lines for a Worker's socket proxy are never the old ones after a save.** The server answers with the new lines when allowed containers are recorded or a suggestion was out of date. In the setup of an instance, "Saved. These are the lines as they are now." could stand above the old lines.
 - **The setup page shows how a Worker check ended also on a computer whose clock is ahead.**
+- **Saving a form no longer puts back what was changed elsewhere.** With unsaved changes on screen, the other fields of Settings, an instance's Overrides and the backup destinations kept the values they had when the page opened, and Save wrote them over what another tab or device had saved meanwhile. Fields without an edit now follow what is stored, as last read.
 
 ## [0.19.4] - 2026-11-24
 

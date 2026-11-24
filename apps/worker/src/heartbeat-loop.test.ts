@@ -43,7 +43,6 @@ function setup(replies: Reply[] = [], ping?: (signal: AbortSignal) => Promise<Do
   const start = Date.now()
   const sent: { identity: string; body: HeartbeatBody; at: number; signal: AbortSignal }[] = []
   const logged: string[] = []
-  const contacts: number[] = []
   let open = 0
   let mostOpen = 0
   const failures = new CallFailures()
@@ -64,15 +63,12 @@ function setup(replies: Reply[] = [], ping?: (signal: AbortSignal) => Promise<Do
     },
     failures,
     docker,
-    contact: async () => {
-      contacts.push(Date.now() - start)
-    },
     log: (msg) => logged.push(msg),
     now,
     uptimeSec: () => 100 + (Date.now() - start) / 1000,
     timers,
   })
-  return { beats, docker, failures, sent, logged, contacts, mostOpen: () => mostOpen, start }
+  return { beats, docker, failures, sent, logged, mostOpen: () => mostOpen, start }
 }
 
 const run = (ms: number) => vi.advanceTimersByTimeAsync(ms)
@@ -182,13 +178,12 @@ describe("Heartbeats", () => {
   })
 
   it("drops a body the server calls invalid, says so once, and goes on with the next seq", async () => {
-    const { beats, sent, logged, contacts } = setup([status(400), status(400), ok])
+    const { beats, sent, logged } = setup([status(400), status(400), ok])
     beats.use(idA)
     await run(0)
     await run(2 * HEARTBEAT_INTERVAL_MS)
     expect(sent.map((s) => s.body.seq)).toEqual([1, 2, 3])
     expect(logged).toEqual(["the server refused a heartbeat as invalid; it is dropped", "heartbeats delivered again"])
-    expect(contacts).toEqual([60_000])
   })
 
   it("asks a server without heartbeats again every 10 minutes and goes on once it answers", async () => {
@@ -278,32 +273,6 @@ describe("Heartbeats", () => {
     beats.use(null)
     await run(10 * 60_000)
     expect(sent).toHaveLength(2)
-  })
-
-  it("writes the heartbeat file on 2xx and 429 only", async () => {
-    const { beats, contacts } = setup([down, status(500), status(429), ok, status(400), status(404), hang])
-    beats.use(idA)
-    await run(0)
-    await run(4 * HEARTBEAT_INTERVAL_MS)
-    expect(contacts).toEqual([60_000, 90_000])
-    await run(HEARTBEAT_RETRY_MISSING_MS + HEARTBEAT_TIMEOUT_MS)
-    expect(contacts).toEqual([60_000, 90_000])
-  })
-
-  it("keeps going when the heartbeat file cannot be written, and says so once", async () => {
-    const logged: string[] = []
-    const beats = new Heartbeats({
-      send: async () => new Response("{}", { status: 200 }),
-      failures: new CallFailures(),
-      docker: { take: () => null },
-      contact: () => Promise.reject(new Error("EROFS")),
-      log: (msg) => logged.push(msg),
-      timers,
-    })
-    beats.use(idA)
-    await run(3 * HEARTBEAT_INTERVAL_MS)
-    expect(logged).toEqual(["cannot write the heartbeat file"])
-    beats.use(null)
   })
 
   it("reports each Docker check in exactly one heartbeat", async () => {

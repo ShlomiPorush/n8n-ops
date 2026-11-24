@@ -15,8 +15,7 @@ COPY apps/worker apps/worker
 RUN pnpm --filter @n8n-ops/worker run build
 
 FROM node:24.22.3-bookworm-slim
-ENV NODE_ENV=production \
-    HEARTBEAT_FILE=/tmp/n8n-ops-worker-heartbeat
+ENV NODE_ENV=production
 WORKDIR /app
 # The version the worker reports is this file (apps/worker/src/version.ts), never an environment variable. Readable
 # by node whatever the checkout's permissions.

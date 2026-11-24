@@ -1329,39 +1329,35 @@ export async function listAccess(ctx: Ctx) {
   return listed(ctx, rows)
 }
 
-/** Where a page of ended requests continues: the last request's time, exact to the microsecond, and its id. */
-export type EndedCursor = { at: string; id: string }
-
 /**
  * Requests that ended, newest first, a page at a time: the first page from the newest one, each next page after
- * the cursor the previous one gave. The order is the Access list's, so the pages hold every ended request once.
+ * the request the previous one ended with (`next`). The order is the Access list's, so the pages hold every ended
+ * request once.
  */
-export async function listEndedAccess(ctx: Ctx, before?: EndedCursor) {
+export async function listEndedAccess(ctx: Ctx, before?: string) {
   const live = ["pending", "approved"] as const
   const rows = await ctx.db
-    .select({
-      r: accessRequests,
-      tokenName: apiTokens.name,
-      // The time as PostgreSQL keeps it: a JavaScript date holds milliseconds only.
-      at: sql<string>`to_char(${accessRequests.requestedAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
-    })
+    .select({ r: accessRequests, tokenName: apiTokens.name })
     .from(accessRequests)
     .innerJoin(apiTokens, eq(accessRequests.tokenId, apiTokens.id))
     .where(
       and(
         notInArray(accessRequests.status, [...live]),
+        // Compared in the database: a JavaScript date holds milliseconds only, and PostgreSQL keeps microseconds.
         before
-          ? sql`(${accessRequests.requestedAt}, ${accessRequests.id}) < (${before.at}::timestamptz, ${before.id}::uuid)`
+          ? sql`(${accessRequests.requestedAt}, ${accessRequests.id}) < ${ctx.db
+              .select({ at: accessRequests.requestedAt, id: accessRequests.id })
+              .from(accessRequests)
+              .where(eq(accessRequests.id, before))}`
           : undefined,
       ),
     )
     .orderBy(desc(accessRequests.requestedAt), desc(accessRequests.id))
     .limit(MAX_ENDED_LISTED + 1)
   const page = rows.slice(0, MAX_ENDED_LISTED)
-  const last = page.at(-1)
   return {
     requests: await listed(ctx, page),
-    next: rows.length > MAX_ENDED_LISTED && last ? { at: last.at, id: last.r.id } : null,
+    next: rows.length > MAX_ENDED_LISTED ? (page.at(-1)?.r.id ?? null) : null,
   }
 }
 

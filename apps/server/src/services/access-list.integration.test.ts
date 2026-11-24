@@ -1,13 +1,13 @@
 import { randomBytes } from "node:crypto"
 import { join } from "node:path"
-import { eq, sql } from "drizzle-orm"
+import { sql } from "drizzle-orm"
 import postgres from "postgres"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import type { Ctx } from "../context.ts"
 import { createDatabase, type Database } from "../db/client.ts"
 import { type AccessStatus, accessRequests, apiTokens } from "../db/schema.ts"
 import { sha256 } from "../lib/crypto.ts"
-import { type EndedCursor, listAccess, listEndedAccess, MAX_ENDED_LISTED } from "./access.ts"
+import { listAccess, listEndedAccess, MAX_ENDED_LISTED } from "./access.ts"
 
 // The operator's Access list against a real PostgreSQL: every request waiting for a decision or approved is listed
 // however many requests ended after it, with the latest ended ones.
@@ -110,7 +110,7 @@ describe("the pages of ended requests", () => {
   }
   const allPages = async () => {
     const pages: Awaited<ReturnType<typeof listEndedAccess>>[] = []
-    let before: EndedCursor | undefined
+    let before: string | undefined
     do {
       const page = await listEndedAccess(ctx, before)
       pages.push(page)
@@ -180,19 +180,7 @@ describe("the pages of ended requests", () => {
     expect(listed.map((r) => r.id)).toEqual(expected)
     expect(listed.every((r) => r.status !== "pending" && r.status !== "approved")).toBe(true)
     expect(listed[0]).toMatchObject({ token: "pages-bot", reason: "Pages check", instances: [] })
-    // The cursor names the time to the microsecond, in UTC.
-    expect(pages[0]?.next?.at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/)
-    expect(pages[0]?.next?.id).toBe(expected[MAX_ENDED_LISTED - 1])
-  })
-
-  it("go on after the request the cursor names is gone", async () => {
-    const expected = await endedInOrder()
-    const first = await listEndedAccess(ctx)
-    const cursor = first.next
-    if (!cursor) throw new Error("no next page")
-    await ctx.db.delete(accessRequests).where(eq(accessRequests.id, cursor.id))
-    const second = await listEndedAccess(ctx, cursor)
-    expect(second.requests.map((r) => r.id)).toEqual(expected.slice(MAX_ENDED_LISTED, 2 * MAX_ENDED_LISTED))
+    expect(pages[0]?.next).toBe(expected[MAX_ENDED_LISTED - 1])
   })
 
   it("leave the first load of the Access list as it was", async () => {

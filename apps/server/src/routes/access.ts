@@ -44,21 +44,8 @@ const approveBody = z.object({
     .optional(),
 })
 
-/**
- * A page of ended requests: no cursor for the first page, or both parts of the one the previous page gave (a UTC
- * time, and the request's id).
- */
-const endedQuery = z
-  .object({
-    // PostgreSQL has no year 0, which the ISO format allows.
-    before: z.iso
-      .datetime()
-      .refine((at) => !at.startsWith("0000-"))
-      .optional(),
-    beforeId: z.string().uuid().optional(),
-  })
-  .strict()
-  .refine((q) => (q.before === undefined) === (q.beforeId === undefined))
+/** A page of ended requests: no cursor for the first page, or the id of the request the previous page ended with. */
+const endedQuery = z.object({ before: z.string().uuid().optional() }).strict()
 
 /** Access requests from agents, for people: list, details with every proxied call, approve, deny, revoke. */
 export function accessRoutes(ctx: Ctx) {
@@ -68,8 +55,7 @@ export function accessRoutes(ctx: Ctx) {
   app.get("/ended", async (c) => {
     const parsed = endedQuery.safeParse(c.req.query())
     if (!parsed.success) return c.json({ error: "invalid_cursor", message: "Reload the page and try again." }, 400)
-    const { before, beforeId } = parsed.data
-    return c.json(await listEndedAccess(ctx, before && beforeId ? { at: before, id: beforeId } : undefined))
+    return c.json(await listEndedAccess(ctx, parsed.data.before))
   })
   app.get("/:id", async (c) => {
     const row = await getAccess(ctx, c.req.param("id"))

@@ -47,22 +47,15 @@ describe("pages of ended access requests", () => {
     expect(await ended("")).toEqual({ status: 200, body: { requests: [], next: null }, cursors: [undefined] })
   })
 
-  it("continue from the exact time and id of the cursor", async () => {
-    const at = "2026-11-16T08:15:30.123456Z"
-    const { status, cursors } = await ended(`?before=${encodeURIComponent(at)}&beforeId=${id}`)
+  it("continue from the request of the cursor", async () => {
+    const { status, cursors } = await ended(`?before=${id}`)
     expect(status).toBe(200)
-    expect(cursors).toEqual([{ at, id }])
+    expect(cursors).toEqual([id])
   })
 
   it.each([
-    ["only a time", "?before=2026-11-16T08:15:30.123456Z"],
-    ["only an id", `?beforeId=${id}`],
-    ["a time that is not one", `?before=yesterday&beforeId=${id}`],
-    ["a day the calendar does not have", `?before=2026-02-30T08:15:30Z&beforeId=${id}`],
-    ["a year the database does not have", `?before=0000-01-01T00:00:00Z&beforeId=${id}`],
-    ["a time with an offset", `?before=2026-11-16T10:15:30%2B02:00&beforeId=${id}`],
-    ["an id that is not one", "?before=2026-11-16T08:15:30Z&beforeId=42"],
-    ["anything else", `?before=2026-11-16T08:15:30Z&beforeId=${id}&limit=5000`],
+    ["an id that is not one", "?before=42"],
+    ["anything else", `?before=${id}&limit=5000`],
   ])("are refused with %s", async (_what, query) => {
     const { status, body, cursors } = await ended(query)
     expect(status).toBe(400)

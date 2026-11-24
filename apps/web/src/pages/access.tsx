@@ -1,6 +1,6 @@
 import { formatDuration, formatUsed, usedMinutes } from "@n8n-ops/shared"
 import { Ban, Check, KeyRound, Plug, Plus, X } from "lucide-react"
-import { useEffect, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
 import { Link, useNavigate, useParams, useSearchParams } from "react-router"
 import { useCrumb } from "@/app/chrome"
 import { useConfirm } from "@/components/confirm"
@@ -141,10 +141,7 @@ export function AccessPage() {
   const [params, setParams] = useSearchParams()
   const view = params.get("view") === "all" ? "all" : "open"
   const rows = useApi<AccessRow[]>("/access", { refetchInterval: 30_000 })
-  // Older ended requests, in the All view: as its end comes into view, or a page per press in an order where they
-  // would not come last (set from the sort below).
-  const [byScrolling, setByScrolling] = useState(true)
-  const older = useAccessHistory(rows.data, { active: view === "all", auto: byScrolling })
+  const older = useAccessHistory(rows.data)
   // A failed refresh keeps the rows; the head says so (TB-5, LD-12).
   const load = loadView(rows)
   const all = older.rows ?? []
@@ -171,7 +168,6 @@ export function AccessPage() {
     },
   })
   const scrolls = loadsByScrolling(sort.control.isDefault, sort.control.state)
-  useEffect(() => setByScrolling(scrolls), [scrolls])
   // While older requests may exist, the counts say so: "200+".
   const orMore = older.more ? "+" : ""
   const rowProps = (r: AccessRow) => ({
@@ -330,29 +326,35 @@ export function AccessPage() {
           </TableBody>
         </Table>
       )}
-      {view === "all" && load === "ready" && shown.length > 0 && older.state && (
+      {view === "all" && load === "ready" && shown.length > 0 && older.full && (
         <p aria-live="polite" className="relative text-center text-small text-muted-foreground">
           {/* Reaches above the end, so older requests are asked for before the reader gets there. */}
-          <span ref={older.endRef} aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 h-[400px]" />
-          {older.state === "failed" ? (
+          {scrolls && (
+            <span
+              ref={older.endRef}
+              aria-hidden
+              className="pointer-events-none absolute inset-x-0 bottom-0 h-[400px]"
+            />
+          )}
+          {older.failed ? (
             // Try again stays in place while it loads, so the focus stays on it (AX-6).
             <>
-              {older.retrying ? null : "Could not load older requests. "}
-              <TryAgain busy={older.retrying} onClick={older.tryAgain} />
+              {older.reading ? null : "Could not load older requests. "}
+              <TryAgain busy={older.reading} onClick={older.tryAgain} />
             </>
-          ) : older.state === "loading" ? (
+          ) : !older.more ? (
+            `All ${plural(shown.length, "request")} shown`
+          ) : scrolls ? (
             "Loading older requests…"
-          ) : older.state === "button" ? (
+          ) : (
             <Button
               size="sm"
               aria-busy={older.reading || undefined}
               aria-disabled={older.reading || undefined}
-              onClick={() => !older.reading && older.loadOnce()}
+              onClick={() => !older.reading && older.loadOlder()}
             >
               Load older requests
             </Button>
-          ) : (
-            `All ${plural(shown.length, "request")} shown`
           )}
         </p>
       )}

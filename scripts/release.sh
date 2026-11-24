@@ -49,15 +49,6 @@ version_in() {
   return 0
 }
 
-# The version a tag was released as: its VERSION, or for a tag made before VERSION existed, package.json's version.
-tag_version() {
-  if git_ cat-file -e "$1:VERSION" 2>/dev/null; then
-    git_ show "$1:VERSION" | version_in
-  else
-    git_ show "$1:package.json" | sed -nE 's/^  "version": "([0-9]+\.[0-9]+\.[0-9]+)",$/\1/p' | head -1
-  fi
-}
-
 next_version() {
   local major minor patch
   IFS=. read -r major minor patch <<<"$1"
@@ -148,7 +139,7 @@ preflight() {
     if [ "$state" = missing ]; then
       RESUME=1 TAG="$newest" VERSION="${newest#v}"
       git_ merge-base --is-ancestor "$TAG" HEAD || die "$TAG is not on main"
-      [ "$(tag_version "$TAG")" = "$VERSION" ] || die "the version at $TAG is not $VERSION"
+      [ "$(git_ show "$TAG:VERSION" | version_in)" = "$VERSION" ] || die "the version at $TAG is not $VERSION"
       echo "    $TAG was not finished: this run finishes it and ignores --bump $BUMP. Run again for the next version."
       return
     fi
@@ -193,10 +184,6 @@ publish_images() {
   # shellcheck disable=SC2064 # expand now: the path is fixed
   trap "rm -rf '$src'" EXIT
   git_ archive "$TAG" | tar -x -C "$src"
-  # The images read the version from the tag's VERSION file. A tag made before that file existed has Dockerfiles that
-  # take it as a build argument instead, so finishing such a release builds it the way it was made.
-  local version_arg=()
-  [ -f "$src/VERSION" ] || version_arg=(--build-arg "VERSION=$VERSION")
   for pair in "${IMAGES[@]}"; do
     app="${pair%%:*}" name="${pair#*:}" ref="$REGISTRY/${pair#*:}:$VERSION"
     state="$(image_state "$ref" "$revision")"
@@ -206,7 +193,7 @@ publish_images() {
       missing)
         info "Building and pushing $ref"
         docker buildx build --push --provenance=mode=max --sbom=true \
-          -f "$src/docker/$app.Dockerfile" "${version_arg[@]}" \
+          -f "$src/docker/$app.Dockerfile" \
           --label "org.opencontainers.image.revision=$revision" \
           --label "org.opencontainers.image.source=$SOURCE_URL" \
           --label "org.opencontainers.image.version=$VERSION" \

@@ -681,7 +681,6 @@ RCLONE_PASS=$webdav"
 
 STACK_USED=0
 on_exit() {
-  stop_pulls
   [ $STACK_USED -eq 0 ] || cleanup_stack
   [ -z "$RUN_ENV_DIR" ] || rm -rf "$RUN_ENV_DIR"
 }
@@ -689,7 +688,7 @@ on_exit() {
 main() {
   require_docker
   trap on_exit EXIT
-  # Ctrl-C or a stopped CI job end the script through exit, so the EXIT trap stops the pulls and the stack.
+  # Ctrl-C or a stopped CI job end the script through exit, so the EXIT trap stops the stack.
   trap 'exit 130' INT
   trap 'exit 143' TERM
 

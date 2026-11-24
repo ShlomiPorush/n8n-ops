@@ -47,12 +47,10 @@ mask_env() {
 
 show_env() {
   # Print the filtered, masked environment of container $1, one variable per line. The variables
-  # come from one inspect call, each JSON-encoded on its own line and then "end", so a value with
-  # line breaks stays on one line (\n, with \" and \\ for quotes and backslashes) and an
-  # incomplete answer is recognised.
+  # come from one inspect call, each JSON-encoded on its own line, so a value with line breaks
+  # stays on one line (\n, with \" and \\ for quotes and backslashes).
   local out
-  if ! out=$(docker inspect -f '{{range .Config.Env}}{{json .}}{{"\n"}}{{end}}end' "$1" 2>/dev/null) ||
-    [ "${out##*$'\n'}" != end ]; then
+  if ! out=$(docker inspect -f '{{range .Config.Env}}{{json .}}{{"\n"}}{{end}}' "$1" 2>/dev/null); then
     echo "  (not available)"
     return
   fi
@@ -61,20 +59,18 @@ show_env() {
 
 show_command() {
   # Print "Command: <program> (<n> arguments, not shown)" for container $1. Entrypoint and Cmd
-  # come from one inspect call, one JSON-encoded element per line and then "end", so a value
-  # with line breaks stays one element and an incomplete answer is recognised. No argument is
-  # printed, and the program only when its whole name is a plain path.
+  # come from one inspect call, one JSON-encoded element per line, so a value with line breaks
+  # stays one element. No argument is printed, and the program only when its whole name is a
+  # plain path.
   local out line program
   local -a argv=()
-  if ! out=$(docker inspect -f '{{range .Config.Entrypoint}}{{json .}}{{"\n"}}{{end}}{{range .Config.Cmd}}{{json .}}{{"\n"}}{{end}}end' "$1" 2>/dev/null) ||
-    [ "${out##*$'\n'}" != end ]; then
+  if ! out=$(docker inspect -f '{{range .Config.Entrypoint}}{{json .}}{{"\n"}}{{end}}{{range .Config.Cmd}}{{json .}}{{"\n"}}{{end}}' "$1" 2>/dev/null); then
     echo "Command: (not available)"
     return
   fi
   while IFS= read -r line; do
-    argv+=("$line")
+    [ -z "$line" ] || argv+=("$line")
   done <<<"$out"
-  unset "argv[$((${#argv[@]} - 1))]"
   if [ ${#argv[@]} -eq 0 ]; then
     echo "Command: (none)"
     return

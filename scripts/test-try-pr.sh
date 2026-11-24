@@ -99,8 +99,6 @@ sandbox() {
   local repo="$WORK/case/repo"
   cp "$REPO/scripts/try-pr.sh" "$repo/scripts/"
   cp "$REPO/scripts/lib/common.sh" "$repo/scripts/lib/"
-  # There is no Docker socket here; the stand-in needs no group.
-  echo 'docker_socket_gid() { echo 0; }' >>"$repo/scripts/lib/common.sh"
   cp "$REPO/docker/docker-compose-dev.example.yml" "$repo/docker/"
   cp "$REPO/docker/docker-compose-dev.example.yml" "$repo/docker-compose-dev.yml"
   cp "$REPO"/docker/env/*.env.example "$repo/docker/env/"

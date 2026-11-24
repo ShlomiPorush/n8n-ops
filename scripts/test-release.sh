@@ -114,13 +114,8 @@ sandbox() {
   cp "$REPO/scripts/lib/common.sh" "$seed/scripts/lib/"
   : >"$seed/docker/server.Dockerfile"
   : >"$seed/docker/worker.Dockerfile"
-  if [ "${OLD_LAYOUT:-}" = 1 ]; then
-    # Before VERSION existed: the version in package.json.
-    printf '{\n  "name": "n8n-ops",\n  "version": "0.0.0",\n  "private": true\n}\n' >"$seed/package.json"
-  else
-    printf '{\n  "name": "n8n-ops",\n  "private": true\n}\n' >"$seed/package.json"
-    printf '0.0.0\n' >"$seed/VERSION"
-  fi
+  printf '{\n  "name": "n8n-ops",\n  "private": true\n}\n' >"$seed/package.json"
+  printf '0.0.0\n' >"$seed/VERSION"
   printf '# Changelog\n\n## [Unreleased]\n\n### Added\n\n- The first feature.\n' >"$seed/CHANGELOG.md"
   git -C "$seed" add -A
   git -C "$seed" commit --quiet -m "Initial"
@@ -255,23 +250,6 @@ MOCK_FAIL_BUILD=n8n-ops-worker release
 MOCK_GH_DOWN=1 release
 check "GitHub that cannot be read stops the run" [ $? -ne 0 ]
 check "  and starts no new version" lacks_tag v0.2.0
-
-# A release tagged before VERSION existed, left unfinished with one image published, then VERSION added on main.
-OLD_LAYOUT=1 sandbox
-dir="$(checkout)"
-sed -i 's/"version": "0.0.0"/"version": "0.1.0"/' "$dir/package.json"
-sed -i 's/^## \[Unreleased\]$/## [Unreleased]\n\n## [0.1.0] - 2026-01-01/' "$dir/CHANGELOG.md"
-git -C "$dir" commit --quiet -am "Release v0.1.0" && git -C "$dir" tag -a v0.1.0 -m v0.1.0
-git -C "$dir" push --quiet --atomic origin main refs/tags/v0.1.0
-printf '%s' "$(tag_rev v0.1.0)" >"$STATE/images/ghcr.io_shlomiporush_n8n-ops_0.1.0"
-sed -i '/"version"/d' "$dir/package.json" && printf '0.1.0\n' >"$dir/VERSION"
-git -C "$dir" add -A && git -C "$dir" commit --quiet -m "Keep the version in VERSION" && git -C "$dir" push --quiet origin main
-release
-check "an unfinished release tagged before VERSION existed is finished" complete 0.1.0
-check "  with its version from package.json at the tag" said "v0.1.0 was not finished"
-check "  building the missing image the way that tag was made" \
-  [ "$(cat "$STATE/buildargs/ghcr.io_shlomiporush_n8n-ops-worker_0.1.0")" = " VERSION=0.1.0" ]
-check "  and not the image already published" [ "$(grep -c "buildx build.*n8n-ops:0.1.0" "$STATE/calls")" = 0 ]
 
 for bad in "1.2" "v1.2.3" "1.2.3 1.2.4" "$(printf '1.2.3\n1.2.4')"; do
   sandbox

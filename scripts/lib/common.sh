@@ -65,42 +65,17 @@ build_images() {
 
 # Pulls external images in the background, so they download while other work runs. An image already
 # present is left as it is, as Compose would, so a run without network still works from the local cache.
-# Each pull tries three times; wait_for_pulls waits for the images given right before their first use.
+# wait_for_pulls waits for the images given right before their first use.
 declare -gA PULL_PIDS=()
-PULL_LOGS=""
-
-pull_log() {
-  echo "$PULL_LOGS/${1//[^A-Za-z0-9._-]/_}.log"
-}
 
 start_pulls() {
-  local image held="" int_trap term_trap
-  # Ctrl-C or a stop while a pull starts waits until it is in PULL_PIDS, so stop_pulls always finds it. The pulls
-  # themselves get the default handling: a shell resets caught signals in what it starts.
-  int_trap="$(trap -p INT)"
-  term_trap="$(trap -p TERM)"
-  trap 'held=130' INT
-  trap 'held=143' TERM
+  local image
   for image in "$@"; do
     [ -z "${PULL_PIDS[$image]:-}" ] || continue
     docker image inspect "$image" >/dev/null 2>&1 && continue
-    [ -n "$PULL_LOGS" ] || PULL_LOGS="$(mktemp -d "${TMPDIR:-/tmp}/n8n-ops-pulls.XXXXXX")"
-    # A process group of its own (setsid execs in place, so the pid is the group's), which stop_pulls ends whole:
-    # the retry loop and whatever it runs at that moment.
-    # shellcheck disable=SC2016 # Expanded by the inner shell.
-    setsid bash -c '
-      for try in 1 2 3; do
-        echo "pull $try of 3: $1"
-        docker pull --quiet "$1" && exit 0
-        [ "$try" = 3 ] || sleep $((try * 5))
-      done
-      exit 1
-    ' _ "$image" >"$(pull_log "$image")" 2>&1 &
+    docker pull --quiet "$image" >/dev/null 2>&1 &
     PULL_PIDS[$image]=$!
   done
-  eval "${int_trap:-trap - INT}"
-  eval "${term_trap:-trap - TERM}"
-  [ -z "$held" ] || exit "$held"
 }
 
 # Waits for the background pulls of the images given. An image that is not being pulled passes at once.
@@ -109,37 +84,10 @@ wait_for_pulls() {
   for image in "$@"; do
     pid="${PULL_PIDS[$image]:-}"
     [ -n "$pid" ] || continue
-    if ! wait "$pid"; then
-      cat "$(pull_log "$image")" >&2 || true
+    wait "$pid" || docker pull --quiet "$image" || { sleep 5 && docker pull --quiet "$image"; } ||
       die "could not pull $image"
-    fi
     unset 'PULL_PIDS[$image]'
   done
-}
-
-# Stops the pulls that still run when the script ends early, failed or interrupted, waits for them, and removes
-# their logs. A pull already waited for is gone from PULL_PIDS.
-stop_pulls() {
-  local pid
-  for pid in "${PULL_PIDS[@]}"; do
-    # The whole group at once, so the loop cannot start another try in between. Stopped so early that it had not
-    # made its group yet: the process, then the group again, which it may have made and filled meanwhile.
-    if ! kill -TERM -- "-$pid" 2>/dev/null; then
-      kill -TERM "$pid" 2>/dev/null || true
-      wait "$pid" 2>/dev/null || true
-      kill -TERM -- "-$pid" 2>/dev/null || true
-    fi
-    wait "$pid" 2>/dev/null || true
-  done
-  PULL_PIDS=()
-  [ -z "$PULL_LOGS" ] || rm -rf "$PULL_LOGS"
-  PULL_LOGS=""
-}
-
-docker_socket_gid() {
-  local sock=/var/run/docker.sock
-  [ -S "$sock" ] || die "Docker socket not found at $sock"
-  stat -c %g "$sock"
 }
 
 # Fails when any process of a running Compose service runs as UID 0. The server's health check
@@ -354,44 +302,21 @@ dev_data_dir() {
   printf '%s' "${N8N_OPS_DATA_DIR:-$DEV_DEFAULT_DATA_DIR}"
 }
 
-# A docker-compose-dev.yml copied before the stack generated its secrets names the tracked env files of then.
-dev_compose_is_old() {
-  [ -f "$DEV_COMPOSE_FILE" ] && grep -qE 'docker/(dev|n8n-dev|s3-dev)\.env' "$DEV_COMPOSE_FILE"
-}
-
 dev_compose() {
   [ -f "$DEV_COMPOSE_FILE" ] || die "docker-compose-dev.yml is missing. Create it with:
   cp docker/docker-compose-dev.example.yml docker-compose-dev.yml"
-  # Before scripts/local.sh migrate, only what reads the running containers by project name works: the old copy
-  # names env files that no longer exist.
-  if dev_compose_is_old; then
-    case "${1:-}" in
-      # From / so Compose finds no file at all (from the repository it would read the production one) and acts on
-      # the project's containers by their labels.
-      down | logs | ps | stop) (cd / && docker compose -p "$DEV_PROJECT" "$@") ;;
-      *) die "docker-compose-dev.yml names the env files of before the stack generated its secrets. Run once:
-  scripts/local.sh migrate" ;;
-    esac
-    return
-  fi
   local data
   data="$(dev_data_dir)"
-  # DOCKER_SOCKET_GID only for docker-compose-dev.yml copies made before the socket proxy ran as root.
-  N8N_OPS_DATA_DIR="$data" N8N_OPS_ENV_DIR="$data/env" N8N_OPS_IMAGE_TAG=dev DOCKER_SOCKET_GID="$(docker_socket_gid)" \
+  N8N_OPS_DATA_DIR="$data" N8N_OPS_ENV_DIR="$data/env" N8N_OPS_IMAGE_TAG=dev \
     docker compose -p "$DEV_PROJECT" --project-directory "$REPO_ROOT" -f "$DEV_COMPOSE_FILE" "$@"
 }
 
 # Before the development stack starts: makes its secrets on a fresh stack, checks them on one that has them, and
-# stops on a stack that is not ready (an old docker-compose-dev.yml, a migration that did not finish, or secrets
-# lost while its database is kept: new ones would not open that database).
+# stops when they are lost while its database is kept: new ones would not open that database.
 require_dev_secrets() {
   local data env name complete=1
   data="$(dev_data_dir)"
   env="$data/env"
-  dev_compose_is_old && die "docker-compose-dev.yml names the env files of before the stack generated its secrets. Run once:
-  scripts/local.sh migrate"
-  [ -e "$env/.rotate-postgres" ] && die "moving the development database to its new password did not finish. Run again:
-  scripts/local.sh migrate"
   for name in "${STACK_ENV_FILES[@]}"; do
     [ -f "$env/$name.env" ] || complete=0
   done

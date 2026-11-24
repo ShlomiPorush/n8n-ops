@@ -17,8 +17,8 @@ import { createPairingToken, deliverToWaiter, pairWorker } from "./workers.ts"
 
 // The socket proxy fix against a real PostgreSQL: what Add worker entered is kept for the worker it pairs, the
 // rule covers every main and the queue workers listed for the instance's current target only, a report that is
-// not applied changes nothing, workers of earlier releases are read from their words, and a failed backup or
-// credential export carries the lines for the worker and container it ran on.
+// not applied changes nothing, and a failed backup or credential export carries the lines for the worker and
+// container it ran on.
 const adminUrl = process.env.MIGRATION_DATABASE_URL
 if (!adminUrl) throw new Error("MIGRATION_DATABASE_URL is required (scripts/verify.sh sets it)")
 
@@ -161,71 +161,6 @@ describe("the fix for a refused probe", () => {
     expect(rule.gaps).toEqual(["the queue workers of acme are not known yet; the next check lists them"])
   })
 
-  it("reads the refusals of a worker of an earlier release from its words", async () => {
-    await applyHealth(
-      ctx,
-      instanceId,
-      report({
-        source: "inside",
-        mode: "queue",
-        workers: [
-          {
-            url: "docker://acme-worker-1",
-            name: "acme-worker-1",
-            state: "not-checked",
-            ok: false,
-            status: 0,
-            ms: 1,
-            error: 'the socket proxy does not allow commands in "acme-worker-1"; add it to -allowPOST',
-          },
-        ],
-        discovery: { status: "ok", found: 1 },
-      }),
-      await ticket(instanceId),
-    )
-    const fix = await instanceProxyFix(ctx, await instanceRow(instanceId), await workerRow(workerId))
-    expect(fix?.refused).toEqual(["commands in acme-worker-1"])
-    // The worker it names goes in the line; that release read the whole list, so nothing is missing.
-    expect(fix?.rule.allows.map((a) => a.name)).toEqual(["acme", "acme-worker-1"])
-    expect(fix?.rule.coverage).toBe("complete")
-    // A main that release could not read inside: it named no queue workers, and the line says so.
-    await applyHealth(
-      ctx,
-      instanceId,
-      report({
-        source: "network",
-        fallback: 'the socket proxy does not allow commands in "acme"; add it to -allowPOST',
-      }),
-      await ticket(instanceId),
-    )
-    const refused = await instanceProxyFix(ctx, await instanceRow(instanceId), await workerRow(workerId))
-    expect(refused?.refused).toEqual(["commands in acme"])
-    expect(refused?.rule.gaps).toEqual(["the worker's release does not list the queue workers of acme; update it"])
-  })
-
-  it("never puts a name an earlier release cut short in the line", async () => {
-    const whole = `acme-${"w".repeat(130)}`
-    await applyHealth(
-      ctx,
-      instanceId,
-      report({
-        source: "inside",
-        mode: "queue",
-        workers: [
-          { url: `docker://${whole}`, name: whole.slice(0, 128), state: "ready", ok: true, status: 200, ms: 1 },
-        ],
-        discovery: { status: "ok", found: 1 },
-      }),
-      await ticket(instanceId),
-    )
-    const { rule } = await workerRule(ctx, await workerRow(workerId))
-    expect(rule.allows.map((a) => a.name)).toEqual(["acme"])
-    expect(rule.coverage).toBe("partial")
-    expect(rule.gaps).toEqual([
-      "a queue worker of acme has a name that cannot go in the line (not a Docker container name, or longer than 128 characters)",
-    ])
-  })
-
   it("keeps the containers the owner recorded, and covers mains of instances whose health is checked directly", async () => {
     await ctx.db.update(workers).set({ allowed: { containers: ["acme-worker-*"] } })
     await ctx.db.insert(instances).values({
@@ -270,8 +205,6 @@ describe("the fix for a failed backup or credential export", () => {
       { call: "exec-create", container: "acme" },
       'the socket proxy does not allow commands in "acme"',
     )
-    // A run of an earlier release: the refusal only in its words.
-    await failedBackup("acme", null, 'the socket proxy does not allow commands in "acme"')
     for (const run of await recentRuns(ctx, instanceId))
       expect(run).toMatchObject({ proxyFix: { refused: ["commands in acme"] } })
     await updateInstance(ctx, instanceId, { containerName: "acme-new" })
@@ -281,25 +214,22 @@ describe("the fix for a failed backup or credential export", () => {
     }
   })
 
-  it("throws the lines with a credential export the proxy refused, from this release and an earlier one", async () => {
-    const instance = await instanceRow(instanceId)
-    for (const outcome of [
-      { ok: false, error: "credential export failed: x", refused: { call: "exec-create" as const, container: "acme" } },
-      { ok: false, error: 'credential export failed: the socket proxy does not allow commands in "acme"' },
-    ]) {
-      const exporting = exportCredentials(ctx, instance).catch((e) => e)
-      let job: { id: string } | undefined
-      for (let i = 0; i < 50 && !job; i++) {
-        ;[job] = await ctx.db.select().from(workerJobs).where(eq(workerJobs.kind, "export-credentials"))
-        if (!job) await new Promise((r) => setTimeout(r, 20))
-      }
-      if (!job) throw new Error("no export job")
-      deliverToWaiter(job.id, outcome)
-      const error = await exporting
-      expect(error).toBeInstanceOf(ProxyRefusedError)
-      expect(error.proxyFix.refused).toEqual(["commands in acme"])
-      await ctx.db.delete(workerJobs)
+  it("throws the lines with a credential export the proxy refused", async () => {
+    const exporting = exportCredentials(ctx, await instanceRow(instanceId)).catch((e) => e)
+    let job: { id: string } | undefined
+    for (let i = 0; i < 50 && !job; i++) {
+      ;[job] = await ctx.db.select().from(workerJobs).where(eq(workerJobs.kind, "export-credentials"))
+      if (!job) await new Promise((r) => setTimeout(r, 20))
     }
+    if (!job) throw new Error("no export job")
+    deliverToWaiter(job.id, {
+      ok: false,
+      error: "credential export failed: x",
+      refused: { call: "exec-create", container: "acme" },
+    })
+    const error = await exporting
+    expect(error).toBeInstanceOf(ProxyRefusedError)
+    expect(error.proxyFix.refused).toEqual(["commands in acme"])
   })
 
   it("shows no lines for an export whose instance moved to another container while it ran", async () => {
@@ -332,13 +262,18 @@ describe("recording a pattern for queue workers added later", () => {
   it("offers it only when the worker found it clean, and records it in place of the names it covers", async () => {
     await applyHealth(ctx, instanceId, withPattern(false), await ticket(instanceId))
     expect((await workerRule(ctx, await workerRow(workerId))).rule.widened).toBeNull()
-    expect((await recordPatterns(ctx, workerId, ["qworker*"], "e2e")).status).toBe(409)
+    expect(await recordPatterns(ctx, workerId, ["qworker*"], "e2e")).toMatchObject({
+      status: 409,
+      proxy: { recorded: null, rule: { widened: null } },
+    })
 
     await applyHealth(ctx, instanceId, withPattern(true), await ticket(instanceId))
     const { rule } = await workerRule(ctx, await workerRow(workerId))
     expect(rule.widened?.patterns.map((p) => p.pattern)).toEqual(["qworker*"])
     audited.length = 0
-    expect((await recordPatterns(ctx, workerId, ["qworker*"], "e2e")).status).toBe(200)
+    const recorded = await recordPatterns(ctx, workerId, ["qworker*"], "e2e")
+    expect(recorded).toMatchObject({ status: 200, proxy: { recorded: "allowed", rule: { widened: null } } })
+    expect("proxy" in recorded && recorded.proxy).toEqual(await workerRule(ctx, await workerRow(workerId)))
     expect(await allowedNow()).toEqual(["acme", "qworker*"])
     expect(audited).toEqual([
       expect.objectContaining({

@@ -28,7 +28,6 @@ export type CheckView = {
   attempt: number | null
   startedAt: string | null
   at: string | null
-  deadline: string | null
   detail: Record<string, unknown> | null
 }
 
@@ -36,7 +35,6 @@ export type SetupData = {
   id: string
   name: string
   setupState: "incomplete" | "complete"
-  configRevision: number
   baseUrl: string
   collection: CollectionMode
   backupVia: BackupVia
@@ -51,8 +49,6 @@ export type SetupData = {
   requirements: Requirements
   checks: Record<"api" | "health" | "worker" | "backup" | "access", CheckView | null>
   ready: boolean
-  deadlineMs: number
-  freshMs: number
 }
 
 export type StepKey = "basics" | "api" | "worker" | "health" | "access" | "backup" | "review"
@@ -180,8 +176,6 @@ export function activeWith<T extends PickedInstance>(list: T[] | undefined, key:
 }
 
 /** Whether a worker check is still waiting for the worker, so the page asks again in a moment. */
-export function waitingForWorker(setup: SetupData | undefined, now = Date.now()) {
-  const check = setup?.checks.worker
-  if (check?.state !== "running") return false
-  return !check.deadline || Date.parse(check.deadline) + 5_000 > now
+export function waitingForWorker(setup: SetupData | undefined) {
+  return setup?.checks.worker?.state === "running"
 }

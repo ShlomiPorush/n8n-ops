@@ -30,8 +30,6 @@ type Detail = {
   access?: { refused: Refusal[] }
   listed?: { names: string[]; complete: boolean; patterns?: { pattern: string; clean: boolean }[] }
   checkedAt?: string
-  fallback?: string
-  workers?: { url?: string; name?: string; error?: string }[]
   discovery?: { status: string; reason?: string }
   resolvedContainer?: string
   replicas?: { clean: boolean }
@@ -40,35 +38,15 @@ type Detail = {
 /** What a job or a report said about a Compose service target: the container used, and whether its rule is clean. */
 export type ServiceSeen = { project: string; service: string; resolved?: string; clean?: boolean }
 
-/** The phrases with which workers of 0.2.0 and 0.3.0 said the socket proxy refused, before reports carried it. */
-const OLD_EXEC = /the socket proxy does not allow commands in "([^"]{1,128})"/
-const OLD_LIST = /^the socket proxy does not allow listing containers/
-
 /** The instance's last applied report, if it is about the instance's current collection target. */
 export function currentDetail(instance: Pick<Instance, "healthDetail" | "collectionRevision">): Detail | null {
   const detail = instance.healthDetail as Detail | null
   return detail && detail.revision === instance.collectionRevision ? detail : null
 }
 
-/** What the socket proxy refused in a report; for a worker of an earlier release, read from its words. */
+/** What the socket proxy refused in a report. */
 export function refusalsOf(detail: Detail | null): Refusal[] {
-  if (!detail) return []
-  if (detail.access) return detail.access.refused
-  const found: Refusal[] = []
-  const main = detail.fallback?.match(OLD_EXEC)
-  if (main?.[1]) found.push({ call: "exec-create", container: main[1] })
-  for (const w of detail.workers ?? []) {
-    const m = w.error?.match(OLD_EXEC)
-    if (m?.[1]) found.push({ call: "exec-create", container: m[1] })
-  }
-  if (detail.discovery?.reason && OLD_LIST.test(detail.discovery.reason)) found.push({ call: "list" })
-  return found
-}
-
-/** The refusal in a failed job's error, for a worker of an earlier release that sent only its words. */
-export function refusalInError(error: string | null | undefined): Refusal | undefined {
-  const m = error?.match(OLD_EXEC)
-  return m?.[1] ? { call: "exec-create", container: m[1] } : undefined
+  return detail?.access?.refused ?? []
 }
 
 /** A refusal in words, for the sentence "The socket proxy on <worker> refuses ...". */
@@ -113,21 +91,6 @@ function queueWorkersOf(instance: Instance): { names: string[]; gaps: string[]; 
       names: [],
       gaps: [`the queue workers of ${name} cannot be told apart: ${detail.discovery.reason ?? "unknown reason"}`],
     }
-  if (detail && !detail.access) {
-    // A worker of an earlier release names the queue workers it found and checked (at most 50): those go in the
-    // line. Only a full list it read (discovery ok) says there are no others.
-    // The url keeps the whole name, which that release cut at 128 characters in `name`.
-    const found = (detail.workers ?? []).flatMap((w) =>
-      w.url?.startsWith("docker://") ? [w.url.slice("docker://".length)] : w.name ? [w.name] : [],
-    )
-    return {
-      names: found,
-      gaps:
-        detail.discovery?.status === "ok"
-          ? []
-          : [`the worker's release does not list the queue workers of ${name}; update it`],
-    }
-  }
   return { names: [], gaps: [`the queue workers of ${name} are not known yet; the next check lists them`] }
 }
 
@@ -242,10 +205,9 @@ export async function jobProxyFix(
     target?: { project: string; service: string }
     seen?: ServiceSeen
     refused?: Refusal
-    error?: string | null
   },
 ) {
-  const refused = job.refused ?? refusalInError(job.error)
+  const { refused } = job
   if (!refused || instance.workerId !== job.workerId) return null
   // Only while the instance still has the target the job ran for.
   const same = job.target
@@ -273,6 +235,7 @@ export const allowedContainers = z
  * suggested by the lines as they are now (otherwise "stale", nothing saved). They are added to what is recorded, or
  * to the Add worker list, or, when neither exists, to what the lines allow, so nothing the lines allowed is lost;
  * exact names a pattern covers are dropped. A result over the limits is refused whole. Audited with the change.
+ * Answers with the worker's lines as they are then, when they were recorded and when they were out of date.
  */
 export async function recordPatterns(ctx: Ctx, workerId: string, requested: string[], actor: string) {
   return ctx.db.transaction(async (tx) => {
@@ -282,10 +245,11 @@ export async function recordPatterns(ctx: Ctx, workerId: string, requested: stri
       .where(and(eq(workers.id, workerId), isNull(workers.revokedAt)))
       .for("update")
     if (!before) return { status: 404 as const }
-    const { rule } = await workerRule(ctx, before, tx)
+    const proxy = await workerRule(ctx, before, tx)
+    const { rule } = proxy
     const offered = new Set(rule.widened?.patterns.map((p) => p.pattern) ?? [])
     const patterns = [...new Set(requested)]
-    if (!patterns.every((p) => offered.has(p))) return { status: 409 as const }
+    if (!patterns.every((p) => offered.has(p))) return { status: 409 as const, proxy }
     const base =
       before.allowed?.containers ??
       before.install?.containers ??
@@ -297,7 +261,8 @@ export async function recordPatterns(ctx: Ctx, workerId: string, requested: stri
     const checked = allowedContainers.safeParse(containers)
     if (!checked.success)
       return { status: 400 as const, message: [...new Set(checked.error.issues.map((i) => i.message))].join(". ") }
-    await tx.update(workers).set({ allowed: { containers } }).where(eq(workers.id, before.id))
+    const allowed = { containers }
+    await tx.update(workers).set({ allowed }).where(eq(workers.id, before.id))
     await ctx.audit(
       {
         actor,
@@ -308,6 +273,6 @@ export async function recordPatterns(ctx: Ctx, workerId: string, requested: stri
       },
       tx,
     )
-    return { status: 200 as const, containers }
+    return { status: 200 as const, containers, proxy: await workerRule(ctx, { ...before, allowed }, tx) }
   })
 }

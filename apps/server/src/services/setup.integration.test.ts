@@ -424,7 +424,7 @@ describe("activation", () => {
 })
 
 describe("the worker check", () => {
-  it("reuses the probe of the current attempt and counts only a read inside the main for its inputs", async () => {
+  it("replaces the probe before it and counts only a read inside the main for its inputs", async () => {
     reset()
     const w = await worker()
     const row = await draft({
@@ -435,11 +435,31 @@ describe("the worker check", () => {
       containerName: "n8n-main",
     })
     const first = await checkWorker(ctx, row.id)
+    // Taken by the worker, then replaced: its answer, however late, is not the new check's.
+    const [taken] = await ctx.db
+      .update(workerJobs)
+      .set({ status: "running", startedAt: new Date() })
+      .where(eq(workerJobs.id, first?.jobId ?? ""))
+      .returning()
+    await checkWorker(ctx, row.id)
     const again = await checkWorker(ctx, row.id)
-    expect(again).toMatchObject({ jobId: first?.jobId, reused: true })
-    const jobs = await ctx.db.select().from(workerJobs).where(eq(workerJobs.instanceId, row.id))
-    expect(jobs).toHaveLength(1)
-    expect(jobs[0]?.payload).toMatchObject({ inside: { container: "n8n-main" }, setup: { attempt: first?.attempt } })
+    await setupWorkerResult(ctx, taken as typeof workerJobs.$inferSelect, {
+      ok: true,
+      result: insideReport(),
+      current: true,
+    })
+    expect((await read(row.id)).setupChecks.worker).toMatchObject({
+      status: "running",
+      jobId: again?.jobId,
+      attempt: again?.attempt,
+    })
+    // A probe nobody took yet is deleted when it is replaced.
+    const jobs = await ctx.db
+      .select()
+      .from(workerJobs)
+      .where(and(eq(workerJobs.instanceId, row.id), eq(workerJobs.status, "queued")))
+    expect(jobs.map((j) => j.id)).toEqual([again?.jobId])
+    expect(jobs[0]?.payload).toMatchObject({ inside: { container: "n8n-main" }, setup: { attempt: again?.attempt } })
     expect(jobs[0]?.payload.check).toBeUndefined()
 
     const job = jobs[0] as typeof workerJobs.$inferSelect

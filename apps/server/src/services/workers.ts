@@ -58,7 +58,7 @@ export async function workerByIdentity(ctx: Ctx, identity: string) {
 }
 
 export async function enqueueJob(
-  ctx: Ctx,
+  ctx: { db: Pick<Ctx["db"], "insert"> },
   workerId: string,
   kind: JobKind,
   payload: Record<string, unknown>,

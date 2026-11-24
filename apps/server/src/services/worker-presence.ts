@@ -191,9 +191,8 @@ async function inBatches(ctx: Ctx, query: SQL) {
 /**
  * Deletes worker jobs that finished more than FINISHED_JOB_KEEP_MS ago, a batch at a time, so it can stop and run
  * again at any point. A health probe's result is applied to the instance's own history when it arrives; the job row
- * is only a copy. Kept: queued and running jobs, backup jobs (the proxy fix of a failed run reads its job, and runs
- * are kept), and the job a running worker setup check points at (its view reads it). The status and kind stay
- * literals, so the planner can use worker_jobs_finished_idx.
+ * is only a copy. Kept: queued and running jobs, and backup jobs (the proxy fix of a failed run reads its job, and
+ * runs are kept). The status and kind stay literals, so the planner can use worker_jobs_finished_idx.
  */
 export async function pruneWorkerJobs(ctx: Ctx, now = Date.now()) {
   const cutoff = at(new Date(now - FINISHED_JOB_KEEP_MS))
@@ -202,9 +201,6 @@ export async function pruneWorkerJobs(ctx: Ctx, now = Date.now()) {
     sql`delete from worker_jobs where id in (
       select j.id from worker_jobs j
       where j.status in ('done', 'failed') and j.kind <> 'backup' and j.finished_at < ${cutoff}
-        and not exists (
-          select 1 from instances i
-          where i.setup_checks->'worker'->>'status' = 'running' and i.setup_checks->'worker'->>'jobId' = j.id::text)
       limit ${BATCH})`,
   )
 }

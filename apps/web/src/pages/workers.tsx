@@ -212,7 +212,7 @@ function WorkerSettings({ worker: w }: { worker: Worker }) {
       ) : (
         <div className="grid min-w-0 gap-2">
           <p className="font-semibold">What its socket proxy needs now</p>
-          <RuleLines rule={w.proxy.rule} workerId={w.id} recorded={w.proxy.recorded} />
+          <RuleLines rule={w.proxy.rule} workerId={w.id} recorded={w.proxy.recorded} refresh={[]} />
         </div>
       )}
       {w.proxy.update && (

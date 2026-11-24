@@ -2781,7 +2781,7 @@ test("Back from an instance added on another one asks, Stay keeps it without a r
   // An add that is only answered, with e2e-n8n-b as the new instance: nothing is stored.
   const add = (url: URL) => url.pathname === "/api/instances"
   await page.route(add, (route) =>
-    route.request().method() === "POST" ? route.fulfill({ json: { id: added, configRevision: 0 } }) : route.continue(),
+    route.request().method() === "POST" ? route.fulfill({ json: { id: added } }) : route.continue(),
   )
   const unsaved = page.getByRole("region", { name: "Unsaved changes" })
   const ask = page.getByRole("alertdialog", { name: "Leave without saving?" })

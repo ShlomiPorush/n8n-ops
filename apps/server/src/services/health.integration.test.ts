@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto"
 import { EventEmitter } from "node:events"
 import { join } from "node:path"
-import { eq } from "drizzle-orm"
+import { eq, sql } from "drizzle-orm"
 import postgres from "postgres"
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 import type { Ctx } from "../context.ts"
@@ -193,7 +193,7 @@ describe("applyHealth", () => {
   it("never reopens queue alerts after a switch to regular by hand, whichever comes first", async () => {
     await ctx.db.update(instances).set({ queueMode: true }).where(eq(instances.id, id))
     const down = { url: "http://worker:5678/healthz", ok: false, status: 0, ms: 1, error: "refused" }
-    // A queue report in flight and the switch at the same time: the switch takes the report's turn.
+    // A queue report in flight and the switch at the same time: one waits for the other's row lock.
     const t = await ticket()
     await Promise.all([
       applyHealth(ctx, id, report({ workers: [down] }), t),
@@ -336,7 +336,7 @@ describe("applyHealth", () => {
     ])
   })
 
-  it("takes a revoked worker off in the instance's turn, so a report in flight cannot reopen its alerts", async () => {
+  it("takes a revoked worker off under the instance's row lock, so a report in flight cannot reopen its alerts", async () => {
     const [w] = await ctx.db
       .insert(workers)
       .values({ name: "old-host", tokenHash: "h-old", lastSeenAt: new Date() })
@@ -472,6 +472,31 @@ describe("down alerts after failed checks in a row", () => {
     expect(await sent()).toEqual([])
     await apply(down)
     expect((await sent())[0]).toContain("5 failed checks in a row")
+  })
+
+  it("follows the setting of the locked row when it changes while a report waits for it", async () => {
+    await ctx.db
+      .update(instances)
+      .set({ overrides: { downAfterFailures: 5 } })
+      .where(eq(instances.id, id))
+    for (let i = 0; i < 2; i++) await apply(down)
+    const third = await ticket()
+    let applying: Promise<unknown> = Promise.resolve()
+    await ctx.db.transaction(async (tx) => {
+      await tx
+        .update(instances)
+        .set({ overrides: { downAfterFailures: 3 } })
+        .where(eq(instances.id, id))
+      applying = applyHealth(ctx, id, down, third)
+      await vi.waitFor(async () => {
+        const [waiting] = await ctx.db.execute(
+          sql`select count(*)::int as n from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock'`,
+        )
+        expect(waiting?.n).toBeGreaterThan(0)
+      })
+    })
+    await applying
+    expect(await sent()).toHaveLength(1)
   })
 
   it("forgets failed checks of what was checked before a change of collection", async () => {

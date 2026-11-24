@@ -492,7 +492,7 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
           </div>
         )}
         {error && <FieldError>{error}</FieldError>}
-        {fix && <ProxyFixBlock fix={fix} held />}
+        {fix && <ProxyFixBlock fix={fix} />}
         <DialogFooter>
           {steps ? (
             <Button variant="primary" onClick={() => void guard.requestClose("finished")}>

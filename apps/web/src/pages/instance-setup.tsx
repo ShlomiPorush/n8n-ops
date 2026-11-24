@@ -232,7 +232,7 @@ function ExistingSetup({ id }: { id: string }) {
   const detail = useApi<InstanceDetailData>(`/instances/${id}`)
   const s = setup.data
   const d = detail.data
-  // A worker check ends in the worker's own time: the page asks every 2 seconds until it has (deadline included).
+  // A worker check ends in the worker's own time: the page asks every 2 seconds until it has.
   useEffect(() => setPolling(waitingForWorker(s)), [s])
   const draft = s?.setupState === "incomplete"
   useCrumb(s?.name ?? d?.name)
@@ -1499,7 +1499,7 @@ function ReviewStep(context: StepContext) {
     try {
       await api(`/instances/${id}/activate`, {
         method: "POST",
-        json: { configRevision: s.configRevision, ...(draft ? {} : { add: context.add }) },
+        json: draft ? {} : { add: context.add },
       })
     } catch (e) {
       if (e instanceof ApiError && e.code === "revision_changed")

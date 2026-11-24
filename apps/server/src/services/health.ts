@@ -5,15 +5,15 @@ import {
   readMetricsText,
   workerDetails,
 } from "@n8n-ops/shared"
-import { and, eq, gt, like, or, sql } from "drizzle-orm"
+import { and, eq, gt, inArray, like, or, sql } from "drizzle-orm"
 import { z } from "zod"
 import { type Ctx, changed } from "../context.ts"
 import { alertState, type Health, instances } from "../db/schema.ts"
-import { oneAtATime } from "../lib/one-at-a-time.ts"
+import { resolveInstanceSettings } from "../lib/settings.ts"
 import { probe } from "../n8n/client.ts"
 import { conditionSettings, type Streak, setConditionIn } from "./alerts.ts"
 import { recordCheck } from "./health-history.ts"
-import { healthTurn, type Instance, metricsUrlOf } from "./instances.ts"
+import { type Instance, metricsUrlOf } from "./instances.ts"
 import type { DbLike } from "./problems.ts"
 import { clip, html } from "./telegram.ts"
 
@@ -116,8 +116,6 @@ export type HealthReport = z.infer<typeof probeReport> & { via: "direct" | "work
 
 /** A health check as it started: its number, and the collection revision it was made for. */
 export type CheckTicket = { seq: number; revision: number }
-
-export const checkTicket = z.object({ seq: z.number().int(), revision: z.number().int() })
 
 /** What a metrics endpoint that did not answer 2xx means. n8n answers 404 there while N8N_METRICS is off. */
 export function metricsAnswer(status: number) {
@@ -294,16 +292,14 @@ export async function resetPendingDown(db: Pick<Ctx["db"], "update">, instanceId
     .where(and(eq(alertState.key, `down:${instanceId}`), eq(alertState.active, false), gt(alertState.failures, 0)))
 }
 
-/** Ends worker conditions of an instance that `ends` picks, without a message, saying why. */
-async function closeWorkerAlerts(tx: DbLike, instanceId: string, ends: (key: string) => boolean, why: string) {
-  const prefix = `worker:${instanceId}:`
-  const open = await tx
+/** Ends worker conditions of an instance that `ends` picks, without a message. */
+async function dropWorkerConditions(tx: DbLike, instanceId: string, ends: (key: string) => boolean) {
+  const rows = await tx
     .select({ key: alertState.key })
     .from(alertState)
-    .where(and(like(alertState.key, `${prefix}%`), openOrPending))
-  for (const { key } of open.filter((o) => ends(o.key))) {
-    await tx.update(alertState).set(closed(why)).where(eq(alertState.key, key))
-  }
+    .where(like(alertState.key, `worker:${instanceId}:%`))
+  const gone = rows.map((r) => r.key).filter(ends)
+  if (gone.length) await tx.delete(alertState).where(inArray(alertState.key, gone))
 }
 
 /**
@@ -315,48 +311,20 @@ async function closeWorkerAlerts(tx: DbLike, instanceId: string, ends: (key: str
 async function settleWorkerSources(tx: DbLike, instanceId: string, report: HealthReport, typed: string[]) {
   const found = `worker:${instanceId}:docker://`
   const stillTyped = new Set(typed.map((url) => `worker:${instanceId}:${url}`))
-  await closeWorkerAlerts(
-    tx,
-    instanceId,
-    (key) => !key.startsWith(found) && !stillTyped.has(key),
-    "Closed: the worker URL is no longer checked",
-  )
+  await dropWorkerConditions(tx, instanceId, (key) => !key.startsWith(found) && !stillTyped.has(key))
   const d = report.discovery
   if (!d) {
     // Only typed worker URLs end the conditions of found workers. A report without discovery for another reason
     // (a fallback to the network, a worker of an earlier release) says nothing about them: they stay.
     if (!report.workers.some((w) => !w.url.startsWith("docker://"))) return
-    return closeWorkerAlerts(
-      tx,
-      instanceId,
-      (key) => key.startsWith(found),
-      "Closed: the workers are checked another way",
-    )
+    return dropWorkerConditions(tx, instanceId, (key) => key.startsWith(found))
   }
-  await closeWorkerAlerts(
-    tx,
-    instanceId,
-    (key) => !key.startsWith(found),
-    "Closed: the workers are found next to the main",
-  )
+  await dropWorkerConditions(tx, instanceId, (key) => !key.startsWith(found))
   if (d.status !== "ok") return
   const listed = new Set(report.workers.map((w) => `worker:${instanceId}:${w.url}`))
-  await closeWorkerAlerts(
-    tx,
-    instanceId,
-    (key) => key.startsWith(found) && !listed.has(key),
-    "Closed: the worker was removed",
-  )
+  await dropWorkerConditions(tx, instanceId, (key) => key.startsWith(found) && !listed.has(key))
 }
 
-/**
- * Stores a health report and raises or clears health alerts (requirement C3). It applies only if, under a row lock
- * taken after the check's I/O, the instance still has the collection revision the check started from and no check
- * that started later has been applied; otherwise it is dropped. Returns the health, or null when dropped.
- *
- * The reports of one instance are applied one at a time, alerts included, so an earlier check's alerts never come
- * after a later check's. The transaction uses only its own connection: settings are read before it.
- */
 /**
  * The most found queue workers an instance keeps conditions for, open or counting failed checks: far above any real
  * deployment. A failing found worker beyond it gets no condition until others recover or are removed. Typed worker
@@ -367,17 +335,16 @@ const FOUND_WORKER_CONDITIONS = 500
 /** Instances at that limit, so it is logged once when reached, not on every check. */
 const foundWorkersAtLimit = new Set<string>()
 
-export function applyHealth(ctx: Ctx, instanceId: string, given: HealthReport, ticket: CheckTicket) {
-  return oneAtATime(healthTurn(instanceId), () => applyHealthNow(ctx, instanceId, given, ticket))
-}
-
-async function applyHealthNow(ctx: Ctx, instanceId: string, given: HealthReport, ticket: CheckTicket) {
-  const [before] = await ctx.db
-    .select({ overrides: instances.overrides })
-    .from(instances)
-    .where(eq(instances.id, instanceId))
-  if (!before) return null
-  const s = await ctx.settings.forInstance(before.overrides)
+/**
+ * Stores a health report and raises or clears health alerts (requirement C3). It applies only if, under a row lock
+ * taken after the check's I/O, the instance still has the collection revision the check started from and no check
+ * that started later has been applied; otherwise it is dropped. Returns the health, or null when dropped.
+ *
+ * The row stays locked until the alerts are written, so an earlier check's alerts never come after a later check's.
+ * The transaction uses only its own connection: what is not on the locked row is read before it.
+ */
+export async function applyHealth(ctx: Ctx, instanceId: string, given: HealthReport, ticket: CheckTicket) {
+  const defaults = await ctx.settings.get("defaults")
   const subject = { instanceId }
   const alerting = await conditionSettings(ctx, "health", subject)
 
@@ -392,6 +359,7 @@ async function applyHealthNow(ctx: Ctx, instanceId: string, given: HealthReport,
       })
       return null
     }
+    const s = resolveInstanceSettings(defaults, current.overrides)
     const found = foundMode(given) !== null
     const queueMode = queueModeOf(given, current.queueMode)
     const report = forMode(given, queueMode)
@@ -538,7 +506,7 @@ async function applyHealthNow(ctx: Ctx, instanceId: string, given: HealthReport,
 /**
  * Parses a health report a worker sent for a probe job, and applies it with the job's ticket. Returns what may be
  * stored: the parsed report (unknown fields dropped), or a note that it did not fit, which leaves the last known
- * health. A job made before tickets existed carries none and is not applied.
+ * health.
  */
 export async function applyWorkerReport(
   ctx: Ctx,
@@ -564,9 +532,7 @@ export async function applyWorkerReport(
       count: report.data.workers.length - workers.length,
     })
   const data = { ...report.data, workers }
-  const ticket = checkTicket.safeParse(payload.check)
-  if (ticket.success) await applyHealth(ctx, instance.id, { ...data, via: "worker" }, ticket.data)
-  else ctx.log.info("health report of a probe made before this release not applied", { instance: instance.name })
+  await applyHealth(ctx, instance.id, { ...data, via: "worker" }, payload.check as CheckTicket)
   return data
 }
 

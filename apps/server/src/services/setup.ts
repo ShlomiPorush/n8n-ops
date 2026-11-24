@@ -10,7 +10,7 @@ import {
   withDependencies,
   withoutDependents,
 } from "@n8n-ops/shared"
-import { and, eq, inArray, like, or, sql } from "drizzle-orm"
+import { and, eq, like, or, sql } from "drizzle-orm"
 import type { z } from "zod"
 import { type Ctx, changed } from "../context.ts"
 import {
@@ -22,7 +22,6 @@ import {
   workerJobs,
   workers,
 } from "../db/schema.ts"
-import { oneAtATime } from "../lib/one-at-a-time.ts"
 import { policyScopes } from "./access.ts"
 import { endRunsWithoutArchive } from "./backup-copies.ts"
 import { canReach, jobTarget, probePayload } from "./backups.ts"
@@ -30,7 +29,7 @@ import { reportsSince } from "./collection.ts"
 import { destinationsFor, testDestination } from "./destinations/index.ts"
 import { closed, collectDirect, forMode, openOrPending, probeReport, queueModeOf } from "./health.ts"
 import { RevisionChanged } from "./instance-update.ts"
-import { healthTurn, type Instance, isActive, mainTarget, refreshInstanceMeta, testKey } from "./instances.ts"
+import { type Instance, isActive, mainTarget, refreshInstanceMeta, testKey } from "./instances.ts"
 import { jobProxyFix } from "./proxy-fix.ts"
 import { enqueueJob } from "./workers.ts"
 import { syncWorkflowsSoon } from "./workflows.ts"
@@ -101,9 +100,8 @@ export function inputsOf(kind: SetupCheckKind, row: Instance): string {
 
 /**
  * Stores a check's result, with the row locked: only while what the check depends on is as it was before its I/O
- * (`before`) and no later attempt of the same kind was stored. `extra` (a new key) is written with it, and the
- * result records the inputs of the row as written. With `revision`, also only while the configuration revision
- * is still that one (a key and a base URL are compared and set together, P9).
+ * (`before`) and no later attempt of the same kind was stored. `extra` (a new key, with the next configuration
+ * revision) is written with it, and the result records the inputs of the row as written.
  */
 async function storeCheck(
   ctx: Ctx,
@@ -111,17 +109,20 @@ async function storeCheck(
   kind: SetupCheckKind,
   check: Omit<SetupCheck, "inputs">,
   before: string,
-  { extra = {}, revision }: { extra?: Partial<typeof instances.$inferInsert>; revision?: number } = {},
+  extra: Partial<typeof instances.$inferInsert> = {},
 ) {
   return ctx.db.transaction(async (tx) => {
     const [row] = await tx.select().from(instances).where(eq(instances.id, id)).for("update")
-    if (!row || inputsOf(kind, row) !== before || (revision !== undefined && row.configRevision !== revision))
-      return false
+    if (!row || inputsOf(kind, row) !== before) return false
     if ((row.setupChecks[kind]?.attempt ?? 0) > check.attempt) return false
     const stored: SetupCheck = { ...check, inputs: inputsOf(kind, { ...row, ...extra } as Instance) }
     await tx
       .update(instances)
-      .set({ ...extra, setupChecks: { ...row.setupChecks, [kind]: stored } })
+      .set({
+        ...extra,
+        ...(extra.apiKeyEnc ? { configRevision: row.configRevision + 1 } : {}),
+        setupChecks: { ...row.setupChecks, [kind]: stored },
+      })
       .where(eq(instances.id, id))
     return true
   })
@@ -142,8 +143,8 @@ const done = (started: { attempt: number; startedAt: string }) => ({
 
 /**
  * The API check: n8n answers, accepts the key and is 2.14.0 or later, with the key's scopes. A typed key is
- * stored only when it passes, in one write with its result and the next revision, and only while the URL, the key
- * and the revision are those read before the test; otherwise RevisionChanged and nothing is stored.
+ * stored only when it passes, in one write with its result and the next revision, and only while the URL and the
+ * key are those read before the test; otherwise RevisionChanged and nothing is stored.
  */
 export async function checkApi(ctx: Ctx, id: string, typedKey?: string) {
   const started = await startAttempt(ctx, id)
@@ -158,20 +159,16 @@ export async function checkApi(ctx: Ctx, id: string, typedKey?: string) {
     : { ...done(started), ok: false, reason: test.error, detail: { version: test.version, code: test.code } }
   if (typedKey && test.ok) {
     const saved = await storeCheck(ctx, id, "api", check, before, {
-      revision: row.configRevision,
-      extra: {
-        apiKeyEnc: ctx.secrets.encrypt(typedKey),
-        configRevision: row.configRevision + 1,
-        scopes: test.scopes,
-        scopesCheckedAt: new Date(),
-        updatedAt: new Date(),
-      },
+      apiKeyEnc: ctx.secrets.encrypt(typedKey),
+      scopes: test.scopes,
+      scopesCheckedAt: new Date(),
+      updatedAt: new Date(),
     })
     if (!saved) throw new RevisionChanged()
     return { check, keyStored: true, instance: row }
   }
   const extra = test.ok ? { scopes: test.scopes, scopesCheckedAt: new Date() } : {}
-  if (!(await storeCheck(ctx, id, "api", check, before, { extra }))) await notStored(ctx, id, "api", before)
+  if (!(await storeCheck(ctx, id, "api", check, before, extra))) await notStored(ctx, id, "api", before)
   return { check, keyStored: false, instance: row }
 }
 
@@ -198,39 +195,24 @@ export async function checkHealthDirect(ctx: Ctx, id: string) {
 }
 
 /**
- * The worker check: one probe that reads inside the main, whatever the collection mode. Made in the instance's
- * turn; a probe of the current attempt (same revision and worker, inside its deadline, not lost to a restart) is
- * reused, older queued ones are deleted. The result comes back through setupWorkerResult; pages poll the setup.
+ * The worker check: one probe that reads inside the main, whatever the collection mode, made with its check in one
+ * transaction under the row lock. It replaces the check before it: a probe nobody took yet is deleted, and the answer
+ * of one already taken no longer counts. The result comes back through setupWorkerResult; pages poll the setup.
  */
 export function checkWorker(ctx: Ctx, id: string) {
-  return oneAtATime(healthTurn(id), async () => {
-    const [row] = await ctx.db.select().from(instances).where(eq(instances.id, id))
+  return ctx.db.transaction(async (tx) => {
+    const [row] = await tx.select().from(instances).where(eq(instances.id, id)).for("update")
     if (!row) return null
     if (!row.workerId) throw new SetupRefused("Choose the worker on this instance's host first.")
     if (!mainTarget(row))
       throw new SetupRefused("Set the main: its container name, or its Compose project and service.")
-    const [worker] = await ctx.db.select().from(workers).where(eq(workers.id, row.workerId))
+    const [worker] = await tx.select().from(workers).where(eq(workers.id, row.workerId))
     if (!worker || worker.revokedAt) throw new SetupRefused("The chosen worker was removed. Choose another one.")
     if (!canReach(worker, row))
       throw new SetupRefused(
         `${worker.name} runs a release that cannot follow a Compose service. Update its image, or name the main container.`,
       )
-    const previous = row.setupChecks.worker
-    if (
-      previous?.status === "running" &&
-      previous.jobId &&
-      previous.inputs === inputsOf("worker", row) &&
-      Date.now() - Date.parse(previous.startedAt) < SETUP_DEADLINE_MS
-    ) {
-      const [job] = await ctx.db
-        .select()
-        .from(workerJobs)
-        .where(and(eq(workerJobs.id, previous.jobId), inArray(workerJobs.status, ["queued", "running"])))
-      if (job && !(job.startedAt && job.startedAt < reportsSince(job.workerId)))
-        return { jobId: job.id, attempt: previous.attempt, deadline: deadlineOf(previous), reused: true }
-    }
-    // Older setup probes nobody took yet are not wanted any more.
-    await ctx.db
+    await tx
       .delete(workerJobs)
       .where(
         and(
@@ -240,37 +222,30 @@ export function checkWorker(ctx: Ctx, id: string) {
           sql`${workerJobs.payload} ? 'setup'`,
         ),
       )
-    const started = await startAttempt(ctx, id)
-    if (!started) return null
-    const now = started.instance
-    if (now.workerId !== worker.id || !mainTarget(now)) throw new RevisionChanged()
+    const attempt = row.setupAttemptSeq + 1
     const job = await enqueueJob(
-      ctx,
+      { db: tx },
       worker.id,
       "probe",
-      { ...probePayload(now, undefined, true), setup: { attempt: started.attempt } },
+      { ...probePayload(row, undefined, true), setup: { attempt } },
       id,
     )
-    const check = {
-      attempt: started.attempt,
-      startedAt: started.startedAt,
-      status: "running" as const,
+    const check: SetupCheck = {
+      attempt,
+      startedAt: new Date().toISOString(),
+      status: "running",
       workerId: worker.id,
       jobId: job.id,
-      detail: { inside: jobTarget(now) },
+      inputs: inputsOf("worker", row),
+      detail: { inside: jobTarget(row) },
     }
-    const before = inputsOf("worker", now)
-    if (!(await storeCheck(ctx, id, "worker", check, before))) {
-      await ctx.db.delete(workerJobs).where(and(eq(workerJobs.id, job.id), eq(workerJobs.status, "queued")))
-      await notStored(ctx, id, "worker", before)
-      return null
-    }
-    return { jobId: job.id, attempt: started.attempt, deadline: deadlineOf(check), reused: false }
+    await tx
+      .update(instances)
+      .set({ setupAttemptSeq: attempt, setupChecks: { ...row.setupChecks, worker: check } })
+      .where(eq(instances.id, id))
+    return { jobId: job.id, attempt }
   })
 }
-
-const deadlineOf = (check: Pick<SetupCheck, "startedAt">) =>
-  new Date(Date.parse(check.startedAt) + SETUP_DEADLINE_MS).toISOString()
 
 type ProbeReport = z.infer<typeof probeReport>
 
@@ -401,7 +376,6 @@ export type CheckView = {
   attempt: number | null
   startedAt: string | null
   at: string | null
-  deadline: string | null
   detail: Record<string, unknown> | null
 }
 
@@ -413,7 +387,6 @@ const view = (check: SetupCheck | undefined, extra: Partial<CheckView>): CheckVi
   attempt: check?.attempt ?? null,
   startedAt: check?.startedAt ?? null,
   at: check?.at ?? null,
-  deadline: check ? deadlineOf(check) : null,
   detail: check?.detail ?? null,
   ...extra,
 })
@@ -499,7 +472,6 @@ export async function evaluate(ctx: Ctx, row: Instance, verify: CapabilityKey[],
           current: true,
           ok,
           reason: ok ? null : "Turn on Temporary access and allow at least one scope the API key grants.",
-          deadline: null,
           detail: { enabled: row.agentAccess.enabled, grantable: policyScopes(row) },
         })
       })()
@@ -536,7 +508,7 @@ async function workerView(
       job.status === "done" ||
       job.status === "failed" ||
       Boolean(job.startedAt && job.startedAt < reportsSince(job.workerId))
-    if (lost || now >= Date.parse(deadlineOf(check)))
+    if (lost || now >= Date.parse(check.startedAt) + SETUP_DEADLINE_MS)
       return view(check, {
         state: "failed",
         current: true,
@@ -621,7 +593,6 @@ export async function setupState(ctx: Ctx, row: Instance, add?: CapabilityKey[])
     id: row.id,
     name: row.name,
     setupState: row.setupState,
-    configRevision: row.configRevision,
     baseUrl: row.baseUrl,
     collection: row.collection,
     backupVia: row.backupVia,
@@ -633,8 +604,6 @@ export async function setupState(ctx: Ctx, row: Instance, add?: CapabilityKey[])
     requirements: result.requirements,
     checks: result.checks,
     ready: result.ready && verify.length > 0,
-    deadlineMs: SETUP_DEADLINE_MS,
-    freshMs: EVIDENCE_FRESH_MS,
   }
 }
 
@@ -700,60 +669,58 @@ export async function activate(ctx: Ctx, id: string, input: { add?: CapabilityKe
 }
 
 /**
- * Removes a capability, and what needs it. No check is needed. In the instance's turn and one transaction with the
- * row locked: the conditions of a removed capability end without a message, its queued jobs go, and backup runs
- * still waiting for their archive end without an alert. A run that has its archive finishes its copies.
+ * Removes a capability, and what needs it. No check is needed. In one transaction with the row locked: the
+ * conditions of a removed capability end without a message, its queued jobs go, and backup runs still waiting for
+ * their archive end without an alert. A run that has its archive finishes its copies.
  */
 export function removeCapability(ctx: Ctx, id: string, capability: CapabilityKey) {
-  return oneAtATime(healthTurn(id), () =>
-    ctx.db.transaction(async (tx) => {
-      const [row] = await tx.select().from(instances).where(eq(instances.id, id)).for("update")
-      if (!row) return null
-      const after = withoutDependents(row.chosenCapabilities, [capability])
-      const removed = row.chosenCapabilities.filter((k) => !after.includes(k))
-      if (!removed.length) return { instance: row, removed }
-      const [saved] = await tx
-        .update(instances)
-        .set({
-          chosenCapabilities: after,
-          ...(removed.includes("backup") ? { backupSince: null } : {}),
-          updatedAt: new Date(),
-        })
-        .where(eq(instances.id, id))
-        .returning()
-      // Failed checks still counting toward a condition end with it: they never add up with checks made after the
-      // capability comes back.
-      const close = (why: string, ...keys: ReturnType<typeof eq>[]) =>
-        tx
-          .update(alertState)
-          .set(closed(why))
-          .where(and(openOrPending, or(...keys)))
-      if (removed.includes("health")) {
-        await close(
-          "Closed: health was turned off for the instance",
-          eq(alertState.key, `down:${id}`),
-          eq(alertState.key, `backlog:${id}`),
-          like(alertState.key, `worker:${id}:%`),
+  return ctx.db.transaction(async (tx) => {
+    const [row] = await tx.select().from(instances).where(eq(instances.id, id)).for("update")
+    if (!row) return null
+    const after = withoutDependents(row.chosenCapabilities, [capability])
+    const removed = row.chosenCapabilities.filter((k) => !after.includes(k))
+    if (!removed.length) return { instance: row, removed }
+    const [saved] = await tx
+      .update(instances)
+      .set({
+        chosenCapabilities: after,
+        ...(removed.includes("backup") ? { backupSince: null } : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(instances.id, id))
+      .returning()
+    // Failed checks still counting toward a condition end with it: they never add up with checks made after the
+    // capability comes back.
+    const close = (why: string, ...keys: ReturnType<typeof eq>[]) =>
+      tx
+        .update(alertState)
+        .set(closed(why))
+        .where(and(openOrPending, or(...keys)))
+    if (removed.includes("health")) {
+      await close(
+        "Closed: health was turned off for the instance",
+        eq(alertState.key, `down:${id}`),
+        eq(alertState.key, `backlog:${id}`),
+        like(alertState.key, `worker:${id}:%`),
+      )
+      await tx
+        .delete(workerJobs)
+        .where(
+          and(
+            eq(workerJobs.instanceId, id),
+            eq(workerJobs.kind, "probe"),
+            eq(workerJobs.status, "queued"),
+            sql`not (${workerJobs.payload} ? 'setup')`,
+          ),
         )
-        await tx
-          .delete(workerJobs)
-          .where(
-            and(
-              eq(workerJobs.instanceId, id),
-              eq(workerJobs.kind, "probe"),
-              eq(workerJobs.status, "queued"),
-              sql`not (${workerJobs.payload} ? 'setup')`,
-            ),
-          )
-      }
-      if (removed.includes("backup")) {
-        await close("Closed: backup was turned off for the instance", like(alertState.key, `backup:${id}:%`))
-        await endRunsWithoutArchive(tx, { instanceId: id })
-        await tx
-          .delete(workerJobs)
-          .where(and(eq(workerJobs.instanceId, id), eq(workerJobs.kind, "backup"), eq(workerJobs.status, "queued")))
-      }
-      return { instance: saved ?? row, removed }
-    }),
-  )
+    }
+    if (removed.includes("backup")) {
+      await close("Closed: backup was turned off for the instance", like(alertState.key, `backup:${id}:%`))
+      await endRunsWithoutArchive(tx, { instanceId: id })
+      await tx
+        .delete(workerJobs)
+        .where(and(eq(workerJobs.instanceId, id), eq(workerJobs.kind, "backup"), eq(workerJobs.status, "queued")))
+    }
+    return { instance: saved ?? row, removed }
+  })
 }

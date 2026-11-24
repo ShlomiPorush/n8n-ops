@@ -197,20 +197,20 @@ export function instanceRoutes(ctx: Ctx) {
   const app = new Hono<Env>()
   app.use("*", requireUser(ctx))
 
+  const lastBackup = async (id: string) => {
+    const [run] = await ctx.db
+      .select({ status: backupRuns.status, at: backupRuns.startedAt })
+      .from(backupRuns)
+      .where(eq(backupRuns.instanceId, id))
+      .orderBy(desc(backupRuns.startedAt))
+      .limit(1)
+    return run ?? null
+  }
+
   app.get("/", async (c) => {
     const rows = await ctx.db.select().from(instances).orderBy(asc(instances.name))
     const open = await openProblemsByInstance(ctx)
-    const lastBackups = await Promise.all(
-      rows.map(async (r) => {
-        const [b] = await ctx.db
-          .select({ status: backupRuns.status, at: backupRuns.startedAt })
-          .from(backupRuns)
-          .where(eq(backupRuns.instanceId, r.id))
-          .orderBy(desc(backupRuns.startedAt))
-          .limit(1)
-        return b ?? null
-      }),
-    )
+    const lastBackups = await Promise.all(rows.map((r) => lastBackup(r.id)))
     const assigned = await ctx.db.select().from(workers)
     const now = await currentHealth(ctx, rows)
     return c.json({
@@ -225,12 +225,6 @@ export function instanceRoutes(ctx: Ctx) {
         lastBackup: lastBackups[i],
       })),
     })
-  })
-
-  app.post("/test", async (c) => {
-    const body = z.object({ baseUrl: url, apiKey: z.string().min(10) }).safeParse(await c.req.json().catch(() => ({})))
-    if (!body.success) return c.json({ error: "invalid", issues: body.error.issues }, 400)
-    return c.json(await testKey(body.data.baseUrl, body.data.apiKey))
   })
 
   /** Creates a draft (Setup incomplete): it does nothing in the background until its setup is completed. */
@@ -261,7 +255,7 @@ export function instanceRoutes(ctx: Ctx) {
       details: { chosen },
     })
     changed(ctx, "instances")
-    return c.json({ id: row.id, configRevision: row.configRevision })
+    return c.json({ id: row.id })
   })
 
   app.get(ID, async (c) => {
@@ -284,6 +278,7 @@ export function instanceRoutes(ctx: Ctx) {
       // The health now, beside the stored one it may only be the last known of.
       ...healthNow(row, worker, effectiveSettings.healthIntervalSec),
       worker: workerSummary(worker),
+      lastBackup: await lastBackup(row.id),
       // What the socket proxy refused in the current report, with the exact lines that allow it.
       proxyFix: await instanceProxyFix(ctx, row, worker),
       // A Compose service needs a worker of a release that follows one (services/backups.ts canReach).
@@ -398,7 +393,7 @@ export function instanceRoutes(ctx: Ctx) {
       via: "web",
       details: { fields: Object.keys(parsed.data).filter((k) => k !== "apiKey") },
     })
-    return c.json({ ok: true, configRevision: updated?.configRevision ?? row.configRevision })
+    return c.json({ ok: true })
   })
 
   app.delete(ID, async (c) => {
@@ -515,7 +510,7 @@ export function instanceRoutes(ctx: Ctx) {
     }
   })
 
-  /** Starts the worker check, or answers with the one still running; GET /:id/setup tells how it ends. */
+  /** Starts the worker check; GET /:id/setup tells how it ends. */
   app.post(`${ID}/setup/worker`, async (c) => {
     try {
       const started = await checkWorker(ctx, c.req.param("id"))
@@ -542,10 +537,7 @@ export function instanceRoutes(ctx: Ctx) {
 
   /** Activates a draft, or adds capabilities to an active instance, once every requirement has a current check. */
   app.post(`${ID}/activate`, async (c) => {
-    const body = z
-      // A configRevision sent along is ignored: each check records the settings it was made for.
-      .object({ add: z.array(capability).optional(), configRevision: z.number().int().optional() })
-      .safeParse(await c.req.json().catch(() => ({})))
+    const body = z.object({ add: z.array(capability).optional() }).safeParse(await c.req.json().catch(() => ({})))
     if (!body.success) return c.json({ error: "invalid", issues: body.error.issues }, 400)
     try {
       const result = await activate(ctx, c.req.param("id"), body.data)
@@ -562,7 +554,6 @@ export function instanceRoutes(ctx: Ctx) {
         ok: true,
         setupState: instance.setupState,
         chosen: instance.chosenCapabilities,
-        configRevision: instance.configRevision,
       })
     } catch (error) {
       return setupRefusal(c, error)
@@ -591,7 +582,6 @@ export function instanceRoutes(ctx: Ctx) {
       ok: true,
       removed: result.removed,
       chosen: result.instance.chosenCapabilities,
-      configRevision: result.instance.configRevision,
     })
   })
 

@@ -65,7 +65,6 @@ export async function exportCredentials(
           workerId: worker.id,
           container: instance.containerName,
           refused: outcome.refused,
-          error: outcome.error,
           ...(instance.composeProject && instance.composeService
             ? {
                 target: { project: instance.composeProject, service: instance.composeService },

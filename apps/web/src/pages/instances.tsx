@@ -187,7 +187,7 @@ export type InstanceRow = {
   effectiveScopes: string[]
   agentAccess: { enabled: boolean; scopes: string[] }
   openProblems: number
-  lastBackup?: { status: string; at: string } | null
+  lastBackup: { status: string; at: string } | null
   worker: { id: string; name: string; lastSeenAt: string | null; online: boolean } | null
 }
 
@@ -308,14 +308,6 @@ export function InstancesPage() {
     "data-search-target": `instance:${i.id}`,
     onClick: () => navigate(`/instances/${i.id}`),
   })
-  const open = rows.find((r) => r.id === id)
-  const backup: ListBackup = data.data
-    ? open
-      ? { state: "known", run: open.lastBackup ?? null }
-      : { state: "missing" }
-    : data.error
-      ? { state: "failed" }
-      : { state: "loading" }
   const down = rows.filter((r) => r.health === "down").length
   const warn = rows.filter((r) => r.health === "warn").length
 
@@ -513,7 +505,7 @@ export function InstancesPage() {
     <ListWithPanel
       list={list}
       panelTitle="Instance"
-      panel={id ? <InstanceDetail id={id} backup={backup} /> : null}
+      panel={id ? <InstanceDetail id={id} /> : null}
       onClose={() => navigate("/instances")}
     />
   )
@@ -524,11 +516,6 @@ export function InstancesPage() {
  * screen (Overview) and the settings that change once a month sit one click away. Every tab stays mounted, so
  * edits on several tabs survive a switch and one save bar saves them all.
  */
-/** The last backup run comes from the list; the detail does not carry it. */
-type ListBackup =
-  | { state: "loading" | "failed" | "missing" }
-  | { state: "known"; run: { status: string; at: string } | null }
-
 /*
  * In a pane narrower than 52rem a Regular card of four is too narrow for a figure beside its icon, so the
  * icon goes (it only illustrates) and the figure is a size smaller; "128,400" then still fits. On a phone
@@ -544,7 +531,7 @@ const kpisInPane = cn(
 /** What Check now did: the failures and the workflows it read, each null where not chosen. */
 type Refreshed = { poll: { error?: string } | null; map: { error?: string } | null }
 
-function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
+function InstanceDetail({ id }: { id: string }) {
   const navigate = useNavigate()
   const w = useTimeFormat()
   const [tab, show] = usePaneTab("overview")
@@ -740,7 +727,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
               to={`/workflows?instance=${i.id}`}
             />
             <Kpi label="Executions, 30 days" icon={ActivityIcon} value={i.workflowCounts.runs30d} />
-            <LastBackupKpi id={i.id} backup={backup} chosen={i.chosen.includes("backup")} />
+            <LastBackupKpi id={i.id} run={i.lastBackup} chosen={i.chosen.includes("backup")} />
           </Kpis>
           <CapabilitiesPanel instance={i} />
           <Panel>
@@ -916,7 +903,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
         </PaneTabPanel>
 
         <PaneTabPanel value="backups">
-          <LastBackupPanel id={i.id} backup={backup} chosen={i.chosen.includes("backup")} />
+          <LastBackupPanel id={i.id} run={i.lastBackup} chosen={i.chosen.includes("backup")} />
           <InstanceBackupCard
             key={`backup-destinations-${i.id}`}
             instanceId={i.id}
@@ -982,7 +969,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
               The worker could not run n8n's export in the container, because the socket proxy refused it.
             </DialogDescription>
           </DialogHeader>
-          {exportFix && <ProxyFixBlock fix={exportFix} held />}
+          {exportFix && <ProxyFixBlock fix={exportFix} />}
           <DialogFooter>
             <Button variant="primary" onClick={() => setExportFix(null)}>
               Done
@@ -1286,36 +1273,31 @@ function StatusStrip({ instance: i, footer }: { instance: InstanceDetailData; fo
   )
 }
 
+type LastBackup = InstanceRow["lastBackup"]
+
 /**
- * The words for the last backup run; the list may still load, or may have failed. Backup not chosen: off, with an
- * earlier run shown as history only, never as something to fix.
+ * The words for the last backup run. Backup not chosen: off, with an earlier run shown as history only, never as
+ * something to fix.
  */
-function backupWords(backup: ListBackup, chosen: boolean) {
-  if (backup.state === "loading") return { value: "…", tone: undefined, hint: undefined }
-  if (backup.state !== "known") return { value: "Unknown", tone: undefined, hint: "Could not be read" }
-  if (!chosen)
-    return {
-      value: backup.run ? <When value={backup.run.at} /> : "Off",
-      tone: undefined,
-      hint: "Backup is not chosen",
-    }
-  if (!backup.run) return { value: "Never", tone: "fail" as const, hint: "Not backed up" }
-  const s = statusOf("backup", backup.run.status as keyof typeof statusTable.backup)
+function backupWords(run: LastBackup, chosen: boolean) {
+  if (!chosen) return { value: run ? <When value={run.at} /> : "Off", tone: undefined, hint: "Backup is not chosen" }
+  if (!run) return { value: "Never", tone: "fail" as const, hint: "Not backed up" }
+  const s = statusOf("backup", run.status as keyof typeof statusTable.backup)
   const tone = s.tone === "fail" ? ("fail" as const) : s.tone === "warn" ? ("warn" as const) : undefined
-  return { value: <When value={backup.run.at} />, tone, hint: s.label }
+  return { value: <When value={run.at} />, tone, hint: s.label }
 }
 
-type BackupProps = { id: string; backup: ListBackup; chosen: boolean }
+type BackupProps = { id: string; run: LastBackup; chosen: boolean }
 
-function LastBackupKpi({ id, backup, chosen }: BackupProps) {
-  const w = backupWords(backup, chosen)
+function LastBackupKpi({ id, run, chosen }: BackupProps) {
+  const w = backupWords(run, chosen)
   return (
     <Kpi label="Last backup run" icon={ArchiveIcon} value={w.value} tone={w.tone} hint={w.hint} to={`/backups/${id}`} />
   )
 }
 
-function LastBackupPanel({ id, backup, chosen }: BackupProps) {
-  const w = backupWords(backup, chosen)
+function LastBackupPanel({ id, run, chosen }: BackupProps) {
+  const w = backupWords(run, chosen)
   return (
     <Panel>
       <PanelHead

@@ -27,6 +27,7 @@ let database: Database
 let ctx: Ctx
 const alerts = { health: true }
 const minute = 60_000
+const instanceDefaults = { ...defaults.defaults, healthIntervalSec: 3600, backlogThreshold: 100, backlogMinutes: 5 }
 const ago = (ms: number) => new Date(Date.now() - ms)
 
 beforeAll(async () => {
@@ -40,13 +41,9 @@ beforeAll(async () => {
     events: new EventEmitter(),
     log: { info: () => {}, warn: () => {}, error: () => {} },
     settings: {
-      get: async (key: string) => (key === "alerts" ? alerts : { routes: [], defaultThreadId: null }),
-      forInstance: async () => ({
-        ...defaults.defaults,
-        healthIntervalSec: 3600,
-        backlogThreshold: 100,
-        backlogMinutes: 5,
-      }),
+      get: async (key: string) =>
+        key === "alerts" ? alerts : key === "defaults" ? instanceDefaults : { routes: [], defaultThreadId: null },
+      forInstance: async () => instanceDefaults,
     },
   } as unknown as Ctx
 })

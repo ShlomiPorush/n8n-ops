@@ -1,4 +1,3 @@
-import { useQueryClient } from "@tanstack/react-query"
 import { ShieldCheck as ShieldCheckIcon } from "lucide-react"
 import { useRef, useState } from "react"
 import { BusyButton, Command, UserText } from "@/components/kit"
@@ -15,7 +14,7 @@ import {
 } from "@/components/ui/dialog"
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import { ApiError, api, failureText, useApiMutation } from "@/lib/api"
+import { ApiError, api, failureText, refreshAreas, useApiMutation } from "@/lib/api"
 import { toast } from "@/lib/toast"
 
 /*
@@ -70,144 +69,99 @@ const sourceWords = (s: RuleSource) =>
 
 const sentence = (text: string) => `${text.charAt(0).toUpperCase()}${text.slice(1)}.`
 
-/** Why the lines are read again: the allowed containers were saved, or a suggestion was no longer current. */
-type Reread = "saved" | "stale"
-
-const readingText = (why: Reread) =>
-  why === "stale"
-    ? "The suggestion was out of date. Reading the lines again…"
-    : "The allowed containers were saved. Reading the lines again…"
-const failedText = (why: Reread) =>
-  why === "stale"
-    ? "The suggestion was out of date, and the lines could not be read again, so the ones shown before are out of date."
-    : "The allowed containers were saved, but the lines could not be read again, so the ones shown before are out of date."
 const STALE_NOTE = "The suggestion was out of date. These are the lines as they are now."
 const SAVED_NOTE = "Saved. These are the lines as they are now."
 
 /**
- * Says how a re-read of the lines goes, in one live region that stays in place, and takes the keyboard focus when
- * the control that started it is gone. While reading, or after it failed, the out-of-date lines are not shown.
+ * The two lines, Copy, what they allow, and what is not known yet. Shared by the fix and the worker's panel. After the
+ * allowed containers are saved, or a suggestion was out of date, the lines of the server's answer show, until the page
+ * has read its own again. That is said in one live region that stays in place, and takes the keyboard focus, as the
+ * control that was used can be gone.
  */
-function useReread(read: () => Promise<boolean>) {
-  const [phase, setPhase] = useState<{ kind: "reading" | "failed"; why: Reread } | null>(null)
-  const [note, setNote] = useState<string | null>(null)
-  const status = useRef<HTMLDivElement>(null)
-  const run = async (why: Reread) => {
-    setNote(null)
-    setPhase({ kind: "reading", why })
-    const ok = await read().catch(() => false)
-    setPhase(ok ? null : { kind: "failed", why })
-    if (ok) setNote(why === "stale" ? STALE_NOTE : SAVED_NOTE)
-    requestAnimationFrame(() => status.current?.focus())
-  }
-  const region = (
-    <div ref={status} role="status" tabIndex={-1} className="min-w-0 outline-none empty:hidden">
-      {phase?.kind === "reading" && <p>{readingText(phase.why)}</p>}
-      {phase?.kind === "failed" && <p>{failedText(phase.why)}</p>}
-      {!phase && note && <p className="font-semibold">{note}</p>}
-    </div>
-  )
-  const retry = phase?.kind === "failed" && (
-    <BusyButton size="sm" className="justify-self-start" busyLabel="Reading…" run={() => run(phase.why)}>
-      Try again
-    </BusyButton>
-  )
-  return { hidden: phase !== null, run, region, retry }
-}
-
-/** The two lines, Copy, what they allow, and what is not known yet. Shared by the fix and the worker's panel. */
 export function RuleLines({
-  rule,
+  rule: given,
   workerId,
-  recorded,
-  refresh = [],
-  onSaved,
+  recorded: givenRecorded,
+  refresh,
 }: {
   rule: WorkerRule["rule"]
   workerId: string
   recorded: WorkerRule["recorded"]
-  /** Queries to read again once the allowed containers are saved. */
+  /** Queries to read again once the allowed containers are saved; none for a fix held from a failed request. */
   refresh?: string[]
-  /** For a fix held from a failed request: reads its lines again after a save. Says why. */
-  onSaved?: (why?: Reread) => Promise<void>
 }) {
   const [editing, setEditing] = useState(false)
-  const client = useQueryClient()
-  // A page's fix is read again with its queries; a failed read keeps the page's data, so it is said and retried.
-  const reread = useReread(async () => {
-    const keys = ["/workers", "/instances", ...refresh]
-    const started = Date.now()
-    await Promise.all(keys.map((key) => client.invalidateQueries({ queryKey: [key] }, { throwOnError: true })))
-    // Only the queries on the page are fetched again, and only those must have new data. A query paused while
-    // offline resolves without an answer: only data that arrived since counts as read.
-    return keys.every((key) => {
-      const query = client.getQueryCache().find({ queryKey: [key], exact: true })
-      if (!query?.isActive()) return true
-      const state = query.state
-      return state.status === "success" && state.fetchStatus === "idle" && state.dataUpdatedAt >= started
-    })
-  })
-  const after = (why: Reread) => (onSaved ? onSaved(why) : reread.run(why))
+  const status = useRef<HTMLDivElement>(null)
+  const [note, setNote] = useState<string | null>(null)
+  const [answer, setAnswer] = useState<WorkerRule | null>(null)
+  const rule = answer?.rule ?? given
+  const recorded = answer ? answer.recorded : givenRecorded
+  const show = (now: WorkerRule, said: string) => {
+    setAnswer(now)
+    setNote(said)
+    void refreshAreas("/workers", "/instances", ...(refresh ?? [])).then(
+      () => refresh && setAnswer(null),
+      () => {},
+    )
+    requestAnimationFrame(() => status.current?.focus())
+  }
   return (
     <div className="grid min-w-0 gap-3">
-      {reread.region}
-      {reread.retry}
-      {!reread.hidden && (
-        <>
-          <Command value={rule.lines} label="Copy the two lines" />
+      <div ref={status} role="status" tabIndex={-1} className="min-w-0 outline-none empty:hidden">
+        {note && <p className="font-semibold">{note}</p>}
+      </div>
+      <Command value={rule.lines} label="Copy the two lines" />
+      <p>
+        {rule.coverage === "complete"
+          ? "In the worker's docker-compose.yml, replace the -allowGET and -allowPOST lines of the socket proxy with these two, then run docker compose up -d in its folder. The worker keeps its pairing."
+          : "These lines allow what n8n-ops knows of so far. In the worker's docker-compose.yml, replace the -allowGET and -allowPOST lines of the socket proxy with them, then run docker compose up -d in its folder."}
+      </p>
+      {rule.gaps.length > 0 && (
+        <ul className="list-disc ps-5">
+          {rule.gaps.map((g) => (
+            <li key={g}>{sentence(g)}</li>
+          ))}
+        </ul>
+      )}
+      <div className="min-w-0">
+        <p className="font-semibold">The -allowPOST line lets the worker run commands in:</p>
+        <ul className="mt-1 grid gap-0.5">
+          {rule.allows.map((a) => (
+            <li key={`${a.pattern}:${a.name}`} className="min-w-0 break-words">
+              <code dir="ltr" className="font-mono text-small">
+                {a.name}
+              </code>
+              {/* Ink, not muted: it stands on the tint of a warning, where muted text is too faint to read. */}
+              <span>
+                {" "}
+                (
+                {a.regex
+                  ? "by name: any container named so on this host, also ones added later, "
+                  : a.pattern && a.name.includes("*")
+                    ? "pattern, "
+                    : ""}
+                {a.sources.map(sourceWords).join(", ")})
+              </span>
+            </li>
+          ))}
+        </ul>
+      </div>
+      {rule.widened && <WidenedOption widened={rule.widened} workerId={workerId} show={show} />}
+      {recorded === null ? (
+        <div className="grid gap-2">
           <p>
-            {rule.coverage === "complete"
-              ? "In the worker's docker-compose.yml, replace the -allowGET and -allowPOST lines of the socket proxy with these two, then run docker compose up -d in its folder. The worker keeps its pairing."
-              : "These lines allow what n8n-ops knows of so far. In the worker's docker-compose.yml, replace the -allowGET and -allowPOST lines of the socket proxy with them, then run docker compose up -d in its folder."}
+            The containers this worker's proxy allows were not recorded when it was added. Replacing your lines with
+            these removes anything else they allow, such as a pattern for containers added later. To keep such patterns,
+            record them for this worker; the lines then include them.
           </p>
-          {rule.gaps.length > 0 && (
-            <ul className="list-disc ps-5">
-              {rule.gaps.map((g) => (
-                <li key={g}>{sentence(g)}</li>
-              ))}
-            </ul>
-          )}
-          <div className="min-w-0">
-            <p className="font-semibold">The -allowPOST line lets the worker run commands in:</p>
-            <ul className="mt-1 grid gap-0.5">
-              {rule.allows.map((a) => (
-                <li key={`${a.pattern}:${a.name}`} className="min-w-0 break-words">
-                  <code dir="ltr" className="font-mono text-small">
-                    {a.name}
-                  </code>
-                  {/* Ink, not muted: it stands on the tint of a warning, where muted text is too faint to read. */}
-                  <span>
-                    {" "}
-                    (
-                    {a.regex
-                      ? "by name: any container named so on this host, also ones added later, "
-                      : a.pattern && a.name.includes("*")
-                        ? "pattern, "
-                        : ""}
-                    {a.sources.map(sourceWords).join(", ")})
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </div>
-          {rule.widened && <WidenedOption widened={rule.widened} workerId={workerId} after={after} />}
-          {recorded === null ? (
-            <div className="grid gap-2">
-              <p>
-                The containers this worker's proxy allows were not recorded when it was added. Replacing your lines with
-                these removes anything else they allow, such as a pattern for containers added later. To keep such
-                patterns, record them for this worker; the lines then include them.
-              </p>
-              <Button size="sm" className="justify-self-start" onClick={() => setEditing(true)}>
-                <ShieldCheckIcon /> Record allowed containers
-              </Button>
-            </div>
-          ) : (
-            <Button size="sm" className="justify-self-start" onClick={() => setEditing(true)}>
-              <ShieldCheckIcon /> Change allowed containers
-            </Button>
-          )}
-        </>
+          <Button size="sm" className="justify-self-start" onClick={() => setEditing(true)}>
+            <ShieldCheckIcon /> Record allowed containers
+          </Button>
+        </div>
+      ) : (
+        <Button size="sm" className="justify-self-start" onClick={() => setEditing(true)}>
+          <ShieldCheckIcon /> Change allowed containers
+        </Button>
       )}
       {/* Mounted on each opening, so it starts from the lines as they are now. */}
       {editing && (
@@ -216,8 +170,7 @@ export function RuleLines({
           onOpenChange={setEditing}
           workerId={workerId}
           prefill={rule.allows.filter((a) => !a.computed).map((a) => a.name)}
-          refresh={refresh}
-          onSaved={onSaved ? () => onSaved("saved") : undefined}
+          onSaved={(now) => show(now, SAVED_NOTE)}
         />
       )}
     </div>
@@ -227,16 +180,16 @@ export function RuleLines({
 /**
  * The lines with a pattern for queue workers added later, offered beside the exact ones: what each pattern allows,
  * Copy, and a button that records the patterns so the lines n8n-ops shows from then on keep them. A suggestion the
- * lines no longer make (the server answers 409) is read again, never recorded.
+ * lines no longer make is never recorded: the server answers 409 with the lines as they are now.
  */
 function WidenedOption({
   widened,
   workerId,
-  after,
+  show,
 }: {
   widened: NonNullable<WorkerRule["rule"]["widened"]>
   workerId: string
-  after: (why: Reread) => Promise<void>
+  show: (now: WorkerRule, said: string) => void
 }) {
   const many = widened.patterns.length > 1
   return (
@@ -272,18 +225,19 @@ function WidenedOption({
         className="justify-self-start"
         busyLabel="Recording…"
         run={async () => {
+          let saved: { proxy: WorkerRule }
           try {
-            await api(`/workers/${workerId}/allowed/patterns`, {
+            saved = await api(`/workers/${workerId}/allowed/patterns`, {
               method: "POST",
               json: { patterns: widened.patterns.map((p) => p.pattern) },
             })
           } catch (error) {
-            if (error instanceof ApiError && error.status === 409) return after("stale")
-            toast.error(failureText(many ? "record the patterns" : "record the pattern", error))
+            if (error instanceof ApiError && error.status === 409) show(error.body?.proxy as WorkerRule, STALE_NOTE)
+            else toast.error(failureText(many ? "record the patterns" : "record the pattern", error))
             throw error
           }
           toast.success(many ? "Patterns recorded" : "Pattern recorded")
-          await after("saved")
+          show(saved.proxy, SAVED_NOTE)
         }}
       >
         <ShieldCheckIcon /> {many ? "Record these patterns" : "Record this pattern"}
@@ -294,37 +248,17 @@ function WidenedOption({
 
 /**
  * Where the socket proxy refused something: what it refused, and the lines that allow it. A fix read with the page
- * (`refresh`) is read again after the allowed containers are saved. A fix `held` from a failed request (an export,
- * a move) cannot be: after a save here the worker's lines are read again before the dialog closes, and until they
- * are, the old lines are not offered to copy.
+ * names the queries to read again after the allowed containers are saved (`refresh`); one held from a failed request
+ * (an export, a move) has none.
  */
-export function ProxyFixBlock({ fix, refresh, held }: { fix: ProxyFix; refresh?: string[]; held?: boolean }) {
-  const [saved, setSaved] = useState<WorkerRule | null>(null)
-  const rule = saved?.rule ?? fix.rule
-  const recorded = saved ? saved.recorded : fix.recorded
-  const reread = useReread(async () => {
-    const list = await api<{ id: string; proxy: WorkerRule }[]>("/workers")
-    const now = list.find((w) => w.id === fix.worker.id)?.proxy
-    if (now) setSaved(now)
-    return Boolean(now)
-  })
+export function ProxyFixBlock({ fix, refresh }: { fix: ProxyFix; refresh?: string[] }) {
   return (
     <Alert variant="warn">
       <AlertTitle>
         The socket proxy on <UserText>{fix.worker.name}</UserText> refuses {fix.refused.join(", ")}
       </AlertTitle>
       <AlertDescription className="grid min-w-0 gap-3">
-        {reread.region}
-        {reread.retry}
-        {!reread.hidden && (
-          <RuleLines
-            rule={rule}
-            workerId={fix.worker.id}
-            recorded={recorded}
-            refresh={refresh}
-            onSaved={held ? (why) => reread.run(why ?? "saved") : undefined}
-          />
-        )}
+        <RuleLines rule={fix.rule} workerId={fix.worker.id} recorded={fix.recorded} refresh={refresh} />
         {fix.update && (
           <div className="grid gap-1.5">
             <p>
@@ -345,20 +279,18 @@ export function AllowedDialog({
   onOpenChange,
   workerId,
   prefill,
-  refresh = [],
   onSaved,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   workerId: string
   prefill: string[]
-  refresh?: string[]
-  onSaved?: () => Promise<void>
+  /** The worker's lines as they are after the save. */
+  onSaved: (now: WorkerRule) => void
 }) {
   const fits = prefill.length <= ALLOWED_MAX
   const [text, setText] = useState(() => (fits ? prefill.join(", ") : ""))
-  const save = useApiMutation<{ containers: string[] }>("PUT", `/workers/${workerId}/allowed`, {
-    invalidate: ["/workers", "/instances", ...refresh],
+  const save = useApiMutation<{ containers: string[] }, { proxy: WorkerRule }>("PUT", `/workers/${workerId}/allowed`, {
     success: "Allowed containers recorded",
     failed: "record the allowed containers",
   })
@@ -394,8 +326,8 @@ export function AllowedDialog({
             disabled={list.length === 0}
             busyLabel="Saving…"
             run={async () => {
-              await save.mutateAsync({ containers: list })
-              await onSaved?.()
+              const { proxy } = await save.mutateAsync({ containers: list })
+              onSaved(proxy)
               onOpenChange(false)
             }}
           >

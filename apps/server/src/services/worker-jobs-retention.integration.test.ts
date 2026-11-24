@@ -6,7 +6,7 @@ import postgres from "postgres"
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest"
 import type { Ctx } from "../context.ts"
 import { createDatabase, type Database } from "../db/client.ts"
-import { instances, type JobKind, type JobStatus, workerJobs, workers } from "../db/schema.ts"
+import { type JobKind, type JobStatus, workerJobs, workers } from "../db/schema.ts"
 import { createSettings } from "../lib/settings.ts"
 import { FINISHED_JOB_KEEP_MS, pruneWorkerJobs } from "./worker-presence.ts"
 
@@ -43,7 +43,6 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await ctx.db.delete(workerJobs)
-  await ctx.db.delete(instances)
   await ctx.db.delete(workers)
   const [w] = await ctx.db
     .insert(workers)
@@ -104,21 +103,6 @@ describe("pruning worker jobs", () => {
     // Run again: nothing more goes.
     await pruneWorkerJobs(ctx, NOW)
     expect(await labels()).toHaveLength(7)
-  })
-
-  it("keeps the job a running worker setup check reads, and not one a finished check once pointed at", async () => {
-    const pointed = await job("setup running", "probe", "failed", t(cutoff - MIN))
-    const done = await job("setup done", "probe", "done", t(cutoff - MIN))
-    const check = (jobId: string, status: "running" | "done") => ({
-      worker: { attempt: 1, startedAt: t(cutoff - 2 * MIN).toISOString(), inputs: "x", status, workerId, jobId },
-    })
-    await ctx.db.insert(instances).values([
-      { name: "acme", baseUrl: "https://acme.example.com", setupChecks: check(pointed.id, "running") },
-      { name: "beta", baseUrl: "https://beta.example.com", setupChecks: check(done.id, "done") },
-    ])
-
-    await pruneWorkerJobs(ctx, NOW)
-    expect(await labels()).toEqual(["setup running"])
   })
 
   it("deletes more than one batch in one run", async () => {

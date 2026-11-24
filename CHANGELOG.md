@@ -7,6 +7,7 @@ All notable changes to this project are documented here. The format follows [Kee
 ### Changed
 
 - **From a version before 0.8.0, upgrade to 0.19.3 first.** The first start of 0.8.0 to 0.19.4 regrouped the problems recorded before 0.8.0 by cause; this version no longer does. `regroup-dry-run` of the server's command line went with it. Links to problems regrouped then still show where their workflows went, and the buttons of Telegram messages from before still do nothing.
+- **Update Workers from before 0.4.0.** What a socket proxy refused is read only from what Workers of 0.4.0 and later report, no longer from the error texts of earlier ones.
 
 ### Removed
 
@@ -19,6 +20,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - **Show JSON no longer stays on "Reading the archive" when Download JSON is chosen meanwhile.**
 - **A mute that ended counts as open everywhere.** Needs attention and the Telegram messages still took a problem as muted until the hourly housekeeping turned it back; the lists and counts already showed it as open. The server now ends mutes every 5 seconds, so they show it as open too.
 - **A report is sent once while an update replaces the server.** The old and the new server run together for a short time then, and when a daily or weekly report came due, both could send it. This holds from the update after this one, since both servers must have it.
+- **The lines for a Worker's socket proxy are never the old ones after a save.** The server answers with the new lines when allowed containers are recorded or a suggestion was out of date. In the setup of an instance, "Saved. These are the lines as they are now." could stand above the old lines.
+- **The setup page shows how a Worker check ended also on a computer whose clock is ahead.**
 
 ## [0.19.4] - 2026-11-24
 

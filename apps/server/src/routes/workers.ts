@@ -77,6 +77,7 @@ export function workerRoutes(ctx: Ctx) {
   /**
    * Records the containers the worker's socket proxy allows now, as the owner set them (Add worker validation).
    * Changes only what n8n-ops shows; the proxy itself is changed by the owner. What was entered in Add worker stays.
+   * Answers with the worker's lines as they are now.
    */
   app.put("/:id/allowed", async (c) => {
     const body = allowedBody.safeParse(await c.req.json().catch(() => ({})))
@@ -85,14 +86,15 @@ export function workerRoutes(ctx: Ctx) {
       return c.json({ error: "invalid", message, issues: body.error.issues }, 400)
     }
     const containers = [...new Set(body.data.containers)]
-    const saved = await ctx.db.transaction(async (tx) => {
+    const proxy = await ctx.db.transaction(async (tx) => {
       const [before] = await tx
         .select()
         .from(workers)
         .where(and(eq(workers.id, c.req.param("id")), isNull(workers.revokedAt)))
         .for("update")
       if (!before) return null
-      await tx.update(workers).set({ allowed: { containers } }).where(eq(workers.id, before.id))
+      const allowed = { containers }
+      await tx.update(workers).set({ allowed }).where(eq(workers.id, before.id))
       await ctx.audit(
         {
           actor: actorName(c.get("actor")),
@@ -103,10 +105,10 @@ export function workerRoutes(ctx: Ctx) {
         },
         tx,
       )
-      return before
+      return workerRule(ctx, { ...before, allowed }, tx)
     })
-    if (!saved) return c.json({ error: "not_found" }, 404)
-    return c.json({ ok: true })
+    if (!proxy) return c.json({ error: "not_found" }, 404)
+    return c.json({ ok: true, proxy })
   })
 
   /**
@@ -122,9 +124,12 @@ export function workerRoutes(ctx: Ctx) {
     const outcome = await recordPatterns(ctx, c.req.param("id"), body.data.patterns, actorName(c.get("actor")))
     if (outcome.status === 404) return c.json({ error: "not_found" }, 404)
     if (outcome.status === 409)
-      return c.json({ error: "stale", message: "The suggestion is out of date; the lines were read again." }, 409)
+      return c.json(
+        { error: "stale", message: "The suggestion is out of date; the lines were read again.", proxy: outcome.proxy },
+        409,
+      )
     if (outcome.status === 400) return c.json({ error: "invalid", message: outcome.message }, 400)
-    return c.json({ ok: true })
+    return c.json({ ok: true, proxy: outcome.proxy })
   })
 
   app.post("/pairing", async (c) => {

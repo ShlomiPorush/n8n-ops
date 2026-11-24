@@ -34,7 +34,7 @@ import {
   readsInside,
   unsupportedVersion,
 } from "./instances.ts"
-import { jobProxyFix, refusalInError } from "./proxy-fix.ts"
+import { jobProxyFix } from "./proxy-fix.ts"
 import { zonedParts } from "./reports.ts"
 import { removeSpool, reserve, spoolDir, writeSpool } from "./spool.ts"
 import { enqueueJob, pendingJobs } from "./workers.ts"
@@ -709,7 +709,7 @@ export async function recentRuns(ctx: Ctx, instanceId: string | null, limit = 30
  */
 async function runFix(ctx: Ctx, run: typeof backupRuns.$inferSelect) {
   if (run.status !== "failed" || !run.instanceId) return {}
-  const refused = (run.refusal as Refusal | null) ?? refusalInError(run.error)
+  const refused = run.refusal as Refusal | null
   if (!refused) return {}
   const [job] = await ctx.db
     .select({ workerId: workerJobs.workerId, payload: workerJobs.payload })

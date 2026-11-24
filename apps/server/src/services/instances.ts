@@ -68,9 +68,6 @@ export async function testKey(baseUrl: string, apiKey: string, client = new N8nC
   }
 }
 
-/** The turn an instance's health reports, its version writes and its changes take, one at a time. */
-export const healthTurn = (instanceId: string) => `health:${instanceId}`
-
 /**
  * Whether the version comes from the worker reading inside: health is collected that way now, and the last report
  * had one. With health off no report comes, so the one stored is history and the version is read over the network.
@@ -218,11 +215,11 @@ async function refreshInstanceMetaNow(ctx: Ctx, id: string): Promise<Instance | 
   ])
   if (version) {
     // Only a version actually read, only while collection is as it was when the read started, and not once the
-    // worker has reported one from inside meanwhile: decided in the instance's turn with its health reports.
-    await oneAtATime(healthTurn(instance.id), async () => {
-      const [now] = await ctx.db.select().from(instances).where(eq(instances.id, instance.id))
+    // worker has reported one from inside meanwhile: decided on the locked row.
+    await ctx.db.transaction(async (tx) => {
+      const [now] = await tx.select().from(instances).where(eq(instances.id, instance.id)).for("update")
       if (!now || now.collectionRevision !== instance.collectionRevision || versionFromInside(now)) return
-      await ctx.db.update(instances).set({ version }).where(eq(instances.id, instance.id))
+      await tx.update(instances).set({ version }).where(eq(instances.id, instance.id))
     })
   }
   const before = new Set(effectiveScopes(instance))

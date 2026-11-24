@@ -130,7 +130,6 @@ const CLOSED: Record<string, string> = {
   "POST /api/instances/:id{[0-9a-fA-F-]{36}}/setup/backup": PEOPLE,
   "POST /api/instances/:id{[0-9a-fA-F-]{36}}/setup/health": PEOPLE,
   "POST /api/instances/:id{[0-9a-fA-F-]{36}}/setup/worker": PEOPLE,
-  "POST /api/instances/test": PEOPLE,
   "POST /api/problems/:id/merge": PEOPLE,
   "POST /api/problems/:id/mute": PEOPLE,
   "POST /api/problems/:id/reopen": PEOPLE,

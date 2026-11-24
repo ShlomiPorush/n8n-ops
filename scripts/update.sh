@@ -112,6 +112,7 @@ interrupted() {
     if record "$rolling"; then
       err "Interrupted while rolling $rolling. It now runs: $(tr '\n' ' ' <<<"$images")Check its containers with docker compose ps $rolling, and remove one you do not want with docker rm -f <container>."
     else
+      # Left out of rolled, restore would put the old VERSION back while the new release may run.
       rolled+=("$rolling")
       err "Interrupted while rolling $rolling, and Docker did not say what runs now. .env has VERSION=$version; check with: docker compose ps $rolling"
     fi

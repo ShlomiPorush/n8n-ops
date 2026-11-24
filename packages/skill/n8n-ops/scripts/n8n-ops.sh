@@ -119,10 +119,9 @@ revision_ok() {
 }
 
 json_scan() {
+  # Without tr an awk that stops at NUL would take a broken answer for complete JSON.
   tr '\000' '\001' <"$2" | LC_ALL=C awk -v mode="$1" -v key="${3:-}" '
 function hexv(c) { return index("0123456789abcdef", tolower(c)) - 1 }
-# A string as JSON.parse reads it, for comparing: an escape of printable ASCII becomes its character; any other
-# stays \u and four hex digits, which no value compared here holds.
 function unesc(s,   out, i, c, n, v) {
   out = ""; n = length(s)
   for (i = 1; i <= n; i++) {
@@ -143,7 +142,6 @@ function unesc(s,   out, i, c, n, v) {
   }
   return out
 }
-# A value starts in the open container at depth: kind s (string), l (number or literal), { or [.
 function assign(kind, v,   k) {
   k = cur[depth]
   if (depth == 1 && typ[1] == "{") {
@@ -151,7 +149,6 @@ function assign(kind, v,   k) {
     if (mode == "failed" && k == "success") succ = (kind == "l" && v == "false")
     if (mode == "failed" && k == "status") stat = (kind == "s" && v == "error")
     if (mode == "kinds" && k == "revision") { seenrev = (kind == "s"); rev = v }
-    # Only the last list counts: the rows of an earlier one are dropped.
     if (mode == "kinds" && k == "endpoints") { list = (kind == "["); rows = "" }
   } else if (mode == "kinds" && depth == 3 && typ[3] == "{" && typ[2] == "[" && ckey[2] == "endpoints") {
     if (k == "method") em = (kind == "s") ? v : ""
@@ -162,7 +159,6 @@ function assign(kind, v,   k) {
 function ended() { state = (depth > 0) ? "x" : "e" }
 { text = text $0 "\n" }
 END {
-  # States: v a value, f a value or ], k a key, K a key or }, c a colon, x a comma or the close, e the end.
   n = length(text); i = 1; depth = 0; state = "v"; bad = 0
   succ = 0; stat = 0; topv = ""; list = 0; rows = ""; seenrev = 0; rev = ""
   while (i <= n) {
@@ -180,7 +176,6 @@ END {
           if (d == "u" && substr(text, j + 2, 4) ~ /^[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]$/) { j += 6; continue }
           break
         }
-        # A control character, which JSON writes only as an escape.
         if (d < " ") break
         j++
       }
@@ -228,7 +223,6 @@ END {
     if (c == "}" || c == "]") {
       if (c == "}" && state != "K" && !(state == "x" && typ[depth] == "{")) { bad = 1; break }
       if (c == "]" && state != "f" && !(state == "x" && typ[depth] == "[")) { bad = 1; break }
-      # Anything but an explicit read counts as an act.
       if (mode == "kinds" && depth == 3 && typ[3] == "{" && typ[2] == "[" && ckey[2] == "endpoints" && em != "" && ep != "")
         rows = rows em " " ep " " (ek == "read" ? "read" : "act") "\n"
       depth--; i++; ended(); continue
@@ -371,7 +365,6 @@ NR == 1 {
     while (len < 4 && hv(substr(s, p, 1)) >= 0) { value = value * 16 + hv(substr(s, p, 1)); p++; len++ }
     c = substr(s, p, 1)
     if (c == ".") {
-      # A dotted IPv4 end: four decimal numbers of 0 to 255 without leading zeros, as the last two groups.
       if (len == 0 || piece > 6) exit 1
       p -= len; seen = 0
       while (p <= n) {
@@ -643,6 +636,7 @@ break_lock() {
     rm -f "$moved"
     return 0
   fi
+  # A rename here would replace a newer holder's lock.
   ln "$moved" "$LOCK" 2>/dev/null || :
   rm -f "$moved"
   return 1

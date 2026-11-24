@@ -13,8 +13,6 @@ const done = () => {
   process.exit(0)
 }
 setTimeout(() => { out.notCollected = "the check in __WHERE__ did not finish within 8 s"; done() }, 8000).unref()
-// As @n8n/config reads settings: a variable that is set wins even when empty; otherwise <NAME>_FILE, trimmed.
-// A file that cannot be read makes the setting unknown here (n8n would not start), never its default.
 function raw(name) {
   if (name in env) return { value: env[name] }
   const file = env[name + "_FILE"]
@@ -45,8 +43,6 @@ function choice(name, options, fallback) {
   const r = text(name, fallback)
   return r.unknown ? r : { value: options.includes(r.value) ? r.value : fallback }
 }
-// Each request is timed on its own, from sending it until its whole answer arrived; a request that got no whole
-// answer has no time.
 function get(target, path, max) {
   return new Promise((resolve) => {
     const lib = target.tls ? https : http
@@ -77,7 +73,6 @@ const status = (r) => (r.error
   : { status: r.status, ms: r.ms })
 const escape = (s) => s.replace(/[.*+?^$(){}|[\]\\]/g, "\\$&")
 const loopback = (a) => (a === "::" || a === "" ? "::1" : a === "0.0.0.0" ? "127.0.0.1" : a)
-// n8n adds a leading slash and keeps a trailing one: readiness is the health path followed by /readiness.
 const slashed = (p) => (p.startsWith("/") ? p : "/" + p)
 `
 
@@ -96,7 +91,6 @@ const needed = [["N8N_LISTEN_ADDRESS", address], ["N8N_PORT", port], ["N8N_ENDPO
 if (protocol.value === "https") needed.push(["N8N_SSL_KEY", sslKey], ["N8N_SSL_CERT", sslCert])
 const unknown = needed.filter((s) => s[1].unknown).map((s) => s[0])
 if (unknown.length) { out.notCollected = "cannot read " + unknown.join(", ") + " in the main"; done() }
-// HTTPS exactly when n8n serves it: https with a key and a certificate. Only whether they are set is used.
 const tls = protocol.value === "https" && Boolean(sslKey.value) && Boolean(sslCert.value)
 const health = slashed(healthPath.value)
 const main = { host: loopback(address.value), port: port.value, tls: tls }
@@ -105,7 +99,6 @@ const main = { host: loopback(address.value), port: port.value, tls: tls }
   out.health = status(h)
   out.readiness = status(r)
   out.mode = mode.unknown ? null : mode.value
-  // With a metrics URL the owner typed, the queue figures come from there; the version is still read here.
   const typed = process.argv.includes("typed-metrics")
   if (metricsOn.unknown) out.metrics = { state: "failed", reason: "cannot read N8N_METRICS" }
   else if (prefix.unknown) out.metrics = { state: "failed", reason: "cannot read N8N_METRICS_PREFIX" }
@@ -116,8 +109,6 @@ const main = { host: loopback(address.value), port: port.value, tls: tls }
     else if (m.status === 404) out.metrics = { state: "404" }
     else if (m.status !== 200) out.metrics = { state: "failed", reason: "HTTP " + m.status }
     else {
-      // Each sample within its own line, as the shared parser reads it, so a parse takes time in proportion to the
-      // text; only the prefix is the configured one here.
       const p = escape(prefix.value)
       const labels = ${JSON.stringify(METRIC_LABELS)}
       const gap = ${JSON.stringify(METRIC_GAP)}
@@ -144,17 +135,12 @@ const main = { host: loopback(address.value), port: port.value, tls: tls }
 `}`
 
 export const READERS = String.raw`
-/** n8n's version, from the package of the official image. */
 function versionOf(read) {
   try {
     const v = JSON.parse(read("/usr/local/lib/node_modules/n8n/package.json")).version
     return typeof v === "string" && /^(?=.{5,40}$)[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}([-+.][0-9A-Za-z.+-]*)?$/.test(v) ? v : undefined
   } catch (e) { return undefined }
 }
-/**
- * How long the container has run: since PID 1 started, when PID 1 is the container's init or n8n and belongs to
- * this container (its groups are this process's; a PID namespace shared with another container fails that).
- */
 function uptimeOf(read) {
   try {
     if (read("/proc/1/cgroup") !== read("/proc/self/cgroup")) return undefined
@@ -163,17 +149,12 @@ function uptimeOf(read) {
     if (open < 0 || close < open) return undefined
     const comm = stat.slice(open + 1, close)
     if (!["tini", "docker-init", "dumb-init", "node", "n8n"].includes(comm)) return undefined
-    // Fields after the command, from field 3 on: the start time is field 22, in ticks of USER_HZ (100).
     const start = Number(stat.slice(close + 2).split(" ")[19])
     const up = Number(read("/proc/uptime").split(" ")[0])
     const sec = Math.floor(up - start / 100)
     return Number.isFinite(sec) && sec >= 0 ? sec : undefined
   } catch (e) { return undefined }
 }
-/**
- * The container's memory use and limit, from the memory group in /proc/self/cgroup (the v1 memory controller when
- * there is one, else v2), found through the cgroup mount in /proc/self/mountinfo. Limit null: none set on the group.
- */
 function memoryOf(read) {
   try {
     const lines = read("/proc/self/cgroup").split("\n")
@@ -190,7 +171,6 @@ function memoryOf(read) {
       const parts = line.trim().split(" ")
       const dash = parts.indexOf("-")
       if (dash < 0 || parts.length < dash + 4) continue
-      // Spaces, tabs, new lines and backslashes in mountinfo paths are written as octal escapes (\040).
       const plain = (p) => p.replace(/\\([0-7]{3})/g, (_, o) => String.fromCharCode(parseInt(o, 8)))
       const root = plain(parts[3]), point = plain(parts[4]), type = parts[dash + 1], options = parts[dash + 3].split(",")
       if (v === 1 ? !(type === "cgroup" && options.includes("memory")) : type !== "cgroup2") continue
@@ -211,7 +191,6 @@ function memoryOf(read) {
 `
 
 export const WORKER_CHECK = `${PRELUDE.replace("__WHERE__", "the worker")}${READERS}${String.raw`
-// About the worker itself: figures only, each left out when it cannot be read for sure.
 try {
   const read = (path) => fs.readFileSync(path, "utf8")
   const limit = raw("N8N_CONCURRENCY_PRODUCTION_LIMIT")
@@ -220,7 +199,6 @@ try {
     version: versionOf(read),
     uptimeSec: uptimeOf(read),
     memory: memoryOf(read),
-    // n8n reads it as a number; blank or not a number is its default, -1: then the flag or 10 decide.
     concurrencyEnv: limit.unknown ? "unknown" : n === undefined || isNaN(n) || n === -1 ? "absent" : n,
   }
 } catch (e) {}

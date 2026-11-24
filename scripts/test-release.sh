@@ -24,7 +24,6 @@ check() {
 mkdir -p "$WORK/bin"
 cat >"$WORK/bin/docker" <<'EOF'
 #!/usr/bin/env bash
-# Registry stand-in: one file per image tag, holding the commit it was built from.
 key() { printf '%s' "$1" | tr '/:' '__'; }
 echo "docker $*" >>"$STATE/calls"
 [ "$1" = info ] && exit 0
@@ -34,7 +33,6 @@ if [ "$1 $2" = "imagetools inspect" ]; then
   [ -n "${MOCK_REGISTRY_DOWN:-}" ] && { echo "ERROR: unauthorized: authentication required" >&2; exit 1; }
   f="$STATE/images/$(key "$3")"
   [ -f "$f" ] || { echo "ERROR: $3: not found" >&2; exit 1; }
-  # Indented, as docker prints it.
   printf '{\n  "architecture": "amd64",\n  "config": {\n    "Labels": {\n      "org.opencontainers.image.revision": "%s"\n    }\n  }\n}\n' "$(cat "$f")"
   exit 0
 fi
@@ -55,7 +53,6 @@ if [ "$1" = build ]; then
   done
   case "$ref" in *"${MOCK_FAIL_BUILD:-no-such-image}"*) echo "push failed" >&2; exit 1 ;; esac
   printf '%s' "$rev" >"$STATE/images/$(key "$ref")"
-  # The build arguments each image got, for the cases that check how the version goes in.
   printf '%s' "$args" >"$STATE/buildargs/$(key "$ref")"
   exit 0
 fi
@@ -64,7 +61,6 @@ exit 2
 EOF
 cat >"$WORK/bin/gh" <<'EOF'
 #!/usr/bin/env bash
-# GitHub Releases stand-in: one file per release, holding its title and notes.
 echo "gh $*" >>"$STATE/calls"
 [ "$1" = release ] || exit 2
 case "$2" in

@@ -181,6 +181,7 @@ publish_env_file() {
   tmp="$(mktemp "$dir/.$name.XXXXXX")" || die "could not write in $dir"
   chmod 0600 "$tmp"
   printf '%s\n' "$content" >"$tmp"
+  # mv would replace secrets that another run has just published.
   ln "$tmp" "$dir/$name" 2>/dev/null || true
   rm -f "$tmp"
   [ -f "$dir/$name" ] || die "could not write $dir/$name"

@@ -531,6 +531,7 @@ async function breakLock(ctx, held) {
     fs.rmSync(moved, { force: true })
     return true
   }
+  // A rename here would replace a newer holder's lock.
   try {
     fs.linkSync(moved, ctx.lock)
   } catch {}

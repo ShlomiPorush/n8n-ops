@@ -16,7 +16,6 @@ export function Toaster() {
   const item = useCurrentToast()
   const ref = useRef<HTMLDivElement>(null)
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: only a new toast takes the keyboard over
   useLayoutEffect(() => {
     if (item?.takeFocus)
       ref.current?.querySelector<HTMLElement>("[data-toast-action], [data-toast-close]")?.focus({ preventScroll: true })

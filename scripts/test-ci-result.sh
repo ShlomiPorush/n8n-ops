@@ -25,9 +25,6 @@ check() {
 mkdir -p "$WORK/bin"
 cat >"$WORK/bin/gh" <<'EOF'
 #!/usr/bin/env bash
-# GitHub API stand-in: answers from $STATE/api/<key>.<n> for the n-th call of that key, else
-# $STATE/api/<key>, else 404. MOCK_GH_SLOW=S moves the clock S seconds per call; MOCK_GH_HANG=KEY
-# answers that key only after 30 real seconds.
 echo "gh $*" >>"$STATE/calls"
 [ "$1" = api ] && [ $# -eq 2 ] || { echo "unexpected gh $*" >&2; exit 2; }
 [ -n "${MOCK_GH_DOWN:-}" ] && { echo "HTTP 502: Bad Gateway" >&2; exit 1; }
@@ -38,7 +35,6 @@ case "$2" in
   *) echo "unexpected gh api $2" >&2; exit 2 ;;
 esac
 [ -n "${MOCK_GH_SLOW:-}" ] && echo $(($(cat "$STATE/clock") + MOCK_GH_SLOW)) >"$STATE/clock"
-# A hung call answers as usual after 30 seconds, so only the time limit makes it fail.
 [ "${MOCK_GH_HANG:-}" = "$key" ] && PATH=/usr/bin:/bin sleep 30 </dev/null >/dev/null 2>&1
 n=$(($(cat "$STATE/count.$key" 2>/dev/null || echo 0) + 1))
 echo "$n" >"$STATE/count.$key"

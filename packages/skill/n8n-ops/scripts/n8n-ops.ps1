@@ -606,6 +606,7 @@ function Invoke-Http($ctx, [string]$method, [string]$url, $form, [string]$bearer
         $left = $timeoutMs - [int]$clock.ElapsedMilliseconds
         if ($left -le 0) { throw 'the connection timed out' }
         $tcp.ReceiveTimeout = $left; $tcp.SendTimeout = $left
+        # A fixed version here would refuse servers that offer only another; None is the system's choice.
         $handshake = $ssl.AuthenticateAsClientAsync($u.DnsSafeHost, $null, [Security.Authentication.SslProtocols]::None, $true)
         if (-not $handshake.Wait($left)) { $tcp.Close(); throw 'the TLS handshake timed out' }
         $stream = $ssl

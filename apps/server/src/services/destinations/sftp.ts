@@ -97,6 +97,7 @@ export function sftpStore(location: SftpLocation, credentials: SftpCredentials):
     const handle = await call<Buffer>((cb) => sftp.open(path, "r", cb))
     try {
       const { size } = await call<{ size: number }>((cb) => sftp.fstat(handle, cb))
+      // A rejected read that nobody awaits yet would crash the server.
       type Read = Promise<{ chunk: Buffer } | { error: Error }>
       const reads: Read[] = []
       let next = 0

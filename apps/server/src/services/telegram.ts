@@ -141,6 +141,7 @@ export class TelegramHtml {
 export const html = (strings: TemplateStringsArray, ...values: unknown[]) => TelegramHtml.template(strings, values)
 
 export function telegramPlainText(html: TelegramHtml | string) {
+  // With a single pass, CodeQL reports incomplete multi-character sanitization here.
   let text = String(html)
   for (let previous = ""; text !== previous; ) {
     previous = text

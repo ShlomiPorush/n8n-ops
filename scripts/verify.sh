@@ -121,7 +121,6 @@ run_guards() {
       echo "Hebrew text is not allowed in tracked files:"; echo "$hebrew"; fail=1
     fi
 
-    # Env files are tracked only as examples; the stacks generate the real ones with new secrets (AGENTS.md, Secrets).
     env_files="$(git ls-files -co --exclude-standard | grep -E "(^|/)(\.env[^/]*|[^/]*\.env)$" | grep -vE "\.example$" || true)"
     if [ -n "$env_files" ]; then
       echo "Env files may be tracked only as *.example, with empty or placeholder values:"; echo "$env_files"; fail=1
@@ -146,7 +145,6 @@ run_guards() {
     bash scripts/test-discover.sh || fail=1
     bash scripts/test-try-pr.sh || fail=1
 
-    # Scripts inside the images run with plain POSIX sh.
     mapfile -t image_scripts < <(git ls-files -co --exclude-standard "docker/*.sh")
     shellcheck -s sh "${image_scripts[@]}" || fail=1
     shfmt -d -ln posix -i 2 -ci "${image_scripts[@]}" || { echo "Run: shfmt -w -ln posix -i 2 -ci docker/*.sh"; fail=1; }
@@ -154,7 +152,6 @@ run_guards() {
       [ "$mode" = 100755 ] || { echo "$path is not executable"; fail=1; }
     done < <(git ls-files -s "docker/*.sh")
 
-    # The shell versions of the agent skill run with plain POSIX sh.
     skill=(packages/skill/n8n-ops/scripts/n8n-ops packages/skill/n8n-ops/scripts/n8n-ops.sh)
     shellcheck -s sh "${skill[@]}" || fail=1
     shfmt -d -ln posix -i 2 -ci "${skill[@]}" || { echo "Run: shfmt -w -ln posix -i 2 -ci ${skill[*]}"; fail=1; }
@@ -169,6 +166,7 @@ run_guards() {
 run_checks() {
   local filter=()
   if [ -n "$CHANGED_BASE" ]; then
+    # The root package's scripts would build apps/web a second time, at once, into the same dist.
     filter=(--filter "...[$CHANGED_BASE]" --filter "!n8n-ops")
     # grep -q would end its producer with SIGPIPE, which pipefail turns into no match.
     if printf '%s\n' "${files[@]}" | grep '^packages/skill/' >/dev/null; then
@@ -419,9 +417,6 @@ run_queue_checks() {
     stack exec -T -u node worker node -e '
       const r = JSON.parse(process.argv[1]); const w = (r.workers || [])[0] || {};
       console.log("    main " + r.source + " " + r.mode + ", list " + (r.discovery || {}).status + ", worker " + w.name + ": " + w.state);
-      // When the worker is ready the whole instance is: the main up and ready, and the queue figures read.
-      // A ready worker also has its figures: the version of the main, the time its container is up, the n8n default
-      // of 10 jobs at once (no flag, no variable here), and memory in use when it can be read on this host.
       const figures = w.version === r.version && w.uptimeSec > 0 && w.concurrency && w.concurrency.value === 10 &&
         w.concurrency.from === "default" && (!w.memory || w.memory.used > 0);
       const whole = process.argv[2] !== "ready" || (r.main.ok && r.readiness.ok && r.queue !== null && figures);

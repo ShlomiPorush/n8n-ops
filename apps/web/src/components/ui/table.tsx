@@ -304,7 +304,6 @@ export function useSort<T>(
     if (server) return list
     const column = state && columns[state.key]
     return sortRows(list, state && column ? { value: column.value, dir: state.dir } : null, rankOf)
-    // biome-ignore lint/correctness/useExhaustiveDependencies: columns and rank are declared inline by each page
   }, [list, state, server])
   const first = (column: SortColumn<T>): SortDir => (kindOf(list, column) === "text" ? "ascending" : "descending")
   return {

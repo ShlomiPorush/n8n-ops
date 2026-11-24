@@ -48,7 +48,6 @@ env_of() {
 mkdir -p "$WORK/bin"
 cat >"$WORK/bin/docker" <<'EOF'
 #!/usr/bin/env bash
-# docker stand-in: containers are the directories under $FIXTURES.
 set +x
 case "$1" in
   version | system | network) exit 0 ;;
@@ -63,7 +62,6 @@ esac
 fmt="$3"
 dir="$FIXTURES/$4"
 [ -d "$dir" ] || { echo "Error: No such object: $4" >&2; exit 1; }
-# The list as a JSON array, as {{json .Config.X}} renders it.
 array() {
   [ -f "$dir/$1" ] || { printf null; return; }
   local items=() line
@@ -76,7 +74,6 @@ elements() {
   [ -f "$dir/cmd" ] && cat "$dir/cmd" && [ -s "$dir/cmd" ] && echo
   return 0
 }
-# The environment one JSON string per line, escaping what these fixtures hold.
 variables() {
   local v
   while IFS= read -r -d '' v; do
@@ -88,7 +85,6 @@ variables() {
     printf '"%s"\n' "$v"
   done <"$dir/env"
 }
-# answer LIST: the lines of LIST, as the container's mode says.
 answer() {
   case "$(cat "$dir/mode" 2>/dev/null)" in
     fail-partial) "$1" | head -n 1; exit 1 ;;

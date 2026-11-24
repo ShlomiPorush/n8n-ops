@@ -23,6 +23,7 @@ export function telegramWebhookRoutes(ctx: Ctx) {
     } catch (error) {
       ctx.log.error("telegram callback failed", { error: (error as Error).message })
     }
+    // Any other status would make Telegram send this update again.
     return c.json({ ok: true })
   })
   return app

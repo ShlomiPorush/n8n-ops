@@ -208,6 +208,7 @@ export function TopicRoutes({
         <Button
           id={id}
           onClick={() => write([...rows, blank])}
+          // With disabled, the search could not bring the focus here when the list is full.
           aria-disabled={rows.length >= maxRoutes || undefined}
           title={rows.length >= maxRoutes ? `Up to ${maxRoutes} routes` : undefined}
         >

@@ -25,7 +25,6 @@ check() {
 mkdir -p "$WORK/bin"
 cat >"$WORK/bin/docker" <<'EOF'
 #!/usr/bin/env bash
-# Docker stand-in: answers what the checks ask from files in $STATE.
 echo "docker $*" >>"$STATE/calls"
 case "$1" in
   info) exit 0 ;;
@@ -50,7 +49,6 @@ case "$1" in
     [ "${*: -1}" = label=com.docker.compose.service=socket-proxy ] && { echo proxy-id; exit 0; }
     ;;
   inspect)
-    # With MOCK_INSPECT_FAIL the answer is printed, and the command still fails.
     [ "${*: -1}" = proxy-id ] && { cat "$STATE/running-proxy"; [ -z "${MOCK_INSPECT_FAIL:-}" ]; exit; }
     ;;
   container)
@@ -66,7 +64,6 @@ exit 2
 EOF
 cat >"$WORK/bin/gh" <<'EOF'
 #!/usr/bin/env bash
-# gh stand-in: the pull request record, as gh prints it with the --jq the script passes.
 echo "gh $*" >>"$STATE/calls"
 [ -n "${MOCK_GH_FAIL:-}" ] && { echo "HTTP 404: Not Found" >&2; exit 1; }
 cat "$STATE/pr-record"

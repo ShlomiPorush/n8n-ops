@@ -15,6 +15,7 @@ export function whenDrawn<T extends Element>(find: () => T | null, then: (el: T)
 
 export function flash(el: HTMLElement) {
   el.classList.remove("search-flash")
+  // Without this read the ring does not start again on an element that was ringed before.
   void el.offsetWidth
   el.classList.add("search-flash")
 }

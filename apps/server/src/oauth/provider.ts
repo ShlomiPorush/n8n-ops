@@ -170,6 +170,7 @@ export function createAgentProvider({ issuer, adapter, cookieKeys, pages }: Agen
     },
   }
   const provider = new Provider(issuer, configuration)
+  // Without it the provider sees http behind the TLS proxy and cannot set its Secure cookies.
   provider.proxy = issuer.startsWith("https://")
   return provider
 }

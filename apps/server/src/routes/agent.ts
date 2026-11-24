@@ -222,6 +222,7 @@ export function restRoutes(ctx: Ctx) {
   const tokenOf = (c: Context<Env>) => (c.get("actor") as TokenActor).id
   const accessError = (e: unknown) => {
     if (!(e instanceof AccessError)) throw e
+    // 429 busy would tell the skill that no route ran, and a 5xx that the outcome is unknown.
     const status =
       e.code === "not_found"
         ? 404

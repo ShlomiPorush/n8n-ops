@@ -1,5 +1,5 @@
-// Container health check: healthy only after a recent successful contact with the server.
-import { DEFAULT_HEARTBEAT_FILE, isFresh, readLastContact } from "./heartbeat.ts"
+// Container health check: healthy while the Worker process keeps marking itself alive, whether or not it reaches the
+// server (that is the Worker's online status in n8n-ops).
+import { ALIVE_FILE, isFresh, readLastAlive } from "./alive.ts"
 
-const last = await readLastContact(process.env.HEARTBEAT_FILE ?? DEFAULT_HEARTBEAT_FILE)
-process.exit(isFresh(last, Date.now()) ? 0 : 1)
+process.exit(isFresh(await readLastAlive(ALIVE_FILE), Date.now()) ? 0 : 1)

@@ -157,8 +157,6 @@ export type HeartbeatsOptions = {
   send: (identity: string, body: HeartbeatBody, signal: AbortSignal) => Promise<Response>
   failures: CallFailures
   docker: { take(): DockerTaken | null }
-  /** Writes the heartbeat file the container health check reads. */
-  contact: () => Promise<void>
   log: Log
   /** Monotonic milliseconds. */
   now?: () => number
@@ -197,7 +195,6 @@ export class Heartbeats {
   private rtt: { ms: number; at: number } | null = null
   /** The condition last logged, so each is logged once until it changes. */
   private said: string | null = null
-  private fileFailing = false
 
   constructor(private readonly options: HeartbeatsOptions) {
     this.bootId = options.bootId ?? randomBytes(16).toString("base64url")
@@ -284,13 +281,11 @@ export class Heartbeats {
     if (status >= 200 && status < 300) {
       if (this.pending === built) this.pending = null
       this.rtt = { ms, at: this.now() }
-      await this.contact()
       this.recovered()
       return HEARTBEAT_INTERVAL_MS
     }
     if (status === 429) {
       // Sent too soon after the last one the server took: the same body goes again at the next tick.
-      await this.contact()
       this.recovered()
       return HEARTBEAT_INTERVAL_MS
     }
@@ -356,17 +351,6 @@ export class Heartbeats {
         }
     }
     return body
-  }
-
-  /** Writes the heartbeat file; a file that cannot be written only makes the container look unhealthy. */
-  private async contact(): Promise<void> {
-    try {
-      await this.options.contact()
-      this.fileFailing = false
-    } catch (error) {
-      if (!this.fileFailing) this.options.log("cannot write the heartbeat file", { error: (error as Error).message })
-      this.fileFailing = true
-    }
   }
 
   private recovered(): void {

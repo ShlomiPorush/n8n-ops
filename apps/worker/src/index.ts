@@ -1,7 +1,7 @@
 import { readFile, rm } from "node:fs/promises"
 import { HEARTBEAT_FEATURE } from "@n8n-ops/shared"
 import { Docker } from "./docker.ts"
-import { DEFAULT_HEARTBEAT_FILE, recordContact } from "./heartbeat.ts"
+import { ALIVE_FILE, keepAlive } from "./alive.ts"
 import { CallFailures, DockerChecks, Heartbeats } from "./heartbeat-loop.ts"
 import { backupJob, exportCredentialsJob, type Job, type JobResult, probeJob } from "./jobs.ts"
 import { Pairing } from "./pairing.ts"
@@ -18,7 +18,6 @@ const version = readVersion()
 const dataDir = process.env.WORKER_DATA_DIR ?? "/data"
 const identityFile = `${dataDir}/identity.json`
 const pairingFile = process.env.PAIRING_TOKEN_FILE ?? `${dataDir}/pairing-token`
-const heartbeatFile = process.env.HEARTBEAT_FILE ?? DEFAULT_HEARTBEAT_FILE
 const docker = new Docker(process.env.DOCKER_HOST || process.env.DOCKER_SOCKET || "/var/run/docker.sock")
 const log = (msg: string, extra: Record<string, unknown> = {}) => console.log(JSON.stringify({ msg, ...extra }))
 
@@ -43,7 +42,6 @@ const heartbeats = new Heartbeats({
     }),
   failures,
   docker: dockerChecks,
-  contact: () => recordContact(heartbeatFile),
   log,
 })
 
@@ -116,6 +114,7 @@ async function handle(identity: string, job: Job): Promise<JobResult> {
 
 async function main() {
   log("n8n-ops worker starting", { version, server: serverUrl })
+  keepAlive(ALIVE_FILE, log)
   // Both run on timers of their own, so a long job or a stuck Docker call never holds them up.
   dockerChecks.start()
   let identity = await loadIdentity()
@@ -124,9 +123,7 @@ async function main() {
   for (;;) {
     try {
       if (!identity) {
-        // Unpaired: keep proving the server is reachable, and pair as soon as a token is provided.
-        const live = await fetch(url("/healthz/live"), { signal: AbortSignal.timeout(10_000) })
-        if (live.ok) await recordContact(heartbeatFile)
+        // Unpaired: pair as soon as a token is provided.
         const token = await pairingToken()
         identity = await pairing.attempt(token)
         // The token is spent now; a file that cannot be removed (a read-only mount) does no harm.
@@ -138,7 +135,6 @@ async function main() {
       const { job } = await api<{ job: Job | null }>(identity, "GET", "/jobs/next")
       // The server took this identity, so a heartbeat stopped by a 401 may resume.
       heartbeats.use(identity)
-      await recordContact(heartbeatFile)
       if (!job) {
         await sleep(5_000)
         continue

@@ -16,6 +16,7 @@ import {
   enqueueAlert,
   enqueueProblemAlert,
   handleTelegramCallback,
+  problemAlertSettings,
   sendTestTelegram,
 } from "./alerts.ts"
 import { mergeProblems, splitAffectedWorkflow } from "./problems.ts"
@@ -201,8 +202,8 @@ async function setup(
       .where(eq(alertOutbox.status, "pending"))
     await dispatchAlerts(ctx)
   }
-  const enqueue = (p: typeof affectedWorkflows.$inferSelect, reason: "new" | "joined" | "regression" = "new") =>
-    enqueueProblemAlert(ctx, d.db, p, reason)
+  const enqueue = async (p: typeof affectedWorkflows.$inferSelect, reason: "new" | "joined" | "regression" = "new") =>
+    enqueueProblemAlert(ctx, d.db, p, reason, await problemAlertSettings(ctx))
   return { ctx, db: d.db, a, b, problem, enqueue, warnings, dispatch }
 }
 
@@ -313,6 +314,7 @@ describe("Telegram forum topics", () => {
 
     await t.enqueue(await t.problem(t.a.id, "Import leads"))
     await t.dispatch()
+    await t.dispatch()
     expect(first).toBeDefined()
     expect(bot.edits()).toHaveLength(1)
     const again = bot.sends()[1]
@@ -343,6 +345,25 @@ describe("Telegram forum topics", () => {
     ])
   })
 
+  it("tries an edit that failed again, and leaves the message as it is until then", async () => {
+    const t = await setup({ defaultThreadId: 7 })
+    await t.enqueue(await t.problem(t.a.id, "Sync orders"))
+    await t.dispatch()
+    await t.enqueue(await t.problem(t.a.id, "Import leads"))
+    bot.failNextCalls(1)
+    await t.dispatch()
+    const [group] = await t.db.select().from(alertGroups)
+    expect(group?.closedAt).toBeNull()
+    const pending = await t.db.select().from(alertOutbox).where(eq(alertOutbox.status, "pending"))
+    expect(pending.map((r) => r.attempts)).toEqual([1])
+
+    await t.dispatch()
+    expect(bot.sends()).toHaveLength(1)
+    const shown = String(bot.applied.at(-1)?.body.text)
+    expect(shown).toContain("Sync orders")
+    expect(shown).toContain("Import leads")
+  })
+
   it("leaves other failures to the usual retry instead of falling back", async () => {
     const t = await setup({ defaultThreadId: 5 })
     await enqueueAlert(t.ctx, "health", html`alpha is down`, { instanceId: t.a.id })
@@ -362,6 +383,7 @@ describe("Telegram forum topics", () => {
 
     await t.enqueue(await t.problem(t.a.id, "Import leads"))
     bot.failNextSends(1)
+    await t.dispatch()
     await t.dispatch()
     // Its problem waits in the queue again, with the new one.
     const pending = await t.db.select().from(alertOutbox).where(eq(alertOutbox.status, "pending"))

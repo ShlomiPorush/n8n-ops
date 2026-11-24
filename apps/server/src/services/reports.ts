@@ -302,9 +302,12 @@ export async function maybeSendReports(ctx: Ctx, now = new Date()) {
   if (email.weeklyEnabled && local.weekday === email.weeklyDay && local.time >= email.weeklyTime) due.push("weekly")
   for (const period of due) {
     const key = `report:${period}:${local.date}`
-    const [sent] = await ctx.db.select().from(alertState).where(eq(alertState.key, key))
-    if (sent) continue
-    await ctx.db.insert(alertState).values({ key, active: false, detail: "sent" }).onConflictDoNothing()
+    const [claimed] = await ctx.db
+      .insert(alertState)
+      .values({ key, active: false, detail: "sent" })
+      .onConflictDoNothing()
+      .returning({ key: alertState.key })
+    if (!claimed) continue
     try {
       await sendEmail(ctx, await buildReport(ctx, period, now))
       ctx.log.info("report sent", { period })

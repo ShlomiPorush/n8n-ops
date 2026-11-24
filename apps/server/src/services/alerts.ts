@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, inArray, isNull, lt, lte } from "drizzle-orm"
+import { and, asc, desc, eq, gt, inArray, isNull, lt, lte, sql } from "drizzle-orm"
 import { type Ctx, changed } from "../context.ts"
 import {
   type AlertKind,
@@ -10,6 +10,7 @@ import {
   problems,
   workflows,
 } from "../db/schema.ts"
+import { oneAtATime } from "../lib/one-at-a-time.ts"
 import type { Section } from "../lib/settings.ts"
 import { type AlertSubject, resolveThread, sendRouted, topicGoneNote } from "./alert-routing.ts"
 import { causeFields } from "./cause.ts"
@@ -63,9 +64,8 @@ export async function enqueueProblemAlert(
   tx: DbLike,
   row: AffectedRow,
   reason: ProblemAlertReason,
-  settings?: ProblemAlertSettings,
+  { alerts, telegram }: ProblemAlertSettings,
 ) {
-  const { alerts, telegram } = settings ?? (await problemAlertSettings(ctx))
   if (reason !== "regression" && !alerts.newProblem) return
   if (reason === "regression" && !alerts.regression) return
   const thread = resolveThread(telegram, await problemSubject(tx, telegram, row), (pattern) =>
@@ -73,7 +73,6 @@ export async function enqueueProblemAlert(
   )
   await tx.insert(alertOutbox).values({
     kind: "problem",
-    groupKey: row.errorMessage,
     affectedWorkflowId: row.id,
     threadId: thread,
     text: reason,
@@ -220,22 +219,12 @@ export type GroupLine = {
 const groupNote = (group: Pick<GroupRow, "threadId" | "fellBack">) =>
   group.fellBack && group.threadId !== null ? topicGoneNote(group.threadId) : undefined
 
-const groupLocks = new Map<string, Promise<unknown>>()
-
 /**
- * Runs one change of a group's message at a time, so a button press and a dispatch that adds problems never edit
- * from stale reads (the last edit would drop the other's change). Each reads the group again inside. One server
- * process, as supported.
+ * Changes of a group's message run one at a time in this process under this key, so a button press and a dispatch that
+ * adds problems never edit from stale reads (the last edit would drop the other's change). Each reads the group again
+ * inside.
  */
-function withGroup<T>(groupId: string, fn: () => Promise<T>): Promise<T> {
-  const run = (groupLocks.get(groupId) ?? Promise.resolve()).catch(() => undefined).then(fn)
-  const tail = run.catch(() => undefined)
-  groupLocks.set(groupId, tail)
-  void tail.then(() => {
-    if (groupLocks.get(groupId) === tail) groupLocks.delete(groupId)
-  })
-  return run
-}
+const groupTurn = (groupId: string) => `alert-group:${groupId}`
 
 /**
  * Text of a Problem's message. `spread` is set on a later message of a Problem that already had one: it lists only
@@ -429,7 +418,7 @@ export async function dispatchAlerts(ctx: Ctx) {
     ctx.log.warn("Telegram topic not found; the alert went to General", { threadId })
 
   for (const { problemId, rows } of groups.values()) {
-    const ids = rows.map((r) => r.id)
+    let ids = rows.map((r) => r.id)
     const threadId = rows[0]?.threadId ?? null
     try {
       const [problem] = await ctx.db.select().from(problems).where(eq(problems.id, problemId))
@@ -457,9 +446,9 @@ export async function dispatchAlerts(ctx: Ctx) {
         .orderBy(desc(alertGroups.createdAt))
         .limit(1)
       if (recent && settings.editWindowMin > 0) {
-        const outcome = await withGroup(recent.id, async () => {
+        const handled = await oneAtATime(groupTurn(recent.id), async () => {
           const [current] = await ctx.db.select().from(alertGroups).where(eq(alertGroups.id, recent.id))
-          if (!current || current.closedAt) return { merged: false as const }
+          if (!current || current.closedAt) return false
           const kept = await stillIn(ctx, problemId, current.affectedWorkflowIds)
           // Read again after the wait: a workflow split away meanwhile goes out with its own Problem later.
           newIds = await stillIn(ctx, problemId, newIds)
@@ -482,51 +471,35 @@ export async function dispatchAlerts(ctx: Ctx) {
           } catch (error) {
             if (!isMessageGone(error)) throw error
             // The message is gone (deleted with its topic). Its workflows are queued again and the group closed in one
-            // step, so they go out with these in the next message, however late a failed send makes it.
-            const carried = kept.filter((id) => !newIds.includes(id))
-            const queued = await ctx.db.transaction(async (tx) => {
+            // step, so the next dispatch sends them with these, which stay queued, however late a failed send makes it.
+            const again = kept.filter((id) => !newIds.includes(id))
+            await ctx.db.transaction(async (tx) => {
               await tx.update(alertGroups).set({ closedAt: new Date() }).where(eq(alertGroups.id, current.id))
-              if (!carried.length) return []
-              return tx
-                .insert(alertOutbox)
-                .values(
-                  carried.map((affectedWorkflowId) => ({
-                    kind: "problem" as const,
-                    groupKey: problem.errorMessage,
-                    affectedWorkflowId,
-                    threadId,
-                    text: "again",
-                  })),
-                )
-                .returning({ id: alertOutbox.id })
+              if (!again.length) return
+              await tx.insert(alertOutbox).values(
+                again.map((affectedWorkflowId) => ({
+                  kind: "problem" as const,
+                  affectedWorkflowId,
+                  threadId,
+                  text: "again",
+                })),
+              )
             })
-            return { merged: false as const, carry: all, queued: queued.map((q) => q.id) }
+            return true
           }
           await ctx.db.update(alertGroups).set({ affectedWorkflowIds: all }).where(eq(alertGroups.id, current.id))
           await ctx.db
             .update(alertOutbox)
             .set({ status: "merged", sentAt: new Date(), telegramMessageId: current.telegramMessageId })
             .where(inArray(alertOutbox.id, idsOf(newIds)))
-          return { merged: true as const }
+          return true
         })
-        if (outcome.merged) continue
-        if (outcome.carry) {
-          newIds = outcome.carry
-          ids.push(...(outcome.queued ?? []))
-        }
+        if (handled) continue
       }
       // A Problem that had a message before gets a short one: only these workflows, and how many it is in now.
-      const carried = ids.filter((id) => !rows.some((r) => r.id === id))
       newIds = await stillIn(ctx, problemId, newIds)
-      const carriedRows = carried.length
-        ? await ctx.db
-            .select({ id: alertOutbox.id, affectedWorkflowId: alertOutbox.affectedWorkflowId })
-            .from(alertOutbox)
-            .where(inArray(alertOutbox.id, carried))
-        : []
-      const kept = carriedRows.filter((r) => r.affectedWorkflowId && newIds.includes(r.affectedWorkflowId))
-      ids.splice(0, ids.length, ...idsOf(newIds), ...kept.map((r) => r.id))
       if (!newIds.length) continue
+      ids = idsOf(newIds)
       const spread = await spreadOf(ctx, problemId)
       const lines = await groupLines(ctx, newIds)
       const [group] = await ctx.db
@@ -582,20 +555,14 @@ export async function dispatchAlerts(ctx: Ctx) {
 
 async function markRetry(ctx: Ctx, ids: string[], error: unknown, retryMin: number) {
   const wait = error instanceof TelegramError && error.retryAfter ? error.retryAfter * 1000 : retryMin * 60_000
-  for (const id of ids) {
-    const [row] = await ctx.db
-      .select({ attempts: alertOutbox.attempts })
-      .from(alertOutbox)
-      .where(eq(alertOutbox.id, id))
-    await ctx.db
-      .update(alertOutbox)
-      .set({
-        attempts: (row?.attempts ?? 0) + 1,
-        lastError: (error as Error).message,
-        sendAfter: new Date(Date.now() + wait),
-      })
-      .where(eq(alertOutbox.id, id))
-  }
+  await ctx.db
+    .update(alertOutbox)
+    .set({
+      attempts: sql`${alertOutbox.attempts} + 1`,
+      lastError: (error as Error).message,
+      sendAfter: new Date(Date.now() + wait),
+    })
+    .where(inArray(alertOutbox.id, ids))
   ctx.log.warn("alert delivery failed, will retry", { error: (error as Error).message, retryInMs: wait })
 }
 
@@ -635,7 +602,7 @@ export async function handleTelegramCallback(ctx: Ctx, update: CallbackUpdate): 
   )
   if (!known?.problemId || known.beforeRegroup) return true
   const { problemId } = known
-  return withGroup(groupId, async () => {
+  return oneAtATime(groupTurn(groupId), async () => {
     const [group] = await ctx.db.select().from(alertGroups).where(eq(alertGroups.id, groupId))
     if (!group) return true
     const who = cb.from?.username ? `@${cb.from.username}` : (cb.from?.first_name ?? "someone")

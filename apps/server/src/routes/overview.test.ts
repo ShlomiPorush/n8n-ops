@@ -74,15 +74,6 @@ describe("Needs attention put together", () => {
   it("has no tone when nothing needs a look", () => {
     expect(combine([["workers", { items: [], total: 0, tone: null }]])).toMatchObject({ total: 0, tone: null })
   })
-
-  it("never says fewer than no problems are left out", () => {
-    // A count that fell behind its rows (they were read apart before) must not make another source's count smaller.
-    const a = combine([
-      ["problems", { items: [problem("p1", 1), problem("p2", 2)], total: 1, tone: "fail" }],
-      ["workers", { items: [worker("w1", 5)], total: 1, tone: "warn" }],
-    ])
-    expect(a.moreProblems).toBe(0)
-  })
 })
 
 describe("Needs attention read from its sources", () => {

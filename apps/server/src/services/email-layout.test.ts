@@ -3,11 +3,9 @@ import nodemailer from "nodemailer"
 import { describe, expect, it } from "vitest"
 import { renderAccessEmail } from "./access-notify.ts"
 import {
-  banner,
   button,
   formatDate,
   kv,
-  link,
   mono,
   panel,
   panelText,
@@ -34,7 +32,6 @@ describe("email layout", () => {
           count: hostile,
           note: hostile,
         }),
-        banner("fail", hostile, hostile),
         stats([{ label: hostile, value: hostile, note: hostile }]),
         paragraph(hostile),
         tag(hostile),
@@ -50,8 +47,7 @@ describe("email layout", () => {
   })
 
   it("links only http and https addresses", () => {
-    expect(link("Open", "javascript:alert(1)").html).not.toContain("<a ")
-    expect(link("Open", "https://ops.example.com/access/1").html).toContain('href="https://ops.example.com/access/1"')
+    expect(button("Open", "https://ops.example.com/access/1").html).toContain('href="https://ops.example.com/access/1"')
     expect(button("Approve or deny", "data:text/html,x").html).toBe("")
   })
 
@@ -132,8 +128,6 @@ describe("email in Outlook's dark mode", () => {
     expect(html).toContain('filled="f" strokecolor="#C42B1C"')
     expect(html).not.toContain("fillcolor")
     expect(style).toContain(".m-fail { color: #FF6B61 !important; border-color: #FF6B61 !important; }")
-    // A banner keeps its tint: it stays readable in Outlook's dark mode.
-    expect(banner("warn", "w").html).toContain('bgcolor="#F2EAD9"')
   })
 
   it("declares left to right on the outer tables, which Outlook on the web keeps", () => {
@@ -145,9 +139,8 @@ describe("email in Outlook's dark mode", () => {
     )
   })
 
-  it("keeps links the client makes in the text colour, and its own links as they are", () => {
+  it("keeps links the client makes in the text colour, and its own button as it is", () => {
     expect(style).toContain(".m-bg a { color: inherit !important; text-decoration: none !important; }")
-    expect(link("Open", "https://ops.example.com/x").html).toContain("text-decoration:underline !important;")
     // The button's link inherits its colour from the cell, which the dark theme switches.
     expect(html).toContain(
       '<td class="m-mark" bgcolor="#141414" style="padding:10px 18px;background-color:#141414;border-radius:8px;color:#FFFFFF;">',

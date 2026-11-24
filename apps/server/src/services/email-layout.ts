@@ -16,13 +16,13 @@ import { type DateWriting, formatDay, formatStamp, messageWriting } from "@n8n-o
  *
  * The email declares its direction on the outer tables as well: Outlook on the web drops the dir of <html> and
  * <body>, and would show it right to left under a Hebrew interface. Clients turn dates into links of their own;
- * every link takes the colour of its text, and the links this module makes carry their underline inline.
+ * every link takes the colour of its text.
  *
  * Outlook for Windows draws email with Word, which ignores padding and margins outside table cells, rounded
  * corners, max-width and font fallbacks. So every gap is cell padding or a spacer row, divider lines are 1px
- * rows, the email is wrapped in a 600px table for Outlook, and a block never relies on margins. Panels,
- * banners and cards stay square there: a VML shape that grows with its content does not push the next block
- * down, so blocks overlap. Only the topic tag, which has a fixed size, gets a rounded VML shape.
+ * rows, the email is wrapped in a 600px table for Outlook, and a block never relies on margins. Panels and
+ * cards stay square there: a VML shape that grows with its content does not push the next block down, so
+ * blocks overlap. Only the topic tag, which has a fixed size, gets a rounded VML shape.
  *
  * Every value passed to a block is escaped. Only the output of another block (a Safe string) is inserted as
  * markup, so callers never escape by hand:
@@ -67,20 +67,18 @@ const LINE = "#E0E0E0"
 /** The dark tile of the mark and the button. */
 const SOLID = "#141414"
 
-/** Each tone's colour and its banner tint: the colour at 13 to 15% over white, as color-mix() gives in the
- * console; email clients cannot mix colours. A banner's tint stays readable in Outlook's dark mode. */
-const TONES: Record<Tone, [string, string]> = {
-  ok: ["#12803F", "#E0F0E6"],
-  warn: ["#9A6200", "#F2EAD9"],
-  fail: ["#C42B1C", "#F8E0DE"],
-  info: ["#1F5FBF", "#E0E9F6"],
-  muted: ["#5E6863", "#EEEEEE"],
+const TONES: Record<Tone, string> = {
+  ok: "#12803F",
+  warn: "#9A6200",
+  fail: "#C42B1C",
+  info: "#1F5FBF",
+  muted: "#5E6863",
 }
 const tone = (t?: Tone | null) => TONES[t ?? "muted"] ?? TONES.muted
 const CLASS_COLORS: Record<string, string> = {
   "m-ink": INK,
   "m-muted": MUTED,
-  ...Object.fromEntries(Object.entries(TONES).map(([t, [c]]) => [`m-${t}`, c])),
+  ...Object.fromEntries(Object.entries(TONES).map(([t, c]) => [`m-${t}`, c])),
 }
 
 // Runs of the characters an address is made of. The text can come from outside (workflow names, error
@@ -142,18 +140,16 @@ const DARK_CSS = `
   .m-line { border-color: #333333 !important; }
   .m-rule { background-color: #333333 !important; }
   .m-mark { background-color: #E0E0E0 !important; color: #141414 !important; }
-  .m-ok { color: #3FCF7F !important; border-color: #3FCF7F !important; } .m-ok-bg { background-color: #1A3325 !important; }
-  .m-warn { color: #F0B03F !important; border-color: #F0B03F !important; } .m-warn-bg { background-color: #3A2F1A !important; }
-  .m-fail { color: #FF6B61 !important; border-color: #FF6B61 !important; } .m-fail-bg { background-color: #3D2220 !important; }
-  .m-info { color: #7DB3FF !important; border-color: #7DB3FF !important; } .m-info-bg { background-color: #1E2C40 !important; }
-  .m-muted-bg { background-color: #2A2A2A !important; }
+  .m-ok { color: #3FCF7F !important; border-color: #3FCF7F !important; }
+  .m-warn { color: #F0B03F !important; border-color: #F0B03F !important; }
+  .m-fail { color: #FF6B61 !important; border-color: #FF6B61 !important; }
+  .m-info { color: #7DB3FF !important; border-color: #7DB3FF !important; }
 }
 [data-ogsb] .m-bg { background-color: #FFFFFF !important; }
 [data-ogsb] .m-panel { background-color: #202020 !important; }
 [data-ogsb] .m-line { border-color: #333333 !important; }
 [data-ogsb] .m-rule { background-color: #333333 !important; }
 [data-ogsb] .m-mark { background-color: #333333 !important; color: #FFFFFF !important; }
-[data-ogsb] .m-muted-bg { background-color: #2A2A2A !important; }
 @media (max-width: 620px) {
   .m-wrap { padding: 24px 16px !important; }
   .m-h1 { font-size: 26px !important; }
@@ -184,7 +180,7 @@ const rule = (colspan = 1) =>
 /** An outlined tag: no fill, a 1px border and the text in the tone colour. A light tinted fill turns into a
  * muddy chip in Outlook's dark mode; an outline keeps its colour. */
 function tagHtml(text: string, t: Tone, roundedInOutlook: boolean): string {
-  const [color] = tone(t)
+  const color = tone(t)
   const cell =
     `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="display:inline-table;vertical-align:middle;">` +
     `<tr><td class="m-${t} m-b" style="padding:1px 7px;border:1px solid ${color};border-radius:6px;color:${color};font-size:12px;font-weight:700;line-height:1.4;white-space:nowrap;">` +
@@ -205,12 +201,6 @@ function tagHtml(text: string, t: Tone, roundedInOutlook: boolean): string {
 /** A small status label, as in the console. A table cell, so Word keeps its padding. */
 export const tag = (text: string, t: Tone = "muted") => new Safe(tagHtml(text, t, false))
 
-export function strong(text: Text, t?: Tone): Safe {
-  const color = t ? tone(t)[0] : INK
-  const cls = t ? `m-${t}` : "m-ink"
-  return new Safe(`<b class="${cls} m-b" style="color:${color};font-weight:650;">${e(text, cls)}</b>`)
-}
-
 /**
  * Technical values (IDs, scopes, keys). Long values without spaces may break anywhere instead of widening
  * the email; Word cannot break them at all, so maxLength shortens them in the middle.
@@ -227,17 +217,8 @@ export function mono(value: Text, maxLength?: number): Safe {
   )
 }
 
-/** A link; only http(s) addresses become links, anything else stays text (OT-17). */
-export function link(text: Text, url: string | null | undefined): Safe {
-  if (!url || !/^https?:\/\//i.test(url)) return new Safe(e(text))
-  // The underline is inline and important: the rule that keeps client-made links plain reaches this link too.
-  return new Safe(
-    `<a href="${attr(url)}" class="m-ink" style="color:${INK};text-decoration:underline !important;">${e(text)}</a>`,
-  )
-}
-
 /** The one call to action of an email: a dark button that works in Outlook as a padded cell. The cell holds the
- * text colour, which the link inherits, so the dark theme switches both. */
+ * text colour, which the link inherits, so the dark theme switches both. Only http(s) addresses become links (OT-17). */
 export function button(text: string, url: string | null | undefined): Safe {
   if (!url || !/^https?:\/\//i.test(url)) return new Safe("")
   return new Safe(
@@ -252,22 +233,6 @@ export function paragraph(text: Text, muted = false): Safe {
   const [color, cls] = muted ? [MUTED, "m-muted"] : [INK, "m-ink"]
   return new Safe(
     `<p class="${cls}" style="margin:0;color:${color};font-size:15px;line-height:1.55;">${lines(text, cls)}</p>`,
-  )
-}
-
-/** A tinted message across the full width, as a console banner. */
-export function banner(t: Tone, title: Text, text?: Text): Safe {
-  const [color, tint] = tone(t)
-  const body = text
-    ? `<tr><td class="m-ink" style="padding:3px 16px 0;color:${INK};font-size:14px;line-height:1.5;">${lines(text)}</td></tr>`
-    : ""
-  return new Safe(
-    `<table ${TABLE} class="m-${t}-bg" bgcolor="${tint}" style="background-color:${tint};border-radius:12px;">` +
-      spacer(13) +
-      `<tr><td class="m-${t} m-b" style="padding:0 16px;color:${color};font-size:14px;font-weight:700;line-height:1.4;">${lines(title, `m-${t}`)}</td></tr>` +
-      body +
-      spacer(13) +
-      `</table>`,
   )
 }
 
@@ -289,7 +254,7 @@ export function stats(items: Stat[], perRow = 3): Safe {
         cells.push(`<td width="${width}%">&nbsp;</td>`)
         continue
       }
-      const color = item.tone ? tone(item.tone)[0] : INK
+      const color = item.tone ? tone(item.tone) : INK
       const vcls = item.tone ? `m-${item.tone}` : "m-ink"
       const note = item.note
         ? `<br><span class="m-muted" style="color:${MUTED};font-size:12px;line-height:1.4;">${e(item.note, "m-muted")}</span>`
@@ -311,7 +276,7 @@ export function stats(items: Stat[], perRow = 3): Safe {
 /** Label on the left, value on the right, a line between rows. */
 export function kv(rows: [label: string, value: Text, tone?: Tone][]): Safe {
   const out = rows.map(([label, value, t]) => {
-    const color = t ? tone(t)[0] : INK
+    const color = t ? tone(t) : INK
     const vcls = t ? `m-${t}` : "m-ink"
     // Markup such as a tag must not sit inside <b>: Word then reports the table as corrupt.
     const shown = value instanceof Safe ? value.html : `<b style="font-weight:650;">${lines(value, vcls)}</b>`
@@ -422,7 +387,7 @@ export type Email = { subject: string; text: string; html: string }
  * - title: the headline, a sentence that says what happened
  * - topic: what kind of email this is, shown as a tag above the title
  * - intro: one or two sentences under the title
- * - blocks: output of panel(), banner(), stats(), paragraph(), button()
+ * - blocks: output of panel(), stats(), paragraph(), button()
  * - footer: why the reader gets this email and where to change it
  */
 export function render({

@@ -18,6 +18,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - **The Move and Restore dialogs always open empty.** An answer that came after a dialog was closed, such as a late review, no longer shows in the next one, and a check of one restore no longer changes the details of another. The Move dialog stays open while a move runs, so its result is always shown.
 - **Show JSON no longer stays on "Reading the archive" when Download JSON is chosen meanwhile.**
 - **A mute that ended counts as open everywhere.** Needs attention and the Telegram messages still took a problem as muted until the hourly housekeeping turned it back; the lists and counts already showed it as open. The server now ends mutes every 5 seconds, so they show it as open too.
+- **A report is sent once while an update replaces the server.** The old and the new server run together for a short time then, and when a daily or weekly report came due, both could send it. This holds from the update after this one, since both servers must have it.
 
 ## [0.19.4] - 2026-11-24
 

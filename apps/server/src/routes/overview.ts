@@ -119,8 +119,7 @@ export function combine(parts: [AttentionSource, Part | null][]): Attention {
     items,
     total,
     tone: worstTone(read.map((p) => p.tone)),
-    // Never below zero, even should a source count fewer than it lists.
-    moreProblems: read.reduce((sum, p) => sum + Math.max(0, p.total - p.items.length), 0),
+    moreProblems: read.reduce((sum, p) => sum + p.total - p.items.length, 0),
     unchecked: read.flatMap((p) => p.unchecked ?? []),
     failed: parts.flatMap(([source, p]) => (p ? [] : [source])),
   }

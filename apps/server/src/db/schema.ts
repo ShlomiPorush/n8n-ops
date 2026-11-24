@@ -642,7 +642,7 @@ export const alertOutbox = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     kind: text("kind").$type<AlertKind>().notNull(),
-    /** The error text of a problem alert. Problem alerts are grouped by the Problem their workflow is in when sent. */
+    /** No longer written. Problem alerts are grouped by the Problem their workflow is in when sent. */
     groupKey: text("group_key"),
     affectedWorkflowId: uuid("affected_workflow_id"),
     text: text("text").notNull(),

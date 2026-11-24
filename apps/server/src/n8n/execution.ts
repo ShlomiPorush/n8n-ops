@@ -19,13 +19,9 @@ type ExecutionData = {
   }
 }
 
-/** What the cause of a failure is read from on the failing node (docs/adr/0003). */
 export type FailedNode = {
-  /** The `url` parameter when it is a string. */
   url: string | null
-  /** Credentials that have both an id and a name, in the node's order. */
   credentials: { id: string; name: string }[]
-  /** For an Execute Workflow node: the workflow it runs, when its id is literal (not an expression). */
   calledWorkflow: { id: string; name: string | null } | null
 }
 
@@ -35,7 +31,6 @@ export type Failure = {
   message: string
   description: string | null
   stack: string | null
-  /** Up to MAX_INPUT_ITEMS input items of the failed node (their json). */
   input: unknown[]
   node: FailedNode
 }
@@ -51,14 +46,9 @@ const lastRun = (runs: unknown): RunEntry | undefined =>
     ? (runs[runs.length - 1] as RunEntry)
     : undefined
 
-/** The workflow's nodes, or none when n8n sent something that is not a list of nodes. */
 const nodesOf = (workflow: N8nWorkflow | undefined): N8nNode[] =>
   Array.isArray(workflow?.nodes) ? (workflow.nodes as unknown[]).filter(isRecord).map((n) => n as N8nNode) : []
 
-/**
- * Finds the node that failed, its error and its input, from an error execution with data. Total: fields of the wrong
- * type count as absent, so a strange execution gives a weaker answer instead of an error.
- */
 export function extractFailure(execution: N8nExecution): Failure {
   const data = isRecord(execution.data) ? (execution.data as ExecutionData) : {}
   const result = isRecord(data.resultData) ? data.resultData : {}
@@ -81,7 +71,6 @@ export function extractFailure(execution: N8nExecution): Failure {
   }
 }
 
-/** What the cause is read from on a node definition of an execution. */
 export function failedNode(node: N8nNode | undefined): FailedNode {
   const parameters = isRecord(node?.parameters) ? node.parameters : {}
   const credentials = isRecord(node?.credentials)
@@ -94,7 +83,6 @@ export function failedNode(node: N8nNode | undefined): FailedNode {
   return { url: text(parameters.url) ?? null, credentials, calledWorkflow: calledWorkflow(parameters.workflowId) }
 }
 
-/** The workflow an Execute Workflow node runs: a string id, or the value of a resource locator. Not an expression. */
 function calledWorkflow(ref: unknown): FailedNode["calledWorkflow"] {
   const raw = typeof ref === "string" ? ref : isRecord(ref) ? text(ref.value) : undefined
   const id = raw?.trim().replace(/^=/, "")
@@ -129,7 +117,6 @@ function nodeInput(nodeName: string, runData: Record<string, RunEntry[]>, workfl
 
 export type GraphNode = { name: string; type: string; state: "ok" | "failed" | "skipped"; column: number }
 
-/** Nodes of the workflow placed in columns (longest path from a start node), with their run state. */
 export function workflowGraph(
   workflow: N8nWorkflow,
   runData: Record<string, unknown>,
@@ -161,12 +148,10 @@ export function workflowGraph(
     .sort((a, b) => a.column - b.column)
 }
 
-/** "n8n-nodes-base.httpRequest" -> "httpRequest" */
 export function shortType(type: string): string {
   return type.split(".").pop() ?? type
 }
 
-/** The workflow's trigger, for the workflow map. */
 export function describeTrigger(workflow: N8nWorkflow): { type: string; detail: string } {
   const triggers = workflow.nodes.filter((n) => /trigger|webhook/i.test(n.type) && !n.disabled)
   const node = triggers[0]

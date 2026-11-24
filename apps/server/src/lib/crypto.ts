@@ -10,11 +10,9 @@ import {
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname } from "node:path"
 
-/** Encrypts secrets stored by n8n-ops (API keys, tokens, passwords) with AES-256-GCM. */
 export type Secrets = {
   encrypt(plain: string): string
   decrypt(sealed: string): string
-  /** HMAC-SHA256 of the value (base64url), with a key derived from the app key for signing short-lived tokens. */
   mac(value: string): string
 }
 
@@ -41,10 +39,6 @@ export function createSecrets(key: Buffer): Secrets {
   }
 }
 
-/**
- * Loads the app key from the data directory, creating it on first start.
- * The file never leaves the server's data directory; the operator can download a copy from Settings.
- */
 export async function loadOrCreateAppKey(path: string): Promise<{ key: Buffer; created: boolean }> {
   try {
     const key = Buffer.from((await readFile(path, "utf8")).trim(), "base64")
@@ -63,7 +57,6 @@ export function sha256(value: string | Buffer): string {
   return createHash("sha256").update(value).digest("hex")
 }
 
-/** A random token with a readable prefix, for API and worker tokens. */
 export function newToken(prefix: string): string {
   return `${prefix}_${randomBytes(24).toString("base64url")}`
 }

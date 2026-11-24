@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { likeContains } from "./like.ts"
 
-// String.raw keeps every backslash as written, so each case reads as the pattern PostgreSQL gets.
 describe("likeContains", () => {
   it("wraps plain text in wildcards", () => {
     expect(likeContains("Sync orders")).toBe("%Sync orders%")

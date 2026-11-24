@@ -1,18 +1,11 @@
 const UNPAIRED_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g
 
-/**
- * Text PostgreSQL can keep. Its text and jsonb types refuse U+0000, and jsonb refuses an unpaired UTF-16 surrogate,
- * so both are removed; paired surrogates stay.
- */
 export function storableText(text: string): string {
   return text.replaceAll("\u0000", "").replace(UNPAIRED_SURROGATE, "")
 }
 
-/** The start of `text` that takes at most `maxBytes` bytes in UTF-8, cut between characters. */
 export function cutToBytes(text: string, maxBytes: number): string {
-  // A UTF-16 code unit takes at most three bytes in UTF-8.
   if (text.length * 3 <= maxBytes) return text
-  // encodeInto writes whole characters only and says how much of the text it read.
   const { read } = new TextEncoder().encodeInto(text, new Uint8Array(maxBytes))
   return text.slice(0, read)
 }
@@ -21,11 +14,6 @@ type Container = Record<string, unknown> | unknown[]
 
 const isContainer = (value: unknown): value is Container => !!value && typeof value === "object"
 
-/**
- * Cleans a value parsed from JSON in place, so every string in it, object keys included, is storableText. It walks
- * without recursion, so no nesting depth makes it throw. Properties are defined, never assigned, so a "__proto__" key
- * stays an own property. Keys that clean to the same key keep the later value, as jsonb does with duplicate keys.
- */
 export function makeStorable(value: unknown): void {
   if (!isContainer(value)) return
   const pending: Container[] = [value]

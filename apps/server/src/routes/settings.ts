@@ -18,7 +18,6 @@ import { issuerOf } from "../oauth/agents.ts"
 import { syncTelegramWebhook } from "../services/alerts.ts"
 import { storeClocks } from "../services/session-policy.ts"
 
-/** Secret fields: stored encrypted as <name>Enc, written as plain <name>, read back only as <name>Set. */
 const secretFields: Partial<Record<SectionName, string[]>> = {
   telegram: ["botToken"],
   email: ["smtpPassword"],
@@ -36,23 +35,17 @@ const editable: SectionName[] = [
   "agents",
 ]
 
-/** The variable each value from the environment comes from, for the note under its field (FS-6). */
 const envVariables = {
   publicUrl: "N8N_OPS_PUBLIC_URL",
   smtpAllowUnencrypted: "N8N_OPS_SMTP_ALLOW_UNENCRYPTED",
 } as const
 
-/** A value from the environment: `inUse` while it applies, `locked` when the field cannot be changed here. */
 type EnvValue = { variable: string; value: string; inUse: boolean; locked?: boolean }
 
 export function settingsRoutes(ctx: Ctx) {
   const app = new Hono<Env>()
   app.use("*", requireUser(ctx))
 
-  /**
-   * The settings in effect, for every reader, and under `meta` what a form needs beside them (FS-6, SV-1): the
-   * defaults, the range of each number, and which values come from the environment.
-   */
   app.get("/:section", async (c) => {
     const section = c.req.param("section") as SectionName
     if (!editable.includes(section)) return c.json({ error: "not_found" }, 404)
@@ -88,18 +81,13 @@ export function settingsRoutes(ctx: Ctx) {
     if (!editable.includes(section)) return c.json({ error: "not_found" }, 404)
     const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null
     if (!body || typeof body !== "object") return c.json({ error: "invalid" }, 400)
-    // A save changes what is stored, never what the environment provides: the public URL from N8N_OPS_PUBLIC_URL
-    // stays there, so a later change of the variable applies (FS-6).
     const current = (await ctx.settings.stored(section)) as Record<string, unknown>
     const sent = Object.fromEntries(
       Object.entries(body).filter(([k]) => k in sections[section].shape && !k.endsWith("Enc")),
     )
     const next: Record<string, unknown> = { ...current, ...sent }
-    // A client that sends back the whole section it read sends the value in effect: that is not a change.
     const envUrl = ctx.settings.fromEnv().publicUrl
     if (section === "general" && !current.publicUrl && envUrl && next.publicUrl === envUrl) next.publicUrl = ""
-    // "Allow sending without encryption" set by the environment is locked: the value in effect sent back changes
-    // nothing, any other value is refused.
     const envPlain = ctx.settings.fromEnv().smtpAllowUnencrypted
     if (section === "email" && envPlain !== undefined && "smtpAllowUnencrypted" in body) {
       if (body.smtpAllowUnencrypted !== envPlain)
@@ -111,7 +99,6 @@ export function settingsRoutes(ctx: Ctx) {
         )
       next.smtpAllowUnencrypted = current.smtpAllowUnencrypted
     }
-    // The stored SMTP password is never sent to a server it was not given for (FS-5).
     if (section === "email" && smtpPasswordNeeded(current, next, body.smtpPassword))
       return c.json(
         {
@@ -131,7 +118,6 @@ export function settingsRoutes(ctx: Ctx) {
     if (section === "telegram" && !next.webhookSecret) next.webhookSecret = randomBytes(24).toString("hex")
     const parsed = sections[section].safeParse(next)
     if (!parsed.success) return c.json(invalidAnswer(section, wordedIssues(section, parsed.error.issues)), 400)
-    // Entries are checked once their field changes, in the same words as the UI (SV-12).
     const issues = changedValueIssues(section, current, next)
     if (issues.length) return c.json(invalidAnswer(section, issues), 400)
     const before = section === "general" ? (await ctx.settings.get("general")).publicUrl : null
@@ -146,7 +132,6 @@ export function settingsRoutes(ctx: Ctx) {
         secretsChanged: Object.keys(body).filter((k) => secretNames.includes(k)),
       },
     }
-    // Longer sign-in clocks sign out the other sessions, stored and audited in one transaction with them.
     if (section === "security") {
       const actor = c.get("actor")
       if (actor.kind !== "user") return c.json({ error: "unauthorized" }, 401)
@@ -162,12 +147,10 @@ export function settingsRoutes(ctx: Ctx) {
     if (section === "agents" && ctx.agents) await ctx.agents.saveSettings(sent as Partial<Section<"agents">>, who)
     else await ctx.settings.set(section, parsed.data as never)
     await ctx.audit(changed)
-    // Agents connected to the old address hold tokens issued by it; they connect again at the new one.
     if (section === "general" && ctx.agents) {
       const { publicUrl } = await ctx.settings.get("general")
       if (before !== publicUrl) await ctx.agents.reconcileIssuer(issuerOf(publicUrl), who)
     }
-    // Point the bot at this installation now rather than at the next minute check.
     if (section === "telegram" || section === "general")
       await syncTelegramWebhook(ctx).catch((e: Error) => ctx.log.warn("Telegram webhook not set", { error: e.message }))
     return c.json({ ok: true })

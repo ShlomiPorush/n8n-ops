@@ -8,12 +8,6 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { AGENT_IDLE_MAX_DAYS } from "../lib/settings.ts"
 import { type AgentProvider, CLI_CLIENT, createAgentProvider, resources, SCOPES } from "./provider.ts"
 
-/*
- * The authorization server's configuration, driven the way an MCP client, a script and the approving person
- * drive it. The provider keeps its records in memory here; the real store, the approval page and the
- * connection records are covered end to end.
- */
-
 const pages = {
   codeInput: (form: string) => `<html>${form}</html>`,
   codeConfirm: (form: string, _name: string, code: string) => `<html><b>${code}</b>${form}</html>`,
@@ -30,7 +24,6 @@ type Loose = any
 
 beforeAll(async () => {
   const app = new Hono<{ Bindings: Bindings }>()
-  // The person's side, stripped to its decision: grant the ticked scopes, refuse the rest.
   app.post("/connect/approve/:uid/decision", async (c) => {
     const { incoming, outgoing } = c.env
     const { scopes, deny } = (await c.req.json()) as { scopes: string[]; deny?: boolean }
@@ -75,7 +68,6 @@ beforeAll(async () => {
 afterAll(() => server.close())
 afterEach(() => vi.useRealTimers())
 
-/** A browser: keeps cookies, does not follow redirects. */
 function browser() {
   const jar = new Map<string, string>()
   return async (path: string, init: { method?: string; form?: Record<string, string>; json?: unknown } = {}) => {
@@ -113,7 +105,6 @@ function browser() {
 const tokenRequest = (form: Record<string, string>) => browser()("/oauth/token", { form })
 const check = async (accessToken: string) => provider.AccessToken.find(accessToken)
 
-/** Registers like an MCP client, signs in through the approval page, and exchanges the code. */
 async function connectMcp(scopes: string[]) {
   const go = browser()
   const redirect = "http://127.0.0.1:33418/callback"
@@ -138,7 +129,6 @@ async function connectMcp(scopes: string[]) {
   const approval = await go(`/connect/approve/${uid}/decision`, { json: { scopes } })
   const back = await go(approval.data.redirectTo)
   const code = new URL(back.location ?? "", base).searchParams.get("code") ?? ""
-  // OAuth 2.1: no redirect_uri on the token request.
   const tokens = await tokenRequest({
     grant_type: "authorization_code",
     code,
@@ -188,7 +178,6 @@ describe("agents connecting through the browser (MCP)", () => {
       json: { redirect_uris: ["https://app.example.com/cb"], token_endpoint_auth_method: "client_secret_basic" },
     })
     expect(secret.status).toBe(400)
-    // The skill's built-in client has no redirect and keeps working.
     const device = await go("/oauth/device", {
       form: { client_id: CLI_CLIENT, scope: "ops:read offline_access", resource: resources(base).rest },
     })
@@ -290,15 +279,12 @@ describe("agents connecting through the browser (MCP)", () => {
 
   it("keeps working when the browser session that approved it ends", async () => {
     const { tokens, go } = await connectMcp([SCOPES.read])
-    // Signing out of the provider's session in that browser.
     const page = await go("/oauth/logout")
     const xsrf = /name="xsrf" value="([^"]+)"/.exec(String(page.data))?.[1] ?? ""
     await go("/oauth/logout/confirm", { form: { xsrf, logout: "yes" } })
     expect(await check(tokens.access_token)).toBeTruthy()
   })
 
-  // n8n-ops ends a connection after the idle period it is set to (oauth/agents.ts); the refresh token lasts a day
-  // longer than the longest idle period, so the authorization server never ends a connection first.
   it("keeps a refresh token one day longer than the longest idle period, and no longer", async () => {
     const { tokens, clientId } = await connectMcp([SCOPES.read])
     vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + AGENT_IDLE_MAX_DAYS * 86_400_000 })
@@ -331,7 +317,6 @@ describe("agents connecting with a code (scripts)", () => {
         client_id: CLI_CLIENT,
       })
     const pending = await poll()
-    // The person opens the link, compares the code, continues to the approval page and approves.
     const page = await go(
       new URL(device.data.verification_uri_complete).pathname + new URL(device.data.verification_uri_complete).search,
     )

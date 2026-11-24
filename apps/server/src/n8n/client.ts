@@ -1,7 +1,5 @@
 import { parseVersionMetric, readMetricsText, requestOnce } from "@n8n-ops/shared"
 
-/** Minimal client for the n8n public API (v1) and the unauthenticated health endpoints. */
-
 export type N8nExecution = {
   id: string
   status: string
@@ -38,14 +36,12 @@ export type N8nWorkflow = {
   description?: string | null
   createdAt?: string
   updatedAt?: string
-  /** The saved version (the draft on n8n 2.x); the published one is `activeVersionId`. */
   versionId?: string
   activeVersionId?: string | null
 }
 
 export type N8nCredential = { id: string; name: string; type: string; createdAt?: string }
 
-/** What a workflow create or update may carry besides its name, nodes, connections and settings. */
 export type WorkflowBody = Pick<N8nWorkflow, "name" | "nodes" | "connections"> & {
   settings: Record<string, unknown>
 } & Partial<Pick<N8nWorkflow, "nodeGroups" | "description" | "pinData">>
@@ -62,7 +58,6 @@ export class N8nError extends Error {
 
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>
 
-/** n8n gives at most 250 workflows a page, so this reads up to 100,000 workflows. */
 export const MAX_WORKFLOW_PAGES = 400
 
 export class N8nClient {
@@ -98,10 +93,8 @@ export class N8nClient {
       },
       body: body !== undefined ? JSON.stringify(body) : undefined,
       signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
-      // The API key and the body go only to the instance's own address: a redirect is an error, never followed.
       redirect: "manual",
     })
-    // Decided by the status alone: a redirect's body is never read.
     if (res.status >= 300 && res.status < 400) {
       await res.body?.cancel().catch(() => undefined)
       throw new N8nError(
@@ -114,7 +107,6 @@ export class N8nClient {
     return (text ? JSON.parse(text) : null) as T
   }
 
-  /** Scopes of the API key, or null when the instance has no /discover endpoint (n8n older than 2.14.0). */
   async discoverScopes(): Promise<string[] | null> {
     try {
       const res = await this.api<{ data?: { scopes?: string[] } }>("GET", "/discover")
@@ -125,7 +117,6 @@ export class N8nClient {
     }
   }
 
-  /** Error executions, newest first, with their data. */
   listErrorExecutions(cursor?: string, limit = 50) {
     return this.api<{ data: N8nExecution[]; nextCursor: string | null }>("GET", "/executions", {
       query: { status: "error", includeData: true, limit, cursor },
@@ -149,10 +140,6 @@ export class N8nClient {
     return this.api<N8nExecution>("GET", `/executions/${encodeURIComponent(id)}`, { query: { includeData: true } })
   }
 
-  /**
-   * Every workflow, or those n8n finds by `name` (callers still compare the name exactly). Throws rather than return
-   * part of the list when n8n gives a cursor it gave before, or more than MAX_WORKFLOW_PAGES pages, or `signal` aborts.
-   */
   async listWorkflows(name?: string, signal?: AbortSignal): Promise<N8nWorkflow[]> {
     const all: N8nWorkflow[] = []
     const seen = new Set<string>()
@@ -182,10 +169,6 @@ export class N8nClient {
     return this.api<N8nWorkflow>("POST", "/workflows", { body: workflow })
   }
 
-  /**
-   * Writes an existing workflow (`PUT /workflows/{id}`). `publishIfActive: false` (n8n 2.35.0 and later) saves the
-   * draft and never publishes it, even when the workflow is published.
-   */
   updateWorkflow(id: string, workflow: WorkflowBody, options: { publishIfActive?: boolean } = {}) {
     return this.api<N8nWorkflow>("PUT", `/workflows/${encodeURIComponent(id)}`, {
       query: { publishIfActive: options.publishIfActive },
@@ -218,10 +201,6 @@ export class N8nClient {
     return this.api<N8nCredential>("POST", "/credentials", { body: credential })
   }
 
-  /**
-   * The n8n version: from the public frontend settings on older n8n, otherwise from the metrics endpoint
-   * (n8n 2.x no longer publishes it without sign-in). Null when neither is available.
-   */
   async version(metricsUrl?: string | null): Promise<string | null> {
     try {
       const res = await this.fetchImpl(this.url("/rest/settings"), { signal: AbortSignal.timeout(this.timeoutMs) })
@@ -229,9 +208,7 @@ export class N8nClient {
         const body = (await res.json()) as { data?: { versionCli?: string } }
         if (body.data?.versionCli) return body.data.versionCli
       }
-    } catch {
-      // Fall through to metrics.
-    }
+    } catch {}
     try {
       const res = await this.fetchImpl(metricsUrl || this.url("/metrics"), {
         signal: AbortSignal.timeout(this.timeoutMs),
@@ -243,7 +220,6 @@ export class N8nClient {
   }
 }
 
-/** Probes a health URL: true when it answers 2xx. */
 export function probe(url: string, fetchImpl: FetchLike = fetch, timeoutMs = 10_000) {
   return requestOnce(url, AbortSignal.timeout(timeoutMs), fetchImpl)
 }

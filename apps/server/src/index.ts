@@ -28,7 +28,6 @@ try {
 } catch (error) {
   const problem = describeDatabaseError(error, config.databaseUrl)
   if (!problem) throw error
-  // Written synchronously: console output to a pipe may still be pending when the process exits.
   writeSync(2, `${JSON.stringify({ level: "error", msg: problem })}\n`)
   process.exit(1)
 }
@@ -56,9 +55,8 @@ const ctx: Ctx = {
   events: new EventEmitter().setMaxListeners(100),
 }
 
-// The authorization server for agents signs its cookies with a key derived from the app key. Its records go through
-// a small pool of their own: an approval holds a transaction of the main pool while the provider stores its grant.
 const cookieKey = Buffer.from(hkdfSync("sha256", key, "n8n-ops", "agent-connect-cookies", 32)).toString("base64")
+// On the main pool approvals could deadlock: each holds one of its connections while the provider stores the grant.
 const storeDatabase = createDatabase(config.databaseUrl, { max: 4 })
 ctx.agents = createAgentConnect(ctx, {
   cookieKeys: [cookieKey],
@@ -66,22 +64,17 @@ ctx.agents = createAgentConnect(ctx, {
   skillDir: config.skillDir,
   storeDb: storeDatabase.db,
 })
-// A two-factor reset ends every agent connection: whoever reset it may not be the person who approved them.
 onTwoFactorReset(accountResetHooks(ctx))
-// Connections made under a public URL that has since changed end before the server takes a request.
 await ctx.agents.reconcile()
 
 await ctx.settings.loadDesign()
-// A table compaction whose answer was lost when the server stopped ends as unknown (services/database.ts).
 await settleCompactions(ctx)
-// Mutes that ended while the server was down, before a request or a report reads them as muted.
 await endMutes(ctx)
 const { mounts, start } = features(ctx)
 const app = createApp(ctx, { webDir: config.webDir, mounts })
 const server = serve({ fetch: app.fetch, port: config.port }, ({ port }) => {
   log.info(`n8n-ops server ${config.version} listening`, { port })
 }) as Server
-// A worker's backup upload may take longer than Node's default five minutes; the upload has its own deadline.
 server.requestTimeout = UPLOAD_DEADLINE_MS + 5 * 60_000
 const stop = start()
 

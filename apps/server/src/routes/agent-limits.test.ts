@@ -5,11 +5,6 @@ import type { Env } from "../http/types.ts"
 import { LIMITS, policy } from "./agent.ts"
 import type { OpenRoute } from "./agent-policy.ts"
 
-/*
- * The limits of the agent API (the agent-access standard): a call that outlives the deadline answers outcome_unknown
- * and keeps its slot until its work ends, so slow calls cannot pile up beyond the calls allowed at once.
- */
-
 const saved = { ...LIMITS }
 afterEach(() => Object.assign(LIMITS, saved))
 
@@ -23,7 +18,6 @@ const ctx = {
 
 const route: OpenRoute = { method: "GET", path: "/slow", area: "read", kind: "read", description: "A slow read." }
 
-/** An app whose one route runs as long as the test lets it, as a connection made by hand (no policy headers). */
 function app() {
   let finish = () => {}
   const running = new Promise<void>((r) => {
@@ -50,7 +44,6 @@ describe("the agent API's limits", () => {
     const late = await a.request("/slow")
     expect(late.status).toBe(504)
     expect(await late.json()).toMatchObject({ error: "outcome_unknown" })
-    // The slow call still runs: its connection has no free slot.
     const refused = await a.request("/fast")
     expect(refused.status).toBe(429)
     expect(await refused.json()).toMatchObject({ error: "busy" })

@@ -1,7 +1,3 @@
-/**
- * Turns a failure to reach or sign in to PostgreSQL at startup into a sentence that says what
- * happened and what to do, instead of a stack trace. Returns null for any other error.
- */
 export function describeDatabaseError(error: unknown, databaseUrl: string): string | null {
   const code = errorCode(error)
   if (!code) return null
@@ -14,7 +10,6 @@ export function describeDatabaseError(error: unknown, databaseUrl: string): stri
         `docker compose exec postgres psql -U ${user} -d ${database}, then \\password ${user}.`
       )
     case "28000":
-      // Also a pg_hba.conf rule or a required client certificate, so the user may well exist.
       return (
         `PostgreSQL refused user "${user}" before checking a password. Check POSTGRES_USER and DATABASE_URL ` +
         `in .env, and the database's authentication rules.`
@@ -36,7 +31,6 @@ export function describeDatabaseError(error: unknown, databaseUrl: string): stri
   }
 }
 
-/** The first error code along the cause chain (postgres.js sets it on the cause of a query error). */
 export function errorCode(error: unknown): string | null {
   for (let e = error, depth = 0; e && depth < 5; e = (e as { cause?: unknown }).cause, depth++) {
     const code = (e as { code?: unknown }).code

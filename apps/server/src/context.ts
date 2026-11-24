@@ -6,10 +6,8 @@ import type { Secrets } from "./lib/crypto.ts"
 import type { SettingsStore } from "./lib/settings.ts"
 import type { AgentConnect } from "./oauth/agents.ts"
 
-/** Everything request handlers and background jobs share. */
 export type Ctx = {
   db: Db
-  /** Better Auth for the public URL in effect; take it once per request. */
   auth: AuthSource
   secrets: Secrets
   settings: SettingsStore
@@ -19,9 +17,7 @@ export type Ctx = {
   checkDatabase: () => Promise<boolean>
   connectDatabase: Database["connect"]
   log: Logger
-  /** "change" events carry the list of UI areas whose data changed, for live updates. */
   events: EventEmitter
-  /** Agents connected by approval (OAuth); absent where the server is not running (unit tests). */
   agents?: AgentConnect
 }
 

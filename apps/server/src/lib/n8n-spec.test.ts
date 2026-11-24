@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest"
 import { checkCall } from "../services/access.ts"
 import { matchOperation, parseSpec, specHasScopes } from "./n8n-spec.ts"
 
-// A trimmed copy of the shape of n8n's /api/v1/openapi.yml.
 const spec = parseSpec(`
 openapi: 3.0.0
 paths:
@@ -43,7 +42,6 @@ paths:
       x-required-scope: none
 `)
 
-// The operations a grant limited to workflows meets beyond them, as n8n describes them.
 const wideSpec = parseSpec(`
 paths:
   /workflows/{workflowId}:
@@ -104,7 +102,6 @@ paths:
       x-required-scope: none
 `)
 
-// Earlier n8n versions name the path parameters {id}.
 const idSpec = parseSpec(`
 paths:
   /workflows/{id}:
@@ -340,7 +337,6 @@ describe("what the access proxy sends to n8n", () => {
   })
 
   it("takes a slash only in the parameters n8n documents with one, whatever else the description lists", () => {
-    // A description without the operation the slash would lead to, as an older n8n's is.
     const older = parseSpec(`
 paths:
   /credentials/{credentialId}:

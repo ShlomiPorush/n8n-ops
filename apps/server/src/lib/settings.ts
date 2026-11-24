@@ -21,43 +21,29 @@ import { settings as settingsTable } from "../db/schema.ts"
 
 const time = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "use HH:MM")
 
-/**
- * The longest a browser session may be set to last (30 days). Better Auth is told to keep every session a day
- * longer, so its own expiry never comes before the clocks set under Sign-in security.
- */
 export const maxSessionHours = 720
 
-/** Settings an instance can override. Everything else is global. */
 export const instanceSettingsSchema = z.object({
   pollIntervalSec: z.number().int().min(15).max(3600),
   healthIntervalSec: z.number().int().min(10).max(3600),
-  /** Failed health checks in a row before a down alert about the main or a queue worker. */
   downAfterFailures: z.number().int().min(3).max(20),
   backupTime: time,
   staleBackupHours: z.number().int().min(1).max(720),
   executionRetentionDays: z.number().int().min(1).max(3650),
-  /** How long every health check of the main is kept for the history and the response-time chart. */
   healthHistoryDays: z.number().int().min(1).max(30),
   autoResolveDays: z.number().int().min(1).max(365),
   backlogThreshold: z.number().int().min(1),
   backlogMinutes: z.number().int().min(1).max(1440),
-  /** How often the workflow map reads the instance's workflows and their execution counts. */
   workflowMapMinutes: z.number().int().min(1).max(1440),
-  /** How often the n8n version and the API key's scopes are read again. */
   instanceCheckHours: z.number().int().min(1).max(168),
 })
 export type InstanceSettings = z.infer<typeof instanceSettingsSchema>
 export const instanceOverridesSchema = instanceSettingsSchema.partial()
 export type InstanceOverrides = z.infer<typeof instanceOverridesSchema>
 
-/** The two web designs. Regular is the default; Compact is the denser v3 design. */
 export const designs = ["regular", "compact"] as const
 export type Design = (typeof designs)[number]
 
-/**
- * An IANA time zone name, such as Europe/Berlin or UTC. A fixed offset such as +03:00 is refused although Intl takes
- * it, since it would not follow daylight saving.
- */
 export function isTimeZone(value: unknown): value is string {
   if (typeof value !== "string" || !/^[A-Za-z][\w+-]*(\/[\w+-]+)*$/.test(value)) return false
   try {
@@ -68,14 +54,12 @@ export function isTimeZone(value: unknown): value is string {
   }
 }
 
-/** A Telegram forum topic: the `message_thread_id`, a PostgreSQL integer. Refused in the words the UI uses. */
 export const topicIdSchema = z
   .number({ error: topicWords })
   .int({ error: topicWords })
   .min(1, { error: topicWords })
   .max(maxTopicId, { error: topicWords })
 
-/** Trimmed text, with an empty value read as not set, so an empty field never becomes a condition. */
 const condition = (max: number, tooLong?: string) =>
   z.preprocess(
     (v) => (typeof v === "string" ? v.trim() || undefined : v),
@@ -85,20 +69,13 @@ const condition = (max: number, tooLong?: string) =>
       .optional(),
   )
 
-/**
- * Sends the alerts that match it to a forum topic. Every condition it sets must hold; workflow and tag never match
- * an alert about an instance alone (health, backups).
- */
 export const telegramRouteSchema = z
   .object({
-    /** The instance's ID. A route of a removed instance stays, matching nothing, until it is deleted. */
     instanceId: condition(64),
-    /** Regular expression for the workflow name, case-insensitive. */
     workflow: condition(routeLimits.workflow, routeWords.patternLength).refine(
       (p) => p === undefined || isRoutePattern(p),
       routeWords.pattern,
     ),
-    /** A workflow tag, case-insensitive. */
     tag: condition(routeLimits.tag, routeWords.tagLength),
     threadId: topicIdSchema,
   })
@@ -113,10 +90,6 @@ type SmtpAccount = {
   smtpAllowUnencrypted?: unknown
 }
 
-/**
- * The SMTP account as a comparable text: host without case or spaces, the port as a number, the user trimmed, and
- * how the connection is protected.
- */
 const smtpAccount = (v: SmtpAccount) =>
   JSON.stringify([
     String(v.smtpHost ?? "")
@@ -128,11 +101,6 @@ const smtpAccount = (v: SmtpAccount) =>
     Boolean(v.smtpAllowUnencrypted),
   ])
 
-/**
- * Whether an Email save would send the stored SMTP password where it was not given: the host, port or user
- * really changed (case, spaces and "587" against 587 do not count) or how the connection is encrypted changed, and
- * the save brings no new password (FS-5).
- */
 export const smtpPasswordNeeded = (
   current: SmtpAccount & { smtpPasswordEnc?: unknown },
   next: SmtpAccount,
@@ -143,24 +111,15 @@ export const smtpPasswordNeeded = (
   newPassword !== null &&
   smtpAccount(current) !== smtpAccount(next)
 
-/**
- * The longest the agents' idle period may be set to. Refresh tokens are issued for one day longer
- * (oauth/provider.ts), so the authorization server never ends a connection before n8n-ops does.
- */
 export const AGENT_IDLE_MAX_DAYS = 365
 
 export const sections = {
   general: z.object({
-    /** Public URL of this n8n-ops installation, used in links sent by Telegram and email. */
     publicUrl: z.string(),
-    /** Empty means UTC. */
     timezone: z.string().refine((v) => v === "" || isTimeZone(v), "choose a time zone from the list"),
-    /** How the console, the emails and Telegram write a date and a time (FW-9, EM-6). */
     dateFormat: z.enum(dateFormats),
     timeFormat: z.enum(timeFormats),
-    /** Which of the two web designs the whole installation uses. */
     design: z.enum(designs),
-    /** How often the newest n8n release is read from GitHub, for the "latest" shown beside each version. */
     releaseCheckHours: z.number().int().min(1).max(168),
   }),
   defaults: instanceSettingsSchema,
@@ -177,10 +136,8 @@ export const sections = {
     botTokenEnc: z.string().optional(),
     chatId: z.string(),
     webhookSecret: z.string(),
-    /** Forum topics: the first matching route wins, then `defaultThreadId`, then the chat's General topic. */
     routes: z.array(telegramRouteSchema).max(maxRoutes),
     defaultThreadId: topicIdSchema.nullable(),
-    /** Topic for agent access requests; null follows `defaultThreadId`. */
     accessThreadId: topicIdSchema.nullable(),
   }),
   email: z.object({
@@ -194,79 +151,45 @@ export const sections = {
     smtpHost: z.string(),
     smtpPort: z.number().int().min(1).max(65535),
     smtpSecure: z.boolean(),
-    /**
-     * Off: without TLS from the start, mail goes only after STARTTLS succeeds (Nodemailer's requireTLS). On: the
-     * password and the mail may go in clear text to a server that offers no encryption. N8N_OPS_SMTP_ALLOW_UNENCRYPTED
-     * overrides it.
-     */
     smtpAllowUnencrypted: z.boolean(),
     smtpUser: z.string(),
     smtpPasswordEnc: z.string().optional(),
   }),
   backups: z.object({
-    /** Where the n8n-ops database backup goes: the default destinations, or those listed. */
     selfDestinations: z.enum(["default", "custom"]),
     selfDestinationIds: z.array(z.string().uuid()),
-    /** Largest archive accepted, in MiB. Archives are built in memory, so this also bounds memory use. */
     maxArchiveMb: z.number().int().min(16).max(20_480),
   }),
   access: z.object({
-    /** Longest temporary access an agent may get to an n8n instance. */
     maxMinutes: z
       .number()
       .int()
       .min(5)
       .max(7 * 24 * 60),
-    /** A request nobody approves or denies in this time expires. */
     pendingMinutes: z
       .number()
       .int()
       .min(1)
       .max(24 * 60),
-    /** Send each new request to the Telegram chat with Approve and Deny buttons. */
     notifyTelegram: z.boolean(),
-    /** Email each new request to the report recipients, with a link to decide in n8n-ops. */
     notifyEmail: z.boolean(),
-    /**
-     * Where a request goes when its agent chose no channel, or none of the channels it chose is on and set up; of
-     * these, only the channels on and set up are used (services/access-notify.ts `channelsFor`).
-     */
     defaultNotify: z.array(z.enum(accessChannels)).min(1),
-    /**
-     * Telegram user IDs or @usernames allowed to press Approve or Deny. Empty: only the user of a private chat
-     * (the chat ID is that user), never anyone in a group.
-     */
     telegramApprovers: z.array(z.string()),
   }),
-  /** Agents connected by approval (oauth/agents.ts). */
   agents: z.object({
-    /** Agents may connect and keep working. Turning it off ends every connection. */
     enabled: z.boolean(),
-    /** A connection not used for this many days ends. A shorter value applies at once; a longer one revives none. */
     idleDays: z.number().int().min(1).max(AGENT_IDLE_MAX_DAYS),
   }),
-  /**
-   * How long a browser session lasts (services/session-policy.ts). A shorter limit applies to sessions already open;
-   * a longer one, or the inactivity sign-out turned off, signs out every session but the one that saved it.
-   */
   security: z.object({
-    /** A session nothing uses, not even an open page, ends this long after its last request. */
     lifetimeHours: z.number().int().min(1).max(maxSessionHours),
-    /** Sign out after a time without real input. Off keeps an open page signed in while the other clocks allow. */
     idleTimeout: z.boolean(),
     idleMinutes: z.number().int().min(5).max(1440),
-    /** No session lasts longer than this from sign-in, whatever its activity. */
     maxHours: z.number().int().min(1).max(maxSessionHours),
   }),
   keys: z.object({
-    /** age public key used to encrypt every backup archive. */
     backupRecipient: z.string().optional(),
     privateKeySavedAt: z.string().optional(),
   }),
-  /**
-   * Kept by services/session-policy.ts, never edited by hand: how many times longer sign-in limits signed out the
-   * other sessions, and the session that saved the latest of them.
-   */
   sessionSignOuts: z.object({
     generation: z.number().int().min(0),
     keptSessionId: z.string().nullable(),
@@ -338,10 +261,6 @@ export const defaults: { [K in SectionName]: Section<K> } = {
   sessionSignOuts: { generation: 0, keptSessionId: null },
 }
 
-/**
- * Stores a section that holds nothing in memory, on the database or in the caller's transaction: a change that must
- * commit with others (agents turned off, with the end of every connection). The store's set does the same otherwise.
- */
 export async function writeSection<K extends Exclude<SectionName, "general">>(
   db: Pick<Db, "insert">,
   key: K,
@@ -354,20 +273,16 @@ export async function writeSection<K extends Exclude<SectionName, "general">>(
     .onConflictDoUpdate({ target: settingsTable.key, set: { value: parsed, updatedAt: new Date() } })
 }
 
-/** What is stored for a section, over the defaults, on the database or in the caller's transaction. */
 export async function readSection<K extends SectionName>(db: Pick<Db, "select">, key: K): Promise<Section<K>> {
   const [row] = await db.select().from(settingsTable).where(eq(settingsTable.key, key))
   return storedValue(key, row?.value)
 }
 
-/** A stored value read as its section: over the defaults, with values this release does not take left out. */
 function storedValue<K extends SectionName>(key: K, value: unknown): Section<K> {
   const stored = { ...((value as Record<string, unknown> | null | undefined) ?? {}) }
-  // A General value this release does not take, such as a design of a newer one, falls back alone (FW-9).
   if (key === "general")
     for (const [name, schema] of Object.entries(sections.general.shape))
       if (name in stored && !schema.safeParse(stored[name]).success) delete stored[name]
-  // A route that no longer passes is left out alone; the bot token and chat must not fall back with it.
   if (key === "telegram" && Array.isArray(stored.routes))
     stored.routes = stored.routes.filter((r) => telegramRouteSchema.safeParse(r).success).slice(0, maxRoutes)
   const merged = { ...defaults[key], ...stored }
@@ -375,12 +290,10 @@ function storedValue<K extends SectionName>(key: K, value: unknown): Section<K> 
   return (parsed.success ? parsed.data : defaults[key]) as Section<K>
 }
 
-/** The range of each number setting of a section, read from its schema, so the UI checks the same (SV-1). */
 export function numberLimits(section: SectionName): Record<string, NumberLimits> {
   const out: Record<string, NumberLimits> = {}
   for (const [name, schema] of Object.entries(sections[section].shape)) {
     if (!(schema instanceof z.ZodNumber)) continue
-    // .int() alone bounds a number by the safe integers; only a limit set on purpose is one.
     const set = (v: number | null) => v !== null && Math.abs(v) < Number.MAX_SAFE_INTEGER
     const { minValue, maxValue } = schema
     out[name] = {
@@ -393,10 +306,6 @@ export function numberLimits(section: SectionName): Record<string, NumberLimits>
 
 export type Issue = { path: (string | number)[]; message: string }
 
-/**
- * Checks the fields a save changes beyond their type, as the UI does before it sends them: list entries, the chat,
- * addresses (SV-12). Only changed fields: an entry stored before these checks stays until its field is edited.
- */
 export function changedValueIssues(
   section: SectionName,
   stored: Record<string, unknown>,
@@ -410,7 +319,6 @@ export function changedValueIssues(
   })
 }
 
-/** Schema issues in words that follow the field's label, instead of the schema's own ("Too small: expected…"). */
 export function wordedIssues(section: SectionName, issues: readonly z.core.$ZodIssue[]): Issue[] {
   const limits = numberLimits(section)
   const kinds = settingKinds[section] ?? {}
@@ -425,13 +333,11 @@ export function wordedIssues(section: SectionName, issues: readonly z.core.$ZodI
           : issue.code === "invalid_value"
             ? `choose one of ${issue.values.map(String).join(", ")}`
             : issue.message
-    // A refused topic route is named by its place in the list: "Topic routes: route 2: …".
     const route = field === "routes" && typeof issue.path[1] === "number" ? `route ${issue.path[1] + 1}: ` : ""
     return { path: field ? [field] : [], message: route + (message ?? issue.message) }
   })
 }
 
-/** The answer to a save the checks refused: each field named by its label, as "<Label>: <problem>" (SV-1). */
 export function invalidAnswer(section: SectionName, issues: Issue[]) {
   return {
     error: "invalid",
@@ -440,46 +346,21 @@ export function invalidAnswer(section: SectionName, issues: Issue[]) {
   }
 }
 
-/** Values the environment provides: N8N_OPS_PUBLIC_URL and N8N_OPS_SMTP_ALLOW_UNENCRYPTED. */
 export type SettingsEnv = { publicUrl?: string; smtpAllowUnencrypted?: boolean }
 
-/** The Email section in effect: N8N_OPS_SMTP_ALLOW_UNENCRYPTED, when set, over the stored switch. */
 export const withEmailEnv = (email: Section<"email">, env: SettingsEnv): Section<"email"> =>
   env.smtpAllowUnencrypted === undefined ? email : { ...email, smtpAllowUnencrypted: env.smtpAllowUnencrypted }
 
 export type SettingsStore = {
-  /**
-   * The settings in effect: stored values over the defaults, the public URL from N8N_OPS_PUBLIC_URL while none is
-   * stored, and N8N_OPS_SMTP_ALLOW_UNENCRYPTED over the stored switch.
-   */
   get<K extends SectionName>(key: K): Promise<Section<K>>
-  /**
-   * What is stored, over the defaults, without anything taken from the environment. A save starts from this, so
-   * a value from the environment is never written by a save that did not change it (FS-6).
-   */
   stored<K extends SectionName>(key: K): Promise<Section<K>>
-  /**
-   * Values the environment provides: N8N_OPS_PUBLIC_URL (used while none is stored) and
-   * N8N_OPS_SMTP_ALLOW_UNENCRYPTED (always used; the field is locked).
-   */
   fromEnv(): SettingsEnv
   set<K extends SectionName>(key: K, value: Section<K>): Promise<void>
-  /** Effective settings for one instance: global defaults with its overrides applied. */
   forInstance(overrides: Record<string, unknown>): Promise<InstanceSettings>
-  /**
-   * The design the web UI is served in, held in memory so serving a page never waits for the database. It
-   * follows every saved General and assumes one server process, which is the supported deployment.
-   */
   design(): Design
-  /** Reads the stored design. Call once after migrations. */
   loadDesign(): Promise<void>
 }
 
-/**
- * `env.publicUrl` (N8N_OPS_PUBLIC_URL) stands in for the public URL while Settings > General leaves it empty,
- * so links in alerts, the Telegram webhook and worker install commands use the address users open.
- * `env.smtpAllowUnencrypted` (N8N_OPS_SMTP_ALLOW_UNENCRYPTED) decides the Email switch whatever is stored.
- */
 export function createSettings(db: Db, env: SettingsEnv = {}): SettingsStore {
   let currentDesign: Design = defaults.general.design
 
@@ -514,7 +395,6 @@ export function createSettings(db: Db, env: SettingsEnv = {}): SettingsStore {
     async set(key, value) {
       const parsed = sections[key].parse(value) as typeof value
       await write(key, parsed)
-      // Updated where the value is stored, so a later failure in the request cannot leave memory behind.
       if (key === "general") currentDesign = (parsed as Section<"general">).design
     },
     async forInstance(overrides) {

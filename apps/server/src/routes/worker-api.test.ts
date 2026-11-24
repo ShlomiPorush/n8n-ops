@@ -35,7 +35,6 @@ describe("uploadUrl", () => {
 })
 
 describe("pairing request bodies", () => {
-  /** A context whose database must not be reached: any use fails the request. */
   const noDatabase = {
     db: new Proxy(
       {},

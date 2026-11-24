@@ -10,9 +10,6 @@ import { createAudit } from "../lib/audit.ts"
 import { sha256 } from "../lib/crypto.ts"
 import { restRoutes } from "./agent.ts"
 
-// The agents' workflow search against a real PostgreSQL: more workflows than one page, read page by page, each page
-// with the total the filters match and where the next page starts. The database is made for this file from
-// MIGRATION_DATABASE_URL with every migration applied.
 const adminUrl = process.env.MIGRATION_DATABASE_URL
 if (!adminUrl) throw new Error("MIGRATION_DATABASE_URL is required (scripts/verify.sh sets it)")
 
@@ -24,7 +21,6 @@ let token: string
 
 const pad = (i: number) => String(i).padStart(3, "0")
 
-/** 65 jobs on alpha and 60 on beta with the same names and IDs, three twins on alpha, and two found by tag. */
 const TOTAL = 65 + 60 + 3 + 2
 
 beforeAll(async () => {
@@ -47,7 +43,6 @@ beforeAll(async () => {
   await database.db.insert(workflows).values([
     ...Array.from({ length: 65 }, (_, i) => job(alpha.id, i + 1)),
     ...Array.from({ length: 60 }, (_, i) => job(beta.id, i + 1)),
-    // Alike in name on one instance, so only the ID can settle their order.
     ...["t-3", "t-1", "t-2"].map((workflowId) => ({ ...base, instanceId: alpha.id, workflowId, name: "Twin" })),
     { ...base, instanceId: alpha.id, workflowId: "inv-1", name: "Invoices", tags: ["Billing team"] },
     {
@@ -84,7 +79,6 @@ async function page(query: string): Promise<Page> {
   return (await res.json()) as Page
 }
 
-/** Every page from offset 0 on, as an agent reads them, checking that each says the same total. */
 async function walk(query: string, limit: number) {
   const hits: Hit[] = []
   let total: number | undefined
@@ -120,7 +114,6 @@ describe("the agents' workflow search", () => {
     const names = [...new Set(hits.map((h) => h.name))]
     const jobs = Array.from({ length: 65 }, (_, i) => `Job ${pad(i + 1)}`)
     expect(names).toEqual(["Invoices", ...jobs, "Orders in", "Twin"])
-    // The same name on both instances: alpha first. The same name on one instance: by ID.
     const job1 = hits.filter((h) => h.name === "Job 001").map(key)
     expect(job1).toEqual(["alpha-n8n/wf-1", "beta-n8n/wf-1"])
     expect(hits.filter((h) => h.name === "Twin").map((h) => h.workflowId)).toEqual(["t-1", "t-2", "t-3"])
@@ -137,12 +130,12 @@ describe("the agents' workflow search", () => {
 
   it("counts only what the filters match", async () => {
     const cases: [string, number][] = [
-      ["q=Job%2001", 20], // Job 010 to 019 on both instances
-      ["q=wf-7", 2], // a workflow ID, on both instances
-      ["q=billing", 2], // part of a tag, in any case
-      [`q=${encodeURIComponent("https://n8n.example/webhook/orders-in")}`, 1], // a webhook URL
+      ["q=Job%2001", 20],
+      ["q=wf-7", 2],
+      ["q=billing", 2],
+      [`q=${encodeURIComponent("https://n8n.example/webhook/orders-in")}`, 1],
       ["instance=beta-n8n", 61],
-      ["q=Job%2006&instance=alpha-n8n", 6], // Job 060 to 065
+      ["q=Job%2006&instance=alpha-n8n", 6],
       ["instance=no-such-instance", 0],
       ["q=nothing-like-this", 0],
     ]

@@ -16,7 +16,6 @@ import {
   wordedIssues,
 } from "./settings.ts"
 
-/** A new SMTP password and a Telegram bot token, new for each run. */
 const newPassword = randomBytes(16).toString("hex")
 const botToken = randomBytes(16).toString("hex")
 
@@ -77,7 +76,6 @@ describe("sending email without encryption", () => {
     ] as const) {
       const settings = createSettings(dbWith({ smtpAllowUnencrypted: stored }), { smtpAllowUnencrypted: env })
       expect((await settings.get("email")).smtpAllowUnencrypted).toBe(env)
-      // What is stored, which a save starts from, stays as it was.
       expect((await settings.stored("email")).smtpAllowUnencrypted).toBe(stored)
       expect(settings.fromEnv()).toEqual({ smtpAllowUnencrypted: env })
     }
@@ -120,7 +118,6 @@ describe("instance settings", () => {
     expect(defaults.general.releaseCheckHours).toBe(6)
     const result = resolveInstanceSettings(defaults.defaults, { workflowMapMinutes: 60, instanceCheckHours: 24 })
     expect(result).toMatchObject({ workflowMapMinutes: 60, instanceCheckHours: 24 })
-    // Out of range (1 to 168 hours): the defaults stay.
     expect(resolveInstanceSettings(defaults.defaults, { instanceCheckHours: 0 }).instanceCheckHours).toBe(6)
   })
 })
@@ -140,7 +137,6 @@ describe("settings stored before a key existed", () => {
 })
 
 describe("public URL", () => {
-  // The smallest stand-in for select().from().where() returning the stored row, if any.
   const dbWith = (stored?: object) =>
     ({ select: () => ({ from: () => ({ where: async () => (stored ? [{ value: stored }] : []) }) }) }) as unknown as Db
 
@@ -237,7 +233,6 @@ describe("a Telegram test with the values on screen", () => {
 })
 
 describe("web design", () => {
-  // A stand-in database with a stored General row.
   function fakeDb(stored?: object) {
     let row = stored
     const db = {

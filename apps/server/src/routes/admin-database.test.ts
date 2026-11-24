@@ -3,8 +3,6 @@ import type { Ctx } from "../context.ts"
 import { defaults, type SectionName, sections } from "../lib/settings.ts"
 import { adminRoutes } from "./admin.ts"
 
-// The database routes against a fake service: who may start a compaction and how its refusals are answered. The
-// service itself has its integration test.
 const service = vi.hoisted(() => ({ started: [] as string[][], next: null as Error | null }))
 vi.mock("../services/database.ts", async (importOriginal) => {
   const real = await importOriginal<typeof import("../services/database.ts")>()

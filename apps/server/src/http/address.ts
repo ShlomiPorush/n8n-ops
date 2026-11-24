@@ -4,22 +4,10 @@ import type { Context } from "hono"
 
 type Bindings = { incoming: IncomingMessage }
 
-/** The Node request under Hono; null when the app is driven without a server (unit tests). */
 export const incomingOf = (c: Context) => (c.env as Partial<Bindings> | undefined)?.incoming ?? null
 
-/**
- * Proxies trusted when N8N_OPS_TRUSTED_PROXIES is not set: loopback and private networks, where the reverse proxy
- * of the shipped deployment (Traefik on a Docker network) and a proxy on the same host connect from. IPv4-mapped
- * IPv6 peers (::ffff:10.0.0.1) match the IPv4 ranges.
- */
 const DEFAULT_TRUSTED_PROXIES = ["127.0.0.0/8", "::1", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7"]
 
-/**
- * The proxies whose X-Forwarded-For is believed: a comma-separated list of addresses and CIDR ranges, such as
- * "172.18.0.0/16, fd00::/8". Empty entries are skipped; no entry at all means the built-in list, and any entry
- * replaces it. An IPv6 address with a zone (fe80::1%eth0) matches only that address on that interface, and a peer
- * with a zone matches only such an entry. Throws on an entry that is none of these, naming it.
- */
 export function trustedProxies(value: string | undefined): (address: string) => boolean {
   const entries = (value ?? "")
     .split(",")
@@ -49,33 +37,22 @@ export function trustedProxies(value: string | undefined): (address: string) => 
 
 let cached: { value: string | undefined; trusts: (address: string) => boolean } | undefined
 
-/** An IPv4 address that reached a dual-stack socket as ::ffff:a.b.c.d, written as plain IPv4. */
 const plain = (address: string) =>
   address.startsWith("::ffff:") && isIP(address.slice(7)) === 4 ? address.slice(7) : address
 
-/**
- * The caller's address: the socket's, or, when the socket is a trusted proxy (N8N_OPS_TRUSTED_PROXIES, by default
- * loopback and private networks), the last X-Forwarded-For address. A forwarded header from anyone else is ignored.
- */
 export function addressOf(req: IncomingMessage | null) {
   const socket = req?.socket?.remoteAddress
   if (!socket || !isIP(socket)) return socket ?? "unknown"
   const value = process.env.N8N_OPS_TRUSTED_PROXIES
   if (!cached || cached.value !== value) cached = { value, trusts: trustedProxies(value) }
   if (!cached.trusts(socket)) return plain(socket)
-  // The address the trusted proxy appended: the last one. Earlier entries come from the client and can be made up.
   const forwarded = req.headers["x-forwarded-for"]
   const last = (Array.isArray(forwarded) ? forwarded.join(",") : forwarded)?.split(",").at(-1)?.trim()
   return plain(last && isIP(last) ? last : socket)
 }
 
-/**
- * The header Better Auth reads the client's address from (auth/auth.ts advanced.ipAddress). Only the server sets
- * it, from addressOf; a value the client sent is removed first (http/auth-guard.ts).
- */
 export const CLIENT_ADDRESS_HEADER = "x-n8n-ops-client-address"
 
-/** How many times a header was sent: Node keeps only the first Authorization, so count the raw headers. */
 export function headerCount(c: Context, name: string) {
   const req = incomingOf(c)
   if (!req) return c.req.header(name) === undefined ? 0 : 1
@@ -84,11 +61,6 @@ export function headerCount(c: Context, name: string) {
   return n
 }
 
-/**
- * A small fixed-window limit per key. It counts before anything else runs; `refund` gives a counted one back.
- * Windows run on the monotonic clock. Keys stay in the order their windows started, so at most once a second a
- * check forgets the ended ones from the front and stops at the first that is still running.
- */
 export function limiter(max: number, windowMs: number) {
   const hits = new Map<string, { at: number; n: number }>()
   let swept = Number.NEGATIVE_INFINITY
@@ -103,7 +75,7 @@ export function limiter(max: number, windowMs: number) {
     }
     const hit = hits.get(key)
     if (!hit || now - hit.at > windowMs) {
-      // A new window goes to the end, after every window that started before it.
+      // Without this delete a renewed key keeps its old place, where the cleanup above stops, and ended keys pile up.
       hits.delete(key)
       hits.set(key, { at: now, n: 1 })
       return true
@@ -115,9 +87,7 @@ export function limiter(max: number, windowMs: number) {
     const hit = hits.get(key)
     if (hit && hit.n > 0) hit.n--
   }
-  /** Whether this check is the first one over the limit in its window: log a block once. */
   check.firstOver = (key: string) => hits.get(key)?.n === max + 1
-  /** How many keys are kept. */
   check.size = () => hits.size
   return check
 }

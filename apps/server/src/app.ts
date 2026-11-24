@@ -14,18 +14,14 @@ import { settingsRoutes } from "./routes/settings.ts"
 import { setupRoutes } from "./routes/setup.ts"
 
 export type AppOptions = {
-  /** Directory with the built UI, relative to the working directory. Omit to serve no UI. */
   webDir?: string
-  /** Extra routers mounted under /api, added by later features. */
   mounts?: { path: string; router: Hono<Env> }[]
 }
 
-/** The largest request body the sign-in library's routes read (/api/auth/*). */
 export const AUTH_BODY_BYTES = 64 * 1024
 
 export function createApp(ctx: Ctx, { webDir, mounts = [] }: AppOptions = {}) {
   const app = new Hono<Env>()
-  // Agent tokens only where they are taken; never on the console's routes.
   app.use("*", agentGuard)
 
   app.get("/healthz/live", (c) => c.json<Health>({ status: "ok", version: ctx.version, checks: {} }))
@@ -36,9 +32,7 @@ export function createApp(ctx: Ctx, { webDir, mounts = [] }: AppOptions = {}) {
     return c.json(body, database === "ok" ? 200 : 503)
   })
 
-  // Self sign-up is closed: the single account is created by the setup endpoint.
   app.all("/api/auth/sign-up/*", (c) => c.json({ error: "sign_up_disabled" }, 403))
-  // Sign-in, two-factor and passkey bodies take a few KiB; nothing larger is read before anyone is signed in.
   app.on(
     ["GET", "POST"],
     "/api/auth/*",

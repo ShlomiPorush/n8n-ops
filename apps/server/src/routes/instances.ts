@@ -77,7 +77,6 @@ const baseFields = {
     .regex(/^[a-zA-Z0-9_.-]+$/, "letters, digits, dot, dash and underscore only"),
   baseUrl: url,
   containerName: z.string().max(128).nullish(),
-  // The main as a Compose project and service (Compose's project rule; a plain service name), instead of a name.
   composeProject: z
     .string()
     .regex(
@@ -96,19 +95,14 @@ const baseFields = {
   workerId: z.string().uuid().nullish(),
 }
 const backupVia = z.enum(["worker", "api"])
-/** A draft: what it is chosen for and where it is; the key and the checks come in its setup. */
 const createSchema = z.object({ ...baseFields, chosen: chosenCapabilitiesSchema, backupVia: backupVia.default("api") })
 export const updateSchema = z
   .object({
     ...baseFields,
-    // Without their defaults: Zod 4 fills a default in also under .partial(), so a change of one field (a setup
-    // step, the overrides) would otherwise put the collection, the queue mode and the worker URLs back to theirs.
     queueMode: z.boolean(),
     workerHealthUrls: z.array(url),
     collection: z.enum(["direct", "worker"]),
-    /** A new key, tested before it is stored; null removes the stored key. */
     apiKey: z.string().min(10).nullable().optional(),
-    /** Only while the instance is a draft; an active one adds and removes capabilities on their own. */
     chosen: chosenCapabilitiesSchema.optional(),
     backupVia: backupVia.optional(),
     overrides: instanceOverridesSchema.optional(),
@@ -117,7 +111,6 @@ export const updateSchema = z
   .partial()
 const capability = z.enum(capabilityKeys)
 
-/** `?add=monitor,map`: the capabilities a setup page proposes to add; undefined when not given. */
 function addOf(raw: string | undefined) {
   if (raw === undefined) return { ok: true as const, add: undefined }
   const parsed = z.array(capability).safeParse(
@@ -130,8 +123,6 @@ function addOf(raw: string | undefined) {
 }
 
 export function instanceView(instance: Instance, extra: { openProblems?: number; hasWorker: boolean }) {
-  // The check counters and the backlog start are bookkeeping of the health checks, not part of the instance; the
-  // setup checks are read through GET /:id/setup.
   const {
     apiKeyEnc,
     executionCursor: _cursor,
@@ -155,7 +146,6 @@ export function instanceView(instance: Instance, extra: { openProblems?: number;
     effectiveScopes: scopes,
     effectiveMetricsUrl: metricsUrlOf(instance),
     capabilities: capabilityStatus(scopes, extra.hasWorker, grantable),
-    // Each chosen capability with what keeps it from working now (empty when nothing does).
     chosenStatus: capabilityProblems(chosenCapabilities, {
       hasKey: Boolean(apiKeyEnc),
       scopes: instance.scopes,
@@ -169,7 +159,6 @@ export function instanceView(instance: Instance, extra: { openProblems?: number;
   }
 }
 
-/** A setup step's refusal as an answer; anything else is an internal error. */
 function setupRefusal(c: Context<Env>, error: unknown) {
   if (error instanceof RevisionChanged) return c.json({ error: "revision_changed", message: error.message }, 409)
   if (error instanceof RequirementNotMet)
@@ -178,7 +167,6 @@ function setupRefusal(c: Context<Env>, error: unknown) {
   throw error
 }
 
-/** The worker assigned to an instance as the pages show it. In collection mode "worker", only one online checks. */
 function workerSummary(worker: typeof workers.$inferSelect | undefined) {
   if (!worker) return null
   const { id, name, lastSeenAt, revokedAt } = worker
@@ -190,7 +178,6 @@ function workerSummary(worker: typeof workers.$inferSelect | undefined) {
   }
 }
 
-/** An instance's id in a path is a UUID: /instances/new and the like are a plain 404, never a failed query. */
 const ID = "/:id{[0-9a-fA-F-]{36}}"
 
 export function instanceRoutes(ctx: Ctx) {
@@ -227,7 +214,6 @@ export function instanceRoutes(ctx: Ctx) {
     })
   })
 
-  /** Creates a draft (Setup incomplete): it does nothing in the background until its setup is completed. */
   app.post("/", async (c) => {
     const parsed = createSchema.safeParse(await c.req.json().catch(() => ({})))
     if (!parsed.success) return c.json({ error: "invalid", issues: parsed.error.issues }, 400)
@@ -275,15 +261,11 @@ export function instanceRoutes(ctx: Ctx) {
     const effectiveSettings = await ctx.settings.forInstance(row.overrides)
     return c.json({
       ...instanceView(row, { openProblems: open?.n ?? 0, hasWorker: Boolean(worker && !worker.revokedAt) }),
-      // The health now, beside the stored one it may only be the last known of.
       ...healthNow(row, worker, effectiveSettings.healthIntervalSec),
       worker: workerSummary(worker),
       lastBackup: await lastBackup(row.id),
-      // What the socket proxy refused in the current report, with the exact lines that allow it.
       proxyFix: await instanceProxyFix(ctx, row, worker),
-      // A Compose service needs a worker of a release that follows one (services/backups.ts canReach).
       composeNeedsUpdate: Boolean(row.composeProject && worker && !worker.revokedAt && !canReach(worker, row)),
-      // The container the service resolved to, from a report of the current settings only (none after a change).
       resolvedContainer: row.composeProject ? (currentDetail(row)?.resolvedContainer ?? null) : null,
       workflowCounts: {
         total: wfs.length,
@@ -301,7 +283,6 @@ export function instanceRoutes(ctx: Ctx) {
     })
   })
 
-  /** Where this instance's backups go: the default destinations as they change, or the ones chosen here. */
   app.put(`${ID}/backup-destinations`, async (c) => {
     const [row] = await ctx.db
       .select()
@@ -322,13 +303,11 @@ export function instanceRoutes(ctx: Ctx) {
     if (known.length !== ids.length)
       return c.json({ error: "invalid", message: "A chosen destination no longer exists." }, 400)
     await ctx.db.transaction(async (tx) => {
-      // A backup check compares the destinations it tested with those in use now, so it notices this change.
       await tx
         .update(instances)
         .set({ backupDestinations: body.data.mode, updatedAt: new Date() })
         .where(eq(instances.id, row.id))
       await tx.delete(instanceBackupDestinations).where(eq(instanceBackupDestinations.instanceId, row.id))
-      // The choice is kept while defaults are used, so switching back restores it.
       if (ids.length)
         await tx
           .insert(instanceBackupDestinations)
@@ -353,10 +332,7 @@ export function instanceRoutes(ctx: Ctx) {
     const parsed = updateSchema.safeParse(await c.req.json().catch(() => ({})))
     if (!parsed.success) return c.json({ error: "invalid", issues: parsed.error.issues }, 400)
     const { apiKey, metricsUrl, chosen, ...data } = parsed.data
-    // A selection only while a draft, and a new base URL only with the key again or without one: both decided by
-    // updateInstance on the locked row (ChangeRefused).
     const urlChanged = data.baseUrl !== undefined && data.baseUrl !== row.baseUrl
-    // Any valid key is stored; the capabilities it lacks scopes for show on the instance's page.
     const test = apiKey ? await testKey(data.baseUrl ?? row.baseUrl, apiKey) : null
     if (test && !test.ok) return c.json({ error: "connection_failed", code: test.code, message: test.error }, 400)
     let updated: Awaited<ReturnType<typeof updateInstance>>
@@ -373,7 +349,6 @@ export function instanceRoutes(ctx: Ctx) {
             : {}),
           ...(apiKey === null ? { apiKeyEnc: null, scopes: null, scopesCheckedAt: null } : {}),
         },
-        // A tested key is stored only for the configuration it was tested with.
         test ? row.configRevision : undefined,
       )
     } catch (error) {
@@ -399,14 +374,12 @@ export function instanceRoutes(ctx: Ctx) {
   app.delete(ID, async (c) => {
     const id = c.req.param("id")
     if (!z.string().uuid().safeParse(id).success) return c.json({ error: "not_found" }, 404)
-    // With its workflows, failures and the Problems it leaves without a workflow.
     const row = await deleteInstance(ctx, id)
     if (!row) return c.json({ error: "not_found" }, 404)
     await ctx.audit({ actor: actorName(c.get("actor")), action: "Instance removed", target: row.name, via: "web" })
     return c.json({ ok: true })
   })
 
-  /** Re-reads version and scopes, checks health, polls failures and syncs the workflows now: each only where chosen. */
   app.post(`${ID}/refresh`, async (c) => {
     const [row] = await ctx.db
       .select()
@@ -434,15 +407,12 @@ export function instanceRoutes(ctx: Ctx) {
     return c.json({ ok: true, poll, map, skipped })
   })
 
-  // --- Setup (docs/adr/0002): the checks of a draft, or of capabilities added to an active instance.
-
   const load = async (id: string) => {
     if (!z.string().uuid().safeParse(id).success) return null
     const [row] = await ctx.db.select().from(instances).where(eq(instances.id, id))
     return row ?? null
   }
 
-  /** The instance's health history for the Health tab: the same answer agents get from /api/v1/health. */
   app.get(`${ID}/health-history`, async (c) => {
     const parsed = historyQuery.safeParse(c.req.query())
     if (!parsed.success) return c.json({ error: "invalid", message: "Choose a range of 1 to 720 hours." }, 400)
@@ -454,7 +424,6 @@ export function instanceRoutes(ctx: Ctx) {
     }
   })
 
-  /** The selection (`?add=` proposes one), its requirements and each check as it stands now. */
   app.get(`${ID}/setup`, async (c) => {
     const add = addOf(c.req.query("add"))
     if (!add.ok) return c.json({ error: "invalid", message: "Unknown capability in add." }, 400)
@@ -510,7 +479,6 @@ export function instanceRoutes(ctx: Ctx) {
     }
   })
 
-  /** Starts the worker check; GET /:id/setup tells how it ends. */
   app.post(`${ID}/setup/worker`, async (c) => {
     try {
       const started = await checkWorker(ctx, c.req.param("id"))
@@ -535,7 +503,6 @@ export function instanceRoutes(ctx: Ctx) {
     }
   })
 
-  /** Activates a draft, or adds capabilities to an active instance, once every requirement has a current check. */
   app.post(`${ID}/activate`, async (c) => {
     const body = z.object({ add: z.array(capability).optional() }).safeParse(await c.req.json().catch(() => ({})))
     if (!body.success) return c.json({ error: "invalid", issues: body.error.issues }, 400)
@@ -560,7 +527,6 @@ export function instanceRoutes(ctx: Ctx) {
     }
   })
 
-  /** Removes a capability and what needs it (removing the map removes Move workflows). No check is needed. */
   app.delete(`${ID}/capabilities/:capability`, async (c) => {
     const key = capability.safeParse(c.req.param("capability"))
     if (!key.success) return c.json({ error: "invalid", message: "Unknown capability." }, 400)

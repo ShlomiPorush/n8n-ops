@@ -10,8 +10,6 @@ import { createDatabase } from "../db/client.ts"
 import { createAudit } from "../lib/audit.ts"
 import { createSettings } from "../lib/settings.ts"
 
-// The first-run setup creates exactly one account, against the real Better Auth and a real PostgreSQL: every other
-// attempt is answered 409 already_set_up, however the attempts overlap.
 const adminUrl = process.env.MIGRATION_DATABASE_URL
 if (!adminUrl) throw new Error("MIGRATION_DATABASE_URL is required (scripts/verify.sh sets it)")
 
@@ -25,7 +23,6 @@ afterAll(async () => {
   await admin.end()
 })
 
-/** A fresh, migrated installation with no account yet. */
 async function install() {
   const name = `n8n_ops_setup_${randomBytes(4).toString("hex")}`
   await admin.unsafe(`CREATE DATABASE "${name}"`)
@@ -67,10 +64,6 @@ async function install() {
 
 const password = () => randomBytes(24).toString("hex")
 
-/**
- * Sends the setups while new accounts cannot be written yet, and lets them be written only once every one of them is
- * waiting to write its account: each has passed every check the setup makes before it creates the account.
- */
 async function overlapping(
   { sql, setup }: Awaited<ReturnType<typeof install>>,
   bodies: { username: string; password: string }[],
@@ -81,7 +74,6 @@ async function overlapping(
     sent = bodies.map((b) => setup(JSON.stringify(b)))
     const deadline = Date.now() + 30_000
     for (;;) {
-      // Asked on the other connection: inside the transaction the activity view would stay as first read.
       const [row] = await sql<{ n: number }[]>`
         select count(*)::int as n from pg_stat_activity
         where datname = current_database() and wait_event_type = 'Lock' and query ilike 'insert into "auth_user"%'`
@@ -140,7 +132,6 @@ describe("POST /api/setup/account", () => {
         async pull(controller) {
           pulls += 1
           if (pulls === 1) return controller.enqueue(new TextEncoder().encode(text.slice(0, half)))
-          // The setup is reading its body and waits for the rest.
           reading()
           await rest
           controller.enqueue(new TextEncoder().encode(text.slice(half)))

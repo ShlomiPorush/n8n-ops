@@ -22,11 +22,6 @@ import { gateExclusive, generation } from "./gate.ts"
 import { CLI_CLIENT, createAgentProvider, resources } from "./provider.ts"
 import { MAX_CLIENTS, MAX_DEVICE_REQUESTS, storeAdapter } from "./store.ts"
 
-/*
- * Agent connection against a real PostgreSQL (the agent-access standard): token values never stored, existing rows
- * converted in place, every connection ending at once and for good, the policy check of the REST API, and what a
- * connection's token is checked against on every call.
- */
 const adminUrl = process.env.MIGRATION_DATABASE_URL
 if (!adminUrl) throw new Error("MIGRATION_DATABASE_URL is required (scripts/verify.sh sets it)")
 
@@ -56,7 +51,6 @@ async function freshDatabase(migrations = folder) {
   return database
 }
 
-/** The migrations up to and including `tag`. */
 function migrationsUpTo(tag: string) {
   const dir = mkdtempSync(join(scratch, "m-"))
   cpSync(folder, dir, { recursive: true })
@@ -105,12 +99,10 @@ describe("the migration to hashed token storage", () => {
       expect(row?.payload).not.toHaveProperty("jti")
     }
     expect(rows.find((r) => r.type === "DeviceCode")?.id).toBe(raw.DeviceCode)
-    // No stored row holds a converted value anywhere.
     const dump = JSON.stringify(rows)
     for (const type of ["AccessToken", "RefreshToken", "AuthorizationCode"] as const)
       expect(dump).not.toContain(raw[type])
 
-    // Read back through the adapter by the value an agent holds: the same payload, with its jti.
     const Adapter = storeAdapter(before.db)
     expect(await new Adapter("RefreshToken").find(raw.RefreshToken)).toMatchObject({ jti: raw.RefreshToken })
     expect(await createSettings(before.db).get("agents")).toMatchObject({ enabled: true, idleDays: 90 })
@@ -148,7 +140,6 @@ describe("the token store", () => {
     expect(dump).not.toContain(refresh)
     expect(await provider.AccessToken.find(access)).toBeTruthy()
     expect(await provider.RefreshToken.find(refresh)).toBeTruthy()
-    // What a database read gives (the stored id) is not a token.
     for (const row of rows.filter((r) => r.type === "AccessToken" || r.type === "RefreshToken"))
       expect(await provider[row.type as "AccessToken"].find(row.id)).toBeUndefined()
   })
@@ -174,7 +165,6 @@ describe("the token store", () => {
   })
 })
 
-/** An agent connection row and its access request, for the tests that end connections. */
 async function connection(ctx: Ctx, extra: Partial<typeof apiTokens.$inferInsert> = {}) {
   const [row] = await ctx.db
     .insert(apiTokens)
@@ -238,7 +228,6 @@ describe("the check on every call", () => {
   let ctx: Ctx
   let agents: ReturnType<typeof createAgentConnect>
 
-  /** A live connection with a real access token of the authorization server. */
   async function connected(extra: Partial<typeof apiTokens.$inferInsert> = {}) {
     const p = await agents.provider()
     if (!p) throw new Error("no provider")
@@ -276,7 +265,6 @@ describe("the check on every call", () => {
 
   it("refuses at once a token whose grant the provider removed, before its revoke event ends the connection", async () => {
     const { token, row } = await connected()
-    // As the provider does on a reused refresh token or a revocation: the grant goes first, the event comes later.
     await ctx.db.delete(oauthStore).where(and(eq(oauthStore.type, "Grant"), eq(oauthStore.id, row.grantId ?? "")))
     expect((await agents.verify(token, "rest")).ok).toBe(false)
     expect((await ctx.db.select().from(apiTokens).where(eq(apiTokens.id, row.id)))[0]?.endReason).toBe("cut")
@@ -351,7 +339,6 @@ describe("the REST API's policy check", () => {
     await ctx.db
       .insert(apiTokens)
       .values({ name: "script", kind: "rest", prefix: "nops_api", tokenHash: sha256(manualSecret) })
-    // The authorization server's part of the check is covered above; here a token either is this agent's or not.
     ctx.agents = {
       verify: async (token: string) =>
         token === agentSecret
@@ -399,7 +386,6 @@ describe("the REST API's policy check", () => {
       expect(await res.json()).toMatchObject({ error: "policy_changed" })
     }
     expect((await call("/problems", declared("read"))).status).toBe(200)
-    // Letter case and ;parameters name no route: nothing runs, and nothing reads as a read.
     expect((await call("/PROBLEMS", declared("read"))).status).toBe(404)
     expect((await call("/problems;x", declared("read"))).status).toBe(404)
   })
@@ -462,7 +448,6 @@ describe("the requests an approval checks", () => {
     await new Promise((r) => server.once("listening", r))
     const port = (server.address() as { port: number }).port
     try {
-      // The issuer is http://localhost:8080; the provider takes requests on any port it is given.
       const device = () =>
         fetch(`http://127.0.0.1:${port}/oauth/device`, {
           method: "POST",
@@ -484,7 +469,6 @@ describe("the requests an approval checks", () => {
       await endEveryConnection(ctx, "all", { by: "owner", via: "web" })
       expect(await generation(ctx.db)).toBe((row?.generation ?? 0) + 1)
 
-      // The generation cannot be read for one request: it fails, and the next device request is not held up by it.
       await ctx.db.execute(sql`alter table agent_state rename to agent_state_away`)
       const failed = await device()
       await ctx.db.execute(sql`alter table agent_state_away rename to agent_state`)
@@ -501,7 +485,6 @@ describe("the requests an approval checks", () => {
 })
 
 describe("making and ending connections against each other", () => {
-  /** A database of its own, with a main pool of `max` connections and the adapter's own pool of two. */
   async function setUp(max = 10) {
     const name = `n8n_ops_agent_race_${randomBytes(4).toString("hex")}`
     await admin.unsafe(`CREATE DATABASE "${name}"`)
@@ -523,7 +506,6 @@ describe("making and ending connections against each other", () => {
     return { ctx, agents, provider: p.provider }
   }
 
-  /** A request opened in the current generation and bound to `session`, as the provider and the page leave it. */
   async function opened(ctx: Ctx, session: string, gen?: number) {
     const uid = value()
     await ctx.db
@@ -597,11 +579,9 @@ describe("making and ending connections against each other", () => {
     expect(await s.agents.bindRequest(uid, mine)).toBe(true)
     expect(await s.agents.bindRequest(uid, value())).toBe(false)
     expect((await decision(s, uid, value())).kind).toBe("gone")
-    // A new server process: the binding is in the database, not in memory.
     const again = createAgentConnect(s.ctx, { cookieKeys: [value()] })
     expect(await again.bindRequest(uid, mine)).toBe(true)
     expect((await decision(s, uid, mine)).kind).toBe("approved")
-    // A request with no record (it began without one) is no request.
     expect(await s.agents.bindRequest(value(), mine)).toBe(false)
   })
 
@@ -613,7 +593,6 @@ describe("making and ending connections against each other", () => {
     const device = value()
     await s.ctx.db.insert(agentConsent).values({ key: `d:${sha256(device)}`, generation: before })
     await endEveryConnection(s.ctx, "all", { by: "owner", via: "web" })
-    // Ending everything drops the waiting records; put back the ones the provider might store after it.
     await s.ctx.db.insert(agentConsent).values([
       { key: `i:${stale}`, generation: before, sessionId: session },
       { key: `d:${sha256(device)}`, generation: before },
@@ -656,7 +635,6 @@ describe("making and ending connections against each other", () => {
   it("ends at start every connection a turn-off left behind", async () => {
     const s = await setUp()
     await connection(s.ctx)
-    // As if the server stopped between storing the switch and ending connections.
     await s.ctx.settings.set("agents", { enabled: false, idleDays: 90 })
     await s.agents.reconcile()
     expect(await live(s.ctx)).toBe(0)
@@ -665,7 +643,6 @@ describe("making and ending connections against each other", () => {
   it("keeps a connection used while the idle sweep was on its way to it", async () => {
     const s = await setUp()
     const row = await connection(s.ctx, { lastUsedAt: new Date(Date.now() - 100 * 86_400_000) })
-    // The sweep picked it; a call came in before it ended it.
     await s.ctx.db.update(apiTokens).set({ lastUsedAt: new Date() }).where(eq(apiTokens.id, row.id))
     const cutoff = new Date(Date.now() - 86_400_000)
     expect(await s.agents.end({ id: row.id }, "unused", { by: "n8n-ops", via: "system" }, cutoff)).toBeNull()
@@ -791,7 +768,6 @@ describe("making and ending connections, in each order", () => {
     expect(await s.live()).toBe(1)
     expect((await s.ctx.db.select().from(accessRequests))[0]?.status).toBe("pending")
     expect((await s.ctx.db.select().from(oauthStore)).length).toBe(before.length)
-    // The grant itself (a Grant record has no grant_id of its own: its id is the grant).
     const grant = await s.ctx.db
       .select()
       .from(oauthStore)

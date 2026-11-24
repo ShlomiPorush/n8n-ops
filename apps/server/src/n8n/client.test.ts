@@ -4,7 +4,6 @@ import type { AddressInfo } from "node:net"
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest"
 import { MAX_WORKFLOW_PAGES, N8nClient, N8nError } from "./client.ts"
 
-/** The n8n API key the client sends, new for each run. */
 const apiKey = randomBytes(16).toString("hex")
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status })
@@ -42,7 +41,6 @@ describe("N8nClient", () => {
     expect(all.map((w) => w.id)).toEqual(["1", "2"])
   })
 
-  /** A stand-in n8n whose workflow list gives `next(page)` as the cursor after page `page` (1-based). */
   const pagedWorkflows = (next: (page: number) => string | null) =>
     vi.fn(async (url: string) => {
       const cursor = new URL(url).searchParams.get("cursor")
@@ -79,7 +77,6 @@ describe("N8nClient", () => {
         new Promise<Response>((resolve, reject) => {
           const signal = init?.signal as AbortSignal
           signals.push(signal)
-          // The first page answers; the second waits until it is aborted, as a stalled n8n would.
           if (signals.length === 1) return resolve(json({ data: [{ id: "1" }], nextCursor: "c2" }))
           signal.addEventListener("abort", () => reject(signal.reason))
         }),
@@ -117,7 +114,6 @@ describe("N8nClient", () => {
   })
 })
 
-// Real HTTP on loopback, with the real fetch: the instance at `from` points elsewhere, and `to` records what reaches it.
 describe("N8nClient and redirects", () => {
   const reached: { method?: string; key?: string | string[]; body: string }[] = []
   let from: Server
@@ -142,7 +138,6 @@ describe("N8nClient and redirects", () => {
     const toUrl = `http://127.0.0.1:${(to.address() as AddressInfo).port}`
     from = createServer((req, res) => {
       res.writeHead(status, { location: `${toUrl}${req.url}` })
-      // A body that starts and never ends.
       if (endless) res.write("Moved")
       else res.end()
     })

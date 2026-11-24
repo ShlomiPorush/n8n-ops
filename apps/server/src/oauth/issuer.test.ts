@@ -4,7 +4,6 @@ import { issuerOf } from "./agents.ts"
 afterEach(() => vi.unstubAllEnvs())
 
 it("allows a plain-http issuer only on loopback, whatever the environment says", () => {
-  // The variable the verification stack once set to add its host name to plain http.
   vi.stubEnv("N8N_OPS_TEST_HTTP_ISSUER_HOST", "server,ops.example.com")
   expect(issuerOf("http://server:8080")).toBeNull()
   expect(issuerOf("http://ops.example.com")).toBeNull()

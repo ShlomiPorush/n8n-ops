@@ -15,7 +15,6 @@ import { type AgentProvider, createAgentProvider, resources, SCOPES } from "./pr
 import { servedSkillVersion } from "./skill.ts"
 import { cancelWaiting, deleteGrant, grantAlive, storeAdapter, sweepOrphanGrants, sweepStore } from "./store.ts"
 
-/** Why a connected agent ended; shown in the audit log. */
 export type EndReason = "revoked" | "unused" | "cut" | "unfinished" | "address" | "all" | "off" | "identity" | "account"
 const endText: Record<EndReason, string> = {
   revoked: "revoked",
@@ -32,16 +31,8 @@ const endText: Record<EndReason, string> = {
 type Who = { by: string; via: AuditVia }
 const SYSTEM: Who = { by: "n8n-ops", via: "system" }
 
-/**
- * Names on which plain http is allowed: the loopback names only, for trying n8n-ops on this computer. Nothing adds
- * to them, not even for tests: the verification stack's end-to-end tests reach the server on localhost.
- */
 const HTTP_HOSTS = ["localhost", "127.0.0.1", "[::1]"]
 
-/**
- * The installation's public address as an OAuth issuer: an absolute https origin with nothing after it, or http on
- * exactly localhost, 127.0.0.1 or [::1]. Without one, agents cannot connect by approval (manual tokens still work).
- */
 export function issuerOf(publicUrl: string): string | null {
   try {
     const url = new URL(publicUrl)
@@ -54,7 +45,6 @@ export function issuerOf(publicUrl: string): string | null {
   }
 }
 
-/** Why agents cannot connect at this public URL, for the admin page; null when they can. */
 export function issuerProblem(publicUrl: string): string | null {
   if (!publicUrl) return "Set the public URL in Settings → General."
   if (issuerOf(publicUrl)) return null
@@ -66,10 +56,6 @@ export function issuerProblem(publicUrl: string): string | null {
   return "The public URL must be a plain https address, such as https://ops.example.com."
 }
 
-/**
- * Ends one connection in the caller's transaction: its row, every token and code of its grant, and any instance access
- * it asked for or holds, with the audit entry, all or nothing. Ending one twice does nothing the second time.
- */
 async function endIn(ctx: Ctx, tx: Tx, which: { id: string } | { grantId: string }, reason: EndReason, who: Who) {
   const [row] = await tx
     .update(apiTokens)
@@ -92,12 +78,6 @@ async function endIn(ctx: Ctx, tx: Tx, which: { id: string } | { grantId: string
   return row
 }
 
-/**
- * Ends every connection and every request still waiting (codes, device requests, approvals), and starts a new
- * generation so a request that began before cannot be approved after. Under the exclusive gate, in one transaction.
- * Needs no authorization server: the CLI runs it for a two-factor reset made from the server. `alsoIn` runs in the same
- * transaction first, for a change that must hold exactly when everything ended.
- */
 export async function endEveryConnection(ctx: Ctx, reason: EndReason, who: Who, alsoIn?: (tx: Tx) => Promise<void>) {
   const ended = await ctx.db.transaction(async (tx) => {
     await gateExclusive(tx)
@@ -162,21 +142,17 @@ const idleConnections = (db: Db | Tx, cutoff: Date) =>
 
 export type AgentConnect = ReturnType<typeof createAgentConnect>
 
-/** Agents connected by approval: the authorization server for the current public URL, and their records. */
 export function createAgentConnect(
   ctx: Ctx,
   { cookieKeys, webDir, skillDir, storeDb }: { cookieKeys: string[]; webDir?: string; skillDir?: string; storeDb?: Db },
 ) {
-  // A refresh token or code used twice at once: the loser ends the connection, like any reuse.
   const Adapter = storeAdapter(storeDb ?? ctx.db, {
     onReuse: (grantId) => end({ grantId }, "cut", SYSTEM),
   })
   const pages = providerPages(webDir, (): Design => ctx.settings.design())
   let current: { issuer: string; provider: AgentProvider } | null = null
-  /** Set by the routes: a device-code poll that was counted, and turned out to be waiting or approved. */
   const hooks: {
     devicePollAnswered?: (req: IncomingMessage) => void
-    /** A code typed on the code page, in this provider session (its signed cookie) or none: false when over the limit. */
     codeAttempt?: (session: string | undefined, req: IncomingMessage) => boolean
   } = {}
 
@@ -184,17 +160,10 @@ export function createAgentConnect(
     return (await ctx.settings.get("agents")).enabled
   }
 
-  /** Records the generation a request began under, for the approval (`agent_consent`). */
   async function recordRequest(key: string, gen: number) {
     await ctx.db.insert(agentConsent).values({ key, generation: gen }).onConflictDoNothing()
   }
 
-  /**
-   * Binds a request to the browser session that first opens it: the first open fills the session only while it is
-   * empty, and every later open or answer must come from that session. Another browser, or the same person after
-   * signing in again, never sees or answers it. No record (a request that began without one) is no request. Kept in
-   * the database, so a restart keeps the binding.
-   */
   async function bindRequest(uid: string, sessionId: string) {
     const key = `i:${uid}`
     await ctx.db
@@ -205,14 +174,6 @@ export function createAgentConnect(
     return Boolean(row && row.sessionId === sessionId && !row.decidedAt)
   }
 
-  /**
-   * Answers a request, once, under the shared gate and in one transaction: an end that began first has finished and
-   * moved the generation; one that begins now waits until this connection is recorded, and then ends it. The request
-   * is taken by its session (approve or deny), and only while it and its device code began in the current generation.
-   * Whether agents are on and the issuer are read before the transaction (any change of them ends everything and moves
-   * the generation, which is checked inside), so the transaction holds one connection of the main pool and nothing
-   * else of it. `makeGrant` stores the grant through the provider, on its own pool.
-   */
   async function decide(input: {
     uid: string
     sessionId: string
@@ -260,7 +221,6 @@ export function createAgentConnect(
         .from(user)
         .where(eq(user.id, input.accountId))
       if (!account?.twoFactorEnabled) return { kind: "gone" as const }
-      // If this transaction fails after the grant is stored, the sweep removes the grant.
       const grantId = await input.makeGrant()
       await connected(tx, { ...input.record, issuer: input.issuer, grantId })
       return { kind: "approved" as const, grantId }
@@ -273,26 +233,17 @@ export function createAgentConnect(
     if (current?.issuer !== issuer) {
       await reconcileIssuer(issuer)
       const created = createAgentProvider({ issuer, adapter: Adapter, cookieKeys, pages })
-      // A refresh token used twice, or revoked by the agent, ends its grant; end the connection with it.
       created.on("grant.revoked", (_c, grantId: string) => {
         void end({ grantId }, "cut", SYSTEM).catch((e: Error) =>
           ctx.log.warn("could not end an agent connection", { error: e.message }),
         )
       })
       created.on("server_error", (_c, e: Error) => ctx.log.error("authorization server error", { error: e.message }))
-      /*
-       * The provider's documented middleware. Before the provider builds any record of a request that may open an
-       * approval (authorize and its resume, the device code pages and their resume, a device code request), it reads
-       * the generation; after, it records that generation for the approval to compare. A request that began before
-       * every connection ended can then not be approved, even when the provider stored its records later. With no
-       * record, an approval is refused.
-       */
       created.use(async (k, next) => {
         const path = k.path
         const opens = /^\/(oauth\/authorize|connect\/device|oauth\/device$)/.test(path)
         const gen = opens ? await generation(ctx.db) : 0
         let failure: unknown
-        // The session is the provider's own, read with its own signed-cookie parser, so a made-up cookie is no session.
         const limited =
           path.startsWith("/connect/device") &&
           k.method === "POST" &&
@@ -328,12 +279,6 @@ export function createAgentConnect(
     return current
   }
 
-  /**
-   * Checks an access token presented to /mcp or /api/v1: agents are on, it is live, made for that resource, carries
-   * ops:read, belongs to a connection nobody ended, under this public URL, whose approving account still exists, and
-   * that was used within the idle period. A connection found past its idle period or without its account ends for
-   * good. ops:access comes from the token itself, so a token narrowed on refresh cannot ask for more than it carries.
-   */
   async function verify(token: string, endpoint: "mcp" | "rest") {
     const invalid = { ok: false as const, reason: "invalid" as const }
     const settings = await ctx.settings.get("agents")
@@ -350,8 +295,6 @@ export function createAgentConnect(
       .from(apiTokens)
       .where(and(eq(apiTokens.grantId, String(at.grantId)), isNull(apiTokens.revokedAt)))
     if (!row || row.issuer !== p.issuer) return invalid
-    // The provider removes the grant before it answers a reused refresh token or a revocation, and ends the connection
-    // only afterwards (its grant.revoked event): a token issued meanwhile, or not yet removed, is refused here at once.
     if (!(await p.provider.Grant.find(String(at.grantId)))) {
       await end({ id: row.id }, "cut", SYSTEM)
       return invalid
@@ -375,7 +318,6 @@ export function createAgentConnect(
     return { ok: true as const, row, canRequestAccess: scopes.includes(SCOPES.access) }
   }
 
-  /** Whether a connection is still live: checked again inside each MCP tool call, which may have waited. */
   async function stillLive(id: string) {
     const [row] = await ctx.db
       .select({ id: apiTokens.id })
@@ -384,7 +326,6 @@ export function createAgentConnect(
     return Boolean(row)
   }
 
-  /** Records a connection a person just approved, in the approval's transaction; its grant is its identity. */
   async function connected(
     tx: Tx,
     input: {
@@ -425,10 +366,6 @@ export function createAgentConnect(
     return row
   }
 
-  /**
-   * Ends one connected agent for good, under the exclusive gate, in one transaction. With `unusedSince`, only while it
-   * still has not been used since then, checked under the gate: a call that came in meanwhile keeps it.
-   */
   async function end(which: { id: string } | { grantId: string }, reason: EndReason, who: Who, unusedSince?: Date) {
     const row = await ctx.db.transaction(async (tx) => {
       await gateExclusive(tx)
@@ -445,11 +382,6 @@ export function createAgentConnect(
     return row
   }
 
-  /**
-   * The public URL connections are made under. When it differs from the one recorded, everything ends (S18): every
-   * connection, every waiting request, and the generation moves on. Before the first record (a database from an
-   * earlier release), only connections made under another URL end, as before.
-   */
   async function reconcileIssuer(issuer: string | null, savedBy?: Who) {
     const known = await lastIssuer(ctx.db)
     if (savedBy || (known && known !== issuer)) {
@@ -471,11 +403,6 @@ export function createAgentConnect(
     if (issuer) await rememberIssuer(ctx.db, issuer)
   }
 
-  /**
-   * Brings connections in line with the settings as they are now; run at start, before any request, and by the
-   * sweep. A connection whose URL changed or went away ends with its instance access, and so does every connection
-   * while agents are off (one that an interrupted turn-off left behind never works again).
-   */
   async function reconcile() {
     await reconcileIssuer(issuerOf((await ctx.settings.get("general")).publicUrl))
     if (!(await enabled())) {
@@ -484,14 +411,10 @@ export function createAgentConnect(
     }
   }
 
-  /**
-   * Ends every connected agent: disconnect all.
-   */
   async function endAll(reason: EndReason, who: Who) {
     return endEveryConnection(ctx, reason, who)
   }
 
-  /** Ends every connection not used within `days`, under the exclusive gate (the sweep). */
   async function endIdle(days: number) {
     const cutoff = daysAgo(days)
     let ended = 0
@@ -514,15 +437,8 @@ export function createAgentConnect(
     changed(ctx, "access", "overview")
   }
 
-  /**
-   * Every 15 minutes: connections past the idle period end; a connection approved over 15 minutes ago whose refresh
-   * tokens all ran out or were never fetched ends; records of grants no live connection holds, and records that ran
-   * out, are cleared. Requests check tokens themselves, so nothing waits for this job.
-   */
   async function sweep() {
     await reconcile()
-    // A connection whose grant the authorization server removed (the agent revoked a token) and that its event did not
-    // end, for example when the server stopped in between.
     const orphans = await ctx.db
       .select({ id: apiTokens.id })
       .from(apiTokens)
@@ -576,18 +492,15 @@ export function createAgentConnect(
     reconcileIssuer,
     hooks,
     skillDir,
-    /** The version a served copy of this build's skill sends (null without a skill): see updateSkillNotice. */
     skillVersion: servedSkillVersion(skillDir),
   }
 }
 
 const daysAgo = (days: number) => new Date(Date.now() - days * 86_400_000)
 
-/** A connection not used since `cutoff` (or never used, and approved before it). */
 const idleBefore = (cutoff: Date) =>
   or(lt(apiTokens.lastUsedAt, cutoff), and(isNull(apiTokens.lastUsedAt), lt(apiTokens.createdAt, cutoff)))
 
-/** When a connection was last used, or approved when never used: the idle period counts from there. */
 export function idleSince(row: { lastUsedAt: Date | null; createdAt: Date }) {
   return (row.lastUsedAt ?? row.createdAt).getTime()
 }

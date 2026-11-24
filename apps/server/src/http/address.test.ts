@@ -2,9 +2,6 @@ import type { IncomingMessage } from "node:http"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { addressOf, limiter, trustedProxies } from "./address.ts"
 
-// The caller's address that the per-client limits count by: the socket's, or, behind a trusted proxy, the address
-// the proxy appended to X-Forwarded-For.
-
 const request = (peer: string, forwarded?: string | string[]) =>
   ({
     socket: { remoteAddress: peer },

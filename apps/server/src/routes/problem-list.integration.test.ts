@@ -22,10 +22,6 @@ import {
 import { endMutes } from "../services/problems.ts"
 import { restRoutes } from "./agent.ts"
 
-// The Problems list against a real PostgreSQL (TB-4, TB-18): sorted before the limit, so a sort covers every
-// problem and not only the 200 sent; a total that counts what the filters match; one row per Problem with the
-// workflows it hit (docs/adr/0001); the agents' API. The database is made for this file from MIGRATION_DATABASE_URL
-// with every migration applied.
 const adminUrl = process.env.MIGRATION_DATABASE_URL
 if (!adminUrl) throw new Error("MIGRATION_DATABASE_URL is required (scripts/verify.sh sets it)")
 
@@ -39,14 +35,11 @@ const hour = 60 * minute
 const day = 24 * hour
 const ago = (ms: number) => new Date(Date.now() - ms)
 
-/** More plain open problems than the list sends; all were first seen days ago, so none counts as new. */
 const PLAIN = 205
 const ids: Record<string, string> = {}
-/** The Affected workflow of each of those Problems. */
 const rowIds: Record<string, string> = {}
 let seq = 0
 
-/** An Affected workflow in `problemId`, or in a Problem of its own made for it. */
 async function row(instanceId: string, state: Partial<typeof affectedWorkflows.$inferInsert> = {}, problemId?: string) {
   seq += 1
   const errorMessage = state.errorMessage ?? `ERP refused (${seq})`
@@ -93,29 +86,23 @@ beforeAll(async () => {
     ])
     .returning()
   if (!alpha || !beta || !aster) throw new Error("no instances")
-  // Seen one minute apart, the most recent first; a few failures each.
   for (let i = 0; i < PLAIN; i++) await row(alpha.id, { lastSeen: ago((i + 1) * minute), count: (i % 7) + 1 })
   const named = async (key: string, instanceId: string, state: Partial<typeof affectedWorkflows.$inferInsert>) => {
     const r = await row(instanceId, state)
     ids[key] = r.problemId
     rowIds[key] = r.id
   }
-  // The most failures of all, yet seen longest ago: last in the default order, outside the first 200.
   await named("worst", alpha.id, { count: 999, firstSeen: ago(10 * day), lastSeen: ago(5 * day) })
-  // A regression and a new problem come first by default, though seen earlier than the plain ones.
   await named("regression", alpha.id, { regression: true, lastSeen: ago(4 * day) })
   await named("new", alpha.id, { firstSeen: ago(hour), lastSeen: ago(hour) })
-  // A name in lower case sorts among the others without regard to case.
   await named("aardvark", beta.id, { workflowName: "aardvark sync", lastSeen: ago(2 * day) })
   await named("muted", beta.id, { status: "muted", count: 5000, mutedUntil: new Date(Date.now() + day) })
   await named("resolved", beta.id, { status: "resolved", count: 4000, resolvedAt: ago(day) })
-  // Merged into another problem: an alias with no workflows, listed nowhere, counted nowhere.
   const [merged] = await database.db
     .insert(problems)
     .values({ errorMessage: "Merged away", mergedInto: ids.worst })
     .returning()
   ids.merged = merged?.id ?? ""
-  // Alike in every value a list sorts by, so only the id can settle their order; one of them has a blank name.
   const same = { workflowName: "Twin job", errorMessage: "Same error", count: 3, firstSeen: ago(3 * day) }
   const at = ago(2 * day)
   for (const key of ["twin1", "twin2", "twin3", "twin4"]) await named(key, aster.id, { ...same, lastSeen: at })
@@ -131,14 +118,13 @@ afterAll(async () => {
   await admin.end()
 })
 
-const OPEN = PLAIN + 9 // the plain ones, worst, regression, new, aardvark, the four twins and the blank one
+const OPEN = PLAIN + 9
 
 const listProblems = async (options: ProblemFilter & { limit?: number }) => (await problemPage(ctx, options)).items
 const listRows = async (options: Parameters<typeof problemRowsPage>[1]) => (await problemRowsPage(ctx, options)).items
 const workflowOf = (p: { affectedWorkflows: { workflowName: string }[] } | undefined) =>
   p?.affectedWorkflows[0]?.workflowName
 
-/** Every problem the filters match, in the default order: what a total must count. */
 const everything = (filter: ProblemFilter) => listProblems({ ...filter, limit: 100_000 })
 
 describe("the Problems list", () => {
@@ -147,7 +133,6 @@ describe("the Problems list", () => {
     expect(rows).toHaveLength(200)
     expect(rows[0]?.id).toBe(ids.regression)
     expect(rows[1]?.id).toBe(ids.new)
-    // Then the plain open ones, most recently seen first.
     expect(workflowOf(rows[2])).toBe("Workflow 1")
     expect(rows.map((r) => r.id)).not.toContain(ids.worst)
     expect(rows.map((r) => r.id)).not.toContain(ids.merged)
@@ -158,7 +143,6 @@ describe("the Problems list", () => {
     expect(rows).toHaveLength(200)
     expect(rows[0]?.id).toBe(rowIds.worst)
     expect(rows[0]?.count).toBe(999)
-    // Fewest first: only one-failure problems fit in the first rows, and the worst is not among the 200.
     const fewest = await listRows({ status: "open", order: { sort: "failures", order: "asc" } })
     expect(fewest[0]?.count).toBe(1)
     expect(fewest.map((r) => r.id)).not.toContain(rowIds.worst)
@@ -175,7 +159,6 @@ describe("the Problems list", () => {
         expect(order === "desc" ? a.count >= b.count : a.count <= b.count).toBe(true)
         if (a.count === b.count) expect(ranked.indexOf(a.id)).toBeLessThan(ranked.indexOf(b.id))
       }
-      // Asked twice, the same order.
       expect((await listRows({ status: "open", order: { sort: "failures", order } })).map((r) => r.id)).toEqual(
         sorted.slice(0, 200).map((r) => r.id),
       )
@@ -218,15 +201,12 @@ describe("the Problems list", () => {
       const all = await everything(filter)
       const page = await problemPage(ctx, filter)
       expect(page.total).toBe(all.length)
-      // The rows are the list's own first 200, without the count riding on them.
       expect(page.items).toEqual(all.slice(0, 200))
     }
     const total = async (filter: ProblemFilter) => (await problemPage(ctx, filter)).total
     expect(await total({ status: "open" })).toBe(OPEN)
-    // Every status, and the merged one left out.
     expect(await total({ status: "all" })).toBe(OPEN + 2)
     expect(await total({ status: "open", instanceId: ids.beta })).toBe(1)
-    // A number, also where nothing matches.
     expect(await total({ status: "open", q: "nothing like this" })).toBe(0)
     expect(typeof (await total({ status: "open" }))).toBe("number")
   })
@@ -239,11 +219,9 @@ describe("the Problems list", () => {
         const rows = (await listRows({ ...aster, order: { sort, order } })).map((r) => r.id)
         const alike = rows.filter((id) => id !== rowIds.blank)
         expect(alike, `${sort} ${order}`).toEqual(twins)
-        // A blank name or error comes after every named one, whichever way the column is turned (TB-2).
         if (sort === "workflow" || sort === "error") expect(rows.at(-1), `${sort} ${order}`).toBe(rowIds.blank)
       }
     }
-    // Among every open problem too: blank last both ways.
     for (const order of ["asc", "desc"] as const) {
       const rows = await listRows({ status: "open", order: { sort: "workflow", order }, limit: 100_000 })
       expect(rows.at(-1)?.id).toBe(rowIds.blank)
@@ -275,7 +253,6 @@ describe("the Problems list", () => {
     const body = (await res.json()) as { data: { id: string; affectedWorkflows: { workflowName: string }[] }[] }
     expect(Object.keys(body)).toEqual(["data"])
     expect(body.data).toHaveLength(3)
-    // Most recently seen first, as it always was.
     expect(workflowOf(body.data[0])).toBe("Workflow 1")
     expect(body.data[0]).not.toHaveProperty("total")
     const bad = await restRoutes(ctx).request("/problems/not-a-uuid", { headers: { authorization: `Bearer ${token}` } })
@@ -300,7 +277,6 @@ describe("a Problem that hit several workflows", () => {
       { errorMessage: text, workflowName: "Get DNS Data", status: "resolved", count: 2, lastSeen: ago(2 * day) },
       first.problemId,
     )
-    // The same workflow at another node: a row of its own, not another workflow.
     const third = await row(
       gamma,
       {
@@ -345,7 +321,6 @@ describe("a Problem that hit several workflows", () => {
       instances: ["alpha-n8n", "gamma-n8n"],
     })
     expect(p?.affectedWorkflows.map((a) => a.id)).toEqual(multi.map((m) => m.id))
-    // Found by the name of any of its workflows.
     expect((await listProblems({ status: "all", q: "Get DNS" })).map((r) => r.id)).toEqual([multi[0]?.problemId])
   })
 
@@ -368,7 +343,6 @@ describe("a Problem that hit several workflows", () => {
     expect(byRow).toMatchObject({ id: pid, selected: { id: multi[1]?.id, instanceName: "alpha-n8n" } })
     const [alias] = await database.db.insert(problems).values({ errorMessage: "old", mergedInto: pid }).returning()
     expect((await problemDetail(ctx, alias?.id ?? ""))?.id).toBe(pid)
-    // A workflow that is not in the Problem is not found.
     expect(await problemDetail(ctx, pid, (await row(gamma)).id)).toBeNull()
   })
 
@@ -382,7 +356,6 @@ describe("a Problem that hit several workflows", () => {
     })
     expect(await agentFailure(ctx, pid, undefined, multi[0]?.id)).toMatchObject({ executionId: "m-1" })
     expect((await agentFailure(ctx, pid))?.problemId).toBe(pid)
-    // A failure of another workflow of the Problem is not that workflow's.
     const m1 = await agentFailure(ctx, pid, undefined, multi[0]?.id)
     expect(await agentFailure(ctx, pid, m1?.id, multi[1]?.id)).toBeNull()
     expect(await agentFailure(ctx, multi[1]?.id ?? "", m1?.id)).toBeNull()
@@ -412,7 +385,6 @@ describe("the Problems list as rows", () => {
       lastSeen: ago(90 * minute),
     })
     const resolved = await at({ workflowName: "Resolved one", status: "resolved", resolvedAt: ago(day) })
-    // A second workflow in the Problem of the failing one: the same cause in 2 workflows.
     await at({ workflowName: "Peer one", lastSeen: ago(2 * hour) }).then((r) =>
       database.db.update(affectedWorkflows).set({ problemId: now.problemId }).where(eq(affectedWorkflows.id, r.id)),
     )
@@ -445,7 +417,6 @@ describe("the Problems list as rows", () => {
       muted.id,
     ])
 
-    // Every section is counted under the filters, before the limit and whatever section is shown.
     expect(all.sections).toEqual({ instance: 1, now: 3, quiet: 1, alerts: 1, muted: 1, resolved: 1 })
     const openCounts = { instance: 1, now: 3, quiet: 1, alerts: 1, muted: 0, resolved: 0 }
     expect(open.sections).toEqual(openCounts)
@@ -465,11 +436,9 @@ describe("the Problems list as rows", () => {
       quiet: 0,
     })
 
-    // Search reads the target and the reason too; the count is over every match, before the limit.
     const found = await problemRowsPage(ctx, { status: "all", instanceId: own.id, q: "Bad ticket", limit: 2 })
     expect(found.items).toHaveLength(2)
     expect(found.total).toBe(8)
-    // An order picked replaces the sections.
     const byName = await problemRowsPage(ctx, {
       status: "all",
       instanceId: own.id,
@@ -494,7 +463,6 @@ describe("the Problems list as rows", () => {
       .returning()
     if (!own) throw new Error("no instance")
     const pad = " The service said so in many more words than any screen needs to show here."
-    // Over 100 characters, "Error fetching from <url>:" goes from the title, so this one reads "Zebra failed…".
     const zebra = await row(own.id, {
       workflowName: "Zebra",
       target: "api.example.com",
@@ -511,7 +479,6 @@ describe("the Problems list as rows", () => {
       kind: "svc",
       regression: true,
     })
-    // Two nodes of one workflow: one workflow, not two.
     const { workflowId, workflowName, target, reason, kind } = zebra
     await row(own.id, { workflowId, workflowName, target, reason, kind, nodeName: "Second node" }, zebra.problemId)
     const page = (order?: { sort: "status" | "error"; order: "asc" | "desc" }) =>
@@ -520,18 +487,14 @@ describe("the Problems list as rows", () => {
     await endMutes(ctx)
     const all = await page()
     const shownZebra = all.items.find((r) => r.id === zebra.id)
-    // A mute that ended reads as open, in its status too.
     expect(shownZebra).toMatchObject({ status: "open", state: "now", problemTotal: 1, mergedByHand: false })
     expect(shownZebra?.title).toBe(`api.example.com · Zebra failed.${pad}`)
 
-    // By Cause: by the title shown, not by the reason as stored.
     const byCause = await page({ sort: "error", order: "asc" })
     expect(byCause.items.map((r) => r.workflowName)).toEqual(["Mango", "Zebra", "Zebra"])
-    // By Status, high to low: the regression first, as its badge reads, whatever its section.
     const byStatus = await page({ sort: "status", order: "desc" })
     expect(byStatus.items[0]?.id).toBe(mango.id)
 
-    // Merged by hand: the rows and the Problem say so.
     await database.db.update(problems).set({ mergedInto: zebra.problemId }).where(eq(problems.id, mango.problemId))
     await database.db
       .update(affectedWorkflows)
@@ -549,7 +512,6 @@ describe("the Problems list as rows", () => {
       .returning()
     if (!own) throw new Error("no instance")
     const reasons = [
-      // Over 120 characters: its first sentence, which sorts before a shorter reason that goes on after it.
       `Request failed. Zebra ${"Details ".repeat(20)}`,
       "Request failed. Alpha",
       `[RequestId: 42] Bad   ticket\n(see the log) ${"word ".repeat(20)}`,
@@ -557,7 +519,6 @@ describe("the Problems list as rows", () => {
       "  short  ",
     ]
     for (const reason of reasons) await row(own.id, { target: "api.example.com", reason, kind: "svc" })
-    // A row from before the regroup by cause reads its error text.
     await row(own.id, { errorMessage: "Old error text" })
 
     const byCause = await problemRowsPage(ctx, {
@@ -569,7 +530,6 @@ describe("the Problems list as rows", () => {
     expect(titles.indexOf("api.example.com · Request failed.")).toBeLessThan(
       titles.indexOf("api.example.com · Request failed. Alpha"),
     )
-    // The SQL that sorts gives each row the title the screens show.
     const inSql = await database.db
       .select({
         id: affectedWorkflows.id,
@@ -590,7 +550,6 @@ describe("a Problem's detail", () => {
       .values({ name: "detail-n8n", baseUrl: "http://detail:5678", apiKeyEnc: "v1:x:y:z" })
       .returning()
     if (!own) throw new Error("no instance")
-    // n8n words a 403 the same way for every service it calls.
     const text = "Forbidden - perhaps check your credentials?"
     const problemAt = async (
       cause: { targetKey: string | null; target: string | null; reason: string | null },
@@ -607,21 +566,17 @@ describe("a Problem's detail", () => {
     }
     const hosting = { targetKey: `credential:${own.id}:cred-1`, target: "Hosting API" }
     const here = await problemAt({ ...hosting, reason: "HTTP 403 · Access denied" })
-    // The same credential failing for another reason is linked, whatever n8n's words.
     const sibling = await problemAt({ ...hosting, reason: "HTTP 401 · Token expired" }, {}, "Authorization failed")
-    // The same text at another target is another cause, and not linked.
     const elsewhere = await problemAt({
       targetKey: "host:api.example.com",
       target: "api.example.com",
       reason: "HTTP 403 · Forbidden",
     })
-    // A Problem merged into another is an alias, not linked.
     const [alias] = await database.db
       .insert(problems)
       .values({ errorMessage: text, ...hosting, reason: "HTTP 500 · Down", mergedInto: elsewhere.problemId })
       .returning()
     if (!alias) throw new Error("no alias")
-    // Rows from before the regroup by cause have no target: the same text links nothing.
     const oldOne = await problemAt({ targetKey: null, target: null, reason: null })
     await problemAt({ targetKey: null, target: null, reason: null })
 
@@ -659,7 +614,6 @@ describe("a Problem's detail", () => {
       return p.id
     }
     const here = await at("HTTP 500 · Here", {})
-    // More resolved ones than the detail carries, each seen after the open one.
     for (let i = 0; i < 51; i++)
       await at(`HTTP 500 · Resolved ${i}`, { status: "resolved", resolvedAt: ago(hour), lastSeen: ago(hour + i) })
     const open = await at("HTTP 500 · Still open", { lastSeen: ago(5 * day) })
@@ -687,7 +641,6 @@ describe("a Problem's detail", () => {
       createdAt: ago(storedAgo),
       error: { message: executionId },
     })
-    // Stored in this order: the latest run first, then two older runs read in afterwards.
     await database.db
       .insert(failures)
       .values([failure("latest", day, 2 * day), failure("oldest", 3 * day, hour), failure("middle", 2 * day, hour)])

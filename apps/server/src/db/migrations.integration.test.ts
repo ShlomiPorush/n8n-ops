@@ -18,8 +18,6 @@ import {
   problems,
 } from "./schema.ts"
 
-// The upgrade to backup destinations (0004, 0005) on databases as earlier releases left them, against a real
-// PostgreSQL. MIGRATION_DATABASE_URL is a role that may create databases; each case gets its own.
 const adminUrl = process.env.MIGRATION_DATABASE_URL
 if (!adminUrl) throw new Error("MIGRATION_DATABASE_URL is required (scripts/verify.sh sets it)")
 
@@ -34,7 +32,6 @@ afterAll(async () => {
   rmSync(scratch, { recursive: true, force: true })
 })
 
-/** A copy of the migrations up to (and including) the given tag, optionally with one more statement after. */
 function migrationsUpTo(tag: string | null, extra?: string) {
   const dir = mkdtempSync(join(scratch, "m-"))
   cpSync(folder, dir, { recursive: true })
@@ -64,7 +61,6 @@ async function freshDatabase() {
 
 const json = (value: unknown) => JSON.stringify(value)
 
-/** A database as release 0.1.0 left it: S3 storage, overrides, and runs in every state. */
 async function seedRelease010(sql: postgres.Sql, storage: Record<string, unknown> | null) {
   if (storage) await sql`insert into settings (key, value) values ('storage', ${json(storage)}::jsonb)`
   await sql`insert into settings (key, value) values ('defaults', ${json({
@@ -125,9 +121,7 @@ describe("the upgrade to backup destinations", () => {
         prefix: "e2e",
         forcePathStyle: true,
       })
-      // The secret is carried over as it was stored, still encrypted.
       expect(d?.credentials).toEqual({ accessKeyId: "test", secretAccessKeyEnc: "v1:iv:tag:data" })
-      // The largest of the default (7/4/6) and the overrides (30 daily, 3 monthly): nobody keeps less.
       expect(d?.retention).toEqual({ daily: 30, weekly: 4, monthly: 6 })
 
       const copies =
@@ -140,7 +134,6 @@ describe("the upgrade to backup destinations", () => {
         expect(c.verified_at).toBeNull()
       }
       const byKey = Object.fromEntries(copies.map((c) => [c.object_key, c]))
-      // Keys stay exactly as written, prefix included.
       expect(byKey["e2e/long/2026/09/long-20260901T020000Z.tar.gz.age"]).toMatchObject({
         status: "ok",
         deleted_at: null,
@@ -219,7 +212,6 @@ describe("the upgrade to backup destinations", () => {
       expect(storage?.value.bucket).toBe("n8n-ops-backups")
       const columns = await sql`select column_name from information_schema.columns where table_name = 'backup_runs'`
       expect(columns.map((c) => c.column_name)).toContain("object_key")
-      // Fixed, the same upgrade then goes through.
       await migrate(db, { migrationsFolder: folder })
       expect(await sql`select 1 from backup_copies`).toHaveLength(5)
     } finally {
@@ -228,8 +220,6 @@ describe("the upgrade to backup destinations", () => {
   })
 })
 
-// The version of an Affected workflow is moved by a trigger (0007, 0012), which the drizzle snapshot does not hold:
-// the schema check would not notice it dropped, and Undo would then overwrite later changes (FB-16).
 describe("the affected workflow version trigger", () => {
   it("is installed and moves the version on a change of state, a new occurrence or a move, not on a rename", async () => {
     const { sql, db, close } = await freshDatabase()
@@ -287,11 +277,6 @@ describe("the affected workflow version trigger", () => {
 
 const at = (iso: string) => new Date(iso).toISOString()
 
-/**
- * A database as release 0.3.0 left it: one problem row per instance, workflow, node and text, merges made by the old
- * Merge (failures and counts moved onto the target, the target renamed by later failures of the merged row), and
- * broken merges an interrupted old Merge could leave: a chain, a loop, a target that is gone.
- */
 async function seedRelease030(sql: postgres.Sql) {
   const [alpha] = await sql`insert into instances (name, base_url, api_key_enc)
     values ('alpha', 'http://n8n:5678', 'v1:x:y:z') returning id`
@@ -318,7 +303,6 @@ async function seedRelease030(sql: postgres.Sql) {
   }
   const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`
   const rows: Row[] = [
-    // One text on two instances, and in one workflow at two nodes.
     { id: id(1), instance: a, workflow: "wf-1", name: "CRM Quote", node: "HTTP", text: "Bad request", count: 5 },
     {
       id: id(2),
@@ -342,7 +326,6 @@ async function seedRelease030(sql: postgres.Sql) {
       mutedUntil: "2099-01-01T00:00:00Z",
       count: 2,
     },
-    // A merge target: 2 failures of its own and 1 of the merged row kept; the merged row's ingest renamed it.
     {
       id: id(4),
       instance: a,
@@ -365,7 +348,6 @@ async function seedRelease030(sql: postgres.Sql) {
       count: 0,
       mergedInto: id(4),
     },
-    // A chain the old Merge did not flatten.
     {
       id: id(6),
       instance: a,
@@ -389,7 +371,6 @@ async function seedRelease030(sql: postgres.Sql) {
       mergedInto: id(8),
     },
     { id: id(8), instance: a, workflow: "wf-8", name: "End", node: "N", text: "Chain end", count: 1 },
-    // A loop, and a target that is gone: taken as not merged, each with a text no other row has.
     {
       id: id(9),
       instance: a,
@@ -423,7 +404,6 @@ async function seedRelease030(sql: postgres.Sql) {
       count: 2,
       mergedInto: id(99),
     },
-    // One text merged into two different targets, and no row of it left unmerged: it routes nowhere now.
     {
       id: id(12),
       instance: a,
@@ -470,7 +450,6 @@ async function seedRelease030(sql: postgres.Sql) {
   await failure(1, id(1), a, "wf-1", "HTTP", "Bad request", "2026-10-20T00:00:00Z")
   await failure(2, id(4), a, "wf-3", "Call", "Timeout", "2026-10-20T08:00:00Z")
   await failure(3, id(4), a, "wf-3", "Call", "Timeout", "2026-10-21T08:00:00Z")
-  // The merged row's failure, on its target since the old Merge.
   await failure(4, id(4), a, "wf-4", "Call", "ERP refused", "2026-10-22T09:00:00Z")
   await sql`insert into alert_outbox (kind, group_key, problem_id, text, status)
     values ('problem', 'Bad request', ${id(1)}, 'new', 'pending')`
@@ -502,7 +481,6 @@ describe("the upgrade to Problems across workflows (0012)", () => {
         from affected_workflows`
       expect(after).toEqual(before)
 
-      // One Problem per text over the rows that are not merged, with the fingerprint ingest computes.
       const all = await db.select().from(problems)
       expect(all.map((p) => p.errorMessage).sort()).toEqual(
         ["Bad request", "Chain end", "Loop A text", "Loop B text", "Orphan text", "Timeout"].sort(),
@@ -514,7 +492,6 @@ describe("the upgrade to Problems across workflows (0012)", () => {
       expect([6, 7, 8].map(problemOf)).toEqual(["Chain end", "Chain end", "Chain end"])
       expect([9, 10, 11].map(problemOf)).toEqual(["Loop A text", "Loop B text", "Orphan text"])
 
-      // Each row keeps its own state; a merged row takes its target's, a broken merge keeps its own.
       expect(row(1)).toMatchObject({ status: "open", count: 5 })
       expect(row(2)).toMatchObject({ status: "resolved", count: 3 })
       expect(row(3)).toMatchObject({ status: "muted", count: 2 })
@@ -522,7 +499,6 @@ describe("the upgrade to Problems across workflows (0012)", () => {
       expect(row(6)).toMatchObject({ status: "open" })
       expect(row(9)).toMatchObject({ status: "resolved", count: 1 })
 
-      // The merged row's kept failure and one count went back to it; its target got back its name and last seen.
       const failuresOf = async (n: number) =>
         (
           await db
@@ -539,7 +515,6 @@ describe("the upgrade to Problems across workflows (0012)", () => {
       expect(row(4)).toMatchObject({ count: 5, workflowName: "Payments" })
       expect(row(4).lastSeen.toISOString()).toBe(at("2026-10-21T08:00:00Z"))
 
-      // Old Telegram messages take no later alerts; queued alerts and failures name the same ids; receipts are gone.
       const [group] = await db.select().from(alertGroups)
       expect(group?.closedAt).not.toBeNull()
       expect(group).toMatchObject({ problemId: null, affectedWorkflowIds: [id(1), id(2)] })
@@ -547,7 +522,6 @@ describe("the upgrade to Problems across workflows (0012)", () => {
       expect(queued?.affectedWorkflowId).toBe(id(1))
       expect(await db.select().from(problemReceipts)).toEqual([])
 
-      // The catalog: the trigger no longer reads the dropped column; the new keys cascade.
       const [fn] = await sql`select prosrc from pg_proc where proname = 'affected_workflows_bump_version'`
       expect(fn?.prosrc).not.toContain("merged_into")
       expect(fn?.prosrc).toContain("problem_id")
@@ -594,7 +568,6 @@ describe("the session clocks (0009)", () => {
         values ('s1', now() + interval '7 days', ${randomBytes(32).toString("base64url")}, 'u1', ${created.toISOString()}::timestamptz,
           ${created.toISOString()}::timestamptz)`
       await migrate(db, { migrationsFolder: migrationsUpTo(null) })
-      // Compared in the database: the connection is drizzle's, which reads timestamps as text.
       const [row] = await sql<{ kept: boolean; seen: number; active: number; ended: string | null }[]>`
         select authenticated_at = ${created.toISOString()}::timestamptz as kept,
           extract(epoch from now() - seen_at)::float as seen, extract(epoch from now() - active_at)::float as active,
@@ -651,13 +624,11 @@ describe("the instance setup (0015)", () => {
           config_revision: 0,
           setup_checks: {},
         })
-      // The declared path is gone: an older n8n has no scopes, and every API capability shows unavailable.
       expect(rows.find((r) => r.name === "older-n8n")?.scopes).toBeNull()
       expect(
         await sql`select column_name from information_schema.columns
           where table_name = 'instances' and column_name in ('scopes_source', 'declared_access')`,
       ).toHaveLength(0)
-      // A draft has no key until its setup stores one.
       await sql`insert into instances (name, base_url, setup_state) values ('draft', 'http://e', 'incomplete')`
     } finally {
       await close()
@@ -721,7 +692,6 @@ describe("the single account (0033)", () => {
 
 describe("the bounded access call history (0035)", () => {
   const DID_NOT_ANSWER = "The n8n instance did not answer."
-  // Characters outside the BMP take two UTF-16 units: the cut counts characters, as PostgreSQL does.
   const wide = "\u{1F600}"
   const longPath = `/${wide.repeat(10)}${"a".repeat(2000)}`
   const longReason = wide.repeat(600)
@@ -730,7 +700,6 @@ describe("the bounded access call history (0035)", () => {
       .slice(0, max - 1)
       .join("")}…`
 
-  /** An ended request with a Telegram message shown as current, and its calls as earlier releases stored them. */
   async function seedCalls(sql: postgres.Sql) {
     const [token] = await sql`insert into api_tokens (name, kind, prefix, token_hash)
       values ('old-bot', 'rest', 'nops_x', 'old-calls') returning id`
@@ -749,7 +718,6 @@ describe("the bounded access call history (0035)", () => {
     await call(1, "PUT", "/variables/v1", 502, DID_NOT_ANSWER)
     await call(2, "DELETE", "/tags/t1", 502, DID_NOT_ANSWER)
     await call(3, "GET", "/workflows", 502, DID_NOT_ANSWER)
-    // Six calls made at the same moment where the latest 500 end: the ID decides which of them stay.
     for (let i = 0; i < 600; i++)
       await call(i >= 100 && i <= 105 ? 110 : 10 + i, "GET", `/nothing/${i}`, 403, "GET /nothing is not an operation.")
     await call(1000, "GET", longPath, 403, longReason)
@@ -769,7 +737,6 @@ describe("the bounded access call history (0035)", () => {
 
       const [request] = await sql`select call_count, refused_count, telegram_closed_at from access_requests
         where id = ${id}`
-      // Every refused call counted, the possibly applied changes no longer among them; the message is edited again.
       expect(request).toMatchObject({ call_count: 605, refused_count: 602, telegram_closed_at: null })
       const changes = await sql`select method, path, status, refused from access_calls
         where request_id = ${id} and change order by created_at`
@@ -784,7 +751,6 @@ describe("the bounded access call history (0035)", () => {
       expect(others[0]?.path).toBe(cut(longPath, 1024))
       expect(Array.from(others[0]?.path as string)).toHaveLength(1024)
       expect(others[0]?.refused).toBe(cut(longReason, 500))
-      // The latest 494 with their own moment, then the five tied calls with the highest IDs.
       expect(others[494]?.path).toBe("/nothing/106")
       expect(others.slice(495).map((o) => o.id)).toEqual(tied.slice(0, 5).map((t) => t.id))
     } finally {

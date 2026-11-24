@@ -20,10 +20,6 @@ import {
 import { createAudit } from "../lib/audit.ts"
 import { attention, PROBLEMS_SHOWN } from "./overview.ts"
 
-// Needs attention against a real PostgreSQL (NL-19, FB-10): which problems count is decided before the list is cut,
-// so problems that do not count never push one that does out of it; the total and the tone cover every eligible
-// item; checks that could not run are listed apart. The database is made for this file from
-// MIGRATION_DATABASE_URL with every migration applied.
 const adminUrl = process.env.MIGRATION_DATABASE_URL
 if (!adminUrl) throw new Error("MIGRATION_DATABASE_URL is required (scripts/verify.sh sets it)")
 
@@ -37,11 +33,9 @@ const hour = 60 * minute
 const day = 24 * hour
 const ago = (ms: number) => new Date(Date.now() - ms)
 
-/** More open problems that do not count (first seen days ago) than the list holds, all seen more recently. */
 const PLAIN = 60
 const ids: Record<string, string> = {}
 let seq = 0
-/** An Affected workflow, in `problemId` or in a Problem of its own made for it. */
 const problem = async (
   instanceId: string,
   state: Partial<typeof affectedWorkflows.$inferInsert>,
@@ -95,7 +89,6 @@ beforeAll(async () => {
         health: "down",
         healthDetail: { main: { error: "ECONNREFUSED" } },
         healthCheckedAt: ago(minute),
-        // Down already says it cannot be reached: its failed read is not a check of its own.
         lastPollError: "fetch failed",
       },
       {
@@ -118,15 +111,12 @@ beforeAll(async () => {
     .returning()
   for (const i of inserted) ids[i.name] = i.id
   const alpha = ids["alpha-n8n"] as string
-  // Seen in the last hour, the most recent first, but first seen days ago: open, yet not new.
   for (let i = 0; i < PLAIN; i++) await problem(alpha, { lastSeen: ago((i + 1) * minute) })
   const named = async (key: string, state: Partial<typeof affectedWorkflows.$inferInsert>) => {
     ids[key] = (await problem(alpha, state)).problemId
   }
-  // New and a regression, both seen before every plain one: past the first 50 by the time they were seen.
   await named("new", { firstSeen: ago(3 * hour), lastSeen: ago(2 * hour) })
   await named("regression", { regression: true, lastSeen: ago(4 * hour) })
-  // Not counted: muted, merged, or a regression not seen for more than a day.
   await named("muted", { status: "muted", firstSeen: ago(hour), lastSeen: ago(hour) })
   const [merged] = await database.db
     .insert(problems)
@@ -135,8 +125,6 @@ beforeAll(async () => {
   ids.merged = merged?.id ?? ""
   await named("quiet", { regression: true, lastSeen: ago(2 * day) })
 
-  // Backups: alpha's last run failed after an earlier success; warn-n8n's last run wrote only some copies; the
-  // n8n-ops database is late and a run is on its way.
   await database.db.insert(backupRuns).values([
     { instanceId: alpha, status: "ok", startedAt: ago(2 * day), finishedAt: ago(2 * day) },
     { instanceId: alpha, status: "failed", error: "Disk full", startedAt: ago(hour), finishedAt: ago(hour) },
@@ -145,12 +133,10 @@ beforeAll(async () => {
   ])
   await database.db.insert(alertState).values([
     { key: "backup:self:d1", active: true, since: ago(day), detail: "<b>No recent backup of n8n-ops database</b>" },
-    // Late too, but the failure says more: one item for alpha, red.
     { key: `backup:${alpha}:d1`, active: true, since: ago(day), detail: "<b>No recent backup of alpha-n8n</b>" },
     { key: "backup:gone:d1", active: false, since: ago(day), detail: "cleared" },
   ])
 
-  // A worker that stopped reporting, one that reports, and one revoked.
   const [hostA] = await database.db
     .insert(workers)
     .values([
@@ -159,7 +145,6 @@ beforeAll(async () => {
       { name: "host-c", tokenHash: "h-c", lastSeenAt: ago(day), revokedAt: ago(hour) },
     ])
     .returning()
-  // Collected by host-a, which stopped reporting: its health is unknown, and down is only its last known health.
   await database.db.insert(instances).values({
     name: "far-n8n",
     baseUrl: "http://far:5678",
@@ -196,7 +181,6 @@ beforeAll(async () => {
     requestedWorkflowIds: [],
     scopes: ["workflow:read"],
   })
-  // One request for two instances is one item, named by both; one of them was deleted since.
   const [both] = await database.db
     .insert(accessRequests)
     .values({
@@ -295,11 +279,9 @@ describe("Needs attention", () => {
         { kind: "access", tone: "warn", name: "gone-n8n +1", id: ids.both, agent: "ops-bot", revision: 2 },
       ]),
     )
-    // One item per backup target, and only what needs a look.
     expect(brief.filter((i) => i.kind === "backup")).toHaveLength(3)
     expect(brief.filter((i) => i.kind === "worker")).toHaveLength(1)
     expect(brief.filter((i) => i.kind === "instance")).toHaveLength(2)
-    // Red first.
     const tones = a.items.map((i) => i.tone)
     expect(tones.lastIndexOf("fail")).toBeLessThan(tones.indexOf("warn"))
     expect(a.tone).toBe("fail")
@@ -345,7 +327,6 @@ describe("Needs attention", () => {
     const a = await attention(ctx)
     const listed = a.items.filter((i) => i.kind === "problem")
     expect(listed).toHaveLength(PROBLEMS_SHOWN)
-    // Two eligible before, `more` now: every one counts, those left out of the list too.
     expect(a.total).toBe(before.total + more)
     expect(a.moreProblems).toBe(more + 2 - PROBLEMS_SHOWN)
     expect(a.items).toHaveLength(a.total - a.moreProblems)

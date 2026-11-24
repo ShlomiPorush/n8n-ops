@@ -9,7 +9,6 @@ export type Actor =
       name: string
       tokenKind: "mcp" | "rest"
       canRequestAccess: boolean
-      /** A token made by hand in Settings, not an agent connected by approval. */
       manual: boolean
     }
 
@@ -19,7 +18,6 @@ export function actorName(actor: Actor): string {
   return actor.kind === "user" ? actor.username : tokenActor(actor)
 }
 
-/** An agent or token in the audit log: its name, which can repeat, and the start of its id, which cannot. */
 export function tokenActor(token: { id: string; name: string }): string {
   return `token:${token.name} #${token.id.slice(0, 8)}`
 }

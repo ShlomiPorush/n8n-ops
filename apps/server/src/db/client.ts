@@ -9,7 +9,6 @@ export type Database = {
   db: Db
   migrate(migrationsFolder: string): Promise<void>
   ping(): Promise<boolean>
-  /** A postgres.js client apart from the pool, for work that needs a session of its own; whoever opens it ends it. */
   connect(options: Options<Record<string, never>>): Sql
   close(): Promise<void>
 }

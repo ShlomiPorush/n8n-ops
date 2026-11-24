@@ -2,13 +2,11 @@ import { describe, expect, it, vi } from "vitest"
 import type { Ctx } from "../context.ts"
 import { accessRoutes } from "./access.ts"
 
-// The session clocks have their own tests; here every session is live and completed two-factor.
 vi.mock("../services/session-policy.ts", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../services/session-policy.ts")>()),
   checkSession: async () => ({ ok: true, clocks: {}, status: {}, twoFactorVerified: true }),
 }))
 
-// The pages themselves are read from PostgreSQL (access-list.integration.test.ts); here, what the route asks for.
 const asked = vi.hoisted(() => ({ cursors: [] as unknown[] }))
 vi.mock("../services/access.ts", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../services/access.ts")>()),

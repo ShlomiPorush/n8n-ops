@@ -5,7 +5,6 @@ import { describeDatabaseError } from "./errors.ts"
 const password = randomBytes(16).toString("hex")
 const url = `postgres://n8n_ops:${password}@postgres:5432/n8n_ops`
 
-// The shape postgres.js and Drizzle produce: the code sits on the cause of the query error.
 function queryError(code: string) {
   return Object.assign(new Error('Failed query: CREATE SCHEMA IF NOT EXISTS "drizzle"'), {
     cause: Object.assign(new Error("server error"), { code }),
@@ -31,7 +30,6 @@ describe("describeDatabaseError", () => {
   })
 
   it("explains a connection that opened but never answered as PostgreSQL", () => {
-    // postgres.js reports this one with its own code, not ETIMEDOUT.
     expect(describeDatabaseError(queryError("CONNECT_TIMEOUT"), url)).toContain(
       "Cannot reach PostgreSQL at postgres:5432 (CONNECT_TIMEOUT)",
     )

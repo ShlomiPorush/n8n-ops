@@ -11,13 +11,8 @@ export type AuditEntry = {
   details?: Record<string, unknown>
 }
 
-/** The database or an open transaction: anything that can insert. */
 export type AuditWriter = Pick<Db, "insert">
 
-/**
- * Writes one audit row. Pass the transaction of the change it records, so the change and its row are saved
- * together or not at all.
- */
 export type Audit = (entry: AuditEntry, tx?: AuditWriter) => Promise<void>
 
 export function createAudit(db: Db): Audit {

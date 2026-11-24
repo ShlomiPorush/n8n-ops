@@ -12,9 +12,6 @@ import { createAudit } from "../lib/audit.ts"
 import { createSettings, defaults } from "../lib/settings.ts"
 import { createAuthSource } from "./current.ts"
 
-// Passkeys against the real Better Auth plugin and a real PostgreSQL, with a software authenticator: a passkey is
-// a whole sign-in, it must verify the person (PIN or biometrics), it signs in past an ended session and starts
-// fresh clocks, adding one needs a live and recent session, and it belongs to the public URL in effect.
 const adminUrl = process.env.MIGRATION_DATABASE_URL
 if (!adminUrl) throw new Error("MIGRATION_DATABASE_URL is required (scripts/verify.sh sets it)")
 
@@ -24,7 +21,6 @@ let database: Database
 let ctx: Ctx
 let app: ReturnType<typeof createApp>
 
-// The public URL as the browser sees it; requests reach the server as http://localhost, as behind a proxy.
 const PUBLIC = "https://ops.example.test"
 const USERNAME = "operator"
 const password = randomBytes(24).toString("hex")
@@ -33,10 +29,8 @@ const minute = 60_000
 const hour = 60 * minute
 const ago = (ms: number) => new Date(Date.now() - ms)
 
-// Until a public URL is set, the page is opened at the server's own address.
 let pageOrigin = "http://localhost"
 
-/** Stores the public URL; the browser then has n8n-ops open there when it is a valid one. */
 async function setPublicUrl(publicUrl: string) {
   await ctx.settings.set("general", { ...defaults.general, publicUrl })
   pageOrigin = URL.canParse(publicUrl) ? new URL(publicUrl).origin : "http://localhost"
@@ -59,7 +53,6 @@ beforeAll(async () => {
   } as unknown as Ctx
   app = createApp(ctx, { mounts: [] })
   expect((await call("POST", "/api/setup/account", { json: { username: USERNAME, password } })).status).toBe(200)
-  // Two-factor on, as the setup wizard leaves it.
   let cookie = await signIn()
   const enabled = await call("POST", "/api/auth/two-factor/enable", { json: { password }, cookie })
   expect(enabled.status).toBe(200)
@@ -79,7 +72,6 @@ afterAll(async () => {
 })
 
 let ip = 0
-/** A request as the browser makes it: from the page it has open, with the cookies it holds. */
 async function call(
   method: string,
   path: string,
@@ -97,12 +89,10 @@ async function call(
       },
       body: json !== undefined ? JSON.stringify(json) : undefined,
     },
-    // Better Auth limits sign-in per client address; each request here is a client of its own.
     { incoming: { socket: { remoteAddress: `10.1.${Math.floor(ip / 250)}.${ip % 250}` }, headers: {} } },
   )
 }
 
-/** The cookies a response sets, merged into the ones held. */
 function cookies(held: string, res: Response): string {
   const jar = new Map(
     held
@@ -122,7 +112,6 @@ function cookies(held: string, res: Response): string {
 
 const hasSession = (cookie: string) => /better-auth\.session_token=/.test(cookie)
 
-/** The session row behind a cookie. */
 async function rowOf(cookie: string) {
   const token = decodeURIComponent(/better-auth\.session_token=([^;]+)/.exec(cookie)?.[1] ?? "").split(".")[0] ?? ""
   const [row] = await database.db.select().from(session).where(eq(session.token, token))
@@ -142,7 +131,6 @@ function base32Decode(input: string): Buffer {
   return Buffer.from(bytes)
 }
 
-/** The RFC 6238 code of now (SHA-1, 6 digits, 30-second steps). */
 async function freshTotp(secret: string): Promise<string> {
   const counter = Buffer.alloc(8)
   counter.writeBigUInt64BE(BigInt(Math.floor(Date.now() / 30_000)))
@@ -151,7 +139,6 @@ async function freshTotp(secret: string): Promise<string> {
   return ((hmac.readUInt32BE(offset) & 0x7fffffff) % 1_000_000).toString().padStart(6, "0")
 }
 
-/** Signs in with the password, and the two-factor code once two-factor is on. Returns the cookies. */
 async function signIn(): Promise<string> {
   const res = await call("POST", "/api/auth/sign-in/username", { json: { username: USERNAME, password } })
   expect(res.status).toBe(200)
@@ -170,11 +157,6 @@ async function signIn(): Promise<string> {
 const auditCount = async (action: string) =>
   (await database.db.select().from(auditLog).where(eq(auditLog.action, action))).length
 
-// ---------------------------------------------------------------------------
-// A software authenticator: ES256 key, "none" attestation, as a browser hands it over.
-// ---------------------------------------------------------------------------
-
-/** The CBOR subset WebAuthn needs: unsigned and negative integers, byte and text strings, maps. */
 function cbor(value: unknown): Buffer {
   const head = (major: number, n: number) => {
     if (n < 24) return Buffer.from([(major << 5) | n])
@@ -213,10 +195,6 @@ function authData(rpId: string, flags: number, count: number, attested?: Buffer)
 const clientData = (type: string, challenge: string, origin: string) =>
   Buffer.from(JSON.stringify({ type, challenge, origin, crossOrigin: false }))
 
-/**
- * Adds a passkey from a session: the plugin's options, a new key, and its verification. `beforeVerify` runs between
- * the two, as a change made while the person's browser asks the authenticator.
- */
 async function register(
   cookie: string,
   opts: { verified?: boolean; name?: string; createSession?: boolean; beforeVerify?: () => Promise<void> } = {},
@@ -278,10 +256,6 @@ async function register(
   return { res, authenticator }
 }
 
-/**
- * Signs in with a passkey from a browser holding `cookie`, on the page at `page`; `signedFor` is the origin the
- * authenticator signed for (another one: a relayed answer). Returns the answer, the cookies and what was sent.
- */
 async function passkeySignIn(
   a: Authenticator,
   opts: {
@@ -380,7 +354,6 @@ describe("passkeys at the public URL", () => {
     const { res, cookie } = await passkeySignIn(laptop)
     expect(res.status).toBe(200)
     expect(hasSession(cookie)).toBe(true)
-    // A route that needs two-factor: the passkey sign-in stands for both factors.
     expect((await call("GET", "/api/overview/summary", { cookie })).status).toBe(200)
     expect((await rowOf(cookie)).authenticatedAt.getTime()).toBeGreaterThan(Date.now() - 10_000)
     expect(await auditCount("Login")).toBe(logins + 1)
@@ -398,7 +371,6 @@ describe("passkeys at the public URL", () => {
   })
 
   it("refuses an answer made for another origin, and one sent twice", async () => {
-    // Signed on another site and relayed to n8n-ops: the page's request is in order, the signed origin is not.
     const wrong = await passkeySignIn(laptop, { signedFor: "https://evil.example" })
     expect(wrong.res.status).toBeGreaterThanOrEqual(400)
     expect(hasSession(wrong.cookie)).toBe(false)
@@ -423,19 +395,16 @@ describe("passkeys at the public URL", () => {
   })
 
   it("adds a passkey only from a live, recent, signed-in session", async () => {
-    // A session the clocks ended.
     const ended = await signIn()
     await setClocks((await rowOf(ended)).id, { activeAt: ago(2 * hour) })
     const refused = await register(ended)
     expect(refused.res.status).toBe(401)
     expect(await refused.res.json()).toMatchObject({ error: "session_ended" })
 
-    // Only the password step done: the two-factor cookie is no session.
     const pending = await call("POST", "/api/auth/sign-in/username", { json: { username: USERNAME, password } })
     expect(((await pending.json()) as { twoFactorRedirect?: boolean }).twoFactorRedirect).toBe(true)
     expect((await register(cookies("", pending))).res.status).toBe(401)
 
-    // A session that is live but was created more than a day ago: Better Auth asks for a new sign-in.
     const old = await signIn()
     await setClocks((await rowOf(old)).id, { createdAt: ago(25 * hour) })
     await ctx.settings.set("security", { ...defaults.security, maxHours: 48, lifetimeHours: 48 })
@@ -462,7 +431,6 @@ describe("passkeys at the public URL", () => {
     const passkeys = await passkeyCount()
     const added = await auditCount("Passkey added")
     try {
-      // Options taken while two-factor was on, sent after it was turned off: nothing is added, no session made.
       const cookie = await signIn()
       let sessions = 0
       const late = await register(cookie, {
@@ -476,13 +444,11 @@ describe("passkeys at the public URL", () => {
       expect(await late.res.json()).toMatchObject({ code: "TWO_FACTOR_REQUIRED" })
       expect(await sessionCount()).toBe(sessions)
 
-      // A password sign-in, which has no two-factor step now, cannot begin adding one.
       const passwordOnly = await signIn()
       const early = await register(passwordOnly)
       expect(early.res.status).toBe(403)
       expect(await early.res.json()).toMatchObject({ code: "TWO_FACTOR_REQUIRED" })
 
-      // Nor can a session signed in with a passkey.
       const { res, cookie: viaPasskey } = await passkeySignIn(laptop)
       expect(res.status).toBe(200)
       expect((await register(viaPasskey)).res.status).toBe(403)
@@ -492,7 +458,6 @@ describe("passkeys at the public URL", () => {
     }
     expect(await passkeyCount()).toBe(passkeys)
     expect(await auditCount("Passkey added")).toBe(added)
-    // Two-factor is on again: adding works as before.
     expect((await register(await signIn(), { name: "Desk" })).res.status).toBe(200)
     await database.db.delete(passkey).where(eq(passkey.name, "Desk"))
   })
@@ -512,7 +477,6 @@ describe("passkeys at the public URL", () => {
     expect((await call("POST", "/api/auth/passkey/delete-passkey", { cookie, json: { id: row.id } })).status).toBe(200)
     expect(await auditCount("Passkey renamed")).toBe(renamed + 1)
     expect(await auditCount("Passkey deleted")).toBe(deleted + 1)
-    // The deleted passkey no longer signs in.
     expect((await passkeySignIn(authenticator)).res.status).toBeGreaterThanOrEqual(400)
   })
 
@@ -523,7 +487,6 @@ describe("passkeys at the public URL", () => {
     if (!row) throw new Error("no passkey")
     await setPublicUrl("")
     try {
-      // Without an HTTPS public URL the session cookie is no longer the Secure one: the person signs in again.
       const cookie = await signIn()
       const listed = await call("GET", "/api/auth/passkey/list-user-passkeys", { cookie })
       expect(listed.status).toBe(200)
@@ -557,10 +520,6 @@ describe("passkeys at the public URL", () => {
     expect((await rowOf(created)).authenticatedAt.toISOString()).toBe(signedInAt.toISOString())
   })
 
-  /**
-   * Adds a passkey with a new session from `from`, held just before Better Auth creates that session (at the
-   * passkey's own row) while `meanwhile` runs. Returns the new session's cookies.
-   */
   async function addPasskeyAround(from: string, meanwhile: () => Promise<void>) {
     let release = () => {}
     const held = new Promise<void>((r) => {
@@ -639,7 +598,6 @@ describe("passkeys at the public URL", () => {
   it("after a reset from the server, a passkey signs in but two-factor must be set up again first", async () => {
     const [u] = await database.db.select().from(user)
     if (!u) throw new Error("no user")
-    // What `cli.js reset-password` does to two-factor and sessions; it keeps passkeys.
     await database.db.delete(twoFactor).where(eq(twoFactor.userId, u.id))
     await database.db.update(user).set({ twoFactorEnabled: false }).where(eq(user.id, u.id))
     await database.db.delete(session).where(eq(session.userId, u.id))
@@ -648,7 +606,6 @@ describe("passkeys at the public URL", () => {
     const blocked = await call("GET", "/api/overview/summary", { cookie })
     expect(blocked.status).toBe(403)
     expect(await blocked.json()).toMatchObject({ error: "totp_required" })
-    // Back as the other tests found it.
     await database.db.update(user).set({ twoFactorEnabled: true }).where(eq(user.id, u.id))
   })
 
@@ -667,13 +624,10 @@ describe("passkeys at the public URL", () => {
   })
 })
 
-// Account > Reset: the page signs out the other sessions, turns two-factor off with the password, and the person
-// sets up a new code on /setup. The audit log has one "Two-factor reset" for it, without the password.
 describe("a two-factor reset from the Account page", () => {
   it("signs out the other sessions, turns two-factor off once with the password, audits it, and takes a new code", async () => {
     const [u] = await database.db.select().from(user)
     if (!u) throw new Error("no user")
-    // From a known state: two-factor set up again, as the setup wizard leaves it.
     await database.db.delete(twoFactor).where(eq(twoFactor.userId, u.id))
     await database.db.update(user).set({ twoFactorEnabled: false }).where(eq(user.id, u.id))
     await database.db.delete(session).where(eq(session.userId, u.id))
@@ -691,18 +645,15 @@ describe("a two-factor reset from the Account page", () => {
     const other = await signIn()
     const logins = await auditCount("Login")
 
-    // 1. The other sessions are signed out first.
     expect((await call("POST", "/api/auth/revoke-other-sessions", { json: {}, cookie })).status).toBe(200)
     expect((await call("GET", "/api/overview/summary", { cookie: other })).status).toBe(401)
     expect((await call("GET", "/api/overview/summary", { cookie })).status).toBe(200)
 
-    // 2. A wrong password changes nothing and audits nothing.
     const refused = await call("POST", "/api/auth/two-factor/disable", { json: { password: `${password}x` }, cookie })
     expect(refused.status).toBe(400)
     expect(await auditCount("Two-factor reset")).toBe(0)
     expect((await call("GET", "/api/overview/summary", { cookie })).status).toBe(200)
 
-    // The right one turns it off, with one audit row that holds no password.
     const off = await call("POST", "/api/auth/two-factor/disable", { json: { password }, cookie })
     expect(off.status).toBe(200)
     cookie = cookies(cookie, off)
@@ -710,13 +661,11 @@ describe("a two-factor reset from the Account page", () => {
     expect(rows).toHaveLength(1)
     expect(rows[0]).toMatchObject({ actor: USERNAME, target: "", via: "web" })
     expect(JSON.stringify(rows[0])).not.toContain(password)
-    // Until a new code is set up, the session reaches setup only.
     expect(await (await call("GET", "/api/setup/checklist", { cookie })).json()).toMatchObject({ twoFactor: false })
     const blocked = await call("GET", "/api/overview/summary", { cookie })
     expect(blocked.status).toBe(403)
     expect(await blocked.json()).toMatchObject({ error: "totp_required" })
 
-    // 3. The new code, set up as /setup does: an enrolment, not a Login.
     const again = await call("POST", "/api/auth/two-factor/enable", { json: { password }, cookie })
     expect(again.status).toBe(200)
     cookie = cookies(cookie, again)

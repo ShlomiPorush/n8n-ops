@@ -1,15 +1,3 @@
-/**
- * The docker-compose.yml that installs a worker on an n8n Docker host: saved in an empty folder and started with
- * "docker compose up -d", nothing else. The server URL and the one-time pairing token are written in it; after
- * pairing, the worker keeps its identity in ./data. The worker image hands ./data to its user and, without the
- * proxy, joins the Docker socket's group by itself (docker/worker-entrypoint.sh), so no value is filled in by hand.
- *
- * With the socket proxy, only wollomatic/socket-proxy mounts the Docker socket. The worker reaches it over an
- * internal network, and the proxy allows exactly the calls the worker makes: ping, listing containers (to find
- * n8n queue workers; never inspecting one), and exec in the listed n8n containers. Without it, the worker mounts
- * the socket itself (full Docker access).
- */
-
 import { proxyRules } from "@n8n-ops/shared"
 
 export const SOCKET_PROXY_IMAGE = "wollomatic/socket-proxy:1.13.1"
@@ -17,12 +5,10 @@ export const WORKER_IMAGE = "ghcr.io/shlomiporush/n8n-ops-worker"
 
 export { CONTAINER_PATTERN, proxyRules } from "@n8n-ops/shared"
 
-/** The worker image tag for this server: its own release, or latest for a development build. */
 export function workerTag(serverVersion: string): string {
   return /^\d+\.\d+\.\d+$/.test(serverVersion) ? serverVersion : "latest"
 }
 
-/** A value Compose takes literally: a YAML double-quoted string, with $ doubled so it is not interpolated. */
 function literal(value: string): string {
   return JSON.stringify(value.replaceAll("$", "$$$$"))
 }

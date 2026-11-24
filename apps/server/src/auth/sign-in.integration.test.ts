@@ -11,8 +11,6 @@ import { createSettings, defaults } from "../lib/settings.ts"
 import { LOGIN_DOMAIN } from "./auth.ts"
 import { createAuthSource } from "./current.ts"
 
-// Signing in with the password goes through the console's username sign-in only, with its limit of 5 attempts per
-// 5 minutes per client, against the real Better Auth and a real PostgreSQL. Better Auth's email sign-in is closed.
 const adminUrl = process.env.MIGRATION_DATABASE_URL
 if (!adminUrl) throw new Error("MIGRATION_DATABASE_URL is required (scripts/verify.sh sets it)")
 
@@ -29,10 +27,8 @@ afterAll(async () => {
   await admin.end()
 })
 
-/** Where a request comes from: the address that connects, alone or with extra headers. */
 type From = string | { peer: string; headers?: [string, string][] }
 
-/** A new database with the single account, and a client that sends each request from the address it is given. */
 async function installation({ envPublicUrl }: { envPublicUrl?: string } = {}) {
   const name = `n8n_ops_sign_in_${randomBytes(4).toString("hex")}`
   await admin.unsafe(`CREATE DATABASE "${name}"`)
@@ -54,7 +50,6 @@ async function installation({ envPublicUrl }: { envPublicUrl?: string } = {}) {
   const post = (path: string, json: unknown, from: From) => {
     const { peer, headers = [] } = typeof from === "string" ? { peer: from } : from
     const sent: [string, string][] = [["origin", ORIGIN], ["content-type", "application/json"], ...headers]
-    // The connection as Node gives it to the server: the peer's address and the headers, a repeated one joined.
     const incoming: Record<string, string> = {}
     for (const [name, value] of sent) {
       const key = name.toLowerCase()
@@ -106,7 +101,6 @@ describe("password sign-in", () => {
 
 describe("the sign-in limit counts the client address the server resolves", () => {
   const PROXY = "172.18.0.5"
-  /** The answer to the right password once the client, as `from` sends each request, has used up its attempts. */
   async function sixth(
     post: Awaited<ReturnType<typeof installation>>["post"],
     password: string,
@@ -168,7 +162,6 @@ describe("the sign-in limit counts the client address the server resolves", () =
 })
 
 describe("the session cookie", () => {
-  /** The session cookie a password sign-in sets, by name, with its attributes. */
   async function sessionCookie(post: Awaited<ReturnType<typeof installation>>["post"], password: string, from: string) {
     const res = await post("/api/auth/sign-in/username", { username: USERNAME, password }, from)
     expect(res.status).toBe(200)

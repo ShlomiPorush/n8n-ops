@@ -1,7 +1,3 @@
-// Operator commands, run inside the server container:
-//   node dist/cli.js reset-password
-// Sets a new random password, turns two-factor off (it must be set up again at the next sign-in)
-// and signs out every session. Every agent connection ends with it.
 import { randomBytes } from "node:crypto"
 import { EventEmitter } from "node:events"
 import { eq } from "drizzle-orm"
@@ -34,9 +30,6 @@ if (!u) {
 
 const password = randomBytes(18).toString("base64url")
 const hash = await (await auth.$context).password.hash(password)
-// Whoever resets the account may not be the person who approved its agents. The reset and the end of every agent
-// connection are one transaction, under the gate approvals take too: none is answered in between, and a run that
-// stops changes nothing.
 const agentCtx = { db, audit: createAudit(db), events: new EventEmitter() } as unknown as Ctx
 await endEveryConnection(agentCtx, "identity", { by: "operator", via: "cli" }, async (tx) => {
   await tx.update(account).set({ password: hash, updatedAt: new Date() }).where(eq(account.userId, u.id))

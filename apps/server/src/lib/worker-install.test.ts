@@ -4,7 +4,6 @@ import { describe, expect, it } from "vitest"
 import { parse } from "yaml"
 import { CONTAINER_PATTERN, proxyRules, workerInstall, workerTag } from "./worker-install.ts"
 
-// The proxy anchors every pattern (^...$), as the tests do here.
 const allows = (pattern: string, path: string) => new RegExp(`^${pattern}$`).test(path)
 
 describe("socket proxy rules", () => {
@@ -23,7 +22,6 @@ describe("socket proxy rules", () => {
     expect(allows(rules.post, "/v1.43/exec/3f2a9c/start")).toBe(true)
     expect(allows(rules.get, "/v1.43/exec/3f2a9c/json")).toBe(true)
     expect(allows(rules.get, "/v1.43/_ping")).toBe(true)
-    // Listing finds the queue workers; inspecting a container, which shows its environment, stays refused.
     expect(allows(rules.get, "/v1.43/containers/json")).toBe(true)
     expect(allows(rules.get, "/containers/json")).toBe(true)
     expect(allows(rules.get, "/v1.43/containers/3f2a9c/json")).toBe(false)
@@ -89,7 +87,6 @@ describe("worker install", () => {
     expect(proxy).toContain("cap_drop: [ALL]")
     expect(proxy).toContain("read_only: true")
     expect(proxy).not.toContain("ports:")
-    // No socket in the worker, so no socket group to join; another container goes into the exec group.
     expect(compose).not.toContain("socket's group")
     expect(compose).toContain("add its name to the (…|…) group in -allowPOST")
   })

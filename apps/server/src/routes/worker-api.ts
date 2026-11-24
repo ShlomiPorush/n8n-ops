@@ -21,7 +21,6 @@ import { readUpload, signUpload } from "../services/upload-token.ts"
 import { recordBeat, recordWorkerCall } from "../services/worker-presence.ts"
 import { claimJob, deliverToWaiter, pairWorker, workerByIdentity } from "../services/workers.ts"
 
-/** The features a worker names in x-worker-features: short words only, at most 20. */
 export const featuresOf = (header: string | undefined) =>
   (header ?? "")
     .split(",")
@@ -33,18 +32,11 @@ type WorkerEnv = {
   Variables: { worker: typeof workers.$inferSelect; seenAt: Date; job: typeof workerJobs.$inferSelect }
 }
 
-/** The longest an archive upload may take once it has started. */
 export const UPLOAD_DEADLINE_MS = 30 * 60_000
 
-/** The largest pairing request: a token and a version take a few hundred bytes. */
 export const PAIR_BODY_BYTES = 64 * 1024
-/**
- * The largest job result a worker may send. The largest real one is a credential export, which carries every
- * credential of the instance.
- */
 export const RESULT_BODY_BYTES = 32 * 1024 * 1024
 
-/** The API the worker calls. Authenticated with the worker's identity token, never with a user session. */
 export function workerApiRoutes(ctx: Ctx) {
   const app = new Hono<WorkerEnv>()
 
@@ -67,11 +59,8 @@ export function workerApiRoutes(ctx: Ctx) {
     const worker = header.startsWith("Bearer ") ? await workerByIdentity(ctx, header.slice(7).trim()) : null
     if (!worker) return c.json({ error: "unauthorized" }, 401)
     workerSeen(worker)
-    // Committed before the handler runs: the offline period this call ends, the presence, and that this server is
-    // recording, with the time the call was recorded at.
     const seenAt = await recordWorkerCall(ctx, worker.id, {
       version: c.req.header("x-worker-version") ?? worker.version,
-      // What it supports; a worker of an earlier release sends none, and none is what it supports.
       features: featuresOf(c.req.header("x-worker-features")),
     })
     c.set("worker", worker)
@@ -79,19 +68,12 @@ export function workerApiRoutes(ctx: Ctx) {
     await next()
   })
 
-  /** When each Worker's last heartbeat was let through to the insert, on this process's monotonic clock. */
   const beatLetThrough = new Map<string, number>()
 
-  /**
-   * The Worker's heartbeat, on its own timer. Presence is recorded by `auth` whatever the answer; the body is stored
-   * once per (bootId, seq), and at most once per HEARTBEAT_MIN_GAP_MS per Worker.
-   */
   app.post("/heartbeat", auth, async (c) => {
     const body = heartbeatBody.safeParse(await c.req.json().catch(() => null))
     if (!body.success) return c.json({ error: "invalid" }, 400)
     const worker = c.get("worker")
-    // Checked and set with no await in between, so concurrent heartbeats cannot both pass. The monotonic clock is
-    // not moved by the wall clock, so a clock correction never blocks heartbeats.
     const now = performance.now()
     const last = beatLetThrough.get(worker.id)
     if (last !== undefined && now - last < HEARTBEAT_MIN_GAP_MS) return c.json({ error: "too_soon" }, 429)
@@ -100,10 +82,6 @@ export function workerApiRoutes(ctx: Ctx) {
     return c.json({ ok: true })
   })
 
-  /**
-   * Why a job is no longer wanted: its instance is a draft, or no longer has the capability the job is for. A setup
-   * check is wanted for any instance (a draft, or one adding a capability). Null when it is wanted.
-   */
   async function unwanted(job: typeof workerJobs.$inferSelect): Promise<string | null> {
     if (!job.instanceId || (job.kind === "probe" && job.payload.setup)) return null
     const [instance] = await ctx.db.select().from(instances).where(eq(instances.id, job.instanceId))
@@ -118,10 +96,6 @@ export function workerApiRoutes(ctx: Ctx) {
     return null
   }
 
-  /**
-   * Ends a running job here without handing it over or taking its result; a backup's run ends with it, and a
-   * waiting export is told. A job that ended meanwhile is left as it ended.
-   */
   async function dropJob(job: typeof workerJobs.$inferSelect, error: string, quiet: boolean) {
     const [ended] = await ctx.db
       .update(workerJobs)
@@ -136,7 +110,6 @@ export function workerApiRoutes(ctx: Ctx) {
   }
 
   app.get("/jobs/next", auth, async (c) => {
-    // Jobs no longer wanted end here, so the next one is handed over in the same call.
     for (;;) {
       const job = await claimJob(ctx, c.get("worker").id)
       if (!job) return c.json({ job: null })
@@ -157,11 +130,6 @@ export function workerApiRoutes(ctx: Ctx) {
     return job ?? null
   }
 
-  /**
-   * Backups: the worker reports size and checksum first and gets where to send the archive: this server,
-   * with a token bound to that size and checksum. Workers released before destinations existed send the
-   * archive to whatever URL and headers they get here, so they keep working unchanged.
-   */
   app.post("/jobs/:id/upload-url", auth, async (c) => {
     const worker = c.get("worker")
     const job = await ownJob(worker.id, c.req.param("id"))
@@ -202,7 +170,6 @@ export function workerApiRoutes(ctx: Ctx) {
     })
   })
 
-  /** The encrypted archive, once. It goes to the spool; the copies are written from there in the background. */
   app.put("/jobs/:id/archive", async (c) => {
     const header = c.req.header("authorization") ?? ""
     const grant = header.startsWith("Bearer ") ? readUpload(ctx.secrets, header.slice(7).trim()) : null
@@ -221,7 +188,6 @@ export function workerApiRoutes(ctx: Ctx) {
       await endRunsWithoutArchive(ctx.db, { runId: grant.run }, why)
       return c.json({ error: "conflict", message: why }, 409)
     }
-    // Taken before the body is read, so a second upload of the same run is refused.
     const [started] = await ctx.db
       .update(backupRuns)
       .set({ uploadStartedAt: new Date() })
@@ -247,7 +213,6 @@ export function workerApiRoutes(ctx: Ctx) {
       })
       if (written.size !== grant.size || written.sha256 !== grant.sha256)
         throw new SpoolError("The uploaded archive does not match the size and checksum the worker announced.")
-      // The run ended while the archive came (backup turned off, or too late): the file is not kept.
       if (!(await archiveReady(ctx, grant.run, written)))
         return c.json({ error: "conflict", message: "This backup run no longer takes an archive." }, 409)
       return c.json({ ok: true })
@@ -260,7 +225,6 @@ export function workerApiRoutes(ctx: Ctx) {
     }
   })
 
-  /** The worker's own running job the call names; its body is read only after this. */
   const runningJob = createMiddleware<WorkerEnv>(async (c, next) => {
     const job = await ownJob(c.get("worker").id, c.req.param("id") ?? "")
     if (!job) return c.json({ error: "not_found" }, 404)
@@ -268,7 +232,6 @@ export function workerApiRoutes(ctx: Ctx) {
     await next()
   })
 
-  // A result over the limit is not taken: the job fails with that reason, as any failed job does.
   const resultLimit = bodyLimit({
     maxSize: RESULT_BODY_BYTES,
     onError: async (c) => {
@@ -285,7 +248,6 @@ export function workerApiRoutes(ctx: Ctx) {
         ok: z.boolean(),
         result: z.record(z.string(), z.unknown()).optional(),
         error: z.string().optional(),
-        // What the socket proxy refused, when that made the job fail. Workers of earlier releases leave it out.
         refused: refusal.optional().catch(undefined),
         resolvedContainer: z
           .string()
@@ -296,25 +258,19 @@ export function workerApiRoutes(ctx: Ctx) {
       })
       .safeParse(await c.req.json().catch(() => ({})))
     if (!body.success) return c.json({ error: "invalid" }, 400)
-    // The job may have ended while its body arrived (another answer for it came first): that answer stands, and
-    // nothing of this one is applied.
     if (!(await ownJob(job.workerId, job.id)))
       return c.json({ error: "conflict", message: "This job has already ended." }, 409)
     const { ok, result = {}, error, refused, resolvedContainer, replicas } = body.data
     const seen = { ...(resolvedContainer ? { resolvedContainer } : {}), ...(replicas ? { replicas } : {}) }
 
-    // Secrets (exported credentials) go straight to the waiting request and are never stored. A health report is
-    // stored only as parsed, so nothing else a worker put in it (container details, by mistake) is kept.
     let stored: Record<string, unknown> =
       job.kind === "export-credentials"
         ? { credentials: Array.isArray(result.credentials) ? result.credentials.length : 0 }
         : job.kind === "probe"
           ? {}
           : result
-    // A check claimed before the worker was last offline, or before this server started, is not current.
     const worker = c.get("worker")
     const current = Boolean(job.startedAt && job.startedAt >= reportsSince(worker.id))
-    // A setup check is evidence for the setup only: it never applies health or alerts.
     if (job.kind === "probe" && job.payload.setup)
       stored = await setupWorkerResult(ctx, job, { ok, result, error, current })
     else if (job.kind === "probe" && job.instanceId && ok && current && !(await unwanted(job))) {
@@ -332,14 +288,10 @@ export function workerApiRoutes(ctx: Ctx) {
       })
       .where(and(eq(workerJobs.id, job.id), eq(workerJobs.status, "running")))
       .returning({ id: workerJobs.id })
-    // The job ended meanwhile (another answer for it came first): that answer stands.
     if (!ended) return c.json({ error: "conflict", message: "This job has already ended." }, 409)
 
-    // Secrets go to the waiting request only while the instance still allows their export; otherwise it is told
-    // why, and the secrets are dropped here.
     if (job.kind === "export-credentials")
       deliverToWaiter(job.id, why ? { ok: false, error: why } : { ok, result, error, refused, ...seen })
-    // A backup turned off meanwhile ends without an alert; one whose archive arrived finishes its copies.
     if (job.kind === "backup" && why) await endRunsWithoutArchive(ctx.db, { runId: String(job.payload.runId) }, why)
     else if (job.kind === "backup")
       await workerBackupResult(ctx, String(job.payload.runId), { ok, result, error, refused, ...seen })
@@ -349,11 +301,6 @@ export function workerApiRoutes(ctx: Ctx) {
   return app
 }
 
-/**
- * Where the worker sends its archive: the address it reached this server at. When that is the public host,
- * the public URL (HTTPS behind the proxy) is used; otherwise the request's own scheme and host, such as an
- * internal http://server:8080. Forwarded headers are not trusted for this.
- */
 export async function uploadUrl(ctx: Ctx, requestUrl: string, host: string | undefined, path: string) {
   const request = new URL(requestUrl)
   const reached = host || request.host
@@ -362,9 +309,7 @@ export async function uploadUrl(ctx: Ctx, requestUrl: string, host: string | und
     try {
       const pub = new URL(publicUrl)
       if (pub.host.toLowerCase() === reached.toLowerCase()) return new URL(path, pub.origin).toString()
-    } catch {
-      // An unusable public URL falls through to the request's own address.
-    }
+    } catch {}
   }
   return new URL(path, `${request.protocol}//${reached}`).toString()
 }

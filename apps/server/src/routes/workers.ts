@@ -22,10 +22,8 @@ import { refusal, WorkerHealthError, workerHealth } from "../services/worker-hea
 import { createPairingToken, PAIRING_TTL_MS } from "../services/workers.ts"
 import { WORKER_ONLINE_MS } from "./overview.ts"
 
-/** The containers a worker's socket proxy allows now, as the owner records them: the Add worker rules. */
 export const allowedBody = z.object({ containers: allowedContainers })
 
-/** The Workers list puts offline workers first, each group in the order it came (by name) (TB-11). */
 export const offlineFirst = (a: { online: boolean }, b: { online: boolean }) => Number(a.online) - Number(b.online)
 
 export function workerRoutes(ctx: Ctx) {
@@ -44,7 +42,6 @@ export function workerRoutes(ctx: Ctx) {
             ...w,
             online: Boolean(w.lastSeenAt && Date.now() - w.lastSeenAt.getTime() < WORKER_ONLINE_MS),
             instances: own.map((i) => ({ id: i.id, name: i.name })),
-            // The rule its socket proxy needs now, and what the proxy refused in each instance's current report.
             proxy: {
               ...(await workerRule(ctx, { ...w, tokenHash: null })),
               refused: own
@@ -61,7 +58,6 @@ export function workerRoutes(ctx: Ctx) {
     return c.json(listed.sort(offlineFirst))
   })
 
-  /** The Worker's health history for its Health panel: the same answer agents get from /api/v1/worker-health. */
   app.get("/:id/health", async (c) => {
     const parsed = historyQuery.safeParse(c.req.query())
     if (!parsed.success) return c.json({ error: "invalid", message: "Choose a range of 1 to 720 hours." }, 400)
@@ -74,11 +70,6 @@ export function workerRoutes(ctx: Ctx) {
     }
   })
 
-  /**
-   * Records the containers the worker's socket proxy allows now, as the owner set them (Add worker validation).
-   * Changes only what n8n-ops shows; the proxy itself is changed by the owner. What was entered in Add worker stays.
-   * Answers with the worker's lines as they are now.
-   */
   app.put("/:id/allowed", async (c) => {
     const body = allowedBody.safeParse(await c.req.json().catch(() => ({})))
     if (!body.success) {
@@ -111,11 +102,6 @@ export function workerRoutes(ctx: Ctx) {
     return c.json({ ok: true, proxy })
   })
 
-  /**
-   * Records patterns n8n-ops suggested for queue workers added later. Each must still be suggested by the lines as
-   * they are now; they are added to what is recorded (or, when nothing is, to what the lines allow), and the exact
-   * names they cover are dropped. Nothing is saved when the result breaks the limits of what may be recorded.
-   */
   app.post("/:id/allowed/patterns", async (c) => {
     const body = z
       .object({ patterns: z.array(z.string().regex(CONTAINER_PATTERN)).min(1).max(MAX_SUGGESTED) })
@@ -135,7 +121,6 @@ export function workerRoutes(ctx: Ctx) {
   app.post("/pairing", async (c) => {
     const body = z
       .object({
-        // Only shown to people (lists, audit log, alerts), so any readable name will do.
         name: z
           .string()
           .trim()
@@ -159,7 +144,6 @@ export function workerRoutes(ctx: Ctx) {
       })
       .safeParse(await c.req.json().catch(() => ({})))
     if (!body.success) {
-      // Every message above is written for people, so the dialog shows them as they are.
       const message = [...new Set(body.error.issues.map((i) => i.message))].join(". ")
       return c.json({ error: "invalid", message, issues: body.error.issues }, 400)
     }

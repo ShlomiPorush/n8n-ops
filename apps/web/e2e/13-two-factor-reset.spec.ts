@@ -40,19 +40,28 @@ async function sendReset(withPassword: string) {
   await resetDialog().getByRole("button", { name: "Reset two-factor" }).click()
 }
 
-/** The new code on /setup: the password again, then the code of the new secret, and back on Account. */
-async function setUpNewCode() {
+async function enterNewCode() {
   await expect(page.getByRole("heading", { name: "Set Up Two-Factor Authentication" })).toBeVisible()
   await page.getByLabel("Confirm your password").fill(password)
   await page.getByRole("button", { name: "Continue" }).click()
   const secret = (await page.getByTestId("totp-secret").textContent()) ?? ""
   expect(secret).toMatch(/^[A-Z2-7]+=*$/)
   await page.getByLabel("Two-factor code").fill(await freshTotp(secret))
-  await expect(page).toHaveURL(/\/account$/)
-  await expect(page.getByRole("heading", { name: "Sign-In" })).toBeVisible()
+  return secret
+}
+
+async function keep(secret: string) {
   // The next spec file and the next test sign in with the new secret, in this session.
   saveSecret(secret)
   await saveSession(page)
+}
+
+/** The new code on /setup: the password again, then the code of the new secret, and back on Account. */
+async function setUpNewCode() {
+  const secret = await enterNewCode()
+  await expect(page).toHaveURL(/\/account$/)
+  await expect(page.getByRole("heading", { name: "Sign-In" })).toBeVisible()
+  await keep(secret)
 }
 
 test("the password is changed in a dialog, and the way back without one is folded away", async () => {
@@ -89,7 +98,7 @@ test("Reset with a wrong password leaves two-factor on and says so", async () =>
   expect(me).toMatchObject({ twoFactor: true })
 })
 
-test("Reset takes a new code on /setup and goes back to Account, past the optional steps, and is audited", async () => {
+async function nothingOptionalSetUp() {
   // Telegram and the backup destination as not set up, so /setup would ask for them after a first setup.
   await page.route("**/api/setup/checklist", async (route) => {
     try {
@@ -100,11 +109,13 @@ test("Reset takes a new code on /setup and goes back to Account, past the option
       if (!String(e).includes("Route is already handled")) throw e
     }
   })
-  // That the other sessions are signed out first is in auth/passkey.integration.test.ts: one more here would need a
-  // sign-in of its own, and sign-in is rate limited.
+}
+
+test("Reset takes a new code on /setup and goes back to Account, past the optional steps, and is audited", async () => {
+  await nothingOptionalSetUp()
   try {
     await sendReset(password)
-    await expect(page).toHaveURL(/\/setup$/)
+    await expect(page).toHaveURL(/\/setup\?reset$/)
     await setUpNewCode()
   } finally {
     await page.unroute("**/api/setup/checklist")
@@ -142,9 +153,20 @@ test("when the answer is lost after two-factor was turned off, sign-in leads to 
   }
   await page.getByLabel("Username").fill(username)
   await page.getByLabel("Password", { exact: true }).fill(password)
-  await page.getByRole("button", { name: "Continue" }).click()
-  await expect(page).toHaveURL(/\/setup$/)
-  await setUpNewCode()
+  await nothingOptionalSetUp()
+  try {
+    await page.getByRole("button", { name: "Continue" }).click()
+    await expect(page).toHaveURL(/\/setup$/)
+    const secret = await enterNewCode()
+    await expect(page.getByRole("heading", { name: "Telegram Alerts" })).toBeVisible()
+    await page.getByRole("button", { name: "Skip for now" }).click()
+    await expect(page.getByRole("heading", { name: "Backup Destination" })).toBeVisible()
+    await page.getByRole("button", { name: "Skip for now" }).click()
+    await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible()
+    await keep(secret)
+  } finally {
+    await page.unroute("**/api/setup/checklist")
+  }
 })
 
 test("when the answer is lost but its new session cookie came, the new code is set up in the same session", async () => {
@@ -155,7 +177,7 @@ test("when the answer is lost but its new session cookie came, the new code is s
   })
   try {
     await sendReset(password)
-    await expect(page).toHaveURL(/\/setup$/)
+    await expect(page).toHaveURL(/\/setup\?reset$/)
   } finally {
     await page.unroute("**/api/auth/two-factor/disable")
   }

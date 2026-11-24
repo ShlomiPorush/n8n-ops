@@ -4,8 +4,6 @@
  * with the address it was on, once. Signing out switches the guard off too, once it worked.
  */
 
-import { clearTwoFactorReset } from "@/lib/two-factor-reset"
-
 let signedIn = false
 let ending = false
 let guardOff = false
@@ -30,13 +28,11 @@ export function sessionStarted() {
 }
 
 /**
- * Signing out worked: nothing asks about unsaved changes on the way out, and a 401 after it is expected. A
- * two-factor reset under way in this tab ends with it.
+ * Signing out worked: nothing asks about unsaved changes on the way out, and a 401 after it is expected.
  */
 export function sessionClosed() {
   signedIn = false
   guardOff = true
-  clearTwoFactorReset()
 }
 
 /** Whether leaving with unsaved changes should ask; off once the session has ended or was closed. */

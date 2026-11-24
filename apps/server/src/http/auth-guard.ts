@@ -1,6 +1,6 @@
 import { isIP } from "node:net"
 import type { Context } from "hono"
-import { PASSKEY_SIGN_IN, withResetScope } from "../auth/auth.ts"
+import { PASSKEY_SIGN_IN } from "../auth/auth.ts"
 import type { Ctx } from "../context.ts"
 import { checkSession, withInheritedClocks } from "../services/session-policy.ts"
 import { addressOf, CLIENT_ADDRESS_HEADER, incomingOf } from "./address.ts"
@@ -8,21 +8,6 @@ import { notSignedInAnswer, sessionEndedAnswer, signedIn } from "./middleware.ts
 
 /** Shown when passkeys are used while no public URL is in effect. */
 export const PASSKEYS_OFF_TEXT = "Passkeys need a public URL. Set one under Settings > General."
-
-/**
- * Better Auth's routes (/api/auth/*) under the session clocks. Better Auth only knows its own expiry, so a request
- * made with a session the clocks ended is answered here, before it reaches Better Auth: get-session answers as
- * signed out, everything else with `session_ended`. Signing in and out always pass, so an ended session never
- * stands in the way of a new one; a passkey sign-in is a sign-in too. Adding and managing passkeys stays under the
- * clocks, and adding one also needs two-factor on (auth/auth.ts). A request with no regular session also passes: Better Auth then checks it itself, such as the two-factor
- * code step of a sign-in, which runs on its own short-lived cookie. Passkeys are off while no public URL is in
- * effect (auth/auth.ts passkeyAddress). While the account has two-factor on, a session that did not complete it
- * counts as signed out here too (http/middleware.ts signedIn), and no device is trusted to skip the code.
- */
-export function authRoute(ctx: Ctx, c: Context): Promise<Response> {
-  // A two-factor reset begun in this call is finished when it ends, however it ends (auth/auth.ts).
-  return withResetScope(() => route(ctx, c))
-}
 
 /**
  * The request as Better Auth gets it: carrying the client address the server resolved (addressOf) in the one header
@@ -37,7 +22,17 @@ function withClientAddress(c: Context): Request {
   return new Request(c.req.raw, { headers })
 }
 
-async function route(ctx: Ctx, c: Context): Promise<Response> {
+/**
+ * Better Auth's routes (/api/auth/*) under the session clocks. Better Auth only knows its own expiry, so a request
+ * made with a session the clocks ended is answered here, before it reaches Better Auth: get-session answers as
+ * signed out, everything else with `session_ended`. Signing in and out always pass, so an ended session never
+ * stands in the way of a new one; a passkey sign-in is a sign-in too. Adding and managing passkeys stays under the
+ * clocks, and adding one also needs two-factor on (auth/auth.ts). A request with no regular session also passes: Better Auth then checks it itself, such as the two-factor
+ * code step of a sign-in, which runs on its own short-lived cookie. Passkeys are off while no public URL is in
+ * effect (auth/auth.ts passkeyAddress). While the account has two-factor on, a session that did not complete it
+ * counts as signed out here too (http/middleware.ts signedIn), and no device is trusted to skip the code.
+ */
+export async function authRoute(ctx: Ctx, c: Context): Promise<Response> {
   const { auth, passkeyUrl } = await ctx.auth()
   const path = c.req.path.slice("/api/auth".length)
   const req = withClientAddress(c)

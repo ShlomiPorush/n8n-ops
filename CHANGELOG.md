@@ -8,6 +8,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 - **From a version before 0.8.0, upgrade to 0.19.3 first.** The first start of 0.8.0 to 0.19.4 regrouped the problems recorded before 0.8.0 by cause; this version no longer does. `regroup-dry-run` of the server's command line went with it. Links to problems regrouped then still show where their workflows went, and the buttons of Telegram messages from before still do nothing.
 - **Update Workers from before 0.4.0.** What a socket proxy refused is read only from what Workers of 0.4.0 and later report, no longer from the error texts of earlier ones.
+- **A two-factor reset whose session was lost shows the optional setup steps.** After signing in again, setup offers Telegram and the backup destination with Skip and ends on Overview. A reset that n8n-ops could not answer stays in its window and says so.
 
 ### Removed
 
@@ -27,6 +28,10 @@ All notable changes to this project are documented here. The format follows [Kee
 - **The database password is no longer on pg_dump's command line.** The backup of the n8n-ops database gives it to pg_dump in its environment, so a failed backup always shows what pg_dump reported; details are no longer hidden.
 - **An archive that reached the server is kept when the database's answer to recording it is lost.** The backup was counted as failed and its archive removed.
 - **A backup no longer fails because four other archives are being received.**
+- **A refused two-factor reset changes nothing.** A wrong password on Account → Reset disconnected every agent and signed out the other sessions. They now end only once the password was checked.
+- **A client that sends its request slowly no longer holds up agents that connect.** One such registration or code request kept the others waiting for up to a minute.
+- **A change of the public URL is recorded once in the audit log**, with who made it. The end of the agents' connections was recorded a second time, by n8n-ops.
+- **Saving Agent Connections no longer puts back what another save changed at the same time.**
 
 ## [0.19.4] - 2026-11-24
 

@@ -1,27 +1,15 @@
-import { randomBytes, randomUUID } from "node:crypto"
+import { randomBytes } from "node:crypto"
 import type { IncomingMessage } from "node:http"
 import { and, eq, isNotNull, isNull, lt, ne, or, sql } from "drizzle-orm"
 import { type Ctx, changed } from "../context.ts"
 import type { Db } from "../db/client.ts"
-import { agentConsent, apiTokens, user } from "../db/schema.ts"
+import { agentConsent, apiTokens, session, user } from "../db/schema.ts"
 import { tokenActor } from "../http/types.ts"
 import type { AuditVia } from "../lib/audit.ts"
 import { sha256 } from "../lib/crypto.ts"
-import type { Design } from "../lib/settings.ts"
+import { type Design, readSection, type Section, sections, writeSection } from "../lib/settings.ts"
 import { revokeAccessOfToken } from "../services/access.ts"
-import {
-  addReset,
-  gateExclusive,
-  gateShared,
-  generation,
-  lastIssuer,
-  nextGeneration,
-  rememberIssuer,
-  removeResets,
-  resetIds,
-  resetting,
-  type Tx,
-} from "./gate.ts"
+import { gateExclusive, gateShared, generation, lastIssuer, nextGeneration, rememberIssuer, type Tx } from "./gate.ts"
 import { providerPages } from "./pages.ts"
 import { type AgentProvider, createAgentProvider, resources, SCOPES } from "./provider.ts"
 import { servedSkillVersion } from "./skill.ts"
@@ -108,49 +96,69 @@ async function endIn(ctx: Ctx, tx: Tx, which: { id: string } | { grantId: string
  * Ends every connection and every request still waiting (codes, device requests, approvals), and starts a new
  * generation so a request that began before cannot be approved after. Under the exclusive gate, in one transaction.
  * Needs no authorization server: the CLI runs it for a two-factor reset made from the server. `alsoIn` runs in the same
- * transaction first, for a change that must hold exactly when everything ended (agents turned off).
+ * transaction first, for a change that must hold exactly when everything ended.
  */
 export async function endEveryConnection(ctx: Ctx, reason: EndReason, who: Who, alsoIn?: (tx: Tx) => Promise<void>) {
   const ended = await ctx.db.transaction(async (tx) => {
     await gateExclusive(tx)
     await alsoIn?.(tx)
-    await nextGeneration(tx)
-    const rows = await tx
-      .select({ id: apiTokens.id })
-      .from(apiTokens)
-      .where(and(eq(apiTokens.kind, "agent"), isNull(apiTokens.revokedAt)))
-    for (const r of rows) await endIn(ctx, tx, { id: r.id }, reason, who)
-    await cancelWaiting(tx)
-    await ctx.audit(
-      {
-        actor: who.by,
-        action: "All agent connections ended",
-        target: `${rows.length} (${endText[reason]})`,
-        via: who.via,
-      },
-      tx,
-    )
-    return rows.length
+    return endEveryIn(ctx, tx, reason, who)
   })
   changed(ctx, "access", "overview")
   return ended
 }
 
-/**
- * A two-factor reset made on the account page ends every connection on both sides of the change (D6): first, in the
- * transaction that records the reset as under way (a row of its own, agent_resets), so no approval is answered while
- * any reset is under way; then again once it is done, which removes only its own row. Better Auth makes the change
- * between the two, outside these transactions. The server process knows which rows are its own resets still running
- * (createAgentConnect: beginReset, finishReset); any other row was left by a process that stopped, and reconcile
- * finishes it. The reset from the server (cli.ts) needs no row: it makes its change inside endEveryConnection's
- * transaction, under the exclusive gate.
- */
-export async function beginIdentityReset(ctx: Ctx, who: Who, id: string) {
-  await endEveryConnection(ctx, "identity", who, (tx) => addReset(tx, id))
+async function endEveryIn(ctx: Ctx, tx: Tx, reason: EndReason, who: Who) {
+  await nextGeneration(tx)
+  const rows = await liveConnections(tx)
+  for (const r of rows) await endIn(ctx, tx, { id: r.id }, reason, who)
+  await cancelWaiting(tx)
+  await ctx.audit(
+    {
+      actor: who.by,
+      action: "All agent connections ended",
+      target: `${rows.length} (${endText[reason]})`,
+      via: who.via,
+    },
+    tx,
+  )
+  return rows.length
 }
-export async function finishIdentityReset(ctx: Ctx, who: Who, ids: string[]) {
-  return endEveryConnection(ctx, "identity", who, (tx) => removeResets(tx, ids))
+
+export function accountResetHooks(ctx: Ctx) {
+  return {
+    async before({ actor, userId, sessionId }: { actor: string; userId: string; sessionId: string }) {
+      await endEveryConnection(ctx, "identity", { by: actor, via: "web" }, async (tx) => {
+        await tx.delete(session).where(and(eq(session.userId, userId), ne(session.id, sessionId)))
+      })
+    },
+    async after({ actor }: { actor: string }) {
+      try {
+        const left = await ctx.db.transaction(async (tx) => {
+          await gateExclusive(tx)
+          return liveConnections(tx)
+        })
+        if (left.length) await endEveryConnection(ctx, "identity", { by: actor, via: "web" })
+      } catch (e) {
+        ctx.log.error("could not end the agent connections left after a two-factor reset", {
+          error: (e as Error).message,
+        })
+      }
+    },
+  }
 }
+
+const liveConnections = (db: Db | Tx) =>
+  db
+    .select({ id: apiTokens.id })
+    .from(apiTokens)
+    .where(and(eq(apiTokens.kind, "agent"), isNull(apiTokens.revokedAt)))
+
+const idleConnections = (db: Db | Tx, cutoff: Date) =>
+  db
+    .select({ id: apiTokens.id })
+    .from(apiTokens)
+    .where(and(eq(apiTokens.kind, "agent"), isNull(apiTokens.revokedAt), idleBefore(cutoff)))
 
 export type AgentConnect = ReturnType<typeof createAgentConnect>
 
@@ -168,36 +176,9 @@ export function createAgentConnect(
   /** Set by the routes: a device-code poll that was counted, and turned out to be waiting or approved. */
   const hooks: {
     devicePollAnswered?: (req: IncomingMessage) => void
-    /** The provider has handled a request: a capped request gives its lock back (oauth/routes.ts). */
-    providerDone?: (req: IncomingMessage) => void
     /** A code typed on the code page, in this provider session (its signed cookie) or none: false when over the limit. */
     codeAttempt?: (session: string | undefined, req: IncomingMessage) => boolean
   } = {}
-
-  /** The two-factor resets this process began and whose request still runs; see beginIdentityReset. */
-  const runningResets = new Set<string>()
-
-  /** Begins a reset of the account page: returns its id, for finishReset. */
-  async function beginReset(who: Who) {
-    const id = randomUUID()
-    runningResets.add(id)
-    try {
-      await beginIdentityReset(ctx, who, id)
-    } catch (e) {
-      runningResets.delete(id)
-      throw e
-    }
-    return id
-  }
-
-  /** Finishes it, made or refused. If that fails, its row stays and the sweep finishes it (it no longer runs). */
-  async function finishReset(who: Who, id: string) {
-    try {
-      await finishIdentityReset(ctx, who, [id])
-    } finally {
-      runningResets.delete(id)
-    }
-  }
 
   async function enabled() {
     return (await ctx.settings.get("agents")).enabled
@@ -258,7 +239,7 @@ export function createAgentConnect(
         )
         .returning({ generation: agentConsent.generation })
       const now = await generation(tx)
-      if (!taken || taken.generation !== now || (await resetting(tx))) return { kind: "gone" as const }
+      if (!taken || taken.generation !== now) return { kind: "gone" as const }
       if (input.deviceCode) {
         const [device] = await tx
           .select({ generation: agentConsent.generation })
@@ -274,8 +255,11 @@ export function createAgentConnect(
         return { kind: "denied" as const }
       }
       if (!on || issuer !== input.issuer) return { kind: "gone" as const }
-      const [account] = await tx.select({ id: user.id }).from(user).where(eq(user.id, input.accountId))
-      if (!account) return { kind: "gone" as const }
+      const [account] = await tx
+        .select({ twoFactorEnabled: user.twoFactorEnabled })
+        .from(user)
+        .where(eq(user.id, input.accountId))
+      if (!account?.twoFactorEnabled) return { kind: "gone" as const }
       // If this transaction fails after the grant is stored, the sweep removes the grant.
       const grantId = await input.makeGrant()
       await connected(tx, { ...input.record, issuer: input.issuer, grantId })
@@ -304,14 +288,6 @@ export function createAgentConnect(
        * record, an approval is refused.
        */
       created.use(async (k, next) => {
-        try {
-          await handle(k, next)
-        } finally {
-          // Whatever happened above, a capped request gives its lock back once the provider is done with it.
-          hooks.providerDone?.(k.req)
-        }
-      })
-      async function handle(k: Parameters<Parameters<typeof created.use>[0]>[0], next: () => Promise<unknown>) {
         const path = k.path
         const opens = /^\/(oauth\/authorize|connect\/device|oauth\/device$)/.test(path)
         const gen = opens ? await generation(ctx.db) : 0
@@ -324,12 +300,12 @@ export function createAgentConnect(
         try {
           if (limited) {
             k.status = 429
-            k.set("Retry-After", "600")
             k.body = { error: "slow_down", error_description: "Too many codes tried. Wait a few minutes." }
           } else await next()
         } catch (e) {
           failure = e
         }
+        if (k.status === 429) k.set("Retry-After", "600")
         if (opens && !failure) {
           const uid = /\/connect\/approve\/([\w-]+)/.exec(String(k.response.get("location") ?? ""))?.[1]
           if (uid) await recordRequest(`i:${uid}`, gen)
@@ -346,7 +322,7 @@ export function createAgentConnect(
             hooks.devicePollAnswered?.(k.req)
         }
         if (failure) throw failure
-      }
+      })
       current = { issuer, provider: created }
     }
     return current
@@ -381,11 +357,15 @@ export function createAgentConnect(
       return invalid
     }
     const [account] = await ctx.db
-      .select({ id: user.id })
+      .select({ twoFactorEnabled: user.twoFactorEnabled })
       .from(user)
       .where(eq(user.id, String(at.accountId)))
     if (!account) {
       await end({ id: row.id }, "account", SYSTEM)
+      return invalid
+    }
+    if (!account.twoFactorEnabled) {
+      await end({ id: row.id }, "identity", SYSTEM)
       return invalid
     }
     if (idleSince(row) < Date.now() - settings.idleDays * 86_400_000) {
@@ -470,24 +450,25 @@ export function createAgentConnect(
    * connection, every waiting request, and the generation moves on. Before the first record (a database from an
    * earlier release), only connections made under another URL end, as before.
    */
-  async function reconcileIssuer(issuer: string | null) {
+  async function reconcileIssuer(issuer: string | null, savedBy?: Who) {
     const known = await lastIssuer(ctx.db)
-    if (known && known !== issuer) {
-      await endEveryConnection(ctx, "address", SYSTEM)
-    } else {
-      const rows = await ctx.db
-        .select({ id: apiTokens.id })
-        .from(apiTokens)
-        .where(
-          and(
-            eq(apiTokens.kind, "agent"),
-            isNull(apiTokens.revokedAt),
-            issuer ? or(ne(apiTokens.issuer, issuer), isNull(apiTokens.issuer)) : undefined,
-          ),
-        )
-      for (const r of rows) await end({ id: r.id }, "address", SYSTEM)
+    if (savedBy || (known && known !== issuer)) {
+      await endEveryConnection(ctx, "address", savedBy ?? SYSTEM, (tx) => rememberIssuer(tx, issuer))
+      return
     }
-    if (known !== issuer) await rememberIssuer(ctx.db, issuer)
+    if (known) return
+    const rows = await ctx.db
+      .select({ id: apiTokens.id })
+      .from(apiTokens)
+      .where(
+        and(
+          eq(apiTokens.kind, "agent"),
+          isNull(apiTokens.revokedAt),
+          issuer ? or(ne(apiTokens.issuer, issuer), isNull(apiTokens.issuer)) : undefined,
+        ),
+      )
+    for (const r of rows) await end({ id: r.id }, "address", SYSTEM)
+    if (issuer) await rememberIssuer(ctx.db, issuer)
   }
 
   /**
@@ -496,39 +477,41 @@ export function createAgentConnect(
    * while agents are off (one that an interrupted turn-off left behind never works again).
    */
   async function reconcile() {
-    // Two-factor resets that are not this process's own still running were left by a process that stopped (or by a
-    // finish of this one that failed): end everything again, and remove them.
-    const abandoned = (await resetIds(ctx.db)).filter((id) => !runningResets.has(id))
-    if (abandoned.length) await finishIdentityReset(ctx, SYSTEM, abandoned)
     await reconcileIssuer(issuerOf((await ctx.settings.get("general")).publicUrl))
     if (!(await enabled())) {
-      const [live] = await ctx.db
-        .select({ id: apiTokens.id })
-        .from(apiTokens)
-        .where(and(eq(apiTokens.kind, "agent"), isNull(apiTokens.revokedAt)))
-        .limit(1)
+      const [live] = await liveConnections(ctx.db).limit(1)
       if (live) await endEveryConnection(ctx, "off", SYSTEM)
     }
   }
 
   /**
-   * Ends every connected agent: disconnect all, a new public URL, a two-factor reset. `alsoIn` makes a change in the
-   * same transaction (turning agents off is stored with the end it causes, or not at all).
+   * Ends every connected agent: disconnect all.
    */
-  async function endAll(reason: EndReason, who: Who, alsoIn?: (tx: Tx) => Promise<void>) {
-    return endEveryConnection(ctx, reason, who, alsoIn)
+  async function endAll(reason: EndReason, who: Who) {
+    return endEveryConnection(ctx, reason, who)
   }
 
-  /** Ends every connection not used within `days`, under the exclusive gate (a new idle period, the sweep). */
-  async function endIdle(days: number, who: Who = SYSTEM) {
-    const cutoff = new Date(Date.now() - days * 86_400_000)
-    const rows = await ctx.db
-      .select({ id: apiTokens.id })
-      .from(apiTokens)
-      .where(and(eq(apiTokens.kind, "agent"), isNull(apiTokens.revokedAt), idleBefore(cutoff)))
+  /** Ends every connection not used within `days`, under the exclusive gate (the sweep). */
+  async function endIdle(days: number) {
+    const cutoff = daysAgo(days)
     let ended = 0
-    for (const r of rows) if (await end({ id: r.id }, "unused", who, cutoff)) ended++
+    for (const r of await idleConnections(ctx.db, cutoff))
+      if (await end({ id: r.id }, "unused", SYSTEM, cutoff)) ended++
     return ended
+  }
+
+  async function saveSettings(change: Partial<Section<"agents">>, who: Who) {
+    await ctx.db.transaction(async (tx) => {
+      await gateExclusive(tx)
+      const before = await readSection(tx, "agents")
+      const after = sections.agents.parse({ ...before, ...change })
+      if (!after.enabled) await endEveryIn(ctx, tx, "off", who)
+      else
+        for (const r of await idleConnections(tx, daysAgo(Math.min(before.idleDays, after.idleDays))).for("update"))
+          await endIn(ctx, tx, { id: r.id }, "unused", who)
+      await writeSection(tx, "agents", after)
+    })
+    changed(ctx, "access", "overview")
   }
 
   /**
@@ -538,6 +521,20 @@ export function createAgentConnect(
    */
   async function sweep() {
     await reconcile()
+    // A connection whose grant the authorization server removed (the agent revoked a token) and that its event did not
+    // end, for example when the server stopped in between.
+    const orphans = await ctx.db
+      .select({ id: apiTokens.id })
+      .from(apiTokens)
+      .where(
+        and(
+          eq(apiTokens.kind, "agent"),
+          isNull(apiTokens.revokedAt),
+          isNotNull(apiTokens.grantId),
+          sql`not exists (select 1 from oauth_store g where g.type = 'Grant' and g.id = ${apiTokens.grantId})`,
+        ),
+      )
+    for (const r of orphans) await end({ id: r.id }, "cut", SYSTEM)
     await endIdle((await ctx.settings.get("agents")).idleDays)
     const quarterHourAgo = new Date(Date.now() - 15 * 60_000)
     const rows = await ctx.db
@@ -553,25 +550,8 @@ export function createAgentConnect(
       )
     for (const row of rows) {
       if (await grantAlive(ctx.db, row.grantId as string)) continue
-      // Look once more a moment later: a refresh may have been between using the old token and storing the new.
-      await new Promise((r) => setTimeout(r, 2_000))
-      if (await grantAlive(ctx.db, row.grantId as string)) continue
       await end({ id: row.id }, row.lastUsedAt ? "unused" : "unfinished", SYSTEM)
     }
-    // A connection whose grant the authorization server removed (the agent revoked a token) and that its event did not
-    // end, for example when the server stopped in between.
-    const orphans = await ctx.db
-      .select({ id: apiTokens.id })
-      .from(apiTokens)
-      .where(
-        and(
-          eq(apiTokens.kind, "agent"),
-          isNull(apiTokens.revokedAt),
-          isNotNull(apiTokens.grantId),
-          sql`not exists (select 1 from oauth_store g where g.type = 'Grant' and g.id = ${apiTokens.grantId})`,
-        ),
-      )
-    for (const r of orphans) await end({ id: r.id }, "cut", SYSTEM)
     await ctx.db.transaction(async (tx) => {
       await gateExclusive(tx)
       await sweepOrphanGrants(tx)
@@ -586,20 +566,22 @@ export function createAgentConnect(
     stillLive,
     bindRequest,
     decide,
-    beginReset,
-    finishReset,
     connected,
     end,
     endAll,
     endIdle,
+    saveSettings,
     sweep,
     reconcile,
+    reconcileIssuer,
     hooks,
     skillDir,
     /** The version a served copy of this build's skill sends (null without a skill): see updateSkillNotice. */
     skillVersion: servedSkillVersion(skillDir),
   }
 }
+
+const daysAgo = (days: number) => new Date(Date.now() - days * 86_400_000)
 
 /** A connection not used since `cutoff` (or never used, and approved before it). */
 const idleBefore = (cutoff: Date) =>

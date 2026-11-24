@@ -1,33 +1,26 @@
 import { randomBytes, randomUUID } from "node:crypto"
 import { EventEmitter } from "node:events"
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import type { Server } from "node:http"
+import { connect } from "node:net"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { and, eq, isNull, sql } from "drizzle-orm"
 import postgres from "postgres"
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest"
-import { beginScopedReset, createAuth, onTwoFactorReset, withResetScope } from "../auth/auth.ts"
+import { createAuth, onTwoFactorReset } from "../auth/auth.ts"
 import type { Ctx } from "../context.ts"
 import { createDatabase, type Database } from "../db/client.ts"
-import {
-  accessRequests,
-  agentConsent,
-  agentResets,
-  agentState,
-  apiTokens,
-  auditLog,
-  oauthStore,
-  user,
-} from "../db/schema.ts"
+import { accessRequests, agentConsent, agentState, apiTokens, auditLog, oauthStore, user } from "../db/schema.ts"
 import { createAudit } from "../lib/audit.ts"
 import { createSecrets, sha256 } from "../lib/crypto.ts"
-import { createSettings } from "../lib/settings.ts"
+import { createSettings, writeSection } from "../lib/settings.ts"
 import { HEADERS, restRoutes } from "../routes/agent.ts"
 import { OPEN, REVISION } from "../routes/agent-policy.ts"
 import { createAgentConnect, endEveryConnection } from "./agents.ts"
-import { generation } from "./gate.ts"
+import { gateExclusive, generation } from "./gate.ts"
 import { CLI_CLIENT, createAgentProvider, resources } from "./provider.ts"
-import { storeAdapter } from "./store.ts"
+import { MAX_CLIENTS, MAX_DEVICE_REQUESTS, storeAdapter } from "./store.ts"
 
 /*
  * Agent connection against a real PostgreSQL (the agent-access standard): token values never stored, existing rows
@@ -43,6 +36,7 @@ const admin = postgres(adminUrl, { max: 1, onnotice: () => {} })
 const made: string[] = []
 const open: Database[] = []
 const issuer = "http://localhost:8080"
+const owner = { id: "u1", name: "owner", email: "owner@n8n-ops.local", twoFactorEnabled: true }
 const pages = {
   codeInput: (form: string) => form,
   codeConfirm: (form: string) => form,
@@ -265,7 +259,7 @@ describe("the check on every call", () => {
     ctx = contextOf(database)
     await ctx.settings.set("general", { ...(await ctx.settings.get("general")), publicUrl: issuer })
     await ctx.settings.set("agents", { enabled: true, idleDays: 30 })
-    await ctx.db.insert(user).values({ id: "u1", name: "owner", email: "owner@n8n-ops.local" })
+    await ctx.db.insert(user).values(owner)
     agents = createAgentConnect(ctx, { cookieKeys: [value()] })
     ctx.agents = agents
   })
@@ -521,7 +515,7 @@ describe("making and ending connections against each other", () => {
     const ctx = contextOf(main)
     await ctx.settings.set("general", { ...(await ctx.settings.get("general")), publicUrl: issuer })
     await ctx.settings.set("agents", { enabled: true, idleDays: 90 })
-    await ctx.db.insert(user).values({ id: "u1", name: "owner", email: "owner@n8n-ops.local" })
+    await ctx.db.insert(user).values(owner)
     const agents = createAgentConnect(ctx, { cookieKeys: [value()], storeDb: store.db })
     ctx.agents = agents
     const p = await agents.provider()
@@ -706,7 +700,7 @@ describe("making and ending connections, in each order", () => {
     const ctx = contextOf(database)
     await ctx.settings.set("general", { ...(await ctx.settings.get("general")), publicUrl: issuer })
     await ctx.settings.set("agents", { enabled: true, idleDays: 90 })
-    await ctx.db.insert(user).values({ id: "u1", name: "owner", email: "owner@n8n-ops.local" })
+    await ctx.db.insert(user).values(owner)
     const agents = createAgentConnect(ctx, { cookieKeys: [value()] })
     ctx.agents = agents
     const p = await agents.provider()
@@ -755,41 +749,6 @@ describe("making and ending connections, in each order", () => {
     await endEveryConnection(s.ctx, "all", { by: "owner", via: "web" })
     expect((await s.decide(value(), before)).kind).toBe("gone")
     expect(await s.live()).toBe(0)
-  })
-
-  it("answers no approval while a two-factor reset is under way, however long, and again once it is done", async () => {
-    const s = await setUp()
-    expect((await s.decide(value())).kind).toBe("approved")
-    const reset = await s.agents.beginReset({ by: "owner", via: "web" as const })
-    expect(await s.live()).toBe(0)
-    expect((await s.decide(value())).kind).toBe("gone")
-    // However long it takes, the sweep leaves a reset this process still runs alone.
-    await s.ctx.db.update(agentResets).set({ createdAt: new Date(Date.now() - 86_400_000) })
-    await s.agents.reconcile()
-    expect((await s.decide(value())).kind).toBe("gone")
-    await s.agents.finishReset({ by: "owner", via: "web" as const }, reset)
-    expect((await s.decide(value())).kind).toBe("approved")
-  })
-
-  it("waits for every reset under way: one that finishes first does not open approvals for another", async () => {
-    const s = await setUp()
-    const first = await s.agents.beginReset({ by: "owner", via: "web" as const })
-    const second = await s.agents.beginReset({ by: "owner", via: "web" as const })
-    await s.agents.finishReset({ by: "owner", via: "web" as const }, first)
-    expect((await s.decide(value())).kind).toBe("gone")
-    await s.agents.finishReset({ by: "owner", via: "web" as const }, second)
-    expect((await s.decide(value())).kind).toBe("approved")
-  })
-
-  it("finishes a two-factor reset that another process began and left", async () => {
-    const s = await setUp()
-    // An earlier server process began a reset and stopped; this one starts.
-    const earlier = createAgentConnect(s.ctx, { cookieKeys: [value()] })
-    await earlier.beginReset({ by: "owner", via: "web" as const })
-    expect((await s.decide(value())).kind).toBe("gone")
-    await s.agents.reconcile()
-    expect(await s.ctx.db.select().from(agentResets)).toEqual([])
-    expect((await s.decide(value())).kind).toBe("approved")
   })
 
   it("ends every connection with the reset from the server, in one transaction, or neither", async () => {
@@ -842,16 +801,15 @@ describe("making and ending connections, in each order", () => {
 })
 
 describe("the two-factor reset hooks", () => {
-  it("begin nothing, and stop the reset, for a request without a session", async () => {
+  it("run for no request without a session, and the reset is refused", async () => {
     const database = await freshDatabase()
     const calls: string[] = []
     onTwoFactorReset({
-      begin: async () => {
-        calls.push("begin")
-        return "reset"
+      before: async () => {
+        calls.push("before")
       },
-      finish: async () => {
-        calls.push("finish")
+      after: async () => {
+        calls.push("after")
       },
     })
     const auth = createAuth(database.db, randomBytes(32), issuer)
@@ -867,32 +825,324 @@ describe("the two-factor reset hooks", () => {
   })
 })
 
-describe("a two-factor reset whose call fails", () => {
-  it("is finished when the call ends, also with an error that is not Better Auth's, and approvals open again", async () => {
+describe("the caps on what anyone may add without signing in", () => {
+  async function setUp() {
     const database = await freshDatabase()
     const ctx = contextOf(database)
     await ctx.settings.set("general", { ...(await ctx.settings.get("general")), publicUrl: issuer })
     await ctx.settings.set("agents", { enabled: true, idleDays: 90 })
     const agents = createAgentConnect(ctx, { cookieKeys: [value()] })
     ctx.agents = agents
-    const who = { by: "owner", via: "web" as const }
-    onTwoFactorReset({ begin: () => agents.beginReset(who), finish: (_actor, id) => agents.finishReset(who, id) })
-
-    await expect(
-      withResetScope(async () => {
-        await beginScopedReset("owner")
-        expect(await ctx.db.select().from(agentResets)).toHaveLength(1)
-        throw new Error("the database dropped the update")
-      }),
-    ).rejects.toThrow("the database dropped the update")
-    expect(await ctx.db.select().from(agentResets)).toEqual([])
-    // Nothing in this process still counts it as running: the sweep has nothing left to wait for.
-    await agents.reconcile()
-    expect(await ctx.db.select().from(agentResets)).toEqual([])
+    const { serve } = await import("@hono/node-server")
+    const { agentConnectRoutes } = await import("./routes.ts")
+    const server = serve({ fetch: agentConnectRoutes(ctx, agents).fetch, port: 0 }) as Server
+    await new Promise((r) => server.once("listening", r))
+    servers.push(server)
+    const port = (server.address() as { port: number }).port
+    const device = () =>
+      fetch(`http://127.0.0.1:${port}/oauth/device`, {
+        method: "POST",
+        body: new URLSearchParams({
+          client_id: CLI_CLIENT,
+          scope: "ops:read offline_access",
+          resource: resources(issuer).rest,
+        }),
+      })
+    const register = () =>
+      fetch(`http://127.0.0.1:${port}/oauth/register`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          client_name: "agent",
+          redirect_uris: ["https://agent.example.com/back"],
+          token_endpoint_auth_method: "none",
+        }),
+      })
+    const stored = async (type: string) =>
+      (await ctx.db.select().from(oauthStore).where(eq(oauthStore.type, type))).map((r) => r.id)
+    const fill = async (type: "DeviceCode" | "Client", n: number, approved = 0) => {
+      const ids = Array.from({ length: n }, () => randomUUID())
+      const rows = ids.map((id) =>
+        type === "Client"
+          ? { type, id, payload: { client_id: id, client_id_issued_at: 1 } }
+          : { type, id, payload: {}, expiresAt: new Date(Date.now() + 600_000) },
+      )
+      if (n) await ctx.db.insert(oauthStore).values(rows)
+      const grants = ids.slice(0, approved).map((id) => ({ type: "Grant", id: value(), payload: { clientId: id } }))
+      if (grants.length) await ctx.db.insert(oauthStore).values(grants)
+      return ids
+    }
+    return { ctx, port, device, register, stored, fill }
+  }
+  const servers: Server[] = []
+  afterAll(() => {
+    for (const server of servers) server.close()
   })
 
-  it("is refused outside a call into Better Auth, where nothing would finish it", async () => {
-    onTwoFactorReset({ begin: async () => "reset", finish: async () => {} })
-    await expect(beginScopedReset("owner")).rejects.toThrow()
+  const refused = async (res: Response) => {
+    expect(res.status).toBe(429)
+    expect(res.headers.get("retry-after")).toBe("600")
+    expect(await res.json()).toEqual({
+      error: "slow_down",
+      error_description: "Too many requests. Wait a few minutes.",
+    })
+  }
+
+  it("opens no more device requests than the cap, also at once, and refuses the rest with 429 slow_down", async () => {
+    const s = await setUp()
+    await s.fill("DeviceCode", MAX_DEVICE_REQUESTS - 3)
+    const answers = await Promise.all(Array.from({ length: 12 }, s.device))
+    expect(answers.filter((r) => r.status === 200)).toHaveLength(3)
+    for (const res of answers.filter((r) => r.status !== 200)) await refused(res)
+    expect(await s.stored("DeviceCode")).toHaveLength(MAX_DEVICE_REQUESTS)
+    expect(await s.ctx.db.select().from(agentConsent)).toHaveLength(3)
+  })
+
+  it("makes room when a request runs out or is answered, and goes on with an open one while full", async () => {
+    const s = await setUp()
+    const [expired = "", answered = ""] = await s.fill("DeviceCode", MAX_DEVICE_REQUESTS - 1)
+    const opened = await s.device()
+    expect(opened.status).toBe(200)
+    const { device_code } = (await opened.json()) as { device_code: string }
+    await refused(await s.device())
+
+    const codes = new (storeAdapter(s.ctx.db))("DeviceCode")
+    const payload = (await codes.find(device_code)) ?? {}
+    await codes.upsert(device_code, { ...payload, inFlight: true }, 600)
+    expect(await codes.find(device_code)).toMatchObject({ inFlight: true })
+    await expect(codes.upsert(value(), payload, 600)).rejects.toMatchObject({ statusCode: 429, error: "slow_down" })
+
+    await s.ctx.db
+      .update(oauthStore)
+      .set({ expiresAt: new Date(Date.now() - 1000) })
+      .where(eq(oauthStore.id, expired))
+    expect((await s.device()).status).toBe(200)
+    await refused(await s.device())
+    await codes.upsert(answered, { grantId: "g" }, 600)
+    expect((await s.device()).status).toBe(200)
+    await refused(await s.device())
+  })
+
+  it("makes room for a registration by the oldest ones no person approved, also at once", async () => {
+    const s = await setUp()
+    const ids = await s.fill("Client", MAX_CLIENTS, MAX_CLIENTS - 2)
+    const answers = await Promise.all(Array.from({ length: 6 }, s.register))
+    for (const res of answers) expect(res.status).toBe(201)
+    const left = await s.stored("Client")
+    expect(left).toHaveLength(MAX_CLIENTS)
+    for (const id of ids.slice(0, MAX_CLIENTS - 2)) expect(left).toContain(id)
+    for (const id of ids.slice(MAX_CLIENTS - 2)) expect(left).not.toContain(id)
+  })
+
+  it("refuses a registration when every one is approved, and removes none", async () => {
+    const s = await setUp()
+    const ids = await s.fill("Client", MAX_CLIENTS, MAX_CLIENTS)
+    for (const res of await Promise.all([s.register(), s.register()])) await refused(res)
+    expect((await s.stored("Client")).sort()).toEqual(ids.sort())
+  })
+
+  it("is not held up by a request that sends its body slowly", async () => {
+    const s = await setUp()
+    const slow = [connect(s.port, "127.0.0.1"), connect(s.port, "127.0.0.1")]
+    try {
+      for (const [i, path] of ["/oauth/register", "/oauth/device"].entries()) {
+        const type = i === 0 ? "application/json" : "application/x-www-form-urlencoded"
+        slow[i]?.write(
+          `POST ${path} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: ${type}\r\nContent-Length: 100\r\n\r\n{`,
+        )
+      }
+      await new Promise((r) => setTimeout(r, 300))
+      const late = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error("held up")), 10_000).unref()
+      })
+      expect((await Promise.race([s.register(), late])).status).toBe(201)
+      expect((await Promise.race([s.device(), late])).status).toBe(200)
+    } finally {
+      for (const socket of slow) socket.destroy()
+    }
+  })
+})
+
+describe("the public URL connections are made under", () => {
+  async function setUp() {
+    const database = await freshDatabase()
+    const ctx = contextOf(database)
+    const move = async (publicUrl: string) =>
+      ctx.settings.set("general", { ...(await ctx.settings.get("general")), publicUrl })
+    await move(issuer)
+    await ctx.settings.set("agents", { enabled: true, idleDays: 90 })
+    const agents = createAgentConnect(ctx, { cookieKeys: [value()] })
+    ctx.agents = agents
+    await agents.reconcile()
+    const ends = async () =>
+      (await ctx.db.select().from(auditLog).where(eq(auditLog.action, "All agent connections ended"))).map((r) => [
+        r.actor,
+        r.target,
+      ])
+    return { ctx, agents, move, ends }
+  }
+
+  it("ends everything once for a save that changes it, by who saved it", async () => {
+    const s = await setUp()
+    const row = await connection(s.ctx)
+    await s.move("https://ops.example.com")
+    await s.agents.reconcileIssuer("https://ops.example.com", { by: "owner", via: "web" })
+    await s.agents.provider()
+    await s.agents.reconcile()
+    expect((await s.ctx.db.select().from(apiTokens).where(eq(apiTokens.id, row.id)))[0]?.endReason).toBe("address")
+    expect(await s.ends()).toEqual([["owner", "1 (the public URL changed)"]])
+  })
+
+  it("ends everything at start for a change made while the server was down, and keeps connections otherwise", async () => {
+    const s = await setUp()
+    const kept = await connection(s.ctx)
+    await s.agents.reconcile()
+    expect(await s.agents.stillLive(kept.id)).toBe(true)
+    await s.move("https://ops.example.com")
+    await s.agents.reconcile()
+    expect(await s.agents.stillLive(kept.id)).toBe(false)
+    expect(await s.ends()).toEqual([["n8n-ops", "1 (the public URL changed)"]])
+  })
+
+  it("remembers the new address only with the end it causes", async () => {
+    const s = await setUp()
+    const row = await connection(s.ctx)
+    const audit = s.ctx.audit
+    s.ctx.audit = async () => {
+      throw new Error("stopped here")
+    }
+    await expect(s.agents.reconcileIssuer("https://ops.example.com")).rejects.toThrow("stopped here")
+    s.ctx.audit = audit
+    expect((await s.ctx.db.select().from(agentState))[0]?.issuer).toBe(issuer)
+    expect(await s.agents.stillLive(row.id)).toBe(true)
+  })
+
+  it("ends only connections of another address in a database that never recorded one", async () => {
+    const s = await setUp()
+    await s.ctx.db.update(agentState).set({ issuer: null })
+    const here = await connection(s.ctx)
+    const elsewhere = await connection(s.ctx, { issuer: "https://old.example.com" })
+    await s.agents.reconcile()
+    expect(await s.agents.stillLive(here.id)).toBe(true)
+    expect(await s.agents.stillLive(elsewhere.id)).toBe(false)
+    expect((await s.ctx.db.select().from(agentState))[0]?.issuer).toBe(issuer)
+  })
+})
+
+describe("saving Settings → Agent Connections", () => {
+  const who = { by: "owner", via: "web" as const }
+  const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000)
+
+  async function setUp(idleDays: number) {
+    const database = await freshDatabase()
+    const ctx = contextOf(database)
+    await ctx.settings.set("general", { ...(await ctx.settings.get("general")), publicUrl: issuer })
+    await ctx.settings.set("agents", { enabled: true, idleDays })
+    const agents = createAgentConnect(ctx, { cookieKeys: [value()] })
+    ctx.agents = agents
+    const reasonOf = async (id: string) =>
+      (await ctx.db.select().from(apiTokens).where(eq(apiTokens.id, id)))[0]?.endReason ?? null
+    return { ctx, agents, reasonOf }
+  }
+
+  it("revives no connection with a longer idle period, and keeps one within the old one", async () => {
+    const s = await setUp(30)
+    const past = await connection(s.ctx, { lastUsedAt: daysAgo(31) })
+    const within = await connection(s.ctx, { lastUsedAt: daysAgo(29) })
+    await s.agents.saveSettings({ idleDays: 365 }, who)
+    expect(await s.reasonOf(past.id)).toBe("unused")
+    expect(await s.reasonOf(within.id)).toBeNull()
+    expect(await s.ctx.settings.get("agents")).toEqual({ enabled: true, idleDays: 365 })
+  })
+
+  it("applies a shorter idle period at once, stored with the connections it ends or not at all", async () => {
+    const s = await setUp(30)
+    const past = await connection(s.ctx, { lastUsedAt: daysAgo(6) })
+    const within = await connection(s.ctx, { lastUsedAt: daysAgo(4) })
+    const audit = s.ctx.audit
+    s.ctx.audit = async () => {
+      throw new Error("stopped here")
+    }
+    await expect(s.agents.saveSettings({ idleDays: 5 }, who)).rejects.toThrow("stopped here")
+    s.ctx.audit = audit
+    expect(await s.reasonOf(past.id)).toBeNull()
+    expect(await s.ctx.settings.get("agents")).toEqual({ enabled: true, idleDays: 30 })
+
+    await s.agents.saveSettings({ idleDays: 5 }, who)
+    expect(await s.reasonOf(past.id)).toBe("unused")
+    expect(await s.reasonOf(within.id)).toBeNull()
+    expect(await s.ctx.settings.get("agents")).toEqual({ enabled: true, idleDays: 5 })
+  })
+
+  it("picks the connections and reads the stored settings once it has the gate", async () => {
+    const s = await setUp(30)
+    const past = await connection(s.ctx, { lastUsedAt: daysAgo(31) })
+    const used = await connection(s.ctx, { lastUsedAt: daysAgo(31) })
+    let save: Promise<void> | undefined
+    await s.ctx.db.transaction(async (tx) => {
+      await gateExclusive(tx)
+      save = s.agents.saveSettings({ enabled: true }, who)
+      await new Promise((r) => setTimeout(r, 300))
+      await tx.update(apiTokens).set({ lastUsedAt: new Date() }).where(eq(apiTokens.id, used.id))
+      await writeSection(tx, "agents", { enabled: true, idleDays: 20 })
+    })
+    await save
+    expect(await s.reasonOf(past.id)).toBe("unused")
+    expect(await s.reasonOf(used.id)).toBeNull()
+    expect(await s.ctx.settings.get("agents")).toEqual({ enabled: true, idleDays: 20 })
+  })
+
+  it("ends every connection and waiting request when agents are turned off", async () => {
+    const s = await setUp(30)
+    const row = await connection(s.ctx)
+    await s.ctx.db.insert(oauthStore).values({ type: "DeviceCode", id: value(), payload: {} })
+    const before = await generation(s.ctx.db)
+    await s.agents.saveSettings({ enabled: false }, who)
+    expect(await s.reasonOf(row.id)).toBe("off")
+    expect(await s.ctx.db.select().from(oauthStore)).toEqual([])
+    expect(await generation(s.ctx.db)).toBe(before + 1)
+    expect(await s.ctx.settings.get("agents")).toEqual({ enabled: false, idleDays: 30 })
+  })
+})
+
+describe("the sweep", () => {
+  it("tells a connection its agent disconnected, one never used, one being refreshed and a live one apart", async () => {
+    const database = await freshDatabase()
+    const ctx = contextOf(database)
+    await ctx.settings.set("general", { ...(await ctx.settings.get("general")), publicUrl: issuer })
+    await ctx.settings.set("agents", { enabled: true, idleDays: 90 })
+    const agents = createAgentConnect(ctx, { cookieKeys: [value()] })
+    ctx.agents = agents
+    const made = new Date(Date.now() - 20 * 60_000)
+    const store = async (grantId: string | null, refresh?: { consumedAt?: Date }) => {
+      if (!grantId) throw new Error("no grant")
+      await ctx.db.insert(oauthStore).values({ type: "Grant", id: grantId, payload: {} })
+      if (refresh)
+        await ctx.db.insert(oauthStore).values({
+          type: "RefreshToken",
+          id: value(),
+          payload: {},
+          grantId,
+          expiresAt: new Date(Date.now() + 600_000),
+          ...refresh,
+        })
+    }
+    const cut = await connection(ctx, { createdAt: made, lastUsedAt: made })
+    const unfinished = await connection(ctx, { createdAt: made })
+    await store(unfinished.grantId)
+    const refreshing = await connection(ctx, { createdAt: made, lastUsedAt: made })
+    await store(refreshing.grantId, { consumedAt: new Date(Date.now() - 60_000) })
+    const live = await connection(ctx, { createdAt: made, lastUsedAt: made })
+    await store(live.grantId, {})
+    const lost = await connection(ctx, { createdAt: made, lastUsedAt: made })
+    await store(lost.grantId, { consumedAt: new Date(Date.now() - 6 * 60_000) })
+
+    await agents.sweep()
+    const reasons = new Map((await ctx.db.select().from(apiTokens)).map((r) => [r.id, r.endReason]))
+    expect(reasons.get(cut.id)).toBe("cut")
+    expect(reasons.get(unfinished.id)).toBe("unfinished")
+    expect(reasons.get(refreshing.id)).toBeNull()
+    expect(reasons.get(live.id)).toBeNull()
+    expect(reasons.get(lost.id)).toBe("unused")
   })
 })

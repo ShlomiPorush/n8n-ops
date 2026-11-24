@@ -15,7 +15,6 @@ import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/c
 import { PasswordInput } from "@/components/ui/password-input"
 import { authClient, authErrorText } from "@/lib/auth-client"
 import { toast } from "@/lib/toast"
-import { clearTwoFactorReset, markTwoFactorReset } from "@/lib/two-factor-reset"
 import { PasskeysPanel } from "@/pages/account-passkeys"
 import { SettingRow } from "@/pages/settings"
 
@@ -179,7 +178,7 @@ function ChangePasswordDialog({ opener, onClose }: Opened) {
 /**
  * A new authenticator app: the other sessions are signed out first, so none of them goes on without two-factor;
  * then two-factor is turned off, and the page loads /setup afresh, where the server's answer decides what comes
- * next. Turned off, the person sets up a new code there and comes back to this page (lib/two-factor-reset.ts);
+ * next. Turned off, the person sets up a new code there and comes back to this page;
  * still on, they stay in the console; a session that was lost on the way goes to sign-in.
  */
 function ResetTwoFactorDialog({ opener, onClose }: Opened) {
@@ -192,30 +191,27 @@ function ResetTwoFactorDialog({ opener, onClose }: Opened) {
     setError("")
     let leaving = false
     try {
-      let first: { status?: number; message?: string } | null = null
+      let error: { status?: number; message?: string } | null = null
       try {
-        ;({ error: first } = await authClient.revokeOtherSessions())
+        ;({ error } = await authClient.twoFactor.disable({ password }))
       } catch {
-        first = { status: 0 }
-      }
-      if (first)
-        return setError(
-          `Two-factor was not reset and is still on. Some or all of your other sessions may be signed out already. ${authErrorText(first)}`,
-        )
-      markTwoFactorReset()
-      let second: { status?: number; message?: string } | null = null
-      try {
-        ;({ error: second } = await authClient.twoFactor.disable({ password }))
-      } catch {
-        second = { status: 0 }
+        error = { status: 0 }
       }
       // Refused: nothing changed. Any other answer, or none, may have turned it off.
-      if (second?.status && second.status < 500) {
-        clearTwoFactorReset()
-        return setError(`Two-factor was not reset and is still on: ${authErrorText(second)}`)
+      if (error?.status && error.status < 500)
+        return setError(`Two-factor was not reset and is still on: ${authErrorText(error)}`)
+      if (error) {
+        const reached = await fetch("/healthz/ready", { signal: AbortSignal.timeout(10_000) }).then(
+          (answer) => answer.ok,
+          () => false,
+        )
+        if (!reached)
+          return setError(
+            "n8n-ops could not be reached, so two-factor may or may not have been reset. Reload the page when it is back.",
+          )
       }
       leaving = true
-      window.location.assign("/setup")
+      window.location.assign("/setup?reset")
     } finally {
       if (!leaving) setBusy(false)
     }

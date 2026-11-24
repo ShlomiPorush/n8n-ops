@@ -212,7 +212,7 @@ export function policy(ctx: Ctx, route: OpenRoute): MiddlewareHandler<Env> {
     const length = Number(c.res.headers.get("content-length") ?? NaN)
     const size = Number.isFinite(length) ? length : (await c.res.clone().arrayBuffer()).byteLength
     if (size > LIMITS.answerBytes) {
-      await record(status < 400 ? "error" : "error", status)
+      await record("error", status)
       c.res = new Response(
         JSON.stringify({
           error: "answer_too_large",
@@ -492,9 +492,6 @@ export type ToolGuard = (
   run: () => Promise<{ content: { type: "text"; text: string }[]; isError?: boolean }>,
 ) => Promise<{ content: { type: "text"; text: string }[]; isError?: boolean }>
 
-/** Without a guard (unit tests), a tool simply runs. */
-const unguarded: ToolGuard = (_tool, _kind, _args, run) => run()
-
 /**
  * One stateless MCP server per request. Every tool reads (requirement E3), except the access tools, offered only to
  * connections allowed to ask for temporary access to n8n instances (which a person must approve). Each tool carries
@@ -502,12 +499,11 @@ const unguarded: ToolGuard = (_tool, _kind, _args, run) => run()
  */
 export function buildMcpServer(
   ctx: Ctx,
-  audit: (tool: string, args: unknown, outcome?: Outcome) => Promise<void>,
+  guard: ToolGuard,
   access?: { tokenId: string; publicUrl: string },
-  extra: { guard?: ToolGuard; getAccess?: () => Promise<unknown> } = {},
+  getAccess?: () => Promise<unknown>,
 ) {
   const server = new McpServer({ name: "n8n-ops", version: ctx.version }, { instructions: MCP_INSTRUCTIONS })
-  const guard = extra.guard ?? unguarded
   // Arguments are validated by the SDK against inputSchema before run() is called.
   // biome-ignore lint/suspicious/noExplicitAny: tool arguments are typed by each tool's zod schema
   type Args = Record<string, any>
@@ -518,7 +514,6 @@ export function buildMcpServer(
       (async (args: Args) =>
         guard(name, "read", args, async () => {
           const result = await run(args)
-          if (!extra.guard) await audit(name, args, "ok")
           return result === null ? { ...json({ error: "not found" }), isError: true } : json(result)
         })) as never,
     )
@@ -531,7 +526,7 @@ export function buildMcpServer(
       inputSchema: {},
       annotations: readOnly,
     },
-    (async () => guard("get_access", "read", {}, async () => json(await (extra.getAccess?.() ?? {})))) as never,
+    (async () => guard("get_access", "read", {}, async () => json(await (getAccess?.() ?? {})))) as never,
   )
   tool(
     "list_open_problems",
@@ -759,10 +754,7 @@ export function mcpRoutes(ctx: Ctx) {
       return done.value
     }
     const access = who.canRequestAccess ? { tokenId: who.id, publicUrl: await publicBase(ctx, c.req.url) } : undefined
-    const server = buildMcpServer(ctx, async () => {}, access, {
-      guard,
-      getAccess: () => accessAnswer(ctx, who, undefined),
-    })
+    const server = buildMcpServer(ctx, guard, access, () => accessAnswer(ctx, who, undefined))
     const transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true,

@@ -1,4 +1,3 @@
-import { AsyncLocalStorage } from "node:async_hooks"
 import { hkdfSync } from "node:crypto"
 import { passkey } from "@better-auth/passkey"
 import { betterAuth } from "better-auth"
@@ -31,6 +30,8 @@ export const PASSKEY_SIGN_IN = "/passkey/verify-authentication"
  */
 const SECOND_FACTOR_DONE = new Set(["/two-factor/verify-totp", "/two-factor/verify-backup-code", PASSKEY_SIGN_IN])
 
+const TWO_FACTOR_RESET = "/two-factor/disable"
+
 /** The paths that add a passkey: its options, then its verification, which stores it. */
 const PASSKEY_REGISTRATION = new Set(["/passkey/generate-register-options", "/passkey/verify-registration"])
 
@@ -42,7 +43,7 @@ const signInChanges: Record<string, string> = {
   "/passkey/verify-registration": "Passkey added",
   "/passkey/update-passkey": "Passkey renamed",
   "/passkey/delete-passkey": "Passkey deleted",
-  "/two-factor/disable": "Two-factor reset",
+  [TWO_FACTOR_RESET]: "Two-factor reset",
 }
 
 /**
@@ -68,41 +69,20 @@ export function passkeyAddress(publicUrl: string | undefined): URL | null {
  */
 /**
  * A two-factor reset (Account → Reset) ends every agent connection, since the person may have lost control of the
- * account: `begin` before the reset runs (and no approval is answered until `finish`), `finish` once the call has
- * ended, whether the reset was made, refused or failed (oauth/agents.ts, set by index.ts). Only a request from a signed-in session begins one, so a
+ * account (oauth/agents.ts, set by index.ts). Only a request from a signed-in session begins one, so a
  * request without a session ends nothing. The reset from the server does the same in cli.ts.
  */
-type ResetHooks = { begin(actor: string): Promise<string>; finish(actor: string, id: string): Promise<unknown> }
+type ResetHooks = {
+  before(reset: { actor: string; userId: string; sessionId: string }): Promise<void>
+  after(reset: { actor: string }): Promise<void>
+}
 let twoFactorReset: ResetHooks | null = null
 export function onTwoFactorReset(hooks: ResetHooks) {
   twoFactorReset = hooks
 }
-/**
- * The resets begun within one call into Better Auth. http/auth-guard.ts runs every call in its own scope and finishes
- * the resets begun in it when the call ends, however it ends: Better Auth runs no after hook when its endpoint throws
- * an error of its own, and a reset left unfinished would keep approvals closed.
- */
-type Begun = { id: string; actor: string }
-const resetScope = new AsyncLocalStorage<Begun[]>()
 
-/** Runs one call into Better Auth, and finishes every reset begun in it once the call has ended. */
-export async function withResetScope<T>(run: () => Promise<T>): Promise<T> {
-  const begun: Begun[] = []
-  try {
-    return await resetScope.run(begun, run)
-  } finally {
-    // A finish that fails leaves its row; the sweep finishes it (oauth/agents.ts reconcile).
-    for (const b of begun.splice(0)) await twoFactorReset?.finish(b.actor, b.id).catch(() => undefined)
-  }
-}
-
-/** Begins a reset for the call under way; refused outside a scope, where nothing would finish it. */
-export async function beginScopedReset(actor: string) {
-  const begun = resetScope.getStore()
-  if (!begun || !twoFactorReset)
-    throw new APIError("FORBIDDEN", { message: "Two-factor can be reset only from the Account page." })
-  begun.push({ id: await twoFactorReset.begin(actor), actor })
-}
+const nameOf = (account: { username?: string | null; name?: string } | undefined) =>
+  account?.username ?? account?.name ?? ""
 
 export function createAuth(db: Db, appKey: Buffer, publicUrl?: string, passkeyUrl: URL | null = null) {
   const audit = createAudit(db)
@@ -160,6 +140,26 @@ export function createAuth(db: Db, appKey: Buffer, publicUrl?: string, passkeyUr
       // addressOf: the socket, or a trusted proxy's X-Forwarded-For), which the server alone puts in this header.
       ipAddress: { ipAddressHeaders: [CLIENT_ADDRESS_HEADER] },
     },
+    databaseHooks: {
+      user: {
+        update: {
+          before: async (data, context) => {
+            if (context?.path !== TWO_FACTOR_RESET || data.twoFactorEnabled !== false || !twoFactorReset) return
+            const found = context.context.session
+            if (!found) throw new APIError("UNAUTHORIZED", { message: "Sign in again, then reset two-factor." })
+            await twoFactorReset.before({
+              actor: nameOf(found.user),
+              userId: found.user.id,
+              sessionId: found.session.id,
+            })
+          },
+          after: async (_user, context) => {
+            if (context?.path !== TWO_FACTOR_RESET || !twoFactorReset) return
+            await twoFactorReset.after({ actor: nameOf(context.context.session?.user) })
+          },
+        },
+      },
+    },
     // Audit a login once, when it completes. With two-factor on, the password step creates a session that the
     // two-factor plugin deletes again while the code is pending; the real session comes from verify-totp. A
     // passkey sign-in completes at once.
@@ -168,36 +168,23 @@ export function createAuth(db: Db, appKey: Buffer, publicUrl?: string, passkeyUr
         // A passkey stands in for the password and the two-factor code together, so one is added only on an account
         // with two-factor on, the same rule as every console route. Both steps check it: options taken while it was
         // on cannot be used once it is off. A session that cannot be read here adds nothing either.
-        if (PASSKEY_REGISTRATION.has(ctx.path)) {
-          const found = await getSessionFromCtx(ctx)
-          if (!found) throw new APIError("UNAUTHORIZED", { message: "Sign in again to add a passkey." })
-          if ((found.user as { twoFactorEnabled?: boolean | null }).twoFactorEnabled !== true)
-            throw new APIError("FORBIDDEN", {
-              code: "TWO_FACTOR_REQUIRED",
-              message: "Set up two-factor authentication before adding a passkey.",
-            })
-          return
-        }
-        // Before the reset, so that it never takes effect while the agents approved under the earlier sign-in still
-        // work (a reset that is then refused, such as for a wrong password, has still ended them: the safe side).
-        if (ctx.path !== "/two-factor/disable" || !twoFactorReset) return
-        // Better Auth checks the session after this hook; read it here through its own interface.
-        // No session, or one that could not be read: the reset does not run at all (it would be refused anyway, and
-        // must never run with the agents still connected).
-        const session = await getSessionFromCtx(ctx)
-        if (!session) throw new APIError("UNAUTHORIZED", { message: "Sign in again, then reset two-factor." })
-        const actor = session.user as { username?: string | null; name?: string }
-        await beginScopedReset(actor.username ?? actor.name ?? "")
+        if (!PASSKEY_REGISTRATION.has(ctx.path)) return
+        const found = await getSessionFromCtx(ctx)
+        if (!found) throw new APIError("UNAUTHORIZED", { message: "Sign in again to add a passkey." })
+        if ((found.user as { twoFactorEnabled?: boolean | null }).twoFactorEnabled !== true)
+          throw new APIError("FORBIDDEN", {
+            code: "TWO_FACTOR_REQUIRED",
+            message: "Set up two-factor authentication before adding a passkey.",
+          })
       }),
       after: createAuthMiddleware(async (ctx) => {
         const change = signInChanges[ctx.path]
         // The after hook also runs when the endpoint refused; only a change that was made is recorded.
         if (change && !(ctx.context.returned instanceof APIError)) {
-          const actor = ctx.context.session?.user as { username?: string | null; name?: string } | undefined
           // A passkey by its name or id; never anything else from the body, which holds the password of a reset.
           const body = (ctx.path.startsWith("/passkey/") ? (ctx.body ?? {}) : {}) as { name?: unknown; id?: unknown }
           await audit({
-            actor: actor?.username ?? actor?.name ?? "",
+            actor: nameOf(ctx.context.session?.user),
             action: change,
             target: String(body.name ?? body.id ?? ""),
             via: "web",

@@ -13,8 +13,8 @@ import {
   sections,
   smtpPasswordNeeded,
   wordedIssues,
-  writeSection,
 } from "../lib/settings.ts"
+import { issuerOf } from "../oauth/agents.ts"
 import { syncTelegramWebhook } from "../services/alerts.ts"
 import { storeClocks } from "../services/session-policy.ts"
 
@@ -91,10 +91,10 @@ export function settingsRoutes(ctx: Ctx) {
     // A save changes what is stored, never what the environment provides: the public URL from N8N_OPS_PUBLIC_URL
     // stays there, so a later change of the variable applies (FS-6).
     const current = (await ctx.settings.stored(section)) as Record<string, unknown>
-    const next: Record<string, unknown> = { ...current }
-    for (const [k, v] of Object.entries(body)) {
-      if (k in sections[section].shape && !k.endsWith("Enc")) next[k] = v
-    }
+    const sent = Object.fromEntries(
+      Object.entries(body).filter(([k]) => k in sections[section].shape && !k.endsWith("Enc")),
+    )
+    const next: Record<string, unknown> = { ...current, ...sent }
     // A client that sends back the whole section it read sends the value in effect: that is not a change.
     const envUrl = ctx.settings.fromEnv().publicUrl
     if (section === "general" && !current.publicUrl && envUrl && next.publicUrl === envUrl) next.publicUrl = ""
@@ -136,8 +136,6 @@ export function settingsRoutes(ctx: Ctx) {
     if (issues.length) return c.json(invalidAnswer(section, issues), 400)
     const before = section === "general" ? (await ctx.settings.get("general")).publicUrl : null
     const who = { by: actorName(c.get("actor")), via: "web" as const }
-    const agentsBefore = section === "agents" ? await ctx.settings.get("agents") : null
-    const agentsAfter = section === "agents" ? (parsed.data as Section<"agents">) : null
     const changed = {
       actor: actorName(c.get("actor")),
       action: "Settings changed",
@@ -161,21 +159,14 @@ export function settingsRoutes(ctx: Ctx) {
       if (!stored.ok) return c.json(sessionEndedAnswer(stored.reason), 401)
       return c.json(stored.signedOut ? { ok: true, signedOut: true } : { ok: true })
     }
-    // A longer idle period revives nothing: connections past the old one end before it is stored.
-    if (agentsBefore && agentsAfter && agentsAfter.idleDays > agentsBefore.idleDays)
-      await ctx.agents?.endIdle(agentsBefore.idleDays, who)
-    // Agents turned off: stored in the transaction that ends every connection and waiting request, so the switch is
-    // never off while a connection lives on to work again when it is turned back on (start-up ends any left anyway).
-    if (agentsAfter && !agentsAfter.enabled && ctx.agents)
-      await ctx.agents.endAll("off", who, (tx) => writeSection(tx, "agents", agentsAfter))
+    if (section === "agents" && ctx.agents) await ctx.agents.saveSettings(sent as Partial<Section<"agents">>, who)
     else await ctx.settings.set(section, parsed.data as never)
-    // A shorter one applies at once: stored first, so no call is let through under the old one meanwhile.
-    if (agentsBefore && agentsAfter && agentsAfter.idleDays < agentsBefore.idleDays)
-      await ctx.agents?.endIdle(agentsAfter.idleDays, who)
     await ctx.audit(changed)
     // Agents connected to the old address hold tokens issued by it; they connect again at the new one.
-    if (section === "general" && ctx.agents && before !== (await ctx.settings.get("general")).publicUrl)
-      await ctx.agents.endAll("address", { by: actorName(c.get("actor")), via: "web" })
+    if (section === "general" && ctx.agents) {
+      const { publicUrl } = await ctx.settings.get("general")
+      if (before !== publicUrl) await ctx.agents.reconcileIssuer(issuerOf(publicUrl), who)
+    }
     // Point the bot at this installation now rather than at the next minute check.
     if (section === "telegram" || section === "general")
       await syncTelegramWebhook(ctx).catch((e: Error) => ctx.log.warn("Telegram webhook not set", { error: e.message }))

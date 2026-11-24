@@ -17,6 +17,16 @@ type Runner = Db | Tx
  */
 const HASHED = new Set(["AccessToken", "RefreshToken", "AuthorizationCode"])
 
+/** Registrations kept at most; unused ones are cleared after a day. */
+export const MAX_CLIENTS = 500
+/** Device requests open at once, at most. */
+export const MAX_DEVICE_REQUESTS = 200
+
+const CAPPED: Record<string, { lock: number; room: (tx: Tx) => Promise<boolean> }> = {
+  Client: { lock: 0x6e386f63, room: (tx) => roomForClient(tx, MAX_CLIENTS) },
+  DeviceCode: { lock: 0x6e386f64, room: async (tx) => (await openDeviceRequests(tx)) < MAX_DEVICE_REQUESTS },
+}
+
 /**
  * oidc-provider's storage on Postgres: one row per record, by model name and id, with the few fields the
  * provider looks records up by. An expired record reads as missing; a consumed one carries `consumed`.
@@ -58,10 +68,25 @@ export function storeAdapter(db: Db, { onReuse }: { onReuse?: (grantId: string) 
         uid: payload.uid ?? null,
         expiresAt: expiresIn ? new Date(Date.now() + expiresIn * 1000) : null,
       }
-      await db
-        .insert(oauthStore)
-        .values(row)
-        .onConflictDoUpdate({ target: [oauthStore.type, oauthStore.id], set: row })
+      const store = (to: Runner) =>
+        to
+          .insert(oauthStore)
+          .values(row)
+          .onConflictDoUpdate({ target: [oauthStore.type, oauthStore.id], set: row })
+      const cap = CAPPED[this.name]
+      if (!cap) {
+        await store(db)
+        return
+      }
+      await db.transaction(async (tx) => {
+        await tx.execute(sql`select pg_advisory_xact_lock(${cap.lock})`)
+        const [known] = await tx
+          .select({ id: oauthStore.id })
+          .from(oauthStore)
+          .where(and(eq(oauthStore.type, this.name), eq(oauthStore.id, row.id)))
+        if (!known && !(await cap.room(tx))) throw tooMany()
+        await store(tx)
+      })
     }
 
     async find(id: string) {
@@ -168,9 +193,15 @@ export async function sweepOrphanGrants(tx: Tx) {
       and not exists (select 1 from api_tokens t where t.grant_id = g.id and t.revoked_at is null)`)
 }
 
+function tooMany() {
+  return Object.assign(new errors.OIDCProviderError(429, "slow_down"), {
+    error_description: "Too many requests. Wait a few minutes.",
+  })
+}
+
 /** How many device requests are open (not run out, not answered): capped so nobody can fill the table. */
-export async function openDeviceRequests(db: Db) {
-  const [row] = await db
+async function openDeviceRequests(tx: Tx) {
+  const [row] = await tx
     .select({ n: sql<number>`count(*)::int` })
     .from(oauthStore)
     .where(and(eq(oauthStore.type, "DeviceCode"), gt(oauthStore.expiresAt, new Date()), isNull(oauthStore.grantId)))
@@ -179,14 +210,13 @@ export async function openDeviceRequests(db: Db) {
 
 /**
  * Makes room for one more self-registered agent (RFC 7591) under a cap, so open registration cannot fill the
- * table: when full, the oldest registrations no person approved go first. False when every one is approved. The
- * caller holds the registration lock until the provider stored the new one.
+ * table: when full, the oldest registrations no person approved go first. False when every one is approved.
  */
-export async function roomForClient(db: Db, max: number) {
-  const [row] = await db.select({ n: sql<number>`count(*)::int` }).from(oauthStore).where(eq(oauthStore.type, "Client"))
+async function roomForClient(tx: Tx, max: number) {
+  const [row] = await tx.select({ n: sql<number>`count(*)::int` }).from(oauthStore).where(eq(oauthStore.type, "Client"))
   const over = (row?.n ?? 0) - max + 1
   if (over <= 0) return true
-  const evicted = await db
+  const evicted = await tx
     .delete(oauthStore)
     .where(
       and(

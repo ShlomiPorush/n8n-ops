@@ -370,7 +370,10 @@ describe("the channel of an access request", () => {
   })
 
   it("takes the choice over MCP", async () => {
-    const mcp = buildMcpServer(ctx, async () => {}, { tokenId, publicUrl: "https://ops.example.com" })
+    const mcp = buildMcpServer(ctx, (_tool, _kind, _args, run) => run(), {
+      tokenId,
+      publicUrl: "https://ops.example.com",
+    })
     const [clientSide, serverSide] = InMemoryTransport.createLinkedPair()
     const client = new Client({ name: "test", version: "1" })
     await mcp.connect(serverSide)

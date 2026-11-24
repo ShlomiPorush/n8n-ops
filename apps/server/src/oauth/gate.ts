@@ -1,6 +1,6 @@
-import { eq, inArray, sql } from "drizzle-orm"
+import { eq, sql } from "drizzle-orm"
 import type { Db } from "../db/client.ts"
-import { agentResets, agentState } from "../db/schema.ts"
+import { agentState } from "../db/schema.ts"
 
 /** A transaction, or the database outside one: what the gate's statements run on. */
 export type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0]
@@ -41,25 +41,6 @@ export async function nextGeneration(tx: Tx): Promise<number> {
     .onConflictDoUpdate({ target: agentState.id, set: { generation: sql`${agentState.generation} + 1` } })
     .returning({ generation: agentState.generation })
   return row?.generation ?? 0
-}
-
-/** Whether any two-factor reset is under way: no approval is answered meanwhile. */
-export async function resetting(db: Runner): Promise<boolean> {
-  const [row] = await db.select({ id: agentResets.id }).from(agentResets).limit(1)
-  return Boolean(row)
-}
-
-/** Records a reset as under way, or done; in the transaction that ends every connection. Each reset has its own row. */
-export async function addReset(tx: Tx, id: string) {
-  await tx.insert(agentResets).values({ id })
-}
-export async function removeResets(tx: Tx, ids: string[]) {
-  if (ids.length) await tx.delete(agentResets).where(inArray(agentResets.id, ids))
-}
-
-/** Every reset recorded as under way. */
-export async function resetIds(db: Runner): Promise<string[]> {
-  return (await db.select({ id: agentResets.id }).from(agentResets)).map((r) => r.id)
 }
 
 /** The public URL connections were last made under, or null before the first start that recorded one. */

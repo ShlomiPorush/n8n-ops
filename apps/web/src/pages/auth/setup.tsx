@@ -2,7 +2,7 @@ import { useQueryClient } from "@tanstack/react-query"
 import { Download } from "lucide-react"
 import QRCode from "qrcode"
 import { useEffect, useState } from "react"
-import { Navigate, useNavigate } from "react-router"
+import { Navigate, useNavigate, useSearchParams } from "react-router"
 import { SessionGuard } from "@/app/session-guard"
 import { BusyButton, Loading, Panel } from "@/components/kit"
 import { Button } from "@/components/ui/button"
@@ -14,7 +14,6 @@ import { ApiError, api, describeError, UNREACHABLE_TEXT, useApi } from "@/lib/ap
 import { authClient, authErrorText } from "@/lib/auth-client"
 import { download } from "@/lib/download"
 import { loginPath, sessionStarted } from "@/lib/session"
-import { clearTwoFactorReset, twoFactorResetPending } from "@/lib/two-factor-reset"
 import { cn } from "@/lib/utils"
 import { DestinationFields, type DestinationForm, destinationBody, destinationForm } from "../destinations"
 import { AuthFrame, type TotpAnswer, TotpInput, totpAnswer } from "./shared"
@@ -28,9 +27,9 @@ export function SetupPage() {
   const checklist = useApi<Checklist>(status.data?.hasUser ? "/setup/checklist" : null)
   const [password, setPassword] = useState("")
   const [skipped, setSkipped] = useState<Step[]>([])
-  // A two-factor reset from Account (lib/two-factor-reset.ts): a new code, then back to Account, without the
-  // optional steps. Read once, when the page opens; the steps it skips are decided only from a checklist that loaded.
-  const [resetting] = useState(twoFactorResetPending)
+  // A two-factor reset from Account: a new code, then back to Account, without the
+  // optional steps. The steps it skips are decided only from a checklist that loaded.
+  const resetting = useSearchParams()[0].has("reset")
   const navigate = useNavigate()
   const client = useQueryClient()
   // Signed in before two-factor is set up: the session clocks apply here too, and a session that ends goes to
@@ -100,16 +99,7 @@ export function SetupPage() {
           }}
         />
       )}
-      {step === "Two-Factor" && (
-        <TwoFactorStep
-          password={password}
-          onDone={async () => {
-            // The new code is set up: the reset is over, and this page still skips what it skipped for it.
-            if (resetting) clearTwoFactorReset()
-            await refresh()
-          }}
-        />
-      )}
+      {step === "Two-Factor" && <TwoFactorStep password={password} onDone={refresh} />}
       {step === "Backup Key" && <BackupKeyStep onDone={refresh} />}
       {step === "Telegram" && <TelegramStep onDone={refresh} onSkip={() => skip("Telegram")} />}
       {step === "Destination" && (

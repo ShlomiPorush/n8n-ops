@@ -12,7 +12,6 @@ import { type AgentConnect, issuerOf } from "./agents.ts"
 import { cleanLabel } from "./label.ts"
 import { CLI_CLIENT, resources, SCOPES } from "./provider.ts"
 import { skillRoutes } from "./skill.ts"
-import { openDeviceRequests, roomForClient } from "./store.ts"
 
 type Bindings = { incoming: IncomingMessage; outgoing: ServerResponse }
 /** The Node request and response under Hono; absent when the app is driven without a server (unit tests). */
@@ -21,10 +20,6 @@ const node = (c: Context) => ((c.env as Partial<Bindings> | undefined)?.incoming
 /** The provider's addresses, each exactly as configured (a uid after authorize and device is the provider's). */
 const PROVIDER_PATHS =
   /^(\/oauth\/(authorize(\/[\w-]+)?|token|device|revoke|register|jwks|userinfo|logout(\/confirm|\/success)?)|\/connect\/device(\/[\w-]+)?|\/\.well-known\/(oauth-authorization-server|openid-configuration))$/
-/** Registrations kept at most; unused ones are cleared after a day. */
-const MAX_CLIENTS = 500
-/** Device requests open at once, at most. */
-const MAX_DEVICE_REQUESTS = 200
 /** Approvals answered at once: each holds a connection of the main pool while the provider stores its grant. */
 const DECISIONS_AT_ONCE = 2
 
@@ -35,20 +30,6 @@ const notConfigured = {
 const gone = {
   error: "expired",
   message: "This request is no longer open. Start the connection again in your agent.",
-}
-
-/** One at a time: a cap is counted and filled under it, until the provider has stored the new record. */
-function mutex() {
-  let tail: Promise<unknown> = Promise.resolve()
-  return () => {
-    let release = () => {}
-    const held = new Promise<void>((r) => {
-      release = r
-    })
-    const turn = tail.then(() => release)
-    tail = tail.then(() => held)
-    return turn
-  }
 }
 
 /** At most `n` at a time; the others wait their turn. */
@@ -87,14 +68,6 @@ export function agentConnectRoutes(ctx: Ctx, agents: AgentConnect) {
   agents.hooks.devicePollAnswered = (req) => limits.token.refund(addressOf(req))
   // Codes typed on the code page count per provider session too, so one session cannot try them from many addresses.
   agents.hooks.codeAttempt = (session, req) => limits.verifySession(session ? `s:${sha256(session)}` : addressOf(req))
-  /** The lock of a capped request, given back when the provider has handled it. */
-  const handled = new WeakMap<IncomingMessage, () => void>()
-  agents.hooks.providerDone = (req) => {
-    handled.get(req)?.()
-    handled.delete(req)
-  }
-  const registering = mutex()
-  const requesting = mutex()
   const deciding = semaphore(DECISIONS_AT_ONCE)
   const tooMany = (c: Context) =>
     c.json({ error: "slow_down", error_description: "Too many requests. Wait a few minutes." }, 429, {
@@ -302,32 +275,6 @@ export function agentConnectRoutes(ctx: Ctx, agents: AgentConnect) {
           via: "system",
         })
       return tooMany(c)
-    }
-    // A cap is counted and filled one request at a time: the lock is given back once the provider has handled the
-    // request (its middleware, oauth/agents.ts), whether it stored the record, failed, or its client left meanwhile,
-    // and after a minute at the latest.
-    const capped =
-      c.req.method === "POST" && path === "/oauth/register"
-        ? { lock: registering, room: () => roomForClient(ctx.db, MAX_CLIENTS) }
-        : c.req.method === "POST" && path === "/oauth/device"
-          ? { lock: requesting, room: async () => (await openDeviceRequests(ctx.db)) < MAX_DEVICE_REQUESTS }
-          : null
-    if (capped) {
-      const release = await capped.lock()
-      // A request still unhandled after a minute (a client sending its body slowly) is cut off. The lock is given
-      // back only when the provider is done with the request, never on a timer: while a store may still be on its way
-      // the cap stays closed (the safe side), so no two requests fill the last place.
-      const cutOff = setTimeout(() => n.incoming.destroy(), 60_000)
-      cutOff.unref?.()
-      const done = () => {
-        clearTimeout(cutOff)
-        release()
-      }
-      if (!(await capped.room().catch(() => false))) {
-        done()
-        return tooMany(c)
-      }
-      handled.set(n.incoming, done)
     }
     n.outgoing.setHeader("X-Frame-Options", "DENY")
     n.outgoing.setHeader("Content-Security-Policy", "frame-ancestors 'none'")

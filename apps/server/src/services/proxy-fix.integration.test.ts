@@ -15,10 +15,6 @@ import { exportCredentials, ProxyRefusedError } from "./moves.ts"
 import { instanceProxyFix, recordPatterns, workerRule } from "./proxy-fix.ts"
 import { createPairingToken, deliverToWaiter, pairWorker } from "./workers.ts"
 
-// The socket proxy fix against a real PostgreSQL: what Add worker entered is kept for the worker it pairs, the
-// rule covers every main and the queue workers listed for the instance's current target only, a report that is
-// not applied changes nothing, and a failed backup or credential export carries the lines for the worker and
-// container it ran on.
 const adminUrl = process.env.MIGRATION_DATABASE_URL
 if (!adminUrl) throw new Error("MIGRATION_DATABASE_URL is required (scripts/verify.sh sets it)")
 
@@ -326,7 +322,6 @@ describe("a main named by its Compose service", () => {
     )
     const fix = await instanceProxyFix(ctx, await instanceRow(instanceId), await workerRow(workerId))
     expect(fix?.rule.allows.map((a) => a.name)).toEqual(["n8n1-app-<number>"])
-    // The replicas are worked out every time, never recorded as a container the owner allows.
     expect(fix?.rule.allows[0]?.regex).toBe("n8n1-app-[0-9]+")
   })
 
@@ -357,9 +352,7 @@ describe("a main named by its Compose service", () => {
     })
     const [shown] = await recentRuns(ctx, instanceId)
     const allows = (shown as { proxyFix?: { rule: { allows: { name: string }[] } } }).proxyFix?.rule.allows
-    // Not clean on that host: the container the backup used, by name.
     expect(allows?.map((a) => a.name)).toEqual(["n8n1-app-3"])
-    // Another service since: no lines for the old one.
     await ctx.db.update(instances).set({ composeService: "main" }).where(eq(instances.id, instanceId))
     const [after] = await recentRuns(ctx, instanceId)
     expect(after).not.toHaveProperty("proxyFix")
@@ -376,10 +369,8 @@ describe("what a failed job saw of a Compose service", () => {
     const names = async (seen?: Map<string, Seen>) =>
       (await workerRule(ctx, await workerRow(workerId), ctx.db, seen)).rule.allows.map((a) => a.name)
     const own = await names()
-    // Seen on the service it names now: the container the job used is in the rule.
     const same = new Map([[instanceId, { project: "n8n1", service: "main", resolved: "n8n1-main-4" }]])
     expect(await names(same)).toContain("n8n1-main-4")
-    // Seen on service app, before the instance moved to service main: ignored, its own report decides.
     const before = new Map([[instanceId, { project: "n8n1", service: "app", resolved: "n8n1-app-2", clean: true }]])
     expect(await names(before)).toEqual(own)
     expect(own).not.toContain("n8n1-app-2")

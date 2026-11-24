@@ -32,10 +32,6 @@ import {
   startRecording,
 } from "./worker-presence.ts"
 
-// The Worker's health history against a real PostgreSQL: each authenticated call records presence and the offline
-// period it ends once, heartbeats are stored once per (bootId, seq) and at most once per 10 s, the server's own
-// recording opens a new row after a silence, the read derives periods and pages them, and retention keeps what the
-// read needs.
 const adminUrl = process.env.MIGRATION_DATABASE_URL
 if (!adminUrl) throw new Error("MIGRATION_DATABASE_URL is required (scripts/verify.sh sets it)")
 
@@ -119,7 +115,6 @@ describe("n8n-ops recording", () => {
     expect(rows[0]?.startedAt).toEqual(first)
     expect(rows[0]?.aliveAt).toEqual(second)
 
-    // Nothing recorded for 50 s: the newest row stays as it was and a new one starts now.
     await ctx.db.execute(sql`update server_recording set started_at = started_at - interval '50 seconds',
       alive_at = alive_at - interval '50 seconds'`)
     const before = (await recordingRows())[0]
@@ -129,7 +124,6 @@ describe("n8n-ops recording", () => {
     expect(rows[0]).toEqual(before)
     expect(rows[1]).toMatchObject({ startedAt: third, aliveAt: third })
 
-    // The clock moved back: the newest row lies ahead of now, so it is left alone and a new one starts.
     await ctx.db.execute(sql`update server_recording set alive_at = alive_at + interval '1 hour'
       where id = ${rows[1]?.id}`)
     const ahead = (await recordingRows())[1]
@@ -185,23 +179,19 @@ describe("worker calls", () => {
     const w = await addWorker("w1", { createdAt: ago(new Date(), DAY) })
     const app = workerApiRoutes(ctx)
     await call(app, w.identity, "/heartbeat", {})
-    // The server stopped right after that call and came back 10 minutes later.
     await ctx.db.execute(sql`update server_recording set started_at = started_at - interval '10 minutes',
       alive_at = alive_at - interval '10 minutes'`)
     await ctx.db.execute(sql`update workers set last_seen_at = last_seen_at - interval '10 minutes'`)
     const [stopped] = await recordingRows()
     await call(app, w.identity, "/heartbeat", {})
     const rows = await recordingRows()
-    // The call after the gap opened a new row before anything extended the old one.
     expect(rows).toHaveLength(2)
     expect(rows[0]).toEqual(stopped)
     const reopened = rows[1]?.startedAt
     if (!stopped || !reopened) throw new Error("no rows")
 
-    // Read a second later, so the gap's end is never the window's end.
     const h = await workerHealth(ctx, { name: "w1" }, query({ hours: 1 }), new Date(Date.now() + SEC))
     expect(h.periods.notRecording).toEqual([{ from: stopped.aliveAt.toISOString(), to: reopened.toISOString() }])
-    // The offline period the second call ended lies wholly in that gap, so the Worker was never seen offline.
     expect(await ctx.db.select().from(workerOffline)).toHaveLength(1)
     expect(h.events.map((e) => e.kind)).toEqual(["not-recording"])
     expect(h.summary).toMatchObject({ offlinePeriods: 0, offlineMs: 0, availability: 1 })
@@ -214,14 +204,12 @@ describe("worker calls", () => {
     await ctx.db.execute(sql`update server_recording set started_at = started_at - interval '10 minutes',
       alive_at = alive_at - interval '10 minutes'`)
     await ctx.db.execute(sql`update workers set last_seen_at = last_seen_at - interval '10 minutes'`)
-    // The server's own mark at start came first, 5 s before the Worker called again.
     const restarted = await alive()
     await ctx.db.execute(sql`update server_recording set started_at = started_at - interval '5 seconds',
       alive_at = alive_at - interval '5 seconds' where started_at = ${restarted.toISOString()}::timestamptz`)
     await call(app, w.identity, "/heartbeat", {})
     expect(await recordingRows()).toHaveLength(2)
 
-    // Workers get 90 s to call after recording starts again; the stored period ends inside them.
     expect(await ctx.db.select().from(workerOffline)).toHaveLength(1)
     const h = await workerHealth(ctx, { name: "w1" }, query({ hours: 1 }), new Date(Date.now() + SEC))
     expect(h.events.map((e) => e.kind)).toEqual(["not-recording"])
@@ -301,7 +289,6 @@ describe("the read", () => {
   const NOW = new Date("2026-11-09T12:00:00Z")
   const at = (minutesAgo: number) => ago(NOW, minutesAgo * MIN)
 
-  /** A Worker whose history starts 10 days ago, recorded throughout, online now. */
   async function recorded(workerName = "w1") {
     const w = await addWorker(workerName, { createdAt: ago(NOW, 10 * DAY), lastSeenAt: ago(NOW, 10 * SEC) })
     await ctx.db
@@ -325,7 +312,6 @@ describe("the read", () => {
     ])
     expect(first.summary).toMatchObject({ offlinePeriods: 5, offlineMs: 25 * MIN })
     expect(first.series).toHaveLength(288)
-    // A period written after the first page, with a time inside the window, is counted too.
     await ctx.db.insert(workerOffline).values({ workerId: w.id, from: at(400), to: at(395) })
     const second = await workerHealth(
       ctx,
@@ -336,7 +322,6 @@ describe("the read", () => {
     expect(second.window).toEqual(first.window)
     expect(second).toMatchObject({ total: 6, nextOffset: 4 })
     const past = await workerHealth(ctx, { name: "w1" }, query({ hours: 1, to: at(52).toISOString() }), NOW)
-    // The period from 50 to 45 minutes ago is outside a window that ends 52 minutes ago.
     expect(past.events.map((e) => e.kind === "offline" && e.from)).toEqual([at(100).toISOString()])
     const end = await workerHealth(ctx, { name: "w1" }, query({ hours: 1, to: at(98).toISOString() }), NOW)
     expect(end.events[0]).toMatchObject({ kind: "offline", from: at(100).toISOString(), to: null })
@@ -345,7 +330,6 @@ describe("the read", () => {
   it("derives restarts, Docker failing time and coverage from heartbeats", async () => {
     const w = await recorded()
     const rows = [
-      // The first boot ever seen is not a restart; the second boot is.
       {
         bootId: "boot-one-aaaaaaaaaaa",
         seq: 1,
@@ -380,7 +364,6 @@ describe("the read", () => {
         dockerChecks: 1,
         dockerFailed: 0,
       },
-      // A late row of the first boot only adds to it.
       { bootId: "boot-one-aaaaaaaaaaa", seq: 3, receivedAt: at(39), uptimeSec: 2000 },
     ]
     for (const r of rows) await ctx.db.insert(workerBeats).values({ workerId: w.id, ...r })
@@ -400,7 +383,6 @@ describe("the read", () => {
       dockerChecks: 2,
       dockerFailed: 1,
     })
-    // The failing check covers until the next check, 3 minutes at most: no check followed within them.
     expect(h.periods.dockerFailing).toEqual([
       { from: at(59).toISOString(), to: at(56).toISOString(), endUnknown: true },
     ])
@@ -429,18 +411,14 @@ describe("the read", () => {
     const w = await recorded()
     const sec = (n: number) => ago(NOW, n * SEC)
     const rows = [
-      // A newer passing check, received first.
       { seq: 1, receivedAt: sec(10), dockerCheckedAt: sec(20), dockerOk: true },
-      // A late report of an older failing check, received after it.
       { seq: 2, receivedAt: sec(5), dockerCheckedAt: sec(200), dockerOk: false, dockerError: "timeout" },
-      // A check dated after now (the server clock moved back since).
       { seq: 3, receivedAt: sec(1), dockerCheckedAt: new Date(NOW.getTime() + 3_600_000), dockerOk: false },
     ]
     for (const r of rows)
       await ctx.db.insert(workerBeats).values({ workerId: w.id, bootId: "boot-one-aaaaaaaaaaa", uptimeSec: 60, ...r })
     const h = await workerHealth(ctx, { name: "w1" }, query({ hours: 1 }), NOW)
     expect(h.docker).toMatchObject({ checkedAt: sec(20).toISOString(), ok: true, current: true })
-    // Three minutes later nothing covers now: the latest check is still shown, as not current.
     const later = await workerHealth(ctx, { name: "w1" }, query({ hours: 1 }), new Date(NOW.getTime() + 3 * MIN))
     expect(later.docker).toMatchObject({ checkedAt: sec(20).toISOString(), current: false })
   })
@@ -464,9 +442,7 @@ describe("the read", () => {
     const w = await recorded()
     const to = at(60)
     const beats = [
-      // Exactly at the window's end: outside it.
       { seq: 1, receivedAt: to, failedCalls: 5, rttMs: 90, rttAt: to },
-      // Inside the last bucket.
       { seq: 2, receivedAt: at(61), failedCalls: 2, rttMs: 30, rttAt: at(61) },
     ]
     for (const b of beats)
@@ -524,10 +500,10 @@ describe("retention", () => {
     const cutoff = 30 * DAY
     const beats = [
       [w.id, "boot-old-aaaaaaaaaaa", 1, cutoff + 10 * MIN],
-      [w.id, "boot-old-aaaaaaaaaaa", 2, cutoff + 5 * MIN], // the anchor: newest the rule would delete
-      [w.id, "boot-new-aaaaaaaaaaa", 1, cutoff + 2 * MIN], // within 3 minutes of the cutoff: kept
+      [w.id, "boot-old-aaaaaaaaaaa", 2, cutoff + 5 * MIN],
+      [w.id, "boot-new-aaaaaaaaaaa", 1, cutoff + 2 * MIN],
       [w.id, "boot-new-aaaaaaaaaaa", 2, DAY],
-      [other.id, "boot-two-aaaaaaaaaaa", 1, cutoff + DAY], // the other Worker's anchor
+      [other.id, "boot-two-aaaaaaaaaaa", 1, cutoff + DAY],
     ] as const
     for (const [workerId, bootId, seq, msAgo] of beats)
       await ctx.db.insert(workerBeats).values({ workerId, bootId, seq, receivedAt: t(msAgo), uptimeSec: 10 })
@@ -555,7 +531,6 @@ describe("retention", () => {
       (await ctx.db.select().from(historyMarks).where(eq(historyMarks.key, PRUNED_MARK)))[0]?.before
     expect(await mark()).toEqual(t(cutoff))
 
-    // Run again: nothing more goes. Raising Keep health history later never moves the mark back.
     await pruneWorkerHistory(ctx, NOW)
     expect(await ctx.db.select().from(workerBeats)).toHaveLength(4)
     await ctx.settings.set("defaults", { ...(await ctx.settings.get("defaults")), healthHistoryDays: 1 })

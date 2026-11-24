@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { actionChange, receiptRefusal, restoring, stateOf } from "./problems.ts"
 
-// The pure parts of problem actions and their Undo (FB-16, FB-11). The database parts (versions, single use,
-// two tabs, automatic changes in between) are in problem-undo.integration.test.ts.
-
 const now = new Date("2026-10-23T12:00:00.000Z")
 const open = { status: "open" as const, regression: false, mutedUntil: null, resolvedAt: null }
 const resolved = { ...open, status: "resolved" as const, resolvedAt: new Date("2026-10-20T08:00:00.000Z") }

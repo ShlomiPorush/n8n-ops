@@ -1,6 +1,5 @@
 export type RetentionPolicy = { daily: number; weekly: number; monthly: number }
 
-/** ISO week key such as 2026-W42. */
 export function isoWeek(date: Date): string {
   const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()))
   const day = d.getUTCDay() || 7
@@ -10,10 +9,6 @@ export function isoWeek(date: Date): string {
   return `${d.getUTCFullYear()}-W${String(week).padStart(2, "0")}`
 }
 
-/**
- * Grandfather-father-son retention: the newest archive of each of the last N days, N weeks and N months.
- * The newest archive is always kept. Returns the ids to keep.
- */
 export function selectKeep<T extends { id: string; at: Date }>(archives: T[], policy: RetentionPolicy): Set<string> {
   const sorted = [...archives].sort((a, b) => b.at.getTime() - a.at.getTime())
   const keep = new Set<string>()
@@ -34,10 +29,6 @@ export function selectKeep<T extends { id: string; at: Date }>(archives: T[], po
   return keep
 }
 
-/**
- * The copies on one destination that retention removes now: those the policy no longer keeps, except while an
- * Object Lock still holds them. Those wait for their lock to end.
- */
 export function selectExpired<T extends { id: string; at: Date; retainUntil: Date | null }>(
   copies: T[],
   policy: RetentionPolicy,

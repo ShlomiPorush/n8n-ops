@@ -7,7 +7,6 @@ import { type FetchLike, N8nClient, N8nError } from "../n8n/client.ts"
 
 export type Instance = typeof instances.$inferSelect
 
-/** The instance has no API key stored: whatever needs the n8n API cannot run. */
 export class NoApiKey extends Error {
   constructor(name: string) {
     super(`${name} has no API key. Add one in its settings.`)
@@ -19,35 +18,25 @@ export function clientFor(ctx: Ctx, instance: Pick<Instance, "name" | "baseUrl" 
   return new N8nClient(instance.baseUrl, ctx.secrets.decrypt(instance.apiKeyEnc))
 }
 
-/** Whether the instance finished its setup; a draft does nothing in the background. */
 export const isActive = (instance: Pick<Instance, "setupState">) => instance.setupState === "complete"
 
-/** Whether the instance is active and was chosen for `capability` (docs/adr/0002). */
 export const can = (instance: Pick<Instance, "setupState" | "chosenCapabilities">, capability: CapabilityKey) =>
   isActive(instance) && instance.chosenCapabilities.includes(capability)
 
-/** The same as `can`, as a filter for the background loops; admin lists show every instance. */
 export const activeWith = (capability: CapabilityKey): SQL =>
   and(
     eq(instances.setupState, "complete"),
     sql`${instances.chosenCapabilities} @> ${JSON.stringify([capability])}::jsonb`,
   ) as SQL
 
-/** Active instances only, for the overview, reports and agents. */
 export const activeOnly = eq(instances.setupState, "complete")
 
-/** Instances with a key, for the meta refresh. */
 export const withKey = isNotNull(instances.apiKeyEnc)
 
-/** Why a key test failed: n8n refused the key, it is older than the minimum, or it could not be reached. */
 export type KeyTest =
   | { ok: true; version: string | null; scopes: string[] }
   | { ok: false; code: "key_refused" | "unsupported_version" | "unreachable"; error: string; version: string | null }
 
-/**
- * The one key test (setup and edits): n8n answers, accepts the key, and is 2.14.0 or later. It returns the key's
- * scopes from /discover; it never judges them, so a key with fewer scopes is still a valid key.
- */
 export async function testKey(baseUrl: string, apiKey: string, client = new N8nClient(baseUrl, apiKey)) {
   const version = await client.version().catch(() => null)
   const fail = (code: Exclude<KeyTest, { ok: true }>["code"], error: string): KeyTest => ({
@@ -68,10 +57,6 @@ export async function testKey(baseUrl: string, apiKey: string, client = new N8nC
   }
 }
 
-/**
- * Whether the version comes from the worker reading inside: health is collected that way now, and the last report
- * had one. With health off no report comes, so the one stored is history and the version is read over the network.
- */
 export function versionFromInside(
   instance: Pick<
     Instance,
@@ -89,8 +74,6 @@ export function versionFromInside(
   return can(instance, "health") && readsInside(instance) && detail?.source === "inside" && Boolean(detail.version)
 }
 
-/** Whether the worker on the host reads the instance from inside its main container. */
-/** Where the main is: a container name, or a Compose project and service; nothing when neither is set. */
 export type MainTarget = { name: string } | { project: string; service: string }
 
 export function mainTarget(
@@ -107,11 +90,6 @@ export function readsInside(
   return instance.collection === "worker" && Boolean(instance.workerId) && mainTarget(instance) !== null
 }
 
-/**
- * Whether n8n-ops finds this instance's queue workers through Docker, so the socket proxy must allow them: read
- * from inside, no worker URLs typed, and queue mode, or a mode not found yet (a main in queue mode the proxy
- * refuses never tells its mode).
- */
 export function needsQueueWorkers(
   instance: Pick<
     Instance,
@@ -132,10 +110,6 @@ export function needsQueueWorkers(
   )
 }
 
-/**
- * Where the queue metrics of an instance are read over the network: the URL set on it, otherwise /metrics of its
- * base URL, where n8n serves them. Only in queue mode: outside it there is no queue to read, so nothing is asked.
- */
 export function metricsUrlOf(instance: Pick<Instance, "metricsUrl" | "queueMode" | "baseUrl">): string | null {
   if (!instance.queueMode) return null
   return instance.metricsUrl || `${instance.baseUrl.replace(/\/+$/, "")}/metrics`
@@ -155,12 +129,6 @@ type CollectionFields = Pick<
   | "workerHealthUrls"
 >
 
-/**
- * What an update means for how health is collected. The target (collection, worker, container) is where a found
- * mode was read: changing it clears the found mode, so a manual value counts until the new target is read. While
- * the mode is found and the target stays, a queue mode in the update is ignored, whoever sends it. Any change to
- * how health is collected raises the collection revision, so checks that started before are dropped.
- */
 export function collectionUpdate(row: CollectionFields, next: Partial<CollectionFields>) {
   const differs = <K extends keyof CollectionFields>(key: K) =>
     next[key] !== undefined && JSON.stringify(next[key] ?? null) !== JSON.stringify(row[key] ?? null)
@@ -173,7 +141,6 @@ export function collectionUpdate(row: CollectionFields, next: Partial<Collection
   const locked = row.queueModeSource === "found" && !targetChanged
   const queueModeChanged = !locked && differs("queueMode")
   return {
-    /** The queue mode to store, or undefined to keep the stored one. */
     queueMode: locked ? undefined : next.queueMode,
     queueModeSource: targetChanged ? ("manual" as const) : undefined,
     raiseRevision:
@@ -181,25 +148,17 @@ export function collectionUpdate(row: CollectionFields, next: Partial<Collection
   }
 }
 
-/** The scopes n8n-ops may rely on: those n8n reports for the key; none on n8n older than 2.14.0. */
 export function effectiveScopes(instance: Pick<Instance, "scopes">): string[] {
   return instance.scopes ?? []
 }
 
-/** n8n is older than 2.14.0: the key was read and n8n has no /discover, or its version is known to be older. */
 export const unsupportedVersion = (instance: Pick<Instance, "apiKeyEnc" | "scopes" | "scopesCheckedAt" | "version">) =>
   Boolean(
     (instance.apiKeyEnc && instance.scopesCheckedAt && instance.scopes === null) ||
       (instance.version && belowMinimum(instance.version)),
   )
 
-/**
- * Reads the n8n version and the API key's scopes, and stores them. It works from the row as it is when its turn
- * comes, does nothing without a key, and stores nothing when the configuration changed meanwhile (a new URL or key
- * is read by its own refresh). Returns the row as stored, or as it was when nothing was read.
- */
 export function refreshInstanceMeta(ctx: Ctx, instance: Pick<Instance, "id">) {
-  // One at a time per instance, so a slow earlier read never writes over a later one.
   return oneAtATime(`meta:${instance.id}`, () => refreshInstanceMetaNow(ctx, instance.id))
 }
 
@@ -207,15 +166,11 @@ async function refreshInstanceMetaNow(ctx: Ctx, id: string): Promise<Instance | 
   const [instance] = await ctx.db.select().from(instances).where(eq(instances.id, id))
   if (!instance?.apiKeyEnc) return instance
   const client = clientFor(ctx, instance)
-  // While the worker reports a version from inside, reading it over the network would race it. A worker that
-  // checks over the network, or one of an earlier release, reports none: then it is read here, as before.
   const [version, scopes] = await Promise.all([
     versionFromInside(instance) ? Promise.resolve(null) : client.version(instance.metricsUrl),
     client.discoverScopes(),
   ])
   if (version) {
-    // Only a version actually read, only while collection is as it was when the read started, and not once the
-    // worker has reported one from inside meanwhile: decided on the locked row.
     await ctx.db.transaction(async (tx) => {
       const [now] = await tx.select().from(instances).where(eq(instances.id, instance.id)).for("update")
       if (!now || now.collectionRevision !== instance.collectionRevision || versionFromInside(now)) return
@@ -245,7 +200,6 @@ async function refreshInstanceMetaNow(ctx: Ctx, id: string): Promise<Instance | 
   return saved
 }
 
-/** Link to an execution in the n8n editor. */
 export function executionUrl(instance: Pick<Instance, "baseUrl">, workflowId: string, executionId: string) {
   return `${instance.baseUrl.replace(/\/+$/, "")}/workflow/${encodeURIComponent(workflowId)}/executions/${encodeURIComponent(executionId)}`
 }
@@ -254,14 +208,8 @@ export function workflowUrl(instance: Pick<Instance, "baseUrl">, workflowId: str
   return `${instance.baseUrl.replace(/\/+$/, "")}/workflow/${encodeURIComponent(workflowId)}`
 }
 
-/** After a failed read, the next one comes this soon (or at the set interval, if shorter). */
 const RELEASE_RETRY_MS = 3600_000
 
-/**
- * The newest n8n release on GitHub, read again every `everyHours` (Settings → General). A failed read, an error
- * answer included, keeps the version known before and is tried again within an hour. Calls at the same time share
- * one read.
- */
 export function releaseChecker(fetchImpl: FetchLike = (url, init) => fetch(url, init), now = () => Date.now()) {
   let known: string | null = null
   let checkedAt = 0
@@ -297,12 +245,10 @@ export function releaseChecker(fetchImpl: FetchLike = (url, init) => fetch(url, 
 
 const latestRelease = releaseChecker()
 
-/** Latest n8n release from GitHub, as often as Settings → General says. */
 export async function latestN8nVersion(ctx: Pick<Ctx, "settings">): Promise<string | null> {
   return latestRelease((await ctx.settings.get("general")).releaseCheckHours)
 }
 
-/** -1, 0 or 1 comparing dotted versions numerically. */
 export function compareVersions(a: string, b: string): number {
   const pa = a.split(".").map((n) => Number.parseInt(n, 10) || 0)
   const pb = b.split(".").map((n) => Number.parseInt(n, 10) || 0)

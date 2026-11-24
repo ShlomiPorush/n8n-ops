@@ -42,7 +42,6 @@ describe("replace", () => {
     expect(replaceRefusal(target, false)).toContain("only on the instance the archive is from")
     expect(replaceRefusal({ ...target, scopes: ["workflow:read"] }, true)).toContain("(workflow:update)")
     expect(replaceRefusal({ ...target, scopes: [] }, true)).toContain("(workflow:read, workflow:update)")
-    // Each refusal offers the copy.
     expect(replaceRefusal(target, false)).toContain("Restore it as a copy instead.")
   })
 
@@ -54,7 +53,6 @@ describe("replace", () => {
     expect(liveRefusal(archived, { ...archived, createdAt: "2026-02-01T00:00:00Z" }, "prod")).toContain(
       "another workflow",
     )
-    // Identity not proven when either side has no creation time.
     expect(liveRefusal(archived, { ...archived, createdAt: undefined }, "prod")).toContain("cannot prove")
     expect(liveRefusal({ ...archived, createdAt: undefined }, archived, "prod")).toContain("cannot prove")
   })
@@ -81,13 +79,11 @@ describe("replace", () => {
     const fields = { fields: ["name", "nodes", "connections", "settings"], settings: ["executionOrder", "timezone"] }
     const published = replaceSettings(archived, { ...live, active: true, activeVersionId: "v9" }, fields)
     expect(published.settingsFrom).toBe("live")
-    // Only those the API takes are sent; n8n keeps the others, so nothing changes and it does not publish again.
     expect(published.settings).toEqual({ executionOrder: "v1", timezone: "Asia/Tokyo" })
     expect(published.effective).toEqual(live.settings)
     const draft = replaceSettings(archived, { ...live, activeVersionId: null }, fields)
     expect(draft.settingsFrom).toBe("backup")
     expect(draft.settings).toEqual({ executionOrder: "v1", timezone: "UTC" })
-    // n8n merges what is sent into what it holds: a key only it has stays.
     expect(draft.effective).toEqual({ executionOrder: "v1", timezone: "UTC", errorWorkflow: "e1" })
   })
 
@@ -133,15 +129,12 @@ describe("replace", () => {
       executionOrder: "v1",
       timezone: "Asia/Tokyo",
     })
-    // The backup differs only in settings, and n8n kept its own: not proven.
     expect(proofDifferences(proof, { ...w, nodeGroups: [], description: "About" })).toEqual([
       "settings.timezone has another value",
     ])
     const written = { ...w, settings: { executionOrder: "v1", timezone: "Asia/Tokyo" }, description: "About" }
-    // Groups sent empty to clear them: n8n still holding some is not as sent; none in any form is.
     expect(proofDifferences(proof, { ...written, nodeGroups: [{ id: "g" }] })).toEqual(["nodeGroups"])
     expect(landed({ ...written, nodeGroups: null }, proof)).toBe(true)
-    // A field n8n does not return cannot be compared.
     expect(landed({ ...written }, proof)).toBe(true)
   })
 
@@ -276,7 +269,6 @@ describe("credential references", () => {
     expect(mapped[1]?.credentials).toEqual({ slackApi: { id: "n1", name: "Slack (restored)" } })
     expect(mapped[2]?.credentials).toEqual({ gmail: { id: "c5", name: "Mail" } })
     const innerAfter = JSON.parse(String(mapped[3]?.parameters?.workflowJson)) as { nodes: N8nNode[] }
-    // Removed with its name too, so n8n cannot bind it to another credential of that name.
     expect(innerAfter.nodes[0]?.credentials).toBeUndefined()
   })
 })
@@ -312,7 +304,6 @@ describe("resolveCredentials", () => {
       ["c3", "remove"],
     ])
     expect(actions[0]).toMatchObject({ matchedBy: "id_type_created" })
-    // No creation time on one side: still linked, but the review says the match is weaker.
     expect(actions[1]).toMatchObject({ matchedBy: "id_type" })
     expect(nextStep).toBe(1)
   })

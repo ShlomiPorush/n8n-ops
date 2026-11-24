@@ -10,8 +10,6 @@ import { fetchHostKey, sftpStore } from "./sftp.ts"
 import { type Store, verifyByReading } from "./store.ts"
 import { webdavStore } from "./webdav.ts"
 
-// Each store against a real server of its kind in the verification stack: S3Mock, OpenSSH and rclone's WebDAV
-// server over HTTPS. scripts/verify.sh starts them and passes where they are.
 const env = (name: string) => {
   const value = process.env[name]
   if (!value) throw new Error(`${name} is required (scripts/verify.sh sets it)`)
@@ -21,7 +19,6 @@ const env = (name: string) => {
 const work = mkdtempSync(join(tmpdir(), "n8n-ops-stores-"))
 afterAll(() => rmSync(work, { recursive: true, force: true }))
 
-/** A file of random bytes and what a copy of it must match. */
 function archive(size: number) {
   const bytes = randomBytes(size)
   const file = join(work, `${randomBytes(4).toString("hex")}.age`)
@@ -32,7 +29,6 @@ function archive(size: number) {
 const signal = () => AbortSignal.timeout(60_000)
 const testKey = () => `_n8n-ops/destination-test-${Date.now()}.bin`
 
-/** The test servers start with the stack; this waits until one answers. */
 async function whenUp<T>(fn: () => Promise<T>, ms = 90_000): Promise<T> {
   const until = Date.now() + ms
   for (;;) {
@@ -45,7 +41,6 @@ async function whenUp<T>(fn: () => Promise<T>, ms = 90_000): Promise<T> {
   }
 }
 
-/** What every store must do, whatever its kind. */
 function contract(name: string, open: () => Store, keyOf = (parts: string[]) => parts.join("/")) {
   describe(`${name}: the store contract`, () => {
     it("writes an archive into new folders, verifies it, reads it back whole and removes it", async () => {
@@ -58,7 +53,6 @@ function contract(name: string, open: () => Store, keyOf = (parts: string[]) => 
         await verifyByReading(store, key, expected, signal(), put.versionId)
         await store.remove(key, signal(), put.versionId)
         await expect(verifyByReading(store, key, expected, signal(), put.versionId)).rejects.toThrow()
-        // Removing what is already gone is not an error.
         await store.remove(key, signal(), put.versionId)
       } finally {
         await store.close()
@@ -89,7 +83,6 @@ function contract(name: string, open: () => Store, keyOf = (parts: string[]) => 
         const real = archive(4096)
         const other = archive(4096)
         const key = keyOf(["inst", `corrupt-${Date.now()}.age`])
-        // The other bytes are stored under the key, and checked against the archive's checksum.
         const put = await store.put(key, other.file, other.expected, signal())
         await expect(store.verify(key, real.expected, signal(), put.versionId)).rejects.toThrow(/checksum/)
         await store.remove(key, signal(), put.versionId)
@@ -109,8 +102,6 @@ function contract(name: string, open: () => Store, keyOf = (parts: string[]) => 
   })
 }
 
-// ---------------------------------------------------------------------------
-
 const s3Location = (bucket: string) => ({
   endpoint: env("S3_ENDPOINT"),
   region: "us-east-1",
@@ -118,7 +109,6 @@ const s3Location = (bucket: string) => ({
   prefix: "it",
   forcePathStyle: true,
 })
-// S3Mock takes any credentials; these are new for each run all the same.
 const s3Credentials = { accessKeyId: randomBytes(8).toString("hex"), secretAccessKey: randomBytes(24).toString("hex") }
 
 const s3Key = (parts: string[]) => keyFor({ kind: "s3", location: s3Location("n8n-ops-backups") }, parts)
@@ -162,8 +152,6 @@ describe("S3 Object Lock", () => {
   })
 })
 
-// ---------------------------------------------------------------------------
-
 const sftpLocation = {
   host: env("SFTP_HOST"),
   port: Number(env("SFTP_PORT")),
@@ -171,7 +159,6 @@ const sftpLocation = {
   path: env("SFTP_PATH"),
 }
 const hostKey = await whenUp(() => fetchHostKey(sftpLocation.host, sftpLocation.port, AbortSignal.timeout(10_000)))
-// The SFTP user exists a moment after the SSH port opens.
 await whenUp(async () => {
   const store = sftpStore(sftpLocation, { password: env("SFTP_PASSWORD"), hostKey })
   try {
@@ -203,8 +190,6 @@ describe("SFTP host key", () => {
 })
 
 contract("SFTP", () => sftpStore(sftpLocation, { password: env("SFTP_PASSWORD"), hostKey }))
-
-// ---------------------------------------------------------------------------
 
 const ca = readFileSync(env("WEBDAV_CA"))
 const webdav = (password = env("WEBDAV_PASSWORD")) =>

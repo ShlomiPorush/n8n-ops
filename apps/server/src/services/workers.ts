@@ -6,7 +6,6 @@ import { newToken, sha256 } from "../lib/crypto.ts"
 export const PAIRING_TTL_MS = 15 * 60_000
 export const JOB_TIMEOUT_MS = 15 * 60_000
 
-/** A pairing token for a worker named `name`, with what was entered in Add worker, kept for the worker it pairs. */
 export async function createPairingToken(ctx: Ctx, name: string, install?: WorkerInstall) {
   const token = newToken("nops_pair")
   await ctx.db.insert(pairingTokens).values({
@@ -18,7 +17,6 @@ export async function createPairingToken(ctx: Ctx, name: string, install?: Worke
   return token
 }
 
-/** Exchanges a one-time pairing token for a permanent worker identity. */
 export async function pairWorker(ctx: Ctx, token: string, version: string | undefined) {
   const [pairing] = await ctx.db
     .update(pairingTokens)
@@ -40,7 +38,6 @@ export async function pairWorker(ctx: Ctx, token: string, version: string | unde
       tokenHash: sha256(identity),
       version: version ?? null,
       lastSeenAt: new Date(),
-      // As entered in Add worker; a token made before this was recorded gives none.
       install: pairing.install ?? null,
     })
     .returning()
@@ -72,7 +69,6 @@ export async function enqueueJob(
   return job
 }
 
-/** Hands the oldest queued job to the worker. Jobs stuck in "running" past the timeout fail first. */
 export async function claimJob(ctx: Ctx, workerId: string) {
   await ctx.db
     .update(workerJobs)
@@ -99,21 +95,15 @@ export async function claimJob(ctx: Ctx, workerId: string) {
   return claimed ?? null
 }
 
-/** A job's outcome; `refused` says what the socket proxy refused when that made it fail. */
 export type JobOutcome = {
   ok: boolean
   result?: Record<string, unknown>
   error?: string
   refused?: { call: "exec-create" | "exec-start" | "exec-inspect" | "list"; container?: string }
-  /** For a main named by its Compose service: the container the job used, and whether its replicas' rule is clean. */
   resolvedContainer?: string
   replicas?: { clean: boolean }
 }
 
-/**
- * Callers that need a job's result in memory (credential exports) wait here. The result never reaches
- * the database for those jobs; only a summary is stored.
- */
 const waiters = new Map<string, (outcome: JobOutcome) => void>()
 
 export function waitForJob(jobId: string, timeoutMs = 120_000): Promise<JobOutcome> {

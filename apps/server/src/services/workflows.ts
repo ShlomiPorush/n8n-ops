@@ -9,10 +9,6 @@ import { N8nError, type N8nExecution, type N8nWorkflow } from "../n8n/client.ts"
 import { describeTrigger } from "../n8n/execution.ts"
 import { can, clientFor, type Instance, unsupportedVersion } from "./instances.ts"
 
-/**
- * Same structure = same node types connected the same way. Node names, positions and parameters are
- * ignored, so a renamed copy still matches (requirement F2).
- */
 export function structureHash(workflow: Pick<N8nWorkflow, "nodes" | "connections">): string {
   const nodes = workflow.nodes.filter((n) => !n.type.endsWith(".stickyNote"))
   const typeOf = new Map(nodes.map((n) => [n.name, n.type]))
@@ -25,14 +21,9 @@ export function structureHash(workflow: Pick<N8nWorkflow, "nodes" | "connections
   return sha256(JSON.stringify({ types, edges: edges.sort() }))
 }
 
-/**
- * An identifier n8n-ops keeps exactly as n8n gave it: a non-empty string PostgreSQL can store unchanged. An
- * identifier is never cleaned, since a cleaned one could name another workflow or credential.
- */
 const storableId = (value: unknown): value is string =>
   typeof value === "string" && value !== "" && storableText(value) === value
 
-/** The credentials the workflow's nodes use, by ID; an entry without a storable ID is left out. */
 export function credentialIds(workflow: Pick<N8nWorkflow, "nodes">): string[] {
   const ids = workflow.nodes.flatMap((n) =>
     Object.values(n.credentials ?? {}).map((c) => (c as { id?: unknown } | null)?.id),
@@ -40,7 +31,6 @@ export function credentialIds(workflow: Pick<N8nWorkflow, "nodes">): string[] {
   return [...new Set(ids)].filter(storableId)
 }
 
-/** Ids of workflows called with Execute Workflow nodes (by id, which breaks when moved). */
 export function calledWorkflowIds(workflow: Pick<N8nWorkflow, "nodes">): string[] {
   const ids = workflow.nodes
     .filter((n) => /executeWorkflow$/i.test(n.type) && !n.disabled)
@@ -60,17 +50,9 @@ type ExecutionLister = {
   ): Promise<ExecutionPage>
 }
 
-/** Older n8n (2.30 among them) has no `startedAfter` filter on GET /executions and answers 400 to it. */
 const rejectsStartedAfter = (error: unknown) =>
   error instanceof N8nError && error.status === 400 && /startedAfter/.test(error.body ?? "")
 
-/**
- * Every execution started at or after `since` that the instance still keeps, newest first, read 250 at a time to
- * the end. When the instance does not know the `startedAfter` filter, it reads all executions and keeps those that
- * started in the window: n8n orders by ID, not by start, and a run that waited in the queue starts after newer ones,
- * so an older page can still hold one. A run that never started (cancelled while queued) is not counted, as with the
- * filter. It stops if n8n hands back a cursor it already gave, and throws once `signal` aborts.
- */
 export async function executionsSince(client: ExecutionLister, since: string, signal?: AbortSignal) {
   const sinceMs = Date.parse(since)
   const out: ExecutionPage["data"] = []
@@ -96,10 +78,8 @@ export async function executionsSince(client: ExecutionLister, since: string, si
   return out
 }
 
-/** At most this many instances sync at once: each sync lists every workflow and pages through 30 days of runs. */
 const SYNCS_AT_ONCE = 2
 
-/** The longest a sync may spend reading an instance's workflows and runs from n8n, so it always gives its slot back. */
 const READ_DEADLINE_MS = 30 * 60_000
 let syncing = 0
 const slotWaiters: (() => void)[] = []
@@ -110,33 +90,21 @@ async function inSlot<T>(fn: () => Promise<T>): Promise<T> {
   try {
     return await fn()
   } finally {
-    // The slot passes straight to the next waiter, so the count stays.
     const next = slotWaiters.shift()
     if (next) next()
     else syncing -= 1
   }
 }
 
-/** Instances with a sync waiting to start, and with one running. */
 const waiting = new Map<string, Promise<{ workflows: number }>>()
 const running = new Set<string>()
 
-/** When each instance's last sync started reading, whoever asked for it. */
 const startedAt = new Map<string, number>()
 
-/** Whether a sync of the instance is running or waiting, so the scheduler does not ask for another. */
 export const workflowSyncBusy = (instanceId: string) => waiting.has(instanceId) || running.has(instanceId)
 
-/** When the instance's last sync started reading, in milliseconds; 0 when none has since the server started. */
 export const lastWorkflowSync = (instanceId: string) => startedAt.get(instanceId) ?? 0
 
-/**
- * Reads every workflow of an instance and its run counts for the last 30 days (requirement F1). One at a time per
- * instance: an earlier sync that read an older list would otherwise delete what a later one stored. A call while
- * one waits joins it, so a burst of requests costs one running sync and one after it. The instance is read again
- * when its sync starts, so a sync that waited follows a change made meanwhile (removed, map no longer chosen, a new
- * key or address). Reading from n8n stops after `readDeadlineMs`; the sync then fails before it writes anything.
- */
 export function syncWorkflows(
   ctx: Ctx,
   instance: Pick<Instance, "id">,
@@ -190,8 +158,6 @@ async function syncWorkflowsNow(ctx: Ctx, instance: Instance, readDeadlineMs: nu
     if (at && (!s.last || at > s.last)) s.last = at
     stats.set(e.workflowId, s)
   }
-  // A workflow n8n gives in a form the map cannot read is skipped, and the rest of the map still syncs. One with a
-  // storable ID keeps the row an earlier sync stored until n8n no longer lists it; one without cannot have a row.
   const listed: string[] = []
   const skipped: string[] = []
   let skippedWithoutId = 0
@@ -218,7 +184,6 @@ async function syncWorkflowsNow(ctx: Ctx, instance: Instance, readDeadlineMs: nu
     ctx.log.warn("workflow map sync skipped workflows it could not read", {
       instance: instance.name,
       skipped: skipped.length + skippedWithoutId,
-      // At most 10 IDs, each to its first 100 characters, so the line stays short whatever n8n sends.
       ids: skipped.slice(0, 10).map((id) => id.slice(0, 100)),
     })
   await ctx.db
@@ -230,10 +195,6 @@ async function syncWorkflowsNow(ctx: Ctx, instance: Instance, readDeadlineMs: nu
   return { workflows: all.length }
 }
 
-/**
- * The map's row for one workflow. Throws when n8n gave the workflow in a form it cannot read. Its text is made
- * storable (lib/storable.ts); its IDs are kept only as n8n gave them.
- */
 function workflowRow(w: N8nWorkflow, s: { runs: number; errors: number; last: Date | null } | undefined) {
   if (typeof w.name !== "string" || !Array.isArray(w.nodes)) throw new Error("unexpected workflow form")
   const trigger = describeTrigger(w)
@@ -257,11 +218,6 @@ function workflowRow(w: N8nWorkflow, s: { runs: number; errors: number; last: Da
   return row
 }
 
-/**
- * Syncs the workflows of an instance now, without waiting for it: after activation, so the counts appear at once
- * instead of at the next run of the workflow-map job. Only where the map is chosen and the n8n version is read
- * through its API. A busy instance pages through 30 days of executions, so the caller does not await it.
- */
 export function syncWorkflowsSoon(ctx: Ctx, instance: Instance) {
   if (!can(instance, "map") || unsupportedVersion(instance)) return
   void syncWorkflows(ctx, instance).catch((e: Error) =>

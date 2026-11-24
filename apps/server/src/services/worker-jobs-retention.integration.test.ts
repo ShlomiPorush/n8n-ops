@@ -10,8 +10,6 @@ import { type JobKind, type JobStatus, workerJobs, workers } from "../db/schema.
 import { createSettings } from "../lib/settings.ts"
 import { FINISHED_JOB_KEEP_MS, pruneWorkerJobs } from "./worker-presence.ts"
 
-// Retention of worker jobs against a real PostgreSQL: finished jobs other than backups go a day after they end, a
-// batch at a time; what a reader still needs stays.
 const adminUrl = process.env.MIGRATION_DATABASE_URL
 if (!adminUrl) throw new Error("MIGRATION_DATABASE_URL is required (scripts/verify.sh sets it)")
 
@@ -72,21 +70,16 @@ const labels = async () =>
 
 describe("pruning worker jobs", () => {
   it("deletes finished jobs other than backups a day after they ended, and keeps everything else", async () => {
-    // Gone: finished before the cutoff.
     await job("probe done old", "probe", "done", t(cutoff - MIN))
     await job("probe failed old", "probe", "failed", t(cutoff - 1))
     await job("self-test old", "self-test", "done", t(cutoff - MIN))
     await job("export old", "export-credentials", "failed", t(cutoff - MIN))
-    // Kept: finished at or after the cutoff.
     await job("probe at cutoff", "probe", "done", t(cutoff))
     await job("probe recent", "probe", "done", t(NOW - MIN))
-    // Kept: not finished, however old.
     await job("probe queued old", "probe", "queued", null)
     await job("export running old", "export-credentials", "running", null)
-    // Kept: backups, which stay with their run, however old.
     await job("backup done old", "backup", "done", t(cutoff - 30 * FINISHED_JOB_KEEP_MS))
     await job("backup failed old", "backup", "failed", t(cutoff - 30 * FINISHED_JOB_KEEP_MS))
-    // Kept: a finished row without a finish time (never written so) is left alone rather than guessed at.
     await job("probe done no finish", "probe", "done", null)
 
     await pruneWorkerJobs(ctx, NOW)
@@ -100,7 +93,6 @@ describe("pruning worker jobs", () => {
       "probe recent",
     ])
 
-    // Run again: nothing more goes.
     await pruneWorkerJobs(ctx, NOW)
     expect(await labels()).toHaveLength(7)
   })

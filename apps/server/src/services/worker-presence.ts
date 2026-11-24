@@ -6,31 +6,15 @@ import { asDate, at } from "./health-history.ts"
 import type { DbLike } from "./problems.ts"
 import { offlineGap, RECORDING_GAP_MS } from "./worker-periods.ts"
 
-/**
- * What a Worker's health history is written from (services/worker-health.ts reads it): each authenticated Worker call
- * (presence, and the offline period it ends), each heartbeat as reported, and the stretches of time in which this
- * server was recording at all.
- */
-
-/** Held while `server_recording` is written, so two writers never both open or extend a row. */
 const RECORDING_LOCK = 7_243_002
-/** The server marks itself alive this long after the previous mark finished, with or without Worker calls. */
 export const RECORDING_TICK_MS = 15_000
-/** history_marks: the first recording ever written, and the cutoff the last prune applied. */
 export const START_MARK = "worker-history-start"
 export const PRUNED_MARK = "worker-history-pruned"
 
 const DAY_MS = 86_400_000
 const BATCH = 5000
-/** How long a finished job (other than a backup) is kept: nothing reads it, so only for a look while debugging. */
 export const FINISHED_JOB_KEEP_MS = DAY_MS
 
-/**
- * Marks this server as recording now: extends the newest `server_recording` row when it was alive within the last
- * RECORDING_GAP_MS, else opens a new row (nothing was recorded meanwhile, or the clock moved back so that row lies
- * ahead of now). The only writer of the table. `now` is the database's clock read after the lock is held, so a write
- * that waited never uses an old time; it is returned, in whole milliseconds, for the caller to record with.
- */
 export async function markAlive(tx: DbLike): Promise<Date> {
   await tx.execute(sql`select pg_advisory_xact_lock(${RECORDING_LOCK}::bigint)`)
   const [row] = (await tx.execute(sql`
@@ -52,7 +36,6 @@ export async function markAlive(tx: DbLike): Promise<Date> {
   return asDate(row.t)
 }
 
-/** Keeps the first recording ever written as the start of every Worker's history; written once. */
 export async function markHistoryStart(db: DbLike) {
   await db.execute(sql`
     insert into history_marks (key, before)
@@ -60,10 +43,6 @@ export async function markHistoryStart(db: DbLike) {
     on conflict (key) do nothing`)
 }
 
-/**
- * Marks the server alive at start and then on a timer of its own (not the scheduler), each tick 15 s after the
- * previous one finished, so ticks never pile up behind a slow database. Returns a stop function.
- */
 export function startRecording(ctx: Ctx): () => void {
   let timer: NodeJS.Timeout | undefined
   let stopped = false
@@ -87,10 +66,6 @@ export function startRecording(ctx: Ctx): () => void {
   }
 }
 
-/**
- * When a Worker's history starts: the latest of when it was added, the first recording, and the cutoff the last prune
- * applied. Null while nothing was ever recorded.
- */
 export async function historyStartsAt(db: DbLike, createdAt: Date): Promise<Date | null> {
   const [row] = (await db.execute(sql`
     select
@@ -106,7 +81,6 @@ export async function historyStartsAt(db: DbLike, createdAt: Date): Promise<Date
   return new Date(Math.max(...times.map((d) => d.getTime())))
 }
 
-/** A job of the Worker that was running and claimed before `from`: a hint of what was going on, never the cause. */
 export async function runningJob(db: DbLike, workerId: string, from: Date): Promise<OfflineJob | null> {
   const [job] = await db
     .select({ kind: workerJobs.kind, startedAt: workerJobs.startedAt, instance: instances.name })
@@ -119,12 +93,6 @@ export async function runningJob(db: DbLike, workerId: string, from: Date): Prom
   return { kind: job.kind, instance: job.instance, startedAt: job.startedAt.toISOString() }
 }
 
-/**
- * Records an authenticated Worker call, in one transaction with the Worker's row locked so two concurrent calls never
- * record the same gap: the offline period it ends (when the last call was 90 s or more ago), its presence, version
- * and features, and that this server is recording. Lock order: the Worker's row, then the recording lock. Returns
- * the time the call was recorded at.
- */
 export async function recordWorkerCall(
   ctx: Ctx,
   workerId: string,
@@ -152,10 +120,6 @@ export async function recordWorkerCall(
   })
 }
 
-/**
- * Stores one heartbeat as reported, its times placed by the ages the Worker measured. A resend or replay of an
- * existing (bootId, seq) stores nothing, whatever else its body says.
- */
 export async function recordBeat(ctx: Ctx, workerId: string, receivedAt: Date, beat: HeartbeatBody) {
   const ago = (sec: number) => new Date(receivedAt.getTime() - Math.round(sec * 1000))
   await ctx.db
@@ -179,7 +143,6 @@ export async function recordBeat(ctx: Ctx, workerId: string, receivedAt: Date, b
     .onConflictDoNothing({ target: [workerBeats.workerId, workerBeats.bootId, workerBeats.seq] })
 }
 
-/** Runs a delete of at most BATCH rows until one deletes fewer, so a prune can stop and run again at any point. */
 async function inBatches(ctx: Ctx, query: SQL) {
   for (;;) {
     const gone = await ctx.db.execute(query)
@@ -187,12 +150,6 @@ async function inBatches(ctx: Ctx, query: SQL) {
   }
 }
 
-/**
- * Deletes worker jobs that finished more than FINISHED_JOB_KEEP_MS ago, a batch at a time, so it can stop and run
- * again at any point. A health probe's result is applied to the instance's own history when it arrives; the job row
- * is only a copy. Kept: queued and running jobs, and backup jobs (the proxy fix of a failed run reads its job, and
- * runs are kept). The status and kind stay literals, so the planner can use worker_jobs_finished_idx.
- */
 export async function pruneWorkerJobs(ctx: Ctx, now = Date.now()) {
   const cutoff = at(new Date(now - FINISHED_JOB_KEEP_MS))
   await inBatches(
@@ -204,13 +161,6 @@ export async function pruneWorkerJobs(ctx: Ctx, now = Date.now()) {
   )
 }
 
-/**
- * Deletes Worker history older than Keep health history (days) of the Defaults (Workers have no overrides). The
- * mark is written first, so an interrupted prune never leaves deleted time counted as measured, and only moves
- * forward. Kept on purpose: per Worker the newest heartbeat the rule would delete (evidence that an earlier boot
- * existed), heartbeats up to the cover time before the cutoff (their Docker check can cover time after it), offline
- * periods that end after the cutoff, and the newest recording before it (the start of the next gap).
- */
 export async function pruneWorkerHistory(ctx: Ctx, now = Date.now()) {
   const { healthHistoryDays } = await ctx.settings.get("defaults")
   const cutoff = new Date(now - healthHistoryDays * DAY_MS)

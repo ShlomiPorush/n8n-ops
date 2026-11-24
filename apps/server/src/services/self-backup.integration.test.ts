@@ -14,8 +14,6 @@ import { createSecrets } from "../lib/crypto.ts"
 import { createSettings } from "../lib/settings.ts"
 import { runSelfBackup } from "./backups.ts"
 
-// A failed backup of the n8n-ops database, recorded against a real PostgreSQL: the stored error, the queued alert
-// and the log line. pg_dump is a stand-in placed first on PATH, so the run fails the way the real one can.
 const adminUrl = process.env.MIGRATION_DATABASE_URL
 if (!adminUrl) throw new Error("MIGRATION_DATABASE_URL is required (scripts/verify.sh sets it)")
 
@@ -26,7 +24,6 @@ let ctx: Ctx
 let dir: string
 const warnings: { message: string; extra?: Record<string, unknown> }[] = []
 
-// The connection the stand-in is given: a password made for the run, with a percent-encoded character in it.
 const password = `${randomBytes(24).toString("hex")}%2F${randomBytes(12).toString("hex")}`
 const decoded = decodeURIComponent(password)
 const url = `postgres://n8n_ops:${password}@db.invalid:5432/n8n_ops`
@@ -42,7 +39,6 @@ beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), "n8n-ops-selfbackup-"))
   chmodSync(dir, 0o700)
   const bin = join(dir, "bin")
-  // The stand-in pg_dump: what it prints and how it ends come from the test, through its environment.
   mkdirSync(bin, { mode: 0o700 })
   writeFileSync(
     join(bin, "pg_dump"),
@@ -105,7 +101,6 @@ beforeEach(async () => {
   delete process.env.STUB_STDERR
 })
 
-/** Every place a recorded failure shows up, once the run has failed, its alert is queued and its line logged. */
 async function failure() {
   const run = await runSelfBackup(ctx)
   return vi.waitFor(
@@ -120,7 +115,6 @@ async function failure() {
   )
 }
 
-/** The connection or any recognisable piece of the password: the whole URL, each form, or 8 characters of one. */
 function holdsConnection(text: string) {
   if (text.includes(url)) return true
   for (const secret of [password, decoded])

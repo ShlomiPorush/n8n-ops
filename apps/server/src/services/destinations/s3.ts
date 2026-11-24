@@ -18,7 +18,6 @@ import { type Expected, type PutResult, roundTrip, type Store, StoreError, verif
 export type S3Location = { endpoint: string; region: string; bucket: string; prefix: string; forcePathStyle: boolean }
 export type S3Credentials = { accessKeyId: string; secretAccessKey: string }
 
-/** One PUT carries the whole archive, so the service checks the SHA-256 of all of it; S3 takes up to 5 GiB per PUT. */
 export const S3_MAX_PUT = 5 * 1024 ** 3
 
 async function md5OfFile(file: string, signal: AbortSignal) {
@@ -36,7 +35,7 @@ export function s3Store(location: S3Location, credentials: S3Credentials, object
     ...(location.endpoint ? { endpoint: location.endpoint } : {}),
     forcePathStyle: location.forcePathStyle,
     credentials,
-    // Many S3-compatible services do not implement the newer default checksum behaviour.
+    // Many S3-compatible services refuse requests with the SDK's default checksums.
     requestChecksumCalculation: "WHEN_REQUIRED",
     responseChecksumValidation: "WHEN_REQUIRED",
   })
@@ -66,10 +65,6 @@ export function s3Store(location: S3Location, credentials: S3Credentials, object
     return res.VersionId ? { versionId: res.VersionId } : {}
   }
 
-  /**
-   * A copy is only counted as locked once the service says so. Some S3-compatible services ignore the lock
-   * sent with the upload; the retention is then set on its own, and without it the copy fails.
-   */
   async function ensureLocked(key: string, versionId: string | undefined, until: Date, signal: AbortSignal) {
     if (!objectLock) return
     const target = { Bucket, Key: key, ...(versionId ? { VersionId: versionId } : {}) }
@@ -94,12 +89,11 @@ export function s3Store(location: S3Location, credentials: S3Credentials, object
   const store: Store = {
     async put(key, file, expected, signal, retainUntil) {
       if (expected.size > S3_MAX_PUT) throw new StoreError("archives over 5 GiB cannot be written to S3 in one piece")
-      // Object Lock asks for an MD5 of the body on many S3-compatible services, as AWS once did.
+      // Many S3-compatible services refuse an Object Lock upload without Content-MD5.
       const lock = retainUntil && objectLock ? { until: retainUntil, md5: await md5OfFile(file, signal) } : undefined
       const put = await putBody(key, createReadStream(file, { signal }), expected, signal, lock)
       if (lock)
         await ensureLocked(key, put.versionId, lock.until, signal).catch((error: Error) => {
-          // The object exists: the caller records its version for removal, whatever went wrong with the lock.
           throw Object.assign(error, { written: { versionId: put.versionId ?? null } })
         })
       return put
@@ -117,7 +111,6 @@ export function s3Store(location: S3Location, credentials: S3Credentials, object
       )
       if (head.ContentLength !== expected.size)
         throw new StoreError(`the stored copy has ${head.ContentLength} bytes, expected ${expected.size}`)
-      // A single PUT keeps the SHA-256 of the whole object; without it the copy is read back.
       if (head.ChecksumSHA256 && !head.ChecksumSHA256.includes("-")) {
         if (head.ChecksumSHA256 !== expected.sha256) throw new StoreError("the stored copy's checksum does not match")
         return
@@ -161,7 +154,6 @@ export function s3Store(location: S3Location, credentials: S3Credentials, object
             "Object Lock is not enabled on this bucket. It is usually turned on when the bucket is created; create one with Object Lock, or turn the lock off here.",
           )
       }
-      // The test file carries no lock of its own; a bucket with a default retention still keeps it that long.
       await roundTrip(store, key, signal)
       if (!objectLock) return []
       const days = objectLock.days === 1 ? "1 day" : `${objectLock.days} days`

@@ -18,7 +18,6 @@ describe("probePayload", () => {
     const payload = probePayload(instance, check)
     expect(payload).toMatchObject({ inside: { container: "n8n-main" }, check })
     expect(payload.overrides).toEqual({})
-    // The URL fields stay for workers of earlier releases and as the network fallback.
     expect(payload).toMatchObject({
       main: "https://n8n.example.com/healthz",
       metrics: "https://n8n.example.com/metrics",

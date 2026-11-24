@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { releaseChecker } from "./instances.ts"
 
-/** A stand-in GitHub: answers in order, counting the reads, on a clock the test moves. */
 function github(...answers: (() => Response)[]) {
   const state = { reads: 0, now: 1_000_000 }
   const fetchImpl = async () => {

@@ -4,17 +4,14 @@ import { join } from "node:path"
 import { pipeline } from "node:stream/promises"
 import { checkKey, roundTrip, type Store, StoreError, verifyByReading } from "./store.ts"
 
-/** The folder mapped into the server container for local backups. */
 export const BACKUPS_DIR = process.env.BACKUPS_DIR || "/backups"
 
 export type LocalLocation = { folder: string }
 
-/** Whether the path is a mount point, from the kernel's mount table (a bind mount can share the device). */
 export async function isMountPoint(path: string, mountinfo = "/proc/self/mountinfo"): Promise<boolean> {
   try {
     const target = await realpath(path)
     const table = await readFile(mountinfo, "utf8")
-    // Field 5 is the mount point, with spaces and similar written as octal escapes.
     return table
       .split("\n")
       .map((line) =>
@@ -31,19 +28,11 @@ const notMapped = () =>
     `${BACKUPS_DIR} is not mapped to a folder on the host, so archives would vanish with the container. Add it to the server's volumes in docker-compose.yml, for example ./backups:${BACKUPS_DIR}.`,
   )
 
-/**
- * Archives under /backups/<folder>. Paths are plain names only, and no symbolic link under /backups is
- * followed, so archives stay inside that folder.
- */
 export function localStore(location: LocalLocation, options: { root?: string; requireMount?: boolean } = {}): Store {
   const base = options.root ?? BACKUPS_DIR
   const requireMount = options.requireMount ?? true
   const folderParts = location.folder ? checkKey(location.folder) : []
 
-  /**
-   * Goes down from a folder one name at a time, creating what is missing when asked. A symbolic link on the
-   * way is refused, so nothing is ever created or written outside /backups, whatever links are in it.
-   */
   async function walk(from: string, parts: string[], create: boolean): Promise<string | null> {
     let current = from
     for (const part of parts) {
@@ -61,13 +50,11 @@ export function localStore(location: LocalLocation, options: { root?: string; re
     return current
   }
 
-  /** The destination's folder under /backups, created when missing. */
   async function ready() {
     if (requireMount && !(await isMountPoint(base))) throw notMapped()
     return (await walk(await realpath(base), folderParts, true)) as string
   }
 
-  /** The archive's path under the destination; its folders are created when asked. */
   async function place(key: string, create: boolean) {
     const root = await ready()
     const parts = checkKey(key)
@@ -82,7 +69,6 @@ export function localStore(location: LocalLocation, options: { root?: string; re
     async put(key, file, _expected, signal) {
       const target = await place(key, true)
       const part = `${target}.part`
-      // A leftover temporary file goes first; the new one is created fresh ("wx"), never through a link.
       await rm(part, { force: true })
       await pipeline(createReadStream(file, { signal }), createWriteStream(part, { flags: "wx" }), { signal })
       const handle = await open(part, "r+")

@@ -21,20 +21,8 @@ export { type CauseFields, causeFields } from "./cause.ts"
 
 import { resolveProblemId } from "./problems.ts"
 
-/*
- * How Problems are read: by the web pages, Overview, the instance pages, the reports and the agents' API. A
- * Problem's state, failures and times come from its Affected workflows (docs/adr/0001), here in SQL, the same way
- * `problemStatus` in problems.ts says it: open when any is open, else muted, else resolved. `endMutes` turns ended
- * mutes back to open, so reads take the stored status as it is.
- */
-
 const a = affectedWorkflows
 
-/**
- * One row per Problem with its derived state, over all its Affected workflows or only those on one instance: with
- * an instance filter, a Problem's state is its state there, so a list of what is open on an instance agrees with
- * the instance's open count.
- */
 function summary(instanceId?: string) {
   return {
     problemId: a.problemId,
@@ -56,7 +44,6 @@ function summaryQuery(ctx: Pick<Ctx, "db">, instanceId?: string) {
   return ctx.db.select(columns).from(a).where(where).groupBy(a.problemId).as("s")
 }
 
-/** How many workflows (instance and workflow, whatever the node) and which instances, over all of a Problem. */
 function reachQuery(ctx: Pick<Ctx, "db">) {
   return ctx.db
     .select({
@@ -71,14 +58,8 @@ function reachQuery(ctx: Pick<Ctx, "db">) {
     .as("w")
 }
 
-/** The list's filters. The rows and their total are read through one `where`, so the two always agree (TB-18). */
 export type ProblemFilter = { status?: string; instanceId?: string; q?: string }
 
-/*
- * Text compares without case, as the table's own sort does, and blank text comes last (TB-2). The table's sort
- * also reads digits as numbers ("Sync 2" before "Sync 10"); PostgreSQL does that only with an ICU collation made
- * for it (`und-u-kn-true`), which no migration creates yet, so here "Sync 10" comes before "Sync 2".
- */
 type SortColumn = { value: SQL | AnyColumn; blank?: SQL }
 const text = (column: SQL | SQL.Aliased | AnyColumn): SortColumn => ({
   value: sql`lower(${column})`,
@@ -91,16 +72,11 @@ export type ProblemOrder = { sort: ProblemSortKey; order: "asc" | "desc" }
 
 const sortQuery = z.object({ sort: z.enum(problemSortKeys), order: z.enum(["asc", "desc"]) })
 
-/**
- * The order asked for in `?sort=<column>&order=asc|desc`. Anything else, an unknown column or direction or
- * only one of the two, is the default order.
- */
 export function parseProblemOrder(sort: string | undefined, order: string | undefined): ProblemOrder | null {
   const parsed = sortQuery.safeParse({ sort, order })
   return parsed.success ? parsed.data : null
 }
 
-/** An Affected workflow as every reader sees it. */
 export type AffectedItem = {
   id: string
   instanceId: string
@@ -117,7 +93,6 @@ export type AffectedItem = {
   mutedUntil: Date | null
   resolvedAt: Date | null
 } & CauseFields & {
-    /** An open workflow that failed in the last 24 hours is failing now; an open one that did not is quiet. */
     state: "now" | "quiet" | null
   }
 
@@ -128,25 +103,16 @@ function openState(row: { status: ProblemStatus; lastSeen: Date }, now: number):
   return now - row.lastSeen.getTime() < DAY_MS ? "now" : "quiet"
 }
 
-/**
- * The title screens show (`causeFields`), in SQL, for the order by Cause: "target · reason" with the reason as
- * `displayReasonOf` shows it, step by step, else the error text of rows from before the regroup by cause. The test
- * "reads a row as screens show it" holds the two to the same titles.
- */
 export function titleSql(target: AnyColumn, reason: AnyColumn, errorMessage: AnyColumn) {
   const flat = sql`btrim(regexp_replace(${reason}, '\\s+', ' ', 'g'))`
-  // Over 100 characters, the asides go: bracketed tags, "Error fetching from <url>:" and parentheses.
   const asides = sql`btrim(regexp_replace(regexp_replace(regexp_replace(${flat}, '(\\[[^\\]]{1,80}\\]:?\\s*)+', '', 'g'), 'Error fetching from \\S+:\\s+', '', 'g'), '\\s*\\([^)]*\\)', '', 'g'))`
   const cleaned = sql`(case when length(${flat}) > 100 then ${asides} else ${flat} end)`
-  // Over 120, its first sentence.
   const sentence = sql`(case when length(${cleaned}) > 120 then coalesce(substring(${cleaned} from '^(.+?[.!?])(\\s|$)'), ${cleaned}) else ${cleaned} end)`
-  // At most 300.
   const capped = sql`(case when length(${sentence}) > 300 then rtrim(left(${sentence}, 299)) || '…' else ${sentence} end)`
   const shown = sql`coalesce(nullif(${capped}, ''), left(${reason}, 300))`
   return sql`coalesce(${target} || ' · ' || ${shown}, ${errorMessage})`
 }
 
-/** A Problem as every reader sees it: the error, its derived state, and the workflows it hit. */
 export type ProblemItem = CauseFields & {
   id: string
   errorMessage: string
@@ -156,32 +122,21 @@ export type ProblemItem = CauseFields & {
   firstSeen: Date
   lastSeen: Date
   mutedUntil: Date | null
-  /** Distinct workflows (instance and workflow), whatever the node. */
   workflows: number
-  /** The names of the instances it hit. */
   instances: string[]
-  /** Its Affected workflows, most recently failed first (those on the filtered instance first). */
   affectedWorkflows: AffectedItem[]
-  /** How many Affected workflows it has, also those left out of `affectedWorkflows`. */
   affectedTotal: number
-  /** A person merged other Problems into it, so its workflows need not share one cause. */
   mergedByHand: boolean
 }
 
-/**
- * Failures latest first by when they ran, as screens show their time (stopped, else started), not by when n8n-ops
- * stored them: failures read in later, such as by a backfill, would otherwise come first.
- */
 const latestFailureFirst = [
   desc(sql`coalesce(${failures.stoppedAt}, ${failures.startedAt}, ${failures.createdAt})`),
   desc(failures.createdAt),
   desc(failures.id),
 ]
 
-/** How many other Problems at the same target a detail carries. */
 const SAME_TARGET_LIMIT = 50
 
-/** How many Affected workflows a list row carries. The detail carries them all. */
 export const AFFECTED_IN_LIST = 50
 
 const affectedColumns = {
@@ -206,7 +161,6 @@ const affectedColumns = {
   resolvedAt: a.resolvedAt,
 }
 
-/** The Affected workflows of these Problems, grouped, most recently failed first, at most `limit` each. */
 async function affectedOf(ctx: Pick<Ctx, "db">, problemIds: string[], instanceId?: string, limit?: number) {
   const byProblem = new Map<string, AffectedItem[]>()
   if (!problemIds.length) return byProblem
@@ -230,14 +184,8 @@ async function affectedOf(ctx: Pick<Ctx, "db">, problemIds: string[], instanceId
   return byProblem
 }
 
-/** A Problem that a person merged others into (Merge; a regroup by cause merges nothing). */
 const problemMergedByHand = sql<boolean>`exists (select 1 from ${problems} m where m.merged_into = ${problems.id} and not m.regrouped)`
 
-/**
- * The rows of a list and how many Problems match its filters in all, not only the rows sent (TB-18). One query
- * counts them over the same rows it sorts, before the limit, so the two always agree, also while failures come in.
- * Merged Problems are aliases and never listed.
- */
 export async function problemPage(
   ctx: Pick<Ctx, "db">,
   { order, limit = 200, status, instanceId, q }: ProblemFilter & { order?: "recent"; limit?: number },
@@ -257,10 +205,6 @@ export async function problemPage(
       ),
     )
   }
-  /*
-   * What needs a look comes first (TB-11), the way the Status column reads a Problem (`problemStatus` in the UI):
-   * a regression, then a Problem first seen in the last 24 hours, then open, muted and resolved.
-   */
   const rank = sql<number>`case
     when ${s.status} = 'resolved' then 0
     when ${s.status} = 'muted' then 1
@@ -268,7 +212,6 @@ export async function problemPage(
     when ${s.firstSeen} > now() - interval '24 hours' then 3
     else 2 end`
   const settle = [desc(sql`${s.lastSeen}`), asc(problems.id)]
-  // The agents' order (requirements E1): most recently seen first, as it always was.
   const orderBy = order === "recent" ? settle : [desc(rank), ...settle]
   const rows = await ctx.db
     .select({
@@ -302,7 +245,6 @@ export async function problemPage(
     instanceId,
     AFFECTED_IN_LIST,
   )
-  // No rows means nothing matched: the count rides on each row.
   return {
     items: rows.map(({ total: _, target, targetSource, reason, kind, ...row }) => ({
       ...row,
@@ -316,28 +258,17 @@ export async function problemPage(
   }
 }
 
-/**
- * The part of the Problems list an Affected workflow sits in (docs/adr/0003): the instance's task runner first, then
- * failing now (failed in the last 24 hours), quiet, the alerts a Stop and Error node raised, muted and resolved.
- */
 export const problemSections = ["instance", "now", "quiet", "alerts", "muted", "resolved"] as const
 export type ProblemSection = (typeof problemSections)[number]
 
-/** The sections the list can be cut to: the open ones, which the Problems page counts above its list. */
 export const openSections = ["instance", "now", "quiet", "alerts"] as const
 export type OpenSection = (typeof openSections)[number]
 
-/** How many rows each section holds. */
 export type SectionCounts = Record<ProblemSection, number>
 export const noSections = (): SectionCounts => ({ instance: 0, now: 0, quiet: 0, alerts: 0, muted: 0, resolved: 0 })
 
-/**
- * The earliest time housekeeping may resolve an open Affected workflow by itself: its last failure plus its
- * instance's auto-resolve days. Housekeeping runs hourly, so screens say "soon", never an hour.
- */
 const closesAt = (lastSeen: Date, autoResolveDays: number) => new Date(lastSeen.getTime() + autoResolveDays * DAY_MS)
 
-/** The section as a rank, in SQL. */
 const sectionRank = sql<number>`case
   when ${a.status} = 'resolved' then 5
   when ${a.status} = 'muted' then 4
@@ -346,10 +277,6 @@ const sectionRank = sql<number>`case
   when ${a.lastSeen} > now() - interval '24 hours' then 1
   else 2 end`
 
-/**
- * An Affected workflow's Status column as a rank, high to low, the way the UI's badge reads it: a regression, then
- * first seen in the last 24 hours, then open, muted and resolved.
- */
 const statusRank = sql<number>`case
   when ${a.status} = 'resolved' then 0
   when ${a.status} = 'muted' then 1
@@ -357,27 +284,16 @@ const statusRank = sql<number>`case
   when ${a.firstSeen} > now() - interval '24 hours' then 3
   else 2 end`
 
-/** A Problem that a person merged others into: its workflows may have failed for different causes. */
 const mergedByHand = sql<boolean>`exists (select 1 from ${problems} m where m.merged_into = ${a.problemId} and not m.regrouped)`
 
-/** An Affected workflow in the list of rows: one row per workflow, at one node, with one cause. */
 export type ProblemRowItem = AffectedItem & {
   problemId: string
   section: ProblemSection
-  /** How many workflows (instance and workflow, whatever the node) its Problem has, this one included. */
   problemTotal: number
-  /** Its Problem had others merged into it by hand, so its workflows need not share this cause. */
   mergedByHand: boolean
-  /** When housekeeping may resolve it by itself at the earliest (`closesAt`); null when it is not open. */
   closesAt: Date | null
 }
 
-/**
- * The Problems list as rows (TB-4, TB-18): one per Affected workflow, in sections in the default order, with the
- * filters, the order and the count applied over all of them before the limit. Rows of merged and regrouped Problems
- * are never listed. `section` cuts the list to one open section; `sections` counts every section under the other
- * filters, before the limit and whatever `section` is.
- */
 export async function problemRowsPage(
   ctx: Pick<Ctx, "db" | "settings">,
   {
@@ -413,7 +329,6 @@ export async function problemRowsPage(
     lastSeen: { value: a.lastSeen },
   }
   const settle = [desc(a.lastSeen), asc(a.id)]
-  // What needs a look first: the sections in order, a regression first within one, then the latest failure.
   const ranked = [asc(sectionRank), desc(a.regression), ...settle]
   let orderBy: SQL[]
   if (!order) orderBy = ranked
@@ -430,7 +345,6 @@ export async function problemRowsPage(
     .from(a)
     .groupBy(a.problemId)
     .as("peers")
-  // Counted before the cut to one section, so every section keeps its figure while one is shown.
   const counted = await ctx.db
     .select({ rank: sectionRank.mapWith(Number), rows: sql<number>`count(*)`.mapWith(Number) })
     .from(a)
@@ -459,7 +373,6 @@ export async function problemRowsPage(
     .where(and(...where))
     .orderBy(...orderBy)
     .limit(limit)
-  // Each instance's auto-resolve days, from the defaults read once and only when an open row needs them.
   let defaults: InstanceSettings | undefined
   const days = new Map<string, number>()
   const daysOf = async (instanceId: string, overrides: Record<string, unknown>) => {
@@ -482,7 +395,6 @@ export async function problemRowsPage(
   return { items, total: rows[0]?.total ?? 0, sections }
 }
 
-/** These Problems (not merged), by id, with their Affected workflows (at most `limit` each). */
 export async function problemItems(ctx: Pick<Ctx, "db">, ids: string[], limit?: number) {
   const items = new Map<string, ProblemItem>()
   if (!ids.length) return items
@@ -529,17 +441,10 @@ export async function problemItems(ctx: Pick<Ctx, "db">, ids: string[], limit?: 
   return items
 }
 
-/** One Problem with every Affected workflow, or null. Merged ones are not read here: resolve the id first. */
 export async function problemItem(ctx: Pick<Ctx, "db">, id: string): Promise<ProblemItem | null> {
   return (await problemItems(ctx, [id])).get(id) ?? null
 }
 
-/**
- * A Problem with every Affected workflow, and the one chosen with its latest failure: error, input, workflow graph and
- * recent executions. `id` may be a Problem, a merged Problem (its target is read) or an Affected workflow, which is
- * then the one chosen; `workflow` chooses one explicitly and must be in the Problem. Without either, the most
- * recently failed workflow is chosen.
- */
 export async function problemDetail(ctx: Pick<Ctx, "db">, id: string, workflow?: string) {
   const resolved = await resolveProblemId(ctx.db, id)
   if (!resolved) return null
@@ -578,12 +483,6 @@ export async function problemDetail(ctx: Pick<Ctx, "db">, id: string, workflow?:
   const graph = stored?.workflowData
     ? workflowGraph(stored.workflowData, stored.data?.resultData?.runData ?? {}, chosen.nodeName)
     : []
-  /*
-   * Other Problems at the same target (docs/adr/0003): the same credential, host, called workflow or node failing for
-   * another reason, or a workflow split off from this Problem by hand. Never by the error text alone: n8n words many
-   * unrelated failures the same way. Rows from before the regroup by cause have no target and list none.
-   */
-  // What is open first, then the most recently failed, sorted before the limit so that no open one is left out.
   const s = summaryQuery(ctx)
   const others = await ctx.db
     .select({ id: problems.id, total: sql<number>`count(*) over()`.mapWith(Number) })
@@ -636,20 +535,13 @@ export async function problemDetail(ctx: Pick<Ctx, "db">, id: string, workflow?:
         url: where ? executionUrl({ baseUrl: where.baseUrl }, chosen.workflowId, f.executionId) : null,
       })),
     },
-    /** Other Problems at the same target: another reason there, or split off by hand. At most 50 of them. */
     sameTarget,
-    /** How many there are in all, also those left out of `sameTarget`. */
     sameTargetTotal: others[0]?.total ?? 0,
   }
 }
 
 export type ProblemDetail = NonNullable<Awaited<ReturnType<typeof problemDetail>>>
 
-/**
- * Where the workflows of a Problem went in the regroup by cause (docs/adr/0003), for an old link: an old Problem the
- * regroup left without workflows, or an old Affected workflow whose failures it split by cause. Null when the id is
- * neither. A Problem deleted since drops out of the list.
- */
 export async function regroupedView(ctx: Pick<Ctx, "db">, id: string) {
   const [problem] = await ctx.db
     .select({ id: problems.id, regrouped: problems.regrouped })
@@ -664,8 +556,6 @@ export async function regroupedView(ctx: Pick<Ctx, "db">, id: string) {
         .where(eq(problemRegroups.oldProblemId, id))
     ).map((r) => r.id)
   } else {
-    // Every row its failures went to: the split ones, and the one that kept its id even when that one was then
-    // combined into another row.
     const aliases = await ctx.db
       .select({ problemId: a.problemId, kind: affectedWorkflowAliases.kind })
       .from(affectedWorkflowAliases)
@@ -675,7 +565,6 @@ export async function regroupedView(ctx: Pick<Ctx, "db">, id: string) {
     const [row] = await ctx.db.select({ problemId: a.problemId }).from(a).where(eq(a.id, id))
     targets = [...(row ? [row.problemId] : []), ...aliases.map((r) => r.problemId)]
   }
-  // A Problem merged since then is read where it went.
   const followed = targets.length
     ? await ctx.db
         .select({ id: problems.id, mergedInto: problems.mergedInto })
@@ -695,10 +584,6 @@ export async function regroupedView(ctx: Pick<Ctx, "db">, id: string) {
   }
 }
 
-/**
- * One stored failed execution of a Problem: the latest of the workflow chosen (by an Affected workflow id, or
- * `workflow`), else the latest of the whole Problem; or the one asked for, which must belong to both.
- */
 export async function problemFailure(ctx: Pick<Ctx, "db">, id: string, opts: { workflow?: string; failure?: string }) {
   const resolved = await resolveProblemId(ctx.db, id)
   if (!resolved) return null
@@ -747,7 +632,6 @@ export async function problemFailure(ctx: Pick<Ctx, "db">, id: string, opts: { w
   }
 }
 
-/** How many Problems are open: in all, or on each instance (a Problem on two instances counts on both). */
 export async function openProblemCount(
   ctx: Pick<Ctx, "db">,
   { instanceId, before }: { instanceId?: string; before?: Date } = {},

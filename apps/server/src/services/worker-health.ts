@@ -32,14 +32,6 @@ import {
 } from "./worker-periods.ts"
 import { historyStartsAt, runningJob } from "./worker-presence.ts"
 
-/**
- * The health history of a Worker (the n8n-ops agent on a Docker host, not an n8n queue worker): when it was online
- * and offline, when n8n-ops itself was not recording, its restarts, round-trip times and Docker checks as it reported
- * them. Agents read it through REST and MCP, the console through the Worker's Health panel; one service checks the
- * request for all of them. Periods, restarts and shares are derived here from rows that carry their own times.
- */
-
-/** All instants are ISO strings; durations are milliseconds; shares are 0 to 1. */
 export type Period = { from: string; to: string | null }
 
 export type WorkerEvent =
@@ -135,16 +127,13 @@ export class WorkerHealthError extends Error {
   }
 }
 
-/** The HTTP answer to a request the service refused; an ambiguous name lists the ids to ask by. */
 export function refusal(e: WorkerHealthError) {
   const status = e.code === "not_found" ? 404 : e.code === "ambiguous" ? 409 : 400
   return [{ error: e.code, message: e.message, ...(e.code === "ambiguous" ? { ids: e.ids } : {}) }, status] as const
 }
 
 const DAY_MS = 86_400_000
-/** Round-trip coverage counts the 5-minute slots that hold a measurement. */
 const RTT_SLOT_MS = 5 * 60_000
-/** The most a heartbeat's measurement can lie before its receipt (the largest age the body takes). */
 const AGE_MAX_MS = DAY_MS
 
 const DESCRIPTION =
@@ -154,7 +143,6 @@ const activeWorker = and(isNull(workers.revokedAt), isNotNull(workers.tokenHash)
 const iso = (ms: number) => new Date(ms).toISOString()
 const num = (v: string | number | null | undefined) => (v === null || v === undefined ? 0 : Number(v))
 
-/** Workers, for agents: who is online, what they run and which instances they serve. Revoked ones are left out. */
 export async function agentWorkers(ctx: Ctx, now = Date.now()): Promise<WorkerListItem[]> {
   const [rows, assigned] = await Promise.all([
     ctx.db.select().from(workers).where(activeWorker).orderBy(asc(workers.name)),
@@ -175,7 +163,6 @@ export async function agentWorkers(ctx: Ctx, now = Date.now()): Promise<WorkerLi
   }))
 }
 
-/** What the read gives the maths, all in epoch milliseconds. */
 export type HealthFacts = {
   now: number
   from: number
@@ -183,43 +170,29 @@ export type HealthFacts = {
   bucketMs: number
   startsAt: number | null
   recording: Span[]
-  /** alive_at of the newest recording row: the server is recording now when it is recent. */
   newestAliveAt: number | null
-  /** Stored offline periods and the ongoing one (`to` null). */
   offline: { from: number; to: number | null; job: OfflineJob | null }[]
   boots: Boot[]
   checks: DockerCheck[]
-  /** By bucket index. */
   sums: { i: number; failedCalls: number; dockerChecks: number; dockerFailed: number }[]
   rtt: { i: number; samples: number; sumMs: number; maxMs: number }[]
-  /** Starts of the 5-minute slots, from `from`, that hold a round-trip measurement. */
   rttSlots: number[]
 }
 
 type Derived = Pick<WorkerHealth, "coverage" | "summary" | "series" | "periods"> & { events: WorkerEvent[] }
 
-/**
- * Everything the answer derives: what was observed (the window after the history starts, up to now), the parts of it
- * when n8n-ops was not recording (time no recording row covers), offline periods with those parts cut out, Docker
- * failing periods, restarts, coverage, the buckets and the events, newest first.
- */
 export function derive(f: HealthFacts): Derived {
   const end = Math.min(f.to, f.now)
   const count = Math.round((f.to - f.from) / f.bucketMs)
   const window: Span = { from: f.from, to: end }
   const observed: Span[] = f.startsAt === null ? [] : union([{ from: Math.max(f.from, f.startsAt), to: end }])
-  // The server answering now is recording now, unless it has not marked itself alive for longer than a silence.
   const recording = [...f.recording]
   if (f.newestAliveAt !== null && f.now - f.newestAliveAt <= RECORDING_GAP_MS)
     recording.push({ from: f.newestAliveAt, to: f.now })
   const notRecording = f.startsAt === null ? [] : subtract([{ from: f.startsAt, to: end }], recording)
   const reachesEnd = (s: Span) => s.to >= end
-  // Right after recording starts again Workers have not had time to call: that time counts as online.
   const settle = settling(f.recording.map((r) => r.from))
 
-  // A period keeps what lies outside the settle time (one that ends inside it is gone; a longer one keeps its part
-  // after it); of that, the Worker was offline where n8n-ops was recording. Each period's times are measured with
-  // running totals, so a period costs the same however many other periods and recording breaks it overlaps.
   const settleM = measured(settle)
   const notRecordingM = measured(notRecording)
   const bothM = measured(intersect(settle, notRecording))
@@ -348,10 +321,6 @@ export function derive(f: HealthFacts): Derived {
 type Row = Record<string, string | number | boolean | Date | null>
 const ms = (v: Row[string] | undefined) => (v === null || v === undefined ? null : asDate(v as Date | string).getTime())
 
-/**
- * The health history of one Worker, by id or name, read from one snapshot. A name several Workers share is
- * ambiguous (their ids are given); revoked Workers are not found. `to` fixes the window's end for the next pages.
- */
 export async function workerHealth(
   ctx: Ctx,
   ref: { id?: string; name?: string },
@@ -385,14 +354,10 @@ export async function workerHealth(
         )
       const id = worker.id
       const startsAt = await historyStartsAt(tx, worker.createdAt)
-      // The latest check made at or before now, by when it was made (a late report of an older check never wins);
-      // its cover contains now when it is under the cover time old. A check dated after now (the server clock moved
-      // back) is shown only when there is no other.
       const [docker] = (await tx.execute(sql`
         select docker_checked_at, docker_ok, docker_ms, docker_error from worker_beats
         where worker_id = ${id} and docker_checked_at is not null
         order by (docker_checked_at <= ${at(now)}) desc, docker_checked_at desc, id desc limit 1`)) as unknown as Row[]
-      // The ongoing offline period, with the same hint the write side records: a job running since before it.
       const ongoing = offlineGap(worker.lastSeenAt?.getTime() ?? null, now.getTime(), startsAt?.getTime() ?? null)
       const ongoingJob = ongoing ? await runningJob(tx, id, new Date(ongoing.from)) : null
       const base = { worker, startsAt, docker, ongoing, ongoingJob }
@@ -431,15 +396,11 @@ export async function workerHealth(
             sql`${workerOffline.from} <= ${at(end)}`,
           ),
         )
-      // A boot starts at its earliest receipt minus uptime; every kept row counts, the anchor too.
-      // Heartbeats are read by their own times in the half-open window [from, to), so every row falls in exactly one
-      // bucket and the series always adds up to the summary.
       const boots = (await tx.execute(sql`
         select boot_id, min(extract(epoch from received_at) * 1000 - uptime_sec * 1000) as start,
           max(uptime_sec) as uptime
         from worker_beats where worker_id = ${id} and received_at < ${toAt}
         group by boot_id`)) as unknown as Row[]
-      // A check before the measured start can cover time after it; receipt is never before the check.
       const coverFrom = at(new Date(measured.getTime() - DOCKER_CHECK_COVER_MS))
       const checks = (await tx.execute(sql`
         select extract(epoch from docker_checked_at) * 1000 as at, docker_ok as ok, docker_error as error

@@ -106,7 +106,6 @@ describe("versions and scopes", () => {
     expect(unsupportedVersion({ ...read, scopes: null })).toBe(true)
     expect(unsupportedVersion({ ...read, scopes: [] })).toBe(false)
     expect(unsupportedVersion({ ...read, scopes: ["workflow:read"], version: "2.13.1" })).toBe(true)
-    // Not read yet: nothing is known.
     expect(unsupportedVersion({ ...read, scopesCheckedAt: null, scopes: null })).toBe(false)
   })
 })

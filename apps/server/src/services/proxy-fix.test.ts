@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { refusalsOf, workerUpdate } from "./proxy-fix.ts"
 
-// Reading what the socket proxy refused from reports, and when a worker is told to update.
 describe("refusalsOf", () => {
   it("takes what a report of this release says, and nothing from its words", () => {
     const report = {

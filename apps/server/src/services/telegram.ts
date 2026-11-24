@@ -3,18 +3,14 @@ import type { FetchLike } from "../n8n/client.ts"
 export class TelegramError extends Error {
   constructor(
     message: string,
-    /** Seconds Telegram asked us to wait (HTTP 429). */
     readonly retryAfter?: number,
-    /** Telegram's `error_code`, when it answered (400, 403, 429...). */
     readonly code?: number,
-    /** Telegram's own description, such as "Bad Request: message thread not found". */
     readonly description?: string,
   ) {
     super(message)
   }
 }
 
-/** The forum topic is gone or closed: Telegram refused the message because of its `message_thread_id`. */
 export function isTopicGone(error: unknown) {
   return (
     error instanceof TelegramError &&
@@ -23,7 +19,6 @@ export function isTopicGone(error: unknown) {
   )
 }
 
-/** The message to edit no longer exists (its topic was deleted, or someone deleted it). */
 export function isMessageGone(error: unknown) {
   return (
     error instanceof TelegramError &&
@@ -34,13 +29,8 @@ export function isMessageGone(error: unknown) {
 
 export type InlineButton = { text: string; callback_data?: string; url?: string }
 
-/**
- * The Bot API address. Only the verification stack changes it (TELEGRAM_API_URL), to a stand-in that records
- * calls, so the end-to-end tests can follow messages and button presses without a real bot.
- */
 const API_BASE = (process.env.TELEGRAM_API_URL || "https://api.telegram.org").replace(/\/+$/, "")
 
-/** Telegram Bot API calls used by n8n-ops. Messages use HTML parse mode. */
 export class Telegram {
   constructor(
     private readonly token: string,
@@ -72,7 +62,6 @@ export class Telegram {
     return json.result as T
   }
 
-  /** Sends a message, into the forum topic `threadId` when one is given (null or none: the chat's General topic). */
   async send(
     chatId: string,
     text: TelegramHtml,
@@ -101,7 +90,6 @@ export class Telegram {
         reply_markup: { inline_keyboard: buttons },
       })
     } catch (error) {
-      // Editing to identical content is not an error for us.
       if (!(error instanceof TelegramError && /message is not modified/i.test(error.message))) throw error
     }
   }
@@ -119,7 +107,6 @@ export function escapeHtml(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
 }
 
-/** Shortens text for a message line. Counts characters, so an emoji is never cut in half. */
 export function clip(text: string, max = 300): string {
   if (text.length <= max) return text
   const kept: string[] = []
@@ -130,10 +117,6 @@ export function clip(text: string, max = 300): string {
   return text
 }
 
-/**
- * Telegram HTML (parse mode HTML). Only `html` and `TelegramHtml.join` make it, so every value from outside in it
- * was escaped; message senders and alert queues accept nothing else.
- */
 export class TelegramHtml {
   private constructor(private readonly text: string) {}
 
@@ -150,22 +133,14 @@ export class TelegramHtml {
     return new TelegramHtml(parts.map((p) => p.text).join(escapeHtml(separator)))
   }
 
-  /** Text this code made with `html` and stored (the alert outbox), read back for sending. */
   static stored(text: string) {
     return new TelegramHtml(text)
   }
 }
 
-/** Builds Telegram HTML: the template's own text is markup, every value is escaped unless it is TelegramHtml. */
 export const html = (strings: TemplateStringsArray, ...values: unknown[]) => TelegramHtml.template(strings, values)
 
-/**
- * Telegram HTML as display text: tags dropped, entities read back (`&amp;` last, so nothing is
- * decoded twice), lines joined. Exact for text made with `html`, whose only tags are its own.
- * Not an HTML sanitizer: callers show the result as text.
- */
 export function telegramPlainText(html: TelegramHtml | string) {
-  // Tags are dropped until none is left. One pass already leaves none; the loop makes that plain to code scanning.
   let text = String(html)
   for (let previous = ""; text !== previous; ) {
     previous = text

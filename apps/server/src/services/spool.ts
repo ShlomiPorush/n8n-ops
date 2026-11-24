@@ -6,10 +6,6 @@ import { Readable, Transform } from "node:stream"
 import { pipeline } from "node:stream/promises"
 import type { Ctx } from "../context.ts"
 
-/**
- * Encrypted archives wait here, under the server's data directory, until every destination has its copy.
- * Space is reserved before a write starts, so two archives arriving together cannot both take the last of it.
- */
 export const KEEP_FREE = 1024 ** 3
 
 export const spoolDir = (ctx: Pick<Ctx, "appKeyPath">) => join(dirname(ctx.appKeyPath), "spool")
@@ -24,7 +20,6 @@ async function freeSpace(dir: string) {
   return fs.bavail * fs.bsize
 }
 
-/** Holds room for an archive of this size; release it when the write ends, whatever the outcome. */
 export async function reserve(
   dir: string,
   size: number,
@@ -32,7 +27,6 @@ export async function reserve(
 ) {
   await mkdir(dir, { recursive: true })
   const free = await measure(dir)
-  // Checked and taken without an await in between, so concurrent callers see each other's reservations.
   const held = reserved.get(dir) ?? 0
   if (free - held - size < KEEP_FREE)
     throw new SpoolError(
@@ -47,10 +41,6 @@ export async function reserve(
   }
 }
 
-/**
- * Writes an archive to the spool through a temporary name, counting bytes and computing SHA-256 on the way.
- * More bytes than `limit` end the write. Returns the size and checksum of what was written.
- */
 export async function writeSpool(
   dir: string,
   runId: string,
@@ -92,7 +82,6 @@ export async function removeSpool(dir: string, runId: string) {
   await rm(`${spoolFile(dir, runId)}.part`, { force: true })
 }
 
-/** Run IDs that have a file in the spool, complete or not. */
 export async function spooledRuns(dir: string) {
   const names = await readdir(dir).catch(() => [] as string[])
   return [...new Set(names.filter((n) => /\.age(\.part)?$/.test(n)).map((n) => n.replace(/\.age(\.part)?$/, "")))]

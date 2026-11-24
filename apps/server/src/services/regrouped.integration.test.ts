@@ -23,9 +23,6 @@ import {
   undoProblemAction,
 } from "./problems.ts"
 
-// Problems that release 0.8.0 regrouped by cause (docs/adr/0003), as it left them: an old Problem without workflows,
-// and the ids of Affected workflows it split or combined. Old links still say where they went, and no action reaches
-// an old Problem. The database is made for this file from MIGRATION_DATABASE_URL with every migration applied.
 const adminUrl = process.env.MIGRATION_DATABASE_URL
 if (!adminUrl) throw new Error("MIGRATION_DATABASE_URL is required (scripts/verify.sh sets it)")
 const admin = postgres(adminUrl, { max: 1, onnotice: () => {} })
@@ -59,7 +56,6 @@ afterAll(async () => {
   await admin.end()
 })
 
-/** A Problem of one cause with one Affected workflow in it. */
 async function current(reason: string) {
   seq++
   const cause = {
@@ -93,7 +89,6 @@ async function current(reason: string) {
   return { problemId: p.id, rowId: row.id, title: `crm.example.com · ${reason}` }
 }
 
-/** A Problem that was regrouped: no workflows, no key, no cause, and where its workflows went. */
 async function regrouped(to: { problemId: string }[], mergedInto: string | null = null) {
   const [p] = await database.db
     .insert(problems)
@@ -115,12 +110,10 @@ describe("a link to a regrouped Problem or workflow", () => {
     const domain = await current("HTTP 400 · Domain not found")
     const old = await regrouped([ticket, domain])
     expect(await titles(old)).toEqual([domain.title, ticket.title])
-    // The old Problem names itself, so its page opens.
     expect(await resolveProblemId(database.db, old)).toEqual({ problemId: old, affectedWorkflowId: null })
 
     await mergeProblems(ctx, ticket.problemId, domain.problemId)
     expect(await titles(old)).toEqual([domain.title])
-    // A Problem that was not regrouped has no such page, merged or not.
     expect(await regroupedView(ctx, domain.problemId)).toBeNull()
     expect(await regroupedView(ctx, ticket.problemId)).toBeNull()
   })

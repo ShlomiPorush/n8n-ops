@@ -11,11 +11,6 @@ import { instances, workflows } from "../db/schema.ts"
 import { createSecrets } from "../lib/crypto.ts"
 import { lastWorkflowSync, syncWorkflows, syncWorkflowsSoon, workflowSyncBusy } from "./workflows.ts"
 
-// Syncs of the workflow map against a real PostgreSQL and a stand-in n8n that holds each workflow list until the
-// test lets it go: requests for an instance join the one waiting, few instances sync at once, a sync that
-// waited reads the instance again when it starts, and a sync of an n8n whose lists never end gives its slot back.
-// The stand-in answers under a path prefix of the instance's address: `/endless` gives a new workflow cursor on
-// every page, `/slow-runs` lists one workflow at once and runs a page at a time with no end.
 const adminUrl = process.env.MIGRATION_DATABASE_URL
 if (!adminUrl) throw new Error("MIGRATION_DATABASE_URL is required (scripts/verify.sh sets it)")
 
@@ -28,10 +23,8 @@ let baseUrl: string
 
 const KEY = randomBytes(24).toString("hex")
 const n8n = { reads: 0, open: 0, mostOpen: 0, runPages: 0, held: [] as (() => void)[] }
-/** The workflows the stand-in lists under `/listed`, as n8n would give them. */
 let listed: unknown[] = []
 
-/** Lets every workflow list that is waiting go, and waits until the next one asks, if any. */
 const release = () => {
   for (const go of n8n.held.splice(0)) go()
 }
@@ -126,7 +119,6 @@ describe("workflow map syncs", () => {
     const first = syncWorkflows(ctx, i)
     await until(() => n8n.reads === 1)
     expect(workflowSyncBusy(i.id)).toBe(true)
-    // The scheduler, the proxy after an agent's change, and Refresh now, while the first runs.
     const joined = [syncWorkflows(ctx, i), syncWorkflows(ctx, i)]
     syncWorkflowsSoon(ctx, i)
     syncWorkflowsSoon(ctx, i)
@@ -145,7 +137,6 @@ describe("workflow map syncs", () => {
     await until(() => n8n.reads === 2)
     await new Promise((r) => setTimeout(r, 100))
     expect(n8n.open).toBe(2)
-    // The one waiting for its turn has not started: its interval counts from when it does.
     const [, , third] = all
     if (!third) throw new Error("no third instance")
     expect(lastWorkflowSync(third.id)).toBe(0)
@@ -185,7 +176,6 @@ describe("workflow map syncs", () => {
     )
     const other = await instance()
     const synced = syncWorkflows(ctx, other)
-    // It starts once the two endless lists have each failed at their page limit.
     await until(() => n8n.reads === 1, 3_000)
     release()
     expect(await synced).toEqual({ workflows: 1 })
@@ -193,7 +183,6 @@ describe("workflow map syncs", () => {
       "n8n listed more than 400 pages of workflows",
       "n8n listed more than 400 pages of workflows",
     ])
-    // Both slots are free again: two instances sync at once.
     const next = await Promise.all([instance(), instance()])
     const both = next.map((i) => syncWorkflows(ctx, i))
     await until(() => n8n.open === 2)

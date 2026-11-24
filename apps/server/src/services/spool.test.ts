@@ -21,7 +21,6 @@ describe("spool space", () => {
     const release = (a.status === "fulfilled" ? a.value : (b as PromiseFulfilledResult<() => void>).value) as () => void
     release()
     release()
-    // Released (once, however often called): the room is there again.
     const again = await reserve(dir, 2 * GiB, { free })
     again()
   })

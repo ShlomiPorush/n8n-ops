@@ -72,7 +72,6 @@ describe("Temporary access", () => {
     expect(openToAgents(instance({ setupState: "incomplete" }))).toBe(false)
     expect(grantableScopes(instance({ chosenCapabilities: ["monitor"] }))).toEqual([])
     expect(grantableScopes(instance({ apiKeyEnc: null }))).toEqual([])
-    // What the policy would allow is still shown on the instance's page.
     expect(policyScopes(instance({ chosenCapabilities: [] }))).toEqual(["workflow:read"])
   })
 

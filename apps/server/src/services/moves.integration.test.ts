@@ -12,8 +12,6 @@ import { createSettings } from "../lib/settings.ts"
 import { exportCredentials, runMove } from "./moves.ts"
 import { deliverToWaiter, type JobOutcome } from "./workers.ts"
 
-// A move and a credential download against a real PostgreSQL, with what the worker answers given by each case: a
-// worker of an earlier release answers a failed export with success and an empty list.
 const adminUrl = process.env.MIGRATION_DATABASE_URL
 if (!adminUrl) throw new Error("MIGRATION_DATABASE_URL is required (scripts/verify.sh sets it)")
 
@@ -35,7 +33,6 @@ const answered = (credentials: unknown[], more: Record<string, unknown> = {}): J
   result: { credentials, ...more },
 })
 
-/** The workflow on the source, with one node per credential. */
 const workflow = (credentialIds: string[]) => ({
   id: "w1",
   name: "Orders",
@@ -50,7 +47,6 @@ const workflow = (credentialIds: string[]) => ({
   settings: {},
 })
 
-/** Both n8n instances; keeps every call that changes one of them, as `host METHOD path`. */
 function n8n(reads: ReturnType<typeof workflow>[]) {
   const changes: string[] = []
   const bodies: unknown[] = []
@@ -72,7 +68,6 @@ function n8n(reads: ReturnType<typeof workflow>[]) {
   return { changes, bodies }
 }
 
-/** Answers the export the call queues, once the call waits for it. */
 async function answerExport(outcome: JobOutcome) {
   await vi.waitFor(async () => {
     const [job] = await ctx.db.select().from(workerJobs).where(eq(workerJobs.status, "queued"))

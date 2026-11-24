@@ -15,9 +15,6 @@ import { createAudit } from "../lib/audit.ts"
 import { createSecrets } from "../lib/crypto.ts"
 import type { N8nWorkflow } from "../n8n/client.ts"
 
-// Restores of single items against a real PostgreSQL and a stand-in n8n that can fail the way n8n does: save and
-// then answer with an error, cut the connection with or without saving, or refuse before saving. The archive is
-// sealed here with a key made for the run; reading it from a destination is covered by the store tests.
 const archives = new Map<string, Uint8Array>()
 vi.mock("./backups.ts", async (original) => ({
   ...(await original<typeof import("./backups.ts")>()),
@@ -28,7 +25,6 @@ vi.mock("./backups.ts", async (original) => ({
   },
   maxArchiveBytes: async () => maxBytes,
 }))
-/** The largest an archive may unpack to (Settings, Largest archive). */
 let maxBytes = 64 * 1024 ** 2
 const {
   checkRestore,
@@ -55,10 +51,6 @@ let identity: string
 const KEY = randomBytes(24).toString("hex")
 const SECRET = randomBytes(12).toString("hex")
 
-/**
- * For a write only: `unpublish`, n8n saves, then its re-activation of the published version fails; `refuseUnpublished`,
- * n8n refuses the write and leaves the workflow unpublished.
- */
 type Behaviour =
   | "ok"
   | "saveThenFail"
@@ -73,18 +65,12 @@ const n8n = {
   workflows: [] as (N8nWorkflow & { createdAt: string })[],
   next: { credential: [] as Behaviour[], workflow: [] as Behaviour[], put: [] as Behaviour[] },
   writes: 0,
-  /** Each PUT /workflows/:id received: its query and body, whatever happened to it. */
   puts: [] as { query: string; body: Record<string, unknown> }[],
-  /** Runs when a PUT arrives, before n8n saves anything. */
   onPut: null as (() => Promise<void>) | null,
-  /** Someone saves the workflow in the n8n editor right after the next credential create. */
   editAfterCredential: false,
-  /** Serve an API description (which takes `description` on create) from the next credential create on. */
   specAfterCredential: false,
   spec: false,
-  /** The API description served while `spec` is on. */
   specText: "",
-  /** Settings values n8n drops from a write as its defaults (its removeDefaultValues). */
   defaults: {} as Record<string, unknown>,
 }
 let keys: { backupRecipient?: string } = {}
@@ -144,7 +130,6 @@ beforeAll(async () => {
       const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : {}
       const create = (kind: keyof typeof n8n.next, save: () => { id: string }) => {
         const behaviour = n8n.next[kind].shift() ?? "ok"
-        // Like a validation error that repeats what it was sent, secrets included.
         if (behaviour === "refuse") return send(400, { message: `request/body is invalid: ${JSON.stringify(body)}` })
         if (behaviour === "dropWithoutSave") return res.destroy()
         n8n.writes += 1
@@ -192,9 +177,6 @@ beforeAll(async () => {
           return send(400, { message: "Workflow could not be activated" })
         }
         return create("put", () => {
-          // As n8n 2.35.0: the settings sent, less those equal to its defaults, are merged into the stored ones; a
-          // linked credential gets its current name; a published workflow is published again unless
-          // `publishIfActive=false`.
           const published = Boolean(stored.activeVersionId)
           const sent = Object.entries(body.settings ?? {}).filter(
             ([k, v]) => !(k in n8n.defaults && n8n.defaults[k] === v),
@@ -250,7 +232,6 @@ beforeEach(async () => {
   })
   keys = {}
   maxBytes = 64 * 1024 ** 2
-  // Restores taken from another restore's version first: they refer to it.
   await ctx.db.update(restores).set({ fromRestoreId: null })
   await ctx.db.delete(restores)
 })
@@ -311,7 +292,6 @@ const archivedWorkflowJson = (): N8nWorkflow => ({
   settings: { executionOrder: "v1" },
 })
 
-/** A run of `source` whose archive holds the workflow and its credentials, Basic with its secret. */
 async function archiveOf(source: { id: string }) {
   const [run] = await ctx.db
     .insert(backupRuns)
@@ -361,7 +341,6 @@ const preview = (
     actorId: "user-1",
     via: "web",
   })
-/** The person who confirms; the audit names them, not who reviewed. */
 const by = { actor: "owner", actorId: "user-2", via: "web" as const }
 
 describe("browsing an archive", () => {
@@ -408,7 +387,6 @@ describe("restoring a workflow as a copy", () => {
   it("is reviewed without writing, then links, creates once, removes, and records who did it", async () => {
     const source = await instance()
     const run = await archiveOf(source)
-    // Basic is gone from the instance; Slack still exists with its creation time.
     live("cred-slack", "Slack", "slackApi", "2026-01-03T00:00:00Z")
     const review = await preview(run.id, source)
     expect(n8n.writes).toBe(0)
@@ -436,16 +414,13 @@ describe("restoring a workflow as a copy", () => {
     expect(copy?.nodes.find((n) => n.name === "Notify")?.credentials).toEqual({
       slackApi: { id: "cred-slack", name: "Slack" },
     })
-    // The workflow kept inside the Execute Workflow node points at the new credential too.
     const inner = JSON.parse(String(copy?.nodes.find((n) => n.name === "Inner")?.parameters?.workflowJson))
     expect(inner.nodes[0].credentials.httpBasicAuth.id).toBe(created?.id)
     const [entry] = await ctx.db.select().from(auditLog).where(eq(auditLog.action, "Workflow restored"))
-    // The person who confirmed it, not who reviewed it.
     expect(entry).toMatchObject({ actor: "owner", via: "web" })
     expect((await ctx.db.select().from(restores).where(eq(restores.id, review.id)))[0]?.actorId).toBe("user-2")
     expect(JSON.stringify(entry?.details)).not.toContain(SECRET)
 
-    // A second confirm (double click, a resend) changes nothing.
     expect((await confirmRestore(ctx, review.id, identity, by)).status).toBe("done")
     expect(n8n.writes).toBe(2)
   })
@@ -458,7 +433,6 @@ describe("restoring a workflow as a copy", () => {
       confirmRestore(ctx, review.id, identity, by),
       confirmRestore(ctx, review.id, identity, by),
     ])
-    // One ran it; the other got the restore as it was at that moment.
     expect([a.status, b.status]).toContain("done")
     expect(n8n.workflows).toHaveLength(1)
     expect(n8n.credentials).toHaveLength(1)
@@ -542,7 +516,6 @@ describe("restoring a workflow as a copy", () => {
     ])
     expect((await confirmRestore(ctx, review.id, identity, by)).status).toBe("done")
     const copy = n8n.workflows[0]
-    // Removed as a whole: n8n cannot bind it to another credential by name.
     expect(copy?.nodes.find((n) => n.name === "Notify")?.credentials).toBeUndefined()
   })
 })
@@ -567,7 +540,6 @@ describe("a write that ends in an error", () => {
     expect(result.status).toBe("failed")
     expect(result.steps.map((s) => s.status)).toEqual(["failed", "todo"])
     expect(n8n.workflows).toEqual([])
-    // n8n's message repeated the secret it was sent: neither the result nor the record nor the audit keeps it.
     expect(result.steps[0]?.error).toBe("n8n answered 400.")
     const [row] = await ctx.db.select().from(restores).where(eq(restores.id, review.id))
     const audit = await ctx.db.select().from(auditLog).where(eq(auditLog.action, "Workflow restore failed"))
@@ -586,15 +558,12 @@ describe("a write that ends in an error", () => {
     const checked = await checkRestore(ctx, review.id)
     expect(checked.status).toBe("unknown")
     expect(checked.steps[1]?.error).toContain("does not prove it failed")
-    // The request lands late after all.
     const step = result.steps[1]
     n8n.workflows.push({ ...archivedWorkflowJson(), id: "late", name: step?.name ?? "", createdAt: "" })
-    // Two checks at once: the second never writes the steps back over what the first proved.
     const [found, again] = await Promise.all([checkRestore(ctx, review.id), checkRestore(ctx, review.id)])
     expect(again).toMatchObject({ status: "done", steps: found.steps })
     expect(found.status).toBe("done")
     expect(found.steps[1]).toMatchObject({ status: "done", createdId: "late" })
-    // The next review of the same item names the earlier unknown one while it is unknown; now it is done.
     expect((await preview(run.id, target)).plan.earlierUnknown).toEqual([])
   })
 
@@ -708,7 +677,6 @@ describe("the sweep", () => {
   })
 })
 
-/** The workflow as n8n holds it now: the archived one with a node added since, saved and, when asked, published. */
 function liveOrders(published: boolean, extra: Partial<N8nWorkflow> = {}) {
   const archived = archivedWorkflowJson()
   const w = {
@@ -726,13 +694,11 @@ function liveOrders(published: boolean, extra: Partial<N8nWorkflow> = {}) {
   return w
 }
 
-/** The audit entry of one restore (the log is kept from test to test). */
 async function auditOf(action: string, restoreId: string) {
   const rows = await ctx.db.select().from(auditLog).where(eq(auditLog.action, action))
   return rows.find((r) => (r.details as { restoreId?: string } | null)?.restoreId === restoreId)
 }
 
-/** An instance that takes a replace, an archive of it, and the credentials the workflow uses still there. */
 async function replaceable({ basicLive = true } = {}) {
   const source = await instance(REPLACE)
   const run = await archiveOf(source)
@@ -758,7 +724,6 @@ describe("replacing a workflow", () => {
     expect(review.plan.replace).toMatchObject({
       settingsFrom: "backup",
       live: { published: false, versionId: "v-draft", updatedAt: "2026-03-01T00:00:00.000Z" },
-      // A key only n8n has stays after its merge.
       effectiveSettings: { executionOrder: "v1", timezone: "Asia/Tokyo" },
     })
     expect(review.plan.sent?.settings).toEqual({ executionOrder: "v1" })
@@ -771,7 +736,6 @@ describe("replacing a workflow", () => {
     expect(done.status).toBe("done")
     expect(done.steps[0]).toMatchObject({ status: "done", createdId: "wf-orders" })
     expect(done.steps[0]?.warning).toBeUndefined()
-    // The version before was stored before the write, and the write never publishes.
     expect(keptFirst).toBe(true)
     expect(n8n.puts.map((p) => p.query)).toEqual(["?publishIfActive=false"])
     expect(wf.nodes.map((n) => n.name)).toEqual(["Start", "Post", "Notify", "Inner"])
@@ -780,7 +744,6 @@ describe("replacing a workflow", () => {
     expect(done.versionBefore?.takenAt).toBeTruthy()
     const [row] = await ctx.db.select().from(restores).where(eq(restores.id, review.id))
     expect(row?.beforeArchive).toBeTruthy()
-    // The stored version never leaves the server in a restore's answer.
     expect(JSON.stringify(done)).not.toContain(row?.beforeArchive ?? "-")
     const entry = await auditOf("Workflow replaced", review.id)
     expect(entry).toMatchObject({ actor: "owner", via: "web" })
@@ -882,7 +845,6 @@ describe("replacing a workflow", () => {
     const result = await confirmRestore(ctx, review.id, identity, by)
     expect(result.status).toBe("failed")
     expect(wf.nodes).toHaveLength(5)
-    // The version before was kept all the same: it is what n8n still holds.
     expect(result.versionBefore).not.toBeNull()
   })
 
@@ -897,7 +859,6 @@ describe("replacing a workflow", () => {
     const checked = await checkRestore(ctx, review.id)
     expect(checked.status).toBe("unknown")
     expect(checked.steps[0]?.error).toContain("does not prove it failed")
-    // The write lands late after all.
     const sent = n8n.puts[0]?.body as Pick<N8nWorkflow, "name" | "nodes" | "connections">
     Object.assign(wf, { name: sent.name, nodes: sent.nodes, connections: sent.connections })
     const found = await checkRestore(ctx, review.id)
@@ -924,7 +885,6 @@ describe("replacing a workflow", () => {
     expect(first.status).toBe("done")
     expect(wf.nodes).toHaveLength(4)
     expect((await getRestore(ctx, first.id))?.versionBefore?.takenAt).toBeTruthy()
-    // Sealed to the backup key and to the key pasted for the restore: both open it, another does not.
     const opened = await inspectArchive(ctx, { versionOf: first.id }, backup)
     expect(opened.source).toMatchObject({ kind: "version", id: first.id, instanceId: source.id })
     expect(opened.workflows.map((w) => [w.id, w.nodes])).toEqual([["wf-orders", 5]])
@@ -933,7 +893,6 @@ describe("replacing a workflow", () => {
     await expect(inspectArchive(ctx, { versionOf: first.id }, await generateX25519Identity())).rejects.toThrow(
       "Cannot open the archive",
     )
-    // Put back with Replace: the guards hold for it too (the instance it was taken from, same workflow).
     const back = await previewRestore(ctx, {
       source: { versionOf: first.id },
       privateKey: backup,
@@ -951,7 +910,6 @@ describe("replacing a workflow", () => {
     expect(wf.nodes.map((n) => n.name)).toContain("Later")
     expect(wf).toMatchObject({ active: true, activeVersionId: "v-published" })
     expect(n8n.puts.every((p) => p.query === "?publishIfActive=false")).toBe(true)
-    // A restore of it as a copy works as well, into another instance too.
     const copy = await previewRestore(ctx, {
       source: { versionOf: first.id },
       privateKey: identity,
@@ -974,7 +932,6 @@ describe("replacing a workflow", () => {
     wf.isArchived = true
     await expect(replaceReview(run.id, source)).rejects.toThrow("archived in n8n")
     wf.isArchived = false
-    // A credential it uses can be neither linked nor created (Slack has no secrets in the archive).
     n8n.credentials = n8n.credentials.filter((c) => c.id !== "cred-slack")
     await expect(replaceReview(run.id, source)).rejects.toThrow("Restore it as a copy instead.")
     await expect(replaceReview(run.id, await instance(REPLACE))).rejects.toThrow("only on the instance")
@@ -988,7 +945,6 @@ describe("replacing a workflow", () => {
   })
 })
 
-/** A run of `source` whose archive holds only `workflow`, without credentials. */
 async function archiveWith(source: { id: string }, workflow: N8nWorkflow) {
   const [run] = await ctx.db
     .insert(backupRuns)
@@ -1003,7 +959,6 @@ async function archiveWith(source: { id: string }, workflow: N8nWorkflow) {
   return run
 }
 
-/** The archived workflow with one node and no credentials; `live` puts it on the instance as saved there. */
 const plain = (extra: Partial<N8nWorkflow> = {}): N8nWorkflow => ({
   id: "wf-plain",
   name: "Plain",
@@ -1038,7 +993,6 @@ const plainReview = (runId: string, target: { id: string }, source: { runId: str
     via: "web",
   })
 
-/** An API description that takes every optional field and the settings these tests use. */
 const FULL_SPEC = `
 openapi: 3.0.0
 paths:
@@ -1071,7 +1025,6 @@ describe("proving a replace", () => {
     expect(review.plan.replace?.sameAsLive).toBe(false)
     n8n.next.put.push("refuse")
     const result = await confirmRestore(ctx, review.id, identity, by)
-    // Name, nodes and connections match already; the settings do not, so nothing proves the write.
     expect(result.status).toBe("failed")
     expect(wf.settings).toEqual({ executionOrder: "v0" })
   })
@@ -1085,7 +1038,6 @@ describe("proving a replace", () => {
     expect(review.plan.warnings.join(" ")).toContain("already holds this version")
     n8n.next.put.push("refuse")
     expect((await confirmRestore(ctx, review.id, identity, by)).status).toBe("failed")
-    // The same check of an unknown write finds nothing new either.
     const again = await plainReview(run.id, source, { runId: run.id })
     n8n.next.put.push("dropWithoutSave")
     expect((await confirmRestore(ctx, again.id, identity, by)).status).toBe("unknown")
@@ -1113,7 +1065,6 @@ describe("proving a replace", () => {
     const first = await confirmRestore(ctx, (await plainReview(run.id, source, { runId: run.id })).id, identity, by)
     expect(first.status).toBe("done")
     expect(wf.nodeGroups).toEqual(groups)
-    // The version before had no groups: putting it back sends them empty, so n8n does not keep these.
     const back = await plainReview(run.id, source, { versionOf: first.id })
     expect(back.plan.sent?.fields).toContain("nodeGroups")
     const putBack = await confirmRestore(ctx, back.id, identity, by)
@@ -1147,7 +1098,6 @@ describe("proving a replace", () => {
     const done = await confirmRestore(ctx, review.id, identity, by)
     expect(done.status).toBe("done")
     expect(done.steps[0]?.warning).toBeUndefined()
-    // Sent with its name now, as n8n would put it there anyway.
     const sentNodes = (n8n.puts[0]?.body.nodes ?? []) as N8nWorkflow["nodes"]
     const notify = sentNodes.find((n) => n.name === "Notify")
     expect(notify?.credentials).toEqual({ slackApi: { id: "cred-slack", name: "Slack (renamed)" } })

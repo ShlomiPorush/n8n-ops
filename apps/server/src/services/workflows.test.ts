@@ -121,8 +121,6 @@ describe("executionsSince", () => {
 
   it("pages without the filter where n8n rejects it, to the end, keeping what started in the window", async () => {
     const queries: Query[] = []
-    // Newest ID first, as n8n lists them. "queued" has a lower ID than the whole page before it but waited in the
-    // queue and started inside the window.
     const pages: Record<string, { data: ReturnType<typeof run>[]; nextCursor: string | null }> = {
       first: { data: [run("cancelled", null), run("b", "2026-10-05T00:00:00.000Z")], nextCursor: "c1" },
       c1: { data: [run("c", "2026-10-01T00:00:00.000Z"), run("old", "2026-09-30T23:59:00.000Z")], nextCursor: "c2" },
@@ -181,7 +179,6 @@ describe("executionsSince", () => {
       },
     }
     await expect(executionsSince(client, since)).rejects.toBe(bad)
-    // A rejection after the first page is not the missing filter: n8n accepted it a page before.
     const first = { data: [run("a", "2026-10-03T00:00:00.000Z")], nextCursor: "c1" }
     const later = { listExecutions: async (q: Query) => (q.cursor ? Promise.reject(rejected()) : first) }
     await expect(executionsSince(later, since)).rejects.toThrow("400")

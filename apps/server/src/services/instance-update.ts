@@ -6,10 +6,6 @@ import { collectionUpdate, type Instance } from "./instances.ts"
 
 export type InstanceChange = Partial<typeof instances.$inferInsert>
 
-/**
- * Where the main is, after merging a change with what is stored: a container name, or a Compose project and
- * service, never part of a pair, never both. Their names together stay within Docker's 128 characters.
- */
 export function targetProblem(t: {
   containerName?: string | null
   composeProject?: string | null
@@ -24,10 +20,8 @@ export function targetProblem(t: {
   return null
 }
 
-/** A change that would leave where the main is half set or set twice; nothing of it is saved. */
 export class TargetProblem extends Error {}
 
-/** A change the instance as it is now does not take; `code` is the API error. Nothing of it is saved. */
 export class ChangeRefused extends Error {
   constructor(
     message: string,
@@ -37,32 +31,21 @@ export class ChangeRefused extends Error {
   }
 }
 
-/** The configuration changed since it was read (another change, or a setup step): nothing was saved. */
 export class RevisionChanged extends Error {
   constructor() {
     super("The instance was changed meanwhile. Reload and try again.")
   }
 }
 
-/** Whether a change sets another base URL or API key (a new key is a change even when it encrypts the same text). */
 export const keyOrUrlChanged = (current: Instance, data: InstanceChange) =>
   (data.apiKeyEnc !== undefined && data.apiKeyEnc !== current.apiKeyEnc) ||
   (data.baseUrl !== undefined && data.baseUrl !== current.baseUrl)
 
-/**
- * Saves a change to an instance with its row locked: a report already being applied finishes, alerts included, before
- * the change; one that comes after sees the change, and a mode the worker finds at the same time is not lost or
- * overwritten by a stale form. Set to regular by hand, its queue alerts end now, without a message.
- *
- * With `expectedRevision`, only while the configuration revision is still the one the caller read before its I/O (a
- * key it tested); otherwise RevisionChanged and nothing is saved.
- */
 export function updateInstance(ctx: Ctx, id: string, data: InstanceChange, expectedRevision?: number) {
   return ctx.db.transaction(async (tx) => {
     const [current] = await tx.select().from(instances).where(eq(instances.id, id)).for("update")
     if (!current) return undefined
     if (expectedRevision !== undefined && current.configRevision !== expectedRevision) throw new RevisionChanged()
-    // Decided on the locked row, so a key stored or an activation just before cannot slip past them.
     if (
       data.baseUrl !== undefined &&
       data.baseUrl !== current.baseUrl &&
@@ -72,7 +55,6 @@ export function updateInstance(ctx: Ctx, id: string, data: InstanceChange, expec
       throw new ChangeRefused("A new base URL needs the API key again. Enter it, or remove the key.", "key_required")
     if (data.chosenCapabilities !== undefined && current.setupState === "complete")
       throw new ChangeRefused("An active instance adds a capability through its setup, and removes one on its own.")
-    // Checked against the row as it is now, under its lock: two changes at once cannot set both kinds or half.
     const problem = targetProblem({ ...current, ...data })
     if (problem) throw new TargetProblem(problem)
     const change = collectionUpdate(current, data)
@@ -90,25 +72,18 @@ export function updateInstance(ctx: Ctx, id: string, data: InstanceChange, expec
         ...(change.queueMode !== undefined ? { queueMode: change.queueMode } : {}),
         ...(change.queueModeSource ? { queueModeSource: change.queueModeSource } : {}),
         ...(change.raiseRevision ? { collectionRevision: sql`${instances.collectionRevision} + 1` } : {}),
-        // A key tested, or a meta read made, for the URL and key before this change is no longer stored.
         ...(keyOrUrlChanged(current, data) ? { configRevision: sql`${instances.configRevision} + 1` } : {}),
         updatedAt: new Date(),
       })
       .where(eq(instances.id, id))
       .returning()
     if (saved && current.queueMode && !saved.queueMode) await closeQueueAlerts(tx, saved.id)
-    // Another worker, container or collection mode: the worker conditions of the old target end.
     else if (saved && change.queueModeSource) await closeWorkerConditions(tx, saved.id)
-    // Failed checks of the old target never count toward a down alert about the new one.
     if (saved && change.raiseRevision) await resetPendingDown(tx, saved.id)
     return saved
   })
 }
 
-/**
- * Takes a revoked worker off its instances, each with its row locked: checks under way are dropped, a found mode no
- * longer holds, and the worker conditions of the old host end, with no report reopening them after.
- */
 export async function detachWorker(ctx: Ctx, workerId: string) {
   const attached = await ctx.db.select({ id: instances.id }).from(instances).where(eq(instances.workerId, workerId))
   for (const { id } of attached) {

@@ -50,9 +50,6 @@ import {
 import { html } from "./telegram.ts"
 import { waitForJob } from "./workers.ts"
 
-// The setup of an instance against a real PostgreSQL and a stand-in n8n: drafts stay silent, each check binds to
-// the configuration revision it was made for, activation verifies them under the row's lock, and removing a
-// capability ends what it started. MIGRATION_DATABASE_URL is a role that may create databases.
 const adminUrl = process.env.MIGRATION_DATABASE_URL
 if (!adminUrl) throw new Error("MIGRATION_DATABASE_URL is required (scripts/verify.sh sets it)")
 
@@ -66,18 +63,14 @@ let baseUrl: string
 const KEY = randomBytes(24).toString("hex")
 const allScopes = ["execution:list", "execution:read", "workflow:list", "workflow:read"]
 
-/** What the stand-in n8n answers; tests change it. */
 const n8n = {
   version: "2.20.0" as string | null,
   discover: true,
   scopes: allScopes,
   healthy: true,
-  /** Fail /discover from this call on (counted from 1); 0 never. */
   failFrom: 0,
   calls: 0,
-  /** Requests for the workflow list, which only the workflow map makes. */
   workflowReads: 0,
-  /** Held until released, so a test can change the instance while a key is being tested. */
   hold: null as Promise<void> | null,
 }
 
@@ -132,7 +125,6 @@ beforeAll(async () => {
       if (req.headers["x-n8n-api-key"] !== KEY) return send(401, { message: "unauthorized" })
       return send(200, { data: { scopes: n8n.scopes } })
     }
-    // What the workflow map reads: one workflow that ran twice, once failing.
     if (path === "/api/v1/workflows" || path === "/api/v1/executions") {
       if (req.headers["x-n8n-api-key"] !== KEY) return send(401, { message: "unauthorized" })
       const startedAt = new Date().toISOString()
@@ -205,7 +197,6 @@ async function worker(name = `host-${++seq}`) {
   return w
 }
 
-/** A health report read inside the main, as a worker of this release sends it. */
 const insideReport = (over: Record<string, unknown> = {}) => ({
   main: { ok: true, status: 200, ms: 3 },
   readiness: { ok: true, status: 200, ms: 3 },
@@ -219,7 +210,6 @@ const insideReport = (over: Record<string, unknown> = {}) => ({
   ...over,
 })
 
-/** Stores a passing worker check and backup check made for the instance as it is now (destinations, backup key). */
 async function passWorkerAndBackup(id: string) {
   const row = await read(id)
   const { backupRecipient } = await ctx.settings.get("keys")
@@ -304,7 +294,6 @@ describe("the API check", () => {
     expect(saved.configRevision).toBe(1)
     expect(saved.apiKeyEnc && ctx.secrets.decrypt(saved.apiKeyEnc)).toBe(KEY)
     expect(saved.scopes).toEqual(allScopes)
-    // The result is bound to the key as stored, so it counts for it at once.
     expect(saved.setupChecks.api).toMatchObject({ ok: true, attempt: 2, inputs: inputsOf("api", saved) })
   })
 
@@ -318,7 +307,6 @@ describe("the API check", () => {
     const refused = await checkApi(ctx, row.id, KEY)
     expect(refused?.check.reason).toBe("n8n-ops needs n8n 2.14.0 or later.")
     expect((await read(row.id)).apiKeyEnc).toBeNull()
-    // The key's scopes were never read, so the step names none of them as missing.
     const page = await setupState(ctx, await read(row.id))
     expect(page.checks.api?.detail?.missingByCapability).toEqual({})
   })
@@ -349,10 +337,8 @@ describe("activation", () => {
     await checkApi(ctx, row.id, KEY)
     await expect(activate(ctx, row.id, {})).rejects.toMatchObject({ requirement: "health" })
     await checkHealthDirect(ctx, row.id)
-    // Temporary access is no check: the policy of the locked row decides.
     await expect(activate(ctx, row.id, {})).rejects.toMatchObject({ requirement: "access" })
 
-    // Saving the policy and choosing destinations leave the API and health checks as they were.
     await updateInstance(ctx, row.id, { agentAccess: { enabled: true, scopes: ["workflow:read"] } })
     await updateInstance(ctx, row.id, { backupDestinations: "custom" })
     let page = await setupState(ctx, await read(row.id))
@@ -360,14 +346,12 @@ describe("activation", () => {
     expect(page.checks.health).toMatchObject({ state: "ok", current: true })
     expect(page.ready).toBe(true)
 
-    // A new base URL (with the key again) makes both stale; activation runs the API check again, not health's.
     await updateInstance(ctx, row.id, { baseUrl: `${baseUrl}/`, apiKeyEnc: ctx.secrets.encrypt(KEY) })
     page = await setupState(ctx, await read(row.id))
     expect(page.checks.api).toMatchObject({ state: "stale", reason: expect.stringContaining("the base URL") })
     expect(page.checks.health).toMatchObject({ state: "stale" })
     await expect(activate(ctx, row.id, {})).rejects.toMatchObject({ requirement: "health" })
     expect((await setupState(ctx, await read(row.id))).checks.api?.state).toBe("ok")
-    // A queue setting is an input of health, not of the API check.
     await checkHealthDirect(ctx, row.id)
     await updateInstance(ctx, row.id, { metricsUrl: `${baseUrl}/metrics` })
     page = await setupState(ctx, await read(row.id))
@@ -376,7 +360,6 @@ describe("activation", () => {
 
     await checkHealthDirect(ctx, row.id)
     expect((await setupState(ctx, await read(row.id))).ready).toBe(true)
-    // The API check runs again first (call 1 below); the meta read after activation (call 2) fails.
     n8n.calls = 0
     n8n.failFrom = 2
     const done = await activate(ctx, row.id, {})
@@ -395,14 +378,12 @@ describe("activation", () => {
     expect(page.checks.health).toBeNull()
     expect(page.checks.api).toMatchObject({ state: "missing" })
     await checkApi(ctx, row.id)
-    // The key lacks the scopes moving needs.
     await expect(activate(ctx, row.id, { add: ["move"] })).rejects.toMatchObject({
       requirement: "api",
       message: expect.stringContaining("Move workflows needs workflow:create"),
     })
     const added = await activate(ctx, row.id, { add: ["map"] })
     expect(added?.instance.chosenCapabilities).toEqual(["health", "map"])
-    // The map is read right after activation, not at the next run of the 30-minute workflow-map job.
     await vi.waitFor(
       async () => {
         const rows = await ctx.db.select().from(workflows).where(eq(workflows.instanceId, row.id))
@@ -417,7 +398,6 @@ describe("activation", () => {
     const row = await instance({ chosenCapabilities: ["health"], apiKeyEnc: ctx.secrets.encrypt(KEY) })
     await checkApi(ctx, row.id)
     await activate(ctx, row.id, { add: ["monitor"] })
-    // A sync would have asked for the list by now; the stand-in counts every request for it.
     await new Promise((resolve) => setTimeout(resolve, 500))
     expect(n8n.workflowReads).toBe(0)
   })
@@ -435,7 +415,6 @@ describe("the worker check", () => {
       containerName: "n8n-main",
     })
     const first = await checkWorker(ctx, row.id)
-    // Taken by the worker, then replaced: its answer, however late, is not the new check's.
     const [taken] = await ctx.db
       .update(workerJobs)
       .set({ status: "running", startedAt: new Date() })
@@ -453,7 +432,6 @@ describe("the worker check", () => {
       jobId: again?.jobId,
       attempt: again?.attempt,
     })
-    // A probe nobody took yet is deleted when it is replaced.
     const jobs = await ctx.db
       .select()
       .from(workerJobs)
@@ -463,7 +441,6 @@ describe("the worker check", () => {
     expect(jobs[0]?.payload.check).toBeUndefined()
 
     const job = jobs[0] as typeof workerJobs.$inferSelect
-    // A fallback to the network is a failed check, not a pass.
     await setupWorkerResult(ctx, job, {
       ok: true,
       result: insideReport({ source: "network", fallback: "the socket proxy refused exec", mainState: undefined }),
@@ -475,7 +452,6 @@ describe("the worker check", () => {
       reason: expect.stringContaining("socket proxy refused"),
     })
 
-    // A read inside with /healthz failing passes the backup, not health (P29).
     const second = await checkWorker(ctx, row.id)
     const [secondJob] = await ctx.db
       .select()
@@ -491,7 +467,6 @@ describe("the worker check", () => {
     page = await setupState(ctx, now)
     expect(page.checks.worker).toMatchObject({ ok: false, reason: "The main answered /healthz with HTTP 503." })
 
-    // A result for a revision that moved, or after the deadline, is not stored.
     const third = await checkWorker(ctx, row.id)
     const [thirdJob] = await ctx.db
       .select()
@@ -532,7 +507,6 @@ describe("the worker check", () => {
       reason: expect.stringContaining("did not answer within 90 seconds"),
     })
 
-    // In time and for the current revision, a read inside a healthy main passes health too.
     const fifth = await checkWorker(ctx, row.id)
     const [fifthJob] = await ctx.db
       .select()
@@ -544,7 +518,6 @@ describe("the worker check", () => {
       current: true,
     })
     expect((await setupState(ctx, await read(row.id))).checks.worker).toMatchObject({ state: "ok", ok: true })
-    // Only the latest setup probe is left queued.
     const queued = await ctx.db
       .select()
       .from(workerJobs)
@@ -570,7 +543,6 @@ describe("the worker check", () => {
       await setupWorkerResult(ctx, job as typeof workerJobs.$inferSelect, { ok: true, result, current: true })
       return (await setupState(ctx, await read(row.id))).checks.worker
     }
-    // A worker sends its metrics advice whatever the mode; n8n has no queue in regular mode, so it does not apply.
     const queueParts = {
       metricsState: "no-queue-figures",
       metricsError: "no queue metrics; set N8N_METRICS_INCLUDE_QUEUE_METRICS=true",
@@ -582,7 +554,6 @@ describe("the worker check", () => {
       detail: { report: { queue: null, metricsError: undefined, metricsState: "no-queue-figures" } },
     })
 
-    // In queue mode the same parts are what the owner must see.
     const queue = await answer(insideReport({ ...queueParts, mode: "queue" }))
     expect(queue?.detail?.report).toMatchObject({ queue: queueParts.queue, metricsError: queueParts.metricsError })
   })
@@ -607,7 +578,6 @@ describe("the worker check", () => {
       const page = await setupState(ctx, await read(row.id), ["move", "backup"])
       return [page.checks.api?.state, page.checks.worker?.state]
     }
-    // move needs scopes the key lacks: the API check is current and failed, which is what counts here.
     expect(await states()).toEqual(["failed", "ok"])
     await updateInstance(ctx, row.id, { agentAccess: { enabled: true, scopes: ["workflow:read"] } })
     await updateInstance(ctx, row.id, { backupDestinations: "custom" })
@@ -747,7 +717,6 @@ describe("backups", () => {
       containerName: "n8n-main",
     })
     await passWorkerAndBackup(row.id)
-    // Activation reads what it needs, then waits for the row; the key is replaced meanwhile.
     let release = () => {}
     const held = new Promise<void>((r) => {
       release = r
@@ -797,7 +766,6 @@ describe("backups", () => {
       )[0]?.active,
     ).toBe(false)
     expect((await ctx.db.select().from(alertOutbox)).length).toBe(alerts)
-    // An archive that arrives now is not taken.
     expect(await archiveReady(ctx, run.id, { size: 1, sha256: "x" })).toBe(false)
     expect((await read(row.id)).chosenCapabilities).toEqual(["health", "monitor", "map", "move", "agents"])
   })
@@ -821,7 +789,6 @@ describe("health turned off", () => {
     const left = await ctx.db.select().from(workerJobs).where(eq(workerJobs.instanceId, row.id))
     expect(left.map((j) => j.payload)).toEqual([{ setup: { attempt: 1 } }])
     expect((await ctx.db.select().from(alertOutbox)).length).toBe(alerts)
-    // Nothing makes a new health alert for it now.
     await setCondition(ctx, `down:${row.id}`, true, {
       kind: "health",
       subject: { instanceId: row.id },
@@ -855,7 +822,6 @@ describe("PATCH /instances/:id", () => {
     })
 
   it("decides on the locked row: a key stored, or an activation, after the request read the row (R1, R2)", async () => {
-    // What a PATCH read before: a draft without a key. A key was stored and it was activated meanwhile.
     const row = await draft()
     await ctx.db
       .update(instances)
@@ -900,7 +866,6 @@ describe("POST /instances/:id/refresh", () => {
       .route("/api/instances", instanceRoutes(ctx))
       .request(`http://ops.example.com/api/instances/${id}/refresh`, {
         method: "POST",
-        // A bodiless change, as the page sends it: from its own origin.
         headers: { origin: "http://ops.example.com" },
       })
     expect(res.status).toBe(200)
@@ -930,7 +895,6 @@ describe("the n8n version", () => {
   it("is read over the network again once health is off, so an update clears unsupported (R5)", async () => {
     reset()
     const w = await worker()
-    // The worker read 2.13.0 inside the main; then health was turned off, and n8n was updated.
     const row = await instance({
       chosenCapabilities: ["backup"],
       collection: "worker",
@@ -956,7 +920,6 @@ describe("a credential export", () => {
       .insert(workers)
       .values({ name: `exporter-${++seq}`, tokenHash: sha256(token), lastSeenAt: new Date() })
       .returning()
-    // Move was removed while the worker ran the export; nothing else allows it.
     const row = await instance({ chosenCapabilities: ["health"], workerId: w?.id, containerName: "n8n-main" })
     const [job] = await ctx.db
       .insert(workerJobs)

@@ -6,7 +6,6 @@ const m = (n: number) => T + n * 60_000
 const min = (n: number) => n * 60_000
 const iso = (n: number) => new Date(m(n)).toISOString()
 
-/** Two hours, recorded throughout (since well before them), nothing else happened. */
 const facts = (patch: Partial<HealthFacts> = {}): HealthFacts => ({
   now: m(120),
   from: m(0),
@@ -56,7 +55,6 @@ describe("n8n-ops not recording", () => {
       }),
     )
     expect(d.periods.notRecording).toEqual([{ from: iso(30), to: iso(40) }])
-    // The 90 s after recording started again at 40 count as online.
     expect(d.periods.offline).toEqual([
       { from: iso(25), to: iso(30) },
       { from: iso(41.5), to: iso(45) },
@@ -64,7 +62,6 @@ describe("n8n-ops not recording", () => {
     expect(d.summary).toMatchObject({ offlineMs: min(8.5), offlinePeriods: 1, notRecordingMs: min(10) })
     expect(d.coverage).toMatchObject({ observedMs: min(110), onlineMs: min(101.5) })
     expect(d.summary.availability).toBeCloseTo(101.5 / 110)
-    // Newest first by start; the not-recording event inside the offline period is its own event.
     expect(d.events).toEqual([
       { kind: "not-recording", from: iso(30), to: iso(40), durationMs: min(10) },
       { kind: "offline", from: iso(25), to: iso(45), durationMs: min(8.5), notRecordingMs: min(10), job: null },
@@ -130,7 +127,6 @@ describe("n8n-ops not recording", () => {
 })
 
 describe("after recording starts again", () => {
-  // Recording stopped at 30 and started again at 40; Workers then get 90 s to call.
   const restarted = (offline: HealthFacts["offline"]) =>
     derive(
       facts({
@@ -166,7 +162,6 @@ describe("after recording starts again", () => {
       offlinePeriods: 1,
       offlineMs: min(10),
     })
-    // The deploy: recording starts for the first time with the history; Workers had not called yet.
     const deploy = derive(
       facts({ recording: [{ from: m(0), to: m(120) - 5000 }], offline: [{ from: m(0), to: m(1), job: null }] }),
     )
@@ -259,7 +254,6 @@ describe("measurements", () => {
 
 describe("a long history", () => {
   const HOUR = 3_600_000
-  /** A window of 3.75 days times `scale`, ending now. */
   const window = (scale: number) => {
     const end = m(5400 * scale)
     const read = (patch: Partial<HealthFacts>) =>
@@ -269,7 +263,6 @@ describe("a long history", () => {
       for (let t = m(0); t < end; t += stepMs) out.push(t)
       return out
     }
-    /** Recording rows from before the window to now, with a break of a minute between them. */
     const breaks = (rows: number) => {
       const step = (end - m(-60)) / rows
       return Array.from({ length: rows }, (_, k) => ({
@@ -280,11 +273,6 @@ describe("a long history", () => {
     const frequent = () => every(min(3)).map((t) => ({ from: t + min(1), to: t + min(1) + 70_000, job: null }))
     return { end, read, every, breaks, frequent }
   }
-  /**
-   * How many times longer a read of 30 days takes than one of 3.75 days with an eighth of the rows: about 8 when the
-   * work grows with the rows, about 64 when it grows with their square. Each side is the best of a few runs, so a busy
-   * machine slows both alike.
-   */
   const growth = (make: (scale: number) => HealthFacts) => {
     const timeOf = (f: HealthFacts) => {
       const started = performance.now()
@@ -297,7 +285,6 @@ describe("a long history", () => {
     let smallMs = Number.POSITIVE_INFINITY
     for (let i = 0; i < 5; i++) smallMs = Math.min(smallMs, timeOf(small))
     let largeMs = timeOf(large)
-    // Tried again when it took too long, in case something else slowed that run.
     for (let i = 0; i < 2 && largeMs > 25 * smallMs; i++) largeMs = Math.min(largeMs, timeOf(large))
     return largeMs / smallMs
   }

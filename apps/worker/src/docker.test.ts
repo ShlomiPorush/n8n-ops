@@ -3,7 +3,6 @@ import type { AddressInfo } from "node:net"
 import { describe, expect, it } from "vitest"
 import { Docker, demux, parseDockerEndpoint } from "./docker.ts"
 
-/** A stand-in Docker API on a free local port, closed after the test. */
 async function withDocker<T>(handler: RequestListener, test: (docker: Docker) => Promise<T>): Promise<T> {
   const server = createServer(handler)
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))

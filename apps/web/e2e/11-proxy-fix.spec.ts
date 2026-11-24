@@ -2,11 +2,6 @@ import { expect, type Page, test } from "@playwright/test"
 import postgres from "postgres"
 import { signIn } from "./helpers.ts"
 
-// A worker whose socket proxy refuses commands in the main: the Health tab, the Workers page and a failed
-// credential export show the exact lines to paste, with Copy, and what they allow; the containers the proxy allows
-// can be recorded, and the lines then keep them. The proxy cannot be changed from here, so the test adds a worker
-// and an instance with the report such a worker sends, in the database (E2E_DATABASE_URL), and removes them again.
-
 const databaseUrl = process.env.E2E_DATABASE_URL
 const workerName = "e2e-proxy-host"
 const instanceName = "e2e-proxy-n8n"
@@ -78,7 +73,6 @@ test("the Health tab shows the lines that allow what the proxy refused, and poin
   await expect(fix.getByRole("button", { name: "Copy the two lines", exact: true })).toBeVisible()
   await expect(fix.getByText("e2e-acme-worker-1 (queue worker of e2e-proxy-n8n)")).toBeVisible()
   await expect(fix.getByText("replace the -allowGET and -allowPOST lines")).toBeVisible()
-  // Its settings were not recorded when it was added: replacing the lines is said to drop anything else.
   await expect(fix.getByText("were not recorded when it was added")).toBeVisible()
   await expect(
     page.getByText("The lines above also allow the queue workers it found.").filter({ visible: true }),
@@ -96,15 +90,12 @@ test("the lines with a pattern for queue workers added later are offered, and re
     widened.getByText(/only queue workers of e2e-proxy-n8n on this host had a name starting with/),
   ).toBeVisible()
   await expect(widened.locator("code").last()).toHaveText(lines("e2e-acme-worker-[^/]*|e2e-acme"))
-  // The exact lines stay first and unchanged.
   await expect(fix.locator("code").first()).toHaveText(lines("e2e-acme|e2e-acme-worker-1"))
   await widened.getByRole("button", { name: "Record this pattern" }).click()
   await expect(fix.locator("code").first()).toHaveText(lines("e2e-acme|e2e-acme-worker-[^/]*"))
-  // Recorded, the pattern is in the lines themselves, so nothing is offered beside them.
   await expect(fix.getByTestId("proxy-widened")).toHaveCount(0)
   const [row] = await sql`select allowed from workers where id = ${workerId}`
   expect(row?.allowed).toEqual({ containers: ["e2e-acme", "e2e-acme-worker-*"] })
-  // Back as it was, for the next test.
   await sql`update workers set allowed = null where id = ${workerId}`
   await sql`delete from audit_log where target = ${workerName}`
 })
@@ -131,7 +122,6 @@ test("recording the allowed containers keeps the owner's pattern in the lines, a
 test("the Workers page shows the worker's settings and the same lines", async () => {
   await page.goto("/workers")
   const settings = page.getByTestId(`worker-settings-${workerId}`).filter({ visible: true })
-  // Open from the start: its proxy refuses something.
   await expect(settings).toBeVisible()
   await expect(
     settings.getByText("Not recorded: this worker was added before n8n-ops recorded its settings"),
@@ -143,7 +133,6 @@ test("the Workers page shows the worker's settings and the same lines", async ()
 
 test("a credential export the proxy refused shows the lines in a dialog", async () => {
   const { proxyFix } = (await (await page.request.get(`/api/instances/${instanceId}`)).json()) as { proxyFix: unknown }
-  // The worker of this test never runs: the export answers as the server does when the proxy refused it.
   await page.route(`**/api/instances/${instanceId}/export-credentials`, (route) =>
     route.fulfill({
       status: 400,

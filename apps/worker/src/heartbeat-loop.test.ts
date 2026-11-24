@@ -12,11 +12,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { DockerPing } from "./docker.ts"
 import { CallFailures, callError, DockerChecks, Heartbeats } from "./heartbeat-loop.ts"
 
-/** Two worker identities, new for each run. */
 const idA = `nops_worker_${randomBytes(16).toString("hex")}`
 const idB = `nops_worker_${randomBytes(16).toString("hex")}`
 
-/** What the stand-in server does with one heartbeat. */
 type Reply = (signal: AbortSignal) => Promise<Response>
 
 const status =
@@ -26,7 +24,6 @@ const status =
 const ok = status(200)
 const down: Reply = () =>
   Promise.reject(Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } }))
-/** Never answers, and ignores its signal too: only the loop's own timeout ends the attempt. */
 const hang: Reply = () => new Promise(() => {})
 const delayed =
   (ms: number, reply: Reply): Reply =>
@@ -38,7 +35,6 @@ const timers = {
   clear: (handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>),
 }
 
-/** A heartbeat loop against a stand-in server, on fake timers, with what it sent, logged and wrote. */
 function setup(replies: Reply[] = [], ping?: (signal: AbortSignal) => Promise<DockerPing>) {
   const start = Date.now()
   const sent: { identity: string; body: HeartbeatBody; at: number; signal: AbortSignal }[] = []
@@ -50,7 +46,6 @@ function setup(replies: Reply[] = [], ping?: (signal: AbortSignal) => Promise<Do
   const docker = new DockerChecks({ ping: ping ?? (async () => ({ ok: true, ms: 2, error: null })), now, timers })
   const beats = new Heartbeats({
     send: async (identity, body, signal) => {
-      // Every body must be one the server's schema takes, unchanged.
       expect(heartbeatBody.parse(body)).toEqual(body)
       sent.push({ identity, body, at: Date.now() - start, signal })
       open++
@@ -87,7 +82,6 @@ describe("Heartbeats", () => {
     beats.use(idA)
     await run(0)
     expect(sent.map((s) => s.at)).toEqual([0])
-    // Telling it the same identity while one is out starts nothing.
     beats.use(idA)
     await run(8_000 + HEARTBEAT_INTERVAL_MS - 1)
     expect(sent).toHaveLength(1)
@@ -107,7 +101,6 @@ describe("Heartbeats", () => {
     beats.use(idB)
     await run(1_000)
     expect(sent).toHaveLength(1)
-    // The answer for the first identity comes at 5 s; only then does the second one's first heartbeat go.
     await run(2_999)
     expect(sent).toHaveLength(1)
     await run(10)
@@ -126,14 +119,12 @@ describe("Heartbeats", () => {
     })
     docker.start()
     beats.use(idA)
-    // A job that never ends, as the sequential job loop would have during a long backup.
     const job = new Promise(() => {})
     void job
     await run(5 * 60_000)
     expect(sent.map((s) => s.at)).toEqual([
       0, 30_000, 60_000, 90_000, 120_000, 150_000, 180_000, 210_000, 240_000, 270_000, 300_000,
     ])
-    // The stuck check is not started again while it hangs; its deadline made it a failed check.
     expect(pings).toBe(1)
     const withDocker = sent.filter((s) => s.body.docker)
     expect(withDocker).toHaveLength(1)
@@ -144,26 +135,22 @@ describe("Heartbeats", () => {
   it("sends the same body again after a failure, a timeout, a 429 or a 5xx, and counts each failure in one seq", async () => {
     const { beats, failures, sent } = setup([down, hang, status(429), status(502), ok, ok, ok])
     beats.use(idA)
-    await run(0) // seq 1, refused
-    await run(HEARTBEAT_INTERVAL_MS) // seq 1 again, no answer
+    await run(0)
+    await run(HEARTBEAT_INTERVAL_MS)
     await run(HEARTBEAT_TIMEOUT_MS - 1)
     expect(sent[1]?.signal.aborted).toBe(false)
     await run(1)
-    // The timeout cancels the request itself, so it cannot still be open when the next one goes.
     expect(sent[1]?.signal.aborted).toBe(true)
-    await run(HEARTBEAT_INTERVAL_MS) // seq 1 again, 429
-    // A failed call of the job loop in the meantime.
+    await run(HEARTBEAT_INTERVAL_MS)
     await failures.track(Promise.resolve(new Response("", { status: 503 })))
-    await run(HEARTBEAT_INTERVAL_MS) // seq 1 again, 502
-    await run(HEARTBEAT_INTERVAL_MS) // seq 1 acknowledged
-    await run(HEARTBEAT_INTERVAL_MS) // seq 2
-    await run(HEARTBEAT_INTERVAL_MS) // seq 3
+    await run(HEARTBEAT_INTERVAL_MS)
+    await run(HEARTBEAT_INTERVAL_MS)
+    await run(HEARTBEAT_INTERVAL_MS)
+    await run(HEARTBEAT_INTERVAL_MS)
     expect(sent.map((s) => s.body.seq)).toEqual([1, 1, 1, 1, 1, 2, 3])
     expect(sent.slice(0, 5).every((s) => s.body.failedCalls === 0 && s.body.lastCallError === undefined)).toBe(true)
-    // Refused, timed out, the job loop's 503 and the heartbeat's 502: in seq 2 only; the 429 is no failure.
     expect(sent[5]?.body).toMatchObject({ failedCalls: 4, lastCallError: "HTTP 502" })
     expect(sent[6]?.body.failedCalls).toBe(0)
-    // The times are those of each attempt.
     expect(sent.map((s) => s.body.uptimeSec)).toEqual(sent.map((s) => 100 + s.at / 1000))
   })
 
@@ -195,7 +182,6 @@ describe("Heartbeats", () => {
     await run(1)
     expect(sent).toHaveLength(2)
     await run(HEARTBEAT_RETRY_MISSING_MS)
-    // Each 404 drops its body: the next attempt builds a new one with the next seq.
     expect(sent.map((s) => [s.at, s.body.seq])).toEqual([
       [0, 1],
       [600_000, 2],
@@ -217,23 +203,20 @@ describe("Heartbeats", () => {
     })
     beats.use(idA)
     await run(1)
-    // Checks at 1 ms, then every minute: ten before the 404 at 600 s, ten between it and the heartbeat at 1200 s.
     docker.start()
     await run(300_000 - 1)
     await failures.track(Promise.resolve(new Response("", { status: 503 })))
-    await run(300_000) // the 404 at 600 s drops these counts
+    await run(300_000)
     await run(300_000)
     await expect(failures.track(down(new AbortController().signal))).rejects.toThrow()
-    await run(300_000) // acknowledged at 1200 s
+    await run(300_000)
     expect(sent.map((s) => [s.at, s.body.seq])).toEqual([
       [0, 1],
       [600_000, 2],
       [1_200_000, 3],
     ])
-    // The body the old server could not store had the earlier counts.
     expect(sent[1]?.body).toMatchObject({ failedCalls: 1, lastCallError: "HTTP 503" })
     expect(sent[1]?.body.docker).toMatchObject({ checks: 10, failed: 3 })
-    // The first one stored carries only the failure and the checks after the last 404.
     expect(sent[2]?.body).toMatchObject({ seq: 3, failedCalls: 1, lastCallError: "ECONNREFUSED" })
     expect(sent[2]?.body.docker).toEqual({ ok: true, ms: 2, ageSec: 59.999, checks: 10, failed: 1 })
     await run(HEARTBEAT_INTERVAL_MS)
@@ -246,7 +229,6 @@ describe("Heartbeats", () => {
     await run(10 * 60_000)
     expect(sent).toHaveLength(1)
     expect(logged).toEqual(["heartbeats stopped: the server does not accept this identity"])
-    // The job loop's call went through with this identity: the heartbeat resumes, with the same body.
     beats.use(idA)
     await run(0)
     expect(sent.map((s) => [s.identity, s.body.seq])).toEqual([
@@ -255,7 +237,6 @@ describe("Heartbeats", () => {
     ])
     await run(10 * 60_000)
     expect(sent).toHaveLength(2)
-    // Paired again: a new identity starts it, without the counts built for the old one.
     beats.use(idB)
     await run(0)
     expect(sent.map((s) => [s.identity, s.body.seq])).toEqual([
@@ -287,7 +268,6 @@ describe("Heartbeats", () => {
     beats.use(idA)
     await run(1)
     await run(3 * DOCKER_CHECK_INTERVAL_MS)
-    // Checks at 0, 60, 120 and 180 s; heartbeats at 1 ms, then every 30 s.
     expect(sent.map((s) => s.body.docker ?? null)).toEqual([
       { ok: true, ms: 3, ageSec: 0.001, checks: 1, failed: 0 },
       null,
@@ -309,9 +289,8 @@ describe("Heartbeats", () => {
       async () => results.shift() ?? { ok: true, ms: 2, error: null },
     )
     beats.use(idA)
-    await run(1) // seq 1 built with no check, refused
+    await run(1)
     docker.start()
-    // Checks at 1 ms and 60 s; seq 1 refused at 30 and 60 s, taken at 90 s; seq 2 built at 120 s.
     await run(4 * HEARTBEAT_INTERVAL_MS - 1)
     expect(sent.map((s) => s.body.seq)).toEqual([1, 1, 1, 1, 2])
     expect(sent.slice(0, 4).every((s) => s.body.docker === undefined)).toBe(true)
@@ -324,10 +303,10 @@ describe("Heartbeats", () => {
     docker.start()
     await run(1)
     beats.use(idA)
-    await run(0) // seq 1 with the check; acknowledged after 250 ms
-    await run(250 + HEARTBEAT_INTERVAL_MS) // seq 2 built: check of 0 s is taken, none new; refused
-    await run(HEARTBEAT_INTERVAL_MS) // seq 2 again, now with the check at 60 s waiting for seq 3; refused
-    await run(HEARTBEAT_INTERVAL_MS) // seq 2 acknowledged
+    await run(0)
+    await run(250 + HEARTBEAT_INTERVAL_MS)
+    await run(HEARTBEAT_INTERVAL_MS)
+    await run(HEARTBEAT_INTERVAL_MS)
     expect(sent[0]?.body.rtt).toBeUndefined()
     const [, a, b] = sent
     expect(a?.body.seq).toBe(2)

@@ -7,8 +7,6 @@ import { backupJob, exportCredentialsJob, type Job, type JobResult, probeJob } f
 import { Pairing } from "./pairing.ts"
 import { readVersion } from "./version.ts"
 
-// Outbound-only agent for an n8n Docker host. It pairs once with a one-time token, then polls the
-// server for jobs. It opens no ports.
 const serverUrl = process.env.N8N_OPS_SERVER_URL
 if (!serverUrl) {
   console.error("N8N_OPS_SERVER_URL is required")
@@ -26,7 +24,6 @@ const url = (path: string) => new URL(path, serverUrl).toString()
 const headers = (identity: string) => ({
   authorization: `Bearer ${identity}`,
   "x-worker-version": version,
-  // What this release supports, so the server sends only jobs it can run and knows it sends heartbeats.
   "x-worker-features": `compose-target,${HEARTBEAT_FEATURE}`,
 })
 
@@ -102,7 +99,6 @@ async function handle(identity: string, job: Job): Promise<JobResult> {
         docker,
         job.payload,
         (size, sha256) => api(identity, "POST", `/jobs/${job.id}/upload-url`, { size, sha256 }),
-        // The archive goes to the server too: a failed upload is a failed call like any other.
         (url, init) => failures.track(fetch(url, init)),
       )
     case "export-credentials":
@@ -115,7 +111,6 @@ async function handle(identity: string, job: Job): Promise<JobResult> {
 async function main() {
   log("n8n-ops worker starting", { version, server: serverUrl })
   keepAlive(ALIVE_FILE, log)
-  // Both run on timers of their own, so a long job or a stuck Docker call never holds them up.
   dockerChecks.start()
   let identity = await loadIdentity()
   heartbeats.use(identity)
@@ -125,14 +120,12 @@ async function main() {
       if (!identity) {
         const token = await pairingToken()
         identity = await pairing.attempt(token)
-        // The token is spent now; a file that cannot be removed (a read-only mount) does no harm.
         if (identity) await rm(pairingFile, { force: true }).catch(() => {})
         heartbeats.use(identity)
         await sleep(5_000)
         continue
       }
       const { job } = await api<{ job: Job | null }>(identity, "GET", "/jobs/next")
-      // The server took this identity, so a heartbeat stopped by a 401 may resume.
       heartbeats.use(identity)
       if (!job) {
         await sleep(5_000)

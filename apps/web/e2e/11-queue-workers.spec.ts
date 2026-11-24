@@ -2,11 +2,6 @@ import { expect, type Page, test } from "@playwright/test"
 import postgres from "postgres"
 import { signIn } from "./helpers.ts"
 
-// The queue workers of an instance on its Health tab: a line that sums their states, a line that says once what is
-// the same on all of them, and a row each, listed by name, with what the check in it read (version against the
-// main's, how long its container is up, jobs at once, memory). The test adds an instance with such a report in the
-// database (E2E_DATABASE_URL) and removes it again.
-
 const databaseUrl = process.env.E2E_DATABASE_URL
 const workerName = "e2e-queue-host"
 const instanceName = "e2e-queue-n8n"
@@ -45,7 +40,6 @@ test.beforeAll(async ({ browser }) => {
     mode: "queue",
     version: "2.44.3",
     discovery: { status: "ok", found: 3 },
-    // In the probe's rotation order, as a worker sends them.
     workers: [
       worker("e2e-queue-worker-10", {
         version: "2.44.3",
@@ -89,14 +83,12 @@ test("the queue workers are listed by name, summed up once, and each row says wh
   await expect(panel.getByTestId("queue-workers-summary")).toContainText(
     "2 of 3 queue workers ready, 1 health not verified",
   )
-  // What is the same on all of them, said once.
   const facts = panel.getByTestId("queue-workers-facts")
   await expect(facts).toContainText("15 jobs at once (not the same on each, set differently on each)")
   await expect(facts).toContainText(
     "e2e-queue-worker-2 runs n8n 2.43.0-a-long-build-label-for-the-test, the main 2.44.3",
   )
   await expect(facts).toContainText("a memory limit on 1 of the 2 containers read, of 3")
-  // The queue: what it holds now.
   await expect(panel.getByTestId("queue-line")).toContainText("0 waiting · 1 active")
   const rows = panel.getByTestId("queue-worker")
   await expect(rows).toHaveCount(3)
@@ -111,7 +103,6 @@ test("the queue workers are listed by name, summed up once, and each row says wh
   await expect(rows.nth(1)).toContainText("2 GB")
   await expect(rows.nth(1).getByRole("progressbar")).toHaveCount(0)
   await expect(rows.nth(1)).toContainText("n8n's default")
-  // Nothing read: the row says so instead of empty columns.
   await expect(rows.nth(0)).toContainText("health not verified")
   await expect(rows.nth(0)).toContainText("No figures read")
 })

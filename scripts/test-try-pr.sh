@@ -1,8 +1,4 @@
 #!/usr/bin/env bash
-# Tests for the checks scripts/try-pr.sh makes before it fetches a pull request: who opened it (asked of GitHub with
-# gh) and whether the development stack runs the template's server, worker and socket proxy. Real git and the real
-# scripts in a scratch repository; docker and gh are stand-ins that answer from files and fail on anything else, and
-# fetching is recorded instead of done. Run by scripts/verify.sh (guards).
 set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -25,8 +21,6 @@ check() {
     [ -f "$WORK/case/out" ] && sed 's/^/      | /' "$WORK/case/out"
   fi
 }
-
-# --- stand-ins -------------------------------------------------------------------------------
 
 mkdir -p "$WORK/bin"
 cat >"$WORK/bin/docker" <<'EOF'
@@ -77,7 +71,6 @@ echo "gh $*" >>"$STATE/calls"
 [ -n "${MOCK_GH_FAIL:-}" ] && { echo "HTTP 404: Not Found" >&2; exit 1; }
 cat "$STATE/pr-record"
 EOF
-# Real git, except that fetching is only recorded and then fails, so a run that gets there stops.
 cat >"$WORK/bin/git" <<EOF
 #!/usr/bin/env bash
 if [ "\$1" = -C ] && [ "\$3" = fetch ]; then
@@ -88,10 +81,6 @@ exec "$REAL_GIT" "\$@"
 EOF
 chmod +x "$WORK/bin/docker" "$WORK/bin/gh" "$WORK/bin/git"
 
-# --- sandbox ---------------------------------------------------------------------------------
-
-# A scratch repository with the scripts and the template, origin on github.com, and a stack that matches the
-# template, opened by the owner; each case changes one thing.
 sandbox() {
   rm -rf "$WORK/case"
   mkdir -p "$WORK/case/repo/scripts/lib" "$WORK/case/repo/docker/env" "$WORK/case/home" "$WORK/case/data/mail-tls"
@@ -104,7 +93,6 @@ sandbox() {
   cp "$REPO"/docker/env/*.env.example "$repo/docker/env/"
   "$REAL_GIT" init --quiet "$repo"
   "$REAL_GIT" -C "$repo" remote add origin https://github.com/owner/n8n-ops.git
-  # A mail certificate already made, so the stack's own checks pass without the toolchain image.
   chmod 700 "$WORK/case/data/mail-tls"
   echo cert >"$WORK/case/data/mail-tls/cert.pem"
   (umask 077 && echo key >"$WORK/case/data/mail-tls/key.pem")
@@ -131,8 +119,6 @@ not_fetched() { ! fetched; }
 asked_github() { grep -q "^gh " "$STATE/calls"; }
 not_asked_github() { ! asked_github; }
 no_compose() { ! grep -q "^docker compose" "$STATE/calls"; }
-
-# --- cases -----------------------------------------------------------------------------------
 
 sandbox
 run_try 7

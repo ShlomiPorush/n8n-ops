@@ -26,7 +26,6 @@ describe("requestOnce", () => {
     const reading = await requestOnce(url, AbortSignal.timeout(5000))
     expect(reading).toMatchObject({ ok: true, status: 200 })
     expect(reading.requestMs).toBeGreaterThanOrEqual(350)
-    // `ms` keeps its earlier meaning: until the headers came.
     expect(reading.ms).toBeLessThan(300)
   })
 

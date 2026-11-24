@@ -1,8 +1,3 @@
-/**
- * Minimal POSIX ustar reader and writer for backup archives (regular files and directories only).
- * Archives are small (workflow and credential JSON), so everything stays in memory.
- */
-
 export type TarEntry = { name: string; data: Uint8Array }
 
 const BLOCK = 512
@@ -68,10 +63,6 @@ function readString(block: Uint8Array, offset: number, length: number): string {
   return decoder.decode(end === -1 ? slice : slice.subarray(0, end))
 }
 
-/**
- * Reads regular files from a tar archive. Paths are normalised (no leading "./"). Throws on an entry whose size is not
- * an octal number or whose data runs past the end of the archive, so every step moves forward and the read ends.
- */
 export function readTar(archive: Uint8Array): TarEntry[] {
   const entries: TarEntry[] = []
   let offset = 0
@@ -89,7 +80,6 @@ export function readTar(archive: Uint8Array): TarEntry[] {
     const name = longName ?? (prefix ? `${prefix}/${readString(block, 0, 100)}` : readString(block, 0, 100))
     longName = null
     const data = archive.subarray(offset + BLOCK, offset + BLOCK + size)
-    // A GNU long name ends at its first NUL (read in linear time; a trailing-NUL regex is quadratic).
     if (type === "L") longName = readString(data, 0, data.length)
     else if (type === "0" || type === "\0") entries.push({ name: name.replace(/^\.\//, ""), data: data.slice() })
     offset += BLOCK + Math.ceil(size / BLOCK) * BLOCK

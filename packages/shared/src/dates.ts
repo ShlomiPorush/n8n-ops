@@ -1,16 +1,5 @@
-/*
- * How dates and times are written, the same in the console, the emails and Telegram (FW-9, FW-2, EM-6). Settings
- * → General chooses a Date format and a Time format; every date is written in the app's time zone, as numbers,
- * never with a month name. "browser" takes only the order of the date, or the choice of the 12- or 24-hour clock,
- * from the browser's language: the calendar is always the Gregorian one and the digits always 0-9, whatever the
- * language asks for. Every other choice reads the same everywhere. Only Intl is used, so the server and the UI run
- * the same code.
- */
-
-/** The Date format choices, Browser first: it is the default. */
 export const dateFormats = ["browser", "DD/MM/YYYY", "MM/DD/YYYY", "YYYY-MM-DD", "DD.MM.YYYY"] as const
 export type DateFormat = (typeof dateFormats)[number]
-/** The Time format choices; 24-hour is the default. */
 export const timeFormats = ["24h", "12h", "browser"] as const
 export type TimeFormat = (typeof timeFormats)[number]
 
@@ -26,15 +15,10 @@ export const timeFormatLabels: Record<TimeFormat, string> = { "24h": "24-hour", 
 export const isDateFormat = (value: unknown): value is DateFormat => dateFormats.includes(value as DateFormat)
 export const isTimeFormat = (value: unknown): value is TimeFormat => timeFormats.includes(value as TimeFormat)
 
-/**
- * How to write a date: the app's time zone and the two formats. `locale` is the language Browser follows; left
- * out, it is the runtime's own (the browser's in the console).
- */
 export type DateWriting = { zone: string; date: DateFormat; time: TimeFormat; locale?: string }
 
 type General = { timezone?: string; dateFormat?: string; timeFormat?: string }
 
-/** The writing General asks for; an empty zone is UTC, and an unknown format reads as its default. */
 export function writingOf(general: General | undefined, locale?: string): DateWriting {
   const date = general?.dateFormat
   const time = general?.timeFormat
@@ -46,10 +30,6 @@ export function writingOf(general: General | undefined, locale?: string): DateWr
   }
 }
 
-/**
- * The writing of an email or a Telegram message. There is no browser to ask, so Browser writes day/month/year and
- * the 24-hour clock there (EM-6).
- */
 export function messageWriting(general: General | undefined): DateWriting {
   const w = writingOf(general)
   return {
@@ -59,7 +39,6 @@ export function messageWriting(general: General | undefined): DateWriting {
   }
 }
 
-// Building an Intl.DateTimeFormat is slow, and a list writes one date per row.
 const formats = new Map<string, Intl.DateTimeFormat>()
 function intl(locale: string | undefined, options: Intl.DateTimeFormatOptions): Intl.DateTimeFormat {
   const key = `${locale ?? ""}|${JSON.stringify(options)}`
@@ -72,7 +51,6 @@ function intl(locale: string | undefined, options: Intl.DateTimeFormatOptions): 
 }
 
 const zones = new Map<string, boolean>()
-/** The zone if this runtime knows it; empty or unknown is UTC, as the server falls back (FW-2). */
 export function usableZone(zone: string | undefined): string {
   if (!zone) return "UTC"
   if (!zones.has(zone)) {
@@ -86,10 +64,8 @@ export function usableZone(zone: string | undefined): string {
   return zones.get(zone) ? zone : "UTC"
 }
 
-/** A calendar day and a clock time, as numbers. */
 export type DateParts = { year: number; month: number; day: number; hour: number; minute: number; second: number }
 
-/** The day and the clock time of an instant in a time zone. */
 export function partsIn(when: Date, zone: string): DateParts {
   const parts = intl("en-US", {
     timeZone: usableZone(zone),
@@ -119,15 +95,10 @@ const orders: Record<Exclude<DateFormat, "browser">, { order: ("day" | "month" |
   "DD.MM.YYYY": { order: ["day", "month", "year"], sep: "." },
 }
 const pad2 = (n: number) => String(n).padStart(2, "0")
-// Direction marks some languages put between the numbers (Arabic writes U+200F after the day and the month); in
-// an LTR line they would reorder the date.
 const directionMarks = new RegExp(`[${String.fromCharCode(0x200e, 0x200f, 0x061c)}]`, "g")
 
-/** A calendar day as the Date format writes it: "16/10/2026", or without the year "16/10". */
 export function writeDate(p: DateParts, w: DateWriting, { year = true } = {}): string {
   if (w.date === "browser" || !(w.date in orders)) {
-    // Only the order and separators come from the language: a Hebrew or Buddhist calendar would write another
-    // year (or a month name), Arabic or Persian digits other numbers.
     const options: Intl.DateTimeFormatOptions = {
       timeZone: "UTC",
       calendar: "gregory",
@@ -137,8 +108,6 @@ export function writeDate(p: DateParts, w: DateWriting, { year = true } = {}): s
     }
     if (year) options.year = "numeric"
     const parts = intl(w.locale, options).formatToParts(new Date(Date.UTC(p.year, p.month - 1, p.day)))
-    // Only the numbers are kept, in the language's order, with its separator when that is punctuation: words
-    // the language adds ("г." after a Bulgarian year, "年" in Japanese) never reach the line.
     const numbers = parts.filter((x) => x.type === "day" || x.type === "month" || x.type === "year")
     const between = parts
       .slice(parts.indexOf(numbers[0] as Intl.DateTimeFormatPart) + 1)
@@ -156,20 +125,12 @@ export function writeDate(p: DateParts, w: DateWriting, { year = true } = {}): s
     .join(sep)
 }
 
-/**
- * The clock Browser stands for: the 12- or 24-hour clock of the language. Only that choice is taken from it, so
- * the time is still written with 0-9 and AM or PM, never with the language's own digits or words for them.
- */
 function clockOf(w: DateWriting): Exclude<TimeFormat, "browser"> {
   if (w.time !== "browser") return w.time
   const cycle = intl(w.locale, { hour: "numeric" }).resolvedOptions().hourCycle
   return cycle === "h11" || cycle === "h12" ? "12h" : "24h"
 }
 
-/**
- * A clock time as the Time format writes it: "14:05", or "2:05 PM"; Browser picks one of the two by the
- * browser's language. `compact` writes a whole hour on the 12-hour clock as "3 PM", for an axis.
- */
 export function writeClock(p: DateParts, w: DateWriting, { seconds = false, compact = false } = {}): string {
   const whole = compact && !seconds && p.minute === 0
   const tail = `${pad2(p.minute)}${seconds ? `:${pad2(p.second)}` : ""}`
@@ -177,14 +138,12 @@ export function writeClock(p: DateParts, w: DateWriting, { seconds = false, comp
   return `${pad2(p.hour)}:${tail}`
 }
 
-/** An instant from what the API sends; null when it names none. */
 function instant(value: string | number | Date | null | undefined): Date | null {
   if (value === null || value === undefined || value === "") return null
   const d = value instanceof Date ? value : new Date(value)
   return Number.isNaN(d.getTime()) ? null : d
 }
 
-/** The date and the time to the second, "16/10/2026, 14:05:09"; `seconds: false` leaves them out (FW-2). */
 export function formatTime(value: string | number | Date, w: DateWriting, { seconds = true } = {}): string {
   const d = instant(value)
   if (!d) return "-"
@@ -192,16 +151,13 @@ export function formatTime(value: string | number | Date, w: DateWriting, { seco
   return `${writeDate(p, w)}, ${writeClock(p, w, { seconds })}`
 }
 
-/** The day of an instant, "16/10/2026"; `year: false` leaves the year out. */
 export function formatDay(value: string | number | Date, w: DateWriting, { year = true } = {}): string {
   const d = instant(value)
   return d ? writeDate(partsIn(d, w.zone), w, { year }) : "-"
 }
 
-/** The day and month of an instant, "16/10". */
 export const formatDayMonth = (value: string | number | Date, w: DateWriting) => formatDay(value, w, { year: false })
 
-/** The clock time of an instant, "14:05" or "2:05 PM". */
 export function formatClock(
   value: string | number | Date,
   w: DateWriting,
@@ -211,10 +167,6 @@ export function formatClock(
   return d ? writeClock(partsIn(d, w.zone), w, options) : "-"
 }
 
-/**
- * A clock time stored as 24-hour "HH:MM", such as the daily backup at "02:00", as the Time format writes it
- * ("2:00 AM"). What is stored and sent stays "HH:MM"; anything else is shown as it is.
- */
 export function formatClockAt(hhmm: string, w: DateWriting): string {
   const m = /^(\d{1,2}):(\d{2})$/.exec(hhmm.trim())
   if (!m) return hhmm
@@ -224,10 +176,6 @@ export function formatClockAt(hhmm: string, w: DateWriting): string {
   return writeClock({ year: 2000, month: 1, day: 1, hour, minute, second: 0 }, w)
 }
 
-/**
- * A time in a list row (FW-1): the clock for today, day and month earlier this year, the whole date before;
- * "today" is the day in the app's time zone.
- */
 export function formatListTime(value: string | number | Date, w: DateWriting, now: Date = new Date()): string {
   const d = instant(value)
   if (!d) return "-"
@@ -238,10 +186,6 @@ export function formatListTime(value: string | number | Date, w: DateWriting, no
 }
 
 const offsetName = /^GMT[+-]/
-/**
- * The short name of the zone at an instant: "CEST", "EDT", "UTC", or "GMT+3" where the zone has no common
- * abbreviation. English (US) knows the American names, English (UK) the European ones, so both are asked.
- */
 export function zoneName(when: Date, zone: string): string {
   const z = usableZone(zone)
   const name = (locale: string) =>
@@ -254,10 +198,6 @@ export function zoneName(when: Date, zone: string): string {
   return offsetName.test(gb) ? us : gb
 }
 
-/**
- * A date and time with the zone after it, as emails write them: "20/10/2026 13:00 CEST" (EM-6). `zone: false`
- * leaves the zone out, as Telegram writes them: "20/10/2026 13:00".
- */
 export function formatStamp(value: string | number | Date, w: DateWriting, { zone = true } = {}): string {
   const d = instant(value)
   if (!d) return "-"
@@ -266,11 +206,6 @@ export function formatStamp(value: string | number | Date, w: DateWriting, { zon
   return zone ? `${at} ${zoneName(d, w.zone)}` : at
 }
 
-/**
- * A span of time with its exact ends: "From 22/10/2026 06:00 to 23/10/2026 06:00", without the zone. Only when
- * daylight saving changed in between are both ends named with their zone, so a day that reads as 09:00 to 08:00
- * is still clearly 24 hours (EM-6).
- */
 export function formatWindow(from: Date, to: Date, w: DateWriting): string {
   const end = (d: Date) => {
     const p = partsIn(d, w.zone)

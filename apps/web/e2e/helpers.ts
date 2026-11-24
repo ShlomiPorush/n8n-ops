@@ -3,24 +3,16 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { expect, type Page } from "@playwright/test"
 import { freshTotp } from "./totp.ts"
 
-/** The design this run of the suite is served in; scripts/verify.sh runs the suite once per design. */
 export const design: "regular" | "compact" = process.env.E2E_DESIGN === "compact" ? "compact" : "regular"
 
-/** A setting scripts/verify.sh made for this run (AGENTS.md, Secrets): no password of the suite is in the repository. */
 function fromRun(name: string): string {
   const value = process.env[name]
   if (!value) throw new Error(`${name} is required (scripts/verify.sh sets it)`)
   return value
 }
 
-/** A new random value, for a password or key the tests make and use in one place. */
 export const randomSecret = () => randomBytes(24).toString("hex")
 
-/**
- * The Origin n8n-ops' own pages send. A direct API call with no JSON body (a bodiless POST or DELETE) needs it, as the
- * server refuses such a change from any other page; calls with a JSON body need nothing (they cannot come from
- * another page without a CORS preflight).
- */
 export const ownPage = { headers: { origin: new URL(process.env.E2E_BASE_URL ?? "http://localhost:8080").origin } }
 
 export const username = "operator"
@@ -37,7 +29,6 @@ function loadState(): State {
   }
 }
 
-/** Shares the TOTP secret and the backup private key between spec files (they run in order, in one worker). */
 export function saveState(patch: State) {
   mkdirSync("test-results", { recursive: true })
   writeFileSync(stateFile, JSON.stringify({ ...loadState(), ...patch }))
@@ -50,10 +41,6 @@ export const currentApiKey = () => loadState().apiKey ?? ""
 
 const sessionFile = "test-results/e2e-session.json"
 
-/**
- * Signs in, reusing the session of an earlier spec file when it is still valid: sign-in is rate limited
- * (5 per 5 minutes), and the spec files together sign in more often than that.
- */
 export async function signIn(page: Page) {
   try {
     const cookies = JSON.parse(readFileSync(sessionFile, "utf8")) as Parameters<
@@ -71,51 +58,29 @@ export async function signIn(page: Page) {
   await saveSession(page)
 }
 
-/**
- * Keeps the page's session for the next spec file's signIn(). Each sign-in needs a two-factor code of a time step
- * not used yet, so one that is not reused waits up to 30 seconds for the next step.
- */
 export async function saveSession(page: Page) {
   mkdirSync("test-results", { recursive: true })
   writeFileSync(sessionFile, JSON.stringify(await page.context().cookies()))
 }
 
-/**
- * Waits until an open dialog, sheet or list holds its Back step. The step is pushed on the next task after it opens
- * (lib/overlay-history.ts), so a Back pressed before that leaves the page instead of closing it.
- */
 export async function dialogOpened(page: Page) {
   await expect
     .poll(() => page.evaluate(() => (window.history.state as { overlay?: number } | null)?.overlay ?? null))
     .not.toBeNull()
 }
 
-/**
- * Waits until a dialog or confirmation closed without leaving the page has given back its Back entry. It calls
- * history.back() once its panel is gone (a dialog after its fade-out), and that back cancels a page.goto or reload
- * started in the meantime (net::ERR_ABORTED). Only for the top overlay: one still open underneath that holds an
- * entry of its own keeps this waiting; one without an entry, such as a reading pane, does not.
- */
 export async function dialogClosed(page: Page) {
   await expect
     .poll(() => page.evaluate(() => (window.history.state as { overlay?: number } | null)?.overlay ?? null))
     .toBeNull()
 }
 
-/** Answers Discard to "Discard your changes?", which a typed dialog asks before it drops what was typed (DS-9). */
 export async function discardChanges(page: Page) {
   const ask = page.getByRole("alertdialog", { name: "Discard your changes?" })
   await ask.getByRole("button", { name: "Discard" }).click()
   await expect(ask).toHaveCount(0)
 }
 
-/**
- * Keeps the daily backup schedule away while a spec file adds backups and starts each one by hand. The schedule
- * starts a backup on its own once the daily backup time has passed on a day without one, so the installation's time
- * zone becomes one where it is now 10:00 to 12:59 and the daily backup time 23:59, more than 11 hours away. What
- * puts both back is handed to `keep` before either changes, for the file's afterAll, so the files after it find them
- * as they were also when this stops half-way. It puts back both, even when one of them fails.
- */
 export async function holdBackupSchedule(page: Page, keep: (restore: () => Promise<void>) => void) {
   const general = await page.request.get("/api/settings/general")
   const defaults = await page.request.get("/api/settings/defaults")
@@ -138,14 +103,12 @@ export async function holdBackupSchedule(page: Page, keep: (restore: () => Promi
   expect((await page.request.put("/api/settings/defaults", { data: { backupTime: "23:59" } })).ok()).toBe(true)
 }
 
-/** Opens the New token dialog on Connected agents, where the token made by hand is folded away (a native fold). */
 export async function openNewToken(page: Page) {
   await page.goto("/agents")
   await page.locator("summary", { hasText: "Advanced: a token made by hand" }).click()
   await page.getByRole("button", { name: "New token" }).click()
 }
 
-/** Signs in with the password and a two-factor code: a session of its own, not the one other specs reuse. */
 export async function signInWithPassword(page: Page) {
   await page.goto("/login")
   await page.getByLabel("Username").fill(username)
@@ -156,10 +119,6 @@ export async function signInWithPassword(page: Page) {
   await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible()
   await page.goto("/instances")
 }
-
-// ---------------------------------------------------------------------------
-// The disposable n8n in the test stack
-// ---------------------------------------------------------------------------
 
 export const n8nUrl = process.env.E2E_N8N_URL ?? "http://n8n:5678"
 
@@ -175,7 +134,6 @@ async function n8n(path: string, init: RequestInit & { cookie?: string; apiKey?:
   return res
 }
 
-/** Creates the n8n owner and an API key with every scope the owner may grant. */
 export async function n8nSetup(): Promise<string> {
   const setup = await n8n("/rest/owner/setup", {
     method: "POST",
@@ -200,12 +158,10 @@ export async function n8nSetup(): Promise<string> {
   return apiKey
 }
 
-/** Calls the test n8n with the saved API key. */
 export function n8nApi(path: string, init: RequestInit = {}) {
   return n8n(path, { ...init, apiKey: currentApiKey() })
 }
 
-/** Creates and activates a workflow whose Code node always throws. Returns its webhook path. */
 export async function n8nFailingWorkflow(apiKey: string, name: string, message: string): Promise<string> {
   const path = `fail-${Math.random().toString(36).slice(2, 8)}`
   const created = await n8n("/api/v1/workflows", {
@@ -241,10 +197,6 @@ export async function n8nFailingWorkflow(apiKey: string, name: string, message: 
   return path
 }
 
-/**
- * Creates and activates a workflow whose HTTP Request node calls a host that does not exist, so its failures have
- * that host as their target and join across workflows (docs/adr/0003). Returns its webhook path.
- */
 export async function n8nFailingHttpWorkflow(apiKey: string, name: string, url: string): Promise<string> {
   const path = `http-${Math.random().toString(36).slice(2, 8)}`
   const created = await n8n("/api/v1/workflows", {
@@ -280,10 +232,8 @@ export async function n8nFailingHttpWorkflow(apiKey: string, name: string, url: 
   return path
 }
 
-/** Calls the workflow's webhook and waits until n8n has stored the failed execution. */
 export async function n8nTrigger(apiKey: string, path: string) {
   const before = await errorCount(apiKey)
-  // Activation registers the webhook asynchronously: retry until n8n accepts the call.
   await expect.poll(async () => (await n8n(`/webhook/${path}`)).status, { timeout: 15_000 }).toBe(200)
   await expect.poll(() => errorCount(apiKey), { timeout: 20_000 }).toBeGreaterThan(before)
 }

@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# Development stack: build images, start, stop, inspect, and reset.
-# Usage: scripts/local.sh <build|up|start|down|status|logs|nuke>
 set -euo pipefail
 
 # shellcheck source=scripts/lib/common.sh
@@ -8,7 +6,6 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
 PROJECT="$DEV_PROJECT"
 export N8N_OPS_DATA_DIR="${N8N_OPS_DATA_DIR:-$DEV_DEFAULT_DATA_DIR}"
-# The socket proxy is checked on its own: it may run as root to open the Docker socket.
 SERVICES=(server postgres worker)
 
 usage() {

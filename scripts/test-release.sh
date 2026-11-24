@@ -1,7 +1,4 @@
 #!/usr/bin/env bash
-# Tests for scripts/release.sh: real git against a local bare remote, with docker and gh replaced by
-# stand-ins that keep the registry and the GitHub Releases in files and fail on request. Covers a
-# release, each way a run can stop halfway, and the run after it. Run by scripts/verify.sh (guards).
 set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -23,8 +20,6 @@ check() {
     [ -f "$WORK/case/out" ] && sed 's/^/      | /' "$WORK/case/out"
   fi
 }
-
-# --- stand-ins -------------------------------------------------------------------------------
 
 mkdir -p "$WORK/bin"
 cat >"$WORK/bin/docker" <<'EOF'
@@ -99,9 +94,6 @@ exit 2
 EOF
 chmod +x "$WORK/bin/docker" "$WORK/bin/gh"
 
-# --- sandbox ---------------------------------------------------------------------------------
-
-# A fresh origin with one commit on main and a fresh registry and Releases; prints nothing.
 sandbox() {
   rm -rf "$WORK/case"
   mkdir -p "$WORK/case/images" "$WORK/case/releases" "$WORK/case/buildargs"
@@ -123,7 +115,6 @@ sandbox() {
   git -C "$seed" push --quiet origin main
 }
 
-# A new checkout of origin's main, as each workflow run makes; prints its path.
 checkout() {
   local dir
   dir="$(mktemp -d "$WORK/case/run.XXXX")"
@@ -133,7 +124,6 @@ checkout() {
 
 origin_head() { git -C "$WORK/case/origin.git" rev-parse main; }
 
-# Runs a release in a new checkout, verified at origin's current main unless EXPECT is set.
 release() {
   local dir
   dir="$(checkout)"
@@ -156,8 +146,6 @@ complete() {
     [ "$(image_rev n8n-ops_latest)" = "$rev" ] && [ "$(image_rev n8n-ops-worker_latest)" = "$rev" ] &&
     has_release "v$1"
 }
-
-# --- cases -----------------------------------------------------------------------------------
 
 sandbox
 release
@@ -270,7 +258,6 @@ release
 check "an empty Unreleased section stops the run" [ $? -ne 0 ]
 check "  with a clear reason" said "no entries under \[Unreleased\]"
 
-# release_notes on its own.
 # shellcheck source=scripts/release.sh
 source "$REPO/scripts/release.sh"
 set +e

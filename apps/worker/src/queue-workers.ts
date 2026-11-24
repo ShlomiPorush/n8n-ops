@@ -10,7 +10,6 @@ import {
 import { type Docker, DockerError, type Refusal, refusalOf } from "./docker.ts"
 import { WORKER_CHECK } from "./inside.ts"
 
-/** How a queue worker is, as the health report says it. Only Ready counts as up. */
 export type WorkerState = "ready" | "not-ready" | "unreachable" | "not-verified" | "down" | "not-checked"
 
 export type CheckedWorker = {
@@ -20,15 +19,12 @@ export type CheckedWorker = {
   ok: boolean
   status: number
   ms: number
-  /** The request that decided the state, alone; absent when it got no whole answer. */
   requestMs?: number
   error?: string
   code?: string
-  /** Set when the socket proxy refused the check; moved to the report's `access` before it is sent. */
   refusal?: Refusal
 } & WorkerFigures
 
-/** What the check in a worker read about it: figures only, each left out when not known for sure. */
 export type WorkerFigures = {
   version?: string
   uptimeSec?: number
@@ -36,11 +32,6 @@ export type WorkerFigures = {
   concurrency?: { value: number; from: "env" | "flag" | "default" }
 }
 
-/**
- * The figures of a worker from its check and the `--concurrency` flag of its command. How many jobs it runs at once
- * follows n8n 2 (checked in n8nio/n8n:2.44.3): N8N_CONCURRENCY_PRODUCTION_LIMIT when it is set and not -1, else the
- * flag, else 10. Without a version 2 read in the worker, an unknown variable or a flag that is not a number, none.
- */
 export function figuresOf(details: WorkerCheckOutput["details"], flag: ConcurrencyFlag): WorkerFigures {
   if (!details) return {}
   const { version, uptimeSec, memory, concurrencyEnv: env } = details
@@ -69,19 +60,11 @@ export type Discovery = {
 export type DiscoveryResult = {
   discovery: Discovery
   workers: CheckedWorker[]
-  /** The main's state in the container list, when it was read. */
   mainState?: ContainerState
-  /**
-   * Every queue worker name of the main, when the list told them apart: the socket proxy must allow them all. With
-   * `patterns`, the patterns n8n-ops may suggest for workers added later, and whether each is clean: no other
-   * container on the host has a name that starts the same way. Only that answer leaves the host, never a name.
-   */
   listed?: { names: string[]; complete: boolean; patterns?: { pattern: string; clean: boolean }[] }
-  /** What the socket proxy refused while finding and checking the workers. */
   refused: Refusal[]
 }
 
-/** Limits of one probe: Docker's answers, how many workers, how many at once, and how long in all. */
 export const LIMITS = {
   listBytes: 2 * 1024 * 1024,
   workers: QUEUE_WORKERS_PER_PROBE,
@@ -105,7 +88,6 @@ const entry = (name: string, state: WorkerState, ms: number, error?: string, sta
 
 const DOWN_STATES = new Set<ContainerState>(["exited", "dead", "restarting", "removing", "created", "paused"])
 
-/** Checks one running queue worker from inside its container. */
 export async function checkWorker(
   docker: Docker,
   name: string,
@@ -129,9 +111,7 @@ export async function checkWorker(
     if (!out.success)
       return entry(name, "not-checked", ms(), "the answer of the check in the worker was not understood")
     const o = out.data
-    // The figures go with every state the check itself read, also when the worker is not ready.
     const figures = figuresOf(o.details, flag)
-    // The request that decided the state gives its own time and error code, as for the main.
     const checked = (state: WorkerState, error?: string, status = 0, reading?: { ms?: number; code?: string }) => ({
       ...entry(name, state, ms(), error, status),
       ...(reading?.ms !== undefined ? { requestMs: reading.ms } : {}),
@@ -163,10 +143,6 @@ export async function checkWorker(
   }
 }
 
-/**
- * The state of the main in the container list, or none when the list cannot be read: then only the check inside
- * the main says how it is. A list the socket proxy refuses (an earlier install) is said, so the fix shows.
- */
 export async function mainStateOf(
   docker: Docker,
   main: string,
@@ -186,7 +162,6 @@ export async function mainStateOf(
 
 type Found = { ok: true; workers: FoundWorker[]; mainState?: ContainerState } | { ok: false; result: DiscoveryResult }
 
-/** Lists the containers of the main's Compose project and tells its queue workers apart. Runs no command. */
 async function findWorkers(docker: Docker, main: string, deadline: AbortSignal, service?: string): Promise<Found> {
   const call = () => ({
     signal: AbortSignal.any([deadline, AbortSignal.timeout(LIMITS.callMs)]),
@@ -239,14 +214,8 @@ async function findWorkers(docker: Docker, main: string, deadline: AbortSignal, 
   return { ok: true, workers: found.workers, mainState: found.main }
 }
 
-/** A name that ends in digits, and the part before them: the start of a pattern for workers added later. */
 const NUMBERED = /^([a-zA-Z0-9][a-zA-Z0-9_.-]*[^0-9])[0-9]+$/
 
-/**
- * Checks, for each prefix of the main's numbered queue workers, whether any other container on the host has a name
- * that starts the same way. One more list call, all containers, after every health check of the probe and only with
- * what is left of its deadline; a failure, a timeout or a list over the cap gives no patterns at all.
- */
 export async function patternsOf(
   docker: Docker,
   workers: { name: string }[],
@@ -277,7 +246,6 @@ export async function patternsOf(
   }))
 }
 
-/** The names for the proxy's line: at most 500, none longer than the 128 characters the server takes. */
 const listedOf = (workers: { name: string }[]) => {
   const fit = workers.filter((w) => w.name.length <= 128)
   return {
@@ -286,10 +254,6 @@ const listedOf = (workers: { name: string }[]) => {
   }
 }
 
-/**
- * Finds the queue workers of a main the socket proxy refuses commands in, without checking them: their names tell
- * the owner what the proxy must allow. With `check`, they are reported Not checked, and why.
- */
 export async function listWorkers(
   docker: Docker,
   main: string,
@@ -317,12 +281,6 @@ export async function listWorkers(
 
 const withPatterns = (patterns: { pattern: string; clean: boolean }[] | undefined) => (patterns ? { patterns } : {})
 
-/**
- * Finds the queue workers of the main `main` and checks them: from the container list, then one check inside each
- * running worker. At most `LIMITS.together` at a time, starting at a place that moves with `rotation` so a deadline
- * never leaves the same workers unchecked every time; at the probe's deadline the checks under way are aborted and
- * the rest are Not checked.
- */
 export async function discoverWorkers(
   docker: Docker,
   main: string,
@@ -344,7 +302,6 @@ export async function discoverWorkers(
     for (let next = queue.shift(); next; next = queue.shift()) {
       if (deadline.aborted) break
       const checked = await checkWorker(docker, next.name, deadline, next.concurrencyFlag)
-      // An answer that came after the deadline is not used.
       if (!deadline.aborted) results.set(next.name, checked)
     }
   }
@@ -362,7 +319,6 @@ export async function discoverWorkers(
       : { status: "ok", found: all.length },
     workers: checked.map(({ refusal: _r, ...w }) => w),
     mainState: found.mainState,
-    // After every check above, with what is left of the deadline.
     listed: { ...listedOf(all), ...withPatterns(await patternsOf(docker, all, deadline)) },
     refused: checked.flatMap((w) => (w.refusal ? [w.refusal] : [])),
   }

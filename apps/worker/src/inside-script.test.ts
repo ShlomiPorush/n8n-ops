@@ -10,8 +10,6 @@ import { METRICS_MAX_BYTES, mainCheckOutput } from "@n8n-ops/shared"
 import { afterEach, beforeAll, describe, expect, it } from "vitest"
 import { MAIN_CHECK } from "./inside.ts"
 
-// The check the worker runs in the n8n main container, run here exactly as sent: `node -e` with the same string,
-// against stand-in n8n servers, with only the settings each case gives it.
 type Handler = (req: IncomingMessage, res: ServerResponse) => void
 const servers: Server[] = []
 let requested: string[] = []
@@ -28,7 +26,6 @@ const metricsText = (prefix = "n8n_") =>
   ].join("\n")
 
 const n8n = (routes: Record<string, (res: ServerResponse) => void>): Handler => {
-  // A Map, so a requested path can only find a route given here, never a property of the object.
   const known = new Map(Object.entries(routes))
   return (req, res) => {
     requested.push(req.url ?? "")
@@ -136,7 +133,6 @@ describe("the check in the main", () => {
     const port = await listen(n8n({ ...healthy, "/metrics": answer(200, metricsText("acme_")) }))
     const prefixFile = join(dir, "prefix")
     writeFileSync(prefixFile, "acme_")
-    // The empty prefix wins, so the acme_ figures are not ours.
     const out = await output(
       at(port, { N8N_METRICS: "true", N8N_METRICS_PREFIX: "", N8N_METRICS_PREFIX_FILE: prefixFile }),
     )
@@ -175,7 +171,6 @@ describe("the check in the main", () => {
         readiness: { status: 503 },
       })
     }
-    // n8n keeps a trailing slash, so its readiness is at /up//readiness.
     requested = []
     await output(at(port, { N8N_ENDPOINT_HEALTH: "/up/" }))
     expect(requested.sort()).toEqual(["/up/", "/up//readiness"])
@@ -210,7 +205,6 @@ describe("the check in the main", () => {
       health: { status: 0, error: "no answer within 3 s", code: "timeout" },
       readiness: { status: 0, error: "no answer within 3 s", code: "timeout" },
     })
-    // No whole answer came, so the request has no time.
     expect(out.health?.ms).toBeUndefined()
     expect(Date.now() - started).toBeLessThan(8000)
   })
@@ -222,7 +216,6 @@ describe("the check in the main", () => {
   })
 
   it("times each request on its own, until its whole answer came", async () => {
-    // Health sends its headers at once and its body after 400 ms; readiness answers at once; metrics take 1.5 s.
     const late = (res: ServerResponse) => {
       res.writeHead(200)
       res.write("{")
@@ -282,7 +275,6 @@ describe("the check in the main", () => {
     expect(out.version).toBeUndefined()
   })
 
-  // About 100,000 lines that open a label set and never close it, just under the 4 MiB the check reads.
   const MALFORMED_LINES = 100_000
   const gauges = [
     "n8n_scaling_mode_queue_jobs_waiting 3",
@@ -290,7 +282,6 @@ describe("the check in the main", () => {
     "n8n_scaling_mode_queue_jobs_completed_total 450",
     "n8n_scaling_mode_queue_jobs_failed_total 2",
   ].join("\n")
-  /** Runs the check on a metrics text near the size limit; it must answer well within its 8 s deadline. */
   const quickly = async (text: string) => {
     expect(Buffer.byteLength(text)).toBeLessThan(METRICS_MAX_BYTES)
     expect(Buffer.byteLength(text)).toBeGreaterThan(METRICS_MAX_BYTES * 0.8)

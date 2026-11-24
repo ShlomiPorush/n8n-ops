@@ -2,8 +2,6 @@ import { describe, expect, it } from "vitest"
 import { READERS } from "./inside.ts"
 import { figuresOf } from "./queue-workers.ts"
 
-// The readers of the check in a queue worker, run as the same text against stand-in files: what each figure is,
-// and that it is left out whenever the files do not say it for sure.
 type Read = (path: string) => string
 const { versionOf, uptimeOf, memoryOf } = new Function(`${READERS}; return { versionOf, uptimeOf, memoryOf }`)() as {
   versionOf: (read: Read) => string | undefined
@@ -32,7 +30,6 @@ describe("versionOf", () => {
 })
 
 describe("uptimeOf", () => {
-  // Field 22 (the start time) is the 20th after the command; 4250 ticks is 42.5 s after boot.
   const stat = (comm: string) =>
     `1 (${comm}) S 0 1 1 0 -1 4194560 100 0 0 0 1 2 0 0 20 0 1 0 4250 1000 100 18446744073709551615`
   it("counts from PID 1's start, also when its command has spaces and parentheses", () => {
@@ -79,7 +76,6 @@ describe("uptimeOf", () => {
       ),
     ).toBeUndefined()
     expect(uptimeOf(files({ "/proc/uptime": "3642.5 1" }))).toBeUndefined()
-    // A PID namespace shared with another container: PID 1 is that one's, so its time is not this container's.
     expect(
       uptimeOf(
         files({
@@ -123,7 +119,6 @@ describe("memoryOf", () => {
       "/sys/fs/cgroup/memory/memory.usage_in_bytes": "2000",
       "/sys/fs/cgroup/memory/memory.limit_in_bytes": "9223372036854771712",
     })
-    // The v1 sentinel of no limit.
     expect(memoryOf(read)).toEqual({ used: 2000, limit: null })
   })
   it("prefers the v1 memory controller on a hybrid host, under the group's own folder", () => {

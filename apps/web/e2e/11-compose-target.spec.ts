@@ -2,10 +2,6 @@ import { expect, type Page, test } from "@playwright/test"
 import postgres from "postgres"
 import { dialogClosed, signIn } from "./helpers.ts"
 
-// An instance whose main is named by its Compose project and service, so it follows docker rollout: the choice in
-// Edit instance, kept after saving, and what the Health tab says with a worker of a release that cannot follow one.
-// The test adds a worker and an instance in the database (E2E_DATABASE_URL) and removes them again.
-
 const databaseUrl = process.env.E2E_DATABASE_URL
 const workerName = "e2e-compose-host"
 const instanceName = "e2e-compose-n8n"
@@ -25,10 +21,8 @@ test.beforeAll(async ({ browser }) => {
   if (!databaseUrl) throw new Error("E2E_DATABASE_URL is required (scripts/verify.sh sets it)")
   sql = postgres(databaseUrl, { max: 1, onnotice: () => {} })
   await removeFixture()
-  // A worker of an earlier release: it names no features.
   const [w] = await sql`insert into workers (name, token_hash, last_seen_at, version)
     values (${workerName}, ${`e2e-${Date.now()}`}, now(), '0.5.0') returning id`
-  // The address and the stored key of the e2e n8n: saving the instance reads its details from there again.
   const [instance] = await sql`insert into instances
     (name, base_url, api_key_enc, collection, worker_id, container_name)
     select ${instanceName}, base_url, api_key_enc, 'worker', ${w?.id}, 'e2e-compose-app-1'

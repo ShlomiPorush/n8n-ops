@@ -1,8 +1,6 @@
 import { expect, type Locator, type Page, type Request, test } from "@playwright/test"
 import { design, dialogClosed, dialogOpened, discardChanges, randomSecret, signIn } from "./helpers.ts"
 
-// The shared ways of moving around: search, sorting, filters in the address, the keyboard, Back, unsaved
-// changes, the sidebar and the links out to n8n.
 test.describe.configure({ mode: "serial" })
 
 let page: Page
@@ -23,7 +21,6 @@ test("the search finds instances, workflows and pages, and opens them", async ()
   const search = page.getByRole("combobox", { name: "Search" })
   await expect(search).toBeFocused()
 
-  // A workflow, from its own result type, opens the workflow list filtered to it.
   await search.fill("Sync orders")
   await page.getByRole("tab", { name: /^Workflows/ }).click()
   await expect(page.getByRole("tab", { name: /^Workflows/ })).toHaveAttribute("aria-selected", "true")
@@ -57,11 +54,9 @@ test("a table sorts by its column headers and by its Sort button, in one order, 
   await head.getByRole("button").click()
   await expect(head).toHaveAttribute("aria-sort", "ascending")
   await expect(rows.first()).not.toContainText("e2e-n8n-b")
-  // The button says the order the header set, and its dot marks an order that is not the default.
   await expect(button).toHaveAccessibleName("Sort: Instance, A to Z")
   await expect(button).toHaveAttribute("data-set", "")
 
-  // The menu opens on the order in use, turns it around at once and stays open; the header follows.
   await button.click()
   const menu = page.getByRole("dialog", { name: "Sort workflows" })
   const column = menu.getByRole("radio", { name: "Instance", exact: true })
@@ -71,10 +66,8 @@ test("a table sorts by its column headers and by its Sort button, in one order, 
   await expect(head).toHaveAttribute("aria-sort", "descending")
   await expect(rows.first()).toContainText("e2e-n8n-b")
   await expect(button).toHaveAccessibleName("Sort: Instance, Z to A")
-  // Default order puts the list back as it came, with no column sorted and nothing to turn around.
   await menu.getByRole("radio", { name: "Default order" }).check()
   await expect(head).toHaveAttribute("aria-sort", "none")
-  // With no column there is no kind to word the order by: Order says Ascending and Descending, and is off (TB-28).
   for (const name of ["Ascending", "Descending"]) {
     await expect(menu.getByRole("radio", { name, exact: true })).toBeDisabled()
     await expect(menu.getByRole("radio", { name, exact: true })).not.toBeChecked()
@@ -84,7 +77,6 @@ test("a table sorts by its column headers and by its Sort button, in one order, 
   await expect(menu).toBeHidden()
   await expect(button).toBeFocused()
 
-  // A phone hides the header row; the same button sorts the same list.
   await page.setViewportSize({ width: 390, height: 844 })
   try {
     await expect(head).toBeHidden()
@@ -98,7 +90,6 @@ test("a table sorts by its column headers and by its Sort button, in one order, 
   } finally {
     await page.setViewportSize({ width: 1440, height: 900 })
   }
-  // Back on a wide screen the header shows the order the phone picked.
   await expect(head).toHaveAttribute("aria-sort", "descending")
 })
 
@@ -117,7 +108,6 @@ test("list filters live in the address, survive a reload and clear in one step",
 
 test("Clear filters drops a search typed but not sent yet, so it does not come back (SR-9)", async () => {
   await page.goto("/workflows")
-  // An instance picked shows Clear filters while the search is still empty in the address.
   await page.getByRole("button", { name: /^Instance:/ }).click()
   await page.getByRole("option", { name: "e2e-n8n", exact: true }).click()
   await expect(page).toHaveURL(/[?&]instance=/)
@@ -132,13 +122,11 @@ test("Clear filters drops a search typed but not sent yet, so it does not come b
   }
   page.on("request", watch)
   try {
-    // Typed and cleared within the pause of 300ms before a search is sent.
     await box.fill("Sync orders")
     await page.getByRole("button", { name: "Clear filters" }).click()
     cleared = true
     await expect(page).not.toHaveURL(/[?&]instance=/)
     await expect(box).toHaveValue("")
-    // Well past the pause: a search still on its way would have been asked for by now, and put q back.
     await page.waitForTimeout(1000)
     expect(searched).toEqual([])
     await expect(page).not.toHaveURL(/[?&]q=/)
@@ -150,11 +138,9 @@ test("Clear filters drops a search typed but not sent yet, so it does not come b
 
 test("a row opens from the keyboard, with Enter and with Space, and keeps its focus", async () => {
   await page.goto("/instances")
-  // On a wide screen the first instance opens by itself.
   await expect(page.locator('tr[aria-current="true"]')).toHaveCount(1)
   const names = ["e2e-n8n", "e2e-n8n-b"]
   const rowOf = (name: string) => page.getByRole("row").filter({ has: page.getByText(name, { exact: true }) })
-  // Start from the one that is not open, or the heading below would prove nothing.
   if ((await rowOf(names[0] as string).getAttribute("aria-current")) === "true") names.reverse()
   for (const [name, key] of [
     [names[0] as string, "Enter"],
@@ -170,7 +156,6 @@ test("a row opens from the keyboard, with Enter and with Space, and keeps its fo
   }
 })
 
-/** Two frames, so a click that was going to open something has drawn it by now. */
 const twoFrames = () =>
   page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(null)))))
 const selected = () => page.evaluate(() => window.getSelection()?.toString() ?? "")
@@ -185,7 +170,6 @@ test("selecting text in a row does not open it; a plain click on it and Enter el
   const row = rowOf(closed)
   const name = row.getByText(closed, { exact: true })
 
-  // A drag over the name selects it and opens nothing, so it can be copied.
   const before = page.url()
   const box = await name.boundingBox()
   if (!box) throw new Error("the name has no box")
@@ -198,13 +182,11 @@ test("selecting text in a row does not open it; a plain click on it and Enter el
   expect(page.url()).toBe(before)
   await expect(row).not.toHaveAttribute("aria-current", "true")
 
-  // A plain click on the text still selected opens the row.
   await name.click()
   const heading = page.getByRole("heading", { name: closed, exact: true })
   await expect(heading).toBeVisible()
   await expect(row).toHaveAttribute("aria-current", "true")
 
-  // Enter opens a row while text elsewhere on the page (the open instance's name) is selected.
   const next = rowOf(other)
   await next.focus()
   await heading.evaluate((el) => window.getSelection()?.selectAllChildren(el))
@@ -234,12 +216,9 @@ test("an empty search narrows again after Escape or Tab, the page's buttons come
   await expect(search).not.toBeFocused()
   await expect(add).toBeVisible()
 
-  // A click outside keeps the text and closes the results; the next search starts again on All.
   await search.fill("e2e")
   await page.getByRole("tab", { name: /^Instances/ }).click()
   await expect(page.getByRole("tab", { name: /^Instances/ })).toHaveAttribute("aria-selected", "true")
-  // The open results cover the page under the wide search, so the click goes to the trail beside it: plain
-  // text, outside the results in both designs.
   await page.getByRole("navigation", { name: "You are here" }).locator('[aria-current="page"]').click()
   await expect(page.getByRole("listbox", { name: "Results" })).toHaveCount(0)
   await expect(search).toHaveValue("e2e")
@@ -266,7 +245,6 @@ test("a search result that the Leave question keeps from opening leaves the quer
   await dialogClosed(page)
   await expect(page).toHaveURL(/\/settings\/general/)
   await expect(search).toHaveValue("Audit")
-  // A later move somewhere else is not the result opening: the query stays.
   const sections = page.getByRole("navigation", { name: "Settings categories" })
   await sections.getByRole("link", { name: /^Alerts/ }).click()
   await expect(page).toHaveURL(/\/settings\/alerts$/)
@@ -274,7 +252,6 @@ test("a search result that the Leave question keeps from opening leaves the quer
   await sections.getByRole("link", { name: /^General/ }).click()
   await page.getByRole("button", { name: "Discard" }).click()
   await expect(field).toHaveValue(before)
-  // With nothing left to lose, the same result opens, and the search is cleared once it has.
   await search.click()
   await expect(page.getByRole("option").first()).toContainText("Audit")
   await search.press("Enter")
@@ -295,7 +272,6 @@ test("on a phone a result the Leave question keeps from opening leaves its query
     const search = page.getByRole("combobox", { name: "Search" })
     const audit = page.getByRole("option").filter({ hasText: "Audit" }).first()
 
-    // The sheet closes on a choice; after Stay the next search opens with the query.
     await opener.click()
     await search.fill("Audit")
     await audit.click()
@@ -307,7 +283,6 @@ test("on a phone a result the Leave question keeps from opening leaves its query
     await opener.click()
     await expect(search).toHaveValue("Audit")
 
-    // Cancel drops the query.
     await page.getByRole("button", { name: "Cancel" }).click()
     await dialogClosed(page)
     await opener.click()
@@ -315,7 +290,6 @@ test("on a phone a result the Leave question keeps from opening leaves its query
     await page.getByRole("button", { name: "Cancel" }).click()
     await dialogClosed(page)
 
-    // With nothing left to lose the result opens, and the query is gone once it has.
     await unsaved.getByRole("button", { name: "Discard" }).click()
     await expect(field).toHaveValue(before)
     await opener.click()
@@ -345,20 +319,17 @@ test("on a phone the search is a layer: the page behind waits, Tab stays inside,
     await expect(layer).toHaveAttribute("aria-modal", "true")
     await expect(layer.getByRole("combobox", { name: "Search" })).toBeFocused()
     expect(await behindInert()).toBe(true)
-    // Tab and Shift+Tab go round the layer's controls and never reach the page behind it.
     for (const key of ["Tab", "Tab", "Tab", "Tab", "Shift+Tab", "Shift+Tab", "Shift+Tab", "Shift+Tab"]) {
       await page.keyboard.press(key)
       expect(await focusInside()).toBe(true)
     }
 
-    // Escape closes it, the page is usable again, and the focus is back on the Search button.
     await page.keyboard.press("Escape")
     await expect(layer).toHaveCount(0)
     await expect(opener).toBeFocused()
     expect(await behindInert()).toBe(false)
     await dialogClosed(page)
 
-    // Back closes it too, on the same page.
     await opener.click()
     await expect(layer).toBeVisible()
     await expect.poll(overlayEntry).not.toBeNull()
@@ -373,7 +344,6 @@ test("on a phone the search is a layer: the page behind waits, Tab stays inside,
 })
 
 test("the list stays in place while its first item opens by itself, so focus is kept", async () => {
-  // Hold the list until a field of the page has focus; then the rows arrive and the first one opens.
   let release = () => {}
   const held = new Promise<void>((resolve) => {
     release = resolve
@@ -385,7 +355,6 @@ test("the list stays in place while its first item opens by itself, so focus is 
   })
   try {
     await page.goto("/problems")
-    // Beside the pane the search is a button that opens into the field (FB-19).
     await page.locator('[data-slot="filter-bar"]').getByRole("button", { name: "Search problems", exact: true }).click()
     const box = page.getByLabel("Search workflow, target or error")
     await expect(box).toBeVisible()
@@ -410,7 +379,6 @@ test("beside the reading pane every row shows all its values, at any width of th
       await page.goto(path)
       const rows = page.locator('[data-slot="table-container"] [data-slot="item-row"]')
       await expect(rows.first()).toBeVisible()
-      // Wide enough for the old table rule (560px), yet the list draws items and cuts nothing off.
       const clipped = () =>
         page.evaluate(() => {
           const out: string[] = []
@@ -425,7 +393,6 @@ test("beside the reading pane every row shows all its values, at any width of th
             }
             const title = item.querySelector('[data-part="title"]') as HTMLElement
             if (title.getBoundingClientRect().width < 120) out.push(`"${title.textContent}" has no room`)
-            // The end values, the status and the action are never shortened.
             for (const part of item.querySelectorAll<HTMLElement>(
               '[data-part="end"], [data-part="sub-end"], [data-part="lead"], [data-part="action"]',
             )) {
@@ -435,7 +402,6 @@ test("beside the reading pane every row shows all its values, at any width of th
           return out
         })
       expect(await clipped(), path).toEqual([])
-      // The narrowest the list can be made: Home on the handle moves it as far as it goes.
       await page.locator('[data-slot="resizable-handle"]').focus()
       await page.keyboard.press("Home")
       await expect
@@ -462,7 +428,6 @@ test("a list beside the reading pane sorts from its Sort button, and Default ord
   await expect(button).toHaveAccessibleName("Sort: Default order")
   await button.click()
   const menu = page.getByRole("dialog", { name: "Sort instances" })
-  // A column starts in its own first order, A to Z for names.
   await menu.getByRole("radio", { name: "Instance", exact: true }).check()
   await expect(menu.getByRole("radio", { name: "A to Z" })).toBeChecked()
   await expect(first).not.toContainText("e2e-n8n-b")
@@ -476,7 +441,6 @@ test("a list beside the reading pane sorts from its Sort button, and Default ord
   await expect(menu).toBeHidden()
 })
 
-/** Opens e2e-n8n's Edit dialog, the dialog these tests type into. */
 async function openEdit() {
   await page.goto("/instances")
   await page
@@ -499,7 +463,6 @@ test("Back closes a dialog and stays on the page", async () => {
   await expect(page).toHaveURL(from)
 })
 
-/** The overlay Back entry the page is on, if any. */
 const overlayEntry = () => page.evaluate(() => (window.history.state as { overlay?: number } | null)?.overlay ?? null)
 
 test("a typed dialog asks before Cancel, Escape or Close drops what was typed, starting on Keep editing", async () => {
@@ -509,7 +472,6 @@ test("a typed dialog asks before Cancel, Escape or Close drops what was typed, s
   const keep = ask.getByRole("button", { name: "Keep editing" })
   await name.fill("typed, not saved")
 
-  // Cancel asks; the focus starts on Keep editing, so Enter keeps the work.
   await dialog.getByRole("button", { name: "Cancel" }).click()
   await expect(ask).toBeVisible()
   await expect(keep).toBeFocused()
@@ -517,7 +479,6 @@ test("a typed dialog asks before Cancel, Escape or Close drops what was typed, s
   await expect(ask).toHaveCount(0)
   await expect(name).toHaveValue("typed, not saved")
 
-  // Escape asks too, and Keep editing keeps the dialog as it was.
   await page.keyboard.press("Escape")
   await expect(ask).toBeVisible()
   await keep.click()
@@ -525,13 +486,11 @@ test("a typed dialog asks before Cancel, Escape or Close drops what was typed, s
   await expect(dialog).toBeVisible()
   await expect(name).toHaveValue("typed, not saved")
 
-  // Discard closes it and drops what was typed.
   await dialog.getByRole("button", { name: "Close", exact: true }).click()
   await ask.getByRole("button", { name: "Discard" }).click()
   await expect(dialog).toHaveCount(0)
   await dialogClosed(page)
 
-  // With nothing typed, Cancel closes at once.
   await page.getByRole("button", { name: "Edit", exact: true }).click()
   await expect(name).toHaveValue("e2e-n8n")
   await dialog.getByRole("button", { name: "Cancel" }).click()
@@ -552,7 +511,6 @@ test("Back on a typed dialog asks first, and Keep editing keeps the dialog and i
   await ask.getByRole("button", { name: "Keep editing" }).click()
   await expect(dialog).toBeVisible()
   await expect(name).toHaveValue("typed, not saved")
-  // The dialog holds its Back step again, so the next Back asks again instead of leaving the page.
   await expect.poll(overlayEntry).not.toBeNull()
 
   await page.goBack()
@@ -572,7 +530,6 @@ test("leaving with unsaved changes asks first", async () => {
   await page.getByRole("link", { name: "Overview", exact: true }).first().click()
   const ask = page.getByRole("alertdialog", { name: "Leave without saving?" })
   await expect(ask).toBeVisible()
-  // The question starts on Stay, so Enter keeps the work, and it adds no Back step of its own.
   await expect(ask.getByRole("button", { name: "Stay" })).toBeFocused()
   expect(await overlayEntry()).toBeNull()
   await ask.getByRole("button", { name: "Stay" }).click()
@@ -583,7 +540,6 @@ test("leaving with unsaved changes asks first", async () => {
   await expect(field).toHaveValue(before)
 })
 
-/** Settings as stored, for the tests that change them and put them back. */
 const readSettings = async (section: string) =>
   (await (await page.request.get(`/api/settings/${section}`)).json()) as Record<string, number>
 const settingsLink = (name: string) =>
@@ -603,7 +559,6 @@ test("Settings keeps changes across its sections, with one save bar and a dot on
     await expect(unsaved).toContainText("1 unsaved change")
     await expect(sectionDot("Alerts")).toBeVisible()
 
-    // Another section opens without a question, and the first one's change stays.
     await settingsLink("Instance Defaults").click()
     await expect(page).toHaveURL(/\/settings\/defaults$/)
     await expect(page.getByRole("alertdialog")).toHaveCount(0)
@@ -615,7 +570,6 @@ test("Settings keeps changes across its sections, with one save bar and a dot on
     await settingsLink("Alerts").click()
     await expect(grouping).toHaveValue(nextGrouping)
 
-    // One Save writes every changed section.
     await unsaved.getByRole("button", { name: "Save changes" }).click()
     await expect(
       page.getByText(/^Saved the (Alerts|Instance Defaults) settings and the (Alerts|Instance Defaults) settings$/),
@@ -659,14 +613,12 @@ test("how often instances are read is set in Settings, and per instance in its o
     await page.goto(`/instances/${id}`)
     await page.getByRole("tab", { name: "Settings" }).click()
     const own = page.getByLabel("Refresh workflows and execution counts every (minutes)")
-    // Empty uses the default, which it shows.
     await expect(own).toHaveAttribute("placeholder", "15")
     await own.fill("60")
     await unsaved.getByRole("button", { name: "Save changes" }).click()
     await expect(unsaved).toHaveCount(0)
     expect(await overrides()).toMatchObject({ workflowMapMinutes: 60 })
   } finally {
-    // Every step runs even when one fails, and each is checked, so a later test starts from what was stored.
     const restore = async (what: string, send: () => Promise<{ ok(): boolean }>) => {
       const ok = await send().then(
         (res) => res.ok(),
@@ -699,7 +651,6 @@ test("a section that fails to save keeps its changes and its dot, and the toast 
   const unsaved = page.getByRole("region", { name: "Unsaved changes" })
   const nextStale = String((before.defaults.staleBackupHours ?? 0) + 1)
   const nextRetry = String(before.alerts.retryMin === 7 ? 8 : 7)
-  // A value the page's own check takes, which the server then refuses.
   await page.route("**/api/settings/alerts", (route) =>
     route.request().method() === "PUT"
       ? route.fulfill({ status: 400, json: { error: "invalid", message: "Refused by the server for this test." } })
@@ -713,7 +664,6 @@ test("a section that fails to save keeps its changes and its dot, and the toast 
     await expect(unsaved).toContainText("2 unsaved changes")
     await unsaved.getByRole("button", { name: "Save changes" }).click()
 
-    // The saved section is saved; the failure is not covered by a success and names its section (SV-3).
     await expect(
       page.getByText(/^Saved the Instance Defaults settings\. Could not save the Alerts settings: .+/),
     ).toBeVisible()
@@ -746,7 +696,6 @@ test("a changed field that fails its check stops the save, opens its section, ta
   }
   page.on("request", onRequest)
   try {
-    // The server takes 1 to 60 minutes; the page checks it the same way before it sends anything.
     await page.goto("/settings/alerts")
     await retry.fill("99")
     await settingsLink("Email Reports").click()
@@ -755,13 +704,11 @@ test("a changed field that fails its check stops the save, opens its section, ta
     await expect(page.getByRole("button", { name: "Remove bob" })).toBeVisible()
     await unsaved.getByRole("button", { name: "Save changes" }).click()
 
-    // The first failing field on the page takes the focus, is marked and says why; the message counts them.
     await expect(page.getByText("2 fields need a valid value, starting with Recipients")).toBeVisible()
     await expect(recipients).toBeFocused()
     await expect(recipients).toHaveAttribute("aria-invalid", "true")
     await expect(page.locator("#recipients-problem")).toHaveText('"bob" is not an email address')
 
-    // With that one fixed, the one left opens its own section.
     await page.getByRole("button", { name: "Remove bob" }).click()
     await expect(recipients).not.toHaveAttribute("aria-invalid", "true")
     await unsaved.getByRole("button", { name: "Save changes" }).click()
@@ -794,7 +741,6 @@ test("a Design change sends the design alone, so it never stores a Public URL it
     await unsaved.getByRole("button", { name: "Save changes" }).click()
     expect((await sent).postDataJSON()).toEqual({ design: other?.toLowerCase() })
     await expect(unsaved).toHaveCount(0)
-    // Everything else stays as stored, the Public URL included.
     expect(await (await page.request.get("/api/settings/general")).json()).toEqual({
       ...before,
       design: other?.toLowerCase(),
@@ -807,7 +753,6 @@ test("a Design change sends the design alone, so it never stores a Public URL it
     await expect(unsaved).toHaveCount(0)
   } finally {
     await page.request.put("/api/settings/general", { data: { design: before.design } })
-    // The page is drawn in the stored design again for the tests after this one.
     await page.goto("/")
     await expect(page.locator("html")).toHaveAttribute("data-design", String(before.design))
   }
@@ -825,7 +770,6 @@ test("Send test email tests the values on screen without saving them, and a chan
     await recipients.press("Enter")
     await page.getByRole("button", { name: "Send test email" }).click()
 
-    // The result shows beside the button, for the recipients on screen, unsaved.
     const sentTo = page.getByText(`Sent to ${[...(before.recipients as string[]), draft].join(", ")}`, { exact: true })
     await expect(sentTo).toBeVisible({ timeout: 20_000 })
     await expect(page.getByText("Accepted", { exact: true })).toBeVisible()
@@ -836,19 +780,16 @@ test("Send test email tests the values on screen without saving them, and a chan
       expect(list.messages.some((m) => m.To.some((t) => t.Address === draft))).toBe(true)
     }).toPass({ timeout: 20_000 })
 
-    // A change on screen leaves values the result does not belong to.
     const port = page.getByLabel("SMTP port")
     await port.fill("2526")
     await expect(page.getByText("Changed since the last test. Send a test again.")).toBeVisible()
     await expect(page.getByText("Accepted", { exact: true })).toHaveCount(0)
-    // Put back, they are the tested values again.
     await port.fill(String(before.smtpPort))
     await expect(page.getByText("Accepted", { exact: true })).toBeVisible()
 
     await unsaved.getByRole("button", { name: "Discard" }).click()
     await expect(unsaved).toHaveCount(0)
   } finally {
-    // A test stores nothing.
     expect(await (await page.request.get("/api/settings/email")).json()).toEqual(before)
   }
 })
@@ -867,8 +808,6 @@ test("Ctrl+B folds the sidebar into the rail and back", async () => {
 
 test("the Settings flyout is a menu that closes on resize, and Settings clicked again adds no Back step (NL-8, NL-4)", async () => {
   await page.setViewportSize({ width: 1440, height: 900 })
-  // From 1000px the list opens its first item by itself, in place of /instances. Wait for it, so the entry Back
-  // returns to has its final address whether the list loaded fast or slow.
   await page.goto("/instances")
   await expect(page).toHaveURL(/\/instances\/[^/?]+$/)
   const from = page.url()
@@ -884,7 +823,6 @@ test("the Settings flyout is a menu that closes on resize, and Settings clicked 
   await expect(menu).toHaveCount(0)
   await page.setViewportSize({ width: 1440, height: 900 })
 
-  // Clicked again on one of its sections, Settings stays there without a step of its own: Back leaves it.
   await settings.click()
   await expect(page).toHaveURL(/\/settings\/alerts$/)
   await page.goBack()
@@ -917,20 +855,15 @@ test("a failed Check now says what failed and why, and its toast waits while the
   const close = toast.getByRole("button", { name: "Close" })
   try {
     await page.getByRole("button", { name: "Check now" }).click()
-    // The button shows the result for a moment (FB-7). Checked first: "Failed" shows for two seconds only.
     await expect(page.getByRole("button", { name: "Failed", exact: true })).toBeDisabled()
-    // The toast names the instance and the server's reason (FB-3, FB-4).
     await expect(toast).toHaveText("Could not check e2e-n8n-b: n8n did not answer.")
-    // The keyboard goes into it at once: it then holds past its four seconds (FB-2).
     await close.focus()
-    // Then the button has its label again.
     await expect(page.getByRole("button", { name: "Check now" })).toBeEnabled()
   } finally {
     await page.unroute(refresh)
   }
   await page.waitForTimeout(5_000)
   await expect(toast).toBeVisible()
-  // Once the keyboard leaves it goes, after the rest of its time (at least 1.5 seconds).
   await close.blur()
   await expect(toast).toBeVisible()
   await expect(toast).toHaveCount(0, { timeout: 8_000 })
@@ -990,7 +923,6 @@ test("Connected agents and Account are pages of their own, and their old Setting
   await expect(sections.getByRole("link", { name: "Agent Access" })).toBeVisible()
   await expect(sections.getByRole("link", { name: /Connected Agents|Account/i })).toHaveCount(0)
 
-  // Agent access leads to Connected agents, and the account menu to Account.
   await page.goto("/access")
   await page.getByRole("banner").getByRole("link", { name: "Connected agents" }).click()
   await expect(page).toHaveURL(/\/agents$/)
@@ -1013,7 +945,6 @@ test("the time zone is chosen from a list with a search, and Back closes the lis
   await expect(search).toHaveCount(0)
   await expect(page).toHaveURL(/\/settings\/general$/)
 
-  // Opened again, the list is whole; Escape closes it and returns to the field.
   await field.click()
   await expect(search).toHaveValue("")
   await page.keyboard.press("Escape")
@@ -1022,7 +953,6 @@ test("the time zone is chosen from a list with a search, and Back closes the lis
   await dialogClosed(page)
 
   try {
-    // Picked and saved at once, without waiting for the list to give back its Back entry.
     await field.click()
     await search.fill("jerusalem")
     await page.getByRole("option", { name: /Asia\/Jerusalem/ }).click()
@@ -1031,8 +961,6 @@ test("the time zone is chosen from a list with a search, and Back closes the lis
     await expect(page.getByText("Settings saved")).toBeVisible()
     expect((await (await page.request.get("/api/settings/general")).json()).timezone).toBe("Asia/Jerusalem")
 
-    // A click beside the list only closes it, even on a link. None of the ways it closed left an entry
-    // behind: Back now leaves the page.
     const overview = await page.getByRole("link", { name: "Overview", exact: true }).first().boundingBox()
     await field.click()
     await expect(search).toBeVisible()
@@ -1043,7 +971,6 @@ test("the time zone is chosen from a list with a search, and Back closes the lis
     await page.goBack()
     await expect(page).toHaveURL(/\/account$/)
 
-    // A new time zone must be a zone name: a fixed offset would not follow daylight saving.
     const offset = await page.request.put("/api/settings/general", { data: { timezone: "+03:00" } })
     expect(offset.status()).toBe(400)
   } finally {
@@ -1064,7 +991,6 @@ test("a Date format chosen in Settings writes the dates in a list that way, and 
     )
     await field.click()
     await page.getByRole("option", { name: "YYYY-MM-DD" }).click()
-    // The example shows the choice before it is saved, and the row says it differs from the default.
     await expect(page.getByText(/^Example: \d{4}-\d{2}-\d{2}$/)).toBeVisible()
     await expect(page.getByRole("button", { name: "Reset to default (Browser)" })).toBeVisible()
     await unsaved.getByRole("button", { name: "Save changes" }).click()
@@ -1076,7 +1002,6 @@ test("a Date format chosen in Settings writes the dates in a list that way, and 
   } finally {
     await page.request.put("/api/settings/general", { data: { dateFormat: before.dateFormat } })
   }
-  // Back to how it was: the same list no longer writes the year first.
   await page.goto("/audit")
   await expect(firstDate).toBeVisible()
   await expect(firstDate).not.toHaveText(iso)
@@ -1093,7 +1018,6 @@ test("the 12-hour Time format writes the daily backup time that way as soon as i
     .locator('[data-slot="kpi-figure"]')
   const unsaved = page.getByRole("region", { name: "Unsaved changes" })
   try {
-    // From the 24-hour clock, whatever was stored: Browser in an English (US) browser would show 12 hours already.
     await page.request.put("/api/settings/general", { data: { timeFormat: "24h" } })
     await page.goto("/backups")
     await expect(figure).toHaveText(backupTime)
@@ -1102,7 +1026,6 @@ test("the 12-hour Time format writes the daily backup time that way as soon as i
     await page.getByRole("radio", { name: "12-hour" }).click()
     await unsaved.getByRole("button", { name: "Save changes" }).click()
     await expect(unsaved).toHaveCount(0)
-    // Back to Backups inside the app, with no reload: the saved choice shows at once.
     await page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Backups", exact: true }).click()
     await expect(page).toHaveURL(/\/backups$/)
     await expect(figure).toHaveText(twelve)
@@ -1111,9 +1034,6 @@ test("the 12-hour Time format writes the daily backup time that way as soon as i
   }
 })
 
-/** Opens the second test instance and returns its id. */
-/** A stand-in Problem in one workflow, as the server sends it. */
-/** Chooses a status of the Problems list in its Status picker (FB-19). */
 async function chooseStatus(name: string) {
   await page
     .locator('[data-slot="filter-bar"]')
@@ -1126,7 +1046,6 @@ async function chooseStatus(name: string) {
 function standInProblem(id: string, workflowName: string, errorMessage: string, more: Record<string, unknown> = {}) {
   const at = new Date(Date.now() - 3 * 86_400_000).toISOString()
   const state = { status: "open", regression: false, count: 1, firstSeen: at, lastSeen: at, mutedUntil: null }
-  // Its cause (docs/adr/0003): the node, as for a Code node that names no host or credential.
   const cause = {
     title: `Call ERP · ${errorMessage}`,
     target: "Call ERP",
@@ -1176,7 +1095,6 @@ test("an instance tab has its own address, which reload and Back follow", async 
   const tab = (name: string | RegExp) => page.getByRole("tab", { name })
   await expect(tab("Overview")).toHaveAttribute("aria-selected", "true")
 
-  /** The pane's address: the instance, and the tab when it is not the overview. */
   const at = (search: string) => (url: URL) => url.pathname === `/instances/${id}` && url.search === search
   await tab(/^Health/).click()
   await expect(page).toHaveURL(at("?tab=health"))
@@ -1187,12 +1105,10 @@ test("an instance tab has its own address, which reload and Back follow", async 
   await expect(page).toHaveURL(at(""))
   await expect(tab("Overview")).toHaveAttribute("aria-selected", "true")
 
-  // An unknown tab shows the overview, and the address says so.
   await page.goto(`/instances/${id}?tab=nothing`)
   await expect(tab("Overview")).toHaveAttribute("aria-selected", "true")
   await expect(page).toHaveURL(at(""))
 
-  // The arrow keys move between tabs without opening them; Enter opens one.
   await page.goto(`/instances/${id}`)
   await tab("Overview").focus()
   await page.keyboard.press("ArrowRight")
@@ -1209,10 +1125,8 @@ test("a clicked tab shows no focus ring until a key is pressed on it", async () 
   const outline = () => health.evaluate((el) => getComputedStyle(el).outlineStyle)
   await health.click()
   await expect(health).toBeFocused()
-  // Hidden because a pointer pressed it, not because the browser chose not to ring it.
   await expect(health).toHaveAttribute("data-pointer", "")
   expect(await outline()).toBe("none")
-  // A key pressed on the same tab, focus not moving, brings the ring back.
   await page.keyboard.press("Enter")
   await expect(health).toBeFocused()
   await expect(health).not.toHaveAttribute("data-pointer")
@@ -1221,7 +1135,6 @@ test("a clicked tab shows no focus ring until a key is pressed on it", async () 
 
 test("the Edit dialog keeps what is typed when the instance refreshes behind it", async () => {
   const id = await openInstanceB()
-  // From now on the instance answers with another n8n version, as after an upgrade.
   const detail = `**/api/instances/${id}`
   await page.route(detail, async (route) => {
     if (route.request().method() !== "GET") return route.continue()
@@ -1233,12 +1146,9 @@ test("the Edit dialog keeps what is typed when the instance refreshes behind it"
     const dialog = page.getByRole("dialog", { name: "Edit e2e-n8n-b" })
     const name = dialog.getByLabel("Name", { exact: true })
     await name.fill("e2e-n8n-b renamed")
-    // A refresh, as the 15-second poll or coming back to the window brings; the pane behind the dialog shows the
-    // new version once the new answer has reached it.
     await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")))
     await expect(page.getByText("· n8n 9.9.9")).toBeAttached()
     await expect(name).toHaveValue("e2e-n8n-b renamed")
-    // Closing with the typed name asks first, and Discard keeps the stored name.
     await dialog.getByRole("button", { name: "Cancel" }).click()
     await discardChanges(page)
     await expect(dialog).toHaveCount(0)
@@ -1272,12 +1182,10 @@ test("edits on several instance tabs survive a switch, and one save bar saves or
   await choose.click()
   await expect(mark("Backups")).toBeVisible()
 
-  // Switching tabs neither asks nor loses anything.
   await tab("Settings").click()
   await expect(page.getByRole("alertdialog")).toHaveCount(0)
   await expect(field).toHaveValue("9")
 
-  // Opening another instance still asks first.
   await page
     .getByRole("row")
     .filter({ has: page.getByText("e2e-n8n", { exact: true }) })
@@ -1295,7 +1203,6 @@ test("edits on several instance tabs survive a switch, and one save bar saves or
   await tab("Access").click()
   expect(await allowed.isChecked()).toBe(wasAllowed)
 
-  // Save writes every changed tab; the edits then show as stored.
   await allowed.click()
   await tab("Settings").click()
   await field.fill("9")
@@ -1306,7 +1213,6 @@ test("edits on several instance tabs survive a switch, and one save bar saves or
   await page.reload()
   await expect(field).toHaveValue("9")
 
-  // Back to what it was.
   await field.fill(before)
   await tab("Access").click()
   await allowed.click()
@@ -1325,10 +1231,8 @@ test("on a phone the save bar of an instance shows inside its sheet", async () =
     const field = sheet.getByLabel("Auto-resolve after days without failures")
     const before = await field.inputValue()
     await field.fill("9")
-    // Inside the sheet, so the focus trap and the backdrop leave it in reach.
     const bar = sheet.getByRole("region", { name: "Unsaved changes" })
     await expect(bar).toBeVisible()
-    // The bar ends the sheet's content: no room is kept under it, as a page keeps under its last field.
     const body = sheet.locator('[data-slot="dialog-body"]')
     expect(await body.evaluate((el) => getComputedStyle(el).paddingBottom)).toBe("0px")
     await bar.getByRole("button", { name: "Discard" }).click()
@@ -1341,7 +1245,6 @@ test("on a phone the save bar of an instance shows inside its sheet", async () =
 
 test("on a phone the instance tabs are a bar at the bottom of a sheet that keeps its size", async () => {
   const id = await openInstanceB()
-  // A small tablet: the instance opens as a centered dialog, with its tabs at the top.
   await page.setViewportSize({ width: 800, height: 844 })
   try {
     await page.goto(`/instances/${id}`)
@@ -1351,43 +1254,35 @@ test("on a phone the instance tabs are a bar at the bottom of a sheet that keeps
     expect(await bottom()).toBeLessThan(400)
     await sheet.getByRole("tab", { name: /^Health/ }).focus()
 
-    // Turned into a phone, the tabs move to the bottom bar, and the focused tab keeps the focus there.
     await page.setViewportSize({ width: 390, height: 844 })
     await expect.poll(bottom).toBeGreaterThan(700)
     await expect(page.locator('[data-slot="pane-nav"]').getByRole("tab", { name: /^Health/ })).toBeFocused()
 
-    // A short tab, opened straight away (nothing scrolled, which grows a sheet), still gets four fifths of the
-    // screen: the sheet does not shrink to its content.
     await page.goto(`/instances/${id}?tab=health`)
     await expect(sheet.getByRole("tab", { name: /^Health/ })).toHaveAttribute("aria-selected", "true")
     const box = await sheet.boundingBox()
     expect(box?.height ?? 0).toBeGreaterThanOrEqual(844 * 0.8 - 1)
-    // The tab bar sits at the bottom of the screen, under the content.
     expect(await bottom()).toBeGreaterThan(700)
   } finally {
     await page.setViewportSize({ width: 1440, height: 900 })
   }
 })
 
-/** Where an element starts and ends on the screen. */
 const top = async (el: Locator) => (await el.boundingBox())?.y ?? Number.NaN
 const bottom = async (el: Locator) => {
   const box = await el.boundingBox()
   return (box?.y ?? Number.NaN) + (box?.height ?? 0)
 }
-/** Makes the open tab long enough to scroll far, whatever the test data holds. */
 const lengthenOpenTab = (scope: Locator) =>
   scope.locator('[role="tabpanel"][data-state="active"]').evaluate((el) => {
     const spacer = document.createElement("div")
     spacer.style.height = "2000px"
     el.append(spacer)
   })
-/** Lets the browser draw and deliver the scroll events of what a test just scrolled. */
 const settle = () =>
   page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))))
 
 test("an instance's tabs stay at the top of its pane, another tab starts under them, and Back scrolls back (DS-14, NL-3)", async () => {
-  // Low, but over 600px: on a screen 600px high or less the pane does not scroll on its own (NL-1, below).
   await page.setViewportSize({ width: 1440, height: 640 })
   try {
     await openInstanceB()
@@ -1400,15 +1295,12 @@ test("an instance's tabs stay at the top of its pane, another tab starts under t
     })
     await settle()
 
-    // Stuck at the very top of the pane: the pane has no padding above them for content to show through.
     const gap = async () => (await top(tabs)) - (await top(pane))
     await expect.poll(gap).toBeGreaterThanOrEqual(0)
     expect(await gap()).toBeLessThanOrEqual(10)
-    // Still a row that scrolls sideways, with its line under it (#92); Regular draws segments instead.
     expect(await tabs.evaluate((el) => getComputedStyle(el).overflowX)).toBe("auto")
     if (design === "compact") expect(await tabs.evaluate((el) => getComputedStyle(el).boxShadow)).not.toBe("none")
 
-    // Another tab starts right under the tabs, not at the old offset.
     await region.getByRole("tab", { name: /^Health/ }).click()
     const panel = region.locator('[role="tabpanel"][data-state="active"]')
     const under = async () => (await top(panel)) - (await bottom(tabs))
@@ -1417,7 +1309,6 @@ test("an instance's tabs stay at the top of its pane, another tab starts under t
     expect(await pane.evaluate((el) => el.scrollTop)).toBeLessThan(1200)
     await settle()
 
-    // Back opens the overview again where it was scrolled.
     await page.goBack()
     await expect(region.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true")
     await expect.poll(() => pane.evaluate((el) => el.scrollTop)).toBeGreaterThan(1190)
@@ -1426,7 +1317,6 @@ test("an instance's tabs stay at the top of its pane, another tab starts under t
   }
 })
 
-/** Where an element is scrolled. */
 const scrollTopOf = (el: Locator) => el.evaluate((e) => e.scrollTop)
 
 test("on a short screen, where the page scrolls an instance with its list, another tab starts under its tabs (NL-1, DS-14)", async () => {
@@ -1438,8 +1328,6 @@ test("on a short screen, where the page scrolls an instance with its list, anoth
     const main = page.locator("#main")
     const tabs = region.getByRole("tablist", { name: "Instance sections" })
     await expect.poll(() => pane.evaluate((el) => getComputedStyle(el).overflowY)).toBe("visible")
-    // Both tabs long, so the page keeps its offset on a switch unless the tabs move it: a short tab would let the
-    // browser cut the scroll back by itself.
     const health = region.getByRole("tab", { name: /^Health/ })
     const overview = region.getByRole("tab", { name: "Overview" })
     await health.click()
@@ -1454,7 +1342,6 @@ test("on a short screen, where the page scrolls an instance with its list, anoth
     await settle()
     expect(await scrollTopOf(main)).toBeGreaterThan(1190)
 
-    // Scrolled past the tabs, another tab starts right under them, not at the old offset.
     await health.click()
     const panel = region.locator('[role="tabpanel"][data-state="active"]')
     const under = async () => (await top(panel)) - (await bottom(tabs))
@@ -1475,7 +1362,6 @@ test("Back on a short screen puts an instance where it was read on a taller one,
     const main = page.locator("#main")
     await lengthenOpenTab(region)
 
-    // Scrolled where the pane scrolls on its own; another tab, then a short screen.
     await pane.evaluate((el) => {
       el.scrollTop = 1200
     })
@@ -1486,7 +1372,6 @@ test("Back on a short screen puts an instance where it was read on a taller one,
     await page.setViewportSize({ width: 1440, height: 560 })
     await expect.poll(() => pane.evaluate((el) => getComputedStyle(el).overflowY)).toBe("visible")
 
-    // Back opens the overview where it was read, now by scrolling the page; once there, it stays.
     await page.goBack()
     await expect(region.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true")
     await expect.poll(() => scrollTopOf(main)).toBeGreaterThan(1190)
@@ -1499,13 +1384,11 @@ test("Back on a short screen puts an instance where it was read on a taller one,
 })
 
 test("Back returns to the top of a tab that was never scrolled (NL-3)", async () => {
-  // Low, but over 600px, where the pane scrolls on its own (NL-1).
   await page.setViewportSize({ width: 1440, height: 640 })
   try {
     await openInstanceB()
     const region = page.getByRole("region", { name: "Instance", exact: true })
     const pane = region.locator("[data-scroll-pane]")
-    // Long enough that a scroll left over from another tab would show.
     await lengthenOpenTab(region)
     expect(await pane.evaluate((el) => el.scrollTop)).toBe(0)
 
@@ -1519,7 +1402,6 @@ test("Back returns to the top of a tab that was never scrolled (NL-3)", async ()
     await settle()
     expect(await pane.evaluate((el) => el.scrollTop)).toBeGreaterThan(700)
 
-    // The overview was only seen at its top: Back opens it there, not where Health was scrolled.
     await page.goBack()
     await expect(region.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true")
     await expect.poll(() => pane.evaluate((el) => el.scrollTop)).toBe(0)
@@ -1539,7 +1421,6 @@ test("at 900px an instance opens 16px from the screen's edges, keeps its height 
     const box = await dialog.boundingBox()
     expect(box?.x ?? 0).toBeGreaterThanOrEqual(15.5)
     expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(900 - 15.5)
-    // 90% of the screen, whatever the tab holds.
     expect(Math.abs((box?.height ?? 0) - 630)).toBeLessThan(2)
 
     await lengthenOpenTab(dialog)
@@ -1566,7 +1447,6 @@ test("at 900px an instance opens 16px from the screen's edges, keeps its height 
 test("Back puts an instance opened as a dialog or a phone sheet back where its tab was scrolled (NL-3, DS-14)", async () => {
   const id = await openInstanceB()
   try {
-    // A small tablet opens it as a dialog, a phone as a sheet; either scrolls in its own body, outside the page.
     for (const [width, height] of [
       [900, 700],
       [390, 844],
@@ -1577,20 +1457,16 @@ test("Back puts an instance opened as a dialog or a phone sheet back where its t
       const body = dialog.locator('[data-slot="dialog-body"]')
       const overview = dialog.getByRole("tab", { name: "Overview" })
       await expect(overview).toHaveAttribute("aria-selected", "true")
-      // The tab's own parts (its open problems) load after the instance. One that arrives after the place below is
-      // read grows the tab above it, and the browser keeps the view by scrolling on: the place left is then lower.
       await expect(dialog.getByRole("status").filter({ hasText: /^Loading/ })).toHaveCount(0)
       await lengthenOpenTab(dialog)
       await body.evaluate((el) => {
         el.scrollTop = 1200
       })
-      // A phone sheet first grows to the full screen by part of that scroll.
       await settle()
       await settle()
       const scrolled = await body.evaluate((el) => el.scrollTop)
       expect(scrolled).toBeGreaterThan(800)
 
-      // Another tab, here at its very top, so a place left over from it cannot pass for the overview's.
       const health = dialog.getByRole("tab", { name: /^Health/ })
       await health.click()
       await expect(health).toHaveAttribute("aria-selected", "true")
@@ -1602,12 +1478,10 @@ test("Back puts an instance opened as a dialog or a phone sheet back where its t
 
       await page.goBack()
       await expect(overview).toHaveAttribute("aria-selected", "true")
-      // The place is compared here: the function given to evaluate runs in the page, which does not see `scrolled`.
       await expect
         .poll(async () => Math.abs((await body.evaluate((el) => el.scrollTop)) - scrolled))
         .toBeLessThanOrEqual(2)
       if (width === 900) {
-        // Put back under the dialog's head, with its tabs stuck there, not in the head's place.
         const head = dialog.locator('[data-slot="dialog-header"]')
         const tabs = dialog.getByRole("tablist", { name: "Instance sections" })
         const gap = async () => (await top(tabs)) - (await bottom(head))
@@ -1629,7 +1503,6 @@ test("an opened tab names the browser tab and ends the trail, and an unknown tab
   await expect(trail.locator('[aria-current="page"]')).toHaveText("Health")
   await expect(trail).toContainText("e2e-n8n-b")
 
-  // The address is corrected without a step of its own: Back goes to the tab before it.
   await page.goto(`/instances/${id}?tab=nothing`)
   await expect(page).toHaveURL((url) => url.pathname === `/instances/${id}` && url.search === "")
   await expect(page.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true")
@@ -1639,7 +1512,6 @@ test("an opened tab names the browser tab and ends the trail, and an unknown tab
 })
 
 test("an item opened from its list starts on its first tab, and an address with a tab opens that tab (NL-4)", async () => {
-  // A link to an instance's tab opens it; the next instance opened from the list starts on Overview.
   const id = await openInstanceB()
   await page.goto(`/instances/${id}?tab=health`)
   await expect(page.getByRole("tab", { name: /^Health/ })).toHaveAttribute("aria-selected", "true")
@@ -1650,8 +1522,6 @@ test("an item opened from its list starts on its first tab, and an address with 
   await expect(page).toHaveURL((url) => url.pathname !== `/instances/${id}` && url.search === "")
   await expect(page.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true")
 
-  // A problem's tab stays its own: the list's links keep its filters but not the open tab. A row opens its own
-  // workflow on Overview.
   await page.goto("/problems?status=all")
   await page
     .getByRole("row", { name: /Sync orders to ERP/ })
@@ -1666,7 +1536,6 @@ test("an item opened from its list starts on its first tab, and an address with 
   expect(links.length).toBeGreaterThan(0)
   for (const link of links) expect(link).toMatch(/^\/problems\/[^?]+\?status=all&workflow=[^&]+&tab=overview$/)
 
-  // A smaller screen opens it as a dialog; closing it leaves the list's address without the tab.
   await page.setViewportSize({ width: 900, height: 800 })
   try {
     await page.goto(`${problem}?status=all&tab=input`)
@@ -1690,7 +1559,6 @@ test("a problem's tabs have their own address, and Merge opens from its menu and
   await expect(tab(/^Overview/)).toHaveAttribute("aria-selected", "true")
   await expect(page.getByRole("heading", { name: "Where It Broke" })).toBeVisible()
 
-  // Each tab opened is a step in the history of the same problem, with the list's filters kept.
   const problem = new URL(page.url())
   const at = (which: string) => (url: URL) =>
     url.pathname === problem.pathname &&
@@ -1707,12 +1575,10 @@ test("a problem's tabs have their own address, and Merge opens from its menu and
   await expect(page).toHaveURL(at("input"))
   await expect(tab(/^Input/)).toHaveAttribute("aria-selected", "true")
 
-  // A tab that is not there (unknown, or no other problem at the same target) opens the overview.
   await page.goto(`${new URL(page.url()).pathname}?tab=nothing`)
   await expect(tab(/^Overview/)).toHaveAttribute("aria-selected", "true")
   await expect(page).toHaveURL((url) => url.pathname === problem.pathname && url.search === "")
 
-  // Merge is in the menu; closing its dialog puts the focus back on the menu's button.
   const more = page.getByRole("button", { name: "More actions" })
   await more.click()
   await page.getByRole("menuitem", { name: "Merge into…" }).click()
@@ -1731,7 +1597,6 @@ test("Merge lands on the problem merged into, and Back returns to the problem it
     .click()
   await expect(page.getByRole("heading", { name: "Where It Broke" })).toBeVisible()
   const problem = new URL(page.url()).pathname
-  // A stand-in problem to merge into, and a merge that is only answered: the stored problems stay as they are.
   const candidates = (url: URL) => url.pathname === "/api/problems" && url.searchParams.get("status") === "all"
   const merge = (url: URL) => /^\/api\/problems\/[^/]+\/merge$/.test(url.pathname)
   await page.route(candidates, (route) =>
@@ -1754,8 +1619,6 @@ test("Merge lands on the problem merged into, and Back returns to the problem it
     await expect(page).toHaveURL((url) => url.pathname === "/problems/e2e-merge-target")
     await expect(dialog).toHaveCount(0)
 
-    // The new page took the dialog's Back step (DS-10): one Back returns to the problem, with no dialog step
-    // left on the way.
     await page.goBack()
     await expect(page).toHaveURL((url) => url.pathname === problem)
     await expect.poll(overlayEntry).toBeNull()
@@ -1773,7 +1636,6 @@ test("a long choice in a form has a search that reads an underscore as a space, 
     .first()
     .click()
   await expect(page.getByRole("heading", { name: "Where It Broke" })).toBeVisible()
-  // Thirteen stand-in problems to merge into, one of them with a name far wider than the list.
   const candidates = (url: URL) => url.pathname === "/api/problems" && url.searchParams.get("status") === "all"
   const items = [
     ...Array.from({ length: 12 }, (_, i) =>
@@ -1810,18 +1672,14 @@ test("a long choice in a form has a search that reads an underscore as a space, 
 
 test("a list keeps its rows when a refresh fails, says so under the title, and Try again brings it back", async () => {
   await page.goto("/problems?status=all")
-  // The rows of the list column only: the problem that opens beside it has tables of its own.
   const rows = page.locator("[data-scroll-pane]").first().locator("[data-href]")
   await expect(rows.first()).toBeVisible()
   await expect(page.getByRole("heading", { name: "Where It Broke" })).toBeVisible()
   const shown = await rows.count()
-  // From now on the list answers as a server that has a problem does; the problem pane is not touched.
   const list = (url: URL) => url.pathname === "/api/problems/rows" && url.searchParams.get("status") === "all"
   await page.route(list, (route) => route.fulfill({ status: 500, json: { error: "internal_error" } }))
   const failed = page.getByRole("status").filter({ hasText: "Could not refresh" })
   try {
-    // A refresh, as the 15-second poll or coming back to the window brings. It is asked again twice before it
-    // counts as failed, which takes a few seconds.
     await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")))
     await expect(failed).toBeVisible({ timeout: 15_000 })
     await expect(page.locator("p", { has: failed })).toContainText("Could not refresh · Updated ")
@@ -1830,7 +1688,6 @@ test("a list keeps its rows when a refresh fails, says so under the title, and T
   } finally {
     await page.unroute(list)
   }
-  // The next good answer clears the line.
   await page.getByRole("button", { name: "Try again" }).click()
   await expect(failed).toHaveCount(0)
   await expect(rows).toHaveCount(shown)
@@ -1849,9 +1706,7 @@ test("new filters whose list fails to load keep the previous rows, and the filte
   try {
     await chooseStatus("Muted")
     await expect(page).toHaveURL(/[?&]status=muted/)
-    // It is asked again twice before it counts as failed, which takes a few seconds.
     await expect(note).toBeVisible({ timeout: 15_000 })
-    // The rows stay instead of an error, and the line takes the place of a count that would name them muted.
     await expect(rows).toHaveCount(shown)
     await expect(page.getByText("Could not load problems")).toHaveCount(0)
     await expect(countLine).not.toHaveText(/^[\d,]+ muted rows?/)
@@ -1859,7 +1714,6 @@ test("new filters whose list fails to load keep the previous rows, and the filte
   } finally {
     await page.unroute(muted)
   }
-  // The next good answer is drawn and clears the line.
   await page.getByRole("button", { name: "Try again" }).click()
   await expect(note).toHaveCount(0)
   await expect(page.getByText("Could not load problems")).toHaveCount(0)
@@ -1870,14 +1724,11 @@ test("the Problems count line counts every row, also above the 200 the list hold
   await page.goto("/problems?status=all")
   const rows = page.locator("[data-scroll-pane]").first().locator("[data-href]")
   await expect(rows.first()).toBeVisible()
-  // Every row is on screen: a plain count, and no note about the others. The count line only: Regular's top
-  // bar has a link that counts the open problems too.
   const countLine = page.locator('[data-slot="list-count"]')
   const shown = await rows.count()
   await expect(countLine).toHaveText(new RegExp(`^${shown} rows?$`))
   await expect(page.getByText(/^Showing the first/)).toHaveCount(0)
 
-  // The server says there are more than it sent.
   const list = (url: URL) => url.pathname === "/api/problems/rows" && url.searchParams.get("status") === "all"
   await page.route(list, async (route) => {
     const res = await route.fetch()
@@ -1901,8 +1752,6 @@ test("the Problems list asks the server for its order and draws the rows as they
   const rows = column.locator("[data-href]")
   await expect(rows.first()).toBeVisible()
   await expect(page.getByRole("heading", { name: "Where It Broke" })).toBeVisible()
-  // Beside the reading pane the list has no header row; its Sort button sets the same order. Failures start with
-  // the most.
   const sorted = (url: URL) =>
     url.pathname === "/api/problems/rows" &&
     url.searchParams.get("status") === "all" &&
@@ -1921,7 +1770,6 @@ test("the Problems list asks the server for its order and draws the rows as they
   const answer = (await asked.json()) as { items: { problemId: string; count: number }[]; total: number }
   expect(answer.items.length).toBeGreaterThan(0)
   expect(answer.total).toBeGreaterThanOrEqual(answer.items.length)
-  // The most failures first, and the rows in the server's order, not sorted again in the page.
   const counts = answer.items.map((p) => p.count)
   expect(counts).toEqual([...counts].sort((a, b) => b - a))
   await expect(rows).toHaveCount(answer.items.length)
@@ -1933,8 +1781,6 @@ test("the Problems list asks the server for its order and draws the rows as they
 })
 
 test("a new filter starts the list at its first row, and the filter bar stays in sight (TB-7, NL-16)", async () => {
-  // A short screen and sixty rows for every filter, so the list scrolls whatever the run recorded: the first
-  // problem of all and copies of it under ids of their own.
   const list = (url: URL) => url.pathname === "/api/problems/rows"
   let seed: { id: string } | undefined
   await page.route(list, async (route) => {
@@ -1946,17 +1792,12 @@ test("a new filter starts the list at its first row, and the filter bar stays in
         ? [first, ...Array.from({ length: 59 }, (_, i) => ({ ...first, id: `${first.id}-copy-${i}` }))]
         : []
       await route.fulfill({ response: res, json: { items, total: items.length } })
-    } catch {
-      // The page moved on (a new filter or the next width's page load) and dropped this request meanwhile.
-    }
+    } catch {}
   })
   try {
-    // Beside the reading pane the list scrolls in its own column; narrower, with no pane, in the page itself. On a
-    // screen 600px high or less the pane stays beside the list, but the page scrolls the two as one (NL-1).
     for (const [width, height, scroller, holder] of [
       [1440, 640, "[data-scroll-pane]", "[data-scroll-pane]"],
       [900, 640, "#main", "#main"],
-      // The rows are in the list column, beside the open problem, which the page also holds.
       [1440, 560, "#main", '[data-scroll-pane="list"]'],
     ] as const) {
       await page.setViewportSize({ width, height })
@@ -1970,7 +1811,6 @@ test("a new filter starts the list at its first row, and the filter bar stays in
         el.scrollTop = el.scrollHeight
       })
       await expect(rows.first()).not.toBeInViewport()
-      // The filters stuck at the very top of where the list scrolls, with no rows showing above them.
       await expect(page.getByRole("button", { name: /^Status:/ })).toBeInViewport()
       await expect
         .poll(() =>
@@ -2007,7 +1847,6 @@ test("beside the pane the filters keep one line: search first, then Status and I
     if (!b) throw new Error("not on screen")
     return b
   }
-  /** One line, in this order from the start. */
   const inOrder = async (...parts: ReturnType<typeof page.locator>[]) => {
     const boxes = await Promise.all(parts.map(place))
     const ys = boxes.map((b) => b.y + b.height / 2)
@@ -2015,25 +1854,20 @@ test("beside the pane the filters keep one line: search first, then Status and I
     for (let i = 1; i < boxes.length; i++)
       expect(boxes[i]?.x ?? 0).toBeGreaterThan((boxes[i - 1]?.x ?? 0) + (boxes[i - 1]?.width ?? 0) - 1)
   }
-  // Closed: the search button, Status, Instance and Sort, in that order on one line, Sort at its end; no Filters
-  // button.
   await expect(box).toBeHidden()
   await expect(bar).toHaveAttribute("data-pickers", "row")
   await expect(filters).toHaveCount(0)
   await expect(status).toHaveText(/Open/)
   await inOrder(searchButton, status, instance, sort)
-  // Open: the field takes the room, focused, and Instance goes behind Filters; still one line.
   await searchButton.click()
   await expect(box).toBeFocused()
   await expect(bar).toHaveAttribute("data-pickers", "panel")
   await inOrder(box, status, filters, sort)
-  // Sort ends the line: its end is the bar's.
   const end = async (l: ReturnType<typeof page.locator>) => {
     const b = await place(l)
     return b.x + b.width
   }
   expect(Math.abs((await end(sort)) - (await end(bar)))).toBeLessThan(2)
-  // Moving on inside the bar keeps the empty search open; Escape in it closes it and goes back to the button.
   await page.keyboard.press("Tab")
   await expect(status).toBeFocused()
   await page.keyboard.press("Tab")
@@ -2041,7 +1875,6 @@ test("beside the pane the filters keep one line: search first, then Status and I
   await page.keyboard.press("Tab")
   await expect(sort).toBeFocused()
   await expect(box).toBeVisible()
-  // Its Sort menu opens outside the bar, and is still part of it (R1).
   await page.keyboard.press("Enter")
   await expect(page.getByRole("dialog", { name: "Sort problems" })).toBeVisible()
   await expect(box).toBeVisible()
@@ -2053,10 +1886,8 @@ test("beside the pane the filters keep one line: search first, then Status and I
   await page.keyboard.press("Escape")
   await expect(searchButton).toBeFocused()
   await expect(box).toBeHidden()
-  // Closed again, Instance is back in the row.
   await expect(bar).toHaveAttribute("data-pickers", "row")
   await inOrder(searchButton, status, instance, sort)
-  // A status chosen while searching keeps the search open; Escape in the picker closes only the picker.
   await searchButton.click()
   await status.click()
   await page.keyboard.press("Escape")
@@ -2065,20 +1896,16 @@ test("beside the pane the filters keep one line: search first, then Status and I
   await chooseStatus("Muted")
   await expect(page).toHaveURL(/status=muted/)
   await expect(box).toBeVisible()
-  // The longest status still leaves one line, and the status is a view, not a filter: nothing to clear.
   await chooseStatus("Resolved")
   await expect(status).toHaveText(/Resolved/)
   await inOrder(box, status, filters, sort)
   await expect(bar.getByRole("button", { name: "Clear filters" })).toHaveCount(0)
-  // Leaving the bar closes an empty search, and the focus stays where it went.
   const elsewhere = page.getByRole("link", { name: "Overview", exact: true }).first()
   await elsewhere.focus()
   await expect(box).toBeHidden()
   await expect(elsewhere).toBeFocused()
   await expect(status).toHaveText(/Resolved/)
   await inOrder(searchButton, status, instance, sort)
-  // A search from the address shows the field, without taking the focus; Instance waits behind Filters, whose
-  // badge counts it, and Clear filters clears both.
   await page.goto("/problems?status=open&q=ERP")
   await expect(box).toHaveValue("ERP")
   await expect(box).toBeVisible()
@@ -2113,7 +1940,6 @@ test("an instance with a long name is cut in the row before it goes behind Filte
     await instance.click()
     await page.getByRole("option", { name: long, exact: true }).click()
     await expect(page).toHaveURL(/instance=/)
-    // Still in the row and on one line, its value cut short.
     await expect(bar).toHaveAttribute("data-pickers", "row")
     await expect(instance).toContainText("e2e")
     expect(await instance.locator('[data-slot="picker-value"]').evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(
@@ -2133,13 +1959,11 @@ test("a shorter value at the same width brings Instance back into the row (FB-19
     const bar = page.locator('[data-slot="filter-bar"]').first()
     const status = bar.getByRole("button", { name: /^Status:/ })
     await expect(status).toHaveText(/Resolved/)
-    /** The bar's width at a window width. */
     const barAt = async (width: number) => {
       await page.setViewportSize({ width, height: 900 })
       await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(width)
       return bar.evaluate((el) => el.clientWidth)
     }
-    /** The width the line needs with everything it shows now. */
     const need = () =>
       bar.evaluate((el) => {
         const shown = [...(el.firstElementChild?.children ?? [])].filter((c) => !(c as HTMLElement).hidden)
@@ -2154,17 +1978,13 @@ test("a shorter value at the same width brings Instance back into the row (FB-19
     await expect(status).toHaveText(/Open/)
     const withOpen = await need()
     expect(withResolved - withOpen).toBeGreaterThan(10)
-    /** The window width that gives the bar this width. */
     const windowFor = (barWidth: number) => Math.round(1440 + ((barWidth - narrow) * 480) / (wide - narrow))
-    // A window where the line holds Instance beside Open but not beside Resolved.
     await barAt(windowFor((withOpen + withResolved) / 2))
     await expect(bar).toHaveAttribute("data-pickers", "row")
     await chooseStatus("Resolved")
     await expect(bar).toHaveAttribute("data-pickers", "panel")
     await chooseStatus("Open")
     await expect(bar).toHaveAttribute("data-pickers", "row")
-    // Just wide enough for Resolved, Instance is back in the row: the width it was short by is not counted twice
-    // (R5).
     await chooseStatus("Resolved")
     await expect(bar).toHaveAttribute("data-pickers", "panel")
     await barAt(windowFor(withResolved + 4))
@@ -2182,7 +2002,6 @@ test("an Instance list opened behind Filters stays open while the search updates
     await expect(bar).toHaveAttribute("data-pickers", "panel")
     await bar.getByRole("button", { name: "Search problems", exact: true }).click()
     await page.keyboard.type("Sync")
-    // Before the typed search is sent: Instance opened behind Filters.
     await bar.getByRole("button", { name: /^Filters/ }).click()
     await bar.getByRole("button", { name: /^Instance:/ }).click()
     const option = page.getByRole("option", { name: "All", exact: true })
@@ -2196,8 +2015,6 @@ test("an Instance list opened behind Filters stays open while the search updates
 })
 
 test("a control that a new width moves gives the focus to the one in its place (FB-19)", async () => {
-  // Beside the pane at 1440 Instance fits beside Status; at 1000 the column is too narrow and it goes behind
-  // Filters.
   try {
     await page.goto("/problems?status=open")
     const bar = page.locator('[data-slot="filter-bar"]').first()
@@ -2208,17 +2025,14 @@ test("a control that a new width moves gives the focus to the one in its place (
     await page.setViewportSize({ width: 1000, height: 900 })
     await expect(bar).toHaveAttribute("data-pickers", "panel")
     await expect(filters).toBeFocused()
-    // And back: the Filters button goes, and Instance in the row takes the focus.
     await page.setViewportSize({ width: 1440, height: 900 })
     await expect(bar).toHaveAttribute("data-pickers", "row")
     await expect(instance).toBeFocused()
-    // An option of an open Instance list hands the focus to the Filters button that Instance went behind (R5).
     await instance.click()
     await expect(page.getByRole("option", { name: "All", exact: true })).toBeFocused()
     await page.setViewportSize({ width: 1000, height: 900 })
     await expect(bar).toHaveAttribute("data-pickers", "panel")
     await expect(filters).toBeFocused()
-    // The search button hands the focus to the field that takes its place (R5).
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.goto("/problems?status=open")
     const searchButton = bar.getByRole("button", { name: "Search problems", exact: true })
@@ -2226,8 +2040,6 @@ test("a control that a new width moves gives the focus to the one in its place (
     await page.setViewportSize({ width: 2600, height: 900 })
     await expect(bar).toHaveAttribute("data-mode", "wide")
     await expect(bar.getByLabel("Search workflow, target or error")).toBeFocused()
-    // A picker that stays where it is keeps its open list and the focus in it (R6): Status, while Instance goes
-    // behind Filters.
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.goto("/problems?status=open")
     await bar.getByRole("button", { name: /^Status:/ }).click()
@@ -2260,19 +2072,15 @@ test("an order whose list fails to load leaves the rows and the Sort button in t
   try {
     await button.click()
     await menu.getByRole("radio", { name: "Failures" }).check()
-    // The new order shows at once, while its rows are on their way.
     await expect(menu.getByRole("radio", { name: "Most first" })).toBeChecked()
     await page.keyboard.press("Escape")
-    // It is asked again twice before it counts as failed, which takes a few seconds.
     await expect(note).toBeVisible({ timeout: 15_000 })
-    // The rows stay in the order they came in, and so does the Sort button: the default order, with no dot.
     await expect(button).toHaveAccessibleName("Sort: Default order")
     await expect(button).not.toHaveAttribute("data-set")
     expect(await rows.evaluateAll((els) => els.map((el) => el.getAttribute("data-href")))).toEqual(before)
   } finally {
     await page.unroute(sorted)
   }
-  // Try again asks for the order picked; once its rows come, the Sort button shows it.
   await page.locator('[data-slot="list-count"]').getByRole("button", { name: "Try again" }).click()
   await expect(note).toHaveCount(0)
   await expect(button).toHaveAccessibleName("Sort: Failures, Most first")
@@ -2281,11 +2089,9 @@ test("an order whose list fails to load leaves the rows and the Sort button in t
 
 test("the open problems of an instance say when a new order or a refresh failed, and keep the rows (TB-4, TB-5)", async () => {
   const id = await openInstanceB()
-  // Stand-in rows, so the test does not depend on which problems are open: two, the fewer failures first.
   const problem = (n: number, count: number) => {
     const p = standInProblem(`00000000-0000-4000-8000-00000000000${n}`, `E2E stand-in ${n}`, "ERP refused")
     const lastSeen = new Date(Date.now() - n * 60_000).toISOString()
-    // A row of the list: the problem's one workflow, on e2e-n8n-b.
     return {
       ...p.affectedWorkflows[0],
       problemId: p.id,
@@ -2309,14 +2115,12 @@ test("the open problems of an instance say when a new order or a refresh failed,
   try {
     await page.goto(`/instances/${id}?tab=problems`)
     const panel = page.getByRole("tabpanel")
-    // Its rows, without the headings of the sections it reads in by default.
     const rows = panel.locator("tbody tr:not([data-section])")
     const button = panel.getByRole("button", { name: /^Sort:/ })
     const menu = page.getByRole("dialog", { name: "Sort open problems" })
     await expect(rows.first()).toContainText("E2E stand-in 1")
     await expect(button).toHaveAccessibleName("Sort: Default order")
 
-    // A new order whose list fails: the rows and the Sort button stay as they are, and a line says so.
     await button.click()
     await menu.getByRole("radio", { name: "Failures" }).check()
     await page.keyboard.press("Escape")
@@ -2327,7 +2131,6 @@ test("the open problems of an instance say when a new order or a refresh failed,
     await expect(button).toHaveAccessibleName("Sort: Default order")
     await expect(button).not.toHaveAttribute("data-set")
     await expect(rows.first()).toContainText("E2E stand-in 1")
-    // Try again brings the order once the server answers.
     sortFails = false
     await panel.getByRole("button", { name: "Try again" }).click()
     await expect(note).toHaveCount(0)
@@ -2335,7 +2138,6 @@ test("the open problems of an instance say when a new order or a refresh failed,
     await expect(button).toHaveAttribute("data-set", "")
     await expect(rows.first()).toContainText("E2E stand-in 2")
 
-    // A refresh that fails, as coming back to the window brings, keeps the rows and says so.
     fails = true
     await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")))
     const failed = panel.getByRole("status").filter({ hasText: "Could not refresh" })
@@ -2347,7 +2149,6 @@ test("the open problems of an instance say when a new order or a refresh failed,
     await expect(failed).toHaveCount(0)
     await expect(rows.first()).toContainText("E2E stand-in 2")
 
-    // Default order asks the server for its own order again: no sort in the address, here the fewer failures first.
     await button.click()
     await menu.getByRole("radio", { name: "Default order" }).check()
     await page.keyboard.press("Escape")
@@ -2360,7 +2161,6 @@ test("the open problems of an instance say when a new order or a refresh failed,
 })
 
 test("the Problems list says what each section holds, cuts to one, and tags every row with its section", async () => {
-  // Stand-in rows, one per open section, and a muted alert, so the test does not depend on what the run recorded.
   const day = 86_400_000
   const row = (n: number, workflowName: string, section: string, more: Record<string, unknown> = {}) => {
     const p = standInProblem(`00000000-0000-4000-8000-0000000001${n}0`, workflowName, "ERP refused")
@@ -2389,7 +2189,6 @@ test("the Problems list says what each section holds, cuts to one, and tags ever
   const raised = row(3, "E2E alert", "alerts", { ...alert, count: 9, lastSeen: quietSince, closesAt: quietSince })
   const muted = row(4, "E2E muted alert", "muted", { ...alert, status: "muted", mutedUntil: quietSince })
   const open = [failing, quiet, raised]
-  // Quiet holds more than the list sends: the figure and the heading count the section in all, not the rows shown.
   const counts = { instance: 0, now: 1, quiet: 240, alerts: 1, muted: 0, resolved: 0 }
   const asked: string[] = []
   const list = (url: URL) => url.pathname === "/api/problems/rows" && !url.searchParams.has("instance")
@@ -2409,8 +2208,6 @@ test("the Problems list says what each section holds, cuts to one, and tags ever
   const item = (name: string) => column.getByRole("row", { name: new RegExp(name) })
   try {
     await page.goto("/problems?status=open")
-    // A figure per open section with its count on one line (its heading says what it holds); Instance problems
-    // only when there are some.
     await expect(figure("Failing now")).toBeVisible()
     await expect(figure("Quiet")).toContainText("240")
     await expect(figure("Your alerts")).not.toContainText("Stop and Error")
@@ -2419,7 +2216,6 @@ test("the Problems list says what each section holds, cuts to one, and tags ever
         figure(name).locator("[data-slot=kpi-figure]").boundingBox(),
         figure(name).getByText(name, { exact: true }).boundingBox(),
       ])
-      // The label sits beside its count on the count's line, and takes one line itself.
       expect(count && label).toBeTruthy()
       if (!count || !label) continue
       expect(label.x).toBeGreaterThan(count.x + count.width - 1)
@@ -2427,7 +2223,6 @@ test("the Problems list says what each section holds, cuts to one, and tags ever
       expect(label.y + label.height).toBeLessThanOrEqual(count.y + count.height + 1)
     }
     await expect(figure("Instance")).toHaveCount(0)
-    // The figures are tabs on the list's top edge: no room between them and the rows, and none marked yet.
     expect(
       await strip.evaluate((el) => {
         const next = el.nextElementSibling
@@ -2435,45 +2230,37 @@ test("the Problems list says what each section holds, cuts to one, and tags ever
       }),
     ).toBe(0)
     await expect(strip.locator('[aria-current="true"]')).toHaveCount(0)
-    // Each heading counts its section in all and says what it holds.
     const quietHeading = column.locator('[data-section="quiet"]')
     await expect(quietHeading).toContainText("240")
     await expect(quietHeading).toContainText("closes by itself")
-    // Each row's tag names its section, never a plain Open; a quiet one says how long and when it closes.
     await expect(item("E2E failing")).toContainText("Failing now")
     await expect(item("E2E failing")).toContainText("Regression")
     await expect(item("E2E quiet")).toContainText("Quiet 3 d")
     await expect(item("E2E quiet")).toContainText("Auto-closes in ~4 d")
-    // An alert says so once: its tag, not a kind badge as well.
     await expect(item("E2E alert").getByText("Your alert", { exact: true })).toHaveCount(1)
     for (const name of ["E2E failing", "E2E quiet", "E2E alert"])
       await expect(item(name).getByText("Open", { exact: true })).toHaveCount(0)
 
-    // A figure shows its section alone and is marked; again, all of them.
     await figure("Quiet").click()
     await expect(page).toHaveURL(/section=quiet/)
     await expect(figure("Quiet")).toHaveAttribute("aria-current", "true")
     await expect(column.locator("[data-href]")).toHaveCount(1)
     await expect(page.getByText(/\b1 quiet row\b/).first()).toBeVisible()
     expect(asked).toContain("quiet")
-    // The section shown alone keeps its full count, in its figure and its heading.
     await expect(figure("Quiet")).toContainText("240")
     await expect(quietHeading).toContainText("240")
     await figure("Quiet").click()
     await expect(page).not.toHaveURL(/section=/)
     await expect(column.locator("[data-href]")).toHaveCount(3)
 
-    // Another status leaves the section, and the figures go: they count the open sections.
     await figure("Quiet").click()
     await expect(page).toHaveURL(/section=quiet/)
     await chooseStatus("All")
     await expect(page).not.toHaveURL(/section=/)
     await expect(strip).toHaveCount(0)
-    // A muted alert keeps its kind: its tag says Muted.
     await expect(item("E2E muted alert")).toContainText("Muted")
     await expect(item("E2E muted alert").getByText("Your alert", { exact: true })).toHaveCount(1)
 
-    // Sorted by another column, the headings go and each row's tag still says its section.
     await chooseStatus("Open")
     const button = page.getByRole("button", { name: /^Sort:/ })
     await button.click()
@@ -2488,7 +2275,6 @@ test("the Problems list says what each section holds, cuts to one, and tags ever
     await page.keyboard.press("Escape")
     await expect(column.locator("[data-section]").first()).toBeVisible()
 
-    // The wide table, at a width with no reading pane, tags its rows the same way.
     await page.setViewportSize({ width: 900, height: 900 })
     await page.goto("/problems?status=open")
     const quietRow = page.getByRole("row", { name: /E2E quiet/ })
@@ -2502,7 +2288,6 @@ test("the Problems list says what each section holds, cuts to one, and tags ever
 })
 
 test("the audit log keeps its entries when older ones fail to load, and waits for Try again", async () => {
-  // A log of 100 stand-in entries, so a second page is due whatever the run recorded; older ones fail at first.
   const entry = (id: number) => ({
     id,
     at: new Date(Date.now() - (1000 - id) * 60_000).toISOString(),
@@ -2514,7 +2299,6 @@ test("the audit log keeps its entries when older ones fail to load, and waits fo
   let newest = 0
   let older = 0
   let failOlder = true
-  // While set, older entries are answered only once it settles.
   let hold: Promise<void> | null = null
   let release = () => {}
   const audit = (url: URL) => url.pathname === "/api/admin/audit"
@@ -2533,24 +2317,18 @@ test("the audit log keeps its entries when older ones fail to load, and waits fo
     await page.goto("/audit")
     const rows = page.locator("tbody tr")
     await expect(rows).toHaveCount(100)
-    // The end of the list comes near, and the older entries are asked for.
     await rows.last().scrollIntoViewIfNeeded()
     const failed = page.getByText("Could not load older entries.")
     await expect(failed).toBeVisible()
-    // Asked once, not again by itself (TB-6), and every entry loaded stays, with no failed refresh said.
     expect(older).toBe(1)
     await expect(rows).toHaveCount(100)
     await expect(page.getByText("Could not load the audit log")).toHaveCount(0)
     await expect(page.getByRole("status").filter({ hasText: "Could not refresh" })).toHaveCount(0)
 
-    // Coming back to the window refreshes the list, which clears React Query's page error; the failed page still
-    // waits for Try again.
     const refreshed = async () => {
       const asked = newest
       await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")))
       await expect.poll(() => newest).toBe(asked + 1)
-      // Proving that nothing is asked needs a wait: two frames for the refresh to be drawn, then the moment the
-      // end of the list, still in view, would take to ask by itself.
       await page.evaluate(
         () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(null)))),
       )
@@ -2560,7 +2338,6 @@ test("the audit log keeps its entries when older ones fail to load, and waits fo
     expect(older).toBe(1)
     await expect(failed).toBeVisible()
 
-    // Try again keeps its place and the focus while it loads, and keeps the focus when it fails again (AX-6).
     hold = new Promise<void>((resolve) => {
       release = resolve
     })
@@ -2575,7 +2352,6 @@ test("the audit log keeps its entries when older ones fail to load, and waits fo
     await expect(again).toBeFocused()
     await expect(failed).toBeVisible()
     expect(older).toBe(2)
-    // A Try again that fails straight after a failed one, with no refresh between them, waits across a refresh too.
     await page.keyboard.press("Enter")
     await expect.poll(() => older).toBe(3)
     await expect(again).toBeFocused()
@@ -2607,7 +2383,6 @@ test("Raw Data says a failed load in words, and a closed window drops its late a
   const dialog = page.getByRole("dialog", { name: "Raw Data" })
   const execution = (url: URL) => /^\/api\/problems\/[^/]+\/failures\/[^/]+$/.test(url.pathname)
 
-  // A failure is a message with the server's reason in the same window, not JSON (DS-17).
   await page.route(execution, (route) =>
     route.fulfill({ status: 500, json: { error: "internal_error", message: "The execution could not be read." } }),
   )
@@ -2623,7 +2398,6 @@ test("Raw Data says a failed load in words, and a closed window drops its late a
     await page.unroute(execution)
   }
 
-  // Closed while it loads, the window gives up its load (DS-6): the answer can no longer open it again.
   let release = () => {}
   const held = new Promise<void>((resolve) => {
     release = resolve
@@ -2638,7 +2412,6 @@ test("Raw Data says a failed load in words, and a closed window drops its late a
     answered()
   })
   try {
-    // Settled once the request was given up, or once its answer was sent, whichever comes first.
     const settled = Promise.race([
       page.waitForEvent("requestfailed", (request) => execution(new URL(request.url()))),
       handled,
@@ -2650,7 +2423,6 @@ test("Raw Data says a failed load in words, and a closed window drops its late a
     await dialogClosed(page)
     release()
     await settled
-    // Two frames, so an answer that was still taken in would have drawn the window again by now.
     await page.evaluate(
       () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(null)))),
     )
@@ -2661,7 +2433,6 @@ test("Raw Data says a failed load in words, and a closed window drops its late a
   }
 })
 
-// The sign-in request never reaches the server here, so it does not count against the sign-in limit.
 test("sign-in says when n8n-ops cannot be reached, gives the button back and keeps what was typed", async ({
   browser,
 }) => {
@@ -2683,7 +2454,6 @@ test("sign-in says when n8n-ops cannot be reached, gives the button back and kee
     await login.getByRole("button", { name: "Continue" }).click()
     const busy = login.getByRole("button", { name: "Signing in…" })
     await expect(busy).toBeDisabled()
-    // A disabled button shows that it cannot be used (AX-9).
     expect(await busy.evaluate((el) => getComputedStyle(el).cursor)).toBe("not-allowed")
     release()
     await expect(login.getByText("Could not reach n8n-ops. Check your connection and try again.")).toBeVisible()
@@ -2696,7 +2466,6 @@ test("sign-in says when n8n-ops cannot be reached, gives the button back and kee
   }
 })
 
-// Neither the password nor the code reaches the server here, so nothing counts against the sign-in limit.
 test("a two-factor code is kept when n8n-ops cannot be reached, and cleared when the code is refused", async ({
   browser,
 }) => {
@@ -2718,12 +2487,10 @@ test("a two-factor code is kept when n8n-ops cannot be reached, and cleared when
     const code = login.getByLabel("Two-factor code")
     await code.fill("123456")
 
-    // Without an answer the code stays, ready to send again.
     await expect(login.getByText("Could not reach n8n-ops. Check your connection and try again.")).toBeVisible()
     await expect(code).toHaveValue("123456")
     await expect(code).toBeFocused()
 
-    // A refused code is cleared for the next one.
     answer = "refused"
     await login.getByRole("button", { name: "Try again" }).click()
     await expect(login.getByText("Invalid code")).toBeVisible()
@@ -2741,7 +2508,6 @@ test("setup that made the account but could not sign in only signs in when tried
   let created = 0
   let signIns = 0
   try {
-    // The stack has its user already: the first-run account step is shown, and no request reaches the server.
     await setup.route("**/api/setup/status", (route) => route.fulfill({ json: { hasUser: false } }))
     await setup.route("**/api/setup/account", (route) => {
       created += 1
@@ -2778,14 +2544,12 @@ test("Back from an instance added on another one asks, Stay keeps it without a r
     .click()
   await expect(page.getByRole("heading", { name: "e2e-n8n", exact: true })).toBeVisible()
   const first = new URL(page.url()).pathname
-  // An add that is only answered, with e2e-n8n-b as the new instance: nothing is stored.
   const add = (url: URL) => url.pathname === "/api/instances"
   await page.route(add, (route) =>
     route.request().method() === "POST" ? route.fulfill({ json: { id: added } }) : route.continue(),
   )
   const unsaved = page.getByRole("region", { name: "Unsaved changes" })
   const ask = page.getByRole("alertdialog", { name: "Leave without saving?" })
-  // A mark on the window that a reload would wipe.
   const notReloaded = () => page.evaluate(() => (window as { e2eSamePage?: boolean }).e2eSamePage === true)
   try {
     await page.getByRole("button", { name: "Add instance" }).click()
@@ -2793,8 +2557,6 @@ test("Back from an instance added on another one asks, Stay keeps it without a r
     await page.getByLabel("Name", { exact: true }).fill("e2e-added")
     await page.getByLabel("Base URL", { exact: true }).fill("http://n8n.example.invalid")
     await page.getByRole("button", { name: "Continue" }).click()
-    // The new instance's setup takes the add page's place; the answer here is an active instance, whose setup
-    // starts at what to add, and Cancel goes to its page in the same place.
     await expect(page).toHaveURL((url) => url.pathname === `/instances/${added}/setup`)
     await page.getByRole("button", { name: "Cancel" }).click()
     await expect(page).toHaveURL((url) => url.pathname === `/instances/${added}`)
@@ -2804,7 +2566,6 @@ test("Back from an instance added on another one asks, Stay keeps it without a r
 
     const settings = page.getByRole("tab", { name: /^Settings/ })
     const field = page.getByLabel("Auto-resolve after days without failures")
-    /** The tab is a Back step on the same page, which does not ask. */
     const backFromTab = async () => {
       await page.goBack()
       await expect(page).toHaveURL((url) => url.pathname === `/instances/${added}` && url.search === "")
@@ -2816,7 +2577,6 @@ test("Back from an instance added on another one asks, Stay keeps it without a r
     await expect(unsaved).toContainText("1 unsaved change")
     await backFromTab()
 
-    // Back to the instance the dialog was opened on asks; Stay keeps the page, with no reload, and what was typed.
     await page.goBack()
     await expect(ask).toBeVisible()
     await ask.getByRole("button", { name: "Stay" }).click()
@@ -2828,7 +2588,6 @@ test("Back from an instance added on another one asks, Stay keeps it without a r
     await expect(field).toHaveValue(typed)
     await backFromTab()
 
-    // Back again, and Leave goes to that instance, with no dialog step left on the way.
     await page.goBack()
     await ask.getByRole("button", { name: "Leave without saving" }).click()
     await expect(page).toHaveURL((url) => url.pathname === first)
@@ -2841,19 +2600,15 @@ test("Back from an instance added on another one asks, Stay keeps it without a r
   }
 })
 
-// Last: it leaves the page on sign-in.
 test("a session that ends on an open page goes to sign-in, back to that page, without asking", async () => {
   await page.goto("/settings/alerts")
   const field = page.getByLabel("Grouping window (seconds)")
   await field.fill(String(Number(await field.inputValue()) + 1))
   await expect(page.getByRole("region", { name: "Unsaved changes" })).toBeVisible()
-  // From now on the server answers this section as it does once the session has ended.
   const section = "**/api/settings/alerts"
   await page.route(section, (route) => route.fulfill({ status: 401, json: { error: "unauthorized" } }))
   try {
-    // A refresh, as coming back to the window brings.
     await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")))
-    // The unsaved-changes guard is off first, so leaving does not ask (NL-18).
     await expect(page).toHaveURL(/\/login\?next=%2Fsettings%2Falerts$/)
     await expect(page.getByRole("alertdialog")).toHaveCount(0)
   } finally {

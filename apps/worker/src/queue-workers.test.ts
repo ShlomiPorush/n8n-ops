@@ -9,8 +9,6 @@ import { WORKER_CHECK } from "./inside.ts"
 import { probeJob } from "./jobs.ts"
 import { discoverWorkers, listWorkers } from "./queue-workers.ts"
 
-// Finding and checking queue workers against a stand-in Docker Engine API, and the check that runs in a worker
-// against a stand-in n8n worker server.
 const servers: Server[] = []
 afterEach(async () => {
   await Promise.all(servers.splice(0).map((s) => new Promise((r) => s.close(r))))
@@ -38,12 +36,10 @@ const listed = (name: string, command: string, state = "running") => ({
 })
 
 type Answer = { output?: string; refuse?: number; hang?: boolean }
-/** A stand-in Docker: the containers it lists, and what a check inside each one prints. */
 async function engine(
   containers: ReturnType<typeof listed>[],
   answers: Record<string, Answer>,
   listStatus = 200,
-  /** What the list of every container on the host answers (no filter), when it differs from the others. */
   host?: { containers?: unknown[]; status?: number; hang?: boolean },
 ) {
   const execs = new Map<string, string>()
@@ -169,13 +165,11 @@ describe("discoverWorkers", () => {
     expect((await discoverWorkers(clean.docker, "acme-n8n-1", { rotation: 0 })).listed?.patterns).toEqual([
       { pattern: "acme-w-*", clean: true },
     ])
-    // Another container on the host starts the same way: the pattern is not clean, and its name does not leave.
     const db = { ...listed("acme-w-db", "docker-entrypoint.sh postgres"), Image: "postgres:18" }
     const crowded = await engine(workers, {}, 200, { containers: [...workers, db] })
     const result = await discoverWorkers(crowded.docker, "acme-n8n-1", { rotation: 0 })
     expect(result.listed?.patterns).toEqual([{ pattern: "acme-w-*", clean: false }])
     expect(JSON.stringify(result)).not.toContain("acme-w-db")
-    // A host list that is refused gives no patterns at all, never a clean one.
     const refused = await engine(workers, {}, 200, { status: 403 })
     expect((await discoverWorkers(refused.docker, "acme-n8n-1", { rotation: 0 })).listed).not.toHaveProperty("patterns")
   })
@@ -242,7 +236,6 @@ describe("discoverWorkers", () => {
       access: { refused: [{ call: "exec-create", container: "acme-n8n-1" }] },
       listed: { names: ["acme-w-1"], complete: true },
     })
-    // Asked only for the names (the server's `list`), it reports no workers to check.
     const namesOnly = await probeJob(
       {
         main: "http://127.0.0.1:9/healthz",
@@ -292,7 +285,6 @@ describe("discoverWorkers", () => {
     const started = Date.now()
     const result = await discoverWorkers(docker, "acme-n8n-1", { rotation: 0, deadline: AbortSignal.timeout(500) })
     expect(Date.now() - started).toBeLessThan(3000)
-    // Four at once; none of the others was started after the deadline.
     expect(checked).toHaveLength(4)
     expect(result.workers.every((w) => w.state === "not-checked")).toBe(true)
     expect(result.discovery.status).toBe("ok")
@@ -337,7 +329,6 @@ describe("the check in a queue worker", () => {
       expect(text).not.toContain(word)
   })
 
-  // Each case starts a process of its own, so each is a test of its own with its own time limit.
   it("says unknown for a concurrency the worker cannot read", async () => {
     expect(
       ((await run({ N8N_CONCURRENCY_PRODUCTION_LIMIT_FILE: "/missing" })) as { details: { concurrencyEnv: unknown } })
@@ -345,8 +336,6 @@ describe("the check in a queue worker", () => {
     ).toBe("unknown")
   })
 
-  // Blank, not a number or n8n's -1: the variable decides nothing. As n8n reads a number: written with quotes, it is
-  // not one.
   it.each(["", "-1", "many", '"7"'])("says absent for the concurrency %j", async (value) => {
     expect(
       ((await run({ N8N_CONCURRENCY_PRODUCTION_LIMIT: value })) as { details: { concurrencyEnv: unknown } }).details

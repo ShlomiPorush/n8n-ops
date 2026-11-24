@@ -7,8 +7,6 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest"
 import type { Docker } from "./docker.ts"
 import { exportCredentialsJob } from "./jobs.ts"
 
-// The credential export, run exactly as sent to the container: the same shell command, with a stand-in `n8n` first
-// on PATH that does what each case says.
 const bin = mkdtempSync(join(tmpdir(), "export-"))
 const FILE = "/tmp/n8n-ops-export.json"
 const secret = randomBytes(16).toString("hex")

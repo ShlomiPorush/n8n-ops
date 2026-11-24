@@ -1,7 +1,4 @@
 #!/usr/bin/env bash
-# The single verification entry point, used locally, in CI and by the release workflow.
-# Usage: scripts/verify.sh [--changed [BASE]] [--guards-only] [--skip-guards] [--skip-integration] [--design NAME]
-#                          [--only checks|integration|e2e]
 set -euo pipefail
 
 # shellcheck source=scripts/lib/common.sh
@@ -9,7 +6,6 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
 PROJECT="n8n-ops-verify"
 PLAYWRIGHT_IMAGE="mcr.microsoft.com/playwright:v1.65.1-noble"
-# Real servers for the backup destination stores: OpenSSH for SFTP, rclone's WebDAV server over HTTPS.
 SFTP_IMAGE="lscr.io/linuxserver/openssh-server:10.3_p1-r1-ls239"
 WEBDAV_IMAGE="rclone/rclone:1.75.2"
 STORES_DONE=0
@@ -18,8 +14,6 @@ GUARDS=1
 GUARDS_ONLY=0
 SKIP_INTEGRATION=0
 ONLY=""
-# The three parts after the guards: checks before any stack, the integration checks on a stack, and the
-# end-to-end tests, each design on a stack of its own.
 CHECKS=1
 INTEGRATION=1
 E2E=1
@@ -104,14 +98,11 @@ case "$ONLY" in
   integration) CHECKS=0 E2E=0 ;;
   e2e) CHECKS=0 INTEGRATION=0 ;;
 esac
-# The integration checks alone run on one stack in the regular design, as in the first round of a full sweep.
 [ $E2E -eq 1 ] || DESIGNS=(regular)
 
 changed_files() {
   local base
   base="$(git -C "$REPO_ROOT" merge-base "$CHANGED_BASE" HEAD)" || die "cannot find a merge base with $CHANGED_BASE"
-  # Without renames, a file moved out of a directory still counts as a change there. NUL-separated, so git does not
-  # quote a path with other than plain characters, which would hide where it is.
   {
     git -C "$REPO_ROOT" diff --name-only --no-renames -z "$base"
     git -C "$REPO_ROOT" ls-files --others --exclude-standard -z
@@ -178,13 +169,8 @@ run_guards() {
 run_checks() {
   local filter=()
   if [ -n "$CHANGED_BASE" ]; then
-    # Never the root package: its scripts run the same script in every package, so a root file such as
-    # CHANGELOG.md would build apps/web twice at once into the same dist. Shared root files already
-    # force a full sweep (main), so nothing is left unchecked.
     filter=(--filter "...[$CHANGED_BASE]" --filter "!n8n-ops")
-    # The server's tests run the skill's files (apps/server/src/oauth/skill.test.ts), though the server does not
-    # depend on the skill as a package. The files come from main. grep without -q reads all of its input, so its
-    # producer never fails with SIGPIPE, which pipefail would turn into no match.
+    # grep -q would end its producer with SIGPIPE, which pipefail turns into no match.
     if printf '%s\n' "${files[@]}" | grep '^packages/skill/' >/dev/null; then
       filter+=(--filter @n8n-ops/server)
     fi
@@ -194,20 +180,16 @@ run_checks() {
   info "Lint and format"
   in_toolchain "pnpm lint"
   info "Types, unit tests and builds${CHANGED_BASE:+ (changed since $CHANGED_BASE)}"
-  # The skill is plain JavaScript without a typecheck script: left out of that run, so a change to it alone does not
-  # select only a package pnpm refuses as "no script". Remove the exclusion if the skill gets a typecheck script.
   in_toolchain "pnpm -r ${filter[*]:+${filter[*]@Q}} --filter '!@n8n-ops/skill' run typecheck \
     && pnpm -r ${filter[*]:+${filter[*]@Q}} run test \
     && pnpm -r ${filter[*]:+${filter[*]@Q}} --filter=./apps/* run build"
   info "Database schema matches its migrations"
-  # A schema change without its migration would otherwise only show when the next migration is generated.
   # shellcheck disable=SC2016 # expands inside the container
   in_toolchain 'cd apps/server && out="$(pnpm exec drizzle-kit generate --name schema-check 2>&1)"; echo "$out" | tail -1;
     grep -q "No schema changes" <<<"$out"' ||
     die "the schema in apps/server/src/db/schema.ts has changes without a migration; run drizzle-kit generate"
 }
 
-# The development template, with a socket proxy that also allows the queue checks' n8n (docker/verify-proxy.yml).
 STACK_FILES=("$REPO_ROOT/docker/docker-compose-dev.example.yml" "$REPO_ROOT/docker/verify-proxy.yml")
 
 stack() {
@@ -215,8 +197,6 @@ stack() {
     docker compose -p "$PROJECT" --project-directory "$REPO_ROOT" -f "${STACK_FILES[0]}" -f "${STACK_FILES[1]}" "$@"
 }
 
-# The external images of the stack and of the queue checks, read from their Compose files; the n8n-ops images are
-# built here, never pulled.
 STACK_IMAGES=()
 QUEUE_IMAGES=()
 read_images() {
@@ -228,7 +208,6 @@ read_images() {
   fi
 }
 
-# Starts pulling every external image the parts that run will use, so they download during the work before it.
 start_image_pulls() {
   [ $INTEGRATION -eq 1 ] || [ $E2E -eq 1 ] || return 0
   read_images
@@ -245,13 +224,11 @@ cleanup_stack() {
   docker compose -p "${PROJECT}-queue" -f "$REPO_ROOT/docker/verify-queue.yml" down -v >/dev/null 2>&1 || true
   stop_store_servers
   stack down --remove-orphans >/dev/null 2>&1 || true
-  # After the last round the data is already gone; the exit trap must not turn that into a failure.
   if [ -n "${N8N_OPS_DATA_DIR:-}" ]; then
     remove_data_dir "$N8N_OPS_DATA_DIR"
   fi
 }
 
-# Stops the stack, confirms nothing of it still runs, and removes its data, so the next round starts fresh.
 stop_stack() {
   stop_store_servers
   stack down --remove-orphans || die "the verification stack did not stop"
@@ -264,7 +241,6 @@ start_stack() {
   N8N_OPS_DATA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/n8n-ops-verify.XXXXXX")"
   export N8N_OPS_DATA_DIR
   prepare_data_dirs "$N8N_OPS_DATA_DIR"
-  # A new certificate for the mail server each run, in the run's data directory.
   make_mail_tls "$N8N_OPS_DATA_DIR"
   wait_for_pulls "${STACK_IMAGES[@]}"
   stack up -d --remove-orphans --wait --wait-timeout 180 || {
@@ -275,8 +251,6 @@ start_stack() {
   check_non_root "$PROJECT" server postgres worker
   check_socket_proxy "$PROJECT"
   check_socket_proxy_config "$PROJECT" "${STACK_FILES[@]}" || die "the socket proxy was not made from its Compose files"
-  # The worker never gets database credentials. Only the names are read, never the values (one may span lines), and a
-  # failed read fails the check: in a pipe, grep -q could end the reading with SIGPIPE, which pipefail reads as no match.
   local names
   names="$(stack exec -T -u node worker node -e 'console.log(Object.keys(process.env).join("\n"))')" ||
     die "could not read the names in the worker's environment"
@@ -285,8 +259,6 @@ start_stack() {
   fi
 }
 
-# Stores the design in the fresh database and restarts the server to read it, so even first-run setup
-# shows that design.
 seed_design() {
   local design="$1"
   # shellcheck disable=SC2016 # expands inside the container
@@ -299,11 +271,8 @@ seed_design() {
   fi
 }
 
-# The server's readiness, the stack's socket proxy and the worker image, none of which depend on the design. In each
-# round of a full sweep, and in CI in the Integration job only.
 run_checks_on_stack() {
   info "Integration: health endpoint"
-  # The version the server reports is the image's VERSION file, read as node: the repository's VERSION.
   local version
   version="$(head -n 1 "$REPO_ROOT/VERSION")"
   TOOLCHAIN_EXTRA_ARGS=(--network "${PROJECT}_default" -e "WANT_VERSION=$version")
@@ -315,8 +284,6 @@ run_checks_on_stack() {
   TOOLCHAIN_EXTRA_ARGS=()
 
   info "Integration: the socket proxy allows only what the worker needs"
-  # From inside the worker: ping and listing containers pass, with or without an API version and with a query;
-  # inspecting a container (its environment), also with an encoded path, and exec in another container are refused.
   local probe='const p = (m, path) => fetch("http://socket-proxy:2375" + path, { method: m, headers: { "content-type": "application/json" }, body: m === "POST" ? "{}" : undefined }).then((r) => r.status);
 (async () => {
   const pg = "'"${PROJECT}"'-postgres-1";
@@ -329,8 +296,6 @@ run_checks_on_stack() {
   stack exec -T -u node worker node -e "$probe" || die "the socket proxy does not enforce its allowlist"
 
   info "Integration: the socket proxy allows commands only in this stack's n8n and the queue checks' main"
-  # Other projects' names, another replica and another service, made for this run and checked absent first, are refused
-  # with 403. The stack's own n8n and the queue main are let through. No call carries a command.
   local r=$((RANDOM * 32768 + RANDOM + 2)) name names refused allowed
   refused=("other$r-n8n-1" "x$r$PROJECT-n8n-1" "$PROJECT$r-n8n-1" "$PROJECT-n8n-$r" "$PROJECT-n8n-worker-$r"
     "$PROJECT-queue$r-n8n-1" "$PROJECT-queue-n8n-$r")
@@ -351,14 +316,12 @@ run_checks_on_stack() {
     })()' "${refused[*]}" "${allowed[*]}" || die "the socket proxy allows commands in containers of other projects"
 
   info "Integration: the socket proxy check refuses a proxy made from other settings"
-  # The stack's proxy was made with docker/verify-proxy.yml; the template alone gives other settings.
   if (check_socket_proxy_config "$PROJECT" "${STACK_FILES[0]}") 2>/dev/null; then
     die "check_socket_proxy_config accepts a socket proxy made from other settings"
   fi
   echo "    made from the template and docker/verify-proxy.yml, checked against the template alone: refused"
 
   info "Integration: the proxy check refuses a proxy that may gain privileges"
-  # The same container with the setting on passes, so the refusal is for that setting alone.
   local fake value outcome
   for value in true false; do
     fake="$(docker run -d --rm --label "com.docker.compose.project=${PROJECT}-fake" \
@@ -374,8 +337,6 @@ run_checks_on_stack() {
   done
 
   info "Integration: the worker joins the group of the socket it uses, and only that one"
-  # Runs the worker image's entrypoint with the host's socket mounted, as the generated compose
-  # does without the proxy, and reads the groups the worker would run with.
   local gid groups expect setting name mount env got envs
   gid="$(stat -c %g /var/run/docker.sock)"
   [ "$gid" != 1000 ] || die "the Docker socket's group is 1000, the worker's own; this check cannot tell them apart"
@@ -392,8 +353,6 @@ run_checks_on_stack() {
   done
 
   info "Integration: the worker takes a data folder that Docker made for root"
-  # docker compose up makes a missing ./data as root. With the limits of the generated compose, the
-  # entrypoint hands it to node, and the worker can then save its identity there.
   local data="$N8N_OPS_DATA_DIR/worker-root-data" owner
   mkdir -p "$data"
   docker run --rm -u 0 --entrypoint chown -v "$data:/data" n8n-ops-worker:verify 0:0 /data
@@ -405,21 +364,17 @@ run_checks_on_stack() {
   [ "$owner" = "1000 node 1000 node " ] || die "the worker entrypoint does not hand a root-owned /data to node"
 }
 
-# The database upgrades on earlier releases' data, and each backup destination store against a real server
-# of its kind. Once per run, and in CI in the Integration job only: they do not depend on the design.
 run_server_integration() {
   [ "$STORES_DONE" = 0 ] || return 0
   STORES_DONE=1
   info "Integration: database upgrades and backup destination stores"
   local net="${PROJECT}_default" certs="$N8N_OPS_DATA_DIR/certs"
   mkdir -p "$certs"
-  # A throwaway certificate for the WebDAV server; the tests trust it, nothing else does.
   TOOLCHAIN_EXTRA_ARGS=(-v "$certs:/certs")
   in_toolchain "openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj /CN=webdav \
     -addext subjectAltName=DNS:webdav -keyout /certs/key.pem -out /certs/cert.pem 2>/dev/null \
     && chmod 0644 /certs/key.pem" || die "could not make the WebDAV test certificate"
   wait_for_pulls "$SFTP_IMAGE" "$WEBDAV_IMAGE"
-  # Their passwords are this run's (make_run_secrets), read from env files so they are on no command line.
   docker run -d --name "${PROJECT}-sftp" --network "$net" --network-alias sftp \
     -e PUID=1000 -e PGID=1000 -e USER_NAME=n8n-ops -e PASSWORD_ACCESS=true --env-file "$RUN_ENV_DIR/sftp.env" \
     "$SFTP_IMAGE" >/dev/null || die "the SFTP test server did not start"
@@ -443,17 +398,12 @@ run_server_integration() {
 
 QUEUE_DONE=0
 
-# The n8n queue workers next to a main, found and checked by the stack's worker through its socket proxy, against
-# the official n8n in queue mode (docker/verify-queue.yml): ready, not ready while Redis is stopped (its readiness
-# endpoint is seen at 503 first), ready again, and down once stopped. Once per run, and in CI in the Integration job
-# only: it does not depend on the design.
 run_queue_checks() {
   [ "$QUEUE_DONE" = 0 ] || return 0
   QUEUE_DONE=1
   info "Integration: queue workers found next to the main and checked through the socket proxy"
   local q="${PROJECT}-queue" started=$SECONDS
   queue() { docker compose -p "$q" -f "$REPO_ROOT/docker/verify-queue.yml" "$@"; }
-  # The proxy and the probe of run_proxy_checks start there, on their own.
   wait_for_pulls "${QUEUE_IMAGES[@]}"
   queue up -d --wait --wait-timeout 240 postgres redis n8n n8n-worker >/dev/null 2>&1 || {
     queue ps -a
@@ -461,7 +411,6 @@ run_queue_checks() {
     queue down -v >/dev/null 2>&1
     die "the queue-mode n8n did not start"
   }
-  # One probe as the server asks for it; the JSON report is checked with node in the worker container.
   local payload="{\"inside\":{\"container\":\"$q-n8n-1\"},\"discover\":true,\"check\":{\"seq\":1,\"revision\":0}}"
   expect_worker() {
     local want="$1" report
@@ -484,8 +433,6 @@ run_queue_checks() {
         die "the queue worker was not seen as $want"
       }
   }
-  # Waits, at most a minute, until the worker's own readiness endpoint answers the status given, so the check is not
-  # raced. Each request gives up after two seconds.
   readiness_is() {
     local want="$1" until=$((SECONDS + 60))
     while [ "$SECONDS" -lt "$until" ]; do
@@ -496,8 +443,6 @@ run_queue_checks() {
     die "the queue worker's readiness did not answer $want"
   }
   expect_worker ready
-  # The same main named by its Compose project and service instead of its name: the worker resolves the container,
-  # reads it inside, finds its queue workers, and finds a rule for the service's replicas clean on this host.
   local by_service="{\"inside\":{\"target\":{\"project\":\"$q\",\"service\":\"n8n\"}},\"discover\":true,\"check\":{\"seq\":1,\"revision\":0}}"
   local service_report
   service_report="$(stack exec -T -u node worker node dist/probe-cli.js "$by_service")"
@@ -527,10 +472,6 @@ run_queue_checks() {
   echo "    queue checks took $((SECONDS - started)) s"
 }
 
-# What the socket proxy refuses and the lines n8n-ops computes for it, against the queue project's own proxy
-# (queue-proxy, used by queue-probe), never the stack's: a probe names the queue workers of a main the proxy refuses;
-# the computed lines let the next probe read inside, and still refuse inspecting a container and commands in one
-# they do not list; a proxy that refuses reading a command's result is reported as that, and the lines fix it too.
 run_proxy_checks() {
   local q="$1" override="$N8N_OPS_DATA_DIR/queue-proxy.yml" narrow="$N8N_OPS_DATA_DIR/queue-proxy-narrow.yml" report
   local payload="{\"inside\":{\"container\":\"$q-n8n-1\"},\"discover\":true,\"check\":{\"seq\":1,\"revision\":0}}"
@@ -542,7 +483,6 @@ run_proxy_checks() {
     die "$1"
   }
   probe() { report="$(queue exec -T queue-probe node dist/probe-cli.js "$payload")"; }
-  # Checks the last report with a test given as a JavaScript expression over r (the report).
   expect_report() {
     # shellcheck disable=SC2016 # expands inside the container
     queue exec -T queue-probe node -e 'const r = JSON.parse(process.argv[1]); process.exit(eval(process.argv[2]) ? 0 : 1)' \
@@ -552,7 +492,6 @@ run_proxy_checks() {
     queue -f "$1" up -d --wait --wait-timeout 60 --force-recreate queue-proxy >/dev/null 2>&1 ||
       fail_queue "the queue socket proxy did not start with $1"
   }
-  # The proxy as it starts refuses commands everywhere.
   queue up -d --wait --wait-timeout 60 queue-proxy queue-probe 2>&1 | tail -5 || true
   if [ -z "$(queue ps -q --status running queue-probe)" ] || [ -z "$(queue ps -q --status running queue-proxy)" ]; then
     fail_queue "the queue socket proxy or its probe did not start"
@@ -573,7 +512,6 @@ run_proxy_checks() {
     Promise.all([ask("GET", "/containers/" + process.argv[1] + "-postgres-1/json"), ask("POST", "/containers/" + process.argv[1] + "-postgres-1/exec")])
       .then((s) => process.exit(s.every((x) => x === 403) ? 0 : 1))' "$q" ||
     fail_queue "the computed lines allow inspecting a container or commands in one they do not list"
-  # A proxy that refuses reading a command's result.
   sed 's#exec/\[0-9a-f\]+/json|##' "$override" >"$narrow"
   proxy_with "$narrow"
   probe
@@ -585,8 +523,6 @@ run_proxy_checks() {
   echo "    socket proxy lines checked against a proxy of their own"
 }
 
-# One round per design, each on a fresh stack: the integration checks, then the end-to-end tests. Both designs are
-# one app with the same functions, so the same suite runs in each and must pass in each; only the look differs.
 run_round() {
   local design="$1"
   if [ $E2E -eq 1 ]; then
@@ -608,11 +544,6 @@ run_round() {
 run_e2e() {
   local design="$1" app="$2"
   wait_for_pulls "$PLAYWRIGHT_IMAGE"
-  # The tests run in the server container's network, as a browser on the server's own computer would: they reach it
-  # at http://localhost:8080, where agents may connect over plain http with no exception for tests, and the server
-  # reaches the stand-in Telegram Bot API they run at localhost:8099 (TELEGRAM_API_URL). The stack's other services
-  # keep their names. The session spec moves its session's clocks in the database, since the server's clock cannot
-  # be moved.
   local server
   server="$(stack ps -q server)"
   [ -n "$server" ] || die "the server container is not running"
@@ -623,19 +554,14 @@ run_e2e() {
     -v "$N8N_OPS_DATA_DIR/pairing:/worker-data" -v "$N8N_OPS_DATA_DIR/backups:/backups-data:ro" \
     -v "$REPO_ROOT:/repo" -w "/repo/$app" \
     "$PLAYWRIGHT_IMAGE" node node_modules/@playwright/test/cli.js test || {
-    # The proxy and n8n too: a worker's Docker call that breaks off shows there which hop dropped it.
     stack logs --tail 60 server worker socket-proxy n8n
     die "end-to-end tests failed ($design design)"
   }
 }
 
-# The integration checks and the end-to-end tests, as far as they run: both in a full sweep, where the integration
-# checks run in the first round only, except those on the stack itself, which run in each round.
 run_integration() {
   info "Integration: images and stack"
   build_images verify
-  # Telegram calls go to the stand-in Bot API inside the end-to-end test runner, never to Telegram. The runner shares
-  # the server's network (run_e2e), so the stand-in is on the server's localhost.
   export TELEGRAM_API_URL="http://localhost:8099"
   STACK_USED=1
   local design
@@ -644,9 +570,6 @@ run_integration() {
   done
 }
 
-# This run's secrets, new for each run (AGENTS.md, Secrets): the stack's env files, those of the queue checks, and
-# what the test containers and the SFTP and WebDAV test servers read. Every Compose call of the run reads this
-# directory, so it is made before the first one and removed by the exit trap after the stack is gone.
 RUN_ENV_DIR=""
 make_run_secrets() {
   local queue_password queue_key sftp webdav admin owner url content
@@ -666,7 +589,6 @@ make_run_secrets() {
   admin="$(random_secret)" || exit 1
   owner="$(random_secret)" || exit 1
   url="$(env_value "$RUN_ENV_DIR/server.env" DATABASE_URL)"
-  # n8n wants an upper-case letter and a digit in its owner's password, and at most 64 characters.
   publish_env_file "$RUN_ENV_DIR" tests.env "MIGRATION_DATABASE_URL=$url
 E2E_DATABASE_URL=$url
 E2E_ADMIN_PASSWORD=$admin
@@ -674,7 +596,6 @@ E2E_N8N_OWNER_PASSWORD=N8n-${owner:0:40}
 SFTP_PASSWORD=$sftp
 WEBDAV_PASSWORD=$webdav"
   publish_env_file "$RUN_ENV_DIR" sftp.env "USER_PASSWORD=$sftp"
-  # rclone reads each flag from RCLONE_<FLAG>: --user and --pass of serve webdav.
   publish_env_file "$RUN_ENV_DIR" webdav.env "RCLONE_USER=n8n-ops
 RCLONE_PASS=$webdav"
 }
@@ -688,20 +609,17 @@ on_exit() {
 main() {
   require_docker
   trap on_exit EXIT
-  # Ctrl-C or a stopped CI job end the script through exit, so the EXIT trap stops the stack.
   trap 'exit 130' INT
   trap 'exit 143' TERM
 
   if [ -n "$CHANGED_BASE" ]; then
     mapfile -d '' -t files < <(changed_files)
-    # mapfile does not see the status of the process substitution: a failed merge-base would read as no changes.
     wait $! || die "could not list the files changed since $CHANGED_BASE"
     if [ ${#files[@]} -eq 0 ]; then
       info "No changes since $CHANGED_BASE"
       CHECKS=0 INTEGRATION=0 E2E=0
-    # grep without -q, as in run_checks: with -q a long list could fail with SIGPIPE and read as no match.
+    # grep -q would end its producer with SIGPIPE, which pipefail turns into no match.
     elif printf '%s\n' "${files[@]}" | grep -vE '^(docs/|README\.md$|AGENTS\.md$|CHANGELOG\.md$|LICENSE$)' >/dev/null; then
-      # Shared root files, config or images: the package filter cannot see their consumers, so run everything.
       if printf '%s\n' "${files[@]}" |
         grep -E '^(VERSION$|package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|biome\.json|config/|docker/|docker-compose\.yml|scripts/lib/)' >/dev/null; then
         info "Shared files changed: full sweep"
@@ -716,7 +634,6 @@ main() {
   if [ $INTEGRATION -eq 1 ] || [ $E2E -eq 1 ]; then
     make_run_secrets
   fi
-  # The external images download while the toolchain, the checks and the images are built.
   start_image_pulls
   build_toolchain
 
@@ -725,7 +642,6 @@ main() {
     run_checks
   fi
   if [ $INTEGRATION -eq 1 ] || [ $E2E -eq 1 ]; then
-    # The server integration tests and the end-to-end tests need the workspace's node_modules.
     [ $CHECKS -eq 1 ] || install_deps
     run_integration
   fi

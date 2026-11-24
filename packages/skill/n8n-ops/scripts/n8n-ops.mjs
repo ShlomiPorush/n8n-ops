@@ -1,24 +1,4 @@
 #!/usr/bin/env node
-/*
- * n8n-ops for agents: connect with a code a person approves (OAuth device flow, RFC 8628), then read n8n-ops and ask
- * for temporary n8n instance access through its REST API, within what the person allowed.
- *
- * One of three versions with one contract: n8n-ops.mjs (Node 20+), n8n-ops.ps1 (Windows PowerShell 5.1+ and
- * PowerShell 7) and n8n-ops.sh (POSIX sh, curl and awk). Same commands, same JSON output and error codes, same files
- * and the same lock, so they can run side by side on one computer. Tokens never appear in the output.
- *
- * The connection belongs to the computer user, not to the folder the skill is in: every agent install of this user
- * shares it, it is kept in the user's profile (~/.n8n-ops), and the skill's folder is never written.
- *
- * The refresh token rotates on every use, and the server ends the connection when one is used twice. So every
- * change to the connection's file and every request that spends a one-time secret runs under one lock, the access
- * token is reused until a minute before it runs out, and a refresh whose answer was lost is retried once.
- *
- * The kind of a call (read or act) comes only from the server's own list of this connection's calls, kept per
- * connection with the list's revision, which every call carries. Without a usable list nothing is sent. A call is
- * sent again only after one of the three refusals the server makes before any route code runs, or, for a read,
- * after a network failure. An act call whose answer is lost, or that the server failed, is outcome_unknown.
- */
 import { execFileSync } from "node:child_process"
 import { createHash, randomBytes } from "node:crypto"
 import fs from "node:fs"
@@ -62,31 +42,20 @@ const SKILL_REVISION = 3
 const env = (name) => process.env[`${ENV_PREFIX}${name}`]
 const SKILL_HEADER = SKILL_VERSION.startsWith("__") ? `r${SKILL_REVISION}` : SKILL_VERSION
 const WAIT_SECONDS = Number(env("WAIT_SECONDS")) || 90
-// A pending code is dropped locally only this long after its expiry: until then the server decides
-// (an approved code can be collected for a few minutes after it expires).
 const STALE_CODE_SECONDS = 600
 const LOCK_WAIT_MS = Number(env("LOCK_WAIT_MS")) || 20_000
 const OAUTH_TIMEOUT_MS = 15_000
-// The server answers an API call within 60 s (or says the outcome is unknown); tests shorten it.
 const API_TIMEOUT_MS = Number(env("TEST_API_TIMEOUT_MS")) || 75_000
-// RFC 8628: 5 seconds between polls unless the server says otherwise (tests shorten it).
 const POLL_SECONDS = Number(env("TEST_POLL_SECONDS")) || 5
-// A refresh is retried only once it cannot be in flight any more: twice the request timeout (tests shorten it).
 const REFRESH_GRACE = Number(env("TEST_REFRESH_GRACE") ?? 30)
-// Wait before the one retry of a call the server refused as busy (tests shorten it).
 const BUSY_WAIT_MS = Number(env("TEST_BUSY_WAIT_MS") ?? 2000)
 const KINDS_MAX_AGE = 3600
 const KINDS_FORMAT = "2"
 const SECRET = /^[A-Za-z0-9._~+/=-]{1,4096}$/
-// The policy revision the server gives with its list: a short token, safe in a header and in the kinds file.
 const REVISION = /^[A-Za-z0-9._-]{1,128}$/
-// Every value in a connection file: no quote, backslash or control character, so the shell version reads it too.
 // biome-ignore lint/suspicious/noControlCharactersInRegex: refusing control characters is the point
 const PLAIN = /^[^"\\\u0000-\u001f\u007f]*$/
-// The only address shape kept (the server serves its own address in this shape too): no character an agent's
-// shell would treat specially can reach the commands this one prints.
 const SAFE_ORIGIN = /^https?:\/\/(\[[0-9a-f:.]+\]|[a-z0-9.-]+)(:[1-9][0-9]{0,4})?$/
-// The file that keeps the address of the last working connection, so a copy of the skill without one finds it.
 const ADDRESS = "address"
 const PATH_CHARS = /^[A-Za-z0-9._~!$&'()*+,;=:@/?%-]+$/
 const UNKNOWN_OUTCOME = "The action may have run. Read its state before trying again."
@@ -129,7 +98,6 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const print = (value) => process.stdout.write(`${JSON.stringify(value)}\n`)
 const host = () => (win ? process.env.COMPUTERNAME || os.hostname() : os.hostname())
 const sameHost = (h) => String(h).toLowerCase() === host().toLowerCase()
-// Windows tools by their full path: in Git Bash, for one, whoami is a different program.
 const system32 = (exe) => path.join(process.env.SystemRoot || "C:\\Windows", "System32", exe)
 
 const HELP = `${CMD}: use ${PRODUCT} after a person approves it.
@@ -191,11 +159,6 @@ function body(opts, fallback) {
   return opts.json ?? fallback
 }
 
-/**
- * The server's address and where its connection is kept: one per address for this computer user.
- * The address: --url, the environment, the one filled in when the server served this file, or the one kept on
- * connecting.
- */
 function context(urlOption) {
   const dir = credentialsDir()
   let raw = urlOption || env("URL") || (DEFAULT_URL.startsWith("__") ? "" : DEFAULT_URL)
@@ -205,7 +168,6 @@ function context(urlOption) {
     throw new Fail("no_url", `No ${PRODUCT} address. Ask the person for it, then run: ${CMD} connect --url "<address>"`)
   let issuer
   try {
-    // A kept address is one line: anything else in the file makes it invalid, not a different address.
     if (kept && /\s/.test(kept)) throw new Fail("insecure_url", "")
     issuer = issuerOf(raw)
   } catch (e) {
@@ -223,7 +185,6 @@ function context(urlOption) {
   }
 }
 
-/** The origin of an address: https (http only on this computer), with nothing after it. */
 function issuerOf(raw) {
   let url
   try {
@@ -252,17 +213,13 @@ function keptAddress(dir) {
   }
 }
 
-/** Keeps the address of a working connection, in one step. Only a convenience: a failure changes nothing. */
 function keepAddress(ctx) {
   try {
     if (keptAddress(ctx.dir) === ctx.issuer) return
     writePrivate(ctx, path.join(ctx.dir, ADDRESS), `${ctx.issuer}\n`)
-  } catch {
-    // The connection works without it: --url, the environment or the served address still find it.
-  }
+  } catch {}
 }
 
-/** What the connection is called on the approval page and in the product's list of connections. */
 function label() {
   if (env("AGENT_NAME")) return env("AGENT_NAME").slice(0, 60)
   return `Agents on ${host()}`.slice(0, 60)
@@ -283,7 +240,6 @@ function credentialsDir() {
 }
 
 let secured = false
-/** Creates the folder if needed and checks that only this user can read it; never loosens or fixes it silently. */
 function secureDir(dir) {
   if (secured) return
   try {
@@ -295,7 +251,6 @@ function secureDir(dir) {
   if (st.isSymbolicLink() || !st.isDirectory())
     throw new Fail("insecure_credentials", `${dir} must be a plain folder, not a link.`)
   if (win) {
-    // Mode bits are no ACL on Windows: the folder is limited to this user, SYSTEM and Administrators.
     try {
       const sid = userSid()
       execFileSync(
@@ -311,10 +266,7 @@ function secureDir(dir) {
         ],
         { stdio: "ignore" },
       )
-      // The owner may always change an ACL, so the folder and its files must be this user's. (Only now: taking
-      // ownership needs the full control just granted. No /C, which would hide a failure behind exit code 0.)
       icacls([dir, "/setowner", `*${sid}`, "/T", "/Q"])
-      // Granting does not remove other entries: read the folder's and its files' ACLs back and allow no one else.
       assertOnlyUser(dir, sid)
     } catch (e) {
       if (e instanceof Fail) throw e
@@ -325,11 +277,6 @@ function secureDir(dir) {
 }
 
 let checked = false
-/**
- * Before the connection's file is read: the folder must still be one only this user can open, since a restore or a
- * change of its permissions may have opened it since secureDir set it up. Checks only, never changes it; once per
- * command.
- */
 function checkDir(dir) {
   if (secured || checked) return
   const st = fs.lstatSync(dir)
@@ -354,7 +301,6 @@ function userSid() {
   return sid[1]
 }
 
-/** Reads the folder's and its files' ACLs back and allows no one but this user, SYSTEM and Administrators. */
 function assertOnlyUser(dir, sid) {
   const saved = path.join(dir, `.acl-${hex(4)}`)
   try {
@@ -372,7 +318,6 @@ function assertOwnMode(dir, st) {
   if (st.mode & 0o077) throw new Fail("insecure_credentials", `Others can open ${dir}. Run: chmod 700 '${dir}'`)
 }
 
-/** icacls over the folder and its files; tried again while other commands add or replace files in it. */
 function icacls(args) {
   for (let i = 0; ; i++) {
     try {
@@ -385,13 +330,8 @@ function icacls(args) {
   }
 }
 
-/**
- * What in saved ACLs (icacls /save: one SDDL line per object) lets anyone but this user, SYSTEM and Administrators
- * in. Anything but plain allow and deny entries (conditional or callback ones) counts too: refused, not guessed.
- */
 function othersAllowed(saved, userSid) {
   const allowed = new Set([userSid, "SY", "BA", "S-1-5-18", "S-1-5-32-544"])
-  // SDDL writes the built-in Administrator account (RID 500) as LA, so a user who is that account shows as LA.
   if (/^S-1-5-21-[0-9-]+-500$/.test(userSid)) allowed.add("LA")
   for (const line of saved.split(/\r?\n/)) {
     const at = line.indexOf("D:")
@@ -461,7 +401,6 @@ function serialize(rec) {
   return `{${parts.join(",")}}\n`
 }
 
-/** Writes a file of the connection in one step: a private temp file, synced, renamed over the old one. */
 function writePrivate(ctx, file, text) {
   secureDir(ctx.dir)
   const tmp = `${file}.${hex(6)}.tmp`
@@ -482,7 +421,6 @@ function writePrivate(ctx, file, text) {
 const writeRecord = (ctx, rec) => writePrivate(ctx, ctx.file, serialize(rec))
 
 function renameOver(from, to) {
-  // On Windows an open handle (an antivirus scan) can refuse the rename for a moment.
   const until = Date.now() + 5_000
   for (;;) {
     try {
@@ -502,8 +440,6 @@ function removeRecord(ctx) {
   fs.rmSync(ctx.file, { force: true })
   fs.rmSync(ctx.kinds, { force: true })
 }
-
-/* The lock: a file created exclusively, naming its holder. Never taken from a live holder, however old. */
 
 function readLock(file) {
   try {
@@ -525,7 +461,7 @@ function alive(pid) {
     process.kill(pid, 0)
     return true
   } catch (e) {
-    // The holder runs as this user, so a process of another user with that number means the holder is gone.
+    // EPERM as alive outside Windows would keep a dead holder's lock while another user's process has its number.
     return win && e.code === "EPERM"
   }
 }
@@ -537,7 +473,6 @@ async function hook(point) {
   for (let i = 0; i < 1200 && !fs.existsSync(`${at}.go`); i++) await sleep(50)
 }
 
-/** Takes the lock; `own` is a lock this process held before, which counts as taken if it is back in place. */
 async function acquire(ctx, own) {
   secureDir(ctx.dir)
   const token = hex(16)
@@ -553,7 +488,6 @@ async function acquire(ctx, own) {
       return token
     } catch (e) {
       if (fd !== undefined) fs.closeSync(fd)
-      // Windows refuses for a moment to create a file whose name is still being deleted (a lock just released).
       const deleting = win && (e.code === "EPERM" || e.code === "EACCES") && Date.now() < deadline
       if (deleting) {
         await sleep(50 + Math.random() * 100)
@@ -562,9 +496,7 @@ async function acquire(ctx, own) {
       if (e.code !== "EEXIST") throw new Fail("cannot_save", `Cannot create a lock in ${ctx.dir}.`)
     }
     const held = readLock(ctx.lock)
-    // Another process moved this one's lock away by mistake and has put it back.
     if (own && held && !held.empty && held.token === own) return own
-    // A holder that died between creating the lock and writing its name leaves it empty; that takes a moment.
     const dead = held?.empty
       ? Date.now() - held.mtime > 60_000
       : held && sameHost(held.host) && !alive(Number(held.pid))
@@ -581,16 +513,11 @@ async function acquire(ctx, own) {
           : `Another ${CMD} command is using this connection. Nothing was sent; run it again.`,
       )
     }
-    // Reached only while another live process holds the lock: the tests wait for it instead of for a fixed time.
     await hook("lock-busy")
     await sleep(100 + Math.random() * 200)
   }
 }
 
-/**
- * Removes a dead holder's lock. Moving it away is atomic, so of two that try only one moves it; if what was moved
- * is not the dead lock (another process had just taken a fresh one), it goes back unless a newer one is there.
- */
 async function breakLock(ctx, held) {
   const moved = `${ctx.lock}.${hex(6)}.dead`
   try {
@@ -606,9 +533,7 @@ async function breakLock(ctx, held) {
   }
   try {
     fs.linkSync(moved, ctx.lock)
-  } catch {
-    // A newer lock is there already.
-  }
+  } catch {}
   fs.rmSync(moved, { force: true })
   return false
 }
@@ -628,12 +553,9 @@ async function withLock(ctx, fn, own) {
   }
 }
 
-/** Before spending a one-time secret: the lock must still be ours, or nothing is sent. */
 function assertMine(ctx, token) {
   if (!mine(ctx, token)) throw new Fail("busy", `Another ${CMD} command took over this connection. Run it again.`)
 }
-
-/* Requests */
 
 const NOT_SENT = new Set([
   "ENOTFOUND",
@@ -664,14 +586,12 @@ async function request(ctx, method, url, { form, bearer, json, policy, kind, tim
     headers.authorization = `Bearer ${bearer}`
     headers[SKILL_HEADER_NAME] = SKILL_HEADER
   }
-  // The revision and the kind go together: the server runs the call only when both still hold for the route it picks.
   if (policy) {
     headers[POLICY_HEADER_NAME] = policy
     headers[KIND_HEADER_NAME] = kind
   }
   let res
   try {
-    // No redirects: a secret never follows one to another address.
     res = await fetch(url, {
       method,
       headers,
@@ -687,13 +607,10 @@ async function request(ctx, method, url, { form, bearer, json, policy, kind, tim
   }
   let text
   try {
-    // As the other versions read it: res.text() would drop a byte order mark, which is not JSON.
     text = new TextDecoder("utf-8", { ignoreBOM: true }).decode(await res.arrayBuffer())
   } catch {
-    // The answer started and broke off: the server got the request and may have acted on it.
     throw new Fail("unreachable", `The answer from ${ctx.issuer} broke off.`, { sent: true })
   }
-  // isJson says whether the text is JSON at all: a JSON null is still JSON.
   let parsed = null
   let isJson = false
   try {
@@ -738,8 +655,6 @@ async function revokePending(ctx, rec) {
   return next
 }
 
-/* Commands */
-
 function status(ctx) {
   const rec = readRecord(ctx)
   print({
@@ -751,7 +666,6 @@ function status(ctx) {
 }
 
 async function connect(ctx, replace) {
-  // Before any code exists: can it keep a connection here, and is the server there?
   secureDir(ctx.dir)
   const probe = path.join(ctx.dir, `.probe-${hex(4)}`)
   try {
@@ -771,7 +685,6 @@ async function connect(ctx, replace) {
     let rec = readRecord(ctx) ?? emptyRecord(ctx)
     rec = await revokePending(ctx, rec)
     if (rec.refreshToken && !replace) return { status: "already_connected", label: rec.label, scope: rec.scope }
-    // The open code again, unless asked for a new one (--replace: the link did not work for the person).
     if (rec.deviceCode && rec.deviceExpiresAt - now() > 30 && !replace) return pending(ctx, rec)
     assertMine(ctx, lock)
     const r = await oauth(ctx, DEVICE_PATH, {
@@ -804,10 +717,6 @@ async function connect(ctx, replace) {
   print(result)
 }
 
-/**
- * The hint names the address, so the wait asks the same server even if the kept address changes meanwhile. Quoted:
- * a shell would take the brackets of an IPv6 address as a file pattern.
- */
 function pending(ctx, rec) {
   return {
     status: "pending",
@@ -832,8 +741,6 @@ async function waitForApproval(ctx) {
         throw new Fail("not_connected", `No connection is being made. Run: ${CMD} connect`)
       }
       const t = now()
-      // The server decides when a code has ended: one approved at the last minute can
-      // still be collected for a while after. Only a code long past that is dropped here.
       if (rec.deviceExpiresAt + STALE_CODE_SECONDS <= t) {
         writeRecord(ctx, clearPending(rec))
         throw new Fail("expired", `The code expired before it was approved. Run: ${CMD} connect`)
@@ -855,7 +762,6 @@ async function waitForApproval(ctx) {
       }
       if (r.status === 200) {
         const tokens = tokensFrom(r)
-        // Connecting again (--replace): the old connection is ended once the new one is stored.
         const old = rec.refreshToken && rec.refreshToken !== tokens.refreshToken ? rec.refreshToken : ""
         rec = {
           ...clearPending(rec),
@@ -902,7 +808,6 @@ async function waitForApproval(ctx) {
 
 const usable = (rec) => rec.accessToken && rec.accessExpiresAt - now() > 60 && !rec.refreshStartedAt
 
-/** A live access token: the stored one while it lasts, else one refresh under the lock. */
 async function accessToken(ctx, stale) {
   const first = readRecord(ctx)
   if (!first?.refreshToken) throw new Fail("not_connected", `Not connected. Run: ${CMD} connect`)
@@ -911,15 +816,11 @@ async function accessToken(ctx, stale) {
     let rec = readRecord(ctx)
     if (!rec?.refreshToken) throw new Fail("not_connected", `Not connected. Run: ${CMD} connect`)
     rec = await revokePending(ctx, rec)
-    // Another command refreshed while this one waited for the lock.
     if (usable(rec) && rec.accessToken !== stale) return rec.accessToken
     const before = { refreshStartedAt: rec.refreshStartedAt, refreshRetried: rec.refreshRetried }
-    // A refresh that started moments ago may still be on its way (its holder lost the lock): never send it twice.
     if (rec.refreshStartedAt && now() - rec.refreshStartedAt < REFRESH_GRACE)
       throw new Fail("busy", `Another ${CMD} command is refreshing this connection. Nothing was sent; run it again.`)
     if (rec.refreshStartedAt) {
-      // The last refresh got no answer; it may or may not have reached the server. Trying once more either
-      // continues the connection or ends it there, which also ends the new token nobody received.
       if (rec.refreshRetried)
         throw new Fail(
           "connection_ended",
@@ -939,7 +840,6 @@ async function accessToken(ctx, stale) {
         resource: `${ctx.issuer}${RESOURCE}`,
       })
     } catch (e) {
-      // Nothing left the computer: the token is as good as before.
       if (e.code === "unreachable" && e.extra.sent === false) writeRecord(ctx, { ...rec, ...before })
       throw e
     }
@@ -947,13 +847,11 @@ async function accessToken(ctx, stale) {
       const next = { ...rec, ...tokensFrom(r), refreshStartedAt: 0, refreshRetried: 0 }
       await hook("before-write")
       if (!mine(ctx, lock)) {
-        // The lock was taken while this one waited for the server: keep the new tokens anyway, under a fresh lock.
         await withLock(ctx, async () => writeRecord(ctx, next), lock)
       } else writeRecord(ctx, next)
       return next.accessToken
     }
     if (r.json?.error === "invalid_grant") {
-      // An old connection still to be ended (after --replace) keeps its place until the server confirms it.
       if (rec.toRevoke) writeRecord(ctx, { ...emptyRecord(ctx), label: rec.label, toRevoke: rec.toRevoke })
       else removeRecord(ctx)
       throw new Fail(
@@ -961,34 +859,19 @@ async function accessToken(ctx, stale) {
         `This connection has ended (disconnected in ${PRODUCT}, its time ran out, sign-in settings changed, or its token was used twice). Run: ${CMD} connect`,
       )
     }
-    // The server answered with an error before spending the token (a 4xx); a 5xx may have come after.
     if (r.status < 500) writeRecord(ctx, { ...rec, ...before })
     throw httpFail(r, "Refreshing the connection")
   })
 }
 
-/**
- * The full path of a call (with its query) and the URL to send it to: a path under one of PREFIXES, never
- * anywhere else, so the token goes only to the API.
- */
 function apiTarget(ctx, p) {
   const value = String(p ?? "")
   const bad = `Give a path from \`${CMD} endpoints\`, for example: get '/api/v1/problems?status=open' (percent-encode anything else)`
-  // The same characters in every version (the shell version passes the path to curl as it is).
-  // Encoded dots too: a server or proxy that decodes them would take the token out of the API.
   if (!PATH_CHARS.test(value) || value.includes("://") || value.startsWith("//") || /%2e/i.test(value))
     throw new Fail("bad_path", bad)
   const pathOnly = value.split("?")[0]
-  // The kind is found from the path as it is sent, but a server may decode the path before it routes it. So in the
-  // path an escape may not stand for a character a route template holds as it is (A-Z a-z 0-9 . _ ~ : -), nor for
-  // / \ or % (/api/v1/problems/7%2Fsend would match /api/v1/problems/{id} here and may run /api/v1/problems/{id}/send
-  // there), and
-  // every % must start an escape. The query keeps any escape.
   if (/%(?![0-9A-Fa-f]{2})|%(2[5DEF]|3[0-9A]|4[1-9A-F]|5[0-9ACF]|6[1-9A-F]|7[0-9AE])/i.test(pathOnly))
     throw new Fail("bad_path", bad)
-  // Some servers drop ;parameters from a segment before they route (/api/v1/problems/export;x runs
-  // /api/v1/problems/export).
-  // The server's check of the declared kind stops such a call too; this refuses it before it is sent.
   if (pathOnly.includes(";")) throw new Fail("bad_path", bad)
   if (!PREFIXES.some((x) => pathOnly.startsWith(x) && pathOnly.length > x.length)) throw new Fail("bad_path", bad)
   if (pathOnly.split("/").some((s) => s === "." || s === "..")) throw new Fail("bad_path", bad)
@@ -997,14 +880,8 @@ function apiTarget(ctx, p) {
   return { url: url.toString(), path: url.pathname, hasQuery: value.includes("?") }
 }
 
-/*
- * Kinds: whether a call is a read or an act, from the server's own list of this connection's calls, kept with the
- * list's revision for the current connection only. Access and the listing itself are reads, exempt from the list.
- */
-
 const exempt = (method, p) => method === "GET" && (p === ACCESS || p === ENDPOINTS)
 
-/** The usable part of a listing answer, or null when it is not a list with a valid revision. */
 function parseKinds(data) {
   if (data === null || typeof data !== "object" || Array.isArray(data) || !Array.isArray(data.endpoints)) return null
   if (typeof data.revision !== "string" || !REVISION.test(data.revision)) return null
@@ -1012,7 +889,6 @@ function parseKinds(data) {
   for (const e of data.endpoints) {
     const method = String(e?.method ?? "")
     const template = String(e?.path ?? "")
-    // Anything but an explicit read counts as an act.
     const kind = e?.kind === "read" ? "read" : "act"
     if (/^[A-Z]{3,7}$/.test(method) && TEMPLATE.test(template)) entries.push({ method, template, kind })
   }
@@ -1040,7 +916,6 @@ function readKinds(ctx, rec) {
   return { revision: head[4], entries }
 }
 
-/** Keeps a list for the connection it was fetched under. Only a cache: a failure changes nothing. */
 function storeKinds(ctx, generation, list) {
   const rec = readRecord(ctx)
   if (!generation || rec?.generation !== generation) return
@@ -1051,10 +926,6 @@ function storeKinds(ctx, generation, list) {
   } catch {}
 }
 
-/**
- * The list from the server, kept for this connection. Fails closed: when the listing cannot be read, or its answer
- * is not a list, nothing is sent (endpoints_unavailable). Errors of the connection itself are passed on as they are.
- */
 async function fetchKinds(ctx) {
   const generation = readRecord(ctx)?.generation ?? ""
   let r
@@ -1083,10 +954,6 @@ function templateMatches(template, p) {
   return t.length === s.length
 }
 
-/**
- * "read", "act", "both" (a read and an act both match the path, such as /api/v1/problems/export and
- * /api/v1/problems/{id}), or null when the list does not hold the call.
- */
 function lookup(list, method, p) {
   const hits = list.entries.filter((e) => e.method === method && templateMatches(e.template, p))
   const act = hits.some((e) => e.kind === "act")
@@ -1095,11 +962,6 @@ function lookup(list, method, p) {
   return act ? "act" : read ? "read" : null
 }
 
-/**
- * How a call is sent: its kind, and the revision of the list it was classified with. A path the list does not hold
- * is not sent (bad_path), after the list was fetched again in case it changed. A path that a read and an act both
- * match goes as an act first (both: send may send it once more as a read).
- */
 async function classify(ctx, method, p) {
   if (exempt(method, p)) return { kind: "read", revision: "", path: p, both: false }
   const rec = readRecord(ctx)
@@ -1118,27 +980,16 @@ async function classify(ctx, method, p) {
   }
 }
 
-/** The top object's own field `key` when it is a string (as JSON.parse reads the answer), else undefined. */
 function topText(r, key) {
   const body = r.json
   if (body === null || typeof body !== "object" || Array.isArray(body) || !Object.hasOwn(body, key)) return undefined
   return typeof body[key] === "string" ? body[key] : undefined
 }
 
-// The three refusals the server makes before any route code runs. Nothing ran, so the call may go again. The markers
-// count only as the top object's exact key error with a string value.
 const tokenRefused = (r) => r.status === 401 && r.challenge.includes('error="invalid_token"')
 const busyRefused = (r) => r.status === 429 && topText(r, "error") === "busy"
 const policyRefused = (r) => r.status === 409 && topText(r, "error") === "policy_changed"
 
-/**
- * One API call with its retries, each at most once: after a 401 with the invalid_token challenge, a refresh and the
- * call again; after a 429 busy, a wait and the call again; after a 409 policy_changed, the list again and the call
- * again under its new kind. A path that a read and an act both match went as an act; when the list read again still
- * has both for it, it goes once more as a read (the router picked the read route). Every one of these follows a
- * refusal made before any route code ran. Any other answer is the answer. For a read, one retry after a network
- * failure; an act is never sent again once it may have reached the server.
- */
 async function send(ctx, method, url, json, call) {
   let token = await accessToken(ctx)
   let refreshed = false
@@ -1191,7 +1042,6 @@ async function send(ctx, method, url, json, call) {
   }
 }
 
-/** The answer as JSON text on one line: a JSON answer as it is (its line breaks are only spacing), text as a string. */
 function dataText(r) {
   if (r.isJson) return r.text.replace(/[\r\n]/g, "").trim()
   return JSON.stringify(r.text)
@@ -1232,11 +1082,9 @@ async function api(ctx, method, p, json) {
     process.stdout.write(`{"status":${r.status},"data":${data}}\n`)
     return
   }
-  // A connection the person did not allow to ask for instance access: it needs a new approval to get it.
   if (r.status === 403 && topText(r, "error") === "not_allowed")
     throw new Fail("insufficient_scope", NO_ACCESS_SCOPE, { status: r.status })
   const body = r.json !== null && typeof r.json === "object" && !Array.isArray(r.json) ? r.json : null
-  // The server's own refusals for agents carry a code and a message: passed on as they are.
   if (body && typeof body.error === "string" && /^[a-z_]{1,40}$/.test(body.error) && typeof body.message === "string")
     throw new Fail(body.error, body.message, { status: r.status })
   throw httpFail(r, `${method} ${p}`)

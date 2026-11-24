@@ -2,8 +2,6 @@ import { randomBytes } from "node:crypto"
 import { describe, expect, it } from "vitest"
 import { concurrencyFlag, discover, type ListedContainer, roleOf } from "./discovery.ts"
 
-// Container lists as Docker gives them for the official image (the Command shapes are copied from a real list):
-// a main runs the entrypoint alone, a worker the entrypoint followed by `worker` and its flags.
 const ENTRY = "tini -- /docker-entrypoint.sh"
 const c = (name: string, command: string, project: string | null = "acme", more: Partial<ListedContainer> = {}) => ({
   Names: [`/${name}`],

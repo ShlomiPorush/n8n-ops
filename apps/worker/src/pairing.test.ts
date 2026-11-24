@@ -5,7 +5,6 @@ import { join } from "node:path"
 import { describe, expect, it } from "vitest"
 import { Pairing } from "./pairing.ts"
 
-/** Pairing tokens and the identity the stand-in server answers with, new for each run. */
 const made = (prefix: string) => `${prefix}${randomBytes(16).toString("hex")}`
 const tokenA = made("nops_pair_")
 const tokenB = made("nops_pair_")
@@ -19,7 +18,6 @@ const refused = () =>
     status: 401,
   })
 
-/** A pairing against a stand-in server, with the tokens it was sent and the messages it logged. */
 async function setup(answers: (() => Response)[], dir?: string) {
   const dataDir = dir ?? (await mkdtemp(join(tmpdir(), "pair-")))
   const sent: string[] = []
@@ -106,7 +104,6 @@ describe("Pairing", () => {
     const logged: string[] = []
     const pairing = new Pairing({
       dataDir,
-      // The folder passes the check, but the file cannot be written: the window between check and save.
       identityFile: join(dataDir, "missing", "identity.json"),
       request: async (token) => {
         sent.push(token)

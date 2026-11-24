@@ -3,14 +3,12 @@ import type { AddressInfo } from "node:net"
 import { describe, expect, it } from "vitest"
 import { METRICS_MAX_BYTES, parseQueueMetrics, parseVersionMetric, readMetricsText } from "./metrics.ts"
 
-/** Runs `parse` once and returns its result with the time it took. */
 function timed<T>(parse: () => T) {
   const started = performance.now()
   const result = parse()
   return { result, ms: performance.now() - started }
 }
 
-/** Far above what a linear parse of these inputs takes, far below what one that rescans the text would. */
 const QUICK_MS = 250
 const LINES = 20_000
 
@@ -100,7 +98,6 @@ describe("parseQueueMetrics", () => {
   })
 })
 
-/** A response whose body comes in the given chunks, counting how many were read. */
 function chunked(chunks: Uint8Array[], endless?: Uint8Array) {
   const state = { pulled: 0, cancelled: false }
   let next = 0

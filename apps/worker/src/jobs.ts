@@ -13,11 +13,6 @@ import { type DiscoveryResult, discoverWorkers, LIMITS, listWorkers, mainStateOf
 import { replicasClean, resolveTarget, type ServiceTarget, targetOf } from "./target.ts"
 
 export type Job = { id: string; kind: string; payload: Record<string, unknown> }
-/**
- * A job's result. `refused` says what the socket proxy refused when that made the job fail; for a main named by its
- * Compose service, `resolvedContainer` and `replicas` say which container the job used and whether a rule for the
- * service's replicas reaches only them (the server builds the proxy fix of a failed job from them).
- */
 export type JobResult = {
   ok: boolean
   result?: Record<string, unknown>
@@ -27,10 +22,6 @@ export type JobResult = {
   replicas?: { clean: boolean }
 }
 
-/**
- * The container a backup or an export runs in: the name it was given, or the container of the Compose service now.
- * Resolved once, at the start: every step of the job runs in that one container, even if a rollout replaces it.
- */
 async function jobContainer(
   docker: Docker,
   payload: Record<string, unknown>,
@@ -47,14 +38,9 @@ async function jobContainer(
   const r = await resolveTarget(docker, target, call)
   if (!r.ok) return { ok: false, error: r.reason, ...(r.refused ? { refused: r.refused } : {}) }
   const fields = await serviceFields(docker, target, r.name, AbortSignal.timeout(LIMITS.callMs))
-  // No replica runs: the newest is stopped. Then a failed command is that, not a rollout midway.
   return { ok: true, container: r.name, target, stopped: r.state !== "running", fields }
 }
 
-/**
- * A job's container that a rollout removed or stopped midway: said as that, the next run uses the new one. A
- * service whose containers were all stopped when the job started is said as stopped.
- */
 function replaced(
   error: unknown,
   where: { container: string; target?: ServiceTarget; stopped?: boolean },
@@ -68,14 +54,11 @@ function replaced(
 }
 
 export type Uploader = (size: number, sha256: string) => Promise<{ url: string; headers: Record<string, string> }>
-/** Sends the archive to the server; the Worker passes one that counts a failed upload as a failed call. */
 export type Put = (url: string, init: RequestInit) => Promise<Response>
 
 const WORK = "/tmp/n8n-ops-export"
-/** Printed between the two exports of a backup, so each one is judged by its own output. */
 const CREDENTIALS_LOG = "__CREDENTIALS_EXPORT__"
 
-/** "No workflows found" and similar are not failures: the instance is simply empty. */
 function emptyExport(stderr: string, stdout: string) {
   return /No (workflows|credentials) found/i.test(`${stdout}\n${stderr}`)
 }
@@ -90,19 +73,16 @@ async function cleanup(docker: Docker, container: string) {
 }
 
 async function requestUrl(url: string, signal: AbortSignal = AbortSignal.timeout(10_000)): Promise<RequestReading> {
-  // Past the probe's deadline nothing more is asked.
   if (signal.aborted) return { ok: false, status: 0, ms: 0, error: "the probe reached its deadline before this check" }
   return requestOnce(url, signal)
 }
 
-/** Reads the queue figures from a metrics URL over the network. */
 async function metricsOver(
   url: string,
   signal: AbortSignal = AbortSignal.timeout(10_000),
 ): Promise<{ queue: Record<string, number> | null; metricsError?: string }> {
   try {
     const res = await fetch(url, { signal })
-    // n8n answers 404 there while N8N_METRICS is off; the server words it the same (services/health.ts).
     if (!res.ok)
       throw new Error(
         res.status === 404
@@ -110,7 +90,6 @@ async function metricsOver(
           : `metrics answered ${res.status}`,
       )
     const queue = parseQueueMetrics(await readMetricsText(res))
-    // What this read found replaces what the check in the main said about the queue, an error included.
     return queue
       ? { queue, metricsError: undefined }
       : { queue: null, metricsError: "no queue metrics; set N8N_METRICS_INCLUDE_QUEUE_METRICS=true" }
@@ -119,10 +98,6 @@ async function metricsOver(
   }
 }
 
-/**
- * What a report or a job result says about a Compose service target: the container it used, and whether a rule for
- * `<project>-<service>-<number>` reaches only this service's containers on the host (see target.ts).
- */
 async function serviceFields(docker: Docker, target: ServiceTarget, container: string, deadline: AbortSignal) {
   const clean = deadline.aborted
     ? undefined
@@ -139,7 +114,6 @@ async function serviceFields(docker: Docker, target: ServiceTarget, container: s
 const strings = (value: unknown) =>
   Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : []
 
-/** What the socket proxy refused in a probe, and the queue worker names it listed, as the report carries them. */
 function accessOf(refused: Refusal[], found?: DiscoveryResult) {
   return {
     access: { refused: [...refused, ...(found?.refused ?? [])].slice(0, 60) },
@@ -147,26 +121,14 @@ function accessOf(refused: Refusal[], found?: DiscoveryResult) {
   }
 }
 
-/**
- * Checks an instance from its host (collection mode "worker"). With `inside`, the main is read from inside its
- * container; when the worker cannot do that here (the socket proxy refuses, the container is missing), it checks
- * the URL fields over the network instead and says why. `overrides` holds only what the owner typed: worker health
- * URLs, and a metrics URL read over the network instead of the metrics inside the main.
- *
- * When the socket proxy refuses commands in the main, the worker still lists the main's queue workers if the server
- * asks (`discover` or `list`), after the network checks and within what is left of the budget: their names tell
- * the owner what the proxy must allow.
- */
 export async function probeJob(payload: Record<string, unknown>, docker?: Docker): Promise<JobResult> {
   const inside = payload.inside as { container?: unknown; target?: unknown } | undefined
-  // A main named by its Compose service: the container of the service in use now (resolved below).
   const target = targetOf(inside?.target)
   const overrides = (payload.overrides ?? {}) as { metricsUrl?: unknown; workerHealthUrls?: unknown }
   const typedMetrics = typeof overrides.metricsUrl === "string" ? overrides.metricsUrl : undefined
   const checkedAt = () => new Date().toISOString()
   let fallback: string | undefined
   let refusal: Refusal | undefined
-  // One budget for the whole probe, from its start, the network fallback included; each call has a shorter one.
   const deadline = AbortSignal.timeout(LIMITS.probeMs)
   const within = () => AbortSignal.any([deadline, AbortSignal.timeout(LIMITS.callMs)])
   let container = typeof inside?.container === "string" ? inside.container : ""
@@ -178,8 +140,6 @@ export async function probeJob(payload: Record<string, unknown>, docker?: Docker
       refusal = r.refused
     }
   }
-  // Which container the service resolved to, and whether a rule for its replicas reaches only them: after every
-  // check, with what is left of the budget.
   const targetFields = async () => (docker && target ? await serviceFields(docker, target, container, deadline) : {})
   if (docker && container) {
     const outcome = await checkInside(docker, container, { skipMetrics: Boolean(typedMetrics), signal: within() })
@@ -187,7 +147,6 @@ export async function probeJob(payload: Record<string, unknown>, docker?: Docker
       let report = outcome.report
       const metrics = typedMetrics && !report.notCollected ? await metricsOver(typedMetrics, within()) : {}
       const check = payload.check as { seq?: unknown } | undefined
-      // Queue mode with no worker URLs typed: find the queue workers next to the main and check them.
       const found =
         payload.discover === true
           ? await discoverWorkers(docker, container, {
@@ -196,8 +155,6 @@ export async function probeJob(payload: Record<string, unknown>, docker?: Docker
               service: target?.service,
             })
           : undefined
-      // The state of the main in the container list, read with the workers or on its own. A main the list shows
-      // restarting or stopped is down, even when a check got through in between or could not finish.
       const own = found ? undefined : await mainStateOf(docker, container, within())
       const listed = found ? found.mainState : own?.state
       const listRefused = own?.refused ? [own.refused] : []
@@ -236,7 +193,6 @@ export async function probeJob(payload: Record<string, unknown>, docker?: Docker
     fallback = outcome.reason
     refusal = outcome.refusal
   }
-  // Over the network: the URL fields, as workers of earlier releases do.
   const [main, readiness] = await Promise.all([
     requestUrl(String(payload.main), within()),
     requestUrl(String(payload.readiness), within()),
@@ -246,7 +202,6 @@ export async function probeJob(payload: Record<string, unknown>, docker?: Docker
   )
   const metrics =
     typeof payload.metrics === "string" && payload.metrics ? await metricsOver(payload.metrics, within()) : {}
-  // A main the proxy refuses: list its queue workers (no command), when the server needs their names.
   const listed =
     docker && refusal && container && (payload.discover === true || payload.list === true)
       ? await listWorkers(docker, container, { check: payload.discover === true, deadline, service: target?.service })
@@ -269,10 +224,6 @@ export async function probeJob(payload: Record<string, unknown>, docker?: Docker
   }
 }
 
-/**
- * Exports workflows and decrypted credentials with n8n's CLI inside the container, then encrypts the
- * archive with age before anything leaves the host (requirements D1, D2).
- */
 export async function backupJob(
   docker: Docker,
   payload: Record<string, unknown>,
@@ -286,9 +237,6 @@ export async function backupJob(
   if (!where.ok) return { ok: false, error: where.error, ...(where.refused ? { refused: where.refused } : {}) }
   const { container, fields } = where
   try {
-    // One command: Docker binds an exec to the container it was created in, so the export and the archive read
-    // come from the same container even when a redeploy makes another one under the same name meanwhile. The
-    // archive is the only output; what n8n prints goes to stderr.
     const exported = await run(
       docker,
       container,
@@ -301,7 +249,6 @@ cat ${WORK}.tar`,
     )
     const log = exported.stderr
     if (exported.exitCode !== 0) throw new Error(`export failed: ${log.slice(-400)}`)
-    // Each export by its own output: "No workflows found" never excuses a failed credential export.
     const at = log.indexOf(CREDENTIALS_LOG)
     if (at < 0) throw new Error(`export failed: ${log.slice(-400)}`)
     const workflowLog = log.slice(0, at)
@@ -331,7 +278,6 @@ cat ${WORK}.tar`,
     if (!res.ok) throw new Error(`upload failed: HTTP ${res.status} ${(await res.text()).slice(0, 300)}`)
     return { ok: true, result: { size: sealed.size, sha256: sealed.sha256Base64, workflows, credentials } }
   } catch (error) {
-    // The code (ECONNRESET and the like) tells a cut connection from other failures.
     const { message, code } = error as NodeJS.ErrnoException
     const refused = refusalOf(error, container)
     const swapped = replaced(error, where, "backup")
@@ -346,7 +292,6 @@ cat ${WORK}.tar`,
   }
 }
 
-/** The parser's own message quotes the text around a fault, here a decrypted secret. */
 function parseCredentials(stdout: Buffer): { id: string }[] {
   try {
     return JSON.parse(stdout.toString()) as { id: string }[]
@@ -355,7 +300,6 @@ function parseCredentials(stdout: Buffer): { id: string }[] {
   }
 }
 
-/** Decrypted credentials for a move or an export. Returned to the server over HTTPS and never written to disk here. */
 export async function exportCredentialsJob(docker: Docker, payload: Record<string, unknown>): Promise<JobResult> {
   const where = await jobContainer(docker, payload)
   if (!where.ok)
@@ -366,14 +310,12 @@ export async function exportCredentialsJob(docker: Docker, payload: Record<strin
     }
   const { container, fields } = where
   try {
-    // n8n says only in its log that it has no credentials, and the instance's own settings may keep that elsewhere.
     const res = await run(
       docker,
       container,
       `rm -f ${WORK}.json && N8N_LOG_OUTPUT=console N8N_LOG_LEVEL=error N8N_LOG_FORMAT=text n8n export:credentials --all --decrypted --output=${WORK}.json >&2 && cat ${WORK}.json`,
     )
     const none = res.exitCode !== 0 && emptyExport(res.stderr, "")
-    // What n8n printed stays here: the error is stored and shown, and the export handles decrypted secrets.
     if (res.exitCode !== 0 && !none)
       throw new Error(
         `n8n export:credentials failed in ${container} (exit code ${res.exitCode}). Run it there to see why, then try again.`,

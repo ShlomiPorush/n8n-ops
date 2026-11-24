@@ -1,19 +1,6 @@
 import { type MainCheckOutput, METRIC_GAP, METRIC_LABELS, METRICS_MAX_BYTES, mainCheckOutput } from "@n8n-ops/shared"
 import { type Docker, DockerError, type Refusal, refusalOf } from "./docker.ts"
 
-/**
- * The check the worker runs in the n8n main container with `node -e`, as the container's own user. It reads n8n's
- * settings the way n8n 2.44.3 does (a direct value first, then `<NAME>_FILE`; an unreadable file makes a setting
- * unknown, never off), requests health, readiness and metrics on the loopback of the address n8n listens on, and
- * prints one short JSON line: statuses, the execution mode, the queue figures and the version. Setting values and
- * the metrics text never leave the container. It is a plain string, not a function, so bundling cannot change what
- * runs there; the tests run this same string.
- *
- * HTTPS exactly when n8n serves it (N8N_PROTOCOL=https with a key and a certificate set); the certificate is not
- * verified, for these requests only: the peer is the same network namespace, the requests carry no credentials,
- * and a certificate issued for the public name cannot match a loopback address.
- */
-/** What every check shares: reading settings as @n8n/config does, and requests on the loopback with a deadline. */
 const PRELUDE = String.raw`
 const fs = require("fs"), http = require("http"), https = require("https")
 const env = process.env
@@ -156,17 +143,6 @@ const main = { host: loopback(address.value), port: port.value, tls: tls }
 })().catch((e) => { out.notCollected = "the check in the main failed: " + String((e && e.message) || e).slice(0, 150); done() })
 `}`
 
-/**
- * The check the worker runs in an n8n queue worker container, like the main's. n8n's worker server answers health
- * and readiness only with QUEUE_HEALTH_CHECK_ACTIVE (readiness checks the database, Redis and that start-up
- * finished), on N8N_WORKER_SERVER_ADDRESS and QUEUE_HEALTH_CHECK_PORT, over HTTP. With the health check off it says
- * so and asks for nothing.
- */
-/**
- * What the check in a queue worker reads about the worker itself, as plain functions of a `read(path)` that returns
- * a file's text. The check runs them with the container's files; the tests run the same text with stand-in files.
- * Each answers undefined when it cannot be sure, and nothing they read leaves but the figures they return.
- */
 export const READERS = String.raw`
 /** n8n's version, from the package of the official image. */
 function versionOf(read) {
@@ -268,12 +244,9 @@ if (!active.value) { out.active = false; done() }
 `}`
 
 export type InsideOutcome =
-  /** The check ran (or Docker said the main is down): a report to send. */
   | { kind: "report"; report: Record<string, unknown> }
-  /** Reading inside is not possible here: check over the network instead, and say why. */
   | { kind: "fallback"; reason: string; refusal?: Refusal }
 
-/** What a metrics state means for the owner, worded as the server words it (services/health.ts). */
 export function metricsText(metrics: MainCheckOutput["metrics"]): string | undefined {
   switch (metrics?.state) {
     case "off":
@@ -289,7 +262,6 @@ export function metricsText(metrics: MainCheckOutput["metrics"]): string | undef
   }
 }
 
-// `ms` stays the whole check, as workers of earlier releases sent it; `requestMs` is the request alone.
 const probe = (r: MainCheckOutput["health"], ms: number) =>
   r
     ? {
@@ -302,7 +274,6 @@ const probe = (r: MainCheckOutput["health"], ms: number) =>
       }
     : { ok: false, status: 0, ms, error: "not checked" }
 
-/** Turns what the check in the main printed into the parts of a health report. */
 export function reportFromOutput(output: MainCheckOutput, ms: number): Record<string, unknown> {
   if (output.notCollected) return notCollected(output.notCollected, ms)
   return {
@@ -323,11 +294,6 @@ function notCollected(reason: string, ms: number): Record<string, unknown> {
   return { main: unknown, readiness: unknown, queue: null, source: "inside", notCollected: reason.slice(0, 300) }
 }
 
-/**
- * Reads the main from inside its container. Docker refusing (the socket proxy, a container missing) means the
- * worker cannot read inside: it checks over the network instead. Docker saying the main is stopped or paused is a
- * result: the main is down. Any other failure is the check's own: "not collected", never the main down.
- */
 export async function checkInside(
   docker: Docker,
   container: string,
@@ -352,7 +318,6 @@ export async function checkInside(
       parsed = null
     }
     const output = mainCheckOutput.safeParse(parsed)
-    // A full answer has both statuses, or says why it could not get them; anything else is not understood.
     if (!output.success || (!output.data.notCollected && (!output.data.health || !output.data.readiness)))
       return { kind: "report", report: notCollected("the answer of the check in the main was not understood", ms()) }
     return { kind: "report", report: reportFromOutput(output.data, ms()) }

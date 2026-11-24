@@ -6,8 +6,6 @@ import { CallFailures } from "./heartbeat-loop.ts"
 import { backupJob } from "./jobs.ts"
 import { pickReplica, replicasClean, targetOf } from "./target.ts"
 
-// Following an instance's main by its Compose project and service: which container is used during a rollout, that
-// labels alone never make a container one of the service's, and when a rule for its replicas reaches only them.
 const ENTRY = "tini -- /docker-entrypoint.sh"
 const t = { project: "n8n1", service: "app" }
 const c = (
@@ -41,7 +39,6 @@ describe("pickReplica", () => {
     expect(pickReplica([old, starting], t)).toMatchObject({ name: "n8n1-app-1" })
     const healthy = c("n8n1-app-2", { Created: 2000 })
     expect(pickReplica([old, healthy], t)).toMatchObject({ name: "n8n1-app-2" })
-    // An unhealthy new one does not take over from a healthy old one either.
     expect(pickReplica([old, c("n8n1-app-2", { Created: 2000, Status: "Up 1 minute (unhealthy)" })], t)).toMatchObject({
       name: "n8n1-app-1",
     })
@@ -95,7 +92,6 @@ describe("replicasClean", () => {
   })
 
   it("is not clean when another project gives the same names, or a container only has the name", async () => {
-    // Project n8n1 with service app-main, and project n8n1-app with service main: both n8n1-app-main-1.
     const target = { project: "n8n1", service: "app-main" }
     const other = c(
       "n8n1-app-main-2",
@@ -130,7 +126,6 @@ describe("discover with a Compose service", () => {
     ]
     const found = discover(list, "n8n1-app-2", "app")
     expect(found.status === "ok" && found.workers.map((w) => w.name)).toEqual(["n8n1-worker-1"])
-    // Without the service, the same project has three mains: not told apart.
     expect(discover(list, "n8n1-app-2").status).toBe("ambiguous")
   })
 
@@ -153,7 +148,6 @@ describe("a backup of a Compose service", () => {
       exec: async (container: string, cmd: string[]) => {
         ran.push(container)
         scripts.push(cmd.join(" "))
-        // The container is gone by the time the command runs.
         if (scripts.length === 1) throw new DockerError("gone", "missing", 404, "exec-create")
         return { exitCode: 0, stdout: Buffer.from(""), stderr: "" }
       },
@@ -169,14 +163,12 @@ describe("a backup of a Compose service", () => {
     expect(result.error).toBe("the container n8n1-app-1 was replaced during the backup; the next run uses the new one")
     expect(result.resolvedContainer).toBe("n8n1-app-1")
     expect(new Set(ran)).toEqual(new Set(["n8n1-app-1"]))
-    // A redeploy can reuse the name between two commands: the export and the read are one, then only cleanup.
     expect(scripts[0]).toMatch(/n8n export:workflow[\s\S]*cat \/tmp\/n8n-ops-export\.tar$/)
     expect(scripts.slice(1).every((s) => s.includes("rm -rf"))).toBe(true)
   })
 })
 
 describe("each export of a backup by its own output", () => {
-  // What the one backup command prints on stderr, the archive (empty here) on stdout.
   const backupWith = async (stderr: string) => {
     const recipient = await identityToRecipient(await generateX25519Identity())
     const docker = {
@@ -203,7 +195,6 @@ describe("each export of a backup by its own output", () => {
 })
 
 describe("the archive upload", () => {
-  // A backup of an empty instance, uploaded through the counting PUT the Worker gives it.
   const backupPut = async (failures: CallFailures, answer: () => Promise<Response>) => {
     const recipient = await identityToRecipient(await generateX25519Identity())
     const docker = {

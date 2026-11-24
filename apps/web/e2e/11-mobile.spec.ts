@@ -1,10 +1,6 @@
 import { type Browser, expect, type Page, test } from "@playwright/test"
 import { discardChanges, signIn } from "./helpers.ts"
 
-// Touch, keyboard and screen sizes: the theme before the first paint (OT-4), values that copy (FB-12) and values
-// only a tooltip shows (MO-4, AX-5), short screens (NL-1), figures on a phone (MO-8) and the native fold (AX-12).
-
-/** A page of a context of its own, signed in through the saved session on a wide screen, then at `viewport`. */
 async function signedIn(
   browser: Browser,
   { viewport = { width: 1440, height: 900 }, ...options }: Parameters<Browser["newContext"]>[0] = {},
@@ -16,10 +12,6 @@ async function signedIn(
   return page
 }
 
-/**
- * The class on <html> once the document is parsed, with the app's script kept from running. `blocked` storage
- * throws when read, as a browser that blocks site data does.
- */
 async function themeBeforeTheApp(browser: Browser, stored: string | null | "blocked", system: "light" | "dark") {
   const context = await browser.newContext({ colorScheme: system })
   const page = await context.newPage()
@@ -35,8 +27,6 @@ async function themeBeforeTheApp(browser: Browser, stored: string | null | "bloc
       Object.assign(window, { e2eTheme: { classes: html.className, scheme: html.style.colorScheme } })
     })
   }, stored)
-  // Only the inline script of index.html may set the theme here: the app (the built bundle, or the source in
-  // development) is not loaded at all.
   await page.route(/\/(assets\/.*\.js|src\/main\.tsx|@vite\/client)(\?.*)?$/, (route) => route.abort())
   await page.goto("/login")
   const seen = await page.evaluate(() => (window as { e2eTheme?: { classes: string; scheme: string } }).e2eTheme)
@@ -55,7 +45,6 @@ test("the theme is on the page before anything draws: the one chosen, else the s
   expect(light?.classes.split(" ")).not.toContain("dark")
   expect(light?.scheme).toBe("light")
 
-  // Never chosen, System, or storage the browser does not let the page read: the system's.
   for (const stored of [null, "system", "blocked"]) {
     const system = await themeBeforeTheApp(browser, stored, "dark")
     expect(system?.classes.split(" "), `stored: ${stored}`).toContain("dark")
@@ -78,7 +67,6 @@ test("a value that copies shows no icon at rest, a faint one under the pointer, 
     await value.hover()
     await expect.poll(opacity).toBe("0.5")
 
-    // Plain HTTP has no clipboard to ask: the toast says so. Over HTTPS (or localhost) the value is copied.
     if (await page.evaluate(() => window.isSecureContext)) {
       await page.context().grantPermissions(["clipboard-read", "clipboard-write"])
       await value.click()
@@ -103,14 +91,12 @@ test("an exact time shows on keyboard focus, and on a tap whose click does not o
     await expect(time).toBeVisible()
     const tip = page.locator('[data-slot="tooltip-content"]')
 
-    // The keyboard reaches it and it shows its tooltip there.
     await expect(time).toHaveAttribute("tabindex", "0")
     await time.focus()
     await expect(tip.first()).toBeVisible()
     await page.keyboard.press("Escape")
     await expect(tip).toHaveCount(0)
 
-    // A tap shows the exact time and leaves the list where it was; it stays a while.
     await time.tap()
     await expect(tip.first()).toBeVisible()
     await expect(page.getByRole("dialog")).toHaveCount(0)
@@ -118,7 +104,6 @@ test("an exact time shows on keyboard focus, and on a tap whose click does not o
     await expect(tip.first()).toBeVisible()
     await expect(tip).toHaveCount(0, { timeout: 5_000 })
 
-    // A tap elsewhere on the row opens it.
     await row.locator('[data-part="title"]').tap()
     await expect(page.getByRole("dialog")).toBeVisible()
   } finally {
@@ -136,7 +121,6 @@ test("a time inside a link shows its exact value on the link's keyboard focus, a
     await expect(link.locator("time")).toBeVisible()
     const tip = page.locator('[data-slot="tooltip-content"]')
 
-    // Tab from the figure before it, so the focus is the keyboard's.
     await page.locator('a[data-slot="kpi"][href="/problems?status=open"]').focus()
     await page.keyboard.press("Tab")
     await expect(link).toBeFocused()
@@ -145,7 +129,6 @@ test("a time inside a link shows its exact value on the link's keyboard focus, a
     expect(exact).toMatch(/\d/)
     await expect(link).toHaveAccessibleName(new RegExp(`, ${exact.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`))
 
-    // Leaving it closes the tip.
     await page.keyboard.press("Shift+Tab")
     await expect(tip).toHaveCount(0)
   } finally {
@@ -160,17 +143,14 @@ test("on a short screen the list and its pane scroll with the page as one, and a
   const pane = page.getByRole("region", { name: "Problem", exact: true })
   const overflow = (sel: string) => page.locator(sel).evaluate((e) => getComputedStyle(e).overflowY)
   try {
-    // The window itself never scrolls; only the regions of the frame do.
     await page.goto("/problems?status=all")
     for (const el of ["html", "body"])
       expect(await page.locator(el).evaluate((e) => getComputedStyle(e).overflow)).toBe("hidden")
 
-    // The pane stays beside the list, but neither scrolls on its own: the page does.
     await expect(pane).toBeVisible()
     await expect.poll(() => overflow('[data-scroll-pane="list"]')).toBe("visible")
     await expect.poll(() => overflow('[data-scroll-pane="item"]')).toBe("visible")
     expect(await overflow("#main")).toBe("auto")
-    // Each is as tall as what it holds, nothing cut off at the foot of the screen, and the page scrolls to its end.
     await expect
       .poll(() =>
         page.evaluate(() => {
@@ -185,7 +165,6 @@ test("on a short screen the list and its pane scroll with the page as one, and a
       )
       .toEqual([true, true])
 
-    // A little taller, the list and the pane scroll each on its own again, without a reload.
     await page.setViewportSize({ width: 1440, height: 640 })
     await expect.poll(() => overflow('[data-scroll-pane="list"]')).toBe("auto")
     await expect.poll(() => overflow('[data-scroll-pane="item"]')).toBe("auto")
@@ -200,7 +179,6 @@ test("a change of height, such as an on-screen keyboard, keeps an open dialog an
 }) => {
   const page = await signedIn(browser, { viewport: { width: 1440, height: 640 } })
   try {
-    // A wide screen opens the first instance beside the list by itself.
     await page.goto("/instances")
     await page
       .getByRole("region", { name: "Instance", exact: true })
@@ -211,7 +189,6 @@ test("a change of height, such as an on-screen keyboard, keeps an open dialog an
     await name.fill("typed while the screen changes")
     for (const height of [560, 640]) {
       await page.setViewportSize({ width: 1440, height })
-      // Long enough for a layout swap to unmount the dialog, were there one.
       await page.waitForTimeout(500)
       await expect(dialog).toBeVisible()
       await expect(name).toHaveValue("typed while the screen changes")
@@ -237,8 +214,6 @@ test("on a phone figures go two to a line and an odd last one takes the whole li
     expect(Math.abs((await width(0)) - (await width(1)))).toBeLessThan(2)
     expect(await width(2)).toBeGreaterThan(strip * 0.95)
 
-    // On a wide phone too, where three would fit a line: Overview's four figures, and the four of an instance in
-    // its sheet, go two by two.
     await page.setViewportSize({ width: 700, height: 900 })
     for (const open of ["/", "/instances"]) {
       await page.goto(open)
@@ -278,7 +253,6 @@ test("the advanced token fold is a native disclosure that opens from the keyboar
     await page.keyboard.press("Enter")
     await expect(fold).toHaveAttribute("open")
     await expect(newToken).toBeVisible()
-    // A double click on the toggle selects no text (AX-10).
     expect(await fold.locator("summary").evaluate((el) => getComputedStyle(el).userSelect)).toBe("none")
   } finally {
     await page.context().close()

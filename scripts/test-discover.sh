@@ -1,9 +1,4 @@
 #!/usr/bin/env bash
-# Tests for scripts/discover.sh, with docker replaced by a stand-in that serves canned containers.
-# Covers the Command line of each container (its program and the number of its arguments, never an
-# argument), an inspect that fails, and the masked environment: secret-looking names, the user and
-# password of URLs, and values with line breaks. Values the report must not show are made new for each
-# run. Run by scripts/verify.sh (guards).
 set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -13,7 +8,6 @@ FIXTURES="$WORK/containers"
 REPORT="$WORK/report.txt"
 FAILED=0
 PASSED=0
-# Values the report must not show, new for each run: H[1] to H[26].
 H=()
 for i in $(seq 26); do
   H[i]="v$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
@@ -35,9 +29,6 @@ absent() {
   ! grep -qF -- "$1" "$REPORT"
 }
 
-# container NAME IMAGE ENTRYPOINT CMD [MODE]: ENTRYPOINT and CMD hold one JSON-encoded element per
-# line, as docker renders {{json .}}, or "null" for a list that is not set. MODE makes the inspect
-# of the command and of the environment fail-partial (exit 1, cut short) or fail-complete (exit 1).
 container() {
   local dir="$FIXTURES/$1"
   mkdir -p "$dir"
@@ -48,15 +39,11 @@ container() {
   : >"$dir/env"
 }
 
-# env_of NAME VARIABLE...: the environment of container NAME, each variable as it is (it may hold
-# line breaks), ended by a NUL byte.
 env_of() {
   local name="$1"
   shift
   printf '%s\0' "$@" >"$FIXTURES/$name/env"
 }
-
-# --- stand-in -------------------------------------------------------------------------------
 
 mkdir -p "$WORK/bin"
 cat >"$WORK/bin/docker" <<'EOF'
@@ -126,8 +113,6 @@ esac
 EOF
 chmod +x "$WORK/bin/docker"
 
-# --- containers ------------------------------------------------------------------------------
-
 container queue-redis redis:7-alpine '"docker-entrypoint.sh"' \
   "$(printf '"redis-server"\n"--requirepass"\n"%s"\n"--masterauth=%s"\n"-a%s"' "${H[1]}" "${H[2]}" "${H[3]}")"
 env_of queue-redis "REDIS_PASSWORD=${H[4]}" TZ=UTC
@@ -161,9 +146,6 @@ env_of env-values \
   N8N_SMTP_SENDER=ops@example.com \
   'N8N_QUOTED=a"b\c'
 
-# --- run ---------------------------------------------------------------------------------------
-
-# With tracing and xpg_echo inherited from the environment, the report must stay the same.
 env PATH="$WORK/bin:$PATH" FIXTURES="$FIXTURES" SHELLOPTS=xtrace BASHOPTS=xpg_echo \
   bash "$REPO/scripts/discover.sh" "$REPORT" >/dev/null 2>&1
 check "discover.sh writes a report" test -s "$REPORT"
@@ -174,7 +156,6 @@ for value in "${H[@]}"; do
   check "the report does not show the value $value" absent "$value"
 done
 
-# command_is NAME LINE: the Command line in the section of container NAME.
 command_is() {
   local got
   got="$(awk -v s="===== Container: $1 =====" '$0 == s { on = 1; next } /^===== / { on = 0 } on && /^Command:/' "$REPORT")"
@@ -196,7 +177,6 @@ check "a failed inspect with a complete answer" command_is gone-complete "Comman
 check "the environment stays masked" grep -qxF '  REDIS_PASSWORD=*** (set)' "$REPORT"
 check "other environment values are shown" grep -qxF '  TZ=UTC' "$REPORT"
 
-# env_is NAME LINE...: the Environment lines in the section of container NAME, in any order.
 env_is() {
   local name="$1" got want
   shift

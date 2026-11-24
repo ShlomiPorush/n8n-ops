@@ -1,10 +1,6 @@
 import { expect, type Page, test } from "@playwright/test"
 import { signIn } from "./helpers.ts"
 
-// A Worker's health on the Workers page: the Health toggle of the real worker the suite paired (E2E Host, in
-// 03-operations) opens its history with the range toggle, the description line, the chart and the events. What it
-// holds depends on how long the stack has run, so the test checks what is there in any case, not counts.
-
 const workerName = "E2E Host"
 let page: Page
 
@@ -33,7 +29,6 @@ test("the Health toggle opens the worker's history with its range, chart and eve
   const panel = worker.getByTestId(/^worker-health-[0-9a-f-]{36}$/)
   await expect(panel.getByRole("heading", { name: "Health" })).toBeVisible()
   await expect(panel.getByRole("radio", { name: "24 h" })).toBeChecked()
-  // The worker has called in since it was paired, so its history has started.
   await expect(panel.getByTestId("worker-health-description")).toContainText(
     /^Online \d+(\.\d)?% of the last 24 hours\./,
   )
@@ -55,7 +50,6 @@ test("the Health toggle opens the worker's history with its range, chart and eve
   await expect(panel.getByTestId("worker-health-chart").getByRole("img")).toBeVisible()
   await expect(events).toBeVisible()
 
-  // Settings opens on its own beside it (already open when the socket proxy refuses something).
   const settings = worker.getByRole("button", { name: /^Settings/ })
   if ((await settings.getAttribute("aria-expanded")) === "false") await settings.click()
   await expect(settings).toHaveAttribute("aria-expanded", "true")

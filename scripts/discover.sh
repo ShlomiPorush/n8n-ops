@@ -1,16 +1,6 @@
 #!/usr/bin/env bash
-# Read-only discovery of the n8n Docker host for n8n-ops.
-# Changes nothing: only runs docker inspect/ps/info and df.
-# Environment variables are filtered to n8n, database and queue names, one line each (a line
-# break in a value shows as \n). Their values are masked where the variable name looks secret
-# (keys, passwords, tokens), and in every other value the user and password of a URL are masked.
-# For each container the report shows only its program and the number of its arguments, never
-# the arguments.
-#
-# Usage: ./discover.sh [output-file]
 
 set -u
-# Tracing stays off, so the report holds only the masked values.
 set +x
 
 OUTPUT="${1:-./n8n-discovery-$(date +%Y%m%d_%H%M%S).txt}"
@@ -22,10 +12,6 @@ section() {
 }
 
 mask_env() {
-  # Print NAME=value. The value of a secret-looking name becomes ***. In any other line, a URL's
-  # user and password become ***: everything after the first ":" that has an "@" after it (and the
-  # slashes right after that ":") up to the last "@". Other text with a colon before an "@" is
-  # masked too; masking too much is preferred to showing a password.
   local line name rest
   while IFS= read -r line; do
     name="${line%%=*}"
@@ -46,9 +32,6 @@ mask_env() {
 }
 
 show_env() {
-  # Print the filtered, masked environment of container $1, one variable per line. The variables
-  # come from one inspect call, each JSON-encoded on its own line, so a value with line breaks
-  # stays on one line (\n, with \" and \\ for quotes and backslashes).
   local out
   if ! out=$(docker inspect -f '{{range .Config.Env}}{{json .}}{{"\n"}}{{end}}' "$1" 2>/dev/null); then
     echo "  (not available)"
@@ -58,10 +41,6 @@ show_env() {
 }
 
 show_command() {
-  # Print "Command: <program> (<n> arguments, not shown)" for container $1. Entrypoint and Cmd
-  # come from one inspect call, one JSON-encoded element per line, so a value with line breaks
-  # stays one element. No argument is printed, and the program only when its whole name is a
-  # plain path.
   local out line program
   local -a argv=()
   if ! out=$(docker inspect -f '{{range .Config.Entrypoint}}{{json .}}{{"\n"}}{{end}}{{range .Config.Cmd}}{{json .}}{{"\n"}}{{end}}' "$1" 2>/dev/null); then
@@ -103,7 +82,6 @@ show_command() {
 
   for c in $(docker ps -a --format '{{.Names}}'); do
     image=$(docker inspect -f '{{.Config.Image}}' "$c")
-    # Only n8n, Postgres and Redis containers get a detailed section
     if ! [[ "$image" =~ (n8n|postgres|redis) ]]; then
       continue
     fi

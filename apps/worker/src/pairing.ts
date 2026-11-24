@@ -5,24 +5,16 @@ type Log = (msg: string, extra?: Record<string, unknown>) => void
 export type PairingOptions = {
   dataDir: string
   identityFile: string
-  /** Sends the token to the server's pair endpoint. */
   request: (token: string) => Promise<Response>
   log: Log
 }
 
-/**
- * Exchanges the one-time pairing token for the worker's identity. The loop calls attempt every few seconds, so a
- * reason not to pair is logged once until it changes, and a token the server has spent is not sent again: only a
- * new token pairs after that.
- */
 export class Pairing {
   private said: string | null = null
-  /** Tokens the server refused or spent, for as long as the worker runs. */
   private readonly spent = new Set<string>()
 
   constructor(private readonly options: PairingOptions) {}
 
-  /** One try: the identity when it is paired and saved, otherwise null. */
   async attempt(token: string | null): Promise<string | null> {
     if (!token) return this.quiet()
     const { dataDir, identityFile, request, log } = this.options
@@ -33,7 +25,6 @@ export class Pairing {
     this.said = null
     const res = await request(token)
     if (res.status === 401) {
-      // Wrong, used or expired: sending it again cannot work.
       this.spent.add(token)
       log("pairing failed", { status: res.status, body: (await res.text()).slice(0, 200) })
       return null
@@ -42,7 +33,6 @@ export class Pairing {
       log("pairing failed", { status: res.status, body: (await res.text()).slice(0, 200) })
       return null
     }
-    // The server has spent the token when it answers yes, even if the answer is then cut off or cannot be saved.
     this.spent.add(token)
     const { identity, workerId, name } = (await res.json()) as { identity: string; workerId: string; name: string }
     try {

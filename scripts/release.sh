@@ -1,8 +1,4 @@
 #!/usr/bin/env bash
-# Releases a version: the release commit and tag, both images on GHCR, and the GitHub Release. Deploys
-# nothing. Normally run by the Release workflow (.github/workflows/release.yml), which verifies the
-# commit first; run by hand it runs scripts/verify.sh itself.
-# Usage: scripts/release.sh --target ghcr --bump <patch|minor|major> [--skip-verify --expect-sha SHA] [--dry-run]
 set -euo pipefail
 
 # shellcheck source=scripts/lib/common.sh
@@ -41,7 +37,6 @@ EOF
 
 git_() { git -C "$REPO_ROOT" "$@"; }
 
-# The version in VERSION content on stdin: one line holding only MAJOR.MINOR.PATCH, or nothing.
 version_in() {
   local text
   text="$(cat)"
@@ -63,8 +58,6 @@ unreleased_notes() {
   awk '/^## \[Unreleased\]/ { on = 1; next } /^## \[/ { on = 0 } on && NF' "$REPO_ROOT/CHANGELOG.md"
 }
 
-# Prints the notes of one released version from CHANGELOG content on stdin. Fails unless the
-# CHANGELOG has exactly one dated section for it, with at least one entry.
 release_notes() {
   local version="$1" text count notes
   text="$(cat)"
@@ -83,7 +76,6 @@ release_notes() {
   printf '%s\n' "$notes"
 }
 
-# Prints "present" or "missing" for a GitHub Release. Any other failure stops the release.
 release_state() {
   local out
   if out="$(gh release view "$1" --json tagName 2>&1)"; then
@@ -95,8 +87,6 @@ release_state() {
   fi
 }
 
-# Prints "missing", "match" (built from the given commit) or "other" for an image tag. A registry
-# that cannot be read stops the release: it must never count as a free version.
 image_state() {
   local ref="$1" revision="$2" out
   if ! out="$(docker buildx imagetools inspect "$ref" --format '{{json .Image}}' 2>&1)"; then
@@ -106,7 +96,6 @@ image_state() {
     fi
     die "cannot read $ref from the registry: $out"
   fi
-  # The JSON comes indented; compare without white space.
   if grep -qF "\"org.opencontainers.image.revision\":\"$revision\"" <<<"$(tr -d '[:space:]' <<<"$out")"; then
     echo match
   else
@@ -172,7 +161,6 @@ create_tag() {
   git_ commit --quiet -m "Release $TAG"
   git_ tag -a "$TAG" -m "$TAG"
   info "Pushing the release commit and $TAG"
-  # Both or neither: a tag on origin is what a later run finishes.
   git_ push --quiet --atomic origin HEAD:refs/heads/main "refs/tags/$TAG" ||
     die "pushing the release commit and $TAG failed, so nothing was published. Run the release again."
 }
@@ -206,7 +194,6 @@ publish_images() {
     state="$(image_state "$ref" "$revision")"
     [ "$state" = match ] || die "$ref is not the image built from $TAG"
   done
-  # :latest moves only once both images of this version are there.
   for pair in "${IMAGES[@]}"; do
     name="${pair#*:}"
     info "Pointing $REGISTRY/$name:latest at $VERSION"
@@ -221,7 +208,6 @@ publish_release() {
   git_ show "$TAG:CHANGELOG.md" | release_notes "$VERSION" >"$notes"
   info "Creating the GitHub Release $TAG"
   if ! gh release create "$TAG" --verify-tag --title "n8n-ops $VERSION" --notes-file "$notes"; then
-    # The request may have succeeded with its answer lost.
     state="$(release_state "$TAG")"
     [ "$state" = present ] || die "creating the GitHub Release $TAG failed. Run the release again to finish it."
     echo "    the GitHub Release $TAG exists"

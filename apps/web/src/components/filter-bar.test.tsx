@@ -16,7 +16,6 @@ describe("the layout of a filter bar by its width (FB-19)", () => {
 
 describe("the Filters button of a filter bar (MP-6)", () => {
   it("is not there while the common pickers have room in the row", () => {
-    // A bar starts wide; a narrow one moves the pickers behind Filters once measured (FB-19, e2e).
     const html = renderToStaticMarkup(<FilterBar pickers={<button type="button">Instance: All</button>} />)
     expect(html).not.toContain("Filters")
     expect(html).toContain("Instance: All")
@@ -71,7 +70,6 @@ describe("a search that waits for a pause (SR-9)", () => {
     expect(sent).toEqual([])
     vi.advanceTimersByTime(1)
     expect(sent).toEqual(["Sync"])
-    // Its own value coming back is not a change from outside: what is typed since stays and is asked for.
     draft.type("Sync o")
     draft.sync("Sync")
     vi.advanceTimersByTime(SEARCH_PAUSE_MS)
@@ -81,7 +79,6 @@ describe("a search that waits for a pause (SR-9)", () => {
   it("drops what is typed when Clear filters leaves the value as it was, as nothing was sent yet", () => {
     const { draft, sent } = box()
     draft.type("Sync")
-    // Clear filters draws a new box: this one is gone, and the new one starts from the value.
     draft.cancel()
     vi.advanceTimersByTime(SEARCH_PAUSE_MS * 2)
     expect(sent).toEqual([])
@@ -109,7 +106,6 @@ describe("a new filter starts the list at its first row (TB-7)", () => {
     reset.changed(true)
     expect(reset.loaded(true)).toBe(false)
     expect(reset.loaded(false)).toBe(true)
-    // A later refresh, with the same rows or new ones, leaves the list where it is.
     expect(reset.loaded(true)).toBe(false)
     expect(reset.loaded(false)).toBe(false)
   })
@@ -117,7 +113,6 @@ describe("a new filter starts the list at its first row (TB-7)", () => {
   it("does not wait for rows already drawn, as when the new filters were cached", () => {
     const reset = firstRowReset(clock().now)
     reset.changed(false)
-    // The next refresh of the same filters is not their first answer.
     expect(reset.loaded(true)).toBe(false)
     expect(reset.loaded(false)).toBe(false)
   })
@@ -136,7 +131,6 @@ describe("a new filter starts the list at its first row (TB-7)", () => {
     const planned = reset.ticket()
     reset.scrolled()
     expect(planned()).toBe(false)
-    // New filters plan a reset of their own.
     reset.changed(false)
     expect(reset.ticket()()).toBe(true)
   })
@@ -147,7 +141,6 @@ describe("a new filter starts the list at its first row (TB-7)", () => {
     reset.changed(true)
     c.wait(LIST_WAIT_MS + 1)
     expect(reset.loaded(false)).toBe(false)
-    // A newer change starts over.
     reset.changed(true)
     expect(reset.loaded(false)).toBe(true)
   })

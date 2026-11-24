@@ -4,7 +4,6 @@ import { selectingGesture, selectionTouches } from "./row-held"
 const row = { name: "row" } as unknown as Node
 const elsewhere = { name: "elsewhere" } as unknown as Node
 
-/** A selection over the given nodes; none is a collapsed one (a caret, nothing selected). */
 const selection = (...over: Node[]) => ({
   isCollapsed: over.length === 0,
   rangeCount: over.length ? 1 : 0,
@@ -19,7 +18,6 @@ const click = (patch: Partial<{ detail: number; shiftKey: boolean; clientX: numb
   ...patch,
 })
 
-/** Loads the helper in a page that has the given selection; returns it and a way to press the mouse. */
 async function inPage(current: ReturnType<typeof selection>) {
   vi.resetModules()
   let onPress: (e: { clientX: number; clientY: number }) => void = () => {}
@@ -72,7 +70,6 @@ describe("rowHeld", () => {
   })
 
   it("opens on a plain click on text that is still selected", async () => {
-    // The old check held any click while the page had a selection.
     const page = await inPage(selection(row))
     page.press(100, 100)
     expect(page.rowHeld(click())).toBe(false)

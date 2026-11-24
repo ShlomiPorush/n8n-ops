@@ -1,13 +1,6 @@
 import { TableCell, TableHeader, TableRow } from "@/components/ui/table"
 import { cn } from "@/lib/utils"
 
-/*
- * A list beside a reading pane draws each row as an item of two or three lines instead of table columns, so
- * nothing is cut off at any pane width. It stays a table of one column: rows keep their keyboard, selection
- * and address, and the list's Sort button (TB-28) sorts it without a header. Values read in the order they show.
- */
-
-/** The header of a list of items: one column, read by assistive tech, not drawn. */
 export function ItemsHeader({ label }: { label: string }) {
   return (
     <TableHeader>
@@ -20,11 +13,6 @@ export function ItemsHeader({ label }: { label: string }) {
   )
 }
 
-/**
- * One item: an optional lead (a status), the title with a figure at its end, a muted line with its own end
- * value, and an optional detail line or action. Title, line and detail cut off with an ellipsis, so put
- * nothing there that must always show; the end values never cut off.
- */
 export function ItemRow({
   lead,
   title,
@@ -35,16 +23,13 @@ export function ItemRow({
   detail,
   action,
 }: {
-  /** A small status mark (a dot) before the title; a status tag goes at the start of the line instead. */
   lead?: React.ReactNode
   title: React.ReactNode
-  /** The whole title, shown on hover when it is cut off. */
   titleText?: string
   end?: React.ReactNode
   sub?: React.ReactNode
   subEnd?: React.ReactNode
   detail?: React.ReactNode
-  /** A button on a line of its own, in place of the detail. */
   action?: React.ReactNode
 }) {
   const led = lead !== undefined
@@ -100,7 +85,6 @@ export function ItemRow({
   )
 }
 
-/** Words that say what a value is, for assistive tech only, where the item shows the value alone. */
 export function Said({ children }: { children: React.ReactNode }) {
   return <span className="sr-only">{children} </span>
 }

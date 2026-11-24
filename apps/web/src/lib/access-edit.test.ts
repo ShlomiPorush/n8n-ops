@@ -61,7 +61,6 @@ describe("naming a request", () => {
   it("names the first instance asked for and counts the others asked for", () => {
     expect(instanceLabel(request.instances)).toBe("n8n-a +2")
     expect(instanceLabel([inst({})])).toBe("n8n-a")
-    // An instance an approver added is not counted.
     expect(instanceLabel([inst({}), inst({ position: 1, name: "added", requested: false })])).toBe("n8n-a")
   })
 
@@ -211,7 +210,6 @@ describe("the approval editor", () => {
 
 describe("what the editor shows", () => {
   it("never sends a scope whose box is gone, nor an instance that may be granted nothing", () => {
-    // Edits kept while the policy took workflow:read away from n8n-a and everything from n8n-b.
     const kept = initialEdit(request, choices)
     const [a, b] = kept.instances
     if (!a || !b) throw new Error("instances")
@@ -226,7 +224,6 @@ describe("what the editor shows", () => {
       [true, ["workflow:list"]],
       [false, []],
     ])
-    // An added instance no longer open to agents is left out too.
     const added = onScreen(addInstance(kept, { instanceId: C, name: "n8n-c" }), { ...choices, others: [] })
     expect(added.instances.at(-1)).toMatchObject({ included: false, scopes: [] })
   })

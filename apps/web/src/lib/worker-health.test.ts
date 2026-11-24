@@ -76,7 +76,6 @@ function health(more: Partial<WorkerHealth> = {}): WorkerHealth {
   }
 }
 
-/** A Worker of an earlier release, without heartbeats, and nothing of its own measured in the range. */
 function notMeasuring(more: Partial<WorkerHealth> = {}): WorkerHealth {
   const base = health()
   return health({
@@ -333,7 +332,6 @@ describe("describeHealth", () => {
   })
   it("names failed Docker checks that left no failing time, before saying there was no failure", () => {
     const empty = notMeasuring()
-    // A failure and recovery between two delivered heartbeats: the latest check is ok, one of two failed.
     const h = notMeasuring({ summary: { ...empty.summary, dockerChecks: 2, dockerFailed: 1 } })
     expect(dockerHint(h)).toBe("1 failed check in this range")
     expect(dockerHint(notMeasuring({ summary: { ...empty.summary, dockerChecks: 2 } }))).toBe(

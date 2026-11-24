@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
-/** A fresh copy of the module, since it holds the one toast of the page and its clock. */
 const load = async () => {
   vi.resetModules()
   return import("./toast.ts")
@@ -174,7 +173,6 @@ describe("toast action (FB-2)", () => {
     toast.act(key)
     expect(run).toHaveBeenCalledTimes(1)
     expect(currentToast()?.running).toBe(true)
-    // Neither its own time nor a pointer that comes and goes lets it close meanwhile.
     toast.hold(key, "pointer")
     toast.release(key, "pointer")
     await wait(30_000)

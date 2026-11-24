@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react"
 
-/** Whether a media query matches, kept up to date. */
 export function useMediaQuery(query: string) {
   const [matches, setMatches] = useState(() => window.matchMedia(query).matches)
   useEffect(() => {
@@ -13,7 +12,6 @@ export function useMediaQuery(query: string) {
   return matches
 }
 
-/** A phone: up to 760px, where the tab bar replaces the sidebar. */
 export function useIsMobile() {
   return useMediaQuery("(max-width: 760px)")
 }

@@ -20,13 +20,6 @@ import { n, plural } from "@/lib/numbers"
 import { useProblemAction } from "@/lib/problem-actions"
 import { cn } from "@/lib/utils"
 
-/*
- * Needs attention (FB-10, FB-17, NL-19): the list Overview shows and the bell opens on every page, with the same
- * rows and the same actions. Each row opens its item and carries its action: Approve for an access request, Run now
- * for a backup, Resolve and Mute for a problem (with Undo, FB-16).
- */
-
-/** Opens an item from a list that moves on its own (the bell's window); a plain link otherwise. */
 export type OpenItem = (to: string, e: React.MouseEvent<HTMLAnchorElement>) => void
 
 const time = (at: string | null) => (
@@ -36,7 +29,6 @@ const time = (at: string | null) => (
 )
 
 function ProblemRow({ a, onOpen }: { a: Extract<AttentionItem, { kind: "problem" }>; onOpen?: OpenItem }) {
-  // A Problem in several workflows is named by its cause, and its buttons say they act on all of them.
   const single = a.affectedTotal <= 1
   const title = single ? a.workflowName : a.title
   const named = () => (title.length > 60 ? `${title.slice(0, 59)}…` : title)
@@ -93,8 +85,6 @@ function ProblemRow({ a, onOpen }: { a: Extract<AttentionItem, { kind: "problem"
 }
 
 function AccessRow({ a, onOpen }: { a: Extract<AttentionItem, { kind: "access" }>; onOpen?: OpenItem }) {
-  // One click approves the request as it stands, as on the request's own page; Deny is final and asks first there
-  // (DS-20). The revision listed goes with it, so a request changed since (in Telegram) is not approved unseen.
   const approve = useApiMutation<{ revision: number }>("POST", `/access/${a.id}/approve`, {
     invalidate: ["/access", `/access/${a.id}`, "/overview", "/overview/summary", ATTENTION_PATH],
     success: () => `Access approved for ${a.agent} on ${a.name}`,
@@ -136,7 +126,6 @@ function BackupRow({ a, onOpen }: { a: Extract<AttentionItem, { kind: "backup" }
       label={a.tone === "fail" ? "Backup failed" : "Backup"}
       onOpen={onOpen}
       actions={
-        // One click starts one run: locked until the request ends, and while a run is on its way (FB-7).
         <BusyButton size="sm" icon={Play} busyLabel="Starting…" disabled={a.running} run={() => run.mutateAsync()}>
           {a.running ? "Running…" : "Run now"}
           <span className="sr-only"> backup of {a.name}</span>
@@ -146,7 +135,6 @@ function BackupRow({ a, onOpen }: { a: Extract<AttentionItem, { kind: "backup" }
   )
 }
 
-/** A row that says what is wrong and where: instances, backups, workers, access requests. */
 function PlainRow({
   a,
   label,
@@ -178,7 +166,6 @@ function PlainRow({
   )
 }
 
-/** One item of Needs attention, with its action. */
 export function AttentionRow({ a, onOpen }: { a: AttentionItem; onOpen?: OpenItem }) {
   switch (a.kind) {
     case "problem":
@@ -194,7 +181,6 @@ export function AttentionRow({ a, onOpen }: { a: AttentionItem; onOpen?: OpenIte
   }
 }
 
-/** A check that could not run: grey, it opens the instance, and it keeps the list from saying all is well. */
 function UncheckedRow({ u, onOpen }: { u: UncheckedItem; onOpen?: OpenItem }) {
   const to = `/instances/${u.id}`
   return (
@@ -215,10 +201,6 @@ function UncheckedRow({ u, onOpen }: { u: UncheckedItem; onOpen?: OpenItem }) {
   )
 }
 
-/**
- * Whether a list is taller than its box and whether more is below what shows, kept up to date as it scrolls, its
- * rows change or the box is resized.
- */
 function useOverflow(box: HTMLElement | null, rows: unknown) {
   const [state, setState] = useState({ over: false, below: false })
   const check = useCallback(() => {
@@ -242,17 +224,6 @@ function useOverflow(box: HTMLElement | null, rows: unknown) {
   return state
 }
 
-/**
- * The list of Needs attention (FB-10, FB-17). In a panel it is as tall as its rows up to a cap (380px, 340px on a
- * phone), past which they scroll inside it: its foot fades while more is below (not while the focus is in it), and
- * a line under it counts the rows only then. At the end of its rows the scroll goes on to the page. In the bell's
- * window the window sets the height and the list scrolls inside it.
- *
- * It is a region named "Needs attention", a Tab stop only while it scrolls (not in the phone sheet, NL-19). An
- * answer that changes nothing leaves it as it is, and a row that leaves after an action hands the focus to the row
- * now in its place, else to the list. A source that could not be read keeps what it showed and says so with
- * Retry; with nothing to list, it says "Nothing needs you right now." only when every check ran.
- */
 export function AttentionList({
   query,
   place,
@@ -262,7 +233,6 @@ export function AttentionList({
   query: UseQueryResult<Attention>
   place: "panel" | "window" | "sheet"
   onOpen?: OpenItem
-  /** For the empty state in Regular; the page's own icon when not given. */
   icon?: LucideIcon
 }) {
   const a = query.data
@@ -271,7 +241,6 @@ export function AttentionList({
   const { over, below } = useOverflow(box, a)
   const retry = () => void query.refetch()
 
-  // The place of the focused row, so the focus can stay at that place when its row leaves.
   const focusedAt = useRef<number | null>(null)
   // biome-ignore lint/correctness/useExhaustiveDependencies: looked at again with every answer, which may remove the focused row
   useLayoutEffect(() => {
@@ -289,7 +258,6 @@ export function AttentionList({
   const unchecked = checksFailed(a, refreshFailed(query))
   return (
     <>
-      {/* A refresh that failed keeps the rows and says so (TB-5, LD-12). */}
       <RefreshLine live={query} />
       {failed.length > 0 && (
         <p role="status" className="px-pad-x pt-3 text-small text-warn">
@@ -299,7 +267,6 @@ export function AttentionList({
       )}
       {rowCount === 0 ? (
         unchecked ? (
-          // The line above says which read failed, with Try again.
           <Empty title="Some checks could not run." icon={icon}>
             Nothing else is known to need you right now.
           </Empty>
@@ -309,11 +276,9 @@ export function AttentionList({
           </Empty>
         )
       ) : (
-        // A section with a name is a region: "Needs attention".
         <section
           ref={setBox}
           aria-label="Needs attention"
-          // A Tab stop only while it scrolls, so the keyboard can scroll it; the phone sheet's body never is.
           tabIndex={over && place !== "sheet" ? 0 : undefined}
           data-more={below || undefined}
           onFocus={(e) => {
@@ -323,7 +288,6 @@ export function AttentionList({
           }}
           onBlur={(e) => {
             if (e.currentTarget.contains(e.relatedTarget as Node | null)) return
-            // Moved away by the user: forgotten. A row removed with the focus in it keeps its place.
             const left = e.target
             setTimeout(() => {
               if (left.isConnected) focusedAt.current = null
@@ -335,7 +299,6 @@ export function AttentionList({
             place === "panel" &&
               "max-h-[380px] overflow-y-auto max-md:max-h-[340px] regular:mx-pad-x regular:mb-pad-x regular:rounded-lg regular:border regular:border-line regular:[&>:first-child]:border-t-0",
             place === "window" && "min-h-0 flex-1 overflow-y-auto",
-            // The phone sheet scrolls as a whole and grows with it (DS-1); its head already has a line under it.
             place === "sheet" && "[&>:first-child]:border-t-0",
           )}
         >
@@ -359,7 +322,6 @@ export function AttentionList({
           )}
         </section>
       )}
-      {/* Only while the rows pass the cap; it takes no room otherwise (FB-17). */}
       {rowCount > 0 && over && place === "panel" && (
         <p
           data-slot="attention-more"
@@ -372,7 +334,6 @@ export function AttentionList({
   )
 }
 
-/** The count beside the title: every item that needs a look, those left out of the list included. */
 export function attentionCount(a: Attention | undefined) {
   return a?.total ? n(a.total) : undefined
 }

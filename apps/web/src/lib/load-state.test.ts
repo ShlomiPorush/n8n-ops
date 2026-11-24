@@ -51,13 +51,11 @@ describe("refreshFailed (LD-12)", () => {
 })
 
 describe("keepShown (TB-5)", () => {
-  // A list answer as React Query gives it: `data` is its own answer, or the previous one while `isPlaceholderData`.
   type Answer = Loadable & { dataUpdatedAt: number; isPlaceholderData?: boolean }
   const a = (state: Partial<Answer>): Answer => ({ ...q({}), dataUpdatedAt: 0, ...state })
   const open = [{ id: "open-1" }]
   const muted = [{ id: "muted-1" }]
 
-  /** Runs answers through one list, as its renders would, and returns what each draws. */
   function run(...answers: [string, Answer][]) {
     let shown: Shown | null = null
     return answers.map(([key, answer]) => {
@@ -77,13 +75,11 @@ describe("keepShown (TB-5)", () => {
     expect(failed?.data).toBe(open)
     expect(failed?.dataUpdatedAt).toBe(1000)
     expect(failed?.previous).toBe("failed")
-    // Rows and a line, not the error panel.
     expect(failed && loadView(failed)).toBe("ready")
     expect(failed && filterFailed(failed)).toBe(true)
   })
 
   it("keeps saying so while the failed filters are asked for again", () => {
-    // A poll or Try again: the failed query is pending again, its error cleared, the previous rows held meanwhile.
     const [, , retrying, failedAgain] = run(
       ["open", a({ data: open, dataUpdatedAt: 1000 })],
       ["muted", a({ error: failure })],

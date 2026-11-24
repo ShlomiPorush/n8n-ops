@@ -3,7 +3,6 @@ import { ENDED_PAGE, historyMisses, type Listed, loadsByScrolling, mergeHistory 
 
 const at = (s: number, ms = 0) => new Date(Date.UTC(2026, 10, 16, 8, 0, 0) - s * 1000 + ms).toISOString()
 const row = (id: string, status: string, time: string): Listed => ({ id, status, requestedAt: time })
-/** Ended requests e0, e1, … one second apart, newest first. */
 const ended = (from: number, count: number) =>
   Array.from({ length: count }, (_, i) => row(`e${from + i}`, "released", at(from + i)))
 
@@ -38,7 +37,6 @@ describe("the history read again", () => {
     expect(historyMisses(ids(before), arrived, history)).toBe(false)
     const approved = [row("p", "approved", at(5)), ...before.slice(1)]
     expect(historyMisses(ids(before), approved, history)).toBe(false)
-    // The request it pushes out of the latest ones is in the history.
     const ends = [row("p", "denied", at(5)), ...ended(0, ENDED_PAGE - 1), row("old", "approved", at(900))]
     expect(historyMisses(ids(before), ends, history)).toBe(false)
   })

@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
-/** Fresh copies that share one toast, since the toast module holds the one toast of the page. */
 const load = async () => {
   vi.resetModules()
   const { toast, currentToast } = await import("./toast.ts")
@@ -14,7 +13,6 @@ afterEach(() => vi.useRealTimers())
 
 const wait = (ms: number) => vi.advanceTimersByTimeAsync(ms)
 
-/** An Undo offer for "Sync orders" whose request the test settles. */
 function offer(undo: () => Promise<unknown>, after = vi.fn(() => Promise.resolve())) {
   return {
     after,
@@ -74,7 +72,6 @@ describe("offerUndo (FB-16)", () => {
     const key = currentToast()?.key ?? 0
     toast.act(key)
     await wait(0)
-    // Still the Undo toast, locked, while the lists are read again.
     expect(currentToast()).toMatchObject({ key, running: true })
 
     fail()
@@ -87,7 +84,6 @@ describe("offerUndo (FB-16)", () => {
     await wait(60_000)
     expect(currentToast()?.action?.label).toBe("Refresh")
 
-    // Refresh reads again and never sends Undo again; failing again, it offers the same.
     after.mockImplementationOnce(() => Promise.reject(new Error("refresh_failed")))
     toast.act(currentToast()?.key ?? 0)
     await wait(0)

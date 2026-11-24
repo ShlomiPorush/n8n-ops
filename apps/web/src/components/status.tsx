@@ -7,10 +7,6 @@ import { plural } from "@/lib/numbers"
 import { formatListTime, formatTime, isoTime, useTimeFormat } from "@/lib/time"
 import { cn } from "@/lib/utils"
 
-/**
- * The one place that turns a status into words and a tone. The text is the status; the colour only
- * reinforces it: ok is green, warn amber, fail red, info blue, muted grey. Nothing else gets colour.
- */
 export type ToneName = "ok" | "warn" | "fail" | "info" | "muted"
 
 export const statusTable = {
@@ -27,7 +23,6 @@ export const statusTable = {
     muted: { label: "Muted", tone: "muted" },
     resolved: { label: "Resolved", tone: "ok" },
   },
-  /** The section of the Problems list a row sits in (lib/problems.ts), as the row's own tag. */
   section: {
     instance: { label: "Instance", tone: "fail" },
     now: { label: "Failing now", tone: "fail" },
@@ -57,11 +52,9 @@ export const statusTable = {
     expired: { label: "No copy to restore", tone: "muted" },
     none: { label: "Not backed up", tone: "fail" },
   },
-  /** An instance added whose setup has not been completed (docs/adr/0002). */
   setup: {
     incomplete: { label: "Setup incomplete", tone: "warn" },
   },
-  /** One check of an instance's setup, as it stands for its settings now. */
   check: {
     ok: { label: "Passed", tone: "ok" },
     failed: { label: "Failed", tone: "fail" },
@@ -69,7 +62,6 @@ export const statusTable = {
     stale: { label: "Check again", tone: "warn" },
     missing: { label: "Not checked", tone: "muted" },
   },
-  /** One archive on one destination. */
   copy: {
     pending: { label: "Waiting", tone: "info" },
     writing: { label: "Writing", tone: "info" },
@@ -77,13 +69,11 @@ export const statusTable = {
     failed: { label: "Failed", tone: "fail" },
     expired: { label: "Expired", tone: "muted" },
   },
-  /** A workflow in an archive, compared with the one on its instance (D6). */
   comparison: {
     same: { label: "Same", tone: "ok" },
     changed: { label: "Changed", tone: "warn" },
     not_found: { label: "Not found with this API key", tone: "muted" },
   },
-  /** One restore of an item of an archive (D6). */
   restore: {
     previewed: { label: "Reviewed", tone: "info" },
     pending: { label: "Running", tone: "info" },
@@ -91,7 +81,6 @@ export const statusTable = {
     failed: { label: "Failed", tone: "fail" },
     unknown: { label: "Unknown", tone: "warn" },
   },
-  /** One step of a restore: one item it creates in n8n. */
   restoreStep: {
     todo: { label: "Not run", tone: "muted" },
     done: { label: "Done", tone: "ok" },
@@ -106,7 +95,6 @@ export function statusOf<K extends StatusKind>(kind: K, status: keyof (typeof st
   return statusTable[kind][status] as { label: string; tone: ToneName }
 }
 
-/** The icon Regular draws before a status word; Compact shows the word alone. The word carries the meaning. */
 const toneIcon: Record<ToneName, LucideIcon> = {
   ok: CircleCheck,
   warn: TriangleAlert,
@@ -120,7 +108,6 @@ function ToneIcon({ tone }: { tone: ToneName }) {
   return <Icon aria-hidden strokeWidth={2.25} className="hidden shrink-0 regular:block" />
 }
 
-/** A status tag from the central table. children replaces the label when the words must say more. */
 export function StatusTag<K extends StatusKind>({
   kind,
   status,
@@ -141,7 +128,6 @@ export function StatusTag<K extends StatusKind>({
   )
 }
 
-/** A tag in a tone, for statuses that are not in the table (an HTTP result, a one-off fact). */
 export function Tone({ tone, children, className }: { tone: ToneName; children: React.ReactNode; className?: string }) {
   return (
     <Badge variant={tone} className={className}>
@@ -161,7 +147,6 @@ const dotTone: Record<ToneName, string> = {
   muted: "bg-muted-foreground/50 text-muted-foreground",
 }
 
-/** A small status dot for tight spaces; it carries the status as its accessible name and tooltip. */
 export function Dot({ health, label, className }: { health: HealthState; label?: string; className?: string }) {
   const s = statusOf("health", health)
   return (
@@ -176,7 +161,6 @@ export function Dot({ health, label, className }: { health: HealthState; label?:
         className,
       )}
     >
-      {/* Regular: a down instance pulses, so it is seen at a glance. */}
       {health === "down" && (
         <span className="absolute inset-0 hidden animate-ping rounded-full bg-fail/60 regular:block" />
       )}
@@ -184,7 +168,6 @@ export function Dot({ health, label, className }: { health: HealthState; label?:
   )
 }
 
-/** Which problem status to show: regressions and problems first seen in the last 24 hours stand out. */
 export function problemStatus(p: { status: string; regression: boolean; firstSeen?: string }) {
   if (p.status === "resolved") return "resolved" as const
   if (p.status === "muted") return "muted" as const
@@ -201,16 +184,10 @@ export function Code({ children, className }: { children: React.ReactNode; class
   return <code className={cn("rounded-tag bg-ink/6 px-1.5 py-0.5 font-mono break-all", className)}>{children}</code>
 }
 
-/**
- * How long ago something happened: "just now", "4 min ago", "30 h ago", "3 d ago", each step rounded (FW-1). A time
- * ahead of now, such as a clock a little ahead of the server's, clamps to "just now"; a deadline is `timeLeft`.
- * Beyond FW-1, which ends at days, an age of a month or more reads "2 months ago", "1 year ago".
- */
 export function timeAgo(value: string | Date | null | undefined): string {
   if (!value) return "never"
   const ms = Date.now() - new Date(value).getTime()
   if (ms < 60_000) return "just now"
-  // Each step rounds from the exact age, so 59 min 40 s reads "1 h ago", not "60 min ago".
   const m = Math.round(ms / 60_000)
   if (m < 60) return `${m} min ago`
   const h = Math.round(ms / 3600_000)
@@ -222,10 +199,6 @@ export function timeAgo(value: string | Date | null | undefined): string {
   return `${plural(Math.floor(mo / 12), "year")} ago`
 }
 
-/**
- * How long until a deadline: "in 5 min", "in 3 h", "in 2 d", in the steps of `timeAgo`, rounded, never less than a
- * minute while it is ahead. A deadline that has passed reads "now": what it ends has ended or is about to.
- */
 export function timeLeft(value: string | Date): string {
   const ms = new Date(value).getTime() - Date.now()
   if (!(ms > 0)) return "now"
@@ -236,7 +209,6 @@ export function timeLeft(value: string | Date): string {
   return `in ${Math.round(ms / 86400_000)} d`
 }
 
-/** Re-renders on one shared timer, so every "3 min ago" on screen keeps ticking while the page is open (LD-12). */
 const tickers = new Set<() => void>()
 let tickTimer: ReturnType<typeof setInterval> | undefined
 export function useTick() {
@@ -257,12 +229,6 @@ export function useTick() {
   }, [])
 }
 
-/*
- * The times below keep their digits at their natural width (normal-nums) even in a column of figures: the UI
- * font's tabular "1" is as wide as a "0", so "09.11" looked spaced out and smaller than "01:00".
- */
-
-/** An age ("18 h ago"), with the exact time on hover, keyboard focus or a tap (FW-1, MO-4). */
 export function TimeAgo({ value }: { value: string | Date | null | undefined }) {
   const w = useTimeFormat()
   useTick()
@@ -276,7 +242,6 @@ export function TimeAgo({ value }: { value: string | Date | null | undefined }) 
   )
 }
 
-/** The time left to a deadline ("in 3 h"), with the exact time on hover, keyboard focus or a tap (MO-4). */
 export function TimeLeft({ value }: { value: string | Date }) {
   const w = useTimeFormat()
   useTick()
@@ -289,11 +254,6 @@ export function TimeLeft({ value }: { value: string | Date }) {
   )
 }
 
-/**
- * A time in a list (FW-1): the clock for today, day and month earlier this year, the whole date before, as the Date
- * and Time format write them; the full time and the age on hover, keyboard focus or a tap (MO-4). The cell names
- * its instant, so it sorts by it.
- */
 export function When({ value }: { value: string | Date | null | undefined }) {
   const w = useTimeFormat()
   if (!value) return <span className="text-muted-foreground">never</span>
@@ -312,10 +272,6 @@ export function When({ value }: { value: string | Date | null | undefined }) {
   )
 }
 
-/**
- * The whole date and time to the minute, "16/10/2026, 14:05", as the Date and Time format write them, for a place
- * with room for it; the time to the second on hover, keyboard focus or a tap (MO-4). Pair it with TimeAgo.
- */
 export function FullTime({ value }: { value: string | Date }) {
   const w = useTimeFormat()
   return (
@@ -327,11 +283,6 @@ export function FullTime({ value }: { value: string | Date }) {
   )
 }
 
-/**
- * A time in a list cell as Occurrences shows it: the whole date and time on one line, its age under it. Lines
- * follow the cell's alignment; a table stacked into rows puts them on its label's line (index.css). No time
- * reads "never".
- */
 export function FullWhen({ value }: { value: string | Date | null | undefined }) {
   if (!value) return <span className="text-muted-foreground">never</span>
   return (

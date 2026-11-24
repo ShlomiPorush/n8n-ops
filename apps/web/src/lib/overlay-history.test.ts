@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
-/** Just enough of the browser's history: entries, pushState, replaceState, and go/back with a later popstate. */
 function fakeWindow() {
   const listeners: (() => void)[] = []
   const entries: Record<string, unknown>[] = [{ page: "/instances" }]
@@ -16,7 +15,6 @@ function fakeWindow() {
       get state() {
         return entries[index]
       },
-      /** Where Back stands: 1 is the page the test starts on. */
       get position() {
         return index + 1
       },
@@ -34,7 +32,6 @@ function fakeWindow() {
 }
 
 let win: ReturnType<typeof fakeWindow>
-// The module keeps its overlays in module state: a fresh copy for each test.
 const load = async () => {
   vi.resetModules()
   return import("./overlay-history.ts")
@@ -66,7 +63,6 @@ describe("overlay history", () => {
     const release = holdOverlayEntry(() => {})
     vi.runAllTimers()
     expect(leaveOverlays()).toBe(true)
-    // The new page replaces the dialog's entry, so Back from it goes to the list (DS-10).
     win.history.replaceState({ page: "/instances/new" })
     release()
     vi.runAllTimers()
@@ -80,7 +76,6 @@ describe("overlay history", () => {
     const release = holdOverlayEntry(close)
     vi.runAllTimers()
     leaveOverlays()
-    // The Leave question blocks the navigation; the dialog closes meanwhile, then Stay is chosen.
     release()
     vi.runAllTimers()
     stayAfterBlock()
@@ -106,7 +101,6 @@ describe("overlay history", () => {
     const heard = vi.fn()
     onOverlaysHeld(() => heard(overlaysHeld()))
     expect(overlaysHeld()).toBe(false)
-    // Merge, then a picker in it.
     const merge = holdOverlayEntry(() => {})
     const picker = holdOverlayEntry(() => {})
     vi.runAllTimers()
@@ -115,7 +109,6 @@ describe("overlay history", () => {
     vi.runAllTimers()
     expect(overlaysHeld()).toBe(true)
     merge()
-    // Its entry is still the current one until the step back lands: a correction now would replace it.
     expect(win.history.state?.overlay).toBeDefined()
     expect(overlaysHeld()).toBe(true)
     vi.runAllTimers()
@@ -131,12 +124,10 @@ describe("overlay history", () => {
     const merge = holdOverlayEntry(() => {})
     vi.runAllTimers()
     leaveOverlays()
-    // The navigation from it waits on the Leave question, and the dialog closes meanwhile: its entry stays.
     merge()
     vi.runAllTimers()
     expect(win.history.state?.overlay).toBeDefined()
     expect(overlaysHeld()).toBe(true)
-    // Stay: the entry is taken away, and only then may a tab address be corrected.
     stayAfterBlock()
     expect(overlaysHeld()).toBe(true)
     vi.runAllTimers()
@@ -153,7 +144,6 @@ describe("overlay history", () => {
     merge()
     vi.runAllTimers()
     expect(overlaysHeld()).toBe(true)
-    // Leave: the router replaces the dialog's entry with the new page, without a popstate.
     win.history.replaceState({ page: "/problems/b" })
     expect(overlaysHeld()).toBe(false)
   })

@@ -1,11 +1,4 @@
-/*
- * The archive browser and restores (requirement D6), as the server sends them (apps/server/src/services/restore.ts
- * and restore-types.ts). The web app does not import server code, so the shapes are repeated here, with the words
- * the page uses for them.
- */
-
 export type RestoreKind = "workflow" | "credential"
-/** `copy` creates new items; `replace` writes the archived workflow over the existing one, as its draft. */
 export type RestoreMode = "copy" | "replace"
 export type RestoreStatus = "previewed" | "pending" | "done" | "failed" | "unknown"
 export type StepStatus = "todo" | "done" | "failed" | "unknown"
@@ -39,9 +32,7 @@ export type WorkflowSummary = {
     hasSecrets: boolean
     embedded: boolean
   }[]
-  /** Execute Workflow nodes that run a workflow kept in the node itself. */
   embedded: number
-  /** What could not be read (a workflow embedded in an expression or too deep): the credentials listed are partial. */
   warnings: string[]
 }
 
@@ -51,7 +42,6 @@ export type CredentialSummary = {
   type: string
   createdAt: string | null
   hasSecrets: boolean
-  /** IDs of the archived workflows that use it. */
   usedBy: string[]
 }
 
@@ -65,7 +55,6 @@ export type Comparison =
   | { available: false; reason: string }
 
 export type Inspection = {
-  /** A backup run's archive, or the Version before replace a restore kept; the instance it was taken from, and when. */
   source: { kind: "run" | "version"; id: string; instanceId: string | null; at: string }
   manifest: { includesSecrets?: boolean } | null
   workflows: WorkflowSummary[]
@@ -90,7 +79,6 @@ export type CredentialAction =
 export type PlannedStep = {
   step: number
   kind: RestoreKind
-  /** `replace` writes the existing workflow; absent or `create` creates a new item. */
   action?: "create" | "replace"
   sourceId: string
   name: string
@@ -100,11 +88,9 @@ export type RestoreStep = PlannedStep & {
   status: StepStatus
   createdId?: string
   error?: string
-  /** What n8n did that the review did not expect, such as unpublishing the workflow: shown loudly. */
   warning?: string
 }
 
-/** What a replace found on the instance at review, and which settings it sends. */
 export type ReplacePlan = {
   workflowId: string
   live: {
@@ -114,9 +100,7 @@ export type ReplacePlan = {
     activeVersionId: string | null
     published: boolean
   }
-  /** `live`: published, so its own settings are sent unchanged; `backup`: the archive's settings. */
   settingsFrom: "live" | "backup"
-  /** The settings n8n holds after the write: its own merged with those sent. */
   effectiveSettings: Record<string, unknown>
 }
 
@@ -128,14 +112,9 @@ export type RestorePlan = {
   credentials: CredentialAction[]
   steps: PlannedStep[]
   notRestored: string[]
-  /**
-   * What the restore of a workflow sends to n8n: the top-level fields of the request body, and its settings exactly
-   * as sent. Absent for a credential, and in reviews made before the server said it.
-   */
   sent?: { fields: string[]; settings: Record<string, unknown> }
   warnings: string[]
   earlierUnknown: { id: string; at: string; created: string[] }[]
-  /** For a replace. */
   replace?: ReplacePlan
 }
 
@@ -148,11 +127,8 @@ export type RestoreView = {
   itemName: string
   mode: RestoreMode
   runId: string | null
-  /** Set when this restore came from another restore's Version before replace. */
   fromRestoreId: string | null
-  /** The Version before replace this restore kept, when it kept one. */
   versionBefore: { takenAt: string } | null
-  /** Null once the instance was removed. */
   targetInstanceId: string | null
   actor: string
   plan: RestorePlan
@@ -164,7 +140,6 @@ export type RestoreView = {
   expiresAt: string | null
 }
 
-/** What part of a workflow differs from the one on the instance, in plain words. */
 const changeWords: Record<ChangeKind, string> = {
   definition: "The workflow itself",
   layout: "Node positions",
@@ -181,7 +156,6 @@ export function changeText(kind: ChangeKind): string {
   return changeWords[kind] ?? kind
 }
 
-/** What happens to one credential a restored workflow uses. */
 export function credentialActionText(a: CredentialAction): string {
   switch (a.action) {
     case "link":
@@ -197,12 +171,10 @@ export function credentialActionText(a: CredentialAction): string {
   }
 }
 
-/** The steps a restore has to show: as run once confirmed, as planned before. */
 export function stepsOf(r: Pick<RestoreView, "steps" | "plan">): RestoreStep[] {
   return r.steps.length ? r.steps : r.plan.steps.map((s) => ({ ...s, status: "todo" as const }))
 }
 
-/** The sentence that ends a restore, said for the person who ran it. */
 export function restoreOutcome(r: Pick<RestoreView, "status" | "kind" | "error" | "plan">): string {
   const into = r.plan.target.name
   switch (r.status) {
@@ -225,13 +197,8 @@ export function restoreOutcome(r: Pick<RestoreView, "status" | "kind" | "error" 
   }
 }
 
-/** The first n8n that can save a workflow's draft without publishing it, which Replace needs (as the server says). */
 export const REPLACE_MIN_VERSION = "2.35.0"
 
-/**
- * Why the archive's own instance cannot take a replace, from what the page knows of it (its version and its key's
- * scopes); null when nothing it knows stops it. The server decides again at review.
- */
 export function replaceBlocked(i: { name: string; version?: string | null; effectiveScopes?: string[] }) {
   if (i.version) {
     const a = i.version.split(".").map((x) => Number.parseInt(x, 10) || 0)
@@ -246,17 +213,14 @@ export function replaceBlocked(i: { name: string; version?: string | null; effec
   return null
 }
 
-/** Where the Version before replace a restore kept opens: on the archive page of the instance it was taken from. */
 export function versionBeforePath(r: Pick<RestoreView, "id" | "targetInstanceId">): string {
   return `/backups/${r.targetInstanceId ?? "removed"}/versions/${r.id}`
 }
 
-/** One value of the settings a restore sends, exactly as sent: as JSON, so text and a number or flag never look alike. */
 export function settingText(value: unknown): string {
   return value === undefined ? "undefined" : JSON.stringify(value)
 }
 
-/** A file name for an archived workflow's JSON, from its name; never empty. */
 export function jsonFileName(name: string, id: string): string {
   const base = [...name]
     .map((c) => (c < " " ? " " : c))

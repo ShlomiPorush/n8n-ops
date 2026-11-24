@@ -30,7 +30,6 @@ describe("the words of a Sort menu (TB-28)", () => {
     expect(sortLabel({ state: null, columns })).toBe("Sort: Default order")
     expect(sortLabel({ state: { key: "failures", dir: "descending" }, columns })).toBe("Sort: Failures, Most first")
     expect(sortLabel({ state: { key: "status", dir: "ascending" }, columns })).toBe("Sort: Status, Needs a look last")
-    // A column that is gone falls back to the default order rather than a name it cannot give.
     expect(sortLabel({ state: { key: "gone", dir: "ascending" }, columns })).toBe("Sort: Default order")
   })
 })
@@ -69,7 +68,6 @@ describe("the default order (TB-3, TB-11)", () => {
   })
 })
 
-// Instances and Agent access rank by the column they show as Status.
 describe("a list ranked by its Status column (TB-1, TB-11, TB-28)", () => {
   type Row = { name: string; rank: number }
   const rows: Row[] = [
@@ -82,7 +80,6 @@ describe("a list ranked by its Status column (TB-1, TB-11, TB-28)", () => {
     status: { label: "Status", kind: "number" as const, words: RANK_WORDS, value: (r: Row) => r.rank },
     name: { label: "Name", kind: "text" as const, value: (r: Row) => r.name },
   }
-  /** What `useSort` gives the page, with the order picked given as `order`, as the page's state would hold it. */
   const sorting = (order?: SortOrder) => {
     let got: Sorting<Row> | undefined
     function Probe() {

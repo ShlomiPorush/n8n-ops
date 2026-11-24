@@ -30,10 +30,6 @@ function DialogOverlay({ className, ...props }: React.ComponentProps<typeof Dial
   return <DialogPrimitive.Overlay data-slot="dialog-overlay" className={cn(overlayClass, className)} {...props} />
 }
 
-/**
- * Tab past either end of a layer goes to the toast's buttons when a toast shows (Undo, Retry), since the toast stays
- * usable beside the layer (DS-8, FB-16); from there Tab comes back into the layer, which follows it in the page.
- */
 function tabToToast(e: React.KeyboardEvent<HTMLElement>) {
   if (e.key !== "Tab" || e.altKey || e.ctrlKey || e.metaKey) return
   const toast = [...document.querySelectorAll<HTMLElement>("[data-toast] button")]
@@ -47,15 +43,6 @@ function tabToToast(e: React.KeyboardEvent<HTMLElement>) {
   ;(e.shiftKey ? toast.at(-1) : toast[0])?.focus()
 }
 
-/**
- * Phone sheet gestures (DS-1, DS-3, DS-4). Scrolling first raises the sheet by exactly the scrolled distance
- * until it fills the screen, then the content scrolls. Dragging the grip or the head up grows the sheet with
- * the finger; pulling down moves it, and released past min(120px, a quarter of its height) it slides away,
- * otherwise it springs back. A pull from the content moves the sheet only when the content is at its top.
- * A second finger cancels a drag, and the sheet then ignores every touch until all fingers are lifted (a pinch
- * is not a pull). Touch only: with a mouse the sheet does not drag. Returns what removes the listeners; a plain
- * function, so it can be tested without a page.
- */
 export function attachSheetGestures(panel: HTMLElement, close: () => void, canPullClose: boolean): () => void {
   const phone = () => window.matchMedia(PHONE_QUERY).matches
   const markFull = () => panel.toggleAttribute("data-full", panel.offsetHeight >= window.innerHeight - 1)
@@ -65,7 +52,6 @@ export function attachSheetGestures(panel: HTMLElement, close: () => void, canPu
     markFull()
   }
 
-  // One passive capture-phase listener catches every inner scroller.
   const onScroll = (e: Event) => {
     if (!phone()) return
     const scroller = e.target as HTMLElement
@@ -77,9 +63,7 @@ export function attachSheetGestures(panel: HTMLElement, close: () => void, canPu
   }
 
   let drag: { y: number; height: number; head: boolean; dy: number; grown: boolean } | null = null
-  /** Set by a second finger; cleared once every finger is lifted. */
   let blocked = false
-  // The sheet goes back to where the drag started, as a spring back.
   const cancel = () => {
     if (drag) {
       const { height, grown } = drag
@@ -100,7 +84,6 @@ export function attachSheetGestures(panel: HTMLElement, close: () => void, canPu
     const target = e.target as HTMLElement
     const head = Boolean(target.closest('[data-slot="dialog-grip"], [data-slot="dialog-header"]'))
     if (!head) {
-      // Any scroller between the finger and the sheet that is not at its top keeps the gesture.
       for (let el: HTMLElement | null = target; el && el !== panel; el = el.parentElement) {
         if (el.scrollTop > 0) return
       }
@@ -118,7 +101,6 @@ export function attachSheetGestures(panel: HTMLElement, close: () => void, canPu
     const dy = (e.touches[0]?.clientY ?? drag.y) - drag.y
     drag.dy = dy
     if (dy < 0) {
-      // An upward drag from the content scrolls the content; only the head grows the sheet.
       if (!drag.head) return
       panel.style.transform = ""
       drag.grown = true
@@ -139,11 +121,8 @@ export function attachSheetGestures(panel: HTMLElement, close: () => void, canPu
     panel.style.transition = `transform ${SHEET_SLIDE_MS}ms ease`
     if (dy > 0 && canPullClose && dy > Math.min(SHEET_PULL_CLOSE_PX, panel.offsetHeight / 4)) {
       panel.style.transform = "translateY(100%)"
-      // Close through the dialog's own Close, so its owner's cleanup and its Back entry run.
       setTimeout(() => {
         close()
-        // A close that was refused (unsaved changes, and the user chose Stay) leaves the sheet open: bring
-        // it back up instead of leaving it out of sight.
         setTimeout(() => {
           if (panel.isConnected && panel.dataset.state === "open") panel.style.transform = ""
         }, SHEET_SLIDE_MS)
@@ -178,31 +157,6 @@ function useSheetGestures(
   }, [panel, closeRef, canPullClose])
 }
 
-/**
- * A dialog: centered, up to 90% high, the header and the footer stay while the body scrolls. Pass a max-w
- * class for the width (up to 1100px); it keeps 16px from each side of the screen, so a wide dialog on a small
- * tablet never touches the edges (DS-16).
- *
- * On opening the focus goes to the first field, except on a touch-only screen, where that would raise the
- * keyboard over the dialog: there the panel itself takes it (DS-8). A caller's own `onOpenAutoFocus` decides
- * instead.
- *
- * On a phone every dialog is a bottom sheet with a grip that opens at four fifths of the screen, grows with
- * the scroll and squares its corners at full height; pulled down it closes (DS-1 to DS-4).
- *
- * Escape and Back close only the top layer (DS-8, DS-10). An information window closes on a backdrop click;
- * a dialog with typed input sets `keepOnBackdrop`, and its owner routes every close through `useDiscardGuard`,
- * which asks before dropping what was typed (DS-9): X, Escape, Back and the pull-down all reach the owner's
- * `onOpenChange`. A dialog whose state is in the address already gets Back from the router and sets
- * `history={false}`, and `scrollPane` when Back and Forward should also return its body to where it was
- * scrolled (NL-3).
- *
- * A modal dialog hides everything beside it, the toast too. One whose actions offer Undo (the Needs attention sheet)
- * has a root with `modal={false}` and passes `inertPage` while open: it draws the veil itself, makes everything
- * beside it inert except the toast, which stays usable (DS-8, lib/inert.ts), and Tab past its ends reaches the
- * toast's buttons. It sets no `aria-modal`, which would hide the toast from screen readers again. Being not modal,
- * it gives the focus back to its opener only when it was not closed from outside: its owner does that.
- */
 function DialogContent({
   className,
   children,
@@ -220,39 +174,30 @@ function DialogContent({
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean
   keepOnBackdrop?: boolean
-  /** Whether pulling the phone sheet down closes it; by default when it has a Close button. */
   pullToClose?: boolean
   history?: boolean
-  /** Names the body as a scrolling area of the page, whose place each history entry keeps (`data-scroll-pane`). */
   scrollPane?: string
-  /** For a root with `modal={false}`: true while open, the page beside it is inert except the toast (see above). */
   inertPage?: boolean
 }) {
-  // The panel mounts after this component (the portal waits a render), so it is tracked as state.
   const [panel, setPanel] = React.useState<HTMLDivElement | null>(null)
-  // Undone as soon as it closes, before its closing slide ends, so the focus can go back to its opener.
   React.useEffect(() => {
     if (!inertPage || !panel) return
     return inertBeside(panel)
   }, [inertPage, panel])
   const closeRef = React.useRef<HTMLButtonElement>(null)
   useSheetGestures(panel, closeRef, pullToClose ?? showCloseButton)
-  // This component renders also while its dialog is closed; only a mounted panel holds a Back entry. A close
-  // that asks first keeps the panel open, and then the entry is held again.
   useOverlayHistory(
     history && panel !== null,
     () => closeRef.current?.click(),
     () => panel?.isConnected === true && panel.dataset.state === "open",
   )
 
-  // A click on the toast is not a click on the backdrop.
   const outside = (e: { target: EventTarget | null; preventDefault(): void }) => {
     if (keepOnBackdrop || (e.target instanceof Element && e.target.closest("[data-toast]"))) e.preventDefault()
   }
 
   return (
     <DialogPortal>
-      {/* A dialog that is not modal draws no overlay of its own; the same veil, which a click beside it passes. */}
       {inertPage !== undefined ? (
         <div
           aria-hidden
@@ -268,11 +213,8 @@ function DialogContent({
         data-slot="dialog-content"
         className={cn(
           "fixed top-1/2 left-1/2 z-50 flex max-h-[90dvh] w-full max-w-md -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg bg-popover text-body text-popover-foreground shadow-modal duration-150 outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0",
-          // A 16px gutter on each side above the phone width; the max-w class caps it below that (DS-16).
           "md:w-[calc(100%-32px)]",
-          // Phone: a bottom sheet; the size, corners and notch rules are in index.css.
           "max-md:max-w-none! max-md:translate-x-0 max-md:translate-y-0 max-md:duration-200 max-md:data-[state=closed]:slide-out-to-bottom max-md:data-[state=open]:slide-in-from-bottom",
-          // Compact's sheet casts its shadow up, over the page above it (DS-2).
           "compact:max-md:shadow-sheet",
           className,
         )}
@@ -304,8 +246,6 @@ function DialogContent({
         <div
           data-slot="dialog-body"
           data-scroll-pane={scrollPane}
-          // A footer, or a pane's footer while it holds the save bar or tabs, ends the body itself: padding under
-          // it would show below the buttons in a scroll container.
           className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain px-pad-x pb-pad-x has-[>[data-slot=dialog-footer]:last-child]:pb-0 has-[>[data-slot=pane-footer]:last-child>:not(:empty)]:pb-0 max-md:pb-[calc(var(--spacing-pad-x)+env(safe-area-inset-bottom))] max-md:has-[>[data-slot=dialog-footer]:last-child]:pb-0 max-md:has-[>[data-slot=pane-footer]:last-child>:not(:empty)]:pb-0"
         >
           {children}
@@ -331,11 +271,9 @@ function DialogHeader({
   children,
   ...props
 }: React.ComponentProps<"div"> & {
-  /** What the dialog is about; Regular draws it above the title, red for an action that removes something. */
   icon?: LucideIcon
   tone?: "fail"
 }) {
-  // The body learns the header's height (--dialog-head-h), so tabs inside it stick right under it (DS-14).
   const measure = React.useCallback((el: HTMLDivElement | null) => {
     const body = el?.parentElement
     if (!el || !body) return
@@ -390,7 +328,6 @@ function DialogFooter({ className, children, ...props }: React.ComponentProps<"d
 }
 
 function DialogTitle({ className, ...props }: React.ComponentProps<typeof DialogPrimitive.Title>) {
-  // Compact sets dialog and sheet titles a step bolder than other section titles, without tightening.
   return (
     <DialogPrimitive.Title
       data-slot="dialog-title"

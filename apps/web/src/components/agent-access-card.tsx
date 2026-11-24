@@ -10,12 +10,9 @@ import { cn } from "@/lib/utils"
 type Props = {
   id: string
   name: string
-  /** n8n older than 2.14.0: what the key allows cannot be read, so nothing that needs the API works. */
   unsupported: boolean
-  /** What the instance's API key holds; access can never go beyond it. */
   keyScopes: string[]
   agentAccess: Access
-  /** When the instance was read. */
   readAt: number
 }
 
@@ -28,13 +25,11 @@ const changes = (a: Access, b: Access) =>
 
 const readOnly = (s: string) => /:(read|list)$/.test(s)
 
-/** Per instance: whether agents may ask for temporary access, and the most they may ever be granted. */
 export function AgentAccessCard({ id, name, unsupported, keyScopes, agentAccess, readAt }: Props) {
   const read: Access = {
     enabled: agentAccess.enabled,
     scopes: agentAccess.scopes.filter((s) => keyScopes.includes(s)),
   }
-  // The policy is one value: an edit of it keeps all of it when what is stored changes under it.
   const form = useEdits({ access: read }, readAt, (a, b) => changes(a as Access, b as Access) > 0)
   const access = form.values.access as Access
   const count = changes(access, form.stored.access as Access)
@@ -81,7 +76,6 @@ export function AgentAccessCard({ id, name, unsupported, keyScopes, agentAccess,
           scopes={new Set(access.scopes)}
           onEnabled={(enabled) => form.set("access", { ...access, enabled })}
           onScopes={(scopes) => form.set("access", { ...access, scopes: [...scopes] })}
-          // While a save runs the card is locked, so nothing is edited under it.
           disabled={save.isPending}
           className="border-t border-line p-pad-x"
         />
@@ -90,10 +84,6 @@ export function AgentAccessCard({ id, name, unsupported, keyScopes, agentAccess,
   )
 }
 
-/**
- * The controls of an instance's Temporary access policy: on or off, and the scopes that may be granted, among those
- * the key holds. The card above saves them through the save bar; the instance setup saves them with its step.
- */
 export function AgentAccessFields({
   id,
   name,
@@ -132,7 +122,6 @@ export function AgentAccessFields({
     { value: "none", label: "None", scopes: [] },
   ]
   const matches = (list: string[]) => list.length === scopes.size && list.every((s) => scopes.has(s))
-  // When two presets hold the same scopes, None wins, then Everything the key allows.
   const preset = ["none", "all", "read"].find((v) => matches(presets.find((p) => p.value === v)?.scopes ?? [])) ?? ""
   return (
     <fieldset disabled={disabled} className={cn("grid min-w-0 gap-4", className)}>
@@ -149,7 +138,6 @@ export function AgentAccessFields({
             <span className="me-1 text-small font-semibold text-muted-foreground">
               Scopes that may be granted · {n(scopes.size)} of {n(keyScopes.length)}
             </span>
-            {/* Shows the preset the selection matches; a selection made by hand matches none of them. */}
             <ToggleGroup
               type="single"
               segmented

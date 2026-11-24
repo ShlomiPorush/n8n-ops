@@ -3,12 +3,9 @@ import { cn } from "@/lib/utils"
 
 export type GraphNode = { name: string; type: string; state: "ok" | "failed" | "skipped"; column: number }
 
-/** The workflow drawn left to right by depth, with the failed node highlighted (requirement Q35: drawn by us). */
 export function FlowGraph({ nodes }: { nodes: GraphNode[] }) {
   const scroller = useRef<HTMLDivElement>(null)
   const failed = useRef<HTMLDivElement>(null)
-  // On a narrow screen the failed node can be past the right edge; bring it into view. A graph in a hidden tab
-  // has no width yet, so it is brought into view again when it first shows.
   useEffect(() => {
     const box = scroller.current
     if (!box || !nodes.length) return

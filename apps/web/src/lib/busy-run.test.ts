@@ -7,7 +7,6 @@ afterEach(() => vi.useRealTimers())
 
 const wait = (ms: number) => vi.advanceTimersByTimeAsync(ms)
 
-/** A clock, with every state it showed. */
 function setup() {
   const shown: BusyState[] = []
   const clock = busyRun((s) => shown.push(s))

@@ -9,7 +9,6 @@ afterEach(() => {
 })
 
 type Row = { id: string }
-/** Three pages of ended requests, as the server gives them, and every read of them with its signal. */
 function server() {
   const pages: Record<string, EndedPage<Row>> = {
     first: { requests: [{ id: "a" }], next: "a" },
@@ -65,7 +64,6 @@ describe("the history of ended access requests", () => {
     await observer.fetchNextPage()
     expect(observer.getCurrentResult().data?.pages.flatMap((p) => p.requests.map((r) => r.id))).toEqual(["a", "b", "c"])
     expect(observer.getCurrentResult().hasNextPage).toBe(false)
-    // A new request ended before "a": read again, the pages follow the new cursors.
     s.pages.first = { requests: [{ id: "n" }], next: "n" }
     s.pages.n = { requests: [{ id: "a" }], next: "a" }
     s.reads.length = 0

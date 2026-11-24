@@ -115,7 +115,6 @@ describe("the queue worker list", () => {
     ]
     expect(workersSummary(rows)).toBe("2 of 5 queue workers ready, 1 health not verified, 1 down, 1 state not known")
     expect(workersSummary(rows.slice(0, 2), { found: 51 })).toBe("Showing 2 of 51 queue workers: 2 ready")
-    // A health URL the owner typed answers health only: it is not counted ready.
     expect(workersSummary([{ url: "http://w:5678/healthz", ok: true }])).toBe(
       "0 of 1 queue workers ready, 1 answering, readiness not checked",
     )
@@ -138,7 +137,6 @@ describe("the queue worker list", () => {
       jobs: { value: 5, from: "set by --concurrency" },
       memory: { used: "312 MB", limit: "1 GB", percent: 30 },
     })
-    // Without the main's version read in the same check, nothing is marked.
     expect(workerCells(w).version).toBeUndefined()
     expect(workerCells({ ...w, memory: { used: 2048 * 1024 * 1024, limit: null } }).memory).toEqual({
       used: "2 GB",
@@ -148,10 +146,8 @@ describe("the queue worker list", () => {
     const down = workerCells(row("b", "not-ready", { error: "Redis connection refused" }))
     expect(down).toMatchObject({ health: "down", state: "not ready", error: "Redis connection refused" })
     expect(down.uptime ?? down.jobs ?? down.memory).toBeUndefined()
-    // The main's version not read: a worker's own shows when the workers run more than one.
     expect(workerCells(w, undefined, true).version).toEqual({ version: "2.44.2", main: undefined })
     expect(workerCells(w, undefined, false).version).toBeUndefined()
-    // That state says it already.
     expect(workerCells(row("c", "not-verified", { error: "running, health not verified" })).error).toBeUndefined()
   })
 
@@ -163,9 +159,7 @@ describe("the queue worker list", () => {
       { text: "n8n 2.40.5 on every worker, same as the main" },
       { text: "no memory limit on any container" },
     ])
-    // Read inside the main or not, the workers alone agree.
     expect(workersFacts(rows)[1]).toEqual({ text: "n8n 2.40.5 on every worker" })
-    // Nothing read: nothing to say beyond how many are ready.
     expect(workersFacts([row("w7", "ready")])).toEqual([])
   })
 
@@ -195,7 +189,6 @@ describe("the queue worker list", () => {
       { text: "w3 runs n8n 2.39.1, the main 2.40.5", warn: true },
       { text: "a memory limit on the 3 containers read, of 4" },
     ])
-    // Without the main's version, workers that disagree are still pointed at.
     expect(workersFacts(rows)[1]).toEqual({ text: "n8n 2.40.5 on 2, 2.39.1 on 1", warn: true })
     const partial = workersFacts([
       row("w8", "ready", { memory: { used: gb, limit: null }, concurrency: { value: 10, from: "default" } }),

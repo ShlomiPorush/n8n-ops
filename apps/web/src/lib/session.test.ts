@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 afterEach(() => vi.unstubAllGlobals())
 
-/** A fresh copy of the module, since it holds the session state of one page. */
 const load = async () => {
   vi.resetModules()
   return import("./session.ts")
@@ -61,7 +60,6 @@ describe("sessionEnded", () => {
     expect(session.unsavedGuardOn()).toBe(false)
     session.sessionEnded()
     expect(replace).not.toHaveBeenCalled()
-    // Signing in again turns the guard back on.
     session.sessionStarted()
     expect(session.unsavedGuardOn()).toBe(true)
   })

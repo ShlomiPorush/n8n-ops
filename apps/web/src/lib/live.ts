@@ -6,11 +6,6 @@ import { ATTENTION_PATH } from "./attention"
 const changed = (topics: string[]) => (key: unknown) =>
   typeof key === "string" && topics.some((t) => key.startsWith(`/${t}`))
 
-/**
- * Marks the queries of the changed areas stale and reads the shown ones again. Needs attention, which every page
- * holds, is not read in a hidden browser tab (NL-19): it is only marked stale there, and React Query reads it again
- * when the tab is shown (`refetchOnWindowFocus`, which follows `visibilitychange`).
- */
 export function invalidateTopics(client: QueryClient, topics: string[], hidden: boolean): Promise<unknown> {
   const hit = changed(topics)
   const attention = (key: unknown) => key === ATTENTION_PATH
@@ -24,7 +19,6 @@ export function invalidateTopics(client: QueryClient, topics: string[], hidden: 
   ])
 }
 
-/** Refetches the queries of the areas the server reports as changed (server-sent events on /api/events). */
 export function useLiveUpdates() {
   useEffect(() => {
     let source: EventSource | null = null
@@ -37,8 +31,6 @@ export function useLiveUpdates() {
       })
       source.onerror = () => {
         source?.close()
-        // The stream ends when the session does, and EventSource does not show why: a plain request does, and
-        // goes to sign-in if it ended.
         void api("/session").catch(() => {})
         retry = setTimeout(connect, 5_000)
       }

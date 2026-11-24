@@ -135,7 +135,6 @@ describe("readAfterSave", () => {
     const client = new QueryClient()
     client.setQueryData([path], { design: "regular" })
     const old = client.fetchQuery({ queryKey: [path], queryFn: read }).catch(() => {})
-    // The save lands while the old read is still on its way; nothing on screen reads the path again.
     void readAfterSave({ queryKey: [path] }, client)
     client.setQueryData([path], { design: "compact" })
     answer(new Response(JSON.stringify({ design: "regular" })))
@@ -204,10 +203,8 @@ describe("refreshAreas", () => {
 
     fail = true
     await expect(refreshAreas("/problems", "/overview")).rejects.toBeInstanceOf(RefreshError)
-    // The old rows stay on screen beside the error (TB-5); another area is not concerned.
     expect(observer.getCurrentResult().data).toEqual(["Sync orders"])
     await expect(refreshAreas("/overview")).resolves.toBeUndefined()
-    // A read no longer on screen is not read again, so it cannot fail the refresh.
     stop()
     await expect(refreshAreas("/problems")).resolves.toBeUndefined()
   })
@@ -220,7 +217,6 @@ describe("refreshAreas", () => {
       queryFn: async () => {
         calls += 1
         if (calls === 1) return ["Sync orders"]
-        // The refresh and its replacements are slow; only the last one answers, and it fails.
         await new Promise<void>((resolve) => (release = resolve))
         throw new ApiError(500, "internal_error")
       },
@@ -229,7 +225,6 @@ describe("refreshAreas", () => {
     const stop = observer.subscribe(() => {})
     await vi.waitFor(() => expect(observer.getCurrentResult().data).toEqual(["Sync orders"]))
     const refreshing = refreshAreas("/problems")
-    // Two live updates, each replacing the request on its way.
     void queryClient.invalidateQueries({ queryKey: ["/problems?status=open"] })
     await new Promise((r) => setTimeout(r, 1))
     void queryClient.invalidateQueries({ queryKey: ["/problems?status=open"] })

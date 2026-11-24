@@ -2,12 +2,6 @@ import { ArrowRight, Bot, Code, Cpu, Globe, type LucideIcon, Mail, Send, Setting
 import { type SettingsSection, settingsIcons } from "@/app/settings-sections"
 import { cn } from "@/lib/utils"
 
-/*
- * Small marks that Regular draws beside information that is already there as text (#29's look). They are
- * decoration only: hidden from assistive technology, and hidden in Compact.
- */
-
-/** A person's initial in a round badge, before their name. */
 export function Initial({ name }: { name: string }) {
   return (
     <span
@@ -31,13 +25,11 @@ const viaIcon: Record<string, LucideIcon> = {
   cli: Terminal,
 }
 
-/** The icon of the channel an action came through, before its name. */
 export function ViaIcon({ via }: { via: string }) {
   const Icon = viaIcon[via] ?? Globe
   return <Icon aria-hidden className="me-1.5 hidden size-3.5 align-[-2px] regular:inline" />
 }
 
-/** A short bar under a percentage: how much of something it is. */
 export function RateBar({ rate, tone }: { rate: number; tone: "fail" | "warn" | "ok" }) {
   return (
     <span aria-hidden className="ms-auto mt-1 hidden h-1.5 w-16 overflow-hidden rounded-full bg-fill regular:block">
@@ -49,19 +41,16 @@ export function RateBar({ rate, tone }: { rate: number; tone: "fail" | "warn" | 
   )
 }
 
-/** An arrow after a step that leads somewhere, as on #29's buttons. */
 export function StepArrow() {
   return <ArrowRight aria-hidden className="hidden size-3.5 shrink-0 regular:block" />
 }
 
-/** A settings section's icon, before its name in the section list. */
 export function SectionIcon({ section }: { section: string }) {
   const Icon = settingsIcons[section as SettingsSection]
   if (!Icon) return null
   return <Icon aria-hidden className="hidden size-4 shrink-0 text-muted-foreground regular:block" />
 }
 
-/** A worker's host, in a tile before its name. */
 export function HostMark() {
   return (
     <span

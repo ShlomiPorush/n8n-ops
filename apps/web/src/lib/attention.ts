@@ -3,13 +3,6 @@ import { ApiError, api, queryClient } from "@/lib/api"
 import { ATTENTION_POLL_MS, ATTENTION_TIMEOUT_MS } from "@/lib/behavior"
 import { plural } from "@/lib/numbers"
 
-/*
- * Needs attention (NL-19, FB-10): what needs a decision, read by the bell on every page and by Overview through
- * one query. The server decides what counts and gives each item a tone; this file keeps what a failed read
- * showed, and says the count and the tone the bell shows.
- */
-
-/** Red when something fails, amber for a warning, plain (ink) for news only. */
 export type Tone = "fail" | "warn" | "info"
 
 export type AttentionSource = "access" | "problems" | "instances" | "backups" | "workers"
@@ -20,15 +13,12 @@ export type AttentionItem = { tone: Tone } & (
       id: string
       status: "open"
       reason: "new" | "regression"
-      /** The most recently failed workflow; with several, the item names the error and how many. */
       workflowName: string
       instanceName: string
       errorMessage: string
-      /** What the Problem is about, "target · reason" (docs/adr/0003), and the line for a known error. */
       title: string
       hint: string | null
       count: number
-      /** Distinct workflows the Problem hit, and its Affected workflows (a workflow at two nodes is two). */
       workflows: number
       affectedTotal: number
       instances: string[]
@@ -40,29 +30,22 @@ export type AttentionItem = { tone: Tone } & (
   | {
       kind: "access"
       id: string
-      /** The instances the agent asked for, "name +N". */
       name: string
       agent: string
       detail: string
       at: string | null
-      /** The revision of the request as listed; Approve sends it, so a request changed since is not approved. */
       revision: number
     }
 )
 
-/** A check that could not run: an instance whose health was never read, or whose failures could not be read. */
 export type UncheckedItem = { kind: "health" | "failures"; id: string; name: string; detail: string; at: string | null }
 
 export type Attention = {
   items: AttentionItem[]
-  /** Every item that needs a look, also those left out of `items`. */
   total: number
-  /** The worst tone of all of them; null when nothing needs a look. */
   tone: Tone | null
-  /** New problems left out of `items` (the list holds the latest 50). */
   moreProblems: number
   unchecked: UncheckedItem[]
-  /** Sources the server could not read this time. */
   failed: AttentionSource[]
 }
 
@@ -84,7 +67,6 @@ const kindOf: Record<AttentionSource, AttentionItem["kind"]> = {
   workers: "worker",
 }
 
-/** What "Could not check …" names for a source. */
 export const sourceLabel: Record<AttentionSource, string> = {
   access: "access requests",
   problems: "problems",
@@ -95,11 +77,6 @@ export const sourceLabel: Record<AttentionSource, string> = {
 
 const time = (i: { at: string | null }) => (i.at ? Date.parse(i.at) : 0)
 
-/**
- * A source that could not be read keeps what it showed (NL-19): its items, its checks and the problems left out of
- * the list come from the previous answer, and the total and the tone count them again. `failed` still names it, so
- * the list can say so.
- */
 export function keepFailed(prev: Attention | undefined, next: Attention): Attention {
   if (!prev || prev === next || next.failed.length === 0) return next
   const kinds = new Set(next.failed.map((s) => kindOf[s]))
@@ -116,18 +93,15 @@ export function keepFailed(prev: Attention | undefined, next: Attention): Attent
   }
 }
 
-/** Whether some check could not run: an instance not checked, a source not read, or no answer to the last read. */
 export function checksFailed(a: Attention | undefined, readFailed: boolean): boolean {
   return readFailed || Boolean(a && (a.unchecked.length > 0 || a.failed.length > 0))
 }
 
-/** The bell's badge: hidden at zero, the number up to 99, then "99+" (the full number is in its name). */
 export function badgeText(total: number): string | null {
   if (total <= 0) return null
   return total > 99 ? "99+" : String(total)
 }
 
-/** The bell's accessible name: the count in full, and whether some checks could not run (NL-19). */
 export function bellName(a: Attention | undefined, unchecked: boolean): string {
   const parts = ["Needs attention"]
   if (a?.total) parts.push(plural(a.total, "item"))
@@ -136,10 +110,8 @@ export function bellName(a: Attention | undefined, unchecked: boolean): string {
   return parts.join(", ")
 }
 
-/** The line under a list that passes its cap: "12 items. Scroll the list for the rest" (FB-17). */
 export const scrollLine = (count: number) => `${plural(count, "item")}. Scroll the list for the rest`
 
-/** Where an item opens. */
 export function attentionTarget(item: AttentionItem): string {
   switch (item.kind) {
     case "problem":
@@ -155,15 +127,6 @@ export function attentionTarget(item: AttentionItem): string {
   }
 }
 
-/**
- * Needs attention for the bell on every page and for Overview: one query, read again every ATTENTION_POLL_MS. React
- * Query skips a timed refetch while the browser tab is hidden (`refetchIntervalInBackground` is false by default)
- * and reads again when it is shown (`refetchOnWindowFocus`); a change the server reports meanwhile only marks it
- * stale (`invalidateTopics` in lib/live.ts). A read without an answer in ATTENTION_TIMEOUT_MS fails,
- * and is tried once more, so a hung request never holds the next one. An answer read before an action on it is
- * dropped: the actions refresh "/overview" through `refreshAreas` or `invalidate` (`readAfterSave`). A source the
- * server could not read keeps what it showed (`keepFailed`).
- */
 export function useAttention() {
   return useQuery<Attention>({
     queryKey: [ATTENTION_PATH],

@@ -4,7 +4,6 @@ import { Switch as SwitchPrimitive } from "radix-ui"
 import type * as React from "react"
 import { cn } from "@/lib/utils"
 
-// A switch turns a feature on; on is the ok colour.
 function Switch({ className, ...props }: React.ComponentProps<typeof SwitchPrimitive.Root>) {
   return (
     <SwitchPrimitive.Root

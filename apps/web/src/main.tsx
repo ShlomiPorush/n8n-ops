@@ -15,7 +15,6 @@ import { LoginPage } from "@/pages/auth/login"
 import { SetupPage } from "@/pages/auth/setup"
 import { ConnectApprovePage } from "@/pages/connect"
 
-// Development only: ?design=regular or ?design=compact previews a design without the server choosing it.
 if (import.meta.env.DEV) pinDesign(new URLSearchParams(window.location.search).get("design"))
 
 const router = createBrowserRouter([
@@ -24,7 +23,6 @@ const router = createBrowserRouter([
   {
     element: <RequireAuth />,
     children: [
-      // An agent asking to connect: a page of its own, signed in, outside the console around it.
       { path: "/connect/approve/:uid", element: <ConnectApprovePage /> },
       { element: <AppShell />, children: routes },
     ],
@@ -34,7 +32,6 @@ const router = createBrowserRouter([
 
 function Root() {
   return (
-    // Light, dark or the operating system (default); the choice is kept in this browser.
     <ThemeProvider
       attribute="class"
       defaultTheme="system"

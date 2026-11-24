@@ -7,7 +7,6 @@ afterEach(() => {
   focusManager.setFocused(undefined)
 })
 
-/** A client with Needs attention and a page's query in use, as on a page, and how often each was read. */
 async function shown() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   client.mount()
@@ -44,7 +43,6 @@ describe("live updates (NL-19)", () => {
     const { client, reads, done } = await shown()
     focusManager.setFocused(false)
     await invalidateTopics(client, ["overview", "instances"], true)
-    // The page's own query is read as before; Needs attention waits.
     expect(reads).toEqual({ attention: 1, instances: 2 })
     expect(client.getQueryState([ATTENTION_PATH])?.isInvalidated).toBe(true)
 

@@ -40,12 +40,6 @@ import {
 } from "@/lib/restore"
 import { formatTime, useTimeFormat } from "@/lib/time"
 
-/*
- * How a restore (D6) reads: its review before the confirm, and its result after, step by step. The archive page's
- * Restore dialog and the Restores list of an instance's backup pane show the same views.
- */
-
-/** What happens to each credential a restored workflow uses. */
 function CredentialActions({ actions }: { actions: CredentialAction[] }) {
   if (actions.length === 0) return null
   return (
@@ -71,7 +65,6 @@ function CredentialActions({ actions }: { actions: CredentialAction[] }) {
   )
 }
 
-/** Settings as a list of exact values. */
 function SettingsList({ settings, empty }: { settings: Record<string, unknown>; empty: string }) {
   const entries = Object.entries(settings)
   if (entries.length === 0) return <p className="text-small text-muted-foreground">{empty}</p>
@@ -90,7 +83,6 @@ function SettingsList({ settings, empty }: { settings: Record<string, unknown>; 
   )
 }
 
-/** What a replace does to the workflow on the instance, said before anything else in its review. */
 function ReplaceIntro({ plan: p }: { plan: RestoreView["plan"] }) {
   const live = p.replace?.live
   return (
@@ -115,7 +107,6 @@ function ReplaceIntro({ plan: p }: { plan: RestoreView["plan"] }) {
   )
 }
 
-/** The review: everything the restore will create and send, what happens to each credential, and what it leaves out. */
 export function PlanReview({ restore: r }: { restore: RestoreView }) {
   const w = useTimeFormat()
   const p = r.plan
@@ -234,14 +225,12 @@ const outcomeLook = {
   previewed: { variant: "info", icon: CircleDashed, title: "Not confirmed" },
 } as const
 
-/** What one step writes, in the review or in the result. */
 function stepLabel(s: PlannedStep, when: "review" | "result") {
   if (s.kind === "credential") return `Credential${when === "review" && s.type ? `, ${s.type}` : ""}`
   if (s.action === "replace") return when === "review" ? "Workflow, written over as its draft" : "Workflow, replaced"
   return when === "review" ? "Workflow, inactive" : "Workflow"
 }
 
-/** How each step of a restore went. */
 function StepList({ restore }: { restore: RestoreView }) {
   return (
     <ol className="grid gap-1.5">
@@ -266,7 +255,6 @@ function StepList({ restore }: { restore: RestoreView }) {
   )
 }
 
-/** What n8n did that the review did not expect (a replace that unpublished the workflow, say), said first. */
 function StepWarnings({ restore }: { restore: RestoreView }) {
   const warnings = stepsOf(restore).flatMap((s) => (s.warning ? [s.warning] : []))
   if (warnings.length === 0) return null
@@ -285,10 +273,6 @@ function StepWarnings({ restore }: { restore: RestoreView }) {
   )
 }
 
-/**
- * The result of a confirmed restore: how it ended, each step with its exact name, status, created ID and error, and
- * what happened to each credential. `stillUnknown` after a check that found nothing yet.
- */
 export function RestoreResult({ restore: r, stillUnknown = false }: { restore: RestoreView; stillUnknown?: boolean }) {
   const w = useTimeFormat()
   const navigateFromDialog = useNavigateFromOverlay()
@@ -313,7 +297,6 @@ export function RestoreResult({ restore: r, stillUnknown = false }: { restore: R
             <Link
               to={versionBeforePath(r)}
               onClick={(e) => {
-                // A plain click opens it in place of the dialog's Back entry; one with a modifier is the browser's.
                 if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
                 e.preventDefault()
                 navigateFromDialog(versionBeforePath(r))
@@ -339,17 +322,12 @@ export function RestoreResult({ restore: r, stillUnknown = false }: { restore: R
   )
 }
 
-/** "Check and try again" for a restore whose outcome is unknown: checks n8n and gives the restore as it is now. */
 export async function checkRestore(r: RestoreView): Promise<RestoreView> {
   const now = await api<RestoreView>(`/backups/restores/${r.id}/check`, { method: "POST" })
   void queryClient.invalidateQueries({ queryKey: [`/backups/${now.targetInstanceId}/restores`] })
   return now
 }
 
-/**
- * A stored restore opened from a list, after a reload too: its result, and Check and try again while unknown. Give it
- * a new key for each opening: it starts from what the list says, and a check that ends later lands on no other one.
- */
 export function RestoreDetailsDialog({ restore, onClose }: { restore: RestoreView | null; onClose: () => void }) {
   const [shown, setShown] = useState<RestoreView | null>(null)
   const [stillUnknown, setStillUnknown] = useState(false)

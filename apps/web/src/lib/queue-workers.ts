@@ -1,9 +1,3 @@
-/*
- * What the Health tab says about the n8n queue workers of an instance in queue mode: nothing while they are checked
- * (by the URLs typed, or found next to the main), otherwise why they are not, and what to change. The worker rows
- * themselves say how each worker is.
- */
-
 export type WorkerState = "ready" | "not-ready" | "unreachable" | "not-verified" | "down" | "not-checked"
 
 export type QueueWorkersInput = {
@@ -18,11 +12,9 @@ export type QueueWorkersInput = {
     fallback?: string
     discovery?: { status: string; reason?: string; found: number }
   } | null
-  /** Set when the socket proxy refused something in the current report: the fix shown above says what to paste. */
   proxyFix?: { refused: string[] } | null
 }
 
-/** What to say, and whether editing the instance is the way to change it. */
 export type QueueWorkersNote = { title: string; text: string; edit: boolean }
 
 export function queueWorkersNote(i: QueueWorkersInput): QueueWorkersNote | null {
@@ -91,7 +83,6 @@ export function queueWorkersNote(i: QueueWorkersInput): QueueWorkersNote | null 
   return null
 }
 
-/** How a queue worker is, in words, with what the check said. */
 export function workerWords(state: WorkerState | undefined, ok: boolean, error?: string): string {
   const why = error ? `: ${error}` : ""
   switch (state) {
@@ -112,13 +103,11 @@ export function workerWords(state: WorkerState | undefined, ok: boolean, error?:
   }
 }
 
-/** The dot of a queue worker: ok when ready, a warning when not known, down otherwise. */
 export function workerHealth(state: WorkerState | undefined, ok: boolean): "ok" | "warn" | "down" {
   if (state === "not-verified" || state === "not-checked") return "warn"
   return ok ? "ok" : "down"
 }
 
-/** A queue worker as the Health tab shows it, with the figures the check in it read. */
 export type QueueWorkerRow = {
   url: string
   name?: string
@@ -131,12 +120,10 @@ export type QueueWorkerRow = {
   concurrency?: { value: number; from: "env" | "flag" | "default" }
 }
 
-/** By name, numbers in order (worker2 before worker10); the checks run in another order, the list does not. */
 export function byName(a: QueueWorkerRow, b: QueueWorkerRow): number {
   return (a.name ?? a.url).localeCompare(b.name ?? b.url, "en", { numeric: true })
 }
 
-/** What a row says, in the summary's words. A row without a state (a health URL the owner typed) has no readiness. */
 type Bucket = WorkerState | "health-only" | "unknown"
 const bucketOf = (r: QueueWorkerRow): Bucket => r.state ?? (r.ok ? "health-only" : "unknown")
 
@@ -150,15 +137,10 @@ const STATE_WORDS: [Bucket, string][] = [
   ["unknown", "state not known"],
 ]
 
-/**
- * One line above the queue workers: how many are ready of how many there are, then each other state with its count.
- * When the list was cut (`found` above the rows), it says how many were checked; `past` marks the last check.
- */
 export function workersSummary(rows: QueueWorkerRow[], options: { found?: number; past?: boolean } = {}): string {
   const count = (bucket: Bucket) => rows.filter((r) => bucketOf(r) === bucket).length
   const ready = count("ready")
   const total = options.found !== undefined && options.found > rows.length ? options.found : rows.length
-  // More were found than are shown (the probe checks at most 50): say how many are shown, not how many were checked.
   const head =
     total > rows.length
       ? `Showing ${rows.length} of ${total} queue workers: ${ready} ready`
@@ -173,14 +155,12 @@ export function workersSummary(rows: QueueWorkerRow[], options: { found?: number
 
 const MB = 1024 * 1024
 
-/** Bytes in words: MB under a GB, GB above, one decimal under ten. */
 export function bytesWords(bytes: number): string {
   if (bytes < 1024 * MB) return `${Math.round(bytes / MB)} MB`
   const gb = bytes / (1024 * MB)
   return `${gb < 10 ? gb.toFixed(1).replace(/\.0$/, "") : Math.round(gb)} GB`
 }
 
-/** A duration in words, its two largest units: "3 d 4 h", "5 h 12 min", "12 min", "45 s". */
 export function uptimeWords(seconds: number): string {
   const d = Math.floor(seconds / 86_400)
   const h = Math.floor((seconds % 86_400) / 3600)
@@ -196,16 +176,8 @@ const FROM_WORDS = {
   default: "n8n's default",
 } as const
 
-/** One fact in the line under the queue workers' summary; `warn` when it stands out. */
 export type WorkersFact = { text: string; warn?: boolean }
 
-/**
- * The line under the queue workers' summary: what is the same on all of them, said once, so the rows keep only what
- * differs. How many jobs the ready ones run at once (the others take none), the n8n they run, and whether their
- * containers have a memory limit, each only when a check read it on some worker and saying so when it was read on
- * some only. The version is compared with the main's only when it was read inside the main in the same check
- * (`mainVersion`), else only between the workers.
- */
 export function workersFacts(rows: QueueWorkerRow[], mainVersion?: string): WorkersFact[] {
   const isReady = (r: QueueWorkerRow) => bucketOf(r) === "ready"
   const every = (read: number) => (read === rows.length ? "every worker" : `${read} of ${rows.length} workers`)
@@ -222,7 +194,6 @@ export function workersFacts(rows: QueueWorkerRow[], mainVersion?: string): Work
     const from = new Set(withJobs.map((r) => r.concurrency?.from))
     const [one] = each
     const [source] = from
-    // Ready workers whose figure was not read take jobs too: their part is missing from the count.
     const unread = rows.filter((r) => isReady(r) && !r.concurrency).length
     const why = [
       each.size === 1 ? `${one} each` : "not the same on each",
@@ -263,7 +234,6 @@ export function workersFacts(rows: QueueWorkerRow[], mainVersion?: string): Work
   if (withMemory.length) {
     const limited = withMemory.filter((r) => r.memory?.limit !== null).length
     const read = withMemory.length
-    // Read on some workers only: say of how many containers, and how many there are.
     const of = read === rows.length ? "" : ` read, of ${rows.length}`
     facts.push({
       text:
@@ -281,17 +251,11 @@ export function workersFacts(rows: QueueWorkerRow[], mainVersion?: string): Work
   return facts
 }
 
-/**
- * One queue worker's row: its state in a word, what went wrong when something did, its version when it stands out
- * (it differs from the main's, or, the main's not read, the workers run more than one), and each figure only when
- * the check read it.
- */
 export function workerCells(w: QueueWorkerRow, mainVersion?: string, mixed = false) {
   const health = workerHealth(w.state, w.ok)
   return {
     health,
     state: workerWords(w.state, w.ok),
-    // "Running, health not verified" is what that state says already.
     error: w.error && w.state !== "not-verified" ? w.error : undefined,
     version:
       w.version && (mainVersion ? w.version !== mainVersion : mixed)

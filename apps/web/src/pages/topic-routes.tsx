@@ -109,7 +109,7 @@ export function TopicRoutes({
           ]
           return (
             <li
-              // biome-ignore lint/suspicious/noArrayIndexKey: see above
+              // biome-ignore lint/suspicious/noArrayIndexKey: rows are plain values, so a moved row's fields move with it
               key={i}
               className={cn("grid gap-2 rounded-md border p-3", marked ? "border-fail" : "border-line")}
               aria-label={`Route ${n}`}

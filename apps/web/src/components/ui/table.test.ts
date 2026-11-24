@@ -5,13 +5,11 @@ const failures: SortState = { key: "failures", dir: "descending" }
 const fewest: SortState = { key: "failures", dir: "ascending" }
 const byName: SortState = { key: "workflow", dir: "ascending" }
 
-// What `useApi(path, { keepRows: true })` gives for the address asked for.
 const arrived: SortAnswer = { data: { items: [] } }
 const loading: SortAnswer = { data: { items: [] }, isPlaceholderData: true, previous: "loading" }
 const failed: SortAnswer = { data: { items: [] }, previous: "failed" }
 const retrying: SortAnswer = { data: { items: [] }, isPlaceholderData: true, previous: "failed" }
 
-// A list sorted on the server shows the order its rows are in (TB-4), and remembers only that one (TB-3).
 describe("sortTracker", () => {
   it("shows a new order at once, while its rows are on their way", () => {
     const sort = sortTracker("t-at-once")
@@ -27,7 +25,6 @@ describe("sortTracker", () => {
     sort.shown(failures, loading)
     expect(sort.shown(failures, failed)).toBeNull()
     expect(sort.shown(failures, retrying)).toBeNull()
-    // Its rows come after all: now it is the order shown.
     expect(sort.shown(failures, arrived)).toEqual(failures)
   })
 

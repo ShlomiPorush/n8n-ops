@@ -17,11 +17,6 @@ import { Input } from "@/components/ui/input"
 import { ApiError, api, failureText, refreshAreas, useApiMutation } from "@/lib/api"
 import { toast } from "@/lib/toast"
 
-/*
- * What a worker's socket proxy must allow, as the server computes it (services/proxy-fix.ts), and the fix shown
- * where the proxy refused something: the exact lines to paste, with Copy, and what they allow.
- */
-
 export type RuleSource =
   | { kind: "entered" }
   | { kind: "main"; instance: string }
@@ -35,7 +30,6 @@ export type WorkerRule = {
     allows: { name: string; pattern: boolean; sources: RuleSource[]; regex?: string; computed?: boolean }[]
     coverage: "complete" | "partial"
     gaps: string[]
-    /** The same lines with a pattern for queue workers added later, offered beside the exact ones. */
     widened: {
       patterns: { pattern: string; prefix: string; instance: string; checkedAt?: string }[]
       lines: string
@@ -53,7 +47,6 @@ export type ProxyFix = WorkerRule & {
 
 const ALLOWED_MAX = 500
 
-/** The socket proxy fix a failed request carries (a credential export, a move), or null. */
 export function proxyFixOf(error: unknown): ProxyFix | null {
   if (!(error instanceof ApiError)) return null
   const fix = error.body?.proxyFix
@@ -72,12 +65,6 @@ const sentence = (text: string) => `${text.charAt(0).toUpperCase()}${text.slice(
 const STALE_NOTE = "The suggestion was out of date. These are the lines as they are now."
 const SAVED_NOTE = "Saved. These are the lines as they are now."
 
-/**
- * The two lines, Copy, what they allow, and what is not known yet. Shared by the fix and the worker's panel. After the
- * allowed containers are saved, or a suggestion was out of date, the lines of the server's answer show, until the page
- * has read its own again. That is said in one live region that stays in place, and takes the keyboard focus, as the
- * control that was used can be gone.
- */
 export function RuleLines({
   rule: given,
   workerId,
@@ -87,7 +74,6 @@ export function RuleLines({
   rule: WorkerRule["rule"]
   workerId: string
   recorded: WorkerRule["recorded"]
-  /** Queries to read again once the allowed containers are saved; none for a fix held from a failed request. */
   refresh?: string[]
 }) {
   const [editing, setEditing] = useState(false)
@@ -131,7 +117,6 @@ export function RuleLines({
               <code dir="ltr" className="font-mono text-small">
                 {a.name}
               </code>
-              {/* Ink, not muted: it stands on the tint of a warning, where muted text is too faint to read. */}
               <span>
                 {" "}
                 (
@@ -163,7 +148,6 @@ export function RuleLines({
           <ShieldCheckIcon /> Change allowed containers
         </Button>
       )}
-      {/* Mounted on each opening, so it starts from the lines as they are now. */}
       {editing && (
         <AllowedDialog
           open
@@ -177,11 +161,6 @@ export function RuleLines({
   )
 }
 
-/**
- * The lines with a pattern for queue workers added later, offered beside the exact ones: what each pattern allows,
- * Copy, and a button that records the patterns so the lines n8n-ops shows from then on keep them. A suggestion the
- * lines no longer make is never recorded: the server answers 409 with the lines as they are now.
- */
 function WidenedOption({
   widened,
   workerId,
@@ -246,11 +225,6 @@ function WidenedOption({
   )
 }
 
-/**
- * Where the socket proxy refused something: what it refused, and the lines that allow it. A fix read with the page
- * names the queries to read again after the allowed containers are saved (`refresh`); one held from a failed request
- * (an export, a move) has none.
- */
 export function ProxyFixBlock({ fix, refresh }: { fix: ProxyFix; refresh?: string[] }) {
   return (
     <Alert variant="warn">
@@ -273,7 +247,6 @@ export function ProxyFixBlock({ fix, refresh }: { fix: ProxyFix; refresh?: strin
   )
 }
 
-/** Records the containers the worker's socket proxy allows now: what n8n-ops puts in the lines it shows. */
 export function AllowedDialog({
   open,
   onOpenChange,
@@ -285,7 +258,6 @@ export function AllowedDialog({
   onOpenChange: (open: boolean) => void
   workerId: string
   prefill: string[]
-  /** The worker's lines as they are after the save. */
   onSaved: (now: WorkerRule) => void
 }) {
   const fits = prefill.length <= ALLOWED_MAX

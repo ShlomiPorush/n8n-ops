@@ -1,18 +1,10 @@
 import type { ToneName } from "@/components/status"
 
-/*
- * Where an instance's health and queue metrics come from: the server checks them itself, or the worker on the n8n
- * host does and reports them, from inside the main container or over the network. The words say what happens now,
- * not only what is set: a worker that is offline or missing means nothing is checked, and a check that failed
- * means the health shown is not known.
- */
-
 export type Collection = "direct" | "worker"
 
 export type CollectionInput = {
   collection: Collection
   worker: { name: string; online: boolean } | null
-  /** What the stored health says about how it was checked. */
   detail?: { via?: string; source?: string; fallback?: string; notCollected?: string } | null
 }
 

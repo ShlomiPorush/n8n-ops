@@ -4,13 +4,6 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { byName, type QueueWorkerRow, workerCells, workersFacts, workersSummary } from "@/lib/queue-workers"
 import { cn } from "@/lib/utils"
 
-/*
- * The queue workers of an instance on its Health tab. Two lines say once what is the same on all of them (how many
- * are ready, then the jobs they run at once, the n8n they run and the memory limit), and the table keeps what
- * differs between them, one row each, so a worker that stands out is seen down a column. Where something is wrong the
- * row says it under the worker's name. In a narrow pane or on a phone the table stacks, as every table does, each
- * value labelled with its column. `past` shows what the last check read: no tones, and the dots grey.
- */
 export function QueueWorkers({
   rows,
   mainVersion,
@@ -18,22 +11,16 @@ export function QueueWorkers({
   past,
 }: {
   rows: QueueWorkerRow[]
-  /** The main's version read inside in the same check, the only one a worker's is compared with. */
   mainVersion?: string
-  /** How many the worker found, when more than it checked. */
   found?: number
   past: boolean
 }) {
   if (rows.length === 0) return null
   const sorted = [...rows].sort(byName)
   const facts = workersFacts(sorted, mainVersion)
-  // The list was cut (the worker checks at most 50): the facts are of the workers shown.
   const cut = found !== undefined && found > sorted.length
-  // Jobs at once are said per row only when they come from different places.
   const sources = new Set(sorted.flatMap((r) => (r.concurrency ? [r.concurrency.from] : [])))
-  // Health URLs typed by hand answer health only: without a figure on any row, there are no columns for them.
   const anyRead = sorted.some((r) => r.uptimeSec !== undefined || r.concurrency || r.memory)
-  // The main's version not read: a worker's own stands out when they run more than one.
   const mixed = new Set(sorted.flatMap((r) => (r.version ? [r.version] : []))).size > 1
 
   return (
@@ -57,7 +44,6 @@ export function QueueWorkers({
           </p>
         )}
       </div>
-      {/* No Sort button (TB-28): the workers stay in name order, worker2 before worker10. */}
       <Table bare>
         <TableHeader>
           <TableRow>
@@ -76,7 +62,6 @@ export function QueueWorkers({
           {sorted.map((w) => {
             const c = workerCells(w, mainVersion, mixed)
             const read = c.uptime || c.jobs || c.memory
-            // A ready worker on another n8n warns too.
             const tint = past
               ? undefined
               : c.health === "down"
@@ -146,7 +131,6 @@ export function QueueWorkers({
                         </>
                       )}
                     </TableCell>
-                    {/* Stacked, the memory and its bar take a line of their own. */}
                     <TableCell data-wide className="align-top whitespace-normal">
                       {c.memory && (
                         <span className="inline-grid min-w-24 gap-1 align-top">

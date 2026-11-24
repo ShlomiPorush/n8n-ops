@@ -113,7 +113,6 @@ export type WorkerHealth = {
   events: WorkerEvent[]
   total: number
   nextOffset: number | null
-  latestIds: { offline: number; beats: number; recording: number }
 }
 
 export type WorkerListItem = {
@@ -149,7 +148,7 @@ const RTT_SLOT_MS = 5 * 60_000
 const AGE_MAX_MS = DAY_MS
 
 const DESCRIPTION =
-  "A Worker is online while it called the server within the last 90 s; an offline period starts 90 s after its last call and ends at its next call. Time when n8n-ops itself was not running or could not record (process stopped, blocked, or its database unreachable) is shown as not recording, never as the Worker offline; such time may begin up to 15 s later than shown when the server was idle. For 90 s after n8n-ops starts recording again Workers have not had time to call yet, so offline time then counts as online. Workers that announce the heartbeat feature call every 30 s also while a job runs, and report as measured by the Worker: the round trip of their previous heartbeat, calls to the server that failed, and a Docker check every 60 s (each speaks for the time until the next one, at most 3 minutes; a Docker failing period that began earlier than 3 minutes before the window starts there). A restart is a new Worker process after an earlier one was seen. Time before historyStartsAt is not measured and never counts in shares. Pages with the same to read the same window, but rows written later with a time inside it (a late report, or a server clock moved back) can still appear: latestIds changes when they do."
+  "A Worker is online while it called the server within the last 90 s; an offline period starts 90 s after its last call and ends at its next call. Time when n8n-ops itself was not running or could not record (process stopped, blocked, or its database unreachable) is shown as not recording, never as the Worker offline; such time may begin up to 15 s later than shown when the server was idle. For 90 s after n8n-ops starts recording again Workers have not had time to call yet, so offline time then counts as online. Workers that announce the heartbeat feature call every 30 s also while a job runs, and report as measured by the Worker: the round trip of their previous heartbeat, calls to the server that failed, and a Docker check every 60 s (each speaks for the time until the next one, at most 3 minutes; a Docker failing period that began earlier than 3 minutes before the window starts there). A restart is a new Worker process after an earlier one was seen. Time before historyStartsAt is not measured and never counts in shares. Pages with the same to read the same window, but rows written later with a time inside it (a late report, or a server clock moved back) can still appear and move the rest, so an event may appear twice or be skipped between pages; total changes when it adds one."
 
 const activeWorker = and(isNull(workers.revokedAt), isNotNull(workers.tokenHash))
 const iso = (ms: number) => new Date(ms).toISOString()
@@ -386,11 +385,6 @@ export async function workerHealth(
         )
       const id = worker.id
       const startsAt = await historyStartsAt(tx, worker.createdAt)
-      const [latest] = (await tx.execute(sql`
-        select
-          (select coalesce(max(id), 0) from worker_offline where worker_id = ${id}) as offline,
-          (select coalesce(max(id), 0) from worker_beats where worker_id = ${id}) as beats,
-          (select coalesce(max(id), 0) from server_recording) as recording`)) as unknown as Row[]
       // The latest check made at or before now, by when it was made (a late report of an older check never wins);
       // its cover contains now when it is under the cover time old. A check dated after now (the server clock moved
       // back) is shown only when there is no other.
@@ -401,7 +395,7 @@ export async function workerHealth(
       // The ongoing offline period, with the same hint the write side records: a job running since before it.
       const ongoing = offlineGap(worker.lastSeenAt?.getTime() ?? null, now.getTime(), startsAt?.getTime() ?? null)
       const ongoingJob = ongoing ? await runningJob(tx, id, new Date(ongoing.from)) : null
-      const base = { worker, startsAt, latest, docker, ongoing, ongoingJob }
+      const base = { worker, startsAt, docker, ongoing, ongoingJob }
       if (!startsAt)
         return {
           ...base,
@@ -554,10 +548,5 @@ export async function workerHealth(
     events: derived.events.slice(q.offset, q.offset + q.limit),
     total: derived.events.length,
     nextOffset: next < derived.events.length ? next : null,
-    latestIds: {
-      offline: num(read.latest?.offline as number),
-      beats: num(read.latest?.beats as number),
-      recording: num(read.latest?.recording as number),
-    },
   }
 }

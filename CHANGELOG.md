@@ -12,6 +12,7 @@ All notable changes to this project are documented here. The format follows [Kee
 ### Removed
 
 - **`scripts/local.sh migrate` and `DOCKER_SOCKET_GID`, for development stacks only.** A stack whose `docker-compose-dev.yml` names the env files of before 0.9.0, or whose `migrate` did not finish, runs it with the scripts of 0.9.0 to 0.19.4. A copy that still names `DOCKER_SOCKET_GID` is made again from `docker/docker-compose-dev.example.yml`.
+- **`latestIds` in a Worker's health history.** It changed with every heartbeat. The API, the MCP tool and the agent skill now say that a row written late may make an event appear twice or be skipped between pages, and that the pages are read again when `total` changes. Installed skills keep working.
 
 ### Fixed
 

@@ -325,7 +325,7 @@ describe("the read", () => {
     ])
     expect(first.summary).toMatchObject({ offlinePeriods: 5, offlineMs: 25 * MIN })
     expect(first.series).toHaveLength(288)
-    // A period written after the first page, with a time inside the window, changes latestIds.
+    // A period written after the first page, with a time inside the window, is counted too.
     await ctx.db.insert(workerOffline).values({ workerId: w.id, from: at(400), to: at(395) })
     const second = await workerHealth(
       ctx,
@@ -334,7 +334,6 @@ describe("the read", () => {
       NOW,
     )
     expect(second.window).toEqual(first.window)
-    expect(second.latestIds.offline).toBeGreaterThan(first.latestIds.offline)
     expect(second).toMatchObject({ total: 6, nextOffset: 4 })
     const past = await workerHealth(ctx, { name: "w1" }, query({ hours: 1, to: at(52).toISOString() }), NOW)
     // The period from 50 to 45 minutes ago is outside a window that ends 52 minutes ago.

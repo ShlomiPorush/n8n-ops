@@ -169,7 +169,6 @@ export async function recordBeat(ctx: Ctx, workerId: string, receivedAt: Date, b
       rttMs: beat.rtt ? Math.round(beat.rtt.ms) : null,
       rttAt: beat.rtt ? ago(beat.rtt.ageSec) : null,
       failedCalls: beat.failedCalls ?? null,
-      lastCallError: beat.lastCallError ?? null,
       dockerCheckedAt: beat.docker ? ago(beat.docker.ageSec) : null,
       dockerOk: beat.docker?.ok ?? null,
       dockerMs: beat.docker ? Math.round(beat.docker.ms) : null,

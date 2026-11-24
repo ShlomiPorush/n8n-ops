@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Changed
+
+- **From a version before 0.8.0, upgrade to 0.19.3 first.** The first start of 0.8.0 to 0.19.4 regrouped the problems recorded before 0.8.0 by cause; this version no longer does. `regroup-dry-run` of the server's command line went with it. Links to problems regrouped then still show where their workflows went, and the buttons of Telegram messages from before still do nothing.
+
 ### Removed
 
 - **`scripts/local.sh migrate` and `DOCKER_SOCKET_GID`, for development stacks only.** A stack whose `docker-compose-dev.yml` names the env files of before 0.9.0, or whose `migrate` did not finish, runs it with the scripts of 0.9.0 to 0.19.4. A copy that still names `DOCKER_SOCKET_GID` is made again from `docker/docker-compose-dev.example.yml`.
@@ -13,6 +17,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - **A move goes to the target its review shows.** With another target picked while the review was being made, the dialog showed the first one and moved to the second.
 - **The Move and Restore dialogs always open empty.** An answer that came after a dialog was closed, such as a late review, no longer shows in the next one, and a check of one restore no longer changes the details of another. The Move dialog stays open while a move runs, so its result is always shown.
 - **Show JSON no longer stays on "Reading the archive" when Download JSON is chosen meanwhile.**
+- **A mute that ended counts as open everywhere.** Needs attention and the Telegram messages still took a problem as muted until the hourly housekeeping turned it back; the lists and counts already showed it as open. The server now ends mutes every 5 seconds, so they show it as open too.
 
 ## [0.19.4] - 2026-11-24
 

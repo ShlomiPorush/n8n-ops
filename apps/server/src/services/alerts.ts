@@ -16,7 +16,7 @@ import { causeFields } from "./cause.ts"
 import { telegramTarget } from "./draft-tests.ts"
 import { can } from "./instances.ts"
 import type { DbLike } from "./problems.ts"
-import { applyProblemActions } from "./problems.ts"
+import { applyProblemAction } from "./problems.ts"
 import { clip, html, type InlineButton, isMessageGone, Telegram, TelegramError, TelegramHtml } from "./telegram.ts"
 
 type AffectedRow = typeof affectedWorkflows.$inferSelect
@@ -617,7 +617,7 @@ export async function handleTelegramCallback(ctx: Ctx, update: CallbackUpdate): 
   const [action, groupId] = cb.data.split(":")
   if (!groupId || (action !== "r" && action !== "m")) return false
   const [known] = await ctx.db
-    .select({ id: alertGroups.id, beforeRegroup: alertGroups.beforeRegroup })
+    .select({ problemId: alertGroups.problemId, beforeRegroup: alertGroups.beforeRegroup })
     .from(alertGroups)
     .where(eq(alertGroups.id, groupId))
   // Answered at once: Telegram shows a spinner until then, and the change may wait for a dispatch editing this group.
@@ -625,24 +625,23 @@ export async function handleTelegramCallback(ctx: Ctx, update: CallbackUpdate): 
   // Problems now, and a press must never resolve or mute what the message did not show.
   await tg.api.answerCallback(
     cb.id,
-    !known
-      ? "This alert is no longer known."
-      : known.beforeRegroup
-        ? "This alert is from before the regrouping. Open n8n-ops to act."
+    known?.beforeRegroup
+      ? "This alert is from before the regrouping. Open n8n-ops to act."
+      : !known?.problemId
+        ? "This alert is no longer known."
         : action === "r"
           ? "Marked as resolved"
           : "Muted for 24 hours",
   )
-  if (!known || known.beforeRegroup) return true
+  if (!known?.problemId || known.beforeRegroup) return true
+  const { problemId } = known
   return withGroup(groupId, async () => {
     const [group] = await ctx.db.select().from(alertGroups).where(eq(alertGroups.id, groupId))
     if (!group) return true
     const who = cb.from?.username ? `@${cb.from.username}` : (cb.from?.first_name ?? "someone")
-    // The whole Problem the message is about, read now (a Merge since may have moved it). A message from before
-    // 0012 names no Problem; its button acts on the Problems of the workflows it lists, as it did on those rows.
-    // One transaction for all of them, which reads each Problem again under its lock and follows a Merge.
-    const named = group.problemId ? { problems: [group.problemId] } : { workflows: group.affectedWorkflowIds }
-    const problemIds = await applyProblemActions(ctx, named, action === "r" ? "resolve" : "mute", {
+    // The whole Problem the message is about, or the one a Merge since moved it to.
+    const acted = await applyProblemAction(ctx, problemId, action === "r" ? "resolve" : "mute", {
+      fromMessage: true,
       muteHours: 24,
       audit: {
         actor: `telegram:${who}`,
@@ -651,11 +650,8 @@ export async function handleTelegramCallback(ctx: Ctx, update: CallbackUpdate): 
       },
     })
     changed(ctx, "problems", "overview")
-    const listed = group.problemId
-      ? await stillIn(ctx, problemIds[0] ?? group.problemId, group.affectedWorkflowIds)
-      : group.affectedWorkflowIds
-    const lines = await groupLines(ctx, listed)
-    const [problem] = problemIds[0] ? await ctx.db.select().from(problems).where(eq(problems.id, problemIds[0])) : []
+    const problem = acted?.problem
+    const lines = await groupLines(ctx, await stillIn(ctx, problem?.id ?? problemId, group.affectedWorkflowIds))
     // The pressed message itself: its group may never have stored the ID (a send that timed out but arrived).
     const messageId = cb.message?.message_id ?? group.telegramMessageId
     try {
@@ -663,14 +659,12 @@ export async function handleTelegramCallback(ctx: Ctx, update: CallbackUpdate): 
         tg.chatId,
         messageId,
         renderProblemGroup(
-          group.problemId && problem ? causeFields(problem).title : group.groupKey,
+          problem ? causeFields(problem).title : group.groupKey,
           lines,
           html`<i>${action === "r" ? "Resolved" : "Muted for 24 hours"} by ${who}</i>`,
           groupNote(group),
           // Its form by its own history, its count by the Problem it is in now (a Merge may have moved it).
-          group.problemId && problemIds[0]
-            ? await spreadOf(ctx, group.problemId, group.createdAt, problemIds[0])
-            : undefined,
+          problem ? await spreadOf(ctx, problemId, group.createdAt, problem.id) : undefined,
           problem ? causeFields(problem).hint : null,
         ),
       )

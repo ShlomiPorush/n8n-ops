@@ -21,8 +21,8 @@ import { causeOf } from "./cause.ts"
 import {
   type AffectedWorkflow,
   applyProblemAction,
-  applyProblemActions,
   deleteInstance,
+  endMutes,
   fingerprint,
   housekeeping,
   ingestExecution,
@@ -259,74 +259,6 @@ describe("a failed execution", () => {
     expect(await readProblem(a?.problemId ?? "")).toMatchObject({ target: "New" })
   })
 
-  it("keeps a newer label that another ingest committed while this one waited for the Problem", async () => {
-    const run = (id: string, workflowId: string, name: string, at: number) => ({
-      ...execution(id, workflowId, "Upload", "Client authentication failed."),
-      startedAt: new Date(Date.now() - at).toISOString(),
-      stoppedAt: new Date(Date.now() - at).toISOString(),
-      workflowData: {
-        id: workflowId,
-        name: workflowId,
-        nodes: [
-          { name: "Upload", type: "n8n-nodes-base.microsoftOneDrive", credentials: { oauth: { id: "cred-3", name } } },
-        ],
-        connections: {},
-      } as never,
-    })
-    const a = await ingestExecution(ctx, instance, run("race-a1", "race-a", "Initial", 3 * hour), { silent: true })
-    const b = await ingestExecution(ctx, instance, run("race-b1", "race-b", "Initial", 4 * hour), { silent: true })
-    const pid = a?.problemId ?? ""
-    let late: Promise<unknown> = Promise.resolve()
-    // Another ingest holds the Problem: workflow B failed an hour ago under the new name, not committed yet.
-    await database.db.transaction(async (tx) => {
-      await tx.select({ id: problems.id }).from(problems).where(eq(problems.id, pid)).for("update")
-      await tx
-        .update(affectedWorkflows)
-        .set({ lastSeen: new Date(Date.now() - hour) })
-        .where(eq(affectedWorkflows.id, b?.affectedWorkflowId ?? ""))
-      await tx.update(problems).set({ target: "New" }).where(eq(problems.id, pid))
-      // A failure of A from two hours ago, under a name in between, waits for that ingest.
-      late = ingestExecution(ctx, instance, run("race-a2", "race-a", "Between", 2 * hour), { silent: true })
-      await new Promise((done) => setTimeout(done, 500))
-    })
-    await late
-    expect(await readProblem(pid)).toMatchObject({ target: "New" })
-  })
-
-  it("writes the newest label when another ingest held the Problem with an older one", async () => {
-    const run = (id: string, workflowId: string, name: string, at: number) => ({
-      ...execution(id, workflowId, "Upload", "Client authentication failed."),
-      startedAt: new Date(Date.now() - at).toISOString(),
-      stoppedAt: new Date(Date.now() - at).toISOString(),
-      workflowData: {
-        id: workflowId,
-        name: workflowId,
-        nodes: [
-          { name: "Upload", type: "n8n-nodes-base.microsoftOneDrive", credentials: { oauth: { id: "cred-4", name } } },
-        ],
-        connections: {},
-      } as never,
-    })
-    const a = await ingestExecution(ctx, instance, run("hold-a1", "hold-a", "New", 3 * hour), { silent: true })
-    const b = await ingestExecution(ctx, instance, run("hold-b1", "hold-b", "New", 4 * hour), { silent: true })
-    const pid = a?.problemId ?? ""
-    let late: Promise<unknown> = Promise.resolve()
-    // Another ingest holds the Problem with an older label: B failed two hours ago, not committed yet.
-    await database.db.transaction(async (tx) => {
-      await tx.select({ id: problems.id }).from(problems).where(eq(problems.id, pid)).for("update")
-      await tx
-        .update(affectedWorkflows)
-        .set({ lastSeen: new Date(Date.now() - 2 * hour) })
-        .where(eq(affectedWorkflows.id, b?.affectedWorkflowId ?? ""))
-      await tx.update(problems).set({ target: "Older" }).where(eq(problems.id, pid))
-      // A failed an hour ago under "New": the latest failure, so its label must win once the other one is done.
-      late = ingestExecution(ctx, instance, run("hold-a2", "hold-a", "New", hour), { silent: true })
-      await new Promise((done) => setTimeout(done, 500))
-    })
-    await late
-    expect(await readProblem(pid)).toMatchObject({ target: "New" })
-  })
-
   it("keeps the earliest and latest failure times when a page arrives newest first", async () => {
     // n8n lists executions newest first, so the first failure ingested for a workflow is its latest one.
     const text = `Timeout (${randomBytes(3).toString("hex")})`
@@ -367,7 +299,7 @@ describe("a failed execution", () => {
     expect(m).toMatchObject({ problemId: muted.problemId, reason: null })
     expect(await read(m?.affectedWorkflowId ?? "")).toMatchObject({ status: "muted", mutedUntil: until })
 
-    // A mute that ended counts as open, also before housekeeping notices.
+    // A mute that ended counts as open, also before the job ends it.
     const ended = await row({ status: "muted", mutedUntil: new Date(Date.now() - hour) })
     const e = await ingestExecution(ctx, instance, execution(`ej-${ended.id}`, "new-wf", "N", ended.errorMessage), {
       silent: true,
@@ -896,40 +828,38 @@ describe("problem actions", () => {
 })
 
 describe("the review's rare states", () => {
-  it("Mute works again on a workflow whose mute ended before housekeeping noticed", async () => {
+  it("Mute works again on a workflow whose mute ended before the job ended it", async () => {
     const p = await row({ status: "muted", mutedUntil: new Date(Date.now() - hour) })
     const result = await applyProblemAction(ctx, p.problemId, "mute")
     expect(result?.receipt).toBeTruthy()
     expect((await read(p.id)).mutedUntil?.getTime()).toBeGreaterThan(Date.now())
   })
 
-  it("a Telegram press acts on the Problem a Merge moved its workflows to, all in one transaction", async () => {
+  it("a Telegram press acts on the Problem a Merge moved its workflows to, without a receipt", async () => {
     const into = await row()
     const from = await row()
     await mergeProblems(ctx, from.problemId, into.problemId)
-    expect(await applyProblemActions(ctx, { problems: [from.problemId] }, "resolve")).toEqual([into.problemId])
+    // Not a press in a message: an old link's action on the merged Problem is refused.
+    expect(await applyProblemAction(ctx, from.problemId, "resolve")).toBeNull()
+    const pressed = await applyProblemAction(ctx, from.problemId, "resolve", { fromMessage: true })
+    expect(pressed).toMatchObject({ problem: { id: into.problemId }, receipt: null })
     expect((await read(from.id)).status).toBe("resolved")
     expect((await read(into.id)).status).toBe("resolved")
-    // Either all of them or none: an audit that cannot be written saves no change.
-    const other = await row()
+    expect(
+      await ctx.db
+        .select()
+        .from(problemReceipts)
+        .where(inArray(problemReceipts.problemId, [from.problemId, into.problemId])),
+    ).toEqual([])
+    // An audit that cannot be written saves no change.
     const failing = { ...ctx, audit: async () => Promise.reject(new Error("audit log unavailable")) } as Ctx
     await expect(
-      applyProblemActions(failing, { problems: [into.problemId, other.problemId] }, "reopen", {
+      applyProblemAction(failing, from.problemId, "reopen", {
+        fromMessage: true,
         audit: { actor: "telegram:ops", action: "Problem reopened", via: "telegram" },
       }),
     ).rejects.toThrow("audit log unavailable")
     expect((await read(into.id)).status).toBe("resolved")
-    expect((await read(other.id)).status).toBe("open")
-  })
-
-  it("a press on a message from before 0012 acts on the Problems its workflows are in now", async () => {
-    const a = await row()
-    const b = await row({ errorMessage: a.errorMessage }, a.problemId)
-    const split = await splitAffectedWorkflow(ctx, a.problemId, b.id)
-    const done = await applyProblemActions(ctx, { workflows: [b.id] }, "resolve")
-    expect(done).toEqual([split?.problem.id])
-    expect((await read(b.id)).status).toBe("resolved")
-    expect((await read(a.id)).status).toBe("open")
   })
 
   it("removing an instance keeps the aliases of a Problem that stays", async () => {
@@ -1143,10 +1073,10 @@ describe("undo of a problem action", () => {
     expect(await undoProblemAction(ctx, a.problemId, own.id)).toEqual({ ok: false, error: "already_changed" })
   })
 
-  it("is refused after housekeeping ended the mute", async () => {
+  it("is refused after the mute ended", async () => {
     const p = await row()
     const receipt = await act(p, "mute")
-    await housekeeping(ctx, Date.now() + 25 * hour)
+    await endMutes(ctx, Date.now() + 25 * hour)
     const unmuted = await read(p.id)
     expect(unmuted).toMatchObject({ status: "open", mutedUntil: null })
 
@@ -1187,8 +1117,10 @@ describe("undo of a problem action", () => {
     expect(await undoProblemAction(ctx, p.problemId, receipt.id)).toEqual({ ok: false, error: "receipt_expired" })
     expect(await read(p.id)).toEqual(resolved)
 
-    // The next action clears expired receipts away.
-    await act(other, "resolve")
+    // Housekeeping clears expired receipts away, and no other.
+    const kept = await act(other, "resolve")
+    await housekeeping(ctx)
+    expect(await ctx.db.select().from(problemReceipts).where(eq(problemReceipts.id, kept.id))).toHaveLength(1)
     expect(await ctx.db.select().from(problemReceipts).where(eq(problemReceipts.id, receipt.id))).toHaveLength(0)
   })
 
@@ -1200,40 +1132,6 @@ describe("undo of a problem action", () => {
     await ingestExecution(ctx, instance, exec, { silent: true })
     expect(await read(p.id)).toMatchObject({ status: "muted", count: 1, version: receipt.prior[0]?.version })
     expect((await undoProblemAction(ctx, p.problemId, receipt.id)).ok).toBe(true)
-  })
-
-  it("clearing expired receipts does not wait for one another transaction holds", async () => {
-    const p = await row()
-    const old = await act(p, "resolve")
-    await ctx.db
-      .update(problemReceipts)
-      .set({ expiresAt: new Date(Date.now() - 1000) })
-      .where(eq(problemReceipts.id, old.id))
-    // Another transaction (an Undo of that receipt, say) holds it until released.
-    let release = () => {}
-    const released = new Promise<void>((resolve) => (release = resolve))
-    let holding = () => {}
-    const held = new Promise<void>((resolve) => (holding = resolve))
-    const holder = ctx.db.transaction(async (tx) => {
-      await tx.select().from(problemReceipts).where(eq(problemReceipts.id, old.id)).for("update")
-      holding()
-      await released
-    })
-    let timer: ReturnType<typeof setTimeout> | undefined
-    try {
-      await held
-      const other = await row()
-      const waited = new Promise<"waited">((resolve) => (timer = setTimeout(() => resolve("waited"), 2000)))
-      const acted = applyProblemAction(ctx, other.problemId, "resolve").then(() => "acted" as const)
-      expect(await Promise.race([acted, waited])).toBe("acted")
-    } finally {
-      clearTimeout(timer)
-      release()
-      await holder
-    }
-    // Left for a later action once free.
-    await act(await row(), "resolve")
-    expect(await ctx.db.select().from(problemReceipts).where(eq(problemReceipts.id, old.id))).toHaveLength(0)
   })
 })
 

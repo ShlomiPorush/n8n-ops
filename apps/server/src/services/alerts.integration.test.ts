@@ -442,7 +442,7 @@ describe("Telegram forum topics", () => {
     expect(await sendTestTelegram(t.ctx)).toEqual({ topicNotFound: true })
   })
 
-  it("delivers alerts queued before the upgrades to General, in a new message, and keeps old buttons working", async () => {
+  it("delivers alerts queued before the upgrades to General, in a new message, and old buttons do nothing", async () => {
     const { database, url } = await freshDatabase("0006_backup_copy_leftovers")
     const sql = postgres(url, { max: 1, onnotice: () => {} })
     const [inst] = await sql`insert into instances (name, base_url, api_key_enc) values ('old', 'http://n8n:5678', 'x')
@@ -467,7 +467,7 @@ describe("Telegram forum topics", () => {
     expect(sent).toContainEqual([undefined, "old is down"])
     expect(sent.find(([, text]) => String(text).includes("Sync orders"))).toBeDefined()
 
-    // Its buttons still act, on the Problem of the workflows it lists.
+    // It names no Problem, so its buttons do not act, and say so.
     const [old] = await t.db.select().from(alertGroups).where(eq(alertGroups.telegramMessageId, 55))
     await handleTelegramCallback(t.ctx, {
       callback_query: {
@@ -481,7 +481,48 @@ describe("Telegram forum topics", () => {
       .select()
       .from(affectedWorkflows)
       .where(eq(affectedWorkflows.id, p?.id as string))
-    expect(row?.status).toBe("resolved")
+    expect(row?.status).toBe("open")
+    expect(bot.calls.at(-1)).toMatchObject({
+      method: "answerCallbackQuery",
+      body: { text: "This alert is no longer known." },
+    })
+  })
+
+  it("a press on a message from before the regroup by cause changes nothing and says so", async () => {
+    const t = await setup({ defaultThreadId: 7 })
+    const audit = vi.fn(async () => {})
+    t.ctx.audit = audit
+    const row = await t.problem(t.a.id, "Sync orders")
+    // As release 0.8.0 left every message sent before it. Its Problem may even have kept its id.
+    const [group] = await t.db
+      .insert(alertGroups)
+      .values({
+        groupKey: "connect ECONNREFUSED",
+        problemId: row.problemId,
+        telegramMessageId: 55,
+        affectedWorkflowIds: [row.id],
+        beforeRegroup: true,
+        closedAt: new Date(),
+      })
+      .returning()
+    for (const action of ["r", "m"]) {
+      const handled = await handleTelegramCallback(t.ctx, {
+        callback_query: {
+          id: `cb-${action}`,
+          data: `${action}:${group?.id}`,
+          from: { id: 1, username: "ops" },
+          message: { message_id: 55, chat: { id: "-100" } },
+        },
+      })
+      expect(handled).toBe(true)
+    }
+    const [after] = await t.db.select().from(affectedWorkflows).where(eq(affectedWorkflows.id, row.id))
+    expect(after).toEqual(row)
+    expect(audit).not.toHaveBeenCalled()
+    expect(bot.calls.map((c) => [c.method, c.body.text])).toEqual([
+      ["answerCallbackQuery", "This alert is from before the regrouping. Open n8n-ops to act."],
+      ["answerCallbackQuery", "This alert is from before the regrouping. Open n8n-ops to act."],
+    ])
   })
 
   it("a later message of a Problem, past the edit window, is short: only the new workflow, and how many now", async () => {

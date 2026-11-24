@@ -4,7 +4,7 @@ import { dispatchAlerts, syncTelegramWebhook } from "./alerts.ts"
 import { checkDirect } from "./health.ts"
 import { pruneHealthHistory } from "./health-history.ts"
 import { activeOnly, can, refreshInstanceMeta, unsupportedVersion } from "./instances.ts"
-import { housekeeping, pollInstance } from "./problems.ts"
+import { endMutes, housekeeping, pollInstance } from "./problems.ts"
 import { maybeSendReports } from "./reports.ts"
 import { pruneWorkerHistory, pruneWorkerJobs } from "./worker-presence.ts"
 import { lastWorkflowSync, syncWorkflows, workflowSyncBusy } from "./workflows.ts"
@@ -40,6 +40,7 @@ export function startScheduler(ctx: Ctx, extraJobs: Job[] = []): () => void {
   // How soon the server acts on its own records, not how often it reads an instance (those follow the settings).
   const jobs: Job[] = [
     { name: "alerts", everyMs: 5_000, run: dispatchAlerts },
+    { name: "mutes", everyMs: 5_000, run: endMutes },
     { name: "telegram-webhook", everyMs: 60_000, run: syncTelegramWebhook },
     { name: "reports", everyMs: 60_000, run: maybeSendReports },
     { name: "housekeeping", everyMs: 3600_000, run: housekeeping },

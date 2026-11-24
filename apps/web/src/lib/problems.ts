@@ -128,9 +128,8 @@ export function quietText(lastSeen: string, now = Date.now()) {
 }
 
 /**
- * When a row may close by itself, never closer than a day: housekeeping runs hourly and closes an ended mute a run
- * later, so "Auto-closes in ~4 d" counts days rounded as ages are, and under a day, or past it, the row is
- * "Closing soon".
+ * When a row may close by itself, never closer than a day: housekeeping runs hourly, so "Auto-closes in ~4 d" counts
+ * days rounded as ages are, and under a day, or past it, the row is "Closing soon".
  */
 export function closesText(closesAt: string, now = Date.now()) {
   const days = (new Date(closesAt).getTime() - now) / DAY_MS

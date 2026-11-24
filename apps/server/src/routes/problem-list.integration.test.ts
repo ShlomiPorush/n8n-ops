@@ -13,13 +13,13 @@ import { createSettings } from "../lib/settings.ts"
 import { agentFailure, agentProblem, agentProblems } from "../services/agent.ts"
 import {
   type ProblemFilter,
-  type ProblemOrder,
   problemDetail,
   problemFailure,
   problemPage,
   problemRowsPage,
   titleSql,
 } from "../services/problem-view.ts"
+import { endMutes } from "../services/problems.ts"
 import { restRoutes } from "./agent.ts"
 
 // The Problems list against a real PostgreSQL (TB-4, TB-18): sorted before the limit, so a sort covers every
@@ -42,6 +42,8 @@ const ago = (ms: number) => new Date(Date.now() - ms)
 /** More plain open problems than the list sends; all were first seen days ago, so none counts as new. */
 const PLAIN = 205
 const ids: Record<string, string> = {}
+/** The Affected workflow of each of those Problems. */
+const rowIds: Record<string, string> = {}
 let seq = 0
 
 /** An Affected workflow in `problemId`, or in a Problem of its own made for it. */
@@ -94,7 +96,9 @@ beforeAll(async () => {
   // Seen one minute apart, the most recent first; a few failures each.
   for (let i = 0; i < PLAIN; i++) await row(alpha.id, { lastSeen: ago((i + 1) * minute), count: (i % 7) + 1 })
   const named = async (key: string, instanceId: string, state: Partial<typeof affectedWorkflows.$inferInsert>) => {
-    ids[key] = (await row(instanceId, state)).problemId
+    const r = await row(instanceId, state)
+    ids[key] = r.problemId
+    rowIds[key] = r.id
   }
   // The most failures of all, yet seen longest ago: last in the default order, outside the first 200.
   await named("worst", alpha.id, { count: 999, firstSeen: ago(10 * day), lastSeen: ago(5 * day) })
@@ -129,8 +133,8 @@ afterAll(async () => {
 
 const OPEN = PLAIN + 9 // the plain ones, worst, regression, new, aardvark, the four twins and the blank one
 
-type ListOptions = ProblemFilter & { order?: ProblemOrder | null; limit?: number }
-const listProblems = async (options: ListOptions) => (await problemPage(ctx, options)).items
+const listProblems = async (options: ProblemFilter & { limit?: number }) => (await problemPage(ctx, options)).items
+const listRows = async (options: Parameters<typeof problemRowsPage>[1]) => (await problemRowsPage(ctx, options)).items
 const workflowOf = (p: { affectedWorkflows: { workflowName: string }[] } | undefined) =>
   p?.affectedWorkflows[0]?.workflowName
 
@@ -150,20 +154,20 @@ describe("the Problems list", () => {
   })
 
   it("sorts before the limit, so the most failures come first even when seen longest ago", async () => {
-    const rows = await listProblems({ status: "open", order: { sort: "failures", order: "desc" } })
+    const rows = await listRows({ status: "open", order: { sort: "failures", order: "desc" } })
     expect(rows).toHaveLength(200)
-    expect(rows[0]?.id).toBe(ids.worst)
+    expect(rows[0]?.id).toBe(rowIds.worst)
     expect(rows[0]?.count).toBe(999)
     // Fewest first: only one-failure problems fit in the first rows, and the worst is not among the 200.
-    const fewest = await listProblems({ status: "open", order: { sort: "failures", order: "asc" } })
+    const fewest = await listRows({ status: "open", order: { sort: "failures", order: "asc" } })
     expect(fewest[0]?.count).toBe(1)
-    expect(fewest.map((r) => r.id)).not.toContain(ids.worst)
+    expect(fewest.map((r) => r.id)).not.toContain(rowIds.worst)
   })
 
   it("keeps equal values in the default order in both directions, so the order is stable", async () => {
-    const ranked = (await everything({ status: "open" })).map((r) => r.id)
+    const ranked = (await listRows({ status: "open", limit: 100_000 })).map((r) => r.id)
     for (const order of ["asc", "desc"] as const) {
-      const sorted = await listProblems({ status: "open", order: { sort: "failures", order }, limit: 100_000 })
+      const sorted = await listRows({ status: "open", order: { sort: "failures", order }, limit: 100_000 })
       expect(sorted).toHaveLength(OPEN)
       for (let i = 1; i < sorted.length; i++) {
         const [a, b] = [sorted[i - 1], sorted[i]]
@@ -172,29 +176,30 @@ describe("the Problems list", () => {
         if (a.count === b.count) expect(ranked.indexOf(a.id)).toBeLessThan(ranked.indexOf(b.id))
       }
       // Asked twice, the same order.
-      expect((await listProblems({ status: "open", order: { sort: "failures", order } })).map((r) => r.id)).toEqual(
+      expect((await listRows({ status: "open", order: { sort: "failures", order } })).map((r) => r.id)).toEqual(
         sorted.slice(0, 200).map((r) => r.id),
       )
     }
   })
 
   it("sorts text without regard to case, and by the instance name", async () => {
-    const byName = await listProblems({ status: "open", order: { sort: "workflow", order: "asc" } })
-    expect(byName[0]?.id).toBe(ids.aardvark)
-    const byInstance = await listProblems({ status: "open", order: { sort: "instance", order: "desc" } })
-    expect(byInstance[0]?.instances).toEqual(["Beta-n8n"])
-    const byInstanceUp = await listProblems({ status: "open", order: { sort: "instance", order: "asc" } })
-    expect(byInstanceUp[0]?.instances).toEqual(["alpha-n8n"])
+    const byName = await listRows({ status: "open", order: { sort: "workflow", order: "asc" } })
+    expect(byName[0]?.id).toBe(rowIds.aardvark)
+    const byInstance = await listRows({ status: "open", order: { sort: "instance", order: "desc" } })
+    expect(byInstance[0]?.instanceName).toBe("Beta-n8n")
+    const byInstanceUp = await listRows({ status: "open", order: { sort: "instance", order: "asc" } })
+    expect(byInstanceUp[0]?.instanceName).toBe("alpha-n8n")
   })
 
-  it("sorts by status the way the default order ranks, and by last seen", async () => {
-    const all = await listProblems({ status: "all", order: { sort: "status", order: "asc" } })
-    expect(all[0]?.id).toBe(ids.resolved)
-    expect(all[1]?.id).toBe(ids.muted)
-    const ranked = await listProblems({ status: "all", order: { sort: "status", order: "desc" } })
-    expect(ranked.map((r) => r.id)).toEqual((await listProblems({ status: "all" })).map((r) => r.id))
-    const oldest = await listProblems({ status: "open", order: { sort: "lastSeen", order: "asc" } })
-    expect(oldest[0]?.id).toBe(ids.worst)
+  it("sorts by status, a regression and what is new above the other open ones, and by last seen", async () => {
+    const all = await listRows({ status: "all", order: { sort: "status", order: "asc" } })
+    expect(all[0]?.id).toBe(rowIds.resolved)
+    expect(all[1]?.id).toBe(rowIds.muted)
+    const down = await listRows({ status: "all", order: { sort: "status", order: "desc" }, limit: 100_000 })
+    expect(down.slice(0, 2).map((r) => r.id)).toEqual([rowIds.regression, rowIds.new])
+    expect(down.slice(-2).map((r) => r.id)).toEqual([rowIds.muted, rowIds.resolved])
+    const oldest = await listRows({ status: "open", order: { sort: "lastSeen", order: "asc" } })
+    expect(oldest[0]?.id).toBe(rowIds.worst)
   })
 
   it("counts every problem the filters match, the same ones the list holds, in the answer that sends them", async () => {
@@ -227,21 +232,21 @@ describe("the Problems list", () => {
   })
 
   it("settles values that are alike in everything by the id, in both directions, and keeps blank text last", async () => {
-    const twins = ["twin1", "twin2", "twin3", "twin4"].map((k) => ids[k] ?? "").sort()
+    const twins = ["twin1", "twin2", "twin3", "twin4"].map((k) => rowIds[k] ?? "").sort()
     const aster = { status: "open", instanceId: ids.aster } as const
     for (const sort of ["status", "failures", "lastSeen", "instance", "workflow", "error"] as const) {
       for (const order of ["asc", "desc"] as const) {
-        const rows = (await listProblems({ ...aster, order: { sort, order } })).map((r) => r.id)
-        const alike = rows.filter((id) => id !== ids.blank)
+        const rows = (await listRows({ ...aster, order: { sort, order } })).map((r) => r.id)
+        const alike = rows.filter((id) => id !== rowIds.blank)
         expect(alike, `${sort} ${order}`).toEqual(twins)
         // A blank name or error comes after every named one, whichever way the column is turned (TB-2).
-        if (sort === "workflow" || sort === "error") expect(rows.at(-1), `${sort} ${order}`).toBe(ids.blank)
+        if (sort === "workflow" || sort === "error") expect(rows.at(-1), `${sort} ${order}`).toBe(rowIds.blank)
       }
     }
     // Among every open problem too: blank last both ways.
     for (const order of ["asc", "desc"] as const) {
-      const rows = await listProblems({ status: "open", order: { sort: "workflow", order }, limit: 100_000 })
-      expect(rows.at(-1)?.id).toBe(ids.blank)
+      const rows = await listRows({ status: "open", order: { sort: "workflow", order }, limit: 100_000 })
+      expect(rows.at(-1)?.id).toBe(rowIds.blank)
     }
   })
 
@@ -412,6 +417,7 @@ describe("the Problems list as rows", () => {
       database.db.update(affectedWorkflows).set({ problemId: now.problemId }).where(eq(affectedWorkflows.id, r.id)),
     )
 
+    await endMutes(ctx)
     const all = await problemRowsPage(ctx, { status: "all", instanceId: own.id })
     expect(all.items.map((r) => [r.workflowName, r.section])).toEqual([
       ["Runner one", "instance"],
@@ -511,6 +517,7 @@ describe("the Problems list as rows", () => {
     const page = (order?: { sort: "status" | "error"; order: "asc" | "desc" }) =>
       problemRowsPage(ctx, { status: "all", instanceId: own.id, order })
 
+    await endMutes(ctx)
     const all = await page()
     const shownZebra = all.items.find((r) => r.id === zebra.id)
     // A mute that ended reads as open, in its status too.

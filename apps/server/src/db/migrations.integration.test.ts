@@ -7,12 +7,7 @@ import { drizzle } from "drizzle-orm/postgres-js"
 import { migrate } from "drizzle-orm/postgres-js/migrator"
 import postgres from "postgres"
 import { afterAll, describe, expect, it } from "vitest"
-import type { Ctx } from "../context.ts"
-import { createAudit } from "../lib/audit.ts"
 import { sha256 } from "../lib/crypto.ts"
-import type { N8nExecution } from "../n8n/client.ts"
-import { applyProblemAction, deleteInstance, ingestExecution, undoProblemAction } from "../services/problems.ts"
-import { regroupByCause } from "../services/regroup.ts"
 import {
   affectedWorkflows,
   alertGroups,
@@ -568,74 +563,6 @@ describe("the upgrade to Problems across workflows (0012)", () => {
         ["problem_receipts_problem_id_problems_id_fk", "c"],
         ["problems_merged_into_problems_id_fk", "c"],
       ])
-    } finally {
-      await close()
-    }
-  })
-
-  it("works after the upgrade and the regroup by cause: ingest, an action and its Undo, removing an instance", async () => {
-    const { sql, db, close } = await freshDatabase()
-    try {
-      await migrate(db, { migrationsFolder: migrationsUpTo("0011_last_known_health") })
-      const { alpha, beta, id } = await seedRelease030(sql)
-      await migrate(db, { migrationsFolder: folder })
-      const ctx = { db, audit: createAudit(db as never) } as unknown as Ctx
-      const [instance] = await db.select().from(instances).where(eq(instances.id, alpha))
-      if (!instance) throw new Error("no instance")
-      const execution = (executionId: string, workflowId: string, node: string, text: string): N8nExecution => ({
-        id: executionId,
-        status: "error",
-        mode: "webhook",
-        startedAt: "2026-10-25T08:00:00Z",
-        stoppedAt: "2026-10-25T08:00:00Z",
-        workflowId,
-        workflowData: { id: workflowId, name: workflowId, nodes: [], connections: {} } as never,
-        data: { resultData: { runData: {}, error: { message: text, node: { name: node } } } },
-      })
-      // Start-up regroups by cause after the migrations (docs/adr/0003). A row without stored failures takes its node
-      // and its error text as its cause, so a new failure there counts on it.
-      await regroupByCause(ctx)
-      const [old] = await db
-        .select()
-        .from(affectedWorkflows)
-        .where(eq(affectedWorkflows.id, id(1)))
-      const counted = await ingestExecution(ctx, instance, execution("new-1", "wf-1", "HTTP", "Bad request"), {
-        silent: true,
-      })
-      expect(counted).toMatchObject({ affectedWorkflowId: id(1), problemId: old?.problemId, reason: null })
-      // The same text in another workflow, at a node with nothing known about its target, is a Problem of its own.
-      const other = await ingestExecution(ctx, instance, execution("new-2", "wf-new", "HTTP", "Bad request"), {
-        silent: true,
-      })
-      expect(other).toMatchObject({ reason: "new" })
-      expect(other?.problemId).not.toBe(old?.problemId)
-
-      const acted = await applyProblemAction(ctx, old?.problemId ?? "", "resolve")
-      expect(acted?.receipt).toBeTruthy()
-      const undone = await undoProblemAction(ctx, old?.problemId ?? "", acted?.receipt?.id ?? "")
-      expect(undone.ok).toBe(true)
-
-      // Removing beta removes its rows, and the Problem it leaves without a workflow.
-      const loopB = (
-        await db
-          .select()
-          .from(affectedWorkflows)
-          .where(eq(affectedWorkflows.id, id(10)))
-      )[0]?.problemId
-      await deleteInstance(ctx, beta)
-      expect(await db.select().from(affectedWorkflows).where(eq(affectedWorkflows.instanceId, beta))).toEqual([])
-      expect(
-        await db
-          .select()
-          .from(problems)
-          .where(eq(problems.id, loopB ?? "")),
-      ).toEqual([])
-      expect(
-        await db
-          .select()
-          .from(problems)
-          .where(eq(problems.id, old?.problemId ?? "")),
-      ).toHaveLength(1)
     } finally {
       await close()
     }

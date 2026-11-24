@@ -4,7 +4,7 @@ status: accepted
 
 # A Problem is one cause: what the failing node talked to and what went wrong there
 
-Supersedes [0001](0001-problem-is-one-error-across-workflows.md). Not built yet: the rules that read the cause exist (`apps/server/src/services/cause.ts`), and grouping, alerts and the interface switch to them in a later change, which also regroups the Problems recorded before.
+Supersedes [0001](0001-problem-is-one-error-across-workflows.md). Built: the rules that read the cause are in `apps/server/src/services/cause.ts`.
 
 0001 made a Problem one exact error text wherever it happens. n8n words many errors the same way for every service it calls: its HTTP Request node reports "Bad request - please check your parameters" for any 400 and "The resource you are requesting could not be found" for any 404. In practice those texts joined unrelated faults into one Problem, such as a retired AI model and a deleted download file, and a Problem's title did not say where it broke. The stored execution already holds what tells the faults apart: the failing node's type, its URL and credential, and the answer of the service it called (n8n's error description).
 
@@ -20,4 +20,4 @@ A Problem becomes one **cause**, read from that data by fixed rules. No rule cal
 - A workflow whose sub-workflow fails is its own Problem, titled after the workflow it runs and with the sub-workflow's error as its reason. n8n's link from a child execution to its parent does not prove which child made the parent fail, so the two are not joined.
 - Each cause has a kind (your alert from a Stop and Error node, n8n task runner, called workflow failed, certificate, network, sign-in rejected, service error, request rejected, other) and, for errors in a fixed table, one line that says what it means.
 - Merge and Split stay, for causes the rules cannot tell apart or join.
-- Upgrading regroups the recorded Problems by cause. Telegram buttons on messages sent before the upgrade no longer act; links to old Problems still open.
+- Releases 0.8.0 to 0.19.4 regrouped the Problems recorded before by cause, once, on their first start; later releases do not, so an installation from before 0.8.0 upgrades to 0.19.3 first. Telegram buttons on messages sent before the regroup do not act; links to old Problems still open.

@@ -65,13 +65,13 @@ export async function retrying<T>(run: () => Promise<T>, attempts = 3): Promise<
   }
 }
 
-/** A mute counts only until it ends, also before housekeeping turns it back to open. */
+/** A mute counts only until it ends, also before `endMutes` turns it back to open. */
 const muteActive = (row: Pick<AffectedWorkflow, "status" | "mutedUntil">, now: Date) =>
   row.status === "muted" && (row.mutedUntil === null || row.mutedUntil > now)
 
 /**
  * The state of a Problem, from its Affected workflows: open when any is, else muted when any is, else resolved.
- * The SQL of the lists says the same (`problem-view.ts`).
+ * The SQL of the lists says the same of the stored status (`problem-view.ts`).
  */
 export function problemStatus(rows: Pick<AffectedWorkflow, "status" | "mutedUntil">[], now = new Date()) {
   if (rows.some((r) => r.status === "open" || (r.status === "muted" && !muteActive(r, now)))) return "open" as const
@@ -285,25 +285,17 @@ const unstorableData = (error: unknown) => /^(22|54)[0-9A-Z]{3}$/.test(errorCode
 
 /**
  * The Problem's label follows its latest failure, over all its workflows (a credential renamed, a workflow name
- * learned): written when no workflow of the Problem failed later. The Problem is locked first, in a statement of its
- * own, so the check reads every failure and label committed before the lock; an unlocked look first could miss a
- * label another ingest is writing. A deadlock with an action is retried with the rest of the ingest, which leaves
- * nothing behind.
+ * learned): a failure older than one already stored leaves it alone.
  */
 async function followLatestLabel(tx: Tx, problemId: string, cause: Cause, seenAt: Date) {
-  const [named] = await tx
-    .select({ targetKey: problems.targetKey })
-    .from(problems)
-    .where(eq(problems.id, problemId))
-    .for("update")
-  // The target key never changes on a Problem; a workflow merged in from another cause leaves the label alone.
-  if (!named || named.targetKey !== cause.targetKey) return
   await tx
     .update(problems)
     .set({ target: cause.target, reason: cause.reason, kind: cause.kind, targetSource: cause.targetSource })
     .where(
       and(
         eq(problems.id, problemId),
+        // The target key never changes on a Problem; a workflow merged in from another cause leaves the label alone.
+        eq(problems.targetKey, cause.targetKey),
         sql`(${problems.target}, ${problems.reason}) is distinct from (${cause.target}, ${cause.reason})`,
         sql`not exists (select 1 from ${affectedWorkflows} where ${affectedWorkflows.problemId} = ${problemId} and ${affectedWorkflows.lastSeen} > ${seenAt.toISOString()}::timestamptz)`,
       ),
@@ -392,11 +384,21 @@ export async function pollInstance(ctx: Ctx, instance: Instance) {
   }
 }
 
+/** Turns ended mutes back to open. `now` is for tests that need a mute to have ended. */
+export async function endMutes(ctx: Pick<Ctx, "db">, now = Date.now()) {
+  await retrying(() =>
+    ctx.db
+      .update(affectedWorkflows)
+      .set({ status: "open", mutedUntil: null })
+      .where(and(eq(affectedWorkflows.status, "muted"), lte(affectedWorkflows.mutedUntil, new Date(now)))),
+  )
+}
+
 /**
- * Daily housekeeping, per Affected workflow: auto-resolve quiet ones, end expired mutes, drop old failed executions.
- * `now` is for tests that need a mute to have ended.
+ * Hourly housekeeping: auto-resolve quiet Affected workflows, drop old failed executions and expired receipts.
  */
-export async function housekeeping(ctx: Ctx, now = Date.now()) {
+export async function housekeeping(ctx: Ctx) {
+  const now = Date.now()
   const all = await ctx.db.select().from(instances)
   for (const instance of all) {
     const s = await ctx.settings.forInstance(instance.overrides)
@@ -431,12 +433,7 @@ export async function housekeeping(ctx: Ctx, now = Date.now()) {
         ),
       )
   }
-  await retrying(() =>
-    ctx.db
-      .update(affectedWorkflows)
-      .set({ status: "open", mutedUntil: null })
-      .where(and(eq(affectedWorkflows.status, "muted"), lte(affectedWorkflows.mutedUntil, new Date(now)))),
-  )
+  await ctx.db.delete(problemReceipts).where(lt(problemReceipts.expiresAt, new Date(now)))
   return { checked: all.length }
 }
 
@@ -522,7 +519,7 @@ export function restoring(state: ProblemState) {
   }
 }
 
-/** The status an action sees: a mute that ended is open, also before housekeeping notices. */
+/** The status an action sees: a mute that ended is open, also before `endMutes` turns it back. */
 const statusAt = (p: StateRow, now: Date) =>
   p.status === "muted" && p.mutedUntil !== null && p.mutedUntil <= now ? ("open" as const) : p.status
 
@@ -586,27 +583,26 @@ export function auditTarget(problem: Pick<Problem, "errorMessage">, rows: Affect
 }
 
 /**
- * An action on a Problem that the regroup by cause left without workflows (docs/adr/0003). Its page still opens; it
- * acts on nothing, so an old link or an open tab cannot act on the Problems its workflows went to.
+ * Locks a Problem and its rows (all, or the one asked for) in id order. A merged one is null, or with `followMerge` the
+ * Problem it went into. One that the regroup by cause left without workflows (docs/adr/0003) is null: its page still
+ * opens, but an old link or an open tab acts on nothing.
  */
-export class RegroupedProblemError extends Error {
-  readonly code = "regrouped"
-  constructor() {
-    super("This problem was regrouped. Reload the list.")
-  }
-}
-
-/** Locks a Problem that is not merged, and its rows (all, or the one asked for) in id order. */
-async function lockProblem(tx: Tx, id: string, affectedWorkflowId?: string) {
-  const [problem] = await tx.select().from(problems).where(eq(problems.id, id)).for("update")
-  if (problem?.regrouped) throw new RegroupedProblemError()
-  if (!problem || problem.mergedInto) return null
+async function lockProblem(
+  tx: Tx,
+  id: string,
+  { affectedWorkflowId, followMerge = false }: { affectedWorkflowId?: string; followMerge?: boolean } = {},
+) {
+  const lock = async (id: string) => (await tx.select().from(problems).where(eq(problems.id, id)).for("update"))[0]
+  let problem = await lock(id)
+  // A chain is one step: Merge points everything at the final Problem.
+  if (followMerge && problem?.mergedInto) problem = await lock(problem.mergedInto)
+  if (!problem || problem.mergedInto || problem.regrouped) return null
   const rows = await tx
     .select()
     .from(affectedWorkflows)
     .where(
       and(
-        eq(affectedWorkflows.problemId, id),
+        eq(affectedWorkflows.problemId, problem.id),
         affectedWorkflowId ? eq(affectedWorkflows.id, affectedWorkflowId) : undefined,
       ),
     )
@@ -620,7 +616,8 @@ async function lockProblem(tx: Tx, id: string, affectedWorkflowId?: string) {
  * Applies a problem action to the whole Problem, or to one Affected workflow when `affectedWorkflowId` is given,
  * with its receipt and its audit row in the same transaction: an action is saved with both or not at all. Null when
  * the Problem (or that workflow in it) does not exist. `receipt` is null when the action changed nothing because
- * everything was already in that state (another tab did it), and then nothing is audited.
+ * everything was already in that state (another tab did it), and then nothing is audited. `fromMessage` is a press on
+ * a Telegram message: a Merge since the message is followed, and there is no receipt, because Telegram offers no Undo.
  */
 export async function applyProblemAction(
   ctx: Pick<Ctx, "db" | "audit">,
@@ -631,11 +628,18 @@ export async function applyProblemAction(
     muteHours = 24,
     now = new Date(),
     audit,
-  }: { affectedWorkflowId?: string; muteHours?: number; now?: Date; audit?: ProblemAudit } = {},
+    fromMessage = false,
+  }: {
+    affectedWorkflowId?: string
+    muteHours?: number
+    now?: Date
+    audit?: ProblemAudit
+    fromMessage?: boolean
+  } = {},
 ): Promise<{ problem: Problem; rows: AffectedWorkflow[]; receipt: ProblemReceipt | null } | null> {
   return retrying(() =>
     ctx.db.transaction(async (tx) => {
-      const locked = await lockProblem(tx, id, affectedWorkflowId)
+      const locked = await lockProblem(tx, id, { affectedWorkflowId, followMerge: fromMessage })
       if (!locked) return null
       const { problem, rows } = locked
       const change = affectedWorkflowId ? actionChange : wholeProblemChange
@@ -656,14 +660,9 @@ export async function applyProblemAction(
         after.set(row.id, updated)
         prior.push({ affectedWorkflowId: row.id, version: updated.version, state: stateOf(row) })
       }
-      // Old receipts go when new ones are made; nothing else needs them.
-      const expired = tx
-        .select({ id: problemReceipts.id })
-        .from(problemReceipts)
-        .where(lt(problemReceipts.expiresAt, now))
-        .for("update", { skipLocked: true })
-      await tx.delete(problemReceipts).where(inArray(problemReceipts.id, expired))
       if (audit) await ctx.audit({ ...audit, target: auditTarget(problem, rows, Boolean(affectedWorkflowId)) }, tx)
+      const acted = { problem, rows: rows.map((r) => after.get(r.id) ?? r) }
+      if (fromMessage) return { ...acted, receipt: null }
       const [receipt] = await tx
         .insert(problemReceipts)
         .values({
@@ -675,71 +674,15 @@ export async function applyProblemAction(
           expiresAt: new Date(now.getTime() + RECEIPT_TTL_MS),
         })
         .returning()
-      return { problem, rows: rows.map((r) => after.get(r.id) ?? r), receipt: receipt ?? null }
-    }),
-  )
-}
-
-/**
- * Applies an action to the whole of each of these Problems in one transaction, as a Telegram button does: saved for
- * all of them or none. Each id is read again under its lock and a merged one is followed to the Problem it went into,
- * so a Merge just before the press does not lose it. No receipts: Telegram offers no Undo. Answers the Problems acted
- * on.
- */
-export async function applyProblemActions(
-  ctx: Pick<Ctx, "db" | "audit">,
-  of: { problems: string[] } | { workflows: string[] },
-  action: ProblemAction,
-  { muteHours = 24, now = new Date(), audit }: { muteHours?: number; now?: Date; audit?: ProblemAudit } = {},
-): Promise<string[]> {
-  /** The Problems the workflows are in now: a message from before 0012 names workflows, not a Problem. */
-  const problemsOf = async (tx: Tx, workflows: string[]) =>
-    workflows.length
-      ? (
-          await tx
-            .selectDistinct({ id: affectedWorkflows.problemId })
-            .from(affectedWorkflows)
-            .where(inArray(affectedWorkflows.id, workflows))
-        ).map((r) => r.id)
-      : []
-  return retrying(() =>
-    ctx.db.transaction(async (tx) => {
-      const ids = "problems" in of ? of.problems : await problemsOf(tx, of.workflows)
-      const named = ids.length ? await tx.select().from(problems).where(inArray(problems.id, ids)) : []
-      const targets = [...new Set(named.map((p) => p.mergedInto ?? p.id))].sort()
-      const done: string[] = []
-      for (const id of targets) {
-        const locked = await lockProblem(tx, id)
-        // Merged after it was read: a retry reads it again.
-        if (!locked) {
-          const [gone] = await tx.select().from(problems).where(eq(problems.id, id))
-          if (gone) throw Object.assign(new Error("the problem changed"), { code: "40001" })
-          continue
-        }
-        done.push(id)
-        let touched = false
-        for (const row of locked.rows) {
-          const patch = wholeProblemChange(action, row, now, muteHours)
-          if (!patch) continue
-          touched = true
-          await tx.update(affectedWorkflows).set(patch).where(eq(affectedWorkflows.id, row.id))
-        }
-        if (audit && touched) await ctx.audit({ ...audit, target: auditTarget(locked.problem, locked.rows, false) }, tx)
-      }
-      // A Split or Merge between the read and the locks moved a workflow of the message: a retry reads them again.
-      if ("workflows" in of) {
-        const now = (await problemsOf(tx, of.workflows)).sort()
-        if (now.join() !== done.join()) throw Object.assign(new Error("the problems changed"), { code: "40001" })
-      }
-      return done
+      return { ...acted, receipt: receipt ?? null }
     }),
   )
 }
 
 /**
  * Undoes the action of a receipt, in the transaction that uses the receipt up and writes its audit row. Locks the
- * Problem, then the rows the action changed, then the receipt (the lock order), so of two Undos at once (two tabs)
- * the second waits and then finds it used. A refusal changes nothing and is not audited.
+ * Problem, then the receipt, then the rows the action changed, so of two Undos at once (two tabs) the second waits and
+ * then finds it used. A refusal changes nothing and is not audited.
  */
 export async function undoProblemAction(
   ctx: Pick<Ctx, "db" | "audit">,
@@ -752,20 +695,16 @@ export async function undoProblemAction(
       // A receipt of a Problem that is gone went with it (cascade): not found either way.
       const [problem] = await tx.select().from(problems).where(eq(problems.id, id)).for("update")
       if (!problem) return { ok: false as const, error: "receipt_not_found" as const }
-      const [peek] = await tx.select().from(problemReceipts).where(eq(problemReceipts.id, receiptId))
-      if (!peek || peek.problemId !== id) return { ok: false as const, error: "receipt_not_found" as const }
-      const ids = peek.prior.map((p) => p.affectedWorkflowId)
-      const rows = ids.length
-        ? await tx
-            .select()
-            .from(affectedWorkflows)
-            .where(inArray(affectedWorkflows.id, ids))
-            .orderBy(asc(affectedWorkflows.id))
-            .for("update")
-        : []
       const [receipt] = await tx.select().from(problemReceipts).where(eq(problemReceipts.id, receiptId)).for("update")
       const refusal = receiptRefusal(receipt, id, now)
       if (refusal || !receipt) return { ok: false as const, error: refusal ?? "receipt_not_found" }
+      const ids = receipt.prior.map((p) => p.affectedWorkflowId)
+      const rows = await tx
+        .select()
+        .from(affectedWorkflows)
+        .where(inArray(affectedWorkflows.id, ids))
+        .orderBy(asc(affectedWorkflows.id))
+        .for("update")
       const byId = new Map(rows.map((r) => [r.id, r]))
       const whole = receipt.affectedWorkflowId === null
       const unchanged =
@@ -797,7 +736,7 @@ export async function undoProblemAction(
   )
 }
 
-/** Locks two Problems in id order and checks that both exist, are not merged and differ. */
+/** Locks two Problems in id order and checks that both exist, are neither merged nor regrouped, and differ. */
 async function lockPair(tx: Tx, a: string, b: string) {
   if (a === b) throw new Error("cannot merge a problem into itself")
   const rows = await tx
@@ -808,8 +747,7 @@ async function lockPair(tx: Tx, a: string, b: string) {
     .for("update")
   const first = rows.find((r) => r.id === a)
   const second = rows.find((r) => r.id === b)
-  if (first?.regrouped || second?.regrouped) throw new RegroupedProblemError()
-  if (!first || !second || first.mergedInto || second.mergedInto) throw new Error("problem not found")
+  if (!first || !second || rows.some((p) => p.mergedInto || p.regrouped)) throw new Error("problem not found")
   return [first, second] as const
 }
 

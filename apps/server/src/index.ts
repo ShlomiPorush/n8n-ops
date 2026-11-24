@@ -17,7 +17,7 @@ import { createSettings } from "./lib/settings.ts"
 import { createAgentConnect } from "./oauth/agents.ts"
 import { UPLOAD_DEADLINE_MS } from "./routes/worker-api.ts"
 import { settleCompactions } from "./services/database.ts"
-import { regroupByCause } from "./services/regroup.ts"
+import { endMutes } from "./services/problems.ts"
 
 const config = loadConfig()
 const log = consoleLogger
@@ -76,16 +76,8 @@ await ctx.agents.reconcile()
 await ctx.settings.loadDesign(log)
 // A table compaction whose answer was lost when the server stopped ends as unknown (services/database.ts).
 await settleCompactions(ctx)
-// Once, after the migrations and before any request or job: Problems recorded before become one per cause
-// (docs/adr/0003). A failure here stops the start with everything as it was, and the next start tries again.
-const regrouped = await regroupByCause(ctx)
-if (regrouped)
-  log.info("regrouped the recorded problems by cause", {
-    problemsBefore: regrouped.problemsBefore,
-    problemsAfter: regrouped.problemsAfter,
-    affectedBefore: regrouped.affectedBefore,
-    affectedAfter: regrouped.affectedAfter,
-  })
+// Mutes that ended while the server was down, before a request or a report reads them as muted.
+await endMutes(ctx)
 const { mounts, start } = features(ctx)
 const app = createApp(ctx, { webDir: config.webDir, mounts })
 const server = serve({ fetch: app.fetch, port: config.port }, ({ port }) => {

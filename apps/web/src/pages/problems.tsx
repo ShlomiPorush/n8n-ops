@@ -118,8 +118,9 @@ import { cn } from "@/lib/utils"
 export type { AffectedRow, ProblemList, ProblemRow, ProblemRowItem, ProblemRows } from "@/lib/problems"
 
 /**
- * The address of a Problems list: its filters and the order picked. The server sorts before it cuts the list at
- * 200, so the order covers every problem (TB-4); with no order picked it sends what needs a look first.
+ * The address of a Problems list: its filters and, for the rows, the order picked. The server sorts the rows before
+ * it cuts the list at 200, so the order covers every problem (TB-4); with no order picked it sends what needs a look
+ * first.
  */
 export function problemsPath(filters: Record<string, string>, order: SortState | null = null): string {
   const query = new URLSearchParams(filters)
@@ -1437,12 +1438,11 @@ function MergeDialog({
 }) {
   const navigateOut = useNavigateFromOverlay()
   // Any other Problem, in any state and on any instance: Merge is also the way back after a Split. The server
-  // searches them all; `for` only names the request (the server ignores it), so it is told apart from the list.
+  // searches them all.
   const [find, setFind] = useState("")
-  const candidates = useApi<ProblemList>(
-    open ? problemsPath({ status: "all", for: "merge", ...(find ? { q: find } : {}) }) : null,
-    { keepRows: true },
-  )
+  const candidates = useApi<ProblemList>(open ? problemsPath({ status: "all", ...(find ? { q: find } : {}) }) : null, {
+    keepRows: true,
+  })
   const [into, setInto] = useState("")
   const target = (into: string) => {
     const c = candidates.data?.items.find((c) => c.id === into)

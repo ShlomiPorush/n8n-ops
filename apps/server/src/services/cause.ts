@@ -277,22 +277,14 @@ const keyOf = (targetKey: string, reason: string) => sha256(`${targetKey}\n${nor
 /** The cause of one failed execution. Never throws: anything unexpected gives the node and the error text. */
 export function causeOf(input: CauseInput): Cause {
   try {
-    const message = (typeof input.message === "string" ? input.message : "").slice(0, LIMITS.message).trim()
-    const safe: CauseInput = {
-      ...input,
-      message,
-      description: typeof input.description === "string" ? input.description : null,
-      url: typeof input.url === "string" ? input.url : null,
-      credentials: Array.isArray(input.credentials)
-        ? input.credentials.filter((c) => typeof c?.id === "string" && c.id && typeof c.name === "string")
-        : [],
-    }
-    const httpStatus = httpStatusOf(message, safe.description)
-    const answer = serviceAnswer(safe.description)
+    const message = input.message.slice(0, LIMITS.message).trim()
+    const httpStatus = httpStatusOf(message, input.description)
+    const answer = serviceAnswer(input.description)
     const said = answer || message || "Unknown error"
     const reason = httpStatus ? `HTTP ${httpStatus} · ${said}` : said
-    const target = targetOf(safe)
-    const kind = kindOf(safe, httpStatus, `${message} ${safe.description?.slice(0, LIMITS.description) ?? ""}`)
+    const target = targetOf(input)
+    const text = `${message} ${input.description?.slice(0, LIMITS.description) ?? ""}`
+    const kind = kindOf({ ...input, message }, httpStatus, text)
     const hint = knownErrorOf(message, reason)
     return {
       ...target,
@@ -309,7 +301,7 @@ export function causeOf(input: CauseInput): Cause {
 }
 
 /** The cause when nothing else can be read: the node and the error text as n8n gave it. */
-export function fallbackCause(input: Pick<CauseInput, "instanceId" | "workflowId" | "nodeName" | "message">): Cause {
+function fallbackCause(input: Pick<CauseInput, "instanceId" | "workflowId" | "nodeName" | "message">): Cause {
   const nodeName = typeof input.nodeName === "string" && input.nodeName ? input.nodeName : "Workflow"
   const target = nodeTarget({ instanceId: input.instanceId, workflowId: input.workflowId, nodeName })
   const raw = typeof input.message === "string" ? input.message.slice(0, LIMITS.message).trim() : ""

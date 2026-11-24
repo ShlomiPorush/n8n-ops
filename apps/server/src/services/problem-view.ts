@@ -24,13 +24,11 @@ import { resolveProblemId } from "./problems.ts"
 /*
  * How Problems are read: by the web pages, Overview, the instance pages, the reports and the agents' API. A
  * Problem's state, failures and times come from its Affected workflows (docs/adr/0001), here in SQL, the same way
- * `problemStatus` in problems.ts says it: open when any is open (or its mute ended), else muted, else resolved.
+ * `problemStatus` in problems.ts says it: open when any is open, else muted, else resolved. `endMutes` turns ended
+ * mutes back to open, so reads take the stored status as it is.
  */
 
 const a = affectedWorkflows
-
-/** An Affected workflow that counts as open: open, or muted with its mute over (before housekeeping notices). */
-export const openish = sql`(${a.status} = 'open' or (${a.status} = 'muted' and ${a.mutedUntil} <= now()))`
 
 /**
  * One row per Problem with its derived state, over all its Affected workflows or only those on one instance: with
@@ -41,10 +39,10 @@ function summary(instanceId?: string) {
   return {
     problemId: a.problemId,
     status:
-      sql<ProblemStatus>`case when bool_or(${openish}) then 'open' when bool_or(${a.status} = 'muted') then 'muted' else 'resolved' end`.as(
+      sql<ProblemStatus>`case when bool_or(${a.status} = 'open') then 'open' when bool_or(${a.status} = 'muted') then 'muted' else 'resolved' end`.as(
         "p_status",
       ),
-    regression: sql<boolean>`bool_or(${openish} and ${a.regression})`.as("p_regression"),
+    regression: sql<boolean>`bool_or(${a.status} = 'open' and ${a.regression})`.as("p_regression"),
     count: sql<number>`sum(${a.count})::int`.as("p_count"),
     firstSeen: sql<Date>`min(${a.firstSeen})`.as("p_first_seen"),
     lastSeen: sql<Date>`max(${a.lastSeen})`.as("p_last_seen"),
@@ -71,21 +69,6 @@ function reachQuery(ctx: Pick<Ctx, "db">) {
     .innerJoin(instances, eq(a.instanceId, instances.id))
     .groupBy(a.problemId)
     .as("w")
-}
-
-/** The Affected workflow that stands for a Problem in a sort: its most recently failed one (on the instance asked). */
-function representativeQuery(ctx: Pick<Ctx, "db">, instanceId?: string) {
-  return ctx.db
-    .selectDistinctOn([a.problemId], {
-      problemId: a.problemId,
-      workflowName: sql<string>`${a.workflowName}`.as("rep_workflow_name"),
-      instanceName: sql<string>`${instances.name}`.as("rep_instance_name"),
-    })
-    .from(a)
-    .innerJoin(instances, eq(a.instanceId, instances.id))
-    .where(instanceId ? eq(a.instanceId, instanceId) : undefined)
-    .orderBy(a.problemId, desc(a.lastSeen), asc(a.id))
-    .as("r")
 }
 
 /** The list's filters. The rows and their total are read through one `where`, so the two always agree (TB-18). */
@@ -140,17 +123,9 @@ export type AffectedItem = {
 
 const DAY_MS = 86_400_000
 
-/**
- * An Affected workflow's status and state as screens read them: open also when its mute ended and housekeeping has
- * not noticed yet, as `openish` reads it; an open workflow that failed in the last 24 hours is failing now.
- */
-function readState(row: { status: ProblemStatus; mutedUntil: Date | null; lastSeen: Date }, now: number) {
-  const open =
-    row.status === "open" || (row.status === "muted" && row.mutedUntil !== null && row.mutedUntil.getTime() <= now)
-  return {
-    status: open ? ("open" as const) : row.status,
-    state: !open ? null : now - row.lastSeen.getTime() < DAY_MS ? ("now" as const) : ("quiet" as const),
-  }
+function openState(row: { status: ProblemStatus; lastSeen: Date }, now: number): AffectedItem["state"] {
+  if (row.status !== "open") return null
+  return now - row.lastSeen.getTime() < DAY_MS ? "now" : "quiet"
 }
 
 /**
@@ -247,7 +222,7 @@ async function affectedOf(ctx: Pick<Ctx, "db">, problemIds: string[], instanceId
     const item = {
       ...row,
       ...causeFields({ errorMessage: row.errorMessage, target, targetSource, reason, kind }),
-      ...readState(row, now),
+      state: openState(row, now),
     }
     if (limit === undefined || list.length < limit) list.push(item as AffectedItem)
     byProblem.set(problemId, list)
@@ -258,8 +233,6 @@ async function affectedOf(ctx: Pick<Ctx, "db">, problemIds: string[], instanceId
 /** A Problem that a person merged others into (Merge; a regroup by cause merges nothing). */
 const problemMergedByHand = sql<boolean>`exists (select 1 from ${problems} m where m.merged_into = ${problems.id} and not m.regrouped)`
 
-type ListOptions = ProblemFilter & { order?: ProblemOrder | null | "recent"; limit?: number }
-
 /**
  * The rows of a list and how many Problems match its filters in all, not only the rows sent (TB-18). One query
  * counts them over the same rows it sorts, before the limit, so the two always agree, also while failures come in.
@@ -267,11 +240,10 @@ type ListOptions = ProblemFilter & { order?: ProblemOrder | null | "recent"; lim
  */
 export async function problemPage(
   ctx: Pick<Ctx, "db">,
-  { order = null, limit = 200, status, instanceId, q }: ListOptions,
+  { order, limit = 200, status, instanceId, q }: ProblemFilter & { order?: "recent"; limit?: number },
 ): Promise<{ items: ProblemItem[]; total: number }> {
   const s = summaryQuery(ctx, instanceId)
   const w = reachQuery(ctx)
-  const r = representativeQuery(ctx, instanceId)
   const where: (SQL | undefined)[] = [isNull(problems.mergedInto), eq(problems.regrouped, false)]
   if (status === "open" || status === "muted" || status === "resolved") where.push(eq(s.status, status))
   if (q) {
@@ -295,26 +267,9 @@ export async function problemPage(
     when ${s.regression} then 4
     when ${s.firstSeen} > now() - interval '24 hours' then 3
     else 2 end`
-  const sorts: Record<ProblemSortKey, SortColumn> = {
-    status: { value: rank },
-    workflow: text(r.workflowName),
-    // By the title screens show.
-    error: text(titleSql(problems.target, problems.reason, problems.errorMessage)),
-    instance: text(r.instanceName),
-    failures: { value: sql`${s.count}` },
-    lastSeen: { value: sql`${s.lastSeen}` },
-  }
   const settle = [desc(sql`${s.lastSeen}`), asc(problems.id)]
-  const ranked = [desc(rank), ...settle]
-  let orderBy: SQL[]
   // The agents' order (requirements E1): most recently seen first, as it always was.
-  if (order === "recent") orderBy = settle
-  else if (!order) orderBy = ranked
-  else {
-    const column = sorts[order.sort]
-    const by = order.order === "asc" ? asc(column.value) : desc(column.value)
-    orderBy = [...(column.blank ? [asc(column.blank)] : []), by, ...ranked]
-  }
+  const orderBy = order === "recent" ? settle : [desc(rank), ...settle]
   const rows = await ctx.db
     .select({
       id: problems.id,
@@ -338,7 +293,6 @@ export async function problemPage(
     .from(problems)
     .innerJoin(s, eq(s.problemId, problems.id))
     .innerJoin(w, eq(w.problemId, problems.id))
-    .innerJoin(r, eq(r.problemId, problems.id))
     .where(and(...where))
     .orderBy(...orderBy)
     .limit(limit)
@@ -379,24 +333,14 @@ export const noSections = (): SectionCounts => ({ instance: 0, now: 0, quiet: 0,
 
 /**
  * The earliest time housekeeping may resolve an open Affected workflow by itself: its last failure plus its
- * instance's auto-resolve days, and for a mute that ended, not before the mute's end. Housekeeping runs hourly and
- * turns ended mutes back to open after it resolves, so such a row closes up to a run later; screens say "soon",
- * never an hour. Null when the row is not open.
+ * instance's auto-resolve days. Housekeeping runs hourly, so screens say "soon", never an hour.
  */
-export function closesAt(
-  row: { status: ProblemStatus; mutedUntil: Date | null; lastSeen: Date },
-  autoResolveDays: number,
-  now: number,
-) {
-  if (readState(row, now).status !== "open") return null
-  const after = row.lastSeen.getTime() + autoResolveDays * DAY_MS
-  return new Date(row.status === "muted" && row.mutedUntil ? Math.max(after, row.mutedUntil.getTime()) : after)
-}
+const closesAt = (lastSeen: Date, autoResolveDays: number) => new Date(lastSeen.getTime() + autoResolveDays * DAY_MS)
 
-/** The section as a rank, in SQL; an Affected workflow whose mute ended counts as open. */
+/** The section as a rank, in SQL. */
 const sectionRank = sql<number>`case
   when ${a.status} = 'resolved' then 5
-  when ${a.status} = 'muted' and (${a.mutedUntil} is null or ${a.mutedUntil} > now()) then 4
+  when ${a.status} = 'muted' then 4
   when ${a.kind} = 'runner' then 0
   when ${a.kind} = 'alert' then 3
   when ${a.lastSeen} > now() - interval '24 hours' then 1
@@ -404,11 +348,11 @@ const sectionRank = sql<number>`case
 
 /**
  * An Affected workflow's Status column as a rank, high to low, the way the UI's badge reads it: a regression, then
- * first seen in the last 24 hours, then open, muted and resolved. A mute that ended counts as open.
+ * first seen in the last 24 hours, then open, muted and resolved.
  */
 const statusRank = sql<number>`case
   when ${a.status} = 'resolved' then 0
-  when ${a.status} = 'muted' and (${a.mutedUntil} is null or ${a.mutedUntil} > now()) then 1
+  when ${a.status} = 'muted' then 1
   when ${a.regression} then 4
   when ${a.firstSeen} > now() - interval '24 hours' then 3
   else 2 end`
@@ -436,14 +380,18 @@ export type ProblemRowItem = AffectedItem & {
  */
 export async function problemRowsPage(
   ctx: Pick<Ctx, "db" | "settings">,
-  { order = null, limit = 200, status, instanceId, q, section }: ListOptions & { section?: OpenSection },
+  {
+    order = null,
+    limit = 200,
+    status,
+    instanceId,
+    q,
+    section,
+  }: ProblemFilter & { order?: ProblemOrder | null; limit?: number; section?: OpenSection },
 ): Promise<{ items: ProblemRowItem[]; total: number; sections: SectionCounts }> {
   const where: (SQL | undefined)[] = [isNull(problems.mergedInto), eq(problems.regrouped, false)]
   if (instanceId) where.push(eq(a.instanceId, instanceId))
-  if (status === "open") where.push(openish)
-  if (status === "muted")
-    where.push(sql`${a.status} = 'muted' and (${a.mutedUntil} is null or ${a.mutedUntil} > now())`)
-  if (status === "resolved") where.push(eq(a.status, "resolved"))
+  if (status === "open" || status === "muted" || status === "resolved") where.push(eq(a.status, status))
   if (q) {
     const like = likeContains(q)
     where.push(
@@ -468,8 +416,7 @@ export async function problemRowsPage(
   // What needs a look first: the sections in order, a regression first within one, then the latest failure.
   const ranked = [asc(sectionRank), desc(a.regression), ...settle]
   let orderBy: SQL[]
-  if (order === "recent") orderBy = settle
-  else if (!order) orderBy = ranked
+  if (!order) orderBy = ranked
   else {
     const column = sorts[order.sort]
     const by = order.order === "asc" ? asc(column.value) : desc(column.value)
@@ -524,13 +471,12 @@ export async function problemRowsPage(
   const now = Date.now()
   const items: ProblemRowItem[] = []
   for (const { total: _, overrides, rank, target, targetSource, reason, kind, ...row } of rows) {
-    const state = readState(row, now)
     items.push({
       ...row,
       ...causeFields({ errorMessage: row.errorMessage, target, targetSource, reason, kind }),
-      ...state,
+      state: openState(row, now),
       section: problemSections[rank] ?? "quiet",
-      closesAt: state.status === "open" ? closesAt(row, await daysOf(row.instanceId, overrides), now) : null,
+      closesAt: row.status === "open" ? closesAt(row.lastSeen, await daysOf(row.instanceId, overrides)) : null,
     })
   }
   return { items, total: rows[0]?.total ?? 0, sections }
@@ -811,7 +757,7 @@ export async function openProblemCount(
     .from(a)
     .where(
       and(
-        openish,
+        eq(a.status, "open"),
         instanceId ? eq(a.instanceId, instanceId) : undefined,
         before ? lte(a.createdAt, before) : undefined,
       ),
@@ -823,6 +769,6 @@ export async function openProblemsByInstance(ctx: Pick<Ctx, "db">, before?: Date
   return ctx.db
     .select({ instanceId: a.instanceId, n: sql<number>`count(distinct ${a.problemId})::int` })
     .from(a)
-    .where(and(openish, before ? lte(a.createdAt, before) : undefined))
+    .where(and(eq(a.status, "open"), before ? lte(a.createdAt, before) : undefined))
     .groupBy(a.instanceId)
 }

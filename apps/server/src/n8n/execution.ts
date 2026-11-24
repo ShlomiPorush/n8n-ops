@@ -81,7 +81,7 @@ export function extractFailure(execution: N8nExecution): Failure {
   }
 }
 
-/** What the cause is read from on a node definition, from an execution or from one stored with a failure. */
+/** What the cause is read from on a node definition of an execution. */
 export function failedNode(node: N8nNode | undefined): FailedNode {
   const parameters = isRecord(node?.parameters) ? node.parameters : {}
   const credentials = isRecord(node?.credentials)

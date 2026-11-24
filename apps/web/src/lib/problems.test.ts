@@ -6,8 +6,7 @@ const day = 24 * hour
 const now = Date.parse("2026-11-10T12:00:00Z")
 const at = (ms: number) => new Date(now + ms).toISOString()
 
-// When a quiet row may close by itself: housekeeping runs hourly and closes an ended mute a run later, so the row
-// never promises an hour or a minute (P1 of the plan review).
+// When a quiet row may close by itself: housekeeping runs hourly, so the row never promises an hour or a minute.
 describe("closesText", () => {
   it("counts days, rounded as ages are, while a day or more is left", () => {
     // Quiet for 3 of its 7 days, a few seconds ago: about 4 left, not 3.

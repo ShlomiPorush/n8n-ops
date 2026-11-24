@@ -1,7 +1,7 @@
 import { readFile, rm } from "node:fs/promises"
 import { HEARTBEAT_FEATURE } from "@n8n-ops/shared"
-import { Docker } from "./docker.ts"
 import { ALIVE_FILE, keepAlive } from "./alive.ts"
+import { Docker } from "./docker.ts"
 import { CallFailures, DockerChecks, Heartbeats } from "./heartbeat-loop.ts"
 import { backupJob, exportCredentialsJob, type Job, type JobResult, probeJob } from "./jobs.ts"
 import { Pairing } from "./pairing.ts"
@@ -123,7 +123,6 @@ async function main() {
   for (;;) {
     try {
       if (!identity) {
-        // Unpaired: pair as soon as a token is provided.
         const token = await pairingToken()
         identity = await pairing.attempt(token)
         // The token is spent now; a file that cannot be removed (a read-only mount) does no harm.

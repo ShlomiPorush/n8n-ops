@@ -4,9 +4,8 @@ export const ALIVE_FILE = "/tmp/n8n-ops-worker-alive"
 export const ALIVE_INTERVAL_MS = 15_000
 export const MAX_ALIVE_AGE_MS = 60_000
 
-/** True when the Worker last marked itself alive recently enough. */
-export function isFresh(lastAliveMs: number, nowMs: number, maxAgeMs = MAX_ALIVE_AGE_MS): boolean {
-  return Number.isFinite(lastAliveMs) && nowMs - lastAliveMs >= 0 && nowMs - lastAliveMs <= maxAgeMs
+export function isFresh(lastAliveMs: number, nowMs: number): boolean {
+  return Number.isFinite(lastAliveMs) && nowMs - lastAliveMs >= 0 && nowMs - lastAliveMs <= MAX_ALIVE_AGE_MS
 }
 
 export async function markAlive(file: string, nowMs = Date.now()): Promise<void> {
@@ -26,10 +25,7 @@ export async function readLastAlive(file: string): Promise<number> {
  * container's health is the process's own: a server or a proxy in front of it that cannot be reached shows as the
  * Worker being offline in n8n-ops, not as an unhealthy container, which restarting would not fix.
  */
-export function keepAlive(
-  file: string,
-  log: (msg: string, extra?: Record<string, unknown>) => void,
-): () => void {
+export function keepAlive(file: string, log: (msg: string, extra?: Record<string, unknown>) => void): void {
   let failing = false
   const mark = () =>
     markAlive(file).then(
@@ -42,6 +38,5 @@ export function keepAlive(
       },
     )
   void mark()
-  const timer = setInterval(mark, ALIVE_INTERVAL_MS)
-  return () => clearInterval(timer)
+  setInterval(mark, ALIVE_INTERVAL_MS)
 }

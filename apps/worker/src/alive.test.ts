@@ -41,20 +41,18 @@ describe("keepAlive", () => {
   it("keeps the container healthy with no server at all", async () => {
     vi.useFakeTimers()
     const file = await tempFile()
-    const stop = keepAlive(file, () => {})
+    keepAlive(file, () => {})
     for (let i = 0; i < 20; i++) {
       await vi.advanceTimersByTimeAsync(ALIVE_INTERVAL_MS)
       await vi.waitFor(async () => expect(isFresh(await readLastAlive(file), Date.now())).toBe(true))
     }
-    stop()
   })
 
   it("keeps going when the file cannot be written, and says so once", async () => {
     vi.useFakeTimers()
     const logged: string[] = []
-    const stop = keepAlive(join(await tempFile(), "missing-dir", "alive"), (msg) => logged.push(msg))
+    keepAlive(join(await tempFile(), "missing-dir", "alive"), (msg) => logged.push(msg))
     await vi.advanceTimersByTimeAsync(3 * ALIVE_INTERVAL_MS)
     await vi.waitFor(() => expect(logged).toEqual(["cannot write the health check file"]))
-    stop()
   })
 })

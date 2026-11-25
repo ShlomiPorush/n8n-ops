@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-11-25
+
 ### Changed
 
 - **From a version before 0.8.0, upgrade to 0.19.3 first.** The first start of 0.8.0 to 0.19.4 regrouped the problems recorded before 0.8.0 by cause; this version no longer does. `regroup-dry-run` of the server's command line went with it. Links to problems regrouped then still show where their workflows went, and the buttons of Telegram messages from before still do nothing.

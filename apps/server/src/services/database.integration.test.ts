@@ -338,6 +338,12 @@ describe("compacting", () => {
       await ctx.db.execute(sql`create table "We""ird" (id int)`)
       await startCompact(ctx, 'We"ird', "admin")
       expect((await settled()).recent[0]).toMatchObject({ status: "done", error: null })
+      await ctx.db.execute(sql`insert into bloat select g, repeat('x', 400) from generate_series(20001, 300000) g`)
+      const [before] = await ctx.db.execute(sql`select pg_relation_filenode('bloat') as node`)
+      await startCompact(ctx, "bloat", "admin")
+      expect((await settled(60_000)).recent[0]).toMatchObject({ status: "done", error: null })
+      const [after] = await ctx.db.execute(sql`select pg_relation_filenode('bloat') as node`)
+      expect(after).not.toEqual(before)
     } finally {
       await set(version?.v ?? null)
     }

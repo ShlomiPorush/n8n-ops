@@ -2,6 +2,7 @@ import { hasCapability, unsupportedVersionText } from "@n8n-ops/shared"
 import { eq } from "drizzle-orm"
 import type { Ctx } from "../context.ts"
 import { instances } from "../db/schema.ts"
+import { sha256 } from "../lib/crypto.ts"
 import type { N8nWorkflow } from "../n8n/client.ts"
 import { jobTarget, usableWorker } from "./backups.ts"
 import { can, clientFor, effectiveScopes, type Instance, unsupportedVersion } from "./instances.ts"
@@ -101,7 +102,9 @@ function usedCredentials(workflow: Pick<N8nWorkflow, "nodes">) {
   return [...new Map(creds.map((c) => [c.id, c])).values()].filter((c) => c.id)
 }
 
-export async function previewMove(ctx: Ctx, input: { sourceId: string; targetId: string; workflowId: string }) {
+type MoveInput = { sourceId: string; targetId: string; workflowId: string }
+
+async function reviewMove(ctx: Ctx, input: MoveInput) {
   const [source, target] = await Promise.all([load(ctx, input.sourceId), load(ctx, input.targetId)])
   if (source.id === target.id) throw new Error("Choose a different target instance.")
   for (const end of [source, target]) {
@@ -127,7 +130,7 @@ export async function previewMove(ctx: Ctx, input: { sourceId: string; targetId:
     blockers.push(`The API key of ${target.name} cannot create and activate workflows and credentials.`)
   if (!hasCapability("moveFrom", effectiveScopes(source), Boolean(source.workerId)))
     blockers.push(`The API key of ${source.name} cannot read and deactivate workflows.`)
-  return {
+  const shown = {
     workflow: { id: workflow.id, name: workflow.name, active: workflow.active },
     source: { id: source.id, name: source.name },
     target: { id: target.id, name: target.name },
@@ -137,21 +140,25 @@ export async function previewMove(ctx: Ctx, input: { sourceId: string; targetId:
     credentialsWithSecrets: Boolean(worker),
     blockers,
   }
+  const { nodes, connections, settings } = workflow
+  const places = [source.baseUrl, target.baseUrl, worker?.id, jobTarget(source)]
+  const reviewed = sha256(JSON.stringify([shown, places, nodes, connections, settings]))
+  return { preview: { ...shown, reviewed }, workflow, source, target }
 }
 
-export async function runMove(
-  ctx: Ctx,
-  input: { sourceId: string; targetId: string; workflowId: string },
-  actor: string,
-) {
-  const preview = await previewMove(ctx, input)
+export async function previewMove(ctx: Ctx, input: MoveInput) {
+  return (await reviewMove(ctx, input)).preview
+}
+
+export async function runMove(ctx: Ctx, input: MoveInput & { reviewed: string }, actor: string) {
+  const { preview, workflow, source, target } = await reviewMove(ctx, input)
+  if (preview.reviewed !== input.reviewed)
+    throw new Error("Something changed since you reviewed this move, so nothing was moved. Review it again.")
   if (preview.blockers.length) throw new Error(preview.blockers.join(" "))
-  const [source, target] = await Promise.all([load(ctx, input.sourceId), load(ctx, input.targetId)])
   const from = clientFor(ctx, source)
   const to = clientFor(ctx, target)
   const steps: { step: string; ok: boolean; detail?: string }[] = []
   try {
-    const workflow = await from.getWorkflow(input.workflowId)
     const used = usedCredentials(workflow)
     const idMap = new Map<string, string>()
     if (used.length) {

@@ -1,14 +1,17 @@
-import { spawnSync } from "node:child_process"
+import { spawn, spawnSync } from "node:child_process"
 import { randomBytes } from "node:crypto"
-import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { afterAll, beforeEach, describe, expect, it } from "vitest"
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest"
 import type { Docker } from "./docker.ts"
-import { exportCredentialsJob } from "./jobs.ts"
+import { backupJob, exportCredentialsJob } from "./jobs.ts"
 
 const bin = mkdtempSync(join(tmpdir(), "export-"))
-const FILE = "/tmp/n8n-ops-export.json"
+const left = () =>
+  readdirSync("/tmp")
+    .filter((name) => name.startsWith("n8n-ops-export"))
+    .map((name) => join("/tmp", name))
 const secret = randomBytes(16).toString("hex")
 const stored = [
   { id: "c1", name: "ERP", type: "httpHeaderAuth", data: { value: secret } },
@@ -32,7 +35,9 @@ const writes = (text: string) =>
 
 const run = (ids: string[] | null = null) => exportCredentialsJob(docker, { container: "n8n", ids })
 
-beforeEach(() => rmSync(FILE, { force: true }))
+beforeEach(() => {
+  for (const path of left()) rmSync(path, { recursive: true, force: true })
+})
 afterAll(() => rmSync(bin, { recursive: true, force: true }))
 
 describe("the credential export", () => {
@@ -40,11 +45,10 @@ describe("the credential export", () => {
     n8n(`echo "Successfully exported 2 credentials."\n${writes(JSON.stringify(stored))}`)
     expect(await run()).toEqual({ ok: true, result: { credentials: stored, empty: false } })
     expect(await run(["c2"])).toEqual({ ok: true, result: { credentials: [stored[1]], empty: false } })
-    expect(existsSync(FILE)).toBe(false)
+    expect(left()).toEqual([])
   })
 
-  it("fails when n8n fails, whatever file an earlier run left, and repeats nothing n8n printed", async () => {
-    writeFileSync(FILE, JSON.stringify(stored))
+  it("fails when n8n fails, and repeats nothing n8n printed", async () => {
     n8n(`echo "Error: could not decrypt ${secret}" >&2\nexit 1`)
     const result = await run()
     expect(result).toMatchObject({ ok: false })
@@ -65,11 +69,62 @@ describe("the credential export", () => {
     expect(result.error).not.toContain(secret.slice(0, 4))
   })
 
-  it("says so when n8n has no credentials, whatever file an earlier run left", async () => {
-    writeFileSync(FILE, JSON.stringify(stored))
+  it("says so when n8n has no credentials", async () => {
     n8n(
       '[ "$N8N_LOG_OUTPUT" = console ] && [ "$N8N_LOG_LEVEL" = error ] && [ "$N8N_LOG_FORMAT" = text ] && echo "No credentials found with specified filters"\nexit 1',
     )
     expect(await run()).toEqual({ ok: true, result: { credentials: [], empty: true } })
+  })
+
+  it("removes what a killed export left more than an hour ago, and nothing of one that runs now", async () => {
+    const old = "/tmp/n8n-ops-export.tar"
+    const now = mkdtempSync("/tmp/n8n-ops-export.")
+    writeFileSync(old, secret)
+    const own = "/tmp/n8n-ops-export.backup"
+    writeFileSync(own, secret)
+    for (const path of [old, own]) utimesSync(path, new Date(0), new Date(0))
+    writeFileSync(join(now, "credentials.json"), secret)
+    n8n(writes(JSON.stringify(stored)))
+    expect(await run()).toMatchObject({ ok: true })
+    expect([old, own].map((path) => existsSync(path))).toEqual([false, true])
+    expect(existsSync(join(now, "credentials.json"))).toBe(true)
+  })
+})
+
+describe("a worker stopped while n8n exports", () => {
+  it.each([
+    {
+      job: "a credential export",
+      start: (d: Docker) => exportCredentialsJob(d, { container: "n8n", ids: null }),
+    },
+    {
+      job: "a backup",
+      start: (d: Docker) =>
+        backupJob(d, { container: "n8n", recipient: "age1x" }, async () => ({ url: "", headers: {} })),
+    },
+  ])("leaves no decrypted file of $job in the container", async ({ start }) => {
+    n8n(
+      `for a in "$@"; do case "$a" in
+--output=*/credentials/) echo ${secret} > "\${a#--output=}c1.json" ;;
+--output=*/) ;;
+--output=*) echo ${secret} > "\${a#--output=}" ;;
+esac; done
+sleep 0.5
+echo exported`,
+    )
+    let ended: Promise<unknown> | undefined
+    const cut = {
+      exec: (_container: string, [command = "", ...args]: string[]) => {
+        const script = spawn(command, args, { env: { PATH: `${bin}:${process.env.PATH}` } })
+        script.stdout.destroy()
+        script.stderr.destroy()
+        ended = new Promise((resolve) => script.on("close", resolve))
+        return new Promise(() => {})
+      },
+    } as unknown as Docker
+    void start(cut)
+    await vi.waitFor(() => expect(left()).toHaveLength(1))
+    await ended
+    expect(left()).toEqual([])
   })
 })

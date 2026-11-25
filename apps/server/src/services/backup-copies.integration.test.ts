@@ -9,10 +9,11 @@ import postgres from "postgres"
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest"
 import type { Ctx } from "../context.ts"
 import { createDatabase, type Database } from "../db/client.ts"
-import { alertState, backupCopies, backupDestinations, backupRuns } from "../db/schema.ts"
+import { alertState, backupCopies, backupDestinations, backupRuns, instances } from "../db/schema.ts"
 import { createSettings } from "../lib/settings.ts"
+import { destinationRoutes } from "../routes/destinations.ts"
 import { backupCondition } from "./backup-alerts.ts"
-import { COPY_ATTEMPTS, failRun, kickCopies } from "./backup-copies.ts"
+import { COPY_ATTEMPTS, endRunsWithoutArchive, failRun, kickCopies, sweepRetention } from "./backup-copies.ts"
 import type { Store } from "./destinations/store.ts"
 import { spoolDir, spooledRuns, spoolFile } from "./spool.ts"
 
@@ -20,10 +21,17 @@ const held = new Set<string>()
 const calls: string[] = []
 const warnings: string[] = []
 let refuseWrite = false
+let onRemove: () => Promise<void> = async () => {}
+let unopenable = ""
+vi.mock("./session-policy.ts", async (original) => ({
+  ...(await original<typeof import("./session-policy.ts")>()),
+  checkSession: async () => ({ ok: true, clocks: {}, status: {}, twoFactorVerified: true }),
+}))
 vi.mock("./destinations/index.ts", async (original) => ({
   ...(await original<typeof import("./destinations/index.ts")>()),
-  openStore: () =>
-    ({
+  openStore: (_ctx: unknown, { name }: { name?: string }) => {
+    if (name === unopenable) throw new Error("the credentials cannot be read")
+    return {
       put: async (key: string) => {
         calls.push(`put ${key}`)
         if (refuseWrite) throw new Error("the destination is full")
@@ -37,9 +45,11 @@ vi.mock("./destinations/index.ts", async (original) => ({
       remove: async (key: string) => {
         calls.push(`remove ${key}`)
         held.delete(key)
+        await onRemove()
       },
       close: async () => {},
-    }) as unknown as Store,
+    } as unknown as Store
+  },
 }))
 
 const adminUrl = process.env.MIGRATION_DATABASE_URL
@@ -64,12 +74,26 @@ beforeAll(async () => {
     log: { info: () => {}, warn: (message: string) => warnings.push(message), error: () => {} },
     settings: createSettings(database.db),
     appKeyPath: join(dir, "app.key"),
+    audit: async () => {},
+    auth: async () => ({
+      auth: {
+        api: {
+          getSession: async () => ({
+            session: { id: "s1" },
+            user: { id: "u1", username: "operator", twoFactorEnabled: true },
+          }),
+        },
+      },
+      passkeyUrl: null,
+    }),
   } as unknown as Ctx
   await mkdir(spoolDir(ctx), { recursive: true })
 })
 
 afterEach(async () => {
   refuseWrite = false
+  onRemove = async () => {}
+  unopenable = ""
   calls.length = 0
   warnings.length = 0
   held.clear()
@@ -207,7 +231,140 @@ describe("a copy that was verified on its last attempt", () => {
   })
 })
 
+describe("a destination being deleted", () => {
+  const remove = (id: string) =>
+    destinationRoutes(ctx).request(`http://ops.example.com/${id}?files=delete`, {
+      method: "DELETE",
+      headers: { origin: "http://ops.example.com" },
+    })
+  const destination = async (run: Partial<typeof backupRuns.$inferInsert>, copy: "ok" | "pending") => {
+    const tag = randomBytes(4).toString("hex")
+    const [d] = await ctx.db
+      .insert(backupDestinations)
+      .values({ name: tag, kind: "local", location: { folder: tag }, retention: { daily: 1, weekly: 0, monthly: 0 } })
+      .returning()
+    if (!d) throw new Error("no destination")
+    const copyOf = async (values: Partial<typeof backupRuns.$inferInsert>, status: "ok" | "pending") => {
+      const [r] = await ctx.db
+        .insert(backupRuns)
+        .values({ status: "running", ...values })
+        .returning()
+      if (!r) throw new Error("no run")
+      await ctx.db
+        .insert(backupCopies)
+        .values({ runId: r.id, destinationId: d.id, objectKey: `${tag}-${r.id}`, status })
+    }
+    await copyOf(run, copy)
+    const rows = () => ctx.db.select().from(backupCopies).where(eq(backupCopies.destinationId, d.id))
+    return { d, copyOf, rows }
+  }
+
+  it("keeps the copy of a backup that starts meanwhile, and says which archives are gone", async () => {
+    const { d, copyOf, rows } = await destination({ status: "ok" }, "ok")
+    onRemove = async () => {
+      onRemove = async () => {}
+      await copyOf({}, "pending")
+    }
+    const res = await remove(d.id)
+    expect(res.status).toBe(409)
+    expect(((await res.json()) as { message: string }).message).toBe(
+      "A backup to this destination started meanwhile, so it stays in n8n-ops. Its earlier archives are deleted. Try again when the backup ends.",
+    )
+    expect((await rows()).map((r) => [r.status, r.deletedAt !== null]).sort()).toEqual([
+      ["ok", true],
+      ["pending", false],
+    ])
+    await ctx.db.update(backupRuns).set({ status: "failed" }).where(eq(backupRuns.status, "running"))
+    expect((await remove(d.id)).status).toBe(200)
+  })
+
+  it("is not held by a copy whose run ended without an archive", async () => {
+    const { d, rows } = await destination({ status: "failed" }, "pending")
+    expect((await remove(d.id)).status).toBe(200)
+    expect(await rows()).toEqual([])
+  })
+})
+
+describe("the retention sweep", () => {
+  const leftover = async (copy: Partial<typeof backupCopies.$inferInsert>, name = randomBytes(4).toString("hex")) => {
+    const [d] = await ctx.db
+      .insert(backupDestinations)
+      .values({ name, kind: "local", location: { folder: name }, retention: { daily: 1, weekly: 0, monthly: 0 } })
+      .returning()
+    const [r] = await ctx.db.insert(backupRuns).values({ status: "ok" }).returning()
+    if (!d || !r) throw new Error("no destination or run")
+    const [c] = await ctx.db
+      .insert(backupCopies)
+      .values({
+        runId: r.id,
+        destinationId: d.id,
+        objectKey: name,
+        leftovers: [{ versionId: "v1", retainUntil: null }],
+        ...copy,
+      })
+      .returning()
+    if (!c) throw new Error("no copy")
+    return c
+  }
+
+  it("clears the leftovers of a copy that ended, and leaves one being written to that write", async () => {
+    const ended = await leftover({ status: "failed" })
+    const written = await leftover({ status: "writing" })
+    await sweepRetention(ctx)
+    expect((await copyRow(ended.id)).leftovers).toEqual([])
+    expect((await copyRow(written.id)).leftovers).toHaveLength(1)
+    await ctx.db.delete(backupCopies).where(eq(backupCopies.id, written.id))
+  })
+
+  it("goes on to the next destination when one cannot be opened", async () => {
+    unopenable = `a-${randomBytes(4).toString("hex")}`
+    await leftover({ status: "failed" }, unopenable)
+    const next = await leftover({ status: "failed" })
+    await sweepRetention(ctx)
+    expect((await copyRow(next.id)).leftovers).toEqual([])
+    expect(warnings).toContain("retention could not run")
+  })
+})
+
 describe("a run that is said to have failed", () => {
+  it.each([
+    { how: "fails", end: (id: string) => failRun(ctx, id, "cut") },
+    { how: "ends without an archive", end: (id: string) => endRunsWithoutArchive(ctx.db, { runId: id }) },
+  ])("$how together with its copies or not at all", async ({ end }) => {
+    const { run, copy } = await lastAttempt()
+    await ctx.db.update(backupRuns).set({ spooledAt: null }).where(eq(backupRuns.id, run.id))
+    const accept = await refuse("backup_copies", "")
+    await expect(end(run.id)).rejects.toThrow()
+    await accept()
+    expect(await runStatus(run.id)).toBe("running")
+    await end(run.id)
+    expect(await runStatus(run.id)).toBe("failed")
+    expect((await copyRow(copy.id)).status).toBe("failed")
+  })
+
+  it.each([
+    { what: "the n8n-ops database", values: { includesSecrets: true }, asks: false },
+    { what: "an instance through its API", values: { includesSecrets: false }, instance: true, asks: false },
+    { what: "an instance through its worker", values: { includesSecrets: true }, instance: true, asks: true },
+  ])("asks for the worker only when one makes the archive: $what", async ({ values, instance, asks }) => {
+    const [i] = instance
+      ? await ctx.db
+          .insert(instances)
+          .values({ name: randomBytes(4).toString("hex"), baseUrl: "http://n8n:5678" })
+          .returning()
+      : []
+    const [run] = await ctx.db
+      .insert(backupRuns)
+      .values({ status: "running", instanceId: i?.id ?? null, startedAt: new Date(0), ...values })
+      .returning()
+    await kickCopies(ctx)
+    const [after] = await ctx.db
+      .select()
+      .from(backupRuns)
+      .where(eq(backupRuns.id, run?.id ?? ""))
+    expect(after?.error).toBe(`The encrypted archive did not arrive in time.${asks ? " Is the worker online?" : ""}`)
+  })
+
   const inSpool = async (id: string) => (await spooledRuns(spoolDir(ctx))).includes(id)
 
   it("ends while it waits for its archive, and its file goes with the next pass", async () => {

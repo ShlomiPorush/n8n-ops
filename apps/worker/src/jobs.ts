@@ -56,7 +56,11 @@ function replaced(
 export type Uploader = (size: number, sha256: string) => Promise<{ url: string; headers: Record<string, string> }>
 export type Put = (url: string, init: RequestInit) => Promise<Response>
 
-const WORK = "/tmp/n8n-ops-export"
+const PRIVATE_FOLDER = `set -e
+find /tmp -maxdepth 1 \\( -name n8n-ops-export -o -name n8n-ops-export.tar -o -name n8n-ops-export.json -o -type d -name 'n8n-ops-export.??????' \\) -mmin +60 -exec rm -rf {} + 2>/dev/null || true
+work=$(mktemp -d /tmp/n8n-ops-export.XXXXXX)
+trap 'rm -rf "$work"' EXIT
+trap 'exit 1' PIPE`
 const CREDENTIALS_LOG = "__CREDENTIALS_EXPORT__"
 
 function emptyExport(stderr: string, stdout: string) {
@@ -66,10 +70,6 @@ function emptyExport(stderr: string, stdout: string) {
 async function run(docker: Docker, container: string, script: string) {
   const res = await docker.exec(container, ["sh", "-c", script])
   return res
-}
-
-async function cleanup(docker: Docker, container: string) {
-  await run(docker, container, `rm -rf ${WORK} ${WORK}.tar ${WORK}.json`).catch(() => {})
 }
 
 async function requestUrl(url: string, signal: AbortSignal = AbortSignal.timeout(10_000)): Promise<RequestReading> {
@@ -240,12 +240,13 @@ export async function backupJob(
     const exported = await run(
       docker,
       container,
-      `set -e; rm -rf ${WORK} ${WORK}.tar; mkdir -p ${WORK}/workflows ${WORK}/credentials
-{ n8n export:workflow --all --backup --output=${WORK}/workflows/ || echo "__WF_FAILED__"; } >&2
+      `${PRIVATE_FOLDER}
+mkdir "$work/workflows" "$work/credentials"
+{ n8n export:workflow --all --backup --output="$work/workflows/" || echo "__WF_FAILED__"; } >&2
 echo "${CREDENTIALS_LOG}" >&2
-{ n8n export:credentials --all --decrypted --backup --output=${WORK}/credentials/ || echo "__CRED_FAILED__"; } >&2
-tar -cf ${WORK}.tar -C ${WORK} .
-cat ${WORK}.tar`,
+{ n8n export:credentials --all --decrypted --backup --output="$work/credentials/" || echo "__CRED_FAILED__"; } >&2
+tar -cf "$work/export.tar" -C "$work" workflows credentials
+cat "$work/export.tar"`,
     )
     const log = exported.stderr
     if (exported.exitCode !== 0) throw new Error(`export failed: ${log.slice(-400)}`)
@@ -287,8 +288,6 @@ cat ${WORK}.tar`,
       ...(refused ? { refused } : {}),
       ...fields,
     }
-  } finally {
-    await cleanup(docker, container)
   }
 }
 
@@ -313,7 +312,9 @@ export async function exportCredentialsJob(docker: Docker, payload: Record<strin
     const res = await run(
       docker,
       container,
-      `rm -f ${WORK}.json && N8N_LOG_OUTPUT=console N8N_LOG_LEVEL=error N8N_LOG_FORMAT=text n8n export:credentials --all --decrypted --output=${WORK}.json >&2 && cat ${WORK}.json`,
+      `${PRIVATE_FOLDER}
+N8N_LOG_OUTPUT=console N8N_LOG_LEVEL=error N8N_LOG_FORMAT=text n8n export:credentials --all --decrypted --output="$work/credentials.json" >&2
+cat "$work/credentials.json"`,
     )
     const none = res.exitCode !== 0 && emptyExport(res.stderr, "")
     if (res.exitCode !== 0 && !none)
@@ -333,7 +334,5 @@ export async function exportCredentialsJob(docker: Docker, payload: Record<strin
       ...(refused ? { refused } : {}),
       ...fields,
     }
-  } finally {
-    await cleanup(docker, container)
   }
 }

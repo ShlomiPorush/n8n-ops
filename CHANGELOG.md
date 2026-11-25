@@ -32,6 +32,25 @@ All notable changes to this project are documented here. The format follows [Kee
 - **A client that sends its request slowly no longer holds up agents that connect.** One such registration or code request kept the others waiting for up to a minute.
 - **A change of the public URL is recorded once in the audit log**, with who made it. The end of the agents' connections was recorded a second time, by n8n-ops.
 - **Saving Agent Connections no longer puts back what another save changed at the same time.**
+- **An export cleans up after itself also when its Worker stops.** The export now works in a folder of its own that only its user can read, removes it also when the Worker stops, and removes what an export that was killed left more than an hour before. Update the Workers to get this.
+- **A move copies only what its review showed.** A workflow saved in n8n after the review, an instance that got another address, or a worker that can no longer read the credentials was moved as it was then. The move now stops before it changes anything and asks for a new review.
+- **A Telegram button says what was saved.** "Marked as resolved" and "Muted for 24 hours" came before the change was saved, and a press whose answer Telegram refused was not done. The answer now follows the change, and says so when it could not be saved or changed nothing.
+- **A problem whose mute ended alerts again.** The page said so, but a workflow already in the problem failed on without a message. The first failure after the end of a mute now sends a new Telegram message, "Still failing after the mute", once for the whole problem, when New problem alerts are on.
+- **A backup that starts while its destination is being deleted keeps its record.** The destination now stays, and its answer says to try again. Archives already deleted are shown as deleted, and a destination is no longer held by a copy of a backup that ended without an archive.
+- **A restore that runs while an update replaces the server is no longer shown as cut off.** The new server counted every running restore of the old one as cut off. A restore that really was cut off is now shown so once the server has run for 5 to 10 minutes.
+- **Compact says done when it compacted the table.** After an update of the operating system's collations, PostgreSQL warned about them while it compacted a large table, and the run was recorded as skipped.
+- **A part of Needs attention that does not answer no longer takes up the database connections.** Each page that showed the list waited with a connection of its own, for example while a large table was compacted, until nothing else could be read. Each part is now read by one request at a time.
+- **Clear filters keeps the keyboard's place.** Pressed by keyboard, it left the focus nowhere; the focus now goes to the list's search.
+- **The help for a refusing socket proxy no longer says that an earlier Worker cannot list the queue workers or say what was refused.** It names the image line of the server's release, as the Workers page does.
+- **A long copy to an SFTP server is no longer cut off by a deadline of a step that already ended.** Checking a copy whose writing took long, or removing old archives for more than 5 minutes, could lose the connection halfway.
+- **A backup that fails ends together with its copies.** The server stopping between the two left copies waiting forever.
+- **A backup through an instance's API that fails while the database does not answer no longer ends the server.**
+- **"Is the worker online?" is asked only of a backup a Worker makes.**
+- **The removal of old archives leaves a copy that is being written alone, and goes on after a destination that cannot be opened.**
+- **A message of ended access that was deleted in Telegram is left alone.** n8n-ops tried to edit it every 5 seconds.
+- **The buttons work at once when another bot takes over the same chat.** The new bot got its webhook only at the next start of the server.
+- **Pages catch up after the connection for live updates was cut off.** What changed meanwhile showed only at the next change or a reload.
+- **Setup says when it could not be read.** It offered to create the account, also on an installation that has one.
 
 ## [0.19.4] - 2026-11-24
 

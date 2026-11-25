@@ -13,6 +13,7 @@ import { exportCredentials, ProxyRefusedError, previewMove, runMove } from "../s
 import { syncWorkflows } from "../services/workflows.ts"
 
 const moveSchema = z.object({ sourceId: z.string().uuid(), targetId: z.string().uuid(), workflowId: z.string().min(1) })
+const reviewedMove = moveSchema.extend({ reviewed: z.string() })
 
 export function workflowRoutes(ctx: Ctx) {
   const app = new Hono<Env>()
@@ -112,7 +113,7 @@ export function workflowRoutes(ctx: Ctx) {
   })
 
   app.post("/moves", async (c) => {
-    const body = moveSchema.safeParse(await c.req.json().catch(() => ({})))
+    const body = reviewedMove.safeParse(await c.req.json().catch(() => ({})))
     if (!body.success) return c.json({ error: "invalid", issues: body.error.issues }, 400)
     try {
       const result = await runMove(ctx, body.data, actorName(c.get("actor")))

@@ -4,7 +4,7 @@ import QRCode from "qrcode"
 import { useEffect, useState } from "react"
 import { Navigate, useNavigate, useSearchParams } from "react-router"
 import { SessionGuard } from "@/app/session-guard"
-import { BusyButton, Loading, Panel } from "@/components/kit"
+import { BusyButton, LoadError, Loading, Panel } from "@/components/kit"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
@@ -40,13 +40,21 @@ export function SetupPage() {
         <Loading />
       </AuthFrame>
     )
+  if (!status.data)
+    return (
+      <AuthFrame>
+        <Panel>
+          <LoadError what="the setup" error={status.error} retry={() => status.refetch()} />
+        </Panel>
+      </AuthFrame>
+    )
   const notSignedIn = checklist.error instanceof ApiError && checklist.error.status === 401
-  if (status.data?.hasUser && notSignedIn)
+  if (status.data.hasUser && notSignedIn)
     return <Navigate to={loginPath("/", "", (checklist.error as ApiError).reason)} replace />
 
   const c = checklist.data
   let step: Step | "done" = "done"
-  if (!status.data?.hasUser) step = "Account"
+  if (!status.data.hasUser) step = "Account"
   else if (c && !c.twoFactor) step = "Two-Factor"
   else if (c && !c.backupKey) step = "Backup Key"
   else if (c && !c.telegram && !skipped.includes("Telegram") && !resetting) step = "Telegram"

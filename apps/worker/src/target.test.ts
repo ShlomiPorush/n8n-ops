@@ -163,8 +163,8 @@ describe("a backup of a Compose service", () => {
     expect(result.error).toBe("the container n8n1-app-1 was replaced during the backup; the next run uses the new one")
     expect(result.resolvedContainer).toBe("n8n1-app-1")
     expect(new Set(ran)).toEqual(new Set(["n8n1-app-1"]))
-    expect(scripts[0]).toMatch(/n8n export:workflow[\s\S]*cat \/tmp\/n8n-ops-export\.tar$/)
-    expect(scripts.slice(1).every((s) => s.includes("rm -rf"))).toBe(true)
+    expect(scripts[0]).toMatch(/n8n export:workflow[\s\S]*cat "\$work\/export\.tar"$/)
+    expect(scripts).toHaveLength(1)
   })
 })
 

@@ -31,7 +31,7 @@ import {
   type Safe,
 } from "./email-layout.ts"
 import { sendEmail } from "./reports.ts"
-import { clip, html, type InlineButton, TelegramHtml, telegramPlainText } from "./telegram.ts"
+import { clip, html, type InlineButton, isMessageGone, TelegramHtml, telegramPlainText } from "./telegram.ts"
 
 export type InstanceInfo = {
   position: number
@@ -640,7 +640,11 @@ async function closeOutdated(ctx: Ctx) {
     try {
       const text = renderAccessTelegram(info, dates, accessOutcome({ ...r, changed: info.changed }, dates))
       const note = r.telegramMissingTopic ? topicGoneNote(r.telegramMissingTopic) : undefined
-      await tg.api.edit(tg.chatId, r.telegramMessageId ?? 0, note ? TelegramHtml.join([note, text]) : text)
+      await tg.api
+        .edit(tg.chatId, r.telegramMessageId ?? 0, note ? TelegramHtml.join([note, text]) : text)
+        .catch((error: unknown) => {
+          if (!isMessageGone(error)) throw error
+        })
       await ctx.db
         .update(accessRequests)
         .set({ telegramClosedAt: new Date() })

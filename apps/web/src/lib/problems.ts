@@ -89,7 +89,7 @@ export const SECTION_TITLES: Record<Section, { title: string; note: string }> = 
     title: "Your alerts",
     note: "A Stop and Error node in your workflow raised these on purpose. Recent or old, they stay here.",
   },
-  muted: { title: "Muted", note: "Muted for now; they alert again when the mute ends." },
+  muted: { title: "Muted", note: "Muted for now; they alert again at the first failure after the mute ends." },
   resolved: { title: "Resolved", note: "Resolved by hand or after days without a failure." },
 }
 

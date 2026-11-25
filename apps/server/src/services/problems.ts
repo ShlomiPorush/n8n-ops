@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull, like, lt, lte, sql } from "drizzle-orm"
+import { and, asc, eq, inArray, isNull, like, lt, lte, ne, sql } from "drizzle-orm"
 import { type Ctx, changed } from "../context.ts"
 import type { Db } from "../db/client.ts"
 import { errorCode } from "../db/errors.ts"
@@ -105,6 +105,7 @@ export async function ingestExecution(
   })
   const rowFingerprint = fingerprint(instance.id, execution.workflowId, failure.nodeName, cause.key)
   const seenAt = new Date(execution.stoppedAt ?? execution.startedAt ?? Date.now())
+  const failedAt = new Date(Math.min(seenAt.getTime(), Date.now()))
   const alertSettings = silent ? undefined : await problemAlertSettings(ctx)
 
   const record = (withData: boolean) =>
@@ -143,7 +144,7 @@ export async function ingestExecution(
               firstSeen: seenAt < existing.firstSeen ? seenAt : existing.firstSeen,
               lastSeen: seenAt > existing.lastSeen ? seenAt : existing.lastSeen,
               ...(regression ? { status: "open" as const, regression: true, resolvedAt: null } : {}),
-              ...(unmute ? { status: "open" as const, mutedUntil: null } : {}),
+              ...(unmute ? { status: "open" as const } : {}),
             })
             .where(eq(affectedWorkflows.id, existing.id))
             .returning()
@@ -206,6 +207,21 @@ export async function ingestExecution(
           }
         }
 
+        if (!silent && row.status === "open") {
+          const ownMuteEnded = row.mutedUntil !== null && row.mutedUntil < failedAt
+          const mutesEnded = await tx
+            .update(affectedWorkflows)
+            .set({ status: "open", mutedUntil: null })
+            .where(
+              and(
+                eq(affectedWorkflows.problemId, row.problemId),
+                ne(affectedWorkflows.status, "resolved"),
+                lt(affectedWorkflows.mutedUntil, ownMuteEnded ? failedAt : row.firstSeen),
+              ),
+            )
+            .returning({ id: affectedWorkflows.id })
+          if (mutesEnded.length && reason !== "regression") reason = "mute-ended"
+        }
         await tx.insert(failures).values({
           affectedWorkflowId: row.id,
           instanceId: instance.id,
@@ -334,7 +350,7 @@ export async function endMutes(ctx: Pick<Ctx, "db">, now = Date.now()) {
   await retrying(() =>
     ctx.db
       .update(affectedWorkflows)
-      .set({ status: "open", mutedUntil: null })
+      .set({ status: "open" })
       .where(and(eq(affectedWorkflows.status, "muted"), lte(affectedWorkflows.mutedUntil, new Date(now)))),
   )
 }
@@ -348,7 +364,7 @@ export async function housekeeping(ctx: Ctx) {
     const resolved = await retrying(() =>
       ctx.db
         .update(affectedWorkflows)
-        .set({ status: "resolved", resolvedAt: new Date() })
+        .set({ status: "resolved", resolvedAt: new Date(), mutedUntil: null })
         .where(
           and(
             eq(affectedWorkflows.instanceId, instance.id),
@@ -535,7 +551,7 @@ export async function applyProblemAction(
     audit?: ProblemAudit
     fromMessage?: boolean
   } = {},
-): Promise<{ problem: Problem; rows: AffectedWorkflow[]; receipt: ProblemReceipt | null } | null> {
+): Promise<{ problem: Problem; rows: AffectedWorkflow[]; changed: boolean; receipt: ProblemReceipt | null } | null> {
   return retrying(() =>
     ctx.db.transaction(async (tx) => {
       const locked = await lockProblem(tx, id, { affectedWorkflowId, followMerge: fromMessage })
@@ -546,7 +562,7 @@ export async function applyProblemAction(
         const patch = change(action, row, now, muteHours)
         return patch ? [{ row, patch }] : []
       })
-      if (!changes.length) return { problem, rows, receipt: null }
+      if (!changes.length) return { problem, rows, changed: false, receipt: null }
       const prior: ReceiptRow[] = []
       const after = new Map<string, AffectedWorkflow>()
       for (const { row, patch } of changes) {
@@ -560,7 +576,7 @@ export async function applyProblemAction(
         prior.push({ affectedWorkflowId: row.id, version: updated.version, state: stateOf(row) })
       }
       if (audit) await ctx.audit({ ...audit, target: auditTarget(problem, rows, Boolean(affectedWorkflowId)) }, tx)
-      const acted = { problem, rows: rows.map((r) => after.get(r.id) ?? r) }
+      const acted = { problem, rows: rows.map((r) => after.get(r.id) ?? r), changed: true }
       if (fromMessage) return { ...acted, receipt: null }
       const [receipt] = await tx
         .insert(problemReceipts)

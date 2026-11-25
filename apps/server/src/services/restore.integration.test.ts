@@ -7,7 +7,7 @@ import { sealArchive } from "@n8n-ops/shared/archive"
 import { generateX25519Identity, identityToRecipient } from "age-encryption"
 import { and, eq, sql } from "drizzle-orm"
 import postgres from "postgres"
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 import type { Ctx } from "../context.ts"
 import { createDatabase, type Database } from "../db/client.ts"
 import { auditLog, backupRuns, instances, restores } from "../db/schema.ts"
@@ -636,10 +636,16 @@ describe("what is sent", () => {
 })
 
 describe("the sweep", () => {
+  const upFor = (minutes: number) => vi.spyOn(process, "uptime").mockReturnValue(minutes * 60)
+  afterEach(() => {
+    vi.mocked(process.uptime).mockRestore()
+  })
+
   it("never writes over a restore that ends while it runs", async () => {
     const source = await instance()
     const run = await archiveOf(source)
     const review = await preview(run.id, await instance())
+    upFor(6)
     const [done] = await Promise.all([
       confirmRestore(ctx, review.id, identity, by),
       sweepRestores(ctx),
@@ -649,6 +655,24 @@ describe("the sweep", () => {
     const [row] = await ctx.db.select().from(restores).where(eq(restores.id, review.id))
     expect(row?.status).toBe("done")
     expect(row?.steps.every((s) => s.status === "done" && s.createdId)).toBe(true)
+  })
+
+  it.each([
+    { what: "the server that is replaced runs since 20 minutes", up: 1, minutes: 20 },
+    { what: "the new server runs since a minute", up: 600, minutes: 1 },
+  ])("leaves a restore alone that $what", async ({ up, minutes }) => {
+    const source = await instance()
+    const run = await archiveOf(source)
+    const review = await preview(run.id, source)
+    await ctx.db
+      .update(restores)
+      .set({ status: "pending", confirmedAt: new Date(Date.now() - minutes * 60_000) })
+      .where(eq(restores.id, review.id))
+    upFor(up)
+    await sweepRestores(ctx)
+    const [row] = await ctx.db.select().from(restores).where(eq(restores.id, review.id))
+    expect(row?.status).toBe("pending")
+    await ctx.db.delete(restores).where(eq(restores.id, review.id))
   })
 
   it("drops reviews older than an hour and marks restores cut off by a restart unknown", async () => {
@@ -664,6 +688,7 @@ describe("the sweep", () => {
       .update(restores)
       .set({ status: "pending", confirmedAt: new Date(Date.now() - 24 * 3600_000) })
       .where(eq(restores.id, cut.id))
+    upFor(6)
     await sweepRestores(ctx)
     expect(await ctx.db.select().from(restores).where(eq(restores.id, old.id))).toEqual([])
     const [after] = await ctx.db.select().from(restores).where(eq(restores.id, cut.id))

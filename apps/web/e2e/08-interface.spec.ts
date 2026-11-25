@@ -106,6 +106,25 @@ test("list filters live in the address, survive a reload and clear in one step",
   await expect(page.getByLabel("Search all instances")).toHaveValue("")
 })
 
+for (const width of [1440, 390])
+  test(`Clear filters by keyboard moves the focus to the search, at ${width} px`, async () => {
+    await page.setViewportSize({ width, height: 900 })
+    try {
+      for (const path of ["/workflows?q=Sync+orders", "/problems?status=open&q=ERP"]) {
+        await page.goto(path)
+        const clear = page.getByRole("button", { name: "Clear filters" })
+        await clear.focus()
+        await page.keyboard.press("Enter")
+        await expect(clear).toHaveCount(0)
+        const box = page.locator('[data-slot="filter-bar"] input[type="search"]')
+        await expect(box).toBeFocused()
+        await expect(box).toHaveValue("")
+      }
+    } finally {
+      await page.setViewportSize({ width: 1440, height: 900 })
+    }
+  })
+
 test("Clear filters drops a search typed but not sent yet, so it does not come back (SR-9)", async () => {
   await page.goto("/workflows")
   await page.getByRole("button", { name: /^Instance:/ }).click()
@@ -1626,6 +1645,41 @@ test("Merge lands on the problem merged into, and Back returns to the problem it
   } finally {
     await page.unroute(candidates)
     await page.unroute(merge)
+  }
+})
+
+test("live updates read again what changed while they were cut off (NL-19)", async () => {
+  await page.route("**/api/events", (route) => route.abort())
+  await page.goto("/workflows")
+  await expect(page.locator("tbody tr").first()).toBeVisible()
+  let reads = 0
+  const count = (r: Request) => {
+    if (new URL(r.url()).pathname === "/api/workflows") reads++
+  }
+  page.on("request", count)
+  try {
+    await page.unroute("**/api/events")
+    await page.route("**/api/events", (route) =>
+      route.fulfill({ contentType: "text/event-stream", body: "event: ready\ndata: \n\n" }),
+    )
+    await expect.poll(() => reads, { timeout: 15_000 }).toBeGreaterThan(0)
+  } finally {
+    page.off("request", count)
+    await page.unroute("**/api/events")
+  }
+})
+
+test("setup says that it could not be read, and never offers a new account then", async () => {
+  await page.route("**/api/setup/status", (route) => route.fulfill({ status: 500, json: { error: "internal" } }))
+  try {
+    await page.goto("/setup")
+    await expect(page.getByText("Could not load the setup")).toBeVisible({ timeout: 20_000 })
+    await expect(page.getByText("Create Your Account")).toHaveCount(0)
+    await page.unroute("**/api/setup/status")
+    await page.getByRole("button", { name: "Try again" }).click()
+    await expect(page).toHaveURL((url) => url.pathname === "/")
+  } finally {
+    await page.unroute("**/api/setup/status")
   }
 })
 

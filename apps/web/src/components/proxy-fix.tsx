@@ -235,10 +235,7 @@ export function ProxyFixBlock({ fix, refresh }: { fix: ProxyFix; refresh?: strin
         <RuleLines rule={fix.rule} workerId={fix.worker.id} recorded={fix.recorded} refresh={refresh} />
         {fix.update && (
           <div className="grid gap-1.5">
-            <p>
-              This worker runs an earlier release. With this image line in its docker-compose.yml, it also lists the
-              queue workers when the main is refused and says exactly what the proxy refused:
-            </p>
+            <p>This worker runs an earlier release than the server. Its image line in docker-compose.yml:</p>
             <Command value={fix.update} label="Copy the image line" />
           </div>
         )}

@@ -89,7 +89,10 @@ describe("Needs attention read from its sources", () => {
     vi.useFakeTimers()
     try {
       const errors: unknown[] = []
-      const hung = new Promise<never>(() => {})
+      let end = () => {}
+      const hung = new Promise<never>((_, reject) => {
+        end = () => reject(new Error("ended"))
+      })
       const answer = attention(ctx(errors), { read: { ...read, backups: () => hung }, timeout: 8_000 })
       await vi.advanceTimersByTimeAsync(8_000)
       const a = await answer
@@ -97,6 +100,9 @@ describe("Needs attention read from its sources", () => {
       expect(a.items.map((i) => i.id)).toEqual(["w1"])
       expect(errors).toHaveLength(1)
       expect(vi.getTimerCount()).toBe(0)
+      const next = attention(ctx(errors), { read, timeout: 8_000 })
+      end()
+      expect((await next).failed).toEqual([])
     } finally {
       vi.useRealTimers()
     }

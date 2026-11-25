@@ -17,13 +17,13 @@ import { causeFields } from "./cause.ts"
 import { telegramTarget } from "./draft-tests.ts"
 import { can } from "./instances.ts"
 import type { DbLike } from "./problems.ts"
-import { applyProblemAction } from "./problems.ts"
+import { applyProblemAction, problemStatus } from "./problems.ts"
 import { clip, html, type InlineButton, isMessageGone, Telegram, TelegramError, TelegramHtml } from "./telegram.ts"
 
 type AffectedRow = typeof affectedWorkflows.$inferSelect
 type GroupRow = typeof alertGroups.$inferSelect
 
-export type ProblemAlertReason = "new" | "joined" | "regression"
+export type ProblemAlertReason = "new" | "joined" | "regression" | "mute-ended"
 
 export async function threadFor(ctx: Ctx, subject: AlertSubject): Promise<number | null> {
   const telegram = await ctx.settings.get("telegram")
@@ -189,20 +189,23 @@ export function renderProblemGroup(
   lines: GroupLine[],
   footer?: TelegramHtml,
   note?: TelegramHtml,
-  spread?: { workflows: number },
+  spread?: { workflows: number } | "mute-ended",
   hint?: string | null,
 ): TelegramHtml {
   const regression = lines.some((l) => l.regression)
   const workflows = new Set(lines.map((l, i) => l.workflowKey ?? String(i))).size
-  const title = spread
-    ? regression
-      ? "Regression"
-      : `Now in ${spread.workflows} workflows`
-    : workflows === 1
-      ? regression
-        ? "Regression"
-        : "New problem"
-      : `${regression ? "Problems" : "New problem"} in ${workflows} workflows`
+  const title =
+    spread === "mute-ended"
+      ? "Still failing after the mute"
+      : spread
+        ? regression
+          ? "Regression"
+          : `Now in ${spread.workflows} workflows`
+        : workflows === 1
+          ? regression
+            ? "Regression"
+            : "New problem"
+          : `${regression ? "Problems" : "New problem"} in ${workflows} workflows`
   const body = lines
     .slice(0, 15)
     .map(
@@ -228,6 +231,7 @@ export async function telegramClient(ctx: Ctx) {
   if (!tg.botTokenEnc || !tg.chatId) return null
   return {
     api: new Telegram(ctx.secrets.decrypt(tg.botTokenEnc)),
+    bot: tg.botTokenEnc,
     chatId: tg.chatId,
     secret: tg.webhookSecret,
     defaultThreadId: tg.defaultThreadId,
@@ -369,6 +373,7 @@ export async function dispatchAlerts(ctx: Ctx) {
       let newIds = [...new Set(rows.map((r) => r.affectedWorkflowId).filter((id): id is string => Boolean(id)))]
       const idsOf = (workflowIds: string[]) =>
         rows.filter((r) => r.affectedWorkflowId && workflowIds.includes(r.affectedWorkflowId)).map((r) => r.id)
+      const muteEnded = rows.some((r) => r.text === "mute-ended")
       const since = new Date(Date.now() - settings.editWindowMin * 60_000)
       const [recent] = await ctx.db
         .select()
@@ -384,7 +389,7 @@ export async function dispatchAlerts(ctx: Ctx) {
         )
         .orderBy(desc(alertGroups.createdAt))
         .limit(1)
-      if (recent && settings.editWindowMin > 0) {
+      if (recent && settings.editWindowMin > 0 && !muteEnded) {
         const handled = await oneAtATime(groupTurn(recent.id), async () => {
           const [current] = await ctx.db.select().from(alertGroups).where(eq(alertGroups.id, recent.id))
           if (!current || current.closedAt) return false
@@ -435,7 +440,7 @@ export async function dispatchAlerts(ctx: Ctx) {
       newIds = await stillIn(ctx, problemId, newIds)
       if (!newIds.length) continue
       ids = idsOf(newIds)
-      const spread = await spreadOf(ctx, problemId)
+      const spread = muteEnded ? "mute-ended" : await spreadOf(ctx, problemId)
       const lines = await groupLines(ctx, newIds)
       const [group] = await ctx.db
         .insert(alertGroups)
@@ -520,23 +525,23 @@ export async function handleTelegramCallback(ctx: Ctx, update: CallbackUpdate): 
     .select({ problemId: alertGroups.problemId, beforeRegroup: alertGroups.beforeRegroup })
     .from(alertGroups)
     .where(eq(alertGroups.id, groupId))
-  await tg.api.answerCallback(
-    cb.id,
-    known?.beforeRegroup
-      ? "This alert is from before the regrouping. Open n8n-ops to act."
-      : !known?.problemId
-        ? "This alert is no longer known."
-        : action === "r"
-          ? "Marked as resolved"
-          : "Muted for 24 hours",
-  )
-  if (!known?.problemId || known.beforeRegroup) return true
+  const answer = (text: string) =>
+    tg.api
+      .answerCallback(cb.id, text)
+      .catch((error: Error) => ctx.log.warn("could not answer a Telegram button", { groupId, error: error.message }))
+  if (known?.beforeRegroup) {
+    await answer("This alert is from before the regrouping. Open n8n-ops to act.")
+    return true
+  }
+  if (!known?.problemId) {
+    await answer("This alert is no longer known.")
+    return true
+  }
   const { problemId } = known
-  return oneAtATime(groupTurn(groupId), async () => {
-    const [group] = await ctx.db.select().from(alertGroups).where(eq(alertGroups.id, groupId))
-    if (!group) return true
-    const who = cb.from?.username ? `@${cb.from.username}` : (cb.from?.first_name ?? "someone")
-    const acted = await applyProblemAction(ctx, problemId, action === "r" ? "resolve" : "mute", {
+  const who = cb.from?.username ? `@${cb.from.username}` : (cb.from?.first_name ?? "someone")
+  let acted: Awaited<ReturnType<typeof applyProblemAction>>
+  try {
+    acted = await applyProblemAction(ctx, problemId, action === "r" ? "resolve" : "mute", {
       fromMessage: true,
       muteHours: 24,
       audit: {
@@ -545,28 +550,48 @@ export async function handleTelegramCallback(ctx: Ctx, update: CallbackUpdate): 
         via: "telegram",
       },
     })
-    changed(ctx, "problems", "overview")
-    const problem = acted?.problem
-    const lines = await groupLines(ctx, await stillIn(ctx, problem?.id ?? problemId, group.affectedWorkflowIds))
+  } catch (error) {
+    await answer("n8n-ops could not save this. Press again, or open n8n-ops.")
+    throw error
+  }
+  if (!acted) {
+    await answer("This alert is no longer known.")
+    return true
+  }
+  const { problem } = acted
+  changed(ctx, "problems", "overview")
+  const done = acted.changed ? (action === "r" ? "Resolved" : "Muted for 24 hours") : null
+  const answered = answer(
+    done === null
+      ? `This problem is already ${problemStatus(acted.rows)}.`
+      : done === "Resolved"
+        ? "Marked as resolved"
+        : done,
+  )
+  await oneAtATime(groupTurn(groupId), async () => {
+    const [group] = await ctx.db.select().from(alertGroups).where(eq(alertGroups.id, groupId))
+    if (!group) return
+    const lines = await groupLines(ctx, await stillIn(ctx, problem.id, group.affectedWorkflowIds))
     const messageId = cb.message?.message_id ?? group.telegramMessageId
     try {
       await tg.api.edit(
         tg.chatId,
         messageId,
         renderProblemGroup(
-          problem ? causeFields(problem).title : group.groupKey,
+          causeFields(problem).title,
           lines,
-          html`<i>${action === "r" ? "Resolved" : "Muted for 24 hours"} by ${who}</i>`,
+          done === null ? undefined : html`<i>${done} by ${who}</i>`,
           groupNote(group),
-          problem ? await spreadOf(ctx, problemId, group.createdAt, problem.id) : undefined,
-          problem ? causeFields(problem).hint : null,
+          await spreadOf(ctx, problemId, group.createdAt, problem.id),
+          causeFields(problem).hint,
         ),
       )
     } catch (error) {
       ctx.log.warn("could not update the alert message", { groupId, error: (error as Error).message })
     }
-    return true
   })
+  await answered
+  return true
 }
 
 let appliedWebhook = ""
@@ -576,7 +601,7 @@ export async function syncTelegramWebhook(ctx: Ctx) {
   const { publicUrl } = await ctx.settings.get("general")
   if (!tg || !publicUrl || !tg.secret) return
   const url = `${publicUrl.replace(/\/+$/, "")}/api/telegram/webhook`
-  const key = `${url}|${tg.secret}|${tg.chatId}`
+  const key = `${url}|${tg.secret}|${tg.bot}`
   if (key === appliedWebhook) return
   await tg.api.setWebhook(url, tg.secret)
   appliedWebhook = key

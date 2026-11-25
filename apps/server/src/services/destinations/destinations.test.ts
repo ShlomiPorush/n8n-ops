@@ -9,7 +9,25 @@ import {
   placesOverlap,
 } from "./index.ts"
 import { sftpRoot } from "./sftp.ts"
-import { checkKey, cleanFolder } from "./store.ts"
+import { checkKey, cleanFolder, withDeadline } from "./store.ts"
+
+describe("a deadline", () => {
+  it("ends with its operation, so it never closes a connection a later one uses", async () => {
+    let signal: AbortSignal | undefined
+    await withDeadline(20, "Writing", async (s) => {
+      signal = s
+    })
+    await new Promise((resolve) => setTimeout(resolve, 60))
+    expect(signal?.aborted).toBe(false)
+    await expect(
+      withDeadline(
+        20,
+        "Writing",
+        (s) => new Promise((_, reject) => s.addEventListener("abort", () => reject(s.reason))),
+      ),
+    ).rejects.toThrow("Writing took longer than 1 min")
+  })
+})
 
 const s3 = (bucket: string, prefix: string, endpoint = "https://s3.example.com") => ({
   endpoint,

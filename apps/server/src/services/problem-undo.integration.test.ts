@@ -794,6 +794,88 @@ describe("problem actions", () => {
   })
 })
 
+describe("a problem whose mute ended and that still fails", () => {
+  const fail = (r: AffectedWorkflow, n: number) =>
+    ingestExecution(ctx, instance, failureOf(r, `ended-${r.id}-${n}`), { silent: false })
+  const ended = (problemId?: string) =>
+    row(
+      { status: "muted", mutedUntil: new Date(Date.now() - 60_000), firstSeen: new Date(Date.now() - hour) },
+      problemId,
+    )
+
+  it.each([true, false])("alerts on its first failure, and only then (the job ended the mute: %s)", async (job) => {
+    const p = await ended()
+    if (job) await endMutes(ctx)
+    expect(await fail(p, 1)).toMatchObject({ reason: "mute-ended" })
+    expect(await fail(p, 2)).toMatchObject({ reason: null })
+    expect(await read(p.id)).toMatchObject({ status: "open", mutedUntil: null, regression: false })
+  })
+
+  it("alerts once for all its workflows", async () => {
+    const first = await ended()
+    const second = await ended(first.problemId)
+    await endMutes(ctx)
+    expect(await fail(second, 1)).toMatchObject({ reason: "mute-ended" })
+    expect(await fail(first, 1)).toMatchObject({ reason: null })
+  })
+
+  it("alerts once when a workflow that joins it fails first", async () => {
+    const p = await ended()
+    await endMutes(ctx)
+    const joined = execution(`ended-join-${p.id}`, "joins-after-mute", "N", p.errorMessage)
+    expect(await ingestExecution(ctx, instance, joined, { silent: false })).toMatchObject({ reason: "mute-ended" })
+    expect(await fail(p, 1)).toMatchObject({ reason: null })
+  })
+
+  it("still alerts after the silent first sync of another instance joined it", async () => {
+    const p = await ended()
+    await endMutes(ctx)
+    const joined = execution(`ended-silent-${p.id}`, "joins-silently", "N", p.errorMessage)
+    const other = await newInstance(`silent-${p.id}`)
+    await ingestExecution(ctx, other, joined, { silent: true })
+    const next = { ...joined, id: `${joined.id}-next` }
+    expect(await ingestExecution(ctx, other, next, { silent: false })).toMatchObject({ reason: "mute-ended" })
+    expect(await fail(p, 1)).toMatchObject({ reason: null })
+  })
+
+  it("alerts for the workflow that was muted, not for one that stayed open beside it", async () => {
+    const open = await row()
+    const own = await ended(open.problemId)
+    await endMutes(ctx)
+    expect(await fail(open, 1)).toMatchObject({ reason: null })
+    expect(await fail(own, 1)).toMatchObject({ reason: "mute-ended" })
+  })
+
+  it("does not alert when a workflow muted on its own fails in it", async () => {
+    const p = await ended()
+    const own = await row({ status: "muted", mutedUntil: new Date(Date.now() + hour) }, p.problemId)
+    await endMutes(ctx)
+    expect(await fail(own, 1)).toMatchObject({ reason: null })
+    expect(await fail(p, 1)).toMatchObject({ reason: "mute-ended" })
+  })
+
+  it("still alerts after a failure from before the end of the mute was read late", async () => {
+    const p = await row({ status: "muted", mutedUntil: new Date(Date.now() - 60_000) })
+    await endMutes(ctx)
+    const during = { ...failureOf(p, `ended-${p.id}-late`), stoppedAt: new Date(Date.now() - hour).toISOString() }
+    expect(await ingestExecution(ctx, instance, during, { silent: false })).toMatchObject({ reason: null })
+    expect(await fail(p, 1)).toMatchObject({ reason: "mute-ended" })
+  })
+
+  it("does not alert while it is muted, nor after someone unmuted, reopened or resolved it before it failed", async () => {
+    const muted = await row({ status: "muted", mutedUntil: new Date(Date.now() + hour) })
+    expect(await fail(muted, 1)).toMatchObject({ reason: null })
+    const unmuted = await row({ status: "muted", mutedUntil: new Date(Date.now() + hour) })
+    await applyProblemAction(ctx, unmuted.problemId, "unmute")
+    expect(await fail(unmuted, 1)).toMatchObject({ reason: null })
+    const resolved = await ended()
+    await endMutes(ctx)
+    await applyProblemAction(ctx, resolved.problemId, "resolve")
+    expect(await fail(resolved, 1)).toMatchObject({ reason: "regression" })
+    expect(await fail(resolved, 2)).toMatchObject({ reason: null })
+  })
+})
+
 describe("the review's rare states", () => {
   it("Mute works again on a workflow whose mute ended before the job ended it", async () => {
     const p = await row({ status: "muted", mutedUntil: new Date(Date.now() - hour) })
@@ -1036,7 +1118,8 @@ describe("undo of a problem action", () => {
     const receipt = await act(p, "mute")
     await endMutes(ctx, Date.now() + 25 * hour)
     const unmuted = await read(p.id)
-    expect(unmuted).toMatchObject({ status: "open", mutedUntil: null })
+    expect(unmuted).toMatchObject({ status: "open" })
+    expect(unmuted.version).toBeGreaterThan(p.version)
 
     expect(await undoProblemAction(ctx, p.problemId, receipt.id)).toEqual({ ok: false, error: "already_changed" })
     expect(await read(p.id)).toEqual(unmuted)

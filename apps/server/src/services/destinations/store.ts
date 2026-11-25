@@ -76,11 +76,15 @@ export function cleanFolder(value: string): string {
 }
 
 export async function withDeadline<T>(ms: number, what: string, fn: (signal: AbortSignal) => Promise<T>) {
-  const signal = AbortSignal.timeout(ms)
+  const controller = new AbortController()
+  const { signal } = controller
+  const timer = setTimeout(() => controller.abort(), ms)
   try {
     return await fn(signal)
   } catch (error) {
     if (signal.aborted) throw new StoreError(`${what} took longer than ${Math.round(ms / 60_000) || 1} min`)
     throw error
+  } finally {
+    clearTimeout(timer)
   }
 }

@@ -12,20 +12,12 @@ import { type AgentConnect, issuerOf } from "./agents.ts"
 import { cleanLabel } from "./label.ts"
 import { CLI_CLIENT, resources, SCOPES } from "./provider.ts"
 import { skillRoutes } from "./skill.ts"
-import { openDeviceRequests, roomForClient } from "./store.ts"
 
 type Bindings = { incoming: IncomingMessage; outgoing: ServerResponse }
-/** The Node request and response under Hono; absent when the app is driven without a server (unit tests). */
 const node = (c: Context) => ((c.env as Partial<Bindings> | undefined)?.incoming ? (c.env as Bindings) : null)
 
-/** The provider's addresses, each exactly as configured (a uid after authorize and device is the provider's). */
 const PROVIDER_PATHS =
   /^(\/oauth\/(authorize(\/[\w-]+)?|token|device|revoke|register|jwks|userinfo|logout(\/confirm|\/success)?)|\/connect\/device(\/[\w-]+)?|\/\.well-known\/(oauth-authorization-server|openid-configuration))$/
-/** Registrations kept at most; unused ones are cleared after a day. */
-const MAX_CLIENTS = 500
-/** Device requests open at once, at most. */
-const MAX_DEVICE_REQUESTS = 200
-/** Approvals answered at once: each holds a connection of the main pool while the provider stores its grant. */
 const DECISIONS_AT_ONCE = 2
 
 const notConfigured = {
@@ -37,21 +29,6 @@ const gone = {
   message: "This request is no longer open. Start the connection again in your agent.",
 }
 
-/** One at a time: a cap is counted and filled under it, until the provider has stored the new record. */
-function mutex() {
-  let tail: Promise<unknown> = Promise.resolve()
-  return () => {
-    let release = () => {}
-    const held = new Promise<void>((r) => {
-      release = r
-    })
-    const turn = tail.then(() => release)
-    tail = tail.then(() => held)
-    return turn
-  }
-}
-
-/** At most `n` at a time; the others wait their turn. */
 function semaphore(n: number) {
   let free = n
   const waiting: (() => void)[] = []
@@ -70,7 +47,6 @@ function semaphore(n: number) {
 
 const clientAddress = (c: Context) => addressOf(incomingOf(c))
 
-/** Bearer tokens, API keys and temporary access keys never answer an approval: only a person's browser session. */
 const PEOPLE_ONLY = ["authorization", "x-n8n-api-key"]
 
 export function agentConnectRoutes(ctx: Ctx, agents: AgentConnect) {
@@ -79,32 +55,20 @@ export function agentConnectRoutes(ctx: Ctx, agents: AgentConnect) {
     register: limiter(20, 3600_000),
     device: limiter(30, 600_000),
     authorize: limiter(60, 600_000),
-    // A script polls every 5 seconds; a poll whose code is waiting or approved is given back (below).
     token: limiter(1200, 600_000),
     verify: limiter(60, 600_000),
     verifySession: limiter(30, 600_000),
   }
   agents.hooks.devicePollAnswered = (req) => limits.token.refund(addressOf(req))
-  // Codes typed on the code page count per provider session too, so one session cannot try them from many addresses.
   agents.hooks.codeAttempt = (session, req) => limits.verifySession(session ? `s:${sha256(session)}` : addressOf(req))
-  /** The lock of a capped request, given back when the provider has handled it. */
-  const handled = new WeakMap<IncomingMessage, () => void>()
-  agents.hooks.providerDone = (req) => {
-    handled.get(req)?.()
-    handled.delete(req)
-  }
-  const registering = mutex()
-  const requesting = mutex()
   const deciding = semaphore(DECISIONS_AT_ONCE)
   const tooMany = (c: Context) =>
     c.json({ error: "slow_down", error_description: "Too many requests. Wait a few minutes." }, 429, {
       "Retry-After": "600",
     })
 
-  /** The provider while agents are on and the public URL is usable; null otherwise. */
   const live = async () => ((await agents.enabled()) ? agents.provider() : null)
 
-  // RFC 9728: what each resource is and where its tokens come from. Public, so CORS is open (no cookies).
   const resourceMetadata = (endpoint: "mcp" | "rest") => async (c: Context) => {
     const p = await live()
     if (!p) return c.json(notConfigured, 404, { "Cache-Control": "no-store" })
@@ -124,11 +88,6 @@ export function agentConnectRoutes(ctx: Ctx, agents: AgentConnect) {
   app.get("/.well-known/oauth-protected-resource/mcp", resourceMetadata("mcp"))
   app.get("/.well-known/oauth-protected-resource/api/v1", resourceMetadata("rest"))
 
-  /*
-   * The approval page's own API, under the interaction's address so its cookie comes along. A signed-in person with
-   * two-factor sees what asks, and approves or denies. Approving makes the grant (only the scopes ticked), records the
-   * connection, and returns where the browser goes next.
-   */
   const peopleOnly = async (c: Context, next: () => Promise<void>) => {
     if (PEOPLE_ONLY.some((h) => c.req.header(h) !== undefined)) return c.json({ error: "forbidden" }, 403)
     await next()
@@ -163,7 +122,6 @@ export function agentConnectRoutes(ctx: Ctx, agents: AgentConnect) {
         .filter((s): s is (typeof SCOPES)[keyof typeof SCOPES] => s === SCOPES.read || s === SCOPES.access)
       const resource = params.resource === resources(p.issuer).rest ? "rest" : "mcp"
       const redirect = params.redirect_uri ? new URL(params.redirect_uri) : null
-      // Only a script (the built-in client, device flow) names itself per request; it is its own word.
       const label = client.clientId === CLI_CLIENT ? cleanLabel(params.client_label) : null
       const deviceCode = (details as unknown as { deviceCode?: unknown }).deviceCode
       return {
@@ -217,7 +175,6 @@ export function agentConnectRoutes(ctx: Ctx, agents: AgentConnect) {
     if (!it || !sessionId) return c.json(gone, 410)
     const who = c.get("actor")
     const name = it.client.clientId === CLI_CLIENT ? (it.label ?? "Script") : (it.client.clientName ?? "Unnamed agent")
-    // Only what was asked can be granted, read is always part of it, and only what is ticked is given.
     const granted = [
       SCOPES.read,
       ...(body.data.scopes.includes(SCOPES.access) && it.asked.includes(SCOPES.access) ? [SCOPES.access] : []),
@@ -261,22 +218,18 @@ export function agentConnectRoutes(ctx: Ctx, agents: AgentConnect) {
     })
   })
 
-  // The skill for agents that run commands (they connect with a code).
   app.get("/connect/skill", (c) => c.redirect("/connect/skill/", 301))
   app.route(
     "/",
     skillRoutes(async () => (await live())?.issuer ?? null, agents.skillDir),
   )
 
-  // Everything else of OAuth is the provider's: discovery, authorize, token, device, revoke, register.
   const handoff = async (c: Context) => {
     const n = node(c)
     const p = await live()
     if (!p) return c.json(notConfigured, 404)
     if (!n) return c.json({ error: "unavailable" }, 501)
     const path = c.req.path
-    // Exactly the provider's own addresses: it would also take a trailing slash or other letter case, which
-    // would slip past the checks below.
     const raw = new URL(c.req.url).pathname
     if (raw !== path || !PROVIDER_PATHS.test(path)) return c.json({ error: "not_found" }, 404)
     const address = clientAddress(c)
@@ -293,7 +246,6 @@ export function agentConnectRoutes(ctx: Ctx, agents: AgentConnect) {
                 ? limits.verify
                 : null
     if (limit && !limit(address)) {
-      // Logged once per window, when the limit is first reached.
       if (limit.firstOver(address))
         await ctx.audit({
           actor: "n8n-ops",
@@ -303,37 +255,10 @@ export function agentConnectRoutes(ctx: Ctx, agents: AgentConnect) {
         })
       return tooMany(c)
     }
-    // A cap is counted and filled one request at a time: the lock is given back once the provider has handled the
-    // request (its middleware, oauth/agents.ts), whether it stored the record, failed, or its client left meanwhile,
-    // and after a minute at the latest.
-    const capped =
-      c.req.method === "POST" && path === "/oauth/register"
-        ? { lock: registering, room: () => roomForClient(ctx.db, MAX_CLIENTS) }
-        : c.req.method === "POST" && path === "/oauth/device"
-          ? { lock: requesting, room: async () => (await openDeviceRequests(ctx.db)) < MAX_DEVICE_REQUESTS }
-          : null
-    if (capped) {
-      const release = await capped.lock()
-      // A request still unhandled after a minute (a client sending its body slowly) is cut off. The lock is given
-      // back only when the provider is done with the request, never on a timer: while a store may still be on its way
-      // the cap stays closed (the safe side), so no two requests fill the last place.
-      const cutOff = setTimeout(() => n.incoming.destroy(), 60_000)
-      cutOff.unref?.()
-      const done = () => {
-        clearTimeout(cutOff)
-        release()
-      }
-      if (!(await capped.room().catch(() => false))) {
-        done()
-        return tooMany(c)
-      }
-      handled.set(n.incoming, done)
-    }
     n.outgoing.setHeader("X-Frame-Options", "DENY")
     n.outgoing.setHeader("Content-Security-Policy", "frame-ancestors 'none'")
     n.outgoing.setHeader("Referrer-Policy", "no-referrer")
     p.provider.callback()(n.incoming, n.outgoing)
-    // The provider writes the response to the socket itself.
     return RESPONSE_ALREADY_SENT
   }
   app.all("/oauth/*", handoff)

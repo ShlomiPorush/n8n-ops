@@ -1,8 +1,6 @@
 import { type BrowserContext, expect, type Page, test } from "@playwright/test"
 import { design as here, signIn } from "./helpers.ts"
 
-// Runs last. The design is a look only: switching it in Settings changes the page at once, without a reload,
-// and keeps everything else; it ends in this run's design whatever happened.
 test.describe.configure({ mode: "serial" })
 
 const other = here === "regular" ? "compact" : "regular"
@@ -11,18 +9,15 @@ let context: BrowserContext
 let page: Page
 let general: Record<string, unknown> = {}
 const shown = (p: Page) => p.locator("html")
-/** Marks the page, so a reload (which would clear the mark) can be told apart from a live change. */
 const mark = (p: Page) => p.evaluate(() => Object.assign(window, { e2eMark: "kept" }))
 const marked = (p: Page) => p.evaluate(() => (window as { e2eMark?: string }).e2eMark)
 
-/** Chooses a design in Settings → General and saves. */
 async function choose(p: Page, d: "regular" | "compact") {
   await p.getByRole("radio", { name: label(d) }).click()
   await p.getByRole("region", { name: "Unsaved changes" }).getByRole("button", { name: "Save changes" }).click()
 }
 
 test.beforeAll(async ({ browser }) => {
-  // Its own context, so a second tab can share the session.
   context = await browser.newContext()
   page = await context.newPage()
   await signIn(page)
@@ -41,9 +36,7 @@ test("each design draws with its own type, corners, surfaces and shadows, in lig
   await page.goto("/")
   await expect(shown(page)).toHaveAttribute("data-design", here)
   await expect(page.getByRole("heading", { name: "Needs Attention" })).toBeVisible()
-  // The panels are drawn before the first answer (FB-17): wait for the figure to hold its number, not "Loading".
   await expect(page.locator('[data-slot="kpi-figure"]').first()).toHaveText(/^\d/)
-  /** What the page draws: the body, a key figure and the panel around "Needs Attention". */
   const drawn = (d: "regular" | "compact", dark: boolean) =>
     page.evaluate(
       ([d, dark]) => {
@@ -90,21 +83,15 @@ test("each design draws with its own type, corners, surfaces and shadows, in lig
   await expect(shown(page)).toHaveAttribute("data-design", here)
 })
 
-/**
- * How the Overview is laid out, as drawn now: the two designs share every element and function, but Regular
- * keeps #29's frame, page title, foot of the sidebar and timeline, and Compact its lines and status edges.
- */
 async function layout(p: Page) {
   await p.goto("/")
   const activity = p.locator("section", { has: p.getByRole("heading", { name: "Recent Activity" }) })
-  // The first entry under the head: not the loading line (status) or an error (alert). Signing in records one.
   await expect(activity.locator(":scope > header + div:not([role])")).toBeVisible()
   return p.evaluate(() => {
     const shown = (el: Element | null) => Boolean(el && el.getClientRects().length > 0)
     const frame = document.querySelector('[data-slot="page-frame"]')
     const box = frame?.getBoundingClientRect()
     const nav = document.querySelector('nav[aria-label="Main"]') as HTMLElement
-    // What the keyboard reaches in the sidebar, in order: is the workers link before the pages or after them?
     const stops = [...nav.querySelectorAll<HTMLElement>("a, button")]
       .filter((el) => el.getClientRects().length > 0)
       .map((el) => (el.dataset.slot === "workers-status" ? "workers" : (el.getAttribute("href") ?? el.textContent)))
@@ -150,7 +137,6 @@ test("a list beside the reading pane marks its open item in this design's own wa
     edge: getComputedStyle(td).boxShadow.includes("inset"),
     padding: getComputedStyle(td).paddingTop,
   }))
-  // Compact adds an edge at the start of the open item; Regular has no status edges and roomier rows.
   expect(drawn).toEqual(here === "regular" ? { edge: false, padding: "12px" } : { edge: true, padding: "9px" })
 })
 
@@ -162,7 +148,6 @@ test("switching the design changes the page at once, without a reload, and keeps
   })
   await page.goto("/settings/general")
   await mark(page)
-  // The fields lock while the save is on its way.
   await page.route("**/api/settings/general", async (route) => {
     if (route.request().method() === "PUT") await new Promise((r) => setTimeout(r, 1_500))
     await route.continue()
@@ -195,10 +180,8 @@ test("a failed save leaves the design as it was", async () => {
 })
 
 test("after the switch the page takes the other design's layout", async () => {
-  // The discarded edit is gone first, so leaving the page asks nothing.
   await expect(page.getByRole("region", { name: "Unsaved changes" })).toHaveCount(0)
   expect(await layout(page)).toEqual(laidOut[other])
-  // Narrower, both designs keep one page heading and drop the sidebar's fold and workers link the same way.
   await page.setViewportSize({ width: 1000, height: 800 })
   expect(await layout(page)).toMatchObject({ headings: 1, title: other === "regular", toggles: 0 })
   await page.setViewportSize({ width: 390, height: 800 })
@@ -212,7 +195,6 @@ test("another tab follows when it comes back to the front, and keeps its open pa
   try {
     await tab.goto("/instances")
     await expect(shown(tab)).toHaveAttribute("data-design", other)
-    // The first step of adding an instance, typed in and not saved yet.
     await tab.getByRole("button", { name: "Add instance" }).click()
     const form = tab.getByRole("main")
     const step = tab.getByRole("heading", { name: "Basics" })
@@ -224,7 +206,6 @@ test("another tab follows when it comes back to the front, and keeps its open pa
     await choose(page, here)
     await expect(shown(page)).toHaveAttribute("data-design", here)
 
-    // Back to the other tab: it reads General again and changes its look in place.
     await tab.bringToFront()
     await tab.evaluate(() => document.dispatchEvent(new Event("visibilitychange")))
     await expect(shown(tab)).toHaveAttribute("data-design", here)

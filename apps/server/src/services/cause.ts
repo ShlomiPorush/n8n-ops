@@ -1,17 +1,9 @@
 import { sha256 } from "../lib/crypto.ts"
 import { storableText } from "../lib/storable.ts"
 
-/**
- * The cause of a failed execution: what the failing node talked to (the target) and what went wrong there (the
- * reason), read by fixed rules from what n8n stores with the execution (docs/adr/0003). No rule here calls out or
- * guesses: an unknown error keeps n8n's own words. Every function is total: content from n8n or from the services it
- * called never makes it throw, it only falls back to a weaker rule.
- */
-
 export type CauseKind = "alert" | "runner" | "sub" | "cert" | "net" | "cred" | "svc" | "req" | "other"
 export type TargetSource = "workflow" | "host" | "credential" | "error-host" | "node"
 
-/** What the cause is read from: the failure (see `extractFailure`) and where it happened. */
 export type CauseInput = {
   instanceId: string
   workflowId: string
@@ -19,37 +11,27 @@ export type CauseInput = {
   nodeType: string | null
   message: string
   description: string | null
-  /** The node's `url` parameter when it is a string. */
   url: string | null
-  /** The node's credentials that have both an id and a name. */
   credentials: { id: string; name: string }[]
-  /** For an Execute Workflow node: the workflow it runs, when its id is literal. */
   calledWorkflow: { id: string; name: string | null } | null
 }
 
 export type Cause = {
-  /** Stable: the same target keeps its key when it is renamed. */
   targetKey: string
-  /** What screens and messages show. */
   target: string
   targetSource: TargetSource
-  /** The full reason; with the target key it makes the cause key. */
   reason: string
-  /** The reason shortened for screens. */
   displayReason: string
   httpStatus: number | null
   kind: CauseKind
-  /** One line from the table of known errors, or null. */
   hint: string | null
   key: string
 }
 
-/** Inputs are cut to these lengths before any parsing. */
 export const LIMITS = { message: 2048, description: 8192, url: 2048 } as const
 const JSON_DEPTH = 4
 const DISPLAY_MAX = 300
 
-/** n8n's fixed text for an HTTP status (its NodeApiError messages), by the start of the message. */
 const HTTP_MESSAGES: [number, string][] = [
   [400, "Bad request - please check your parameters"],
   [401, "Authorization failed - please check your credentials"],
@@ -67,7 +49,6 @@ const NETWORK =
 const RUNNER = /not matched to a runner|Task request timed out/i
 const SIGN_IN = /Auth Error|Access denied|Client authentication failed|invalid_client|AADSTS/i
 
-/** One line for an error everyone meets; the first pattern that matches wins. */
 const KNOWN_ERRORS: [RegExp, string][] = [
   [/certificate has expired/i, "The server's TLS certificate has expired."],
   [/AADSTS7000222/, "The client secret of the Microsoft Entra app has expired."],
@@ -80,7 +61,6 @@ const KNOWN_ERRORS: [RegExp, string][] = [
   [/(?:^|\s)HTML page(?: "|$|\s)/, "A proxy answered instead of the service."],
 ]
 
-/** The known-error line for n8n's message and a reason (which holds the service's answer), or null. */
 export function knownErrorOf(message: string, reason: string): string | null {
   const text = `${message.slice(0, LIMITS.message)} ${reason.slice(0, LIMITS.description)}`
   return KNOWN_ERRORS.find(([pattern]) => pattern.test(text))?.[1] ?? null
@@ -89,10 +69,6 @@ export function knownErrorOf(message: string, reason: string): string | null {
 const isStopAndError = (type: string | null) => !!type && /\.stopAndError$/.test(type)
 const isExecuteWorkflow = (type: string | null) => !!type && /\.executeWorkflow$/.test(type)
 
-/**
- * The host of a URL whose whole authority (user info, host, port) is literal, also in an expression that starts with
- * it. An expression anywhere in the authority gives no host: the host could then be anything.
- */
 export function hostOf(url: string | null | undefined): string | null {
   if (typeof url !== "string") return null
   const m = url
@@ -111,10 +87,6 @@ export function hostOf(url: string | null | undefined): string | null {
   return /^[a-z0-9_-]+(\.[a-z0-9_-]+)*\.?$/.test(host) ? host : null
 }
 
-/**
- * The HTTP status of a failure: n8n's fixed message for it, or the "NNN - " that n8n puts before the body of an answer
- * when its message is one it has no fixed text for.
- */
 function httpStatusOf(message: string, description: string | null): number | null {
   const fixed = HTTP_MESSAGES.find(([, text]) => message.startsWith(text))
   if (fixed) return fixed[0]
@@ -122,7 +94,6 @@ function httpStatusOf(message: string, description: string | null): number | nul
   return m ? Number(m[1]) : null
 }
 
-/** The first non-empty `error`, `message` or `reason` string in a parsed body, looked for down to JSON_DEPTH. */
 function pickText(value: unknown, depth = 0): string | null {
   if (depth > JSON_DEPTH || !value || typeof value !== "object") return null
   const record = value as Record<string, unknown>
@@ -137,11 +108,6 @@ function pickText(value: unknown, depth = 0): string | null {
   return null
 }
 
-/**
- * Plain text from a service's answer, in one pass: what lies between "<" and ">" is dropped (a line break becomes a
- * space), and no angle bracket is kept, so nothing that looks like markup ("<<b>script>") survives. Text after a "<"
- * that never closes is kept. A reason is text; screens and messages escape it as well.
- */
 function stripTags(s: string): string {
   let out = ""
   let tag: string | null = null
@@ -157,11 +123,6 @@ function stripTags(s: string): string {
   return (tag === null ? out : out + tag).trim()
 }
 
-/**
- * The service's own answer in n8n's error description: plain text, the text of a JSON body (n8n writes "NNN - body"),
- * the Code and Message of an XML error, or the title of an HTML page. Null when it holds nothing usable. Decoding the
- * JSON can bring back characters PostgreSQL cannot keep, so the answer is made storable.
- */
 export function serviceAnswer(description: string | null): string | null {
   const answer = readAnswer(description)
   return answer === null ? null : storableText(answer) || null
@@ -186,7 +147,6 @@ function readAnswer(description: string | null): string | null {
   return markupAnswer(s) ?? (stripTags(s) || null)
 }
 
-/** The title of an HTML page, or the Code and full Message of an XML error; null for anything else. */
 function markupAnswer(s: string): string | null {
   if (/^(<!doctype html|<html)/i.test(s)) {
     const title = stripTags(s.match(/<title>([^<]*)<\/title>/i)?.[1] ?? "")
@@ -194,14 +154,12 @@ function markupAnswer(s: string): string | null {
   }
   if (/^(<\?xml|<Error\b)/i.test(s)) {
     const code = stripTags(s.match(/<Code>([^<]*)<\/Code>/i)?.[1] ?? "")
-    // To the end of the text when the input cap cut the closing tag off.
     const message = stripTags(s.match(/<Message>([\s\S]*?)(?:<\/Message>|$)/i)?.[1] ?? "")
     return [code, message].filter(Boolean).join(": ") || null
   }
   return null
 }
 
-/** Replaces what changes from one failure to the next without changing what went wrong. */
 export function normalize(reason: string): string {
   return reason
     .replace(/\b(RequestId|Request ID|Trace ID|Correlation ID|Timestamp)\s*:[^\n]*/gi, "$1: <id>")
@@ -210,10 +168,6 @@ export function normalize(reason: string): string {
     .replace(/\b[0-9a-f]{16,}\b/gi, "<hex>")
 }
 
-/**
- * The reason as screens show it. Over 100 characters, the asides go: bracketed tags, "Error fetching from <url>:" and
- * parentheses. Over 120, its first sentence. At most 300.
- */
 export function displayReasonOf(reason: string): string {
   let s = reason.replace(/\s+/g, " ").trim()
   if (s.length > 100)
@@ -274,25 +228,16 @@ const nodeTarget = (input: Pick<CauseInput, "instanceId" | "workflowId" | "nodeN
 
 const keyOf = (targetKey: string, reason: string) => sha256(`${targetKey}\n${normalize(reason)}`)
 
-/** The cause of one failed execution. Never throws: anything unexpected gives the node and the error text. */
 export function causeOf(input: CauseInput): Cause {
   try {
-    const message = (typeof input.message === "string" ? input.message : "").slice(0, LIMITS.message).trim()
-    const safe: CauseInput = {
-      ...input,
-      message,
-      description: typeof input.description === "string" ? input.description : null,
-      url: typeof input.url === "string" ? input.url : null,
-      credentials: Array.isArray(input.credentials)
-        ? input.credentials.filter((c) => typeof c?.id === "string" && c.id && typeof c.name === "string")
-        : [],
-    }
-    const httpStatus = httpStatusOf(message, safe.description)
-    const answer = serviceAnswer(safe.description)
+    const message = input.message.slice(0, LIMITS.message).trim()
+    const httpStatus = httpStatusOf(message, input.description)
+    const answer = serviceAnswer(input.description)
     const said = answer || message || "Unknown error"
     const reason = httpStatus ? `HTTP ${httpStatus} · ${said}` : said
-    const target = targetOf(safe)
-    const kind = kindOf(safe, httpStatus, `${message} ${safe.description?.slice(0, LIMITS.description) ?? ""}`)
+    const target = targetOf(input)
+    const text = `${message} ${input.description?.slice(0, LIMITS.description) ?? ""}`
+    const kind = kindOf({ ...input, message }, httpStatus, text)
     const hint = knownErrorOf(message, reason)
     return {
       ...target,
@@ -308,8 +253,7 @@ export function causeOf(input: CauseInput): Cause {
   }
 }
 
-/** The cause when nothing else can be read: the node and the error text as n8n gave it. */
-export function fallbackCause(input: Pick<CauseInput, "instanceId" | "workflowId" | "nodeName" | "message">): Cause {
+function fallbackCause(input: Pick<CauseInput, "instanceId" | "workflowId" | "nodeName" | "message">): Cause {
   const nodeName = typeof input.nodeName === "string" && input.nodeName ? input.nodeName : "Workflow"
   const target = nodeTarget({ instanceId: input.instanceId, workflowId: input.workflowId, nodeName })
   const raw = typeof input.message === "string" ? input.message.slice(0, LIMITS.message).trim() : ""
@@ -325,11 +269,6 @@ export function fallbackCause(input: Pick<CauseInput, "instanceId" | "workflowId
   }
 }
 
-/**
- * What a Problem or an Affected workflow is about (docs/adr/0003): `title` is "target · reason" as screens show it,
- * `reason` the reason shortened for screens, `hint` the line for a known error. Null on rows recorded before the
- * regroup by cause, which never shows them.
- */
 export type CauseFields = {
   title: string
   target: string | null
@@ -339,7 +278,6 @@ export type CauseFields = {
   hint: string | null
 }
 
-/** The cause fields of a stored row; the title falls back to the error text. */
 export function causeFields(row: {
   errorMessage: string
   target: string | null

@@ -1,4 +1,3 @@
-// Container health check: exits 0 only when the server reports ready.
 const port = process.env.PORT ?? "8080"
 
 try {

@@ -8,29 +8,16 @@ import type { Tx } from "./gate.ts"
 type Payload = Record<string, unknown> & { grantId?: string; userCode?: string; uid?: string; consumed?: number }
 type Runner = Db | Tx
 
-/**
- * The records whose id is a secret a client presents (an opaque token's value is its id, `jti`), kept by the SHA-256
- * of that value only. The provider looks each of them up only by the value a client presents (`find`), and saves
- * and consumes them by the id of the record it found, which is that same value. Device codes are not here: the
- * provider finds them again by the id stored in other records (a user code, an interaction), which a hash cannot
- * give back.
- */
 const HASHED = new Set(["AccessToken", "RefreshToken", "AuthorizationCode"])
 
-/**
- * oidc-provider's storage on Postgres: one row per record, by model name and id, with the few fields the
- * provider looks records up by. An expired record reads as missing; a consumed one carries `consumed`.
- *
- * For the HASHED models the row's id is the SHA-256 of the value and the payload is stored without `jti`; reading it
- * back by its value puts `jti` back as that value. A record is stored only when its `jti` is its id, so what comes
- * back is exactly what was stored.
- *
- * Consuming is atomic: of two requests that use the same refresh token or code at once, one wins; the other is
- * treated as a reuse, which ends the whole grant (`onReuse`) and fails the request.
- *
- * `db` is the adapter's own small pool: an approval holds a transaction of the main pool while the provider stores a
- * grant, which must never wait for a connection of the pool that transaction holds.
- */
+export const MAX_CLIENTS = 500
+export const MAX_DEVICE_REQUESTS = 200
+
+const CAPPED: Record<string, { lock: number; room: (tx: Tx) => Promise<boolean> }> = {
+  Client: { lock: 0x6e386f63, room: (tx) => roomForClient(tx, MAX_CLIENTS) },
+  DeviceCode: { lock: 0x6e386f64, room: async (tx) => (await openDeviceRequests(tx)) < MAX_DEVICE_REQUESTS },
+}
+
 export function storeAdapter(db: Db, { onReuse }: { onReuse?: (grantId: string) => Promise<unknown> } = {}) {
   return class PostgresAdapter {
     readonly hashed: boolean
@@ -58,10 +45,25 @@ export function storeAdapter(db: Db, { onReuse }: { onReuse?: (grantId: string) 
         uid: payload.uid ?? null,
         expiresAt: expiresIn ? new Date(Date.now() + expiresIn * 1000) : null,
       }
-      await db
-        .insert(oauthStore)
-        .values(row)
-        .onConflictDoUpdate({ target: [oauthStore.type, oauthStore.id], set: row })
+      const store = (to: Runner) =>
+        to
+          .insert(oauthStore)
+          .values(row)
+          .onConflictDoUpdate({ target: [oauthStore.type, oauthStore.id], set: row })
+      const cap = CAPPED[this.name]
+      if (!cap) {
+        await store(db)
+        return
+      }
+      await db.transaction(async (tx) => {
+        await tx.execute(sql`select pg_advisory_xact_lock(${cap.lock})`)
+        const [known] = await tx
+          .select({ id: oauthStore.id })
+          .from(oauthStore)
+          .where(and(eq(oauthStore.type, this.name), eq(oauthStore.id, row.id)))
+        if (!known && !(await cap.room(tx))) throw tooMany()
+        await store(tx)
+      })
     }
 
     async find(id: string) {
@@ -116,25 +118,16 @@ export function storeAdapter(db: Db, { onReuse }: { onReuse?: (grantId: string) 
   }
 }
 
-/** Every record of a grant, of every model: what revoking an agent's connection removes. */
 export async function deleteGrant(db: Runner, grantId: string) {
   await db.delete(oauthStore).where(eq(oauthStore.grantId, grantId))
   await db.delete(oauthStore).where(and(eq(oauthStore.type, "Grant"), eq(oauthStore.id, grantId)))
 }
 
-/**
- * Ends every request still waiting: codes not yet exchanged, device requests, approvals not yet answered. Run with
- * the exclusive gate, when every connection ends.
- */
 export async function cancelWaiting(db: Runner) {
   await db.delete(oauthStore).where(inArray(oauthStore.type, ["AuthorizationCode", "DeviceCode", "Interaction"]))
   await db.delete(agentConsent)
 }
 
-/**
- * Whether a grant still has a refresh token that has not run out: one not yet used, or one used in the last
- * five minutes (the provider marks the old token used just before it stores the new one).
- */
 export async function grantAlive(db: Db, grantId: string) {
   const [row] = await db
     .select({ n: sql<number>`count(*)::int` })
@@ -152,11 +145,6 @@ export async function grantAlive(db: Db, grantId: string) {
   return (row?.n ?? 0) > 0
 }
 
-/**
- * Removes the records of grants no live connection holds: one made by an approval that failed after the provider
- * stored it, or records the provider stored for a connection that ended while it was issuing them. Run with the
- * exclusive gate, so an approval that is between storing its grant and recording its connection is never seen.
- */
 export async function sweepOrphanGrants(tx: Tx) {
   await tx.execute(sql`
     delete from oauth_store s
@@ -168,25 +156,25 @@ export async function sweepOrphanGrants(tx: Tx) {
       and not exists (select 1 from api_tokens t where t.grant_id = g.id and t.revoked_at is null)`)
 }
 
-/** How many device requests are open (not run out, not answered): capped so nobody can fill the table. */
-export async function openDeviceRequests(db: Db) {
-  const [row] = await db
+function tooMany() {
+  return Object.assign(new errors.OIDCProviderError(429, "slow_down"), {
+    error_description: "Too many requests. Wait a few minutes.",
+  })
+}
+
+async function openDeviceRequests(tx: Tx) {
+  const [row] = await tx
     .select({ n: sql<number>`count(*)::int` })
     .from(oauthStore)
     .where(and(eq(oauthStore.type, "DeviceCode"), gt(oauthStore.expiresAt, new Date()), isNull(oauthStore.grantId)))
   return row?.n ?? 0
 }
 
-/**
- * Makes room for one more self-registered agent (RFC 7591) under a cap, so open registration cannot fill the
- * table: when full, the oldest registrations no person approved go first. False when every one is approved. The
- * caller holds the registration lock until the provider stored the new one.
- */
-export async function roomForClient(db: Db, max: number) {
-  const [row] = await db.select({ n: sql<number>`count(*)::int` }).from(oauthStore).where(eq(oauthStore.type, "Client"))
+async function roomForClient(tx: Tx, max: number) {
+  const [row] = await tx.select({ n: sql<number>`count(*)::int` }).from(oauthStore).where(eq(oauthStore.type, "Client"))
   const over = (row?.n ?? 0) - max + 1
   if (over <= 0) return true
-  const evicted = await db
+  const evicted = await tx
     .delete(oauthStore)
     .where(
       and(
@@ -203,10 +191,6 @@ export async function roomForClient(db: Db, max: number) {
   return evicted.length === over
 }
 
-/**
- * Removes records that ran out more than a day ago, registrations older than a day that no grant uses (an agent
- * that registered and was never approved), and approval records older than a day (their requests ran out).
- */
 export async function sweepStore(db: Db) {
   await db.delete(oauthStore).where(lt(oauthStore.expiresAt, new Date(Date.now() - 86_400_000)))
   await db.execute(sql`

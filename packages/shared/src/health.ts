@@ -1,6 +1,5 @@
 import { z } from "zod"
 
-/** Response of the server's health endpoints. */
 export const healthSchema = z.object({
   status: z.enum(["ok", "error"]),
   version: z.string(),

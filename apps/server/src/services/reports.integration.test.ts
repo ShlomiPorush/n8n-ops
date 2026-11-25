@@ -7,9 +7,6 @@ import { createDatabase, type Database } from "../db/client.ts"
 import { affectedWorkflows, alertOutbox, backupRuns, failures, instances, problems } from "../db/schema.ts"
 import { buildReport } from "./reports.ts"
 
-// The daily report against a real PostgreSQL: it counts exactly the window it prints, after its start up to and
-// including its end (EM-6), so what arrives while the report is being made waits for the next one. The database is
-// made for this file from MIGRATION_DATABASE_URL, a role that may create databases, with every migration applied.
 const adminUrl = process.env.MIGRATION_DATABASE_URL
 if (!adminUrl) throw new Error("MIGRATION_DATABASE_URL is required (scripts/verify.sh sets it)")
 
@@ -24,7 +21,6 @@ const at = (base: Date, ms: number) => new Date(base.getTime() + ms)
 const hour = 3600_000
 
 beforeAll(async () => {
-  // The latest n8n version comes from GitHub; the report waits for no network here.
   vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ tag_name: "n8n@1.0.0" })))
   await admin.unsafe(`CREATE DATABASE "${name}"`)
   const url = new URL(adminUrl)
@@ -39,7 +35,6 @@ beforeAll(async () => {
     .values({ name: "report-n8n", baseUrl: "http://n8n:5678", apiKeyEnc: "v1:x:y:z", version: "1.0.0" })
     .returning()
   if (!instance) throw new Error("no instance")
-  // `firstSeen` comes from n8n's clock, `createdAt` is when n8n-ops took the problem in; a report counts by the second.
   const problem = async (
     workflowName: string,
     createdAt: Date,
@@ -75,11 +70,8 @@ beforeAll(async () => {
     return row
   }
   const counted = await problem("Sync orders", at(since, -hour))
-  // Taken in after the end, although n8n says it first failed long before: not open yet in this report.
   const later = await problem("Made after the report", at(when, 60_000), at(since, -hour))
-  // Taken in before the end, from an n8n whose clock runs ahead: open in this report.
   await problem("From a clock ahead", at(when, -hour), at(when, hour))
-  // The counted Problem hit another instance too: open on both, once in the total.
   const [other] = await ctx.db
     .insert(instances)
     .values({ name: "other-n8n", baseUrl: "http://other:5678", apiKeyEnc: "v1:x:y:z", version: "1.0.0" })
@@ -97,15 +89,15 @@ beforeAll(async () => {
       createdAt,
     }
   }
-  await ctx.db.insert(failures).values([
-    // The start of the window is the end of the one before: not counted again.
-    failure(counted.id, counted.workflowId, since),
-    failure(counted.id, counted.workflowId, at(since, hour)),
-    // The end of the window is the moment the report is made: counted.
-    failure(counted.id, counted.workflowId, when),
-    failure(counted.id, counted.workflowId, at(when, 1000)),
-    failure(later.id, later.workflowId, at(when, 60_000)),
-  ])
+  await ctx.db
+    .insert(failures)
+    .values([
+      failure(counted.id, counted.workflowId, since),
+      failure(counted.id, counted.workflowId, at(since, hour)),
+      failure(counted.id, counted.workflowId, when),
+      failure(counted.id, counted.workflowId, at(when, 1000)),
+      failure(later.id, later.workflowId, at(when, 60_000)),
+    ])
   const health = (text: string, createdAt: Date) => ({ kind: "health" as const, text, createdAt })
   await ctx.db
     .insert(alertOutbox)
@@ -133,10 +125,8 @@ describe("buildReport", () => {
     const report = await buildReport(ctx, "daily", when)
     expect(report.text).toContain("From 2026-10-22 06:00 to 2026-10-23 06:00")
 
-    // Failures: one inside, one at the end; the one at the start and those after the end are left out.
     expect(report.text).toContain("Sync orders  ·  report-n8n  ·  2 failures")
     expect(report.text).not.toContain("Made after the report")
-    // Open problems are those taken in by the end, whatever n8n's clock said.
     expect(report.text).toContain("Open problems: 2")
     expect(report.text).toContain("other-n8n  ·  1")
 
@@ -145,7 +135,6 @@ describe("buildReport", () => {
     expect(report.text).not.toContain("Health check failed after the report")
     expect(report.text).not.toContain("Counted in yesterday's report")
 
-    // The last backup is the last one by the end of the window.
     expect(report.text).toContain("report-n8n  ·  OK  ·  2026-10-22")
     expect(report.text).not.toContain("Failed")
   })

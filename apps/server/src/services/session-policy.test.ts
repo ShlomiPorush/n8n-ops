@@ -23,7 +23,6 @@ describe("which clock ends a session", () => {
 
   it("names the clock that ran out first when several have", () => {
     const clocks = { authenticatedAt: ago(13 * hour), seenAt: ago(25 * hour), activeAt: ago(25 * hour) }
-    // Idle ran out 24 hours ago, the lifetime one hour ago, the maximum length one hour ago too.
     expect(endedBy(clocks, policy, now)).toMatchObject({ reason: "idle", deadline: ago(24 * hour) })
   })
 

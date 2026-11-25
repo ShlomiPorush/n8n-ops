@@ -26,23 +26,14 @@ import {
   type WorkerEvent,
 } from "@/lib/worker-health"
 
-/**
- * A Worker's health over a range, under its Health toggle on the Workers page: whether it was reachable, how fast its
- * calls to n8n-ops were, whether it reached Docker and when it restarted, with the events of the range. The same
- * answer agents read from /api/v1/worker-health.
- */
-
-/** Events shown at first, and added by each Show more; the server gives at most RUNS_MAX at once. */
 const PAGE = 20
 const EVENTS_MAX = 500
 
-/** A surface inside the Worker's card: outlined in Compact, a tinted block in Regular. */
 const box = "grid min-w-0 gap-3 rounded-lg border border-line p-3 regular:border-0 regular:bg-fill regular:p-4"
 
 export function WorkerHealth({ workerId }: { workerId: string }) {
   const [hours, setHours] = useState("24")
   const [limit, setLimit] = useState(PAGE)
-  // A growing first page rather than pages by offset: the window moves with every refresh, so pages would not meet.
   const health = useApi<Health>(`/workers/${workerId}/health?hours=${hours}&limit=${limit}`, {
     refetchInterval: 60_000,
     keepRows: true,
@@ -51,7 +42,6 @@ export function WorkerHealth({ workerId }: { workerId: string }) {
   return (
     <div className="grid min-w-0 gap-3" data-testid={`worker-health-${workerId}`}>
       <section className={box} aria-labelledby={`${workerId}-health`}>
-        {/* A refresh, or another range, that failed: says so with Try again, over the data kept on screen. */}
         <RefreshLine live={health} what="this range" />
         <div className="flex flex-wrap items-center gap-x-2.5 gap-y-2">
           <h3 id={`${workerId}-health`} className="text-head">
@@ -185,7 +175,6 @@ function Figures({ health: h }: { health: Health }) {
   )
 }
 
-/** The update a Worker without heartbeats needs; `stored` when the range still shows what it measured before. */
 function UpdateAdvice({ update, stored }: { update: string | null; stored: boolean }) {
   return (
     <div className="grid min-w-0 gap-1.5 rounded-sm bg-bg p-3 regular:bg-panel">
@@ -203,7 +192,6 @@ function UpdateAdvice({ update, stored }: { update: string | null; stored: boole
 
 const PAD = { top: 8, right: 12, bottom: 22, left: 52 }
 const STRIP_H = 22
-/** Docker failing marks sit under the strip, the round-trip chart under them. */
 const MARK_Y = PAD.top + STRIP_H + 3
 const RTT_TOP = PAD.top + STRIP_H + 20
 const RTT_H = 120
@@ -233,7 +221,6 @@ function Chart({ health: h, range }: { health: Health; range: string }) {
   const base = RTT_TOP + RTT_H
   const y = (v: number) => base - (Math.min(v, top) / top) * RTT_H
   const mid = (b: WorkerBucket) => new Date(b.at).getTime() + bucketMs / 2
-  // A period of a few minutes in 30 days is under a pixel wide: it is drawn at least 2 pixels wide, so it shows.
   const wide = (a: number, b: number) => Math.max(2, x(b) - x(a))
   const hovered = hover === null ? undefined : h.series[hover]
   const pick = (clientX: number, rect: DOMRect) => {
@@ -355,7 +342,6 @@ function Chart({ health: h, range }: { health: Health; range: string }) {
                 </g>
               </>
             )}
-            {/* A restart: a line through the strip with a dot on top, dashed on down through the round trip. */}
             <g className="text-info">
               {restarts.map((t) => (
                 <g key={`restart-${t}`}>

@@ -20,7 +20,6 @@ const accountSchema = z.object({
   password: z.string().min(12, "at least 12 characters").max(200),
 })
 
-/** The Better Auth error codes a sign-up ends with when the account it would create is refused as a second one. */
 const accountTaken = new Set<string>([
   BASE_ERROR_CODES.FAILED_TO_CREATE_USER.code,
   BASE_ERROR_CODES.USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL.code,
@@ -30,14 +29,11 @@ const accountTaken = new Set<string>([
 export function setupRoutes(ctx: Ctx) {
   const app = new Hono<Env>()
 
-  // Public: tells the UI whether this is a fresh install, and the address passkeys work at (null: they are off).
   app.get("/status", async (c) => {
     const [[row], { passkeyUrl }] = await Promise.all([ctx.db.select({ n: count() }).from(user), ctx.auth()])
     return c.json({ hasUser: (row?.n ?? 0) > 0, passkeys: passkeyUrl?.origin ?? null })
   })
 
-  // Public, but only until the single account exists, and only from n8n-ops' own setup page. The database allows one
-  // account (auth_user_single), so of setups that overlap exactly one creates it and the others are already_set_up.
   app.post("/account", async (c) => {
     const refused = await fromAnotherPage(ctx, c)
     if (refused) return refused
@@ -46,7 +42,6 @@ export function setupRoutes(ctx: Ctx) {
     if (await accountExists()) return alreadySetUp()
     const parsed = accountSchema.safeParse(await c.req.json().catch(() => ({})))
     if (!parsed.success) return c.json({ error: "invalid", issues: parsed.error.issues }, 400)
-    // Asked again once the body is in, which can be much later: no password is hashed for a setup already done.
     if (await accountExists()) return alreadySetUp()
     const { username, password } = parsed.data
     const { auth } = await ctx.auth()
@@ -55,7 +50,6 @@ export function setupRoutes(ctx: Ctx) {
         body: { email: `${username.toLowerCase()}@${LOGIN_DOMAIN}`, password, name: username, username },
       })
     } catch (error) {
-      // Better Auth reports the refused second account as a user it could not create or a name already taken.
       const code = isAPIError(error) ? (error.body as { code?: unknown } | undefined)?.code : undefined
       if (typeof code === "string" && accountTaken.has(code) && (await accountExists())) return alreadySetUp()
       throw error
@@ -64,7 +58,6 @@ export function setupRoutes(ctx: Ctx) {
     return c.json({ ok: true })
   })
 
-  // What the first-run checklist still needs.
   app.get("/checklist", requireUser(ctx, { allowWithoutTotp: true }), async (c) => {
     const actor = c.get("actor")
     const [keys, telegram, [destinations], [inst]] = await Promise.all([

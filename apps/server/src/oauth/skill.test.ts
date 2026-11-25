@@ -16,12 +16,6 @@ import { cleanLabel } from "./label.ts"
 import { type AgentProvider, createAgentProvider, resources, SCOPES } from "./provider.ts"
 import { servedSkillVersion, servesSkill, skillRoutes } from "./skill.ts"
 
-/*
- * The skill's command (every version this computer runs) against the real authorization server, over loopback:
- * it connects with a code a person approves, reads, refreshes the rotating token, survives ten parallel
- * refreshes, ends when its token is replayed, and disconnects. The provider keeps its records in memory here.
- */
-
 const skill = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../../packages/skill/n8n-ops")
 const win = process.platform === "win32"
 const has = (cmd: string, args: string[]) => spawnSync(cmd, args, { stdio: "ignore" }).status === 0
@@ -55,7 +49,6 @@ beforeAll(async () => {
     const grant = new provider.Grant({ accountId: "person", clientId: params.client_id })
     const resource = params.resource ?? resources(base).rest
     grant.addResourceScope(resource, scopes.join(" "))
-    // What was asked and not ticked is refused, as on the real approval page.
     const refused = String(params.scope)
       .split(" ")
       .filter((s) => s.startsWith("ops:") && !scopes.includes(s))
@@ -70,11 +63,6 @@ beforeAll(async () => {
     )
     return c.json({ redirectTo, grantId, label: cleanLabel(params.client_label) })
   })
-  /*
-   * The REST API, stripped to its token check and its policy check (routes/agent.ts): the listing and access answer
-   * without the headers; every other call must carry the revision and the kind of its route in the open table. A
-   * token marked stale answers 401 once more, as an expired one would.
-   */
   app.all("/api/v1/*", async (c) => {
     const token = (c.req.header("authorization") ?? "").replace(/^Bearer /, "")
     const at = await provider.AccessToken.find(token)
@@ -157,7 +145,6 @@ function run(impl: string, inst: ReturnType<typeof install>, args: string[]) {
   })
 }
 
-/** A browser that keeps cookies and does not follow redirects. */
 function browser() {
   const jar = new Map<string, string>()
   return async (p: string, init: { form?: Record<string, string>; json?: unknown } = {}) => {
@@ -192,11 +179,9 @@ function browser() {
   }
 }
 
-/** The person opens the link the agent showed, compares the code, and approves with these scopes. */
 async function approve(link: string, scopes: string[]) {
   const go = browser()
   const xsrfOf = (html: string) => /name="xsrf" value="([^"]+)"/.exec(html)?.[1] ?? ""
-  // The link carries the code: its page submits it at once, and the answer asks to compare it.
   const input = await go(new URL(link).pathname + new URL(link).search)
   const userCode = new URL(link).searchParams.get("user_code") ?? ""
   const page = await go("/connect/device", { form: { xsrf: xsrfOf(input.data), user_code: userCode } })
@@ -230,7 +215,6 @@ for (const impl of impls) {
       expect(r.json, r.out).toMatchObject({ status: 200, data: { data: { path: "/api/v1/problems" } } })
       expect(r.json.data.data.scope).toBe("ops:read ops:access")
 
-      // The access token stops working: ten commands at once refresh it once, and none replays the old token.
       stale.add(record(inst).accessToken)
       const before = refreshes
       const all = await Promise.all(Array.from({ length: 10 }, () => run(impl, inst, ["get", "/api/v1/instances"])))
@@ -238,7 +222,6 @@ for (const impl of impls) {
       expect(refreshes - before).toBe(1)
       expect(revoked).toBe(0)
 
-      // A copy of the refresh token used elsewhere: the provider ends the grant, and the command says so.
       const copy = record(inst).refreshToken
       const thief = await browser()("/oauth/token", {
         form: { grant_type: "refresh_token", refresh_token: copy, client_id: "n8n-ops-cli" },
@@ -295,7 +278,6 @@ describe("serving the skill", () => {
     expect(res.status).toBe(200)
     expect(res.headers.get("cache-control")).toBe("no-cache")
     expect(res.headers.get("x-content-type-options")).toBe("nosniff")
-    // SKILL.md reads the same from Git, where nothing is filled in; the scripts carry the address.
     expect(await res.text()).not.toContain("__N8N_OPS_URL__")
     const script = await (await app("https://ops.example.com").request("/connect/skill/scripts/n8n-ops.mjs")).text()
     expect(script).toContain('const DEFAULT_URL = "https://ops.example.com"')
@@ -303,7 +285,6 @@ describe("serving the skill", () => {
     expect(ps).toContain("$DefaultUrl = 'https://ops.example.com'")
     const note = await (await app("https://ops.example.com").request("/connect/skill/")).text()
     expect(note).toContain("https://ops.example.com/connect/skill/scripts/n8n-ops.ps1 → n8n-ops/scripts/n8n-ops.ps1")
-    // Text between commands is often folded away, so the link and the code must close the agent's turn.
     expect(note).toContain("prints in the reply that ends your turn")
   })
 
@@ -314,7 +295,6 @@ describe("serving the skill", () => {
     fs.writeFileSync(sh, fs.readFileSync(sh, "utf8").replace(/\n/g, "\r\n"))
     const version = servedSkillVersion(dir)
     expect(version).toMatch(/^[0-9a-f]{12}$/)
-    // A checkout with CRLF serves the same skill as one with LF.
     expect(version).toBe(servedSkillVersion(skill))
     const served = await (await app("https://ops.example.com", dir).request("/connect/skill/scripts/n8n-ops.sh")).text()
     expect(served).not.toContain("\r")
@@ -336,8 +316,6 @@ describe("serving the skill", () => {
   })
 
   it("serves nothing for an address with characters the scripts or a shell would run", async () => {
-    // The address goes into the scripts' source: in sh, $(id) would run as the script loads; in PowerShell, ' would
-    // end the string. Such a public URL gets no skill at all, not an install note, not a file.
     expect(servesSkill("http://[::1]:8080")).toBe(true)
     expect(servesSkill("http://localhost:8080")).toBe(true)
     expect(servesSkill("https://ops.example.com:8443")).toBe(true)

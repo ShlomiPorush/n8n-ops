@@ -5,11 +5,6 @@
 @import "@fontsource/ibm-plex-mono/400.css";
 @import "@fontsource-variable/inter";
 
-/*
- * IBM Plex Mono ships 400 and 600 here. The 600 files are declared for every weight from 600 up, so a mono value
- * in bold text (a 650 key value, a 750 figure) keeps its real letters instead of a bold the browser fakes (RT-3).
- * Same subsets as @fontsource/ibm-plex-mono/600.css.
- */
 @font-face {
   font-family: "IBM Plex Mono";
   font-style: normal;
@@ -68,7 +63,6 @@
 }
 
 @custom-variant dark (&:is(.dark *));
-/* The full 240px sidebar: above 1100px, unless the user folded it into the icon rail (NL-7). */
 @custom-variant side {
   @media (min-width: 1101px) {
     html:not([data-nav="rail"]) & {
@@ -76,7 +70,6 @@
     }
   }
 }
-/* Above 1100px with the sidebar folded into the icon rail. */
 @custom-variant folded {
   @media (min-width: 1101px) {
     html[data-nav="rail"] & {
@@ -84,20 +77,12 @@
     }
   }
 }
-/* A short screen, 600px high or less, where regions stop scrolling on their own and the page scrolls as one (NL-1). */
 @custom-variant short (@media (max-height: 600px));
 
-/*
- * Design tokens. Every visual value lives here; components use the Tailwind names below and never raw
- * colours, sizes or shadows. Two designs share every name and differ only in the values: Compact (the v3
- * language, the default values below) and Regular (html[data-design="regular"]). Only lib/design.ts sets the
- * attribute, and nothing but these values and the regular: and compact: variants may depend on it.
- */
 :root {
   --ui-font: "Onest Variable", system-ui, sans-serif;
   --ui-mono: "IBM Plex Mono", ui-monospace, monospace;
 
-  /* Compact: the accent is the ink, no brand colour; colour means status only. */
   --ui-bg: #ffffff;
   --ui-panel: #f4f6f5;
   --ui-fill: var(--ui-panel);
@@ -115,21 +100,12 @@
   --ui-warn: #9a6200;
   --ui-fail: #c42b1c;
   --ui-info: #1f5fbf;
-  /* How strongly a status tints the background of its tag or banner. */
   --ui-tint: 14%;
-  /*
-   * How much of the status colour the text on that tint keeps; the rest is ink (darker in light, lighter in dark),
-   * so it stays readable (4.5:1, AX-11) on the tint, also over a selected row.
-   */
   --ui-tint-ink: 75%;
-  /* A value that copies on click, under the pointer (FB-12): a blue tint. */
   --ui-copy-hover: rgb(59 130 246 / 0.08);
-  /* The dot of the brand mark, on the accent tile: neutral like the letter, since colour means status only. */
   --ui-mark: var(--ui-on-accent);
-  /* The thumb of a scrollbar (OT-4). */
   --ui-scrollbar: rgb(156 163 175 / 0.6);
 
-  /* Type: size, line height, letter spacing and weight per role. */
   --ui-h1: 28px;
   --ui-h1-lh: 1.1;
   --ui-h1-ls: -0.035em;
@@ -175,18 +151,15 @@
   --ui-shadow-modal: 0 24px 60px rgb(0 0 0 / 0.25);
   --ui-shadow-knob: 0 1px 2px rgb(0 0 0 / 0.25);
 
-  /* Layout values that the plain CSS rules below need; the Tailwind names in @theme mirror them. */
   --ui-pad-x: 16px;
   --ui-pad-y: 9px;
   --ui-gap: 14px;
   --ui-tabbar: 64px;
 
-  /* Regular only: the grey canvas under the page card, and the warm setup card. Compact draws neither. */
   --ui-canvas: var(--ui-bg);
   --ui-warm: var(--ui-panel);
   --ui-warm-line: var(--ui-line);
 
-  /* shadcn/ui names, mapped onto the tokens so every primitive follows them. */
   --background: var(--ui-bg);
   --foreground: var(--ui-ink);
   --card: var(--ui-panel);
@@ -231,10 +204,6 @@
   color-scheme: dark;
 }
 
-/*
- * Regular: the Spectrum refined look of PR #29. Inter, neutral greys, white cards with a hairline ring and a
- * soft shadow on a white page, a tinted sidebar, softer weights and rounder corners.
- */
 html[data-design="regular"] {
   --ui-font: "Inter Variable", system-ui, sans-serif;
   --ui-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -245,7 +214,6 @@ html[data-design="regular"] {
   --ui-side: oklch(0.985 0 0);
   --ui-raise: oklch(1 0 0);
   --ui-ink: oklch(0.145 0 0);
-  /* A shade under #29's 0.556, so muted text keeps 4.5:1 on a selected row too (AX-11). */
   --ui-muted: oklch(0.54 0 0);
   --ui-line: oklch(0.922 0 0);
   --ui-accent: oklch(0.205 0 0);
@@ -259,9 +227,7 @@ html[data-design="regular"] {
   --ui-info: #0369a1;
   --ui-tint: 9%;
   --ui-tint-ink: 80%;
-  /* The ink tint of #29, in both themes. */
   --ui-copy-hover: color-mix(in oklab, var(--ui-ink) 6%, transparent);
-  /* The brand mark's dot is green for "alive" (#29), and the scrollbar a muted tint, in both themes. */
   --ui-mark: #3fcf7f;
   --ui-scrollbar: color-mix(in srgb, var(--ui-muted) 45%, transparent);
 
@@ -314,7 +280,6 @@ html[data-design="regular"] {
   --ui-pad-y: 12px;
   --ui-gap: 24px;
 
-  /* The page sits on a grey canvas as one floating card; the setup banner is a warm card of its own. */
   --ui-canvas: var(--ui-side);
   --ui-warm: oklch(0.987 0.022 95.277);
   --ui-warm-line: oklch(0.924 0.12 95.746 / 50%);
@@ -348,7 +313,6 @@ html[data-design="regular"].dark {
   --ui-warm-line: oklch(0.555 0.163 48.998 / 25%);
 }
 
-/* The Tailwind theme holds only the tokens: the default palette, sizes and shadows are removed. */
 @theme inline {
   --color-*: initial;
   --color-transparent: transparent;
@@ -399,18 +363,15 @@ html[data-design="regular"].dark {
   --font-heading: var(--ui-font);
   --font-mono: var(--ui-mono);
 
-  /* Type scale: page title, key figure, item title, section title, panel title, body, control, small, meta. */
   --text-*: initial;
   --text-h1: var(--ui-h1);
   --text-h1--line-height: var(--ui-h1-lh);
   --text-h1--letter-spacing: var(--ui-h1-ls);
   --text-h1--font-weight: var(--ui-h1-w);
-  /* The page title on a phone of 380px or less, beside the page's main action (NL-14). */
   --text-h1-narrow: 24px;
   --text-h1-narrow--line-height: var(--ui-h1-lh);
   --text-h1-narrow--letter-spacing: var(--ui-h1-ls);
   --text-h1-narrow--font-weight: var(--ui-h1-w);
-  /* The page title in the top bar (NL-6). */
   --text-bar: 20px;
   --text-bar--line-height: 1.2;
   --text-bar--letter-spacing: var(--ui-h1-ls);
@@ -438,9 +399,7 @@ html[data-design="regular"].dark {
   --text-small--line-height: var(--ui-small-lh);
   --text-meta: var(--ui-meta);
   --text-meta--line-height: var(--ui-meta-lh);
-  /* Phone inputs: 16px so iOS does not zoom. */
   --text-input-touch: 16px;
-  /* A count that shrinks to a bare dot. */
   --text-none: 0px;
 
   --font-weight-*: initial;
@@ -453,7 +412,6 @@ html[data-design="regular"].dark {
   --font-weight-heavy: var(--ui-w-heavy);
 
   --tracking-*: initial;
-  /* Not "normal": regular:tracking-normal is written in places where it has never had a value. */
   --tracking-none: 0em;
   --tracking-tight: -0.01em;
   --tracking-tighter: -0.02em;
@@ -461,7 +419,6 @@ html[data-design="regular"].dark {
 
   --radius-*: initial;
   --radius-kbd: var(--ui-r-kbd);
-  /* A search match marked inside a result. */
   --radius-mark: 3px;
   --radius-tag: var(--ui-r-tag);
   --radius-sm: var(--ui-r-sm);
@@ -470,9 +427,7 @@ html[data-design="regular"].dark {
   --radius-lg: var(--ui-r-lg);
   --radius-xl: var(--ui-r-lg);
   --radius-sheet: var(--ui-r-sheet);
-  /* The search results, which float under the field. */
   --radius-pop: 14px;
-  /* The phone More sheet, which rises from the tab bar. */
   --radius-drawer: 20px;
 
   --shadow-*: initial;
@@ -480,22 +435,13 @@ html[data-design="regular"].dark {
   --shadow-float: var(--ui-shadow-float);
   --shadow-modal: var(--ui-shadow-modal);
   --shadow-knob: var(--ui-shadow-knob);
-  /* A phone sheet casts its shadow upward, over the page above it (DS-2). */
   --shadow-sheet: 0 -8px 30px rgb(0 0 0 / 0.2);
-  /* A selected option in a list: an ink bar at its start; a selected tab: an ink line under it. */
   --shadow-selected: inset 3px 0 0 var(--ui-ink);
   --shadow-tab: inset 0 -2px 0 var(--ui-ink);
-  /*
-   * A hairline along the bottom of a box that scrolls sideways (a list of tabs): drawn on the box, not on its
-   * content, so it spans the visible width at any scroll position and its children paint over it.
-   */
   --shadow-rule: inset 0 -1px 0 var(--ui-line);
-  /* The chosen segment of a segmented control, raised a little off its track (FS-14). */
   --shadow-segment: 0 1px 2px rgb(0 0 0 / 0.08);
-  /* The open search field: a soft ink halo. */
   --shadow-halo: 0 0 0 3px color-mix(in srgb, var(--ui-ink) 10%, transparent);
 
-  /* Named spacing for the layout tokens; the 4px Tailwind scale stays for small gaps. */
   --spacing-pad-x: var(--ui-pad-x);
   --spacing-pad-y: var(--ui-pad-y);
   --spacing-gap: var(--ui-gap);
@@ -509,7 +455,6 @@ html[data-design="regular"].dark {
   --spacing-bar: 60px;
   --spacing-tabbar: 64px;
 
-  /* Shell breakpoints: phone up to 760px, icon rail up to 1100px, sidebar above; list and detail from 1280px. */
   --breakpoint-*: initial;
   --breakpoint-md: 761px;
   --breakpoint-lg: 1101px;
@@ -517,7 +462,6 @@ html[data-design="regular"].dark {
   --breakpoint-2xl: 1600px;
 }
 
-/* Markup that differs between the designs, for decoration only: icons, rings, a card shadow. */
 @custom-variant regular (html[data-design="regular"] &);
 @custom-variant compact (html:not([data-design="regular"]) &);
 
@@ -525,7 +469,6 @@ html[data-design="regular"].dark {
   * {
     @apply border-border outline-focus;
   }
-  /* The browser window never scrolls; only the regions of the frame do (NL-1). */
   html,
   body {
     height: 100%;
@@ -534,11 +477,6 @@ html[data-design="regular"].dark {
   html {
     font-family: var(--ui-font);
   }
-  /*
-   * Digits keep their natural width: the UI font's tabular "1" is as wide as a "0", which spaces out names such
-   * as n8n13 and dates such as 10/11. Only a column of figures and a counter that changes in place set
-   * tabular-nums, so their digits line up and their width holds still.
-   */
   body {
     @apply bg-bg text-body text-ink antialiased;
   }
@@ -560,7 +498,6 @@ html[data-design="regular"].dark {
   a {
     text-underline-offset: 3px;
   }
-  /* Phones: 16px in fields so iOS does not zoom in on focus. */
   @media (max-width: 760px) {
     input:not([type="checkbox"]):not([type="radio"]),
     select,
@@ -570,33 +507,11 @@ html[data-design="regular"].dark {
   }
 }
 
-/*
- * Layers, from the top (OT-3). Use only these values:
- * toast 100000 > phone search sheet 90 > sidebar flyout 60 > dialogs and their backdrop, confirmations,
- * popovers, menus, pickers and tooltips 50 (Radix portals: the one opened last sits above, so a confirm opened
- * from a dialog covers it) > save bar and search results 45 > tab bar 40 > More sheet 36 and its veil 35 > phone
- * top bar 30 > Settings section picker 20 > sticky heads inside a page 10. Inside one component 10 and 20 order
- * its own parts.
- */
-
-/*
- * Motion explains a state change and nothing else (AX-8): .12s tooltips and flyouts; .15s switches, chevrons,
- * grips, folds, hover colours and the copy icon; .18s the sidebar fold; .2s sheets, dialogs, the More sheet and its
- * veil; .3s toast fade; 2s the search flash; spinners turn at 1s. Figures show their number at once, without
- * counting up. Regular pulses a down instance's dot. Drags turn transitions off. Animations are part of the design
- * and stay when the system asks for reduced motion: there is no reduced-motion override.
- */
-
-/* Thin themed scrollbars (OT-4). */
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--ui-scrollbar) transparent;
 }
 
-/*
- * Phone dialogs are bottom sheets (DS-1, DS-2, DS-4): rounded top corners, four fifths of the screen at the
- * start, square corners and clear of the notch once grown to full height.
- */
 @media (max-width: 760px) {
   [data-slot="dialog-content"] {
     inset: auto 0 0 0;
@@ -606,7 +521,6 @@ html[data-design="regular"].dark {
     border-radius: 16px 16px 0 0;
     transition: border-radius 0.2s ease;
   }
-  /* An item opened from a list keeps that size whatever its content, so switching its tabs does not resize it. */
   [data-slot="dialog-content"][data-pane-sheet] {
     min-height: 80vh;
     /* biome-ignore lint/suspicious/noDuplicateProperties: 80vh above is the fallback where dvh is unknown */
@@ -617,7 +531,6 @@ html[data-design="regular"].dark {
     padding-top: env(safe-area-inset-top);
   }
 }
-/* The grip: a short line in a large hit area that turns bolder and ink while held. */
 [data-slot="dialog-grip"] {
   place-items: center;
   flex-shrink: 0;
@@ -646,7 +559,6 @@ html[data-design="regular"].dark {
   background: var(--ui-ink);
 }
 
-/* Sortable headers (TB-1): a small triangle, hidden until sorted, a faint preview on hover or keyboard focus. */
 [data-sort-head]::after {
   content: "";
   margin-inline-start: 5px;
@@ -672,16 +584,6 @@ html[data-design="regular"].dark {
   opacity: 0.35;
 }
 
-/*
- * A list's filter bar stays in sight at the very top of where the list scrolls, at every width, with no rows
- * showing above it (NL-16): the list column beside a reading pane, whose scroller has no top padding of its own
- * (list-panel.tsx), else the page itself (#main), whose top bar sits above it rather than over it. A sticky
- * element stops at its scroller's padding, so in the page the bar sticks that far up (--main-pad-top, the top
- * padding #main has in shell.tsx). The list column is the scroller only on a screen taller than 600px; on a
- * shorter one the page scrolls it (NL-1). The bar stands on the page's own background, over the rows and under
- * popovers and menus (OT-3), with a little room around it that it takes from the gaps beside it, so nothing
- * moves while it is not stuck.
- */
 #main {
   --main-pad-top: 16px;
 }
@@ -701,19 +603,12 @@ html[data-design="regular"].dark {
 #main [data-slot="filter-bar"] {
   top: calc(-1 * var(--main-pad-top));
 }
-/* Exactly where `short` (max-height: 600px) does not apply, also at a fractional height such as 600.5px. */
 @media not all and (max-height: 600px) {
   #main [data-scroll-pane="list"] [data-slot="filter-bar"] {
     top: 0;
   }
 }
 
-/*
- * The tabs of an instance or a problem stick to the top of where its pane scrolls (DS-14): the docked pane, or
- * right under the sticky head of the dialog it opens in (--dialog-head-h, measured in dialog.tsx). Like the
- * filter bar they take a little room from the gaps beside them, so nothing moves while they are not stuck. The
- * pane's scroller has no top padding of its own, or they would stick below it with content showing above.
- */
 [data-slot="pane-tabs"] {
   position: sticky;
   top: 0;
@@ -727,21 +622,14 @@ html[data-design="regular"].dark {
   background: var(--popover);
 }
 
-/*
- * Tables stack into rows where they have less than 560px, on a phone or beside a reading pane (TB-14): the
- * header row goes, the first cell takes the first line, every other value carries its column name, the
- * actions take the last line and empty cells disappear. The list's Sort button (TB-28) sorts it then.
- */
 [data-slot="table-wrap"] {
   container-type: inline-size;
 }
-/* A whole date at the end of an item drops its time where the list is at its narrowest, so the name keeps room. */
 @container (max-width: 359px) {
   [data-slot="item-row"] [data-part="clock"] {
     display: none;
   }
 }
-/* Compact marks the open item with an edge at its start as well; Regular draws no status edges (#29). */
 html:not([data-design="regular"]) tr[data-state="selected"] > td:has(> [data-slot="item-row"]) {
   box-shadow: inset 3px 0 0 var(--ui-ink);
 }
@@ -761,7 +649,6 @@ html:not([data-design="regular"]) tr[data-state="selected"] > td:has(> [data-slo
     gap: 4px 12px;
     padding: var(--ui-pad-y) var(--ui-pad-x);
   }
-  /* A section heading in a list (Problems) is a band from edge to edge, with its padding inside it. */
   [data-stack] > tbody > tr[data-section] {
     padding: 0;
   }
@@ -774,7 +661,6 @@ html:not([data-design="regular"]) tr[data-state="selected"] > td:has(> [data-slo
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  /* The name of the item leads on its own line: the cell marked data-primary, else the first one. */
   [data-stack] > tbody > tr > td[data-primary] {
     order: -1;
   }
@@ -783,19 +669,16 @@ html:not([data-design="regular"]) tr[data-state="selected"] > td:has(> [data-slo
   [data-stack] > tbody > tr > td:last-child:has([data-slot="button"]) {
     flex-basis: 100%;
   }
-  /* Every other value says what it is, since the column header is gone. */
   [data-stack] > tbody > tr > td[data-label]:not([data-primary], [data-nolabel], [colspan])::before {
     content: attr(data-label) " ";
     color: var(--ui-muted);
     font-weight: 400;
   }
-  /* A labelled value stays on its label's line, also when it is drawn as a block. */
   [data-stack] > tbody > tr > td[data-label]:not([data-primary], [data-nolabel], [data-wide], [colspan]) > * {
     display: inline-flex;
     max-width: 100%;
     vertical-align: baseline;
   }
-  /* A whole date and its age (FullWhen) share that line: "When 16/10/2026, 14:05 · 3 h ago". */
   [data-stack] > tbody > tr > td [data-slot="full-when"] {
     flex-direction: row;
     align-items: baseline;
@@ -814,10 +697,6 @@ html:not([data-design="regular"]) tr[data-state="selected"] > td:has(> [data-slo
   }
 }
 
-/*
- * Status tint for tags, banners and counters: the status colour at --ui-tint over whatever is below, and its text
- * the status colour taken --ui-tint-ink of the way, so it reads on the tint.
- */
 @utility tint-ok {
   color: color-mix(in srgb, var(--ui-ok) var(--ui-tint-ink), var(--ui-ink));
   background-color: color-mix(in srgb, var(--ui-ok) var(--ui-tint), transparent);
@@ -839,7 +718,6 @@ html:not([data-design="regular"]) tr[data-state="selected"] > td:has(> [data-slo
   background-color: color-mix(in srgb, var(--ui-muted) var(--ui-tint), transparent);
 }
 
-/* Hover tint for clickable rows, only where there is a pointer so a tapped row does not stay grey. */
 @utility hover-row {
   cursor: pointer;
   @media (hover: hover) {
@@ -849,16 +727,11 @@ html:not([data-design="regular"]) tr[data-state="selected"] > td:has(> [data-slo
   }
 }
 
-/* A panel of rows: tinted, flat, no border or shadow. */
 @utility panel {
   background-color: var(--ui-panel);
   border-radius: var(--ui-r-lg);
 }
 
-/*
- * While the save bar shows, every scrolling page keeps room under its last field (SV-1). Not an item open as a
- * dialog: its save bar sits in its own footer, under the content.
- */
 html[data-unsaved] :is(#main, [data-scroll-pane]:not([data-slot="dialog-body"])) {
   padding-bottom: 96px;
 }
@@ -868,7 +741,6 @@ html[data-unsaved] :is(#main, [data-scroll-pane]:not([data-slot="dialog-body"]))
   }
 }
 
-/* A target reached from the search is ringed for a moment, so the eye finds it (SR-6). */
 @keyframes search-flash {
   0%,
   40% {

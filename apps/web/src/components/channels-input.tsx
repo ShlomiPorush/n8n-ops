@@ -5,11 +5,6 @@ import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
 
-/**
- * A field that holds some of a fixed set of channels as chips, such as where agent access requests go: × removes
- * one (`Remove <channel>`), and Add lists the channels not chosen yet. The chips keep the set's order, so the same
- * choice always reads, and saves, the same. Drawn like `ChipsInput`: v3 chips in Compact, rounded tags in Regular.
- */
 export function ChannelsInput({
   id,
   label,
@@ -20,12 +15,10 @@ export function ChannelsInput({
   describedBy,
 }: {
   id: string
-  /** The field's name, for the group and the Add button. */
   label: string
   value: string[]
   onChange: (value: AccessChannel[]) => void
   disabled?: boolean
-  /** The field failed its check before a save (SV-1). */
   invalid?: boolean
   describedBy?: string
 }) {
@@ -39,7 +32,6 @@ export function ChannelsInput({
       aria-label={label}
       aria-invalid={invalid || undefined}
       aria-describedby={describedBy}
-      // The save bar puts the focus here to show a problem (SV-1).
       tabIndex={-1}
       data-slot="channels-input"
       className={cn(

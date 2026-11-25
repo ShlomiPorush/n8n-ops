@@ -2,10 +2,6 @@ import { expect, type Page, test } from "@playwright/test"
 import postgres from "postgres"
 import { randomSecret, signIn } from "./helpers.ts"
 
-// Agent Access lists every waiting and active request and the latest 200 that ended; older ones load as the end
-// of the All view comes into view. The test adds 450 ended requests and one active request of an agent token of
-// its own, older than anything the run made, in the database (E2E_DATABASE_URL), and removes them again.
-
 const databaseUrl = process.env.E2E_DATABASE_URL
 const tokenName = "e2e-older-requests"
 const SEEDED = 450
@@ -14,7 +10,6 @@ let page: Page
 
 test.describe.configure({ mode: "serial" })
 
-// Deleting the token deletes its requests and their instances with it.
 const removeFixture = () => sql`delete from api_tokens where name = ${tokenName}`
 
 test.beforeAll(async ({ browser }) => {
@@ -29,7 +24,6 @@ test.beforeAll(async ({ browser }) => {
       now() - interval '10 days' - g * interval '1 minute', now() - interval '10 days',
       now() - interval '10 days', now() - interval '10 days'
     from generate_series(1, ${SEEDED}) g`
-  // Active, and made between the older requests: when it ends, it falls far past the latest 200.
   await sql`insert into access_requests
       (token_id, reason, requested_minutes, minutes, status, created_at, decide_by, decided_at, expires_at)
     values (${token?.id}, 'E2E older active request', 30, 30, 'approved',
@@ -51,14 +45,12 @@ test.afterAll(async () => {
 
 const rows = () => page.locator("[data-href]")
 const everyRequest = async () => Number((await sql`select count(*)::int as n from access_requests`)[0]?.n)
-/** Brings the end of the list into view until `until` shows. */
 async function scrollUntil(until: ReturnType<Page["getByText"]>) {
   await expect(async () => {
     await rows().last().scrollIntoViewIfNeeded()
     await expect(until).toBeVisible({ timeout: 1_000 })
   }).toPass({ timeout: 60_000 })
 }
-/** Moves the page out of view and back, as coming back to the window does: the live list is read again. */
 const comeBack = () => page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")))
 
 test("older ended requests load as the end of the list comes into view, wide and on a phone", async () => {
@@ -73,16 +65,13 @@ test("older ended requests load as the end of the list comes into view, wide and
   try {
     await page.goto("/access?view=all")
     await expect(rows().first()).toBeVisible()
-    // The live answer holds the latest 200 ended requests, so the counts say more may exist.
     await expect(page.getByRole("radio", { name: /^All \d+\+$/ })).toBeVisible()
     expect(pages).toBe(0)
     const first = await rows().count()
 
-    // Beside the reading pane the list scrolls on its own; older requests join it as its end comes near.
     await rows().last().scrollIntoViewIfNeeded()
     await expect.poll(() => rows().count()).toBeGreaterThan(first)
 
-    // On a phone the page scrolls as one, and loading goes on there. The open item becomes a sheet; Back closes it.
     await page.setViewportSize({ width: 390, height: 844 })
     await page.getByRole("button", { name: "Back" }).click()
     const total = await everyRequest()
@@ -90,7 +79,6 @@ test("older ended requests load as the end of the list comes into view, wide and
     await scrollUntil(done)
     await expect(rows()).toHaveCount(total)
     await expect(page.getByText(`E2E older request ${SEEDED}`, { exact: true })).toBeVisible()
-    // Every page once: the first from the newest ended request, then one per 200.
     const ended = Number(
       (await sql`select count(*)::int as n from access_requests where status not in ('pending', 'approved')`)[0]?.n,
     )
@@ -119,7 +107,6 @@ test("a request that ends past the latest 200 is read again, and a failed read w
     const active = page.getByText("E2E older active request", { exact: true })
     await expect(active).toHaveCount(1)
 
-    // It ends, and the live list no longer holds it: the history is read again, which fails.
     await sql`update access_requests set status = 'revoked', ended_at = now(), decided_by = 'operator'
       where reason = 'E2E older active request'`
     fail = true
@@ -130,7 +117,6 @@ test("a request that ends past the latest 200 is read again, and a failed read w
     await expect(done()).toHaveCount(0)
     expect(reads).toBe(before + 1)
 
-    // Nothing is asked again by itself: not when the list refreshes, nor after an item opened and closed.
     await comeBack()
     const opened = page.url()
     await rows().nth(1).click()
@@ -141,7 +127,6 @@ test("a request that ends past the latest 200 is read again, and a failed read w
     expect(reads).toBe(before + 1)
     await expect(failed).toBeVisible()
 
-    // Try again reads the history again, with the request that ended in it.
     fail = false
     await page.getByRole("button", { name: "Try again" }).click()
     await expect(done()).toBeVisible()
@@ -177,8 +162,6 @@ test("in an order where older requests would not come last, they load a page per
     const shown = await rows().count()
     await load.click()
     await expect.poll(() => rows().count()).toBeGreaterThan(shown)
-    // One page of older requests for the press (after the first page, which holds the latest ended requests the
-    // list already has): the end stays in view, and nothing more is asked by itself.
     await expect(load).toBeVisible()
     await page.waitForTimeout(500)
     expect(reads).toBe(2)

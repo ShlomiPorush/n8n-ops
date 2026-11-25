@@ -5,7 +5,6 @@ import type { Ctx } from "../context.ts"
 import { changesWorkflowMap, n8nProxyRoutes } from "./n8n-proxy.ts"
 
 describe("the access proxy's 404 for a path it does not serve", () => {
-  // Mounted where the server mounts it. No route here reaches the database, so the context is never read.
   const app = new Hono().route("/n8n", n8nProxyRoutes({} as Ctx))
   const key = randomBytes(16).toString("hex")
   const call = async (path: string) => {
@@ -23,7 +22,6 @@ describe("the access proxy's 404 for a path it does not serve", () => {
   })
 
   it("points out a path Git Bash rewrote as a Windows path, still percent-encoded", async () => {
-    // What `fetch(baseUrl + path)` sends when Git Bash turned "/workflows/abc" into "C:/Program Files/Git/...".
     const { status, message } = await call("/n8n/inst/api/v1C:/Program%20Files/Git/workflows/abc")
     expect(status).toBe(404)
     expect(message).toContain("for /n8n/inst/api/v1C:/Program%20Files/Git/workflows/abc.")

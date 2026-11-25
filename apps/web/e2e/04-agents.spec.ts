@@ -1,7 +1,6 @@
 import { expect, type Page, test } from "@playwright/test"
 import { dialogClosed, openNewToken, signIn } from "./helpers.ts"
 
-// Read-only access for agents: REST with a REST token, MCP with an MCP token, and the audit trail.
 test.describe.configure({ mode: "serial" })
 
 let page: Page
@@ -94,7 +93,6 @@ test("an agent lists tools and reads problems over MCP", async ({ request }) => 
 })
 
 test("the audit log opens from the Overview without an error, and back", async () => {
-  // The Overview reads the audit log too; moving between them inside the app must not mix their data.
   await page.goto("/")
   await expect(page.getByRole("heading", { name: "Recent Activity" })).toBeVisible()
   await page.getByRole("link", { name: "Full audit log" }).click()

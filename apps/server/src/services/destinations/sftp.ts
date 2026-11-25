@@ -7,19 +7,13 @@ import { checkKey, roundTrip, type Store, StoreError, verifyByReading } from "./
 export type SftpLocation = { host: string; port: number; username: string; path: string }
 export type SftpCredentials = { password?: string; privateKey?: string; passphrase?: string; hostKey: string }
 
-/** OpenSSH's form of a host key fingerprint: SHA256: and the unpadded base64 digest. */
 export const fingerprint = (key: Buffer) =>
   `SHA256:${createHash("sha256").update(key).digest("base64").replace(/=+$/, "")}`
 
 const NO_SUCH_FILE = 2
-/** Requests in flight and their size, for writing and reading archives. */
 const PARALLEL = 32
 const CHUNK = 32 * 1024
 
-/**
- * The fingerprint of the key the server presents, read before any credential is sent: the connection ends at
- * the host key check, so the password or private key never leaves n8n-ops.
- */
 export function fetchHostKey(host: string, port: number, signal: AbortSignal): Promise<string> {
   return new Promise((resolve, reject) => {
     const conn = new Client()
@@ -45,7 +39,6 @@ export function fetchHostKey(host: string, port: number, signal: AbortSignal): P
   })
 }
 
-/** The folder as typed, without trailing slashes; "/" stays the root, and only an empty path is the home folder. */
 export function sftpRoot(path: string) {
   const trimmed = path.trim()
   if (!trimmed) return "."
@@ -66,7 +59,6 @@ export function sftpStore(location: SftpLocation, credentials: SftpCredentials):
           port: location.port,
           username: location.username,
           readyTimeout: 20_000,
-          // The pinned key is required; there is no way to connect without it.
           hostVerifier: (key: Buffer) => {
             presented = fingerprint(key)
             return presented === credentials.hostKey.trim()
@@ -101,13 +93,11 @@ export function sftpStore(location: SftpLocation, credentials: SftpCredentials):
     new Promise<T>((resolve, reject) => fn((error, value) => (error ? reject(error) : resolve(value as T))))
   const code = (error: unknown) => (error as { code?: number }).code
 
-  /** The file's bytes in order, with several reads in flight, as fastGet does but without a local copy. */
   async function* readInOrder(sftp: SFTPWrapper, path: string, signal: AbortSignal) {
     const handle = await call<Buffer>((cb) => sftp.open(path, "r", cb))
     try {
       const { size } = await call<{ size: number }>((cb) => sftp.fstat(handle, cb))
-      // Each read settles into a result, never a rejection left unwatched: a later read can fail, or the
-      // connection drop, while an earlier one is still awaited.
+      // A rejected read that nobody awaits yet would crash the server.
       type Read = Promise<{ chunk: Buffer } | { error: Error }>
       const reads: Read[] = []
       let next = 0
@@ -140,7 +130,6 @@ export function sftpStore(location: SftpLocation, credentials: SftpCredentials):
           yield read.chunk
         }
       } finally {
-        // Reads still in flight finish before the handle closes, whether the copy was read whole or not.
         await Promise.all(reads)
       }
     } finally {
@@ -166,27 +155,20 @@ export function sftpStore(location: SftpLocation, credentials: SftpCredentials):
   }
 
   async function replace(sftp: SFTPWrapper, from: string, to: string) {
-    // posix-rename replaces an existing file in one step; plain SFTP rename refuses to.
     const ext = sftp as SFTPWrapper & { ext_openssh_rename?: SFTPWrapper["rename"] }
     try {
       if (ext.ext_openssh_rename) return await call((cb) => ext.ext_openssh_rename?.call(sftp, from, to, cb))
-    } catch {
-      // Fall through to a plain rename.
-    }
+    } catch {}
     await call((cb) => sftp.unlink(to, cb)).catch(() => {})
     await call((cb) => sftp.rename(from, to, cb))
   }
 
   const store: Store = {
-    key: (parts) => parts.join("/"),
-
     async put(key, file, _expected, signal) {
       const { sftp } = await connect(signal)
       const target = pathOf(key)
       await mkdirs(sftp, posix.dirname(target))
       const part = `${target}.part`
-      // Many writes in flight: one at a time, SFTP waits for every reply and runs at a fraction of the line.
-      // What arrives is read back and compared before the copy counts.
       await call((cb) => sftp.fastPut(file, part, { concurrency: PARALLEL, chunkSize: CHUNK }, cb))
       await replace(sftp, part, target)
       return {}
@@ -208,7 +190,7 @@ export function sftpStore(location: SftpLocation, credentials: SftpCredentials):
       }
     },
 
-    async test(signal) {
+    async test(key, signal) {
       const { sftp } = await connect(signal)
       try {
         await call((cb) => sftp.stat(root, cb))
@@ -216,7 +198,7 @@ export function sftpStore(location: SftpLocation, credentials: SftpCredentials):
         if (code(error) === NO_SUCH_FILE) throw new StoreError(`the folder ${root} does not exist on the server`)
         throw error
       }
-      await roundTrip(store, signal)
+      await roundTrip(store, key, signal)
       return []
     },
 

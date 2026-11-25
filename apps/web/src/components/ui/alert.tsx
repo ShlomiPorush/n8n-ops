@@ -2,7 +2,6 @@ import { cva, type VariantProps } from "class-variance-authority"
 import type * as React from "react"
 import { cn } from "@/lib/utils"
 
-// A banner: a page level notice on a tint of its status colour; the title takes the colour, the body stays ink.
 const alertVariants = cva(
   "group/alert relative grid w-full grid-cols-[minmax(0,1fr)] gap-0.5 rounded-lg px-pad-x py-3 text-start has-[>svg]:grid-cols-[auto_minmax(0,1fr)] has-[>svg]:gap-x-3 *:[svg]:row-span-2 *:[svg]:mt-0.5 *:[svg]:size-[18px] *:[svg]:text-current",
   {

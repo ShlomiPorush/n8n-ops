@@ -1,20 +1,12 @@
 import { DOCKER_CHECK_COVER_MS } from "@n8n-ops/shared"
 import { WORKER_ONLINE_MS } from "./collection.ts"
 
-/**
- * The pure maths of a Worker's health history (services/worker-health.ts): spans of time, offline periods, Docker
- * check covers, boots and buckets. All instants are epoch milliseconds, so nothing here depends on a clock.
- */
-
-/** A recording row is extended while it was alive within this time; a longer silence opens a new one. */
 export const RECORDING_GAP_MS = 45_000
 
-/** A stretch of time, `from` included, `to` excluded. */
 export type Span = { from: number; to: number }
 
 const len = (s: Span) => Math.max(0, s.to - s.from)
 
-/** The spans joined where they overlap or touch, oldest first, without empty ones. */
 export function union(spans: Span[]): Span[] {
   const sorted = spans.filter((s) => s.to > s.from).sort((a, b) => a.from - b.from)
   const out: Span[] = []
@@ -26,10 +18,6 @@ export function union(spans: Span[]): Span[] {
   return out
 }
 
-/**
- * The time in `spans` that no span of `holes` covers. Both are joined once and walked together, so the cost stays
- * linear in their length after sorting.
- */
 export function subtract(spans: Span[], holes: Span[]): Span[] {
   const cut = union(holes)
   const out: Span[] = []
@@ -47,10 +35,6 @@ export function subtract(spans: Span[], holes: Span[]): Span[] {
   return out
 }
 
-/**
- * The time both sets of spans cover: one walk over the two joined lists. Their common parts are already ordered and
- * neither overlap nor touch, so they need no joining.
- */
 export function intersect(a: Span[], b: Span[]): Span[] {
   const xs = union(a)
   const ys = union(b)
@@ -69,7 +53,6 @@ export function intersect(a: Span[], b: Span[]): Span[] {
   return out
 }
 
-/** Joined spans with the running total of their lengths, so the time they cover in any span takes a binary search. */
 export type Measured = { spans: Span[]; before: number[] }
 
 export function measured(spans: Span[]): Measured {
@@ -79,7 +62,6 @@ export function measured(spans: Span[]): Measured {
   return { spans: joined, before }
 }
 
-/** The index of the first span of `m` that ends after `at`. */
 function firstEndingAfter(m: Measured, at: number) {
   let lo = 0
   let hi = m.spans.length
@@ -91,7 +73,6 @@ function firstEndingAfter(m: Measured, at: number) {
   return lo
 }
 
-/** The milliseconds of `m` that fall in `s`. */
 export function measure(m: Measured, s: Span): number {
   if (s.to <= s.from) return 0
   const first = firstEndingAfter(m, s.from)
@@ -103,7 +84,6 @@ export function measure(m: Measured, s: Span): number {
   return (m.before[end] ?? 0) - (m.before[first] ?? 0) - Math.max(0, s.from - head.from) - Math.max(0, tail.to - s.to)
 }
 
-/** Where `s` leaves the span of `m` it starts in, or `s.from` when it starts outside them. */
 export function leave(m: Measured, s: Span): number {
   const at = m.spans[firstEndingAfter(m, s.from)]
   return at && at.from <= s.from ? at.to : s.from
@@ -111,45 +91,26 @@ export function leave(m: Measured, s: Span): number {
 
 export const total = (spans: Span[]) => union(spans).reduce((n, s) => n + len(s), 0)
 
-/** The milliseconds of `spans` that fall in `s`. */
 export const overlap = (spans: Span[], s: Span) => total(intersect(spans, [s]))
 
-/**
- * The offline period a call ends (or, when reading, the one still going on): from the moment the Worker's status
- * turned Offline, its last call plus the online time, to `now`. Never before the history starts, and none when
- * `now` is not after its start (the server clock went back).
- */
 export function offlineGap(lastSeenAt: number | null, now: number, startsAt: number | null): Span | null {
   if (lastSeenAt === null || now - lastSeenAt < WORKER_ONLINE_MS) return null
   const from = Math.max(lastSeenAt + WORKER_ONLINE_MS, startsAt ?? Number.NEGATIVE_INFINITY)
   return now > from ? { from, to: now } : null
 }
 
-/**
- * The time right after n8n-ops started recording again (each recording row's start, the first one too), when Workers
- * have not had time to call yet: the online time from it. Offline time in it is not counted as Worker offline, the
- * same reason the offline alert waits that long after the server starts. It is not time n8n-ops was not recording.
- */
 export const settling = (recordingStarts: number[]): Span[] =>
   union(recordingStarts.map((from) => ({ from, to: from + WORKER_ONLINE_MS })))
 
 export type DockerCheck = { at: number; ok: boolean; error: string | null }
 
-/** What one Docker check speaks for: its result over its cover. */
 export type Cover = Span & {
   ok: boolean
   error: string | null
-  /** The cover reaches `cap` (now, or the window's end) and would go on past it. */
   open: boolean
-  /** It ended because no check followed within the cover time, so when its state ended is not known. */
   endUnknown: boolean
 }
 
-/**
- * The covers of a Worker's Docker checks, all boots together, ordered by when they were made: each covers from its
- * check until the next check, at most DOCKER_CHECK_COVER_MS, never past `cap`, so at any moment at most one covers.
- * Covers start no earlier than the history (`startsAt`); empty ones are left out.
- */
 export function dockerCovers(checks: DockerCheck[], cap: number, startsAt: number): Cover[] {
   const sorted = [...checks].sort((a, b) => a.at - b.at)
   const out: Cover[] = []
@@ -171,13 +132,8 @@ export function dockerCovers(checks: DockerCheck[], cap: number, startsAt: numbe
   return out
 }
 
-/** A time Docker checks failed: the covers of failing checks in a row that touch, joined. */
 export type Failing = Span & { open: boolean; endUnknown: boolean; error: string | null }
 
-/**
- * Docker failing periods: the union of the covers of consecutive failing checks. A period is open while its last
- * cover reaches the cap, and its end is unknown when no check followed within the cover time.
- */
 export function dockerFailing(covers: Cover[]): Failing[] {
   const out: Failing[] = []
   let current: Failing | null = null
@@ -199,13 +155,8 @@ export function dockerFailing(covers: Cover[]): Failing[] {
   return out
 }
 
-/** One boot of a Worker process as its kept heartbeats show it. */
 export type Boot = { bootId: string; start: number; maxUptimeSec: number }
 
-/**
- * Restarts: each boot that has an earlier boot before it (another kept row, or the anchor retention keeps) restarted
- * the Worker at its start. The first boot ever seen is not a restart. Only starts in `[from, to]` are returned.
- */
 export function restarts(boots: Boot[], from: number, to: number) {
   const sorted = [...boots].sort((a, b) => a.start - b.start || a.bootId.localeCompare(b.bootId))
   const out: { at: number; uptimeSecBefore: number | null }[] = []
@@ -216,7 +167,6 @@ export function restarts(boots: Boot[], from: number, to: number) {
   return out
 }
 
-/** The milliseconds of `spans` in each bucket of `bucketMs` from `from`. */
 export function perBucket(spans: Span[], from: number, bucketMs: number, count: number): number[] {
   const out = new Array<number>(count).fill(0)
   for (const s of union(spans)) {

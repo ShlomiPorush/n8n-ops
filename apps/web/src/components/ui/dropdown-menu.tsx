@@ -6,11 +6,6 @@ import * as React from "react"
 import { usePopoverRoom } from "@/lib/popover-room"
 import { cn } from "@/lib/utils"
 
-/**
- * A menu (MP-7). Escape, a click outside and any choice close it, and so does a scroll anywhere outside it: a
- * menu that is not modal lets its pane scroll, and it would otherwise drift away from its button or stay pinned
- * over content its button scrolled off.
- */
 function DropdownMenu({
   open: openProp,
   defaultOpen = false,
@@ -44,7 +39,6 @@ function DropdownMenu({
   )
 }
 
-/** Whether the menu is open, so its content measures its room only then (MP-5). */
 const MenuOpen = React.createContext(false)
 
 function DropdownMenuPortal({ ...props }: React.ComponentProps<typeof DropdownMenuPrimitive.Portal>) {
@@ -68,7 +62,6 @@ function DropdownMenuContent({
         data-slot="dropdown-menu-content"
         sideOffset={sideOffset}
         align={align}
-        // Between the phone's top bar and tab bar, measured again while open (MP-5).
         collisionPadding={room}
         className={cn(
           "z-50 max-h-(--radix-dropdown-menu-content-available-height) w-(--radix-dropdown-menu-trigger-width) min-w-32 origin-(--radix-dropdown-menu-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-sm bg-popover p-1 text-popover-foreground shadow-float duration-100 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-[state=closed]:overflow-hidden data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
@@ -99,7 +92,6 @@ function DropdownMenuItem({
       data-inset={inset}
       data-variant={variant}
       className={cn(
-        // Compact: v3's menu item padding, 7px 10px (MP-7).
         "group/dropdown-menu-item relative flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 compact:px-[10px] compact:py-[7px] text-body outline-hidden select-none focus:bg-accent focus:text-accent-foreground not-data-[variant=destructive]:focus:**:text-accent-foreground data-inset:pl-8 data-[variant=destructive]:text-destructive data-[variant=destructive]:focus:bg-destructive/10 data-[variant=destructive]:focus:text-destructive dark:data-[variant=destructive]:focus:bg-destructive/20 data-disabled:pointer-events-none data-disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 data-[variant=destructive]:*:[svg]:text-destructive",
         className,
       )}

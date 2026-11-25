@@ -43,7 +43,6 @@ describe("a tooltip shown by a tap (MO-4)", () => {
     tip.press("touch")
     vi.advanceTimersByTime(TIP_TAP_CLICK_MS - 1)
     expect(tip.click()).toBe(true)
-    // A second click is the person's: it opens what is under the value.
     expect(tip.click()).toBe(false)
   })
 

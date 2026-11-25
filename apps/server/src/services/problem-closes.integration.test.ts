@@ -10,12 +10,8 @@ import { affectedWorkflows, instances, problems } from "../db/schema.ts"
 import { createAudit } from "../lib/audit.ts"
 import { createSettings } from "../lib/settings.ts"
 import { problemRowsPage } from "./problem-view.ts"
-import { housekeeping } from "./problems.ts"
+import { endMutes, housekeeping } from "./problems.ts"
 
-// When an open row may close by itself, as the Problems list says it, against what housekeeping really does: it
-// resolves open rows whose last failure is older than the instance's auto-resolve days, and turns ended mutes back
-// to open only after that, so an ended mute closes a run later. The database is made for this file from
-// MIGRATION_DATABASE_URL with every migration applied; housekeeping reads every instance, so no other test shares it.
 const adminUrl = process.env.MIGRATION_DATABASE_URL
 if (!adminUrl) throw new Error("MIGRATION_DATABASE_URL is required (scripts/verify.sh sets it)")
 
@@ -89,14 +85,19 @@ const statusOf = async (id: string) =>
   (await database.db.select().from(affectedWorkflows).where(eq(affectedWorkflows.id, id)))[0]?.status
 
 describe("when a row may close by itself", () => {
-  it("is its last failure plus its instance's days, not before a mute ends, and housekeeping keeps to it", async () => {
+  it("is its last failure plus its instance's days, also after a mute that ended, and housekeeping keeps to it", async () => {
     const usual = await newInstance("usual-n8n")
     const short = await newInstance("short-n8n", { autoResolveDays: 2 })
     const lastSeen = ago(3 * day)
     const waiting = await row(usual.id, { workflowName: "Waiting", lastSeen })
     const due = await row(short.id, { workflowName: "Due", lastSeen })
-    const mutedUntil = ago(minute)
-    const unmuted = await row(short.id, { workflowName: "Unmuted", lastSeen, status: "muted", mutedUntil })
+    const unmuted = await row(short.id, {
+      workflowName: "Unmuted",
+      lastSeen,
+      status: "muted",
+      mutedUntil: ago(minute),
+    })
+    const forever = await row(short.id, { workflowName: "Muted without an end", lastSeen, status: "muted" })
     const muted = await row(usual.id, {
       workflowName: "Muted",
       status: "muted",
@@ -104,24 +105,24 @@ describe("when a row may close by itself", () => {
     })
     const resolved = await row(usual.id, { workflowName: "Resolved", status: "resolved", resolvedAt: ago(day) })
 
+    await housekeeping(ctx)
+    expect(await statusOf(unmuted.id)).toBe("muted")
+    await endMutes(ctx)
+    await database.db.update(affectedWorkflows).set({ status: "open" }).where(eq(affectedWorkflows.id, due.id))
     const page = await problemRowsPage(ctx, { status: "all" })
     const at = (id: string) => page.items.find((r) => r.id === id)?.closesAt?.getTime() ?? null
-    // The default seven days, and an instance's own two.
     expect(at(waiting.id)).toBe(lastSeen.getTime() + 7 * day)
     expect(at(due.id)).toBe(lastSeen.getTime() + 2 * day)
-    // An ended mute: its two days are long past, so not before the mute ended.
-    expect(at(unmuted.id)).toBe(mutedUntil.getTime())
+    expect(at(unmuted.id)).toBe(lastSeen.getTime() + 2 * day)
     expect(at(muted.id)).toBeNull()
+    expect(at(forever.id)).toBeNull()
     expect(at(resolved.id)).toBeNull()
 
-    // A run closes the open row that is due and only turns the ended mute back to open; the next run closes it.
     await housekeeping(ctx)
     expect(await statusOf(due.id)).toBe("resolved")
-    expect(await statusOf(unmuted.id)).toBe("open")
-    expect(await statusOf(waiting.id)).toBe("open")
-    await housekeeping(ctx)
     expect(await statusOf(unmuted.id)).toBe("resolved")
     expect(await statusOf(waiting.id)).toBe("open")
     expect(await statusOf(muted.id)).toBe("muted")
+    expect(await statusOf(forever.id)).toBe("muted")
   })
 })

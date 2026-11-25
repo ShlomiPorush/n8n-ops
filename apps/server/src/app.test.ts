@@ -56,7 +56,6 @@ describe("routing", () => {
 })
 
 describe("web", () => {
-  // serveStatic resolves the web directory relative to the working directory.
   const web = `.test-web-${process.pid}`
   const empty = `.test-web-empty-${process.pid}`
 
@@ -148,7 +147,6 @@ describe("withDesign", () => {
 })
 
 describe("the client address the sign-in library gets", () => {
-  /** The address header Better Auth received for one request, connected from `peer` (none: no Node request). */
   async function received(peer: string | null, headers: [string, string][] = []) {
     let seen: string | null | undefined
     const ctx = {
@@ -193,7 +191,6 @@ describe("the client address the sign-in library gets", () => {
 })
 
 describe("request bodies of the sign-in routes", () => {
-  /** A context whose sign-in library answers with the body it was given, and counts its calls. */
   function echoCtx() {
     const calls: string[] = []
     const ctx = {
@@ -212,12 +209,10 @@ describe("request bodies of the sign-in routes", () => {
     } as unknown as Ctx
     return { app: createApp(ctx), calls }
   }
-  /** A JSON body of exactly `size` bytes. */
   const jsonOf = (size: number, fields: Record<string, unknown> = {}) => {
     const base = JSON.stringify({ ...fields, pad: "" })
     return `${base.slice(0, -2)}${"x".repeat(size - base.length)}"}`
   }
-  /** The body as a stream of chunks, with no length announced. */
   const chunked = (text: string, chunk = 16 * 1024) =>
     new ReadableStream<Uint8Array>({
       start(controller) {

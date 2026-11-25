@@ -26,7 +26,6 @@ import { startRecording } from "./services/worker-presence.ts"
 
 type Mount = { path: string; router: Hono<Env> }
 
-/** Feature routers and background jobs. */
 export function features(ctx: Ctx, extra: { mounts?: Mount[]; jobs?: Job[] } = {}) {
   const mounts: Mount[] = [
     { path: "/api/instances", router: instanceRoutes(ctx) },
@@ -47,32 +46,23 @@ export function features(ctx: Ctx, extra: { mounts?: Mount[]; jobs?: Job[] } = {
     ...(ctx.agents ? [{ path: "/", router: agentConnectRoutes(ctx, ctx.agents) }] : []),
     ...(extra.mounts ?? []),
   ]
-  // These intervals are how soon the server acts on its own records (copies due, expired access, sessions to
-  // remove), not how often it reads an instance; shorter is always fine, so they are not settings.
   const jobs: Job[] = [
     { name: "backups", everyMs: 5 * 60_000, run: scheduleBackups },
-    // Copies due again, cut off by a restart, or waiting for a free destination; new archives start it at once.
     { name: "backup-copies", everyMs: 30_000, run: kickCopies },
-    // Expired archives also go where nothing new is written, such as a destination turned off.
     { name: "backup-retention", everyMs: 6 * 3600_000, run: sweepRetention },
-    // Reviews of a restore not confirmed within the hour, and restores a restart cut off.
     { name: "restores", everyMs: 5 * 60_000, run: sweepRestores },
     { name: "probes", everyMs: 10_000, run: enqueueProbes },
-    // Workers that stop reporting leave the health of their instances unknown.
     { name: "collectors", everyMs: 15_000, run: (c) => watchCollectors(c) },
     { name: "access-expiry", everyMs: 15_000, run: expireAccess },
     { name: "access-notify", everyMs: 5_000, run: notifyAccess },
     { name: "agent-connections", everyMs: 15 * 60_000, run: async (c) => c.agents?.sweep() },
-    // Sessions that ended, or that Better Auth let expire, leave the database.
     { name: "sessions", everyMs: 60 * 60_000, run: sweepSessions },
-    // The workflow map runs per instance in the scheduler, as often as its settings say.
     ...(extra.jobs ?? []),
   ]
   return {
     mounts,
     start: () => {
       const scheduler = startScheduler(ctx, jobs)
-      // On its own timer, so a busy scheduler never looks like the server was not recording.
       const recording = startRecording(ctx)
       return () => {
         scheduler()

@@ -1,29 +1,15 @@
-/**
- * Finds the n8n queue workers of an instance in Docker's container list. The contract is one n8n instance per
- * Compose project: the main is the container the owner named, and it must be the one main of its project; the
- * workers are the containers of that project that run n8n's `worker` command. When the list cannot show that for
- * sure, nothing is assigned: guessing could give an instance another instance's workers.
- *
- * Only names and states leave this module. The list carries much more (images, commands, labels, mounts); it is
- * read here and dropped.
- */
-
-/** The fields of Docker's container list this module reads. */
 export type ListedContainer = {
   Names?: string[]
   Image?: string
   Command?: string
   State?: string
-  /** Docker's words for the state, with the health check's answer: "Up 2 minutes (healthy)". */
   Status?: string
-  /** When the container was created, in seconds since 1970. */
   Created?: number
   Labels?: Record<string, string>
 }
 
 export type ContainerState = "running" | "restarting" | "paused" | "exited" | "dead" | "created" | "removing"
 
-/** The `--concurrency` flag of a worker's command: its number, "invalid" when it is not 1..1000, or none. */
 export type ConcurrencyFlag = number | "invalid" | undefined
 
 export type FoundWorker = { name: string; state: ContainerState; concurrencyFlag?: ConcurrencyFlag }
@@ -32,7 +18,6 @@ export type Discovery =
   | { status: "ok"; main: ContainerState; workers: FoundWorker[] }
   | { status: "ambiguous"; reason: string; main?: ContainerState }
 
-/** The entrypoint of the official n8n image, as the list shows it before the command's own words. */
 const ENTRYPOINT = "tini -- /docker-entrypoint.sh"
 const N8N_IMAGE = /^(docker\.n8n\.io\/)?n8nio\/n8n(:[\w.-]+)?(@sha256:[0-9a-f]{64})?$/
 
@@ -40,7 +25,6 @@ const PROJECT = "com.docker.compose.project"
 const ONE_OFF = "com.docker.compose.oneoff"
 const SERVICE = "com.docker.compose.service"
 
-/** A container's name as exec takes it: Docker lists names with a leading slash. */
 export function nameOf(container: ListedContainer): string {
   return (container.Names?.[0] ?? "").replace(/^\//, "")
 }
@@ -49,7 +33,6 @@ const STATES = new Set<ContainerState>(["running", "restarting", "paused", "exit
 export const stateOf = (container: ListedContainer): ContainerState =>
   STATES.has(container.State as ContainerState) ? (container.State as ContainerState) : "dead"
 
-/** The `--concurrency` flag of a listed command (`--concurrency N` or `--concurrency=N`); only its number leaves. */
 export function concurrencyFlag(container: ListedContainer): ConcurrencyFlag {
   const words = (container.Command ?? "").trim().split(/\s+/)
   const at = words.findIndex((w) => w === "--concurrency" || w.startsWith("--concurrency="))
@@ -60,7 +43,6 @@ export function concurrencyFlag(container: ListedContainer): ConcurrencyFlag {
   return Number.isInteger(n) && n >= 1 && n <= 1000 ? n : "invalid"
 }
 
-/** Whether the words after a command are flags only: `--x`, `--x=y`, or `--x value`. */
 function onlyFlags(words: string[]) {
   let value = false
   for (const word of words) {
@@ -71,11 +53,6 @@ function onlyFlags(words: string[]) {
   return true
 }
 
-/**
- * What an n8n container is: a main (`start`, or no command), a queue worker, a webhook processor, or an n8n
- * container whose command is not one of these (started through a shell, for example). Null for anything that is
- * not n8n, such as the database or n8n's task runners.
- */
 export function roleOf(container: ListedContainer): "main" | "worker" | "webhook" | "unknown" | null {
   const command = (container.Command ?? "").trim().replace(/\s+/g, " ")
   if (command !== ENTRYPOINT && !command.startsWith(`${ENTRYPOINT} `))
@@ -90,16 +67,11 @@ export function roleOf(container: ListedContainer): "main" | "worker" | "webhook
   return first.startsWith("-") && onlyFlags(words) ? "main" : "unknown"
 }
 
-/** The Compose project of the main container, read from the list of containers with its name. */
 export function projectOf(list: ListedContainer[], main: string): { project?: string; state?: ContainerState } {
   const found = list.find((c) => nameOf(c) === main)
   return found ? { project: found.Labels?.[PROJECT], state: stateOf(found) } : {}
 }
 
-/**
- * Finds the queue workers of the main named `main` in the containers of its Compose project. With `service`, the
- * main is that Compose service: its replicas (two during a rollout, or an old one stopped) are one main.
- */
 export function discover(projectList: ListedContainer[], main: string, service?: string): Discovery {
   const self = projectList.find((c) => nameOf(c) === main)
   if (!self) return { status: "ambiguous", reason: `container "${main}" is not in its Compose project` }
@@ -112,7 +84,6 @@ export function discover(projectList: ListedContainer[], main: string, service?:
       main: mainState,
     }
   const members = projectList.filter((c) => c.Labels?.[PROJECT] === project && c.Labels?.[ONE_OFF] !== "True")
-  // A one-off container (docker compose run) is not the main of its project, even when it runs n8n.
   if (self.Labels?.[ONE_OFF] === "True")
     return {
       status: "ambiguous",

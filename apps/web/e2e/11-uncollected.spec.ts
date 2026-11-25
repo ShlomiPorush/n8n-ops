@@ -2,10 +2,6 @@ import { expect, type Page, test } from "@playwright/test"
 import postgres from "postgres"
 import { signIn } from "./helpers.ts"
 
-// An instance that nothing collects: its worker stopped reporting, so its health is Unknown everywhere, with the
-// last known health beside it, and the worker alert is queued. The worker cannot be stopped from here, so the test
-// adds a worker and an instance of its own in the database (E2E_DATABASE_URL) and removes them again.
-
 const databaseUrl = process.env.E2E_DATABASE_URL
 const workerName = "e2e-far-host"
 const instanceName = "e2e-far-n8n"
@@ -58,13 +54,11 @@ test("an instance whose worker is offline shows Unknown with its last known heal
   await page.goto(`/instances/${instanceId}`)
   await expect(page.getByRole("heading", { name: instanceName })).toBeVisible()
   await expect(page.getByText("Last known: Healthy").filter({ visible: true }).first()).toBeVisible()
-  // The cells hold the last check, drawn without their tone, and say so.
   await expect(
     page.getByText(`Health unknown: ${workerName} is offline. Last known health, read`).filter({ visible: true }),
   ).toBeVisible()
   await expect(page.getByRole("img", { name: "ok at the last check" }).filter({ visible: true }).first()).toBeVisible()
 
-  // The Health tab names the checks as the last known health.
   await page.goto(`/instances/${instanceId}?tab=health`)
   await expect(page.getByRole("heading", { name: "Last known health" })).toBeVisible()
   await expect(

@@ -78,10 +78,8 @@ type MapData = {
   }
 }
 
-/** Error rate above which a workflow's failures stand out (percent of its runs in 30 days). */
 const ERROR_RATE_FAIL = 3
 
-/** "12 workflows · 2 duplicated · 3 inactive", without a kind that has none (FW-3). */
 export function mapSummary(workflows: number, duplicated: number, inactive: number): string {
   const kinds = counts(
     [
@@ -93,7 +91,6 @@ export function mapSummary(workflows: number, duplicated: number, inactive: numb
   return kinds ? `${plural(workflows, "workflow")} · ${kinds}` : plural(workflows, "workflow")
 }
 
-/** The share of runs that failed in 30 days; without runs a muted "-", not 0% (FB-8). */
 function ErrorRateCell({ rate, errors, runs }: { rate: number | null; errors: number; runs: number }) {
   if (rate === null)
     return (
@@ -116,7 +113,6 @@ function ErrorRateCell({ rate, errors, runs }: { rate: number | null; errors: nu
   )
 }
 
-/** Regular: the insight panels are summary cards whose lines run without rules (#29). */
 const summary = "regular:pb-3 regular:[&>:not(header)]:border-t-0 regular:[&>:not(header)]:py-2"
 
 export function WorkflowsPage() {
@@ -131,11 +127,8 @@ export function WorkflowsPage() {
   }
   const query = new URLSearchParams({ ...(q ? { q } : {}), ...(instance !== "all" ? { instance } : {}) })
   const data = useApi<MapData>(`/workflows?${query}`, { keepRows: true })
-  // A failed refresh keeps the rows and the head says so; new filters that failed keep the previous rows and the
-  // filter line says so (TB-5, LD-12).
   const view = loadView(data)
   const instances = useApi<{ instances: PickedInstance[] }>("/instances")
-  // Moving needs Move workflows chosen on both instances; a workflow elsewhere has no Move.
   const movable = new Set(activeWith(instances.data?.instances, "move").map((i) => i.id))
   const sync = useApiMutation<void>("POST", "/workflows/sync", {
     invalidate: [`/workflows?${query}`],
@@ -143,6 +136,7 @@ export function WorkflowsPage() {
     failed: "refresh the workflow map",
   })
   const [moving, setMoving] = useState<WorkflowRow | null>(null)
+  const [opening, setOpening] = useState(0)
   const ins = data.data?.insights
   const rows = data.data?.workflows ?? []
   const filtered = Boolean(q) || instance !== "all"
@@ -249,7 +243,6 @@ export function WorkflowsPage() {
         count={
           data.data ? (
             <>
-              {/* New filters that failed keep the previous rows, and this line says so instead of a count (TB-5). */}
               {data.previous !== "failed" && plural(rows.length, "workflow")}
               <RefreshNote live={data} what="these workflows" small />
             </>
@@ -338,7 +331,13 @@ export function WorkflowsPage() {
                   <ErrorRateCell rate={rate(w)} errors={w.errors30d} runs={w.runs30d} />
                   <TableCell className="text-end">
                     {movable.has(w.instanceId) && (
-                      <Button size="sm" onClick={() => setMoving(w)}>
+                      <Button
+                        size="sm"
+                        onClick={() => {
+                          setOpening((count) => count + 1)
+                          setMoving(w)
+                        }}
+                      >
                         Move <ArrowRight />
                       </Button>
                     )}
@@ -349,7 +348,7 @@ export function WorkflowsPage() {
           </Table>
         </Reloading>
       )}
-      <MoveDialog workflow={moving} onClose={() => setMoving(null)} />
+      <MoveDialog key={opening} workflow={moving} onClose={() => setMoving(null)} />
     </Page>
   )
 }
@@ -371,18 +370,10 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
   const [preview, setPreview] = useState<Preview | null>(null)
   const [steps, setSteps] = useState<{ step: string; ok: boolean; detail?: string }[] | null>(null)
   const [error, setError] = useState("")
-  // The socket proxy refused what the worker had to do: the lines that allow it, shown in the dialog.
   const [fix, setFix] = useState<ProxyFix | null>(null)
   const [busy, setBusy] = useState(false)
-  // A chosen target is asked about before it is dropped, until the move has run (DS-9).
-  const guard = useDiscardGuard(!steps && target !== "", () => {
-    setTarget("")
-    setPreview(null)
-    setSteps(null)
-    setError("")
-    onClose()
-  })
-  const body = () => ({ sourceId: workflow?.instanceId, targetId: target, workflowId: workflow?.workflowId })
+  const guard = useDiscardGuard(workflow !== null && !steps && target !== "", onClose)
+  const moving = busy && preview !== null && !steps
   async function act(fn: () => Promise<void>) {
     setBusy(true)
     setError("")
@@ -397,7 +388,7 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
     }
   }
   return (
-    <Dialog open={workflow !== null} onOpenChange={guard.onOpenChange}>
+    <Dialog open={workflow !== null} onOpenChange={(open) => !moving && guard.onOpenChange(open)}>
       <DialogContent className="md:max-w-2xl" keepOnBackdrop>
         <DialogHeader icon={ArrowRightLeftIcon}>
           <DialogTitle>Move {workflow?.name}</DialogTitle>
@@ -428,10 +419,7 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
             listLabel="Instances"
             placeholder="Move to…"
             value={target}
-            onChange={(v) => {
-              setTarget(v)
-              setPreview(null)
-            }}
+            onChange={setTarget}
             options={activeWith(instances.data?.instances, "move")
               .filter((i) => i.id !== workflow?.instanceId)
               .map((i) => ({ value: i.id, label: i.name }))}
@@ -492,7 +480,7 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
           </div>
         )}
         {error && <FieldError>{error}</FieldError>}
-        {fix && <ProxyFixBlock fix={fix} held />}
+        {fix && <ProxyFixBlock fix={fix} />}
         <DialogFooter>
           {steps ? (
             <Button variant="primary" onClick={() => void guard.requestClose("finished")}>
@@ -508,7 +496,12 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
                 busyLabel="Reviewing…"
                 onClick={() =>
                   act(async () =>
-                    setPreview(await api<Preview>("/workflows/moves/preview", { method: "POST", json: body() })),
+                    setPreview(
+                      await api<Preview>("/workflows/moves/preview", {
+                        method: "POST",
+                        json: { sourceId: workflow?.instanceId, targetId: target, workflowId: workflow?.workflowId },
+                      }),
+                    ),
                   )
                 }
               >
@@ -517,7 +510,9 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
             </>
           ) : (
             <>
-              <Button onClick={() => setPreview(null)}>Back</Button>
+              <Button disabled={busy} onClick={() => setPreview(null)}>
+                Back
+              </Button>
               <BusyButton
                 variant="primary"
                 disabled={preview.blockers.length > 0}
@@ -529,7 +524,11 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
                       "/workflows/moves",
                       {
                         method: "POST",
-                        json: body(),
+                        json: {
+                          sourceId: preview.source.id,
+                          targetId: preview.target.id,
+                          workflowId: preview.workflow.id,
+                        },
                       },
                     )
                     setSteps(res.steps)

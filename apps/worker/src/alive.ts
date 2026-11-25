@@ -20,11 +20,6 @@ export async function readLastAlive(file: string): Promise<number> {
   }
 }
 
-/**
- * Marks the Worker alive now and every ALIVE_INTERVAL_MS, on a timer of its own, whatever the server answers. The
- * container's health is the process's own: a server or a proxy in front of it that cannot be reached shows as the
- * Worker being offline in n8n-ops, not as an unhealthy container, which restarting would not fix.
- */
 export function keepAlive(file: string, log: (msg: string, extra?: Record<string, unknown>) => void): void {
   let failing = false
   const mark = () =>

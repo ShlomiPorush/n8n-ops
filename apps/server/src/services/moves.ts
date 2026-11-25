@@ -1,15 +1,14 @@
 import { hasCapability, unsupportedVersionText } from "@n8n-ops/shared"
 import { eq } from "drizzle-orm"
 import type { Ctx } from "../context.ts"
-import { instances, moves, workerJobs } from "../db/schema.ts"
+import { instances } from "../db/schema.ts"
 import type { N8nWorkflow } from "../n8n/client.ts"
 import { jobTarget, usableWorker } from "./backups.ts"
 import { can, clientFor, effectiveScopes, type Instance, unsupportedVersion } from "./instances.ts"
 import { jobProxyFix, type ProxyFix } from "./proxy-fix.ts"
 import { enqueueJob, waitForJob } from "./workers.ts"
-import { calledWorkflowIds, credentialIds } from "./workflows.ts"
+import { calledWorkflowIds } from "./workflows.ts"
 
-/** The socket proxy refused what a worker had to do; `proxyFix` has the exact lines that allow it. */
 export class ProxyRefusedError extends Error {
   constructor(
     message: string,
@@ -21,19 +20,11 @@ export class ProxyRefusedError extends Error {
 
 export type ExportedCredential = { id: string; name: string; type: string; data: Record<string, unknown> }
 
-/**
- * Why credentials of an instance may not be exported: only an active instance chosen for moving workflows, or
- * backed up through its worker, which already reads them. Null when they may.
- */
 export function credentialExportRefusal(instance: Instance): string | null {
   if (can(instance, "move") || (can(instance, "backup") && instance.backupVia === "worker")) return null
   return `Credentials of ${instance.name} are exported only for Move workflows or a backup through its worker. Add one of them to its capabilities.`
 }
 
-/**
- * Decrypted credentials of an instance, read by its worker with n8n's CLI: all of them, or every one of `wanted`.
- * Kept in memory only.
- */
 export async function exportCredentials(
   ctx: Ctx,
   instance: Instance,
@@ -58,14 +49,12 @@ export async function exportCredentials(
   const outcome = await waitForJob(job.id)
   if (!outcome.ok) {
     const message = outcome.error ?? "The worker could not export the credentials."
-    // The instance as it is now: if it moved to another worker or container meanwhile, no fix is shown.
     const [now] = await ctx.db.select().from(instances).where(eq(instances.id, instance.id))
     const proxyFix = now
       ? await jobProxyFix(ctx, now, {
           workerId: worker.id,
           container: instance.containerName,
           refused: outcome.refused,
-          error: outcome.error,
           ...(instance.composeProject && instance.composeService
             ? {
                 target: { project: instance.composeProject, service: instance.composeService },
@@ -82,12 +71,7 @@ export async function exportCredentials(
     throw proxyFix ? new ProxyRefusedError(message, proxyFix) : new Error(message)
   }
   const credentials = (outcome.result?.credentials ?? []) as ExportedCredential[]
-  await ctx.db
-    .update(workerJobs)
-    .set({ result: { credentials: credentials.length } })
-    .where(eq(workerJobs.id, job.id))
   if (!wanted) {
-    // A worker of an earlier release answers a failed export with an empty list, and never says `empty`.
     if (!credentials.length && outcome.result?.empty !== true)
       throw new Error(
         `The worker of ${instance.name} returned no credentials and did not say that n8n has none, so the export may have failed. Update the worker and try again.`,
@@ -117,7 +101,6 @@ function usedCredentials(workflow: Pick<N8nWorkflow, "nodes">) {
   return [...new Map(creds.map((c) => [c.id, c])).values()].filter((c) => c.id)
 }
 
-/** What a move will do and break, shown before every move (requirement F3). */
 export async function previewMove(ctx: Ctx, input: { sourceId: string; targetId: string; workflowId: string }) {
   const [source, target] = await Promise.all([load(ctx, input.sourceId), load(ctx, input.targetId)])
   if (source.id === target.id) throw new Error("Choose a different target instance.")
@@ -145,7 +128,7 @@ export async function previewMove(ctx: Ctx, input: { sourceId: string; targetId:
   if (!hasCapability("moveFrom", effectiveScopes(source), Boolean(source.workerId)))
     blockers.push(`The API key of ${source.name} cannot read and deactivate workflows.`)
   return {
-    workflow: { id: workflow.id, name: workflow.name, active: workflow.active, credentialIds: credentialIds(workflow) },
+    workflow: { id: workflow.id, name: workflow.name, active: workflow.active },
     source: { id: source.id, name: source.name },
     target: { id: target.id, name: target.name },
     webhooks,
@@ -156,7 +139,6 @@ export async function previewMove(ctx: Ctx, input: { sourceId: string; targetId:
   }
 }
 
-/** Moves a workflow: create on target, verify, then deactivate the source. Nothing is deleted. */
 export async function runMove(
   ctx: Ctx,
   input: { sourceId: string; targetId: string; workflowId: string },
@@ -168,23 +150,6 @@ export async function runMove(
   const from = clientFor(ctx, source)
   const to = clientFor(ctx, target)
   const steps: { step: string; ok: boolean; detail?: string }[] = []
-  const [move] = await ctx.db
-    .insert(moves)
-    .values({
-      sourceInstanceId: source.id,
-      targetInstanceId: target.id,
-      workflowId: input.workflowId,
-      workflowName: preview.workflow.name,
-      status: "running",
-    })
-    .returning()
-  const record = async (status: "running" | "done" | "failed", newWorkflowId?: string) => {
-    if (move)
-      await ctx.db
-        .update(moves)
-        .set({ status, steps, ...(newWorkflowId ? { newWorkflowId } : {}) })
-        .where(eq(moves.id, move.id))
-  }
   try {
     const workflow = await from.getWorkflow(input.workflowId)
     const used = usedCredentials(workflow)
@@ -230,7 +195,6 @@ export async function runMove(
     } else {
       steps.push({ step: "The source was inactive, so the copy stays inactive", ok: true })
     }
-    await record("done", created.id)
     await ctx.audit({
       actor,
       action: "Workflow moved",
@@ -241,7 +205,6 @@ export async function runMove(
     return { newWorkflowId: created.id, steps }
   } catch (error) {
     steps.push({ step: "Stopped", ok: false, detail: (error as Error).message })
-    await record("failed")
     await ctx.audit({
       actor,
       action: "Workflow move failed",
@@ -249,7 +212,6 @@ export async function runMove(
       via: "web",
       details: { steps },
     })
-    // What the socket proxy refused stays with the error, so the dialog shows the lines that allow it.
     const proxyFix = error instanceof ProxyRefusedError ? { proxyFix: error.proxyFix } : {}
     throw Object.assign(new Error((error as Error).message), { steps, ...proxyFix })
   }

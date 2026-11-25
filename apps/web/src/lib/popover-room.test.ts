@@ -5,7 +5,6 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-/** Just enough of a window for the watch: listeners on itself and on its visible viewport. */
 function fakeWindow() {
   const own = new Map<string, Set<() => void>>()
   const viewport = new Set<() => void>()
@@ -37,7 +36,6 @@ describe("the room of an open panel follows the screen (MP-5)", () => {
     const told: number[] = []
     const stop = watchRoom((room) => told.push(typeof room === "number" ? room : room.bottom), measure)
     expect(told).toEqual([8])
-    // The tab bar grew with the safe area after a rotation, then the keyboard came up.
     bottom = 106
     win.fire("orientationchange")
     win.fire("resize")
@@ -54,7 +52,6 @@ describe("the room of an open panel follows the screen (MP-5)", () => {
 
 describe("the room of a popover on a phone (MP-5)", () => {
   it("stays 8px clear of the top bar and of the tab bar with its safe area", () => {
-    // 844px high: a 56px top bar, a 64px tab bar over a 34px safe area.
     expect(roomBetweenBars({ topBarBottom: 56, tabBarTop: 844 - 98, height: 844 })).toEqual({
       top: 64,
       bottom: 106,

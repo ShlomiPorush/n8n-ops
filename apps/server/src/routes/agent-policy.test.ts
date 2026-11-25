@@ -6,13 +6,6 @@ import { features } from "../features.ts"
 import { agentGuard } from "../http/agent-guard.ts"
 import { AREAS, DATA_SENTENCE, honoPath, listing, OPEN, REVISION, updateSkillNotice } from "./agent-policy.ts"
 
-/*
- * The closed route table (the agent-access standard): every route of the app is open to agents in OPEN
- * (agent-policy.ts), or MCP, or closed here with the reason. A new route fails this test until someone decides.
- * Agents reach only /api/v1 and /mcp with their tokens; a Bearer token anywhere else is refused before any route
- * runs (http/agent-guard.ts), and the console's routes take only a browser session.
- */
-
 const PEOPLE = "a page or API of the console, for a signed-in person only"
 const OAUTH = "the authorization server's own endpoint, not a call made as the person"
 const SIGN_IN = "sign-in, two-factor and passkeys (Better Auth), for people only"
@@ -42,7 +35,6 @@ const CLOSED: Record<string, string> = {
   "ALL /n8n/:instance/api/v1/*": "the temporary access proxy, with a key a person approved for one task",
   "ALL /oauth/*": OAUTH,
   "DELETE /api/admin/tokens/:id": "agent connections, tokens, keys and the audit log are for people only",
-  "DELETE /api/backups/restores/:id": PEOPLE,
   "DELETE /api/destinations/:id": PEOPLE,
   "DELETE /api/instances/:id{[0-9a-fA-F-]{36}}": PEOPLE,
   "DELETE /api/instances/:id{[0-9a-fA-F-]{36}}/capabilities/:capability": PEOPLE,
@@ -131,7 +123,6 @@ const CLOSED: Record<string, string> = {
   "POST /api/instances/:id{[0-9a-fA-F-]{36}}/setup/backup": PEOPLE,
   "POST /api/instances/:id{[0-9a-fA-F-]{36}}/setup/health": PEOPLE,
   "POST /api/instances/:id{[0-9a-fA-F-]{36}}/setup/worker": PEOPLE,
-  "POST /api/instances/test": PEOPLE,
   "POST /api/problems/:id/merge": PEOPLE,
   "POST /api/problems/:id/mute": PEOPLE,
   "POST /api/problems/:id/reopen": PEOPLE,
@@ -162,7 +153,6 @@ const CLOSED: Record<string, string> = {
   "PUT /api/workers/:id/allowed": PEOPLE,
 }
 
-/** The MCP server: open to agents, each tool with its area and kind in routes/agent.ts. */
 const MCP = new Set(["ALL /mcp", "ALL /mcp/*"])
 
 function fakeCtx(): Ctx {

@@ -19,12 +19,6 @@ import { formatTime, useTimeFormat } from "@/lib/time"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
 
-/*
- * The small set of page building blocks. Pages are made of these and the primitives in components/ui;
- * a new block is added only when none of these fits.
- */
-
-/** A page: header, then a column of blocks with the standard gap. */
 export function Page({
   title,
   description,
@@ -50,12 +44,6 @@ export function Page({
   )
 }
 
-/**
- * The page head. From 761px the title is in the top bar and the actions move up beside it (NL-6), so the page
- * starts with its one line description. On a phone the title leads the page with the main action on its line
- * (NL-14). With `live` (the page's queries) a line says how fresh the data is and keeps ticking, and says so
- * when a refresh failed while the rows stay (LD-12, TB-5); `updated={false}` keeps only the failure.
- */
 export function PageHead({
   title,
   description,
@@ -76,7 +64,6 @@ export function PageHead({
     return (
       <>
         {actions && <PageActions>{actions}</PageActions>}
-        {/* Regular also draws the page's icon and name here, large, above the line (#29). */}
         <div
           data-slot="page-head"
           className={cn("mb-1 regular:flex regular:items-start regular:gap-3.5", !said && "compact:hidden")}
@@ -97,11 +84,9 @@ export function PageHead({
   return (
     <div className="mb-1 grid gap-1.5">
       <div className="flex items-start gap-3">
-        {/* Compact: the H1 of the type scale, a step smaller at 380px or less. */}
         <h1 className="min-w-0 flex-1 text-h1 font-heavy break-words regular:tracking-tighter compact:max-[381px]:text-h1-narrow">
           {title}
         </h1>
-        {/* Compact: the main action without its icon, so the title keeps its room; a busy ring or result stays. */}
         {actions && (
           <div className="flex shrink-0 items-center gap-2 compact:[&>*>svg:not([data-status])]:hidden">{actions}</div>
         )}
@@ -116,7 +101,6 @@ export function PageHead({
   )
 }
 
-/** "Updated 3 min ago", with the exact time on hover, keyboard focus or a tap (MO-4); it keeps ticking. */
 function Updated({ at }: { at: number }) {
   useTick()
   const w = useTimeFormat()
@@ -127,16 +111,6 @@ function Updated({ at }: { at: number }) {
   )
 }
 
-/**
- * How fresh the data on screen is, inside a line of text (LD-12). While it is fresh: "Updated 3 min ago" (only with
- * `updated`). After a refresh that failed, with the data kept on screen (TB-5): "Could not refresh · Updated 4 min
- * ago" in amber with Try again, until the next good answer. "Could not refresh" sits in a polite live region that
- * stays mounted, so the failure is announced and the ticking time is not. `separator` leads it when it shows.
- *
- * With `what`, in a list's filter line, it speaks only for new filters that failed to load while the previous
- * rows stay (`previous` in lib/load-state.ts): "Could not load muted problems; showing the previous list", with
- * Try again. The page head then keeps saying when those rows were updated.
- */
 export function RefreshNote({
   live,
   updated = false,
@@ -148,16 +122,12 @@ export function RefreshNote({
   live: Live | Live[]
   updated?: boolean
   separator?: string
-  /** In a small-text line, so Try again matches it. */
   small?: boolean
-  /** The text size of the line it sits in, when that is neither body nor small text, so Try again matches it. */
   textClass?: string
-  /** What the new filters would have shown, for a list's filter line. */
   what?: string
 }) {
   const all = Array.isArray(live) ? live : [live]
   const failed = all.filter(what ? filterFailed : refreshFailed)
-  // The oldest data on screen is the one the line speaks for.
   const at = failed.length ? Math.min(...failed.map((q) => q.dataUpdatedAt)) : all[0]?.dataUpdatedAt
   const fresh = updated && Boolean(at)
   return (
@@ -189,12 +159,6 @@ export function RefreshNote({
   )
 }
 
-/**
- * RefreshNote as a line of its own at the top of a panel whose title is outside it, such as a Settings form. It is
- * out of sight while the data is fresh but stays mounted, so a failure is announced when it comes (TB-5, LD-12).
- * With `what`, for a list with no filter line of its own, it also says when a new order or new filters failed to
- * load and the previous rows stay: "Could not load open problems; showing the previous list".
- */
 export function RefreshLine({ live, what }: { live: Live; what?: string }) {
   const failed = refreshFailed(live) || (what !== undefined && filterFailed(live))
   return (
@@ -205,10 +169,6 @@ export function RefreshLine({ live, what }: { live: Live; what?: string }) {
   )
 }
 
-/**
- * Try again after a failed load. While the new attempt runs it stays in place, named "Loading…" and marked busy,
- * so the keyboard focus stays on it, and is still on it when the attempt fails too (AX-6).
- */
 export function TryAgain({
   busy = false,
   onClick,
@@ -233,15 +193,10 @@ export function TryAgain({
   )
 }
 
-/**
- * The base unit: a tinted panel. Rows inside it are split by a 1px top line only. A line kept out of sight at its
- * top (RefreshLine) does not count as the first row.
- */
 export function Panel({ className, ...props }: React.ComponentProps<"section">) {
   return (
     <section
       className={cn(
-        // Clip, not hidden: a hidden panel is a scroll container whose height a page grid may squash (NL-2).
         "min-w-0 overflow-clip rounded-lg bg-panel regular:shadow-card regular:ring-1 regular:ring-ink/10 [&>:first-child]:border-t-0 [&>.sr-only:first-child+*]:border-t-0",
         className,
       )}
@@ -250,10 +205,6 @@ export function Panel({ className, ...props }: React.ComponentProps<"section">) 
   )
 }
 
-/**
- * A panel header: a short noun, a muted count beside it, and a "more" link or an action on the far side, with the
- * list's Sort button last, at the very end, as on every list.
- */
 export function PanelHead({
   title,
   count,
@@ -269,14 +220,9 @@ export function PanelHead({
   count?: React.ReactNode
   more?: { to: string; label: string }
   action?: React.ReactNode
-  /** The list's Sort button (TB-28), at the end of the head, after the "more" link. */
   sort?: React.ReactNode
   description?: React.ReactNode
   className?: string
-  /**
-   * Makes the panel a summary card in Regular (#29): the title a small label, the count a large figure under it,
-   * and this icon in a tile at the end. Compact keeps its one line head.
-   */
   icon?: LucideIcon
   tone?: "warn"
 }) {
@@ -332,10 +278,6 @@ export function PanelHead({
   )
 }
 
-/**
- * A row that is a link. A drag over it selects its text instead of dragging the link, and a click that ends
- * selecting text goes nowhere, so its values can be copied; a plain click and Enter follow the link (TB-8).
- */
 export function RowLink({ onClick, children, ...props }: React.ComponentProps<typeof Link>) {
   return (
     <Link
@@ -351,7 +293,6 @@ export function RowLink({ onClick, children, ...props }: React.ComponentProps<ty
   )
 }
 
-/** A row in a panel. Pass onClick or asChild-like Link via `to` for a clickable row. */
 export function Row({
   className,
   to,
@@ -364,7 +305,6 @@ export function Row({
   to?: string
   onClick?: () => void
   current?: boolean
-  /** A 3px status edge at the start; healthy rows keep it quiet. Regular has no edges: its tags carry status. */
   edge?: "ok" | "warn" | "fail" | "info" | "muted"
   children: React.ReactNode
 }) {
@@ -400,7 +340,6 @@ export function Row({
   return <div className={cls}>{children}</div>
 }
 
-/** A key value row: the muted label at the start, the value in 650 weight at the end. */
 export function KV({
   label,
   children,
@@ -418,13 +357,6 @@ export function KV({
   )
 }
 
-/**
- * An alert row: a 4px status bar (Compact; Regular's tag carries the status), the text, and its actions (FB-10).
- * With `to` the text is the link that opens the item, and the actions sit beside it as controls of their own, never
- * inside it; a click anywhere else on the row opens the item too, except one that ends selecting text (TB-8). In a
- * list narrower than 32rem (`@container/alerts`: the bell's window, a phone) the actions go under the text.
- * `onOpen` runs on the link's click, for a list that moves on its own (the bell's window).
- */
 export function AlertRow({
   tone,
   title,
@@ -492,12 +424,6 @@ export function AlertRow({
   )
 }
 
-/**
- * Key figures: a large number with a muted label. Compact draws one outlined block (cell lines are outlines,
- * so a short last row leaves no block); Regular draws a card per figure with its icon. On a phone they go two to a
- * line and an odd last figure takes the whole line (MO-8). With `row` they stay in one row at any width, for a
- * narrow column such as a list beside its reading pane (FB-17).
- */
 export function Kpis({
   className,
   row = false,
@@ -510,13 +436,10 @@ export function Kpis({
   const grid = (
     <div
       className={cn(
-        // Clip, not hidden, so a page grid never squashes the figures (NL-2).
         "grid overflow-clip rounded-lg border border-line bg-bg",
         row
           ? kpiRow
-          : // Compact's cells may be narrower, as in v3; a phone always shows two per row (MO-8), in both designs (the
-            // Compact width rule outranks a plain phone rule, so the phone rule is repeated for Compact).
-            "grid-cols-[repeat(auto-fit,minmax(170px,1fr))] compact:grid-cols-[repeat(auto-fit,minmax(150px,1fr))] max-md:grid-cols-2 compact:max-md:grid-cols-2 max-md:[&>:last-child:nth-child(odd)]:col-span-full",
+          : "grid-cols-[repeat(auto-fit,minmax(170px,1fr))] compact:grid-cols-[repeat(auto-fit,minmax(150px,1fr))] max-md:grid-cols-2 compact:max-md:grid-cols-2 max-md:[&>:last-child:nth-child(odd)]:col-span-full",
         "regular:gap-gap regular:overflow-visible regular:border-0 regular:bg-transparent",
         className,
       )}
@@ -527,14 +450,10 @@ export function Kpis({
   return row ? <div className="@container/kpis min-w-0">{grid}</div> : grid
 }
 
-/*
- * Figures in one row that never stacks, however narrow the column they are in (FB-17): there the icon goes (it
- * only illustrates), and in a narrower one the figure is a size smaller with less padding, so it still fits.
- * Regular's own rule for a figure in words is more specific than a plain one: both designs say it.
- */
 const kpiRow = cn(
   "grid-flow-col auto-cols-fr",
   "@max-[40rem]/kpis:**:data-[slot=kpi-icon]:hidden!",
+  // One plain class for both designs would lose to Regular's larger size for a figure in words.
   "compact:@max-[30rem]/kpis:**:data-[slot=kpi-figure]:text-h2",
   "regular:@max-[30rem]/kpis:**:data-[slot=kpi-figure]:text-h2",
   "regular:@max-[30rem]/kpis:gap-2 regular:@max-[30rem]/kpis:**:data-[slot=kpi]:p-3",
@@ -550,13 +469,10 @@ export function Kpi({
   icon: Icon,
 }: {
   label: React.ReactNode
-  /** A number is formatted the same way everywhere (and rolls in, in Regular). */
   value: React.ReactNode | number
   hint?: React.ReactNode
   tone?: "fail" | "warn" | "ok"
-  /** Every count is a link to the list it counts. */
   to?: string
-  /** What the figure is about; drawn by Regular only, beside the figure. */
   icon?: LucideIcon
 }) {
   const inner = (
@@ -566,7 +482,6 @@ export function Kpi({
           data-slot="kpi-figure"
           className={cn(
             "block text-figure",
-            // Words ("just now", "14 h ago") a size down in Regular, so they fit a narrow card on one line.
             typeof value !== "number" && "regular:text-h1",
             tone === "fail" && "text-fail",
             tone === "warn" && "text-warn",
@@ -610,11 +525,6 @@ export function Kpi({
   )
 }
 
-/**
- * Figures that cut the list right under them, drawn as tabs on its top edge (FB-17): each a count and its name on
- * one line, the one on screen now underlined as the app's tabs are, so they cost the list as little height as they
- * can. A column too narrow for all of them scrolls them sideways, as tabs do.
- */
 export function FigureTabs({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <nav aria-label={label} className="flex min-w-0 gap-5 overflow-x-auto overflow-y-hidden [scrollbar-width:none]">
@@ -633,9 +543,7 @@ export function FigureTab({
   label: string
   value: number
   tone?: "fail" | "warn"
-  /** The list cut to what the figure counts, or back to all of it. */
   to: string
-  /** The list on screen now is what this figure counts: marked, and said to assistive technology. */
   selected: boolean
 }) {
   return (
@@ -659,7 +567,6 @@ export function FigureTab({
   )
 }
 
-/** Loading: a 24px spinner with a short sentence. */
 export function Loading({ children = "Loading…", className }: { children?: React.ReactNode; className?: string }) {
   return (
     <div
@@ -672,7 +579,6 @@ export function Loading({ children = "Loading…", className }: { children?: Rea
   )
 }
 
-/** Empty: one bold factual sentence about what is missing, a muted line under it, and at most one action. */
 export function Empty({
   title,
   children,
@@ -683,7 +589,6 @@ export function Empty({
   title: React.ReactNode
   children?: React.ReactNode
   action?: React.ReactNode
-  /** Drawn by Regular only, above the sentence; the page's own icon when not given. */
   icon?: LucideIcon
   className?: string
 }) {
@@ -710,7 +615,6 @@ export function Empty({
   )
 }
 
-/** An area that could not load: what failed and the server's reason, with a retry. */
 export function LoadError({ error, retry, what }: { error: unknown; retry?: () => void; what: string }) {
   return (
     <div role="alert" className="flex flex-wrap items-center gap-3 px-pad-x py-[22px]">
@@ -727,10 +631,6 @@ export function LoadError({ error, retry, what }: { error: unknown; retry?: () =
   )
 }
 
-/**
- * Locked: shown instead of a control that needs something missing. It says what is missing, why it
- * matters, and links to where it is set ("Settings → Backup Storage").
- */
 export function Locked({
   title,
   children,
@@ -763,12 +663,6 @@ export function Locked({
   )
 }
 
-/**
- * An ID, address or key in mono that copies on a click or a tap (FB-12), its tooltip "Click to copy". With a
- * pointer, hover tints it and shows a faint copy icon, hidden at rest so values do not carry icons everywhere; the
- * keyboard focus shows it too. The full value is copied (not the truncated one), with a check for 1.5s and a toast
- * that says what was copied.
- */
 export function Copyable({
   value,
   children,
@@ -779,9 +673,7 @@ export function Copyable({
   value: string
   children?: React.ReactNode
   className?: string
-  /** What the value is, for the accessible name ("Copy execution ID"). */
   label?: string
-  /** A long value wraps onto more lines instead of being cut, the icon after its last line. */
   wrap?: boolean
 }) {
   const { done, copy } = useCopy(value)
@@ -799,14 +691,12 @@ export function Copyable({
         className,
       )}
     >
-      {/* Selectable, for a browser that cannot copy (plain HTTP). */}
       <span className={cn("min-w-0 select-text", wrap ? "wrap-anywhere" : "truncate")} dir="auto">
         {children ?? value}
       </span>
       <Icon
         aria-hidden
         className={cn(
-          // Hidden at rest; faint under a pointer that hovers (never after a tap), full on keyboard focus.
           "size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity duration-150 group-focus-visible/copy:opacity-100 [@media(hover:hover)]:group-hover/copy:opacity-50",
           done && "text-ok opacity-100",
         )}
@@ -815,13 +705,11 @@ export function Copyable({
   )
 }
 
-/** Copies a value: a check for 1.5s and a toast that says what was copied. */
 function useCopy(value: string) {
   const [done, setDone] = useState(false)
   const copy = async (e: React.MouseEvent) => {
     e.stopPropagation()
     e.preventDefault()
-    // Browsers give the clipboard to secure pages only: over plain HTTP there is none to ask (FB-12).
     if (!window.isSecureContext || !navigator.clipboard) {
       toast.error("Copying needs HTTPS. Select the text and copy it instead.")
       return
@@ -838,18 +726,7 @@ function useCopy(value: string) {
   return { done, copy }
 }
 
-/**
- * A command or text to paste somewhere else, in full: it wraps instead of being cut, reads left to right,
- * can be selected by hand, and has its own Copy button.
- */
-export function Command({
-  value,
-  label,
-}: {
-  value: string
-  /** The Copy button's accessible name ("Copy the command"). */
-  label: string
-}) {
+export function Command({ value, label }: { value: string; label: string }) {
   const { done, copy } = useCopy(value)
   return (
     <div className="flex w-full min-w-0 items-start gap-2 rounded-sm border border-line bg-fill py-1.5 ps-3 pe-1.5">
@@ -864,15 +741,6 @@ export function Command({
   )
 }
 
-/**
- * A button that starts a request (FB-7, DS-20). With `run` it owns the request: a click sends one, and clicks
- * are ignored until its label is back (its clock is lib/busy-run.ts, so a double click cannot send two). It is
- * disabled and shows a spinning ring and `busyLabel` ("Checking…") meanwhile; then "Done" for DONE_MS, or
- * "Failed" for FAILED_MS, and its label again. `run` should reject on failure and say why itself (useApiMutation's
- * toast).
- * With `busy` instead, the caller owns the state (a dialog's submit, whose dialog says the result): the ring and
- * `busyLabel` show while it is true.
- */
 export function BusyButton({
   run,
   busy: held = false,
@@ -890,23 +758,18 @@ export function BusyButton({
   busy?: boolean
   busyLabel: string
   icon?: LucideIcon
-  /** For a label that hides in a narrow pane but stays the accessible name (`@max-[34rem]/pane:sr-only`). */
   labelClassName?: string
   children: React.ReactNode
 }) {
   const [state, setState] = useState<BusyState>("idle")
   const [clock] = useState(() => busyRun(setState))
-  useEffect(() => clock.mount(), [clock])
   const busy = held || state === "busy"
   const Shown = busy ? LoaderCircle : state === "done" ? Check : state === "failed" ? X : Icon
-  // A filled button keeps its colours; the others take the result's tone.
   const toned = variant !== "primary" && variant !== "danger-solid"
   return (
     <Button
       {...props}
       variant={variant}
-      // "Done" stays undimmed but, like "Failed", ignores clicks (`clock.ignore`): it is not the action, and a
-      // quick answer cannot turn a double click into two requests.
       disabled={disabled || busy || state === "failed"}
       className={cn(
         toned && state === "done" && "border-ok/40 text-ok",
@@ -914,19 +777,13 @@ export function BusyButton({
         className,
       )}
       onClick={(e) => {
-        // Until its label is back a click does nothing: it neither opens the row the button sits in nor submits.
         if (clock.ignore(e)) return
         onClick?.(e)
         if (run && !e.defaultPrevented) void clock.start(run)
       }}
     >
       {Shown && (
-        <Shown
-          aria-hidden
-          // The ring and the result mark say how the request goes (FB-7), so no design hides them with the icon.
-          data-status={Shown === Icon ? undefined : ""}
-          className={cn(busy && "animate-spin")}
-        />
+        <Shown aria-hidden data-status={Shown === Icon ? undefined : ""} className={cn(busy && "animate-spin")} />
       )}
       <span className={labelClassName}>
         {busy ? busyLabel : state === "done" ? "Done" : state === "failed" ? "Failed" : children}
@@ -935,7 +792,6 @@ export function BusyButton({
   )
 }
 
-/** User-entered text (workflow, instance and token names) keeps its own direction. */
 export function UserText({
   children,
   className,
@@ -943,7 +799,6 @@ export function UserText({
 }: {
   children: React.ReactNode
   className?: string
-  /** The full text on hover, where `className` cuts it to one line (TB-15). */
   title?: string
 }) {
   return (
@@ -953,10 +808,6 @@ export function UserText({
   )
 }
 
-/**
- * A muted "-" where there is nothing to measure or nothing was recorded, never a made-up 0 (FB-8). A screen reader
- * hears `said` instead of the dash.
- */
 export function NoValue({ said = "Not recorded" }: { said?: string }) {
   return (
     <span className="text-muted-foreground">
@@ -977,11 +828,6 @@ export {
   useUnsavedIds,
 } from "@/components/save-bar"
 
-/**
- * A list that reloads keeps its rows on screen until the answer replaces them; they dim only when the
- * answer takes longer than 200ms, so a fast reload does not flicker and nothing collapses (TB-5). A reload that
- * fails keeps them too (`loadView` in lib/load-state.ts), and the page head says so (RefreshNote).
- */
 export function Reloading({
   busy,
   children,
@@ -1010,11 +856,6 @@ export function Reloading({
   )
 }
 
-/**
- * An on/off setting: the whole row, title and description included, is the label of its switch, so a click
- * anywhere on it flips the switch (FS-1). A switch that cannot be used says why in `reason`, shown under the
- * description, as a tip alone never shows by touch or keyboard (AX-9).
- */
 export function SwitchRow({
   id,
   title,
@@ -1049,11 +890,6 @@ export function SwitchRow({
   )
 }
 
-/**
- * A stored secret is never shown as a masked field (FS-3). It reads "Stored" with Replace and Remove; the
- * password field appears only on Replace and takes the focus, and Remove marks it "Removed when you save".
- * The value is `undefined` while unchanged (and is then not sent), a string when replaced, `null` to remove.
- */
 export function SecretField({
   id,
   stored,
@@ -1070,7 +906,6 @@ export function SecretField({
   onChange: (value: string | null | undefined) => void
   removable?: boolean
   placeholder?: string
-  /** The field failed its check before a save, and the note that says why (SV-1). */
   invalid?: boolean
   describedBy?: string
 }) {
@@ -1083,7 +918,6 @@ export function SecretField({
           autoComplete="new-password"
           aria-invalid={invalid || undefined}
           aria-describedby={describedBy}
-          // Focus moves into the field the moment Replace is chosen.
           autoFocus={stored}
           placeholder={stored ? "New value" : placeholder}
           value={value ?? ""}

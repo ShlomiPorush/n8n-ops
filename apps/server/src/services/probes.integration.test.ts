@@ -9,8 +9,6 @@ import { createDatabase, type Database } from "../db/client.ts"
 import { instances, workerJobs, workers } from "../db/schema.ts"
 import { enqueueProbes } from "./backups.ts"
 
-// Health collected by a worker (collection mode "worker") against a real PostgreSQL: a probe that waits for the
-// instance's own worker holds the next one back; one left to another worker, revoked or replaced, does not.
 const adminUrl = process.env.MIGRATION_DATABASE_URL
 if (!adminUrl) throw new Error("MIGRATION_DATABASE_URL is required (scripts/verify.sh sets it)")
 
@@ -67,7 +65,6 @@ describe("enqueueProbes", () => {
       })
       .returning()
     if (!instance) throw new Error("no instance")
-    // Queued for the worker the instance had before it was revoked: no one will ever claim it.
     await ctx.db.insert(workerJobs).values({ workerId: old.id, instanceId: instance.id, kind: "probe", payload: {} })
 
     await enqueueProbes(ctx)
@@ -79,7 +76,6 @@ describe("enqueueProbes", () => {
       metrics: "https://queue.example.com/metrics",
     })
 
-    // Its own worker has not answered yet: no second probe.
     await enqueueProbes(ctx)
     expect(await probesOf(instance.id, current.id)).toHaveLength(1)
   })

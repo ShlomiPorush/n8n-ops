@@ -13,19 +13,6 @@ import { cn } from "@/lib/utils"
 
 const badgeTone: Record<Tone, string> = { fail: "bg-fail", warn: "bg-warn", info: "bg-ink" }
 
-/**
- * Needs attention from every page (NL-19): a bell in the top bar and in the phone top bar. Its badge counts every
- * item that needs a look, red when one fails, amber for warnings only, ink for news only; hidden at zero and "99+"
- * above 99, with the full number in its name ("Needs attention, 120 items"). While nothing is known to need a look
- * but a check could not run, a grey dot shows instead; the name says so either way.
- *
- * It opens the list Overview shows, with the same actions: on a wide screen a window under the bell, on a phone
- * (`phone`, the phone top bar's bell) the shared sheet; beside either one the toast stays usable (Undo after an
- * action), and Tab past the sheet's ends reaches it. Escape, Back or a click beside it closes it, and the focus
- * goes back to the bell. A row opens its item through the unsaved-changes guard: the window closes once the move
- * is made, and stays when the Leave question keeps the page. It closes when the width crosses 760px, since its bell
- * is gone. The list is read on every page by one query (`useAttention`).
- */
 export function AttentionBell({ phone = false }: { phone?: boolean }) {
   const query = useAttention()
   const a = query.data
@@ -37,8 +24,6 @@ export function AttentionBell({ phone = false }: { phone?: boolean }) {
   const openNow = useRef(open)
   openNow.current = open
 
-  // A move from the window closes it once made; one the Leave question kept leaves it open. After a move the page
-  // keeps the focus, instead of the bell.
   const { key } = useLocation()
   const moved = useRef(false)
   // biome-ignore lint/correctness/useExhaustiveDependencies: closes on every move
@@ -51,13 +36,11 @@ export function AttentionBell({ phone = false }: { phone?: boolean }) {
     if (moved.current) e.preventDefault()
     moved.current = false
   }
-  // The other bar's bell takes over across 760px.
   const narrow = useIsMobile()
   // biome-ignore lint/correctness/useExhaustiveDependencies: closes when the width crosses 760px
   useEffect(() => setOpen(false), [narrow])
 
   const navigate = useNavigateFromOverlay()
-  // A plain click opens the item in place; one with a modifier is left to the browser (a new tab).
   const onOpen: OpenItem = (to, e) => {
     if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
     e.preventDefault()
@@ -95,7 +78,6 @@ export function AttentionBell({ phone = false }: { phone?: boolean }) {
         phone
           ? "size-9"
           : "size-10 border border-line bg-panel aria-expanded:border-ink aria-expanded:bg-bg aria-expanded:shadow-halo",
-        // Regular: a quiet icon button like the bar's others (#29).
         !phone &&
           "regular:size-ctl regular:border-transparent regular:bg-transparent regular:aria-expanded:border-transparent regular:aria-expanded:bg-accent regular:aria-expanded:shadow-none regular:[@media(hover:hover)]:hover:bg-accent",
       )}
@@ -127,8 +109,6 @@ export function AttentionBell({ phone = false }: { phone?: boolean }) {
 
   if (phone)
     return (
-      // Not modal, so the toast stays usable over the sheet: Undo after Resolve or Mute (FB-16). The page beside it
-      // is inert all the same (DS-8, `inertPage`).
       <Dialog open={open} onOpenChange={setOpen} modal={false}>
         <DialogTrigger asChild>{button}</DialogTrigger>
         <DialogContent
@@ -137,11 +117,9 @@ export function AttentionBell({ phone = false }: { phone?: boolean }) {
           onCloseAutoFocus={(e) => {
             keepFocusAfterMove(e)
             if (e.defaultPrevented) return
-            // Back on the bell also after a tap beside the sheet, which a sheet that is not modal does not do itself.
             e.preventDefault()
             bellRef.current?.focus({ preventScroll: true })
           }}
-          // The Leave question asked for a move from the sheet is not beside it: Stay keeps the sheet (SV-1).
           onInteractOutside={(e) => {
             if (e.target instanceof Element && e.target.closest('[role="alertdialog"]')) e.preventDefault()
           }}
@@ -171,11 +149,6 @@ export function AttentionBell({ phone = false }: { phone?: boolean }) {
   )
 }
 
-/**
- * The window under the bell: its right edge under the bell's, 460px wide and at most 560px high (less on a short
- * screen), a head with the count, the list scrolling inside, and a foot that opens Overview. It holds a Back step
- * while open (DS-10) and stays within the room between the bars (MP-5).
- */
 function BellWindow({
   open,
   close,
@@ -203,14 +176,11 @@ function BellWindow({
         align="end"
         sideOffset={8}
         collisionPadding={room}
-        // The window itself takes the focus, so Tab goes on to its list and rows.
         onOpenAutoFocus={(e) => {
           e.preventDefault()
           ;(e.currentTarget as HTMLElement).focus({ preventScroll: true })
         }}
         onCloseAutoFocus={onCloseAutoFocus}
-        // The toast (Undo, Retry) and a question over the window, such as Leave without saving when a move from it
-        // waits, are not beside it: the window stays (NL-19, SV-1).
         onInteractOutside={(e) => {
           if (e.target instanceof Element && e.target.closest('[data-toast], [role="alertdialog"]')) e.preventDefault()
         }}

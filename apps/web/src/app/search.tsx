@@ -7,21 +7,12 @@ import { moveTracker } from "@/app/search-move"
 import { settingsGroups } from "@/app/settings-sections"
 import { api } from "@/lib/api"
 import { inertBeside } from "@/lib/inert"
-import { loadView } from "@/lib/load-state"
 import { n, plural } from "@/lib/numbers"
-import { onMoveKept, useNavigateFromOverlay, useOverlayHistory } from "@/lib/overlay-history"
+import { useNavigateFromOverlay, useOverlayHistory } from "@/lib/overlay-history"
 import { instancesText, isSingle, type ProblemRow, problemTitle } from "@/lib/problems"
 import { revealTarget } from "@/lib/reveal"
 import { cn } from "@/lib/utils"
 import { forms } from "@/pages/settings"
-
-/*
- * One search for pages, settings and data (SR-1 to SR-8). It sits in the top bar, widens when used and the
- * page's actions step aside; on a phone it covers the screen. Pages and settings answer on the first
- * character; problems, instances and workflows from the second, after a 200ms pause, each kind filling in
- * as its answer arrives. Up and Down move through the results while typing, Tab switches the kind, Enter
- * opens, Escape closes without closing anything beneath.
- */
 
 export type SearchPage = { to: string; label: string; group: string }
 
@@ -35,7 +26,6 @@ const KINDS: { key: Kind; label: string; icon: typeof Bug }[] = [
 ]
 const SERVER_FROM = 2
 const DEBOUNCE_MS = 200
-/** All shows this many of each kind; a kind's own tab shows up to LIMIT. */
 const SUMMARY = 3
 const LIMIT = 10
 
@@ -45,18 +35,14 @@ type Item = {
   subtitle?: string
   meta?: string
   to: string
-  /** A settings field to bring into view and focus after opening its section. */
   field?: string
-  /** The row marked `data-search-target` with this id flashes once the page has drawn it (SR-6). */
   target?: string
-  /** The "N found · Open in" box at the head of a kind's tab, an option like the results (SR-3). */
   openIn?: boolean
 }
 type Found = { items: Item[]; state: "ready" | "loading" | "failed"; total: number; all?: string }
 
 const lower = (s: string) => s.toLocaleLowerCase()
 
-/** The settings index, read from the forms themselves, so a renamed field is found by its new name. */
 const settingsIndex: (Item & { key: string })[] = settingsGroups.flatMap((g) =>
   g.items.flatMap(([section, sectionLabel]) => [
     {
@@ -83,7 +69,6 @@ function searchLocal(q: string, pages: SearchPage[]): { pages: Item[]; settings:
   const pageItems = pages
     .filter((p) => lower(p.label).includes(t))
     .map((p) => ({ id: `page:${p.to}`, title: p.label, subtitle: p.group, to: p.to }))
-  // Settings whose name matches come before those found only by key, which show the key.
   const byName = settingsIndex.filter((s) => lower(s.title).includes(t))
   const byKey = settingsIndex
     .filter((s) => !lower(s.title).includes(t) && lower(s.key).includes(t))
@@ -95,7 +80,6 @@ type ProblemHit = ProblemRow
 type WorkflowHit = { instanceId: string; workflowId: string; name: string; instanceName: string; triggerType: string }
 type InstanceHit = { id: string; name: string; baseUrl: string; health: string }
 
-/** The highlighted first match of the typed text. */
 function Marked({ text, q }: { text: string; q: string }) {
   const at = lower(text).indexOf(lower(q.trim()))
   if (!q.trim() || at < 0) return <>{text}</>
@@ -109,144 +93,108 @@ function Marked({ text, q }: { text: string; q: string }) {
   )
 }
 
-function useServerSearch(q: string, enabled: boolean) {
-  const [found, setFound] = React.useState<Partial<Record<Kind, Found>>>({})
+const ONCE = {
+  gcTime: 0,
+  staleTime: Number.POSITIVE_INFINITY,
+  retry: false,
+  refetchOnWindowFocus: false,
+  networkMode: "always",
+} as const
+
+function foundBy<T>(
+  asked: boolean,
+  query: { data: T | undefined; error: unknown },
+  items: (data: T) => Omit<Found, "state">,
+): Found | undefined {
+  if (!asked) return
+  if (query.data !== undefined) return { state: "ready", ...items(query.data) }
+  return { items: [], state: query.error ? "failed" : "loading", total: 0 }
+}
+
+function useServerSearch(q: string, enabled: boolean): Partial<Record<Kind, Found>> {
+  const text = q.trim()
+  const asked = enabled && text.length >= SERVER_FROM
+  const [paused, setPaused] = React.useState("")
+  React.useEffect(() => {
+    if (!asked) return
+    const timer = setTimeout(() => setPaused(text), DEBOUNCE_MS)
+    return () => clearTimeout(timer)
+  }, [asked, text])
+  const query = encodeURIComponent(text)
+  const key = asked && text
+  const once = { ...ONCE, enabled: asked && paused === text }
+  const problems = useQuery({
+    ...once,
+    queryKey: ["search-problems", key],
+    queryFn: ({ signal }) => api<{ items: ProblemHit[]; total: number }>(`/problems?status=all&q=${query}`, { signal }),
+  })
+  const workflows = useQuery({
+    ...once,
+    queryKey: ["search-workflows", key],
+    queryFn: ({ signal }) => api<{ workflows: WorkflowHit[] }>(`/workflows?q=${query}`, { signal }),
+  })
   const instances = useQuery({
     queryKey: ["/instances"],
     queryFn: () => api<{ instances: InstanceHit[] }>("/instances"),
     enabled,
     staleTime: 60_000,
   })
-  React.useEffect(() => {
-    const t = q.trim()
-    if (!enabled || t.length < SERVER_FROM) {
-      setFound({})
-      return
-    }
-    setFound({
-      problems: { items: [], state: "loading", total: 0 },
-      workflows: { items: [], state: "loading", total: 0 },
-    })
-    const abort = new AbortController()
-    const timer = setTimeout(() => {
-      const query = encodeURIComponent(t)
-      // The total counts every match, not only the 200 the list sends (TB-18).
-      api<{ items: ProblemHit[]; total: number }>(`/problems?status=all&q=${query}`, { signal: abort.signal })
-        .then((data) =>
-          setFound((f) => ({
-            ...f,
-            problems: {
-              state: "ready",
-              total: data.total,
-              all: `/problems?status=all&q=${query}`,
-              items: data.items.map((p) => ({
-                id: `problem:${p.id}`,
-                title: problemTitle(p),
-                subtitle: isSingle(p)
-                  ? `${p.affectedWorkflows[0]?.instanceName ?? ""} · ${p.title}`
-                  : `${plural(p.workflows, "workflow")} · ${instancesText(p)}`,
-                meta: p.status,
-                to: `/problems/${p.id}?status=all&q=${query}`,
-              })),
-            },
-          })),
-        )
-        .catch(
-          () =>
-            !abort.signal.aborted && setFound((f) => ({ ...f, problems: { items: [], state: "failed", total: 0 } })),
-        )
-      api<{ workflows: WorkflowHit[] }>(`/workflows?q=${query}`, { signal: abort.signal })
-        .then((data) =>
-          setFound((f) => ({
-            ...f,
-            workflows: {
-              state: "ready",
-              total: data.workflows.length,
-              all: `/workflows?q=${query}`,
-              items: data.workflows.map((w) => ({
-                id: `workflow:${w.instanceId}:${w.workflowId}`,
-                title: w.name,
-                subtitle: `${w.instanceName} · ${w.triggerType}`,
-                to: `/workflows?q=${encodeURIComponent(w.name)}&instance=${w.instanceId}`,
-                target: `workflow:${w.instanceId}:${w.workflowId}`,
-              })),
-            },
-          })),
-        )
-        .catch(
-          () =>
-            !abort.signal.aborted && setFound((f) => ({ ...f, workflows: { items: [], state: "failed", total: 0 } })),
-        )
-    }, DEBOUNCE_MS)
-    // Each keystroke cancels the previous question, so an older answer never replaces a newer one.
-    return () => {
-      clearTimeout(timer)
-      abort.abort()
-    }
-  }, [q, enabled])
 
-  const t = lower(q.trim())
-  const instanceItems: Found | undefined =
-    t.length >= SERVER_FROM
-      ? // The instances on hand are searched even when their last refresh failed (TB-5).
-        loadView(instances) === "failed"
-        ? { items: [], state: "failed", total: 0 }
-        : !instances.data
-          ? { items: [], state: "loading", total: 0 }
-          : (() => {
-              const items = instances.data.instances
-                .filter((i) => lower(i.name).includes(t) || lower(i.baseUrl).includes(t))
-                .map((i) => ({
-                  id: `instance:${i.id}`,
-                  title: i.name,
-                  subtitle: i.baseUrl,
-                  to: `/instances/${i.id}`,
-                  target: `instance:${i.id}`,
-                }))
-              return { items, state: "ready", total: items.length }
-            })()
-      : undefined
-  return { ...found, instances: instanceItems }
+  const t = lower(text)
+  return {
+    problems: foundBy(asked, problems, (data) => ({
+      total: data.total,
+      all: `/problems?status=all&q=${query}`,
+      items: data.items.map((p) => ({
+        id: `problem:${p.id}`,
+        title: problemTitle(p),
+        subtitle: isSingle(p)
+          ? `${p.affectedWorkflows[0]?.instanceName ?? ""} · ${p.title}`
+          : `${plural(p.workflows, "workflow")} · ${instancesText(p)}`,
+        meta: p.status,
+        to: `/problems/${p.id}?status=all&q=${query}`,
+      })),
+    })),
+    workflows: foundBy(asked, workflows, (data) => ({
+      total: data.workflows.length,
+      all: `/workflows?q=${query}`,
+      items: data.workflows.map((w) => ({
+        id: `workflow:${w.instanceId}:${w.workflowId}`,
+        title: w.name,
+        subtitle: `${w.instanceName} · ${w.triggerType}`,
+        to: `/workflows?q=${encodeURIComponent(w.name)}&instance=${w.instanceId}`,
+        target: `workflow:${w.instanceId}:${w.workflowId}`,
+      })),
+    })),
+    instances: foundBy(asked, instances, (data) => {
+      const items = data.instances
+        .filter((i) => lower(i.name).includes(t) || lower(i.baseUrl).includes(t))
+        .map((i) => ({
+          id: `instance:${i.id}`,
+          title: i.name,
+          subtitle: i.baseUrl,
+          to: `/instances/${i.id}`,
+          target: `instance:${i.id}`,
+        }))
+      return { items, total: items.length }
+    }),
+  }
 }
 
-type OpenResult = {
-  /** Goes to the result; `landed` runs once the result's page is reached, not when the move is kept or replaced. */
-  open: (item: Item, landed?: () => void) => void
-  /** Forgets a move that did not happen, so a later move does not count as it. */
-  forget: () => void
-}
+type OpenResult = (item: Item, landed?: () => void) => void
 
-/**
- * Opens a result (SR-6). The move goes through the unsaved-changes guard; only once the result's own address
- * is reached is the search cleared, so when the Leave question keeps the page, or the page moves elsewhere,
- * the query stays. A result with a target then marks its row for a moment. From the phone sheet the
- * destination takes the sheet's Back entry (DS-10).
- */
 function useOpenResult(): OpenResult {
   const navigate = useNavigateFromOverlay()
   const location = useLocation()
   const [tracker] = React.useState(() => moveTracker(revealTarget))
   React.useEffect(() => tracker.moved(location), [tracker, location])
-  React.useEffect(() => {
-    const off = onMoveKept(() => tracker.forget())
-    return () => {
-      off()
-      tracker.stop()
-    }
-  }, [tracker])
-  return React.useMemo(
-    () => ({
-      open: (item, landed) => {
-        tracker.start({ to: item.to, landed, target: item.target })
-        navigate(item.to, { state: item.field ? { focusField: item.field } : undefined })
-      },
-      forget: () => tracker.forget(),
-    }),
-    [navigate, tracker],
-  )
+  React.useEffect(() => () => tracker.stop(), [tracker])
+  return (item, landed) => {
+    const move = tracker.start({ landed, target: item.target })
+    navigate(item.to, { state: item.field ? { ...move, focusField: item.field } : move })
+  }
 }
 
-/** What is typed and the kind shown. The phone search keeps it above its sheet, which closes on a choice. */
 type Query = { q: string; setQ: (q: string) => void; kind: Kind | "all"; setKind: (kind: Kind | "all") => void }
 
 function useSearchQuery(): Query {
@@ -255,14 +203,12 @@ function useSearchQuery(): Query {
   return { q, setQ, kind, setKind }
 }
 
-/** Whether a "/" press should open the search: not with a modifier, in a field, or while a dialog is open (SR-4). */
 function slashOpensSearch(e: KeyboardEvent) {
   if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey) return false
   if ((e.target as HTMLElement | null)?.closest?.("input, textarea, select, [contenteditable]")) return false
   return !document.querySelector('[role="dialog"], [role="alertdialog"]')
 }
 
-/** Tab from the last control of a layer goes to its first, and Shift+Tab from the first to its last (DS-8). */
 function tabAround(e: React.KeyboardEvent<HTMLElement>) {
   const controls = [
     ...e.currentTarget.querySelectorAll<HTMLElement>("input, button, a[href], [tabindex]:not([tabindex='-1'])"),
@@ -286,25 +232,19 @@ export function GlobalSearch({
 }: {
   pages: SearchPage[]
   className?: string
-  /** In the top bar, or covering a phone's screen. */
   variant: "bar" | "sheet"
   onOpenChange?: (open: boolean) => void
-  /** The phone sheet: closes it. */
   onClose?: () => void
-  /** The phone sheet: its layer, which the page behind is made inert for. */
   sheetRef?: React.Ref<HTMLDivElement>
-  /** The phone sheet: its button opens results, as it stays after the sheet has closed. */
   opener?: OpenResult
-  /** The phone sheet: its button keeps the query, so a result the Leave question kept from opening keeps it too. */
   query?: Query
 }) {
   const own = useOpenResult()
-  const result = opener ?? own
+  const openResult = opener ?? own
   const ownQuery = useSearchQuery()
   const { q, setQ, kind, setKind } = query ?? ownQuery
   const sheet = variant === "sheet"
   const [focused, setFocused] = React.useState(sheet)
-  /** The highlighted option; null until the arrows move it, which is the first real result (SR-4). */
   const [active, setActive] = React.useState<number | null>(null)
   const input = React.useRef<HTMLInputElement>(null)
   const box = React.useRef<HTMLElement>(null)
@@ -313,7 +253,6 @@ export function GlobalSearch({
   const wide = sheet || focused || q.length > 0
 
   React.useEffect(() => onOpenChange?.(wide), [wide, onOpenChange])
-  // The phone sheet opens ready to type.
   React.useEffect(() => {
     if (sheet) input.current?.focus()
   }, [sheet])
@@ -326,7 +265,6 @@ export function GlobalSearch({
     ...server,
   }
 
-  // The options on screen, in order, for the arrow keys: on a kind's tab the "Open in" box comes first (SR-3).
   const shown: { kind: Kind; options: Item[]; more: number }[] = KINDS.filter((k) => kind === "all" || k.key === kind)
     .map((k) => {
       const f = results[k.key]
@@ -340,7 +278,6 @@ export function GlobalSearch({
     })
     .filter((g) => g.options.length > 0)
   const flat = shown.flatMap((g) => g.options)
-  // A kind's tab starts on its first real result, not on the "Open in" box (SR-4).
   const start = flat[0]?.openIn && flat.length > 1 ? 1 : 0
   const current = Math.min(active ?? start, Math.max(0, flat.length - 1))
   const loading = KINDS.some((k) => results[k.key]?.state === "loading")
@@ -348,7 +285,6 @@ export function GlobalSearch({
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: a new query or kind starts on the first result
   React.useEffect(() => setActive(null), [q, kind])
-  // The next search starts again from All (SR-2).
   React.useEffect(() => {
     if (!open) setKind("all")
   }, [open, setKind])
@@ -365,11 +301,9 @@ export function GlobalSearch({
     setActive(null)
   }
   const choose = (item: Item) => {
-    // The panel closes now; the query goes once the result's page is reached, and stays if the page is kept
-    // (SR-6). On a phone it outlives the sheet, which closes at once.
     setFocused(false)
     input.current?.blur()
-    result.open(item, clear)
+    openResult(item, clear)
     onClose?.()
   }
   const tabs: (Kind | "all")[] = ["all", ...KINDS.map((k) => k.key)]
@@ -395,7 +329,6 @@ export function GlobalSearch({
       e.preventDefault()
       stepKind(e.shiftKey ? -1 : 1)
     } else if (e.key === "Escape") {
-      // Closes the search only, never a dialog beneath it.
       e.stopPropagation()
       e.preventDefault()
       if (sheet) onClose?.()
@@ -404,8 +337,6 @@ export function GlobalSearch({
     }
   }
 
-  // "/" anywhere outside a field focuses the search, unless a dialog is open. On a phone the bar is not drawn,
-  // and the phone's search button takes the key instead.
   React.useEffect(() => {
     if (sheet) return
     const onKey = (e: KeyboardEvent) => {
@@ -417,8 +348,6 @@ export function GlobalSearch({
     return () => document.removeEventListener("keydown", onKey)
   }, [sheet])
 
-  // Leaving the field closes the results: Tab out, Escape, or a click outside, which keeps the text. An empty
-  // field narrows again and the page's actions come back (SR-2). The panel keeps the focus in the field.
   const onBlur = (e: React.FocusEvent) => {
     if (sheet || box.current?.contains(e.relatedTarget as Node | null)) return
     setFocused(false)
@@ -433,7 +362,6 @@ export function GlobalSearch({
   }
 
   const panel = open && (
-    // On a desktop a press in the panel keeps the focus in the field, so typing and the arrows go on (SR-4).
     // biome-ignore lint/a11y/noStaticElementInteractions: only keeps the focus where it is; the options have their own keys
     <div
       onMouseDown={(e) => !sheet && e.preventDefault()}
@@ -448,7 +376,6 @@ export function GlobalSearch({
         <div
           role="tablist"
           aria-label="Result types"
-          // Left and Right step through the kinds when a kind has the focus (SR-4).
           onKeyDown={(e) => {
             if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return
             e.preventDefault()
@@ -474,7 +401,6 @@ export function GlobalSearch({
                 tabIndex={kind === k ? 0 : -1}
                 onClick={() => {
                   setKind(k)
-                  // A tap on a kind lets the phone keyboard go, so the results get the room.
                   if (sheet) input.current?.blur()
                 }}
                 className={cn(
@@ -639,11 +565,7 @@ export function GlobalSearch({
         enterKeyHint="search"
         placeholder="Search pages, settings, problems…"
         value={q}
-        onChange={(e) => {
-          // Typing again: a move that the Leave question kept from happening is no longer awaited.
-          result.forget()
-          setQ(e.target.value)
-        }}
+        onChange={(e) => setQ(e.target.value)}
         onFocus={() => setFocused(true)}
         onBlur={onBlur}
         onKeyDown={onKeyDown}
@@ -664,14 +586,11 @@ export function GlobalSearch({
   )
 
   if (sheet) {
-    // Cancel and Escape drop the query; only a chosen result keeps it until its page is reached.
     const cancel = () => {
       reset()
       onClose?.()
     }
     return (
-      // A layer of its own (DS-8): a modal dialog over the whole screen. The page behind it is inert (PhoneSearch)
-      // and Tab goes round inside it; the input's own Tab, which steps the kinds, comes first.
       <div
         ref={sheetRef}
         role="dialog"
@@ -710,13 +629,6 @@ export function GlobalSearch({
   )
 }
 
-/**
- * The phone search: a button in the top bar that opens the search over the whole screen, as "/" does on a
- * phone with a keyboard (SR-4); Back closes it. A chosen result closes the sheet at once, so the query and
- * the move are kept here: when the Leave question keeps the page, the next search opens with the query
- * (SR-6); Back, Cancel and Escape drop it. The sheet is a layer (DS-8): the page behind it is inert while it
- * is open, and the focus comes back to the Search button when it closes, unless a result's page took it.
- */
 export function PhoneSearch({ pages }: { pages: SearchPage[] }) {
   const [open, setOpen] = React.useState(false)
   const button = React.useRef<HTMLButtonElement>(null)
@@ -726,7 +638,6 @@ export function PhoneSearch({ pages }: { pages: SearchPage[] }) {
     const undo = inertBeside(layer)
     return () => {
       undo()
-      // Still on the page: the effect only ran again (strict mode), the layer did not close.
       if (layer.isConnected) return
       const at = document.activeElement
       if (!at || at === document.body) button.current?.focus({ preventScroll: true })

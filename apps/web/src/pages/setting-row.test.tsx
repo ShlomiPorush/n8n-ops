@@ -18,7 +18,6 @@ describe("a setting row's Reset (FS-6)", () => {
       </SettingRow>,
     )
     expect(times(html, "data-reset")).toBe(1)
-    // The label holds the text and the switch, not the action: pressing Reset never flips the switch.
     const label = html.slice(html.indexOf("<label"), html.indexOf("</label>"))
     expect(label).not.toContain("data-reset")
   })

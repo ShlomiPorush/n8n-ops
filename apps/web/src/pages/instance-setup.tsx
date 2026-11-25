@@ -62,14 +62,6 @@ import {
 } from "./instances"
 import { AddWorkerDialog, type Worker } from "./workers"
 
-/*
- * Adding an instance, or a capability to an active one (docs/adr/0002). The first step chooses what the instance
- * is for; only the steps those need follow, each saves its fields and checks what it set up, and the review
- * activates once every check passed. Which steps show and how each stands is read from GET /instances/:id/setup,
- * so a reload, Finish later and another tab all find the same. The step open is in the address (?step=).
- */
-
-/** What each capability does, read out with its checkbox. */
 const about: Record<CapabilityKey, string> = {
   health: "Whether n8n is up and ready; in queue mode also its queue and queue workers.",
   monitor: "Reads failed executions and groups them into problems, with alerts.",
@@ -80,13 +72,8 @@ const about: Record<CapabilityKey, string> = {
   restore: "Restores a workflow from a backup into this instance.",
 }
 
-/** Move workflows needs the map, and Restore needs backups; each is chosen only after the one it needs. */
 const parentOf: Partial<Record<CapabilityKey, CapabilityKey>> = { move: "map", restore: "backup" }
 
-/**
- * The first step's tiles: four areas, two by two, each with its capabilities. A capability that needs another
- * sits under it in the same tile; the area's icon is that of its page where it has one.
- */
 const areas: { key: string; title: string; about: string; icon: LucideIcon; items: CapabilityKey[] }[] = [
   {
     key: "monitoring",
@@ -124,7 +111,6 @@ const newForm: BasicsForm = { name: "", baseUrl: "", chosen: ["health"], collect
 
 const sameList = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((x, i) => x === b[i])
 
-/** "A, B and C". */
 const words = (list: string[]) =>
   list.length < 2 ? (list[0] ?? "") : `${list.slice(0, -1).join(", ")} and ${list.at(-1)}`
 
@@ -133,7 +119,6 @@ export function InstanceSetupPage() {
   return id ? <ExistingSetup key={id} id={id} /> : <NewInstance />
 }
 
-/** The steps a selection will need, for the rail while the first step is still being filled in. */
 function previewSteps(form: BasicsForm, active: CapabilityKey[] = []): StepKey[] {
   const verify = form.chosen.filter((k) => !active.includes(k))
   return ["basics", ...neededSteps(requirementsOf(verify, form)), "review"]
@@ -161,7 +146,6 @@ function NewInstance() {
         },
       })
       void queryClient.invalidateQueries({ queryKey: ["/instances"] })
-      // The draft takes this page's place, so Back from its setup goes where Add instance was pressed.
       navigate(`/instances/${id}/setup`, { replace: true })
     } catch (e) {
       setError(basicsError(e))
@@ -195,7 +179,6 @@ function NewInstance() {
   )
 }
 
-/** A refused first step in words: the name taken, the address not a URL. */
 function basicsError(e: unknown) {
   if (e instanceof ApiError && e.issues?.length) {
     const issue = e.issues[0]
@@ -206,19 +189,15 @@ function basicsError(e: unknown) {
   return describeError(e)
 }
 
-/** What a step needs from the page around it. */
 type StepContext = {
   id: string
   setup: SetupData
   detail: InstanceDetailData
   add: CapabilityKey[]
-  /** Reads the setup and the instance again, and returns the setup as it is now. */
   reread: () => Promise<SetupData>
-  /** Goes on to the step after this one, as the setup stands now. */
   next: (fresh: SetupData) => void
   back: () => void
   go: (step: StepKey) => void
-  /** Leaves for the instance's page. */
   leave: (finishLater: boolean) => void
 }
 
@@ -232,12 +211,10 @@ function ExistingSetup({ id }: { id: string }) {
   const detail = useApi<InstanceDetailData>(`/instances/${id}`)
   const s = setup.data
   const d = detail.data
-  // A worker check ends in the worker's own time: the page asks every 2 seconds until it has (deadline included).
   useEffect(() => setPolling(waitingForWorker(s)), [s])
   const draft = s?.setupState === "incomplete"
   useCrumb(s?.name ?? d?.name)
   useCrumb(s ? (draft ? "Setup" : "Add capability") : null)
-  // Steps taken on this page stay on the rail of an active instance, also once their check passes.
   const [taken, setTaken] = useState<StepKey[]>([])
   const [form, setForm] = useState<BasicsForm | null>(null)
   const [basicsFailure, setBasicsFailure] = useState("")
@@ -254,7 +231,6 @@ function ExistingSetup({ id }: { id: string }) {
 
   const asked = params.get("step") as StepKey | null
   const steps = s ? stepsOf(s, asked ? [...taken, asked] : taken) : (["basics", "review"] as StepKey[])
-  // An active instance with nothing to add yet starts by choosing what to add.
   const choosing = Boolean(s && !draft && add.length === 0)
   const current: StepKey | null = choosing ? "basics" : asked && steps.includes(asked) ? asked : null
 
@@ -273,7 +249,6 @@ function ExistingSetup({ id }: { id: string }) {
       { replace: true },
     )
   }
-  // Opened without a step (Continue setup, a new draft, a new choice to add): where the setup stands.
   // biome-ignore lint/correctness/useExhaustiveDependencies: pins the step once the setup has been read
   useEffect(() => {
     if (!s || current || choosing) return
@@ -281,7 +256,6 @@ function ExistingSetup({ id }: { id: string }) {
   }, [s, current, choosing])
 
   const reread = async () => {
-    // The instance and its setup (both under /instances/<id>), marked saved so an answer that left before is not used.
     await refreshAreas(`/instances/${id}`)
     const fresh = queryClient.getQueryData<SetupData>([path])
     if (!fresh) throw new Error("The setup could not be read again. Reload the page.")
@@ -328,7 +302,6 @@ function ExistingSetup({ id }: { id: string }) {
     leave,
   }
 
-  /** Saves the first step: a draft's details and selection; for an active instance, what it adds. */
   async function saveBasics() {
     if (!s || !form) return
     const body: Record<string, unknown> = {}
@@ -336,13 +309,11 @@ function ExistingSetup({ id }: { id: string }) {
       if (form.name.trim() !== s.name) body.name = form.name.trim()
       if (normalUrl(form.baseUrl) !== s.baseUrl) {
         body.baseUrl = normalUrl(form.baseUrl)
-        // The stored key was tested against the old address; the API step asks for it again.
         if (s.hasApiKey) body.apiKey = null
       }
       if (!sameList(form.chosen, s.chosen)) body.chosen = form.chosen
     }
     const adding = form.chosen.filter((k) => !active.includes(k))
-    // Where health and backups come from is set only with the capability that uses it.
     if (form.collection !== s.collection && (draft || adding.includes("health"))) body.collection = form.collection
     if (form.backupVia !== s.backupVia && (draft || adding.includes("backup"))) body.backupVia = form.backupVia
     if (Object.keys(body).length) await api(`/instances/${id}`, { method: "PATCH", json: body })
@@ -357,7 +328,6 @@ function ExistingSetup({ id }: { id: string }) {
         if (draft) context.next(await reread())
         else {
           await reread()
-          // A new choice: its steps are read for it, starting where its checks stand.
           setTaken([])
           setParams({ add: adding.join(",") }, { replace: true })
         }
@@ -425,7 +395,6 @@ function ExistingSetup({ id }: { id: string }) {
           steps={shown}
           current={current}
           mark={marks}
-          // Before the first step is saved, the others follow from what it will save.
           onPick={current === "basics" ? undefined : (step) => go(step)}
         />
       }
@@ -463,11 +432,6 @@ const markWords: Record<StepMark, string> = {
   todo: "",
 }
 
-/**
- * The steps, with how each stands: a check mark when its check passed, an exclamation mark when it failed or no
- * longer counts, a ring while it runs. Beside the steps on a wide screen; above them, one line, on a phone, where
- * only the open step keeps its name.
- */
 function StepRail({
   steps,
   current,
@@ -480,7 +444,6 @@ function StepRail({
   onPick?: (step: StepKey) => void
 }) {
   const list = useRef<HTMLOListElement>(null)
-  // On a phone the rail is one line that scrolls: the open step is brought into it.
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs when another step opens
   useEffect(() => {
     const ol = list.current
@@ -557,7 +520,6 @@ function StepRail({
   )
 }
 
-/** One step: its title and what it is for, its fields and checks, and its actions at the bottom. */
 function StepPanel({
   title,
   description,
@@ -578,7 +540,6 @@ function StepPanel({
   )
 }
 
-/** Leaving at the start (Cancel, Finish later); going back, checking and going on at the end. */
 function StepActions({ start, children }: { start: React.ReactNode; children: React.ReactNode }) {
   return (
     <>
@@ -588,7 +549,6 @@ function StepActions({ start, children }: { start: React.ReactNode; children: Re
   )
 }
 
-/** Saves the step's fields and leaves the instance as Setup incomplete. */
 function FinishLater({ save, leave }: { save: () => Promise<unknown>; leave: () => void }) {
   return (
     <BusyButton
@@ -603,7 +563,6 @@ function FinishLater({ save, leave }: { save: () => Promise<unknown>; leave: () 
   )
 }
 
-/** The actions every step after the first shares; `check` is the step's own Check button. */
 function Actions({
   context,
   save,
@@ -617,7 +576,6 @@ function Actions({
   check?: React.ReactNode
   onContinue: () => Promise<unknown>
   continueDisabled?: boolean
-  /** Why Continue cannot be used yet, said beside it (AX-9). */
   waiting?: string
 }) {
   const draft = context.setup.setupState === "incomplete"
@@ -627,7 +585,6 @@ function Actions({
         draft ? (
           <FinishLater
             save={async () => {
-              // The step's fields could not be saved: said, and the page stays where it is.
               try {
                 await save()
               } catch (e) {
@@ -652,7 +609,6 @@ function Actions({
   )
 }
 
-/** A check as it stands: its result, when it ran, and why it did not pass. */
 function CheckLine({ check, children }: { check: CheckView | null; children?: React.ReactNode }) {
   if (!check) return null
   return (
@@ -680,7 +636,6 @@ function CheckLine({ check, children }: { check: CheckView | null; children?: Re
   )
 }
 
-/** The first step: the name and address, and what the instance is for. */
 function BasicsStep({
   form,
   onChange,
@@ -690,7 +645,6 @@ function BasicsStep({
 }: {
   form: BasicsForm
   onChange: (form: BasicsForm) => void
-  /** Capabilities an active instance has already; they are shown, not chosen again. */
   active?: CapabilityKey[]
   error: string
   actions: React.ReactNode
@@ -699,7 +653,6 @@ function BasicsStep({
   const set = (patch: Partial<BasicsForm>) => onChange({ ...form, ...patch })
   const askHealth = form.chosen.includes("health") && !active.includes("health")
   const askBackup = form.chosen.includes("backup") && !active.includes("backup")
-  /** A chosen capability's own choice, under it in its tile. */
   const choiceOf = (key: CapabilityKey) =>
     key === "health" && askHealth ? (
       <SubChoice
@@ -742,7 +695,6 @@ function BasicsStep({
         )}
       </SubChoice>
     ) : null
-  /** One capability in its area's tile: its checkbox, its name and what it needs, then its own choice. */
   const item = (key: CapabilityKey) => {
     const locked = active.includes(key)
     const parent = parentOf[key]
@@ -787,7 +739,6 @@ function BasicsStep({
       </div>
     )
   }
-  /** One area's tile: its icon, name and what it is for, then its capabilities. */
   const tile = (area: (typeof areas)[number]) => {
     const on = area.items.some((k) => form.chosen.includes(k))
     const Icon = area.icon
@@ -862,7 +813,6 @@ function BasicsStep({
   )
 }
 
-/** A chosen capability's own choice, such as where its health is checked from, under it in its tile. */
 function SubChoice({
   label,
   value,
@@ -894,12 +844,10 @@ function SubChoice({
   )
 }
 
-/** A step's own message: what failed when saving or checking, in words. */
 function StepError({ error }: { error: string }) {
   return error ? <FieldError>{error}</FieldError> : null
 }
 
-/** Runs one of the setup checks and reads the setup again; the step then shows how it stands. */
 async function runCheck(context: StepContext, kind: "api" | "health" | "worker" | "backup") {
   const body = kind === "api" && context.add.length ? { add: context.add } : undefined
   try {
@@ -928,7 +876,6 @@ function ApiStep(context: StepContext) {
   const version = check?.current ? (check.detail?.version as string | null | undefined) : undefined
   const canTest = Boolean(key) || s.hasApiKey
 
-  /** Tests the typed key, or the stored one; a typed key that works is stored. True when the step passes now. */
   async function test() {
     setError("")
     try {
@@ -951,7 +898,6 @@ function ApiStep(context: StepContext) {
       actions={
         <Actions
           context={context}
-          // Finish later keeps a typed key only once it works: it is stored by its test.
           save={async () => {
             if (key) await test()
           }}
@@ -1032,7 +978,6 @@ type Probe = {
   resolvedContainer?: string
 }
 
-/** What a health check read: the main, its readiness, the queue workers and the queue. */
 function ProbeRows({ probe }: { probe: Probe | undefined }) {
   if (!probe?.main) return null
   const rows: { label: string; ok: boolean | undefined; value: string }[] = [
@@ -1080,7 +1025,6 @@ function ProbeRows({ probe }: { probe: Probe | undefined }) {
   )
 }
 
-/** What the worker check found: where it ran the command, and n8n as it saw it from inside. */
 function WorkerFound({ check }: { check: CheckView | null }) {
   const detail = check?.detail as
     | { inside?: { container?: string; target?: { project: string; service: string } }; report?: Probe }
@@ -1106,7 +1050,6 @@ function WorkerStep(context: StepContext) {
   const [workerId, setWorkerId] = useState(d.workerId ?? "")
   const [target, setTarget] = useState(mainTargetOf(d))
   const [pairing, setPairing] = useState(false)
-  // The workers there were when a pairing started: those that come after it are marked new.
   const [before, setBefore] = useState<Set<string> | null>(null)
   const [error, setError] = useState("")
   const check = s.checks.worker
@@ -1478,7 +1421,6 @@ function BackupStep(context: StepContext) {
   )
 }
 
-/** Which step proves a requirement that activation found not met. */
 const stepOfRequirement: Record<string, StepKey> = {
   api: "api",
   health: "health",
@@ -1499,7 +1441,7 @@ function ReviewStep(context: StepContext) {
     try {
       await api(`/instances/${id}/activate`, {
         method: "POST",
-        json: { configRevision: s.configRevision, ...(draft ? {} : { add: context.add }) },
+        json: draft ? {} : { add: context.add },
       })
     } catch (e) {
       if (e instanceof ApiError && e.code === "revision_changed")
@@ -1515,14 +1457,12 @@ function ReviewStep(context: StepContext) {
     toast.success(draft ? `${s.name} is set up and active` : `Added ${words(added)} to ${s.name}`)
     navigate(`/instances/${id}`, { replace: true })
   }
-  /** A check that can run from here again: the stored key, the health, the worker, the destinations. */
   const again = (step: StepKey): "api" | "health" | "worker" | "backup" | null => {
     if (step === "api") return s.hasApiKey ? "api" : null
     if (step === "health") return s.requirements.health ? "health" : "worker"
     if (step === "worker" || step === "backup") return step
     return null
   }
-  // The checks that can run again from here and do not pass now, each once (health through the worker is its check).
   const pending = [
     ...new Set(
       steps.flatMap((step) => {
@@ -1532,7 +1472,6 @@ function ReviewStep(context: StepContext) {
       }),
     ),
   ]
-  /** Runs checks again from here; a check that cannot run says why under the list. */
   async function recheck(kinds: ("api" | "health" | "worker" | "backup")[]) {
     setError("")
     try {
@@ -1573,7 +1512,6 @@ function ReviewStep(context: StepContext) {
           <span className="font-semibold">{draft ? "Chosen: " : "Adding: "}</span>
           {added.join(", ") || "nothing yet"}
         </p>
-        {/* A check goes stale when what it depends on changes (the base URL, the worker), or after 15 minutes. */}
         {pending.length > 0 && (
           <BusyButton size="sm" icon={RefreshCw} busyLabel="Checking…" run={() => recheck(pending)}>
             Check all again

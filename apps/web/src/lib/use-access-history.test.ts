@@ -1,29 +1,29 @@
 import { focusManager, InfiniteQueryObserver, onlineManager, QueryClient } from "@tanstack/react-query"
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { type EndedCursor, type EndedPage, endedPath, HISTORY_KEY, historyOptions } from "./use-access-history.ts"
+import { type EndedPage, endedPath, HISTORY_KEY, historyOptions } from "./use-access-history.ts"
 
 afterEach(() => {
   focusManager.setFocused(undefined)
   onlineManager.setOnline(true)
+  vi.unstubAllGlobals()
 })
 
 type Row = { id: string }
-/** Three pages of ended requests, as the server gives them, and every read of them with its signal. */
 function server() {
   const pages: Record<string, EndedPage<Row>> = {
-    first: { requests: [{ id: "a" }], next: { at: "2026-11-16T08:00:00.000002Z", id: "a" } },
-    a: { requests: [{ id: "b" }], next: { at: "2026-11-16T08:00:00.000001Z", id: "b" } },
+    first: { requests: [{ id: "a" }], next: "a" },
+    a: { requests: [{ id: "b" }], next: "b" },
     b: { requests: [{ id: "c" }], next: null },
   }
-  const reads: { cursor: EndedCursor | null; signal: AbortSignal }[] = []
+  const reads: { cursor: string | null; signal: AbortSignal }[] = []
   let hold: Promise<void> | null = null
-  const queryFn = async ({ pageParam, signal }: { pageParam: EndedCursor | null; signal: AbortSignal }) => {
+  const queryFn = async ({ pageParam, signal }: { pageParam: string | null; signal: AbortSignal }) => {
     reads.push({ cursor: pageParam, signal })
     if (hold) await hold
     signal.throwIfAborted()
-    const page = pages[pageParam?.id ?? "first"]
+    const page = pages[pageParam ?? "first"]
     if (!page) throw new Error("no such page")
-    return page
+    return { ...page, listed: [] }
   }
   return { pages, reads, queryFn, holdUntil: (p: Promise<void>) => (hold = p) }
 }
@@ -31,17 +31,15 @@ function server() {
 function watch(queryFn: ReturnType<typeof server>["queryFn"]) {
   const client = new QueryClient()
   client.mount()
-  const observer = new InfiniteQueryObserver(client, { ...historyOptions<Row>(), queryFn })
+  const observer = new InfiniteQueryObserver(client, { ...historyOptions<Row>([]), queryFn })
   const stop = observer.subscribe(() => {})
   return { client, observer, stop }
 }
 
 describe("the history of ended access requests", () => {
-  it("asks for each page after the exact cursor the previous page gave", () => {
+  it("asks for each page after the request the previous page ended with", () => {
     expect(endedPath(null)).toBe("/access/ended")
-    expect(endedPath({ at: "2026-11-16T08:00:00.123456Z", id: "x" })).toBe(
-      "/access/ended?before=2026-11-16T08%3A00%3A00.123456Z&beforeId=x",
-    )
+    expect(endedPath("x")).toBe("/access/ended?before=x")
   })
 
   it("is never read by itself: not when shown, on focus, or back online", async () => {
@@ -66,16 +64,29 @@ describe("the history of ended access requests", () => {
     await observer.fetchNextPage()
     expect(observer.getCurrentResult().data?.pages.flatMap((p) => p.requests.map((r) => r.id))).toEqual(["a", "b", "c"])
     expect(observer.getCurrentResult().hasNextPage).toBe(false)
-    // A new request ended before "a": read again, the pages follow the new cursors.
-    s.pages.first = { requests: [{ id: "n" }], next: { at: "2026-11-16T08:00:00.000003Z", id: "n" } }
-    s.pages.n = { requests: [{ id: "a" }], next: { at: "2026-11-16T08:00:00.000002Z", id: "a" } }
+    s.pages.first = { requests: [{ id: "n" }], next: "n" }
+    s.pages.n = { requests: [{ id: "a" }], next: "a" }
     s.reads.length = 0
     await observer.refetch()
-    expect(s.reads.map((r) => r.cursor?.id ?? null)).toEqual([null, "n", "a"])
+    expect(s.reads.map((r) => r.cursor)).toEqual([null, "n", "a"])
     expect(observer.getCurrentResult().data?.pages.flatMap((p) => p.requests.map((r) => r.id))).toEqual(["n", "a", "b"])
     expect(observer.getCurrentResult().hasNextPage).toBe(true)
     stop()
     client.unmount()
+  })
+
+  it("says what the live answer listed when its read began, whatever it lists when the read ends", async () => {
+    let answer = (_: Response) => {}
+    vi.stubGlobal("fetch", () => new Promise<Response>((resolve) => (answer = resolve)))
+    const client = new QueryClient()
+    const observer = new InfiniteQueryObserver(client, historyOptions<Row>(["a", "b"]))
+    const stop = observer.subscribe(() => {})
+    const read = observer.refetch()
+    observer.setOptions(historyOptions<Row>(["b"]))
+    answer(Response.json({ requests: [{ id: "b" }], next: null }))
+    await read
+    expect(observer.getCurrentResult().data?.pages.map((p) => p.listed)).toEqual([["a", "b"]])
+    stop()
   })
 
   it("keeps a failed page as a failure and does not ask for it again by itself", async () => {

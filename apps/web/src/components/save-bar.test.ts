@@ -39,7 +39,6 @@ describe("formChanged", () => {
 })
 
 describe("leaveAsker", () => {
-  /** A router on /settings with /instances before it, guarded like the save bar: every move to another page asks. */
   function setup() {
     const router = createMemoryRouter([{ path: "/instances" }, { path: "/settings" }], {
       initialEntries: ["/instances", "/settings"],
@@ -49,7 +48,6 @@ describe("leaveAsker", () => {
       currentLocation.pathname !== nextLocation.pathname
     const blocker = () => router.getBlocker("leave", guard)
     blocker()
-    // Like the confirm: a second question replaces the first, which counts as cancelled.
     const open: ((ok: boolean) => void)[] = []
     const ask = vi.fn(
       (signal: AbortSignal) =>
@@ -76,14 +74,12 @@ describe("leaveAsker", () => {
     expect(ask).toHaveBeenCalledTimes(1)
     expect(blocker().state).toBe("blocked")
 
-    // Back again while the question is open: undone by the router, and the question closes as Stay.
     await router.navigate(-1)
     await settle()
     expect(ask).toHaveBeenCalledTimes(1)
     expect(blocker().state).toBe("unblocked")
     expect(router.state.location.pathname).toBe("/settings")
 
-    // The next Back asks again, and Leave goes back without an invalid blocker state.
     await router.navigate(-1)
     await settle()
     expect(ask).toHaveBeenCalledTimes(2)
@@ -96,7 +92,6 @@ describe("leaveAsker", () => {
     await router.navigate("/instances")
     await settle()
     expect(ask).toHaveBeenCalledTimes(1)
-    // A move on the same page is not blocked; when it is done the router clears every block.
     await router.navigate("/settings?section=email")
     await settle()
     expect(blocker().state).toBe("unblocked")
@@ -115,7 +110,6 @@ describe("leaveAsker", () => {
   })
 })
 
-/** A question like the confirm's: a second one replaces the first, which counts as cancelled; abort cancels. */
 function questions() {
   const open: ((ok: boolean) => void)[] = []
   const ask = vi.fn(
@@ -129,7 +123,6 @@ function questions() {
   return { ask, answer: (ok: boolean) => open.at(-1)?.(ok) }
 }
 const settle = () => new Promise((resolve) => setTimeout(resolve))
-/** Blocks a move to another page, as the save bar does with unsaved changes. */
 const toAnotherPage = ({ currentLocation, nextLocation }: { currentLocation: Location; nextLocation: Location }) =>
   currentLocation.pathname !== nextLocation.pathname
 
@@ -152,10 +145,8 @@ describe("guardLeaves", () => {
     const { router, ask, answer } = setup()
     await router.navigate("/instances")
     expect(ask).toHaveBeenCalledTimes(1)
-    // A move on the same page finishes while the question is open: it clears the block and closes the question.
     await router.navigate("/settings?section=email")
     await settle()
-    // Leave now neither proceeds the cleared move nor fails on it ("Invalid blocker state transition").
     await answer(true)
     expect(router.state.location.pathname).toBe("/settings")
     expect(router.state.location.search).toBe("?section=email")
@@ -164,7 +155,6 @@ describe("guardLeaves", () => {
   it("asks once per block however often the router reports its state, and Leave goes", async () => {
     const { router, ask, answer } = setup()
     await router.navigate("/instances")
-    // Other news from the router, such as a fetcher, is not a new block.
     router.revalidate()
     await settle()
     expect(ask).toHaveBeenCalledTimes(1)
@@ -176,14 +166,12 @@ describe("guardLeaves", () => {
     const { router, ask, guard, answer } = setup()
     const logOut = guard.confirm()
     expect(ask).toHaveBeenCalledTimes(1)
-    // Back is blocked and undone by the router; it opens no second question and closes this one as Stay.
     await router.navigate(-1)
     await settle()
     expect(ask).toHaveBeenCalledTimes(1)
     expect(await logOut).toBe(false)
     expect(router.state.location.pathname).toBe("/settings")
     expect([...router.state.blockers.values()].every((b) => b.state === "unblocked")).toBe(true)
-    // The next Back asks again, and Leave goes back.
     await router.navigate(-1)
     await settle()
     expect(ask).toHaveBeenCalledTimes(2)
@@ -194,7 +182,6 @@ describe("guardLeaves", () => {
   it("closes the Log out question without acting when a navigation happens anyway", async () => {
     const { router, guard, answer } = setup()
     const logOut = guard.confirm()
-    // Not blocked: the same page with another section.
     await router.navigate("/settings?section=email")
     await answer(true)
     expect(await logOut).toBe(false)
@@ -220,10 +207,6 @@ describe("guardLeaves", () => {
   })
 })
 
-/**
- * Just enough of a browser for the router's own history: entries with their address and state (where the router
- * keeps its count, `idx`), pushState, replaceState, and go/back with a later popstate. `go(0)` is a reload.
- */
 function fakeBrowser(start: string) {
   const origin = "http://localhost"
   const entries: { url: URL; state: Record<string, unknown> | null }[] = [{ url: new URL(start, origin), state: null }]
@@ -289,7 +272,6 @@ describe("a page opened from a dialog", () => {
   })
 
   it("Back from it with unsaved changes asks, Stay keeps it without a reload, Leave goes to the page before (DS-10, SV-1)", async () => {
-    // Fresh copies: the overlays and their Back entries live in module state.
     vi.resetModules()
     const { createBrowserRouter } = await import("react-router")
     const overlays = await import("@/lib/overlay-history")
@@ -301,7 +283,6 @@ describe("a page opened from a dialog", () => {
     })
     await settle()
 
-    // Unsaved changes on the new page only: the move from the dialog is not asked about.
     let unsaved = false
     const guard = (args: { currentLocation: Location; nextLocation: Location }) => unsaved && toAnotherPage(args)
     const blocker = () => router.getBlocker("leave", guard)
@@ -310,7 +291,6 @@ describe("a page opened from a dialog", () => {
     const asker = saveBar.leaveAsker(ask, blocker)
     router.subscribe((state) => asker.update(state.blockers.get("leave") ?? blocker()))
 
-    // Add instance: the dialog holds its Back entry, and the new instance's page takes it.
     const release = overlays.holdOverlayEntry(() => {})
     await settle()
     expect(browser.window.history.state?.overlay).toBeDefined()
@@ -321,7 +301,6 @@ describe("a page opened from a dialog", () => {
     expect(router.state.location.pathname).toBe("/instances/b")
     unsaved = true
 
-    // Back asks; the router undoes it by stepping forward again, which must not be a reload.
     browser.window.history.back()
     await settle()
     await settle()
@@ -332,7 +311,6 @@ describe("a page opened from a dialog", () => {
     expect(router.state.location.pathname).toBe("/instances/b")
     expect(browser.window.location.pathname).toBe("/instances/b")
 
-    // Back again, and Leave goes to the page the dialog was opened on.
     browser.window.history.back()
     await settle()
     await settle()

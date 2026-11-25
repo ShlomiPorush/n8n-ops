@@ -20,53 +20,38 @@ import { openProblemCount, problemItems } from "../services/problem-view.ts"
 import { telegramPlainText } from "../services/telegram.ts"
 
 export { WORKER_ONLINE_MS }
-/** The most new problems and regressions the list carries; the total and the tone still count every one. */
 export const PROBLEMS_SHOWN = 50
-/**
- * A source without an answer by then counts as not read, so one that hangs never holds the others; well inside the
- * 20 seconds the page waits for the whole answer (NL-19).
- */
 export const SOURCE_TIMEOUT_MS = 8_000
 
-/** How much an item needs a look: red when something fails, amber for a warning, plain (ink) for news (NL-19). */
 export type Tone = "fail" | "warn" | "info"
 
-/** What Needs attention reads, each on its own, so one that cannot be read keeps the others (NL-19). */
 export const attentionSources = ["access", "problems", "instances", "backups", "workers"] as const
 export type AttentionSource = (typeof attentionSources)[number]
 
-/** Something that needs a decision, with what its action needs: the problem, the request, the backup's target. */
 export type AttentionItem = { tone: Tone } & (
   | {
       kind: "problem"
       id: string
       status: "open"
       reason: "new" | "regression"
-      /** The most recently failed workflow; with several, the item names the error and how many. */
       workflowName: string
       instanceName: string
       errorMessage: string
-      /** What the Problem is about, "target · reason" (docs/adr/0003), and the line for a known error. */
       title: string
       hint: string | null
       count: number
-      /** Distinct workflows the Problem hit, and its Affected workflows (a workflow at two nodes is two). */
       workflows: number
       affectedTotal: number
       instances: string[]
       at: Date
     }
   | { kind: "instance"; id: string; name: string; health: string; detail: string; at: Date | null }
-  /** `id` is the instance's, or "self" for the n8n-ops database; `running` while a run is on its way. */
   | { kind: "backup"; id: string; name: string; detail: string; running: boolean; at: Date | null }
   | { kind: "worker"; id: string; name: string; at: Date | null }
-  /** `agent` is the token that asks. */
   | { kind: "access"; id: string; name: string; agent: string; detail: string; at: Date | null; revision: number }
 )
 
-/** A check that could not run, so the list must not say that all is well (NL-19, FB-10). */
 export type UncheckedItem = {
-  /** The instance's health was never read or is unknown now, or reading its failures failed. */
   kind: "health" | "failures"
   id: string
   name: string
@@ -75,25 +60,18 @@ export type UncheckedItem = {
 }
 
 export type Attention = {
-  /** Every eligible item, the worst first, then the newest; problems past PROBLEMS_SHOWN are left out. */
   items: AttentionItem[]
-  /** Every eligible item, those left out included. */
   total: number
-  /** The worst tone over every eligible item, those left out included; null when nothing needs a look. */
   tone: Tone | null
-  /** Eligible problems left out of `items`. */
   moreProblems: number
   unchecked: UncheckedItem[]
-  /** Sources that could not be read; their items are missing here, and the UI keeps what it showed of them. */
   failed: AttentionSource[]
 }
 
-/** What one source found: its items, how many there are in all, and the worst of them. */
 type Part = { items: AttentionItem[]; total: number; tone: Tone | null; unchecked?: UncheckedItem[] }
 
 const rank: Record<Tone, number> = { fail: 0, warn: 1, info: 2 }
 
-/** The worst of some tones, or null for none. */
 export function worstTone(tones: Iterable<Tone | null | undefined>): Tone | null {
   let worst: Tone | null = null
   for (const t of tones) if (t && (!worst || rank[t] < rank[worst])) worst = t
@@ -106,10 +84,6 @@ const listed = (items: AttentionItem[]): Part => ({
   tone: worstTone(items.map((i) => i.tone)),
 })
 
-/**
- * Puts the sources together: the worst first, then the newest. Total and tone are over every eligible item, also
- * those a source left out of its list; a source that could not be read (null) is named in `failed`.
- */
 export function combine(parts: [AttentionSource, Part | null][]): Attention {
   const read = parts.flatMap(([, p]) => (p ? [p] : []))
   const time = (i: { at: Date | null }) => i.at?.getTime() ?? 0
@@ -119,14 +93,12 @@ export function combine(parts: [AttentionSource, Part | null][]): Attention {
     items,
     total,
     tone: worstTone(read.map((p) => p.tone)),
-    // Never below zero, even should a source count fewer than it lists.
-    moreProblems: read.reduce((sum, p) => sum + Math.max(0, p.total - p.items.length), 0),
+    moreProblems: read.reduce((sum, p) => sum + p.total - p.items.length, 0),
     unchecked: read.flatMap((p) => p.unchecked ?? []),
     failed: parts.flatMap(([source, p]) => (p ? [] : [source])),
   }
 }
 
-/** The parts of a stored health reading that say what is wrong. */
 type Reading = {
   main?: { error?: string }
   readiness?: { ok: boolean }
@@ -135,10 +107,6 @@ type Reading = {
   discovery?: { status: string; found: number }
 } | null
 
-/**
- * What is wrong with an instance that is down or needs a look, in the words and order of the Instances page: the
- * main, the backlog, the queue workers, readiness, then finding the queue workers.
- */
 export function instanceDetail(health: "down" | "warn", d: Reading): string {
   if (health === "down") return `Down${d?.main?.error ? `: ${d.main.error}` : ""}`
   if (d?.backlogActive) return "Queue backlog"
@@ -153,7 +121,6 @@ export function instanceDetail(health: "down" | "warn", d: Reading): string {
   return "Needs a look"
 }
 
-/** A backup alert that is still active, with the alert's text as written (names and errors not escaped). */
 export function backupItem(
   instance: Pick<typeof instances.$inferSelect, "id" | "name">,
   state: Pick<typeof alertState.$inferSelect, "detail" | "since">,
@@ -167,10 +134,6 @@ export function backupItem(
   }
 }
 
-/**
- * Agents waiting for access: amber, one item per request, named by the instances it asks for ("name +N"), each with
- * the request and the revision Approve needs (the card approves the request as it stands).
- */
 async function accessPart(ctx: Ctx): Promise<Part> {
   const waiting = await ctx.db
     .select({ r: accessRequests, tokenName: apiTokens.name })
@@ -200,12 +163,6 @@ async function accessPart(ctx: Ctx): Promise<Part> {
   )
 }
 
-/**
- * Problems with a workflow that is new or failed again after it was resolved, seen in the last 24 hours: red. A
- * workflow newly joining an old Problem counts, so whether a Problem is eligible is decided per Affected workflow,
- * in the query, before the limit; problems that do not count can never push one that does out of the list, and the
- * total counts every one. The rows and the total come from one query, so they always agree.
- */
 async function problemsPart(ctx: Ctx): Promise<Part> {
   const dayAgo = new Date(Date.now() - 86_400_000)
   const eligible = ctx.db
@@ -229,7 +186,6 @@ async function problemsPart(ctx: Ctx): Promise<Part> {
       id: problems.id,
       regression: eligible.regression,
       at: eligible.at,
-      // Counted over every eligible row, before the limit.
       total: sql<number>`count(*) over ()`.mapWith(Number),
     })
     .from(problems)
@@ -273,13 +229,7 @@ async function problemsPart(ctx: Ctx): Promise<Part> {
   }
 }
 
-/**
- * Unhealthy instances (down red, warn amber), and the checks that could not run: health never read, unknown
- * because nothing collects it, or reading the failures failed. A down instance already says it cannot be reached,
- * so its failed read is not listed too. The last known health of an instance whose health is unknown is not.
- */
 async function instancesPart(ctx: Ctx): Promise<Part> {
-  // Drafts do nothing yet; health is diagnosed only where it was chosen, failed reads only where monitoring was.
   const all = await ctx.db.select().from(instances).where(activeOnly)
   const now = await currentHealth(ctx, all)
   const items: AttentionItem[] = []
@@ -332,12 +282,7 @@ async function instancesPart(ctx: Ctx): Promise<Part> {
   return { ...listed(items), unchecked }
 }
 
-/**
- * Backups that need a look, one item per instance or n8n-ops itself: the last run failed (red), some of its
- * copies failed or no backup succeeded in time (amber). The latest run also says whether one is running now.
- */
 async function backupsPart(ctx: Ctx): Promise<Part> {
-  // The latest run of each target is one step down the (instance_id, started_at) index, however long the history.
   const run = {
     status: backupRuns.status,
     error: backupRuns.error,
@@ -368,7 +313,6 @@ async function backupsPart(ctx: Ctx): Promise<Part> {
       .select()
       .from(alertState)
       .where(and(eq(alertState.active, true), like(alertState.key, "backup:%"))),
-    // The n8n-ops database's own runs have no instance.
     ctx.db
       .select(run)
       .from(backupRuns)
@@ -376,7 +320,6 @@ async function backupsPart(ctx: Ctx): Promise<Part> {
       .orderBy(desc(backupRuns.startedAt))
       .limit(1),
   ])
-  // Each target with its latest run, if it has one; the n8n-ops database is always a target.
   const targets = [
     ...all,
     {
@@ -404,7 +347,6 @@ async function backupsPart(ctx: Ctx): Promise<Part> {
       at: t.finishedAt ?? t.startedAt,
     })
   }
-  // Keys are backup:<instance id or self>:<destination id>; the oldest alert of a target speaks for it.
   for (const s of stale.sort((a, b) => a.since.getTime() - b.since.getTime())) {
     const t = targets.find((x) => x.id === s.key.split(":")[1])
     if (!t || byTarget.has(t.id)) continue
@@ -413,7 +355,6 @@ async function backupsPart(ctx: Ctx): Promise<Part> {
   return listed([...byTarget.values()])
 }
 
-/** Paired workers that stopped reporting: amber. */
 async function workersPart(ctx: Ctx): Promise<Part> {
   const offlineSince = new Date(Date.now() - WORKER_ONLINE_MS)
   const items: AttentionItem[] = []
@@ -432,12 +373,6 @@ const readers: Record<AttentionSource, (ctx: Ctx) => Promise<Part>> = {
   workers: workersPart,
 }
 
-/**
- * What needs the operator now (NL-19, FB-10): agents waiting for access, new problems and regressions from the
- * last 24 hours, unhealthy instances, backups that failed or are late, offline workers. Each source is read on its
- * own: one that fails, or has no answer in `timeout` ms, is named in `failed` and the others still answer. A source
- * that ran out of time is not called off: its query ends on its own, and its answer is dropped. `read` is for tests.
- */
 export async function attention(
   ctx: Ctx,
   { read = readers, timeout = SOURCE_TIMEOUT_MS }: { read?: typeof readers; timeout?: number } = {},
@@ -465,7 +400,6 @@ export function overviewRoutes(ctx: Ctx) {
   const app = new Hono<Env>()
   app.use("*", requireUser(ctx))
 
-  // Small summary for the sidebar.
   app.get("/summary", async (c) => {
     const onlineSince = new Date(Date.now() - WORKER_ONLINE_MS)
     const [open, [total], [online], [pendingAccess]] = await Promise.all([
@@ -488,13 +422,11 @@ export function overviewRoutes(ctx: Ctx) {
     })
   })
 
-  // Needs attention, read by the bell on every page and by Overview (NL-19).
   app.get("/attention", async (c) => c.json(await attention(ctx)))
 
   app.get("/", async (c) => {
     const rows = await ctx.db.select().from(instances).where(activeOnly)
     const now = await currentHealth(ctx, rows)
-    // Instances without health chosen count as instances, never as healthy, down or warn.
     const all = rows.map((r) => ({ health: can(r, "health") ? (now.get(r.id)?.health ?? r.health) : null }))
     const open = await openProblemCount(ctx)
     const [lastBackup] = await ctx.db

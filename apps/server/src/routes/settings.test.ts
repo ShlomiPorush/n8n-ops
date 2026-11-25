@@ -14,7 +14,6 @@ vi.mock("nodemailer", () => ({
     },
   },
 }))
-// The report itself reads the database; these tests are about where it goes.
 const reports = vi.hoisted(() => ({ built: [] as unknown[][] }))
 vi.mock("../services/reports.ts", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../services/reports.ts")>()),
@@ -24,7 +23,6 @@ vi.mock("../services/reports.ts", async (importOriginal) => ({
   },
 }))
 
-// The session clocks have their own tests; here every session is live and completed two-factor.
 vi.mock("../services/session-policy.ts", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../services/session-policy.ts")>()),
   checkSession: async () => ({ ok: true, clocks: {}, status: {}, twoFactorVerified: true }),
@@ -32,10 +30,6 @@ vi.mock("../services/session-policy.ts", async (importOriginal) => ({
 
 type Stored = Partial<Record<SectionName, Record<string, unknown>>>
 
-/**
- * A signed-in context over settings kept in memory. Like the real store, `stored` is what was saved and `get` adds
- * the public URL from the environment while none is saved, and the environment's Email switch over the stored one.
- */
 function fakeCtx(data: Stored, env: SettingsEnv = {}) {
   const stored = async (key: SectionName) => sections[key].parse({ ...defaults[key], ...(data[key] ?? {}) })
   const settings = {
@@ -129,7 +123,6 @@ describe("a save keeps the public URL from the environment out of the database (
           locked: true,
         },
       })
-      // The value in effect sent back with the rest changes nothing; another one is refused.
       const { meta: _, ...form } = read
       expect((await email("PUT", { ...form, from: "ops@example.com" })).status).toBe(200)
       expect(data.email).toMatchObject({ smtpAllowUnencrypted: !envValue, from: "ops@example.com" })
@@ -246,7 +239,6 @@ describe("Email and Telegram tests with the values on screen (FS-19, FS-5)", () 
     const typed = randomBytes(24).toString("hex")
     await test("POST", { smtpHost: "smtp.elsewhere.example", smtpPassword: typed })
     expect(mail.transports[1]).toMatchObject({ host: "smtp.elsewhere.example", auth: { pass: typed } })
-    // A test stores nothing.
     expect(data.email).toEqual(storedEmail)
   })
 
@@ -259,7 +251,6 @@ describe("Email and Telegram tests with the values on screen (FS-19, FS-5)", () 
       requireTLS: true,
       auth: { pass: storedPassword },
     })
-    // The daily report, made now, with the footer of a test.
     expect(reports.built.at(-1)).toEqual(["daily", expect.any(Date), { test: true }])
   })
 

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { workerCheckOutput } from "./main-check.ts"
 
-// What the check in a queue worker may send about it: each figure bounded, and one that does not fit dropped alone.
 describe("workerCheckOutput details", () => {
   const parse = (details: Record<string, unknown>) => workerCheckOutput.parse({ active: true, details }).details
 

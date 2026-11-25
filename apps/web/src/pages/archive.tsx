@@ -68,25 +68,15 @@ import { unsavedGuardOn } from "@/lib/session"
 import { formatTime, useTimeFormat } from "@/lib/time"
 import { toast } from "@/lib/toast"
 
-/*
- * One archive of an instance's backup (requirement D6): what it holds, compared with the instance, and single items
- * restored from it. The private key is pasted here, kept in this page's memory only and sent with each request that
- * reads the archive; the server uses it in memory and never stores it. Leaving the page drops it, and asks first.
- */
-
 type RunLite = { id: string; startedAt: string; includesSecrets: boolean; status: string }
-/** An instance as `/instances` lists it: what a restore may pick, and what Replace needs of it. */
 type TargetInstance = PickedInstance & { version?: string | null; effectiveScopes?: string[] }
 type View = "workflows" | "credentials"
 
-/** Asks before a move out of the archive drops the pasted key. Moves between its items do not ask. */
 function useKeyGuard(held: boolean, base: string) {
   const router = React.useContext(UNSAFE_DataRouterContext)?.router
   const confirm = useConfirm()
   const latest = React.useRef({ base, confirm })
   latest.current = { base, confirm }
-  // The router consults its newest guard only, so this one is made when a key is typed, after the shell's (the save
-  // bar's, which has nothing to save on this page), and removed as soon as there is no key, which brings that back.
   React.useEffect(() => {
     if (!held || !router) return
     const inside = (path: string) => path === latest.current.base || path.startsWith(`${latest.current.base}/`)
@@ -111,15 +101,9 @@ function useKeyGuard(held: boolean, base: string) {
 
 export function ArchivePage() {
   const { runId, restoreId } = useParams()
-  // Another archive is another page: nothing of this one stays.
   return <Archive key={runId ?? `version:${restoreId}`} />
 }
 
-/*
- * The page opens a backup run's archive (`/backups/:id/runs/:runId`) or the Version before replace that a restore
- * kept (`/backups/:id/versions/:restoreId`), the workflow as n8n held it right before a replace wrote over it. Both
- * read, compare and restore the same way.
- */
 function Archive() {
   const { id = "", runId = "", restoreId, kind, itemId } = useParams()
   const navigate = useNavigate()
@@ -351,8 +335,6 @@ function Archive() {
         itemId === undefined ? null : !selected ? (
           <Empty title="This item is not in the archive." />
         ) : view === "workflows" ? (
-          // Keyed by the item: a narrow screen keeps the pane mounted from item to item, and nothing of one item
-          // (its JSON, an open restore) may stay for the next.
           <WorkflowPane key={`workflow:${selected.id}`} workflow={selected as WorkflowSummary} {...shared} />
         ) : (
           <CredentialPane key={`credential:${selected.id}`} credential={selected as CredentialSummary} {...shared} />
@@ -368,7 +350,6 @@ const matches = (q: string, ...values: (string | null | undefined)[]) => {
   return !needle || values.some((v) => v?.toLowerCase().includes(needle))
 }
 
-/** Changed first, then not found, then the same, for the Compared column. */
 const comparedRank = { changed: 2, not_found: 1, same: 0 } as const
 
 function rowProps(id: string, selected: string | undefined, href: string, navigate: (to: string) => void) {
@@ -571,7 +552,6 @@ function CredentialList({
 type PaneProps = {
   inspection: Inspection
   privateKey: string
-  /** The page of this archive, and where its API calls go. */
   base: string
   apiBase: string
   instances: TargetInstance[] | undefined
@@ -579,7 +559,6 @@ type PaneProps = {
 
 type JsonState = { loading: true } | { data: unknown } | { failed: unknown }
 
-/** One archived workflow: what it is, how it compares, the credentials it uses, its JSON, and Restore. */
 function WorkflowPane({
   workflow: x,
   inspection,
@@ -591,25 +570,16 @@ function WorkflowPane({
   useCrumb(x.name)
   const w = useTimeFormat()
   const [restoring, setRestoring] = useState(false)
+  const [opening, setOpening] = useState(0)
   const [json, setJson] = useState<JsonState | null>(null)
-  const load = React.useRef<AbortController | null>(null)
-  React.useEffect(() => () => load.current?.abort(), [])
-  const fetchJson = async () => {
-    load.current?.abort()
-    const ctl = new AbortController()
-    load.current = ctl
-    return api<unknown>(`${apiBase}/workflows/${encodeURIComponent(x.id)}`, {
-      method: "POST",
-      json: { privateKey },
-      signal: ctl.signal,
-    })
-  }
+  const fetchJson = () =>
+    api<unknown>(`${apiBase}/workflows/${encodeURIComponent(x.id)}`, { method: "POST", json: { privateKey } })
   const showJson = async () => {
     setJson({ loading: true })
     try {
       setJson({ data: await fetchJson() })
     } catch (e) {
-      if (!(e instanceof DOMException && e.name === "AbortError")) setJson({ failed: e })
+      setJson({ failed: e })
     }
   }
   const downloadJson = async () => {
@@ -636,7 +606,14 @@ function WorkflowPane({
             <UserText>{x.name}</UserText>
           </h2>
           <div className="flex flex-wrap gap-2 @min-[40rem]/pane:self-start">
-            <Button size="sm" variant="primary" onClick={() => setRestoring(true)}>
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={() => {
+                setOpening((count) => count + 1)
+                setRestoring(true)
+              }}
+            >
               <RotateCcw /> Restore
             </Button>
             <BusyButton size="sm" icon={DownloadIcon} busyLabel="Preparing…" run={downloadJson}>
@@ -773,6 +750,7 @@ function WorkflowPane({
       </Panel>
 
       <RestoreDialog
+        key={opening}
         open={restoring}
         item={{ kind: "workflow", id: x.id, name: x.name }}
         inspection={inspection}
@@ -785,7 +763,6 @@ function WorkflowPane({
   )
 }
 
-/** One archived credential: what it is, which workflows use it, and Restore as a new credential. */
 function CredentialPane({
   credential: x,
   inspection,
@@ -797,6 +774,7 @@ function CredentialPane({
   useCrumb(x.name)
   const w = useTimeFormat()
   const [restoring, setRestoring] = useState(false)
+  const [opening, setOpening] = useState(0)
   const names = new Map(inspection.workflows.map((wf) => [wf.id, wf.name]))
   return (
     <div className="@container/pane grid min-w-0 gap-gap">
@@ -815,11 +793,13 @@ function CredentialPane({
               variant="primary"
               disabled={!x.hasSecrets}
               aria-describedby={x.hasSecrets ? undefined : "credential-restore-reason"}
-              onClick={() => setRestoring(true)}
+              onClick={() => {
+                setOpening((count) => count + 1)
+                setRestoring(true)
+              }}
             >
               <RotateCcw /> Restore
             </Button>
-            {/* A button that cannot run says why in words beside it (AX-9, FB-1). */}
             {!x.hasSecrets && (
               <span id="credential-restore-reason" className="text-small text-muted-foreground">
                 The archive has no secrets for it
@@ -862,6 +842,7 @@ function CredentialPane({
       </Panel>
 
       <RestoreDialog
+        key={opening}
         open={restoring}
         item={{ kind: "credential", id: x.id, name: x.name }}
         inspection={inspection}
@@ -874,15 +855,6 @@ function CredentialPane({
   )
 }
 
-const dropReview = (r: RestoreView | null) => {
-  // Fire and forget: a review that is not confirmed leaves on its own within an hour anyway.
-  if (r?.status === "previewed") void api(`/backups/restores/${r.id}`, { method: "DELETE" }).catch(() => {})
-}
-
-/**
- * Restore one item (D6): choose where, review exactly what it will do, confirm once, then read how each step went.
- * Closing before the confirm drops the review. The key stays on the page, never in the dialog.
- */
 function RestoreDialog({
   open,
   item,
@@ -900,15 +872,12 @@ function RestoreDialog({
   instances: TargetInstance[] | undefined
   onClose: () => void
 }) {
-  // Only an instance with Restore workflows chosen takes a restore; the archive's own one first when it can.
   const targets = activeWith(instances, "restore")
   const own = inspection.source.instanceId
   const fallback = targets.some((t) => t.id === own) ? (own ?? "") : (targets[0]?.id ?? "")
   const [picked, setPicked] = useState("")
   const target = targets.some((t) => t.id === picked) ? picked : fallback
-  // Copy by default. Replace writes the workflow the archive is from, so only on its own instance.
   const [chosenMode, setMode] = useState<RestoreMode>("copy")
-  // What the page knows of the instance can stop it too (its n8n version, its key's scopes); the server decides.
   const ownInstance = targets.find((t) => t.id === own)
   const replaceReason =
     target === "" || target !== own || !ownInstance
@@ -920,10 +889,6 @@ function RestoreDialog({
   const [stillUnknown, setStillUnknown] = useState(false)
   const [error, setError] = useState("")
   const [busy, setBusy] = useState<"review" | "confirm" | "check" | null>(null)
-  const current = React.useRef<RestoreView | null>(null)
-  current.current = restore
-  // Leaving the page with a review open drops it too.
-  React.useEffect(() => () => dropReview(current.current), [])
 
   async function act(what: "review" | "confirm" | "check", fn: () => Promise<RestoreView>) {
     setBusy(what)
@@ -941,7 +906,6 @@ function RestoreDialog({
       setBusy(null)
     }
   }
-  // Also "Review again" after an unknown outcome: a new review, which names the earlier restore.
   const review = async () => {
     const next = await act("review", () =>
       api<RestoreView>(`${apiBase}/restores`, {
@@ -951,7 +915,6 @@ function RestoreDialog({
     )
     if (next) setStillUnknown(false)
   }
-  // A replace the server refused says why; the copy is offered instead.
   const asCopy = () => {
     setMode("copy")
     setError("")
@@ -965,19 +928,11 @@ function RestoreDialog({
     setStillUnknown(next?.status === "unknown")
   }
   const back = () => {
-    dropReview(restore)
     setRestore(null)
     setError("")
   }
   const close = () => {
-    // The confirm runs once and is not called off; its result shows when it ends.
     if (busy === "confirm") return
-    dropReview(restore)
-    setRestore(null)
-    setStillUnknown(false)
-    setError("")
-    setPicked("")
-    setMode("copy")
     onClose()
   }
 

@@ -13,7 +13,6 @@ function base32Decode(input: string): Buffer {
   return Buffer.from(bytes)
 }
 
-/** RFC 6238 TOTP (SHA-1, 6 digits, 30-second steps), as used by authenticator apps. */
 export function totp(secret: string, time = Date.now()): string {
   const counter = Buffer.alloc(8)
   counter.writeBigUInt64BE(BigInt(Math.floor(time / 30_000)))
@@ -25,7 +24,6 @@ export function totp(secret: string, time = Date.now()): string {
 
 let lastStep = -1
 
-/** A code from a time step that has not been used yet in this run, waiting for the next step if needed. */
 export async function freshTotp(secret: string): Promise<string> {
   let step = Math.floor(Date.now() / 30_000)
   if (step <= lastStep) {

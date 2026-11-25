@@ -15,10 +15,13 @@ const copy = (error: string | null) => ({
 })
 
 describe("runFailure", () => {
+  const spooledAt = "2026-10-22T02:00:05.123Z"
+
   it("shows why a run failed before its archive was ready, which its copies do not say", () => {
     expect(
       runFailure({
         status: "failed",
+        spooledAt: null,
         error: "Upload failed: Not enough free space in the data directory for a 900 MiB archive",
         copies: [copy("The backup failed before this copy could be written.")],
       }),
@@ -27,12 +30,21 @@ describe("runFailure", () => {
 
   it("does not repeat what the copies already say", () => {
     expect(
-      runFailure({ status: "failed", error: "NAS: connection refused", copies: [copy("connection refused")] }),
+      runFailure({
+        status: "failed",
+        spooledAt,
+        error: "NAS: connection refused",
+        copies: [copy("connection refused")],
+      }),
     ).toBeNull()
   })
 
   it("shows the error of a run without copies, and nothing for a run that did not fail", () => {
-    expect(runFailure({ status: "failed", error: "No backup key.", copies: [] })).toBe("No backup key.")
-    expect(runFailure({ status: "ok", error: null, copies: [] })).toBeNull()
+    expect(runFailure({ status: "failed", spooledAt: null, error: "No backup key.", copies: [] })).toBe(
+      "No backup key.",
+    )
+    const error = "NAS: connection refused"
+    expect(runFailure({ status: "failed", spooledAt, error, copies: [] })).toBe(error)
+    expect(runFailure({ status: "ok", spooledAt, error: null, copies: [] })).toBeNull()
   })
 })

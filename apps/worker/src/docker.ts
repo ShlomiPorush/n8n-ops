@@ -1,17 +1,11 @@
 import { request } from "node:http"
 
-/**
- * Minimal Docker Engine API client: run a command in a container and collect its output. It talks to the
- * Unix socket, or to a socket proxy over TCP (DOCKER_HOST=tcp://host:port).
- */
 export type ExecResult = { exitCode: number; stdout: Buffer; stderr: string }
 
 const API = "/v1.43"
 
-/** Where the Docker API is: a Unix socket path, or a TCP host and port. */
 export type DockerEndpoint = { socketPath: string } | { host: string; port: number }
 
-/** Reads a DOCKER_HOST value (tcp://host:port or unix:///path) or a bare socket path. */
 export function parseDockerEndpoint(value: string): DockerEndpoint {
   if (value.startsWith("tcp://") || value.startsWith("http://")) {
     const url = new URL(value.replace(/^tcp:/, "http:"))
@@ -20,17 +14,10 @@ export function parseDockerEndpoint(value: string): DockerEndpoint {
   return { socketPath: value.replace(/^unix:\/\//, "") }
 }
 
-/** Limits of one Docker call: an absolute deadline that cancels it, and the most bytes its answer may have. */
 export type CallLimits = { signal?: AbortSignal; maxBytes?: number }
 
-/** The Docker call that failed: creating, starting or reading the result of a command, or listing containers. */
 export type DockerCall = "exec-create" | "exec-start" | "exec-inspect" | "list"
 
-/**
- * Why Docker did not run a command: the socket proxy refused the call (403), the container does not exist (404),
- * or it is stopped or paused (409). Anything else is "other". `call` says which call it was, so a refusal shows the
- * rule that is missing.
- */
 export class DockerError extends Error {
   constructor(
     message: string,
@@ -42,21 +29,16 @@ export class DockerError extends Error {
   }
 }
 
-/** The result of one check that Docker answers (`Docker.pingDetail`). */
 export type DockerPing = { ok: boolean; ms: number; error: string | null }
 
-/** A refusal of the socket proxy, as a report carries it. */
 export type Refusal = { call: DockerCall; container?: string }
 
-/** The refusal in an error, when the socket proxy refused the call. */
 export function refusalOf(error: unknown, container?: string): Refusal | undefined {
   if (!(error instanceof DockerError) || error.kind !== "refused" || !error.call) return undefined
-  // A name longer than the server takes is left out; the refusal still counts.
   const named = container && container.length <= 128 ? { container } : {}
   return error.call === "list" ? { call: "list" } : { call: error.call, ...named }
 }
 
-/** Reads a refused exec without keeping the answer, which may carry details of the container. */
 function execRefusal(container: string, status: number, data: Buffer, call: DockerCall): DockerError {
   if (status === 403)
     return call === "exec-create"
@@ -85,7 +67,6 @@ function call(
 ): Promise<{ status: number; data: Buffer }> {
   return new Promise((resolve, reject) => {
     const payload = body === undefined ? undefined : Buffer.from(JSON.stringify(body))
-    // Once failed, the call stays failed: an answer that ends after it was cut is not a result.
     let failed = false
     const fail = (error: Error) => {
       if (failed) return
@@ -96,9 +77,6 @@ function call(
     const req = request(
       {
         ...endpoint,
-        // A connection of its own for each call (Connection: close). On a kept-alive connection, the socket proxy's
-        // Go reverse proxy may close its connection to Docker in the middle of an answer to a request with a body
-        // (golang/go#40747), and the call fails as "aborted".
         agent: false,
         method,
         path: `${API}${path}`,
@@ -121,7 +99,6 @@ function call(
     )
     req.on("error", fail)
     req.setTimeout(10 * 60_000, () => fail(new Error(`docker ${method} ${path} timed out`)))
-    // An absolute deadline, not an idle timeout: a slowly streamed answer is cut too.
     const abort = () => fail(new Error(`docker ${method} ${path} passed its deadline`))
     if (limits.signal?.aborted) abort()
     limits.signal?.addEventListener("abort", abort, { once: true })
@@ -131,7 +108,6 @@ function call(
   })
 }
 
-/** Reads a JSON answer of Docker. A broken one says which call, never a piece of the answer. */
 function answer<T>(data: Buffer, what: string): T {
   try {
     return JSON.parse(data.toString()) as T
@@ -140,7 +116,6 @@ function answer<T>(data: Buffer, what: string): T {
   }
 }
 
-/** Splits Docker's multiplexed stream (8-byte frame headers) into stdout and stderr. */
 export function demux(raw: Buffer): { stdout: Buffer; stderr: Buffer } {
   const out: Buffer[] = []
   const err: Buffer[] = []
@@ -163,10 +138,6 @@ export class Docker {
     this.endpoint = parseDockerEndpoint(endpoint)
   }
 
-  /**
-   * Runs a command in a container and collects its output. `limits` applies to the command's output; backups and
-   * exports pass none and keep the ten minutes and no size limit.
-   */
   async exec(container: string, cmd: string[], limits: CallLimits = {}): Promise<ExecResult> {
     const small = { signal: limits.signal, maxBytes: 64 * 1024 }
     const created = await call(
@@ -187,10 +158,6 @@ export class Docker {
     return { exitCode: ExitCode ?? -1, stdout, stderr: stderr.toString() }
   }
 
-  /**
-   * Lists containers, stopped ones included, filtered as given (a convenience for less to read; the socket proxy's
-   * rule is the boundary). The answer is capped: a list larger than `limits.maxBytes` fails rather than being cut.
-   */
   async listContainers(filters: Record<string, string[]>, limits: CallLimits = {}): Promise<unknown[]> {
     const query = `all=1&filters=${encodeURIComponent(JSON.stringify(filters))}`
     const res = await call(this.endpoint, "GET", `/containers/json?${query}`, undefined, limits)
@@ -211,11 +178,6 @@ export class Docker {
     }
   }
 
-  /**
-   * One check that Docker answers, for the Worker's health: how long it took and, when it failed, a short code
-   * (`timeout`, `refused` for the socket proxy's 403, `HTTP <status>`, or the system error code). Never a piece of
-   * the answer.
-   */
   async pingDetail(signal?: AbortSignal): Promise<DockerPing> {
     const started = performance.now()
     const ms = () => Math.round(performance.now() - started)

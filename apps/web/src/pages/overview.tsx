@@ -34,12 +34,10 @@ type Overview = {
 
 type AuditEntry = { id: number; at: string; actor: string; action: string; target: string; via: string }
 
-/* Regular: each missing setup step is an outline button with an arrow, starting with a capital (#29). */
 const step =
   "regular:inline-flex regular:h-8 regular:items-center regular:gap-1.5 regular:rounded-sm regular:border regular:border-line regular:bg-bg regular:px-3 regular:text-ctl regular:font-medium regular:shadow-card regular:[@media(hover:hover)]:hover:bg-fill"
 const stepText = "regular:inline-block regular:first-letter:uppercase"
 
-/* Regular: recent activity as a timeline, a dot per entry on a line that joins them (#29). */
 const timeline =
   "regular:relative regular:border-t-0 regular:ps-[calc(var(--spacing-pad-x)+22px)] regular:before:absolute regular:before:start-pad-x regular:before:top-[19px] regular:before:size-2 regular:before:rounded-full regular:before:bg-muted-foreground/40 regular:before:ring-4 regular:before:ring-panel regular:after:absolute regular:after:start-[calc(var(--spacing-pad-x)+3.5px)] regular:after:top-7 regular:after:-bottom-5 regular:after:w-px regular:after:bg-line regular:last:after:hidden"
 
@@ -52,16 +50,12 @@ export function OverviewPage() {
   const activity = useApi<AuditEntry[]>("/admin/audit", { refetchInterval: 30_000 })
   const o = overview.data
   const order: Record<string, number> = { down: 0, warn: 1, unknown: 2, ok: 3 }
-  // Drafts do nothing yet, so the overview leaves them out; the Instances page lists them as Setup incomplete.
   const rows = (instances.data?.instances ?? [])
     .filter((i) => i.setupState === "complete")
     .sort((a, b) => (order[a.health] ?? 9) - (order[b.health] ?? 9) || b.openProblems - a.openProblems)
-  // The same list the bell opens on every page, from the same query (NL-19).
   const attention = useAttention()
   const a = attention.data
-  // Before the first answer the figures say so and the panels are drawn already, so nothing jumps (FB-17).
   const pending = (q: Loadable) => <NoValue said={loadView(q) === "failed" ? "Could not load" : "Loading"} />
-  // Agents' reads are noisy, and a run of sign-ins says little more than the latest one.
   const events = (activity.data ?? [])
     .filter((e) => e.action !== "MCP read")
     .filter((e, i, all) => e.action !== "Login" || all.findIndex((x) => x.action === "Login") === i)
@@ -78,8 +72,6 @@ export function OverviewPage() {
   return (
     <Page
       title="Overview"
-      // The line speaks for every block that refreshes here; Try again asks again only for those that failed. Needs
-      // attention says so in its own panel, as it does under the bell.
       live={[overview, instances, activity]}
       description={
         o && a
@@ -88,7 +80,6 @@ export function OverviewPage() {
       }
     >
       {missing.length > 0 && (
-        // Regular draws the banner as a warm card whose steps are buttons (#29); the words stay the same.
         <Alert
           variant="warn"
           className="regular:gap-1 regular:border regular:border-warm-line regular:bg-warm regular:p-6 regular:text-ink"
@@ -99,7 +90,6 @@ export function OverviewPage() {
               <Fragment key={s.key}>
                 {i > 0 && <span className="regular:hidden">, </span>}
                 <Link to={s.to} className={step}>
-                  {/* Compact reads the steps as one sentence: only its first word starts with a capital. */}
                   <span className={stepText}>
                     {i === 0 ? `${s.text.charAt(0).toUpperCase()}${s.text.slice(1)}` : s.text}
                   </span>
@@ -122,7 +112,6 @@ export function OverviewPage() {
           label="Need attention"
           icon={SirenIcon}
           value={a ? a.total : pending(attention)}
-          // The worst of what needs a look, as the bell shows it (NL-19).
           tone={a?.tone === "fail" ? "fail" : a?.tone === "warn" ? "warn" : undefined}
         />
         <Kpi
@@ -271,7 +260,6 @@ function InstanceLine({ i, latest }: { i: InstanceRow; latest: string | null }) 
         >
           {n(i.openProblems)} open
         </Link>
-        {/* Backup not chosen: nothing to say about it here. */}
         {i.chosen.includes("backup") && (
           <span>
             backup{" "}

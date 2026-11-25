@@ -55,13 +55,11 @@ import {
 
 const isUuid = (value: string) => z.string().uuid().safeParse(value).success
 
-/** A page of workflows: at most WORKFLOWS_MAX, from `offset` on. */
 const workflowPage = z.object({
   limit: z.coerce.number().int().min(1).max(WORKFLOWS_MAX).default(WORKFLOWS_DEFAULT),
   offset: z.coerce.number().int().min(0).default(0),
 })
 
-/** Limits shared by the REST API and MCP (the agent-access standard): body, answer, time, calls at once. */
 export const LIMITS = {
   bodyBytes: 256 * 1024,
   answerBytes: 16 * 1024 * 1024,
@@ -70,17 +68,11 @@ export const LIMITS = {
   total: 16,
 }
 
-/** The headers the client skill sends; named for the product. */
 export const HEADERS = { skill: "x-n8n-ops-skill", policy: "x-n8n-ops-policy", kind: "x-n8n-ops-kind" } as const
 
 type Outcome = "ok" | "error" | "denied" | "unknown"
 type TokenActor = Extract<Env["Variables"]["actor"], { kind: "token" }>
 
-/**
- * Calls running now, per connection and in total. A call keeps its slot until its work ends, also after its answer
- * went out as outcome_unknown, so slow calls cannot pile up beyond the limits. The limits are read at each call, so a
- * change to them applies at once.
- */
 export function slots(limits: Pick<typeof LIMITS, "perConnection" | "total"> = LIMITS) {
   const per = new Map<string, number>()
   let total = 0
@@ -109,7 +101,6 @@ const slotsFor = (ctx: Ctx) => {
   return made
 }
 
-/** Resolves "late" if the work has not ended within the deadline; the work goes on either way. */
 const within = <T>(work: Promise<T>, ms: number) =>
   Promise.race([
     work.then((value) => ({ late: false as const, value })),
@@ -123,7 +114,6 @@ const unknown = {
   message: "The call took too long, and it may still be running. Read the state it was to change before you try again.",
 }
 
-/** What an agent may do through this token, for `access` and the MCP tool get_access. */
 async function accessAnswer(ctx: Ctx, who: TokenActor, skillHeader: string | undefined) {
   const [row] = await ctx.db.select().from(apiTokens).where(eq(apiTokens.id, who.id))
   const { idleDays } = await ctx.settings.get("agents")
@@ -150,13 +140,6 @@ async function accessAnswer(ctx: Ctx, who: TokenActor, skillHeader: string | und
   }
 }
 
-/**
- * The policy check of one open REST route, before its code runs: the connection holds its area; an agent's call
- * carries the policy revision it used and the kind it found for this route, both as the server has them (409
- * policy_changed otherwise, after which the client may send it again); a free slot (429 busy). Tokens made by hand
- * are a separate channel without the client skill: they skip the headers. Then the route runs within the deadline,
- * its answer within the cap, and every call leaves an audit entry with its outcome.
- */
 export function policy(ctx: Ctx, route: OpenRoute): MiddlewareHandler<Env> {
   return async (c, next) => {
     const who = c.get("actor") as TokenActor
@@ -171,7 +154,6 @@ export function policy(ctx: Ctx, route: OpenRoute): MiddlewareHandler<Env> {
       })
     if (route.area && !areasOf(who.canRequestAccess).includes(route.area)) {
       await record("denied", 403)
-      // An agent connected without ops:access learns which scope it lacks (RFC 6750); it connects again to get it.
       c.header("WWW-Authenticate", `Bearer error="insufficient_scope", scope="ops:read ops:access"`)
       return c.json(
         {
@@ -212,7 +194,7 @@ export function policy(ctx: Ctx, route: OpenRoute): MiddlewareHandler<Env> {
     const length = Number(c.res.headers.get("content-length") ?? NaN)
     const size = Number.isFinite(length) ? length : (await c.res.clone().arrayBuffer()).byteLength
     if (size > LIMITS.answerBytes) {
-      await record(status < 400 ? "error" : "error", status)
+      await record("error", status)
       c.res = new Response(
         JSON.stringify({
           error: "answer_too_large",
@@ -226,11 +208,6 @@ export function policy(ctx: Ctx, route: OpenRoute): MiddlewareHandler<Env> {
   }
 }
 
-/**
- * REST API for scripts and agents (requirement E1), bearer token of kind "rest". Every route is open by the table in
- * agent-policy.ts: read-only, except asking for temporary access to n8n instances, which a connection may do only
- * when the person allowed it, and a person approves each time.
- */
 export function restRoutes(ctx: Ctx) {
   const app = new Hono<Env>()
   app.use("*", requireToken(ctx, "rest"))
@@ -242,10 +219,10 @@ export function restRoutes(ctx: Ctx) {
     }),
   )
 
-  // Temporary access to n8n instances: the policy check let only connections allowed to ask reach these.
   const tokenOf = (c: Context<Env>) => (c.get("actor") as TokenActor).id
   const accessError = (e: unknown) => {
     if (!(e instanceof AccessError)) throw e
+    // 429 busy would tell the skill that no route ran, and a 5xx that the outcome is unknown.
     const status =
       e.code === "not_found"
         ? 404
@@ -253,9 +230,7 @@ export function restRoutes(ctx: Ctx) {
           ? 403
           : e.code === "request_in_progress"
             ? 409
-            : // Nothing was stored in either case: a 4xx, so the client knows the request did not happen (a 5xx after an
-              // action reads as an outcome unknown). Not 429: that is the limits layer's reserved busy.
-              e.code === "busy"
+            : e.code === "busy"
               ? 409
               : e.code.startsWith("spec")
                 ? 424
@@ -358,7 +333,6 @@ export function restRoutes(ctx: Ctx) {
       }
     },
     "POST /api/v1/access-requests/{id}/release": async (c) => {
-      // Without a body, as earlier skills send it, the access is released without a summary.
       const text = await c.req.text()
       let body: unknown = {}
       if (text.trim()) {
@@ -391,13 +365,11 @@ export function restRoutes(ctx: Ctx) {
 const json = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }] })
 const readOnly = { readOnlyHint: true, openWorldHint: false }
 
-/** The public address agents use for the access proxy: Settings, N8N_OPS_PUBLIC_URL, or this request's origin. */
 async function publicBase(ctx: Ctx, requestUrl: string) {
   const { publicUrl } = await ctx.settings.get("general")
   return publicUrl || new URL(requestUrl).origin
 }
 
-/** What a release may say; longer summaries are clipped, never refused, so the release always ends the access. */
 const releaseShape = {
   summary: z
     .string()
@@ -418,10 +390,6 @@ const workflowIdsShape = z
   .describe("Limit the access there to these workflows. Omit only when the task needs the whole instance.")
 const instanceName = z.string().min(1).describe("Instance name, as listed by get_instance_health or search_workflows.")
 
-/**
- * An access request: several instances in `instances`, or one in `instance`, `scopes` and `workflowIds` (the form
- * agents of earlier skills send). `accessInput` takes either.
- */
 const accessRequestShape = {
   instances: z
     .array(z.object({ instance: instanceName, scopes: scopesShape, workflowIds: workflowIdsShape }))
@@ -460,7 +428,6 @@ type AccessRequestBody = {
   notify?: AccessChannel[]
 }
 
-/** The request in one form, or what is wrong with the body. */
 export function accessInput(body: AccessRequestBody): AccessRequestInput | string {
   const single = body.instance !== undefined || body.scopes !== undefined || body.workflowIds !== undefined
   if (body.instances && single) return "Use either instances, or instance with scopes, not both."
@@ -475,7 +442,6 @@ export function accessInput(body: AccessRequestBody): AccessRequestInput | strin
   }
 }
 
-/** What the MCP server tells every agent that connects. */
 export const MCP_INSTRUCTIONS = [
   "n8n-ops watches self-hosted n8n instances: failed executions grouped into problems by cause, instance health and its history, n8n-ops Workers, queues, backups, and where each workflow is.",
   "This connection acts for the person who approved it, within the areas they granted. Call get_access first: it says what this connection may do and when it ends.",
@@ -484,7 +450,6 @@ export const MCP_INSTRUCTIONS = [
   "When an action's outcome is unknown, read its result before trying again.",
 ].join("\n\n")
 
-/** Runs one tool call under the limits and the connection check, and records it; see mcpRoutes. */
 export type ToolGuard = (
   tool: string,
   kind: Kind,
@@ -492,23 +457,13 @@ export type ToolGuard = (
   run: () => Promise<{ content: { type: "text"; text: string }[]; isError?: boolean }>,
 ) => Promise<{ content: { type: "text"; text: string }[]; isError?: boolean }>
 
-/** Without a guard (unit tests), a tool simply runs. */
-const unguarded: ToolGuard = (_tool, _kind, _args, run) => run()
-
-/**
- * One stateless MCP server per request. Every tool reads (requirement E3), except the access tools, offered only to
- * connections allowed to ask for temporary access to n8n instances (which a person must approve). Each tool carries
- * the area and kind of the policy table: read tools hint readOnly, the access tools are acts.
- */
 export function buildMcpServer(
   ctx: Ctx,
-  audit: (tool: string, args: unknown, outcome?: Outcome) => Promise<void>,
+  guard: ToolGuard,
   access?: { tokenId: string; publicUrl: string },
-  extra: { guard?: ToolGuard; getAccess?: () => Promise<unknown> } = {},
+  getAccess?: () => Promise<unknown>,
 ) {
   const server = new McpServer({ name: "n8n-ops", version: ctx.version }, { instructions: MCP_INSTRUCTIONS })
-  const guard = extra.guard ?? unguarded
-  // Arguments are validated by the SDK against inputSchema before run() is called.
   // biome-ignore lint/suspicious/noExplicitAny: tool arguments are typed by each tool's zod schema
   type Args = Record<string, any>
   const tool = (name: string, description: string, inputSchema: z.ZodRawShape, run: (args: Args) => Promise<unknown>) =>
@@ -518,7 +473,6 @@ export function buildMcpServer(
       (async (args: Args) =>
         guard(name, "read", args, async () => {
           const result = await run(args)
-          if (!extra.guard) await audit(name, args, "ok")
           return result === null ? { ...json({ error: "not found" }), isError: true } : json(result)
         })) as never,
     )
@@ -531,7 +485,7 @@ export function buildMcpServer(
       inputSchema: {},
       annotations: readOnly,
     },
-    (async () => guard("get_access", "read", {}, async () => json(await (extra.getAccess?.() ?? {})))) as never,
+    (async () => guard("get_access", "read", {}, async () => json(await (getAccess?.() ?? {})))) as never,
   )
   tool(
     "list_open_problems",
@@ -577,7 +531,6 @@ export function buildMcpServer(
       to: z.string().datetime({ offset: true }).optional(),
     },
     async (a) => {
-      // The SDK checked the arguments against the schema above; a thrown error becomes a tool error.
       const parsed = historyQuery.parse({ hours: a.hours, limit: a.limit, offset: a.offset, to: a.to })
       try {
         return await healthHistory(ctx, { name: a.instance }, parsed)
@@ -596,7 +549,7 @@ export function buildMcpServer(
   )
   tool(
     "get_worker_health_history",
-    `The health history of one n8n-ops Worker, to explain why it was offline or why its instances' health went unknown. Name it by worker (its name) or id. worker: online now, lastSeenAt, version, update (the image line when it runs an earlier release). check: how the history is made (description). historyStartsAt: time before it is not measured. summary: availability (online share of the time observed, which excludes time n8n-ops itself was not recording), offline time and periods, notRecordingMs (n8n-ops was not running or could not record; never the Worker's fault), restarts, Docker failing time, round-trip avg/max and failed calls as reported by the Worker. coverage: how much of the online time had round-trip and Docker measurements; heartbeat false means the Worker must be updated to report them. series: buckets (5 minutes up to 48 hours, 1 hour beyond). periods: the same, as spans for a chart. docker: the last Docker check (current when under 3 minutes old and the Worker is online). events, newest first: offline (with notRecordingMs and job: a job that was running then, a hint, never the cause), not-recording, restart (uptimeSecBefore: a lower bound of the earlier process's uptime) and docker (endUnknown: no check followed). to null: still going on. Paged: limit (default 50, up to ${RUNS_MAX}), offset, total, nextOffset; pass the returned window.to as to for the next pages, and start again when latestIds changes.`,
+    `The health history of one n8n-ops Worker, to explain why it was offline or why its instances' health went unknown. Name it by worker (its name) or id. worker: online now, lastSeenAt, version, update (the image line when it runs an earlier release). check: how the history is made (description). historyStartsAt: time before it is not measured. summary: availability (online share of the time observed, which excludes time n8n-ops itself was not recording), offline time and periods, notRecordingMs (n8n-ops was not running or could not record; never the Worker's fault), restarts, Docker failing time, round-trip avg/max and failed calls as reported by the Worker. coverage: how much of the online time had round-trip and Docker measurements; heartbeat false means the Worker must be updated to report them. series: buckets (5 minutes up to 48 hours, 1 hour beyond). periods: the same, as spans for a chart. docker: the last Docker check (current when under 3 minutes old and the Worker is online). events, newest first: offline (with notRecordingMs and job: a job that was running then, a hint, never the cause), not-recording, restart (uptimeSecBefore: a lower bound of the earlier process's uptime) and docker (endUnknown: no check followed). to null: still going on. Paged: limit (default 50, up to ${RUNS_MAX}), offset, total, nextOffset; pass the returned window.to as to for the next pages; a row written late may still make an event appear twice or be skipped between pages. If total changes between calls, start again from offset 0.`,
     {
       worker: z.string().min(1).optional(),
       id: z.string().uuid().optional(),
@@ -695,12 +648,6 @@ export function buildMcpServer(
   return server
 }
 
-/**
- * MCP over Streamable HTTP at /mcp (requirement E2). Bearer token of kind "mcp". A browser's request is accepted only
- * from n8n-ops's own origin (the MCP transport specification; the SDK leaves Origin to middleware); a request without
- * Origin, from a program, passes. Every tool call is checked again against the connection, runs within the limits,
- * and leaves an audit entry with its outcome.
- */
 export function mcpRoutes(ctx: Ctx) {
   const app = new Hono<Env>()
   app.use("*", async (c, next) => {
@@ -724,7 +671,6 @@ export function mcpRoutes(ctx: Ctx) {
       })
     const guard: ToolGuard = async (tool, kind, args, run) => {
       const fail = (body: object) => ({ ...json(body), isError: true })
-      // The call may have waited, and the connection may have ended since the request's token was checked.
       if (!who.manual && !(await ctx.agents?.stillLive(who.id))) {
         await record(tool, kind, args, "denied")
         return fail({ error: "connection_ended", message: "This connection has ended. Connect again." })
@@ -746,7 +692,6 @@ export function mcpRoutes(ctx: Ctx) {
         await record(tool, kind, args, "unknown")
         return fail(unknown)
       }
-      // The same answer cap as the REST API; the tool ran, and an action says so.
       const size = done.value.content.reduce((n, part) => n + Buffer.byteLength(part.text), 0)
       if (size > LIMITS.answerBytes) {
         await record(tool, kind, args, "error")
@@ -759,10 +704,7 @@ export function mcpRoutes(ctx: Ctx) {
       return done.value
     }
     const access = who.canRequestAccess ? { tokenId: who.id, publicUrl: await publicBase(ctx, c.req.url) } : undefined
-    const server = buildMcpServer(ctx, async () => {}, access, {
-      guard,
-      getAccess: () => accessAnswer(ctx, who, undefined),
-    })
+    const server = buildMcpServer(ctx, guard, access, () => accessAnswer(ctx, who, undefined))
     const transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true,

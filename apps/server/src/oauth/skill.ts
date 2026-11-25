@@ -4,7 +4,6 @@ import { join } from "node:path"
 import { Hono } from "hono"
 import type { Env } from "../http/types.ts"
 
-/** The skill's files, in the layout of the folder an agent installs, and how each is served. */
 const FILES: Record<string, string> = {
   "SKILL.md": "text/markdown; charset=utf-8",
   "scripts/n8n-ops": "text/plain; charset=utf-8",
@@ -14,14 +13,8 @@ const FILES: Record<string, string> = {
 }
 const URL_PLACEHOLDER = /__N8N_OPS_URL__/g
 const VERSION_PLACEHOLDER = /__N8N_OPS_SKILL_VERSION__/g
-// The address goes into JavaScript, PowerShell and sh source, and the skill prints it in commands, so only an origin
-// of this shape is filled in (the same shape the skill's scripts accept).
 const SAFE_ORIGIN = /^https?:\/\/(\[[0-9a-f:.]+\]|[a-z0-9.-]+)(:[1-9][0-9]{0,4})?$/
 
-/**
- * Whether agents may fetch the skill from this address: https, or http to this computer (development), and nothing
- * in it a shell or the scripts' languages would treat as code.
- */
 export function servesSkill(issuer: string) {
   if (!SAFE_ORIGIN.test(issuer)) return false
   const url = new URL(issuer)
@@ -55,7 +48,6 @@ the person the link and the code that \`n8n-ops connect\` prints in the reply th
 `
 }
 
-/** The skill's files as shipped, with line ends made LF so the sh scripts work from a Windows checkout. */
 function readSkill(skillDir: string | undefined) {
   if (!skillDir) return null
   const files = new Map<string, string>()
@@ -65,22 +57,15 @@ function readSkill(skillDir: string | undefined) {
   } catch {
     return null
   }
-  // The served version: a short hash of every file's name and content, in a fixed order.
   const hash = createHash("sha256")
   for (const [name, text] of files) hash.update(`${name}\n${text.length}\n${text}`)
   return { files, version: hash.digest("hex").slice(0, 12) }
 }
 
-/** The version a served copy of this build's skill sends in X-N8n-Ops-Skill, or null when the build has none. */
 export function servedSkillVersion(skillDir: string | undefined) {
   return readSkill(skillDir)?.version ?? null
 }
 
-/**
- * The skill for agents that run commands, served by n8n-ops itself with its public URL and version filled in, so the
- * person only tells the agent where it is. Public (the files hold no secret), never cached, only while agents are on,
- * and only from an https address: an agent runs what it downloads here.
- */
 export function skillRoutes(issuer: () => Promise<string | null>, skillDir: string | undefined) {
   const app = new Hono<Env>()
   const skill = readSkill(skillDir)
@@ -104,7 +89,6 @@ export function skillRoutes(issuer: () => Promise<string | null>, skillDir: stri
     const file = new URL(c.req.url).pathname.slice("/connect/skill/".length)
     if (!skill) return c.json({ error: "not_found", message: "This build has no agent skill." }, 404)
     if (file === "") return c.body(installNote(base), 200, headers("text/markdown; charset=utf-8"))
-    // Each file by the list's own name, never by the name in the request.
     const name = Object.keys(FILES).find((f) => f === file)
     const text = name ? skill.files.get(name) : undefined
     if (!name || text === undefined) return c.json({ error: "not_found" }, 404)

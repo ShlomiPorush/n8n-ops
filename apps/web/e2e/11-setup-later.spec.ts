@@ -1,10 +1,6 @@
 import { expect, type Page, test } from "@playwright/test"
 import { currentApiKey, holdBackupSchedule, n8nUrl, ownPage, signIn } from "./helpers.ts"
 
-// The setup of an instance (docs/adr/0002) beyond the first registration: Finish later keeps it as Setup
-// incomplete (the pill in the list, nothing on Overview), Continue setup goes on where it stopped, a saved change
-// makes the checks before it count no more, and Delete removes it; an instance backed up through the API alone;
-// and every step of the setup on a phone. Each instance made here is removed again, for the files after this one.
 test.describe.configure({ mode: "serial" })
 
 const later = "e2e-later"
@@ -14,7 +10,6 @@ const sayingWhy = "e2e-says-why"
 let page: Page
 let restoreSchedule: (() => Promise<void>) | undefined
 
-/** Removes the instances this file makes, also those a failed test left behind. */
 async function removeOurs() {
   const { instances } = (await (await page.request.get("/api/instances")).json()) as {
     instances: { id: string; name: string }[]
@@ -27,13 +22,11 @@ test.beforeAll(async ({ browser }) => {
   page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
   await signIn(page)
   await removeOurs()
-  // The backup of the instance added below is started by hand; none may come from the schedule in between.
   await holdBackupSchedule(page, (restore) => {
     restoreSchedule = restore
   })
 })
 
-// The instances go first, so none of them is backed up by the schedule once it is back.
 test.afterAll(async () => {
   try {
     await removeOurs()
@@ -46,7 +39,6 @@ test.afterAll(async () => {
   }
 })
 
-/** Starts adding an instance of the test n8n: its name, its address, and the capabilities to click. */
 async function startAdding(name: string, click: string[]) {
   await page.goto("/instances")
   await page.getByRole("button", { name: "Add instance" }).click()
@@ -68,20 +60,17 @@ test("Finish later keeps an instance as Setup incomplete, off Overview, and Cont
   await expect(page).toHaveURL(/\/instances\/[^/]+$/)
   const id = new URL(page.url()).pathname.split("/").pop()
 
-  // Its page offers the setup and Delete, and nothing it does not do yet.
   await expect(heading("Setup Incomplete")).toBeVisible()
   await expect(page.getByText("Chosen for: Health, Monitoring and problems.")).toBeVisible()
   await expect(page.getByRole("button", { name: "Check now" })).toHaveCount(0)
   await expect(page.getByRole("tab", { name: /^Health/ })).toHaveCount(0)
   await expect(page.getByRole("row").filter({ hasText: later })).toContainText("Setup incomplete")
 
-  // Overview counts active instances only.
   await page.goto("/")
   const instances = page.locator("section").filter({ has: heading("Instances") })
   await expect(instances).toContainText("e2e-n8n")
   await expect(instances).not.toContainText(later)
 
-  // Continue setup opens the first step that has not passed: the API key.
   await page.goto(`/instances/${id}`)
   await page.getByRole("link", { name: "Continue setup" }).click()
   await expect(heading("API Key")).toBeVisible()
@@ -92,8 +81,6 @@ test("Finish later keeps an instance as Setup incomplete, off Overview, and Cont
   await expect(heading("Review")).toBeVisible()
   await expect(page.getByRole("button", { name: "Activate" })).toBeEnabled()
 
-  // A saved change makes only the checks that depend on it count no more: queue mode is health's, which its step
-  // checks again on Continue, and not the key's, which still counts.
   await rail()
     .getByRole("button", { name: /^Health/ })
     .click()
@@ -104,7 +91,6 @@ test("Finish later keeps an instance as Setup incomplete, off Overview, and Cont
   await expect(page.getByRole("button", { name: "Check all again" })).toHaveCount(0)
   await expect(page.getByRole("button", { name: "Activate" })).toBeEnabled()
 
-  // Finished later again, then deleted from its page.
   await page.getByRole("button", { name: "Finish later" }).click()
   await expect(heading("Setup Incomplete")).toBeVisible()
   await page.getByRole("button", { name: "Delete", exact: true }).click()
@@ -118,7 +104,6 @@ test("Finish later keeps an instance as Setup incomplete, off Overview, and Cont
 
 test("an instance backed up through the API alone is told what it leaves out, and backs up its workflows", async () => {
   test.setTimeout(150_000)
-  // Health is on by default; this one is for backups only.
   await startAdding(apiOnly, ["Health", "Backup"])
   await page.getByRole("radio", { name: "Through the API only" }).click()
   await expect(page.getByText("Credential secrets are not backed up")).toBeVisible()
@@ -152,7 +137,6 @@ test("a capability that is not chosen shows as off, and what it did before as hi
     instances: { id: string; name: string }[]
   }
   const id = instances.find((i) => i.name === apiOnly)?.id
-  // Backups only: Overview says its health is off, not unknown or down.
   await page.goto("/")
   const lineOf = () =>
     page
@@ -162,11 +146,9 @@ test("a capability that is not chosen shows as off, and what it did before as hi
       .locator("xpath=..")
   const line = lineOf()
   await expect(line).toContainText("Health off")
-  // "backup <when>" (the name has the word too, so the line's own part is looked for).
   await expect(line.getByText(/^backup /)).toHaveCount(1)
   await page.screenshot({ path: test.info().outputPath("overview-health-off.png") })
 
-  // Backup turned off too: its last run is history, not a diagnosis.
   expect((await page.request.delete(`/api/instances/${id}/capabilities/backup`, ownPage)).ok()).toBe(true)
   await page.goto(`/instances/${id}`)
   await expect(page.getByText("Backup is not chosen").filter({ visible: true }).first()).toBeVisible()
@@ -185,7 +167,6 @@ test("a step that cannot be saved, or a check that cannot run from the review, s
   const id = page.url().match(/\/instances\/([^/?]+)\/setup/)?.[1]
   expect(id).toBeTruthy()
 
-  // Finish later saves the step first: a refusal is said, and the page stays.
   await page.goto(`/instances/${id}/setup?step=health`)
   await expect(heading("Health")).toBeVisible()
   await page.route(`**/api/instances/${id}`, (r) =>
@@ -200,7 +181,6 @@ test("a step that cannot be saved, or a check that cannot run from the review, s
   await page.screenshot({ path: test.info().outputPath("finish-later-refused.png") })
   await page.unroute(`**/api/instances/${id}`)
 
-  // A check run again from the review that cannot run says why under the list.
   await page.route(`**/api/instances/${id}/setup/health`, (r) =>
     r.fulfill({ status: 400, json: { error: "invalid", message: "Simulated: the health check could not run." } }),
   )
@@ -232,7 +212,6 @@ test("every step of the setup fits a phone without sideways scrolling", async ()
     await page.getByRole("button", { name: "Continue" }).click()
     await expect(heading("API Key")).toBeVisible()
     const url = new URL(page.url())
-    // A step saves only its own fields, as the access step saves the policy: the first step's choices stay.
     const id = url.pathname.split("/")[2]
     const policy = { agentAccess: { enabled: false, scopes: [] } }
     expect((await page.request.patch(`/api/instances/${id}`, { data: policy })).ok()).toBe(true)
@@ -246,10 +225,8 @@ test("every step of the setup fits a phone without sideways scrolling", async ()
     ] as const) {
       await page.goto(`${url.pathname}?step=${step}`)
       await expect(heading(title)).toBeVisible()
-      // Each step saved only its own fields: health is still checked by the worker, as chosen first.
       if (step === "health")
         await expect(page.getByText(/^Checked by the worker inside the main container/)).toBeVisible()
-      // The open step keeps its name on the one-line rail; Continue (Activate on the review) is in reach.
       await expect(rail().locator('[aria-current="step"]')).toContainText(title)
       await expect(page.getByRole("button", { name: step === "review" ? "Activate" : "Continue" })).toBeVisible()
       expect(await sideways(), `the ${title} step scrolls sideways`).toBeLessThanOrEqual(0)
@@ -260,9 +237,6 @@ test("every step of the setup fits a phone without sideways scrolling", async ()
 })
 
 test("Add instance opens the setup also when the window turns wide before the setup has drawn", async ({ browser }) => {
-  // Narrower than the split, the list opens no instance by itself. The split's media query answers through a
-  // stand-in here, so the window can turn wide in the same moment as the click: the list then draws once more, at
-  // the address it was at, before the setup page has drawn, and must not open its first instance over the setup.
   const context = await browser.newContext({ viewport: { width: 900, height: 900 } })
   const tab = await context.newPage()
   try {

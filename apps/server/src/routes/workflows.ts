@@ -18,7 +18,6 @@ export function workflowRoutes(ctx: Ctx) {
   const app = new Hono<Env>()
   app.use("*", requireUser(ctx))
 
-  /** The map of every workflow on every instance, with duplicates and almost unused instances (F1, F2). */
   app.get("/", async (c) => {
     const where: SQL[] = []
     const instanceId = c.req.query("instance")
@@ -91,7 +90,6 @@ export function workflowRoutes(ctx: Ctx) {
         },
         400,
       )
-    // n8n older than 2.14.0 is not read through its API: said for that instance, the others are synced.
     const results = await Promise.all(
       targets.map(async (i) => ({
         instance: i.name,
@@ -135,7 +133,6 @@ export function workflowRoutes(ctx: Ctx) {
   return app
 }
 
-/** Decrypted credentials of an instance as an age-encrypted file, for moving them to other systems. */
 export function credentialExportRoutes(ctx: Ctx) {
   const app = new Hono<Env>()
   app.use("*", requireUser(ctx))

@@ -12,9 +12,6 @@ import { agentInstances } from "./agent.ts"
 import { applyHealth, type HealthReport, startCheck } from "./health.ts"
 import { HistoryError, healthHistory, historyQuery, pruneChecks } from "./health-history.ts"
 
-// The health history against a real PostgreSQL: every applied check is kept with the facts it was made with,
-// failure runs are derived from them (a check not collected neither extends nor ends one), the window, paging and
-// retention behave as the API says, and drafts and unknown names are not found.
 const adminUrl = process.env.MIGRATION_DATABASE_URL
 if (!adminUrl) throw new Error("MIGRATION_DATABASE_URL is required (scripts/verify.sh sets it)")
 
@@ -45,7 +42,6 @@ const query = (q: Record<string, unknown> = {}) => historyQuery.parse(q)
 
 const NOW = new Date("2026-11-09T12:00:00Z")
 const minutesAgo = (m: number) => new Date(NOW.getTime() - m * 60_000)
-/** Stores checks at given times: "ok", "fail", "fail!" (queued an alert) or "nc" (not collected). */
 async function stored(list: [number, "ok" | "fail" | "fail!" | "nc", number?][]) {
   for (const [ago, what, ms] of list) {
     await ctx.db.insert(healthChecks).values({
@@ -177,17 +173,14 @@ describe("failure runs", () => {
     const h = await healthHistory(ctx, { name: "n8n-a" }, query({ hours: 1 }), NOW)
     expect(h.runs.map((r) => [r.startedBeforeWindow, r.recoverySeen])).toEqual([
       [false, false],
-      // The run of 130 minutes ago ended 50 minutes ago, inside the last hour.
       [true, true],
     ])
-    // A window that ended in the past cuts what came after it.
     const past = await healthHistory(ctx, { name: "n8n-a" }, query({ hours: 2, to: minutesAgo(60) }), NOW)
     expect(past.runs).toHaveLength(1)
     expect(past.runs[0]).toMatchObject({ recoverySeen: false, endTruncated: true })
   })
 
   it("takes a run's times from its first and last checks as applied, even after the clock went back", async () => {
-    // Applied in this order; the clock went back 5 minutes after the first failed check.
     await stored([
       [100, "ok"],
       [90, "fail"],
@@ -203,7 +196,6 @@ describe("failure runs", () => {
   })
 
   it("sets the window by the order the checks were applied, so a clock that went back hides no run", async () => {
-    // The last hour starts with the failed check; the passing check after it carries an earlier clock time.
     await stored([
       [70, "ok"],
       [50, "fail"],
@@ -316,7 +308,6 @@ describe("retention", () => {
 
   it("deletes the first checks as applied, so no hole joins two runs when the clock went back", async () => {
     const day = 24 * 60
-    // Applied in this order around the one-day limit: a failure inside it, a pass the clock put outside, a failure.
     await stored([
       [day - 1, "fail"],
       [day + 1, "ok"],

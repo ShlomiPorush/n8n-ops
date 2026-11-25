@@ -1,17 +1,8 @@
 import { describe, expect, it } from "vitest"
-import {
-  ENDED_PAGE,
-  type HistoryState,
-  historyMisses,
-  type Listed,
-  loadsByScrolling,
-  mergeHistory,
-  nextHistoryRead,
-} from "./access-history.ts"
+import { ENDED_PAGE, historyMisses, type Listed, loadsByScrolling, mergeHistory } from "./access-history.ts"
 
 const at = (s: number, ms = 0) => new Date(Date.UTC(2026, 10, 16, 8, 0, 0) - s * 1000 + ms).toISOString()
 const row = (id: string, status: string, time: string): Listed => ({ id, status, requestedAt: time })
-/** Ended requests e0, e1, … one second apart, newest first. */
 const ended = (from: number, count: number) =>
   Array.from({ length: count }, (_, i) => row(`e${from + i}`, "released", at(from + i)))
 
@@ -36,94 +27,35 @@ describe("the Access list with older requests", () => {
   })
 })
 
-const idle: HistoryState = {
-  reading: false,
-  failed: null,
-  reread: false,
-  hasData: true,
-  hasNextPage: true,
-  want: false,
-  once: false,
-  liveFull: true,
-}
+describe("the history read again", () => {
+  const ids = (rows: Listed[]) => rows.map((r) => r.id)
+  const before = [row("p", "pending", at(5)), ...ended(0, ENDED_PAGE), row("old", "approved", at(900))]
+  const history = ended(0, 2 * ENDED_PAGE)
 
-describe("the next read of older requests", () => {
-  it("starts with the first page once the end is in view or a page was asked for", () => {
-    const none = { ...idle, hasData: false, hasNextPage: false }
-    expect(nextHistoryRead(none)).toBeNull()
-    expect(nextHistoryRead({ ...none, want: true })).toBe("first")
-    expect(nextHistoryRead({ ...none, once: true })).toBe("first")
-    // Fewer than a page of ended requests: the live answer holds them all.
-    expect(nextHistoryRead({ ...none, want: true, liveFull: false })).toBeNull()
+  it("not when a request arrives, is approved, or ends among the latest ones", () => {
+    const arrived = [row("q", "pending", at(-1)), ...before]
+    expect(historyMisses(ids(before), arrived, history)).toBe(false)
+    const approved = [row("p", "approved", at(5)), ...before.slice(1)]
+    expect(historyMisses(ids(before), approved, history)).toBe(false)
+    const ends = [row("p", "denied", at(5)), ...ended(0, ENDED_PAGE - 1), row("old", "approved", at(900))]
+    expect(historyMisses(ids(before), ends, history)).toBe(false)
   })
 
-  it("loads the next page while wanted, and nothing at the end", () => {
-    expect(nextHistoryRead({ ...idle, want: true })).toBe("next")
-    expect(nextHistoryRead({ ...idle, once: true })).toBe("next")
-    expect(nextHistoryRead(idle)).toBeNull()
-    expect(nextHistoryRead({ ...idle, want: true, hasNextPage: false })).toBeNull()
+  it("when an active request ended past the latest ones", () => {
+    expect(historyMisses(ids(before), before.slice(0, -1), history)).toBe(true)
   })
 
-  it("starts nothing while a read runs or waits for the network, and reads again after it", () => {
-    const owed = { ...idle, reread: true, want: true, once: true }
-    expect(nextHistoryRead({ ...owed, reading: true })).toBeNull()
-    expect(nextHistoryRead(owed)).toBe("again")
-    // Once the history was read again, a page asked for during it is loaded.
-    expect(nextHistoryRead({ ...owed, reread: false })).toBe("next")
-  })
-
-  it("starts nothing after a failure, whatever is owed, until Try again", () => {
-    for (const failed of ["first", "again", "next"] as const) {
-      expect(nextHistoryRead({ ...idle, failed, reread: true, want: true, once: true })).toBeNull()
-    }
-  })
-
-  it("reads again what failed after Try again, in any order of the list", () => {
-    // A re-read that failed is owed again; Try again clears the failure only.
-    expect(nextHistoryRead({ ...idle, reread: true })).toBe("again")
-    // A page that failed, while the end is no longer wanted (the order changed): Try again asks for one page.
-    expect(nextHistoryRead({ ...idle, want: false, once: true })).toBe("next")
-    expect(nextHistoryRead({ ...idle, hasData: false, hasNextPage: false, once: true })).toBe("first")
-  })
-})
-
-describe("whether older requests must be read again", () => {
-  const history = ended(0, ENDED_PAGE + 50)
-
-  it("not when a request moved out of the live answer into what the history holds", () => {
-    const before = [row("p", "pending", at(0, 500)), ...ended(0, ENDED_PAGE)]
-    const after = [row("n", "released", at(-1)), row("p", "pending", at(0, 500)), ...ended(0, ENDED_PAGE - 1)]
-    expect(historyMisses(new Set(before.map((r) => r.id)), after, history)).toBe(false)
-  })
-
-  it("when an active request ended past the latest ended ones", () => {
-    const before = [row("old", "approved", at(900)), ...ended(0, ENDED_PAGE)]
-    const after = ended(0, ENDED_PAGE)
-    expect(historyMisses(new Set(before.map((r) => r.id)), after, history)).toBe(true)
-  })
-
-  it("when more requests ended than the live answer holds since the history was read", () => {
-    // 250 requests made and ended while the page was not looking: every one the live answer held before is in
-    // the history, but the 50 between the two are in neither.
+  it("when more requests ended than the live answer holds", () => {
     const newer = Array.from({ length: 250 }, (_, i) => row(`n${i}`, "released", at(-250 + i)))
-    const before = ended(0, ENDED_PAGE)
-    expect(historyMisses(new Set(before.map((r) => r.id)), newer.slice(0, ENDED_PAGE), history)).toBe(true)
+    expect(historyMisses(ids(before), [...newer.slice(0, ENDED_PAGE), row("p", "pending", at(5))], history)).toBe(true)
   })
 
-  it("when the live answer's oldest request and the history's newest share a millisecond", () => {
-    const newest = row("h", "released", at(0, 100))
-    const live = [
-      ...Array.from({ length: ENDED_PAGE - 1 }, (_, i) => row(`n${i}`, "released", at(-1 - i))),
-      row("m", "released", at(0, 100)),
-    ]
-    expect(historyMisses([], live, [newest, ...ended(1, 10)])).toBe(true)
-    // Older than the history's newest: they overlap, nothing can be between.
-    const older = [...live.slice(0, -1), row("m", "released", at(1, 100))]
-    expect(historyMisses([], older, [newest, ...ended(1, 10)])).toBe(false)
+  it("not when the history holds a newer request than the live answer", () => {
+    expect(historyMisses(ids(before), before, [row("n", "released", at(-1)), ...history])).toBe(false)
   })
 
-  it("not while the live answer holds fewer ended requests than a page", () => {
-    expect(historyMisses([], ended(-5, 10), history)).toBe(false)
+  it("not before anything was read", () => {
+    expect(historyMisses([], before, [])).toBe(false)
   })
 })
 

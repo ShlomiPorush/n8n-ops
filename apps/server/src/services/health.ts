@@ -5,23 +5,18 @@ import {
   readMetricsText,
   workerDetails,
 } from "@n8n-ops/shared"
-import { and, eq, gt, like, or, sql } from "drizzle-orm"
+import { and, eq, gt, inArray, like, or, sql } from "drizzle-orm"
 import { z } from "zod"
 import { type Ctx, changed } from "../context.ts"
 import { alertState, type Health, instances } from "../db/schema.ts"
-import { oneAtATime } from "../lib/one-at-a-time.ts"
+import { resolveInstanceSettings } from "../lib/settings.ts"
 import { probe } from "../n8n/client.ts"
 import { conditionSettings, type Streak, setConditionIn } from "./alerts.ts"
 import { recordCheck } from "./health-history.ts"
-import { healthTurn, type Instance, metricsUrlOf } from "./instances.ts"
+import { type Instance, metricsUrlOf } from "./instances.ts"
 import type { DbLike } from "./problems.ts"
 import { clip, html } from "./telegram.ts"
 
-/**
- * One request's result. `ms` is how long the worker's step took (for a check inside a container, the whole check);
- * `requestMs` is the request alone until its whole answer, absent when none came or from workers of earlier
- * releases, so the two are never mixed. `code` names what failed, when known.
- */
 const probeResult = z.object({
   ok: z.boolean(),
   status: z.number(),
@@ -31,7 +26,6 @@ const probeResult = z.object({
   code: z.string().max(40).optional().catch(undefined),
 })
 
-/** What the socket proxy refused: the Docker call, and the container for a command. */
 export const refusal = z.object({
   call: z.enum(["exec-create", "exec-start", "exec-inspect", "list"]),
   container: z.string().max(128).optional(),
@@ -39,18 +33,12 @@ export const refusal = z.object({
 
 export type Refusal = z.infer<typeof refusal>
 
-/**
- * A health report as a worker sends it (collection mode "worker"); the server checks it before using it and stores
- * only what it parsed. The fields after checkedAt come from workers that read the main from inside its container;
- * workers of earlier releases leave them out.
- */
 export const probeReport = z.object({
   main: probeResult,
   readiness: probeResult,
   workers: z.array(
     probeResult.extend({
       url: z.string(),
-      /** Found next to the main (url docker://<name>), with its state; absent for a URL the owner typed. */
       name: z.string().max(128).optional(),
       state: z.enum(["ready", "not-ready", "unreachable", "not-verified", "down", "not-checked"]).optional(),
       ...workerDetails,
@@ -65,18 +53,12 @@ export const probeReport = z.object({
     .nullable() satisfies z.ZodType<QueueMetrics | null>,
   metricsError: z.string().optional(),
   checkedAt: z.string(),
-  /** "inside": read by exec in the main container; "network": requested over the network. */
   source: z.enum(["inside", "network"]).optional(),
-  /** Why the worker checked over the network when it was asked to read from inside. */
   fallback: z.string().max(300).optional(),
-  /** The execution mode read inside the main; null when it could not be read. */
   mode: z.enum(["queue", "regular"]).nullable().optional(),
   version: z.string().max(64).nullable().optional(),
-  /** Docker refused to run a command in the main because it is stopped or paused: the main is down. */
   mainState: z.enum(["running", "not-running", "paused"]).optional(),
-  /** How the metrics were read inside the main: read, off, 404, no queue figures, failed, or a typed URL used. */
   metricsState: z.enum(["read", "off", "404", "no-queue-figures", "failed", "skipped"]).optional(),
-  /** How finding the queue workers went: the container list read in full (ok), or why not. */
   discovery: z
     .object({
       status: z.enum(["ok", "ambiguous", "refused", "failed", "partial"]),
@@ -84,24 +66,18 @@ export const probeReport = z.object({
       found: z.number().int(),
     })
     .optional(),
-  /** The check itself failed (not the main): health is unknown, not the last good state. */
   notCollected: z.string().max(300).optional(),
-  /** What the socket proxy refused in this probe. Absent from workers of earlier releases. */
   access: z.object({ refused: z.array(refusal).max(60) }).optional(),
-  /** The queue worker names the worker listed next to the main, when it told them apart. */
-  /** The container a Compose service target resolved to in this probe. */
   resolvedContainer: z
     .string()
     .regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/)
     .optional()
     .catch(undefined),
-  /** Whether a rule for the service's replicas reaches only them on the host, at this probe. */
   replicas: z.object({ clean: z.boolean() }).optional().catch(undefined),
   listed: z
     .object({
       names: z.array(z.string().max(128)).max(500),
       complete: z.boolean(),
-      /** Patterns for queue workers added later, and whether no other container on the host starts the same way. */
       patterns: z
         .array(z.object({ pattern: z.string().max(130), clean: z.boolean() }))
         .max(20)
@@ -114,23 +90,14 @@ export type ProbeResult = z.infer<typeof probeResult>
 
 export type HealthReport = z.infer<typeof probeReport> & { via: "direct" | "worker" }
 
-/** A health check as it started: its number, and the collection revision it was made for. */
 export type CheckTicket = { seq: number; revision: number }
 
-export const checkTicket = z.object({ seq: z.number().int(), revision: z.number().int() })
-
-/** What a metrics endpoint that did not answer 2xx means. n8n answers 404 there while N8N_METRICS is off. */
 export function metricsAnswer(status: number) {
   return status === 404
     ? "metrics are off (404); set N8N_METRICS=true and N8N_METRICS_INCLUDE_QUEUE_METRICS=true on the main process"
     : `metrics answered ${status}`
 }
 
-/**
- * Starts a health check: takes the instance's next check number, and returns the instance as it is in that same
- * statement. The check must use this row, not one read before: then its settings are exactly those of the
- * revision on its ticket, and a change made just before cannot pass for the new one.
- */
 export async function startCheck(
   ctx: Ctx,
   instanceId: string,
@@ -145,26 +112,18 @@ export async function startCheck(
 
 type ModeReport = Pick<z.infer<typeof probeReport>, "source" | "mode">
 
-/** The execution mode a report read inside the main, or null when it was not read there. */
 const foundMode = (report: ModeReport) =>
   report.source === "inside" && (report.mode === "queue" || report.mode === "regular") ? report.mode : null
 
-/** A mode read inside the main is the instance's mode from now on; one that could not be read keeps the last. */
 export function queueModeOf(report: ModeReport, current: boolean) {
   const mode = foundMode(report)
   return mode === null ? current : mode === "queue"
 }
 
-/**
- * A report as it counts for an instance in that mode. Outside queue mode its queue parts mean nothing, whichever
- * worker release sent them: n8n has no queue there, so it never publishes queue figures. How the metrics were read
- * stays: it says why there is a version or not.
- */
 export function forMode<T extends z.infer<typeof probeReport>>(report: T, queueMode: boolean): T {
   return queueMode ? report : { ...report, workers: [], queue: null, metricsError: undefined, discovery: undefined }
 }
 
-/** Checks an instance from the server (collection mode "direct"). Queue workers only in queue mode. */
 export async function collectDirect(instance: Instance): Promise<HealthReport> {
   const base = instance.baseUrl.replace(/\/+$/, "")
   const workerUrls = instance.queueMode ? instance.workerHealthUrls : []
@@ -198,10 +157,8 @@ export async function collectDirect(instance: Instance): Promise<HealthReport> {
   }
 }
 
-/** Checks an instance from the server now and applies the result, unless a later check or change won. */
 export async function checkDirect(ctx: Ctx, instanceId: string) {
   const started = await startCheck(ctx, instanceId)
-  // Collection may have moved to the worker in between: then this check is not the server's to make.
   if (!started || started.instance.collection !== "direct") return null
   return applyHealth(ctx, instanceId, await collectDirect(started.instance), started.ticket)
 }
@@ -209,7 +166,6 @@ export async function checkDirect(ctx: Ctx, instanceId: string) {
 export function healthOf(report: HealthReport, backlogActive: boolean): Health {
   if (report.notCollected) return "unknown"
   if (!report.main.ok) return "down"
-  // Queue workers found next to the main: a list that could not be read in full, or no worker found, is a warning.
   const d = report.discovery
   const workersWrong = report.workers.some((w) => !w.ok) || (d !== undefined && (d.status !== "ok" || d.found === 0))
   if (!report.readiness.ok || workersWrong || backlogActive) return "warn"
@@ -218,7 +174,6 @@ export function healthOf(report: HealthReport, backlogActive: boolean): Health {
 
 const failure = (p: ProbeResult) => clip(p.error ?? `HTTP ${p.status}`, 500)
 
-/** How long a streak of failed checks has lasted: seconds, or minutes and seconds. */
 export function lasted(ms: number) {
   const total = Math.max(0, Math.round(ms / 1000))
   const min = Math.floor(total / 60)
@@ -226,13 +181,11 @@ export function lasted(ms: number) {
   return min ? (sec ? `${min} min ${sec} s` : `${min} min`) : `${sec} s`
 }
 
-/** The line of a down alert that says how many checks failed in a row, and over how long. */
 const streakLine = (streak: Streak | undefined, now: Date) =>
   streak && streak.failures > 1
     ? html`\n${streak.failures} failed checks in a row over ${lasted(now.getTime() - streak.since.getTime())}`
     : html``
 
-/** Telegram texts of the health alerts. Names, URLs and errors come from outside and are shortened. */
 export const healthAlerts = {
   down: (name: string, main: ProbeResult, streak?: Streak, now = new Date()) =>
     html`<b>${clip(name, 200)} is down</b>\n${failure(main)}${streakLine(streak, now)}`,
@@ -249,10 +202,6 @@ ${clip(url, 200)}`,
 
 const NOT_QUEUE = "Closed without a message: the instance is not in queue mode"
 
-/**
- * Ends the queue alerts of an instance without a message: its worker conditions and its backlog. For an instance
- * that is not in queue mode, whether it just left it or a closing was interrupted before.
- */
 export async function closeQueueAlerts(db: Pick<Ctx["db"], "update">, instanceId: string) {
   for (const prefix of [`worker:${instanceId}:`, `backlog:${instanceId}`]) {
     await db
@@ -262,20 +211,11 @@ export async function closeQueueAlerts(db: Pick<Ctx["db"], "update">, instanceId
   }
 }
 
-/**
- * A condition that is on, or has failed checks counting toward it. Closing one ends both: failed checks of what was
- * checked before a change never add up with those of what is checked after it.
- */
 export const openOrPending = or(eq(alertState.active, true), gt(alertState.failures, 0))
 
-/** What a condition closed without a message is set to, saying why. */
 export const closed = (why: string) =>
   ({ active: false, since: new Date(), detail: why, failures: 0, failingSince: null }) as const
 
-/**
- * Ends every worker condition of an instance without a message: its collection target changed (another worker or
- * host, another container, another collection mode), so a condition of the old one says nothing about the new.
- */
 export async function closeWorkerConditions(db: Pick<Ctx["db"], "update">, instanceId: string) {
   await db
     .update(alertState)
@@ -283,10 +223,6 @@ export async function closeWorkerConditions(db: Pick<Ctx["db"], "update">, insta
     .where(and(like(alertState.key, `worker:${instanceId}:%`), openOrPending))
 }
 
-/**
- * Drops the failed checks counting toward the instance's down condition, when what is checked changed: they were
- * about the old target. A down condition already on stays until a check passes.
- */
 export async function resetPendingDown(db: Pick<Ctx["db"], "update">, instanceId: string) {
   await db
     .update(alertState)
@@ -294,90 +230,36 @@ export async function resetPendingDown(db: Pick<Ctx["db"], "update">, instanceId
     .where(and(eq(alertState.key, `down:${instanceId}`), eq(alertState.active, false), gt(alertState.failures, 0)))
 }
 
-/** Ends worker conditions of an instance that `ends` picks, without a message, saying why. */
-async function closeWorkerAlerts(tx: DbLike, instanceId: string, ends: (key: string) => boolean, why: string) {
-  const prefix = `worker:${instanceId}:`
-  const open = await tx
+async function dropWorkerConditions(tx: DbLike, instanceId: string, ends: (key: string) => boolean) {
+  const rows = await tx
     .select({ key: alertState.key })
     .from(alertState)
-    .where(and(like(alertState.key, `${prefix}%`), openOrPending))
-  for (const { key } of open.filter((o) => ends(o.key))) {
-    await tx.update(alertState).set(closed(why)).where(eq(alertState.key, key))
-  }
+    .where(like(alertState.key, `worker:${instanceId}:%`))
+  const gone = rows.map((r) => r.key).filter(ends)
+  if (gone.length) await tx.delete(alertState).where(inArray(alertState.key, gone))
 }
 
-/**
- * Keeps the worker conditions to the source of this report. Typed URLs no longer in the instance's list are not
- * checked any more, so their conditions end. Found next to the main: conditions of typed URLs end, and a found
- * worker that is gone ends as removed, but only after the container list was read in full. Typed URLs, or no
- * discovery: conditions of found workers end.
- */
 async function settleWorkerSources(tx: DbLike, instanceId: string, report: HealthReport, typed: string[]) {
   const found = `worker:${instanceId}:docker://`
   const stillTyped = new Set(typed.map((url) => `worker:${instanceId}:${url}`))
-  await closeWorkerAlerts(
-    tx,
-    instanceId,
-    (key) => !key.startsWith(found) && !stillTyped.has(key),
-    "Closed: the worker URL is no longer checked",
-  )
+  await dropWorkerConditions(tx, instanceId, (key) => !key.startsWith(found) && !stillTyped.has(key))
   const d = report.discovery
   if (!d) {
-    // Only typed worker URLs end the conditions of found workers. A report without discovery for another reason
-    // (a fallback to the network, a worker of an earlier release) says nothing about them: they stay.
     if (!report.workers.some((w) => !w.url.startsWith("docker://"))) return
-    return closeWorkerAlerts(
-      tx,
-      instanceId,
-      (key) => key.startsWith(found),
-      "Closed: the workers are checked another way",
-    )
+    return dropWorkerConditions(tx, instanceId, (key) => key.startsWith(found))
   }
-  await closeWorkerAlerts(
-    tx,
-    instanceId,
-    (key) => !key.startsWith(found),
-    "Closed: the workers are found next to the main",
-  )
+  await dropWorkerConditions(tx, instanceId, (key) => !key.startsWith(found))
   if (d.status !== "ok") return
   const listed = new Set(report.workers.map((w) => `worker:${instanceId}:${w.url}`))
-  await closeWorkerAlerts(
-    tx,
-    instanceId,
-    (key) => key.startsWith(found) && !listed.has(key),
-    "Closed: the worker was removed",
-  )
+  await dropWorkerConditions(tx, instanceId, (key) => key.startsWith(found) && !listed.has(key))
 }
 
-/**
- * Stores a health report and raises or clears health alerts (requirement C3). It applies only if, under a row lock
- * taken after the check's I/O, the instance still has the collection revision the check started from and no check
- * that started later has been applied; otherwise it is dropped. Returns the health, or null when dropped.
- *
- * The reports of one instance are applied one at a time, alerts included, so an earlier check's alerts never come
- * after a later check's. The transaction uses only its own connection: settings are read before it.
- */
-/**
- * The most found queue workers an instance keeps conditions for, open or counting failed checks: far above any real
- * deployment. A failing found worker beyond it gets no condition until others recover or are removed. Typed worker
- * URLs are the owner's own list and are not counted.
- */
 const FOUND_WORKER_CONDITIONS = 500
 
-/** Instances at that limit, so it is logged once when reached, not on every check. */
 const foundWorkersAtLimit = new Set<string>()
 
-export function applyHealth(ctx: Ctx, instanceId: string, given: HealthReport, ticket: CheckTicket) {
-  return oneAtATime(healthTurn(instanceId), () => applyHealthNow(ctx, instanceId, given, ticket))
-}
-
-async function applyHealthNow(ctx: Ctx, instanceId: string, given: HealthReport, ticket: CheckTicket) {
-  const [before] = await ctx.db
-    .select({ overrides: instances.overrides })
-    .from(instances)
-    .where(eq(instances.id, instanceId))
-  if (!before) return null
-  const s = await ctx.settings.forInstance(before.overrides)
+export async function applyHealth(ctx: Ctx, instanceId: string, given: HealthReport, ticket: CheckTicket) {
+  const defaults = await ctx.settings.get("defaults")
   const subject = { instanceId }
   const alerting = await conditionSettings(ctx, "health", subject)
 
@@ -392,14 +274,13 @@ async function applyHealthNow(ctx: Ctx, instanceId: string, given: HealthReport,
       })
       return null
     }
+    const s = resolveInstanceSettings(defaults, current.overrides)
     const found = foundMode(given) !== null
     const queueMode = queueModeOf(given, current.queueMode)
     const report = forMode(given, queueMode)
-    // What the proxy refused and the names it listed are kept in any mode: they say what the proxy must allow.
 
     const measured = queueMode && !report.notCollected && report.queue !== null
     const now = new Date()
-    // The backlog changes only on a measurement; metrics that could not be read leave it as it was.
     const backlogSince = !queueMode
       ? null
       : measured
@@ -415,10 +296,8 @@ async function applyHealthNow(ctx: Ctx, instanceId: string, given: HealthReport,
       .update(instances)
       .set({
         health,
-        // The revision says which collection target this report is about (services/proxy-fix.ts).
         healthDetail: { ...report, backlogActive, revision: ticket.revision },
         healthCheckedAt: now,
-        // Only a check that read the instance is its last known health; one not collected leaves it.
         ...(health !== "unknown" ? { lastKnownHealth: health, lastKnownAt: now } : {}),
         healthAppliedSeq: ticket.seq,
         backlogSince,
@@ -426,15 +305,10 @@ async function applyHealthNow(ctx: Ctx, instanceId: string, given: HealthReport,
         ...(version ? { version } : {}),
       })
       .where(eq(instances.id, current.id))
-    // In the same transaction, so a mode stored as regular never leaves queue alerts open behind it.
     if (!queueMode) await closeQueueAlerts(tx, current.id)
 
-    // The conditions and their alerts are applied with the report, so a report stored is never one whose alerts
-    // were lost, and failed checks are counted exactly once each.
     const name = current.name
     const after = s.downAfterFailures
-    // Not collected says nothing about the main: its conditions and failed checks in a row stay as they were.
-    // Queue workers checked in the same probe were verified on their own, so their results still apply.
     const alertQueued =
       !report.notCollected &&
       (await setConditionIn(
@@ -450,13 +324,10 @@ async function applyHealthNow(ctx: Ctx, instanceId: string, given: HealthReport,
         },
         alerting,
       ))
-    // The history keeps every applied check of the main, with the facts it was made with.
     await recordCheck(tx, current.id, report, { at: now, queueMode, alertAfter: after, alertQueued })
     let atLimit: boolean | null = null
     if (queueMode) {
       await settleWorkerSources(tx, current.id, report, current.workerHealthUrls)
-      // A URL listed twice is one worker: its condition moves once per check, on its first verified result.
-      // Only a verified state moves an alert: a worker not checked, or running without its health check, keeps it.
       const checked = new Map<string, (typeof report.workers)[number]>()
       for (const w of report.workers) {
         if (w.state === "not-checked" || w.state === "not-verified") continue
@@ -469,11 +340,9 @@ async function applyHealthNow(ctx: Ctx, instanceId: string, given: HealthReport,
         .from(alertState)
         .where(and(like(alertState.key, `${found}%`), openOrPending))
       const open = new Set(kept.filter((k) => k.active).map((k) => k.key))
-      // Found workers that recover in this check make room before a new one takes it, whatever their order.
       const held = new Set(kept.map((k) => k.key).filter((key) => !checked.get(key)?.ok))
       let refused = false
       for (const [key, w] of checked) {
-        // A failing found worker without an open alert counts toward the limit; an open alert always moves.
         if (!w.ok && key.startsWith(found) && !open.has(key)) {
           const fits = held.has(key) ? held.size <= FOUND_WORKER_CONDITIONS : held.size < FOUND_WORKER_CONDITIONS
           if (!fits) {
@@ -512,7 +381,6 @@ async function applyHealthNow(ctx: Ctx, instanceId: string, given: HealthReport,
         )
       }
     }
-    // A closed queue worker condition counts like none, so it is not kept.
     await tx
       .delete(alertState)
       .where(
@@ -535,11 +403,6 @@ async function applyHealthNow(ctx: Ctx, instanceId: string, given: HealthReport,
   return applied.health
 }
 
-/**
- * Parses a health report a worker sent for a probe job, and applies it with the job's ticket. Returns what may be
- * stored: the parsed report (unknown fields dropped), or a note that it did not fit, which leaves the last known
- * health. A job made before tickets existed carries none and is not applied.
- */
 export async function applyWorkerReport(
   ctx: Ctx,
   instance: Pick<Instance, "id" | "name">,
@@ -564,19 +427,13 @@ export async function applyWorkerReport(
       count: report.data.workers.length - workers.length,
     })
   const data = { ...report.data, workers }
-  const ticket = checkTicket.safeParse(payload.check)
-  if (ticket.success) await applyHealth(ctx, instance.id, { ...data, via: "worker" }, ticket.data)
-  else ctx.log.info("health report of a probe made before this release not applied", { instance: instance.name })
+  await applyHealth(ctx, instance.id, { ...data, via: "worker" }, payload.check as CheckTicket)
   return data
 }
 
 const strings = (value: unknown) =>
   Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : []
 
-/**
- * The queue workers a probe job asked about: the worker URLs it carried, and, when it asked the worker to find them
- * next to the main, as many found ones as one check reports. A report counts no others.
- */
 function askedWorkers<W extends { url: string }>(workers: W[], payload: Record<string, unknown>) {
   const overrides = (payload.overrides ?? {}) as { workerHealthUrls?: unknown }
   const typed = new Set([...strings(payload.workers), ...strings(overrides.workerHealthUrls)])

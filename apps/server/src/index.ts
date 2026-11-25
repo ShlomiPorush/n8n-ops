@@ -14,10 +14,10 @@ import { features } from "./features.ts"
 import { createAudit } from "./lib/audit.ts"
 import { createSecrets, loadOrCreateAppKey } from "./lib/crypto.ts"
 import { createSettings } from "./lib/settings.ts"
-import { createAgentConnect } from "./oauth/agents.ts"
+import { accountResetHooks, createAgentConnect } from "./oauth/agents.ts"
 import { UPLOAD_DEADLINE_MS } from "./routes/worker-api.ts"
 import { settleCompactions } from "./services/database.ts"
-import { regroupByCause } from "./services/regroup.ts"
+import { endMutes } from "./services/problems.ts"
 
 const config = loadConfig()
 const log = consoleLogger
@@ -28,7 +28,6 @@ try {
 } catch (error) {
   const problem = describeDatabaseError(error, config.databaseUrl)
   if (!problem) throw error
-  // Written synchronously: console output to a pipe may still be pending when the process exits.
   writeSync(2, `${JSON.stringify({ level: "error", msg: problem })}\n`)
   process.exit(1)
 }
@@ -51,13 +50,13 @@ const ctx: Ctx = {
   version: config.version,
   appKeyPath: config.appKeyPath,
   checkDatabase: database.ping,
+  connectDatabase: database.connect,
   log,
   events: new EventEmitter().setMaxListeners(100),
 }
 
-// The authorization server for agents signs its cookies with a key derived from the app key. Its records go through
-// a small pool of their own: an approval holds a transaction of the main pool while the provider stores its grant.
 const cookieKey = Buffer.from(hkdfSync("sha256", key, "n8n-ops", "agent-connect-cookies", 32)).toString("base64")
+// On the main pool approvals could deadlock: each holds one of its connections while the provider stores the grant.
 const storeDatabase = createDatabase(config.databaseUrl, { max: 4 })
 ctx.agents = createAgentConnect(ctx, {
   cookieKeys: [cookieKey],
@@ -65,33 +64,17 @@ ctx.agents = createAgentConnect(ctx, {
   skillDir: config.skillDir,
   storeDb: storeDatabase.db,
 })
-// A two-factor reset ends every agent connection: whoever reset it may not be the person who approved them.
-onTwoFactorReset({
-  begin: (actor) => (ctx.agents as NonNullable<Ctx["agents"]>).beginReset({ by: actor, via: "web" }),
-  finish: (actor, id) => (ctx.agents as NonNullable<Ctx["agents"]>).finishReset({ by: actor, via: "web" }, id),
-})
-// Connections made under a public URL that has since changed end before the server takes a request.
+onTwoFactorReset(accountResetHooks(ctx))
 await ctx.agents.reconcile()
 
-await ctx.settings.loadDesign(log)
-// A table compaction whose answer was lost when the server stopped ends as unknown (services/database.ts).
+await ctx.settings.loadDesign()
 await settleCompactions(ctx)
-// Once, after the migrations and before any request or job: Problems recorded before become one per cause
-// (docs/adr/0003). A failure here stops the start with everything as it was, and the next start tries again.
-const regrouped = await regroupByCause(ctx)
-if (regrouped)
-  log.info("regrouped the recorded problems by cause", {
-    problemsBefore: regrouped.problemsBefore,
-    problemsAfter: regrouped.problemsAfter,
-    affectedBefore: regrouped.affectedBefore,
-    affectedAfter: regrouped.affectedAfter,
-  })
+await endMutes(ctx)
 const { mounts, start } = features(ctx)
 const app = createApp(ctx, { webDir: config.webDir, mounts })
 const server = serve({ fetch: app.fetch, port: config.port }, ({ port }) => {
   log.info(`n8n-ops server ${config.version} listening`, { port })
 }) as Server
-// A worker's backup upload may take longer than Node's default five minutes; the upload has its own deadline.
 server.requestTimeout = UPLOAD_DEADLINE_MS + 5 * 60_000
 const stop = start()
 

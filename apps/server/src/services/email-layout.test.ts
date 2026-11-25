@@ -3,11 +3,9 @@ import nodemailer from "nodemailer"
 import { describe, expect, it } from "vitest"
 import { renderAccessEmail } from "./access-notify.ts"
 import {
-  banner,
   button,
   formatDate,
   kv,
-  link,
   mono,
   panel,
   panelText,
@@ -34,7 +32,6 @@ describe("email layout", () => {
           count: hostile,
           note: hostile,
         }),
-        banner("fail", hostile, hostile),
         stats([{ label: hostile, value: hostile, note: hostile }]),
         paragraph(hostile),
         tag(hostile),
@@ -50,8 +47,7 @@ describe("email layout", () => {
   })
 
   it("links only http and https addresses", () => {
-    expect(link("Open", "javascript:alert(1)").html).not.toContain("<a ")
-    expect(link("Open", "https://ops.example.com/access/1").html).toContain('href="https://ops.example.com/access/1"')
+    expect(button("Open", "https://ops.example.com/access/1").html).toContain('href="https://ops.example.com/access/1"')
     expect(button("Approve or deny", "data:text/html,x").html).toBe("")
   })
 
@@ -87,7 +83,7 @@ describe("email layout", () => {
 
   it("gives Outlook a rounded shape only for the fixed-size topic tag", () => {
     const html = render({ title: "t", topic: "Test", blocks: [panel("p", [kv([["a", tag("b", "ok")]])])] })
-    expect(html.match(/v:roundrect/g)).toHaveLength(2) // the opening and closing tag of one shape
+    expect(html.match(/v:roundrect/g)).toHaveLength(2)
   })
 })
 
@@ -101,7 +97,6 @@ describe("email in Outlook's dark mode", () => {
   const style = html.slice(html.indexOf("<style>"), html.indexOf("</style>"))
 
   it("draws every surface in a neutral grey, which Outlook keeps, in both themes", () => {
-    // Outlook flattens near-grey surfaces with a faint tint (#F4F6F5, #0E1110, #171B19) into one mid grey.
     for (const tinted of ["#F4F6F5", "#E3E7E5", "#ECEEED", "#0E1110", "#171B19", "#262C29", "#232826"]) {
       expect(html).not.toContain(tinted)
     }
@@ -120,7 +115,6 @@ describe("email in Outlook's dark mode", () => {
     expect(marked).toContain("[data-ogsb] .m-panel { background-color: #202020 !important; }")
     expect(marked).toContain("[data-ogsb] .m-line { border-color: #333333 !important; }")
     expect(marked).toContain("[data-ogsb] .m-rule { background-color: #333333 !important; }")
-    // Outlook does not support an attribute joined to a class in one selector.
     expect(style).not.toMatch(/\[data-ogs[bc]\][.\w]/)
   })
 
@@ -132,8 +126,6 @@ describe("email in Outlook's dark mode", () => {
     expect(html).toContain('filled="f" strokecolor="#C42B1C"')
     expect(html).not.toContain("fillcolor")
     expect(style).toContain(".m-fail { color: #FF6B61 !important; border-color: #FF6B61 !important; }")
-    // A banner keeps its tint: it stays readable in Outlook's dark mode.
-    expect(banner("warn", "w").html).toContain('bgcolor="#F2EAD9"')
   })
 
   it("declares left to right on the outer tables, which Outlook on the web keeps", () => {
@@ -145,10 +137,8 @@ describe("email in Outlook's dark mode", () => {
     )
   })
 
-  it("keeps links the client makes in the text colour, and its own links as they are", () => {
+  it("keeps links the client makes in the text colour, and its own button as it is", () => {
     expect(style).toContain(".m-bg a { color: inherit !important; text-decoration: none !important; }")
-    expect(link("Open", "https://ops.example.com/x").html).toContain("text-decoration:underline !important;")
-    // The button's link inherits its colour from the cell, which the dark theme switches.
     expect(html).toContain(
       '<td class="m-mark" bgcolor="#141414" style="padding:10px 18px;background-color:#141414;border-radius:8px;color:#FFFFFF;">',
     )
@@ -291,7 +281,6 @@ describe("emails", () => {
 
   it("keeps every line of the sent message under the SMTP limit of 998 characters", async () => {
     const r = report()
-    // One very long line in the HTML, as a table row can be.
     const html = r.html.replace("</body>", `<p>${"x".repeat(9_000)}</p></body>`)
     const transport = nodemailer.createTransport({ streamTransport: true, buffer: true })
     const sent = await transport.sendMail(mailOptions({ ...r, html }, "ops@example.com", ["a@example.com"]))

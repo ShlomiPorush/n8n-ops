@@ -22,7 +22,6 @@ const check = (state: CheckView["state"], extra: Partial<CheckView> = {}): Check
   attempt: null,
   startedAt: null,
   at: null,
-  deadline: null,
   detail: null,
   ...extra,
 })
@@ -35,14 +34,11 @@ function setup(over: Partial<SetupData> & { chosen: SetupData["chosen"] }): Setu
     id: "i",
     name: "shop",
     setupState: "incomplete",
-    configRevision: 3,
     baseUrl: "https://n8n.example.com",
     workerId: null,
     hasApiKey: false,
     after: verify,
     ready: false,
-    deadlineMs: 90_000,
-    freshMs: 900_000,
     checks: { api: null, health: null, worker: null, backup: null, access: null },
     ...over,
     collection,
@@ -189,12 +185,11 @@ describe("parseAdd", () => {
 })
 
 describe("waitingForWorker", () => {
-  it("asks again while the worker check runs, and stops a moment after its deadline", () => {
-    const now = Date.parse("2026-10-28T10:00:00Z")
-    const running = (deadline: string) =>
-      setup({ chosen: ["backup"], checks: { ...setup({ chosen: [] }).checks, worker: check("running", { deadline }) } })
-    expect(waitingForWorker(running("2026-10-28T10:01:00Z"), now)).toBe(true)
-    expect(waitingForWorker(running("2026-10-28T09:58:00Z"), now)).toBe(false)
-    expect(waitingForWorker(setup({ chosen: [] }), now)).toBe(false)
+  it("asks again while the worker check runs, and stops once the server says it ended", () => {
+    const worker = (state: CheckView["state"]) =>
+      setup({ chosen: ["backup"], checks: { ...setup({ chosen: [] }).checks, worker: check(state) } })
+    expect(waitingForWorker(worker("running"))).toBe(true)
+    expect(waitingForWorker(worker("failed"))).toBe(false)
+    expect(waitingForWorker(setup({ chosen: [] }))).toBe(false)
   })
 })

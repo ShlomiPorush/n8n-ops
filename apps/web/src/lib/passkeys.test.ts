@@ -1,10 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { passkeyBlock } from "./passkeys"
 
-// Stands for the browser's WebAuthn interface; only its presence matters.
 const webAuthn = class {}
 
-/** A page open at `origin`, in a browser that offers passkeys when the page is secure. */
 function openAt(origin: string, secure = true) {
   vi.stubGlobal("window", { location: { origin }, isSecureContext: secure, PublicKeyCredential: webAuthn })
 }

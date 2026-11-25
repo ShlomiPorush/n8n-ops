@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
-/** A fresh copy of the module, since it holds the one toast of the page and its clock. */
 const load = async () => {
   vi.resetModules()
   return import("./toast.ts")
@@ -174,7 +173,6 @@ describe("toast action (FB-2)", () => {
     toast.act(key)
     expect(run).toHaveBeenCalledTimes(1)
     expect(currentToast()?.running).toBe(true)
-    // Neither its own time nor a pointer that comes and goes lets it close meanwhile.
     toast.hold(key, "pointer")
     toast.release(key, "pointer")
     await wait(30_000)
@@ -213,24 +211,6 @@ describe("toast action (FB-2)", () => {
     expect(currentToast()).toMatchObject({ message: "Problem reopened: Sync orders", running: false })
     await wait(4000)
     expect(currentToast()?.leaving).toBe(true)
-  })
-
-  it("handles a rejection after the action replaced the toast before its first await, and ends its loading toast", async () => {
-    const { toast, currentToast } = await load()
-    toast.success("Problem resolved: Sync orders", {
-      action: {
-        label: "Undo",
-        run: () => {
-          toast.loading("Undoing…")
-          return Promise.reject(new Error("Not found."))
-        },
-      },
-    })
-    // On the old code the rejection was never handled (Vitest fails the run on it) and "Undoing…" stayed for good.
-    toast.act(currentToast()?.key ?? 0)
-    expect(currentToast()?.message).toBe("Undoing…")
-    await wait(0)
-    expect(currentToast()).toBeNull()
   })
 
   it("leaves a result its action showed before its first await on its own clock when the promise rejects", async () => {

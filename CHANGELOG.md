@@ -4,6 +4,35 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Changed
+
+- **From a version before 0.8.0, upgrade to 0.19.3 first.** The first start of 0.8.0 to 0.19.4 regrouped the problems recorded before 0.8.0 by cause; this version no longer does. `regroup-dry-run` of the server's command line went with it. Links to problems regrouped then still show where their workflows went, and the buttons of Telegram messages from before still do nothing.
+- **Update Workers from before 0.4.0.** What a socket proxy refused is read only from what Workers of 0.4.0 and later report, no longer from the error texts of earlier ones.
+- **A two-factor reset whose session was lost shows the optional setup steps.** After signing in again, setup offers Telegram and the backup destination with Skip and ends on Overview. A reset that n8n-ops could not answer stays in its window and says so.
+
+### Removed
+
+- **`scripts/local.sh migrate` and `DOCKER_SOCKET_GID`, for development stacks only.** A stack whose `docker-compose-dev.yml` names the env files of before 0.9.0, or whose `migrate` did not finish, runs it with the scripts of 0.9.0 to 0.19.4. A copy that still names `DOCKER_SOCKET_GID` is made again from `docker/docker-compose-dev.example.yml`.
+- **`latestIds` in a Worker's health history.** It changed with every heartbeat. The API, the MCP tool and the agent skill now say that a row written late may make an event appear twice or be skipped between pages, and that the pages are read again when `total` changes. Installed skills keep working.
+
+### Fixed
+
+- **A move goes to the target its review shows.** With another target picked while the review was being made, the dialog showed the first one and moved to the second.
+- **The Move and Restore dialogs always open empty.** An answer that came after a dialog was closed, such as a late review, no longer shows in the next one, and a check of one restore no longer changes the details of another. The Move dialog stays open while a move runs, so its result is always shown.
+- **Show JSON no longer stays on "Reading the archive" when Download JSON is chosen meanwhile.**
+- **A mute that ended counts as open everywhere.** Needs attention and the Telegram messages still took a problem as muted until the hourly housekeeping turned it back; the lists and counts already showed it as open. The server now ends mutes every 5 seconds, so they show it as open too.
+- **A report is sent once while an update replaces the server.** The old and the new server run together for a short time then, and when a daily or weekly report came due, both could send it. This holds from the update after this one, since both servers must have it.
+- **The lines for a Worker's socket proxy are never the old ones after a save.** The server answers with the new lines when allowed containers are recorded or a suggestion was out of date. In the setup of an instance, "Saved. These are the lines as they are now." could stand above the old lines.
+- **The setup page shows how a Worker check ended also on a computer whose clock is ahead.**
+- **Saving a form no longer puts back what was changed elsewhere.** With unsaved changes on screen, the other fields of Settings, an instance's Overrides and the backup destinations kept the values they had when the page opened, and Save wrote them over what another tab or device had saved meanwhile. Fields without an edit now follow what is stored, as last read.
+- **The database password is no longer on pg_dump's command line.** The backup of the n8n-ops database gives it to pg_dump in its environment, so a failed backup always shows what pg_dump reported; details are no longer hidden.
+- **An archive that reached the server is kept when the database's answer to recording it is lost.** The backup was counted as failed and its archive removed.
+- **A backup no longer fails because four other archives are being received.**
+- **A refused two-factor reset changes nothing.** A wrong password on Account → Reset disconnected every agent and signed out the other sessions. They now end only once the password was checked.
+- **A client that sends its request slowly no longer holds up agents that connect.** One such registration or code request kept the others waiting for up to a minute.
+- **A change of the public URL is recorded once in the audit log**, with who made it. The end of the agents' connections was recorded a second time, by n8n-ops.
+- **Saving Agent Connections no longer puts back what another save changed at the same time.**
+
 ## [0.19.4] - 2026-11-24
 
 ### Fixed

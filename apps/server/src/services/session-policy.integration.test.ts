@@ -14,9 +14,6 @@ import { createSettings, defaults } from "../lib/settings.ts"
 import { eventRoutes } from "../routes/events.ts"
 import { inheritClocks, withInheritedClocks } from "./session-policy.ts"
 
-// The session clocks against the real Better Auth and a real PostgreSQL: what each clock ends, that polling only
-// extends the lifetime, that Better Auth's own routes obey the clocks, that a replaced session keeps its sign-in
-// time, that input from another request is never overtaken by an older check, and that live updates stop.
 const adminUrl = process.env.MIGRATION_DATABASE_URL
 if (!adminUrl) throw new Error("MIGRATION_DATABASE_URL is required (scripts/verify.sh sets it)")
 
@@ -63,7 +60,6 @@ afterAll(async () => {
 })
 
 let ip = 0
-/** A request as the browser makes it: from the app's own page, with the cookies it holds. */
 async function call(
   method: string,
   path: string,
@@ -81,12 +77,10 @@ async function call(
       },
       body: json !== undefined ? JSON.stringify(json) : undefined,
     },
-    // Better Auth limits sign-in per client address; each request here is a client of its own.
     { incoming: { socket: { remoteAddress: `10.0.${Math.floor(ip / 250)}.${ip % 250}` }, headers: {} } },
   )
 }
 
-/** The cookies a response sets, merged into the ones held. */
 function cookies(held: string, res: Response): string {
   const jar = new Map(
     held
@@ -104,7 +98,6 @@ function cookies(held: string, res: Response): string {
   return [...jar].map(([k, v]) => `${k}=${v}`).join("; ")
 }
 
-/** The session row behind a cookie. */
 async function rowOf(cookie: string) {
   const token = decodeURIComponent(/better-auth\.session_token=([^;]+)/.exec(cookie)?.[1] ?? "").split(".")[0] ?? ""
   const [row] = await database.db.select().from(session).where(eq(session.token, token))
@@ -124,7 +117,6 @@ function base32Decode(input: string): Buffer {
   return Buffer.from(bytes)
 }
 
-/** The RFC 6238 code of now (SHA-1, 6 digits, 30-second steps). */
 async function freshTotp(secret: string): Promise<string> {
   const step = Math.floor(Date.now() / 30_000)
   const counter = Buffer.alloc(8)
@@ -134,14 +126,12 @@ async function freshTotp(secret: string): Promise<string> {
   return ((hmac.readUInt32BE(offset) & 0x7fffffff) % 1_000_000).toString().padStart(6, "0")
 }
 
-/** Signs in with the password, and the two-factor code once two-factor is on. Returns the cookies. */
 async function signIn(): Promise<string> {
   const res = await call("POST", "/api/auth/sign-in/username", { json: { username: USERNAME, password } })
   expect(res.status).toBe(200)
   let cookie = cookies("", res)
   const body = (await res.json()) as { twoFactorRedirect?: boolean }
   if (body.twoFactorRedirect) {
-    // The code step has no regular session, only Better Auth's own two-factor cookie: it passes the clocks.
     const verified = await call("POST", "/api/auth/two-factor/verify-totp", {
       json: { code: await freshTotp(totpSecret) },
       cookie,
@@ -168,7 +158,6 @@ describe("before two-factor is set up", () => {
     expect(status.status).toBe(200)
     expect(((await status.json()) as { idle: { remainingSec: number } }).idle.remainingSec).toBeLessThanOrEqual(30 * 60)
 
-    // No body and no content type: only the Origin is checked.
     expect((await call("POST", "/api/session/activity", { cookie })).status).toBe(200)
     expect((await rowOf(cookie)).activeAt.getTime()).toBeGreaterThan(Date.now() - 5_000)
 
@@ -315,17 +304,14 @@ describe("the clocks", () => {
     const row = await rowOf(own)
     expect(row.authenticatedAt.toISOString()).toBe(signedInAt.toISOString())
     expect(row.endedReason).toBeNull()
-    // The other sessions of this file were signed out by the change.
     cookie = own
   })
 
   it("never lets an older check overtake input reported meanwhile", async () => {
     const row = await rowOf(cookie)
-    // Idle past the limit, as a check would read it if it did not wait for the input that is being written.
     await setClocks(row.id, { activeAt: ago(61 * minute) })
     let answer: Promise<Response> | undefined
     await sql.begin(async (tx) => {
-      // Input from another tab holds the row; the check starts meanwhile and must wait for it.
       await tx`select id from auth_session where id = ${row.id} for update`
       answer = call("GET", "/api/setup/checklist", { cookie })
       await new Promise((r) => setTimeout(r, 1500))
@@ -415,7 +401,6 @@ describe("longer clocks", () => {
   it("says nothing was signed out when no other session was open", async () => {
     const saver = await signIn()
     try {
-      // The first save ends whatever the earlier tests left open; the second finds none.
       expect((await saveFrom(saver, { maxHours: 24 })).status).toBe(200)
       await saveSecurity({})
       const res = await saveFrom(saver, { maxHours: 24 })
@@ -446,7 +431,6 @@ describe("longer clocks", () => {
     const row = await rowOf(replacement)
     await setClocks(row.id, { activeAt: ago(2 * hour) })
     expect(await (await call("GET", "/api/session", { cookie: replacement })).json()).toMatchObject({ reason: "idle" })
-    // As the after hook runs for a session made from one that longer clocks signed out since its check.
     const checked = { clocks: { authenticatedAt: ago(hour), seenAt: ago(minute), activeAt: ago(minute) } }
     await withInheritedClocks("signed-out-predecessor", { ...checked, twoFactorVerified: true, signOuts: -1 }, () =>
       inheritClocks(ctx, row.id, USERNAME),
@@ -461,7 +445,6 @@ describe("longer clocks", () => {
     let pending: Promise<Response>[] = []
     try {
       await sql.begin(async (tx) => {
-        // Holds the saves back until both have passed the session check and wait for the same lock.
         await tx`select pg_advisory_xact_lock(${SIGN_OUTS_LOCK})`
         pending = [saveFrom(a, { maxHours: 24 }), saveFrom(b, { maxHours: 48 })]
         await waitFor(async () => (await waitingOn(SIGN_OUTS_LOCK)) >= 2)
@@ -499,7 +482,6 @@ describe("longer clocks", () => {
   })
 })
 
-/** How many connections of this database wait for the advisory lock `key`. */
 async function waitingOn(key: number) {
   const [row] = await sql<{ n: number }[]>`
     select count(*)::int as n from pg_locks
@@ -508,7 +490,6 @@ async function waitingOn(key: number) {
   return row?.n ?? 0
 }
 
-/** Waits until `ready` holds, checking every 50 ms, for at most 10 seconds. */
 async function waitFor(ready: () => Promise<boolean>) {
   const until = Date.now() + 10_000
   while (!(await ready())) {

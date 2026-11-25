@@ -1,10 +1,3 @@
-// Operator commands, run inside the server container:
-//   node dist/cli.js reset-password
-// Sets a new random password, turns two-factor off (it must be set up again at the next sign-in)
-// and signs out every session. Every agent connection ends with it.
-//   node dist/cli.js regroup-dry-run
-// Applies the migrations, then shows how the recorded Problems would be regrouped by cause (docs/adr/0003) and
-// changes nothing else: the regroup runs in a transaction that is rolled back. Meant for a copy of a database.
 import { randomBytes } from "node:crypto"
 import { EventEmitter } from "node:events"
 import { eq } from "drizzle-orm"
@@ -16,24 +9,15 @@ import { account, session, twoFactor, user } from "./db/schema.ts"
 import { createAudit } from "./lib/audit.ts"
 import { loadOrCreateAppKey } from "./lib/crypto.ts"
 import { endEveryConnection } from "./oauth/agents.ts"
-import { regroupByCause } from "./services/regroup.ts"
 
 const command = process.argv[2]
-if (command !== "reset-password" && command !== "regroup-dry-run") {
-  console.error("Usage: node dist/cli.js reset-password | regroup-dry-run")
+if (command !== "reset-password") {
+  console.error("Usage: node dist/cli.js reset-password")
   process.exit(2)
 }
 
 const config = loadConfig()
 const database = createDatabase(config.databaseUrl)
-
-if (command === "regroup-dry-run") {
-  await database.migrate(config.migrationsDir)
-  const report = await regroupByCause({ db: database.db, audit: createAudit(database.db) }, { dryRun: true })
-  console.log(JSON.stringify(report, null, 2))
-  await database.close()
-  process.exit(0)
-}
 const { key } = await loadOrCreateAppKey(config.appKeyPath)
 const auth = createAuth(database.db, key, config.publicUrl)
 const db = database.db
@@ -46,9 +30,6 @@ if (!u) {
 
 const password = randomBytes(18).toString("base64url")
 const hash = await (await auth.$context).password.hash(password)
-// Whoever resets the account may not be the person who approved its agents. The reset and the end of every agent
-// connection are one transaction, under the gate approvals take too: none is answered in between, and a run that
-// stops changes nothing.
 const agentCtx = { db, audit: createAudit(db), events: new EventEmitter() } as unknown as Ctx
 await endEveryConnection(agentCtx, "identity", { by: "operator", via: "cli" }, async (tx) => {
   await tx.update(account).set({ password: hash, updatedAt: new Date() }).where(eq(account.userId, u.id))

@@ -3,7 +3,6 @@ import { FieldPicker } from "@/components/field-picker"
 import type { PickerOption } from "@/components/filter-bar"
 import { zoneOffset } from "@/lib/time"
 
-/** Every zone the browser knows, UTC first; a stored zone the list lacks is kept at the top. */
 function zoneOptions(current: string): PickerOption[] {
   const now = new Date()
   const names = ["UTC", ...Intl.supportedValuesOf("timeZone").filter((z) => z !== "UTC")]
@@ -14,10 +13,6 @@ function zoneOptions(current: string): PickerOption[] {
   })
 }
 
-/**
- * The time zone of the installation, chosen from a list with a search (by city, region or offset) (MP-4). An
- * empty value is UTC. The field shows the zone's offset now, muted, after its name.
- */
 export function TimeZonePicker({
   id,
   value,
@@ -30,9 +25,7 @@ export function TimeZonePicker({
   disabled?: boolean
 }) {
   const zone = value || "UTC"
-  // Built once the list opens: offsets change with daylight saving, and some 400 zones take a moment.
   const options = useCallback(() => zoneOptions(zone), [zone])
-  // UTC needs no offset beside its name.
   const offset = zone === "UTC" ? null : zoneOffset(zone, new Date())
   const name = zone.replaceAll("_", " ")
   return (

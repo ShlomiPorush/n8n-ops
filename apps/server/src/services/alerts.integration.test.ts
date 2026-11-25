@@ -16,13 +16,12 @@ import {
   enqueueAlert,
   enqueueProblemAlert,
   handleTelegramCallback,
+  problemAlertSettings,
   sendTestTelegram,
 } from "./alerts.ts"
 import { mergeProblems, splitAffectedWorkflow } from "./problems.ts"
 import { html } from "./telegram.ts"
 
-// Forum topics end to end against a real PostgreSQL: routing when an alert is queued, grouping and edits per topic,
-// the fallback to General when a topic is gone, and an upgrade from 0006 with alerts on their way.
 const adminUrl = process.env.MIGRATION_DATABASE_URL
 if (!adminUrl) throw new Error("MIGRATION_DATABASE_URL is required (scripts/verify.sh sets it)")
 
@@ -39,7 +38,6 @@ afterAll(async () => {
   rmSync(scratch, { recursive: true, force: true })
 })
 
-/** The migrations up to and including `tag`. */
 function migrationsUpTo(tag: string) {
   const dir = mkdtempSync(join(scratch, "m-"))
   cpSync(folder, dir, { recursive: true })
@@ -61,13 +59,11 @@ async function freshDatabase(upTo?: string) {
   return { database, url: url.toString() }
 }
 
-/** A stand-in Bot API: records calls, refuses gone topics and gone messages, fails the next N calls if asked. */
 type Call = { method: string; body: Record<string, unknown> }
 function botApi() {
   const calls: Call[] = []
   const goneTopics = new Set<number>()
   const goneMessages = new Set<number>()
-  /** Edits in the order Telegram applied them: the last one is what the message shows. */
   const applied: Call[] = []
   let failNext = 0
   let failNextSends = 0
@@ -109,7 +105,6 @@ function botApi() {
     failNextSends: (n: number) => {
       failNextSends = n
     },
-    /** Holds the next edit until the returned function is called. */
     holdNextEdit: () => {
       let release = () => {}
       editGate = new Promise<void>((resolve) => {
@@ -168,7 +163,6 @@ async function setup(
     .returning()
   if (!a || !b) throw new Error("no instances")
   let n = 0
-  /** An Affected workflow, in a Problem keyed here by its error text (made when it is the first). */
   const problem = async (instanceId: string, workflowName: string, errorMessage = "connect ECONNREFUSED") => {
     n++
     const fp = sha256(errorMessage)
@@ -193,7 +187,6 @@ async function setup(
     if (!p) throw new Error("no problem")
     return p
   }
-  // Alerts queued with the database clock are due to a dispatch in the same millisecond only by luck; make them due.
   const dispatch = async () => {
     await d.db
       .update(alertOutbox)
@@ -201,8 +194,8 @@ async function setup(
       .where(eq(alertOutbox.status, "pending"))
     await dispatchAlerts(ctx)
   }
-  const enqueue = (p: typeof affectedWorkflows.$inferSelect, reason: "new" | "joined" | "regression" = "new") =>
-    enqueueProblemAlert(ctx, d.db, p, reason)
+  const enqueue = async (p: typeof affectedWorkflows.$inferSelect, reason: "new" | "joined" | "regression" = "new") =>
+    enqueueProblemAlert(ctx, d.db, p, reason, await problemAlertSettings(ctx))
   return { ctx, db: d.db, a, b, problem, enqueue, warnings, dispatch }
 }
 
@@ -313,6 +306,7 @@ describe("Telegram forum topics", () => {
 
     await t.enqueue(await t.problem(t.a.id, "Import leads"))
     await t.dispatch()
+    await t.dispatch()
     expect(first).toBeDefined()
     expect(bot.edits()).toHaveLength(1)
     const again = bot.sends()[1]
@@ -343,6 +337,25 @@ describe("Telegram forum topics", () => {
     ])
   })
 
+  it("tries an edit that failed again, and leaves the message as it is until then", async () => {
+    const t = await setup({ defaultThreadId: 7 })
+    await t.enqueue(await t.problem(t.a.id, "Sync orders"))
+    await t.dispatch()
+    await t.enqueue(await t.problem(t.a.id, "Import leads"))
+    bot.failNextCalls(1)
+    await t.dispatch()
+    const [group] = await t.db.select().from(alertGroups)
+    expect(group?.closedAt).toBeNull()
+    const pending = await t.db.select().from(alertOutbox).where(eq(alertOutbox.status, "pending"))
+    expect(pending.map((r) => r.attempts)).toEqual([1])
+
+    await t.dispatch()
+    expect(bot.sends()).toHaveLength(1)
+    const shown = String(bot.applied.at(-1)?.body.text)
+    expect(shown).toContain("Sync orders")
+    expect(shown).toContain("Import leads")
+  })
+
   it("leaves other failures to the usual retry instead of falling back", async () => {
     const t = await setup({ defaultThreadId: 5 })
     await enqueueAlert(t.ctx, "health", html`alpha is down`, { instanceId: t.a.id })
@@ -363,12 +376,11 @@ describe("Telegram forum topics", () => {
     await t.enqueue(await t.problem(t.a.id, "Import leads"))
     bot.failNextSends(1)
     await t.dispatch()
-    // Its problem waits in the queue again, with the new one.
+    await t.dispatch()
     const pending = await t.db.select().from(alertOutbox).where(eq(alertOutbox.status, "pending"))
     expect(pending).toHaveLength(2)
     expect(pending.map((r) => r.affectedWorkflowId)).toEqual(expect.arrayContaining(gone?.affectedWorkflowIds ?? []))
 
-    // The retry comes after the edit window, when the old message's group is no longer looked up.
     await t.db.update(alertGroups).set({ createdAt: new Date(Date.now() - 3 * 3600_000) })
     await t.dispatch()
     const last = bot.sends().at(-1)
@@ -412,7 +424,6 @@ describe("Telegram forum topics", () => {
     const [group] = await t.db.select().from(alertGroups)
     await t.enqueue(await t.problem(t.a.id, "Import leads"))
 
-    // The press starts first and its edit is slow; the dispatch comes in meanwhile.
     const release = bot.holdNextEdit()
     const press = handleTelegramCallback(t.ctx, {
       callback_query: {
@@ -436,13 +447,12 @@ describe("Telegram forum topics", () => {
   it("says when the test message went to General", async () => {
     const t = await setup({ defaultThreadId: 42 })
     expect(await sendTestTelegram(t.ctx)).toEqual({ topicNotFound: false })
-    // It says only that the chat can be reached, not where every alert goes: topic routes may send them elsewhere.
     expect(String(bot.sends().at(-1)?.body.text)).toBe("<b>n8n-ops test message</b>\nn8n-ops can send to this chat.")
     bot.goneTopics.add(42)
     expect(await sendTestTelegram(t.ctx)).toEqual({ topicNotFound: true })
   })
 
-  it("delivers alerts queued before the upgrades to General, in a new message, and keeps old buttons working", async () => {
+  it("delivers alerts queued before the upgrades to General, in a new message, and old buttons do nothing", async () => {
     const { database, url } = await freshDatabase("0006_backup_copy_leftovers")
     const sql = postgres(url, { max: 1, onnotice: () => {} })
     const [inst] = await sql`insert into instances (name, base_url, api_key_enc) values ('old', 'http://n8n:5678', 'x')
@@ -458,7 +468,6 @@ describe("Telegram forum topics", () => {
     await sql.end()
     await database.migrate(folder)
 
-    // A message from before 0012 may list workflows of several Problems: it takes no later alerts.
     const t = await setup({}, database)
     await t.dispatch()
     expect(bot.edits()).toEqual([])
@@ -467,7 +476,6 @@ describe("Telegram forum topics", () => {
     expect(sent).toContainEqual([undefined, "old is down"])
     expect(sent.find(([, text]) => String(text).includes("Sync orders"))).toBeDefined()
 
-    // Its buttons still act, on the Problem of the workflows it lists.
     const [old] = await t.db.select().from(alertGroups).where(eq(alertGroups.telegramMessageId, 55))
     await handleTelegramCallback(t.ctx, {
       callback_query: {
@@ -481,7 +489,47 @@ describe("Telegram forum topics", () => {
       .select()
       .from(affectedWorkflows)
       .where(eq(affectedWorkflows.id, p?.id as string))
-    expect(row?.status).toBe("resolved")
+    expect(row?.status).toBe("open")
+    expect(bot.calls.at(-1)).toMatchObject({
+      method: "answerCallbackQuery",
+      body: { text: "This alert is no longer known." },
+    })
+  })
+
+  it("a press on a message from before the regroup by cause changes nothing and says so", async () => {
+    const t = await setup({ defaultThreadId: 7 })
+    const audit = vi.fn(async () => {})
+    t.ctx.audit = audit
+    const row = await t.problem(t.a.id, "Sync orders")
+    const [group] = await t.db
+      .insert(alertGroups)
+      .values({
+        groupKey: "connect ECONNREFUSED",
+        problemId: row.problemId,
+        telegramMessageId: 55,
+        affectedWorkflowIds: [row.id],
+        beforeRegroup: true,
+        closedAt: new Date(),
+      })
+      .returning()
+    for (const action of ["r", "m"]) {
+      const handled = await handleTelegramCallback(t.ctx, {
+        callback_query: {
+          id: `cb-${action}`,
+          data: `${action}:${group?.id}`,
+          from: { id: 1, username: "ops" },
+          message: { message_id: 55, chat: { id: "-100" } },
+        },
+      })
+      expect(handled).toBe(true)
+    }
+    const [after] = await t.db.select().from(affectedWorkflows).where(eq(affectedWorkflows.id, row.id))
+    expect(after).toEqual(row)
+    expect(audit).not.toHaveBeenCalled()
+    expect(bot.calls.map((c) => [c.method, c.body.text])).toEqual([
+      ["answerCallbackQuery", "This alert is from before the regrouping. Open n8n-ops to act."],
+      ["answerCallbackQuery", "This alert is from before the regrouping. Open n8n-ops to act."],
+    ])
   })
 
   it("a later message of a Problem, past the edit window, is short: only the new workflow, and how many now", async () => {

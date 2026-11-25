@@ -33,25 +33,13 @@ import {
 import { sendEmail } from "./reports.ts"
 import { clip, html, type InlineButton, TelegramHtml, telegramPlainText } from "./telegram.ts"
 
-/**
- * Tells approvers about new access requests: a Telegram message with Approve, Deny and Edit buttons, and an email with
- * a link to the request in n8n-ops, on the channels the agent chose or else the default ones (access-channels.ts).
- * Failed sends are retried. In Telegram an approver may leave out instances and change the minutes before approving
- * (the draft); the request page can change everything. Once a request is decided or expires, and again when approved
- * access ends, its Telegram message is edited to say so, without buttons.
- */
-
-/** One instance of a request as a message shows it: the draft while pending, what was granted once approved. */
 export type InstanceInfo = {
   position: number
   name: string
-  /** The instance was deleted since; its name is the one it had. */
   deleted?: boolean
-  /** False for an instance an approver added. */
   requested?: boolean
   scopes: string[]
   workflowIds: string[]
-  /** Names by workflow ID, stored with the request; a workflow without one is shown by its ID. */
   workflowNames?: Record<string, string>
   included?: boolean
   droppedReason?: AccessDropReason | null
@@ -62,50 +50,32 @@ export type RequestInfo = {
   id: string
   token: string
   reason: string
-  /** The draft, or the minutes granted. */
   minutes: number
-  /** What the agent asked for; the same as `minutes` when nobody changed it. */
   requestedMinutes?: number
   decideBy: Date
   revision?: number
   instances: InstanceInfo[]
-  /** Whether an approver changed what the agent asked for. */
   changed?: boolean
 }
 
 const isIncluded = (i: InstanceInfo) => i.included !== false && !i.droppedReason
 
-/** Control characters (line breaks among them), line and paragraph separators, and direction marks and overrides. */
 const BREAKS = /[\p{Cc}\p{Zl}\p{Zp}؜‎‏‪-‮⁦-⁩]/gu
 
-/**
- * What an agent wrote (its name, its reason, what it says it did), on one line: every line break, control character
- * or direction mark, and every run of spaces, becomes one space. Messages show it set apart from their own lines.
- */
 export const oneLine = (text: string) => text.replace(BREAKS, " ").replace(/\s+/g, " ").trim()
 
-/**
- * What an agent wrote, cleaned by `oneLine`, as a Telegram line of its own in italics, after `lead` when given.
- * Telegram takes a line's direction from its first letter, so the text starts with the mark of the direction most of
- * its words read in (`directionMark`): Hebrew with English terms in it reads from the right also when it opens with
- * an English word, and English from the left also when it opens with a Hebrew one. On the line of a label it would
- * take the label's direction and show its words out of order.
- */
 function agentWords(text: string, lead = "") {
   return html`${lead}${directionMark(text)}<i>${text}</i>`
 }
 
-/** A workflow name or ID on one line: each line break, control character or direction mark becomes a space. */
 const unbroken = (text: string) => text.replace(BREAKS, " ")
 
-/** The requested workflows of an instance, each with its name when the request has one, as messages show them. */
 const workflowsOf = (i: InstanceInfo) =>
   i.workflowIds.map((id) => {
     const name = nameIn(i.workflowNames, id)
     return { id: unbroken(id), name: name === undefined ? undefined : unbroken(name) }
   })
 
-/** Whether messages show every workflow of the instances Approve would grant exactly as stored. */
 const shownAsStored = (list: InstanceInfo[]) =>
   list.filter(isIncluded).every((i) =>
     i.workflowIds.every((id) => {
@@ -114,13 +84,8 @@ const shownAsStored = (list: InstanceInfo[]) =>
     }),
   )
 
-/** Width of a quoted line of the email's text part, in characters, after its "> ". */
 const QUOTE_WIDTH = 60
 
-/**
- * Text from outside the request's own facts, for the email's text part: lines of at most QUOTE_WIDTH characters,
- * broken at a space where one is near, each starting with "> ".
- */
 function quoted(text: string) {
   const lines: string[] = []
   let rest = [...text]
@@ -134,13 +99,8 @@ function quoted(text: string) {
   return lines.map((line) => `> ${line}`)
 }
 
-/**
- * A workflow as email text: its name, or its ID when the name is not known, within 60 characters. Word (Outlook for
- * Windows) cannot break a word, so a longer name without spaces would widen the email.
- */
 const workflowText = ({ id, name }: { id: string; name?: string }) => clip(name ?? id, 60)
 
-/** How a request ended up: decided, then perhaps ended, with what the agent said and how many calls it made. */
 type Outcome = {
   status: AccessStatus
   decidedAt: Date | null
@@ -152,36 +112,23 @@ type Outcome = {
   summary: string | null
   callCount: number
   refusedCount: number
-  /** Approved after an approver changed the request. */
   changed?: boolean
 }
 
-/** The longest summary a Telegram message shows; the request page shows all of it. */
 const TELEGRAM_SUMMARY_MAX = 500
-/**
- * What a message may take, in characters as Telegram counts them, below its limit of 4096: room is left for the note
- * that the access requests topic was gone.
- */
 const TELEGRAM_BUDGET = 3900
 
 const channels: Record<string, string> = { telegram: "Telegram", web: "n8n-ops", email: "the email link" }
 
-/** Who decided, as people know them: a Telegram user without the "telegram:" mark, and where they decided. */
 function decider(r: Outcome) {
   const who = (r.decidedBy ?? "someone").replace(/^telegram:/, "")
   const channel = r.decidedVia ? channels[r.decidedVia] : undefined
   return clip(channel ? `${who} via ${channel}` : who, 200)
 }
 
-/** How many calls the key made, and how many of them n8n-ops refused. */
 const callsLine = (calls: number, refused: number) =>
   html`${calls ? `${calls} ${calls === 1 ? "call" : "calls"}` : "No calls"} through n8n-ops${refused ? `, ${refused} refused` : ""}`
 
-/**
- * What a decided or ended request's message shows: an icon for its first line, so the outcome is clear at a glance,
- * and lines under the request saying who decided where, and then how the access ended, how long it was used and
- * what was done. Times are the date and time without the zone; the zone is the one of Settings → General.
- */
 export function accessOutcome(r: Outcome, dates: DateWriting): { icon: string; lines: TelegramHtml[] } {
   const stamp = (when: Date) => formatStamp(when, dates, { zone: false })
   const at = (when: Date | null) => (when ? ` at ${stamp(when)}` : "")
@@ -208,10 +155,6 @@ export function accessOutcome(r: Outcome, dates: DateWriting): { icon: string; l
   return { icon: "✅", lines }
 }
 
-/**
- * A list within about `max` characters, so the message stays under Telegram's limit; the rest is counted. Without
- * `max`, every item in full.
- */
 function listWithin(items: string[], max?: number) {
   if (max === undefined) return { shown: items, rest: 0 }
   const shown: string[] = []
@@ -225,10 +168,6 @@ function listWithin(items: string[], max?: number) {
   return { shown, rest: items.length - shown.length }
 }
 
-/**
- * The workflows of an instance by name, one line each when there are several; a workflow whose name is not known is
- * shown by its ID, in code font. Within about `max` characters, the rest counted; without `max`, all in full.
- */
 function workflowLines(i: InstanceInfo, max?: number): TelegramHtml[] {
   if (!i.workflowIds.length) return [html`Workflows: the whole instance`]
   const named = workflowsOf(i)
@@ -256,10 +195,6 @@ const dropText: Record<AccessDropReason, string> = {
   no_scopes: "allows none of these scopes any more",
 }
 
-/**
- * The first line of an instance: its name (in full, or within 100 characters), and whether it is left out, added,
- * or deleted.
- */
 function instanceTitle(i: InstanceInfo, full = false) {
   const name = full ? i.name : clip(i.name, 100)
   if (i.droppedReason) return html`⬜ <b>${name}</b> · left out: ${dropText[i.droppedReason]}`
@@ -268,10 +203,6 @@ function instanceTitle(i: InstanceInfo, full = false) {
   return html`<b>${name}</b>${marks.length ? ` · ${marks.join(", ")}` : ""}`
 }
 
-/**
- * One instance with everything: its scopes and workflows, within a length each, or with `full` (for an instance that
- * Approve would grant) every one of them in full.
- */
 function instanceBlock(i: InstanceInfo, full = false): TelegramHtml[] {
   const all = full && isIncluded(i)
   const out = all
@@ -282,7 +213,6 @@ function instanceBlock(i: InstanceInfo, full = false): TelegramHtml[] {
   return out
 }
 
-/** One instance on one line, when the message has no room for the details. */
 function instanceLine(i: InstanceInfo): TelegramHtml {
   const workflows = i.workflowIds.length
     ? `${i.workflowIds.length} ${i.workflowIds.length === 1 ? "workflow" : "workflows"}`
@@ -290,14 +220,12 @@ function instanceLine(i: InstanceInfo): TelegramHtml {
   return html`${instanceTitle(i)}: ${i.scopes.length} ${i.scopes.length === 1 ? "scope" : "scopes"}, ${workflows}`
 }
 
-/** The instances a request names, for its first line: "name", or "name +N". */
 export function instancesLabel(list: { name: string; requested?: boolean }[]) {
   const asked = list.filter((i) => i.requested !== false)
   const first = clip((asked[0] ?? list[0])?.name ?? "?", 200)
   return asked.length > 1 ? `${first} +${asked.length - 1}` : first
 }
 
-/** "For 30 min", and what was asked for when an approver changed it. */
 function forLine(r: RequestInfo) {
   const asked =
     r.requestedMinutes !== undefined && r.requestedMinutes !== r.minutes
@@ -306,7 +234,6 @@ function forLine(r: RequestInfo) {
   return html`For <b>${formatDuration(r.minutes)}</b>${asked}`
 }
 
-/** The text of a request message, without its buttons. */
 export function renderAccessTelegram(
   r: RequestInfo,
   dates: DateWriting,
@@ -315,11 +242,6 @@ export function renderAccessTelegram(
   return telegramRequest(r, dates, outcome).text
 }
 
-/**
- * Whether these instances' names, scopes and workflows could fit in one message in full: false when their length
- * alone, at two UTF-16 units a character at most, is past the budget, so a message is never drawn in full to find
- * out.
- */
 function mayFit(list: InstanceInfo[]) {
   let length = 0
   for (const i of list) {
@@ -330,22 +252,10 @@ function mayFit(list: InstanceInfo[]) {
   return true
 }
 
-/** What a waiting request's message says when it cannot name everything Approve would grant. */
 const TOO_LONG = "Too long to approve in Telegram. Open the request in n8n-ops to approve it."
-/** What it says when a workflow name or ID could not be shown exactly as it is stored. */
 const UNSHOWN =
   "A workflow name or ID here has a line break or control character. Open the request in n8n-ops to approve it."
 
-/**
- * The request message, and whether it names in full every instance, scope and workflow that approving it as it
- * stands would grant (`complete`); only then does its keyboard offer Approve. With one instance as asked, its scopes
- * and workflows follow the reason; with several (or one left out), each instance has its own block. When everything
- * does not fit in full, the lists are cut to a length each and the rest counted; when the blocks still do not fit,
- * each instance takes one line, and then only as many lines as fit, with the rest counted. The request page has
- * every detail. The agent's name follows "Agent" on a line of its own, and its reason is the next line, in italics
- * after a speech balloon, so neither reads as one of the message's own lines and the reason keeps its own direction
- * (`agentWords`); a workflow name or ID that had to be put on one line withholds Approve.
- */
 export function telegramRequest(
   r: RequestInfo,
   dates: DateWriting,
@@ -363,15 +273,12 @@ export function telegramRequest(
   const tooLong = exact ? TOO_LONG : UNSHOWN
   const tail = [
     forLine(r),
-    // Only while it waits for a decision; once decided, the outcome says what follows.
     ...(outcome ? [] : [html`Request expires at ${formatStamp(r.decideBy, dates, { zone: false })}`]),
     ...(outcome?.lines.length ? [html``, ...outcome.lines] : []),
   ]
-  // Only a waiting request is approved from its message.
   const cut = outcome ? [] : [html`${tooLong}`, html``]
   const only = r.instances[0]
   if (r.instances.length === 1 && only && isIncluded(only) && only.requested !== false && !only.droppedScopes?.length) {
-    // The first line is the only place this layout names the instance.
     if (exact && instancesLabel(r.instances) === only.name && mayFit([only])) {
       const full = [...head, scopesLine(only), ...workflowLines(only), ...tail]
       if (fits(full)) return { text: TelegramHtml.join(full), complete: true }
@@ -396,7 +303,6 @@ export function telegramRequest(
   }
 }
 
-/** Each instance on one line, and only as many lines as fit, with the rest counted. */
 function compactLines(r: RequestInfo, head: TelegramHtml[], tail: TelegramHtml[], more: TelegramHtml) {
   const size = (parts: TelegramHtml[]) => [...telegramPlainText(TelegramHtml.join(parts))].length
   const lines: TelegramHtml[] = []
@@ -412,17 +318,12 @@ function compactLines(r: RequestInfo, head: TelegramHtml[], tail: TelegramHtml[]
   return TelegramHtml.join([...head, ...lines, more, html``, ...tail])
 }
 
-/** The email lines of one instance's workflows. */
 function emailWorkflows(i: InstanceInfo) {
   const named = workflowsOf(i).map((w) => ({ ...w, shown: workflowText(w) }))
   const value = (w: (typeof named)[number]) => (w.name === undefined ? mono(w.shown) : w.shown)
   return { named, value }
 }
 
-/**
- * The text-part lines of one instance's workflows, a single one on the label's line unless `list`; one known only by
- * its ID is quoted.
- */
 function textWorkflows(named: ReturnType<typeof emailWorkflows>["named"], list = false) {
   const [first] = named
   if (!first) return ["Workflows: the whole instance"]
@@ -434,13 +335,6 @@ function textWorkflows(named: ReturnType<typeof emailWorkflows>["named"], list =
   ]
 }
 
-/**
- * The email for a waiting request: who asks, for how long, for what, and one button to decide in n8n-ops.
- * Workflows are named as in Telegram: without their IDs, one line each when there are several, and an ID in code
- * font only when the name is not known. Times follow Settings → General, without the zone (EM-6). Several
- * instances each get a panel of their own. In the text part, what the agent wrote (its name and reason) and a
- * workflow known only by its ID are quoted, so none of it reads as one of the email's own lines.
- */
 export function renderAccessEmail(
   r: RequestInfo,
   link: string | null,
@@ -548,15 +442,9 @@ async function publicLink(ctx: Ctx, id: string) {
   return publicUrl ? `${publicUrl.replace(/\/+$/, "")}/access/${id}` : null
 }
 
-/** Telegram accepts only public https links on buttons. */
 const openButton = (link: string | null): InlineButton[][] =>
   link?.startsWith("https://") ? [[{ text: "Open in n8n-ops", url: link }]] : []
 
-/**
- * The keyboard of a waiting request: decide, or switch to editing. Approve is offered only when the message names
- * everything it grants (`complete`, from `telegramRequest`); it names the revision shown, and ends in `:g`, which
- * only such a message drawn with the agent's words set apart carries.
- */
 export function decideButtons(
   r: Pick<RequestInfo, "id" | "revision">,
   link: string | null,
@@ -573,21 +461,14 @@ export function decideButtons(
   ]
 }
 
-/** The most instance switches the edit keyboard shows; the request page edits the rest. */
 const TOGGLES_SHOWN = 20
 const PRESETS = [15, 30, 60, 120, 240, 480]
 
-/** The minutes an approver can pick in Telegram: presets, what was asked, the draft, and the longest allowed. */
 export function presetMinutes(r: Pick<RequestInfo, "minutes" | "requestedMinutes">, maxMinutes: number) {
   const all = new Set([...PRESETS, r.requestedMinutes ?? r.minutes, r.minutes, maxMinutes])
   return [...all].filter((m) => m >= 1 && m <= maxMinutes).sort((a, b) => a - b)
 }
 
-/**
- * The keyboard while editing: one switch per instance the agent asked for (it sets the state shown on the other
- * side, never flips), the minutes, and Done. Every button names the revision shown, so a press on an old view is
- * refused instead of changing something else.
- */
 export function editButtons(r: RequestInfo, maxMinutes: number, link: string | null): InlineButton[][] {
   const rev = r.revision ?? 0
   const toggles = r.instances
@@ -611,7 +492,6 @@ export function editButtons(r: RequestInfo, maxMinutes: number, link: string | n
   return [...toggles, ...rows, [{ text: "✓ Done", callback_data: `xv:${r.id}` }], ...openButton(link)]
 }
 
-/** An instance row as a message shows it. */
 const instanceInfo = (c: AccessInstanceRow): InstanceInfo => ({
   position: c.position,
   name: c.instanceName,
@@ -652,10 +532,6 @@ async function requestsWith(ctx: Ctx, where: SQL | undefined) {
   })
 }
 
-/**
- * Background job: notify approvers of new requests, and close the Telegram messages of finished ones. Each request
- * goes to the channels `channelsFor` gives it on this run; a channel that failed waits the retry time on its own.
- */
 export async function notifyAccess(ctx: Ctx) {
   const { defaultNotify } = await ctx.settings.get("access")
   const { retryMin } = await ctx.settings.get("alerts")
@@ -717,26 +593,16 @@ export async function notifyAccess(ctx: Ctx) {
   await closeTelegramMessages(ctx)
 }
 
-/**
- * Edits of request messages run one at a time (the scheduler and button presses both make them), each reading the
- * request when its turn comes, so an older edit never lands after a newer one, and a waiting request's message is
- * never drawn with buttons after its outcome was.
- */
 let editing: Promise<void> = Promise.resolve()
 function inTurn(work: () => Promise<void>) {
   editing = editing.catch(() => undefined).then(work)
   return editing
 }
 
-/**
- * Edits the Telegram message of every decided or ended request to its outcome, without buttons: once when it is
- * decided, and again when approved access ends (released, expired or revoked).
- */
 export function closeTelegramMessages(ctx: Ctx) {
   return inTurn(() => closeOutdated(ctx))
 }
 
-/** Draws a waiting request's message again, with its decision keyboard or its edit keyboard. */
 function redrawWaiting(ctx: Ctx, id: string, mode: "decide" | "edit") {
   return inTurn(async () => {
     const tg = await telegramClient(ctx)
@@ -762,8 +628,6 @@ async function closeOutdated(ctx: Ctx) {
   const tg = await telegramClient(ctx)
   if (!tg) return
   const dates = messageWriting(await ctx.settings.get("general"))
-  // Every change of status clears telegramClosedAt in the same update (access.ts), so these are the messages
-  // that do not show their request's status yet.
   const outdated = await requestsWith(
     ctx,
     and(
@@ -777,8 +641,6 @@ async function closeOutdated(ctx: Ctx) {
       const text = renderAccessTelegram(info, dates, accessOutcome({ ...r, changed: info.changed }, dates))
       const note = r.telegramMissingTopic ? topicGoneNote(r.telegramMissingTopic) : undefined
       await tg.api.edit(tg.chatId, r.telegramMessageId ?? 0, note ? TelegramHtml.join([note, text]) : text)
-      // Marked as shown only if the status and the counts are still the ones shown; if any changed meanwhile, the
-      // next run edits again. A call logged now holds the row, and this update then checks the counts it left.
       await ctx.db
         .update(accessRequests)
         .set({ telegramClosedAt: new Date() })
@@ -796,7 +658,6 @@ async function closeOutdated(ctx: Ctx) {
   }
 }
 
-/** Whether this Telegram user may approve: listed as an approver, or the user of the private chat when none are. */
 export function isApprover(
   approvers: string[],
   chatId: string,
@@ -810,9 +671,7 @@ export function isApprover(
   return id === chatId
 }
 
-/** A button press on a request message, as its callback data says it. */
 export type AccessPress =
-  /** `full`: pressed on a message that named everything Approve grants. */
   | { action: "approve"; id: string; revision: number; full: boolean }
   | { action: "deny"; id: string }
   | { action: "edit" | "done"; id: string }
@@ -821,12 +680,6 @@ export type AccessPress =
 const UUID = /^[0-9a-f-]{36}$/i
 const NUMBER = /^\d{1,9}$/
 
-/**
- * Reads callback data: `xa:<id>:<revision>:g` (and, from messages drawn before the agent's words were set apart,
- * `xa:<id>:<revision>:f`, and from those sent before Approve required a complete message, `xa:<id>:<revision>` and
- * `xa:<id>`, read as revision 0, all of which approve nothing), `xd:<id>`, `xe:<id>`, `xv:<id>`,
- * `xt:<id>:<position>:<0|1>:<revision>`, `xm:<id>:<minutes>:<revision>`. Anything else is not an access request press.
- */
 export function parsePress(data: string | undefined): AccessPress | null {
   const [action, id, a, b, c, ...extra] = (data ?? "").split(":")
   if (!action || !id || !UUID.test(id) || extra.length) return null
@@ -855,13 +708,6 @@ export function parsePress(data: string | undefined): AccessPress | null {
   return null
 }
 
-/**
- * Why an Approve press approves nothing, if it does not: it came from a message that did not name everything Approve
- * grants (an Approve without `:g`, drawn before its message set the agent's words apart), or the request at the
- * revision pressed is too long for its message to name everything, or has a workflow name or ID that the message
- * could not show exactly as it is stored. A request no longer waiting, or at another revision, is left to
- * `approveAccess`, which says so. The revision is checked again when the approval is stored.
- */
 async function approveRefusal(ctx: Ctx, press: Extract<AccessPress, { action: "approve" }>) {
   const [found] = await requestsWith(ctx, eq(accessRequests.id, press.id))
   if (found?.r.status !== "pending" || found.r.decideBy < new Date() || found.r.revision !== press.revision) return null
@@ -871,7 +717,6 @@ async function approveRefusal(ctx: Ctx, press: Extract<AccessPress, { action: "a
   return shownAsStored(found.info.instances) ? TOO_LONG : UNSHOWN
 }
 
-/** A button pressed on a request message. Returns false if the update is not about an access request. */
 export async function handleAccessCallback(
   ctx: Ctx,
   tg: NonNullable<Awaited<ReturnType<typeof telegramClient>>>,
@@ -925,7 +770,6 @@ export async function handleAccessCallback(
   } catch (e) {
     if (!(e instanceof AccessError)) throw e
     await tg.api.answerCallback(cb.id, clip(e.message, 190))
-    // A press on an old view: the message shows the request as it is now.
     if (e.code === "request_changed") await redrawWaiting(ctx, press.id, "decide")
   }
   await closeTelegramMessages(ctx)

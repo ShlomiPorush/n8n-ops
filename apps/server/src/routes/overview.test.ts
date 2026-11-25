@@ -38,7 +38,6 @@ describe("the worst tone", () => {
 
 describe("Needs attention put together", () => {
   it("counts and tones every eligible item, also those a source left out of its list", () => {
-    // The problems source found 120 and listed one; the workers source listed what it found.
     const a = combine([
       ["problems", { items: [problem("p1", 1)], total: 120, tone: "fail" }],
       ["workers", { items: [worker("w1", 5), worker("w2", 9)], total: 2, tone: "warn" }],
@@ -46,7 +45,6 @@ describe("Needs attention put together", () => {
     expect(a.total).toBe(122)
     expect(a.tone).toBe("fail")
     expect(a.moreProblems).toBe(119)
-    // The worst first, then the newest.
     expect(a.items.map((i) => i.id)).toEqual(["p1", "w2", "w1"])
   })
 
@@ -74,15 +72,6 @@ describe("Needs attention put together", () => {
   it("has no tone when nothing needs a look", () => {
     expect(combine([["workers", { items: [], total: 0, tone: null }]])).toMatchObject({ total: 0, tone: null })
   })
-
-  it("never says fewer than no problems are left out", () => {
-    // A count that fell behind its rows (they were read apart before) must not make another source's count smaller.
-    const a = combine([
-      ["problems", { items: [problem("p1", 1), problem("p2", 2)], total: 1, tone: "fail" }],
-      ["workers", { items: [worker("w1", 5)], total: 1, tone: "warn" }],
-    ])
-    expect(a.moreProblems).toBe(0)
-  })
 })
 
 describe("Needs attention read from its sources", () => {
@@ -107,7 +96,6 @@ describe("Needs attention read from its sources", () => {
       expect(a.failed).toEqual(["backups"])
       expect(a.items.map((i) => i.id)).toEqual(["w1"])
       expect(errors).toHaveLength(1)
-      // Every clock was stopped: nothing is left to run.
       expect(vi.getTimerCount()).toBe(0)
     } finally {
       vi.useRealTimers()

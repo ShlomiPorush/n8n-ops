@@ -31,7 +31,6 @@ describe("capabilities", () => {
       capabilityStatus(scopes, false, grantable).find((c) => c.key === "agents")
     expect(agents(["workflow:read"], 1)).toMatchObject({ available: true, missing: [] })
     expect(agents(["workflow:read"], 0)).toMatchObject({ available: false, missingAccess: true })
-    // No scopes read: n8n older than 2.14.0, or not read yet.
     expect(agents([], 1)).toMatchObject({ available: false, missingAccess: true })
   })
 })

@@ -15,10 +15,6 @@ export function Logo() {
   )
 }
 
-/**
- * Sign-in and first-run frame: the form sits on the page itself, without a card around it. As tall as the
- * visible screen, and it scrolls when the form is taller.
- */
 export function AuthFrame({
   children,
   title,
@@ -48,17 +44,10 @@ export function AuthFrame({
   )
 }
 
-/** What became of a sent code: accepted, refused by the server, or sent without an answer. */
 export type TotpAnswer = "done" | "refused" | "unreached"
 
-/** The answer to a code from Better Auth's error: one without a status never reached the server (FS-23). */
 export const totpAnswer = (error: { status?: number }): TotpAnswer => (error.status ? "refused" : "unreached")
 
-/**
- * Six-digit code input that sends the code on the sixth digit. A code the server refused is cleared for the
- * next try; one that got no answer is kept and can be sent again with Try again or Enter (FS-23). Its parts
- * sit in the parent's layout.
- */
 export function TotpInput({
   onSubmit,
   disabled,
@@ -72,7 +61,6 @@ export function TotpInput({
   const [kept, setKept] = useState(false)
   const [refocus, setRefocus] = useState(false)
   const input = useRef<HTMLInputElement>(null)
-  // The field is disabled while the code is sent, which takes the focus away; it comes back once enabled.
   useEffect(() => {
     if (!refocus || disabled) return
     setRefocus(false)

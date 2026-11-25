@@ -5,11 +5,10 @@ import {
   api,
   describeError,
   failureText,
-  markSaved,
   NetworkError,
   queryClient,
   RefreshError,
-  readFresh,
+  readAfterSave,
   refreshAreas,
 } from "./api.ts"
 import { sessionStarted } from "./session.ts"
@@ -123,7 +122,10 @@ describe("failureText", () => {
   })
 })
 
-describe("readFresh", () => {
+describe("readAfterSave", () => {
+  const path = "/settings/general"
+  const read = () => api<{ design: string }>(path)
+
   it("drops an answer to a read that a save overtook, keeping what the cache holds", async () => {
     let answer: (r: Response) => void = () => {}
     vi.stubGlobal(
@@ -131,13 +133,31 @@ describe("readFresh", () => {
       vi.fn(() => new Promise<Response>((done) => (answer = done))),
     )
     const client = new QueryClient()
-    client.setQueryData(["/settings/general"], { design: "regular" })
-    const old = readFresh<{ design: string }>("/settings/general", client)
-    // The save lands while the old read is still on its way.
-    markSaved("/settings/general")
-    client.setQueryData(["/settings/general"], { design: "compact" })
+    client.setQueryData([path], { design: "regular" })
+    const old = client.fetchQuery({ queryKey: [path], queryFn: read }).catch(() => {})
+    void readAfterSave({ queryKey: [path] }, client)
+    client.setQueryData([path], { design: "compact" })
     answer(new Response(JSON.stringify({ design: "regular" })))
-    expect(await old).toEqual({ design: "compact" })
+    await old
+    expect(client.getQueryData([path])).toEqual({ design: "compact" })
+  })
+
+  it("reads again what is on screen, also while its first answer is on its way, and keeps the new answer", async () => {
+    const answers: ((r: Response) => void)[] = []
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise<Response>((done) => answers.push(done))),
+    )
+    const client = new QueryClient()
+    const observer = new QueryObserver(client, { queryKey: [path], queryFn: read })
+    const stop = observer.subscribe(() => {})
+    const saved = readAfterSave({ queryKey: [path] }, client)
+    expect(answers).toHaveLength(2)
+    answers[1]?.(new Response(JSON.stringify({ design: "compact" })))
+    answers[0]?.(new Response(JSON.stringify({ design: "regular" })))
+    await saved
+    expect(observer.getCurrentResult().data).toEqual({ design: "compact" })
+    stop()
   })
 
   it("keeps the answer of a read that started after the save", async () => {
@@ -146,8 +166,21 @@ describe("readFresh", () => {
       vi.fn(async () => new Response(JSON.stringify({ design: "compact" }))),
     )
     const client = new QueryClient()
-    markSaved("/settings/general")
-    expect(await readFresh("/settings/general", client)).toEqual({ design: "compact" })
+    void readAfterSave({ queryKey: [path] }, client)
+    expect(await client.fetchQuery({ queryKey: [path], queryFn: read })).toEqual({ design: "compact" })
+  })
+
+  it("leaves a path under the saved one alone", async () => {
+    let answer: (r: Response) => void = () => {}
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise<Response>((done) => (answer = done))),
+    )
+    const client = new QueryClient()
+    const under = client.fetchQuery({ queryKey: ["/instances/a"], queryFn: () => api("/instances/a") })
+    void readAfterSave({ queryKey: ["/instances"] }, client)
+    answer(new Response(JSON.stringify({ name: "alpha" })))
+    expect(await under).toEqual({ name: "alpha" })
   })
 })
 
@@ -170,10 +203,8 @@ describe("refreshAreas", () => {
 
     fail = true
     await expect(refreshAreas("/problems", "/overview")).rejects.toBeInstanceOf(RefreshError)
-    // The old rows stay on screen beside the error (TB-5); another area is not concerned.
     expect(observer.getCurrentResult().data).toEqual(["Sync orders"])
     await expect(refreshAreas("/overview")).resolves.toBeUndefined()
-    // A read no longer on screen is not read again, so it cannot fail the refresh.
     stop()
     await expect(refreshAreas("/problems")).resolves.toBeUndefined()
   })
@@ -186,7 +217,6 @@ describe("refreshAreas", () => {
       queryFn: async () => {
         calls += 1
         if (calls === 1) return ["Sync orders"]
-        // The refresh and its replacements are slow; only the last one answers, and it fails.
         await new Promise<void>((resolve) => (release = resolve))
         throw new ApiError(500, "internal_error")
       },
@@ -195,7 +225,6 @@ describe("refreshAreas", () => {
     const stop = observer.subscribe(() => {})
     await vi.waitFor(() => expect(observer.getCurrentResult().data).toEqual(["Sync orders"]))
     const refreshing = refreshAreas("/problems")
-    // Two live updates, each replacing the request on its way.
     void queryClient.invalidateQueries({ queryKey: ["/problems?status=open"] })
     await new Promise((r) => setTimeout(r, 1))
     void queryClient.invalidateQueries({ queryKey: ["/problems?status=open"] })
@@ -206,5 +235,49 @@ describe("refreshAreas", () => {
     release()
     await expect(refreshing).rejects.toBeInstanceOf(RefreshError)
     stop()
+  })
+
+  it("waits for the last request when another save replaces the awaited one", async () => {
+    const releases: (() => void)[] = []
+    const observer = new QueryObserver(queryClient, {
+      queryKey: ["/problems?status=open"],
+      queryFn: () => new Promise<number>((resolve) => releases.push(() => resolve(releases.length))),
+      retry: false,
+    })
+    const stop = observer.subscribe(() => {})
+    releases[0]?.()
+    await vi.waitFor(() => expect(observer.getCurrentResult().data).toBe(1))
+    const refreshing = refreshAreas("/problems")
+    void refreshAreas("/problems")
+    let settled = false
+    void refreshing.then(() => (settled = true))
+    releases[1]?.()
+    await new Promise((r) => setTimeout(r, 10))
+    expect(settled).toBe(false)
+    releases[2]?.()
+    await refreshing
+    expect(observer.getCurrentResult().data).toBe(3)
+    stop()
+  })
+
+  it("does not count a read that fails after its page was left", async () => {
+    let fail: () => void = () => {}
+    let calls = 0
+    const observer = new QueryObserver(queryClient, {
+      queryKey: ["/problems?status=open"],
+      queryFn: () => {
+        calls += 1
+        return calls === 1
+          ? Promise.resolve(["Sync orders"])
+          : new Promise((_, reject) => (fail = () => reject(new ApiError(500, "internal_error"))))
+      },
+      retry: false,
+    })
+    const stop = observer.subscribe(() => {})
+    await vi.waitFor(() => expect(observer.getCurrentResult().data).toEqual(["Sync orders"]))
+    const refreshing = refreshAreas("/problems")
+    stop()
+    fail()
+    await expect(refreshing).resolves.toBeUndefined()
   })
 })

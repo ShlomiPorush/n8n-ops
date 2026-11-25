@@ -6,10 +6,6 @@ import { requireUser } from "./middleware.ts"
 import { fromOwnPage, OTHER_PAGE } from "./origin.ts"
 import type { Env } from "./types.ts"
 
-// Which pages may change something: the rule `fromOwnPage` applies (the public URL's origin, or the host the
-// request was made to, without the scheme because TLS ends at the proxy), and `requireUser` refusing a change from
-// another page before it reads the session.
-
 vi.mock("../services/session-policy.ts", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../services/session-policy.ts")>()),
   checkSession: async () => ({ ok: true, clocks: {}, status: {}, twoFactorVerified: true }),
@@ -29,7 +25,6 @@ describe("fromOwnPage", () => {
   it("takes the host the request was made to, whatever the scheme (TLS ends at the proxy)", async () => {
     expect(await noPublicUrl("http://ops.example.com/x", { origin: "https://ops.example.com" })).toBe(true)
     expect(await noPublicUrl("http://ops.example.com/x", { origin: "http://ops.example.com" })).toBe(true)
-    // Before any public URL is set (the first run), the Host header is enough.
     expect(
       await noPublicUrl("http://internal:8080/x", { origin: "https://ops.example.com", host: "ops.example.com" }),
     ).toBe(true)
@@ -104,7 +99,6 @@ describe("requireUser", () => {
       expect(
         (await call("POST", { ...headers, "content-type": "application/x-www-form-urlencoded" }, "a=1")).status,
       ).toBe(403)
-      // A link's ping (Chromium's hyperlink auditing) is a POST with cookies that no preflight asks about.
       expect((await call("POST", { ...headers, "content-type": "text/ping" }, "PING")).status).toBe(403)
     }
     expect(sessions.read).toBe(0)

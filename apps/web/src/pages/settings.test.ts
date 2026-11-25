@@ -1,7 +1,6 @@
 import { settingLabel } from "@n8n-ops/shared"
 import { renderToStaticMarkup } from "react-dom/server"
 import { describe, expect, it } from "vitest"
-import { createTestRuns } from "@/lib/test-run"
 import {
   changeCount,
   defaultText,
@@ -15,6 +14,7 @@ import {
   testDraft,
   testIdentity,
   testMissing,
+  testView,
   toForm,
   withPending,
 } from "./settings.tsx"
@@ -65,9 +65,17 @@ describe("Settings fields", () => {
     const typed = withPending(loaded, { recipients: " dev@example.com " })
     expect(typed.recipients).toEqual(["ops@example.com", "dev@example.com"])
     expect(changeCount(def, typed, loaded)).toBe(1)
-    // Text that adds nothing, blank or a value already in the list, is no change.
     expect(changeCount(def, withPending(loaded, { recipients: "  " }), loaded)).toBe(0)
     expect(changeCount(def, withPending(loaded, { recipients: "OPS@example.com" }), loaded)).toBe(0)
+  })
+
+  it("count a secret while it is replaced or removed, not once that is saved (SV-1)", () => {
+    const def = forms.email as { fields: FieldDef[] }
+    const typed = crypto.randomUUID()
+    const count = (value: unknown, stored?: unknown) =>
+      changeCount(def, { smtpPassword: value }, { smtpPassword: stored })
+    expect([count(undefined), count(""), count(null), count(typed)]).toEqual([0, 0, 1, 1])
+    expect([count(null, null), count(typed, typed)]).toEqual([0, 0])
   })
 
   it("are Changed against their default as their type compares, and Reset names it (FS-6)", () => {
@@ -93,7 +101,6 @@ describe("Settings fields", () => {
 
 describe("the example under Date format and Time format (FW-9)", () => {
   const values = { timezone: "UTC", dateFormat: "YYYY-MM-DD", timeFormat: "12h" }
-  // The text a reader sees, collected from the element tree.
   const textOf = (node: unknown): string => {
     if (node == null || typeof node === "boolean") return ""
     if (typeof node === "string" || typeof node === "number") return String(node)
@@ -147,7 +154,6 @@ describe("a connection test with the values on screen (FS-19)", () => {
       defaultThreadId: "",
       botToken: null,
     })
-    // The default topic on screen goes too, so a test checks it and a new topic asks for a new test.
     expect(testDraft("telegram", { chatId: "4242", defaultThreadId: 12 })).toMatchObject({ defaultThreadId: "12" })
     expect(testIdentity("telegram", { chatId: "4242", defaultThreadId: "12" }, 0)).not.toBe(
       testIdentity("telegram", { chatId: "4242", defaultThreadId: "13" }, 0),
@@ -172,7 +178,6 @@ describe("a connection test with the values on screen (FS-19)", () => {
       message: "route 1: the workflow pattern is not a valid regular expression",
     })
     expect(routesProblem(form([{ tag: "billing" }]))?.id).toBe("route-1-topic")
-    // The server's length limits are checked here too, so a long value is marked before it is sent.
     expect(routesProblem(form([{ workflow: "a".repeat(201), threadId: "7" }]))).toEqual({
       id: "route-1-workflow",
       message: "route 1: keep the workflow pattern to 200 characters",
@@ -181,18 +186,26 @@ describe("a connection test with the values on screen (FS-19)", () => {
     expect(routesProblem(form([{ workflow: "a".repeat(200), tag: "t".repeat(100), threadId: "7" }]))).toBeNull()
   })
 
+  it("shows its result only while the values on screen are the ones it tested (SV-5)", () => {
+    const tested = testIdentity("email", values, 0)
+    const changed = testIdentity("email", { ...values, smtpHost: "mail.other.example" }, 0)
+    const done = { ok: true as const, recipients: ["ops@example.com"], topicGone: false, at: 1000 }
+    const run = { isPending: false, data: done, variables: { identity: tested } }
+    expect(testView({ isPending: false }, tested)).toEqual({ kind: "none" })
+    expect(testView({ isPending: true, variables: { identity: tested } }, tested)).toEqual({ kind: "testing" })
+    expect(testView(run, tested)).toEqual({ kind: "accepted", detail: "Sent to ops@example.com", at: 1000 })
+    expect(testView(run, changed)).toEqual({ kind: "changed" })
+    expect(testView(run, testIdentity("email", { ...values }, 0)).kind).toBe("accepted")
+    const refused = { ok: false as const, message: "Refused", at: 2000 }
+    expect(testView({ ...run, data: refused }, tested)).toEqual({ kind: "failed", message: "Refused", at: 2000 })
+    expect(testView({ ...run, data: refused }, changed)).toEqual({ kind: "changed" })
+  })
+
   it("keeps no result across a saved secret, though the stored one is not among the values (SV-5)", () => {
-    const runs = createTestRuns()
-    // The stored password is tested, then replaced and saved: the field is empty again, as before.
-    const tested = runs.start(testIdentity("email", values, 0))
-    runs.settle(tested, { ok: true }, 1000)
-    expect(testIdentity("email", values, 0)).toBe(testIdentity("email", { ...values }, 0))
-    expect(runs.view(testIdentity("email", values, 0)).kind).toBe("accepted")
-    expect(runs.view(testIdentity("email", values, 1))).toEqual({ kind: "changed", at: 1000 })
-    // A test still on its way when the secret is saved answers for the one before.
-    const late = runs.start(testIdentity("email", { ...values, smtpSecure: true }, 1))
-    runs.settle(late, { ok: true }, 2000)
-    expect(runs.view(testIdentity("email", { ...values, smtpSecure: true }, 2)).kind).toBe("changed")
+    const data = { ok: true as const, recipients: [], topicGone: false, at: 1000 }
+    const run = { isPending: false, data, variables: { identity: testIdentity("email", values, 0) } }
+    expect(testView(run, testIdentity("email", values, 0)).kind).toBe("accepted")
+    expect(testView(run, testIdentity("email", values, 1))).toEqual({ kind: "changed" })
   })
 
   it("says what it still needs on screen", () => {

@@ -46,7 +46,6 @@ describe("the local folder store", () => {
     mkdirSync(join(work, "elsewhere"), { recursive: true })
     symlinkSync(join(work, "elsewhere"), join(root, "team/nas/link"))
     await expect(store.put("link/x/y.age", file, expected, signal())).rejects.toThrow(/symbolic link/)
-    // Nothing was created through the link.
     expect(readdirSync(join(work, "elsewhere"))).toEqual([])
   })
 

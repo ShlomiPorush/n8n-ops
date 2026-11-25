@@ -10,8 +10,6 @@ import {
   signIn,
 } from "./helpers.ts"
 
-// A real n8n 2.44 runs in the test stack. These tests register it, make a workflow fail,
-// and follow the failure through problems: first sync, repeat failures, resolve, regression.
 test.describe.configure({ mode: "serial" })
 
 let apiKey = ""
@@ -19,7 +17,6 @@ let page: Page
 let hookPath = ""
 const message = "ERP refused the connection (e2e)"
 
-// One signed-in page for the whole file: every sign-in needs a fresh TOTP time step.
 test.beforeAll(async ({ browser }) => {
   page = await browser.newPage()
   await signIn(page)
@@ -29,10 +26,6 @@ test.afterAll(async () => {
   await page.close()
 })
 
-/**
- * Opens a menu and picks one of its items. The page refreshes itself as failures come in, which can close a menu
- * opened at that moment: it is opened again then.
- */
 async function pick(button: string, item: string) {
   await expect(async () => {
     await page.getByRole("button", { name: button }).click()
@@ -47,7 +40,6 @@ test("n8n is prepared with an API key and a failing workflow", async () => {
 })
 
 test("an instance is registered through its setup, each step checked before it goes on", async () => {
-  // From Overview, so the way back after the add can be followed.
   await page.goto("/")
   await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible()
   await page.goto("/instances")
@@ -55,12 +47,10 @@ test("an instance is registered through its setup, each step checked before it g
   await expect(page).toHaveURL(/\/instances\/new$/)
   await page.getByLabel("Name", { exact: true }).fill("e2e-n8n")
   await page.getByLabel("Base URL", { exact: true }).fill(n8nUrl)
-  // Health is chosen by default, checked from the server; the rest is chosen here.
   await expect(page.getByRole("checkbox", { name: "Health", exact: true })).toBeChecked()
   await expect(page.getByRole("radio", { name: "The n8n-ops server" })).toBeChecked()
   for (const name of ["Monitoring and problems", "Workflow map", "Temporary access for agents"])
     await page.getByRole("checkbox", { name, exact: true }).click()
-  // Only the steps those need follow.
   const rail = page.getByRole("navigation", { name: "Setup steps" })
   await expect(rail.getByRole("listitem")).toHaveText([
     "1Basics",
@@ -71,7 +61,6 @@ test("an instance is registered through its setup, each step checked before it g
   ])
   await page.getByRole("button", { name: "Continue" }).click()
 
-  // A wrong key is refused and not stored; the right one shows what each chosen capability gets.
   await expect(page.getByRole("heading", { name: "API Key" })).toBeVisible()
   await expect(page).toHaveURL(/\/instances\/[^/]+\/setup\?step=api$/)
   await page.getByLabel("API key", { exact: true }).fill("not-a-real-key-123")
@@ -86,20 +75,17 @@ test("an instance is registered through its setup, each step checked before it g
   await expect(page.getByTestId("scope-hint").getByText("Allowed")).toHaveCount(3)
   await page.getByRole("button", { name: "Continue" }).click()
 
-  // Health from the server, with what it read.
   await expect(page.getByRole("heading", { name: "Health", exact: true })).toBeVisible()
   await page.getByRole("button", { name: "Check", exact: true }).click()
   await expect(page.getByTestId("probe-rows")).toContainText("Main process (/healthz)")
   await expect(result).toContainText("Passed")
   await page.getByRole("button", { name: "Continue" }).click()
 
-  // Temporary access: on, within read-only scopes.
   await expect(page.getByRole("heading", { name: "Temporary Access" })).toBeVisible()
   await page.getByLabel("Agents may request access").click()
   await page.getByRole("radio", { name: "Read only", exact: true }).click()
   await page.getByRole("button", { name: "Continue" }).click()
 
-  // Saving the access policy touches nothing the key and health checks depend on: they still count in the review.
   await expect(page.getByRole("heading", { name: "Review" })).toBeVisible()
   await expect(page.getByRole("button", { name: "Check all again" })).toHaveCount(0)
   for (const step of ["api", "health", "access"])
@@ -111,8 +97,6 @@ test("an instance is registered through its setup, each step checked before it g
   await page.getByRole("tab", { name: "Access" }).click()
   await expect(page.getByText("Read from GET /api/v1/discover")).toBeVisible()
 
-  // The new instance took the add page's Back step instead of adding one after it (DS-10): Back leaves the tab,
-  // then the instance for the list (a wide screen opens its first instance in place), then the list for Overview.
   await page.goBack()
   await expect(page).not.toHaveURL(/tab=access/)
   await page.goBack()
@@ -131,7 +115,6 @@ test("Temporary access turned off stays chosen, and the instance says what it mi
   await page.getByLabel("Agents may request access").click()
   await page.getByRole("button", { name: "Save changes" }).click()
   await expect(page.getByText("Agent access saved")).toBeVisible()
-  // Closed again, as the access tests expect to find it.
   await page.getByRole("tab", { name: /^Overview/ }).click()
   await expect(capability).toContainText("Temporary access is off, or allows no scope the API key grants.")
 })
@@ -146,7 +129,6 @@ test("the first sync imports existing failures as a problem", async () => {
   await page.goto("/problems")
   const row = page.getByRole("row", { name: /Sync orders to ERP/ })
   await expect(row).toBeVisible()
-  // It failed minutes ago: its tag says Failing now, and the figure above the list counts it.
   await expect(row).toContainText("Failing now")
   const sections = page.getByRole("navigation", { name: "Sections" })
   await expect(sections.getByRole("link").filter({ hasText: "Failing now" })).toContainText("1")
@@ -163,7 +145,6 @@ test("a repeated failure only increases the counter", async () => {
   await page.getByRole("button", { name: "Check now" }).click()
   await expect(page.getByText("Checked e2e-n8n").last()).toBeVisible({ timeout: 30_000 })
   await page.goto("/problems")
-  // Beside the reading pane the row is an item whose count reads "2 failures".
   await expect(page.getByRole("row", { name: /Sync orders to ERP/ }).locator('[data-part="end"]')).toHaveText(
     "2 failures",
   )
@@ -175,7 +156,6 @@ test("Resolve acts at once, and its Undo puts the problem back (FB-16)", async (
   await page.getByRole("button", { name: "Mark resolved" }).click()
   await expect(page.getByText("Problem resolved: Sync orders to ERP")).toBeVisible()
   await expect(page.getByRole("button", { name: "Reopen" })).toBeVisible()
-  // The list beside the pane follows: the open list no longer has it.
   await expect(page.getByRole("row", { name: /Sync orders to ERP/ })).toHaveCount(0)
 
   await page.getByRole("button", { name: "Undo resolving Sync orders to ERP" }).click()
@@ -218,9 +198,6 @@ test("a resolved problem that fails again is a regression", async () => {
 })
 
 test("a second workflow failing for the same cause joins the Problem, and Split and Merge move it", async () => {
-  // Two workflows whose HTTP Request node calls the same host and fails the same way: one Problem, one row (the cause
-  // is the host and the reason, docs/adr/0003). The Code node of "Sync orders to ERP" names no host, so it stays apart.
-  // Calls to a host that does not exist take a few seconds each before they fail.
   test.setTimeout(120_000)
   const erp = "http://erp.e2e.invalid/orders"
   const hooks = await Promise.all(
@@ -232,15 +209,12 @@ test("a second workflow failing for the same cause joins the Problem, and Split 
   await page.getByRole("button", { name: "Check now" }).click()
   await expect(page.getByText("Checked e2e-n8n").last()).toBeVisible({ timeout: 30_000 })
   await page.goto("/problems?status=open")
-  // The list column: a wide screen also opens the first problem beside it, whose rows name workflows too.
   const list = page.locator(`[data-scroll-pane="list"]`)
-  // One row per workflow, each saying the same cause hit the other one too.
   const joined = list.getByRole("row", { name: /same cause in 2 workflows/ })
   await expect(joined).toHaveCount(2)
   await expect(list.getByRole("row", { name: /^Get DNS Data/ })).toContainText("erp.e2e.invalid")
   await expect(list.getByRole("row", { name: /Sync orders to ERP/ })).toHaveCount(1)
 
-  // A row opens the Problem on its workflow; the Problem lists both.
   await list.getByRole("row", { name: /^Get DNS Zone/ }).click()
   const tab = (name: RegExp) => page.getByRole("tab", { name })
   await expect(tab(/^Overview/)).toHaveAttribute("aria-selected", "true")
@@ -250,13 +224,11 @@ test("a second workflow failing for the same cause joins the Problem, and Split 
   await expect(pane.getByRole("row", { name: /Get DNS Zone/ })).toBeVisible()
   const problem = new URL(page.url()).pathname
 
-  // A workflow's row shows where it broke there.
   await pane.getByRole("row", { name: /Get DNS Data/ }).click()
   await expect(tab(/^Overview/)).toHaveAttribute("aria-selected", "true")
   await expect(page.getByRole("tabpanel").getByText("Get DNS Data").first()).toBeVisible()
   await expect(page.getByRole("heading", { name: "Where It Broke" })).toBeVisible()
 
-  // Split gives it a Problem of its own; Merge brings it back.
   await tab(/^Affected workflows/).click()
   await pick("Actions for Get DNS Data", "Split into its own problem")
   await expect(page.getByText("Split into a problem of its own: Get DNS Data")).toBeVisible()
@@ -273,8 +245,6 @@ test("a second workflow failing for the same cause joins the Problem, and Split 
   await expect(tab(/^Affected workflows/)).toHaveAttribute("aria-selected", "true")
   await expect(page.getByRole("tabpanel").getByRole("row", { name: /Get DNS Data/ })).toBeVisible()
 
-  // The later files expect the first workflow's Problem alone, and every other Problem with one workflow: split this
-  // one again, resolve both, and remove both workflows from n8n so another instance of the same n8n never reads them.
   await pick("Actions for Get DNS Data", "Split into its own problem")
   await expect(page.getByText("Split into a problem of its own: Get DNS Data").last()).toBeVisible()
   await page.getByRole("button", { name: "Mark resolved" }).click()
@@ -289,7 +259,6 @@ test("a second workflow failing for the same cause joins the Problem, and Split 
     }
     for (const w of listed.data) {
       await n8nApi(`/api/v1/workflows/${w.id}/deactivate`, { method: "POST" })
-      // n8n unpublishes a deactivated workflow in the background and refuses to delete it until then.
       await expect(async () => {
         const removed = await n8nApi(`/api/v1/workflows/${w.id}`, { method: "DELETE" })
         expect(removed.ok, await removed.clone().text()).toBe(true)
@@ -300,10 +269,7 @@ test("a second workflow failing for the same cause joins the Problem, and Split 
 
 test("a queue-mode instance reads /metrics of its base URL by itself and says what is missing", async () => {
   const alert = page.getByRole("alert").filter({ hasText: "The queue workers are not checked" })
-  // No metrics URL is set: the check reads /metrics of the base URL. This n8n serves metrics (docker/n8n-dev.env)
-  // but runs no queue, so the check finds metrics without queue figures.
   const noQueue = page.getByText("Queue metrics: no queue metrics; set N8N_METRICS_INCLUDE_QUEUE_METRICS=true")
-  // Check now reads the version and scopes first, whose requests may take up to 20 seconds each.
   const checked = { timeout: 45_000 }
   const toggleQueueMode = async () => {
     await page.getByRole("button", { name: "Edit", exact: true }).click()
@@ -319,7 +285,6 @@ test("a queue-mode instance reads /metrics of its base URL by itself and says wh
 
   await toggleQueueMode()
   await expect(alert).toBeVisible()
-  // Checked from the server: the alert says how the worker on the host would find the queue workers by itself.
   await expect(alert).toContainText("finds and checks them by itself")
   await page.getByRole("button", { name: "Check now" }).click()
   await expect(noQueue).toBeVisible(checked)

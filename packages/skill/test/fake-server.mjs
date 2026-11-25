@@ -1,28 +1,15 @@
-// A stand-in for n8n-ops's authorization server and REST API, strict like the real one: a refresh token or device code
-// used twice ends the whole grant. Tests drive it through its state and a few switches.
-//
-// Every token, code and id is made at run time with randomBytes: no fixed secret value lives in this file.
 import { createHash, randomBytes } from "node:crypto"
 import http from "node:http"
 
-/* ---- Product constants: the same values as in the scripts' constant block. ---- */
 const CLIENT_ID = "n8n-ops-cli"
-// Every request under /api/ counts as an arrival, also one outside the API version the client may call, so a test
-// that says nothing reached the API sees a path that left the version too.
 const API_PREFIX = "/api/"
 const ACCESS_PATH = "/api/v1/agent/access"
 const ENDPOINTS_PATH = "/api/v1/agent/endpoints"
 const SKILL_HEADER = "x-n8n-ops-skill"
 const POLICY_HEADER = "x-n8n-ops-policy"
 const KIND_HEADER = "x-n8n-ops-kind"
-/* ---- End of product constants. ---- */
 
-/**
- * n8n-ops's REST table for agents: every route an agent may call, with its area (null: any area) and kind (read or
- * act, by effect, never by method). Tests that need a shape this table does not have add a route for that case only.
- */
 export const POLICY = [
-  // Exempt from the policy and kind headers: the client needs them to learn the revision.
   { method: "GET", path: "/api/v1/agent/access", kind: "read", area: null, description: "What it may do." },
   { method: "GET", path: "/api/v1/agent/endpoints", kind: "read", area: null, description: "The calls it may make." },
   { method: "GET", path: "/api/v1/problems", kind: "read", area: "read", description: "Open problems." },
@@ -36,7 +23,6 @@ export const POLICY = [
   { method: "GET", path: "/api/v1/backups", kind: "read", area: "read", description: "The last backups." },
   { method: "GET", path: "/api/v1/workflows", kind: "read", area: "read", description: "Find workflows." },
   { method: "POST", path: "/api/v1/access-requests", kind: "act", area: "access", description: "Ask for access." },
-  // A GET that hands out a one-time key: an act by its effect.
   { method: "GET", path: "/api/v1/access-requests/{id}", kind: "act", area: "access", description: "A request." },
   {
     method: "POST",
@@ -49,7 +35,6 @@ export const POLICY = [
 
 const id = () => randomBytes(18).toString("base64url")
 
-/** Whether a route template matches a path; `anyCase` compares the fixed parts as a case-insensitive router does. */
 function templateMatches(template, p, anyCase = false) {
   const t = template.split("/")
   const s = p.split("/")
@@ -63,21 +48,19 @@ function templateMatches(template, p, anyCase = false) {
   return t.length === s.length
 }
 
-/** On this computer, at 127.0.0.1 unless `host` names another address (such as ::1). */
 export async function startFakeServer(port = 0, host = "127.0.0.1") {
   const s = {
     issuer: "",
-    devices: new Map(), // device_code -> { userCode, label, state: pending|approved|denied|used, scope }
-    refresh: new Map(), // token -> { grant, consumed }
-    access: new Map(), // token -> { grant, exp }
-    grants: new Map(), // id -> { alive, scope }
+    devices: new Map(),
+    refresh: new Map(),
+    access: new Map(),
+    grants: new Map(),
     counts: {},
-    arrivalCounts: new Map(), // "METHOD /path" -> requests that reached the API, refused or not
-    runCounts: new Map(), // "METHOD template" -> times the route's code ran
+    arrivalCounts: new Map(),
+    runCounts: new Map(),
     last: {},
   }
 
-  /** Switches back to their defaults, counters to zero, and n8n-ops's policy table. */
   s.reset = () => {
     Object.assign(s, {
       counts: { device: 0, deviceToken: 0, refresh: 0, revoke: 0, reuse: 0, listing: 0 },
@@ -89,27 +72,13 @@ export async function startFakeServer(port = 0, host = "127.0.0.1") {
       refreshDelayMs: 0,
       revokeStatus: 200,
       slowDownOnce: false,
-      // The endpoints listing: an error status to answer with, or a body to answer 200 with instead of the list.
       listingStatus: 0,
       listingBody: null,
-      // Applied once to the policy table right after the next listing is served: { method, path, kind }.
       reclassifyAfterListing: null,
-      // Refusals before any route code runs, one per call to a route of the table (not access or the listing), in
-      // order: "invalid_token" (401 with the challenge), "busy" (429), "policy_changed" (409, even with the
-      // right revision), or { status, body, headers } to answer with instead (the body as it is when a string).
       beforeRun: [],
-      // What happens after the route's code ran, one per run, in order: "drop" (no answer), "truncate" (the answer
-      // starts and breaks off), or { status, body, headers } to answer with.
       afterRun: [],
-      // The router: like ASP.NET Core's, it matches the fixed parts of a route in any case (/api/v1/problems/EXPORT
-      // runs /api/v1/problems/export); like Spring's or Tomcat's, it drops ;parameters from every segment
-      // (/api/v1/problems/export;x runs /api/v1/problems/export). Either way it can pick another route than the client
-      // matched.
       caseInsensitiveRoutes: false,
       stripPathParameters: false,
-      // Which of two routes that both match a path the router picks: "first" (the first in the table), "static" (the
-      // one with fewer {...} parts, as most routers do: /api/v1/problems/export before /api/v1/problems/{id}) or
-      // "dynamic".
       routePreference: "first",
       policy: POLICY.map((e) => ({ ...e })),
       last: {},
@@ -119,7 +88,6 @@ export async function startFakeServer(port = 0, host = "127.0.0.1") {
   }
   s.reset()
 
-  /** The server's hash of its policy table, as the listing gives it and the policy header must carry it. */
   s.revision = () =>
     createHash("sha256")
       .update(JSON.stringify(s.policy.map((e) => [e.method, e.path, e.area, e.kind])))
@@ -226,7 +194,6 @@ export async function startFakeServer(port = 0, host = "127.0.0.1") {
           return
         }
         if (s.truncateNextRefresh) {
-          // The answer starts, then the connection breaks.
           s.truncateNextRefresh = false
           s.orphan = tokens.refresh_token
           res.writeHead(200, { "content-type": "application/json", "content-length": "400" })
@@ -253,25 +220,19 @@ export async function startFakeServer(port = 0, host = "127.0.0.1") {
       s.last.skill = req.headers[SKILL_HEADER]
       s.last.policy = req.headers[POLICY_HEADER]
       s.last.kind = req.headers[KIND_HEADER]
-      // Like many real servers, it decodes the path before it routes: /api/v1/problems/7%2Fsend runs the route of
-      // /api/v1/problems/7/send, and /api/v1/problems/%65xport the one of /api/v1/problems/export.
       let routed
       try {
         routed = decodeURIComponent(url.pathname)
       } catch {
         return send(400, { error: "bad_request", message: "The path is not valid." })
       }
-      // The ;parameters go after the decoding, the harsher order: /api/v1/problems/export%3Bx runs
-      // /api/v1/problems/export too.
       if (s.stripPathParameters) routed = routed.replace(/;[^/]*/g, "")
-      // 1. The token check, before anything else.
       const bearer = (req.headers.authorization ?? "").replace(/^Bearer /, "")
       const a = s.access.get(bearer)
       if (!a || a.exp < Date.now() || !s.grants.get(a.grant)?.alive)
         return send(401, { error: "invalid_token" }, { "www-authenticate": 'Bearer error="invalid_token"' })
       const scope = s.grants.get(a.grant).scope
 
-      // 2. The calls that are exempt from the policy header: access and the listing.
       if (req.method === "GET" && routed === ACCESS_PATH)
         return send(200, { label: "Agents", scope, areas: [...new Set(s.policy.map((e) => e.area).filter((x) => x))] })
       if (req.method === "GET" && routed === ENDPOINTS_PATH) {
@@ -279,8 +240,6 @@ export async function startFakeServer(port = 0, host = "127.0.0.1") {
         if (s.listingStatus) return send(s.listingStatus, { error: "server_error" })
         if (s.listingBody !== null) return send(200, s.listingBody)
         const area = url.searchParams.get("area")
-        // A copy of the table as it is now: a change after this listing must not reach the answer to it.
-        // A route open to any area is in the listing of every area.
         const endpoints = s.policy
           .filter((e) => area === null || e.area === null || e.area === area)
           .map((e) => ({ ...e }))
@@ -293,16 +252,12 @@ export async function startFakeServer(port = 0, host = "127.0.0.1") {
         return send(200, { endpoints, count: endpoints.length, revision })
       }
 
-      // 3. The limits layer and the policy check: refusals before any route code runs.
       const before = s.beforeRun.shift()
       if (before && typeof before === "object") return send(before.status, before.body ?? "", before.headers ?? {})
       if (before === "invalid_token")
         return send(401, { error: "invalid_token" }, { "www-authenticate": 'Bearer error="invalid_token"' })
       if (before === "busy")
         return send(429, { error: "busy", message: "n8n-ops is busy with this connection's other calls. Try again." })
-      // The policy check: the call carries the current revision and the kind the client found for it, and that kind
-      // is the kind of the route the router picked. Otherwise nothing runs: either the list changed, or the path
-      // names another call here than in the client's copy of the list.
       const changed = () => send(409, { error: "policy_changed", message: "The list of calls changed. Read it again." })
       const declared = req.headers[KIND_HEADER]
       if (before === "policy_changed" || req.headers[POLICY_HEADER] !== s.revision()) return changed()
@@ -317,7 +272,6 @@ export async function startFakeServer(port = 0, host = "127.0.0.1") {
       if (!rule) return send(404, { error: "not_found", message: "No such call." })
       if (rule.kind !== declared) return changed()
 
-      // 4. The route's code runs.
       const ran = `${rule.method} ${rule.path}`
       s.runCounts.set(ran, (s.runCounts.get(ran) ?? 0) + 1)
       s.last.body = raw
@@ -358,10 +312,8 @@ export async function startFakeServer(port = 0, host = "127.0.0.1") {
       server.closeAllConnections?.()
       server.close(r)
     })
-  /** Goes away and comes back on the same address, with the same state. */
   s.stop = s.close
   s.start = () => new Promise((r) => server.listen(s.port, host, r))
-  /** The person approves the latest code, optionally with a narrower scope. */
   s.approve = ({ scope } = {}) => {
     const d = [...s.devices.values()].at(-1)
     d.state = "approved"
@@ -377,7 +329,6 @@ export async function startFakeServer(port = 0, host = "127.0.0.1") {
   s.endAllGrants = () => {
     for (const g of s.grants.values()) g.alive = false
   }
-  /** Every secret it ever handed out, to check that none shows up in the command's output. */
   s.secrets = () => [...s.refresh.keys(), ...s.access.keys(), ...s.devices.keys()]
   return s
 }

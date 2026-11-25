@@ -4,15 +4,9 @@ import { useEffect, useRef } from "react"
 import { useConfirm } from "@/components/confirm"
 import { BusyButton, Kpi, Kpis, LoadError, Loading, Panel, PanelHead } from "@/components/kit"
 import { When } from "@/components/status"
-import { ApiError, api, describeError, readFresh } from "@/lib/api"
+import { ApiError, api, describeError } from "@/lib/api"
 import { formatSize } from "@/lib/numbers"
 import { toast } from "@/lib/toast"
-
-/*
- * Settings → Database: how much room the n8n-ops database takes, the free space inside each table, and compacting
- * a table (PostgreSQL's VACUUM FULL) to give that space back to the disk. One compaction runs at a time; the page
- * follows it, also one another tab started.
- */
 
 type TableSize = {
   name: string
@@ -44,7 +38,6 @@ type Status = { running: Run | null; progress: { phase: string; percent: number 
 const REPORT = "/admin/database"
 const STATUS = "/admin/database/status"
 
-/** Tables whose wait stops more than n8n-ops' own pages, named in the question. */
 const alsoWaiting: Record<string, string> = {
   worker_jobs: "Workers' checks and backups",
 }
@@ -52,25 +45,21 @@ const alsoWaiting: Record<string, string> = {
 export function DatabaseSection({ hidden = false }: { hidden?: boolean }) {
   const client = useQueryClient()
   const ask = useConfirm()
-  // Measuring reads every table: only on opening, after a compaction and on Measure again, never on focus or retry.
   const report = useQuery<Report>({
     queryKey: [REPORT],
-    queryFn: () => readFresh<Report>(REPORT),
+    queryFn: () => api<Report>(REPORT),
     enabled: !hidden,
     refetchOnWindowFocus: false,
     retry: false,
   })
-  // Cheap, and answers during a compaction: followed while the section is open, faster while one runs.
   const status = useQuery<Status>({
     queryKey: [STATUS],
-    queryFn: () => readFresh<Status>(STATUS),
+    queryFn: () => api<Status>(STATUS),
     enabled: !hidden,
     refetchInterval: (q) => (q.state.data?.running ? 2_000 : 5_000),
   })
   const running = status.data?.running ?? null
 
-  // A compaction that ended since the page last looked, here or in another tab, however short: say how it went
-  // and measure again. The newest ended run when the page opens is only remembered.
   const lastEnded = status.data?.recent.find((r) => r.status !== "running") ?? null
   const seen = useRef<string | null | undefined>(undefined)
   useEffect(() => {
@@ -88,8 +77,6 @@ export function DatabaseSection({ hidden = false }: { hidden?: boolean }) {
     void client.invalidateQueries({ queryKey: [REPORT] })
   }, [lastEnded, status.data, client])
 
-  // A report read while a compaction ran (a table "Being compacted", or sizes busy) is read again once status says
-  // none runs, also when the run ended before this page first read the status.
   const stale = Boolean(report.data && (report.data.busy || report.data.tables.some((t) => t.compacting)))
   useEffect(() => {
     if (status.data && !status.data.running && stale) void client.invalidateQueries({ queryKey: [REPORT] })
@@ -137,7 +124,6 @@ export function DatabaseSection({ hidden = false }: { hidden?: boolean }) {
       )
       throw e
     } finally {
-      // Whatever the answer, the page reads what runs now (another tab may have started one, or the answer was lost).
       await status.refetch()
     }
   }
@@ -264,7 +250,6 @@ function LastRun({ run }: { run: Run }) {
   )
 }
 
-/** The free space of the tables that were measured, and how many were not. */
 function sumFree(tables: Record<string, TableFreeSpace>) {
   const all = Object.values(tables)
   const ok = all.filter((t): t is { free: number; dead: number } => "free" in t)

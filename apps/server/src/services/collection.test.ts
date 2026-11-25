@@ -24,7 +24,6 @@ const worker = (seenAgo: number | null, extra: { revokedAt?: Date } = {}) => ({
   lastSeenAt: seenAgo === null ? null : at(seenAgo),
   revokedAt: extra.revokedAt ?? null,
 })
-/** An instance checked this long ago; a check that read it is also its last known health. */
 const instance = (
   checkedAgo: number | null,
   health: "ok" | "down" | "unknown" = "ok",
@@ -55,7 +54,6 @@ describe("healthNow", () => {
     )
   })
 
-  // The server has run for a day: only the worker decides.
   const settled = () => {
     collectionClock.startedAt = at(86_400_000)
   }
@@ -106,7 +104,6 @@ describe("healthNow", () => {
       lastKnownAt: null,
       unknownReason: "host-a is offline",
     })
-    // Online and not read yet: simply not checked yet.
     expect(healthNow(instance(null, "unknown"), worker(1_000), 60, now).unknownReason).toBeNull()
   })
 
@@ -117,7 +114,6 @@ describe("healthNow", () => {
     expect(healthNow(instance(due), worker(1_000), 60, now).unknownReason).toBe(
       "host-a has not reported a check in time",
     )
-    // The same reading, for an instance checked once an hour, is still current.
     expect(healthNow(instance(due), worker(1_000), 3600, now).health).toBe("ok")
   })
 
@@ -149,7 +145,6 @@ describe("healthNow after a check that was not collected", () => {
       lastKnownAt: at(600_000),
       unknownReason: "Not collected: docker exec failed",
     })
-    // Its worker offline afterwards: still the same last known health.
     expect(healthNow(notCollected, worker(WORKER_ONLINE_MS), 60, now)).toMatchObject({
       lastKnownHealth: "ok",
       unknownReason: "host-a is offline",

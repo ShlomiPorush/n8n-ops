@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# Run a pull request on the development stack without touching your checkout.
-# Usage: scripts/try-pr.sh <number> [--any-author] | status | restore
 set -euo pipefail
 
 # shellcheck source=scripts/lib/common.sh
@@ -8,7 +6,6 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
 STATE_DIR="$CACHE_DIR/try-pr"
 STATE_FILE="$STATE_DIR/state.env"
-# Filled from STATE_FILE by load_state.
 PR="" COMMIT="" WORKTREE="" REF="" SERVICES=""
 
 usage() {
@@ -61,7 +58,6 @@ running_image_id() {
   docker inspect -f '{{.Image}}' "$cid"
 }
 
-# "owner/name" of the GitHub repository origin points at, as git would fetch from it; empty for any other remote.
 github_repo() {
   local url
   url="$(git -C "$REPO_ROOT" remote get-url origin 2>/dev/null)" || return 0
@@ -70,14 +66,12 @@ github_repo() {
   fi
 }
 
-# The pull request was opened by the owner of the repository it was opened in, as GitHub says.
 require_owner_author() {
   local pr="$1" repo record author owner two_names=$'^([^\t]+)\t([^\t]+)$'
   repo="$(github_repo)"
   [ -n "$repo" ] || die "origin is not a github.com repository, so who opened pull request #$pr cannot be checked.
 To run it anyway, after reading its code: scripts/try-pr.sh $pr --any-author"
   command -v gh >/dev/null 2>&1 || die "gh (the GitHub CLI) is needed to check who opened pull request #$pr"
-  # The host is named, so neither GH_HOST nor gh's default host can send the question to another server.
   record="$(gh api --hostname github.com "repos/$repo/pulls/$pr" --jq '[.user.login, .base.repo.owner.login] | @tsv')" ||
     die "could not read pull request #$pr of $repo from GitHub"
   [[ "$record" =~ $two_names ]] || die "GitHub did not say who opened pull request #$pr of $repo"
@@ -88,11 +82,6 @@ To run it anyway, after reading its code: scripts/try-pr.sh $pr --any-author"
   fi
 }
 
-# Pull request code runs in the server and worker, and reaches Docker only through the socket proxy, which lets it run
-# commands only in the stack's own n8n. So the server, worker and socket proxy of docker-compose-dev.yml, with what
-# they depend on and their networks, must be the template's as Compose renders them with the stack's own settings; the
-# running socket proxy must have been made from the template; and the one container it allows must be this stack's
-# n8n. Docker container names are unique, so while that container exists no other can take its name.
 require_stack_as_template() {
   local template="$REPO_ROOT/docker/docker-compose-dev.example.yml" copy expected labels
   local fix="Copy the server, worker and socket-proxy services and the networks from docker/docker-compose-dev.example.yml
@@ -119,7 +108,6 @@ try_pr() {
     "" | --any-author) ;;
     *) die "unknown option: $option" ;;
   esac
-  # Every check before anything is fetched or changed, so a refusal leaves nothing behind.
   [ ! -f "$STATE_FILE" ] || die "pull request $(grep '^PR=' "$STATE_FILE" | cut -d= -f2) is active. Run: scripts/try-pr.sh restore"
   [ "$option" = --any-author ] || require_owner_author "$pr"
   dev_compose ps --status running -q postgres | grep -q . || die "the development stack is not running. Run: scripts/local.sh start"

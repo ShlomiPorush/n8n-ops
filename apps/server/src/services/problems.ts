@@ -25,17 +25,14 @@ import { type Cause, causeOf } from "./cause.ts"
 import { clientFor, type Instance } from "./instances.ts"
 
 export type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0]
-/** The database, or a transaction on it. */
 export type DbLike = Db | Tx
 export type Problem = typeof problems.$inferSelect
 export type AffectedWorkflow = typeof affectedWorkflows.$inferSelect
 
-/** Where a failed execution is counted: one workflow, at one node, with one cause, on one instance. */
 export function fingerprint(instanceId: string, workflowId: string, nodeName: string, causeKey: string): string {
   return sha256([instanceId, workflowId, nodeName, causeKey].join("\u0000"))
 }
 
-/** The cause columns of an Affected workflow or a Problem (docs/adr/0003). */
 export const causeValues = (cause: Cause) => ({
   targetKey: cause.targetKey,
   target: cause.target,
@@ -44,17 +41,14 @@ export const causeValues = (cause: Cause) => ({
   kind: cause.kind,
 })
 
-/** Execution ids are increasing integers; compare them numerically when they look like numbers. */
 export function isNewer(id: string, cursor: string | null): boolean {
   if (!cursor) return true
   if (/^\d+$/.test(id) && /^\d+$/.test(cursor)) return BigInt(id) > BigInt(cursor)
   return id > cursor
 }
 
-/** Unique violation, deadlock and serialization failure: another transaction got there first; try again. */
 const RETRYABLE = new Set(["23505", "40P01", "40001"])
 
-/** Runs a transaction again, up to `attempts` times, when it lost a race to another one. */
 export async function retrying<T>(run: () => Promise<T>, attempts = 3): Promise<T> {
   for (let attempt = 1; ; attempt++) {
     try {
@@ -65,14 +59,9 @@ export async function retrying<T>(run: () => Promise<T>, attempts = 3): Promise<
   }
 }
 
-/** A mute counts only until it ends, also before housekeeping turns it back to open. */
 const muteActive = (row: Pick<AffectedWorkflow, "status" | "mutedUntil">, now: Date) =>
   row.status === "muted" && (row.mutedUntil === null || row.mutedUntil > now)
 
-/**
- * The state of a Problem, from its Affected workflows: open when any is, else muted when any is, else resolved.
- * The SQL of the lists says the same (`problem-view.ts`).
- */
 export function problemStatus(rows: Pick<AffectedWorkflow, "status" | "mutedUntil">[], now = new Date()) {
   if (rows.some((r) => r.status === "open" || (r.status === "muted" && !muteActive(r, now)))) return "open" as const
   if (rows.some((r) => muteActive(r, now))) return "muted" as const
@@ -82,21 +71,9 @@ export function problemStatus(rows: Pick<AffectedWorkflow, "status" | "mutedUnti
 export type IngestResult = {
   problemId: string
   affectedWorkflowId: string
-  /** Why it alerts, when it does: a new Problem, a workflow joining one, or a failure after resolve. */
   reason: ProblemAlertReason | null
 }
 
-/**
- * Records one failed execution: finds or makes its Problem and Affected workflow, stores the failure, changes the
- * state and queues the alert, all in one transaction, so a stop anywhere leaves nothing and the next poll reads the
- * execution again. Null when it was already stored or its instance is gone. Alerts unless silent. First removes, in
- * place, the characters PostgreSQL cannot keep from the execution's text. When PostgreSQL still refuses a value, the
- * failure is recorded again without the execution's data and the node's input, and with each text of its error cut
- * to FALLBACK_ERROR_BYTES, so that data does not stop a poll.
- *
- * Locks, in the order every writer takes them: the instance (so a deletion waits or goes first), then the Problem
- * when a workflow joins it, then the Affected workflow, whose state is read and changed under its lock.
- */
 export async function ingestExecution(
   ctx: Ctx,
   instance: Instance,
@@ -106,7 +83,6 @@ export async function ingestExecution(
   makeStorable(execution)
   const failure = extractFailure(execution)
   const workflowName = execution.workflowData?.name ?? `Workflow ${execution.workflowId}`
-  // Read before the transaction: inside it, only the transaction's own connection is used.
   const called = failure.node.calledWorkflow
   const calledName = called
     ? (
@@ -162,10 +138,8 @@ export async function ingestExecution(
             .update(affectedWorkflows)
             .set({
               workflowName,
-              // The latest failure names the row: n8n's text and the target's current label.
               ...(seenAt >= existing.lastSeen ? { errorMessage: failure.message, ...causeValues(cause) } : {}),
               count: sql`${affectedWorkflows.count} + 1`,
-              // A page comes newest first, so an older failure can arrive after a newer one.
               firstSeen: seenAt < existing.firstSeen ? seenAt : existing.firstSeen,
               lastSeen: seenAt > existing.lastSeen ? seenAt : existing.lastSeen,
               ...(regression ? { status: "open" as const, regression: true, resolvedAt: null } : {}),
@@ -191,8 +165,6 @@ export async function ingestExecution(
           }
           const problem = await joinableProblem(tx, cause.key)
           if (problem) {
-            // A workflow joining a Problem takes its state: a resolved Problem regresses, a muted one stays muted
-            // until its mute ends and does not alert (the owner's decision), an open one alerts that it spread.
             const peers = await tx
               .select({ status: affectedWorkflows.status, mutedUntil: affectedWorkflows.mutedUntil })
               .from(affectedWorkflows)
@@ -267,7 +239,6 @@ export async function ingestExecution(
     return await record(true)
   } catch (error) {
     if (!unstorableData(error)) throw error
-    // Nothing of the first attempt was kept, so the failure is recorded once: without its data, its error cut short.
     ctx.log.warn("a failed execution's data could not be stored; it is recorded without its data and input", {
       instance: instance.name,
       execution: execution.id,
@@ -277,43 +248,24 @@ export async function ingestExecution(
   }
 }
 
-/** The most UTF-8 bytes each text of a failure's error keeps when its data could not be stored. */
 const FALLBACK_ERROR_BYTES = 64 * 1024
 
-/** A data exception or a program limit (SQLSTATE classes 22 and 54): PostgreSQL refused a value as it is. */
 const unstorableData = (error: unknown) => /^(22|54)[0-9A-Z]{3}$/.test(errorCode(error) ?? "")
 
-/**
- * The Problem's label follows its latest failure, over all its workflows (a credential renamed, a workflow name
- * learned): written when no workflow of the Problem failed later. The Problem is locked first, in a statement of its
- * own, so the check reads every failure and label committed before the lock; an unlocked look first could miss a
- * label another ingest is writing. A deadlock with an action is retried with the rest of the ingest, which leaves
- * nothing behind.
- */
 async function followLatestLabel(tx: Tx, problemId: string, cause: Cause, seenAt: Date) {
-  const [named] = await tx
-    .select({ targetKey: problems.targetKey })
-    .from(problems)
-    .where(eq(problems.id, problemId))
-    .for("update")
-  // The target key never changes on a Problem; a workflow merged in from another cause leaves the label alone.
-  if (!named || named.targetKey !== cause.targetKey) return
   await tx
     .update(problems)
     .set({ target: cause.target, reason: cause.reason, kind: cause.kind, targetSource: cause.targetSource })
     .where(
       and(
         eq(problems.id, problemId),
+        eq(problems.targetKey, cause.targetKey),
         sql`(${problems.target}, ${problems.reason}) is distinct from (${cause.target}, ${cause.reason})`,
         sql`not exists (select 1 from ${affectedWorkflows} where ${affectedWorkflows.problemId} = ${problemId} and ${affectedWorkflows.lastSeen} > ${seenAt.toISOString()}::timestamptz)`,
       ),
     )
 }
 
-/**
- * The Problem a new workflow with this text joins, locked for the join: the one the text made, or the one it was
- * merged into. Merge and Split lock Problems too, so the Problem is read again after the lock.
- */
 async function joinableProblem(tx: Tx, textFingerprint: string): Promise<Problem | null> {
   const [named] = await tx.select().from(problems).where(eq(problems.fingerprint, textFingerprint))
   if (!named) return null
@@ -322,28 +274,15 @@ async function joinableProblem(tx: Tx, textFingerprint: string): Promise<Problem
     .from(problems)
     .where(eq(problems.id, named.mergedInto ?? named.id))
     .for("update")
-  // Merged meanwhile (a chain is one step: Merge points everything at the final Problem). The retry reads again.
   if (!locked || locked.mergedInto) throw Object.assign(new Error("the problem changed"), { code: "40001" })
   return locked
 }
 
-/** Upper bound of executions read on the first, silent sync of an instance. */
 export const FIRST_SYNC_LIMIT = 2000
-/** Upper bound of executions one later poll reads; the next poll goes on from there. */
 const POLL_LIMIT = 500
 
-/**
- * Where the next poll of an instance goes on when more failures waited than one poll reads: n8n's cursor of the next
- * older page, and the newest execution read. Lost on a restart: that poll starts at the newest again, and a failure
- * already stored changes nothing.
- */
 const unfinished = new Map<string, { page: string; newest: string | null }>()
 
-/**
- * Reads new error executions of one instance (requirement B1). The first sync is silent (B6). The cursor is saved
- * only once everything newer than the saved one was read: pages come newest first, so saving it earlier would skip
- * the older ones for good.
- */
 export async function pollInstance(ctx: Ctx, instance: Instance) {
   const client = clientFor(ctx, instance)
   const silent = !instance.firstSyncDone
@@ -382,7 +321,6 @@ export async function pollInstance(ctx: Ctx, instance: Instance) {
     if (read > 0) changed(ctx, "problems", "overview", "instances")
     return { read, silent }
   } catch (error) {
-    // The next poll starts at the newest: a page n8n cannot give must not keep newer failures from being read.
     unfinished.delete(instance.id)
     await ctx.db
       .update(instances)
@@ -392,11 +330,17 @@ export async function pollInstance(ctx: Ctx, instance: Instance) {
   }
 }
 
-/**
- * Daily housekeeping, per Affected workflow: auto-resolve quiet ones, end expired mutes, drop old failed executions.
- * `now` is for tests that need a mute to have ended.
- */
-export async function housekeeping(ctx: Ctx, now = Date.now()) {
+export async function endMutes(ctx: Pick<Ctx, "db">, now = Date.now()) {
+  await retrying(() =>
+    ctx.db
+      .update(affectedWorkflows)
+      .set({ status: "open", mutedUntil: null })
+      .where(and(eq(affectedWorkflows.status, "muted"), lte(affectedWorkflows.mutedUntil, new Date(now)))),
+  )
+}
+
+export async function housekeeping(ctx: Ctx) {
+  const now = Date.now()
   const all = await ctx.db.select().from(instances)
   for (const instance of all) {
     const s = await ctx.settings.forInstance(instance.overrides)
@@ -431,21 +375,10 @@ export async function housekeeping(ctx: Ctx, now = Date.now()) {
         ),
       )
   }
-  await retrying(() =>
-    ctx.db
-      .update(affectedWorkflows)
-      .set({ status: "open", mutedUntil: null })
-      .where(and(eq(affectedWorkflows.status, "muted"), lte(affectedWorkflows.mutedUntil, new Date(now)))),
-  )
+  await ctx.db.delete(problemReceipts).where(lt(problemReceipts.expiresAt, new Date(now)))
   return { checked: all.length }
 }
 
-/**
- * Removes an instance with its Affected workflows and failures, and the Problems it leaves without a workflow (and
- * so their aliases); the Problems it leaves with workflows move on their version, so an Undo from before refuses.
- * Locks the instance first, then the Problems its workflows are in, read again until no Merge or Split moved one
- * meanwhile, as every writer locks. Null when it was not there.
- */
 export async function deleteInstance(ctx: Pick<Ctx, "db">, id: string) {
   return retrying(() =>
     ctx.db.transaction(async (tx) => {
@@ -470,7 +403,6 @@ export async function deleteInstance(ctx: Pick<Ctx, "db">, id: string) {
         for (const p of more) locked.add(p)
       }
       await tx.delete(instances).where(eq(instances.id, id))
-      // The instance's queue worker conditions go with it.
       await tx.delete(alertState).where(like(alertState.key, `worker:${instance.id}:%`))
       const ids = [...locked]
       if (ids.length) {
@@ -486,23 +418,12 @@ export async function deleteInstance(ctx: Pick<Ctx, "db">, id: string) {
   )
 }
 
-/*
- * Problem actions and their Undo (FB-16). Resolve, Mute, Reopen and Unmute act on the whole Problem or on one of its
- * Affected workflows, at once, and answer with a receipt: the version each changed row was left at and its state
- * before. Undo puts those states back in one transaction that applies only while every row is still at that version
- * and in the Problem, and, for an action on the whole Problem, while no workflow joined or left it, so it never
- * overwrites a later change (another tab, a new failure, an ended mute, a Merge or Split). A receipt is used once and
- * kept RECEIPT_TTL_MS; the toast offers it for seconds.
- */
-
-/** How long a receipt can be used. */
 export const RECEIPT_TTL_MS = 15 * 60_000
 
 type StateRow = Pick<AffectedWorkflow, "status" | "regression" | "mutedUntil" | "resolvedAt">
 export type ProblemReceipt = typeof problemReceipts.$inferSelect
 export type UndoRefusal = "receipt_not_found" | "receipt_used" | "receipt_expired" | "already_changed"
 
-/** The part of an Affected workflow an action changes and its Undo puts back. */
 export function stateOf(p: StateRow): ProblemState {
   return {
     status: p.status,
@@ -512,7 +433,6 @@ export function stateOf(p: StateRow): ProblemState {
   }
 }
 
-/** The columns that put a stored state back. */
 export function restoring(state: ProblemState) {
   return {
     status: state.status,
@@ -522,11 +442,9 @@ export function restoring(state: ProblemState) {
   }
 }
 
-/** The status an action sees: a mute that ended is open, also before housekeeping notices. */
 const statusAt = (p: StateRow, now: Date) =>
   p.status === "muted" && p.mutedUntil !== null && p.mutedUntil <= now ? ("open" as const) : p.status
 
-/** What an action changes on one row, or null when it is already where it would put it (nothing to undo). */
 export function actionChange(
   action: ProblemAction,
   row: StateRow,
@@ -542,25 +460,18 @@ export function actionChange(
       const hours = Number.isFinite(muteHours) ? Math.min(Math.max(muteHours, 1), 24 * 30) : 24
       return { status: "muted", mutedUntil: new Date(now.getTime() + hours * 3600_000), resolvedAt: null }
     }
-    // Reopen starts the workflow afresh, so it is no longer a regression.
     case "reopen":
       return p.status === "open" ? null : { status: "open", resolvedAt: null, mutedUntil: null, regression: false }
-    // Unmute only ends the mute, also one that ended already: a regression stays one (FB-11).
     case "unmute":
       return row.status === "muted" ? { status: "open", mutedUntil: null } : null
   }
 }
 
-/**
- * What an action on the whole Problem changes on one of its rows. Mute silences what is open and leaves resolved
- * workflows resolved, so its end does not reopen them; the other actions are as on one row.
- */
 export function wholeProblemChange(action: ProblemAction, p: StateRow, now: Date, muteHours = 24) {
   if (action === "mute" && statusAt(p, now) !== "open") return null
   return actionChange(action, p, now, muteHours)
 }
 
-/** Why a receipt cannot be used, before the rows are looked at; null when it can. */
 export function receiptRefusal(
   receipt: Pick<ProblemReceipt, "problemId" | "usedAt" | "expiresAt"> | undefined,
   problemId: string,
@@ -572,12 +483,10 @@ export function receiptRefusal(
   return null
 }
 
-/** Who acted and what the audit log calls it; the Problem or the workflow is named as its target. */
 export type ProblemAudit = Omit<AuditEntry, "target">
 
 const clipped = (text: string, max = 120) => (text.length > max ? `${text.slice(0, max - 1)}…` : text)
 
-/** How the audit log names what an action was on: the workflow, or the error and how many workflows it hit. */
 export function auditTarget(problem: Pick<Problem, "errorMessage">, rows: AffectedWorkflow[], one: boolean) {
   const [row] = rows
   if (one && row) return `${row.workflowName} · ${row.nodeName}`
@@ -585,28 +494,21 @@ export function auditTarget(problem: Pick<Problem, "errorMessage">, rows: Affect
   return `${clipped(problem.errorMessage)} (${workflows} workflow${workflows === 1 ? "" : "s"})`
 }
 
-/**
- * An action on a Problem that the regroup by cause left without workflows (docs/adr/0003). Its page still opens; it
- * acts on nothing, so an old link or an open tab cannot act on the Problems its workflows went to.
- */
-export class RegroupedProblemError extends Error {
-  readonly code = "regrouped"
-  constructor() {
-    super("This problem was regrouped. Reload the list.")
-  }
-}
-
-/** Locks a Problem that is not merged, and its rows (all, or the one asked for) in id order. */
-async function lockProblem(tx: Tx, id: string, affectedWorkflowId?: string) {
-  const [problem] = await tx.select().from(problems).where(eq(problems.id, id)).for("update")
-  if (problem?.regrouped) throw new RegroupedProblemError()
-  if (!problem || problem.mergedInto) return null
+async function lockProblem(
+  tx: Tx,
+  id: string,
+  { affectedWorkflowId, followMerge = false }: { affectedWorkflowId?: string; followMerge?: boolean } = {},
+) {
+  const lock = async (id: string) => (await tx.select().from(problems).where(eq(problems.id, id)).for("update"))[0]
+  let problem = await lock(id)
+  if (followMerge && problem?.mergedInto) problem = await lock(problem.mergedInto)
+  if (!problem || problem.mergedInto || problem.regrouped) return null
   const rows = await tx
     .select()
     .from(affectedWorkflows)
     .where(
       and(
-        eq(affectedWorkflows.problemId, id),
+        eq(affectedWorkflows.problemId, problem.id),
         affectedWorkflowId ? eq(affectedWorkflows.id, affectedWorkflowId) : undefined,
       ),
     )
@@ -616,12 +518,6 @@ async function lockProblem(tx: Tx, id: string, affectedWorkflowId?: string) {
   return { problem, rows }
 }
 
-/**
- * Applies a problem action to the whole Problem, or to one Affected workflow when `affectedWorkflowId` is given,
- * with its receipt and its audit row in the same transaction: an action is saved with both or not at all. Null when
- * the Problem (or that workflow in it) does not exist. `receipt` is null when the action changed nothing because
- * everything was already in that state (another tab did it), and then nothing is audited.
- */
 export async function applyProblemAction(
   ctx: Pick<Ctx, "db" | "audit">,
   id: string,
@@ -631,11 +527,18 @@ export async function applyProblemAction(
     muteHours = 24,
     now = new Date(),
     audit,
-  }: { affectedWorkflowId?: string; muteHours?: number; now?: Date; audit?: ProblemAudit } = {},
+    fromMessage = false,
+  }: {
+    affectedWorkflowId?: string
+    muteHours?: number
+    now?: Date
+    audit?: ProblemAudit
+    fromMessage?: boolean
+  } = {},
 ): Promise<{ problem: Problem; rows: AffectedWorkflow[]; receipt: ProblemReceipt | null } | null> {
   return retrying(() =>
     ctx.db.transaction(async (tx) => {
-      const locked = await lockProblem(tx, id, affectedWorkflowId)
+      const locked = await lockProblem(tx, id, { affectedWorkflowId, followMerge: fromMessage })
       if (!locked) return null
       const { problem, rows } = locked
       const change = affectedWorkflowId ? actionChange : wholeProblemChange
@@ -656,14 +559,9 @@ export async function applyProblemAction(
         after.set(row.id, updated)
         prior.push({ affectedWorkflowId: row.id, version: updated.version, state: stateOf(row) })
       }
-      // Old receipts go when new ones are made; nothing else needs them.
-      const expired = tx
-        .select({ id: problemReceipts.id })
-        .from(problemReceipts)
-        .where(lt(problemReceipts.expiresAt, now))
-        .for("update", { skipLocked: true })
-      await tx.delete(problemReceipts).where(inArray(problemReceipts.id, expired))
       if (audit) await ctx.audit({ ...audit, target: auditTarget(problem, rows, Boolean(affectedWorkflowId)) }, tx)
+      const acted = { problem, rows: rows.map((r) => after.get(r.id) ?? r) }
+      if (fromMessage) return { ...acted, receipt: null }
       const [receipt] = await tx
         .insert(problemReceipts)
         .values({
@@ -675,72 +573,11 @@ export async function applyProblemAction(
           expiresAt: new Date(now.getTime() + RECEIPT_TTL_MS),
         })
         .returning()
-      return { problem, rows: rows.map((r) => after.get(r.id) ?? r), receipt: receipt ?? null }
+      return { ...acted, receipt: receipt ?? null }
     }),
   )
 }
 
-/**
- * Applies an action to the whole of each of these Problems in one transaction, as a Telegram button does: saved for
- * all of them or none. Each id is read again under its lock and a merged one is followed to the Problem it went into,
- * so a Merge just before the press does not lose it. No receipts: Telegram offers no Undo. Answers the Problems acted
- * on.
- */
-export async function applyProblemActions(
-  ctx: Pick<Ctx, "db" | "audit">,
-  of: { problems: string[] } | { workflows: string[] },
-  action: ProblemAction,
-  { muteHours = 24, now = new Date(), audit }: { muteHours?: number; now?: Date; audit?: ProblemAudit } = {},
-): Promise<string[]> {
-  /** The Problems the workflows are in now: a message from before 0012 names workflows, not a Problem. */
-  const problemsOf = async (tx: Tx, workflows: string[]) =>
-    workflows.length
-      ? (
-          await tx
-            .selectDistinct({ id: affectedWorkflows.problemId })
-            .from(affectedWorkflows)
-            .where(inArray(affectedWorkflows.id, workflows))
-        ).map((r) => r.id)
-      : []
-  return retrying(() =>
-    ctx.db.transaction(async (tx) => {
-      const ids = "problems" in of ? of.problems : await problemsOf(tx, of.workflows)
-      const named = ids.length ? await tx.select().from(problems).where(inArray(problems.id, ids)) : []
-      const targets = [...new Set(named.map((p) => p.mergedInto ?? p.id))].sort()
-      const done: string[] = []
-      for (const id of targets) {
-        const locked = await lockProblem(tx, id)
-        // Merged after it was read: a retry reads it again.
-        if (!locked) {
-          const [gone] = await tx.select().from(problems).where(eq(problems.id, id))
-          if (gone) throw Object.assign(new Error("the problem changed"), { code: "40001" })
-          continue
-        }
-        done.push(id)
-        let touched = false
-        for (const row of locked.rows) {
-          const patch = wholeProblemChange(action, row, now, muteHours)
-          if (!patch) continue
-          touched = true
-          await tx.update(affectedWorkflows).set(patch).where(eq(affectedWorkflows.id, row.id))
-        }
-        if (audit && touched) await ctx.audit({ ...audit, target: auditTarget(locked.problem, locked.rows, false) }, tx)
-      }
-      // A Split or Merge between the read and the locks moved a workflow of the message: a retry reads them again.
-      if ("workflows" in of) {
-        const now = (await problemsOf(tx, of.workflows)).sort()
-        if (now.join() !== done.join()) throw Object.assign(new Error("the problems changed"), { code: "40001" })
-      }
-      return done
-    }),
-  )
-}
-
-/**
- * Undoes the action of a receipt, in the transaction that uses the receipt up and writes its audit row. Locks the
- * Problem, then the rows the action changed, then the receipt (the lock order), so of two Undos at once (two tabs)
- * the second waits and then finds it used. A refusal changes nothing and is not audited.
- */
 export async function undoProblemAction(
   ctx: Pick<Ctx, "db" | "audit">,
   id: string,
@@ -749,23 +586,18 @@ export async function undoProblemAction(
 ): Promise<{ ok: true; problem: Problem; receipt: ProblemReceipt } | { ok: false; error: UndoRefusal }> {
   return retrying(() =>
     ctx.db.transaction(async (tx) => {
-      // A receipt of a Problem that is gone went with it (cascade): not found either way.
       const [problem] = await tx.select().from(problems).where(eq(problems.id, id)).for("update")
       if (!problem) return { ok: false as const, error: "receipt_not_found" as const }
-      const [peek] = await tx.select().from(problemReceipts).where(eq(problemReceipts.id, receiptId))
-      if (!peek || peek.problemId !== id) return { ok: false as const, error: "receipt_not_found" as const }
-      const ids = peek.prior.map((p) => p.affectedWorkflowId)
-      const rows = ids.length
-        ? await tx
-            .select()
-            .from(affectedWorkflows)
-            .where(inArray(affectedWorkflows.id, ids))
-            .orderBy(asc(affectedWorkflows.id))
-            .for("update")
-        : []
       const [receipt] = await tx.select().from(problemReceipts).where(eq(problemReceipts.id, receiptId)).for("update")
       const refusal = receiptRefusal(receipt, id, now)
       if (refusal || !receipt) return { ok: false as const, error: refusal ?? "receipt_not_found" }
+      const ids = receipt.prior.map((p) => p.affectedWorkflowId)
+      const rows = await tx
+        .select()
+        .from(affectedWorkflows)
+        .where(inArray(affectedWorkflows.id, ids))
+        .orderBy(asc(affectedWorkflows.id))
+        .for("update")
       const byId = new Map(rows.map((r) => [r.id, r]))
       const whole = receipt.affectedWorkflowId === null
       const unchanged =
@@ -797,7 +629,6 @@ export async function undoProblemAction(
   )
 }
 
-/** Locks two Problems in id order and checks that both exist, are not merged and differ. */
 async function lockPair(tx: Tx, a: string, b: string) {
   if (a === b) throw new Error("cannot merge a problem into itself")
   const rows = await tx
@@ -808,15 +639,10 @@ async function lockPair(tx: Tx, a: string, b: string) {
     .for("update")
   const first = rows.find((r) => r.id === a)
   const second = rows.find((r) => r.id === b)
-  if (first?.regrouped || second?.regrouped) throw new RegroupedProblemError()
-  if (!first || !second || first.mergedInto || second.mergedInto) throw new Error("problem not found")
+  if (!first || !second || rows.some((p) => p.mergedInto || p.regrouped)) throw new Error("problem not found")
   return [first, second] as const
 }
 
-/**
- * Merges Problem `from` into `into`: its Affected workflows move, with their failures, and a workflow that later
- * fails with `from`'s text joins `into`. `from` stays as an alias of `into`, so its links keep working.
- */
 export async function mergeProblems(
   ctx: Pick<Ctx, "db" | "audit">,
   fromId: string,
@@ -850,11 +676,6 @@ export async function mergeProblems(
   )
 }
 
-/**
- * Moves one Affected workflow out of its Problem into a Problem of its own (Split), for an error text that has a
- * different cause there. The new Problem has no fingerprint: other workflows with that text keep joining the one it
- * came from. Refused for a Problem's only Affected workflow. Null when the Problem or the workflow in it is not there.
- */
 export async function splitAffectedWorkflow(
   ctx: Pick<Ctx, "db" | "audit">,
   problemId: string,
@@ -867,7 +688,6 @@ export async function splitAffectedWorkflow(
       const row = locked?.rows.find((r) => r.id === affectedWorkflowId)
       if (!locked || !row) return null
       if (locked.rows.length < 2) throw new Error("the problem has only this workflow")
-      // The new Problem takes the cause of the row it is made for, not of the Problem it leaves.
       const [made] = await tx
         .insert(problems)
         .values({
@@ -900,16 +720,11 @@ export async function splitAffectedWorkflow(
   )
 }
 
-/**
- * The Problem an id names: a Problem, the Problem a merged one went into, or the Problem of an Affected workflow (an
- * id from before the upgrade, an old link or an agent), which is then the workflow chosen. Null when none.
- */
 export async function resolveProblemId(
   db: Db,
   id: string,
 ): Promise<{ problemId: string; affectedWorkflowId: string | null } | null> {
   const [problem] = await db.select().from(problems).where(eq(problems.id, id))
-  // A regrouped Problem names itself: its page says where its workflows went (docs/adr/0003).
   if (problem)
     return { problemId: problem.regrouped ? problem.id : (problem.mergedInto ?? problem.id), affectedWorkflowId: null }
   const [row] = await db
@@ -917,8 +732,6 @@ export async function resolveProblemId(
     .from(affectedWorkflows)
     .where(eq(affectedWorkflows.id, id))
   if (row) return { problemId: row.problemId, affectedWorkflowId: id }
-  // An Affected workflow the regroup replaced: one that joined another row resolves to it; one that split has no
-  // single answer, and its links show where its failures went instead (`regroupedView`).
   const aliases = await db
     .select({
       newId: affectedWorkflowAliases.newId,

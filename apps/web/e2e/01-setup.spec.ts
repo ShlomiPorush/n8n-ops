@@ -2,7 +2,6 @@ import { expect, test } from "@playwright/test"
 import { design, password, randomSecret, saveSecret, saveSession, saveState, username } from "./helpers.ts"
 import { freshTotp } from "./totp.ts"
 
-// Runs against a fresh stack (empty database), in order: first run, sign out, sign in again.
 test.describe.configure({ mode: "serial" })
 
 let secret = ""
@@ -13,8 +12,6 @@ test("the server reports ready", async ({ request }) => {
   expect(await res.json()).toMatchObject({ checks: { database: "ok" } })
 })
 
-// The suite runs once per design (scripts/verify.sh). A wrong design fails here, already on the setup page,
-// which never reads the settings: the server writes the design on the page itself.
 test("the chosen design is served, also before setup", async ({ page }) => {
   await page.goto("/")
   await expect(page).toHaveURL(/\/setup$/)
@@ -68,13 +65,11 @@ test("signing in again requires the two-factor code", async ({ page }) => {
   await expect(page.getByText("Two-factor code")).toBeVisible()
   await page.getByLabel("Two-factor code").fill(await freshTotp(secret))
   await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible()
-  // The next spec files go on in this session instead of signing in again.
   await saveSession(page)
 
   await page.goto("/audit")
   await expect(page.getByRole("cell", { name: "Account created" })).toBeVisible()
   await expect(page.getByRole("cell", { name: "Backup key generated" })).toBeVisible()
-  // One row per completed login: the setup and this sign-in, not the pending password step.
   await expect(page.getByRole("cell", { name: "Login", exact: true })).toHaveCount(2)
 })
 

@@ -8,7 +8,6 @@ import { checkKey, roundTrip, type Store, StoreError, verifyByReading } from "./
 export type WebdavLocation = { url: string; username: string }
 export type WebdavCredentials = { password: string }
 
-/** Only HTTPS: the password goes with every request (Basic authentication). */
 export function webdavBase(value: string): URL {
   const url = new URL(value.trim())
   if (url.protocol !== "https:") throw new StoreError("the WebDAV URL must start with https://")
@@ -30,7 +29,6 @@ export function webdavStore(
   const base = webdavBase(location.url)
   const auth = `Basic ${Buffer.from(`${location.username}:${credentials.password}`).toString("base64")}`
 
-  /** The URL of a path under the base, every segment percent-encoded. */
   const urlOf = (path: string, folder = false) => {
     const parts = path ? checkKey(path) : []
     return new URL(parts.map(encodeURIComponent).join("/") + (folder && parts.length ? "/" : ""), base)
@@ -62,7 +60,6 @@ export function webdavStore(
     throw new StoreError(`${what} failed: HTTP ${answer.status}${text ? ` ${text.slice(0, 200)}` : ""}`)
   }
 
-  /** Whether the URL is a collection (folder), from PROPFIND with depth 0. */
   async function isCollection(url: URL, signal: AbortSignal) {
     const answer = await send("PROPFIND", url, signal, {
       headers: { depth: "0", "content-type": "application/xml" },
@@ -76,7 +73,6 @@ export function webdavStore(
     return /<(?:[\w-]+:)?collection\b/i.test(xml)
   }
 
-  /** Creates the folders of a path one by one. 405 means it exists, which is confirmed to be a folder. */
   async function folders(path: string, signal: AbortSignal) {
     const parts = checkKey(path)
     for (let i = 1; i <= parts.length; i++) {
@@ -90,8 +86,6 @@ export function webdavStore(
   }
 
   const store: Store = {
-    key: (parts) => parts.join("/"),
-
     async put(key, file, expected, signal) {
       const parts = checkKey(key)
       if (parts.length > 1) await folders(parts.slice(0, -1).join("/"), signal)
@@ -120,10 +114,10 @@ export function webdavStore(
       ;(await expect(answer, [200, 204, 404], `Deleting ${key}`)).body.resume()
     },
 
-    async test(signal) {
+    async test(key, signal) {
       if (!(await isCollection(base, signal)))
         throw new StoreError(`${base.pathname} is not a folder on the WebDAV server`)
-      await roundTrip(store, signal)
+      await roundTrip(store, key, signal)
       return []
     },
 

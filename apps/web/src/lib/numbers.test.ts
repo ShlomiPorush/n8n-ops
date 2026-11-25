@@ -68,7 +68,6 @@ describe("count lines (FW-3, TB-18)", () => {
     expect(countOf(12, 12, "problem")).toBe("12 problems")
     expect(countOf(1, 1, "open problem")).toBe("1 open problem")
     expect(countOf(0, 0, "problem")).toBe("0 problems")
-    // A total that arrived a moment older than the rows never reads "12 of 11".
     expect(countOf(12, 11, "problem")).toBe("12 problems")
   })
 })

@@ -12,12 +12,10 @@ import { createDatabase, type Database } from "../db/client.ts"
 import { alertState, backupCopies, backupDestinations, backupRuns } from "../db/schema.ts"
 import { createSettings } from "../lib/settings.ts"
 import { backupCondition } from "./backup-alerts.ts"
-import { COPY_ATTEMPTS, kickCopies } from "./backup-copies.ts"
+import { COPY_ATTEMPTS, failRun, kickCopies } from "./backup-copies.ts"
 import type { Store } from "./destinations/store.ts"
-import { spoolDir, spoolFile } from "./spool.ts"
+import { spoolDir, spooledRuns, spoolFile } from "./spool.ts"
 
-// What happens to a copy once it is verified, on its last attempt, against a real PostgreSQL that refuses one write
-// after another. The destination is a stand-in that keeps what it holds in memory.
 const held = new Set<string>()
 const calls: string[] = []
 const warnings: string[] = []
@@ -84,10 +82,6 @@ afterAll(async () => {
   if (dir) rmSync(dir, { recursive: true, force: true })
 })
 
-/**
- * A copy with one attempt left, of a run of n8n-ops itself whose archive is in the spool, on a destination that
- * keeps one archive. `older` is an earlier copy there, which retention removes after this one.
- */
 async function lastAttempt() {
   const tag = randomBytes(4).toString("hex")
   const [destination] = await ctx.db
@@ -115,7 +109,6 @@ async function lastAttempt() {
   const { run, copy } = await copyOf({}, { attempts: COPY_ATTEMPTS - 1 })
   held.add(older.copy.objectKey)
   writeFileSync(spoolFile(spoolDir(ctx), run.id), "age")
-  // An ongoing condition, so that the copy's success writes to it.
   await ctx.db
     .insert(alertState)
     .values({ key: backupCondition(null, destination.id), active: true, detail: "stale" })
@@ -123,7 +116,6 @@ async function lastAttempt() {
   return { run, copy, older: older.copy }
 }
 
-/** The database refuses `what` on the table, until the returned call. */
 async function refuse(table: string, when: string) {
   await database.db.execute(
     sql.raw(`
@@ -162,14 +154,12 @@ describe("a copy that was verified on its last attempt", () => {
       void kickCopies(ctx)
       await vi.waitFor(() => expect(warnings).not.toEqual([]), { timeout: 10_000 })
       expect(calls).toContain(`verify ${copy.objectKey}`)
-      // Passes that would try the copy again.
       for (let i = 0; i < 5; i++) {
         await new Promise((r) => setTimeout(r, 200))
         await kickCopies(ctx)
       }
       expect(held.has(copy.objectKey)).toBe(true)
       expect((await copyRow(copy.id)).status).not.toBe("failed")
-      // From here nothing can be written to the destination: the copy must need no new attempt.
       refuseWrite = true
       await accept()
       accepted = true
@@ -214,5 +204,49 @@ describe("a copy that was verified on its last attempt", () => {
       { timeout: 10_000, interval: 250 },
     )
     expect(await copyRow(copy.id)).toMatchObject({ status: "failed", error: "the destination is full" })
+  })
+})
+
+describe("a run that is said to have failed", () => {
+  const inSpool = async (id: string) => (await spooledRuns(spoolDir(ctx))).includes(id)
+
+  it("ends while it waits for its archive, and its file goes with the next pass", async () => {
+    const { run, copy } = await lastAttempt()
+    await ctx.db.update(backupRuns).set({ spooledAt: null }).where(eq(backupRuns.id, run.id))
+    await kickCopies(ctx)
+    expect(await inSpool(run.id)).toBe(true)
+    await failRun(ctx, run.id, "Upload failed: the connection ended")
+    expect(await runStatus(run.id)).toBe("failed")
+    expect((await copyRow(copy.id)).status).toBe("failed")
+    const other = spoolFile(spoolDir(ctx), `${run.id} (1)`)
+    writeFileSync(other, "x")
+    await kickCopies(ctx)
+    expect(await inSpool(run.id)).toBe(false)
+    expect(await inSpool(`${run.id} (1)`)).toBe(true)
+    rmSync(other)
+    expect(calls).toEqual([])
+  })
+
+  it("keeps its archive once it is in the spool, until its copy is written", async () => {
+    const { run, copy } = await lastAttempt()
+    await ctx.db
+      .update(backupCopies)
+      .set({ nextAttemptAt: new Date(Date.now() + 60_000) })
+      .where(eq(backupCopies.id, copy.id))
+    await failRun(ctx, run.id, "Upload failed: the database did not answer")
+    await kickCopies(ctx)
+    expect(await runStatus(run.id)).toBe("running")
+    expect((await copyRow(copy.id)).status).toBe("pending")
+    expect(await inSpool(run.id)).toBe(true)
+    await ctx.db.update(backupCopies).set({ nextAttemptAt: null }).where(eq(backupCopies.id, copy.id))
+    await vi.waitFor(
+      async () => {
+        await kickCopies(ctx)
+        expect(await runStatus(run.id)).toBe("ok")
+        expect(await inSpool(run.id)).toBe(false)
+      },
+      { timeout: 10_000, interval: 250 },
+    )
+    expect(held.has(copy.objectKey)).toBe(true)
   })
 })

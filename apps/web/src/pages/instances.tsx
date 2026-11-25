@@ -20,7 +20,7 @@ import {
   Trash2,
   Workflow as WorkflowIcon,
 } from "lucide-react"
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { Link, useNavigate, useParams } from "react-router"
 import { useCrumb } from "@/app/chrome"
 import { AgentAccessCard } from "@/components/agent-access-card"
@@ -101,6 +101,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Tip } from "@/components/ui/tooltip"
 import { api, describeError, queryClient, useApi, useApiMutation } from "@/lib/api"
 import { type CollectionView, collectionView } from "@/lib/collection"
+import { useEdits } from "@/lib/edits"
 import { loadView } from "@/lib/load-state"
 import { healthCounts, n, plural } from "@/lib/numbers"
 import { useNavigateFromOverlay } from "@/lib/overlay-history"
@@ -119,7 +120,6 @@ type Capability = {
   available: boolean
   missing: string[]
   missingWorker: boolean
-  /** Temporary access: the key has no scopes n8n reported, or the policy grants none of them. */
   missingAccess?: boolean
 }
 
@@ -127,35 +127,26 @@ export type InstanceRow = {
   id: string
   name: string
   baseUrl: string
-  /** "incomplete": added, its setup not completed; it does nothing in the background (docs/adr/0002). */
   setupState: "incomplete" | "complete"
-  /** What the instance was chosen for; on a draft, what its setup checks. */
   chosen: CapabilityKey[]
-  /** Each chosen capability with what keeps it from working now; an empty list when nothing does. */
   chosenStatus: { key: CapabilityKey; label: string; problems: string[] }[]
   backupVia: "worker" | "api"
   hasApiKey: boolean
   containerName: string | null
-  /** The main as a Compose project and service; both null when it is a container name. */
   composeProject: string | null
   composeService: string | null
   workerId: string | null
   queueMode: boolean
-  /** "found": read by the worker inside the main container; not editable while it is checked from there. */
   queueModeSource: "manual" | "found"
   metricsUrl: string | null
-  /** Where the queue metrics are read: metricsUrl, or /metrics of the base URL in queue mode. */
   effectiveMetricsUrl: string | null
   workerHealthUrls: string[]
   collection: "direct" | "worker"
   version: string | null
   scopes: string[] | null
-  /** n8n older than 2.14.0 (no /discover), or a version known to be older. */
   unsupportedVersion: boolean
   scopesCheckedAt: string | null
-  /** The health now: "unknown" also when nothing collects it (unknownReason). */
   health: HealthState
-  /** While the health is unknown, the health of the last check that read the instance, and when; null if none. */
   lastKnownHealth: HealthState | null
   lastKnownAt: string | null
   unknownReason: string | null
@@ -174,7 +165,6 @@ export type InstanceRow = {
     notCollected?: string
     mainState?: "running" | "not-running" | "paused"
     mode?: "queue" | "regular" | null
-    /** The container a Compose service target used at this check. */
     resolvedContainer?: string
     metricsState?: "read" | "off" | "404" | "no-queue-figures" | "failed" | "skipped"
   } | null
@@ -187,7 +177,7 @@ export type InstanceRow = {
   effectiveScopes: string[]
   agentAccess: { enabled: boolean; scopes: string[] }
   openProblems: number
-  lastBackup?: { status: string; at: string } | null
+  lastBackup: { status: string; at: string } | null
   worker: { id: string; name: string; lastSeenAt: string | null; online: boolean } | null
 }
 
@@ -197,18 +187,13 @@ export type InstanceDetailData = InstanceRow & {
   latestVersion: string | null
   backupDestinations: "default" | "custom"
   backupDestinationIds: string[]
-  /** What the socket proxy refused in the current report, with the lines that allow it; null when nothing. */
   proxyFix: ProxyFix | null
-  /** A Compose service target whose worker is of a release that cannot follow one. */
   composeNeedsUpdate: boolean
-  /** The container the Compose service resolved to at the last check of the current settings. */
   resolvedContainer: string | null
 }
 
-/** Worse first when sorted high to low: down, needs a look, unknown, healthy. */
 const severity: Record<HealthState, number> = { down: 3, warn: 2, unknown: 1, ok: 0 }
 
-/** A warning in words: the first reason that applies, in the same order as the server's Overview. */
 function warnLabel(d: InstanceRow["healthDetail"]) {
   const failed = d?.workers?.filter((w) => !w.ok) ?? []
   const discovery = d?.discovery
@@ -225,10 +210,6 @@ function warnLabel(d: InstanceRow["healthDetail"]) {
 const readingLabel = (health: HealthState, d: InstanceRow["healthDetail"]) =>
   health === "down" ? "Down" : health === "warn" ? warnLabel(d) : health === "ok" ? "Healthy" : "Unknown"
 
-/**
- * The health now in words: Unknown when nothing collects it, never the last known health; Health off when an
- * active instance was not chosen for it.
- */
 export const healthLabel = (
   i: Pick<InstanceRow, "health" | "healthDetail" | "unknownReason" | "chosen" | "setupState">,
 ) =>
@@ -238,14 +219,12 @@ export const healthLabel = (
       ? "Unknown"
       : readingLabel(i.health, i.healthDetail)
 
-/** What the health was at the last check, beside Unknown: "Last known: Healthy, 2 h ago". */
 export function LastKnown({
   instance: i,
 }: {
   instance: Pick<InstanceRow, "lastKnownHealth" | "lastKnownAt" | "healthDetail">
 }) {
   if (!i.lastKnownHealth) return null
-  // After a check that was not collected, the detail of the last reading is gone: only its general words.
   const label = i.healthDetail?.notCollected
     ? statusOf("health", i.lastKnownHealth).label
     : readingLabel(i.lastKnownHealth, i.healthDetail)
@@ -261,10 +240,8 @@ export function LastKnown({
   )
 }
 
-/** Whether the API key may change anything in n8n: any scope beyond listing and reading. */
 const canWrite = (i: Pick<InstanceRow, "effectiveScopes">) => i.effectiveScopes.some((s) => !/:(list|read)$/.test(s))
 
-/** Whether a version is older than the latest n8n release. */
 export const behind = (version: string | null, latest: string | null) => {
   if (!version || !latest) return false
   const a = version.split(".").map(Number)
@@ -279,11 +256,9 @@ export function InstancesPage() {
   const data = useApi<{ latestVersion: string | null; instances: InstanceRow[] }>("/instances", {
     refetchInterval: 15_000,
   })
-  // A failed refresh keeps the rows; the head says so (TB-5, LD-12).
   const view = loadView(data)
   const rows = data.data?.instances ?? []
   const latest = data.data?.latestVersion ?? null
-  // Down and needing a look first, then by name as the server sends them: Status high to low (TB-11).
   const sort = useSort(rows, {
     id: "instances",
     rank: "status",
@@ -304,18 +279,9 @@ export function InstancesPage() {
     "aria-current": id === i.id ? ("true" as const) : undefined,
     className: "hover-row",
     "data-href": `/instances/${i.id}`,
-    // A search result marks this row when it lands here (SR-6).
     "data-search-target": `instance:${i.id}`,
     onClick: () => navigate(`/instances/${i.id}`),
   })
-  const open = rows.find((r) => r.id === id)
-  const backup: ListBackup = data.data
-    ? open
-      ? { state: "known", run: open.lastBackup ?? null }
-      : { state: "missing" }
-    : data.error
-      ? { state: "failed" }
-      : { state: "loading" }
   const down = rows.filter((r) => r.health === "down").length
   const warn = rows.filter((r) => r.health === "warn").length
 
@@ -379,7 +345,6 @@ export function InstancesPage() {
                         )
                       }
                       sub={
-                        // A draft has not been checked yet: nothing about its health or key to say.
                         i.setupState === "incomplete" ? (
                           "Not checked until its setup is completed"
                         ) : (
@@ -513,27 +478,12 @@ export function InstancesPage() {
     <ListWithPanel
       list={list}
       panelTitle="Instance"
-      panel={id ? <InstanceDetail id={id} backup={backup} /> : null}
+      panel={id ? <InstanceDetail id={id} /> : null}
       onClose={() => navigate("/instances")}
     />
   )
 }
 
-/*
- * The instance pane is split into tabs (components/pane-tabs.tsx), so the state of an instance reads on one
- * screen (Overview) and the settings that change once a month sit one click away. Every tab stays mounted, so
- * edits on several tabs survive a switch and one save bar saves them all.
- */
-/** The last backup run comes from the list; the detail does not carry it. */
-type ListBackup =
-  | { state: "loading" | "failed" | "missing" }
-  | { state: "known"; run: { status: string; at: string } | null }
-
-/*
- * In a pane narrower than 52rem a Regular card of four is too narrow for a figure beside its icon, so the
- * icon goes (it only illustrates) and the figure is a size smaller; "128,400" then still fits. On a phone
- * the cards are two by two however wide the sheet (MO-8) and take less padding, so the four do not fill the screen.
- */
 const kpisInPane = cn(
   "grid-cols-2 md:@min-[36rem]/pane:grid-cols-4",
   "@max-[52rem]/pane:**:data-[slot=kpi-icon]:hidden!",
@@ -541,23 +491,20 @@ const kpisInPane = cn(
   "regular:@max-[36rem]/pane:**:data-[slot=kpi]:p-3.5",
 )
 
-/** What Check now did: the failures and the workflows it read, each null where not chosen. */
 type Refreshed = { poll: { error?: string } | null; map: { error?: string } | null }
 
-function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
+function InstanceDetail({ id }: { id: string }) {
   const navigate = useNavigate()
   const w = useTimeFormat()
   const [tab, show] = usePaneTab("overview")
   const detail = useApi<InstanceDetailData>(`/instances/${id}`, { refetchInterval: 15_000 })
   useCrumb(detail.data?.name)
-  const [editing, setEditing] = useState(false)
-  // A credential export the socket proxy refused: the lines that allow it, in a dialog.
+  const [editing, setEditing] = useState({ open: false, opening: 0 })
+  const edit = () => setEditing((e) => ({ open: true, opening: e.opening + 1 }))
   const [exportFix, setExportFix] = useState<ProxyFix | null>(null)
   const confirm = useConfirm()
   const invalidate = [`/instances/${id}`, "/instances", "/overview", "/overview/attention"]
-  // Toasts name the instance (FB-4), read when the request ends.
   const named = () => detail.data?.name ?? "the instance"
-  // The server checks the health itself only for direct collection; a worker reports it on its own schedule.
   const refresh = useApiMutation<void, Refreshed>("POST", `/instances/${id}/refresh`, {
     invalidate,
     failed: () => `check ${named()}`,
@@ -571,13 +518,10 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
       .filter((m): m is string => Boolean(m))
       .map((m) => (/[.!?]$/.test(m) ? m : `${m}.`))
     if (failed.length) {
-      // One toast for both: a second one would replace the first.
       const message = failed.join(" ")
       toast.error(message)
-      // The button shows that it failed too; the toast has said why.
       throw new Error(message)
     }
-    // Each part runs only where it was chosen: health checked here, failures and workflows read.
     const healthHere = detail.data?.collection === "direct" && detail.data.chosen.includes("health")
     const read = [poll && "failures", map && "workflows"].filter(Boolean).join(" and ")
     if (healthHere) toast.success(`Checked ${named()}`)
@@ -598,12 +542,10 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
     return <LoadError what="this instance" error={detail.error} retry={() => detail.refetch()} />
   const i = detail.data
   if (!i) return <Empty title="This instance no longer exists.">It was removed from n8n-ops.</Empty>
-  // Added but not set up: it does nothing yet, so there is no health, backup or problem to show.
   if (i.setupState === "incomplete") return <DraftDetail instance={i} />
   const hd = i.healthDetail
   const health = i.health
   const name = i.name
-  // The server exports credentials only for Move workflows or a backup through the worker.
   const exports = i.chosen.includes("move") || (i.chosen.includes("backup") && i.backupVia === "worker")
   const canExport = Boolean(exports && i.worker && (i.containerName || i.composeProject) && !i.composeNeedsUpdate)
   async function askRemove() {
@@ -630,10 +572,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
   )
   const collected = collectionView({ collection: i.collection, worker: i.worker, detail: hd })
   const workersNote = queueWorkersNote({ ...i, detail: hd, proxyFix: i.proxyFix })
-  // Nothing collects the health now: the checks shown are only the last known health (unless it was not collected).
   const past = Boolean(i.unknownReason && i.lastKnownHealth && !hd?.notCollected)
-  // The queue workers were checked on their own, also when the main was not collected: theirs are old whenever
-  // nothing collects the health now.
   const pastWorkers = Boolean(i.unknownReason)
 
   const tabs: PaneTabItem[] = [
@@ -657,7 +596,6 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
 
   return (
     <div className="@container/pane grid min-w-0 gap-gap">
-      {/* What the instance is comes first; the actions sit beside it, or below it in a narrow pane. */}
       <div className="grid gap-2 @min-[40rem]/pane:grid-cols-[minmax(0,1fr)_auto] @min-[40rem]/pane:gap-x-2.5">
         <div className="flex min-w-0 flex-wrap items-center gap-2.5">
           <h2 className="text-title">
@@ -673,7 +611,6 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
           <span>· n8n {i.version ?? "unknown"}</span>
           {behind(i.version, i.latestVersion) && <Tone tone="warn">latest {i.latestVersion}</Tone>}
           {i.queueMode && <span>· queue mode{i.queueModeSource === "found" ? ", found by the worker" : ""}</span>}
-          {/* A failed refresh keeps the instance on screen and says so here (TB-5, LD-12). */}
           <span>
             <RefreshNote live={detail} separator="· " />
           </span>
@@ -693,11 +630,10 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
           >
             Check now
           </BusyButton>
-          <Button size="sm" onClick={() => setEditing(true)}>
+          <Button size="sm" onClick={edit}>
             <Pencil />
             <span className="@max-[34rem]/pane:sr-only">Edit</span>
           </Button>
-          {/* Not modal: the confirm that Remove opens would otherwise find the page still locked. */}
           <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
               <Button size="sm" aria-label="More actions">
@@ -724,7 +660,6 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
       <PaneTabs label="Instance sections" items={tabs} value={tab} onValueChange={show}>
         <PaneTabPanel value="overview">
           <StatusStrip instance={i} footer={collected} />
-          {/* Four figures in one row wherever the pane has room for them, two by two below that. */}
           <Kpis className={kpisInPane}>
             <Kpi
               label="Open problems"
@@ -740,7 +675,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
               to={`/workflows?instance=${i.id}`}
             />
             <Kpi label="Executions, 30 days" icon={ActivityIcon} value={i.workflowCounts.runs30d} />
-            <LastBackupKpi id={i.id} backup={backup} chosen={i.chosen.includes("backup")} />
+            <LastBackupKpi id={i.id} run={i.lastBackup} chosen={i.chosen.includes("backup")} />
           </Kpis>
           <CapabilitiesPanel instance={i} />
           <Panel>
@@ -853,7 +788,6 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
               found={hd?.discovery?.found}
               past={pastWorkers}
             />
-            {/* What the queue holds now; its completed and failed counts only add up over time, so they are left out. */}
             {hd?.queue && (
               <div
                 className="flex min-w-0 flex-wrap items-center gap-x-2.5 border-t border-line px-pad-x py-pad-y"
@@ -903,7 +837,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
                   <AlertDescription>
                     <p>{workersNote.text}</p>
                     {workersNote.edit && (
-                      <Button size="sm" className="mt-3" onClick={() => setEditing(true)}>
+                      <Button size="sm" className="mt-3" onClick={edit}>
                         <Pencil /> Edit instance
                       </Button>
                     )}
@@ -916,12 +850,13 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
         </PaneTabPanel>
 
         <PaneTabPanel value="backups">
-          <LastBackupPanel id={i.id} backup={backup} chosen={i.chosen.includes("backup")} />
+          <LastBackupPanel id={i.id} run={i.lastBackup} chosen={i.chosen.includes("backup")} />
           <InstanceBackupCard
             key={`backup-destinations-${i.id}`}
             instanceId={i.id}
             mode={i.backupDestinations}
             destinationIds={i.backupDestinationIds}
+            readAt={detail.dataUpdatedAt}
           />
         </PaneTabPanel>
 
@@ -965,15 +900,21 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
             unsupported={i.unsupportedVersion}
             keyScopes={i.effectiveScopes}
             agentAccess={i.agentAccess}
+            readAt={detail.dataUpdatedAt}
           />
         </PaneTabPanel>
 
         <PaneTabPanel value="settings">
-          <OverridesCard key={`overrides-${i.id}`} instance={i} />
+          <OverridesCard key={`overrides-${i.id}`} instance={i} readAt={detail.dataUpdatedAt} />
         </PaneTabPanel>
       </PaneTabs>
 
-      <InstanceDialog open={editing} onOpenChange={setEditing} instance={i} />
+      <InstanceDialog
+        key={`${i.id}-${editing.opening}`}
+        open={editing.open}
+        onOpenChange={(open) => setEditing((e) => (e.opening === editing.opening ? { ...e, open } : e))}
+        instance={i}
+      />
       <Dialog open={exportFix !== null} onOpenChange={(o) => !o && setExportFix(null)}>
         <DialogContent className="md:max-w-2xl">
           <DialogHeader icon={Download}>
@@ -982,7 +923,7 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
               The worker could not run n8n's export in the container, because the socket proxy refused it.
             </DialogDescription>
           </DialogHeader>
-          {exportFix && <ProxyFixBlock fix={exportFix} held />}
+          {exportFix && <ProxyFixBlock fix={exportFix} />}
           <DialogFooter>
             <Button variant="primary" onClick={() => setExportFix(null)}>
               Done
@@ -994,10 +935,6 @@ function InstanceDetail({ id, backup }: { id: string; backup: ListBackup }) {
   )
 }
 
-/**
- * A draft's page: it was added but its setup was not completed, so it does nothing in the background yet. Its
- * setup goes on where it stopped, or it is deleted.
- */
 function DraftDetail({ instance: i }: { instance: InstanceDetailData }) {
   const navigate = useNavigate()
   const confirm = useConfirm()
@@ -1061,10 +998,6 @@ function DraftDetail({ instance: i }: { instance: InstanceDetailData }) {
   )
 }
 
-/**
- * What the instance was chosen for, each with what keeps it from working now, such as a scope the API key lacks.
- * A capability is added through the setup, which checks only what it needs; removing one needs no check.
- */
 function CapabilitiesPanel({ instance: i }: { instance: InstanceDetailData }) {
   const confirm = useConfirm()
   const remove = useApiMutation<CapabilityKey, { removed: CapabilityKey[] }>(
@@ -1140,19 +1073,12 @@ function CapabilitiesPanel({ instance: i }: { instance: InstanceDetailData }) {
   )
 }
 
-/** A mark on a tab that holds unsaved changes; the save bar saves them from any tab. */
 function UnsavedMark() {
   return (
     <span role="img" aria-label="Unsaved changes" title="Unsaved changes" className="size-2 rounded-full bg-info" />
   )
 }
 
-/** The state of the instance in one line of cells: what a health check found, worst in colour. */
-/**
- * Where the health of an instance is checked from, beside its name in the list and on its page: a globe when the
- * n8n-ops server checks it over the web, a container when the worker on the n8n host does. An outline while checks
- * run, the tone when nothing is checked (worker offline or missing). The sentence of collectionView is its tooltip.
- */
 function CollectionTag({ instance: i }: { instance: InstanceRow }) {
   const view = collectionView({ collection: i.collection, worker: i.worker, detail: i.healthDetail })
   const Icon = i.collection === "worker" ? ContainerIcon : GlobeIcon
@@ -1169,10 +1095,8 @@ function CollectionTag({ instance: i }: { instance: InstanceRow }) {
 
 function StatusStrip({ instance: i, footer }: { instance: InstanceDetailData; footer: CollectionView }) {
   const hd = i.healthDetail
-  // While the health is unknown, the cells are the last check and are drawn without their tone.
   const past = Boolean(i.unknownReason)
   const read = Boolean(i.lastKnownHealth && !hd?.notCollected)
-  // A check that could not run says nothing about n8n: its parts show as unknown, not as failures.
   const check = (ok: boolean | undefined): HealthState =>
     ok === undefined || hd?.notCollected ? "unknown" : ok ? "ok" : "down"
   const cells: { label: string; health: HealthState; value: React.ReactNode }[] = [
@@ -1197,7 +1121,6 @@ function StatusStrip({ instance: i, footer }: { instance: InstanceDetailData; fo
     const workers = hd?.workers ?? []
     const up = workers.filter((w) => w.ok).length
     const lost = hd?.discovery && hd.discovery.status !== "ok"
-    // Down only for a worker seen down; one not checked, running without its health check, or none found warns.
     const states = workers.map((w) => workerHealth(w.state, w.ok))
     const health: HealthState = !hd?.workers
       ? "unknown"
@@ -1268,7 +1191,6 @@ function StatusStrip({ instance: i, footer }: { instance: InstanceDetailData; fo
         )}{" "}
         ·{" "}
         {i.lastPollError ? (
-          // The whole error is in the Health tab; here it takes the place of the time failures were read.
           <span className="text-fail">
             <b className="font-semibold">Could not read failures:</b> {i.lastPollError}
           </span>
@@ -1286,36 +1208,27 @@ function StatusStrip({ instance: i, footer }: { instance: InstanceDetailData; fo
   )
 }
 
-/**
- * The words for the last backup run; the list may still load, or may have failed. Backup not chosen: off, with an
- * earlier run shown as history only, never as something to fix.
- */
-function backupWords(backup: ListBackup, chosen: boolean) {
-  if (backup.state === "loading") return { value: "…", tone: undefined, hint: undefined }
-  if (backup.state !== "known") return { value: "Unknown", tone: undefined, hint: "Could not be read" }
-  if (!chosen)
-    return {
-      value: backup.run ? <When value={backup.run.at} /> : "Off",
-      tone: undefined,
-      hint: "Backup is not chosen",
-    }
-  if (!backup.run) return { value: "Never", tone: "fail" as const, hint: "Not backed up" }
-  const s = statusOf("backup", backup.run.status as keyof typeof statusTable.backup)
+type LastBackup = InstanceRow["lastBackup"]
+
+function backupWords(run: LastBackup, chosen: boolean) {
+  if (!chosen) return { value: run ? <When value={run.at} /> : "Off", tone: undefined, hint: "Backup is not chosen" }
+  if (!run) return { value: "Never", tone: "fail" as const, hint: "Not backed up" }
+  const s = statusOf("backup", run.status as keyof typeof statusTable.backup)
   const tone = s.tone === "fail" ? ("fail" as const) : s.tone === "warn" ? ("warn" as const) : undefined
-  return { value: <When value={backup.run.at} />, tone, hint: s.label }
+  return { value: <When value={run.at} />, tone, hint: s.label }
 }
 
-type BackupProps = { id: string; backup: ListBackup; chosen: boolean }
+type BackupProps = { id: string; run: LastBackup; chosen: boolean }
 
-function LastBackupKpi({ id, backup, chosen }: BackupProps) {
-  const w = backupWords(backup, chosen)
+function LastBackupKpi({ id, run, chosen }: BackupProps) {
+  const w = backupWords(run, chosen)
   return (
     <Kpi label="Last backup run" icon={ArchiveIcon} value={w.value} tone={w.tone} hint={w.hint} to={`/backups/${id}`} />
   )
 }
 
-function LastBackupPanel({ id, backup, chosen }: BackupProps) {
-  const w = backupWords(backup, chosen)
+function LastBackupPanel({ id, run, chosen }: BackupProps) {
+  const w = backupWords(run, chosen)
   return (
     <Panel>
       <PanelHead
@@ -1332,14 +1245,8 @@ function LastBackupPanel({ id, backup, chosen }: BackupProps) {
   )
 }
 
-/** The order of a preview, which has no Sort button: the default, never changed. */
 const noOrder: SortOrder = [null, () => {}]
 
-/**
- * The open problems of the instance, what needs a look first unless another order is picked. The server sends
- * the first 200 and how many there are in all; a preview shows the first few. The full list has its Sort
- * button at the end of its panel head, after the link to Problems (TB-28).
- */
 function InstanceProblems({
   instanceId,
   count,
@@ -1348,16 +1255,12 @@ function InstanceProblems({
   onOpen,
 }: {
   instanceId: string
-  /** The instance's open problems, for the panel head. */
   count: number
   more?: { to: string; label: string }
-  /** A preview of the first few, in the order the server sends by default, with no Sort button. */
   limit?: number
   onOpen: (id: string, workflow?: string) => void
 }) {
   const preview = limit !== undefined
-  // The full list sorts on the server, so the order covers every open problem of the instance (TB-4); a new order
-  // keeps the rows on screen until its answer comes. Keyed by the instance, so no rows of another one stay.
   const order = useSortOrder("instance-problems")
   const query = useApi<ProblemRows>(
     problemRowsPath({ status: "open", instance: instanceId }, preview ? null : order.asked),
@@ -1365,8 +1268,6 @@ function InstanceProblems({
   )
   const rows = query.data?.items ?? []
   const total = query.data?.total ?? 0
-  // The headers and the Sort button show the order the rows are in (TB-4). The preview's rows come in the default
-  // order, so its answer must not count as the order picked being applied.
   const shownOrder = preview ? noOrder : order.shown(query)
   const sort = useProblemsSort(rows, shownOrder, false)
   const head = (
@@ -1394,21 +1295,16 @@ function InstanceProblems({
   return (
     <>
       {head}
-      {/* A refresh or a new order that failed keeps the rows on screen, and this line says so with Try again
-          (TB-5, LD-12); the headers and the Sort button stay in the order the rows are in (TB-4). */}
       {!preview && <RefreshLine live={query} what="open problems" />}
       <ProblemsTable
         items
         bare
         sort={preview ? undefined : sort}
         rows={preview ? rows.slice(0, limit) : rows}
-        // The full list's headings count each section in all; a preview of a few rows counts none.
         counts={preview ? undefined : query.data?.sections}
         showInstance={false}
         empty="No open problems on this instance."
         onOpen={onOpen}
-        // The instance's own problems (its task runner) first, then failing now, quiet and its alerts: in the order
-        // the rows are in, so a new order that failed to load leaves them as they were.
         sections={shownOrder[0] === null}
       />
       {!preview && rows.length < total && (
@@ -1420,10 +1316,6 @@ function InstanceProblems({
   )
 }
 
-/**
- * Decrypted credentials, encrypted to the backup key, for moving them to another system. When the socket proxy
- * refused the export, `onRefused` gets the lines that allow it.
- */
 async function exportCredentials(id: string, name: string, onRefused: (fix: ProxyFix) => void) {
   const loading = toast.loading("Asking the worker to export the credentials…")
   try {
@@ -1448,7 +1340,6 @@ async function exportCredentials(id: string, name: string, onRefused: (fix: Prox
   }
 }
 
-/** How the metrics were read inside the main, in words. */
 const metricsWords = {
   read: "read in the main container",
   off: "off (N8N_METRICS is not true)",
@@ -1458,7 +1349,6 @@ const metricsWords = {
   skipped: "from the metrics URL you set",
 } as const
 
-/** One check of the instance; `past` when it is from the last known health, so it is drawn without its tone. */
 function HealthRow({
   label,
   ok,
@@ -1505,30 +1395,31 @@ const overrideFields: [string, string][] = [
   ["instanceCheckHours", "Check the n8n version and API key every (hours)"],
 ]
 
-function OverridesCard({ instance }: { instance: InstanceDetailData }) {
-  const stored = () => Object.fromEntries(Object.entries(instance.overrides).map(([k, v]) => [k, String(v)]))
-  const [values, setValues] = useState<Record<string, string>>(stored)
+function OverridesCard({ instance, readAt }: { instance: InstanceDetailData; readAt: number }) {
+  const form = useEdits(
+    Object.fromEntries(Object.entries(instance.overrides).map(([k, v]) => [k, String(v)])),
+    readAt,
+    (a, b, name) => countChanges({ [name]: a }, { [name]: b }) > 0,
+  )
+  const values = form.values as Record<string, string>
   const save = useApiMutation<{ overrides: Record<string, number | string> }>("PATCH", `/instances/${instance.id}`, {
     invalidate: [`/instances/${instance.id}`],
     quiet: true,
   })
-  const initial = stored()
   const count = countChanges(
     values,
-    initial,
+    form.stored,
     overrideFields.map(([k]) => k),
   )
-  // The 15-second refresh never overwrites what the user is typing (SV-6).
-  // biome-ignore lint/correctness/useExhaustiveDependencies: only new stored overrides replace the form
-  useEffect(() => {
-    if (count === 0) setValues(stored())
-  }, [instance.overrides])
   useSaveSource(`overrides-${instance.id}`, {
     label: "the overrides",
     saved: "Overrides saved",
     count,
-    save: () => save.mutateAsync({ overrides: payload() }),
-    discard: () => setValues(initial),
+    save: async () => {
+      await save.mutateAsync({ overrides: payload() })
+      form.saved(form.edited)
+    },
+    discard: form.discard,
   })
   function payload() {
     const overrides: Record<string, number | string> = {}
@@ -1550,7 +1441,7 @@ function OverridesCard({ instance }: { instance: InstanceDetailData }) {
               type={k === "backupTime" ? "text" : "number"}
               placeholder={String(instance.effectiveSettings[k] ?? "")}
               value={values[k] ?? ""}
-              onChange={(e) => setValues({ ...values, [k]: e.target.value })}
+              onChange={(e) => form.set(k, e.target.value)}
             />
           </Field>
         ))}
@@ -1561,10 +1452,8 @@ function OverridesCard({ instance }: { instance: InstanceDetailData }) {
 
 type Worker = { id: string; name: string }
 
-/** A base URL compared and saved without surrounding spaces and trailing slashes. */
 export const normalUrl = (url: string) => url.trim().replace(/\/+$/, "")
 
-/** Where the main is: a container name, or a Compose project and service (followed across docker rollout). */
 export type MainTarget = {
   mainBy: "name" | "service"
   containerName: string
@@ -1581,7 +1470,6 @@ export const mainTargetOf = (
   composeService: i?.composeService ?? "",
 })
 
-/** The main as the API takes it: one of the two, never both; the server refuses a half pair or both together. */
 export const mainTargetBody = (t: MainTarget) => {
   const byService = t.mainBy === "service"
   return {
@@ -1594,7 +1482,6 @@ export const mainTargetBody = (t: MainTarget) => {
 export const mainTargetSet = (t: MainTarget) =>
   t.mainBy === "service" ? Boolean(t.composeProject.trim() && t.composeService.trim()) : Boolean(t.containerName.trim())
 
-/** How to find the n8n main container on the host: by its name, or by its Compose project and service. */
 export function MainTargetFields({
   value,
   onChange,
@@ -1673,10 +1560,6 @@ export const queueBody = (q: QueueForm) => ({
   workerHealthUrls: q.workerHealthUrls.split(/\s+/).filter(Boolean),
 })
 
-/**
- * Queue mode and where its figures are read: the metrics URL and the queue workers' health URLs. `inside` when the
- * worker reads the main from inside its container; `modeFound` when it read the mode there, so it is not set by hand.
- */
 export function QueueFields({
   value,
   onChange,
@@ -1747,11 +1630,6 @@ export function QueueFields({
   )
 }
 
-/**
- * Edits an instance's details. Adding an instance and its capabilities goes through its setup
- * (pages/instance-setup.tsx); this dialog never refuses because of them, and the instance's page shows what a
- * change leaves missing.
- */
 export function InstanceDialog({
   open,
   onOpenChange,
@@ -1763,7 +1641,7 @@ export function InstanceDialog({
 }) {
   const workers = useApi<Worker[]>(open ? "/workers" : null)
   const navigateOut = useNavigateFromOverlay()
-  const start = () => ({
+  const [form, setForm] = useState(() => ({
     name: instance.name,
     baseUrl: instance.baseUrl,
     apiKey: undefined as string | null | undefined,
@@ -1771,24 +1649,12 @@ export function InstanceDialog({
     ...queueFormOf(instance),
     collection: instance.collection,
     workerId: instance.workerId ?? "",
-  })
-  const [form, setForm] = useState(start)
-  const [opened, setOpened] = useState(form)
+  }))
+  const [opened] = useState(form)
   const [error, setError] = useState("")
   const [busy, setBusy] = useState(false)
-  // Filled when the dialog opens or another instance is chosen, not when the 15-second refresh brings the same
-  // instance again: that would replace what is being typed.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: the stored values are read when it opens, not followed
-  useEffect(() => {
-    if (!open) return
-    setError("")
-    const values = start()
-    setForm(values)
-    setOpened(values)
-  }, [open, instance.id])
   const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }))
   const target = mainTargetBody(form)
-  // The worker read the mode inside the main; it stays its value until the worker or the container changes.
   const modeFound =
     instance.queueModeSource === "found" &&
     form.collection === instance.collection &&
@@ -1797,9 +1663,7 @@ export function InstanceDialog({
     target.composeProject === (instance.composeProject ?? null) &&
     target.composeService === (instance.composeService ?? null)
   const inside = form.collection === "worker" && Boolean(form.workerId) && mainTargetSet(form)
-  // Every close asks first while the form differs from how it opened (DS-9).
   const guard = useDiscardGuard(formChanged(form, opened), () => onOpenChange(false))
-  // A stored API key is never sent to a different server: a changed base URL needs the key again, or its removal.
   const urlChanged = normalUrl(form.baseUrl) !== normalUrl(instance.baseUrl)
 
   async function submit() {
@@ -1915,8 +1779,6 @@ export function InstanceDialog({
                     to="/workers"
                     className="font-semibold text-ink underline"
                     onClick={async (e) => {
-                      // Leaving asks first like any close. Workers then takes the dialog's Back entry, before the
-                      // dialog closes, so its close does not step back as well (DS-10).
                       e.preventDefault()
                       if (!(await guard.confirmDiscard())) return
                       navigateOut("/workers")
@@ -1934,8 +1796,6 @@ export function InstanceDialog({
                   onChange={(v) => set({ workerId: v === "none" ? "" : v })}
                   options={[
                     { value: "none", label: "None" },
-                    // By name: the list says no more than the names, so the Workers page's offline-first order
-                    // would look random here.
                     ...[...(workers.data ?? [])]
                       .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base", numeric: true }))
                       .map((w) => ({ value: w.id, label: w.name })),

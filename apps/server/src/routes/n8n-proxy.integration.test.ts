@@ -27,8 +27,6 @@ import type { Instance } from "../services/instances.ts"
 import { deleteInstance } from "../services/problems.ts"
 import { n8nProxyRoutes, PROXY_BODY_BYTES, PROXY_CALLS } from "./n8n-proxy.ts"
 
-// The access proxy against a real PostgreSQL and a stand-in n8n: a call is forwarded only while its access still
-// holds when it is about to be forwarded, which is after its whole body has arrived.
 const adminUrl = process.env.MIGRATION_DATABASE_URL
 if (!adminUrl) throw new Error("MIGRATION_DATABASE_URL is required (scripts/verify.sh sets it)")
 
@@ -42,7 +40,6 @@ let app: ReturnType<typeof n8nProxyRoutes>
 let server: Server
 let baseUrl: string
 
-/** The instance's own n8n API key, made for this run. */
 const KEY = randomBytes(24).toString("hex")
 const SPEC = `
 openapi: 3.0.0
@@ -55,15 +52,11 @@ paths:
       x-required-scope: variable:update
 `
 const SCOPES = ["variable:update", "variable:list"]
-/** A variable whose change the stand-in n8n receives and never answers. */
 const UNANSWERED = "unanswered"
-/** The stand-in n8n answers a change of a variable named so only once `answer` resolves. */
 const HELD = "held"
 let held: { arrived: () => void; answer: Promise<void> } | null = null
-/** A call whose path or query holds moved-<status> is answered with that redirect, to ELSEWHERE. */
 const ELSEWHERE = "/api/v1/variables/elsewhere"
 const who = { by: "shlomi", via: "web" as const }
-/** What the stand-in n8n received, other than its API description. */
 const received: { method: string; url: string; key: string; body: string }[] = []
 
 beforeAll(async () => {
@@ -124,7 +117,6 @@ afterAll(async () => {
 })
 
 let seq = 0
-/** An instance open to agents for every scope its key holds. */
 async function openInstance(name = `proxy-${++seq}`): Promise<Instance> {
   const [row] = await ctx.db
     .insert(instances)
@@ -143,7 +135,6 @@ async function openInstance(name = `proxy-${++seq}`): Promise<Instance> {
   return row
 }
 
-/** Approved access to `names` for a new agent: its token, its request and its temporary key. */
 async function access(names: string[]) {
   seq += 1
   const [token] = await ctx.db
@@ -168,7 +159,6 @@ async function access(names: string[]) {
   return { tokenId: token.id, requestId: made.id, key: got.key }
 }
 
-/** A request body whose end the test releases; `reading` resolves once the proxy has started to read it. */
 function heldBody(first: string, rest: string) {
   let started!: () => void
   let release!: () => void
@@ -197,7 +187,6 @@ function heldBody(first: string, rest: string) {
   return { stream, reading, release }
 }
 
-/** A PUT through the proxy whose body is held until `whileReading` has run. */
 async function callWhile(address: string, key: string, whileReading: () => Promise<void>) {
   const variable = randomBytes(4).toString("hex")
   const body = heldBody('{"value":"first', '-and-rest"}')
@@ -219,7 +208,6 @@ async function callWhile(address: string, key: string, whileReading: () => Promi
 
 const callsOf = (requestId: string) => ctx.db.select().from(accessCalls).where(eq(accessCalls.requestId, requestId))
 
-/** Whether a session of this database comes to wait for a lock within five seconds. */
 async function waitingForLock() {
   for (let i = 0; i < 50; i++) {
     const [waiting] = await ctx.db.execute<{ n: number }>(
@@ -285,14 +273,12 @@ describe("the access proxy checks the access again right before it forwards a ca
     let holding: Promise<unknown> = Promise.resolve()
     let ending: Promise<boolean> = Promise.resolve(false)
     const { res, writes } = await callWhile(instance.name, key, async () => {
-      // Another session holds the request's instances, as a compaction of that table does, until the access ends.
       holding = locker.begin(async (tx) => {
         await tx`LOCK TABLE access_request_instances IN ACCESS EXCLUSIVE MODE`
         held()
         await unlocked
       })
       await Promise.race([locked, holding])
-      // Once the body is in, the proxy's check waits for the lock; it reads the access only once it has it.
       ending = (async () => {
         try {
           const waited = await waitingForLock()
@@ -340,8 +326,6 @@ describe("the access proxy checks the access again right before it forwards a ca
   })
 
   it("refuses the call when its address leads to another instance of the same access by then", async () => {
-    // One key for two instances, the second named like the first one's ID: the address goes to the second by name,
-    // and once the second is deleted the same address would reach the first by its ID.
     const first = await openInstance()
     const second = await openInstance(first.id)
     const { key, requestId } = await access([first.name, second.name])
@@ -450,7 +434,6 @@ describe("a call through the access proxy is recorded", () => {
   })
 })
 
-/** One call through the proxy, with an empty JSON body unless it reads. */
 const send = (address: string, key: string, method: string, path: string) =>
   app.request(`/${address}/api/v1${path}`, {
     method,
@@ -461,10 +444,6 @@ const sentTo = (variables: string[]) =>
   received.filter((r) => variables.some((v) => r.url === `/api/v1/variables/${v}`))
 const named = (name: string) => `${name}-${randomBytes(4).toString("hex")}`
 
-/**
- * Holds the access request's row in another session until `whileHeld` has run, as a change of the access being
- * saved does; `whileHeld` runs once the proxy waits for the row.
- */
 async function sendWhileRequestHeld(
   instance: Instance,
   key: string,
@@ -508,7 +487,6 @@ describe("the calls of an access", () => {
 
     const detail = await getAccess(ctx, requestId)
     expect(detail).toMatchObject({ callCount: 541, refusedCount: 520 })
-    // The change, and of the other calls the latest 500: the 20 reads and the last 480 refused calls.
     expect(detail?.calls).toHaveLength(501)
     expect(detail?.calls.at(-1)).toMatchObject({ method: "PUT", path: "/variables/kept", status: 200 })
     expect(detail?.calls.at(-2)).toMatchObject({ method: "GET", path: "/nothing/40" })
@@ -545,7 +523,6 @@ describe("the calls of an access", () => {
     const instance = await openInstance()
     const { key, requestId } = await access([instance.name])
     const variable = named("made")
-    // The database refuses to record the answer of this request's calls.
     await locker.unsafe(
       `create function refuse_answer() returns trigger language plpgsql as $$ begin raise exception 'not recorded'; end $$`,
     )
@@ -620,7 +597,6 @@ describe("the calls of an access", () => {
     const [oldest] = await ctx.db.execute<{ id: string }>(
       sql`select id from access_calls where request_id = ${requestId} and not change order by created_at, id limit 1`,
     )
-    // As deleting the instance does: one of its calls held first, then the change.
     let held!: () => void
     const holding = new Promise<void>((resolve) => {
       held = resolve
@@ -636,14 +612,12 @@ describe("the calls of an access", () => {
       await tx`update access_calls set instance_id = null where id = ${change}`
     })
     await Promise.race([holding, removal])
-    // The refusal holds the change and waits for the oldest call, which it removes as the 501st other call.
     const refusing = refuseChange(ctx, requestId, change, 401, "Ended.")
     try {
       expect(await waitingForLock()).toBe(true)
     } finally {
       next()
     }
-    // The refusal waited first, so PostgreSQL ends it, and it runs again once the other session is done.
     await refusing
     await removal
     const calls = await callsOf(requestId)
@@ -676,7 +650,6 @@ describe("the calls of an access", () => {
 
 describe("the access proxy reads a body only for an allowed call, and up to its limit", () => {
   const MiB = 1024 * 1024
-  /** A body of `size` spaces in 1 MiB parts, with no length announced; `pulled` tells whether any was read. */
   function spaces(size: number) {
     const state = { pulled: false }
     let left = size
@@ -750,7 +723,6 @@ describe("the access proxy reads a body only for an allowed call, and up to its 
     expect(refused.status).toBe(401)
     expect(unknown.state.pulled).toBe(false)
 
-    // The operation is not one the access allows (DELETE is not granted).
     const notAllowed = spaces(PROXY_BODY_BYTES + 1)
     const forbidden = await app.request(`/${instance.name}/api/v1/variables/v`, {
       method: "DELETE",
@@ -767,7 +739,6 @@ describe("the access proxy runs a bounded number of calls at once", () => {
   const saved = { ...PROXY_CALLS }
   afterEach(() => Object.assign(PROXY_CALLS, saved))
 
-  /** Makes the stand-in n8n hold its answer to a variable named with HELD until `answer()`. */
   function holdAnswer() {
     let arrived!: () => void
     const arriving = new Promise<void>((resolve) => {
@@ -781,7 +752,6 @@ describe("the access proxy runs a bounded number of calls at once", () => {
     return { arriving, answer }
   }
 
-  /** Runs `whileHeld` while a PUT with `key` waits for n8n's answer, then lets n8n answer and waits for the call. */
   async function whileForwarding(address: string, key: string, whileHeld: () => Promise<void>) {
     const { arriving, answer } = holdAnswer()
     const pending = send(address, key, "PUT", `/variables/${named(HELD)}`)
@@ -791,7 +761,6 @@ describe("the access proxy runs a bounded number of calls at once", () => {
     } finally {
       answer()
       held = null
-      // The call ends before the next test starts, also when an assertion above failed.
       await Promise.resolve(pending).catch(() => undefined)
     }
     return pending
@@ -806,7 +775,6 @@ describe("the access proxy runs a bounded number of calls at once", () => {
       const busy = await send(instance.name, key, "PUT", `/variables/${second}`)
       expect(busy.status).toBe(429)
       expect(await busy.json()).toMatchObject({ message: expect.stringContaining("too many calls at once") })
-      // An unknown key is refused as unknown, and is not counted.
       expect((await send(instance.name, `${key.slice(0, -4)}0000`, "PUT", `/variables/${second}`)).status).toBe(401)
     })
     expect(first.status).toBe(200)
@@ -838,7 +806,6 @@ describe("the access proxy runs a bounded number of calls at once", () => {
     const { key, requestId } = await access([instance.name])
     const ok = async () => expect((await send(instance.name, key, "PUT", `/variables/${named("ok")}`)).status).toBe(200)
 
-    // A body over the limit, announced or streamed.
     const announced = await app.request(`/${instance.name}/api/v1/variables/v`, {
       method: "PUT",
       headers: { "x-n8n-api-key": key, "content-length": String(PROXY_BODY_BYTES + 1) },
@@ -855,13 +822,10 @@ describe("the access proxy runs a bounded number of calls at once", () => {
     } as RequestInit)
     expect(streamed.status).toBe(413)
     await ok()
-    // An operation the access does not allow.
     expect((await send(instance.name, key, "DELETE", "/variables/v")).status).toBe(403)
     await ok()
-    // n8n does not answer.
     expect((await send(instance.name, key, "PUT", `/variables/${named(UNANSWERED)}`)).status).toBe(502)
     await ok()
-    // The access ends while the call arrives: refused when it is checked again, and its place is free.
     const other = await access([instance.name])
     const { res } = await callWhile(instance.name, key, async () => {
       await revokeAccess(ctx, requestId, who)
@@ -917,7 +881,6 @@ describe("the access proxy sends n8n only the call it checked, and only to the i
   })
 
   it("refuses every call while the instance's API description is answered with a redirect", async () => {
-    // An address whose API description redirects to the instance's own; every other call it answers itself.
     const asked: string[] = []
     const redirecting = createServer((req, res) => {
       asked.push(`${req.method} ${req.url}`)
@@ -932,7 +895,6 @@ describe("the access proxy sends n8n only the call it checked, and only to the i
     try {
       const instance = await openInstance()
       const { key, requestId } = await access([instance.name])
-      // The address moves, so the proxy reads the API description again, from the new address.
       await ctx.db
         .update(instances)
         .set({ baseUrl: `http://127.0.0.1:${(redirecting.address() as AddressInfo).port}` })

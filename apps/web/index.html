@@ -5,11 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
     <title>n8n-ops</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <!--
-      Applies the theme before the page draws (OT-4), so a dark theme never flashes white: the one chosen in this
-      browser (next-themes keeps it under the key set in main.tsx), else the system's. Storage that cannot be read
-      (blocked by the browser) counts as no choice, so the system's theme still applies.
-    -->
     <script>
       {
         let theme = null
@@ -22,7 +17,6 @@
         document.documentElement.style.colorScheme = theme
       }
     </script>
-    <!-- Applies a folded sidebar before the page draws, so it never flashes open. -->
     <script>
       try {
         if (localStorage.getItem("n8n-ops-nav") === "rail") document.documentElement.dataset.nav = "rail"

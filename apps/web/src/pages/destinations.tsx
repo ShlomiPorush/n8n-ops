@@ -45,6 +45,7 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { api, describeError, useApi, useApiMutation } from "@/lib/api"
+import { useEdits } from "@/lib/edits"
 import { loadView } from "@/lib/load-state"
 import { n, plural } from "@/lib/numbers"
 import { whenDrawn } from "@/lib/reveal"
@@ -80,7 +81,6 @@ type FieldDef = {
   type?: "text" | "number" | "switch" | "secret" | "key"
 }
 
-/** Each kind: its name, what it suits, where archives go and with what it connects. */
 export const kinds: Record<
   DestinationKind,
   { label: string; icon: LucideIcon; hint: string; location: FieldDef[]; credentials: FieldDef[] }
@@ -176,7 +176,6 @@ export function KindIcon({ kind, className }: { kind: DestinationKind; className
   return <Icon aria-hidden className={cn("size-4 shrink-0 text-muted-foreground", className)} />
 }
 
-/** Tags of a destination: off, default, Object Lock. */
 function Tags({ d }: { d: Destination }) {
   return (
     <>
@@ -187,14 +186,11 @@ function Tags({ d }: { d: Destination }) {
   )
 }
 
-// ---------------------------------------------------------------------------
-// Settings > Backup Destinations
-// ---------------------------------------------------------------------------
-
-/** Settings → Backup Destinations. `hidden` keeps it mounted out of sight while another section shows (SV-1). */
 export function DestinationsSection({ hidden = false }: { hidden?: boolean }) {
   const list = useApi<Destination[]>("/destinations")
-  const [editing, setEditing] = useState<Destination | "new" | null>(null)
+  const [dialog, setDialog] = useState({ open: false, opening: 0, destination: null as Destination | null })
+  const openDialog = (destination: Destination | null) =>
+    setDialog((d) => ({ open: true, opening: d.opening + 1, destination }))
   const named = (id: string) => list.data?.find((d) => d.id === id)?.name ?? "the destination"
   const test = useApiMutation<string, { notes?: string[] }>("POST", (id) => `/destinations/${id}/test`, {
     failed: (id) => `use ${named(id)}`,
@@ -209,13 +205,12 @@ export function DestinationsSection({ hidden = false }: { hidden?: boolean }) {
             list.data ? (
               <>
                 {n(data.length)}
-                {/* A failed refresh keeps what is shown and says so beside the title (TB-5, LD-12). */}
                 <RefreshNote live={list} separator=" · " />
               </>
             ) : undefined
           }
           action={
-            <Button variant="primary" size="sm" onClick={() => setEditing("new")}>
+            <Button variant="primary" size="sm" onClick={() => openDialog(null)}>
               <Plus /> Add destination
             </Button>
           }
@@ -273,7 +268,7 @@ export function DestinationsSection({ hidden = false }: { hidden?: boolean }) {
                 >
                   Test
                 </BusyButton>
-                <Button size="sm" onClick={() => setEditing(d)}>
+                <Button size="sm" onClick={() => openDialog(d)}>
                   Edit
                 </Button>
               </div>
@@ -283,9 +278,10 @@ export function DestinationsSection({ hidden = false }: { hidden?: boolean }) {
       </Panel>
       <SelfBackupCard destinations={data} hidden={hidden} />
       <DestinationDialog
-        destination={editing === "new" ? null : editing}
-        open={editing !== null}
-        onOpenChange={(o) => !o && setEditing(null)}
+        key={dialog.opening}
+        destination={dialog.destination}
+        open={dialog.open}
+        onOpenChange={(open) => setDialog((d) => (d.opening === dialog.opening ? { ...d, open } : d))}
       />
     </>
   )
@@ -295,7 +291,6 @@ type Form = {
   name: string
   kind: DestinationKind
   location: Record<string, string | number | boolean>
-  /** Plain fields as typed; a secret is undefined while unchanged, a string when replaced, null to remove. */
   credentials: Record<string, string | null | undefined>
   retention: { daily: string; weekly: string; monthly: string }
   lock: boolean
@@ -328,7 +323,6 @@ function formOf(d: Destination | null, kind: DestinationKind = "s3"): Form {
   }
 }
 
-/** What to send: on an edit only what changed, so a rename does not test the connection again. */
 function bodyOf(form: Form, d: Destination | null) {
   const location = Object.fromEntries(
     kinds[form.kind].location.map((f) => {
@@ -358,7 +352,6 @@ function bodyOf(form: Form, d: Destination | null) {
   if (!d) return { ...body, kind: form.kind, location, credentials, objectLock }
   if (!d.lockedAt) body.location = location
   if (Object.keys(credentials).length) body.credentials = credentials
-  // Compared field by field: the stored lock may list its fields in another order.
   if (
     (objectLock?.mode ?? null) !== (d.objectLock?.mode ?? null) ||
     (objectLock?.days ?? null) !== (d.objectLock?.days ?? null)
@@ -367,7 +360,6 @@ function bodyOf(form: Form, d: Destination | null) {
   return body
 }
 
-/** Adds or edits a destination. The server tests it before anything is stored. */
 export function DestinationDialog({
   destination,
   open,
@@ -379,22 +371,11 @@ export function DestinationDialog({
 }) {
   const client = useQueryClient()
   const [form, setForm] = useState<Form>(() => formOf(destination))
-  const [opened, setOpened] = useState<Form>(form)
+  const [opened] = useState(form)
   const [error, setError] = useState("")
   const [busy, setBusy] = useState(false)
   const [deleting, setDeleting] = useState(false)
-  // Filled when the dialog opens or another destination is chosen, not when a refresh brings the same one again:
-  // that would replace what is being typed (SV-6).
-  // biome-ignore lint/correctness/useExhaustiveDependencies: the stored values are read when it opens, not followed
-  useEffect(() => {
-    if (!open) return
-    const start = formOf(destination)
-    setForm(start)
-    setOpened(start)
-    setError("")
-  }, [open, destination?.id])
   const locked = Boolean(destination?.lockedAt)
-  // Every close asks first while the form differs from how it opened (DS-9).
   const guard = useDiscardGuard(formChanged(form, opened), () => onOpenChange(false))
 
   async function submit() {
@@ -469,7 +450,6 @@ export function DestinationDialog({
   )
 }
 
-/** The fields of a destination, also used by the first-run setup. */
 export function DestinationFields({
   form,
   setForm,
@@ -481,7 +461,6 @@ export function DestinationFields({
   setForm: (update: (f: Form) => Form) => void
   destination: Destination | null
   locked: boolean
-  /** The kinds offered for a new destination. */
   only?: DestinationKind[]
 }) {
   const kind = kinds[form.kind]
@@ -592,8 +571,6 @@ export function DestinationFields({
                   onChange={(v) => setCredential(f.name, v)}
                 />
               ) : f.type === "key" ? (
-                // A stored key reads Stored, or "Removed when you save" with Keep while its removal waits (FS-3);
-                // Replace opens the field for the new key.
                 destination?.credentials[`${f.name}Set`] && typeof form.credentials[f.name] !== "string" ? (
                   <SecretField
                     id={`d-${f.name}`}
@@ -607,7 +584,6 @@ export function DestinationFields({
                       id={`d-${f.name}`}
                       className="font-mono text-small"
                       placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
-                      // The focus moves into the field the moment Replace is chosen.
                       autoFocus={Boolean(destination?.credentials[`${f.name}Set`])}
                       value={form.credentials[f.name] ?? ""}
                       onChange={(e) =>
@@ -755,7 +731,6 @@ export function DestinationFields({
 export type { Form as DestinationForm }
 export { bodyOf as destinationBody, formOf as destinationForm }
 
-/** Removing a destination: its archives stay where they are, or go with it. */
 function DeleteDestination({
   destination,
   open,
@@ -828,13 +803,8 @@ function DeleteDestination({
   )
 }
 
-// ---------------------------------------------------------------------------
-// Choosing destinations: an instance, or n8n-ops's own database
-// ---------------------------------------------------------------------------
-
 export type Choice = { mode: "default" | "custom"; ids: string[] }
 
-/** The default destinations, or a choice of them. The choice is kept while the defaults are used. */
 export function DestinationChoice({
   id,
   destinations,
@@ -905,51 +875,32 @@ export function DestinationChoice({
   )
 }
 
-/** The choice as stored, with unsaved changes counted against it and kept through refreshes. */
-function useChoice(stored: Choice | null) {
-  const [choice, setChoice] = useState<Choice | null>(stored)
-  const base = useRef<Choice | null>(stored)
-  const count = choice && base.current ? changes(choice, base.current) : 0
-  // biome-ignore lint/correctness/useExhaustiveDependencies: only a new stored choice replaces an unchanged form
-  useEffect(() => {
-    if (!stored) return
-    if (!base.current || count === 0) {
-      base.current = stored
-      setChoice(stored)
-    }
-  }, [JSON.stringify(stored)])
-  return {
-    choice,
-    setChoice,
-    count,
-    saved: () => {
-      base.current = choice
-    },
-    discard: () => setChoice(base.current),
-  }
-}
-
 const changes = (a: Choice, b: Choice) =>
   Number(a.mode !== b.mode) +
   (a.mode === "custom"
     ? a.ids.filter((x) => !b.ids.includes(x)).length + b.ids.filter((x) => !a.ids.includes(x)).length
     : 0)
 
-/** A panel's description is small text in Compact and body text in Regular (PanelHead); Try again in it matches. */
 const descriptionText = "text-small regular:text-body"
 
-/** On an instance: where its backups go. */
 export function InstanceBackupCard({
   instanceId,
   mode,
   destinationIds,
+  readAt,
 }: {
   instanceId: string
   mode: "default" | "custom"
   destinationIds: string[]
+  readAt: number
 }) {
   const destinations = useApi<Destination[]>("/destinations")
-  const state = useChoice({ mode, ids: destinationIds })
+  const form = useEdits(
+    { choice: { mode, ids: destinationIds } },
+    readAt,
+    (a, b) => changes(a as Choice, b as Choice) > 0,
+  )
+  const choice = form.values.choice as Choice
   const save = useApiMutation<{ mode: string; destinationIds: string[] }>(
     "PUT",
     `/instances/${instanceId}/backup-destinations`,
@@ -958,13 +909,12 @@ export function InstanceBackupCard({
   useSaveSource(`backup-destinations-${instanceId}`, {
     label: "the backup destinations",
     saved: "Backup destinations saved",
-    count: state.count,
+    count: changes(choice, form.stored.choice as Choice),
     save: async () => {
-      if (!state.choice) return
-      await save.mutateAsync({ mode: state.choice.mode, destinationIds: state.choice.ids })
-      state.saved()
+      await save.mutateAsync({ mode: choice.mode, destinationIds: choice.ids })
+      form.saved({ choice })
     },
-    discard: state.discard,
+    discard: form.discard,
   })
   return (
     <Panel className="overflow-visible">
@@ -973,7 +923,6 @@ export function InstanceBackupCard({
         description={
           <>
             Where this instance's encrypted backups are written.
-            {/* A failed refresh keeps what is shown and says so here (TB-5, LD-12). */}
             <RefreshNote live={destinations} separator=" " textClass={descriptionText} />
           </>
         }
@@ -981,14 +930,14 @@ export function InstanceBackupCard({
       <fieldset disabled={save.isPending} className="border-t border-line p-pad-x">
         {loadView(destinations) === "failed" ? (
           <LoadError what="the destinations" error={destinations.error} retry={() => destinations.refetch()} />
-        ) : !destinations.data || !state.choice ? (
+        ) : !destinations.data ? (
           <Loading />
         ) : (
           <DestinationChoice
             id={`ib-${instanceId}`}
             destinations={destinations.data}
-            choice={state.choice}
-            onChange={state.setChoice}
+            choice={choice}
+            onChange={(v) => form.set("choice", v)}
           />
         )}
       </fieldset>
@@ -1003,37 +952,35 @@ type BackupSettings = {
   meta?: { limits?: Record<string, NumberLimits> }
 }
 
-/** Where the n8n-ops database backup goes, and the largest archive accepted. */
 function SelfBackupCard({ destinations, hidden }: { destinations: Destination[]; hidden: boolean }) {
   const query = useApi<BackupSettings>("/settings/backups")
   const navigate = useNavigate()
-  const stored = query.data ? { mode: query.data.selfDestinations, ids: query.data.selfDestinationIds } : null
-  const state = useChoice(stored)
-  const [max, setMax] = useState("")
-  const maxBase = useRef("")
-  // What is wrong with a changed Largest archive, found before a save (SV-1); a new value clears it.
+  const form = useEdits(
+    query.data && {
+      choice: { mode: query.data.selfDestinations, ids: query.data.selfDestinationIds },
+      max: String(query.data.maxArchiveMb),
+    },
+    query.dataUpdatedAt,
+    (a, b, name) => (name === "max" ? a !== b : changes(a as Choice, b as Choice) > 0),
+  )
+  const choice = form.values.choice as Choice | undefined
+  const max = String(form.values.max ?? "")
+  const choiceChanges = choice ? changes(choice, form.stored.choice as Choice) : 0
+  const maxChanged = form.values.max !== form.stored.max
   const [maxProblem, setMaxProblem] = useState<string | null>(null)
   const shown = useRef(!hidden)
   shown.current = !hidden
-  // biome-ignore lint/correctness/useExhaustiveDependencies: only new stored settings replace an unchanged field
-  useEffect(() => {
-    if (!query.data) return
-    if (max === maxBase.current) setMax(String(query.data.maxArchiveMb))
-    maxBase.current = String(query.data.maxArchiveMb)
-  }, [query.data?.maxArchiveMb])
   const save = useApiMutation<Partial<BackupSettings>>("PUT", "/settings/backups", {
     invalidate: ["/settings/backups", "/backups"],
     quiet: true,
   })
-  const count = state.count + Number(max !== maxBase.current)
   useSaveSource("backup-settings", {
     label: "the backup settings",
     saved: "Backup settings saved",
-    count,
-    // Kept while another Settings section is open (SV-1).
+    count: choiceChanges + Number(maxChanged),
     keepsOn: "/settings/",
     check: () => {
-      const problem = max === maxBase.current ? null : numberProblem(max, query.data?.meta?.limits?.maxArchiveMb ?? {})
+      const problem = maxChanged ? numberProblem(max, query.data?.meta?.limits?.maxArchiveMb ?? {}) : null
       setMaxProblem(problem)
       if (!problem) return []
       const reveal = () => {
@@ -1052,18 +999,14 @@ function SelfBackupCard({ destinations, hidden }: { destinations: Destination[];
       return [{ label: "Largest archive (MiB)", problem, id: "max-archive", reveal }]
     },
     save: async () => {
-      if (!state.choice) return
       await save.mutateAsync({
-        selfDestinations: state.choice.mode,
-        selfDestinationIds: state.choice.ids,
-        maxArchiveMb: Number(max),
+        ...(choice && choiceChanges ? { selfDestinations: choice.mode, selfDestinationIds: choice.ids } : {}),
+        ...(maxChanged ? { maxArchiveMb: Number(max) } : {}),
       })
-      state.saved()
-      maxBase.current = max
+      form.saved(form.edited)
     },
     discard: () => {
-      state.discard()
-      setMax(maxBase.current)
+      form.discard()
       setMaxProblem(null)
     },
   })
@@ -1074,7 +1017,6 @@ function SelfBackupCard({ destinations, hidden }: { destinations: Destination[];
         description={
           <>
             n8n-ops backs up its own database every day at the daily backup time, encrypted with the backup public key.
-            {/* A failed refresh keeps what is shown and says so here (TB-5, LD-12). */}
             <RefreshNote live={query} separator=" " textClass={descriptionText} />
           </>
         }
@@ -1082,11 +1024,16 @@ function SelfBackupCard({ destinations, hidden }: { destinations: Destination[];
       <fieldset disabled={save.isPending} className="grid gap-4 border-t border-line p-pad-x">
         {loadView(query) === "failed" ? (
           <LoadError what="the backup settings" error={query.error} retry={() => query.refetch()} />
-        ) : !state.choice ? (
+        ) : !choice ? (
           <Loading />
         ) : (
           <>
-            <DestinationChoice id="self" destinations={destinations} choice={state.choice} onChange={state.setChoice} />
+            <DestinationChoice
+              id="self"
+              destinations={destinations}
+              choice={choice}
+              onChange={(v) => form.set("choice", v)}
+            />
             <Field>
               <FieldLabel htmlFor="max-archive">Largest archive (MiB)</FieldLabel>
               <Input
@@ -1097,7 +1044,7 @@ function SelfBackupCard({ destinations, hidden }: { destinations: Destination[];
                 aria-invalid={maxProblem ? true : undefined}
                 aria-describedby={maxProblem ? "max-archive-problem" : undefined}
                 onChange={(e) => {
-                  setMax(e.target.value)
+                  form.set("max", e.target.value)
                   setMaxProblem(null)
                 }}
               />

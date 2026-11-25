@@ -39,7 +39,6 @@ describe("health alert texts", () => {
     expect(text(healthAlerts.workerDown("prod", { ...failed(), url: "http://w1" }, streak, now))).toBe(
       "<b>Queue worker down on prod</b>\nhttp://w1: HTTP 503\n3 failed checks in a row over 1 min 5 s",
     )
-    // One failed check is the old text.
     expect(text(healthAlerts.down("prod", failed(), { failures: 1, since: now }, now))).toBe(
       "<b>prod is down</b>\nHTTP 503",
     )
@@ -75,13 +74,6 @@ describe("backup alert texts", () => {
   it("keep their wording for ordinary values", () => {
     expect(text(backupAlerts.failed("prod", "upload failed"))).toBe("<b>Backup failed on prod</b>\nupload failed")
     expect(text(backupAlerts.failed("prod"))).toBe("<b>Backup failed on prod</b>\n")
-    expect(text(backupAlerts.working("prod"))).toBe("<b>Backups of prod are working again</b>")
-    expect(text(backupAlerts.stale("prod", 26))).toBe(
-      "<b>No recent backup of prod</b>\nNo backup of prod from the last 26 hours succeeded.",
-    )
-    expect(text(backupAlerts.stale("prod", 1))).toBe(
-      "<b>No recent backup of prod</b>\nNo backup of prod from the last hour succeeded.",
-    )
   })
 
   it("name the destination when only its copies are concerned", () => {
@@ -94,12 +86,15 @@ describe("backup alert texts", () => {
     expect(text(backupAlerts.stale("prod", 26, "S3"))).toBe(
       "<b>No recent backup of prod on S3</b>\nNo backup of prod from the last 26 hours has been copied to S3.",
     )
+    expect(text(backupAlerts.stale("prod", 1, "S3"))).toBe(
+      "<b>No recent backup of prod on S3</b>\nNo backup of prod from the last hour has been copied to S3.",
+    )
   })
 
   it("escape the name and the worker's error, and shorten the error", () => {
     expect(text(backupAlerts.failed("R&D", link))).toBe(`<b>Backup failed on R&amp;D</b>\n${escapedLink}`)
-    expect(text(backupAlerts.working("<prod>"))).toBe("<b>Backups of &lt;prod&gt; are working again</b>")
-    expect(text(backupAlerts.stale("<prod>", 1))).toContain("backup of &lt;prod&gt;</b>")
+    expect(text(backupAlerts.working("<prod>", "NAS"))).toBe("<b>Backups of &lt;prod&gt; to NAS are working again</b>")
+    expect(text(backupAlerts.stale("<prod>", 1, "NAS"))).toContain("backup of &lt;prod&gt; on NAS</b>")
     expect(text(backupAlerts.failed("prod", "timeout", "<NAS>"))).toContain("copied to &lt;NAS&gt;</b>")
     expect(text(backupAlerts.failed("prod", "x".repeat(5000))).split("\n")[1]).toHaveLength(500)
   })
@@ -117,8 +112,8 @@ describe("alert texts", () => {
       healthAlerts.backlog(huge, 1, 1),
       healthAlerts.backlogCleared(huge),
       backupAlerts.failed(huge, huge),
-      backupAlerts.working(huge),
-      backupAlerts.stale(huge, 1),
+      backupAlerts.working(huge, huge),
+      backupAlerts.stale(huge, 1, huge),
     ]
     for (const alert of texts) expect(telegramPlainText(alert).length).toBeLessThan(4096)
   })
@@ -140,8 +135,8 @@ describe("clip", () => {
   it("never cuts an emoji in half", () => {
     const clipped = clip(`${"a".repeat(498)}😀😀😀`, 500)
     expect(clipped).toBe(`${"a".repeat(498)}😀…`)
-    expect(clipped).not.toMatch(/\p{Cs}/u) // no lone surrogate
-    expect("😀".slice(0, 1)).toMatch(/\p{Cs}/u) // half an emoji is one
+    expect(clipped).not.toMatch(/\p{Cs}/u)
+    expect("😀".slice(0, 1)).toMatch(/\p{Cs}/u)
   })
 
   it("counts characters, not UTF-16 units", () => {
@@ -174,12 +169,13 @@ describe("telegramPlainText", () => {
 describe("the Overview's backup item", () => {
   it("shows the alert as written", () => {
     const since = new Date("2026-10-21T10:00:00Z")
-    const detail = String(backupAlerts.stale("R&D <prod>", 26))
+    const detail = String(backupAlerts.stale("R&D <prod>", 26, "S3"))
     expect(backupItem({ id: "i1", name: "R&D <prod>" }, { detail, since })).toEqual({
       kind: "backup",
       id: "i1",
       name: "R&D <prod>",
-      detail: "No recent backup of R&D <prod> · No backup of R&D <prod> from the last 26 hours succeeded.",
+      detail:
+        "No recent backup of R&D <prod> on S3 · No backup of R&D <prod> from the last 26 hours has been copied to S3.",
       at: since,
     })
   })
@@ -210,7 +206,6 @@ describe("a worker's health report", () => {
     const odd = { ...report, main: { ...probe, requestMs: -1, code: "x".repeat(41) } }
     const parsed = probeReport.parse(odd)
     expect(parsed.main).toEqual({ ok: true, status: 200, ms: 5 })
-    // A report of an earlier release has no request time at all.
     expect(probeReport.parse(report).main).not.toHaveProperty("requestMs")
   })
 
@@ -225,16 +220,14 @@ describe("a worker's health report", () => {
     expect(parsed.error?.issues.map((i) => i.path.join("."))).toEqual(["main.error", "workers.0.url"])
   })
 
-  // applyHealth starts by reading the instance, so a call to it shows here as that read.
   const reached = new Error("applyHealth was called")
   const fakeCtx = () => {
     const warn = vi.fn()
-    const info = vi.fn()
-    const where = vi.fn(async (): Promise<unknown[]> => {
+    const transaction = vi.fn(async (): Promise<unknown> => {
       throw reached
     })
-    const select = vi.fn(() => ({ from: () => ({ where }) }))
-    return { ctx: { log: { warn, info }, db: { select } } as unknown as Ctx, warn, info, select, where }
+    const settings = { get: async () => ({ routes: [], defaultThreadId: null }) }
+    return { ctx: { log: { warn }, db: { transaction }, settings } as unknown as Ctx, warn, transaction }
   }
   const instance = { id: "i1", name: "prod", overrides: {} } as unknown as Instance
   const payload = { check: { seq: 3, revision: 1 }, workers: ["http://w1/healthz"] }
@@ -246,26 +239,18 @@ describe("a worker's health report", () => {
   })
 
   it("is stored as parsed, without fields the worker added", async () => {
-    const { ctx, where } = fakeCtx()
-    // No instance found: nothing is applied, and what is stored is the parsed report.
-    where.mockResolvedValueOnce([])
+    const { ctx, transaction } = fakeCtx()
+    transaction.mockResolvedValueOnce(null)
     const stored = await applyWorkerReport(ctx, instance, payload, { ...report, labels: { secret: "x" } }, "w")
     expect(stored).not.toHaveProperty("labels")
     expect(stored).toMatchObject({ main: report.main })
   })
 
-  it("is not applied when its probe carries no ticket (made before this release)", async () => {
-    const { ctx, select, info } = fakeCtx()
-    await expect(applyWorkerReport(ctx, instance, {}, report, "w")).resolves.toMatchObject({ main: report.main })
-    expect(select).not.toHaveBeenCalled()
-    expect(info).toHaveBeenCalled()
-  })
-
   it("is logged and skipped when it does not fit", async () => {
-    const { ctx, warn, select } = fakeCtx()
+    const { ctx, warn, transaction } = fakeCtx()
     const broken = { ...report, main: { ok: false, status: 0, ms: 1, error: { code: 1 } } }
     await expect(applyWorkerReport(ctx, instance, payload, broken, "w")).resolves.toEqual({ invalid: true })
-    expect(select).not.toHaveBeenCalled()
+    expect(transaction).not.toHaveBeenCalled()
     expect(warn).toHaveBeenCalledWith("worker sent an invalid health report", {
       instance: "prod",
       worker: "w",

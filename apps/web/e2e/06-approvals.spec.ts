@@ -2,13 +2,10 @@ import { createServer, type Server } from "node:http"
 import { type APIRequestContext, expect, type Page, test } from "@playwright/test"
 import { design, dialogClosed, openNewToken, ownPage, randomSecret, signIn } from "./helpers.ts"
 
-// Approving access requests from Telegram and email. The server's Telegram calls go to a stand-in Bot API run
-// here (verify.sh points TELEGRAM_API_URL at this runner); email goes to Mailpit in the test stack.
 test.describe.configure({ mode: "serial" })
 
 type Call = { method: string; body: Record<string, unknown>; messageId?: number }
 const calls: Call[] = []
-/** Forum topics the stand-in answers as deleted, the way Telegram does. */
 const goneTopics = new Set<number>()
 let botApi: Server
 let page: Page
@@ -63,7 +60,6 @@ async function mcp(request: APIRequestContext, name: string, args: object) {
   return JSON.parse(body.result.content[0]?.text ?? "null")
 }
 
-/** The Telegram message that announced a request, once the server has sent it. */
 async function announcement(reason: string) {
   let found: Call | undefined
   await expect(async () => {
@@ -73,7 +69,6 @@ async function announcement(reason: string) {
   return found as Call
 }
 
-/** What Telegram would post to the webhook when someone presses a button. */
 async function press(request: APIRequestContext, data: string, fromId: number, messageId: number) {
   const res = await request.post("/api/telegram/webhook", {
     headers: { "x-telegram-bot-api-secret-token": secret },
@@ -108,12 +103,10 @@ test("Telegram and email are connected", async () => {
   await expect(page.getByText("Settings saved")).toBeVisible()
 
   await page.goto("/settings/telegram")
-  // A token made for this run; the stand-in Bot API takes any.
   await page.getByLabel("Bot token").fill(`${100000 + Math.floor(Math.random() * 900000)}:${randomSecret()}`)
   await page.getByLabel("Chat ID").fill(chatId)
   await page.getByRole("button", { name: "Save" }).click()
   await expect(page.getByText("Settings saved")).toBeVisible()
-  // Saving points the bot at this installation; the webhook secret comes with it.
   await expect(async () => {
     const hook = calls.find((c) => c.method === "setWebhook")
     expect(hook?.body.url).toBe(`${publicUrl}/api/telegram/webhook`)
@@ -179,8 +172,6 @@ test("only an approver can approve from Telegram, and the message shows the outc
   }).toPass({ timeout: 10_000 })
   expect((await mcp(request, "get_access_request", { requestId: id })).status).toBe("pending")
 
-  // Approve as messages drawn before today's have it approves nothing; the message is
-  // drawn again with today's buttons.
   const redrawn = () =>
     calls.filter((c) => c.method === "editMessageText" && c.body.message_id === messageId && c.body.reply_markup)
   for (const old of [`xa:${id}`, `xa:${id}:0`, `xa:${id}:0:f`]) {
@@ -201,7 +192,6 @@ test("only an approver can approve from Telegram, and the message shows the outc
   expect(String(edited?.body.text).startsWith("✅ <b>Access request</b>")).toBe(true)
   expect(edited?.body.reply_markup).toEqual({ inline_keyboard: [] })
 
-  // Once the agent is done, the message says so too.
   expect((await mcp(request, "release_instance_access", { requestId: id })).status).toBe("released")
   await expect(async () => {
     expect(edits().some((c) => String(c.body.text).includes("⏹ <b>Released</b> by the agent at "))).toBe(true)
@@ -230,7 +220,6 @@ test("a decision in n8n-ops updates the Telegram message too", async ({ request 
   const reason = "Compare two workflows (approved in the UI)"
   const id = await ask(request, reason)
   const messageId = (await announcement(reason)).messageId ?? 0
-  // The email link opens the request; the session is already there.
   await page.goto(`/access/${id}`)
   await page.getByRole("button", { name: "Approve" }).click()
   await expect(page.getByText("Access approved")).toBeVisible()
@@ -255,13 +244,11 @@ test("the default channels and the agent's choice decide where a request goes", 
   await page.goto("/settings/access")
   await expect(channels.getByText("Telegram", { exact: true })).toBeVisible()
   await expect(channels.getByText("Email", { exact: true })).toBeVisible()
-  // A removed channel comes back from Add, in its place.
   await channels.getByRole("button", { name: "Remove Telegram" }).click()
   await expect(channels.getByText("Telegram", { exact: true })).toHaveCount(0)
   await channels.getByRole("button", { name: "Add to Default channels" }).click()
   await page.getByRole("menuitem", { name: "Telegram" }).click()
   await expect(channels).toHaveText(/Telegram.*Email/)
-  // The last channel cannot be saved away: a request needs somewhere to go by default.
   await channels.getByRole("button", { name: "Remove Telegram" }).click()
   await channels.getByRole("button", { name: "Remove Email" }).click()
   await page.getByRole("button", { name: "Save" }).click()
@@ -276,7 +263,6 @@ test("the default channels and the agent's choice decide where a request goes", 
   }
   await page.emulateMedia({ colorScheme: null })
 
-  // Without a choice, the request goes by email only.
   const quiet = "Read the invoice workflow (default channel)"
   const quietId = await ask(request, quiet)
   await expect(async () => {
@@ -292,7 +278,6 @@ test("the default channels and the agent's choice decide where a request goes", 
   await expect(page.getByText("Sent to email.")).toBeVisible()
   expect(calls.some((c) => c.method === "sendMessage" && String(c.body.text).includes(quiet))).toBe(false)
 
-  // The person asked the agent for Telegram: it goes there, outside the default.
   const loud = "Read the invoice workflow (asked for Telegram)"
   const asked = await mcp(request, "request_instance_access", {
     instance: "e2e-n8n",
@@ -307,8 +292,6 @@ test("the default channels and the agent's choice decide where a request goes", 
     expect((await mcp(request, "get_access_request", { requestId: asked.id })).notifiedVia).toEqual(["telegram"])
   }).toPass({ timeout: 15_000 })
 
-  // A person denies them, which frees their places at once; a request the agent released before a decision would
-  // keep its place until it expired, and the specs that follow ask again with the same agent.
   for (const id of [quietId, asked.id])
     expect((await page.request.post(`/api/access/${id}/deny`, ownPage)).ok()).toBe(true)
   await page.goto("/settings/access")
@@ -327,7 +310,6 @@ test("a request for two instances is changed in Telegram, then approved as shown
   const agentAccess = (value: { enabled: boolean; scopes: string[] }) =>
     page.request.patch(`/api/instances/${other.id}`, { data: { agentAccess: value } })
   expect((await agentAccess({ enabled: true, scopes: ["workflow:list"] })).ok()).toBe(true)
-  // e2e-n8n-b was set up without Temporary access for agents; it is added for this test, as the instance page does.
   const added = { data: { add: ["agents"] } }
   const checked = await page.request.post(`/api/instances/${other.id}/setup/api`, added)
   expect(checked.ok(), await checked.text()).toBe(true)
@@ -365,7 +347,6 @@ test("a request for two instances is changed in Telegram, then approved as shown
         expect(calls.some((c) => c.method === "answerCallbackQuery" && String(c.body.text).includes(text))).toBe(true)
       }).toPass({ timeout: 10_000 })
 
-    // Edit shows a switch per instance and the lengths; e2e-n8n-b is left out, then the length is set to 30 min.
     await press(request, `xe:${id}`, Number(chatId), messageId)
     await expect.poll(() => buttons().map((b) => b.text)).toContain("✅ e2e-n8n-b")
     await press(request, `xt:${id}:1:0:0`, Number(chatId), messageId)
@@ -374,7 +355,6 @@ test("a request for two instances is changed in Telegram, then approved as shown
     await press(request, `xm:${id}:30:1`, Number(chatId), messageId)
     await expect.poll(() => String(edits().at(-1)?.body.text)).toContain("For <b>30 min</b> (asked for 15 min)")
 
-    // A press from the view before (a retried webhook) changes nothing, nor does a page loaded before the changes.
     await press(request, `xt:${id}:1:1:0`, Number(chatId), messageId)
     await answered("The request changed meanwhile")
     const stale = await page.request.post(`/api/access/${id}/approve`, { data: { revision: 0 } })
@@ -384,7 +364,6 @@ test("a request for two instances is changed in Telegram, then approved as shown
     expect(bare.status()).toBe(400)
     expect((await bare.json()).error).toBe("revision_required")
 
-    // Done brings back Approve, for the revision now shown.
     await press(request, `xv:${id}`, Number(chatId), messageId)
     await expect.poll(() => buttons().map((b) => b.callback_data)).toContain(`xa:${id}:2:g`)
     await press(request, `xa:${id}:2:g`, Number(chatId), messageId)
@@ -394,7 +373,6 @@ test("a request for two instances is changed in Telegram, then approved as shown
     const base = got.instances[0].baseUrl as string
     const call = (url: string) => fetch(url, { headers: { "X-N8N-API-KEY": got.key } })
     expect((await call(`${base}/workflows`)).status).toBe(200)
-    // The same key does not open the instance that was left out.
     const refused = await call(base.replace("/n8n/e2e-n8n/", "/n8n/e2e-n8n-b/") + "/workflows")
     expect(refused.status).toBe(403)
 
@@ -408,7 +386,6 @@ test("a request for two instances is changed in Telegram, then approved as shown
     await expect(page.getByText("e2e-n8n-b").first()).toBeVisible()
     expect((await mcp(request, "release_instance_access", { requestId: id })).status).toBe("released")
   } finally {
-    // Closed again, as the specs that follow expect.
     expect((await page.request.delete(`/api/instances/${other.id}/capabilities/agents`, ownPage)).ok()).toBe(true)
     expect((await agentAccess({ enabled: false, scopes: [] })).ok()).toBe(true)
   }
@@ -427,7 +404,6 @@ test("forum topics are set in Settings > Telegram and keep their order through D
   await page.getByLabel("Route 2 topic").fill("22")
   await expect(page.getByText("3 unsaved changes")).toBeVisible()
 
-  // A route without a condition is refused before anything is sent: it is marked and its field takes the focus.
   await page.getByRole("button", { name: "Save" }).click()
   await expect(
     page
@@ -440,12 +416,10 @@ test("forum topics are set in Settings > Telegram and keep their order through D
   await expect(refusedPicker).toHaveAccessibleDescription(/^route 2: choose an instance/)
   expect((await (await page.request.get("/api/settings/telegram")).json()).routes).toEqual([])
 
-  // Clicked as a person would to fix it, which also takes the pointer off the refusal's toast over the save bar.
   await page.getByLabel("Route 2 workflow pattern").click()
   await page.getByLabel("Route 2 workflow pattern").fill("orders|leads")
   await page.getByRole("button", { name: "Save" }).click()
   await expect(page.getByText("Settings saved")).toBeVisible()
-  // Nothing left unsaved, so the reload is not held by "Leave without saving?".
   await expect(unsaved).toHaveCount(0)
 
   await page.reload()
@@ -454,7 +428,6 @@ test("forum topics are set in Settings > Telegram and keep their order through D
   )
   await expect(page.getByLabel("Route 2 workflow pattern")).toHaveValue("orders|leads")
 
-  // A new order is a change; Discard brings the saved order back.
   await page.getByRole("button", { name: "Move route 2 up" }).click()
   await expect(page.getByLabel("Route 1 workflow pattern")).toHaveValue("orders|leads")
   await expect(page.getByText("1 unsaved change")).toBeVisible()
@@ -463,7 +436,6 @@ test("forum topics are set in Settings > Telegram and keep their order through D
     "Route 1 instance: e2e-n8n",
   )
 
-  // Editing a saved route is a change too, and a new order is saved.
   await page.getByLabel("Route 1 topic").fill("23")
   await expect(page.getByText("1 unsaved change")).toBeVisible()
   await page.getByRole("button", { name: "Move route 1 down" }).click()
@@ -489,7 +461,6 @@ test("the test message and access requests go to their topics, and to General wh
       .map((c) => c.body.message_thread_id),
   ).toEqual([12])
 
-  // The test takes the topic on screen, before it is saved.
   await page.getByLabel("Default topic").fill("13")
   const typed = sends().length
   await page.getByRole("button", { name: "Send test message" }).click()
@@ -511,13 +482,11 @@ test("the test message and access requests go to their topics, and to General wh
   expect(again?.body.message_thread_id).toBeUndefined()
   expect(String(again?.body.text)).toContain("Topic 12 was not found, so this went to General.")
 
-  // An access request whose topic is gone goes to General, and its note stays when the message shows the decision.
   goneTopics.add(34)
   const lost = "Read the topic routing of alerts (topic gone)"
   const lostId = await ask(request, lost)
   let fallback: Call | undefined
   await expect(async () => {
-    // The refused try into topic 34 is recorded too, without a message ID.
     fallback = calls.find((c) => c.method === "sendMessage" && c.messageId && String(c.body.text).includes(lost))
     expect(fallback).toBeTruthy()
   }).toPass({ timeout: 30_000 })
@@ -537,7 +506,6 @@ test("the test message and access requests go to their topics, and to General wh
   }).toPass({ timeout: 20_000 })
   goneTopics.clear()
 
-  // Back to one chat without topics for the specs that follow.
   for (let n = 2; n >= 1; n--) await page.getByRole("button", { name: `Remove route ${n}` }).click()
   await page.getByLabel("Default topic").fill("")
   await page.getByLabel("Access requests topic").fill("")
@@ -552,7 +520,6 @@ test("a new SMTP server needs the password again, so the stored one is not sent 
   const stored = async () => (await page.request.get("/api/settings/email")).json()
   try {
     expect((await put({ smtpPassword: randomSecret() })).ok()).toBe(true)
-    // A save that keeps the server keeps the stored password.
     expect((await put({ smtpHost: "mail", smtpPort: 1025 })).ok()).toBe(true)
     const refused = await put({ smtpHost: "smtp.elsewhere.example" })
     expect(refused.status()).toBe(400)
@@ -561,7 +528,6 @@ test("a new SMTP server needs the password again, so the stored one is not sent 
     await page.goto("/settings/email")
     await page.getByLabel("SMTP server").fill("smtp.elsewhere.example")
     await page.getByRole("button", { name: "Save" }).click()
-    // Found before anything is sent: the password field opens for the new value, is marked and takes the focus.
     await expect(
       page.getByText(/^SMTP password: the SMTP server, user or encryption changed\. Enter the SMTP password again/),
     ).toBeVisible()
@@ -570,15 +536,12 @@ test("a new SMTP server needs the password again, so the stored one is not sent 
     await expect(password).toHaveAttribute("aria-invalid", "true")
     expect((await stored()).smtpHost).toBe("mail")
 
-    // A new server with the password removed is allowed.
-    // Exact names: each recipient chip has a "Remove <address>" button of its own.
     await page.getByRole("button", { name: "Keep", exact: true }).click()
     await page.getByRole("button", { name: "Remove", exact: true }).click()
     await page.getByRole("button", { name: "Save" }).click()
     await expect(page.getByText("Settings saved")).toBeVisible()
     expect(await stored()).toMatchObject({ smtpHost: "smtp.elsewhere.example", smtpPasswordSet: false })
   } finally {
-    // Later specs send email through the test stack's mail server.
     expect((await put({ smtpHost: "mail", smtpPort: 1025, smtpPassword: null })).ok()).toBe(true)
   }
 })

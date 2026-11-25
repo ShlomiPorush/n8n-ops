@@ -1,19 +1,10 @@
 import { randomBytes } from "node:crypto"
-import { afterEach, describe, expect, it, vi } from "vitest"
+import postgres from "postgres"
+import { describe, expect, it } from "vitest"
 import type { Ctx } from "../context.ts"
-import {
-  archiveParts,
-  CONNECTION_HIDDEN,
-  cleanFailure,
-  connectionSecrets,
-  dumpFailure,
-  NoDestinationError,
-  recordSelfFailure,
-  runSelfBackup,
-} from "./backups.ts"
+import { archiveParts, dumpConnection, dumpFailure, NoDestinationError, runSelfBackup } from "./backups.ts"
 import { checkKey } from "./destinations/store.ts"
 
-/** A value made for the test, never a working credential. */
 const made = (bytes = 12) => randomBytes(bytes).toString("hex")
 
 describe("archiveParts", () => {
@@ -47,143 +38,39 @@ describe("archiveParts", () => {
   })
 })
 
-describe("connectionSecrets", () => {
-  it("knows the password as written, as the URL standard writes it and decoded", () => {
-    const [a, b] = [made(), made()]
-    const { passwords, atInPassword } = connectionSecrets(`postgres://u:${a}%2F ${b}@db:5432/n8n_ops`)
-    expect(passwords).toEqual(expect.arrayContaining([`${a}%2F ${b}`, `${a}%2F%20${b}`, `${a}/ ${b}`]))
-    expect(atInPassword).toBe(false)
+describe("dumpConnection", () => {
+  it("takes the password out of the URL and leaves the rest as it is", () => {
+    const password = made(24)
+    expect(
+      dumpConnection(`postgres://n8n_ops:${password}@db:5432/n8n_ops?sslmode=require&application_name=a:b@c`),
+    ).toEqual({ url: "postgres://n8n_ops@db:5432/n8n_ops?sslmode=require&application_name=a:b@c", password })
   })
 
-  it("knows a password parameter with blanks and a broken escape, as written and without the blanks", () => {
-    const [p, x, y] = [made(), made(), made()]
-    const { passwords } = connectionSecrets(`postgres://u:${p}@db/n8n_ops?sslmode=require&password=${x}\t${y}%GG`)
-    expect(passwords).toEqual(expect.arrayContaining([p, `${x}\t${y}%GG`, `${x}${y}%GG`]))
-    expect(passwords.some((s) => s.includes("require"))).toBe(false)
-  })
+  it.each(["@", "#", ":", "%40", "%2F", "%3A", " ", "@h#", "@h:1#x@y"])(
+    "gives the password postgres.js connects with, and no part of it in the URL, when %j is in it",
+    async (mark) => {
+      const [a, b] = [made(), made()]
+      const given = `postgres://n8n_ops:${a}${mark}${b}@db:5432/n8n_ops`
+      const { url, password } = dumpConnection(given)
+      const library = postgres(given)
+      expect(password).toBe(library.options.pass)
+      await library.end()
+      expect(password).toBe(decodeURIComponent(`${a}${mark}${b}`))
+      expect(url).toBe("postgres://n8n_ops@db:5432/n8n_ops")
+    },
+  )
 
-  it("knows password parameters after '#' and those with another name or blanks around the name", () => {
-    const [p, q, s] = [made(), made(), made()]
-    const { passwords } = connectionSecrets(`postgres://u:${p}@db/n8n_ops#?password=${q}& sslpassword =${s}`)
-    expect(passwords).toEqual(expect.arrayContaining([p, q, s]))
-  })
-
-  it("tells when the password holds an '@' as written, and not when it is written as %40", () => {
-    const [a, b] = [made(), made()]
-    expect(connectionSecrets(`postgres://u:${a}@${b}@db/n8n_ops`).atInPassword).toBe(true)
-    expect(connectionSecrets(`postgres://u:${a}%40${b}@db/n8n_ops`).atInPassword).toBe(false)
-  })
-
-  it("has nothing to hide when the URL holds no password", () => {
-    expect(connectionSecrets("postgres://u@db/n8n_ops")).toEqual({
-      url: "postgres://u@db/n8n_ops",
-      passwords: [],
-      atInPassword: false,
+  it("leaves out the fragment, which the server ignores", () => {
+    const [password, other] = [made(), made()]
+    expect(dumpConnection(`postgres://u:${password}@db:5432/n8n_ops#?password=${other}`)).toEqual({
+      url: "postgres://u@db:5432/n8n_ops",
+      password,
     })
   })
-})
 
-describe("cleanFailure", () => {
-  const password = `${made(24)}%2F${made(12)}`
-  const decoded = decodeURIComponent(password)
-  const url = `postgres://n8n_ops:${password}@db:5432/n8n_ops`
-  const connection = connectionSecrets(url)
-
-  it("keeps an ordinary pg_dump report as it is", () => {
-    const text = `pg_dump ended with exit code 1.\npg_dump: error: connection to server at "db" (10.1.2.3), port 5432 failed: FATAL:  password authentication failed for user "n8n_ops"`
-    expect(cleanFailure(text, connection)).toBe(text)
-  })
-
-  it("names the URL instead of showing it", () => {
-    expect(cleanFailure(`could not use ${url} now`, connection)).toBe("could not use [database URL] now")
-  })
-
-  it("hides the whole text when it shows the password decoded", () => {
-    expect(cleanFailure(`for user "${decoded}"`, connection)).toBe(CONNECTION_HIDDEN)
-  })
-
-  it("hides the whole text when it shows the password as written", () => {
-    expect(cleanFailure(`token "${password}"`, connection)).toBe(CONNECTION_HIDDEN)
-  })
-
-  it("hides the whole text when it shows the first 63 characters of the password", () => {
-    expect(cleanFailure(`for user "${decoded.slice(0, 63)}"`, connection)).toBe(CONNECTION_HIDDEN)
-  })
-
-  it("hides the whole text when it shows a password as written with a blank", () => {
-    const written = `${made()}%2F ${made()}`
-    const blank = connectionSecrets(`postgres://u:${written}@db/n8n_ops`)
-    expect(cleanFailure(`invalid percent-encoded token: "${written}"`, blank)).toBe(CONNECTION_HIDDEN)
-  })
-
-  it("hides the whole text when it shows a password parameter quoted as written", () => {
-    const value = `${made()}\t${made()}%GG`
-    const query = connectionSecrets(`postgres://u:${made()}@db/n8n_ops?password=${value}`)
-    expect(cleanFailure(`invalid percent-encoded token: "${value}"`, query)).toBe(CONNECTION_HIDDEN)
-  })
-
-  it("hides every failure text when the password holds an '@' as written", () => {
-    const at = connectionSecrets(`postgres://u:${made()}@${made()}@db/n8n_ops`)
-    expect(cleanFailure("The archive has 3 MiB, more than the 2 MiB allowed.", at)).toBe(CONNECTION_HIDDEN)
-  })
-
-  it("keeps an ordinary text when the password holds an '@' written as %40", () => {
-    const escaped = connectionSecrets(`postgres://u:${made()}%40${made()}@db/n8n_ops`)
-    const text = "The archive has 3 MiB, more than the 2 MiB allowed."
-    expect(cleanFailure(text, escaped)).toBe(text)
-  })
-})
-
-describe("cleanFailure, one form of the password at a time", () => {
-  /** Three hex characters per piece, so no 8 characters of one form are found in another. */
-  const pieces = () => Array.from({ length: 6 }, () => made(2).slice(0, 3))
-  const kept = "pg_dump got no output."
-
-  it("hides the form the URL standard writes when only that form shows", () => {
-    const parts = pieces()
-    const written = parts.join(" ")
-    const connection = connectionSecrets(`postgres://u:${written}@db/n8n_ops`)
-    expect(cleanFailure(`"${parts.join("%20")}"`, connection)).toBe(CONNECTION_HIDDEN)
-    expect(cleanFailure(kept, connection)).toBe(kept)
-  })
-
-  it("hides the form without blanks when only that form shows", () => {
-    const parts = pieces()
-    const connection = connectionSecrets(`postgres://u:${parts.join(" ")}@db/n8n_ops`)
-    expect(cleanFailure(`"${parts.join("")}"`, connection)).toBe(CONNECTION_HIDDEN)
-  })
-
-  it("hides a password parameter after '#' when only it shows", () => {
-    const value = made()
-    const connection = connectionSecrets(`postgres://u:${made()}@db/n8n_ops#?password=${value}`)
-    expect(cleanFailure(`"${value}"`, connection)).toBe(CONNECTION_HIDDEN)
-  })
-
-  it("hides an sslpassword parameter when only it shows", () => {
-    const value = made()
-    const connection = connectionSecrets(`postgres://u:${made()}@db/n8n_ops?sslpassword=${value}`)
-    expect(cleanFailure(`"${value}"`, connection)).toBe(CONNECTION_HIDDEN)
-  })
-
-  it("hides any 8 characters of the password, the last ones too, and keeps 7", () => {
-    const password = made(24)
-    const connection = connectionSecrets(`postgres://u:${password}@db/n8n_ops`)
-    expect(cleanFailure(`"${password.slice(20, 28)}"`, connection)).toBe(CONNECTION_HIDDEN)
-    expect(cleanFailure(`"${password.slice(-8)}"`, connection)).toBe(CONNECTION_HIDDEN)
-    expect(cleanFailure(`"${password.slice(-7)}"`, connection)).toBe(`"${password.slice(-7)}"`)
-  })
-
-  it("hides a password shorter than 8 characters wherever it shows", () => {
-    const short = made(2).slice(0, 3)
-    const connection = connectionSecrets(`postgres://u:${short}@db/n8n_ops`)
-    expect(cleanFailure(`for "${short}"`, connection)).toBe(CONNECTION_HIDDEN)
-    expect(cleanFailure(kept, connection)).toBe(kept)
-  })
-
-  it("takes an empty password parameter as nothing to hide", () => {
-    const connection = connectionSecrets(`postgres://u:${made()}@db/n8n_ops?password=&sslmode=require`)
-    expect(connection.passwords).not.toContain("")
-    expect(cleanFailure(kept, connection)).toBe(kept)
+  it("finds none in a URL without one", () => {
+    const url = "postgres://u@db:5432/n8n_ops?application_name=http://a:b@c"
+    expect(dumpConnection(url)).toEqual({ url, password: "" })
   })
 })
 
@@ -211,50 +98,8 @@ describe("dumpFailure", () => {
   })
 })
 
-describe("recording a failed backup of the n8n-ops database", () => {
-  const password = made(24)
-  const connection = connectionSecrets(`postgres://u:${password}@db/n8n_ops`)
-
-  afterEach(() => {
-    vi.unstubAllEnvs()
-  })
-
-  it("logs only a cleaned text when the failure cannot be recorded, and does not throw", async () => {
-    const errors: { message: string; extra?: Record<string, unknown> }[] = []
-    const ctx = {
-      log: {
-        info: () => {},
-        warn: () => {},
-        error: (message: string, extra?: Record<string, unknown>) => errors.push({ message, extra }),
-      },
-    } as unknown as Ctx
-    const record = async () => {
-      throw new Error(`password authentication failed for user "${password}"`, { cause: new Error(password) })
-    }
-    await expect(recordSelfFailure(ctx, "run", "pg_dump ended with exit code 1.", connection, record)).resolves.toBe(
-      undefined,
-    )
-    expect(errors).toEqual([{ message: "could not record the failed backup", extra: { error: CONNECTION_HIDDEN } }])
-  })
-
-  it("cleans an error raised before the run is recorded", async () => {
-    const own = made(24)
-    vi.stubEnv("DATABASE_URL", `postgres://u:${own}@db/n8n_ops`)
-    const ctx = {
-      settings: {
-        get: async () => {
-          throw new Error(`password authentication failed for user "${own}"`)
-        },
-      },
-    } as unknown as Ctx
-    const error = await runSelfBackup(ctx).catch((e: unknown) => e)
-    expect(error).toBeInstanceOf(Error)
-    expect((error as Error).message).toBe(CONNECTION_HIDDEN)
-    expect((error as Error).cause).toBeUndefined()
-  })
-
+describe("a backup of the n8n-ops database", () => {
   it("passes on that no destination is chosen as it is", async () => {
-    vi.stubEnv("DATABASE_URL", `postgres://u:${made()}@db/n8n_ops`)
     const ctx = {
       settings: { get: async () => ({ selfDestinations: "custom", selfDestinationIds: [] }) },
     } as unknown as Ctx

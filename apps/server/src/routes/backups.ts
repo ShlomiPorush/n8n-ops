@@ -13,7 +13,6 @@ import {
   archivedWorkflow,
   checkRestore,
   confirmRestore,
-  dropReview,
   getRestore,
   inspectArchive,
   previewRestore,
@@ -27,14 +26,12 @@ const keySchema = z
   .trim()
   .regex(/^AGE-SECRET-KEY-1[0-9A-Z]+$/, KEY_WANTED)
 
-/** A refused body, with the private key named in words when it is what is wrong. */
 const refused = (issues: { path: PropertyKey[] }[]) => ({
   error: "invalid",
   ...(issues.some((i) => i.path[0] === "privateKey") ? { message: KEY_WANTED } : {}),
   issues,
 })
 
-/** Runs that hold an archive: every copy written (ok) or some of them (partial). */
 const withArchive = inArray(backupRuns.status, ["ok", "partial"])
 
 export function backupRoutes(ctx: Ctx) {
@@ -69,7 +66,6 @@ export function backupRoutes(ctx: Ctx) {
           destinations: (await destinationsFor(ctx, i)).map(brief),
           backupTime: s.backupTime,
           staleBackupHours: s.staleBackupHours,
-          // What the instance was chosen for: pages pick only instances that may back up or take a restore.
           backup: can(i, "backup"),
           restore: can(i, "restore"),
           backupVia: i.backupVia,
@@ -117,7 +113,6 @@ export function backupRoutes(ctx: Ctx) {
       }
       const [instance] = await ctx.db.select().from(instances).where(eq(instances.id, id))
       if (!instance) return c.json({ error: "not_found" }, 404)
-      // Decided again when the run is made, with the row locked: it may be turned off in between.
       const run = can(instance, "backup") ? await startBackup(ctx, instance, "manual") : null
       if (!run)
         return c.json(
@@ -135,15 +130,9 @@ export function backupRoutes(ctx: Ctx) {
     }
   })
 
-  // --- Archives and restores (requirement D6). The key comes with each request that reads the archive.
-
-  /** A refused restore call, with a status that says why. */
   const failed = (c: Context<Env>, error: unknown) => {
     if (error instanceof RestoreError)
-      return c.json(
-        { error: error.code, message: error.message },
-        error.code === "not_found" ? 404 : error.code === "changed" ? 409 : 400,
-      )
+      return c.json({ error: error.code, message: error.message }, error.code === "not_found" ? 404 : 400)
     if (error instanceof NoApiKey) return c.json({ error: "invalid", message: error.message }, 400)
     throw error
   }
@@ -151,8 +140,6 @@ export function backupRoutes(ctx: Ctx) {
     schema.safeParse(await c.req.json().catch(() => ({})))
   const uuid = z.string().uuid()
 
-  // A backup run's archive (`/runs/:runId/...`) and the Version before replace a restore kept
-  // (`/versions/:restoreId/...`) open, read and restore the same way.
   const sources = [
     { prefix: "runs", param: "runId", source: (id: string): ArchiveSource => ({ runId: id }) },
     { prefix: "versions", param: "restoreId", source: (id: string): ArchiveSource => ({ versionOf: id }) },
@@ -242,11 +229,6 @@ export function backupRoutes(ctx: Ctx) {
     if (!uuid.safeParse(c.req.param("id")).success) return c.json({ error: "not_found" }, 404)
     const found = await getRestore(ctx, c.req.param("id"))
     return found ? c.json(found) : c.json({ error: "not_found" }, 404)
-  })
-
-  app.delete("/restores/:id", async (c) => {
-    if (uuid.safeParse(c.req.param("id")).success) await dropReview(ctx, c.req.param("id"))
-    return c.json({ ok: true })
   })
 
   app.get("/:instanceId/restores", async (c) => {

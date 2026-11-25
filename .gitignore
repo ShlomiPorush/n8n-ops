@@ -11,7 +11,7 @@ n8n-discovery-*.txt
 *.env
 !*.env.example
 
-# Machine-local development stack, and the copy scripts/local.sh migrate keeps
+# Machine-local development stack, and copies kept beside it
 /docker-compose-dev.yml
 /docker-compose-dev.yml.*
 

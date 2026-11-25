@@ -15,9 +15,6 @@ import { restRoutes } from "../routes/agent.ts"
 import { getAccess, grantForKey, logCall, refuseChange, releaseAccess, reserveChange, revokeAccess } from "./access.ts"
 import { closeTelegramMessages } from "./access-notify.ts"
 
-// Releasing temporary access with what the agent did, and the calls it made, against a real PostgreSQL: the summary
-// is kept only by the release that ends the access, every call is counted with the call, and the Telegram message
-// is shown as up to date only while it shows every call.
 const adminUrl = process.env.MIGRATION_DATABASE_URL
 if (!adminUrl) throw new Error("MIGRATION_DATABASE_URL is required (scripts/verify.sh sets it)")
 
@@ -29,7 +26,6 @@ const open: Database[] = []
 let ctx: Ctx
 let tokenId: string
 let instanceId: string
-/** The REST token of the agent, made for this run. */
 const secret = `nops_r_${randomBytes(24).toString("hex")}`
 
 async function freshDatabase(migrations = folder) {
@@ -44,7 +40,6 @@ async function freshDatabase(migrations = folder) {
   return database
 }
 
-/** The migrations up to and including `tag`. */
 function migrationsUpTo(tag: string) {
   const dir = mkdtempSync(join(scratch, "m-"))
   cpSync(folder, dir, { recursive: true })
@@ -54,7 +49,6 @@ function migrationsUpTo(tag: string) {
   return dir
 }
 
-/** A stand-in Bot API that keeps the edits, and can hold the next one until released. */
 const edits: string[] = []
 let editGate: Promise<void> | null = null
 const fetchStub = async (url: string | URL, init?: RequestInit) => {
@@ -104,7 +98,6 @@ beforeAll(async () => {
 beforeEach(async () => {
   edits.length = 0
   vi.stubGlobal("fetch", fetchStub)
-  // The messages of earlier tests count as shown, so a run edits only the message of the test.
   await ctx.db.update(accessRequests).set({ telegramClosedAt: new Date() })
   return () => vi.unstubAllGlobals()
 })
@@ -116,7 +109,6 @@ afterAll(async () => {
   rmSync(scratch, { recursive: true, force: true })
 })
 
-/** Access approved a minute ago for 30 minutes, with a Telegram message, and the key that opens it. */
 async function approved() {
   const key = `nops_n8n_${randomBytes(16).toString("hex")}`
   const now = Date.now()
@@ -219,7 +211,6 @@ describe("releasing access with a summary", () => {
     expect((await release(said.id, JSON.stringify({ summary: "Fixed the node" }))).status).toBe(200)
     expect(await stored(said.id)).toMatchObject({ status: "released", summary: "Fixed the node" })
 
-    // A body that is not JSON, not an object, or a summary that is not text is refused, and the access stays.
     const wrong = await approved()
     for (const body of ["{not json", "[]", "null", JSON.stringify({ summary: 5 })]) {
       const res = await release(wrong.id, body)
@@ -255,7 +246,6 @@ describe("calls made with the access", () => {
     })
     let row = await stored(id)
     expect(row.callCount).toBe(2)
-    // While the access works, a call does not touch its message: it shows no calls yet.
     expect(row.telegramClosedAt).not.toBeNull()
 
     await releaseAccess(ctx, tokenId, id, "Read the workflow")
@@ -265,7 +255,6 @@ describe("calls made with the access", () => {
     )
     expect((await stored(id)).telegramClosedAt).not.toBeNull()
 
-    // A call that started before the release and ends after it.
     await logCall(ctx, id, { instanceId, method: "GET", path: "/workflows/w1", status: 200 })
     row = await stored(id)
     expect(row.callCount).toBe(3)
@@ -283,7 +272,6 @@ describe("calls made with the access", () => {
       release = resolve
     })
     const closing = closeTelegramMessages(ctx)
-    // The edit is on its way with no calls; one is logged before it lands.
     await vi.waitFor(() => expect(editGate).toBeNull())
     await logCall(ctx, id, { instanceId, method: "GET", path: "/workflows", status: 200 })
     release()
@@ -298,7 +286,6 @@ describe("calls made with the access", () => {
   it("refused after they were recorded while the message is being edited leave it to be edited again", async () => {
     const { id } = await approved()
     await releaseAccess(ctx, tokenId, id)
-    // A change recorded before it is sent, then refused before it was sent: the call count stays, the refused one not.
     const change = await reserveChange(ctx, id, { instanceId, method: "PUT", path: "/workflows/w1" })
     if (!change) throw new Error("not recorded")
     let release = () => {}
@@ -320,7 +307,6 @@ describe("calls made with the access", () => {
 
   it("are all counted on the request page, and the latest listed", async () => {
     const { id } = await approved()
-    // Each call tells open pages that the request changed, also one that ends after the access did.
     const topics: string[][] = []
     const listen = (t: string[]) => topics.push(t)
     ctx.events.on("change", listen)
@@ -353,7 +339,6 @@ describe("calls made with the access", () => {
       .insert(instances)
       .values({ name: "old-n8n", baseUrl: "http://n8n:5678", apiKeyEnc: "x" })
       .returning()
-    // Columns the old schema had only; the new ones do not exist yet.
     const insert = async (calls: number) => {
       const result = await database.db.execute<{ id: string }>(sql`
         INSERT INTO access_requests (token_id, instance_id, reason, scopes, minutes, decide_by)

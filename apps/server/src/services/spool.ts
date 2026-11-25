@@ -6,75 +6,41 @@ import { Readable, Transform } from "node:stream"
 import { pipeline } from "node:stream/promises"
 import type { Ctx } from "../context.ts"
 
-/**
- * Encrypted archives wait here, under the server's data directory, until every destination has its copy.
- * Space is reserved before a write starts, so two archives arriving together cannot both take the last of it.
- */
 export const KEEP_FREE = 1024 ** 3
-export const MAX_UPLOADS = 4
-export const UPLOAD_SLOT_WAIT_MS = 4 * 60_000
 
 export const spoolDir = (ctx: Pick<Ctx, "appKeyPath">) => join(dirname(ctx.appKeyPath), "spool")
 export const spoolFile = (dir: string, runId: string) => join(dir, `${runId}.age`)
 
 export class SpoolError extends Error {}
 
-type Budget = { reserved: number; uploads: number }
-const budgets = new Map<string, Budget>()
+const reserved = new Map<string, number>()
 
 async function freeSpace(dir: string) {
   const fs = await statfs(dir)
   return fs.bavail * fs.bsize
 }
 
-/** Holds room for an archive of this size; release it when the write ends, whatever the outcome. */
 export async function reserve(
   dir: string,
   size: number,
-  {
-    upload = false,
-    free: measure = freeSpace,
-    waitMs = UPLOAD_SLOT_WAIT_MS,
-  }: { upload?: boolean; free?: (dir: string) => Promise<number>; waitMs?: number } = {},
+  { free: measure = freeSpace }: { free?: (dir: string) => Promise<number> } = {},
 ) {
   await mkdir(dir, { recursive: true })
-  const budget = budgets.get(dir) ?? { reserved: 0, uploads: 0 }
-  budgets.set(dir, budget)
-  // Many instances back up at the same time of night: an upload waits its turn rather than fail.
-  const until = Date.now() + waitMs
-  for (;;) {
-    const free = await measure(dir)
-    if (upload && budget.uploads >= MAX_UPLOADS) {
-      if (Date.now() >= until)
-        throw new SpoolError(`${MAX_UPLOADS} archives were being received for too long; the next backup tries again.`)
-      await new Promise((r) => setTimeout(r, 1_000))
-      continue
-    }
-    return take(budget, free, size, upload)
-  }
-}
-
-function take(budget: Budget, free: number, size: number, upload: boolean) {
-  // Checked and taken without an await in between, so concurrent callers see each other's reservations.
-  if (free - budget.reserved - size < KEEP_FREE)
+  const free = await measure(dir)
+  const held = reserved.get(dir) ?? 0
+  if (free - held - size < KEEP_FREE)
     throw new SpoolError(
       `Not enough free space in the data directory for a ${Math.ceil(size / 1024 ** 2)} MiB archive (1 GiB is always kept free).`,
     )
-  budget.reserved += size
-  if (upload) budget.uploads += 1
+  reserved.set(dir, held + size)
   let released = false
   return () => {
     if (released) return
     released = true
-    budget.reserved -= size
-    if (upload) budget.uploads -= 1
+    reserved.set(dir, (reserved.get(dir) ?? 0) - size)
   }
 }
 
-/**
- * Writes an archive to the spool through a temporary name, counting bytes and computing SHA-256 on the way.
- * More bytes than `limit` end the write. Returns the size and checksum of what was written.
- */
 export async function writeSpool(
   dir: string,
   runId: string,
@@ -116,7 +82,6 @@ export async function removeSpool(dir: string, runId: string) {
   await rm(`${spoolFile(dir, runId)}.part`, { force: true })
 }
 
-/** Run IDs that have a file in the spool, complete or not. */
 export async function spooledRuns(dir: string) {
   const names = await readdir(dir).catch(() => [] as string[])
   return [...new Set(names.filter((n) => /\.age(\.part)?$/.test(n)).map((n) => n.replace(/\.age(\.part)?$/, "")))]

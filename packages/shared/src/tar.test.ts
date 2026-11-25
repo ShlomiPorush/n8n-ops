@@ -17,10 +17,6 @@ import(workerData.url).then(
   (error) => parentPort.postMessage({ importFailed: String(error) }),
 )`
 
-/**
- * Runs readTar in a worker thread and stops it after a deadline, so a parse that does not end fails the test
- * instead of stalling the run. The deadline starts once the module is loaded.
- */
 async function parseInWorker(archive: Uint8Array): Promise<Outcome> {
   const url = new URL("./tar.ts", import.meta.url).href
   const worker = new Worker(PARSER, {
@@ -49,7 +45,6 @@ async function parseInWorker(archive: Uint8Array): Promise<Outcome> {
   }
 }
 
-/** A one-entry archive whose 12-byte size field holds `field` (padded with NUL) and whose type byte is `type`. */
 const withSize = (field: string, type = "0") => {
   const archive = createTar([textEntry("workflows/a.json", "{}")])
   archive.fill(0, 124, 136)
@@ -68,7 +63,6 @@ const concat = (...parts: Uint8Array[]) => {
   return out
 }
 
-/** A GNU "././@LongLink" entry (type L) as GNU tar writes it before a file whose name is too long. */
 const longLink = (text: string) => {
   const data = new TextEncoder().encode(text)
   const header = new Uint8Array(512)

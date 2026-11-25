@@ -1,7 +1,4 @@
 #!/usr/bin/env bash
-# Tests for scripts/release.sh: real git against a local bare remote, with docker and gh replaced by
-# stand-ins that keep the registry and the GitHub Releases in files and fail on request. Covers a
-# release, each way a run can stop halfway, and the run after it. Run by scripts/verify.sh (guards).
 set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -24,12 +21,9 @@ check() {
   fi
 }
 
-# --- stand-ins -------------------------------------------------------------------------------
-
 mkdir -p "$WORK/bin"
 cat >"$WORK/bin/docker" <<'EOF'
 #!/usr/bin/env bash
-# Registry stand-in: one file per image tag, holding the commit it was built from.
 key() { printf '%s' "$1" | tr '/:' '__'; }
 echo "docker $*" >>"$STATE/calls"
 [ "$1" = info ] && exit 0
@@ -39,7 +33,6 @@ if [ "$1 $2" = "imagetools inspect" ]; then
   [ -n "${MOCK_REGISTRY_DOWN:-}" ] && { echo "ERROR: unauthorized: authentication required" >&2; exit 1; }
   f="$STATE/images/$(key "$3")"
   [ -f "$f" ] || { echo "ERROR: $3: not found" >&2; exit 1; }
-  # Indented, as docker prints it.
   printf '{\n  "architecture": "amd64",\n  "config": {\n    "Labels": {\n      "org.opencontainers.image.revision": "%s"\n    }\n  }\n}\n' "$(cat "$f")"
   exit 0
 fi
@@ -60,7 +53,6 @@ if [ "$1" = build ]; then
   done
   case "$ref" in *"${MOCK_FAIL_BUILD:-no-such-image}"*) echo "push failed" >&2; exit 1 ;; esac
   printf '%s' "$rev" >"$STATE/images/$(key "$ref")"
-  # The build arguments each image got, for the cases that check how the version goes in.
   printf '%s' "$args" >"$STATE/buildargs/$(key "$ref")"
   exit 0
 fi
@@ -69,7 +61,6 @@ exit 2
 EOF
 cat >"$WORK/bin/gh" <<'EOF'
 #!/usr/bin/env bash
-# GitHub Releases stand-in: one file per release, holding its title and notes.
 echo "gh $*" >>"$STATE/calls"
 [ "$1" = release ] || exit 2
 case "$2" in
@@ -99,9 +90,6 @@ exit 2
 EOF
 chmod +x "$WORK/bin/docker" "$WORK/bin/gh"
 
-# --- sandbox ---------------------------------------------------------------------------------
-
-# A fresh origin with one commit on main and a fresh registry and Releases; prints nothing.
 sandbox() {
   rm -rf "$WORK/case"
   mkdir -p "$WORK/case/images" "$WORK/case/releases" "$WORK/case/buildargs"
@@ -114,13 +102,8 @@ sandbox() {
   cp "$REPO/scripts/lib/common.sh" "$seed/scripts/lib/"
   : >"$seed/docker/server.Dockerfile"
   : >"$seed/docker/worker.Dockerfile"
-  if [ "${OLD_LAYOUT:-}" = 1 ]; then
-    # Before VERSION existed: the version in package.json.
-    printf '{\n  "name": "n8n-ops",\n  "version": "0.0.0",\n  "private": true\n}\n' >"$seed/package.json"
-  else
-    printf '{\n  "name": "n8n-ops",\n  "private": true\n}\n' >"$seed/package.json"
-    printf '0.0.0\n' >"$seed/VERSION"
-  fi
+  printf '{\n  "name": "n8n-ops",\n  "private": true\n}\n' >"$seed/package.json"
+  printf '0.0.0\n' >"$seed/VERSION"
   printf '# Changelog\n\n## [Unreleased]\n\n### Added\n\n- The first feature.\n' >"$seed/CHANGELOG.md"
   git -C "$seed" add -A
   git -C "$seed" commit --quiet -m "Initial"
@@ -128,7 +111,6 @@ sandbox() {
   git -C "$seed" push --quiet origin main
 }
 
-# A new checkout of origin's main, as each workflow run makes; prints its path.
 checkout() {
   local dir
   dir="$(mktemp -d "$WORK/case/run.XXXX")"
@@ -138,7 +120,6 @@ checkout() {
 
 origin_head() { git -C "$WORK/case/origin.git" rev-parse main; }
 
-# Runs a release in a new checkout, verified at origin's current main unless EXPECT is set.
 release() {
   local dir
   dir="$(checkout)"
@@ -161,8 +142,6 @@ complete() {
     [ "$(image_rev n8n-ops_latest)" = "$rev" ] && [ "$(image_rev n8n-ops-worker_latest)" = "$rev" ] &&
     has_release "v$1"
 }
-
-# --- cases -----------------------------------------------------------------------------------
 
 sandbox
 release
@@ -256,23 +235,6 @@ MOCK_GH_DOWN=1 release
 check "GitHub that cannot be read stops the run" [ $? -ne 0 ]
 check "  and starts no new version" lacks_tag v0.2.0
 
-# A release tagged before VERSION existed, left unfinished with one image published, then VERSION added on main.
-OLD_LAYOUT=1 sandbox
-dir="$(checkout)"
-sed -i 's/"version": "0.0.0"/"version": "0.1.0"/' "$dir/package.json"
-sed -i 's/^## \[Unreleased\]$/## [Unreleased]\n\n## [0.1.0] - 2026-01-01/' "$dir/CHANGELOG.md"
-git -C "$dir" commit --quiet -am "Release v0.1.0" && git -C "$dir" tag -a v0.1.0 -m v0.1.0
-git -C "$dir" push --quiet --atomic origin main refs/tags/v0.1.0
-printf '%s' "$(tag_rev v0.1.0)" >"$STATE/images/ghcr.io_shlomiporush_n8n-ops_0.1.0"
-sed -i '/"version"/d' "$dir/package.json" && printf '0.1.0\n' >"$dir/VERSION"
-git -C "$dir" add -A && git -C "$dir" commit --quiet -m "Keep the version in VERSION" && git -C "$dir" push --quiet origin main
-release
-check "an unfinished release tagged before VERSION existed is finished" complete 0.1.0
-check "  with its version from package.json at the tag" said "v0.1.0 was not finished"
-check "  building the missing image the way that tag was made" \
-  [ "$(cat "$STATE/buildargs/ghcr.io_shlomiporush_n8n-ops-worker_0.1.0")" = " VERSION=0.1.0" ]
-check "  and not the image already published" [ "$(grep -c "buildx build.*n8n-ops:0.1.0" "$STATE/calls")" = 0 ]
-
 for bad in "1.2" "v1.2.3" "1.2.3 1.2.4" "$(printf '1.2.3\n1.2.4')"; do
   sandbox
   dir="$(checkout)"
@@ -292,7 +254,6 @@ release
 check "an empty Unreleased section stops the run" [ $? -ne 0 ]
 check "  with a clear reason" said "no entries under \[Unreleased\]"
 
-# release_notes on its own.
 # shellcheck source=scripts/release.sh
 source "$REPO/scripts/release.sh"
 set +e

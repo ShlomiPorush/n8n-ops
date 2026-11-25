@@ -44,16 +44,13 @@ export type Worker = {
   createdAt: string
   online: boolean
   instances: { id: string; name: string }[]
-  /** As entered in Add worker; null for a worker added before n8n-ops recorded it. */
   install: { socketProxy: boolean; containers: string[] } | null
-  /** The containers its socket proxy allows now, as the owner recorded them. */
   allowed: { containers: string[] } | null
   proxy: WorkerRule & { refused: { instance: string; refused: string[] }[]; update: string | null }
 }
 
 export function WorkersPage() {
   const workers = useApi<Worker[]>("/workers", { refetchInterval: 10_000 })
-  // A failed refresh keeps the workers; the head says so (TB-5, LD-12).
   const view = loadView(workers)
   const [open, setOpen] = useState(false)
   const confirm = useConfirm()
@@ -87,7 +84,6 @@ export function WorkersPage() {
         </Button>
       }
     >
-      {/* Regular sets each worker on a card of its own (#29); Compact lists them in one panel. */}
       <Panel className="regular:grid regular:gap-3 regular:overflow-visible regular:rounded-none regular:bg-transparent regular:shadow-none regular:ring-0">
         <PanelHead
           title="Paired Workers"
@@ -159,11 +155,6 @@ export function WorkersPage() {
   )
 }
 
-/**
- * A worker's Health and Settings, each behind its own toggle: its health over a range (components/worker-health.tsx),
- * and its settings as entered, as recorded now, and the lines its socket proxy needs. Settings opens by itself when
- * the socket proxy refuses something.
- */
 function WorkerToggles({ worker: w }: { worker: Worker }) {
   const refused = w.proxy.refused.length > 0
   const [health, setHealth] = useState(false)
@@ -185,7 +176,6 @@ function WorkerToggles({ worker: w }: { worker: Worker }) {
   )
 }
 
-/** A worker's settings: as entered, as recorded now, and the lines its socket proxy needs. */
 function WorkerSettings({ worker: w }: { worker: Worker }) {
   const entered = w.install
     ? w.install.socketProxy
@@ -212,7 +202,7 @@ function WorkerSettings({ worker: w }: { worker: Worker }) {
       ) : (
         <div className="grid min-w-0 gap-2">
           <p className="font-semibold">What its socket proxy needs now</p>
-          <RuleLines rule={w.proxy.rule} workerId={w.id} recorded={w.proxy.recorded} />
+          <RuleLines rule={w.proxy.rule} workerId={w.id} recorded={w.proxy.recorded} refresh={[]} />
         </div>
       )}
       {w.proxy.update && (
@@ -252,7 +242,6 @@ export function AddWorkerDialog({ open, onOpenChange }: { open: boolean; onOpenC
     { failed: (b) => `create a pairing token for ${b.name}` },
   )
   const containerList = containers.split(/[\s,]+/).filter(Boolean)
-  // Until the pairing token is made, anything typed or changed is asked about before it is dropped (DS-9).
   const dirty = !result && (name.trim() !== "" || containers.trim() !== "" || !socketProxy)
   const guard = useDiscardGuard(dirty, () => {
     onOpenChange(false)

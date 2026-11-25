@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { attachSheetGestures } from "./dialog.tsx"
 
-/** Just enough of a sheet panel: its listeners, inline style, height and attributes. */
 function fakePanel() {
   const listeners = new Map<string, (e: unknown) => void>()
   const attrs = new Set<string>()
@@ -20,9 +19,7 @@ function fakePanel() {
   return { panel: panel as unknown as HTMLElement, style: panel.style, attrs, fire }
 }
 
-/** The sheet's grip: a drag from it moves the sheet. */
 const grip = { closest: () => ({}), parentElement: null, scrollTop: 0 }
-/** A touch event with one finger per height given. */
 const touches = (...ys: number[]) => ({ target: grip, touches: ys.map((clientY) => ({ clientY })) })
 
 beforeEach(() => {
@@ -55,11 +52,9 @@ describe("the phone sheet's drag (DS-3)", () => {
     expect(style.transform).toBe("translateY(100px)")
     expect(attrs.has("data-held")).toBe(true)
 
-    // The second finger cancels the drag: the sheet goes back and is no longer held.
     fire("touchstart", touches(200, 400))
     expect(style.transform).toBe("")
     expect(attrs.has("data-held")).toBe(false)
-    // Whatever the fingers do now, the sheet stays, also once one of them is lifted.
     fire("touchmove", touches(500, 600))
     fire("touchend", touches(500))
     fire("touchmove", touches(700))
@@ -70,7 +65,6 @@ describe("the phone sheet's drag (DS-3)", () => {
     vi.runAllTimers()
     expect(close).not.toHaveBeenCalled()
 
-    // Once every finger is up, a new drag works again.
     fire("touchstart", touches(100))
     fire("touchmove", touches(300))
     fire("touchend", touches())

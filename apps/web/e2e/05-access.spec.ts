@@ -1,8 +1,6 @@
 import { expect, type Page, test } from "@playwright/test"
 import { currentApiKey, dialogClosed, n8nUrl, openNewToken, signIn } from "./helpers.ts"
 
-// Temporary access for agents: an MCP token that may request access asks for an instance, a person approves,
-// the agent collects the key once and calls n8n through the n8n-ops proxy, which enforces scopes and workflows.
 test.describe.configure({ mode: "serial" })
 
 let page: Page
@@ -45,7 +43,6 @@ async function mcp(request: import("@playwright/test").APIRequestContext, name: 
   return { error: Boolean(body.result.isError), value: JSON.parse(body.result.content[0]?.text ?? "null") }
 }
 
-/** What search_workflows answers: one page of workflows. */
 type Paged = { workflows: { workflowId: string; instance: string }[]; total: number; nextOffset: number | null }
 
 const proxy = (path: string, accessKey: string, init: RequestInit = {}) =>
@@ -81,7 +78,6 @@ test("the instance opens read-only access to agents", async ({ request }) => {
     .click()
   await page.getByRole("tab", { name: "Access" }).click()
   await page.getByLabel("Agents may request access").click()
-  // The presets show which one the selection matches, and none when it was changed by hand.
   const preset = page.getByRole("radiogroup", { name: "Preset" })
   await preset.getByRole("radio", { name: "None", exact: true }).click()
   await expect(preset.getByRole("radio", { name: "None", exact: true })).toBeChecked()
@@ -96,7 +92,6 @@ test("the instance opens read-only access to agents", async ({ request }) => {
   await page.getByRole("button", { name: "Save changes" }).click()
   await expect(page.getByText("Agent access saved")).toBeVisible()
 
-  // The workflow map tells the agent where a workflow is and what it may ask for there.
   await page.goto("/workflows")
   await page.getByRole("button", { name: "Refresh now" }).click()
   await expect(async () => {
@@ -106,7 +101,6 @@ test("the instance opens read-only access to agents", async ({ request }) => {
     const { workflows: hits, total, nextOffset } = found.value as Page
     expect(total).toBeGreaterThanOrEqual(2)
     expect([hits.length, nextOffset]).toEqual([total, null])
-    // Both test instances point at the same n8n, so the workflow is on both; only one is open to agents.
     const open = hits.find((h) => h.instance === "e2e-n8n")
     expect(open?.access.requestable).toBe(true)
     expect(open?.access.grantableScopes).toContain("workflow:read")
@@ -115,7 +109,6 @@ test("the instance opens read-only access to agents", async ({ request }) => {
     expect(closed?.access.requestable).toBe(false)
   }).toPass({ timeout: 30_000 })
 
-  // One at a time: each page says where the next one starts, and together they hold every instance once.
   const all = (await mcp(request, "search_workflows", { query: workflowId })).value as Paged
   const walked: string[] = []
   for (let offset: number | null = 0; offset !== null; ) {
@@ -150,7 +143,6 @@ test("an agent finds a workflow by part of one tag, read as written", async ({ r
   const before = ((await (await n8nApi(`/workflows/${workflowId}/tags`)).json()) as { id: string }[]).map((t) => t.id)
   const created: string[] = []
   try {
-    // Two tags, so the JSON text of the list holds `", "`; one with a backslash, which JSON doubles.
     for (const name of [String.raw`ops C:\data archive`, "e2e second"]) {
       const res = await n8nApi("/tags", { method: "POST", body: JSON.stringify({ name }) })
       expect(res.ok, await res.clone().text()).toBe(true)
@@ -162,7 +154,6 @@ test("an agent finds a workflow by part of one tag, read as written", async ({ r
     expect(await found(String.raw`C:\data`)).toContain(workflowId)
     expect(await found('", "')).not.toContain(workflowId)
   } finally {
-    // Every step runs even when one fails; a soft failure still fails the test.
     expect.soft((await setTags(before)).status, "restore the workflow's tags").toBe(200)
     for (const id of created)
       expect.soft((await n8nApi(`/tags/${id}`, { method: "DELETE" })).status, "delete the test tag").toBe(200)
@@ -209,7 +200,6 @@ test("a person approves in the UI, and the agent collects the key once", async (
   for (const id of [requestId, shortRequestId]) {
     await page.goto(`/access/${id}`)
     if (id === requestId) {
-      // The approver sees the workflow by its name, with its ID to copy.
       await expect(page.getByText(workflowName, { exact: true })).toBeVisible()
       await expect(page.getByRole("button", { name: `Copy workflow ID: ${workflowId}` })).toBeVisible()
     }
@@ -229,8 +219,6 @@ test("a person approves in the UI, and the agent collects the key once", async (
 
   shortKey = (await mcp(request, "get_access_request", { requestId: shortRequestId })).value.key
   expect(shortKey).toMatch(/^nops_n8n_/)
-  // The one-minute access works now; the last test of the file waits until it has ended on its own, so its real
-  // minute passes while the tests in between run. None of them uses it.
   expect((await proxy("/workflows", shortKey)).status).toBe(200)
 })
 
@@ -317,7 +305,6 @@ test("an approver changes the request on its page before approving, and the agen
 
   await page.goto(`/access/${id}`)
   const approve = page.getByRole("button", { name: "Approve" })
-  // Limited to no workflow is not something to approve: the whole instance is a choice of its own.
   await page.getByRole("button", { name: `Remove ${workflowName}` }).click()
   await expect(approve).toBeDisabled()
   await page.getByLabel("Add a workflow ID on e2e-n8n").fill(otherWorkflowId)
@@ -339,7 +326,6 @@ test("an approver changes the request on its page before approving, and the agen
   const call = (path: string) => fetch(`${got.value.baseUrl}${path}`, { headers: { "X-N8N-API-KEY": got.value.key } })
   expect((await call(`/workflows/${otherWorkflowId}`)).status).toBe(200)
   expect((await call(`/workflows/${workflowId}`)).status).toBe(403)
-  // workflow:list was taken out.
   expect((await call("/workflows")).status).toBe(403)
   await page.reload()
   await expect(page.getByText("The agent asked for: workflow:read, workflow:list.")).toBeVisible()
@@ -359,25 +345,20 @@ test("agent access edits survive a refresh, and a clean card shows the stored ac
   const unsaved = page.getByRole("region", { name: "Unsaved changes" })
   await expect(allowed).not.toBeChecked()
   const id = new URL(page.url()).pathname.split("/").pop()
-  /** Stores agent access as if from elsewhere, and waits until the page has read and drawn it. */
   const store = async (agentAccess: { enabled: boolean; scopes: string[] }) => {
     expect((await page.request.patch(`/api/instances/${id}`, { data: { agentAccess } })).ok()).toBe(true)
-    // The next read of the instance that starts after the change, so it carries the new value.
     const request = await page.waitForRequest((r) => r.method() === "GET" && r.url().endsWith(`/api/instances/${id}`), {
       timeout: 30_000,
     })
     const response = await request.response()
     await response?.finished()
-    // The answer is drawn within a frame; wait for two to be sure.
     await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))))
   }
 
-  // Without unsaved changes, a change made elsewhere shows on the next refresh.
   await store({ enabled: true, scopes: ["workflow:read"] })
   await expect(allowed).toBeChecked()
   await expect(read).toBeChecked()
 
-  // Unsaved changes stay when the stored access changes under them.
   await page.getByRole("radio", { name: "None", exact: true }).click()
   await expect(unsaved).toContainText("1 unsaved change")
   await store({ enabled: false, scopes: [] })
@@ -385,13 +366,10 @@ test("agent access edits survive a refresh, and a clean card shows the stored ac
   await expect(read).not.toBeChecked()
   await expect(unsaved).toContainText("1 unsaved change")
 
-  // Changed back by hand, the card has nothing unsaved and shows what is stored now.
-  // The click itself makes the card clean, so it shows the stored access and the scope list goes.
   await read.click()
   await expect(allowed).not.toBeChecked()
   await expect(unsaved).toHaveCount(0)
 
-  // Discard brings the stored value, not the one the edits started from.
   await allowed.click()
   await expect(unsaved).toContainText("1 unsaved change")
   await store({ enabled: true, scopes: ["workflow:read"] })
@@ -401,7 +379,6 @@ test("agent access edits survive a refresh, and a clean card shows the stored ac
   await expect(read).toBeChecked()
   await expect(unsaved).toHaveCount(0)
 
-  // While a save runs the card is locked, so nothing can be changed under it; afterwards it shows what was saved.
   await page.getByRole("radio", { name: "None", exact: true }).click()
   await expect(unsaved).toContainText("1 unsaved change")
   let release = () => {}
@@ -427,18 +404,15 @@ test("agent access edits survive a refresh, and a clean card shows the stored ac
   await expect(read).not.toBeChecked()
   await expect(unsaved).toHaveCount(0)
 
-  // Back to closed, as the other tests expect.
   await store({ enabled: false, scopes: [] })
   await expect(allowed).not.toBeChecked()
 })
 
-// Last in the file: the one-minute access approved above has run its real minute while the tests in between ran.
 test("access ends on its own when its time is up", async () => {
   test.setTimeout(150_000)
   await expect(async () => {
     expect((await proxy("/workflows", shortKey)).status).toBe(401)
   }).toPass({ timeout: 120_000, intervals: [1_000] })
-  // The key is refused from the moment it expires; the background job then marks the request.
   await expect(async () => {
     await page.goto(`/access/${shortRequestId}`)
     await expect(page.getByText("Expired").first()).toBeVisible({ timeout: 3_000 })

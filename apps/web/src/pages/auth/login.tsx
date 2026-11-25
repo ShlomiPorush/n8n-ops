@@ -12,7 +12,6 @@ import { passkeyBlock, passkeyCancelled } from "@/lib/passkeys"
 import { endedTexts } from "@/lib/session-clock"
 import { AuthFrame, type TotpAnswer, TotpInput, totpAnswer } from "./shared"
 
-/** Where to go after signing in: the page that was asked for, if it is a page of this app (NL-18). */
 function safeNext(next: string | null): string {
   if (!next || next.length > 2048 || !next.startsWith("/") || next.startsWith("//")) return "/"
   const path = new URL(next, window.location.origin).pathname
@@ -23,12 +22,10 @@ export function LoginPage() {
   const navigate = useNavigate()
   const [params] = useSearchParams()
   const next = safeNext(params.get("next"))
-  // Why the server ended the last session (Settings > Sign-in security), when it did.
   const reason = params.get("ended") ?? ""
   const ended = Object.hasOwn(endedTexts, reason) ? endedTexts[reason] : undefined
   const passwordRef = useRef<HTMLInputElement>(null)
   const status = useApi<{ hasUser: boolean; passkeys: string | null }>("/setup/status")
-  // Only offered where it can work; the account page says why when it cannot.
   const passkeys = status.data && !passkeyBlock(status.data.passkeys)
   const [step, setStep] = useState<"password" | "totp">("password")
   const [error, setError] = useState("")
@@ -40,10 +37,6 @@ export function LoginPage() {
 
   if (status.data && !status.data.hasUser) return <Navigate to="/setup" replace />
 
-  /*
-   * The button always comes back from "Signing in…", also when the request never reached the server; that
-   * failure says so and keeps what was typed, as the password was not refused (FS-23).
-   */
   async function signIn(form: FormData) {
     setBusy(true)
     setError("")
@@ -53,7 +46,6 @@ export function LoginPage() {
         password: String(form.get("password")),
       })
       if (error) {
-        // The username stays; a refused password is cleared for the next try.
         if (error.status && passwordRef.current) {
           passwordRef.current.value = ""
           passwordRef.current.focus()
@@ -61,7 +53,6 @@ export function LoginPage() {
         return setError(signInErrorText(error))
       }
       if (data && "twoFactorRedirect" in data && data.twoFactorRedirect) return setStep("totp")
-      // Signed in without two-factor: it must be set up before anything else.
       navigate("/setup", { replace: true })
     } catch {
       setError(UNREACHABLE_TEXT)
@@ -70,7 +61,6 @@ export function LoginPage() {
     }
   }
 
-  // A passkey is a whole sign-in: no password and no code.
   async function signInWithPasskey() {
     setBusy(true)
     setError("")
@@ -83,7 +73,6 @@ export function LoginPage() {
         if (e.status >= 500) return setError("Could not sign in. Try again in a moment.")
         return setError("This passkey did not sign you in. Try another one, or your password.")
       }
-      // After a reset from the server, two-factor is set up again first.
       const u = (data as { user?: { twoFactorEnabled?: boolean | null } } | null)?.user
       navigate(u?.twoFactorEnabled ? next : "/setup", { replace: true })
     } catch {
@@ -93,7 +82,6 @@ export function LoginPage() {
     }
   }
 
-  // A wrong code is cleared; one sent without an answer stays, to be sent again (FS-23).
   async function verify(code: string): Promise<TotpAnswer> {
     setBusy(true)
     setError("")

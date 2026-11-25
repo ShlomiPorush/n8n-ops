@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { heldBy, type ScrollBox, scrollerFor } from "./scroller"
 
-/** Just enough of an element: its parent, style, heights and place on the screen. */
 type Box = ScrollBox & {
   parentElement: Box | null
   overflowY: string
@@ -32,11 +31,6 @@ function box(
 
 const overflowOf = (el: ScrollBox) => (el as Box).overflowY
 
-/**
- * The app's frame: the page (#main) in the body, a list column in it, the filter bar in the column. On a tall
- * screen the column is 500px high and scrolls by its style; on a short one it is as tall as its content and the
- * page scrolls it.
- */
 function frame({ short = false, content = 3000 } = {}) {
   const body = box("body", "visible", null, { content: 5000, height: 560 })
   const page = box("main", "auto", body, { content: short ? content + 100 : 500, height: 500 })
@@ -77,7 +71,6 @@ describe("scrollerFor", () => {
     const tabs = box("div", "visible", dialogBody)
     expect(scrollerFor(tabs, options)).toBe(dialogBody)
 
-    // Nothing that may scroll up to the body, which itself is never taken: the page.
     body.overflowY = "auto"
     const loose = box("div", "visible", body)
     expect(scrollerFor(loose, options)).toBe(options.page())
@@ -92,7 +85,6 @@ describe("heldBy", () => {
 
   it("is the page and where the area starts in it, on a short screen (NL-1)", () => {
     const { page, list, options } = frame({ short: true })
-    // The page starts 56px down the screen and is scrolled 300px; the column starts 20px down its content.
     page.top = 56
     page.scrollTop = 300
     list.top = 56 + 20 - 300

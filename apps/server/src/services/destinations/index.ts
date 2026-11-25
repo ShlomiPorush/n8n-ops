@@ -12,7 +12,7 @@ import {
 import { localStore } from "./local.ts"
 import { s3Store } from "./s3.ts"
 import { sftpStore } from "./sftp.ts"
-import { cleanFolder, type Store, StoreError, withDeadline } from "./store.ts"
+import { cleanFolder, type Store, withDeadline } from "./store.ts"
 import { webdavBase, webdavStore } from "./webdav.ts"
 
 export type Destination = typeof backupDestinations.$inferSelect
@@ -30,7 +30,6 @@ const folder = text(300).transform((v, c) => {
   }
 })
 
-/** Where each kind keeps archives. These fields never change once the destination is created. */
 export const locationSchemas = {
   s3: z.object({
     endpoint: z.union([z.literal(""), z.string().trim().url()]),
@@ -59,7 +58,6 @@ export const locationSchemas = {
   }),
 } satisfies Record<DestinationKind, z.ZodType>
 
-/** Plain credential fields; secrets are written plain and stored as <name>Enc. */
 export const credentialFields: Record<DestinationKind, { plain: string[]; secret: string[] }> = {
   s3: { plain: ["accessKeyId"], secret: ["secretAccessKey"] },
   local: { plain: [], secret: [] },
@@ -79,11 +77,9 @@ export const objectLockSchema = z
 
 export const defaultRetention: RetentionPolicy = { daily: 7, weekly: 4, monthly: 6 }
 
-/** Whether two Object Lock settings are the same, whatever order their fields were stored in. */
 export const sameLock = (a: ObjectLock | null | undefined, b: ObjectLock | null | undefined) =>
   (a?.mode ?? null) === (b?.mode ?? null) && (a?.days ?? null) === (b?.days ?? null)
 
-/** A destination as the UI sees it: secrets only as "set" flags, never their ciphertext. */
 export function destinationView(d: Destination) {
   const { credentials, ...rest } = d
   const view: Record<string, unknown> = {}
@@ -92,7 +88,6 @@ export function destinationView(d: Destination) {
   return { ...rest, credentials: view, where: describeLocation(d) }
 }
 
-/** One line that says where the archives are. */
 export function describeLocation(d: Pick<Destination, "kind" | "location">) {
   const l = d.location as Record<string, string | number | boolean>
   switch (d.kind) {
@@ -107,10 +102,6 @@ export function describeLocation(d: Pick<Destination, "kind" | "location">) {
   }
 }
 
-/**
- * A comparable form of the place archives land: two destinations whose places are equal, or where one holds
- * the other, would write into and expire each other's folders, so a new one like that is refused.
- */
 export function placeOf(kind: DestinationKind, location: Record<string, unknown>): string {
   const l = location as Record<string, string>
   const path = (p: string) => p.replace(/^\/+|\/+$/g, "")
@@ -131,19 +122,16 @@ export function placeOf(kind: DestinationKind, location: Record<string, unknown>
 export function placesOverlap(a: string, b: string) {
   const [ka, ha, ua, pa = ""] = a.split("|")
   const [kb, hb, ub, pb = ""] = b.split("|")
-  // The third part is the bucket for S3 and the account for SFTP and WebDAV, where it decides the place.
   if (ka !== kb || ha !== hb || ua !== ub) return false
   return pa === pb || pa === "" || pb === "" || pa.startsWith(`${pb}/`) || pb.startsWith(`${pa}/`)
 }
 
-/** The key of a new archive on this destination: under the S3 key prefix, or as given elsewhere. */
 export function keyFor(d: Pick<Destination, "kind" | "location">, parts: string[]) {
   const prefix =
     d.kind === "s3" ? String((d.location as { prefix?: string }).prefix ?? "").replace(/^\/+|\/+$/g, "") : ""
   return [prefix, ...parts].filter(Boolean).join("/")
 }
 
-/** Opens the destination with its decrypted credentials. Close the store when done. */
 export function openStore(
   ctx: Pick<Ctx, "secrets">,
   d: Pick<Destination, "kind" | "location" | "credentials" | "objectLock">,
@@ -174,20 +162,19 @@ export function openStore(
 
 const TEST_MS = 60_000
 
-/** Runs the destination's test on settings that may not be stored yet. Returns the test's notes. */
 export async function testDestination(
   ctx: Pick<Ctx, "secrets">,
   d: Pick<Destination, "kind" | "location" | "credentials" | "objectLock">,
 ) {
   const store = openStore(ctx, d)
+  const key = keyFor(d, ["_n8n-ops", `destination-test-${Date.now()}.bin`])
   try {
-    return await withDeadline(TEST_MS, "The test", (signal) => store.test(signal))
+    return await withDeadline(TEST_MS, "The test", (signal) => store.test(key, signal))
   } finally {
     await store.close().catch(() => {})
   }
 }
 
-/** Whether the credentials are complete enough to try. */
 export function missingCredentials(kind: DestinationKind, credentials: Record<string, unknown>): string | null {
   const has = (f: string) => Boolean(credentials[f] || credentials[`${f}Enc`])
   switch (kind) {
@@ -203,15 +190,6 @@ export function missingCredentials(kind: DestinationKind, credentials: Record<st
   }
 }
 
-/** Retention is the newest daily, weekly and monthly archive; an Object Lock only applies to S3. */
-export function checkObjectLock(kind: DestinationKind, lock: ObjectLock | null) {
-  if (lock && kind !== "s3") throw new StoreError("Object Lock is only for S3 destinations")
-}
-
-/**
- * The destinations a backup of this instance (or of n8n-ops itself, with null) writes to now: enabled ones,
- * either the defaults or those chosen.
- */
 export async function destinationsFor(ctx: Ctx, instance: Pick<Instance, "id" | "backupDestinations"> | null) {
   let mode: "default" | "custom"
   let ids: string[] = []

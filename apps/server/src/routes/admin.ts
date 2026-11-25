@@ -23,7 +23,6 @@ export function adminRoutes(ctx: Ctx) {
   const app = new Hono<Env>()
   app.use("*", requireUser(ctx))
 
-  // --- Backup key pair: the private key is returned once and never stored.
   app.get("/keys", async (c) => {
     const keys = await ctx.settings.get("keys")
     return c.json({ backupRecipient: keys.backupRecipient ?? null, privateKeySavedAt: keys.privateKeySavedAt ?? null })
@@ -52,7 +51,6 @@ export function adminRoutes(ctx: Ctx) {
     return c.text(key)
   })
 
-  // --- API and MCP tokens
   app.get("/tokens", async (c) => {
     const rows = await ctx.db
       .select()
@@ -86,7 +84,6 @@ export function adminRoutes(ctx: Ctx) {
   })
 
   app.delete("/tokens/:id", async (c) => {
-    // An agent connected by approval ends with every token of its grant and its instance access.
     const [agent] = await ctx.db
       .select({ id: apiTokens.id })
       .from(apiTokens)
@@ -96,7 +93,6 @@ export function adminRoutes(ctx: Ctx) {
       return ended ? c.json({ ok: true }) : c.json({ error: "not_found" }, 404)
     }
     const who = { by: actorName(c.get("actor")), via: "web" as const }
-    // The token, the access it asked for or holds, and the audit entries end together or not at all.
     const row = await ctx.db.transaction(async (tx) => {
       const [revoked] = await tx
         .update(apiTokens)
@@ -113,20 +109,17 @@ export function adminRoutes(ctx: Ctx) {
     return c.json({ ok: true })
   })
 
-  // --- Agents connected by approval: why they cannot connect, and ending all of them.
   app.get("/agents", async (c) => {
     const { publicUrl } = await ctx.settings.get("general")
     return c.json({ problem: issuerProblem(publicUrl), skillServed: Boolean(ctx.agents?.skillVersion) })
   })
 
-  // Ends every connection and every waiting code, device request and approval; available with none connected.
   app.post("/agents/disconnect-all", async (c) => {
     if (!fromOwnPage(c, (await ctx.settings.get("general")).publicUrl)) return c.json({ error: "forbidden" }, 403)
     const ended = (await ctx.agents?.endAll("all", { by: actorName(c.get("actor")), via: "web" })) ?? 0
     return c.json({ ended })
   })
 
-  // --- Audit log, newest first, keyset pagination by id.
   app.get("/audit", async (c) => {
     const before = Number(c.req.query("before") ?? 0)
     const rows = await ctx.db
@@ -138,7 +131,6 @@ export function adminRoutes(ctx: Ctx) {
     return c.json(rows)
   })
 
-  // --- Database: sizes, free space and compacting a table (Settings → Database).
   app.get("/database", async (c) => {
     const [sizes, free] = await Promise.all([databaseSizes(ctx), freeSpace(ctx)])
     return c.json({ ...sizes, freeSpace: free })
@@ -146,7 +138,6 @@ export function adminRoutes(ctx: Ctx) {
 
   app.get("/database/status", async (c) => c.json(await compactStatus(ctx)))
 
-  // Changes start only from a page of this installation, sent as JSON (a form or another site cannot).
   const ownPage = async (c: Context<Env>) =>
     fromOwnPage(c, (await ctx.settings.get("general")).publicUrl) &&
     (c.req.header("content-type") ?? "").startsWith("application/json")

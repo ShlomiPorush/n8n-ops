@@ -7,12 +7,10 @@ afterEach(() => vi.useRealTimers())
 
 const wait = (ms: number) => vi.advanceTimersByTimeAsync(ms)
 
-/** A clock, mounted, with every state it showed. */
 function setup() {
   const shown: BusyState[] = []
   const clock = busyRun((s) => shown.push(s))
-  const unmount = clock.mount()
-  return { clock, shown, unmount }
+  return { clock, shown }
 }
 
 const click = () => ({ preventDefault: vi.fn(), stopPropagation: vi.fn() })
@@ -57,47 +55,5 @@ describe("busy button clock (FB-7)", () => {
     expect(onDone.preventDefault).toHaveBeenCalled()
     await wait(DONE_MS)
     expect(clock.ignore(click())).toBe(false)
-  })
-
-  it("shows nothing and starts no timer once the button is gone", async () => {
-    const { clock, shown, unmount } = setup()
-    let answer = () => {}
-    const sent = clock.start(() => new Promise<void>((resolve) => (answer = resolve)))
-    unmount()
-    answer()
-    await sent
-    expect(shown).toEqual(["busy"])
-    expect(vi.getTimerCount()).toBe(0)
-  })
-
-  it("comes back with its label and takes clicks when mounted again during Done", async () => {
-    const { clock, shown, unmount } = setup()
-    await clock.start(async () => {})
-    unmount()
-    clock.mount()
-    expect(shown.at(-1)).toBe("idle")
-    await clock.start(async () => {})
-    expect(shown.slice(-2)).toEqual(["busy", "done"])
-  })
-
-  it("takes clicks again when its request settled while it was gone", async () => {
-    const { clock, shown, unmount } = setup()
-    let answer = () => {}
-    const sent = clock.start(() => new Promise<void>((resolve) => (answer = resolve)))
-    unmount()
-    answer()
-    await sent
-    clock.mount()
-    expect(shown.at(-1)).toBe("idle")
-    await clock.start(async () => {})
-    expect(shown.slice(-2)).toEqual(["busy", "done"])
-  })
-
-  it("works again when mounted again, as StrictMode does", async () => {
-    const { clock, shown, unmount } = setup()
-    unmount()
-    clock.mount()
-    await clock.start(async () => {})
-    expect(shown).toEqual(["busy", "done"])
   })
 })

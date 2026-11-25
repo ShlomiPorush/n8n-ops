@@ -1,8 +1,4 @@
 #!/usr/bin/env bash
-# Releases a version: the release commit and tag, both images on GHCR, and the GitHub Release. Deploys
-# nothing. Normally run by the Release workflow (.github/workflows/release.yml), which verifies the
-# commit first; run by hand it runs scripts/verify.sh itself.
-# Usage: scripts/release.sh --target ghcr --bump <patch|minor|major> [--skip-verify --expect-sha SHA] [--dry-run]
 set -euo pipefail
 
 # shellcheck source=scripts/lib/common.sh
@@ -41,21 +37,11 @@ EOF
 
 git_() { git -C "$REPO_ROOT" "$@"; }
 
-# The version in VERSION content on stdin: one line holding only MAJOR.MINOR.PATCH, or nothing.
 version_in() {
   local text
   text="$(cat)"
   [[ "$text" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && echo "$text"
   return 0
-}
-
-# The version a tag was released as: its VERSION, or for a tag made before VERSION existed, package.json's version.
-tag_version() {
-  if git_ cat-file -e "$1:VERSION" 2>/dev/null; then
-    git_ show "$1:VERSION" | version_in
-  else
-    git_ show "$1:package.json" | sed -nE 's/^  "version": "([0-9]+\.[0-9]+\.[0-9]+)",$/\1/p' | head -1
-  fi
 }
 
 next_version() {
@@ -72,8 +58,6 @@ unreleased_notes() {
   awk '/^## \[Unreleased\]/ { on = 1; next } /^## \[/ { on = 0 } on && NF' "$REPO_ROOT/CHANGELOG.md"
 }
 
-# Prints the notes of one released version from CHANGELOG content on stdin. Fails unless the
-# CHANGELOG has exactly one dated section for it, with at least one entry.
 release_notes() {
   local version="$1" text count notes
   text="$(cat)"
@@ -92,7 +76,6 @@ release_notes() {
   printf '%s\n' "$notes"
 }
 
-# Prints "present" or "missing" for a GitHub Release. Any other failure stops the release.
 release_state() {
   local out
   if out="$(gh release view "$1" --json tagName 2>&1)"; then
@@ -104,8 +87,6 @@ release_state() {
   fi
 }
 
-# Prints "missing", "match" (built from the given commit) or "other" for an image tag. A registry
-# that cannot be read stops the release: it must never count as a free version.
 image_state() {
   local ref="$1" revision="$2" out
   if ! out="$(docker buildx imagetools inspect "$ref" --format '{{json .Image}}' 2>&1)"; then
@@ -115,7 +96,6 @@ image_state() {
     fi
     die "cannot read $ref from the registry: $out"
   fi
-  # The JSON comes indented; compare without white space.
   if grep -qF "\"org.opencontainers.image.revision\":\"$revision\"" <<<"$(tr -d '[:space:]' <<<"$out")"; then
     echo match
   else
@@ -148,7 +128,7 @@ preflight() {
     if [ "$state" = missing ]; then
       RESUME=1 TAG="$newest" VERSION="${newest#v}"
       git_ merge-base --is-ancestor "$TAG" HEAD || die "$TAG is not on main"
-      [ "$(tag_version "$TAG")" = "$VERSION" ] || die "the version at $TAG is not $VERSION"
+      [ "$(git_ show "$TAG:VERSION" | version_in)" = "$VERSION" ] || die "the version at $TAG is not $VERSION"
       echo "    $TAG was not finished: this run finishes it and ignores --bump $BUMP. Run again for the next version."
       return
     fi
@@ -181,7 +161,6 @@ create_tag() {
   git_ commit --quiet -m "Release $TAG"
   git_ tag -a "$TAG" -m "$TAG"
   info "Pushing the release commit and $TAG"
-  # Both or neither: a tag on origin is what a later run finishes.
   git_ push --quiet --atomic origin HEAD:refs/heads/main "refs/tags/$TAG" ||
     die "pushing the release commit and $TAG failed, so nothing was published. Run the release again."
 }
@@ -193,10 +172,6 @@ publish_images() {
   # shellcheck disable=SC2064 # expand now: the path is fixed
   trap "rm -rf '$src'" EXIT
   git_ archive "$TAG" | tar -x -C "$src"
-  # The images read the version from the tag's VERSION file. A tag made before that file existed has Dockerfiles that
-  # take it as a build argument instead, so finishing such a release builds it the way it was made.
-  local version_arg=()
-  [ -f "$src/VERSION" ] || version_arg=(--build-arg "VERSION=$VERSION")
   for pair in "${IMAGES[@]}"; do
     app="${pair%%:*}" name="${pair#*:}" ref="$REGISTRY/${pair#*:}:$VERSION"
     state="$(image_state "$ref" "$revision")"
@@ -206,7 +181,7 @@ publish_images() {
       missing)
         info "Building and pushing $ref"
         docker buildx build --push --provenance=mode=max --sbom=true \
-          -f "$src/docker/$app.Dockerfile" "${version_arg[@]}" \
+          -f "$src/docker/$app.Dockerfile" \
           --label "org.opencontainers.image.revision=$revision" \
           --label "org.opencontainers.image.source=$SOURCE_URL" \
           --label "org.opencontainers.image.version=$VERSION" \
@@ -219,7 +194,6 @@ publish_images() {
     state="$(image_state "$ref" "$revision")"
     [ "$state" = match ] || die "$ref is not the image built from $TAG"
   done
-  # :latest moves only once both images of this version are there.
   for pair in "${IMAGES[@]}"; do
     name="${pair#*:}"
     info "Pointing $REGISTRY/$name:latest at $VERSION"
@@ -234,7 +208,6 @@ publish_release() {
   git_ show "$TAG:CHANGELOG.md" | release_notes "$VERSION" >"$notes"
   info "Creating the GitHub Release $TAG"
   if ! gh release create "$TAG" --verify-tag --title "n8n-ops $VERSION" --notes-file "$notes"; then
-    # The request may have succeeded with its answer lost.
     state="$(release_state "$TAG")"
     [ "$state" = present ] || die "creating the GitHub Release $TAG failed. Run the release again to finish it."
     echo "    the GitHub Release $TAG exists"

@@ -1,10 +1,3 @@
-/*
- * Checks for values typed in Settings. The UI runs them before a save and the server runs them when it stores a
- * changed value, so both refuse the same entries in the same words (SV-1, SV-12). A problem is written to follow
- * its field's label: "Recipients: "bob" is not an email address".
- */
-
-/** The label of each setting, as Settings shows it; the server names a refused field with it. */
 export const settingLabels = {
   general: {
     publicUrl: "Public URL",
@@ -84,13 +77,11 @@ export const settingLabels = {
   },
 } as const satisfies Record<string, Record<string, string>>
 
-/** The label of a setting, or its key when it has none. */
 export function settingLabel(section: string, field: string): string {
   const labels = (settingLabels as Record<string, Record<string, string>>)[section]
   return labels?.[field] ?? field
 }
 
-/** Splits typed or pasted text into entries: commas, semicolons, spaces and line breaks separate them (SV-12). */
 export const splitEntries = (text: string): string[] =>
   text
     .split(/[,;\s]+/)
@@ -100,21 +91,16 @@ export const splitEntries = (text: string): string[] =>
 const label = String.raw`[^\s@<>()[\],;:".]+`
 const emailPattern = new RegExp(String.raw`^[^\s@<>()[\],;:"]+@${label}(\.${label})+$`)
 
-/** An address mail can be sent to: a name, @, and a domain with at least one dot ("bob@exmaple" is refused). */
 export const isEmailAddress = (value: string): boolean => emailPattern.test(value)
 
-/** A Telegram user as the approver check reads it: the numeric user ID, or @username. */
 export const isTelegramUser = (value: string): boolean =>
   /^\d{1,20}$/.test(value) || /^@[A-Za-z][A-Za-z0-9_]{3,31}$/.test(value)
 
-/** A Telegram chat: its numeric ID (groups and channels are negative), or a channel's @username. */
 export const isTelegramChat = (value: string): boolean =>
   /^-?\d{1,20}$/.test(value) || /^@[A-Za-z][A-Za-z0-9_]{3,31}$/.test(value)
 
-/** A 24-hour time as HH:MM. */
 export const isClockTime = (value: string): boolean => /^([01]\d|2[0-3]):[0-5]\d$/.test(value)
 
-/** A web address that starts with http:// or https:// and names a host. */
 export function isWebAddress(value: string): boolean {
   try {
     const url = new URL(value)
@@ -124,18 +110,15 @@ export function isWebAddress(value: string): boolean {
   }
 }
 
-/** A From address: an email address, or a name with the address in angle brackets. */
 export function isFromAddress(value: string): boolean {
   const named = /^[^<>]*<([^<>]+)>$/.exec(value)
   return isEmailAddress((named?.[1] ?? value).trim())
 }
 
-/** Where approvers hear of an agent's access request, besides n8n-ops itself. */
 export const accessChannels = ["telegram", "email"] as const
 export type AccessChannel = (typeof accessChannels)[number]
 export const accessChannelLabels: Record<AccessChannel, string> = { telegram: "Telegram", email: "Email" }
 
-/** What a setting's value must be, beyond its type. Empty single values are allowed: they mean not set. */
 export type ValueKind =
   | "emails"
   | "telegram-users"
@@ -145,7 +128,6 @@ export type ValueKind =
   | "from-address"
   | "channels"
 
-/** The settings checked beyond their type, by section and field. Numbers are checked against their limits. */
 export const settingKinds: Record<string, Record<string, ValueKind>> = {
   general: { publicUrl: "web-address" },
   telegram: { chatId: "telegram-chat" },
@@ -159,14 +141,12 @@ const quoted = (entries: string[]) => {
   return q.length < 2 ? (q[0] ?? "") : `${q.slice(0, -1).join(", ")} and ${q.at(-1)}`
 }
 
-/** The entries of a list that are not what the list takes, named in one sentence; null when all are. */
 function listProblem(entries: string[], ok: (v: string) => boolean, one: string, many: string): string | null {
   const bad = entries.filter((e) => !ok(e))
   if (bad.length === 0) return null
   return `${quoted(bad)} ${bad.length === 1 ? `is not ${one}` : `are not ${many}`}`
 }
 
-/** What is wrong with a value of this kind, in words that follow its label; null when it is fine. */
 export function valueProblem(kind: ValueKind, value: unknown): string | null {
   if (kind === "channels") {
     const list = Array.isArray(value) ? value : []
@@ -191,20 +171,16 @@ export function valueProblem(kind: ValueKind, value: unknown): string | null {
   return isFromAddress(text) ? null : "use an email address, such as n8n-ops@example.com, or Name <n8n-ops@example.com>"
 }
 
-/** The largest Telegram forum topic the database holds: a PostgreSQL integer. */
 export const maxTopicId = 2_147_483_647
 
-/** What a forum topic must be. Its number is in a message link: t.me/c/…/12/345 is topic 12. */
 export const topicWords = "use the topic's number, such as 12"
 
-/** What is wrong with a forum topic as typed; null for a topic number, or for empty, which means none. */
 export function topicProblem(value: unknown): string | null {
   const text = String(value ?? "").trim()
   if (text === "") return null
   return /^\d{1,10}$/.test(text) && Number(text) >= 1 && Number(text) <= maxTopicId ? null : topicWords
 }
 
-/** Whether a route's workflow pattern compiles the way it is matched: case-insensitive, Unicode. */
 export function isRoutePattern(pattern: string): boolean {
   try {
     new RegExp(pattern, "iu")
@@ -214,11 +190,9 @@ export function isRoutePattern(pattern: string): boolean {
   }
 }
 
-/** How many topic routes Settings keeps, and the longest workflow pattern and tag a route takes. */
 export const maxRoutes = 50
 export const routeLimits = { workflow: 200, tag: 100 } as const
 
-/** What a topic route needs, in words that follow "route 2: ". */
 export const routeWords = {
   condition: "choose an instance, or type a workflow pattern or a tag",
   pattern: "the workflow pattern is not a valid regular expression",
@@ -226,10 +200,8 @@ export const routeWords = {
   tagLength: `keep the tag to ${routeLimits.tag} characters`,
 } as const
 
-/** The range a number setting takes, as the server's schema sets it. */
 export type NumberLimits = { min?: number; max?: number }
 
-/** What is wrong with a number setting; null when it is a whole number inside its limits. */
 export function numberProblem(value: unknown, { min, max }: NumberLimits): string | null {
   const text = String(value ?? "").trim()
   const n = Number(text)

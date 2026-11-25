@@ -4,14 +4,13 @@ import { dispatchAlerts, syncTelegramWebhook } from "./alerts.ts"
 import { checkDirect } from "./health.ts"
 import { pruneHealthHistory } from "./health-history.ts"
 import { activeOnly, can, refreshInstanceMeta, unsupportedVersion } from "./instances.ts"
-import { housekeeping, pollInstance } from "./problems.ts"
+import { endMutes, housekeeping, pollInstance } from "./problems.ts"
 import { maybeSendReports } from "./reports.ts"
 import { pruneWorkerHistory, pruneWorkerJobs } from "./worker-presence.ts"
 import { lastWorkflowSync, syncWorkflows, workflowSyncBusy } from "./workflows.ts"
 
 export type Job = { name: string; everyMs: number; run: (ctx: Ctx) => Promise<unknown> }
 
-/** Runs a job only if the previous run of the same key finished. */
 export function createRunner(ctx: Ctx) {
   const running = new Set<string>()
   return async function runOnce(key: string, fn: () => Promise<unknown>) {
@@ -27,7 +26,6 @@ export function createRunner(ctx: Ctx) {
   }
 }
 
-/** Per-instance polling and health checks, alert dispatch, reports and housekeeping. Returns a stop function. */
 export function startScheduler(ctx: Ctx, extraJobs: Job[] = []): () => void {
   const runOnce = createRunner(ctx)
   const lastRun = new Map<string, number>()
@@ -37,13 +35,12 @@ export function startScheduler(ctx: Ctx, extraJobs: Job[] = []): () => void {
     lastRun.set(key, Date.now())
     return true
   }
-  // How soon the server acts on its own records, not how often it reads an instance (those follow the settings).
   const jobs: Job[] = [
     { name: "alerts", everyMs: 5_000, run: dispatchAlerts },
+    { name: "mutes", everyMs: 5_000, run: endMutes },
     { name: "telegram-webhook", everyMs: 60_000, run: syncTelegramWebhook },
     { name: "reports", everyMs: 60_000, run: maybeSendReports },
     { name: "housekeeping", everyMs: 3600_000, run: housekeeping },
-    // Instances first, by their own Keep health history; then the Workers', by the Defaults.
     {
       name: "health-history",
       everyMs: 3600_000,
@@ -52,18 +49,15 @@ export function startScheduler(ctx: Ctx, extraJobs: Job[] = []): () => void {
         await pruneWorkerHistory(c)
       },
     },
-    // Apart, so a long first prune of a large table holds back nothing else.
     { name: "worker-jobs", everyMs: 3600_000, run: pruneWorkerJobs },
     ...extraJobs,
   ]
 
   const tick = async () => {
     for (const job of jobs) if (due(job.name, job.everyMs)) void runOnce(job.name, () => job.run(ctx))
-    // A draft does nothing in the background; an active instance only what it was chosen for.
     const all = await ctx.db.select().from(instances).where(activeOnly)
     for (const instance of all) {
       const s = await ctx.settings.forInstance(instance.overrides)
-      // n8n older than 2.14.0 is not read through its API; the meta read below still notices an update.
       if (
         can(instance, "monitor") &&
         !unsupportedVersion(instance) &&
@@ -78,7 +72,6 @@ export function startScheduler(ctx: Ctx, extraJobs: Job[] = []): () => void {
       ) {
         void runOnce(`health:${instance.id}`, () => checkDirect(ctx, instance.id))
       }
-      // Counted from when the last sync started reading, also one a person or an agent's change asked for.
       if (
         can(instance, "map") &&
         !unsupportedVersion(instance) &&

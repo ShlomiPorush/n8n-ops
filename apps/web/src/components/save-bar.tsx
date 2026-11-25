@@ -17,17 +17,12 @@ import { unsavedGuardOn } from "@/lib/session"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
 
-/**
- * How many fields differ from what was loaded (SV-2). Values compare as trimmed text, so typing 5 into a
- * field that holds 5 is no change, and changing a field back takes it off the count.
- */
 export function countChanges(values: Record<string, unknown>, loaded: Record<string, unknown>, keys?: string[]) {
   const names = keys ?? [...new Set([...Object.keys(values), ...Object.keys(loaded)])]
   const text = (v: unknown) => (v === null || v === undefined ? "" : String(v).trim())
   return names.filter((k) => text(values[k]) !== text(loaded[k])).length
 }
 
-/** Nested form values as one level of dotted names, for `countChanges`. */
 function flatten(value: Record<string, unknown>, prefix = "", out: Record<string, unknown> = {}) {
   for (const [k, v] of Object.entries(value)) {
     if (v !== null && typeof v === "object" && !Array.isArray(v))
@@ -37,11 +32,6 @@ function flatten(value: Record<string, unknown>, prefix = "", out: Record<string
   return out
 }
 
-/**
- * Whether a dialog's form differs from how it opened, compared as `countChanges` does, nested fields too (DS-9).
- * A stored secret marked for removal (null, SecretField) is a change of its own: it is not the same as keeping
- * it (undefined) or an empty replacement ("").
- */
 export function formChanged(values: Record<string, unknown>, opened: Record<string, unknown>) {
   const now = flatten(values)
   const then = flatten(opened)
@@ -49,51 +39,23 @@ export function formChanged(values: Record<string, unknown>, opened: Record<stri
   return Object.keys({ ...now, ...then }).some((k) => (now[k] === null) !== (then[k] === null))
 }
 
-/*
- * The save bar (SV-1, SV-3). No autosave and no Edit mode: fields are editable at once. Every editable area
- * registers its unsaved changes here, and one dark bar floats at the bottom center while any exist, with the
- * total count, Discard and Save changes. Save first checks every changed field and sends nothing while one
- * fails (the first is focused and named). Then it writes each changed area and ends in one toast: what was saved,
- * or, when an area failed, which one and why; a failed area keeps its changes. The page keeps room for the bar
- * while it shows. Leaving the page, signing out or closing the browser tab with unsaved changes asks first;
- * the question starts on Stay. An area may keep its changes across moves inside a part of the app (Settings
- * across its sections), and such a move does not ask.
- */
-
 export type SaveSource = {
-  /** What it saves, for a toast that covers several areas: "the overrides", "agent access". */
   label: string
-  /** The toast when only this area was saved: "Overrides saved". */
   saved: string
   count: number
-  /**
-   * Throws when the save failed; the error's message says why. Use a quiet mutation, the bar says what failed. It
-   * may resolve with a `note`: one more sentence for the toast, about something the save did besides saving.
-   */
   save: () => Promise<unknown>
   discard: () => void
-  /** A path prefix, such as "/settings/": moves inside it keep these changes, so they do not ask. */
   keepsOn?: string
-  /**
-   * Checks the changed fields before anything is sent (SV-1): marks each that fails (`aria-invalid` and a note
-   * under its line) and returns them. One problem anywhere stops the whole save.
-   */
   check?: () => FieldProblem[]
 }
 
-/** A changed field that failed its check before a save (SV-1, SV-12). */
 export type FieldProblem = {
-  /** The field's label, as its row shows it. */
   label: string
-  /** What is wrong, in words that follow the label: '"bob" is not an email address'. */
   problem: string
-  /** The id of the field's control, to find which comes first on the page. */
   id: string
-  /** Opens the field's section when it is not shown, and puts the focus in the field. */
   reveal: () => void
 }
 
-/** What the save bar says when fields failed their check: the first by name, and how many (SV-1). */
 export function checkOutcome(problems: Pick<FieldProblem, "label" | "problem">[]): string | null {
   const first = problems[0]
   if (!first) return null
@@ -102,7 +64,6 @@ export function checkOutcome(problems: Pick<FieldProblem, "label" | "problem">[]
     : `${problems.length} fields need a valid value, starting with ${first.label}`
 }
 
-/** Problems in the order their fields come on the page; a section out of sight comes after the one shown. */
 function inPageOrder(problems: FieldProblem[]) {
   const position = (p: FieldProblem) => document.getElementById(p.id)
   return [...problems].sort((a, b) => {
@@ -116,16 +77,11 @@ function inPageOrder(problems: FieldProblem[]) {
 type Entry = { label: string; count: number; keepsOn?: string; get: () => SaveSource }
 type Register = (id: string, entry: Entry | null) => void
 const SaveContext = React.createContext<Register | null>(null)
-/** The ids of the areas that have unsaved changes, read only. */
 const UnsavedContext = React.createContext<ReadonlySet<string>>(new Set())
-/** Sets the element the bar shows in instead of the page, such as a sheet that traps the focus. */
 const HostContext = React.createContext<((host: HTMLElement | null) => void) | null>(null)
-/** Asks before a leave that the router does not see, such as signing out; true to go on. */
 const LeaveContext = React.createContext<() => Promise<boolean>>(async () => true)
-/** Asks "Leave without saving?"; true to go on. The signal closes the question as Stay. */
 type ConfirmLeave = (signal?: AbortSignal) => Promise<boolean>
 
-/** Registers an editable area with the page's save bar while it has unsaved changes. */
 export function useSaveSource(id: string, source: SaveSource) {
   const register = React.useContext(SaveContext)
   const latest = React.useRef(source)
@@ -137,29 +93,18 @@ export function useSaveSource(id: string, source: SaveSource) {
   React.useEffect(() => () => register?.(id, null), [register, id])
 }
 
-/** Whether the area registered under this id has unsaved changes, for a mark on the tab that holds it. */
 export function useUnsaved(id: string) {
   return React.useContext(UnsavedContext).has(id)
 }
 
-/** The ids of every area with unsaved changes, for marks on a list of sections. */
 export function useUnsavedIds(): ReadonlySet<string> {
   return React.useContext(UnsavedContext)
 }
 
-/**
- * Asks "Leave without saving?" when there are unsaved changes, before a leave the router does not see, such as
- * signing out; resolves true to go on. It is the same one question as for the router's moves (SV-1).
- */
 export function useConfirmLeave() {
   return React.useContext(LeaveContext)
 }
 
-/**
- * Where the save bar shows inside a dialog: a sheet traps the focus and covers the page, so the bar would be
- * out of reach under it. Put it in a footer that sticks to the bottom of the dialog's body (list-panel.tsx);
- * below it there may be the pane's own tabs, which then keep the clearance for the phone's home bar.
- */
 export function SaveBarHost() {
   const setHost = React.useContext(HostContext)
   const [el, setEl] = React.useState<HTMLDivElement | null>(null)
@@ -177,15 +122,10 @@ export function SaveBarHost() {
   )
 }
 
-/**
- * The one toast that ends a save of several areas (SV-3). A failure is never covered by a success: it names
- * each area that failed with its reason, after what was saved.
- */
 export function saveOutcome(
   saved: { label: string; saved: string; note?: string }[],
   failed: { label: string; detail: string }[],
 ): { tone: "success" | "error"; text: string } | null {
-  // A note says what a save did besides saving ("Your other sessions were signed out."), after what was saved.
   const notes = saved.flatMap((s) => (s.note ? [` ${s.note}`] : [])).join("")
   if (failed.length === 0) {
     if (saved.length === 0) return null
@@ -224,7 +164,6 @@ export function SaveScope({ children }: { children: React.ReactNode }) {
   )
 
   async function save() {
-    // Every changed field is checked first; the first that fails takes the focus, and nothing is sent (SV-1).
     const problems = inPageOrder(list.flatMap((entry) => entry.get().check?.() ?? []))
     if (problems[0]) {
       problems[0].reveal()
@@ -240,7 +179,6 @@ export function SaveScope({ children }: { children: React.ReactNode }) {
         const result = (await source.save()) as { note?: unknown } | undefined
         saved.push(typeof result?.note === "string" ? { ...source, note: result.note } : source)
       } catch (e) {
-        // Its changes stay, and the toast below says what failed.
         failed.push({ label: source.label, detail: describeError(e) })
       }
     }
@@ -285,13 +223,11 @@ function SaveBar({
 }: {
   count: number
   saving: boolean
-  /** A dialog's place for the bar; without one it floats over the page. */
   host: HTMLElement | null
   onSave: () => void
   onDiscard: () => void
 }) {
   React.useEffect(() => {
-    // The scrolling page keeps room for the bar only while it shows, so it never covers the last field.
     document.documentElement.toggleAttribute("data-unsaved", count > 0)
   }, [count])
   if (count === 0) return null
@@ -321,7 +257,6 @@ function SaveBar({
         disabled={saving}
         className="border-bg bg-bg text-ink hover:border-bg hover:opacity-90 disabled:cursor-wait disabled:opacity-60"
       >
-        {/* The busy ring (FB-7) is drawn here: kit.tsx imports this file, so its BusyButton cannot be used. */}
         {saving && <LoaderCircle aria-hidden className="animate-spin" />}
         {saving ? "Saving…" : "Save changes"}
       </Button>
@@ -330,10 +265,6 @@ function SaveBar({
   )
 }
 
-/**
- * "Leave without saving?" with the focus on Stay, so Enter keeps the work (SV-1, DS-12). It writes no Back
- * entry of its own, since it is asked during Back and Forward too (DS-10).
- */
 function useLeaveQuestion(count: number) {
   const confirm = useConfirm()
   return React.useCallback(
@@ -356,17 +287,6 @@ function useLeaveQuestion(count: number) {
 
 type Question = { controller: AbortController; blocker: Blocker | null; dropped: boolean }
 
-/**
- * Every Leave question goes through here, one at a time (SV-1): the router's blocked moves (`update`, which
- * takes each blocker the router reports) and leaves the router does not see, such as Log out (`confirm`).
- * - Back or Forward while a question is open is blocked again and already undone by the router: it counts as
- *   Stay, so the question closes, the block is reset and the history stays as it was.
- * - A navigation that happens anyway (`moved`) or a guard that goes away (`stop`) closes the question, and its
- *   answer does nothing.
- * - The answer reads the router's block when it comes (`current`) and proceeds only the very move it was asked
- *   about, while that move is still blocked; a move a finished navigation cleared is never proceeded or reset.
- * A move that is not made restores the overlays it was made from (`stayAfterBlock`).
- */
 export function leaveAsker(ask: (signal: AbortSignal) => Promise<boolean>, current: () => Blocker) {
   let asking: Question | null = null
   let seen: Blocker | null = null
@@ -383,7 +303,6 @@ export function leaveAsker(ask: (signal: AbortSignal) => Promise<boolean>, curre
         block.proceed()
         return true
       }
-      // Stay, or a Back that came while the question was open: the router undid it, and it is reset here.
       if (block.state === "blocked") block.reset()
       stayAfterBlock()
       return leave && !blocker
@@ -398,40 +317,28 @@ export function leaveAsker(ask: (signal: AbortSignal) => Promise<boolean>, curre
 
   return {
     update(blocker: Blocker) {
-      // The router reports its whole state; only a new block, or the end of one, is news.
       if (blocker === seen) return
       seen = blocker
       if (asking) {
-        // Blocked again, or no longer blocked: the open question ends as Stay.
         asking.controller.abort()
         return
       }
       if (blocker.state === "blocked") void open(blocker)
     },
-    /** Asks before a leave the router does not see; true to go on. False at once while a question is open. */
     confirm(): Promise<boolean> {
       return asking ? Promise.resolve(false) : open(null)
     },
-    /** A navigation happened while a question was open: it closes, and its answer does nothing. */
     moved() {
       if (!asking) return
       drop()
-      // Overlays a blocked move was made from were not left by it.
       stayAfterBlock()
     },
-    /** The guard is gone (the page unmounted): the question closes and its answer does nothing. */
     stop: drop,
   }
 }
 
 let guards = 0
 
-/**
- * Guards the router's moves with `shouldBlock` and asks with `ask` (`leaveAsker`). It reads the router itself
- * rather than a blocker from the last render: the router's state may move on before React renders it, and an
- * answer must act on the block as it is now. Returns what asks before a leave the router does not see, and what
- * ends the guard.
- */
 export function guardLeaves(
   router: DataRouter,
   shouldBlock: BlockerFunction,
@@ -443,8 +350,6 @@ export function guardLeaves(
   const asker = leaveAsker(ask, current)
   let location = router.state.location
   const unsubscribe = router.subscribe((state) => {
-    // A finished navigation changes the place and clears the block in one update: the move comes first, so the
-    // open question is dropped rather than answered as Stay.
     if (state.location !== location) {
       location = state.location
       asker.moved()
@@ -461,12 +366,6 @@ export function guardLeaves(
   }
 }
 
-/**
- * Unsaved changes are protected: a reload or closing the tab asks the browser, a move inside the app asks here.
- * A move that every changed area keeps its changes across does not ask. A session that ended or was signed out
- * switches the guard off, so leaving for sign-in does not ask (NL-18). Returns what asks before a leave the
- * router does not see, such as signing out, through the same one question.
- */
 function useLeaveGuard(count: number, keepsOn: (string | undefined)[], question: ConfirmLeave) {
   const router = React.useContext(UNSAFE_DataRouterContext)?.router
   if (!router) throw new Error("The save bar needs a data router")

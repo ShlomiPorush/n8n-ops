@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto"
 import { EventEmitter } from "node:events"
 import { join } from "node:path"
-import { eq } from "drizzle-orm"
+import { eq, sql } from "drizzle-orm"
 import postgres from "postgres"
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 import type { Ctx } from "../context.ts"
@@ -15,10 +15,6 @@ import { detachWorker, updateInstance } from "./instance-update.ts"
 import { deleteInstance } from "./problems.ts"
 import { removeCapability } from "./setup.ts"
 
-// Applying health reports against a real PostgreSQL: a check that started earlier never overwrites a later one,
-// a change of how health is collected drops checks that started before it, the mode read inside the main becomes
-// the instance's, the queue backlog survives a restart and changes only on a measurement, and outside queue mode
-// no queue alert is raised or kept.
 const adminUrl = process.env.MIGRATION_DATABASE_URL
 if (!adminUrl) throw new Error("MIGRATION_DATABASE_URL is required (scripts/verify.sh sets it)")
 
@@ -46,7 +42,6 @@ const ticket = async () => {
   if (!t) throw new Error("no instance")
   return t.ticket
 }
-/** Applies the same report as many checks in a row as a down alert takes by default (3). */
 const thrice = async (r: HealthReport) => {
   for (let i = 0; i < 3; i++) await applyHealth(ctx, id, r, await ticket())
 }
@@ -92,7 +87,6 @@ describe("startCheck", () => {
   it("returns the instance as it was when the ticket was taken", async () => {
     await ctx.db.update(instances).set({ collectionRevision: 7, containerName: "n8n-b" }).where(eq(instances.id, id))
     const started = await startCheck(ctx, id)
-    // The check is made from this row: its settings are those of the revision on its ticket.
     expect(started?.ticket.revision).toBe(7)
     expect(started?.instance).toMatchObject({ collectionRevision: 7, containerName: "n8n-b" })
   })
@@ -109,7 +103,6 @@ describe("applyHealth", () => {
 
   it("drops a check that started before collection changed, even when it changed back", async () => {
     const before = await ticket()
-    // A to B and back to A: the revision is raised twice, so the old check never matches again.
     await ctx.db.update(instances).set({ collectionRevision: 2 }).where(eq(instances.id, id))
     expect(await applyHealth(ctx, id, report(), before)).toBeNull()
     expect((await row())?.health).toBe("unknown")
@@ -120,7 +113,6 @@ describe("applyHealth", () => {
     expect(await row()).toMatchObject({ queueMode: true, queueModeSource: "found", version: "2.44.3" })
     await applyHealth(ctx, id, report({ source: "inside", mode: null }), await ticket())
     expect(await row()).toMatchObject({ queueMode: true, queueModeSource: "found" })
-    // A mode over the network is not a mode read inside: it changes nothing.
     await applyHealth(ctx, id, report({ source: "network", mode: "regular" }), await ticket())
     expect((await row())?.queueMode).toBe(true)
   })
@@ -131,19 +123,16 @@ describe("applyHealth", () => {
     await applyHealth(ctx, id, report({ queue: full }), await ticket())
     const since = (await row())?.backlogSince
     expect(since).toBeInstanceOf(Date)
-    // Nothing is kept in memory: the start time is what the database says, as after a restart.
     await ctx.db
       .update(instances)
       .set({ backlogSince: new Date(Date.now() - 2 * 60_000) })
       .where(eq(instances.id, id))
     await applyHealth(ctx, id, report({ queue: full }), await ticket())
     expect(await conditions()).toEqual([expect.objectContaining({ key: `backlog:${id}`, active: true })])
-    // Metrics that could not be read are not an empty queue: the backlog and its alert stay.
     await applyHealth(ctx, id, report({ queue: null, metricsError: "metrics answered 502" }), await ticket())
     expect((await row())?.backlogSince).toBeInstanceOf(Date)
     expect((await conditions())[0]?.active).toBe(true)
     expect((await sent()).filter((t) => t.includes("cleared"))).toEqual([])
-    // A measurement below the threshold clears it, with its message.
     await applyHealth(ctx, id, report({ queue: { ...full, waiting: 0 } }), await ticket())
     expect((await row())?.backlogSince).toBeNull()
     expect((await sent()).filter((t) => t.includes("cleared"))).toHaveLength(1)
@@ -174,13 +163,11 @@ describe("applyHealth", () => {
     await applyHealth(ctx, id, report({ source: "inside", mode: "regular", workers: [down] }), await ticket())
     expect((await conditions()).filter((c) => c.active)).toEqual([])
     expect((await sent()).length).toBe(before)
-    // A late report of a worker of an earlier release cannot reopen it.
     await applyHealth(ctx, id, report({ workers: [down] }), await ticket())
     expect((await conditions()).filter((c) => c.active)).toEqual([])
   })
 
   it("closes queue alerts left open once the mode is regular, as after a switch by hand", async () => {
-    // Set to regular by hand while a worker alert was open: the next report closes it without a message.
     await ctx.db
       .insert(alertState)
       .values({ key: `worker:${id}:http://worker:5678/healthz`, active: true, since: new Date(), detail: "down" })
@@ -193,7 +180,6 @@ describe("applyHealth", () => {
   it("never reopens queue alerts after a switch to regular by hand, whichever comes first", async () => {
     await ctx.db.update(instances).set({ queueMode: true }).where(eq(instances.id, id))
     const down = { url: "http://worker:5678/healthz", ok: false, status: 0, ms: 1, error: "refused" }
-    // A queue report in flight and the switch at the same time: the switch takes the report's turn.
     const t = await ticket()
     await Promise.all([
       applyHealth(ctx, id, report({ workers: [down] }), t),
@@ -207,7 +193,6 @@ describe("applyHealth", () => {
     const down = { ok: false, status: 0, ms: 1, error: "refused" }
     const early = await ticket()
     const late = await ticket()
-    // The later check comes in first; the earlier one, still in flight, must not open an alert after it.
     await Promise.all([applyHealth(ctx, id, report(), late), applyHealth(ctx, id, report({ main: down }), early)])
     expect((await row())?.health).toBe("ok")
     expect((await conditions()).find((c) => c.key === `down:${id}`)?.active ?? false).toBe(false)
@@ -237,15 +222,12 @@ describe("applyHealth", () => {
     await thrice(found([w("not-ready")]))
     expect(await active()).toEqual([key])
     expect((await sent()).at(-1)).toContain("acme-w-1")
-    // Not checked, or running without its health check: the alert stays as it was.
     await applyHealth(ctx, id, found([w("not-checked")]), await ticket())
     await applyHealth(ctx, id, found([w("not-verified")]), await ticket())
     expect(await active()).toEqual([key])
-    // A list that could not be read in full says nothing about the worker being gone.
     await applyHealth(ctx, id, found([], "failed"), await ticket())
     expect(await active()).toEqual([key])
     expect((await row())?.health).toBe("warn")
-    // Ready ends it with "Queue worker back"; gone from a full list ends it without a message.
     await applyHealth(ctx, id, found([w("ready", true)]), await ticket())
     expect(await active()).toEqual([])
     expect((await sent()).at(-1)).toContain("Queue worker back")
@@ -254,7 +236,6 @@ describe("applyHealth", () => {
     await applyHealth(ctx, id, found([]), await ticket())
     expect(await active()).toEqual([])
     expect((await sent()).length).toBe(before)
-    // None found is a warning.
     expect((await row())?.health).toBe("warn")
   })
 
@@ -288,7 +269,6 @@ describe("applyHealth", () => {
     )
     const open = async () => (await conditions()).filter((c) => c.active).map((c) => c.key)
     expect(await open()).toEqual([`worker:${id}:docker://acme-w-1`])
-    // The proxy refused exec in the main this time: the worker checked over the network, without discovery.
     await applyHealth(
       ctx,
       id,
@@ -296,7 +276,6 @@ describe("applyHealth", () => {
       await ticket(),
     )
     expect(await open()).toEqual([`worker:${id}:docker://acme-w-1`])
-    // Another worker on another host: the alerts of the old host's workers end.
     await updateInstance(ctx, id, { collection: "worker", workerId: null, containerName: "acme-n8n-2" })
     expect(await open()).toEqual([])
   })
@@ -336,7 +315,7 @@ describe("applyHealth", () => {
     ])
   })
 
-  it("takes a revoked worker off in the instance's turn, so a report in flight cannot reopen its alerts", async () => {
+  it("takes a revoked worker off under the instance's row lock, so a report in flight cannot reopen its alerts", async () => {
     const [w] = await ctx.db
       .insert(workers)
       .values({ name: "old-host", tokenHash: "h-old", lastSeenAt: new Date() })
@@ -429,7 +408,6 @@ describe("down alerts after failed checks in a row", () => {
     await apply(down)
     expect(await sent()).toEqual([])
     expect(await state()).toMatchObject({ active: false, failures: 2 })
-    // The status shows every check as it is; only the alert waits.
     expect((await row())?.health).toBe("down")
     await apply(down)
     expect(await sent()).toHaveLength(1)
@@ -472,6 +450,31 @@ describe("down alerts after failed checks in a row", () => {
     expect(await sent()).toEqual([])
     await apply(down)
     expect((await sent())[0]).toContain("5 failed checks in a row")
+  })
+
+  it("follows the setting of the locked row when it changes while a report waits for it", async () => {
+    await ctx.db
+      .update(instances)
+      .set({ overrides: { downAfterFailures: 5 } })
+      .where(eq(instances.id, id))
+    for (let i = 0; i < 2; i++) await apply(down)
+    const third = await ticket()
+    let applying: Promise<unknown> = Promise.resolve()
+    await ctx.db.transaction(async (tx) => {
+      await tx
+        .update(instances)
+        .set({ overrides: { downAfterFailures: 3 } })
+        .where(eq(instances.id, id))
+      applying = applyHealth(ctx, id, down, third)
+      await vi.waitFor(async () => {
+        const [waiting] = await ctx.db.execute(
+          sql`select count(*)::int as n from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock'`,
+        )
+        expect(waiting?.n).toBeGreaterThan(0)
+      })
+    })
+    await applying
+    expect(await sent()).toHaveLength(1)
   })
 
   it("forgets failed checks of what was checked before a change of collection", async () => {
@@ -522,7 +525,6 @@ const workerRows = async () => (await conditions()).filter((c) => c.key.startsWi
 const names = (n: number, prefix: string) => Array.from({ length: n }, (_, i) => `${prefix}-${i}`)
 
 describe("queue workers a health check asked about", () => {
-  /** A probe job for the instance as it is now, answered with `result`, as the worker API applies it. */
   const answer = async (
     result: Record<string, unknown>,
     payload?: (check: Awaited<ReturnType<typeof ticket>>) => Record<string, unknown>,
@@ -614,7 +616,6 @@ describe("queue workers a health check asked about", () => {
 
 describe("the number of found queue workers an instance keeps conditions for", () => {
   const BOUND = 500
-  /** Found queue workers that have failed once and not alerted yet. */
   const pending = (list: string[], extra: Partial<typeof alertState.$inferInsert> = {}) =>
     ctx.db.insert(alertState).values(
       list.map((n) => ({
@@ -626,7 +627,6 @@ describe("the number of found queue workers an instance keeps conditions for", (
         ...extra,
       })),
     )
-  // A list read only in part leaves the conditions of workers it does not show as they were.
   const partial = (workers: unknown[]) =>
     report({ source: "inside", workers, discovery: { status: "partial", found: 999 } } as Partial<HealthReport>)
   const apply = async (r: HealthReport) => applyHealth(ctx, id, r, await ticket())
@@ -701,7 +701,6 @@ describe("the number of found queue workers an instance keeps conditions for", (
     expect((await workerRows()).map((c) => c.key)).toEqual([`worker:${id}:docker://w-2`])
     await apply(full([foundReady("w-1")]))
     expect(await workerRows()).toEqual([])
-    // A new streak starts from one: it alerts again on its third failed check.
     await apply(full([foundDown("w-1")]))
     await apply(full([foundDown("w-1")]))
     expect(await workerDownSent()).toHaveLength(2)
@@ -730,7 +729,6 @@ describe("the number of found queue workers an instance keeps conditions for", (
     const other = `worker:00000000-0000-4000-8000-000000000000:docker://x`
     await pending(["w-1", "w-2"])
     await ctx.db.insert(alertState).values({ key: other, active: true, since: new Date() })
-    // The instance is found by its ID in any letter case.
     await deleteInstance(ctx, id.toUpperCase())
     expect(await row()).toBeUndefined()
     const keys = (await ctx.db.select().from(alertState)).map((a) => a.key)

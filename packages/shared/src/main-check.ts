@@ -1,10 +1,5 @@
 import { z } from "zod"
 
-/**
- * One request's result. `ms` is that request alone, from sending it until its whole answer arrived; absent when no
- * whole answer came (or from checks of earlier releases). `code` is the error code when the request failed with one
- * (`timeout` for the check's own deadline).
- */
 const reading = z.object({
   status: z.number(),
   error: z.string().max(200).optional(),
@@ -12,11 +7,6 @@ const reading = z.object({
   code: z.string().max(40).optional().catch(undefined),
 })
 
-/**
- * What the worker's check inside an n8n main container prints (apps/worker/src/inside.ts): health and readiness
- * statuses, the execution mode, the state of the metrics with the queue figures and the version. Anything else is
- * not understood, and not used.
- */
 export const mainCheckOutput = z.object({
   health: reading.optional(),
   readiness: reading.optional(),
@@ -34,14 +24,8 @@ export const mainCheckOutput = z.object({
 
 export type MainCheckOutput = z.infer<typeof mainCheckOutput>
 
-/**
- * The most queue workers found next to a main that one health check checks and reports. The server counts no more
- * than this from one report.
- */
 export const QUEUE_WORKERS_PER_PROBE = 50
 
-/** What the worker's check inside an n8n queue worker container prints (apps/worker/src/inside.ts, WORKER_CHECK). */
-/** A queue worker's figures, each bounded and each dropped alone when it does not fit. */
 export const workerDetails = {
   version: z
     .string()
@@ -50,7 +34,6 @@ export const workerDetails = {
     .optional()
     .catch(undefined),
   uptimeSec: z.number().int().min(0).max(1e10).optional().catch(undefined),
-  /** Bytes; limit null when none is set on the container's memory group. */
   memory: z
     .object({ used: z.number().min(0).max(1e15), limit: z.number().positive().max(1e18).nullable() })
     .optional()

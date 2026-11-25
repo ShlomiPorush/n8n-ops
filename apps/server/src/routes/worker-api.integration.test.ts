@@ -15,8 +15,6 @@ import { inputsOf } from "../services/setup.ts"
 import { deliverToWaiter, waitForJob } from "../services/workers.ts"
 import { RESULT_BODY_BYTES, workerApiRoutes } from "./worker-api.ts"
 
-// A worker's job result against a real PostgreSQL: the body is read only for the worker's own running job, a result
-// over the limit fails the job instead of being taken, and of two answers for one job the first to end it stands.
 const adminUrl = process.env.MIGRATION_DATABASE_URL
 if (!adminUrl) throw new Error("MIGRATION_DATABASE_URL is required (scripts/verify.sh sets it)")
 
@@ -27,7 +25,6 @@ let ctx: Ctx
 let app: ReturnType<typeof workerApiRoutes>
 
 const MiB = 1024 * 1024
-/** An outcome only the test hands over, to show that nothing else reached a waiter first. */
 const MARK = { ok: true, result: { mark: "given by the test" } }
 const TOO_LARGE = `The job's result is larger than ${RESULT_BODY_BYTES / MiB} MiB.`
 
@@ -52,7 +49,6 @@ async function addJob(workerId: string, kind: "probe" | "backup" | "export-crede
 
 const jobRow = async (id: string) => (await ctx.db.select().from(workerJobs).where(eq(workerJobs.id, id)))[0]
 
-/** Posts a result; `length` announces a size without sending it, `body` streams with no length announced. */
 const post = (
   identity: string,
   jobId: string,
@@ -69,10 +65,6 @@ const post = (
     ...(init.body ? { duplex: "half" } : {}),
   } as RequestInit)
 
-/**
- * A body sent in two parts: the first part is read, then the stream waits until `go()` before it sends the rest.
- * `reading` resolves once the server started reading it, which is after the worker and the job were checked.
- */
 function paused(first: string, rest: Uint8Array) {
   let started = () => {}
   let go = () => {}
@@ -115,7 +107,6 @@ beforeAll(async () => {
     settings: createSettings(database.db),
     audit: createAudit(database.db),
     version: "test",
-    // A failed backup removes its spooled archive, if any, from beside the key.
     appKeyPath: join(tmpdir(), name, "app.key"),
   } as unknown as Ctx
   app = workerApiRoutes(ctx)
@@ -175,6 +166,18 @@ describe("a worker's job result", () => {
     expect(await jobRow(streamed.id)).toMatchObject({ status: "failed", error: TOO_LARGE })
   })
 
+  it("of a credential export reaches the waiting request and is stored only as a count", async () => {
+    const w = await addWorker()
+    const job = await addJob(w.id, "export-credentials")
+    const secret = randomBytes(16).toString("hex")
+    const result = { credentials: [{ id: "c1", name: "ERP", type: "httpHeaderAuth", data: { value: secret } }] }
+    const waiting = waitForJob(job.id, 5_000)
+    expect((await post(w.identity, job.id, { json: { ok: true, result } })).status).toBe(200)
+    expect(await waiting).toMatchObject({ ok: true, result })
+    expect(await jobRow(job.id)).toMatchObject({ status: "done", result: { credentials: 1 } })
+    expect(JSON.stringify(await jobRow(job.id))).not.toContain(secret)
+  })
+
   it("over the limit tells a waiting credential export at once", async () => {
     const w = await addWorker()
     const job = await addJob(w.id, "export-credentials")
@@ -212,7 +215,6 @@ describe("a worker's job result", () => {
     go()
     expect((await answer).status).toBe(413)
     expect(await jobRow(job.id)).toMatchObject({ status: "done", error: null })
-    // Nothing was handed to the waiting export: the first outcome it gets is the one given here.
     deliverToWaiter(job.id, MARK)
     expect(await waiting).toEqual(MARK)
   })

@@ -14,11 +14,6 @@ import { useApi } from "@/lib/api"
 import { n, plural } from "@/lib/numbers"
 import { formatTime, useTimeFormat } from "@/lib/time"
 
-/**
- * The Health tab's history of the main: response times over a range, with failed checks marked, and the runs of
- * failed checks in a row with what each one means. The same answer agents read from /api/v1/health.
- */
-
 type Bucket = {
   at: string
   checks: number
@@ -76,7 +71,6 @@ const KIND: Record<string, string> = {
   other: "Failed",
 }
 
-/** Reads only while its tab is shown: the pane keeps every tab mounted. */
 export function HealthHistory({ instanceId, active }: { instanceId: string; active: boolean }) {
   const [hours, setHours] = useState("24")
   const history = useApi<History>(active ? `/instances/${instanceId}/health-history?hours=${hours}&limit=20` : null, {
@@ -88,7 +82,6 @@ export function HealthHistory({ instanceId, active }: { instanceId: string; acti
   return (
     <>
       <Panel>
-        {/* A refresh, or another range, that failed: says so with Try again, over the data kept on screen. */}
         <RefreshLine live={history} what="this range" />
         <PanelHead
           title="Response times"
@@ -190,8 +183,6 @@ function Chart({ history }: { history: History }) {
   const y = (v: number) => PAD.top + plotH - (Math.min(v, top) / top) * plotH
   const mid = (b: Bucket) => new Date(b.at).getTime() + bucketMs / 2
 
-  // A line breaks where a bucket has no measured time, and where buckets are missing (no check at all, the server
-  // or the worker was away), so a gap is never drawn as if it were known.
   const segments: Bucket[][] = []
   let current: Bucket[] = []
   for (const b of history.series) {
@@ -275,7 +266,6 @@ function Chart({ history }: { history: History }) {
               ),
             )}
           </g>
-          {/* Failed checks sit on the baseline in the failure colour, each with a ring of the surface. */}
           <g className="text-fail">
             {history.series
               .filter((b) => b.failed > 0)

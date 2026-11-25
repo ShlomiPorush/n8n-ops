@@ -15,16 +15,13 @@ import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/c
 import { PasswordInput } from "@/components/ui/password-input"
 import { authClient, authErrorText } from "@/lib/auth-client"
 import { toast } from "@/lib/toast"
-import { clearTwoFactorReset, markTwoFactorReset } from "@/lib/two-factor-reset"
 import { PasskeysPanel } from "@/pages/account-passkeys"
 import { SettingRow } from "@/pages/settings"
 
-/** The signed-in person's own sign-in: password, two-factor and passkeys. */
 export function AccountPage() {
   const session = authClient.useSession()
   const [changing, setChanging] = useState(false)
   const [resetting, setResetting] = useState(false)
-  // The dialogs have no trigger of their own, so each gives the focus back to the button that opened it.
   const resetButton = useRef<HTMLButtonElement>(null)
   const changeButton = useRef<HTMLButtonElement>(null)
   const username = (session.data?.user as { username?: string } | undefined)?.username
@@ -61,10 +58,6 @@ export function AccountPage() {
   )
 }
 
-/**
- * What to do without the password, folded away (AX-12): on this page it only helps someone who is still signed in,
- * such as on another device, so it does not take the room of the things done here.
- */
 function ForgotPassword() {
   return (
     <details className="group/fold border-t border-line regular:border-t-0">
@@ -87,19 +80,13 @@ function ForgotPassword() {
   )
 }
 
-/** A dialog of this page and the button that opened it. */
 type Opened = { opener: RefObject<HTMLButtonElement | null>; onClose: () => void }
 
-/** Closed, the focus goes back to the button that opened the dialog, where a keyboard user left off. */
 const backTo = (opener: Opened["opener"]) => (e: Event) => {
   e.preventDefault()
   opener.current?.focus()
 }
 
-/**
- * The fields are emptied only once the change worked: a failure keeps what was typed for another try, and the
- * button comes back also when the request never reached the server (FS-23).
- */
 function ChangePasswordDialog({ opener, onClose }: Opened) {
   const [current, setCurrent] = useState("")
   const [next, setNext] = useState("")
@@ -176,12 +163,6 @@ function ChangePasswordDialog({ opener, onClose }: Opened) {
   )
 }
 
-/**
- * A new authenticator app: the other sessions are signed out first, so none of them goes on without two-factor;
- * then two-factor is turned off, and the page loads /setup afresh, where the server's answer decides what comes
- * next. Turned off, the person sets up a new code there and comes back to this page (lib/two-factor-reset.ts);
- * still on, they stay in the console; a session that was lost on the way goes to sign-in.
- */
 function ResetTwoFactorDialog({ opener, onClose }: Opened) {
   const [password, setPassword] = useState("")
   const [busy, setBusy] = useState(false)
@@ -192,30 +173,26 @@ function ResetTwoFactorDialog({ opener, onClose }: Opened) {
     setError("")
     let leaving = false
     try {
-      let first: { status?: number; message?: string } | null = null
+      let error: { status?: number; message?: string } | null = null
       try {
-        ;({ error: first } = await authClient.revokeOtherSessions())
+        ;({ error } = await authClient.twoFactor.disable({ password }))
       } catch {
-        first = { status: 0 }
+        error = { status: 0 }
       }
-      if (first)
-        return setError(
-          `Two-factor was not reset and is still on. Some or all of your other sessions may be signed out already. ${authErrorText(first)}`,
+      if (error?.status && error.status < 500)
+        return setError(`Two-factor was not reset and is still on: ${authErrorText(error)}`)
+      if (error) {
+        const reached = await fetch("/healthz/ready", { signal: AbortSignal.timeout(10_000) }).then(
+          (answer) => answer.ok,
+          () => false,
         )
-      markTwoFactorReset()
-      let second: { status?: number; message?: string } | null = null
-      try {
-        ;({ error: second } = await authClient.twoFactor.disable({ password }))
-      } catch {
-        second = { status: 0 }
-      }
-      // Refused: nothing changed. Any other answer, or none, may have turned it off.
-      if (second?.status && second.status < 500) {
-        clearTwoFactorReset()
-        return setError(`Two-factor was not reset and is still on: ${authErrorText(second)}`)
+        if (!reached)
+          return setError(
+            "n8n-ops could not be reached, so two-factor may or may not have been reset. Reload the page when it is back.",
+          )
       }
       leaving = true
-      window.location.assign("/setup")
+      window.location.assign("/setup?reset")
     } finally {
       if (!leaving) setBusy(false)
     }

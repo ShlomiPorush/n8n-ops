@@ -2,7 +2,7 @@ import { useQueryClient } from "@tanstack/react-query"
 import { Download } from "lucide-react"
 import QRCode from "qrcode"
 import { useEffect, useState } from "react"
-import { Navigate, useNavigate } from "react-router"
+import { Navigate, useNavigate, useSearchParams } from "react-router"
 import { SessionGuard } from "@/app/session-guard"
 import { BusyButton, Loading, Panel } from "@/components/kit"
 import { Button } from "@/components/ui/button"
@@ -14,7 +14,6 @@ import { ApiError, api, describeError, UNREACHABLE_TEXT, useApi } from "@/lib/ap
 import { authClient, authErrorText } from "@/lib/auth-client"
 import { download } from "@/lib/download"
 import { loginPath, sessionStarted } from "@/lib/session"
-import { clearTwoFactorReset, twoFactorResetPending } from "@/lib/two-factor-reset"
 import { cn } from "@/lib/utils"
 import { DestinationFields, type DestinationForm, destinationBody, destinationForm } from "../destinations"
 import { AuthFrame, type TotpAnswer, TotpInput, totpAnswer } from "./shared"
@@ -28,13 +27,9 @@ export function SetupPage() {
   const checklist = useApi<Checklist>(status.data?.hasUser ? "/setup/checklist" : null)
   const [password, setPassword] = useState("")
   const [skipped, setSkipped] = useState<Step[]>([])
-  // A two-factor reset from Account (lib/two-factor-reset.ts): a new code, then back to Account, without the
-  // optional steps. Read once, when the page opens; the steps it skips are decided only from a checklist that loaded.
-  const [resetting] = useState(twoFactorResetPending)
+  const resetting = useSearchParams()[0].has("reset")
   const navigate = useNavigate()
   const client = useQueryClient()
-  // Signed in before two-factor is set up: the session clocks apply here too, and a session that ends goes to
-  // sign-in with the reason.
   useEffect(() => {
     if (checklist.data) sessionStarted()
   }, [checklist.data])
@@ -100,16 +95,7 @@ export function SetupPage() {
           }}
         />
       )}
-      {step === "Two-Factor" && (
-        <TwoFactorStep
-          password={password}
-          onDone={async () => {
-            // The new code is set up: the reset is over, and this page still skips what it skipped for it.
-            if (resetting) clearTwoFactorReset()
-            await refresh()
-          }}
-        />
-      )}
+      {step === "Two-Factor" && <TwoFactorStep password={password} onDone={refresh} />}
       {step === "Backup Key" && <BackupKeyStep onDone={refresh} />}
       {step === "Telegram" && <TelegramStep onDone={refresh} onSkip={() => skip("Telegram")} />}
       {step === "Destination" && (
@@ -128,7 +114,6 @@ export function SetupPage() {
   )
 }
 
-/** One setup step: a heading with the question it answers, the form, and the actions under it. */
 function StepFrame({
   title,
   description,
@@ -155,11 +140,6 @@ function StepFrame({
 function AccountStep({ onDone }: { onDone: (password: string) => Promise<void> }) {
   const [error, setError] = useState("")
   const [busy, setBusy] = useState(false)
-  /*
-   * The account once it exists. Signing in after it can still fail, offline for one; trying again then only
-   * signs in, as the account is there already (a second create would be refused), with what it was made with.
-   * The fields are read-only while a request runs and after the account exists, so they always show what is used.
-   */
   const [created, setCreated] = useState<{ username: string; password: string } | null>(null)
   async function submit(form: FormData) {
     let account = created
@@ -174,7 +154,6 @@ function AccountStep({ onDone }: { onDone: (password: string) => Promise<void> }
         await api("/setup/account", { method: "POST", json: account })
         setCreated(account)
       }
-      // A sign-in that never reached the server comes back as an error without a status (FS-23).
       const { error } = await authClient.signIn.username(account).catch(() => ({ error: { status: 0 } }))
       if (error) throw new Error(authErrorText(error))
       await onDone(account.password)
@@ -257,7 +236,6 @@ function TwoFactorStep({ password: known, onDone }: { password: string; onDone: 
   const [error, setError] = useState("")
   const [busy, setBusy] = useState(false)
 
-  // The button always comes back, also when the request never reached the server (FS-23).
   async function start(pw: string) {
     setBusy(true)
     setError("")
@@ -282,7 +260,6 @@ function TwoFactorStep({ password: known, onDone }: { password: string; onDone: 
     if (uri) void QRCode.toDataURL(uri, { margin: 1, width: 200 }).then(setQr)
   }, [uri])
 
-  // A wrong code is cleared; one sent without an answer stays, to be sent again (FS-23).
   async function verify(code: string): Promise<TotpAnswer> {
     setBusy(true)
     setError("")
@@ -348,7 +325,6 @@ function BackupKeyStep({ onDone }: { onDone: () => Promise<void> }) {
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState("")
 
-  // Each says what failed under the step and rejects, so its button shows that it failed (FB-7).
   async function generate() {
     setError("")
     try {
@@ -484,7 +460,6 @@ function TelegramStep({ onDone, onSkip }: { onDone: () => Promise<void>; onSkip:
   )
 }
 
-/** The first backup destination: an S3 bucket or the mapped folder. The others are in Settings. */
 function DestinationStep({ onDone, onSkip }: { onDone: () => Promise<void>; onSkip: () => void }) {
   const [form, setForm] = useState<DestinationForm>(() => ({ ...destinationForm(null, "s3"), name: "Backups" }))
   const [error, setError] = useState("")

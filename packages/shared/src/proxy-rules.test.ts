@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { neededRule, PROXY_GET, proxyRules } from "./proxy-rules.ts"
 
-// The proxy anchors every pattern (^...$), as the tests do here.
 const allows = (pattern: string, path: string) => new RegExp(`^${pattern}$`).test(path)
 const exec = (name: string) => `/v1.43/containers/${name}/exec`
 
@@ -18,7 +17,6 @@ describe("neededRule", () => {
     expect(rule.coverage).toBe("complete")
     expect(rule.get).toBe(PROXY_GET)
     for (const name of ["acme", "acme-worker-1", "acme-worker-2"]) expect(allows(rule.post, exec(name))).toBe(true)
-    // Names n8n-ops saw are literal: a sibling with a similar name is not allowed.
     for (const name of ["acme-worker-3", "flowx", "postgres"]) expect(allows(rule.post, exec(name))).toBe(false)
     expect(rule.allows.map((a) => [a.name, a.pattern, a.sources])).toEqual([
       ["acme", false, [{ kind: "main", instance: "acme" }]],
@@ -93,7 +91,6 @@ describe("the lines with a pattern for queue workers added later", () => {
     expect(rule.widened?.allows.map((a) => a.name)).toEqual(["qworker*", "acme"])
     expect(allows(rule.widened?.post ?? "", exec("qworker8"))).toBe(true)
     expect(allows(rule.widened?.post ?? "", exec("postgres"))).toBe(false)
-    // The exact lines stay as they were.
     expect(allows(rule.post, exec("qworker8"))).toBe(false)
   })
 

@@ -6,12 +6,10 @@ import postgres from "postgres"
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest"
 import type { Ctx } from "../context.ts"
 import { createDatabase, type Database } from "../db/client.ts"
-import { instances, type JobKind, type JobStatus, workerJobs, workers } from "../db/schema.ts"
+import { type JobKind, type JobStatus, workerJobs, workers } from "../db/schema.ts"
 import { createSettings } from "../lib/settings.ts"
 import { FINISHED_JOB_KEEP_MS, pruneWorkerJobs } from "./worker-presence.ts"
 
-// Retention of worker jobs against a real PostgreSQL: finished jobs other than backups go a day after they end, a
-// batch at a time; what a reader still needs stays.
 const adminUrl = process.env.MIGRATION_DATABASE_URL
 if (!adminUrl) throw new Error("MIGRATION_DATABASE_URL is required (scripts/verify.sh sets it)")
 
@@ -43,7 +41,6 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await ctx.db.delete(workerJobs)
-  await ctx.db.delete(instances)
   await ctx.db.delete(workers)
   const [w] = await ctx.db
     .insert(workers)
@@ -73,21 +70,16 @@ const labels = async () =>
 
 describe("pruning worker jobs", () => {
   it("deletes finished jobs other than backups a day after they ended, and keeps everything else", async () => {
-    // Gone: finished before the cutoff.
     await job("probe done old", "probe", "done", t(cutoff - MIN))
     await job("probe failed old", "probe", "failed", t(cutoff - 1))
     await job("self-test old", "self-test", "done", t(cutoff - MIN))
     await job("export old", "export-credentials", "failed", t(cutoff - MIN))
-    // Kept: finished at or after the cutoff.
     await job("probe at cutoff", "probe", "done", t(cutoff))
     await job("probe recent", "probe", "done", t(NOW - MIN))
-    // Kept: not finished, however old.
     await job("probe queued old", "probe", "queued", null)
     await job("export running old", "export-credentials", "running", null)
-    // Kept: backups, which stay with their run, however old.
     await job("backup done old", "backup", "done", t(cutoff - 30 * FINISHED_JOB_KEEP_MS))
     await job("backup failed old", "backup", "failed", t(cutoff - 30 * FINISHED_JOB_KEEP_MS))
-    // Kept: a finished row without a finish time (never written so) is left alone rather than guessed at.
     await job("probe done no finish", "probe", "done", null)
 
     await pruneWorkerJobs(ctx, NOW)
@@ -101,24 +93,8 @@ describe("pruning worker jobs", () => {
       "probe recent",
     ])
 
-    // Run again: nothing more goes.
     await pruneWorkerJobs(ctx, NOW)
     expect(await labels()).toHaveLength(7)
-  })
-
-  it("keeps the job a running worker setup check reads, and not one a finished check once pointed at", async () => {
-    const pointed = await job("setup running", "probe", "failed", t(cutoff - MIN))
-    const done = await job("setup done", "probe", "done", t(cutoff - MIN))
-    const check = (jobId: string, status: "running" | "done") => ({
-      worker: { attempt: 1, startedAt: t(cutoff - 2 * MIN).toISOString(), inputs: "x", status, workerId, jobId },
-    })
-    await ctx.db.insert(instances).values([
-      { name: "acme", baseUrl: "https://acme.example.com", setupChecks: check(pointed.id, "running") },
-      { name: "beta", baseUrl: "https://beta.example.com", setupChecks: check(done.id, "done") },
-    ])
-
-    await pruneWorkerJobs(ctx, NOW)
-    expect(await labels()).toEqual(["setup running"])
   })
 
   it("deletes more than one batch in one run", async () => {

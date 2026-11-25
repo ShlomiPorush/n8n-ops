@@ -1,4 +1,3 @@
-// Node only (zlib, crypto). Imported as "@n8n-ops/shared/archive" by the server and the worker.
 import { createHash } from "node:crypto"
 import { gunzipSync, gzipSync } from "node:zlib"
 import { Decrypter, Encrypter } from "age-encryption"
@@ -8,7 +7,6 @@ export type Manifest = {
   format: 1
   instance: string
   createdAt: string
-  /** True when credentials/ holds decrypted secrets (exported by the worker with n8n's CLI). */
   includesSecrets: boolean
   workflows: number
   credentials: number
@@ -17,7 +15,6 @@ export type Manifest = {
 
 export type SealedArchive = { bytes: Uint8Array; size: number; sha256Base64: string }
 
-/** tar + gzip + age, encrypted to the backup public key, or to each of several recipients (any one opens it). */
 export async function sealArchive(entries: TarEntry[], recipients: string | string[]): Promise<SealedArchive> {
   const encrypter = new Encrypter()
   for (const recipient of typeof recipients === "string" ? [recipients] : recipients) encrypter.addRecipient(recipient)
@@ -25,10 +22,6 @@ export async function sealArchive(entries: TarEntry[], recipients: string | stri
   return { bytes, size: bytes.length, sha256Base64: sha256Base64(bytes) }
 }
 
-/**
- * Decrypts and unpacks an archive with the private backup key. `maxUnpackedBytes` bounds the unpacked tar, so an
- * archive that inflates far beyond its size fails cleanly instead of filling the memory.
- */
 export async function openArchive(bytes: Uint8Array, identity: string, maxUnpackedBytes?: number): Promise<TarEntry[]> {
   const decrypter = new Decrypter()
   decrypter.addIdentity(identity.trim())

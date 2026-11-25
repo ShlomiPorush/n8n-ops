@@ -15,53 +15,28 @@ type Entry = { id: number; at: string; actor: string; action: string; target: st
 export function AuditPage() {
   const query = useInfiniteQuery({
     queryKey: ["/admin/audit", "pages"],
-    // A page asks for the entries before the last one it has (a cursor). A newer load cancels an older one, whose
-    // request is aborted and whose answer is dropped, so an old answer never lands in the list (TB-6, SV-10).
     queryFn: ({ pageParam, signal }) =>
       api<Entry[]>(`/admin/audit${pageParam ? `?before=${pageParam}` : ""}`, { signal }),
     initialPageParam: 0,
     getNextPageParam: (last) => (last.length === 100 ? last[last.length - 1]?.id : undefined),
-    // A failed page waits for Try again and never asks again by itself (TB-6).
     retry: false,
   })
   const rows = query.data?.pages.flat() ?? []
   const { hasNextPage, isFetching, isFetchingNextPage, isFetchNextPageError, fetchNextPage, error, errorUpdatedAt } =
     query
-  // A failed page keeps its error on the query while a refresh runs, when the query no longer marks it as a page
-  // error, so the failure is remembered by its time: it is not a failed refresh of the list.
-  const pageError = useRef(0)
-  if (isFetchNextPageError) pageError.current = errorUpdatedAt
-  const pageErrorShown = Boolean(error) && errorUpdatedAt === pageError.current
-  /*
-   * A failed page waits for Try again and never asks again by itself (TB-6). React Query forgets the failure as
-   * soon as the list refreshes (on coming back to the window, for example), so the page remembers the cursor that
-   * failed until Try again. A refresh can move the cursor (new entries on top), and the page still waits: asking
-   * for the moved one by itself would be the automatic retry the rule forbids.
-   */
-  const lastPage = query.data?.pages.at(-1)
-  const cursor = lastPage?.at(-1)?.id ?? 0
-  const [failedCursor, setFailedCursor] = useState<number | null>(null)
-  // On every failure, not only the first: a Try again that fails right after one leaves `isFetchNextPageError` on
-  // throughout, and only the error's time moves.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: errorUpdatedAt marks each new failure
+  const [failedAt, setFailedAt] = useState<number | null>(null)
   useEffect(() => {
-    if (isFetchNextPageError) setFailedCursor(cursor)
-  }, [isFetchNextPageError, errorUpdatedAt, cursor])
+    if (isFetchNextPageError) setFailedAt(errorUpdatedAt)
+  }, [isFetchNextPageError, errorUpdatedAt])
   const [retrying, setRetrying] = useState(false)
-  const blocked = Boolean(hasNextPage) && (failedCursor !== null || isFetchNextPageError)
+  const blocked = Boolean(hasNextPage) && (failedAt !== null || isFetchNextPageError)
+  const pageErrorShown = Boolean(error) && (isFetchNextPageError || retrying || errorUpdatedAt === failedAt)
   async function tryAgain() {
-    setFailedCursor(null)
+    setFailedAt(null)
     setRetrying(true)
-    // Never cancels a refresh of the whole list that is on its way: the newer list wins, and the page is asked for
-    // after it, as its end comes into view (SV-10).
     await fetchNextPage({ cancelRefetch: false })
     setRetrying(false)
   }
-  /*
-   * Older entries load as the end of the list comes into view, before the reader reaches it (TB-6). Nothing is
-   * asked while any load runs, so a next page never cancels a refresh of the whole list and continues from its old
-   * pages; after a failed page, or a failed refresh, they wait for Try again or the next good answer.
-   */
   const end = useRef<HTMLParagraphElement>(null)
   // biome-ignore lint/correctness/useExhaustiveDependencies: observe again once new rows are drawn
   useEffect(() => {
@@ -78,7 +53,6 @@ export function AuditPage() {
   return (
     <Page
       title="Audit Log"
-      // A failed refresh keeps the entries and says so under the title (TB-5, LD-12); a failed page says so at the end.
       live={{
         data: query.data,
         error,
@@ -108,7 +82,6 @@ export function AuditPage() {
           <Empty title="Nothing recorded yet.">Sign-ins, changes and agent reads are recorded here.</Empty>
         </Panel>
       ) : (
-        // No Sort button and no header sort (TB-28): the log is paged on the server, newest first.
         <Table>
           <TableHeader>
             <TableRow>
@@ -154,7 +127,6 @@ export function AuditPage() {
       )}
       {rows.length > 0 && (
         <p ref={end} aria-live="polite" className="text-center text-small text-muted-foreground">
-          {/* Try again stays in place while it loads, so the focus stays on it (AX-6). */}
           {retrying || blocked ? (
             <>
               {retrying ? null : "Could not load older entries. "}
@@ -163,7 +135,6 @@ export function AuditPage() {
           ) : isFetchingNextPage ? (
             "Loading older entries…"
           ) : hasNextPage ? (
-            // After a failed refresh the head says so, and nothing loads here until the next good answer.
             error ? null : (
               "Loading older entries…"
             )

@@ -9,19 +9,10 @@ import {
 } from "../lib/settings.ts"
 import { TelegramError } from "./telegram.ts"
 
-/*
- * Telegram and Email tests run with the values on screen, before they are saved (FS-19). The typed values go
- * over the stored ones for this one send and are never stored. A stored secret goes only where it was given
- * for: the SMTP password only to the same host, port, user and encryption (FS-5), the bot token unless a new one is
- * typed.
- */
-
-/** A test that cannot run with these values; its message says why and what to do. */
 export class TestRefused extends Error {}
 
 type Decrypt = (encrypted: string) => string
 
-/** The values of the Email section a test may take from the screen. */
 const emailFields = [
   "recipients",
   "from",
@@ -36,18 +27,12 @@ export type EmailAccount = {
   host: string
   port: number
   secure: boolean
-  /** Without TLS from the start, send only after STARTTLS succeeds, unless sending without encryption is allowed. */
   requireTLS: boolean
   auth?: { user: string; pass: string }
   from: string
   recipients: string[]
 }
 
-/**
- * The account an email goes out with: the stored Email settings, with the values from a test's screen over them.
- * A typed password is used as typed and null means none; without either, the stored password is used only for
- * the server and user it was stored with, and a test of another one is refused rather than sent without it.
- */
 export function emailAccount(stored: Section<"email">, draft: Record<string, unknown>, decrypt: Decrypt): EmailAccount {
   const next: Record<string, unknown> = { ...stored }
   for (const k of emailFields) if (k in draft) next[k] = draft[k]
@@ -78,10 +63,6 @@ export function emailAccount(stored: Section<"email">, draft: Record<string, unk
   }
 }
 
-/**
- * The bot, chat and default topic a Telegram test goes to: a typed token, chat ID and topic over the stored ones.
- * An empty topic is the chat's General.
- */
 export function telegramTarget(
   stored: Section<"telegram">,
   draft: Record<string, unknown>,
@@ -102,11 +83,9 @@ export function telegramTarget(
   return { token, chatId, threadId: topic ? Number(topic) : null }
 }
 
-/** Why an email was not sent when no encrypted connection could be made (Nodemailer's ETLS). */
 export const noEncryption =
   "No encrypted connection could be made with the SMTP server, so nothing was sent. Check that the server offers STARTTLS on this port, or turn on TLS from the start for port 465."
 
-/** Why a test email was not sent, and what to check (SV-5). */
 export function emailFailureText(error: unknown): string {
   if (error instanceof TestRefused) return error.message
   const { code, message } = error as { code?: string; message?: string }
@@ -118,7 +97,6 @@ export function emailFailureText(error: unknown): string {
   return `The SMTP server did not take the email: ${message ?? "no reason given"}`
 }
 
-/** Why a test message did not reach Telegram, and what to check (SV-5). */
 export function telegramFailureText(error: unknown): string {
   if (error instanceof TestRefused) return error.message
   const message = (error as Error).message ?? ""

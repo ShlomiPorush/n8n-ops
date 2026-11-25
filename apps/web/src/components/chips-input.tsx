@@ -3,16 +3,6 @@ import { useRef } from "react"
 import { addEntries, finishedEntries, pasteInto } from "@/lib/entries"
 import { cn } from "@/lib/utils"
 
-/**
- * A field that holds several values as chips (FS-15): email recipients, Telegram approvers. Enter, a comma or a
- * semicolon adds what is typed; a paste may add several at once, in place of the selection; leaving the field
- * adds what is left in it, so a value typed before Save is never lost. The text not yet added belongs to the
- * form (`pending`), so it counts as a change for the save bar and the leave question before it is a chip (SV-1).
- * × removes one (`Remove <value>`), and Backspace in the empty field removes the last. No value is added twice.
- * Each value is checked on its own: one that `problem` refuses is drawn as failed and says why, and stays until
- * it is fixed or removed (SV-12).
- * Compact draws the chips as v3 does (mono, 6px corners); Regular as its own rounded tags.
- */
 export function ChipsInput({
   id,
   value,
@@ -27,13 +17,10 @@ export function ChipsInput({
   id: string
   value: string[]
   onChange: (value: string[]) => void
-  /** What is typed in the Add field and not yet a chip. */
   pending: string
   onPendingChange: (text: string) => void
-  /** What is wrong with one value, or null when it is fine. */
   problem?: (entry: string) => string | null
   placeholder?: string
-  /** The field failed its check before a save (SV-1). */
   invalid?: boolean
   describedBy?: string
 }) {
@@ -45,7 +32,6 @@ export function ChipsInput({
     if (next.length !== value.length) onChange(next)
   }
   return (
-    // A click anywhere in the box puts the cursor in its Add field (FS-1).
     // biome-ignore lint/a11y/noStaticElementInteractions: the field inside is what the keyboard uses
     // biome-ignore lint/a11y/useKeyWithClickEvents: the field inside is what the keyboard uses
     <div
@@ -99,7 +85,6 @@ export function ChipsInput({
         }}
         onKeyDown={(e) => {
           if (e.key === "Enter") {
-            // Enter adds the value; it never submits the form around it.
             e.preventDefault()
             add(text)
             setText("")
@@ -112,7 +97,6 @@ export function ChipsInput({
           const pasted = e.clipboardData.getData("text")
           if (!/[,;\s]/.test(pasted.trim())) return
           e.preventDefault()
-          // The list takes the place of what is selected, or goes in at the cursor, as a plain paste would.
           const field = e.currentTarget
           const start = field.selectionStart ?? text.length
           add(pasteInto(text, pasted, start, field.selectionEnd ?? start))

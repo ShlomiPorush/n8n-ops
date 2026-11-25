@@ -5,10 +5,6 @@ import type { Ctx } from "../context.ts"
 import { defaults, type Section } from "../lib/settings.ts"
 import { sendEmail } from "./reports.ts"
 
-/**
- * A plain-text SMTP server on 127.0.0.1 that records the command of every line it receives. It never encrypts:
- * `starttls` says whether it advertises STARTTLS (then refuses it with 454) or not at all (502 when asked).
- */
 async function smtpServer(starttls: "none" | "refused") {
   const commands: string[] = []
   const server: Server = createServer((socket) => {
@@ -56,7 +52,6 @@ afterEach(async () => {
   await Promise.all(servers.splice(0).map((s) => new Promise((resolve) => s.close(resolve))))
 })
 
-/** The parts of the context sendEmail reads: the Email settings in effect, the environment's values, decryption. */
 function ctxWith(email: Partial<Section<"email">>, env: { smtpAllowUnencrypted?: boolean } = {}) {
   const password = randomBytes(12).toString("hex")
   const value: Section<"email"> = {

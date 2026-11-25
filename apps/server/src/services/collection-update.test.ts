@@ -18,7 +18,6 @@ const row = {
 
 describe("collectionUpdate", () => {
   it("ignores a queue mode in the update while the mode is found and the target stays", () => {
-    // The edit dialog sends every field, so a stale form must not overwrite what the worker read.
     expect(collectionUpdate(row, { ...row, queueMode: false })).toEqual({
       queueMode: undefined,
       queueModeSource: undefined,
@@ -51,7 +50,6 @@ describe("versionFromInside", () => {
   it("is true only when the last report came from inside with a version", () => {
     const inside = { ...row, healthDetail: { source: "inside", version: "2.44.3" } }
     expect(versionFromInside(inside)).toBe(true)
-    // A worker of an earlier release, or one that fell back to the network, reports none: read it over the network.
     expect(versionFromInside({ ...row, healthDetail: { source: "network" } })).toBe(false)
     expect(versionFromInside({ ...row, healthDetail: { source: "inside" } })).toBe(false)
     expect(versionFromInside({ ...inside, collection: "direct" })).toBe(false)

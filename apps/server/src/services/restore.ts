@@ -1,7 +1,3 @@
-// Restore of single items from an archive (requirement D6): browse what an archive holds, compare it with the
-// instance, and restore one workflow (as an inactive copy, or over the existing one as its draft) or one credential,
-// after a review the confirm must match. The private key is used in memory for one request and never stored;
-// credential secrets never leave the server.
 import { createHash, randomBytes } from "node:crypto"
 import { isDeepStrictEqual } from "node:util"
 import { createTar, entryText, textEntry, unsupportedVersionText } from "@n8n-ops/shared"
@@ -54,34 +50,25 @@ export type ArchivedCredential = {
 export class RestoreError extends Error {
   constructor(
     message: string,
-    readonly code: "not_found" | "invalid" | "changed" = "invalid",
+    readonly code: "not_found" | "invalid" = "invalid",
   ) {
     super(message)
   }
 }
 
-/** How long a review waits for its confirm before it is dropped. */
 export const REVIEW_TTL_MS = 60 * 60_000
-/** Longest name n8n takes for a workflow or a credential. */
 export const NAME_LIMIT = 128
 const EXECUTE_WORKFLOW = "n8n-nodes-base.executeWorkflow"
 
-// ---------------------------------------------------------------------------
-// Reading the archive
-// ---------------------------------------------------------------------------
-
-/** Where an archive comes from: a backup run, or the Version before replace that a restore kept. */
 export type ArchiveSource = { runId: string } | { versionOf: string }
 
 export type OpenedArchive = {
-  /** `instanceId`: the instance it was taken from; `at`: when. */
   source: { kind: "run" | "version"; id: string; instanceId: string | null; at: Date }
   manifest: Manifest | null
   workflows: N8nWorkflow[]
   credentials: ArchivedCredential[]
 }
 
-/** Reads and opens an archive with the pasted key, in memory. */
 export function loadArchive(ctx: Ctx, source: ArchiveSource, privateKey: string): Promise<OpenedArchive> {
   return "runId" in source ? loadRun(ctx, source.runId, privateKey) : loadVersion(ctx, source.versionOf, privateKey)
 }
@@ -94,7 +81,6 @@ async function loadRun(ctx: Ctx, runId: string, privateKey: string): Promise<Ope
   try {
     bytes = await readArchive(ctx, run)
   } catch (error) {
-    // Every copy gone or unreadable: say which, as a refusal the page shows, not as a server error.
     throw new RestoreError((error as Error).message, "not_found")
   }
   return {
@@ -103,7 +89,6 @@ async function loadRun(ctx: Ctx, runId: string, privateKey: string): Promise<Ope
   }
 }
 
-/** The Version before replace a restore kept, opened like an archive. */
 async function loadVersion(ctx: Ctx, restoreId: string, privateKey: string): Promise<OpenedArchive> {
   const [row] = await ctx.db.select().from(restores).where(eq(restores.id, restoreId))
   if (!row?.beforeArchive || !row.beforeSha256 || !row.beforeTakenAt)
@@ -120,7 +105,6 @@ async function loadVersion(ctx: Ctx, restoreId: string, privateKey: string): Pro
 async function unpack(ctx: Ctx, bytes: Uint8Array, privateKey: string) {
   let entries: Awaited<ReturnType<typeof openArchive>>
   try {
-    // The unpacked archive may not exceed the largest archive allowed, so a hostile one cannot fill the memory.
     entries = await openArchive(bytes, privateKey, await maxArchiveBytes(ctx))
   } catch (error) {
     throw new RestoreError(`Cannot open the archive with this key: ${(error as Error).message}`)
@@ -137,13 +121,8 @@ async function unpack(ctx: Ctx, bytes: Uint8Array, privateKey: string) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Credential references, including those inside embedded sub-workflows
-// ---------------------------------------------------------------------------
-
 export type CredentialRef = { type: string; id: string | null; name: string | null; embedded: boolean }
 
-/** The workflow an Execute Workflow node runs from its own parameter, as n8n reads it: only with source "parameter". */
 function embeddedSource(node: N8nNode): { text: string } | null {
   if (node.type !== EXECUTE_WORKFLOW) return null
   const params = node.parameters ?? {}
@@ -161,11 +140,9 @@ function parseEmbedded(text: string): { nodes: N8nNode[] } | "expression" | "unr
   }
 }
 
-/** How deep embedded sub-workflows are followed; a restore of one nested deeper is refused (see `TOO_DEEP`). */
 const MAX_DEPTH = 10
 export const TOO_DEEP = "embeds workflows more than 10 levels deep"
 
-/** Every credential reference in the nodes, embedded sub-workflows included, with warnings for what cannot be read. */
 export function credentialRefs(nodes: N8nNode[], warnings: string[] = [], embedded = false, depth = 0) {
   const refs: CredentialRef[] = []
   for (const node of nodes ?? []) {
@@ -189,10 +166,6 @@ export function credentialRefs(nodes: N8nNode[], warnings: string[] = [], embedd
 
 type RefChange = { id: string; name: string } | null | undefined
 
-/**
- * The nodes with each credential reference replaced (`{id, name}`), removed as a whole (null, so n8n cannot bind
- * it to another credential by name) or kept (undefined), embedded sub-workflows included.
- */
 export function mapCredentialRefs(nodes: N8nNode[], change: (ref: CredentialRef) => RefChange, depth = 0): N8nNode[] {
   return nodes.map((node) => {
     let next: N8nNode = node
@@ -225,10 +198,6 @@ export function mapCredentialRefs(nodes: N8nNode[], change: (ref: CredentialRef)
 const refKey = (ref: Pick<CredentialRef, "type" | "id" | "name">) =>
   ref.id ? `id:${ref.id}` : `name:${ref.type}:${ref.name}`
 
-// ---------------------------------------------------------------------------
-// Browsing and comparing
-// ---------------------------------------------------------------------------
-
 export type WorkflowSummary = {
   id: string
   name: string
@@ -247,9 +216,7 @@ export type WorkflowSummary = {
     hasSecrets: boolean
     embedded: boolean
   }[]
-  /** Execute Workflow nodes that run a workflow kept in the node itself. */
   embedded: number
-  /** What could not be read, such as a workflow embedded in an expression or too deep: the list above is partial. */
   warnings: string[]
 }
 
@@ -273,20 +240,16 @@ export type Comparison =
     }
   | { available: false; reason: string }
 
-// n8n names every node uniquely and refers to nodes by name; the order of the nodes array carries no meaning, so it
-// is compared by name. Every other array (parameters, connections) keeps its order.
 const shape = (nodes: N8nNode[]) =>
   [...(nodes ?? [])]
     .map(({ position: _p, ...rest }: N8nNode & { position?: unknown }) => rest)
     .sort((a, b) => a.name.localeCompare(b.name))
 const positionOf = (n: N8nNode) => (n as N8nNode & { position?: unknown }).position ?? null
-/** Whether a node both sides have was moved. */
 const moved = (a: N8nNode[], b: N8nNode[]) => {
   const there = new Map((b ?? []).map((n) => [n.name, positionOf(n)]))
   return (a ?? []).some((n) => there.has(n.name) && !isDeepStrictEqual(positionOf(n), there.get(n.name)))
 }
 
-/** What differs between the archived workflow and the one on the instance; a field the instance does not return is not compared. */
 export function workflowChanges(archived: N8nWorkflow, live: N8nWorkflow): ChangeKind[] {
   const out: ChangeKind[] = []
   const has = (k: keyof N8nWorkflow) => k in live
@@ -399,7 +362,6 @@ async function compareWithInstance(ctx: Ctx, archive: OpenedArchive): Promise<Co
   return { available: true, instance: instance.name, at: new Date().toISOString(), workflows }
 }
 
-/** What an archive holds, in summaries, compared with its instance where that can be read. */
 export async function inspectArchive(ctx: Ctx, source: ArchiveSource, privateKey: string) {
   const archive = await loadArchive(ctx, source, privateKey)
   const { workflows, credentials } = summarize(archive)
@@ -412,7 +374,6 @@ export async function inspectArchive(ctx: Ctx, source: ArchiveSource, privateKey
   }
 }
 
-/** One archived workflow in full, for reading and download. Credentials are never returned with their data. */
 export async function archivedWorkflow(ctx: Ctx, source: ArchiveSource, privateKey: string, workflowId: string) {
   const archive = await loadArchive(ctx, source, privateKey)
   const workflow = archive.workflows.find((w) => w.id === workflowId)
@@ -420,11 +381,6 @@ export async function archivedWorkflow(ctx: Ctx, source: ArchiveSource, privateK
   return workflow
 }
 
-// ---------------------------------------------------------------------------
-// Review
-// ---------------------------------------------------------------------------
-
-/** The name an item is created with: the base shortened so the whole name fits n8n's limit. */
 export function restoredName(base: string, date: string, code: string, step: number) {
   const suffix = ` (restored ${date} ${code}-${step})`
   const chars = [...base]
@@ -440,13 +396,11 @@ export type ResolveInput = {
   refs: CredentialRef[]
   archived: Map<string, ArchivedCredential>
   sameInstance: boolean
-  /** The target's credentials; a string when they could not be listed (why). */
   live: N8nCredential[] | string
   targetName: string
   firstStep: number
 }
 
-/** What happens to each credential a workflow uses (owner decision: link one that still exists, create only missing). */
 export function resolveCredentials({ refs, archived, sameInstance, live, targetName, firstStep }: ResolveInput) {
   const actions: CredentialAction[] = []
   const seen = new Set<string>()
@@ -472,7 +426,6 @@ export function resolveCredentials({ refs, archived, sameInstance, live, targetN
         continue
       }
       if (!ref.id) {
-        // n8n would bind it by name to whatever credential has that name now, which proves nothing.
         actions.push({
           ...base,
           action: "remove",
@@ -515,7 +468,6 @@ export function resolveCredentials({ refs, archived, sameInstance, live, targetN
 
 const OPTIONAL_FIELDS = ["nodeGroups", "description", "pinData"] as const
 
-/** The body a copy is created with, and what of the archived workflow it leaves out. */
 export function copyBody(
   workflow: N8nWorkflow,
   name: string,
@@ -549,19 +501,12 @@ export function copyBody(
   return { body, notRestored }
 }
 
-// ---------------------------------------------------------------------------
-// Replace: the archived workflow written over the existing one, as its draft
-// ---------------------------------------------------------------------------
-
-/** The first n8n whose `PUT /workflows/{id}` takes `publishIfActive=false`, so a write never publishes. */
 export const REPLACE_MIN_VERSION = "2.35.0"
 const AS_COPY = "Restore it as a copy instead."
 
-/** Published: n8n has a published version (`activeVersionId`), or on n8n without that field, the workflow is active. */
 export const isPublished = (w: Pick<N8nWorkflow, "active" | "activeVersionId">) =>
   "activeVersionId" in w && w.activeVersionId !== undefined ? Boolean(w.activeVersionId) : Boolean(w.active)
 
-/** Why the target cannot take a replace, before anything is read from it; null when it can. */
 export function replaceRefusal(
   target: Pick<Instance, "name" | "version" | "scopes">,
   sameInstance: boolean,
@@ -577,7 +522,6 @@ export function replaceRefusal(
   return null
 }
 
-/** Why the workflow on the instance cannot be replaced by the archived one; null when it can. */
 export function liveRefusal(archived: N8nWorkflow, live: N8nWorkflow | null, targetName: string): string | null {
   if (!live) return `${archived.name} is not on ${targetName} any more, or its API key cannot see it. ${AS_COPY}`
   if (live.isArchived) return `${archived.name} is archived in n8n. ${AS_COPY} Or unarchive it in n8n first.`
@@ -588,7 +532,6 @@ export function liveRefusal(archived: N8nWorkflow, live: N8nWorkflow | null, tar
   return null
 }
 
-/** Why the credentials stop a replace: each one must be linked or created; null when they do not. */
 export function credentialRefusal(actions: CredentialAction[]): string | null {
   const keep = actions.find((a) => a.action === "keep")
   if (keep && keep.action === "keep")
@@ -599,7 +542,6 @@ export function credentialRefusal(actions: CredentialAction[]): string | null {
   return null
 }
 
-/** The settings a workflow takes from those given, by the instance's API description; the others are named. */
 function takenSettings(settings: Record<string, unknown> | undefined, fields: WorkflowFields | null) {
   const taken = { ...(settings ?? {}) }
   const dropped: string[] = []
@@ -612,11 +554,6 @@ function takenSettings(settings: Record<string, unknown> | undefined, fields: Wo
   return { taken, dropped }
 }
 
-/**
- * The settings a replace sends. Published: the workflow's own settings, unchanged, so n8n sees no settings change and
- * does not publish again. Not published: the archived ones. Either way n8n merges what is sent into what it holds
- * (it cannot remove a key), and `effective` is that result.
- */
 export function replaceSettings(archived: N8nWorkflow, live: N8nWorkflow, fields: WorkflowFields | null) {
   const published = isPublished(live)
   const { taken, dropped } = takenSettings(published ? live.settings : archived.settings, fields)
@@ -628,7 +565,6 @@ export function replaceSettings(archived: N8nWorkflow, live: N8nWorkflow, fields
   }
 }
 
-/** Keys sorted all the way down, so the same value always gives the same text. */
 function canonical(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonical)
   if (value && typeof value === "object")
@@ -646,16 +582,10 @@ const sha256 = (value: unknown) =>
     .update(JSON.stringify(canonical(value)))
     .digest("hex")
 
-/** Empty `nodeGroups`, `description` and `pinData` are one value: none. */
 const optionalValue = (value: unknown) => (filled(value) ? value : null)
 
-/** What a replace sends to clear a field the archived workflow has empty and the live one has filled. */
 const CLEARED: Record<(typeof OPTIONAL_FIELDS)[number], unknown> = { nodeGroups: [], description: "", pinData: {} }
 
-/**
- * Nodes with each credential reference by its ID alone: n8n writes a linked credential's current name over the one
- * sent, so the name proves nothing.
- */
 const byCredentialId = (nodes: N8nNode[]) =>
   nodes.map((n) =>
     n.credentials
@@ -668,29 +598,19 @@ const byCredentialId = (nodes: N8nNode[]) =>
       : n,
   )
 
-/**
- * SHA-256 of a workflow's definition: its name, its nodes (in name order, as n8n names them uniquely, with credential
- * references by ID) and its connections.
- */
 export function definitionHash(w: Pick<N8nWorkflow, "nodes" | "connections"> & { name?: string }): string {
   const sorted = byCredentialId([...(w.nodes ?? [])]).sort((a, b) => a.name.localeCompare(b.name))
   return sha256({ name: w.name ?? null, nodes: sorted, connections: w.connections ?? {} })
 }
 
-/** What proves that n8n holds what a replace sent: the definition, each optional field sent, the settings expected. */
 export type ReplaceProof = { hash: string; fields: Record<string, string>; settings: Record<string, unknown> }
 
-/** The proof of a replace body; `settings` are the effective ones the review showed (n8n's merged with those sent). */
 export function replaceProof(body: WorkflowBody, settings: Record<string, unknown>): ReplaceProof {
   const fields: Record<string, string> = {}
   for (const field of OPTIONAL_FIELDS) if (field in body) fields[field] = sha256(optionalValue(body[field]))
   return { hash: definitionHash(body), fields, settings }
 }
 
-/**
- * The settings n8n holds that are not the effective ones the review showed, in words. A key sent but missing
- * afterwards is not as reviewed either: n8n drops a value equal to its default, so the instance may use its own.
- */
 export function settingsDifferences(expected: Record<string, unknown>, after: Record<string, unknown> | undefined) {
   const a = after ?? {}
   return Object.entries(expected).flatMap(([key, value]) =>
@@ -702,21 +622,17 @@ export function settingsDifferences(expected: Record<string, unknown>, after: Re
   )
 }
 
-/** Everything in which n8n does not hold what a replace sent, in words; empty when it does. */
 export function proofDifferences(proof: ReplaceProof, after: N8nWorkflow): string[] {
   const out: string[] = []
   if (definitionHash(after) !== proof.hash) out.push("the name, nodes or connections")
-  // A field n8n does not return cannot be compared.
   for (const [field, hash] of Object.entries(proof.fields))
     if (field in after && sha256(optionalValue(after[field as keyof N8nWorkflow])) !== hash) out.push(field)
   out.push(...settingsDifferences(proof.settings, after.settings))
   return out
 }
 
-/** Whether n8n holds what a replace sent. */
 export const landed = (after: N8nWorkflow, proof: ReplaceProof) => proofDifferences(proof, after).length === 0
 
-/** What changed in the published state between two reads of a workflow, in words; null when nothing did. */
 export function publishedChange(
   before: Pick<N8nWorkflow, "active" | "activeVersionId">,
   after: Pick<N8nWorkflow, "active" | "activeVersionId">,
@@ -730,10 +646,6 @@ export function publishedChange(
   return null
 }
 
-/**
- * After a replace that n8n accepted: everything that is not what the review showed, said loudly, or null. `before` is
- * the workflow read right before the write, `after` the one read right after it.
- */
 export function replaceWarning(
   proof: ReplaceProof,
   before: Pick<N8nWorkflow, "active" | "activeVersionId">,
@@ -750,7 +662,6 @@ export function replaceWarning(
   return out.length ? out.join(" ") : null
 }
 
-/** The workflow on the instance by its ID, or null when n8n does not have it (or the key cannot see it). */
 async function liveWorkflow(client: N8nClient, id: string, targetName: string): Promise<N8nWorkflow | null> {
   try {
     return await client.getWorkflow(id)
@@ -787,10 +698,6 @@ const filled = (value: unknown) =>
   value !== "" &&
   !(typeof value === "object" && Object.keys(value as object).length === 0)
 
-/**
- * The plan of a replace (S7): the workflow must still be the archived one (same ID and creation time, not archived),
- * every credential it uses must be linked or created, and the review names what n8n holds now and which settings go.
- */
 async function replacePlan(
   ctx: Ctx,
   client: N8nClient,
@@ -828,7 +735,6 @@ async function replacePlan(
   })
   const refusedCredentials = credentialRefusal(actions)
   if (refusedCredentials) throw new RestoreError(refusedCredentials)
-  // Putting the version before back later needs the credentials it uses now.
   if (liveRefs.length > 0) {
     if (typeof creds === "string")
       warnings.push(`n8n-ops could not check the credentials the workflow uses now in n8n: ${creds}`)
@@ -858,14 +764,12 @@ async function replacePlan(
   steps.push({ step: nextStep, kind: "workflow", action: "replace", sourceId: workflow.id, name: workflow.name })
   const fields = await workflowFieldsOf(ctx, target)
   const settings = replaceSettings(workflow, live, fields)
-  // The body a copy would send, with the settings chosen above (already limited to those the instance takes).
   const { body, notRestored } = copyBody({ ...workflow, settings: settings.settings }, workflow.name, fields)
   if (settings.settingsFrom === "live")
     notRestored.unshift(
       "settings: the workflow is published, so its current settings are sent unchanged and the archived ones are not restored (a change of settings makes n8n publish again)",
     )
   else for (const key of settings.dropped) notRestored.unshift(`settings.${key}: this n8n does not take it`)
-  // A field the archive has empty is sent empty, so it is cleared: n8n keeps a field that is not sent.
   for (const field of OPTIONAL_FIELDS)
     if (!filled(workflow[field]) && filled(live[field])) {
       if (fields?.fields.includes(field)) Object.assign(body, { [field]: CLEARED[field] })
@@ -875,7 +779,6 @@ async function replacePlan(
         )
     }
   if (filled(live.staticData)) notRestored.push("staticData: the workflow keeps its current polling state")
-  // When n8n holds this version already, a read afterwards cannot tell whether the write happened.
   const { ids, removed } = credentialChanges(actions)
   const sameAsLive =
     !actions.some((a) => a.action === "create") &&
@@ -919,7 +822,6 @@ async function replacePlan(
   }
 }
 
-/** The credential changes a plan makes: linked ones with their current name, removed ones as a whole. */
 function credentialChanges(actions: CredentialAction[]) {
   const ids = new Map<string, { id: string; name: string }>()
   for (const a of actions)
@@ -930,10 +832,6 @@ function credentialChanges(actions: CredentialAction[]) {
   return { ids, removed }
 }
 
-/**
- * The body a workflow is written with: exactly the fields and settings the review showed, whatever the instance's
- * API description says now, and a field sent empty to clear it (a replace) stays in it.
- */
 function reviewedBody(
   workflow: N8nWorkflow,
   nodes: N8nNode[],
@@ -949,7 +847,6 @@ function reviewedBody(
   return body
 }
 
-/** The plan of a restore, computed the same way at review and at confirm. Writes nothing. */
 async function buildPlan(
   ctx: Ctx,
   archive: OpenedArchive,
@@ -1047,7 +944,6 @@ async function buildPlan(
       steps,
       notRestored,
       warnings,
-      // Nodes and connections are those of the archive with the credential changes above; the rest as sent.
       sent: { fields: Object.keys(body), settings: body.settings },
     }
   }
@@ -1073,10 +969,8 @@ async function buildPlan(
   return { plan: { ...plan, earlierUnknown }, workflow, client }
 }
 
-/** Who reviews or confirms: the name the audit shows and, for a person or token, its ID. */
 export type RestoreActor = { actor: string; actorId: string | null; via: AuditVia }
 
-/** Reviews a restore: stores what it will do (no key, no secrets) and returns it with the restore's ID. */
 export async function previewRestore(
   ctx: Ctx,
   input: {
@@ -1092,37 +986,29 @@ export async function previewRestore(
   const target = await targetFor(ctx, input.targetInstanceId)
   const archive = await loadArchive(ctx, input.source, input.privateKey)
   const date = new Date().toISOString().slice(0, 10)
-  for (let attempt = 0; ; attempt++) {
-    const code = randomBytes(4).toString("hex")
-    const item = { kind: input.kind, id: input.itemId }
-    const { plan } = await buildPlan(ctx, archive, target, item, mode, code, date, null)
-    const [row] = await ctx.db
-      .insert(restores)
-      .values({
-        code,
-        actor: input.actor,
-        actorId: input.actorId,
-        via: input.via,
-        runId: archive.source.kind === "run" ? archive.source.id : null,
-        fromRestoreId: archive.source.kind === "version" ? archive.source.id : null,
-        targetInstanceId: target.id,
-        kind: input.kind,
-        itemId: input.itemId,
-        itemName: plan.item.name,
-        mode,
-        status: "previewed",
-        reviewed: plan,
-      })
-      .onConflictDoNothing({ target: restores.code })
-      .returning()
-    if (row) return view(row)
-    if (attempt >= 4) throw new Error("Could not reserve a restore code.")
-  }
+  const code = randomBytes(4).toString("hex")
+  const item = { kind: input.kind, id: input.itemId }
+  const { plan } = await buildPlan(ctx, archive, target, item, mode, code, date, null)
+  const [row] = await ctx.db
+    .insert(restores)
+    .values({
+      code,
+      actor: input.actor,
+      actorId: input.actorId,
+      via: input.via,
+      runId: archive.source.kind === "run" ? archive.source.id : null,
+      fromRestoreId: archive.source.kind === "version" ? archive.source.id : null,
+      targetInstanceId: target.id,
+      kind: input.kind,
+      itemId: input.itemId,
+      itemName: plan.item.name,
+      mode,
+      status: "previewed",
+      reviewed: plan,
+    })
+    .returning()
+  return view(row as Row)
 }
-
-// ---------------------------------------------------------------------------
-// Confirm
-// ---------------------------------------------------------------------------
 
 type Row = typeof restores.$inferSelect
 
@@ -1136,14 +1022,12 @@ export function view(row: Omit<Row, "beforeArchive">) {
     itemName: row.itemName,
     mode: row.mode,
     runId: row.runId,
-    /** Set when this restore came from another restore's Version before replace. */
     fromRestoreId: row.fromRestoreId,
     targetInstanceId: row.targetInstanceId,
     actor: row.actor,
     plan: row.reviewed,
     steps: row.steps,
     error: row.error,
-    /** The Version before replace this restore kept: when it was taken; never its content. */
     versionBefore: row.beforeSha256 && row.beforeTakenAt ? { takenAt: row.beforeTakenAt } : null,
     createdAt: row.createdAt,
     confirmedAt: row.confirmedAt,
@@ -1164,7 +1048,6 @@ const replaceActions: Record<Ended, string> = {
   unknown: "Workflow replace unknown",
 }
 
-/** Ends a restore and writes its audit entry in the same transaction, with the person who confirmed it. */
 async function finish(
   ctx: Ctx,
   row: Row,
@@ -1215,25 +1098,18 @@ export function n8nMessage(error: unknown) {
     try {
       const body = JSON.parse(error.body ?? "") as { message?: string }
       if (body.message) return `${error.message}: ${body.message}`
-    } catch {
-      // Not JSON.
-    }
+    } catch {}
     return error.message
   }
   return (error as Error)?.message ?? String(error)
 }
 
-/**
- * What a failed step stores and shows. For a credential only the status, never n8n's own message: it could repeat
- * a value of the secret that was sent.
- */
 export function stepMessage(step: Pick<PlannedStep, "kind">, error: unknown) {
   if (step.kind !== "credential") return n8nMessage(error)
   if (error instanceof N8nError) return `n8n answered ${error.status}.`
   return (error as Error)?.name === "TimeoutError" ? "n8n did not answer in time." : "The connection to n8n failed."
 }
 
-/** Finds what a step would have created, by its exact name: the ID, null when n8n has none, undefined when unclear. */
 async function findCreated(client: N8nClient, step: PlannedStep): Promise<string | null | undefined> {
   try {
     const matches =
@@ -1247,11 +1123,6 @@ async function findCreated(client: N8nClient, step: PlannedStep): Promise<string
   }
 }
 
-/**
- * One creation in n8n. Any error is followed by a read of what it would have created: n8n can save and then fail
- * (an after-save hook), and a request cut off may still land. Proven written is done; not written after a full
- * answer is failed; anything else is unknown.
- */
 async function runStep(
   client: N8nClient,
   step: PlannedStep,
@@ -1275,7 +1146,6 @@ async function runStep(
   }
 }
 
-/** The workflow as n8n held it, as a one-workflow archive in the backup format, for the Version before replace. */
 async function sealVersionBefore(ctx: Ctx, live: N8nWorkflow, targetName: string, privateKey: string) {
   const { backupRecipient } = await ctx.settings.get("keys")
   const manifest: Manifest = {
@@ -1291,27 +1161,18 @@ async function sealVersionBefore(ctx: Ctx, live: N8nWorkflow, targetName: string
     textEntry("manifest.json", JSON.stringify(manifest)),
     textEntry(`workflows/${live.id}.json`, JSON.stringify(live)),
   ]
-  // It must open again: an archive is opened only up to the largest size allowed (`loadArchive`).
   const unpacked = createTar(entries).length
   const max = await maxArchiveBytes(ctx)
   if (unpacked > max)
     throw new RestoreError(
       `The workflow is too large to keep as the version before (${mib(unpacked)}; an archive may hold at most ${mib(max)}), so it was not replaced. Raise Largest archive in the backup settings, or restore it as a copy instead.`,
     )
-  // Both the backup key and the key pasted for this restore open it.
   const recipients = [...(backupRecipient ? [backupRecipient] : []), await identityToRecipient(privateKey.trim())]
   return sealArchive(entries, [...new Set(recipients)])
 }
 
 const mib = (bytes: number) => `${(bytes / 1024 ** 2).toFixed(1)} MiB`
 
-/**
- * The replace step (S7). Reads the workflow right before the write and refuses when it is not what the review saw;
- * keeps it as the Version before replace on the restore before writing anything (no write when that fails); writes
- * it with `publishIfActive=false`, so n8n saves the draft and never publishes; reads it again and says loudly what
- * is not as reviewed. An error from the write is followed by a read: sent content there is done, unchanged after a
- * full answer is failed, anything else unknown.
- */
 async function runReplace(
   ctx: Ctx,
   row: Row,
@@ -1351,7 +1212,6 @@ async function runReplace(
   try {
     const sealed = await sealVersionBefore(ctx, before, row.reviewed.target.name, privateKey)
     steps[i] = { ...step, sentHash, sentFields }
-    // One write: the version before and the hash a later check needs, both before the workflow is touched.
     await ctx.db
       .update(restores)
       .set({
@@ -1382,7 +1242,6 @@ async function runReplace(
     } catch {
       after = null
     }
-    // Whatever became of the write, a read that shows the workflow unpublished says so.
     const published = after ? publishedChange(before, after) : null
     const said = published ? { warning: published } : {}
     if (after && provenWritten(after, proof, before.versionId, reviewed.sameAsLive)) {
@@ -1419,10 +1278,6 @@ async function runReplace(
   return { ...current, status: "done", createdId: id, ...(warning ? { warning } : {}) }
 }
 
-/**
- * Whether a read proves the write: n8n holds what was sent and, when it held all of that already before (the
- * review said so), a version other than the one before.
- */
 function provenWritten(
   after: N8nWorkflow,
   proof: ReplaceProof,
@@ -1432,22 +1287,8 @@ function provenWritten(
   return landed(after, proof) && (!sameAsLive || (after.versionId ?? null) !== (versionBefore ?? null))
 }
 
-/** Restores this process is running now; a pending one that is not here was cut off (see `sweepRestores`). */
-const running = new Set<string>()
-
-/**
- * Runs a reviewed restore once. A second confirm, or one for a restore already running or ended, returns it as it
- * is. The person who confirms is the one the audit names.
- */
 export function confirmRestore(ctx: Ctx, restoreId: string, privateKey: string, by: RestoreActor) {
-  return oneAtATime(`restore:${restoreId}`, async () => {
-    running.add(restoreId)
-    try {
-      return await confirmNow(ctx, restoreId, privateKey, by)
-    } finally {
-      running.delete(restoreId)
-    }
-  })
+  return oneAtATime(`restore:${restoreId}`, () => confirmNow(ctx, restoreId, privateKey, by))
 }
 
 async function confirmNow(ctx: Ctx, restoreId: string, privateKey: string, by: RestoreActor) {
@@ -1458,7 +1299,7 @@ async function confirmNow(ctx: Ctx, restoreId: string, privateKey: string, by: R
     .returning()
   if (!row) {
     const [current] = await ctx.db.select().from(restores).where(eq(restores.id, restoreId))
-    if (!current) throw new RestoreError("This review has expired or was closed. Open the archive again.", "not_found")
+    if (!current) throw new RestoreError("This review has expired. Open the archive again.", "not_found")
     return view(current)
   }
   if (row.createdAt.getTime() + REVIEW_TTL_MS < Date.now())
@@ -1467,8 +1308,6 @@ async function confirmNow(ctx: Ctx, restoreId: string, privateKey: string, by: R
   try {
     return await execute(ctx, row, steps, privateKey)
   } catch (error) {
-    // The database failed in between (a step's progress, say): what n8n holds is not known. When even this
-    // fails, the row stays pending and the sweep marks it unknown, as it is no longer running.
     const at = steps.findIndex((s) => s.status === "todo")
     if (at >= 0) steps[at] = { ...(steps[at] as RestoreStep), status: "unknown" }
     return view(await finish(ctx, row, "unknown", steps, `The restore stopped: ${(error as Error).message}`))
@@ -1476,7 +1315,6 @@ async function confirmNow(ctx: Ctx, restoreId: string, privateKey: string, by: R
 }
 
 async function execute(ctx: Ctx, row: Row, steps: RestoreStep[], privateKey: string) {
-  // Stored at once, so a restart from here on leaves the steps to check.
   await ctx.db.update(restores).set({ steps }).where(eq(restores.id, row.id))
   let built: Awaited<ReturnType<typeof buildPlan>>
   let archive: OpenedArchive
@@ -1541,12 +1379,7 @@ async function execute(ctx: Ctx, row: Row, steps: RestoreStep[], privateKey: str
   return view(await finish(ctx, row, "done", steps, null))
 }
 
-/**
- * "Check and try again" for a restore whose outcome is unknown: reads n8n for each step's exact name. It ends done
- * only when every step is proven written; not found does not prove a failure, so the restore stays unknown.
- */
 export function checkRestore(ctx: Ctx, restoreId: string) {
-  // One check at a time per restore, so a later one never writes over what an earlier one proved.
   return oneAtATime(`restore:${restoreId}`, () => checkNow(ctx, restoreId))
 }
 
@@ -1585,7 +1418,6 @@ async function checkNow(ctx: Ctx, restoreId: string) {
   return view(saved ?? row)
 }
 
-/** A replace step checked in n8n: done when the workflow holds what was sent; anything else proves nothing. */
 async function checkReplace(client: N8nClient, step: RestoreStep, reviewed: ReplacePlan | undefined) {
   if (step.status !== "unknown") return step
   if (!step.sentHash)
@@ -1600,7 +1432,6 @@ async function checkReplace(client: N8nClient, step: RestoreStep, reviewed: Repl
     active: reviewed.live.published,
     activeVersionId: reviewed.live.activeVersionId ?? undefined,
   }
-  // Whatever the check finds, a workflow n8n unpublished is said.
   const published = seen ? publishedChange(seen, live) : null
   const said = published ? { warning: published } : {}
   const proof: ReplaceProof = {
@@ -1619,9 +1450,7 @@ export async function getRestore(ctx: Ctx, restoreId: string) {
   return row ? view(row) : null
 }
 
-/** Recent restores into an instance, newest first; reviews not confirmed are not listed. */
 export async function recentRestores(ctx: Ctx, targetInstanceId: string, limit = 20) {
-  // Without the stored versions: the list is read often and never shows them.
   const { beforeArchive: _stored, ...columns } = getTableColumns(restores)
   const rows = await ctx.db
     .select(columns)
@@ -1637,29 +1466,18 @@ export async function recentRestores(ctx: Ctx, targetInstanceId: string, limit =
   return rows.map(view)
 }
 
-/** Drops a review that was not confirmed (closing the page). Anything else stays. */
-export async function dropReview(ctx: Ctx, restoreId: string) {
-  await ctx.db.delete(restores).where(and(eq(restores.id, restoreId), eq(restores.status, "previewed")))
-}
-
-/**
- * Scheduled: reviews older than an hour leave (they never wrote anything), and restores this process is not running
- * but still pending (cut off by a restart, or by a failed database write) become unknown, with their audit entry.
- */
 export async function sweepRestores(ctx: Ctx) {
   await ctx.db
     .delete(restores)
     .where(and(eq(restores.status, "previewed"), lt(restores.createdAt, new Date(Date.now() - REVIEW_TTL_MS))))
   const pending = await ctx.db.select({ id: restores.id }).from(restores).where(eq(restores.status, "pending"))
   for (const { id } of pending) {
-    // In the restore's own queue and read again there, so a confirm that ends meanwhile is never written over.
     await oneAtATime(`restore:${id}`, async () => {
       const [row] = await ctx.db.select().from(restores).where(eq(restores.id, id))
-      if (!row || row.status !== "pending" || running.has(id)) return
+      if (row?.status !== "pending") return
       const steps: RestoreStep[] = row.steps.length
         ? [...row.steps]
         : row.reviewed.steps.map((s) => ({ ...s, status: "todo" }))
-      // The step that was running when it stopped may have been written.
       const at = steps.findIndex((s) => s.status === "todo")
       if (at >= 0) steps[at] = { ...(steps[at] as RestoreStep), status: "unknown" }
       await finish(ctx, row, "unknown", steps, "This restore was cut off. Check n8n before trying again.")

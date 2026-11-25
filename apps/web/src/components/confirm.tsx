@@ -11,29 +11,14 @@ import {
 } from "@/components/ui/dialog"
 import { CONFIRM_FOCUS_MS } from "@/lib/behavior"
 
-/*
- * The one confirmation (DS-12, DS-20, FW-8). Ask only before an action that deletes, is permanent or affects
- * many items; a single reversible action runs on one click. The question names the object, the count and the
- * consequence, and the button is named after the action. A dangerous action gets the one solid red button of
- * the app. The confirm button takes the focus, so Enter confirms; a question that protects changes (Leave,
- * Discard) starts on its safe answer instead (`focusCancel`). Escape, Cancel, the backdrop and Back cancel.
- */
-
 export type ConfirmOptions = {
   title: string
   message?: React.ReactNode
-  /** A verb: "Remove instance", "Revoke token". Never "OK". */
   confirmLabel: string
   cancelLabel?: string
   danger?: boolean
-  /** The focus starts on the safe answer (Stay, Keep editing), so Enter never drops work. */
   focusCancel?: boolean
-  /**
-   * No Back entry of its own: the question is asked during Back, Forward or a router block, and an entry pushed
-   * then would disturb the history it protects (DS-10).
-   */
   noHistory?: boolean
-  /** Closes the question as cancelled, such as when the dialog it was asked for saves and closes (DS-9). */
   signal?: AbortSignal
 }
 
@@ -58,7 +43,6 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
       new Promise<boolean>((resolve) => {
         if (options.signal?.aborted) return resolve(false)
         const question: Pending = { ...options, resolve }
-        // A second question replaces the first, which counts as cancelled.
         setPending((previous) => {
           previous?.resolve(false)
           return question

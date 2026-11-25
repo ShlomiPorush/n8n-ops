@@ -7,8 +7,6 @@ import { checkInside, reportFromOutput } from "./inside.ts"
 import { probeJob } from "./jobs.ts"
 import { LIMITS } from "./queue-workers.ts"
 
-// The worker's side of reading the main from inside, against a stand-in Docker Engine API: what Docker's answers
-// mean, the limits of a probe's calls, and when the worker checks over the network instead.
 const servers: Server[] = []
 const frame = (text: string, stream = 1) => {
   const body = Buffer.from(text)
@@ -26,7 +24,6 @@ type Engine = {
 }
 async function engine(spec: Engine) {
   const calls: string[] = []
-  /** How each call came: its Connection header and the client port of the connection it used. */
   const connections: { header: string | undefined; port: number | undefined }[] = []
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     calls.push(`${req.method} ${req.url}`)
@@ -79,7 +76,6 @@ describe("the Docker client in a probe", () => {
       const error = await docker.exec("n8n", ["true"]).catch((e) => e)
       expect(error).toBeInstanceOf(DockerError)
       expect(error.kind).toBe(kind)
-      // Docker's answer is not kept: it may carry details of the container.
       expect(error.message).not.toContain(body)
     }
   })
@@ -192,7 +188,6 @@ describe("checkInside", () => {
       { exitCode: 1 },
       { start: (res: ServerResponse) => res.writeHead(200).end(frame("not json")) },
       { start: (res: ServerResponse) => res.writeHead(200).end(frame('{"mode":"cluster"}')) },
-      // An answer without the statuses is not a result: never the main down.
       { start: (res: ServerResponse) => res.writeHead(200).end(frame("{}")) },
       { start: (res: ServerResponse) => res.writeHead(200).end(frame('{"other":1}')) },
     ]) {
@@ -205,7 +200,6 @@ describe("checkInside", () => {
 })
 
 describe("probeJob and the container list", () => {
-  /** A stand-in Docker whose list shows the main in the state given, and whose exec answers as given. */
   async function withList(state: string, start: (res: ServerResponse) => void) {
     const server = createServer((req, res) => {
       req.resume()
@@ -237,7 +231,6 @@ describe("probeJob and the container list", () => {
     const docker = await withList("exited", (res) => res.writeHead(200).end(frame("not json")))
     const job = await probeJob({ inside: { container: "n8n" } }, docker)
     expect(job.result).toMatchObject({ main: { ok: false, error: "container exited" } })
-    // As sent to the server.
     expect(JSON.parse(JSON.stringify(job.result))).not.toHaveProperty("notCollected")
   })
 

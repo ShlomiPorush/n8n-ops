@@ -1,5 +1,3 @@
-// For scripts/verify.sh: the Compose override that gives the queue checks' socket proxy the lines n8n-ops computes
-// from one probe's report (PROBE_REPORT), with the main given (PROBE_MAIN). The same function the server uses.
 import { neededRule } from "../../packages/shared/src/proxy-rules.ts"
 
 const report = JSON.parse(process.env.PROBE_REPORT ?? "{}")

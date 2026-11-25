@@ -60,7 +60,6 @@ describe("spans", () => {
   })
 
   it("intersects, subtracts and measures like a minute-by-minute count, whatever the order, overlaps or empty spans", () => {
-    // Spans on a grid of 0 to 60; the reference marks each unit one by one. The generator's products stay exact.
     let seed = 1
     const next = (n: number) => {
       seed = (seed * 48_271) % 2_147_483_647
@@ -98,7 +97,6 @@ describe("spans", () => {
       expect(subtract(a, b)).toEqual(toSpans(ma.map((v, i) => v && !mb[i])))
       for (const s of b) expect(measure(measured(a), s)).toBe(total(intersect(a, [s])))
     }
-    // The pairs overlap often enough for the comparison to mean something.
     expect(overlapping).toBeGreaterThan(500)
   })
 
@@ -183,7 +181,6 @@ describe("Docker checks", () => {
   })
 
   it("covers across a boot change one check at a time, and cuts covers at the history start", () => {
-    // Two boots' checks interleaved by time: still one cover at any moment.
     const covers = dockerCovers([check(0, true), check(s(30), false), check(s(90), true)], m(10), s(10))
     expect(covers.map((c) => [c.from, c.to])).toEqual([
       [s(10), s(30)],
@@ -225,7 +222,6 @@ describe("restarts", () => {
       { at: 500, uptimeSecBefore: 300 },
       { at: 900, uptimeSecBefore: 40 },
     ])
-    // The anchor (an earlier boot kept outside the window) makes the first boot inside it a restart.
     expect(restarts(boots, 400, 1000)).toHaveLength(2)
     expect(restarts(boots, 600, 1000)).toEqual([{ at: 900, uptimeSecBefore: 40 }])
     expect(restarts([{ bootId: "a", start: 100, maxUptimeSec: 3 }], 0, 1000)).toEqual([])

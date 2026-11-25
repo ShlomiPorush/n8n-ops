@@ -21,9 +21,6 @@ import { buildMcpServer, restRoutes } from "../routes/agent.ts"
 import { type AccessRequestInput, collectAccess, requestAccess } from "./access.ts"
 import { notifyAccess } from "./access-notify.ts"
 
-// Where an access request is sent, against a real PostgreSQL: the agent's choice over REST and MCP, the default,
-// channels set up or turned off while a request waits, and each channel failing and retrying on its own. Telegram
-// and email are stand-ins that record what is sent and fail when told to.
 const sends = vi.hoisted(() => ({
   telegram: [] as string[],
   email: [] as string[],
@@ -73,7 +70,6 @@ let server: Server
 let baseUrl: string
 
 const KEY = randomBytes(24).toString("hex")
-/** The REST token of the agent, made for this run. */
 const secret = `nops_r_${randomBytes(24).toString("hex")}`
 const SPEC = `
 openapi: 3.0.0
@@ -95,7 +91,6 @@ async function freshDatabase(migrations = folder) {
   return db
 }
 
-/** The migrations up to and including `tag`. */
 function migrationsUpTo(tag: string) {
   const dir = mkdtempSync(join(scratch, "m-"))
   cpSync(folder, dir, { recursive: true })
@@ -160,10 +155,6 @@ afterAll(async () => {
   rmSync(scratch, { recursive: true, force: true })
 })
 
-/**
- * Both channels set up and on, the default both, by default. A channel may be turned off in Agent Access (`telegram`,
- * `email`) or left without its bot and chat, or its SMTP server (`telegramSetUp`, `emailSetUp`).
- */
 async function setUp({
   telegram = true,
   email = true,
@@ -189,7 +180,6 @@ async function setUp({
 }
 
 beforeEach(async () => {
-  // Every test starts with no request waiting, so the notifier sees only its own.
   await ctx.db.update(accessRequests).set({ status: "denied", telegramMessageId: null })
   sends.telegram = []
   sends.email = []
@@ -210,7 +200,6 @@ const row = async (id: string) => {
   return r
 }
 
-/** Moves a channel's last failure back in time, as if the retry time had passed. */
 const failedMinutesAgo = (id: string, channel: AccessChannel, minutes: number) =>
   ctx.db
     .update(accessRequests)
@@ -251,7 +240,6 @@ describe("the channel of an access request", () => {
     await notifyAccess(ctx)
     expect(sends.telegram).toHaveLength(0)
     expect(sends.email).toHaveLength(0)
-    // Only n8n-ops shows it, until a channel of the default is on again.
     await setUp({ telegram: false, defaultNotify: ["email"] })
     await notifyAccess(ctx)
     expect(sends.email).toHaveLength(2)
@@ -259,7 +247,6 @@ describe("the channel of an access request", () => {
   })
 
   it("is sent when its channel is set up while it waits", async () => {
-    // Telegram is on but has no bot yet: the request goes by email until it has.
     await setUp({ telegramSetUp: false })
     const asked = await requestAccess(ctx, tokenId, ask(["telegram", "email"]))
     expect(asked.notify).toEqual(["email"])
@@ -269,7 +256,6 @@ describe("the channel of an access request", () => {
     await setUp()
     await notifyAccess(ctx)
     expect(sends.telegram).toHaveLength(1)
-    // Neither is sent again.
     await notifyAccess(ctx)
     expect(sends.telegram).toHaveLength(1)
     expect(sends.email).toHaveLength(1)
@@ -282,7 +268,6 @@ describe("the channel of an access request", () => {
     await notifyAccess(ctx)
     expect(sends.telegram).toHaveLength(1)
     expect(sends.email).toHaveLength(0)
-    // Once email is set up, the request still waiting goes where the agent asked as well.
     await setUp({ defaultNotify: ["telegram"] })
     await notifyAccess(ctx)
     expect(sends.email).toHaveLength(1)
@@ -328,12 +313,10 @@ describe("the channel of an access request", () => {
     sends.fail = { telegram: true, email: true }
     const asked = await requestAccess(ctx, tokenId, ask(["telegram"]))
     await notifyAccess(ctx)
-    // Telegram failed some time ago and is turned off; then email, the default, fails just now.
     await failedMinutesAgo(asked.id, "telegram", defaults.alerts.retryMin)
     await setUp({ telegram: false, defaultNotify: ["email"] })
     await notifyAccess(ctx)
     expect(Object.keys((await row(asked.id)).notifyFailed).sort()).toEqual(["email", "telegram"])
-    // Telegram works and is on again: it is tried at once, its own retry time having passed.
     sends.fail = { telegram: false, email: true }
     await setUp({ defaultNotify: ["email"] })
     await notifyAccess(ctx)
@@ -370,7 +353,10 @@ describe("the channel of an access request", () => {
   })
 
   it("takes the choice over MCP", async () => {
-    const mcp = buildMcpServer(ctx, async () => {}, { tokenId, publicUrl: "https://ops.example.com" })
+    const mcp = buildMcpServer(ctx, (_tool, _kind, _args, run) => run(), {
+      tokenId,
+      publicUrl: "https://ops.example.com",
+    })
     const [clientSide, serverSide] = InMemoryTransport.createLinkedPair()
     const client = new Client({ name: "test", version: "1" })
     await mcp.connect(serverSide)
@@ -422,7 +408,6 @@ describe("the upgrade to channels per request (0025)", () => {
     expect(after).toMatchObject({ notifyChoice: null, notifyFailed: {}, telegramMessageId: 77, emailSentAt: null })
     expect(after?.notifyError).toBe("Email: SMTP refused")
 
-    // The notifier sends the email it still owes, at once, and Telegram not again.
     const upgraded = { ...ctx, db: database.db, settings: createSettings(database.db) } as Ctx
     await setUp({ on: upgraded })
     await notifyAccess(upgraded)

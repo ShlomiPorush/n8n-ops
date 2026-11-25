@@ -6,10 +6,6 @@ import { OTHER_PAGE } from "../http/origin.ts"
 import { defaults, type SectionName, sections } from "../lib/settings.ts"
 import { setupRoutes } from "./setup.ts"
 
-// Creating the first account is public until it exists, but only from n8n-ops' own setup page: a page of another
-// site cannot create it on a fresh install before the owner does. The refusal comes before the database is read.
-// When Better Auth cannot create the account because one exists by then, the answer is already_set_up.
-
 function app() {
   const touched = { db: 0 }
   const ctx = {
@@ -44,7 +40,6 @@ describe("POST /api/setup/account", () => {
   })
 })
 
-/** The setup with a database that answers the given account counts in turn, and Better Auth failing as given. */
 function failingSignUp(counts: number[], error: unknown) {
   const ctx = {
     settings: { get: async (key: SectionName) => sections[key].parse(defaults[key]) },

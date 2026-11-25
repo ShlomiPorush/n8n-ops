@@ -1,76 +1,51 @@
-import { useEffect, useRef, useState } from "react"
 import { Link } from "react-router"
 import { Panel, PanelHead, SwitchRow, useSaveSource } from "@/components/kit"
 import { Checkbox } from "@/components/ui/checkbox"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useApiMutation } from "@/lib/api"
+import { useEdits } from "@/lib/edits"
 import { n } from "@/lib/numbers"
 import { cn } from "@/lib/utils"
 
 type Props = {
   id: string
   name: string
-  /** n8n older than 2.14.0: what the key allows cannot be read, so nothing that needs the API works. */
   unsupported: boolean
-  /** What the instance's API key holds; access can never go beyond it. */
   keyScopes: string[]
-  agentAccess: { enabled: boolean; scopes: string[] }
+  agentAccess: Access
+  readAt: number
 }
+
+type Access = { enabled: boolean; scopes: string[] }
+
+const changes = (a: Access, b: Access) =>
+  Number(a.enabled !== b.enabled) +
+  a.scopes.filter((s) => !b.scopes.includes(s)).length +
+  b.scopes.filter((s) => !a.scopes.includes(s)).length
 
 const readOnly = (s: string) => /:(read|list)$/.test(s)
 
-/** Per instance: whether agents may ask for temporary access, and the most they may ever be granted. */
-export function AgentAccessCard({ id, name, unsupported, keyScopes, agentAccess }: Props) {
-  const stored = () => ({
+export function AgentAccessCard({ id, name, unsupported, keyScopes, agentAccess, readAt }: Props) {
+  const read: Access = {
     enabled: agentAccess.enabled,
-    scopes: new Set(agentAccess.scopes.filter((s) => keyScopes.includes(s))),
-  })
-  // `base` is the stored access the form started from; unsaved changes are counted against it.
-  const [base, setBase] = useState(stored)
-  const [enabled, setEnabled] = useState(base.enabled)
-  const [scopes, setScopes] = useState(base.scopes)
-  const count =
-    Number(enabled !== base.enabled) +
-    [...scopes].filter((s) => !base.scopes.has(s)).length +
-    [...base.scopes].filter((s) => !scopes.has(s)).length
-  const reset = () => {
-    const next = stored()
-    setBase(next)
-    setEnabled(next.enabled)
-    setScopes(next.scopes)
+    scopes: agentAccess.scopes.filter((s) => keyScopes.includes(s)),
   }
-  const save = useApiMutation<{ agentAccess: Props["agentAccess"] }>("PATCH", `/instances/${id}`, {
+  const form = useEdits({ access: read }, readAt, (a, b) => changes(a as Access, b as Access) > 0)
+  const access = form.values.access as Access
+  const count = changes(access, form.stored.access as Access)
+  const save = useApiMutation<{ agentAccess: Access }>("PATCH", `/instances/${id}`, {
     invalidate: ["/instances", `/instances/${id}`],
     quiet: true,
   })
-  // The stored access as it was when a save finished, until the refetch after it brings the saved value.
-  const savedOver = useRef<{ agentAccess: Props["agentAccess"]; keyScopes: string[] } | null>(null)
-  // Whenever the card has no unsaved changes, it shows the stored access: after a refetch or a change made
-  // elsewhere, and after edits that were changed back by hand. Unsaved changes stay, and Discard brings the
-  // stored value. While a save runs the card is locked, so nothing is edited under it.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: runs when the stored access or the count changes
-  useEffect(() => {
-    if (save.isPending) return
-    if (savedOver.current?.agentAccess === agentAccess && savedOver.current.keyScopes === keyScopes) return
-    savedOver.current = null
-    if (count > 0) return
-    const next = stored()
-    const same =
-      next.enabled === base.enabled &&
-      next.scopes.size === base.scopes.size &&
-      [...next.scopes].every((s) => base.scopes.has(s))
-    if (!same) reset()
-  }, [agentAccess, keyScopes, count, save.isPending])
   useSaveSource(`agent-access-${id}`, {
     label: "agent access",
     saved: "Agent access saved",
     count,
     save: async () => {
-      await save.mutateAsync({ agentAccess: { enabled, scopes: [...scopes] } })
-      savedOver.current = { agentAccess, keyScopes }
-      setBase({ enabled, scopes: new Set(scopes) })
+      await save.mutateAsync({ agentAccess: access })
+      form.saved({ access })
     },
-    discard: reset,
+    discard: form.discard,
   })
 
   return (
@@ -97,10 +72,10 @@ export function AgentAccessCard({ id, name, unsupported, keyScopes, agentAccess 
           id={id}
           name={name}
           keyScopes={keyScopes}
-          enabled={enabled}
-          scopes={scopes}
-          onEnabled={setEnabled}
-          onScopes={setScopes}
+          enabled={access.enabled}
+          scopes={new Set(access.scopes)}
+          onEnabled={(enabled) => form.set("access", { ...access, enabled })}
+          onScopes={(scopes) => form.set("access", { ...access, scopes: [...scopes] })}
           disabled={save.isPending}
           className="border-t border-line p-pad-x"
         />
@@ -109,10 +84,6 @@ export function AgentAccessCard({ id, name, unsupported, keyScopes, agentAccess 
   )
 }
 
-/**
- * The controls of an instance's Temporary access policy: on or off, and the scopes that may be granted, among those
- * the key holds. The card above saves them through the save bar; the instance setup saves them with its step.
- */
 export function AgentAccessFields({
   id,
   name,
@@ -151,7 +122,6 @@ export function AgentAccessFields({
     { value: "none", label: "None", scopes: [] },
   ]
   const matches = (list: string[]) => list.length === scopes.size && list.every((s) => scopes.has(s))
-  // When two presets hold the same scopes, None wins, then Everything the key allows.
   const preset = ["none", "all", "read"].find((v) => matches(presets.find((p) => p.value === v)?.scopes ?? [])) ?? ""
   return (
     <fieldset disabled={disabled} className={cn("grid min-w-0 gap-4", className)}>
@@ -168,7 +138,6 @@ export function AgentAccessFields({
             <span className="me-1 text-small font-semibold text-muted-foreground">
               Scopes that may be granted · {n(scopes.size)} of {n(keyScopes.length)}
             </span>
-            {/* Shows the preset the selection matches; a selection made by hand matches none of them. */}
             <ToggleGroup
               type="single"
               segmented

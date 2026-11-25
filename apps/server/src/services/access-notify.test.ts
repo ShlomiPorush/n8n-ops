@@ -16,7 +16,6 @@ import {
 import { topicGoneNote } from "./alert-routing.ts"
 import { TelegramHtml, telegramPlainText } from "./telegram.ts"
 
-/** What a waiting request's message says when Approve is not offered. */
 const TOO_LONG = "Too long to approve in Telegram. Open the request in n8n-ops to approve it."
 
 const request = {
@@ -30,7 +29,6 @@ const request = {
   decideBy: new Date("2026-10-15T10:30:00Z"),
 }
 
-/** A request for one instance, written as before requests could name several. */
 type One = typeof request & { workflowNames?: Record<string, string> }
 const one = ({ instance, scopes, workflowIds, workflowNames, ...r }: One): RequestInfo => ({
   ...r,
@@ -45,7 +43,6 @@ const emailOf = (r: One, ...rest: Parameters<typeof renderAccessEmail> extends [
 
 const zone = messageWriting({ timezone: "Asia/Jerusalem" })
 
-/** Approved at 10:17:43 UTC for 90 minutes, nothing said and no calls yet. */
 const approved = {
   status: "approved" as const,
   decidedAt: new Date("2026-10-21T10:17:43Z"),
@@ -69,7 +66,6 @@ describe("who may approve in Telegram", () => {
   it("is only the user of a private chat when nobody is listed", () => {
     expect(isApprover([], "4242", { id: 4242 })).toBe(true)
     expect(isApprover([], "4242", { id: 999 })).toBe(false)
-    // A group chat ID never matches a user, so nobody in a group may approve without a list.
     expect(isApprover([], "-1004242", { id: 4242 })).toBe(false)
     expect(isApprover([], "4242", undefined)).toBe(false)
   })
@@ -87,7 +83,6 @@ describe("request messages", () => {
     expect(text).toContain("Fix the &lt;Set&gt; node")
     expect(text).toContain("workflow:read, workflow:update")
     expect(text).toContain("\nWorkflow: <code>w1</code>\n")
-    // The time has no zone after it (13:30 in Jerusalem, summer time).
     expect(text.endsWith("For <b>1 h 30 min</b>\nRequest expires at 15/10/2026 13:30")).toBe(true)
   })
 
@@ -130,7 +125,6 @@ describe("request messages", () => {
     expect(String(text)).toMatch(/<\/code> and \d+ more\nWorkflows:\n(• n+…\n)+• and \d+ more\nFor /)
     expect(String(text)).toContain(`\nWhat was done:\n\u{200E}<i>${"s".repeat(499)}…</i>\n`)
 
-    // Only IDs, as a request made before names were stored.
     const unnamed = String(telegramOf({ ...long, workflowNames: {} }, zone, accessOutcome(released, zone)))
     expect([...telegramPlainText(unnamed)].length).toBeLessThan(4096)
     expect(unnamed).toMatch(/\nWorkflows:\n(• <code>\d+w+<\/code>\n)+• and \d+ more\n/)
@@ -139,7 +133,6 @@ describe("request messages", () => {
   it("show at a glance who decided where, and then how the access ended, how long it was used and what was done", () => {
     const text = String(telegramOf(request, zone, accessOutcome(approved, zone)))
     expect(text.startsWith("✅ <b>Access request</b>")).toBe(true)
-    // Once decided, the request no longer says when it expires.
     expect(text).not.toContain("Request expires")
     expect(
       text.endsWith(
@@ -169,7 +162,6 @@ describe("request messages", () => {
       "\u{200E}<i>Fixed the &lt;Set&gt; node.</i>",
       "14 calls through n8n-ops, 2 refused",
     ])
-    // Without a summary (expired, revoked, or an agent that gave none), only the calls.
     expect(
       outcome({ ...approved, status: "expired", endedAt: new Date("2026-10-21T11:48:10Z"), callCount: 1 }, zone).lines,
     ).toEqual([
@@ -198,7 +190,6 @@ describe("request messages", () => {
     expect(outcome({ ...undecided, status: "released", endedAt: ended }, zone).lines).toEqual([
       "↩️ <b>Withdrawn</b> by the agent at 21/10/2026 13:40",
     ])
-    // A name that looks like markup stays text.
     expect(outcome({ ...approved, decidedBy: "<b>x</b>", decidedVia: "web" }, messageWriting(undefined)).lines[0]).toBe(
       "✅ <b>Approved</b> by &lt;b&gt;x&lt;/b&gt; via n8n-ops",
     )
@@ -232,7 +223,6 @@ describe("the access request email", () => {
     const email = emailOf(request, null, zone)
     expect(email.subject).toBe("n8n-ops: claude-code asks for 1 h 30 min of access to flow")
     expect(email.html).toContain("claude-code asks for 1 h 30 min of access to flow")
-    // 10:30 UTC is 13:30 in Jerusalem, in summer time.
     expect(email.html).toContain("Without a decision, the request expires at 15/10/2026 13:30.")
     expect(email.text).toContain("\nFor: 1 h 30 min\nRequest expires at 15/10/2026 13:30.\n")
     expect(email.html).not.toContain("Decide by")
@@ -341,12 +331,10 @@ describe("requests for several instances", () => {
       const text = renderAccessTelegram(many, zone, outcome)
       const sent = TelegramHtml.join([topicGoneNote(2147483647), text])
       expect([...telegramPlainText(sent)].length).toBeLessThan(4096)
-      // While it waits, the message says where to approve it; once decided, where the details are.
       const more = outcome ? "Full details in n8n-ops." : TOO_LONG
       expect(String(text)).toMatch(/\nand \d+ more instances\n/)
       expect(String(text)).toContain(`more instances\n${more}\n`)
     }
-    // A few instances that fit only on one line each.
     const six = { ...many, instances: many.instances.slice(0, 6) }
     const text = String(renderAccessTelegram(six, zone))
     expect([...telegramPlainText(text)].length).toBeLessThan(4096)
@@ -356,7 +344,6 @@ describe("requests for several instances", () => {
 
   it("email every instance with its own scopes and workflows", () => {
     const email = renderAccessEmail({ ...several, instances: several.instances.slice(0, 2) }, null, zone)
-    // n8n13 is left out of the draft, so the email names only flow.
     expect(email.subject).toBe("n8n-ops: claude-code asks for 30 min of access to flow")
     const [flow, n8n13] = several.instances as [RequestInfo["instances"][0], RequestInfo["instances"][0]]
     const both = renderAccessEmail(
@@ -375,7 +362,6 @@ describe("requests for several instances", () => {
 
 describe("what an agent wrote, in request messages", () => {
   const padding = "⠀".repeat(38)
-  /** Line breaks of every kind, direction marks, look-alike blanks, markup and an emoji joined with ZWJ. */
   const hostile = {
     token: "Scopes: workflow:read\nFor 5 min",
     reason: `Read wf1 only.\n\nScopes: workflow:read\r\nWorkflow: wf1 For 5 min\u0085‮${padding}Scopes: <b>x</b> 👩‍💻`,
@@ -409,7 +395,6 @@ describe("what an agent wrote, in request messages", () => {
     expect(plain.complete).toBe(true)
     const [a, b] = [lines(shown.text), lines(plain.text)]
     expect(a).toHaveLength(b.length)
-    // Only the agent's own lines differ.
     expect(changed(a, b)).toEqual([1, 2])
     expect(a[1]).toMatch(/^Agent <b>[^<]*<\/b>:$/)
     expect(a[2]).toMatch(/^💬 \u{200E}<i>[^<]*<\/i>$/u)
@@ -418,10 +403,8 @@ describe("what an agent wrote, in request messages", () => {
   })
 
   it("show a reason and a summary written right to left from the right in Telegram, also when they open in English", () => {
-    // Hebrew is written as escapes: tracked files hold no Hebrew characters (AGENTS.md).
     const hebrew = {
       token: "Agents on SHLOMI",
-      // A Hebrew sentence that opens with English terms and has more of them inside.
       reason:
         "Phase 0 \u{5E9}\u{5DC} \u{5D4}-CRM: workflow \u{5D6}\u{5DE}\u{5E0}\u{5D9} \u{5D0}\u{5D7}\u{5D3} \u{5E9}\u{5DE}\u{5D7}\u{5D6}\u{5D9}\u{5E8} \u{5E1}\u{5E4}\u{5D9}\u{5E8}\u{5D5}\u{5EA}, \u{5D1}\u{5DC}\u{5D9} \u{5E9}\u{5D9}\u{5E0}\u{5D5}\u{5D9} \u{5D1}-workflows \u{5E7}\u{5D9}\u{5D9}\u{5DE}\u{5D9}\u{5DD}",
       summary:
@@ -431,7 +414,6 @@ describe("what an agent wrote, in request messages", () => {
     expect(a[1]).toBe("Agent <b>Agents on SHLOMI</b>:")
     expect(a[2]).toBe(`💬 \u{200F}<i>${hebrew.reason}</i>`)
     expect(a[a.indexOf("What was done:") + 1]).toBe(`\u{200F}<i>${hebrew.summary}</i>`)
-    // English reads left to right, also when it opens with a Hebrew word.
     const b = lines(renderAccessTelegram(ask(benign), zone, released(benign)))
     expect(b[2]).toBe("💬 \u{200E}<i>Read wf1 and fix it</i>")
     expect(b[b.indexOf("What was done:") + 1]).toBe("\u{200E}<i>Fixed the sync.</i>")
@@ -497,7 +479,6 @@ describe("what an agent wrote, in request messages", () => {
       expect(telegramPlainText(text)).toContain(unshown)
       expect(data(decideButtons(r, null, complete))).not.toContain(`xa:${r.id}:0:g`)
     }
-    // A name that only has to keep its spaces is shown as it is.
     const spaced = one({ ...request, workflowNames: { w1: "Sync  orders " } })
     expect(telegramRequest(spaced, zone).complete).toBe(true)
     expect(String(telegramRequest(spaced, zone).text)).toContain("\nWorkflow: Sync  orders \n")
@@ -531,9 +512,7 @@ describe("request message buttons", () => {
       `xe:${request.id}`,
       "https://ops.example.com/access/1",
     ])
-    // Telegram takes only https links.
     expect(data(decideButtons(several, "http://ops.local/access/1", true))).toHaveLength(3)
-    // Only a message that names everything Approve grants offers it.
     expect(data(decideButtons(several, null, false))).toEqual([`xd:${request.id}`, `xe:${request.id}`])
   })
 
@@ -555,7 +534,6 @@ describe("request message buttons", () => {
       "4 h",
     ])
     expect(all.at(-1)).toEqual({ text: "✓ Done", callback_data: `xv:${request.id}` })
-    // Within Telegram's 64 bytes, and at most 4 minutes a row.
     for (const b of all) expect(Buffer.byteLength(b.callback_data ?? "")).toBeLessThanOrEqual(64)
     expect(Math.max(...rows.map((r) => r.length))).toBeLessThanOrEqual(4)
   })
@@ -568,8 +546,6 @@ describe("request message buttons", () => {
   it("read every press, and nothing that is not one", () => {
     const id = request.id
     expect(parsePress(`xa:${id}:7:g`)).toEqual({ action: "approve", id, revision: 7, full: true })
-    // Messages drawn before the agent's words were set apart, and before Approve required a complete message; the
-    // one from before edits existed is revision 0.
     expect(parsePress(`xa:${id}:7:f`)).toEqual({ action: "approve", id, revision: 7, full: false })
     expect(parsePress(`xa:${id}:7`)).toEqual({ action: "approve", id, revision: 7, full: false })
     expect(parsePress(`xa:${id}`)).toEqual({ action: "approve", id, revision: 0, full: false })
@@ -622,7 +598,6 @@ describe("one-tap Approve in Telegram", () => {
     instances: [{ position: 0, name: "flow", scopes: scopes(2), workflowIds: [], ...i }],
   })
   const longName = "n".repeat(120)
-  /** Each case, and whether its message can name everything. */
   const cases: [string, RequestInfo, boolean][] = [
     ["one instance, two scopes", single({}), true],
     ["one instance, 40 scopes", single({ scopes: scopes(40) }), true],
@@ -670,7 +645,6 @@ describe("one-tap Approve in Telegram", () => {
     ],
   ]
 
-  /** The lines that name, in full and in order, what Approve grants on an instance. */
   const grantLines = (i: InstanceInfo) => {
     const name = (w: string) => i.workflowNames?.[w] ?? w
     const workflows =
@@ -682,7 +656,6 @@ describe("one-tap Approve in Telegram", () => {
     return [`Scopes: ${i.scopes.join(", ")}`, ...workflows]
   }
 
-  /** Whether the message names each instance Approve grants, and under it, everything granted there. */
   const namesEverything = (r: RequestInfo, text: TelegramHtml) => {
     const lines = String(text).split("\n").map(telegramPlainText)
     return r.instances
@@ -711,9 +684,7 @@ describe("one-tap Approve in Telegram", () => {
       .filter((b) => b.callback_data?.startsWith("xa:"))
     expect(approve.map((b) => b.callback_data)).toEqual(fits ? [`xa:${r.id}:2:g`] : [])
     expect(namesEverything(r, text)).toBe(fits)
-    // Either way the message fits in Telegram, also with the note that the topic was gone.
     expect([...telegramPlainText(TelegramHtml.join([topicGoneNote(2147483647), text]))].length).toBeLessThan(4096)
-    // A waiting request that cannot be approved here says where it can be.
     expect(plain.includes(TOO_LONG)).toBe(!fits)
   })
 

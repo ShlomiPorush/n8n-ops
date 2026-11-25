@@ -5,7 +5,6 @@ import { Checkbox as CheckboxPrimitive } from "radix-ui"
 import type * as React from "react"
 import { cn } from "@/lib/utils"
 
-// For picking items in a list (scopes, archive contents). A feature that turns on is a Switch.
 function Checkbox({ className, ...props }: React.ComponentProps<typeof CheckboxPrimitive.Root>) {
   return (
     <CheckboxPrimitive.Root

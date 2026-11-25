@@ -4,15 +4,9 @@ import type { AddressInfo } from "node:net"
 import { expect, type Page, test } from "@playwright/test"
 import { dialogClosed, signIn } from "./helpers.ts"
 
-/*
- * Agents connect by approval (OAuth), against the real server and database: an MCP client through the browser,
- * a script with a code, what each may do, how a connection ends. Runs after 06-approvals, which sets the
- * public URL the authorization server is issued under.
- */
 test.describe.configure({ mode: "serial" })
 
 const base = process.env.E2E_BASE_URL ?? "http://localhost:8080"
-// The callback listens on a port the system picks, set once it listens.
 let callbackHost = ""
 let redirect = ""
 let page: Page
@@ -21,7 +15,6 @@ let callback: Server
 test.beforeAll(async ({ browser }) => {
   page = await browser.newPage()
   await signIn(page)
-  // The agent listens on its computer for the browser to come back, as an MCP client does.
   callback = createServer((_req, res) => res.end("back in the agent"))
   await new Promise<void>((resolve) => callback.listen(0, "127.0.0.1", resolve))
   callbackHost = `127.0.0.1:${(callback.address() as AddressInfo).port}`
@@ -66,15 +59,10 @@ const toolNames = async (token: string) => {
   return body.result.tools.map((t) => t.name)
 }
 
-/**
- * A REST call as the n8n-ops skill makes it: with the policy revision of the endpoints listing and the kind of the
- * route it found there (the agent-access standard). The listing and access need neither.
- */
 async function api(token: string, path: string) {
   const list = (await (
     await fetch(`${base}/api/v1/agent/endpoints`, { headers: { authorization: `Bearer ${token}` } })
   ).json()) as { revision?: string; endpoints?: { method: string; path: string; kind: string }[] }
-  // A token that no longer works gets no list: the call then shows how it is refused.
   const kind = list.endpoints?.find((e) => e.method === "GET" && e.path === path)?.kind ?? "read"
   return fetch(`${base}${path}`, {
     headers: { authorization: `Bearer ${token}`, "x-n8n-ops-policy": list.revision ?? "", "x-n8n-ops-kind": kind },
@@ -110,7 +98,6 @@ test("an MCP client finds where to get a token", async () => {
   expect(res.headers.get("www-authenticate")).toContain(
     `resource_metadata="${base}/.well-known/oauth-protected-resource/mcp"`,
   )
-  // The client asks for what the challenge names; the person approving it decides about instance access.
   expect(res.headers.get("www-authenticate")).toContain(`scope="ops:read ops:access"`)
 
   const resource = (await (await fetch(`${base}/.well-known/oauth-protected-resource/mcp`)).json()) as Record<
@@ -130,7 +117,6 @@ test("registration takes public clients that come back to https or this computer
     body: JSON.stringify({ client_name: "Elsewhere", redirect_uris: ["http://evil.example/cb"] }),
   })
   expect(bad.status).toBe(400)
-  // The same address with a trailing slash or other letter case is not a way around the check.
   for (const path of ["/oauth/register/", "/oauth/REGISTER"]) {
     const res = await fetch(`${base}${path}`, {
       method: "POST",
@@ -145,7 +131,6 @@ test("an MCP client connects through the browser, with only the rights the perso
   const reg = await fetch(`${base}/oauth/register`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    // As the MCP SDK registers: with the scopes the resource lists.
     body: JSON.stringify({
       client_name: "e2e agent",
       redirect_uris: [redirect],
@@ -172,7 +157,6 @@ test("an MCP client connects through the browser, with only the rights the perso
   await expect(page.getByText("e2e agent asks to use n8n-ops.")).toBeVisible()
   await expect(page.getByText(callbackHost)).toBeVisible()
   await expect(page.getByText("Any program can give itself this name.")).toBeVisible()
-  // The agent asked to request instance access; the person does not give it.
   await page.getByLabel("May request access to n8n instances").uncheck()
   await page.getByRole("button", { name: "Approve" }).click()
   await page.waitForURL(`${redirect}**`)
@@ -194,7 +178,6 @@ test("an MCP client connects through the browser, with only the rights the perso
   const tools = await toolNames(browserTokens.access_token ?? "")
   expect(tools).toContain("list_open_problems")
   expect(tools).not.toContain("request_instance_access")
-  // A token for the MCP server is not one for the REST API.
   const rest = await fetch(`${base}/api/v1/problems`, {
     headers: { authorization: `Bearer ${browserTokens.access_token}` },
   })
@@ -239,7 +222,6 @@ test("a script connects with a code that the person compares, then reads the RES
     })
   expect((await poll()).body.error).toBe("authorization_pending")
 
-  // The link carries the code: the page asks at once whether the agent shows the same one.
   await page.goto(device.body.verification_uri_complete ?? "")
   await expect(page.getByRole("heading", { name: "Does your agent show this code?" })).toBeVisible()
   await expect(page.getByText(device.body.user_code ?? "")).toBeVisible()
@@ -253,7 +235,6 @@ test("a script connects with a code that the person compares, then reads the RES
   expect(tokens.status).toBe(200)
   expect(tokens.body.scope).toBe("ops:read ops:access")
   expect((await api(tokens.body.access_token ?? "", "/api/v1/problems")).status).toBe(200)
-  // Without the revision and kind the client skill sends, a call is refused before it runs.
   const bare = await fetch(`${base}/api/v1/problems`, {
     headers: { authorization: `Bearer ${tokens.body.access_token}` },
   })
@@ -321,7 +302,6 @@ test("Connected agents lists both, and a disconnected agent loses access at once
   await expect(agentRow).toContainText(`through the browser · ${callbackHost}`)
   await expect(page.getByRole("row").filter({ hasText: "Script" }).first()).toContainText("with a code")
 
-  // The refresh token rotates and still works before the disconnect.
   const refreshed = await post("/oauth/token", {
     grant_type: "refresh_token",
     refresh_token: browserTokens.refresh_token ?? "",
@@ -378,7 +358,6 @@ test("a used refresh token that comes back ends the connection", async () => {
   await expect(page.getByText("Agent disconnected").first()).toBeVisible()
 })
 
-/** Connects a script with a code and returns its first tokens. */
 async function connectScript() {
   const device = await post("/oauth/device", {
     client_id: "n8n-ops-cli",
@@ -441,13 +420,11 @@ test("a request is answered once, and only from the browser session that opened 
   const uid = page.url().split("/connect/approve/")[1]?.split(/[?#]/)[0] ?? ""
   await page.getByRole("button", { name: "Approve" }).click()
   await expect(page.getByRole("heading", { name: "Agent connected" })).toBeVisible()
-  // The same decision sent again, as a lost answer would be, answers nothing more.
   const again = await page.request.post(`/connect/approve/${uid}/decision`, {
     headers: { origin: base, "content-type": "application/json" },
     data: { approve: true, scopes: ["ops:read"] },
   })
   expect(again.status()).toBe(410)
-  // A token or key beside the session never answers an approval.
   const withBearer = await page.request.get(`/connect/approve/${uid}/request`, {
     headers: { authorization: "Bearer anything" },
   })
@@ -463,7 +440,6 @@ test("Disconnect all ends every connection and every code still waiting", async 
   })
   expect(waiting.status).toBe(200)
   await page.goto("/agents")
-  // The list has loaded with the connection, so the empty list below is the one after Disconnect all.
   const connected = page.getByRole("row").filter({ hasText: "with a code" })
   await expect(connected.first()).toBeVisible()
   await page.getByRole("button", { name: "Disconnect all" }).click()

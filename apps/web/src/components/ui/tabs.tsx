@@ -15,12 +15,6 @@ function Tabs({ className, orientation = "horizontal", ...props }: React.Compone
   )
 }
 
-/*
- * Tabs scroll sideways instead of wrapping, without a scroll bar (important: the global thin scroll bar rule
- * would win otherwise); the active one has a 2px ink underline. The line under them is a shadow of the list
- * itself (shadow-rule), so it runs under the tabs at any scroll position, and nothing sticks out of the list
- * to scroll up and down. The list is positioned, so a tab's offsetLeft is measured from its start.
- */
 function TabsList({ className, ...props }: React.ComponentProps<typeof TabsPrimitive.List>) {
   return (
     <TabsPrimitive.List
@@ -34,11 +28,6 @@ function TabsList({ className, ...props }: React.ComponentProps<typeof TabsPrimi
   )
 }
 
-/*
- * Radix focuses a tab from script on mouse down, which Chrome then rings as if the keyboard had moved there; a tab
- * that a pointer pressed keeps no ring until a key is pressed on it, it loses focus, or the press turns into a
- * scroll. The ring is drawn inside the tab: the list clips anything outside it.
- */
 function TabsTrigger({
   className,
   onPointerDown,

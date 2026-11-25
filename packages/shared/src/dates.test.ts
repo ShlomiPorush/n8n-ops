@@ -17,7 +17,6 @@ import {
 const w = (date: DateWriting["date"], time: DateWriting["time"] = "24h", zone = "UTC", locale?: string) =>
   ({ zone, date, time, ...(locale ? { locale } : {}) }) as DateWriting
 
-// 16 October 2026, 13:05:09 UTC: a day after the twelfth, so day and month cannot be mixed up.
 const at = new Date("2026-10-16T13:05:09Z")
 
 describe("Date format (FW-9)", () => {
@@ -43,7 +42,6 @@ describe("Date format (FW-9)", () => {
   })
 
   it("writes Browser in the Gregorian calendar with 0-9, whatever calendar or digits the language uses", () => {
-    // Hebrew calendar: "05 Heshvan 5787" before; Buddhist: "16/10/2569"; Arabic: Arabic digits with direction marks.
     expect(formatDay(at, w("browser", "24h", "UTC", "en-US-u-ca-hebrew"))).toBe("10/16/2026")
     expect(formatDay(at, w("browser", "24h", "UTC", "th-TH"))).toBe("16/10/2026")
     expect(formatDay(at, w("browser", "24h", "UTC", "ar-EG"))).toBe("16/10/2026")
@@ -52,7 +50,6 @@ describe("Date format (FW-9)", () => {
   })
 
   it("keeps only the numbers of a Browser date, never words the language adds around them", () => {
-    // Bulgarian ends the year with "г.", Japanese and Chinese write 年 and 月 between the numbers.
     expect(formatDay(at, w("browser", "24h", "UTC", "bg-BG"))).toBe("16.10.2026")
     expect(formatDay(at, w("browser", "24h", "UTC", "ja-JP"))).toBe("2026/10/16")
     expect(formatDay(at, w("browser", "24h", "UTC", "zh-CN"))).toBe("2026/10/16")
@@ -61,7 +58,6 @@ describe("Date format (FW-9)", () => {
   })
 
   it("writes the day in the app's time zone", () => {
-    // 22:30 UTC is already the next day in Jerusalem.
     expect(formatDay(new Date("2026-10-16T22:30:00Z"), w("DD/MM/YYYY", "24h", "Asia/Jerusalem"))).toBe("17/10/2026")
   })
 })
@@ -92,7 +88,6 @@ describe("Time format (FW-9)", () => {
   })
 
   it("takes only the 12- or 24-hour choice from the language for Browser, and writes it with 0-9 and AM or PM", () => {
-    // Before, these came out with the language's own words for PM, or its own digits.
     expect(formatClock(at, w("DD/MM/YYYY", "browser", "UTC", "ar-EG"))).toBe("1:05 PM")
     expect(formatClock(at, w("DD/MM/YYYY", "browser", "UTC", "ko-KR"))).toBe("1:05 PM")
     expect(formatClock(at, w("DD/MM/YYYY", "browser", "UTC", "fa-IR"))).toBe("13:05")
@@ -128,7 +123,6 @@ describe("full times and list times (FW-1, FW-2)", () => {
   })
 
   it("decides what today is in the app's time zone", () => {
-    // 23:30 UTC on the 22nd is 02:30 on the 23rd in Jerusalem: today there, yesterday in UTC.
     const now = new Date("2026-10-23T06:00:00Z")
     const before = "2026-10-22T23:30:00Z"
     expect(formatListTime(before, w("DD/MM/YYYY", "24h", "Asia/Jerusalem"), now)).toBe("02:30")
@@ -170,7 +164,6 @@ describe("zone names and windows in messages (EM-6)", () => {
   })
 
   it("names the zone at both ends when daylight saving changed inside the window", () => {
-    // Berlin leaves summer time on 25 October 2026 at 03:00: 24 hours before 08:00 CET is 09:00 CEST.
     const fmt = w("DD/MM/YYYY", "24h", "Europe/Berlin")
     expect(formatWindow(new Date("2026-10-24T07:00:00Z"), new Date("2026-10-25T07:00:00Z"), fmt)).toBe(
       "From 24/10/2026 09:00 CEST to 25/10/2026 08:00 CET",

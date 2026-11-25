@@ -45,11 +45,9 @@ const fail = (status: Fail["status"], message: string, issues?: unknown): Fail =
   issues,
 })
 
-/** Whether two flat objects hold the same values; PostgreSQL stores JSON keys in an order of its own. */
 const sameFields = (a: Record<string, unknown>, b: Record<string, unknown>) =>
   [...new Set([...Object.keys(a), ...Object.keys(b)])].every((k) => a[k] === b[k])
 
-/** Stored credentials: plain fields as given, secrets encrypted; a secret left out stays, null removes it. */
 function mergeCredentials(
   ctx: Ctx,
   kind: DestinationKind,
@@ -71,7 +69,6 @@ function mergeCredentials(
   return next
 }
 
-/** The name of each location field in "Check the destination's …", as the destination form calls it. */
 const locationLabels: Record<string, string> = {
   endpoint: "endpoint",
   region: "region",
@@ -86,7 +83,6 @@ const locationLabels: Record<string, string> = {
   url: "URL",
 }
 
-/** Backup destinations: Settings > Backup Destinations, and the choice on each instance. */
 export function destinationRoutes(ctx: Ctx) {
   const app = new Hono<Env>()
   app.use("*", requireUser(ctx))
@@ -113,7 +109,6 @@ export function destinationRoutes(ctx: Ctx) {
     )
   })
 
-  /** The SFTP server's host key fingerprint, to pin. Asked before any credential is sent. */
   app.post("/host-key", async (c) => {
     const body = z
       .object({ host: z.string().trim().min(1).max(255), port: z.number().int().min(1).max(65535).default(22) })
@@ -126,22 +121,16 @@ export function destinationRoutes(ctx: Ctx) {
     }
   })
 
-  /** Checks a destination and stores it only when its test passes. */
   async function prepare(
     body: z.infer<typeof updateSchema> & { kind: DestinationKind },
     current: Destination | null,
   ): Promise<Fail | { row: Omit<Destination, "id" | "createdAt" | "updatedAt">; tested: boolean; notes: string[] }> {
     const kind = body.kind
-    // A fixed place is kept exactly as stored, even one an earlier version allowed and today's rules would not
-    // (a key prefix with a space), so turning it off or replacing its keys always works.
     const lockedLocation = current?.lockedAt ? current.location : null
     let location: Record<string, unknown>
     if (lockedLocation) {
-      if (body.location && !sameFields(body.location, lockedLocation)) {
-        const asNew = locationSchemas[kind].safeParse(body.location)
-        if (!asNew.success || !sameFields(asNew.data, lockedLocation))
-          return fail(400, "Where archives go cannot change once set; add a new destination for a new location.")
-      }
+      if (body.location && !sameFields(body.location, lockedLocation))
+        return fail(400, "Where archives go cannot change once set; add a new destination for a new location.")
       location = lockedLocation
     } else {
       const parsedLocation = locationSchemas[kind].safeParse(body.location ?? current?.location ?? {})
@@ -181,7 +170,6 @@ export function destinationRoutes(ctx: Ctx) {
         )
     }
 
-    // A change to where, how or with what it connects is tested before it is stored.
     const touches =
       !current?.lockedAt ||
       body.credentials !== undefined ||
@@ -246,7 +234,6 @@ export function destinationRoutes(ctx: Ctx) {
       .returning()
     if (!row) return c.json({ error: "internal_error" }, 500)
     if (!row.enabled && current.enabled) {
-      // Its stale alerts end with it; its archives stay, restorable and expiring as before.
       const keys = (await ctx.db.select({ id: instances.id }).from(instances)).map((i) => `backup:${i.id}:${row.id}`)
       await dropConditions(ctx, [...keys, `backup:self:${row.id}`])
     }
@@ -278,10 +265,6 @@ export function destinationRoutes(ctx: Ctx) {
     }
   })
 
-  /**
-   * Removes a destination. With files "delete" its archives go too (refused while an Object Lock holds any);
-   * with "keep" they stay where they are, and n8n-ops forgets them.
-   */
   app.delete("/:id", async (c) => {
     const files = z.enum(["delete", "keep"]).safeParse(c.req.query("files"))
     if (!files.success) return c.json({ error: "invalid", message: "Say whether to delete or keep its archives." }, 400)
@@ -298,7 +281,6 @@ export function destinationRoutes(ctx: Ctx) {
       )
     const live = copies.filter((x) => x.status === "ok" && !x.deletedAt)
     if (files.data === "delete") {
-      // Everything written there goes: kept archives, what failed copies left, and versions listed for removal.
       const objects = copies.flatMap((x) => [
         ...((x.status === "ok" && !x.deletedAt) || x.status === "failed"
           ? [{ key: x.objectKey, versionId: x.versionId, until: x.status === "ok" ? x.retainUntil : null }]
@@ -348,7 +330,6 @@ export function destinationRoutes(ctx: Ctx) {
     })
     const keys = (await ctx.db.select({ id: instances.id }).from(instances)).map((i) => `backup:${i.id}:${d.id}`)
     await dropConditions(ctx, [...keys, `backup:self:${d.id}`])
-    // Runs left without any copy keep their history; restoring them is no longer possible.
     await ctx.audit({
       actor: actorName(c.get("actor")),
       action: "Backup destination deleted",

@@ -1,9 +1,5 @@
 import { createCn } from "cn/config"
 
-/**
- * clsx + tailwind-merge from the cn package, taught the design tokens in index.css. Without this a size
- * like text-figure next to a colour like text-fail is taken for a second colour and dropped.
- */
 export const cn = createCn({
   extend: {
     classGroups: {

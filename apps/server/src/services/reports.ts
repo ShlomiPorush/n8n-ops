@@ -11,7 +11,6 @@ import { telegramPlainText } from "./telegram.ts"
 
 const n = (value: number) => value.toLocaleString("en-US")
 
-/** How far back each report counts. */
 const periodMs = { daily: 86_400_000, weekly: 7 * 86_400_000 } as const
 
 export type Report = Email
@@ -19,24 +18,18 @@ export type Report = Email
 type ReportData = {
   period: "daily" | "weekly"
   openByInstance: { name: string; open: number }[]
-  /** Open Problems in all; a Problem on several instances counts once. The sum of `openByInstance` when left out. */
   totalOpen?: number
   topWorkflows: { workflow: string; instance: string; failures: number }[]
   incidents: { at: Date; text: string }[]
   backups: { name: string; status: string; at: Date | null }[]
   versions: { name: string; version: string | null }[]
   latest: string | null
-  /** How dates are written: the zone and formats of Settings → General (`messageWriting`, EM-6). */
   dates?: DateWriting
-  /** When the report is made: the end of the window it counts. */
   when?: Date
-  /** The start of that window; a day or a week before `when` when left out. */
   since?: Date
-  /** Sent by the test button in Settings → Email Reports, not on the schedule. */
   test?: boolean
 }
 
-/** What the report the test button sends says about itself. */
 const TEST_NOTE = "This is a test sent from Settings → Email Reports."
 
 const backupWords: Record<string, [string, Tone]> = {
@@ -47,12 +40,10 @@ const backupWords: Record<string, [string, Tone]> = {
   none: ["Never", "muted"],
 }
 
-/** The daily or weekly summary: what needs a look first, then the details, in the console's layout. */
 export function renderReport(d: ReportData): Report {
   const dates = d.dates ?? messageWriting(undefined)
   const when = d.when ?? new Date()
   const since = d.since ?? new Date(when.getTime() - periodMs[d.period])
-  // The exact window the failures and incidents are counted in, with its zone (EM-6).
   const span = formatWindow(since, when, dates)
   const title = `n8n-ops ${d.period} report`
   const totalOpen = d.totalOpen ?? d.openByInstance.reduce((n, i) => n + i.open, 0)
@@ -175,11 +166,6 @@ export function renderReport(d: ReportData): Report {
   return { subject: `${d.test ? "Test: " : ""}${title}: ${plural(totalOpen, "open problem")}`, text, html }
 }
 
-/**
- * The report of the day or week that ends at `when`. Every query counts what happened after `since` up to and
- * including `when`, the window the report prints (EM-6): what arrives while the report is being made waits for
- * the next one. `test` marks the one the test button sends, so its footer says so.
- */
 export async function buildReport(
   ctx: Ctx,
   period: "daily" | "weekly",
@@ -187,10 +173,8 @@ export async function buildReport(
   { test = false } = {},
 ): Promise<Report> {
   const since = new Date(when.getTime() - periodMs[period])
-  // Active instances only; their backups only where backup was chosen. History stays in the other figures.
   const allInstances = await ctx.db.select().from(instances).where(activeOnly)
   const name = new Map(allInstances.map((i) => [i.id, i.name]))
-  // A Problem on two instances counts on each of them, and once in the total.
   const open = await openProblemsByInstance(ctx, when)
   const totalOpen = await openProblemCount(ctx, { before: when })
   const top = await ctx.db
@@ -236,12 +220,7 @@ export async function buildReport(
   })
 }
 
-/**
- * Sends an email with the stored Email settings, or for a test with the values on screen over them (`draft`,
- * FS-19; see emailAccount for which password goes where). Returns who it was sent to.
- */
 export async function sendEmail(ctx: Ctx, report: Report, draft: Record<string, unknown> = {}) {
-  // While the environment decides "Allow sending without encryption", a test cannot change it.
   const { smtpAllowUnencrypted: _, ...screen } = draft
   const typed = ctx.settings.fromEnv().smtpAllowUnencrypted === undefined ? draft : screen
   const account = emailAccount(await ctx.settings.get("email"), typed, (enc) => ctx.secrets.decrypt(enc))
@@ -250,14 +229,12 @@ export async function sendEmail(ctx: Ctx, report: Report, draft: Record<string, 
   try {
     await transport.sendMail(mailOptions(report, from, recipients))
   } catch (error) {
-    // The failure is shown for reports and access requests as well as tests: say why in words, keep the rest.
     if ((error as { code?: string }).code === "ETLS") (error as Error).message = noEncryption
     throw error
   }
   return recipients
 }
 
-/** One message to every recipient, with a plain text part beside the HTML (EM-1, EM-6). */
 export function mailOptions(report: Report, from: string, recipients: string[]) {
   return {
     from,
@@ -265,13 +242,10 @@ export function mailOptions(report: Report, from: string, recipients: string[]) 
     subject: report.subject,
     text: report.text,
     html: report.html,
-    // SMTP allows 998 characters per line, and a server breaks a longer line wherever it likes, even in the
-    // middle of an HTML tag; base64 keeps every line short (EM-3).
     textEncoding: "base64" as const,
   }
 }
 
-/** Local date parts in the configured time zone. */
 export function zonedParts(date: Date, timeZone: string) {
   const parts = Object.fromEntries(
     new Intl.DateTimeFormat("en-GB", {
@@ -291,7 +265,6 @@ export function zonedParts(date: Date, timeZone: string) {
   return { date: `${parts.year}-${parts.month}-${parts.day}`, time: `${parts.hour}:${parts.minute}`, weekday }
 }
 
-/** Sends the daily and weekly reports when their time comes (checked every minute). */
 export async function maybeSendReports(ctx: Ctx, now = new Date()) {
   const email = await ctx.settings.get("email")
   if (!email.dailyEnabled && !email.weeklyEnabled) return
@@ -302,9 +275,12 @@ export async function maybeSendReports(ctx: Ctx, now = new Date()) {
   if (email.weeklyEnabled && local.weekday === email.weeklyDay && local.time >= email.weeklyTime) due.push("weekly")
   for (const period of due) {
     const key = `report:${period}:${local.date}`
-    const [sent] = await ctx.db.select().from(alertState).where(eq(alertState.key, key))
-    if (sent) continue
-    await ctx.db.insert(alertState).values({ key, active: false, detail: "sent" }).onConflictDoNothing()
+    const [claimed] = await ctx.db
+      .insert(alertState)
+      .values({ key, active: false, detail: "sent" })
+      .onConflictDoNothing()
+      .returning({ key: alertState.key })
+    if (!claimed) continue
     try {
       await sendEmail(ctx, await buildReport(ctx, period, now))
       ctx.log.info("report sent", { period })

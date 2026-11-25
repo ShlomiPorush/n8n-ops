@@ -10,7 +10,7 @@ import {
   withDependencies,
   withoutDependents,
 } from "@n8n-ops/shared"
-import { and, eq, inArray, like, or, sql } from "drizzle-orm"
+import { and, eq, like, or, sql } from "drizzle-orm"
 import type { z } from "zod"
 import { type Ctx, changed } from "../context.ts"
 import {
@@ -22,7 +22,6 @@ import {
   workerJobs,
   workers,
 } from "../db/schema.ts"
-import { oneAtATime } from "../lib/one-at-a-time.ts"
 import { policyScopes } from "./access.ts"
 import { endRunsWithoutArchive } from "./backup-copies.ts"
 import { canReach, jobTarget, probePayload } from "./backups.ts"
@@ -30,26 +29,16 @@ import { reportsSince } from "./collection.ts"
 import { destinationsFor, testDestination } from "./destinations/index.ts"
 import { closed, collectDirect, forMode, openOrPending, probeReport, queueModeOf } from "./health.ts"
 import { RevisionChanged } from "./instance-update.ts"
-import { healthTurn, type Instance, isActive, mainTarget, refreshInstanceMeta, testKey } from "./instances.ts"
+import { type Instance, isActive, mainTarget, refreshInstanceMeta, testKey } from "./instances.ts"
 import { jobProxyFix } from "./proxy-fix.ts"
 import { enqueueJob } from "./workers.ts"
 import { syncWorkflowsSoon } from "./workflows.ts"
 
-/*
- * The setup of an instance (docs/adr/0002): each check proves one requirement of the chosen capabilities and
- * stores its result in `setup_checks`, bound to the configuration revision it was made for. Checks never apply
- * health or alerts. Activation verifies the stored results under the row's lock.
- */
-
-/** A setup check that has not ended by then has failed. */
 export const SETUP_DEADLINE_MS = 90_000
-/** An API, health or worker result older than this is checked again before it counts. */
 export const EVIDENCE_FRESH_MS = 15 * 60_000
 
-/** A setup step that cannot run as asked; its message says what to do. */
 export class SetupRefused extends Error {}
 
-/** Activation refused: a requirement is not met by a current check. */
 export class RequirementNotMet extends Error {
   constructor(
     readonly requirement: SetupCheckKind | "access",
@@ -59,10 +48,6 @@ export class RequirementNotMet extends Error {
   }
 }
 
-/**
- * What a setup page verifies, and the selection after activation. A draft verifies its whole selection (`add`
- * when given, else what it stored); an active instance only what `add` brings that it does not have yet.
- */
 export function proposal(instance: Pick<Instance, "setupState" | "chosenCapabilities">, add?: CapabilityKey[]) {
   if (!isActive(instance)) {
     const after = add ? withDependencies(add) : instance.chosenCapabilities
@@ -72,7 +57,6 @@ export function proposal(instance: Pick<Instance, "setupState" | "chosenCapabili
   return { verify: after.filter((k) => !instance.chosenCapabilities.includes(k)), after }
 }
 
-/** Takes the instance's next attempt number, and the row as it is in that same statement. */
 async function startAttempt(ctx: Ctx, id: string) {
   const [row] = await ctx.db
     .update(instances)
@@ -82,52 +66,42 @@ async function startAttempt(ctx: Ctx, id: string) {
   return row ? { instance: row, attempt: row.setupAttemptSeq, startedAt: new Date().toISOString() } : null
 }
 
-/**
- * What each check depends on, read from the row: a result counts while these are as they were when it was made, so
- * saving one step (the access policy, the destinations) never asks again for checks it does not touch. The key is
- * its encrypted form: a new key is a new value even when its text is the same.
- */
 export function inputsOf(kind: SetupCheckKind, row: Instance): string {
   const queue = [row.queueMode, row.metricsUrl, row.workerHealthUrls]
   const inputs = {
     api: [row.baseUrl, row.apiKeyEnc],
     health: [row.baseUrl, ...queue],
     worker: [row.workerId, row.containerName, row.composeProject, row.composeService, ...queue],
-    // The destinations and the backup key are compared as they are now (backupView).
     backup: [row.backupVia],
   }[kind]
   return createHash("sha256").update(JSON.stringify(inputs)).digest("hex").slice(0, 32)
 }
 
-/**
- * Stores a check's result, with the row locked: only while what the check depends on is as it was before its I/O
- * (`before`) and no later attempt of the same kind was stored. `extra` (a new key) is written with it, and the
- * result records the inputs of the row as written. With `revision`, also only while the configuration revision
- * is still that one (a key and a base URL are compared and set together, P9).
- */
 async function storeCheck(
   ctx: Ctx,
   id: string,
   kind: SetupCheckKind,
   check: Omit<SetupCheck, "inputs">,
   before: string,
-  { extra = {}, revision }: { extra?: Partial<typeof instances.$inferInsert>; revision?: number } = {},
+  extra: Partial<typeof instances.$inferInsert> = {},
 ) {
   return ctx.db.transaction(async (tx) => {
     const [row] = await tx.select().from(instances).where(eq(instances.id, id)).for("update")
-    if (!row || inputsOf(kind, row) !== before || (revision !== undefined && row.configRevision !== revision))
-      return false
+    if (!row || inputsOf(kind, row) !== before) return false
     if ((row.setupChecks[kind]?.attempt ?? 0) > check.attempt) return false
     const stored: SetupCheck = { ...check, inputs: inputsOf(kind, { ...row, ...extra } as Instance) }
     await tx
       .update(instances)
-      .set({ ...extra, setupChecks: { ...row.setupChecks, [kind]: stored } })
+      .set({
+        ...extra,
+        ...(extra.apiKeyEnc ? { configRevision: row.configRevision + 1 } : {}),
+        setupChecks: { ...row.setupChecks, [kind]: stored },
+      })
       .where(eq(instances.id, id))
     return true
   })
 }
 
-/** A result that was not stored: RevisionChanged when its inputs changed meanwhile; a later attempt is no error. */
 async function notStored(ctx: Ctx, id: string, kind: SetupCheckKind, before: string) {
   const [now] = await ctx.db.select().from(instances).where(eq(instances.id, id))
   if (!now || inputsOf(kind, now) !== before) throw new RevisionChanged()
@@ -140,11 +114,6 @@ const done = (started: { attempt: number; startedAt: string }) => ({
   at: new Date().toISOString(),
 })
 
-/**
- * The API check: n8n answers, accepts the key and is 2.14.0 or later, with the key's scopes. A typed key is
- * stored only when it passes, in one write with its result and the next revision, and only while the URL, the key
- * and the revision are those read before the test; otherwise RevisionChanged and nothing is stored.
- */
 export async function checkApi(ctx: Ctx, id: string, typedKey?: string) {
   const started = await startAttempt(ctx, id)
   if (!started) return null
@@ -158,24 +127,19 @@ export async function checkApi(ctx: Ctx, id: string, typedKey?: string) {
     : { ...done(started), ok: false, reason: test.error, detail: { version: test.version, code: test.code } }
   if (typedKey && test.ok) {
     const saved = await storeCheck(ctx, id, "api", check, before, {
-      revision: row.configRevision,
-      extra: {
-        apiKeyEnc: ctx.secrets.encrypt(typedKey),
-        configRevision: row.configRevision + 1,
-        scopes: test.scopes,
-        scopesCheckedAt: new Date(),
-        updatedAt: new Date(),
-      },
+      apiKeyEnc: ctx.secrets.encrypt(typedKey),
+      scopes: test.scopes,
+      scopesCheckedAt: new Date(),
+      updatedAt: new Date(),
     })
     if (!saved) throw new RevisionChanged()
     return { check, keyStored: true, instance: row }
   }
   const extra = test.ok ? { scopes: test.scopes, scopesCheckedAt: new Date() } : {}
-  if (!(await storeCheck(ctx, id, "api", check, before, { extra }))) await notStored(ctx, id, "api", before)
+  if (!(await storeCheck(ctx, id, "api", check, before, extra))) await notStored(ctx, id, "api", before)
   return { check, keyStored: false, instance: row }
 }
 
-/** The direct health check: the probes the server makes, with their detail; nothing is applied. */
 export async function checkHealthDirect(ctx: Ctx, id: string) {
   const started = await startAttempt(ctx, id)
   if (!started) return null
@@ -197,40 +161,20 @@ export async function checkHealthDirect(ctx: Ctx, id: string) {
   return check
 }
 
-/**
- * The worker check: one probe that reads inside the main, whatever the collection mode. Made in the instance's
- * turn; a probe of the current attempt (same revision and worker, inside its deadline, not lost to a restart) is
- * reused, older queued ones are deleted. The result comes back through setupWorkerResult; pages poll the setup.
- */
 export function checkWorker(ctx: Ctx, id: string) {
-  return oneAtATime(healthTurn(id), async () => {
-    const [row] = await ctx.db.select().from(instances).where(eq(instances.id, id))
+  return ctx.db.transaction(async (tx) => {
+    const [row] = await tx.select().from(instances).where(eq(instances.id, id)).for("update")
     if (!row) return null
     if (!row.workerId) throw new SetupRefused("Choose the worker on this instance's host first.")
     if (!mainTarget(row))
       throw new SetupRefused("Set the main: its container name, or its Compose project and service.")
-    const [worker] = await ctx.db.select().from(workers).where(eq(workers.id, row.workerId))
+    const [worker] = await tx.select().from(workers).where(eq(workers.id, row.workerId))
     if (!worker || worker.revokedAt) throw new SetupRefused("The chosen worker was removed. Choose another one.")
     if (!canReach(worker, row))
       throw new SetupRefused(
         `${worker.name} runs a release that cannot follow a Compose service. Update its image, or name the main container.`,
       )
-    const previous = row.setupChecks.worker
-    if (
-      previous?.status === "running" &&
-      previous.jobId &&
-      previous.inputs === inputsOf("worker", row) &&
-      Date.now() - Date.parse(previous.startedAt) < SETUP_DEADLINE_MS
-    ) {
-      const [job] = await ctx.db
-        .select()
-        .from(workerJobs)
-        .where(and(eq(workerJobs.id, previous.jobId), inArray(workerJobs.status, ["queued", "running"])))
-      if (job && !(job.startedAt && job.startedAt < reportsSince(job.workerId)))
-        return { jobId: job.id, attempt: previous.attempt, deadline: deadlineOf(previous), reused: true }
-    }
-    // Older setup probes nobody took yet are not wanted any more.
-    await ctx.db
+    await tx
       .delete(workerJobs)
       .where(
         and(
@@ -240,45 +184,33 @@ export function checkWorker(ctx: Ctx, id: string) {
           sql`${workerJobs.payload} ? 'setup'`,
         ),
       )
-    const started = await startAttempt(ctx, id)
-    if (!started) return null
-    const now = started.instance
-    if (now.workerId !== worker.id || !mainTarget(now)) throw new RevisionChanged()
+    const attempt = row.setupAttemptSeq + 1
     const job = await enqueueJob(
-      ctx,
+      { db: tx },
       worker.id,
       "probe",
-      { ...probePayload(now, undefined, true), setup: { attempt: started.attempt } },
+      { ...probePayload(row, undefined, true), setup: { attempt } },
       id,
     )
-    const check = {
-      attempt: started.attempt,
-      startedAt: started.startedAt,
-      status: "running" as const,
+    const check: SetupCheck = {
+      attempt,
+      startedAt: new Date().toISOString(),
+      status: "running",
       workerId: worker.id,
       jobId: job.id,
-      detail: { inside: jobTarget(now) },
+      inputs: inputsOf("worker", row),
+      detail: { inside: jobTarget(row) },
     }
-    const before = inputsOf("worker", now)
-    if (!(await storeCheck(ctx, id, "worker", check, before))) {
-      await ctx.db.delete(workerJobs).where(and(eq(workerJobs.id, job.id), eq(workerJobs.status, "queued")))
-      await notStored(ctx, id, "worker", before)
-      return null
-    }
-    return { jobId: job.id, attempt: started.attempt, deadline: deadlineOf(check), reused: false }
+    await tx
+      .update(instances)
+      .set({ setupAttemptSeq: attempt, setupChecks: { ...row.setupChecks, worker: check } })
+      .where(eq(instances.id, id))
+    return { jobId: job.id, attempt }
   })
 }
 
-const deadlineOf = (check: Pick<SetupCheck, "startedAt">) =>
-  new Date(Date.parse(check.startedAt) + SETUP_DEADLINE_MS).toISOString()
-
 type ProbeReport = z.infer<typeof probeReport>
 
-/**
- * What a worker check found. A command in the main works only when the report was read inside it, was collected
- * and the main is running (apps/worker inside.ts); the main is healthy when its /healthz also answered. A version
- * below 2.14.0 fails it.
- */
 export function readWorkerReport(report: ProbeReport) {
   const failed = (reason: string) => ({ exec: false, healthy: false, reason, healthReason: reason })
   if (report.source !== "inside")
@@ -304,12 +236,6 @@ export function readWorkerReport(report: ProbeReport) {
   }
 }
 
-/**
- * The worker's answer to a setup probe. Stored only for the attempt that is still the instance's latest, within its
- * deadline, while the worker, main and queue settings are those it was made for, and from a worker that has not
- * restarted since it took the job; a
- * late answer never revives an attempt that expired or was replaced. Returns what the job row keeps.
- */
 export async function setupWorkerResult(
   ctx: Ctx,
   job: typeof workerJobs.$inferSelect,
@@ -346,10 +272,8 @@ export async function setupWorkerResult(
   return stored
 }
 
-/** A short fingerprint of the backup key, so the check knows the key it tested is still the one in use. */
 const fingerprint = (recipient: string) => createHash("sha256").update(recipient).digest("hex").slice(0, 16)
 
-/** The backup check: the backup key, and a test of each destination the instance backs up to now. */
 export async function checkBackup(ctx: Ctx, id: string) {
   const started = await startAttempt(ctx, id)
   if (!started) return null
@@ -389,19 +313,14 @@ export async function checkBackup(ctx: Ctx, id: string) {
   return check
 }
 
-/** One requirement on the setup page. */
 export type CheckView = {
-  /** ok: passed for the current configuration; failed: ran for it and did not pass; running: waiting for the
-   * worker; stale: made for an earlier configuration, or too long ago; missing: never ran. */
   state: "ok" | "failed" | "running" | "stale" | "missing"
-  /** The result is about the configuration as it is now (a running check is current until its deadline). */
   current: boolean
   ok: boolean
   reason: string | null
   attempt: number | null
   startedAt: string | null
   at: string | null
-  deadline: string | null
   detail: Record<string, unknown> | null
 }
 
@@ -413,12 +332,10 @@ const view = (check: SetupCheck | undefined, extra: Partial<CheckView>): CheckVi
   attempt: check?.attempt ?? null,
   startedAt: check?.startedAt ?? null,
   at: check?.at ?? null,
-  deadline: check ? deadlineOf(check) : null,
   detail: check?.detail ?? null,
   ...extra,
 })
 
-/** What a check was made for, as said when it changed since. */
 const inputWords: Record<SetupCheckKind, string> = {
   api: "the base URL or the API key",
   health: "the base URL or the queue settings",
@@ -426,7 +343,6 @@ const inputWords: Record<SetupCheckKind, string> = {
   backup: "how the instance is backed up",
 }
 
-/** Why a stored result no longer counts, or null when it does. */
 function staleness(row: Instance, kind: SetupCheckKind, check: SetupCheck, now: number) {
   if (check.inputs !== inputsOf(kind, row)) return `Checked before ${inputWords[kind]} changed. Check again.`
   if (kind !== "backup" && check.at && now - Date.parse(check.at) >= EVIDENCE_FRESH_MS)
@@ -436,10 +352,6 @@ function staleness(row: Instance, kind: SetupCheckKind, check: SetupCheck, now: 
 
 type Options = { recipient: string | null; fixes: boolean }
 
-/**
- * Each requirement of `verify` with its current check, from the stored results and the instance as it is now.
- * Reads through `ctx.db`, which activation sets to its transaction.
- */
 export async function evaluate(ctx: Ctx, row: Instance, verify: CapabilityKey[], options: Options) {
   const requirements = requirementsOf(verify, row)
   const checks = row.setupChecks
@@ -471,7 +383,6 @@ export async function evaluate(ctx: Ctx, row: Instance, verify: CapabilityKey[],
             ? { ok: false, reason: `The API key lacks scopes. ${lacks.join("; ")}.` }
             : { ok: true, reason: null }
         })
-        // A key that failed its test has no scopes read: nothing is named missing then, the reason says why.
         const scopes = result.detail?.scopes as string[] | undefined
         return {
           ...result,
@@ -499,7 +410,6 @@ export async function evaluate(ctx: Ctx, row: Instance, verify: CapabilityKey[],
           current: true,
           ok,
           reason: ok ? null : "Turn on Temporary access and allow at least one scope the API key grants.",
-          deadline: null,
           detail: { enabled: row.agentAccess.enabled, grantable: policyScopes(row) },
         })
       })()
@@ -536,7 +446,7 @@ async function workerView(
       job.status === "done" ||
       job.status === "failed" ||
       Boolean(job.startedAt && job.startedAt < reportsSince(job.workerId))
-    if (lost || now >= Date.parse(deadlineOf(check)))
+    if (lost || now >= Date.parse(check.startedAt) + SETUP_DEADLINE_MS)
       return view(check, {
         state: "failed",
         current: true,
@@ -550,7 +460,6 @@ async function workerView(
     return view(check, { state: "running", current: true, reason: null })
   }
   const stored = check.detail?.report as ProbeReport | undefined
-  // Shown as the instance will count it: outside queue mode the queue parts are dropped, as applyHealth does.
   const report = stored && forMode(stored, queueModeOf(stored, row.queueMode))
   const read = report ? readWorkerReport(report) : null
   const ok = Boolean(read && (need.healthy ? read.healthy : read.exec))
@@ -561,7 +470,6 @@ async function workerView(
         ? read.healthReason
         : read.reason
       : (check.reason ?? "The worker check failed.")
-  // What the socket proxy refused, with the lines that allow it, while the instance still has this worker and main.
   const refused = report?.access?.refused?.[0]
   const inside = (check.detail?.inside ?? {}) as { container?: string; target?: { project: string; service: string } }
   const proxyFix =
@@ -593,7 +501,6 @@ async function backupView(ctx: Ctx, row: Instance, recipient: string | null, now
   if (!check) return view(undefined, {})
   const stale = staleness(row, "backup", check, now)
   if (stale) return view(check, { state: "stale", reason: stale })
-  // The destinations it backs up to now, each as it was tested, all on, and the same backup key.
   const tested = ((check.detail?.destinations ?? []) as { id: string; updatedAt: string }[])
     .map((d) => `${d.id}@${d.updatedAt}`)
     .sort()
@@ -612,7 +519,6 @@ async function backupView(ctx: Ctx, row: Instance, recipient: string | null, now
   })
 }
 
-/** The setup page: the selection, what it needs, and each check as it stands now. */
 export async function setupState(ctx: Ctx, row: Instance, add?: CapabilityKey[]) {
   const { verify, after } = proposal(row, add)
   const { backupRecipient } = await ctx.settings.get("keys")
@@ -621,7 +527,6 @@ export async function setupState(ctx: Ctx, row: Instance, add?: CapabilityKey[])
     id: row.id,
     name: row.name,
     setupState: row.setupState,
-    configRevision: row.configRevision,
     baseUrl: row.baseUrl,
     collection: row.collection,
     backupVia: row.backupVia,
@@ -633,17 +538,9 @@ export async function setupState(ctx: Ctx, row: Instance, add?: CapabilityKey[])
     requirements: result.requirements,
     checks: result.checks,
     ready: result.ready && verify.length > 0,
-    deadlineMs: SETUP_DEADLINE_MS,
-    freshMs: EVIDENCE_FRESH_MS,
   }
 }
 
-/**
- * Activates a draft, or adds capabilities to an active instance. The API check runs again first, outside the lock;
- * then, with the row locked, every requirement of the selection as it is now must have a check made for its inputs
- * as they are now, and passed. The meta refresh after it runs outside the transaction; its failure does not undo
- * activation.
- */
 export async function activate(ctx: Ctx, id: string, input: { add?: CapabilityKey[] }) {
   const [row] = await ctx.db.select().from(instances).where(eq(instances.id, id))
   if (!row) return null
@@ -655,10 +552,8 @@ export async function activate(ctx: Ctx, id: string, input: { add?: CapabilityKe
   const saved = await ctx.db.transaction(async (tx) => {
     const [now] = await tx.select().from(instances).where(eq(instances.id, id)).for("update")
     if (!now) return undefined
-    // The backup key as it is now, held until the end: a key replaced since the backup check makes that check stale.
     const [keys] = await tx.select().from(settings).where(eq(settings.key, "keys")).for("share")
     const backupRecipient = (keys?.value as { backupRecipient?: string } | undefined)?.backupRecipient
-    // The selection of the locked row: a draft's choice may have been saved since it was read above.
     const proposed = proposal(now, input.add)
     verify = proposed.verify
     if (!proposed.after.length || (isActive(now) && !verify.length))
@@ -675,7 +570,6 @@ export async function activate(ctx: Ctx, id: string, input: { add?: CapabilityKe
       .set({
         setupState: "complete",
         chosenCapabilities: after,
-        // Backups are due, and missed, from when backup was turned on, not from when the instance was added.
         ...(after.includes("backup") && (!isActive(now) || !now.chosenCapabilities.includes("backup"))
           ? { backupSince: new Date() }
           : {}),
@@ -693,67 +587,57 @@ export async function activate(ctx: Ctx, id: string, input: { add?: CapabilityKe
     })
     return undefined
   })
-  // The map counts now, not at the next workflow-map run; with the version just read, not the one saved above.
   if (verify.includes("map")) syncWorkflowsSoon(ctx, fresh ?? saved)
   changed(ctx, "instances", "overview")
   return { instance: saved, added: verify, wasDraft: !isActive(row) }
 }
 
-/**
- * Removes a capability, and what needs it. No check is needed. In the instance's turn and one transaction with the
- * row locked: the conditions of a removed capability end without a message, its queued jobs go, and backup runs
- * still waiting for their archive end without an alert. A run that has its archive finishes its copies.
- */
 export function removeCapability(ctx: Ctx, id: string, capability: CapabilityKey) {
-  return oneAtATime(healthTurn(id), () =>
-    ctx.db.transaction(async (tx) => {
-      const [row] = await tx.select().from(instances).where(eq(instances.id, id)).for("update")
-      if (!row) return null
-      const after = withoutDependents(row.chosenCapabilities, [capability])
-      const removed = row.chosenCapabilities.filter((k) => !after.includes(k))
-      if (!removed.length) return { instance: row, removed }
-      const [saved] = await tx
-        .update(instances)
-        .set({
-          chosenCapabilities: after,
-          ...(removed.includes("backup") ? { backupSince: null } : {}),
-          updatedAt: new Date(),
-        })
-        .where(eq(instances.id, id))
-        .returning()
-      // Failed checks still counting toward a condition end with it: they never add up with checks made after the
-      // capability comes back.
-      const close = (why: string, ...keys: ReturnType<typeof eq>[]) =>
-        tx
-          .update(alertState)
-          .set(closed(why))
-          .where(and(openOrPending, or(...keys)))
-      if (removed.includes("health")) {
-        await close(
-          "Closed: health was turned off for the instance",
-          eq(alertState.key, `down:${id}`),
-          eq(alertState.key, `backlog:${id}`),
-          like(alertState.key, `worker:${id}:%`),
+  return ctx.db.transaction(async (tx) => {
+    const [row] = await tx.select().from(instances).where(eq(instances.id, id)).for("update")
+    if (!row) return null
+    const after = withoutDependents(row.chosenCapabilities, [capability])
+    const removed = row.chosenCapabilities.filter((k) => !after.includes(k))
+    if (!removed.length) return { instance: row, removed }
+    const [saved] = await tx
+      .update(instances)
+      .set({
+        chosenCapabilities: after,
+        ...(removed.includes("backup") ? { backupSince: null } : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(instances.id, id))
+      .returning()
+    const close = (why: string, ...keys: ReturnType<typeof eq>[]) =>
+      tx
+        .update(alertState)
+        .set(closed(why))
+        .where(and(openOrPending, or(...keys)))
+    if (removed.includes("health")) {
+      await close(
+        "Closed: health was turned off for the instance",
+        eq(alertState.key, `down:${id}`),
+        eq(alertState.key, `backlog:${id}`),
+        like(alertState.key, `worker:${id}:%`),
+      )
+      await tx
+        .delete(workerJobs)
+        .where(
+          and(
+            eq(workerJobs.instanceId, id),
+            eq(workerJobs.kind, "probe"),
+            eq(workerJobs.status, "queued"),
+            sql`not (${workerJobs.payload} ? 'setup')`,
+          ),
         )
-        await tx
-          .delete(workerJobs)
-          .where(
-            and(
-              eq(workerJobs.instanceId, id),
-              eq(workerJobs.kind, "probe"),
-              eq(workerJobs.status, "queued"),
-              sql`not (${workerJobs.payload} ? 'setup')`,
-            ),
-          )
-      }
-      if (removed.includes("backup")) {
-        await close("Closed: backup was turned off for the instance", like(alertState.key, `backup:${id}:%`))
-        await endRunsWithoutArchive(tx, { instanceId: id })
-        await tx
-          .delete(workerJobs)
-          .where(and(eq(workerJobs.instanceId, id), eq(workerJobs.kind, "backup"), eq(workerJobs.status, "queued")))
-      }
-      return { instance: saved ?? row, removed }
-    }),
-  )
+    }
+    if (removed.includes("backup")) {
+      await close("Closed: backup was turned off for the instance", like(alertState.key, `backup:${id}:%`))
+      await endRunsWithoutArchive(tx, { instanceId: id })
+      await tx
+        .delete(workerJobs)
+        .where(and(eq(workerJobs.instanceId, id), eq(workerJobs.kind, "backup"), eq(workerJobs.status, "queued")))
+    }
+    return { instance: saved ?? row, removed }
+  })
 }

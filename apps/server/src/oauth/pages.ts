@@ -6,7 +6,6 @@ import type { ProviderPages } from "./provider.ts"
 const htmlText = (s: string) =>
   s.replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch] ?? ch)
 
-/** The built app's stylesheet, so these few server pages wear the app's fonts, colours and both designs. */
 function stylesheet(webDir: string | undefined) {
   const file = webDir ? join(webDir, "index.html") : ""
   if (!file || !existsSync(file)) return null
@@ -22,10 +21,6 @@ const errors: Record<string, string> = {
   invalid_redirect_uri: "This agent asked to be sent back to an address it did not register.",
 }
 
-/**
- * The device flow's own pages (enter the code, compare it, done) and the authorization server's error page.
- * Server-rendered by the provider, so they carry its form and its protection against cross-site posts.
- */
 export function providerPages(webDir: string | undefined, design: () => Design): ProviderPages {
   const css = stylesheet(webDir)
   const page = (title: string, body: string) => `<!doctype html>

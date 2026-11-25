@@ -1,10 +1,6 @@
 import { expect, type Page, test } from "@playwright/test"
 import { signIn } from "./helpers.ts"
 
-// A change sent with the signed-in person's session but not from n8n-ops' own page is refused, and changes nothing.
-// The stack cannot host a page on a sibling subdomain (its hosts are separate sites, so a browser would not send the
-// cookie at all), so this sends such requests with the session directly; the server rule has its own unit tests.
-
 let page: Page
 
 test.describe.configure({ mode: "serial" })
@@ -31,5 +27,4 @@ test("a change from another page, or with no page named, is refused and changes 
     })
   }
   expect(await keys()).toEqual(before)
-  // The pages themselves still change things: every other spec of the suite does so through them.
 })

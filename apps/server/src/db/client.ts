@@ -1,15 +1,15 @@
 import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js"
 import { migrate } from "drizzle-orm/postgres-js/migrator"
-import postgres, { type Sql } from "postgres"
+import postgres, { type Options, type Sql } from "postgres"
 import * as schema from "./schema.ts"
 
-/** The database, with its postgres.js client for what must hold one connection (`$client.reserve()`). */
-export type Db = PostgresJsDatabase<typeof schema> & { $client: Sql }
+export type Db = PostgresJsDatabase<typeof schema>
 
 export type Database = {
   db: Db
   migrate(migrationsFolder: string): Promise<void>
   ping(): Promise<boolean>
+  connect(options: Options<Record<string, never>>): Sql
   close(): Promise<void>
 }
 
@@ -29,6 +29,7 @@ export function createDatabase(url: string, { max = 10 }: { max?: number } = {})
         return false
       }
     },
+    connect: (options) => postgres(url, options),
     async close() {
       await sql.end({ timeout: 5 })
     },

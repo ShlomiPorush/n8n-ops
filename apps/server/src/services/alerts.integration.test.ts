@@ -19,6 +19,7 @@ import {
   type ProblemAlertReason,
   problemAlertSettings,
   sendTestTelegram,
+  syncTelegramWebhook,
 } from "./alerts.ts"
 import { mergeProblems, splitAffectedWorkflow } from "./problems.ts"
 import { html } from "./telegram.ts"
@@ -664,6 +665,25 @@ describe("Telegram forum topics", () => {
     const text = String(bot.sends()[1]?.body.text)
     expect(text).toContain("<b>Still failing after the mute</b>")
     expect(text).toContain("Sync orders")
+  })
+
+  it("sets the webhook of a bot that replaced another in the same chat, and of each bot once", async () => {
+    const t = await setup()
+    await t.ctx.settings.set("general", {
+      ...(await t.ctx.settings.get("general")),
+      publicUrl: "https://ops.example.com",
+    })
+    const webhooks = () => bot.calls.filter((c) => c.method === "setWebhook").length
+    await syncTelegramWebhook(t.ctx)
+    await syncTelegramWebhook(t.ctx)
+    expect(webhooks()).toBe(1)
+    await t.ctx.settings.set("telegram", {
+      ...(await t.ctx.settings.get("telegram")),
+      botTokenEnc: t.ctx.secrets.encrypt(`2:${randomBytes(16).toString("hex")}`),
+    })
+    await syncTelegramWebhook(t.ctx)
+    await syncTelegramWebhook(t.ctx)
+    expect(webhooks()).toBe(2)
   })
 
   it("a workflow split away is never listed in its old Problem's message again", async () => {

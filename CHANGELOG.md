@@ -48,6 +48,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - **"Is the worker online?" is asked only of a backup a Worker makes.**
 - **The removal of old archives leaves a copy that is being written alone, and goes on after a destination that cannot be opened.**
 - **A message of ended access that was deleted in Telegram is left alone.** n8n-ops tried to edit it every 5 seconds.
+- **The buttons work at once when another bot takes over the same chat.** The new bot got its webhook only at the next start of the server.
 
 ## [0.19.4] - 2026-11-24
 

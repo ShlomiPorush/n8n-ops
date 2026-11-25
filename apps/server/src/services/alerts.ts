@@ -231,6 +231,7 @@ export async function telegramClient(ctx: Ctx) {
   if (!tg.botTokenEnc || !tg.chatId) return null
   return {
     api: new Telegram(ctx.secrets.decrypt(tg.botTokenEnc)),
+    bot: tg.botTokenEnc,
     chatId: tg.chatId,
     secret: tg.webhookSecret,
     defaultThreadId: tg.defaultThreadId,
@@ -600,7 +601,7 @@ export async function syncTelegramWebhook(ctx: Ctx) {
   const { publicUrl } = await ctx.settings.get("general")
   if (!tg || !publicUrl || !tg.secret) return
   const url = `${publicUrl.replace(/\/+$/, "")}/api/telegram/webhook`
-  const key = `${url}|${tg.secret}|${tg.chatId}`
+  const key = `${url}|${tg.secret}|${tg.bot}`
   if (key === appliedWebhook) return
   await tg.api.setWebhook(url, tg.secret)
   appliedWebhook = key

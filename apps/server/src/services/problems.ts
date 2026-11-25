@@ -535,7 +535,7 @@ export async function applyProblemAction(
     audit?: ProblemAudit
     fromMessage?: boolean
   } = {},
-): Promise<{ problem: Problem; rows: AffectedWorkflow[]; receipt: ProblemReceipt | null } | null> {
+): Promise<{ problem: Problem; rows: AffectedWorkflow[]; changed: boolean; receipt: ProblemReceipt | null } | null> {
   return retrying(() =>
     ctx.db.transaction(async (tx) => {
       const locked = await lockProblem(tx, id, { affectedWorkflowId, followMerge: fromMessage })
@@ -546,7 +546,7 @@ export async function applyProblemAction(
         const patch = change(action, row, now, muteHours)
         return patch ? [{ row, patch }] : []
       })
-      if (!changes.length) return { problem, rows, receipt: null }
+      if (!changes.length) return { problem, rows, changed: false, receipt: null }
       const prior: ReceiptRow[] = []
       const after = new Map<string, AffectedWorkflow>()
       for (const { row, patch } of changes) {
@@ -560,7 +560,7 @@ export async function applyProblemAction(
         prior.push({ affectedWorkflowId: row.id, version: updated.version, state: stateOf(row) })
       }
       if (audit) await ctx.audit({ ...audit, target: auditTarget(problem, rows, Boolean(affectedWorkflowId)) }, tx)
-      const acted = { problem, rows: rows.map((r) => after.get(r.id) ?? r) }
+      const acted = { problem, rows: rows.map((r) => after.get(r.id) ?? r), changed: true }
       if (fromMessage) return { ...acted, receipt: null }
       const [receipt] = await tx
         .insert(problemReceipts)

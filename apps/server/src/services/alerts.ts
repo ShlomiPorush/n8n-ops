@@ -17,7 +17,7 @@ import { causeFields } from "./cause.ts"
 import { telegramTarget } from "./draft-tests.ts"
 import { can } from "./instances.ts"
 import type { DbLike } from "./problems.ts"
-import { applyProblemAction } from "./problems.ts"
+import { applyProblemAction, problemStatus } from "./problems.ts"
 import { clip, html, type InlineButton, isMessageGone, Telegram, TelegramError, TelegramHtml } from "./telegram.ts"
 
 type AffectedRow = typeof affectedWorkflows.$inferSelect
@@ -520,23 +520,23 @@ export async function handleTelegramCallback(ctx: Ctx, update: CallbackUpdate): 
     .select({ problemId: alertGroups.problemId, beforeRegroup: alertGroups.beforeRegroup })
     .from(alertGroups)
     .where(eq(alertGroups.id, groupId))
-  await tg.api.answerCallback(
-    cb.id,
-    known?.beforeRegroup
-      ? "This alert is from before the regrouping. Open n8n-ops to act."
-      : !known?.problemId
-        ? "This alert is no longer known."
-        : action === "r"
-          ? "Marked as resolved"
-          : "Muted for 24 hours",
-  )
-  if (!known?.problemId || known.beforeRegroup) return true
+  const answer = (text: string) =>
+    tg.api
+      .answerCallback(cb.id, text)
+      .catch((error: Error) => ctx.log.warn("could not answer a Telegram button", { groupId, error: error.message }))
+  if (known?.beforeRegroup) {
+    await answer("This alert is from before the regrouping. Open n8n-ops to act.")
+    return true
+  }
+  if (!known?.problemId) {
+    await answer("This alert is no longer known.")
+    return true
+  }
   const { problemId } = known
-  return oneAtATime(groupTurn(groupId), async () => {
-    const [group] = await ctx.db.select().from(alertGroups).where(eq(alertGroups.id, groupId))
-    if (!group) return true
-    const who = cb.from?.username ? `@${cb.from.username}` : (cb.from?.first_name ?? "someone")
-    const acted = await applyProblemAction(ctx, problemId, action === "r" ? "resolve" : "mute", {
+  const who = cb.from?.username ? `@${cb.from.username}` : (cb.from?.first_name ?? "someone")
+  let acted: Awaited<ReturnType<typeof applyProblemAction>>
+  try {
+    acted = await applyProblemAction(ctx, problemId, action === "r" ? "resolve" : "mute", {
       fromMessage: true,
       muteHours: 24,
       audit: {
@@ -545,28 +545,48 @@ export async function handleTelegramCallback(ctx: Ctx, update: CallbackUpdate): 
         via: "telegram",
       },
     })
-    changed(ctx, "problems", "overview")
-    const problem = acted?.problem
-    const lines = await groupLines(ctx, await stillIn(ctx, problem?.id ?? problemId, group.affectedWorkflowIds))
+  } catch (error) {
+    await answer("n8n-ops could not save this. Press again, or open n8n-ops.")
+    throw error
+  }
+  if (!acted) {
+    await answer("This alert is no longer known.")
+    return true
+  }
+  const { problem } = acted
+  changed(ctx, "problems", "overview")
+  const done = acted.changed ? (action === "r" ? "Resolved" : "Muted for 24 hours") : null
+  const answered = answer(
+    done === null
+      ? `This problem is already ${problemStatus(acted.rows)}.`
+      : done === "Resolved"
+        ? "Marked as resolved"
+        : done,
+  )
+  await oneAtATime(groupTurn(groupId), async () => {
+    const [group] = await ctx.db.select().from(alertGroups).where(eq(alertGroups.id, groupId))
+    if (!group) return
+    const lines = await groupLines(ctx, await stillIn(ctx, problem.id, group.affectedWorkflowIds))
     const messageId = cb.message?.message_id ?? group.telegramMessageId
     try {
       await tg.api.edit(
         tg.chatId,
         messageId,
         renderProblemGroup(
-          problem ? causeFields(problem).title : group.groupKey,
+          causeFields(problem).title,
           lines,
-          html`<i>${action === "r" ? "Resolved" : "Muted for 24 hours"} by ${who}</i>`,
+          done === null ? undefined : html`<i>${done} by ${who}</i>`,
           groupNote(group),
-          problem ? await spreadOf(ctx, problemId, group.createdAt, problem.id) : undefined,
-          problem ? causeFields(problem).hint : null,
+          await spreadOf(ctx, problemId, group.createdAt, problem.id),
+          causeFields(problem).hint,
         ),
       )
     } catch (error) {
       ctx.log.warn("could not update the alert message", { groupId, error: (error as Error).message })
     }
-    return true
   })
+  await answered
+  return true
 }
 
 let appliedWebhook = ""

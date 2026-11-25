@@ -3,7 +3,7 @@ import { EventEmitter } from "node:events"
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { asc, desc, eq } from "drizzle-orm"
+import { asc, desc, eq, sql } from "drizzle-orm"
 import postgres from "postgres"
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { Ctx, Logger } from "../context.ts"
@@ -198,6 +198,15 @@ async function setup(
     enqueueProblemAlert(ctx, d.db, p, reason, await problemAlertSettings(ctx))
   return { ctx, db: d.db, a, b, problem, enqueue, warnings, dispatch }
 }
+
+const press = (group: typeof alertGroups.$inferSelect | undefined, action: "r" | "m") => ({
+  callback_query: {
+    id: "cb",
+    data: `${action}:${group?.id}`,
+    from: { id: 1, username: "ops" },
+    message: { message_id: group?.telegramMessageId ?? 0, chat: { id: "-100" } },
+  },
+})
 
 describe("Telegram forum topics", () => {
   it("routes by instance, workflow pattern and tag when queued, first match first, else the default topic", async () => {
@@ -415,6 +424,78 @@ describe("Telegram forum topics", () => {
     const shown = String(bot.applied.at(-1)?.body.text)
     expect(shown).toContain("Import leads")
     expect(shown).toContain("Resolved by @ops")
+  })
+
+  it("never says a press was done when it could not be saved", async () => {
+    const t = await setup()
+    const p = await t.problem(t.a.id, "Sync orders")
+    await t.enqueue(p)
+    await t.dispatch()
+    const [group] = await t.db.select().from(alertGroups)
+    await t.db.execute(
+      sql.raw(`
+        CREATE FUNCTION refuse_write() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'refused'; END $$;
+        CREATE TRIGGER refuse_write BEFORE UPDATE ON affected_workflows FOR EACH ROW EXECUTE FUNCTION refuse_write();
+      `),
+    )
+    await handleTelegramCallback(t.ctx, press(group, "r")).catch(() => {})
+    expect((await t.db.select().from(affectedWorkflows)).map((r) => r.status)).toEqual(["open"])
+    const answers = bot.calls.filter((c) => c.method === "answerCallbackQuery").map((c) => c.body.text)
+    expect(answers).toEqual(["n8n-ops could not save this. Press again, or open n8n-ops."])
+    expect(bot.edits()).toEqual([])
+  })
+
+  it("does what a press asks when Telegram cannot be told", async () => {
+    const t = await setup()
+    await t.enqueue(await t.problem(t.a.id, "Sync orders"))
+    await t.dispatch()
+    const [group] = await t.db.select().from(alertGroups)
+    bot.failNextCalls(1)
+    await handleTelegramCallback(t.ctx, press(group, "r")).catch(() => {})
+    expect((await t.db.select().from(affectedWorkflows)).map((r) => r.status)).toEqual(["resolved"])
+    expect(String(bot.applied.at(-1)?.body.text)).toContain("Resolved by @ops")
+  })
+
+  it.each([
+    { pressed: "m" as const, status: "resolved" as const },
+    { pressed: "r" as const, status: "resolved" as const },
+    { pressed: "m" as const, status: "muted" as const },
+  ])("says what a problem already is when a press changes nothing: $pressed, $status", async ({ pressed, status }) => {
+    const t = await setup()
+    await t.enqueue(await t.problem(t.a.id, "Sync orders"))
+    await t.dispatch()
+    const [group] = await t.db.select().from(alertGroups)
+    await t.db.update(affectedWorkflows).set({ status, mutedUntil: new Date(Date.now() + 3600_000) })
+    await handleTelegramCallback(t.ctx, press(group, pressed))
+    const answers = bot.calls.filter((c) => c.method === "answerCallbackQuery").map((c) => c.body.text)
+    expect(answers).toEqual([`This problem is already ${status}.`])
+    expect(String(bot.applied.at(-1)?.body.text)).not.toContain("by @ops")
+  })
+
+  it("shows the last of two presses, also when Telegram answers the first late", async () => {
+    const t = await setup()
+    await t.enqueue(await t.problem(t.a.id, "Sync orders"))
+    await t.dispatch()
+    const [group] = await t.db.select().from(alertGroups)
+    let release = () => {}
+    const late = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let first = true
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      if (first && url.endsWith("/answerCallbackQuery")) {
+        first = false
+        await late
+      }
+      return bot.fetchStub(url, init)
+    })
+    const muting = handleTelegramCallback(t.ctx, press(group, "m"))
+    await vi.waitFor(() => expect(bot.applied).toHaveLength(1))
+    await handleTelegramCallback(t.ctx, press(group, "r"))
+    release()
+    await muting
+    expect(bot.applied).toHaveLength(2)
+    expect(String(bot.applied[1]?.body.text)).toContain("Resolved by @ops")
   })
 
   it("never lets a button press and a new problem overwrite each other's edit", async () => {

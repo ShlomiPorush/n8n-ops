@@ -743,9 +743,14 @@ export function FilterBar({
           {onClear && (
             <button
               type="button"
-              onClick={() => {
+              onClick={(e) => {
                 setClears((c) => c + 1)
                 onClear()
+                const byKeyboard = e.detail === 0
+                if (byKeyboard) {
+                  focusNext.current = "field"
+                  setExpanded(true)
+                }
               }}
               className="font-semibold text-ink underline underline-offset-3"
             >

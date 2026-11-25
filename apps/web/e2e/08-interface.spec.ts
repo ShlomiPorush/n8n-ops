@@ -106,6 +106,25 @@ test("list filters live in the address, survive a reload and clear in one step",
   await expect(page.getByLabel("Search all instances")).toHaveValue("")
 })
 
+for (const width of [1440, 390])
+  test(`Clear filters by keyboard moves the focus to the search, at ${width} px`, async () => {
+    await page.setViewportSize({ width, height: 900 })
+    try {
+      for (const path of ["/workflows?q=Sync+orders", "/problems?status=open&q=ERP"]) {
+        await page.goto(path)
+        const clear = page.getByRole("button", { name: "Clear filters" })
+        await clear.focus()
+        await page.keyboard.press("Enter")
+        await expect(clear).toHaveCount(0)
+        const box = page.locator('[data-slot="filter-bar"] input[type="search"]')
+        await expect(box).toBeFocused()
+        await expect(box).toHaveValue("")
+      }
+    } finally {
+      await page.setViewportSize({ width: 1440, height: 900 })
+    }
+  })
+
 test("Clear filters drops a search typed but not sent yet, so it does not come back (SR-9)", async () => {
   await page.goto("/workflows")
   await page.getByRole("button", { name: /^Instance:/ }).click()

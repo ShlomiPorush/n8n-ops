@@ -1648,6 +1648,85 @@ test("Merge lands on the problem merged into, and Back returns to the problem it
   }
 })
 
+test("Merge opens without the choice made for another problem", async () => {
+  await page.goto("/problems?status=all")
+  const rows = page.locator('[data-href^="/problems/"]')
+  await expect(rows.first()).toBeVisible()
+  const hrefs = await rows.evaluateAll((all) => all.map((el) => el.getAttribute("data-href") ?? ""))
+  const problemOf = (href: string) => href.split("?")[0]
+  const [first = ""] = hrefs
+  const second = hrefs.find((href) => problemOf(href) !== problemOf(first)) ?? ""
+  const open = async (href: string) => {
+    await page.locator(`[data-href="${href}"]`).first().click()
+    await expect(page).toHaveURL((url) => url.pathname === problemOf(href))
+    await expect(page.getByRole("heading", { name: "Where It Broke" })).toBeVisible()
+  }
+  const dialog = page.getByRole("dialog", { name: "Merge into Another Problem" })
+  const field = dialog.getByRole("button", { name: /^Problem to merge into:/ })
+  const merge = async () => {
+    await page.getByRole("button", { name: "More actions" }).click()
+    await page.getByRole("menuitem", { name: "Merge into…" }).click()
+    await expect(field).toBeVisible()
+  }
+  const close = async () => {
+    await page.keyboard.press("Escape")
+    await expect(dialog).toHaveCount(0)
+    await dialogClosed(page)
+  }
+  const candidates = (url: URL) => url.pathname === "/api/problems" && url.searchParams.get("status") === "all"
+  const items = [standInProblem("e2e-merge-target", "Merge target", "Stand-in problem")]
+  await open(second)
+  await open(first)
+  await page.route(candidates, (route) => route.fulfill({ json: { items, total: 1 } }))
+  try {
+    await merge()
+    await field.click()
+    await page.getByRole("option", { name: /^Merge target/ }).click()
+    await close()
+    await open(second)
+    await merge()
+    await expect(dialog.getByRole("button", { name: "Merge", exact: true })).toBeDisabled()
+    await close()
+  } finally {
+    await page.unroute(candidates)
+  }
+})
+
+test("live updates read again what changed while they were cut off (NL-19)", async () => {
+  await page.route("**/api/events", (route) => route.abort())
+  await page.goto("/workflows")
+  await expect(page.locator("tbody tr").first()).toBeVisible()
+  let reads = 0
+  const count = (r: Request) => {
+    if (new URL(r.url()).pathname === "/api/workflows") reads++
+  }
+  page.on("request", count)
+  try {
+    await page.unroute("**/api/events")
+    await page.route("**/api/events", (route) =>
+      route.fulfill({ contentType: "text/event-stream", body: "event: ready\ndata: \n\n" }),
+    )
+    await expect.poll(() => reads, { timeout: 15_000 }).toBeGreaterThan(0)
+  } finally {
+    page.off("request", count)
+    await page.unroute("**/api/events")
+  }
+})
+
+test("setup says that it could not be read, and never offers a new account then", async () => {
+  await page.route("**/api/setup/status", (route) => route.fulfill({ status: 500, json: { error: "internal" } }))
+  try {
+    await page.goto("/setup")
+    await expect(page.getByText("Could not load the setup")).toBeVisible({ timeout: 20_000 })
+    await expect(page.getByText("Create Your Account")).toHaveCount(0)
+    await page.unroute("**/api/setup/status")
+    await page.getByRole("button", { name: "Try again" }).click()
+    await expect(page).toHaveURL((url) => url.pathname === "/")
+  } finally {
+    await page.unroute("**/api/setup/status")
+  }
+})
+
 test("a long choice in a form has a search that reads an underscore as a space, and no option scrolls sideways (MP-1, MP-4)", async () => {
   await page.goto("/problems?status=all")
   await page

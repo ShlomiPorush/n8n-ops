@@ -13,7 +13,7 @@ import { alertState, backupCopies, backupDestinations, backupRuns, instances } f
 import { createSettings } from "../lib/settings.ts"
 import { destinationRoutes } from "../routes/destinations.ts"
 import { backupCondition } from "./backup-alerts.ts"
-import { COPY_ATTEMPTS, endRunsWithoutArchive, failRun, kickCopies } from "./backup-copies.ts"
+import { COPY_ATTEMPTS, endRunsWithoutArchive, failRun, kickCopies, sweepRetention } from "./backup-copies.ts"
 import type { Store } from "./destinations/store.ts"
 import { spoolDir, spooledRuns, spoolFile } from "./spool.ts"
 
@@ -22,14 +22,16 @@ const calls: string[] = []
 const warnings: string[] = []
 let refuseWrite = false
 let onRemove: () => Promise<void> = async () => {}
+let unopenable = ""
 vi.mock("./session-policy.ts", async (original) => ({
   ...(await original<typeof import("./session-policy.ts")>()),
   checkSession: async () => ({ ok: true, clocks: {}, status: {}, twoFactorVerified: true }),
 }))
 vi.mock("./destinations/index.ts", async (original) => ({
   ...(await original<typeof import("./destinations/index.ts")>()),
-  openStore: () =>
-    ({
+  openStore: (_ctx: unknown, { name }: { name?: string }) => {
+    if (name === unopenable) throw new Error("the credentials cannot be read")
+    return {
       put: async (key: string) => {
         calls.push(`put ${key}`)
         if (refuseWrite) throw new Error("the destination is full")
@@ -46,7 +48,8 @@ vi.mock("./destinations/index.ts", async (original) => ({
         await onRemove()
       },
       close: async () => {},
-    }) as unknown as Store,
+    } as unknown as Store
+  },
 }))
 
 const adminUrl = process.env.MIGRATION_DATABASE_URL
@@ -90,6 +93,7 @@ beforeAll(async () => {
 afterEach(async () => {
   refuseWrite = false
   onRemove = async () => {}
+  unopenable = ""
   calls.length = 0
   warnings.length = 0
   held.clear()
@@ -278,6 +282,47 @@ describe("a destination being deleted", () => {
     const { d, rows } = await destination({ status: "failed" }, "pending")
     expect((await remove(d.id)).status).toBe(200)
     expect(await rows()).toEqual([])
+  })
+})
+
+describe("the retention sweep", () => {
+  const leftover = async (copy: Partial<typeof backupCopies.$inferInsert>, name = randomBytes(4).toString("hex")) => {
+    const [d] = await ctx.db
+      .insert(backupDestinations)
+      .values({ name, kind: "local", location: { folder: name }, retention: { daily: 1, weekly: 0, monthly: 0 } })
+      .returning()
+    const [r] = await ctx.db.insert(backupRuns).values({ status: "ok" }).returning()
+    if (!d || !r) throw new Error("no destination or run")
+    const [c] = await ctx.db
+      .insert(backupCopies)
+      .values({
+        runId: r.id,
+        destinationId: d.id,
+        objectKey: name,
+        leftovers: [{ versionId: "v1", retainUntil: null }],
+        ...copy,
+      })
+      .returning()
+    if (!c) throw new Error("no copy")
+    return c
+  }
+
+  it("clears the leftovers of a copy that ended, and leaves one being written to that write", async () => {
+    const ended = await leftover({ status: "failed" })
+    const written = await leftover({ status: "writing" })
+    await sweepRetention(ctx)
+    expect((await copyRow(ended.id)).leftovers).toEqual([])
+    expect((await copyRow(written.id)).leftovers).toHaveLength(1)
+    await ctx.db.delete(backupCopies).where(eq(backupCopies.id, written.id))
+  })
+
+  it("goes on to the next destination when one cannot be opened", async () => {
+    unopenable = `a-${randomBytes(4).toString("hex")}`
+    await leftover({ status: "failed" }, unopenable)
+    const next = await leftover({ status: "failed" })
+    await sweepRetention(ctx)
+    expect((await copyRow(next.id)).leftovers).toEqual([])
+    expect(warnings).toContain("retention could not run")
   })
 })
 

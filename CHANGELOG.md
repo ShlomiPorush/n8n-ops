@@ -46,6 +46,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - **A backup that fails ends together with its copies.** The server stopping between the two left copies waiting forever.
 - **A backup through an instance's API that fails while the database does not answer no longer ends the server.**
 - **"Is the worker online?" is asked only of a backup a Worker makes.**
+- **The removal of old archives leaves a copy that is being written alone, and goes on after a destination that cannot be opened.**
 
 ## [0.19.4] - 2026-11-24
 

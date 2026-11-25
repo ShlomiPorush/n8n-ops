@@ -453,20 +453,21 @@ export async function sweepRetention(ctx: Ctx) {
   const withLeftovers = await ctx.db
     .select()
     .from(backupCopies)
-    .where(sql`jsonb_array_length(${backupCopies.leftovers}) > 0`)
+    .where(and(inArray(backupCopies.status, ["ok", "failed"]), sql`jsonb_array_length(${backupCopies.leftovers}) > 0`))
   const destinations = await ctx.db.select().from(backupDestinations)
   for (const d of destinations) {
     const targets = pairs.filter((p) => p.destinationId === d.id)
     const leftover = withLeftovers.filter((c) => c.destinationId === d.id)
     if ((!targets.length && !leftover.length) || busy.has(d.id)) continue
-    const store = openStore(ctx, d)
+    let store: Store | undefined
     try {
+      store = openStore(ctx, d)
       for (const t of targets) await applyRetention(ctx, d, t.instanceId, store)
       for (const copy of leftover) await clearLeftovers(ctx, copy, store)
     } catch (error) {
       ctx.log.warn("retention could not run", { destination: d.name, error: (error as Error).message })
     } finally {
-      await store.close().catch(() => {})
+      await store?.close().catch(() => {})
     }
   }
 }

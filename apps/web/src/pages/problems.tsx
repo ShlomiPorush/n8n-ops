@@ -1193,7 +1193,7 @@ export function ProblemDetail({ id }: { id: string }) {
           ) : null}
         </DialogContent>
       </Dialog>
-      <MergeDialog key={p.id} problem={p} open={merging} onOpenChange={setMerging} returnFocus={more} />
+      <MergeDialog problem={p} open={merging} onOpenChange={setMerging} returnFocus={more} />
     </div>
   )
 }

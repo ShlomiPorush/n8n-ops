@@ -51,7 +51,6 @@ All notable changes to this project are documented here. The format follows [Kee
 - **The buttons work at once when another bot takes over the same chat.** The new bot got its webhook only at the next start of the server.
 - **Pages catch up after the connection for live updates was cut off.** What changed meanwhile showed only at the next change or a reload.
 - **Setup says when it could not be read.** It offered to create the account, also on an installation that has one.
-- **Merge opens without the problem chosen for another one.**
 
 ## [0.19.4] - 2026-11-24
 

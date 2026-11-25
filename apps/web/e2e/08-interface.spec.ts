@@ -1648,50 +1648,6 @@ test("Merge lands on the problem merged into, and Back returns to the problem it
   }
 })
 
-test("Merge opens without the choice made for another problem", async () => {
-  await page.goto("/problems?status=all")
-  const rows = page.locator('[data-href^="/problems/"]')
-  await expect(rows.first()).toBeVisible()
-  const hrefs = await rows.evaluateAll((all) => all.map((el) => el.getAttribute("data-href") ?? ""))
-  const problemOf = (href: string) => href.split("?")[0]
-  const [first = ""] = hrefs
-  const second = hrefs.find((href) => problemOf(href) !== problemOf(first)) ?? ""
-  const open = async (href: string) => {
-    await page.locator(`[data-href="${href}"]`).first().click()
-    await expect(page).toHaveURL((url) => url.pathname === problemOf(href))
-    await expect(page.getByRole("heading", { name: "Where It Broke" })).toBeVisible()
-  }
-  const dialog = page.getByRole("dialog", { name: "Merge into Another Problem" })
-  const field = dialog.getByRole("button", { name: /^Problem to merge into:/ })
-  const merge = async () => {
-    await page.getByRole("button", { name: "More actions" }).click()
-    await page.getByRole("menuitem", { name: "Merge into…" }).click()
-    await expect(field).toBeVisible()
-  }
-  const close = async () => {
-    await page.keyboard.press("Escape")
-    await expect(dialog).toHaveCount(0)
-    await dialogClosed(page)
-  }
-  const candidates = (url: URL) => url.pathname === "/api/problems" && url.searchParams.get("status") === "all"
-  const items = [standInProblem("e2e-merge-target", "Merge target", "Stand-in problem")]
-  await open(second)
-  await open(first)
-  await page.route(candidates, (route) => route.fulfill({ json: { items, total: 1 } }))
-  try {
-    await merge()
-    await field.click()
-    await page.getByRole("option", { name: /^Merge target/ }).click()
-    await close()
-    await open(second)
-    await merge()
-    await expect(dialog.getByRole("button", { name: "Merge", exact: true })).toBeDisabled()
-    await close()
-  } finally {
-    await page.unroute(candidates)
-  }
-})
-
 test("live updates read again what changed while they were cut off (NL-19)", async () => {
   await page.route("**/api/events", (route) => route.abort())
   await page.goto("/workflows")

@@ -319,6 +319,32 @@ describe("Needs attention", () => {
     await database.db.delete(problems).where(eq(problems.id, old.problemId))
   })
 
+  it("waits with one database connection at most for a source that does not answer", async () => {
+    const held = async () =>
+      Number(
+        (
+          await admin`select count(*) as n from pg_stat_activity
+            where datname = ${name} and wait_event_type = 'Lock' and pid <> pg_backend_pid()`
+        )[0]?.n,
+      )
+    const url = new URL(adminUrl)
+    url.pathname = `/${name}`
+    const blocker = postgres(url.toString(), { max: 1, onnotice: () => {} })
+    const quiet = { ...ctx, log: { ...ctx.log, error: () => {} } }
+    try {
+      await blocker.begin(async (tx) => {
+        await tx`lock table affected_workflows in access exclusive mode`
+        const answers = await Promise.all([1, 2, 3, 4].map(() => attention(quiet, { timeout: 500 })))
+        expect(answers.map((a) => a.failed)).toEqual([["problems"], ["problems"], ["problems"], ["problems"]])
+        expect(await held()).toBe(1)
+      })
+      expect((await attention(quiet)).failed).toEqual([])
+      expect(await held()).toBe(0)
+    } finally {
+      await blocker.end()
+    }
+  })
+
   it("counts every new problem in the total and the tone, also those past the list", async () => {
     const before = await attention(ctx)
     const more = PROBLEMS_SHOWN + 5

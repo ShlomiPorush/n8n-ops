@@ -13,6 +13,7 @@ import {
 } from "../db/schema.ts"
 import { requireUser } from "../http/middleware.ts"
 import type { Env } from "../http/types.ts"
+import { oneAtATime } from "../lib/one-at-a-time.ts"
 import { instancesOf } from "../services/access.ts"
 import { currentHealth, WORKER_ONLINE_MS } from "../services/collection.ts"
 import { activeOnly, activeWith, can } from "../services/instances.ts"
@@ -380,11 +381,16 @@ export async function attention(
   const parts = await Promise.all(
     attentionSources.map(async (source): Promise<[AttentionSource, Part | null]> => {
       let timer: ReturnType<typeof setTimeout> | undefined
+      let waiting = true
       const late = new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`no answer in ${timeout} ms`)), timeout)
+        timer = setTimeout(() => {
+          waiting = false
+          reject(new Error(`no answer in ${timeout} ms`))
+        }, timeout)
       })
+      const inTurn = oneAtATime(`attention:${source}`, async () => (waiting ? read[source](ctx) : null))
       try {
-        return [source, await Promise.race([read[source](ctx), late])]
+        return [source, await Promise.race([inTurn, late])]
       } catch (error) {
         ctx.log.error("needs attention: a source could not be read", { source, error: (error as Error).message })
         return [source, null]

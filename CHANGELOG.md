@@ -39,6 +39,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - **A backup that starts while its destination is being deleted keeps its record.** The destination now stays, and its answer says to try again. Archives already deleted are shown as deleted, and a destination is no longer held by a copy of a backup that ended without an archive.
 - **A restore that runs while an update replaces the server is no longer shown as cut off.** The new server counted every running restore of the old one as cut off. A restore that really was cut off is now shown so 15 to 20 minutes after it was confirmed.
 - **Compact says done when it compacted the table.** After an update of the operating system's collations, PostgreSQL warned about them while it compacted a large table, and the run was recorded as skipped.
+- **A part of Needs attention that does not answer no longer takes up the database connections.** Each page that showed the list waited with a connection of its own, for example while a large table was compacted, until nothing else could be read. Each part is now read by one request at a time.
 
 ## [0.19.4] - 2026-11-24
 

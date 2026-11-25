@@ -51,6 +51,7 @@ function migrationsUpTo(tag: string) {
 
 const edits: string[] = []
 let editGate: Promise<void> | null = null
+let editRefusal = ""
 const fetchStub = async (url: string | URL, init?: RequestInit) => {
   const method = String(url).split("/").pop() ?? ""
   const body = JSON.parse(String(init?.body ?? "{}")) as { text?: string }
@@ -58,6 +59,10 @@ const fetchStub = async (url: string | URL, init?: RequestInit) => {
     const gate = editGate
     editGate = null
     if (gate) await gate
+    if (editRefusal)
+      return new Response(JSON.stringify({ ok: false, error_code: 400, description: editRefusal }), {
+        headers: { "content-type": "application/json" },
+      })
     edits.push(body.text ?? "")
   }
   return new Response(JSON.stringify({ ok: true, result: method === "sendMessage" ? { message_id: 1 } : true }), {
@@ -230,6 +235,24 @@ describe("releasing access with a summary", () => {
     const row = await stored(id)
     expect(row.status).toBe("approved")
     expect(row.summary).toBeNull()
+  })
+})
+
+describe("a message of ended access that Telegram cannot edit", () => {
+  it.each([
+    { refusal: "Bad Request: message to edit not found", closed: true },
+    { refusal: "Bad Request: message can't be edited", closed: true },
+    { refusal: "Bad Request: chat not found", closed: false },
+  ])("is left alone once it is gone, and tried again otherwise: $refusal", async ({ refusal, closed }) => {
+    const { id } = await approved()
+    await releaseAccess(ctx, tokenId, id, "Read the workflow")
+    editRefusal = refusal
+    try {
+      await closeTelegramMessages(ctx)
+    } finally {
+      editRefusal = ""
+    }
+    expect((await stored(id)).telegramClosedAt !== null).toBe(closed)
   })
 })
 

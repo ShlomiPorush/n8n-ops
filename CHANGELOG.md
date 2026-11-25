@@ -47,6 +47,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - **A backup through an instance's API that fails while the database does not answer no longer ends the server.**
 - **"Is the worker online?" is asked only of a backup a Worker makes.**
 - **The removal of old archives leaves a copy that is being written alone, and goes on after a destination that cannot be opened.**
+- **A message of ended access that was deleted in Telegram is left alone.** n8n-ops tried to edit it every 5 seconds.
 
 ## [0.19.4] - 2026-11-24
 

@@ -41,6 +41,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - **Compact says done when it compacted the table.** After an update of the operating system's collations, PostgreSQL warned about them while it compacted a large table, and the run was recorded as skipped.
 - **A part of Needs attention that does not answer no longer takes up the database connections.** Each page that showed the list waited with a connection of its own, for example while a large table was compacted, until nothing else could be read. Each part is now read by one request at a time.
 - **Clear filters keeps the keyboard's place.** Pressed by keyboard, it left the focus nowhere; the focus now goes to the list's search.
+- **The help for a refusing socket proxy no longer says that an earlier Worker cannot list the queue workers or say what was refused.** It names the image line of the server's release, as the Workers page does.
 
 ## [0.19.4] - 2026-11-24
 

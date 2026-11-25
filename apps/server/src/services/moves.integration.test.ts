@@ -9,7 +9,7 @@ import { createDatabase, type Database } from "../db/client.ts"
 import { auditLog, instances, workerJobs, workers } from "../db/schema.ts"
 import { createAudit } from "../lib/audit.ts"
 import { createSettings } from "../lib/settings.ts"
-import { exportCredentials, runMove } from "./moves.ts"
+import { exportCredentials, previewMove, runMove } from "./moves.ts"
 import { deliverToWaiter, type JobOutcome } from "./workers.ts"
 
 const adminUrl = process.env.MIGRATION_DATABASE_URL
@@ -76,8 +76,11 @@ async function answerExport(outcome: JobOutcome) {
   await ctx.db.update(workerJobs).set({ status: "done" })
 }
 
+const input = () => ({ sourceId: source.id, targetId: target.id, workflowId: "w1" })
+
 async function move(outcome: JobOutcome) {
-  const running = runMove(ctx, { sourceId: source.id, targetId: target.id, workflowId: "w1" }, "tester").then(
+  const { reviewed } = await previewMove(ctx, input())
+  const running = runMove(ctx, { ...input(), reviewed }, "tester").then(
     () => ({ error: null }),
     (error: Error) => ({ error }),
   )
@@ -155,13 +158,6 @@ describe("a move whose worker did not return every credential", () => {
     })
   })
 
-  it("asks for the credentials of the workflow it copies, not of the one it reviewed", async () => {
-    const { changes } = n8n([workflow(["c1"]), workflow(["c1", "c2"])])
-    const { error } = await move(answered(exported.slice(0, 1)))
-    expect(changes).toEqual([])
-    expect(error?.message).toContain("did not return these credentials: Mail.")
-  })
-
   it("moves the workflow when every credential came, also from a worker of an earlier release", async () => {
     const { changes, bodies } = n8n([workflow(["c1", "c2"])])
     const { error, entry } = await move(answered(exported))
@@ -179,6 +175,46 @@ describe("a move whose worker did not return every credential", () => {
       action: "Workflow moved",
       details: { steps: expect.arrayContaining([{ step: "Created on target", ok: true, detail: "copy" }]) },
     })
+  })
+})
+
+describe("a move after its review", () => {
+  const [node] = workflow(["c1"]).nodes as [ReturnType<typeof workflow>["nodes"][number]]
+  it.each([
+    { what: "its nodes", change: { nodes: [{ ...node, credentials: { any: { id: "", name: "" } } }] } },
+    { what: "whether it is active", change: { active: false } },
+    { what: "its name", change: { name: "Orders 2" } },
+  ])("is refused when n8n saved $what since, and changes neither instance", async ({ change }) => {
+    const { changes } = n8n([workflow([]), { ...workflow([]), ...change }])
+    const { reviewed } = await previewMove(ctx, input())
+    await expect(runMove(ctx, { ...input(), reviewed }, "tester")).rejects.toThrow(
+      "Something changed since you reviewed this move, so nothing was moved. Review it again.",
+    )
+    expect(changes).toEqual([])
+  })
+
+  it("is refused when the target got another address since", async () => {
+    const { changes } = n8n([workflow([])])
+    const { reviewed } = await previewMove(ctx, input())
+    await ctx.db.update(instances).set({ baseUrl: "https://other.example.com" }).where(eq(instances.id, target.id))
+    try {
+      await expect(runMove(ctx, { ...input(), reviewed }, "tester")).rejects.toThrow("Review it again.")
+      expect(changes).toEqual([])
+    } finally {
+      await ctx.db.update(instances).set({ baseUrl: target.baseUrl }).where(eq(instances.id, target.id))
+    }
+  })
+
+  it("is refused when the worker that reads the credentials went away since", async () => {
+    const { changes } = n8n([workflow(["c1"])])
+    const { reviewed } = await previewMove(ctx, input())
+    await ctx.db.update(workers).set({ revokedAt: new Date() })
+    try {
+      await expect(runMove(ctx, { ...input(), reviewed }, "tester")).rejects.toThrow("Review it again.")
+      expect(changes).toEqual([])
+    } finally {
+      await ctx.db.update(workers).set({ revokedAt: null })
+    }
   })
 })
 

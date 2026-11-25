@@ -362,6 +362,7 @@ type Preview = {
   credentials: { id: string; name: string; type: string }[]
   credentialsWithSecrets: boolean
   blockers: string[]
+  reviewed: string
 }
 
 function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClose: () => void }) {
@@ -528,6 +529,7 @@ function MoveDialog({ workflow, onClose }: { workflow: WorkflowRow | null; onClo
                           sourceId: preview.source.id,
                           targetId: preview.target.id,
                           workflowId: preview.workflow.id,
+                          reviewed: preview.reviewed,
                         },
                       },
                     )

@@ -33,6 +33,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - **A change of the public URL is recorded once in the audit log**, with who made it. The end of the agents' connections was recorded a second time, by n8n-ops.
 - **Saving Agent Connections no longer puts back what another save changed at the same time.**
 - **A Worker that stops during an export leaves no credentials file in the n8n container.** The export now removes its own files however it ends, works in a folder of its own that only its user can read, and removes what an export that was killed left more than an hour before. Update the Workers to get this.
+- **A move copies only what its review showed.** A workflow saved in n8n after the review, an instance that got another address, or a worker that can no longer read the credentials was moved as it was then. The move now stops before it changes anything and asks for a new review.
 
 ## [0.19.4] - 2026-11-24
 

@@ -116,7 +116,7 @@ run_guards() {
     set -euo pipefail
     fail=0
 
-    hebrew="$(git ls-files -z -co --exclude-standard | xargs -0 grep -IlP "[\x{0590}-\x{05FF}]" -- 2>/dev/null || true)"
+    hebrew="$(git ls-files -z -co --exclude-standard | LC_ALL=C.UTF-8 xargs -0 grep -sIlP "[\x{0590}-\x{05FF}]" -- || true)"
     if [ -n "$hebrew" ]; then
       echo "Hebrew text is not allowed in tracked files:"; echo "$hebrew"; fail=1
     fi

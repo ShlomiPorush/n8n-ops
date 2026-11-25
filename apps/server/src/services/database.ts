@@ -249,27 +249,26 @@ async function runCompact(ctx: Ctx, session: ReservedSql, warnings: string[], ro
   let outcome: Outcome | null = null
   const started = Date.now()
   let sizeBefore: number | null = null
+  const files = async () => {
+    const [read] = await session<{ size: number | null; node: number | null }[]>`
+      select pg_total_relation_size(${row.relationId}::oid)::float8 as size,
+        pg_relation_filenode(${row.relationId}::oid)::int8::float8 as node`
+    return read
+  }
   try {
-    const [before] = await session<{ size: number }[]>`
-      select pg_total_relation_size(${row.relationId}::oid)::float8 as size`
+    const before = await files()
     sizeBefore = before?.size ?? null
     warnings.length = 0
     await session.unsafe(`vacuum (full) ${target}`)
-    if (warnings.length)
-      outcome = {
-        status: "failed",
-        error: `PostgreSQL skipped the table: ${warnings[0]}`.slice(0, 500),
-        sizeBefore,
-      }
-    else {
-      let sizeAfter: number | null = null
-      try {
-        const [size] = await session<{ size: number }[]>`
-          select pg_total_relation_size(${row.relationId}::oid)::float8 as size`
-        sizeAfter = size?.size ?? null
-      } catch {}
-      outcome = { status: "done", sizeBefore, sizeAfter }
-    }
+    const after = await files().catch(() => undefined)
+    outcome =
+      after && (after.node === null || after.node === before?.node)
+        ? {
+            status: "failed",
+            error: `PostgreSQL skipped the table: ${warnings[0] ?? "it gave no reason"}`.slice(0, 500),
+            sizeBefore,
+          }
+        : { status: "done", sizeBefore, sizeAfter: after?.size ?? null }
   } catch (error) {
     if (lostAnswer(error)) outcome = null
     else if (pgCode(error) === "55P03")

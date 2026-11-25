@@ -12,6 +12,7 @@ import { createDatabase, type Database } from "../db/client.ts"
 import { alertState, backupCopies, backupDestinations, backupRuns } from "../db/schema.ts"
 import { createSettings } from "../lib/settings.ts"
 import { backupCondition } from "./backup-alerts.ts"
+import { destinationRoutes } from "../routes/destinations.ts"
 import { COPY_ATTEMPTS, failRun, kickCopies } from "./backup-copies.ts"
 import type { Store } from "./destinations/store.ts"
 import { spoolDir, spooledRuns, spoolFile } from "./spool.ts"
@@ -20,6 +21,11 @@ const held = new Set<string>()
 const calls: string[] = []
 const warnings: string[] = []
 let refuseWrite = false
+let onRemove: () => Promise<void> = async () => {}
+vi.mock("./session-policy.ts", async (original) => ({
+  ...(await original<typeof import("./session-policy.ts")>()),
+  checkSession: async () => ({ ok: true, clocks: {}, status: {}, twoFactorVerified: true }),
+}))
 vi.mock("./destinations/index.ts", async (original) => ({
   ...(await original<typeof import("./destinations/index.ts")>()),
   openStore: () =>
@@ -37,6 +43,7 @@ vi.mock("./destinations/index.ts", async (original) => ({
       remove: async (key: string) => {
         calls.push(`remove ${key}`)
         held.delete(key)
+        await onRemove()
       },
       close: async () => {},
     }) as unknown as Store,
@@ -64,12 +71,25 @@ beforeAll(async () => {
     log: { info: () => {}, warn: (message: string) => warnings.push(message), error: () => {} },
     settings: createSettings(database.db),
     appKeyPath: join(dir, "app.key"),
+    audit: async () => {},
+    auth: async () => ({
+      auth: {
+        api: {
+          getSession: async () => ({
+            session: { id: "s1" },
+            user: { id: "u1", username: "operator", twoFactorEnabled: true },
+          }),
+        },
+      },
+      passkeyUrl: null,
+    }),
   } as unknown as Ctx
   await mkdir(spoolDir(ctx), { recursive: true })
 })
 
 afterEach(async () => {
   refuseWrite = false
+  onRemove = async () => {}
   calls.length = 0
   warnings.length = 0
   held.clear()
@@ -204,6 +224,60 @@ describe("a copy that was verified on its last attempt", () => {
       { timeout: 10_000, interval: 250 },
     )
     expect(await copyRow(copy.id)).toMatchObject({ status: "failed", error: "the destination is full" })
+  })
+})
+
+describe("a destination being deleted", () => {
+  const remove = (id: string) =>
+    destinationRoutes(ctx).request(`http://ops.example.com/${id}?files=delete`, {
+      method: "DELETE",
+      headers: { origin: "http://ops.example.com" },
+    })
+  const destination = async (run: Partial<typeof backupRuns.$inferInsert>, copy: "ok" | "pending") => {
+    const tag = randomBytes(4).toString("hex")
+    const [d] = await ctx.db
+      .insert(backupDestinations)
+      .values({ name: tag, kind: "local", location: { folder: tag }, retention: { daily: 1, weekly: 0, monthly: 0 } })
+      .returning()
+    if (!d) throw new Error("no destination")
+    const copyOf = async (values: Partial<typeof backupRuns.$inferInsert>, status: "ok" | "pending") => {
+      const [r] = await ctx.db
+        .insert(backupRuns)
+        .values({ status: "running", ...values })
+        .returning()
+      if (!r) throw new Error("no run")
+      await ctx.db
+        .insert(backupCopies)
+        .values({ runId: r.id, destinationId: d.id, objectKey: `${tag}-${r.id}`, status })
+    }
+    await copyOf(run, copy)
+    const rows = () => ctx.db.select().from(backupCopies).where(eq(backupCopies.destinationId, d.id))
+    return { d, copyOf, rows }
+  }
+
+  it("keeps the copy of a backup that starts meanwhile, and says which archives are gone", async () => {
+    const { d, copyOf, rows } = await destination({ status: "ok" }, "ok")
+    onRemove = async () => {
+      onRemove = async () => {}
+      await copyOf({}, "pending")
+    }
+    const res = await remove(d.id)
+    expect(res.status).toBe(409)
+    expect(((await res.json()) as { message: string }).message).toBe(
+      "A backup to this destination started meanwhile, so it stays in n8n-ops. Its earlier archives are deleted. Try again when the backup ends.",
+    )
+    expect((await rows()).map((r) => [r.status, r.deletedAt !== null]).sort()).toEqual([
+      ["ok", true],
+      ["pending", false],
+    ])
+    await ctx.db.update(backupRuns).set({ status: "failed" }).where(eq(backupRuns.status, "running"))
+    expect((await remove(d.id)).status).toBe(200)
+  })
+
+  it("is not held by a copy whose run ended without an archive", async () => {
+    const { d, rows } = await destination({ status: "failed" }, "pending")
+    expect((await remove(d.id)).status).toBe(200)
+    expect(await rows()).toEqual([])
   })
 })
 

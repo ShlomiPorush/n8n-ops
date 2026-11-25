@@ -1,8 +1,9 @@
-import { and, count, desc, eq, isNull, max } from "drizzle-orm"
+import { and, count, desc, eq, inArray, isNull, max } from "drizzle-orm"
 import { Hono } from "hono"
 import { z } from "zod"
 import type { Ctx } from "../context.ts"
-import { backupCopies, backupDestinations, type DestinationKind, instances } from "../db/schema.ts"
+import { errorCode } from "../db/errors.ts"
+import { backupCopies, backupDestinations, backupRuns, type DestinationKind, instances } from "../db/schema.ts"
 import { requireUser } from "../http/middleware.ts"
 import { actorName, type Env } from "../http/types.ts"
 import { dropConditions } from "../services/backup-copies.ts"
@@ -82,6 +83,8 @@ const locationLabels: Record<string, string> = {
   path: "folder",
   url: "URL",
 }
+
+const STILL_REFERENCED = new Set(["23001", "23503"])
 
 export function destinationRoutes(ctx: Ctx) {
   const app = new Hono<Env>()
@@ -273,8 +276,13 @@ export function destinationRoutes(ctx: Ctx) {
       .from(backupDestinations)
       .where(eq(backupDestinations.id, c.req.param("id")))
     if (!d) return c.json({ error: "not_found" }, 404)
-    const copies = await ctx.db.select().from(backupCopies).where(eq(backupCopies.destinationId, d.id))
-    if (copies.some((x) => x.status === "pending" || x.status === "writing"))
+    const found = await ctx.db
+      .select({ copy: backupCopies, run: backupRuns.status })
+      .from(backupCopies)
+      .innerJoin(backupRuns, eq(backupCopies.runId, backupRuns.id))
+      .where(eq(backupCopies.destinationId, d.id))
+    const copies = found.map((f) => f.copy)
+    if (found.some((f) => f.run === "running" && (f.copy.status === "pending" || f.copy.status === "writing")))
       return c.json(
         { error: "conflict", message: "A backup is writing to this destination. Try again when it ends." },
         409,
@@ -283,12 +291,20 @@ export function destinationRoutes(ctx: Ctx) {
     if (files.data === "delete") {
       const objects = copies.flatMap((x) => [
         ...((x.status === "ok" && !x.deletedAt) || x.status === "failed"
-          ? [{ key: x.objectKey, versionId: x.versionId, until: x.status === "ok" ? x.retainUntil : null }]
+          ? [
+              {
+                key: x.objectKey,
+                versionId: x.versionId,
+                until: x.status === "ok" ? x.retainUntil : null,
+                archiveOf: x.status === "ok" ? x.id : null,
+              },
+            ]
           : []),
         ...x.leftovers.map((l) => ({
           key: x.objectKey,
           versionId: l.versionId,
           until: l.retainUntil ? new Date(l.retainUntil) : null,
+          archiveOf: null,
         })),
       ])
       const now = new Date()
@@ -305,8 +321,11 @@ export function destinationRoutes(ctx: Ctx) {
       }
       const store = openStore(ctx, d)
       try {
-        for (const o of objects)
+        for (const o of objects) {
           await withDeadline(5 * 60_000, "Deleting an archive", (s) => store.remove(o.key, s, o.versionId))
+          if (o.archiveOf)
+            await ctx.db.update(backupCopies).set({ deletedAt: new Date() }).where(eq(backupCopies.id, o.archiveOf))
+        }
         if (d.kind !== "s3")
           for (const x of copies.filter((c) => c.status === "failed"))
             await withDeadline(60_000, "Deleting a temporary file", (s) =>
@@ -324,10 +343,23 @@ export function destinationRoutes(ctx: Ctx) {
         await store.close().catch(() => {})
       }
     }
-    await ctx.db.transaction(async (tx) => {
-      await tx.delete(backupCopies).where(eq(backupCopies.destinationId, d.id))
-      await tx.delete(backupDestinations).where(eq(backupDestinations.id, d.id))
-    })
+    const checked = copies.map((x) => x.id)
+    try {
+      await ctx.db.transaction(async (tx) => {
+        await tx.delete(backupCopies).where(inArray(backupCopies.id, checked))
+        await tx.delete(backupDestinations).where(eq(backupDestinations.id, d.id))
+      })
+    } catch (error) {
+      if (!STILL_REFERENCED.has(errorCode(error) ?? "")) throw error
+      const gone = files.data === "delete" ? " Its earlier archives are deleted." : ""
+      return c.json(
+        {
+          error: "conflict",
+          message: `A backup to this destination started meanwhile, so it stays in n8n-ops.${gone} Try again when the backup ends.`,
+        },
+        409,
+      )
+    }
     const keys = (await ctx.db.select({ id: instances.id }).from(instances)).map((i) => `backup:${i.id}:${d.id}`)
     await dropConditions(ctx, [...keys, `backup:self:${d.id}`])
     await ctx.audit({

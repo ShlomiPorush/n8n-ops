@@ -9,10 +9,10 @@ import postgres from "postgres"
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 import type { Ctx, Logger } from "../context.ts"
 import { createDatabase, type Database } from "../db/client.ts"
-import { alertOutbox, backupDestinations, backupRuns } from "../db/schema.ts"
+import { alertOutbox, backupDestinations, backupRuns, instances } from "../db/schema.ts"
 import { createSecrets } from "../lib/crypto.ts"
 import { createSettings } from "../lib/settings.ts"
-import { runSelfBackup } from "./backups.ts"
+import { runSelfBackup, startBackup } from "./backups.ts"
 
 const adminUrl = process.env.MIGRATION_DATABASE_URL
 if (!adminUrl) throw new Error("MIGRATION_DATABASE_URL is required (scripts/verify.sh sets it)")
@@ -121,6 +121,39 @@ function holdsConnection(text: string) {
     for (let i = 0; i + 8 <= secret.length; i++) if (text.includes(secret.slice(i, i + 8))) return true
   return false
 }
+
+describe("a failed backup through an instance's API", () => {
+  it("is logged when it cannot be recorded, and does not end the server", async () => {
+    const [instance] = await database.db
+      .insert(instances)
+      .values({
+        name: "api-backup",
+        baseUrl: "http://127.0.0.1:1",
+        apiKeyEnc: ctx.secrets.encrypt(randomBytes(16).toString("hex")),
+        version: "2.20.0",
+        setupState: "complete",
+        chosenCapabilities: ["backup"],
+        backupVia: "api",
+      })
+      .returning()
+    if (!instance) throw new Error("no instance")
+    await database.db.execute(
+      sql.raw(`
+        CREATE FUNCTION refuse_write() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN RAISE EXCEPTION 'refused'; END $$;
+        CREATE TRIGGER refuse_write BEFORE UPDATE ON backup_runs FOR EACH ROW EXECUTE FUNCTION refuse_write();
+      `),
+    )
+    try {
+      await startBackup(ctx, instance, "manual")
+      await vi.waitFor(() => expect(warnings.map((w) => w.message)).toContain("could not record the failed backup"), {
+        timeout: 20_000,
+      })
+    } finally {
+      await database.db.execute(sql.raw("DROP TRIGGER refuse_write ON backup_runs; DROP FUNCTION refuse_write();"))
+    }
+  })
+})
 
 describe("a failed backup of the n8n-ops database", () => {
   it("records how pg_dump ended and what it reported, without the database connection", async () => {

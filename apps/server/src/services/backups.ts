@@ -152,7 +152,9 @@ export async function startBackup(ctx: Ctx, instance: Instance, trigger: "schedu
         now.id,
       )
     } else {
-      void apiBackup(ctx, now, run.id, recipient)
+      apiBackup(ctx, now, run.id, recipient).catch((error: Error) =>
+        ctx.log.error("could not record the failed backup", { error: error.message }),
+      )
     }
     ctx.log.info("backup started", {
       instance: now.name,

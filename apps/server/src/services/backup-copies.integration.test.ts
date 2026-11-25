@@ -9,11 +9,11 @@ import postgres from "postgres"
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest"
 import type { Ctx } from "../context.ts"
 import { createDatabase, type Database } from "../db/client.ts"
-import { alertState, backupCopies, backupDestinations, backupRuns } from "../db/schema.ts"
+import { alertState, backupCopies, backupDestinations, backupRuns, instances } from "../db/schema.ts"
 import { createSettings } from "../lib/settings.ts"
-import { backupCondition } from "./backup-alerts.ts"
 import { destinationRoutes } from "../routes/destinations.ts"
-import { COPY_ATTEMPTS, failRun, kickCopies } from "./backup-copies.ts"
+import { backupCondition } from "./backup-alerts.ts"
+import { COPY_ATTEMPTS, endRunsWithoutArchive, failRun, kickCopies } from "./backup-copies.ts"
 import type { Store } from "./destinations/store.ts"
 import { spoolDir, spooledRuns, spoolFile } from "./spool.ts"
 
@@ -282,6 +282,44 @@ describe("a destination being deleted", () => {
 })
 
 describe("a run that is said to have failed", () => {
+  it.each([
+    { how: "fails", end: (id: string) => failRun(ctx, id, "cut") },
+    { how: "ends without an archive", end: (id: string) => endRunsWithoutArchive(ctx.db, { runId: id }) },
+  ])("$how together with its copies or not at all", async ({ end }) => {
+    const { run, copy } = await lastAttempt()
+    await ctx.db.update(backupRuns).set({ spooledAt: null }).where(eq(backupRuns.id, run.id))
+    const accept = await refuse("backup_copies", "")
+    await expect(end(run.id)).rejects.toThrow()
+    await accept()
+    expect(await runStatus(run.id)).toBe("running")
+    await end(run.id)
+    expect(await runStatus(run.id)).toBe("failed")
+    expect((await copyRow(copy.id)).status).toBe("failed")
+  })
+
+  it.each([
+    { what: "the n8n-ops database", values: { includesSecrets: true }, asks: false },
+    { what: "an instance through its API", values: { includesSecrets: false }, instance: true, asks: false },
+    { what: "an instance through its worker", values: { includesSecrets: true }, instance: true, asks: true },
+  ])("asks for the worker only when one makes the archive: $what", async ({ values, instance, asks }) => {
+    const [i] = instance
+      ? await ctx.db
+          .insert(instances)
+          .values({ name: randomBytes(4).toString("hex"), baseUrl: "http://n8n:5678" })
+          .returning()
+      : []
+    const [run] = await ctx.db
+      .insert(backupRuns)
+      .values({ status: "running", instanceId: i?.id ?? null, startedAt: new Date(0), ...values })
+      .returning()
+    await kickCopies(ctx)
+    const [after] = await ctx.db
+      .select()
+      .from(backupRuns)
+      .where(eq(backupRuns.id, run?.id ?? ""))
+    expect(after?.error).toBe(`The encrypted archive did not arrive in time.${asks ? " Is the worker online?" : ""}`)
+  })
+
   const inSpool = async (id: string) => (await spooledRuns(spoolDir(ctx))).includes(id)
 
   it("ends while it waits for its archive, and its file goes with the next pass", async () => {

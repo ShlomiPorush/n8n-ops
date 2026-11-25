@@ -80,7 +80,12 @@ async function copyPass(ctx: Ctx) {
       ),
     )
   for (const run of lost) {
-    await failRun(ctx, run.id, "The encrypted archive did not arrive in time. Is the worker online?")
+    const throughWorker = run.instanceId !== null && run.includesSecrets
+    await failRun(
+      ctx,
+      run.id,
+      `The encrypted archive did not arrive in time.${throughWorker ? " Is the worker online?" : ""}`,
+    )
     await ctx.db
       .update(workerJobs)
       .set({ status: "failed", error: "The backup run ended before the worker started it.", finishedAt: now })
@@ -340,16 +345,24 @@ export async function failRun(
   error: string,
   refusal?: { call: string; container?: string; resolvedContainer?: string; replicasClean?: boolean },
 ) {
-  const [run] = await ctx.db
-    .update(backupRuns)
-    .set({ status: "failed", error, finishedAt: new Date(), ...(refusal ? { refusal } : {}) })
-    .where(and(eq(backupRuns.id, runId), eq(backupRuns.status, "running"), isNull(backupRuns.spooledAt)))
-    .returning()
+  const run = await ctx.db.transaction(async (tx) => {
+    const [failed] = await tx
+      .update(backupRuns)
+      .set({ status: "failed", error, finishedAt: new Date(), ...(refusal ? { refusal } : {}) })
+      .where(and(eq(backupRuns.id, runId), eq(backupRuns.status, "running"), isNull(backupRuns.spooledAt)))
+      .returning()
+    if (failed)
+      await tx
+        .update(backupCopies)
+        .set({
+          status: "failed",
+          error: "The backup failed before this copy could be written.",
+          finishedAt: new Date(),
+        })
+        .where(and(eq(backupCopies.runId, runId), inArray(backupCopies.status, ["pending", "writing"])))
+    return failed
+  })
   if (!run) return
-  await ctx.db
-    .update(backupCopies)
-    .set({ status: "failed", error: "The backup failed before this copy could be written.", finishedAt: new Date() })
-    .where(and(eq(backupCopies.runId, runId), inArray(backupCopies.status, ["pending", "writing"])))
   const name = await targetName(ctx, run.instanceId)
   ctx.log.warn("backup failed", { instance: name, error })
   await enqueueAlert(ctx, "backup", backupAlerts.failed(name, error), instanceSubject(run.instanceId))
@@ -363,31 +376,33 @@ export async function endRunsWithoutArchive(
   which: { instanceId: string } | { runId: string },
   reason = BACKUP_TURNED_OFF,
 ) {
-  const ended = await db
-    .update(backupRuns)
-    .set({ status: "failed", error: reason, finishedAt: new Date() })
-    .where(
-      and(
-        "runId" in which ? eq(backupRuns.id, which.runId) : eq(backupRuns.instanceId, which.instanceId),
-        eq(backupRuns.status, "running"),
-        isNull(backupRuns.spooledAt),
-      ),
-    )
-    .returning({ id: backupRuns.id })
-  if (ended.length)
-    await db
-      .update(backupCopies)
-      .set({ status: "failed", error: "The backup ended before this copy could be written.", finishedAt: new Date() })
+  return db.transaction(async (tx) => {
+    const ended = await tx
+      .update(backupRuns)
+      .set({ status: "failed", error: reason, finishedAt: new Date() })
       .where(
         and(
-          inArray(
-            backupCopies.runId,
-            ended.map((r) => r.id),
-          ),
-          inArray(backupCopies.status, ["pending", "writing"]),
+          "runId" in which ? eq(backupRuns.id, which.runId) : eq(backupRuns.instanceId, which.instanceId),
+          eq(backupRuns.status, "running"),
+          isNull(backupRuns.spooledAt),
         ),
       )
-  return ended.map((r) => r.id)
+      .returning({ id: backupRuns.id })
+    if (ended.length)
+      await tx
+        .update(backupCopies)
+        .set({ status: "failed", error: "The backup ended before this copy could be written.", finishedAt: new Date() })
+        .where(
+          and(
+            inArray(
+              backupCopies.runId,
+              ended.map((r) => r.id),
+            ),
+            inArray(backupCopies.status, ["pending", "writing"]),
+          ),
+        )
+    return ended.map((r) => r.id)
+  })
 }
 
 export async function applyRetention(ctx: Ctx, destination: Destination, instanceId: string | null, store?: Store) {

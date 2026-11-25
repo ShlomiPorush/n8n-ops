@@ -43,6 +43,9 @@ All notable changes to this project are documented here. The format follows [Kee
 - **Clear filters keeps the keyboard's place.** Pressed by keyboard, it left the focus nowhere; the focus now goes to the list's search.
 - **The help for a refusing socket proxy no longer says that an earlier Worker cannot list the queue workers or say what was refused.** It names the image line of the server's release, as the Workers page does.
 - **A long copy to an SFTP server is no longer cut off by a deadline of a step that already ended.** Checking a copy whose writing took long, or removing old archives for more than 5 minutes, could lose the connection halfway.
+- **A backup that fails ends together with its copies.** The server stopping between the two left copies waiting forever.
+- **A backup through an instance's API that fails while the database does not answer no longer ends the server.**
+- **"Is the worker online?" is asked only of a backup a Worker makes.**
 
 ## [0.19.4] - 2026-11-24
 

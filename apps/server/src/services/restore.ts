@@ -1466,11 +1466,17 @@ export async function recentRestores(ctx: Ctx, targetInstanceId: string, limit =
   return rows.map(view)
 }
 
+const UPDATE_OVERLAP_MS = 5 * 60_000
+
 export async function sweepRestores(ctx: Ctx) {
   await ctx.db
     .delete(restores)
     .where(and(eq(restores.status, "previewed"), lt(restores.createdAt, new Date(Date.now() - REVIEW_TTL_MS))))
-  const pending = await ctx.db.select({ id: restores.id }).from(restores).where(eq(restores.status, "pending"))
+  if (process.uptime() * 1000 < UPDATE_OVERLAP_MS) return
+  const pending = await ctx.db
+    .select({ id: restores.id })
+    .from(restores)
+    .where(and(eq(restores.status, "pending"), lt(restores.confirmedAt, new Date(Date.now() - UPDATE_OVERLAP_MS))))
   for (const { id } of pending) {
     await oneAtATime(`restore:${id}`, async () => {
       const [row] = await ctx.db.select().from(restores).where(eq(restores.id, id))

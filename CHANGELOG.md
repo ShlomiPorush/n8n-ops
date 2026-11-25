@@ -37,6 +37,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - **A Telegram button says what was saved.** "Marked as resolved" and "Muted for 24 hours" came before the change was saved, and a press whose answer Telegram refused was not done. The answer now follows the change, and says so when it could not be saved.
 - **A problem whose mute ended alerts again.** The page said so, but a workflow already in the problem failed on without a message. The first failure after the end of a mute now sends a new Telegram message, "Still failing after the mute", once for the whole problem, when New problem alerts are on.
 - **A backup that starts while its destination is being deleted keeps its record.** The destination now stays, and its answer says to try again. Archives already deleted are shown as deleted, and a destination is no longer held by a copy of a backup that ended without an archive.
+- **A restore that runs while an update replaces the server is no longer shown as cut off.** The new server counted every running restore of the old one as cut off. A restore that really was cut off is now shown so 15 to 20 minutes after it was confirmed.
 
 ## [0.19.4] - 2026-11-24
 

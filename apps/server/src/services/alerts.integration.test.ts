@@ -16,6 +16,7 @@ import {
   enqueueAlert,
   enqueueProblemAlert,
   handleTelegramCallback,
+  type ProblemAlertReason,
   problemAlertSettings,
   sendTestTelegram,
 } from "./alerts.ts"
@@ -194,7 +195,7 @@ async function setup(
       .where(eq(alertOutbox.status, "pending"))
     await dispatchAlerts(ctx)
   }
-  const enqueue = async (p: typeof affectedWorkflows.$inferSelect, reason: "new" | "joined" | "regression" = "new") =>
+  const enqueue = async (p: typeof affectedWorkflows.$inferSelect, reason: ProblemAlertReason = "new") =>
     enqueueProblemAlert(ctx, d.db, p, reason, await problemAlertSettings(ctx))
   return { ctx, db: d.db, a, b, problem, enqueue, warnings, dispatch }
 }
@@ -649,6 +650,20 @@ describe("Telegram forum topics", () => {
     const pressed = String(bot.edits().at(-1)?.body.text)
     expect(pressed).toContain("<b>Now in 3 workflows</b>")
     expect(pressed).toContain("Resolved by @ops")
+  })
+
+  it("a problem that still fails after its mute gets a new message, also within the edit window", async () => {
+    const t = await setup()
+    const p = await t.problem(t.a.id, "Sync orders")
+    await t.db.update(affectedWorkflows).set({ regression: true })
+    await t.enqueue(p)
+    await t.dispatch()
+    await t.enqueue(p, "mute-ended")
+    await t.dispatch()
+    expect(bot.edits()).toEqual([])
+    const text = String(bot.sends()[1]?.body.text)
+    expect(text).toContain("<b>Still failing after the mute</b>")
+    expect(text).toContain("Sync orders")
   })
 
   it("a workflow split away is never listed in its old Problem's message again", async () => {

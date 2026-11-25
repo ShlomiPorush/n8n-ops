@@ -23,7 +23,7 @@ import { clip, html, type InlineButton, isMessageGone, Telegram, TelegramError, 
 type AffectedRow = typeof affectedWorkflows.$inferSelect
 type GroupRow = typeof alertGroups.$inferSelect
 
-export type ProblemAlertReason = "new" | "joined" | "regression"
+export type ProblemAlertReason = "new" | "joined" | "regression" | "mute-ended"
 
 export async function threadFor(ctx: Ctx, subject: AlertSubject): Promise<number | null> {
   const telegram = await ctx.settings.get("telegram")
@@ -189,20 +189,23 @@ export function renderProblemGroup(
   lines: GroupLine[],
   footer?: TelegramHtml,
   note?: TelegramHtml,
-  spread?: { workflows: number },
+  spread?: { workflows: number } | "mute-ended",
   hint?: string | null,
 ): TelegramHtml {
   const regression = lines.some((l) => l.regression)
   const workflows = new Set(lines.map((l, i) => l.workflowKey ?? String(i))).size
-  const title = spread
-    ? regression
-      ? "Regression"
-      : `Now in ${spread.workflows} workflows`
-    : workflows === 1
-      ? regression
-        ? "Regression"
-        : "New problem"
-      : `${regression ? "Problems" : "New problem"} in ${workflows} workflows`
+  const title =
+    spread === "mute-ended"
+      ? "Still failing after the mute"
+      : spread
+        ? regression
+          ? "Regression"
+          : `Now in ${spread.workflows} workflows`
+        : workflows === 1
+          ? regression
+            ? "Regression"
+            : "New problem"
+          : `${regression ? "Problems" : "New problem"} in ${workflows} workflows`
   const body = lines
     .slice(0, 15)
     .map(
@@ -369,6 +372,7 @@ export async function dispatchAlerts(ctx: Ctx) {
       let newIds = [...new Set(rows.map((r) => r.affectedWorkflowId).filter((id): id is string => Boolean(id)))]
       const idsOf = (workflowIds: string[]) =>
         rows.filter((r) => r.affectedWorkflowId && workflowIds.includes(r.affectedWorkflowId)).map((r) => r.id)
+      const muteEnded = rows.some((r) => r.text === "mute-ended")
       const since = new Date(Date.now() - settings.editWindowMin * 60_000)
       const [recent] = await ctx.db
         .select()
@@ -384,7 +388,7 @@ export async function dispatchAlerts(ctx: Ctx) {
         )
         .orderBy(desc(alertGroups.createdAt))
         .limit(1)
-      if (recent && settings.editWindowMin > 0) {
+      if (recent && settings.editWindowMin > 0 && !muteEnded) {
         const handled = await oneAtATime(groupTurn(recent.id), async () => {
           const [current] = await ctx.db.select().from(alertGroups).where(eq(alertGroups.id, recent.id))
           if (!current || current.closedAt) return false
@@ -435,7 +439,7 @@ export async function dispatchAlerts(ctx: Ctx) {
       newIds = await stillIn(ctx, problemId, newIds)
       if (!newIds.length) continue
       ids = idsOf(newIds)
-      const spread = await spreadOf(ctx, problemId)
+      const spread = muteEnded ? "mute-ended" : await spreadOf(ctx, problemId)
       const lines = await groupLines(ctx, newIds)
       const [group] = await ctx.db
         .insert(alertGroups)

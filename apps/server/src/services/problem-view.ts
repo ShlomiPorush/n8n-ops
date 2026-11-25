@@ -157,7 +157,7 @@ const affectedColumns = {
   count: a.count,
   firstSeen: a.firstSeen,
   lastSeen: a.lastSeen,
-  mutedUntil: a.mutedUntil,
+  mutedUntil: sql<Date | null>`case when ${a.status} = 'muted' then ${a.mutedUntil} end`.mapWith(a.mutedUntil),
   resolvedAt: a.resolvedAt,
 }
 

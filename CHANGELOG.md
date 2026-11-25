@@ -35,6 +35,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - **A Worker that stops during an export leaves no credentials file in the n8n container.** The export now removes its own files however it ends, works in a folder of its own that only its user can read, and removes what an export that was killed left more than an hour before. Update the Workers to get this.
 - **A move copies only what its review showed.** A workflow saved in n8n after the review, an instance that got another address, or a worker that can no longer read the credentials was moved as it was then. The move now stops before it changes anything and asks for a new review.
 - **A Telegram button says what was saved.** "Marked as resolved" and "Muted for 24 hours" came before the change was saved, and a press whose answer Telegram refused was not done. The answer now follows the change, and says so when it could not be saved.
+- **A problem whose mute ended alerts again.** The page said so, but a workflow already in the problem failed on without a message. The first failure after the end of a mute now sends a new Telegram message, "Still failing after the mute", once for the whole problem, when New problem alerts are on.
 
 ## [0.19.4] - 2026-11-24
 

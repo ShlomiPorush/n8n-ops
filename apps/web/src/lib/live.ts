@@ -19,17 +19,26 @@ export function invalidateTopics(client: QueryClient, topics: string[], hidden: 
   ])
 }
 
+const EVERY_TOPIC = ["problems", "instances", "backups", "workflows", "workers", "overview", "access"]
+
 export function useLiveUpdates() {
   useEffect(() => {
     let source: EventSource | null = null
     let retry: ReturnType<typeof setTimeout> | undefined
+    let missed = false
+    const refresh = (topics: string[]) =>
+      void invalidateTopics(queryClient, topics, document.visibilityState === "hidden")
     const connect = () => {
       source = new EventSource("/api/events")
       source.addEventListener("change", (event) => {
-        const topics = JSON.parse((event as MessageEvent<string>).data) as string[]
-        void invalidateTopics(queryClient, topics, document.visibilityState === "hidden")
+        refresh(JSON.parse((event as MessageEvent<string>).data) as string[])
+      })
+      source.addEventListener("ready", () => {
+        if (missed) refresh(EVERY_TOPIC)
+        missed = false
       })
       source.onerror = () => {
+        missed = true
         source?.close()
         void api("/session").catch(() => {})
         retry = setTimeout(connect, 5_000)

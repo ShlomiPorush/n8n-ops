@@ -4,9 +4,16 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Changed
+
+- **Needs downtime.** Releases before this one run every scheduled job in each server, so this release cannot run beside them: update to it with the update with downtime in [docs/deploy.md](docs/deploy.md), and copy the new `scripts/update.sh` beside your deployment before you use it again.
+- **Two servers can run at once.** One server leads and runs the scheduled work; the other serves requests and takes the lead when the first has exited. A stopping server first drains (its health check fails so the reverse proxy stops sending it requests), then finishes the requests and work it started. Both releases' web assets are served during an update. Give the server a `stop_grace_period` longer than its longest backup upload, restore or move. [docs/deploy.md](docs/deploy.md) explains it and lists what can differ while both run.
+- **`update.sh` refuses an unsafe update before it changes anything**: a server that is not exactly one healthy container of a release, a release that cannot run beside the running one, or a downgrade. A stopped or missing server is no longer started by it; use the update with downtime.
+- **Starting the same backup twice opens one run.** A manual backup and the schedule starting at once, also of the n8n-ops database, share one run.
+
 ### Added
 
-- **Deployment labels on the server image.** `n8n-ops.compose-sha256` holds the SHA-256 of the release's `docker-compose.yml` and `n8n-ops.rollout-from` the oldest release the image may run beside, which is the release itself for now, so a zero-downtime rollout tool that reads it never runs two servers at once and each release is updated with a short downtime. [docs/deploy.md](docs/deploy.md) lists the tags, the labels, what an installation needs and the update with downtime.
+- **Deployment labels on the server image.** `n8n-ops.compose-sha256` holds the SHA-256 of the release's `docker-compose.yml`, and `n8n-ops.rollout-from` the oldest release the image may run beside: the newest release whose notes say it needs downtime.
 
 ## [0.20.0] - 2026-11-25
 

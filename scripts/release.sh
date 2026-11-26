@@ -7,7 +7,6 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 REGISTRY="ghcr.io/shlomiporush"
 SOURCE_URL="https://github.com/ShlomiPorush/n8n-ops"
 IMAGES=(server:n8n-ops worker:n8n-ops-worker)
-COMPOSE_PROJECT="n8n-ops"
 TARGET=""
 BUMP=""
 EXPECT_SHA=""
@@ -178,7 +177,7 @@ publish_images() {
     app="${pair%%:*}" name="${pair#*:}" ref="$REGISTRY/${pair#*:}:$VERSION"
     labels=()
     if [ "$app" = server ]; then
-      labels=(--label "$COMPOSE_PROJECT.compose-sha256=$compose_sha" --label "$COMPOSE_PROJECT.rollout-from=$VERSION")
+      labels=(--label "n8n-ops.compose-sha256=$compose_sha" --label "n8n-ops.rollout-from=$VERSION")
     fi
     state="$(image_state "$ref" "$revision")"
     case "$state" in

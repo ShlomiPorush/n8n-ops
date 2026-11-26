@@ -166,6 +166,7 @@ update() {
 }
 
 said() { grep -qF -- "$1" "$STATE/out"; }
+not_said() { ! said "$1"; }
 called() { grep -qxF -- "$1" "$STATE/calls"; }
 not_called() { ! called "$1"; }
 line_of() { grep -nxF -- "$1" "$STATE/calls" | head -n 1 | cut -d : -f 1; }
@@ -223,7 +224,17 @@ refused $? "the new image has no version label" "is version unknown, not 0.21.0"
 
 standard 0.10.0 0.9.0 0.9.0
 update 0.9.0
-refused $? "a downgrade" "runs 0.10.0, which is newer than 0.9.0"
+check "a downgrade: the run stops" [ $? -ne 0 ]
+check "  and says to restore the database backup instead" said "restore the n8n-ops database backup into the earlier release"
+check "  and does not point to the update with downtime" not_said "update with downtime"
+check "  and leaves .env as it was" env_kept
+check "  and rolls and starts nothing" nothing_rolled
+
+standard 0.21.0 0.21.0 ""
+without_worker
+update 0.21.0
+check "the server already runs the release, whose image has no rollout-from: the run succeeds" [ $? -eq 0 ]
+check "  and says it is already running" said "server is already running 0.21.0"
 
 standard 0.21.0 0.21.0 0.21.0
 without_worker
@@ -276,12 +287,15 @@ standard 0.20.0 0.21.0 0.20.0
 rm "$STATE"/containers/worker-*
 container worker "$WORKER:0.20.0" exited none
 update 0.21.0
-refused $? "a stopped worker" "worker is stopped"
+check "a stopped worker: the run succeeds" [ $? -eq 0 ]
+check "  and starts the worker" called "docker compose up -d --no-deps --wait --wait-timeout 180 worker"
+check "  after rolling the server" called "docker rollout --timeout 180 --wait-after-healthy 3 server"
 
 standard 0.20.0 0.21.0 0.20.0
 rm "$STATE"/containers/worker-*
 update 0.21.0
-refused $? "a worker without a container" "worker has no container"
+check "a worker without a container: the run succeeds" [ $? -eq 0 ]
+check "  and starts the worker" called "docker compose up -d --no-deps --wait --wait-timeout 180 worker"
 
 standard 0.20.0 0.21.0 0.20.0
 container worker "$WORKER:0.20.0" exited none

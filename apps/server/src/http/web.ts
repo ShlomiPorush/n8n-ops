@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import { existsSync, readFileSync } from "node:fs"
 import { copyFile, mkdir, readdir, rename } from "node:fs/promises"
 import { extname, join } from "node:path"
@@ -24,7 +25,7 @@ export async function publishAssets(dir: string, shared: string) {
   const have = new Set(await readdir(to))
   for (const name of await readdir(from)) {
     if (have.has(name)) continue
-    const part = join(to, `.${name}.${process.pid}.part`)
+    const part = join(to, `.${name}.${randomUUID()}.part`)
     await copyFile(join(from, name), part)
     await rename(part, join(to, name))
   }

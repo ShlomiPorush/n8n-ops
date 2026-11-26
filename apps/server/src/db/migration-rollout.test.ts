@@ -31,10 +31,14 @@ function rolloutProblems(text: string): string[] {
   const created = new Set(all.map((s) => NEW_TABLE.exec(s)?.[1]).filter((t): t is string => Boolean(t)))
   const problems: string[] = []
   for (const statement of all) {
+    if (statement.replace(/;\s*$/, "").includes(";")) {
+      problems.push(`more than one statement between breakpoints: ${statement.split("\n", 1)[0]}`)
+      continue
+    }
     const table = NEW_TABLE.exec(statement)
     if (table) {
-      if (/\b(PARTITION OF|GENERATED|REFERENCES)\b/i.test(statement))
-        problems.push(`${table[1]}: a new table may not be a partition, have generated columns or references`)
+      if (/\b(PARTITION OF|INHERITS|GENERATED|REFERENCES)\b/i.test(statement))
+        problems.push(`${table[1]}: a new table may not be a partition, inherit, have generated columns or references`)
       continue
     }
     const index = NEW_INDEX.exec(statement)
@@ -73,6 +77,8 @@ describe("a migration", () => {
     ['CREATE TABLE "a" ("i" integer GENERATED ALWAYS AS (1) STORED);', "a generated column"],
     ['CREATE TABLE "a" PARTITION OF "audit_log" FOR VALUES IN (1);', "a partition of a table in use"],
     ['UPDATE "instances" SET "name" = "name";', "rewritten rows"],
+    ['CREATE TABLE "a" ("i" text) INHERITS ("instances");', "a child of a table in use"],
+    ['CREATE TABLE "a" ("i" text); DROP TABLE "instances";', "a second statement behind a new table"],
     [
       'CREATE TABLE "a" ("i" text);\n--> statement-breakpoint\nALTER TABLE "a" ADD CONSTRAINT "f" FOREIGN KEY ("i") REFERENCES "public"."instances"("id");',
       "a key to a table in use",

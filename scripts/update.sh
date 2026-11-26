@@ -220,17 +220,14 @@ check_containers() {
   all="$(docker compose ps -a -q "$service")" || stop "Could not read the containers of $service from Docker."
   running="$(docker compose ps -q "$service")" || stop "Could not read the containers of $service from Docker."
   count="$(wc -w <<<"$all")"
-  if ((count == 0)); then
-    stop "$service has no container. $DOWNTIME"
-  fi
   if ! is_server "$service"; then
-    if [[ -z $running ]]; then
-      stop "$service is stopped. $DOWNTIME"
-    fi
-    if ((count != $(wc -w <<<"$running"))); then
+    if [[ -n $running ]] && ((count != $(wc -w <<<"$running"))); then
       stop "$service has stopped containers beside the running one, and docker rollout would replace only those. Remove them with: docker compose rm -f $service"
     fi
     return 0
+  fi
+  if ((count == 0)); then
+    stop "$service has no container. $DOWNTIME"
   fi
   if ((count > 1)); then
     stop "$service has $count containers, not one. $DOWNTIME"
@@ -257,8 +254,11 @@ check_target() {
   if [[ $built != "$expected" ]]; then
     stop "$image is version ${built:-unknown}, not $expected. $DOWNTIME"
   fi
+  if [[ $running == "$expected" ]]; then
+    return 0
+  fi
   if older "$expected" "$running"; then
-    stop "$service runs $running, which is newer than $expected. $DOWNTIME"
+    stop "$service runs $running, which is newer than $expected. A release cannot go back after its migrations ran: to go back, restore the n8n-ops database backup into the earlier release."
   fi
   from="$(label image n8n-ops.rollout-from "$image")" || stop "Could not read the labels of $image from Docker."
   if ! is_release "$from"; then
@@ -298,10 +298,16 @@ for service in "${services[@]}"; do
     rolled+=("$service")
     continue
   fi
-  log "Rolling $service"
+  if ! is_server "$service" && [[ -z "$(docker compose ps -q "$service")" ]]; then
+    log "$service is not running: starting it."
+    started=(docker compose up -d --no-deps --wait --wait-timeout "$TIMEOUT" "$service")
+  else
+    log "Rolling $service"
+    started=(docker rollout --timeout "$TIMEOUT" --wait-after-healthy 3 "$service")
+  fi
   rolling="$service"
   ok=1
-  docker rollout --timeout "$TIMEOUT" --wait-after-healthy 3 "$service" || ok=""
+  "${started[@]}" || ok=""
   if ! record "$service"; then
     rolled+=("$service")
     rolling=""

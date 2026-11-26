@@ -99,7 +99,7 @@ export class Telegram {
   }
 
   getWebhookInfo() {
-    return this.call<{ url?: string } | true>("getWebhookInfo", {})
+    return this.call<{ url?: string; last_error_date?: number } | true>("getWebhookInfo", {})
   }
 
   setWebhook(url: string, secretToken: string) {

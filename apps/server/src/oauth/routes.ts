@@ -8,6 +8,7 @@ import { addressOf, incomingOf, limiter } from "../http/address.ts"
 import { requireUser } from "../http/middleware.ts"
 import { actorName, type Env } from "../http/types.ts"
 import { sha256 } from "../lib/crypto.ts"
+import { own } from "../lib/owned-work.ts"
 import { type AgentConnect, issuerOf } from "./agents.ts"
 import { cleanLabel } from "./label.ts"
 import { CLI_CLIENT, resources, SCOPES } from "./provider.ts"
@@ -258,7 +259,7 @@ export function agentConnectRoutes(ctx: Ctx, agents: AgentConnect) {
     n.outgoing.setHeader("X-Frame-Options", "DENY")
     n.outgoing.setHeader("Content-Security-Policy", "frame-ancestors 'none'")
     n.outgoing.setHeader("Referrer-Policy", "no-referrer")
-    p.provider.callback()(n.incoming, n.outgoing)
+    void own(Promise.resolve(p.provider.callback()(n.incoming, n.outgoing)))
     return RESPONSE_ALREADY_SENT
   }
   app.all("/oauth/*", handoff)

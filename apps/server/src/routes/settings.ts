@@ -41,13 +41,6 @@ const envVariables = {
 
 type EnvValue = { variable: string; value: string; inUse: boolean; locked?: boolean }
 
-function changedFields(before: Record<string, unknown>, after: Record<string, unknown>) {
-  const change: Record<string, unknown> = {}
-  for (const key of new Set([...Object.keys(before), ...Object.keys(after)]))
-    if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) change[key] = after[key]
-  return change
-}
-
 export function settingsRoutes(ctx: Ctx) {
   const app = new Hono<Env>()
   app.use("*", requireUser(ctx))
@@ -150,7 +143,7 @@ export function settingsRoutes(ctx: Ctx) {
       return c.json(stored.signedOut ? { ok: true, signedOut: true } : { ok: true })
     }
     if (section === "agents" && ctx.agents) await ctx.agents.saveSettings(sent as Partial<Section<"agents">>, who)
-    else await ctx.settings.merge(section, changedFields(current, parsed.data as Record<string, unknown>) as never)
+    else await ctx.settings.set(section, parsed.data as never)
     await ctx.audit(changed)
     if (section === "general" && ctx.agents) await ctx.agents.reconcileIssuer(who)
     if ((section === "telegram" || section === "general") && ctx.leading?.() !== false)

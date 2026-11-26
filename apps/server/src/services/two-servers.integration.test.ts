@@ -222,16 +222,4 @@ describe("two servers on one database", () => {
     const page = await (await app.request("/")).text()
     expect(page).toContain('data-design="compact"')
   })
-
-  it("keep both changes when two servers save different General fields at once", async () => {
-    const first = createSettings(database.db)
-    const second = createSettings(database.db)
-    await Promise.all([
-      first.merge("general", { timezone: "Asia/Jerusalem" }),
-      second.merge("general", { publicUrl: "https://ops.example.com" }),
-    ])
-    const general = await first.get("general")
-    expect(general.timezone).toBe("Asia/Jerusalem")
-    expect(general.publicUrl).toBe("https://ops.example.com")
-  })
 })

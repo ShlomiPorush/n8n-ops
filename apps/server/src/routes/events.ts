@@ -3,6 +3,7 @@ import { streamSSE } from "hono/streaming"
 import type { Ctx, Topic } from "../context.ts"
 import { requireUser } from "../http/middleware.ts"
 import { actorName, type Env } from "../http/types.ts"
+import { own } from "../lib/owned-work.ts"
 import { checkSession } from "../services/session-policy.ts"
 
 export const SESSION_RECHECK_MS = 30_000
@@ -41,7 +42,7 @@ export function eventRoutes(ctx: Ctx, { recheckMs = SESSION_RECHECK_MS }: { rech
       const recheck =
         actor.kind === "user"
           ? setInterval(() => {
-              checkSession(ctx, actor.sessionId, { mode: "peek", actor: actorName(actor) })
+              own(checkSession(ctx, actor.sessionId, { mode: "peek", actor: actorName(actor) }))
                 .then((check) => {
                   if (!check.ok) finish()
                 })

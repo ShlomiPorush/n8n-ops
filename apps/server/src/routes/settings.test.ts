@@ -43,10 +43,6 @@ function fakeCtx(data: Stored, env: SettingsEnv = {}) {
     set: async (key: SectionName, value: Record<string, unknown>) => {
       data[key] = value
     },
-    merge: async (key: SectionName, change: Record<string, unknown>) => {
-      data[key] = { ...(await stored(key)), ...change }
-      return data[key]
-    },
   }
   return {
     settings,

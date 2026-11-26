@@ -93,11 +93,15 @@ Accepted behaviours while both servers run:
   marks a restore confirmed more than 5 minutes ago as unknown, even if the other server is still running it.
 - After a server lost its lock and exited, an upload, a Telegram message or a webhook registration it had already
   sent can still complete: a bucket can keep an extra object version, a message can repeat, and Telegram can keep
-  an old webhook address until the leader's next check, within a minute.
+  an old webhook address or secret. The leader checks Telegram every minute and registers again when the address
+  differs or Telegram reports a failed delivery; a changed secret therefore shows at the next button press, which
+  fails once.
+- Two saves of the same Settings page at the same moment: the later one replaces the whole page, as before.
 
 ## What the installation needs
 
-These rules hold for the `docker-compose.yml` and `.env` on the host. The tracked `docker-compose.yml` follows them.
+These rules hold for the `docker-compose.yml` and `.env` on the host. The tracked `docker-compose.yml` follows them,
+except that it sets no `stop_grace_period`; add one to the installation's own file.
 
 - `name: n8n-ops` at the top of `docker-compose.yml`, so the Compose project name is `n8n-ops`.
 - The `server` service uses `image: ghcr.io/shlomiporush/n8n-ops:${VERSION}`.
@@ -109,13 +113,14 @@ These rules hold for the `docker-compose.yml` and `.env` on the host. The tracke
 - A restart policy such as `restart: unless-stopped`, and a `stop_grace_period` as described above.
 
 `scripts/update.sh` rolls a release out with docker rollout only when exactly one healthy server of a release runs,
-the new image's `n8n-ops.rollout-from` allows the running release, and the new release is not older than it. Anything
-else stops it before `.env` changes; then use the update with downtime.
+the new image's `n8n-ops.rollout-from` allows the running release, and the new release is not older than it; a worker
+that is not running is started. Anything else stops it before `.env` changes: use the update with downtime, except for
+a downgrade, which only restoring the n8n-ops database backup into the earlier release can do.
 
 ## Update with downtime
 
-Use it for a release that cannot run beside the running one, for a server that is stopped or missing, and for any
-state the rollout refuses. Before an update, make sure that the n8n-ops database backup (Backups → n8n-ops database)
+Use it for a newer release that cannot run beside the running one, for a server that is stopped or missing, and for
+the other states the rollout refuses, never to go back to an earlier release. Before an update, make sure that the n8n-ops database backup (Backups → n8n-ops database)
 is recent: a release cannot go back to an earlier one after its migrations ran. When the release notes of a release
 since the running one change `docker-compose.yml`, apply those changes to the installation's own file first.
 

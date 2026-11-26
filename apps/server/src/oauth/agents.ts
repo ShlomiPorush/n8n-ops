@@ -7,6 +7,7 @@ import { agentConsent, apiTokens, session, user } from "../db/schema.ts"
 import { tokenActor } from "../http/types.ts"
 import type { AuditVia } from "../lib/audit.ts"
 import { sha256 } from "../lib/crypto.ts"
+import { own } from "../lib/owned-work.ts"
 import { type Design, readSection, type Section, sections, writeSection } from "../lib/settings.ts"
 import { revokeAccessOfToken } from "../services/access.ts"
 import { gateExclusive, gateShared, generation, lastIssuer, nextGeneration, rememberIssuer, type Tx } from "./gate.ts"
@@ -235,7 +236,7 @@ export function createAgentConnect(
       if (!issuer) return null
       const created = createAgentProvider({ issuer, adapter: Adapter, cookieKeys, pages })
       created.on("grant.revoked", (_c, grantId: string) => {
-        void end({ grantId }, "cut", SYSTEM).catch((e: Error) =>
+        void own(end({ grantId }, "cut", SYSTEM)).catch((e: Error) =>
           ctx.log.warn("could not end an agent connection", { error: e.message }),
         )
       })

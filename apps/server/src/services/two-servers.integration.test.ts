@@ -116,7 +116,8 @@ describe("two servers on one database", () => {
     expect(b.leading()).toBe(false)
     await database.db.execute(sql`
       select pg_terminate_backend(pid) from pg_locks
-      where locktype = 'advisory' and granted and objid = ${advisoryLocks.leader}::oid and pid <> pg_backend_pid()`)
+      where locktype = 'advisory' and granted and objid = ${advisoryLocks.leader}::oid and pid <> pg_backend_pid()
+        and database = (select oid from pg_database where datname = current_database())`)
     await vi.waitFor(() => expect(lost).toEqual(["a"]), { timeout: 10_000 })
     await vi.waitFor(() => expect(begun).toEqual(["a", "b"]), { timeout: 10_000 })
     expect(lost).toEqual(["a"])

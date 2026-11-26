@@ -76,11 +76,14 @@ NEW=X.Y.Z
 VERSION="$NEW" docker compose pull server &&
   sed -i --follow-symlinks "s/^VERSION=.*/VERSION=$NEW/" .env &&
   VERSION="$NEW" docker compose stop server &&
-  VERSION="$NEW" docker compose up -d --wait --wait-timeout 300 server
+  VERSION="$NEW" docker compose up -d --no-deps --wait --wait-timeout 300 server
 ```
+
+This replaces only the server. When the release notes change the image of `postgres`, update that service in its own
+step as the notes describe.
 
 Check the version the server reports:
 
 ```bash
-docker compose exec -T -u node server node -e 'fetch("http://127.0.0.1:8080/healthz/live").then((r) => r.json()).then((b) => console.log(b.version))'
+VERSION="$NEW" docker compose exec -T -u node server node -e 'fetch("http://127.0.0.1:8080/healthz/live").then((r) => r.json()).then((b) => console.log(b.version))'
 ```

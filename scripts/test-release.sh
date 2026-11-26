@@ -42,10 +42,10 @@ if [ "$1 $2" = "imagetools create" ]; then
   exit 0
 fi
 if [ "$1" = build ]; then
-  rev="" ref="" args=""
+  rev="" ref="" args="" labels=""
   while [ $# -gt 0 ]; do
     case "$1" in
-      --label) case "$2" in org.opencontainers.image.revision=*) rev="${2#*=}" ;; esac; shift ;;
+      --label) labels="$labels$2 "; case "$2" in org.opencontainers.image.revision=*) rev="${2#*=}" ;; esac; shift ;;
       --build-arg) args="$args $2"; shift ;;
       -t) ref="$2"; shift ;;
     esac
@@ -54,6 +54,7 @@ if [ "$1" = build ]; then
   case "$ref" in *"${MOCK_FAIL_BUILD:-no-such-image}"*) echo "push failed" >&2; exit 1 ;; esac
   printf '%s' "$rev" >"$STATE/images/$(key "$ref")"
   printf '%s' "$args" >"$STATE/buildargs/$(key "$ref")"
+  printf '%s' "$labels" >"$STATE/labels/$(key "$ref")"
   exit 0
 fi
 echo "unexpected docker buildx $*" >&2
@@ -92,7 +93,7 @@ chmod +x "$WORK/bin/docker" "$WORK/bin/gh"
 
 sandbox() {
   rm -rf "$WORK/case"
-  mkdir -p "$WORK/case/images" "$WORK/case/releases" "$WORK/case/buildargs"
+  mkdir -p "$WORK/case/images" "$WORK/case/releases" "$WORK/case/buildargs" "$WORK/case/labels"
   export STATE="$WORK/case"
   git init --quiet --bare --initial-branch=main "$WORK/case/origin.git"
   local seed="$WORK/case/seed"
@@ -103,6 +104,7 @@ sandbox() {
   : >"$seed/docker/server.Dockerfile"
   : >"$seed/docker/worker.Dockerfile"
   printf '{\n  "name": "n8n-ops",\n  "private": true\n}\n' >"$seed/package.json"
+  printf 'name: n8n-ops\n' >"$seed/docker-compose.yml"
   printf '0.0.0\n' >"$seed/VERSION"
   printf '# Changelog\n\n## [Unreleased]\n\n### Added\n\n- The first feature.\n' >"$seed/CHANGELOG.md"
   git -C "$seed" add -A
@@ -131,6 +133,10 @@ has_tag() { git -C "$WORK/case/origin.git" rev-parse -q --verify "refs/tags/$1" 
 image_rev() { cat "$STATE/images/ghcr.io_shlomiporush_$1" 2>/dev/null; }
 tag_rev() { git -C "$WORK/case/origin.git" rev-parse "$1^{commit}"; }
 has_release() { [ -f "$STATE/releases/$1" ]; }
+labels_of() { cat "$STATE/labels/ghcr.io_shlomiporush_$1" 2>/dev/null; }
+has_label() { grep -qF " $2 " <<<" $(labels_of "$1")"; }
+lacks_rollout_labels() { ! grep -q "n8n-ops\.\(compose-sha256\|rollout-from\)=" <<<"$(labels_of "$1")"; }
+tag_compose_sha() { git -C "$WORK/case/origin.git" show "$1:docker-compose.yml" | sha256sum | cut -d ' ' -f 1; }
 lacks_tag() { ! has_tag "$1"; }
 lacks_release() { ! has_release "$1"; }
 nothing_built() { ! grep -q "buildx build" "$STATE/calls"; }
@@ -154,6 +160,10 @@ check "the release commit changes exactly VERSION and CHANGELOG.md" \
   [ "$(git -C "$WORK/case/origin.git" diff --name-only main~1 main | tr '\n' ' ')" = "CHANGELOG.md VERSION " ]
 check "the images take the version from VERSION, not from a build argument" \
   [ -z "$(cat "$STATE/buildargs/ghcr.io_shlomiporush_n8n-ops_0.1.0" "$STATE/buildargs/ghcr.io_shlomiporush_n8n-ops-worker_0.1.0")" ]
+check "the server image carries the hash of the tag's docker-compose.yml" \
+  has_label n8n-ops_0.1.0 "n8n-ops.compose-sha256=$(tag_compose_sha v0.1.0)"
+check "  and may run beside its own release only" has_label n8n-ops_0.1.0 "n8n-ops.rollout-from=0.1.0"
+check "the worker image carries neither label" lacks_rollout_labels n8n-ops-worker_0.1.0
 check "the CHANGELOG keeps an empty Unreleased above the dated section" \
   grep -qzP '## \[Unreleased\]\n\n## \[0\.1\.0\] - \d{4}-\d{2}-\d{2}\n' <(git -C "$WORK/case/origin.git" show main:CHANGELOG.md)
 check "the GitHub Release has the title and the section's notes" \
@@ -164,6 +174,7 @@ git -C "$dir" commit --quiet -am "Fix" && git -C "$dir" push --quiet origin main
 BUMP="patch" release
 check "the next run releases 0.1.1 with --bump patch" complete 0.1.1
 check "0.1.1's notes hold only its own entries" [ "$(sed -n '2,$p' "$STATE/releases/v0.1.1")" = "$(printf '### Fixed\n\n- A fix.')" ]
+check "0.1.1 may run beside 0.1.1 only" has_label n8n-ops_0.1.1 "n8n-ops.rollout-from=0.1.1"
 
 sandbox
 stale="$(origin_head)"
@@ -195,6 +206,7 @@ BUMP="major" release
 check "the next run finishes 0.1.0 and ignores the bump" complete 0.1.0
 check "  and says so" said "v0.1.0 was not finished"
 check "  without building the first image again" [ "$(grep -c "buildx build.*n8n-ops:0.1.0" "$STATE/calls")" = 1 ]
+check "  and the worker it builds carries neither label" lacks_rollout_labels n8n-ops-worker_0.1.0
 check "  and starts no other version" lacks_tag v1.0.0
 
 sandbox

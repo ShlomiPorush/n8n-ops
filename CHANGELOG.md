@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+
+- **Deployment labels on the server image.** `n8n-ops.compose-sha256` holds the SHA-256 of the release's `docker-compose.yml` and `n8n-ops.rollout-from` the oldest release the image may run beside, which is the release itself for now, so a zero-downtime rollout tool that reads it never runs two servers at once and each release is updated with a short downtime. [docs/deploy.md](docs/deploy.md) lists the tags, the labels, what an installation needs and the update with downtime.
+
 ## [0.20.0] - 2026-11-25
 
 ### Changed

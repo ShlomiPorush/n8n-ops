@@ -7,6 +7,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 REGISTRY="ghcr.io/shlomiporush"
 SOURCE_URL="https://github.com/ShlomiPorush/n8n-ops"
 IMAGES=(server:n8n-ops worker:n8n-ops-worker)
+COMPOSE_PROJECT="n8n-ops"
 TARGET=""
 BUMP=""
 EXPECT_SHA=""
@@ -166,14 +167,19 @@ create_tag() {
 }
 
 publish_images() {
-  local revision src pair app name ref state
+  local revision src pair app name ref state compose_sha labels
   revision="$(git_ rev-parse "$TAG^{commit}")"
   src="$(mktemp -d)"
   # shellcheck disable=SC2064 # expand now: the path is fixed
   trap "rm -rf '$src'" EXIT
   git_ archive "$TAG" | tar -x -C "$src"
+  compose_sha="$(sha256sum "$src/docker-compose.yml" | cut -d ' ' -f 1)" || die "$TAG has no docker-compose.yml to hash"
   for pair in "${IMAGES[@]}"; do
     app="${pair%%:*}" name="${pair#*:}" ref="$REGISTRY/${pair#*:}:$VERSION"
+    labels=()
+    if [ "$app" = server ]; then
+      labels=(--label "$COMPOSE_PROJECT.compose-sha256=$compose_sha" --label "$COMPOSE_PROJECT.rollout-from=$VERSION")
+    fi
     state="$(image_state "$ref" "$revision")"
     case "$state" in
       match) echo "    $ref is already published from $TAG" ;;
@@ -185,6 +191,7 @@ publish_images() {
           --label "org.opencontainers.image.revision=$revision" \
           --label "org.opencontainers.image.source=$SOURCE_URL" \
           --label "org.opencontainers.image.version=$VERSION" \
+          "${labels[@]}" \
           -t "$ref" "$src" || die "building or pushing $ref failed. Run the release again to finish $TAG."
         ;;
     esac

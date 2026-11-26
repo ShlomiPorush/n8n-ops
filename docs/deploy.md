@@ -80,7 +80,7 @@ VERSION="$NEW" docker compose pull server &&
 ```
 
 This replaces only the server. When the release notes change the image of `postgres`, update that service in its own
-step as the notes describe.
+step first, with `docker compose up -d --wait postgres` so that it is healthy before the server starts.
 
 Check the version the server reports:
 

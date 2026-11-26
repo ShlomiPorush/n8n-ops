@@ -15,6 +15,7 @@ import {
   workerJobs,
   workers,
 } from "../db/schema.ts"
+import { advisoryLocks } from "../lib/advisory-locks.ts"
 import { own } from "../lib/owned-work.ts"
 import { instanceSubject } from "./alert-routing.ts"
 import { setCondition } from "./alerts.ts"
@@ -98,8 +99,6 @@ export class NoDestinationError extends Error {
   }
 }
 
-const SELF_BACKUP_LOCK = 7_243_005
-
 type Started = { run: Run; instance: Instance | null; created: boolean }
 
 async function createRun(
@@ -111,7 +110,7 @@ async function createRun(
   return ctx.db.transaction(async (tx) => {
     const [now] = target ? await tx.select().from(instances).where(eq(instances.id, target.id)).for("update") : []
     if (target && !(now && can(now, "backup"))) return null
-    if (!target) await tx.execute(sql`select pg_advisory_xact_lock(${SELF_BACKUP_LOCK}::bigint)`)
+    if (!target) await tx.execute(sql`select pg_advisory_xact_lock(${advisoryLocks.selfBackup}::bigint)`)
     const live = await tx
       .select()
       .from(backupRuns)

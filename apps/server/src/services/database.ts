@@ -2,9 +2,9 @@ import { and, desc, eq, sql } from "drizzle-orm"
 import type { ReservedSql } from "postgres"
 import type { Ctx } from "../context.ts"
 import { dbCompactions } from "../db/schema.ts"
+import { advisoryLocks } from "../lib/advisory-locks.ts"
 import { own } from "../lib/owned-work.ts"
 
-const COMPACT_LOCK = 7_243_003
 const COMPACT_WAIT_MS = 3_000
 const FREE_SPACE_TTL_MS = 10 * 60_000
 
@@ -33,7 +33,7 @@ const lockHolder = sql`
   select pid from pg_locks
   where locktype = 'advisory' and granted
     and database = (select oid from pg_database where datname = current_database())
-    and classid = 0 and objid = ${COMPACT_LOCK}::oid and objsubid = 1`
+    and classid = 0 and objid = ${advisoryLocks.compaction}::oid and objsubid = 1`
 
 async function activeHolder(ctx: Pick<Ctx, "db">): Promise<number | null> {
   const [held] = rows<{ pid: number }>(await ctx.db.execute(lockHolder))
@@ -220,7 +220,7 @@ export async function startCompact(ctx: Ctx, table: string, actor: string): Prom
     session = await client.reserve()
     await session.unsafe(`set lock_timeout = ${COMPACT_WAIT_MS}; set client_min_messages = warning`)
     const [lock] = await session<{ locked: boolean }[]>`
-      select pg_try_advisory_lock(${COMPACT_LOCK}::bigint) as locked`
+      select pg_try_advisory_lock(${advisoryLocks.compaction}::bigint) as locked`
     if (!lock?.locked)
       throw new DatabaseMaintenanceError("busy", "Another table is being compacted. Try again when it ends.")
     const row = await ctx.db.transaction(async (tx) => {

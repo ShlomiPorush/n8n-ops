@@ -1,6 +1,6 @@
 import type { Ctx } from "../context.ts"
+import { advisoryLocks } from "../lib/advisory-locks.ts"
 
-const LEADER_LOCK = 7_243_004
 export const LEAD_ATTEMPT_MS = 5_000
 
 export type Leadership = { leading(): boolean; stop(): void }
@@ -29,7 +29,9 @@ export function lead(
     })
     try {
       const session = await client.reserve()
-      const [row] = await session<{ locked: boolean }[]>`select pg_try_advisory_lock(${LEADER_LOCK}::bigint) as locked`
+      const [row] = await session<
+        { locked: boolean }[]
+      >`select pg_try_advisory_lock(${advisoryLocks.leader}::bigint) as locked`
       if (row?.locked && !stopped) {
         held = true
         leading = true

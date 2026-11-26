@@ -1,18 +1,17 @@
 import { eq, sql } from "drizzle-orm"
 import type { Db } from "../db/client.ts"
 import { agentState } from "../db/schema.ts"
+import { advisoryLocks } from "../lib/advisory-locks.ts"
 
 export type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0]
 type Runner = Db | Tx
 
-const GATE = 0x6e386f61
-
 export async function gateShared(tx: Tx) {
-  await tx.execute(sql`select pg_advisory_xact_lock_shared(${GATE})`)
+  await tx.execute(sql`select pg_advisory_xact_lock_shared(${advisoryLocks.agentGate})`)
 }
 
 export async function gateExclusive(tx: Tx) {
-  await tx.execute(sql`select pg_advisory_xact_lock(${GATE})`)
+  await tx.execute(sql`select pg_advisory_xact_lock(${advisoryLocks.agentGate})`)
 }
 
 export async function generation(db: Runner): Promise<number> {

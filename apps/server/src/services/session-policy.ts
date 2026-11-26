@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks"
 import { and, eq, gt, isNotNull, isNull, lt, ne, or, sql } from "drizzle-orm"
 import type { Ctx } from "../context.ts"
 import { session } from "../db/schema.ts"
+import { advisoryLocks } from "../lib/advisory-locks.ts"
 import type { AuditEntry } from "../lib/audit.ts"
 import { readSection, type Section, writeSection } from "../lib/settings.ts"
 
@@ -143,7 +144,7 @@ export async function inheritClocks(ctx: Pick<Ctx, "db" | "audit">, newSessionId
   const kept = inherited.getStore()
   if (!kept) return
   await ctx.db.transaction(async (tx) => {
-    await tx.execute(sql`select pg_advisory_xact_lock_shared(${SIGN_OUTS})`)
+    await tx.execute(sql`select pg_advisory_xact_lock_shared(${advisoryLocks.signOuts})`)
     await tx.update(session).set(kept.values).where(eq(session.id, newSessionId))
     const { generation, keptSessionId } = await readSection(tx, "sessionSignOuts")
     if (generation === kept.signOuts || keptSessionId === kept.sessionId) return
@@ -156,8 +157,6 @@ export async function inheritClocks(ctx: Pick<Ctx, "db" | "audit">, newSessionId
     for (const row of ended) await ctx.audit(signedOutEntry(actor, row.ipAddress, now), tx)
   })
 }
-
-const SIGN_OUTS = 7_243_004
 
 export function lengthens(before: Policy, after: Policy): boolean {
   if (after.lifetimeHours > before.lifetimeHours || after.maxHours > before.maxHours) return true
@@ -181,7 +180,7 @@ export async function storeClocks(
   { sessionId, userId, actor, changed }: { sessionId: string; userId: string; actor: string; changed: AuditEntry },
 ): Promise<{ ok: true; signedOut: boolean } | StoreRefused> {
   return ctx.db.transaction(async (tx) => {
-    await tx.execute(sql`select pg_advisory_xact_lock(${SIGN_OUTS})`)
+    await tx.execute(sql`select pg_advisory_xact_lock(${advisoryLocks.signOuts})`)
     const [own] = await tx
       .select({ endedReason: session.endedReason })
       .from(session)

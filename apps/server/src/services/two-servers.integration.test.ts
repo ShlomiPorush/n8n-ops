@@ -15,6 +15,7 @@ import { createDatabase, type Database } from "../db/client.ts"
 import { backupCopies, backupDestinations, backupRuns, instances } from "../db/schema.ts"
 import type { Env } from "../http/types.ts"
 import { serveWeb } from "../http/web.ts"
+import { advisoryLocks } from "../lib/advisory-locks.ts"
 import { createSecrets } from "../lib/crypto.ts"
 import { createSettings } from "../lib/settings.ts"
 import { archiveReady, runSelfBackup, scheduleBackups, startBackup } from "./backups.ts"
@@ -115,7 +116,7 @@ describe("two servers on one database", () => {
     expect(b.leading()).toBe(false)
     await database.db.execute(sql`
       select pg_terminate_backend(pid) from pg_locks
-      where locktype = 'advisory' and granted and objid = 7243004 and pid <> pg_backend_pid()`)
+      where locktype = 'advisory' and granted and objid = ${advisoryLocks.leader}::oid and pid <> pg_backend_pid()`)
     await vi.waitFor(() => expect(lost).toEqual(["a"]), { timeout: 10_000 })
     await vi.waitFor(() => expect(begun).toEqual(["a", "b"]), { timeout: 10_000 })
     expect(lost).toEqual(["a"])

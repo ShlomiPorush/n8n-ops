@@ -1,6 +1,7 @@
 import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js"
 import { migrate } from "drizzle-orm/postgres-js/migrator"
 import postgres, { type Options, type Sql } from "postgres"
+import { advisoryLocks } from "../lib/advisory-locks.ts"
 import * as schema from "./schema.ts"
 
 export type Db = PostgresJsDatabase<typeof schema>
@@ -12,8 +13,6 @@ export type Database = {
   connect(options: Options<Record<string, never>>): Sql
   close(): Promise<void>
 }
-
-const MIGRATE_LOCK = 7_243_006
 
 export function createDatabase(url: string, { max = 10 }: { max?: number } = {}): Database {
   const sql = postgres(url, { max, onnotice: () => {} })
@@ -31,7 +30,7 @@ export function createDatabase(url: string, { max = 10 }: { max?: number } = {})
         },
       })
       try {
-        await client`select pg_advisory_lock(${MIGRATE_LOCK}::bigint)`
+        await client`select pg_advisory_lock(${advisoryLocks.migrations}::bigint)`
         held = true
         await migrate(drizzle(client, { schema }), { migrationsFolder })
       } finally {

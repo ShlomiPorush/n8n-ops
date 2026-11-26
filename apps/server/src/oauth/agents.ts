@@ -228,10 +228,11 @@ export function createAgentConnect(
   }
 
   async function provider() {
-    const issuer = issuerOf((await ctx.settings.get("general")).publicUrl)
-    if (!issuer) return null
-    if (current?.issuer !== issuer) {
-      await reconcileIssuer(issuer)
+    const wanted = issuerOf((await ctx.settings.get("general")).publicUrl)
+    if (!wanted) return null
+    if (current?.issuer !== wanted) {
+      const issuer = await reconcileIssuer()
+      if (!issuer) return null
       const created = createAgentProvider({ issuer, adapter: Adapter, cookieKeys, pages })
       created.on("grant.revoked", (_c, grantId: string) => {
         void end({ grantId }, "cut", SYSTEM).catch((e: Error) =>
@@ -382,33 +383,47 @@ export function createAgentConnect(
     return row
   }
 
-  async function reconcileIssuer(issuer: string | null, savedBy?: Who) {
-    const known = await lastIssuer(ctx.db)
-    if (savedBy || (known && known !== issuer)) {
-      await endEveryConnection(ctx, "address", savedBy ?? SYSTEM, (tx) => rememberIssuer(tx, issuer))
-      return
-    }
-    if (known) return
-    const rows = await ctx.db
-      .select({ id: apiTokens.id })
-      .from(apiTokens)
-      .where(
-        and(
-          eq(apiTokens.kind, "agent"),
-          isNull(apiTokens.revokedAt),
-          issuer ? or(ne(apiTokens.issuer, issuer), isNull(apiTokens.issuer)) : undefined,
-        ),
-      )
-    for (const r of rows) await end({ id: r.id }, "address", SYSTEM)
-    if (issuer) await rememberIssuer(ctx.db, issuer)
+  async function reconcileIssuer(savedBy?: Who): Promise<string | null> {
+    const { issuer, ended } = await ctx.db.transaction(async (tx) => {
+      await gateExclusive(tx)
+      const general = await readSection(tx, "general")
+      const issuer = issuerOf(general.publicUrl || ctx.settings.fromEnv().publicUrl || "")
+      const known = await lastIssuer(tx)
+      if (known !== null && known === issuer) return { issuer, ended: false }
+      if (known !== null) {
+        await endEveryIn(ctx, tx, "address", savedBy ?? SYSTEM)
+        await rememberIssuer(tx, issuer)
+        return { issuer, ended: true }
+      }
+      const rows = await tx
+        .select({ id: apiTokens.id })
+        .from(apiTokens)
+        .where(
+          and(
+            eq(apiTokens.kind, "agent"),
+            isNull(apiTokens.revokedAt),
+            issuer ? or(ne(apiTokens.issuer, issuer), isNull(apiTokens.issuer)) : undefined,
+          ),
+        )
+      for (const r of rows) await endIn(ctx, tx, { id: r.id }, "address", SYSTEM)
+      if (issuer) await rememberIssuer(tx, issuer)
+      return { issuer, ended: rows.length > 0 }
+    })
+    if (ended) changed(ctx, "access", "overview")
+    return issuer
   }
 
   async function reconcile() {
-    await reconcileIssuer(issuerOf((await ctx.settings.get("general")).publicUrl))
-    if (!(await enabled())) {
-      const [live] = await liveConnections(ctx.db).limit(1)
-      if (live) await endEveryConnection(ctx, "off", SYSTEM)
-    }
+    await reconcileIssuer()
+    const ended = await ctx.db.transaction(async (tx) => {
+      await gateExclusive(tx)
+      if ((await readSection(tx, "agents")).enabled) return false
+      const [live] = await liveConnections(tx).limit(1)
+      if (!live) return false
+      await endEveryIn(ctx, tx, "off", SYSTEM)
+      return true
+    })
+    if (ended) changed(ctx, "access", "overview")
   }
 
   async function endAll(reason: EndReason, who: Who) {

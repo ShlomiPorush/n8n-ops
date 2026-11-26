@@ -98,6 +98,10 @@ export class Telegram {
     return this.call("answerCallbackQuery", { callback_query_id: callbackQueryId, text })
   }
 
+  getWebhookInfo() {
+    return this.call<{ url?: string } | true>("getWebhookInfo", {})
+  }
+
   setWebhook(url: string, secretToken: string) {
     return this.call("setWebhook", { url, secret_token: secretToken, allowed_updates: ["callback_query"] })
   }

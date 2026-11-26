@@ -14,7 +14,6 @@ import {
   smtpPasswordNeeded,
   wordedIssues,
 } from "../lib/settings.ts"
-import { issuerOf } from "../oauth/agents.ts"
 import { syncTelegramWebhook } from "../services/alerts.ts"
 import { storeClocks } from "../services/session-policy.ts"
 
@@ -41,6 +40,13 @@ const envVariables = {
 } as const
 
 type EnvValue = { variable: string; value: string; inUse: boolean; locked?: boolean }
+
+function changedFields(before: Record<string, unknown>, after: Record<string, unknown>) {
+  const change: Record<string, unknown> = {}
+  for (const key of new Set([...Object.keys(before), ...Object.keys(after)]))
+    if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) change[key] = after[key]
+  return change
+}
 
 export function settingsRoutes(ctx: Ctx) {
   const app = new Hono<Env>()
@@ -120,7 +126,6 @@ export function settingsRoutes(ctx: Ctx) {
     if (!parsed.success) return c.json(invalidAnswer(section, wordedIssues(section, parsed.error.issues)), 400)
     const issues = changedValueIssues(section, current, next)
     if (issues.length) return c.json(invalidAnswer(section, issues), 400)
-    const before = section === "general" ? (await ctx.settings.get("general")).publicUrl : null
     const who = { by: actorName(c.get("actor")), via: "web" as const }
     const changed = {
       actor: actorName(c.get("actor")),
@@ -145,13 +150,10 @@ export function settingsRoutes(ctx: Ctx) {
       return c.json(stored.signedOut ? { ok: true, signedOut: true } : { ok: true })
     }
     if (section === "agents" && ctx.agents) await ctx.agents.saveSettings(sent as Partial<Section<"agents">>, who)
-    else await ctx.settings.set(section, parsed.data as never)
+    else await ctx.settings.merge(section, changedFields(current, parsed.data as Record<string, unknown>) as never)
     await ctx.audit(changed)
-    if (section === "general" && ctx.agents) {
-      const { publicUrl } = await ctx.settings.get("general")
-      if (before !== publicUrl) await ctx.agents.reconcileIssuer(issuerOf(publicUrl), who)
-    }
-    if (section === "telegram" || section === "general")
+    if (section === "general" && ctx.agents) await ctx.agents.reconcileIssuer(who)
+    if ((section === "telegram" || section === "general") && ctx.leading?.() !== false)
       await syncTelegramWebhook(ctx).catch((e: Error) => ctx.log.warn("Telegram webhook not set", { error: e.message }))
     return c.json({ ok: true })
   })

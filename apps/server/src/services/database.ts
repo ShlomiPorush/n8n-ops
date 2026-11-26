@@ -2,6 +2,7 @@ import { and, desc, eq, sql } from "drizzle-orm"
 import type { ReservedSql } from "postgres"
 import type { Ctx } from "../context.ts"
 import { dbCompactions } from "../db/schema.ts"
+import { own } from "../lib/owned-work.ts"
 
 const COMPACT_LOCK = 7_243_003
 const COMPACT_WAIT_MS = 3_000
@@ -231,7 +232,7 @@ export async function startCompact(ctx: Ctx, table: string, actor: string): Prom
       await ctx.audit({ actor, action: "Database table compact started", target: target.name, via: "web" }, tx)
       return inserted
     })
-    void runCompact(ctx, session, warnings, row, target.target)
+    void own(runCompact(ctx, session, warnings, row, target.target))
       .finally(close)
       .catch((error: Error) =>
         ctx.log.error("database compact failed to finish", { table: target.name, error: error.message }),

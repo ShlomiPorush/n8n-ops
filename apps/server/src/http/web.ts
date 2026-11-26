@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs"
+import { copyFile, mkdir, readdir, rename } from "node:fs/promises"
 import { extname, join } from "node:path"
 import { serveStatic } from "@hono/node-server/serve-static"
 import type { Hono } from "hono"
@@ -15,7 +16,21 @@ export function withDesign(html: string, design: Design) {
   return html.replace(/<html\b/, `<html ${attr}`)
 }
 
-export function serveWeb(app: Hono<Env>, ctx: Ctx, dir: string | undefined) {
+export async function publishAssets(dir: string, shared: string) {
+  const from = join(dir, "assets")
+  const to = join(shared, "assets")
+  if (!existsSync(from)) return
+  await mkdir(to, { recursive: true })
+  const have = new Set(await readdir(to))
+  for (const name of await readdir(from)) {
+    if (have.has(name)) continue
+    const part = join(to, `.${name}.${process.pid}.part`)
+    await copyFile(join(from, name), part)
+    await rename(part, join(to, name))
+  }
+}
+
+export function serveWeb(app: Hono<Env>, ctx: Ctx, dir: string | undefined, shared?: string) {
   if (!dir) return
 
   for (const prefix of ["/assets", "/compact/assets"]) {
@@ -23,7 +38,10 @@ export function serveWeb(app: Hono<Env>, ctx: Ctx, dir: string | undefined) {
       await next()
       if (c.res.ok) c.res.headers.set("Cache-Control", IMMUTABLE)
     })
-    if (prefix === "/assets") app.use(`${prefix}/*`, serveStatic({ root: dir }))
+    if (prefix === "/assets") {
+      app.use(`${prefix}/*`, serveStatic({ root: dir }))
+      if (shared) app.use(`${prefix}/*`, serveStatic({ root: shared }))
+    }
     app.get(`${prefix}/*`, (c) => c.text("Not found", 404, { "Cache-Control": "no-store" }))
   }
 
@@ -49,6 +67,7 @@ export function serveWeb(app: Hono<Env>, ctx: Ctx, dir: string | undefined) {
       return c.text("Not found", 404, { "Cache-Control": "no-store" })
     }
 
+    await ctx.settings.loadDesign()
     const html = page(ctx.settings.design())
     if (!html) return c.text("The web interface is not installed.", 503, { "Cache-Control": "no-store" })
     return c.html(html, 200, {

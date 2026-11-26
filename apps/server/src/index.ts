@@ -2,6 +2,7 @@ import { hkdfSync } from "node:crypto"
 import { EventEmitter } from "node:events"
 import { writeSync } from "node:fs"
 import type { Server } from "node:http"
+import { dirname, join } from "node:path"
 import { serve } from "@hono/node-server"
 import { createApp } from "./app.ts"
 import { onTwoFactorReset } from "./auth/auth.ts"
@@ -11,12 +12,16 @@ import { type Ctx, consoleLogger } from "./context.ts"
 import { createDatabase } from "./db/client.ts"
 import { describeDatabaseError } from "./db/errors.ts"
 import { features } from "./features.ts"
+import { publishAssets } from "./http/web.ts"
 import { createAudit } from "./lib/audit.ts"
 import { createSecrets, loadOrCreateAppKey } from "./lib/crypto.ts"
+import { own, settleOwnedWork } from "./lib/owned-work.ts"
 import { createSettings } from "./lib/settings.ts"
 import { accountResetHooks, createAgentConnect } from "./oauth/agents.ts"
+import { endStreams } from "./routes/events.ts"
 import { UPLOAD_DEADLINE_MS } from "./routes/worker-api.ts"
 import { settleCompactions } from "./services/database.ts"
+import { lead } from "./services/leader.ts"
 import { endMutes } from "./services/problems.ts"
 
 const config = loadConfig()
@@ -68,22 +73,35 @@ onTwoFactorReset(accountResetHooks(ctx))
 await ctx.agents.reconcile()
 
 await ctx.settings.loadDesign()
-await settleCompactions(ctx)
-await endMutes(ctx)
+const sharedAssetsDir = join(dirname(config.appKeyPath), "web-assets")
+if (config.webDir) await publishAssets(config.webDir, sharedAssetsDir)
 const { mounts, start } = features(ctx)
-const app = createApp(ctx, { webDir: config.webDir, mounts })
+const app = createApp(ctx, { webDir: config.webDir, sharedAssetsDir, mounts })
 const server = serve({ fetch: app.fetch, port: config.port }, ({ port }) => {
   log.info(`n8n-ops server ${config.version} listening`, { port })
 }) as Server
 server.requestTimeout = UPLOAD_DEADLINE_MS + 5 * 60_000
-const stop = start()
+const leadership = lead(ctx, async () => {
+  await own(settleCompactions(ctx))
+  await own(endMutes(ctx))
+  return start()
+})
+ctx.leading = leadership.leading
 
+let closing = false
 const shutdown = (signal: string) => {
+  if (closing) return
+  closing = true
   log.info("shutting down", { signal })
-  stop()
-  server.close(() => {
-    void Promise.all([database.close(), storeDatabase.close()]).then(() => process.exit(0))
-  })
+  leadership.stop()
+  endStreams()
+  const closed = new Promise<void>((resolve) => server.close(() => resolve()))
+  void (async () => {
+    await Promise.all([closed, settleOwnedWork()])
+    await settleOwnedWork()
+    await Promise.all([database.close(), storeDatabase.close()])
+    process.exit(0)
+  })()
 }
 process.on("SIGTERM", () => shutdown("SIGTERM"))
 process.on("SIGINT", () => shutdown("SIGINT"))

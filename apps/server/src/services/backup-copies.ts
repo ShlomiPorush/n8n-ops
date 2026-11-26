@@ -10,6 +10,7 @@ import {
   type Leftover,
   workerJobs,
 } from "../db/schema.ts"
+import { own, stopping } from "../lib/owned-work.ts"
 import { instanceSubject } from "./alert-routing.ts"
 import { enqueueAlert, setCondition } from "./alerts.ts"
 import { backupAlerts, backupCondition } from "./backup-alerts.ts"
@@ -33,16 +34,19 @@ let pass: Promise<void> | null = null
 let again = false
 
 export function kickCopies(ctx: Ctx): Promise<void> {
+  if (stopping()) return Promise.resolve()
   if (pass) {
     again = true
     return pass
   }
-  pass = (async () => {
-    do {
-      again = false
-      await copyPass(ctx)
-    } while (again)
-  })()
+  pass = own(
+    (async () => {
+      do {
+        again = false
+        await copyPass(ctx)
+      } while (again && !stopping())
+    })(),
+  )
     .catch((error: Error) => ctx.log.warn("backup copies failed", { error: error.message }))
     .finally(() => {
       pass = null
@@ -112,11 +116,11 @@ async function copyPass(ctx: Ctx) {
     )
     .orderBy(asc(backupCopies.createdAt))
   for (const row of due) {
-    if (writing.size >= MAX_WRITES) break
+    if (writing.size >= MAX_WRITES || stopping()) break
     if (writing.has(row.copy.id) || busy.has(row.destination.id)) continue
     writing.add(row.copy.id)
     busy.add(row.destination.id)
-    void writeCopy(ctx, row.copy.id)
+    void own(writeCopy(ctx, row.copy.id))
       .catch((error: Error) => ctx.log.warn("backup copy interrupted", { copy: row.copy.id, error: error.message }))
       .finally(() => {
         writing.delete(row.copy.id)

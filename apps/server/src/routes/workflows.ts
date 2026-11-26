@@ -8,6 +8,7 @@ import { instances, workflows } from "../db/schema.ts"
 import { requireUser } from "../http/middleware.ts"
 import { actorName, type Env } from "../http/types.ts"
 import { likeContains } from "../lib/like.ts"
+import { own } from "../lib/owned-work.ts"
 import { activeWith, can, unsupportedVersion, workflowUrl } from "../services/instances.ts"
 import { exportCredentials, ProxyRefusedError, previewMove, runMove } from "../services/moves.ts"
 import { syncWorkflows } from "../services/workflows.ts"
@@ -119,8 +120,8 @@ export function workflowRoutes(ctx: Ctx) {
       const result = await runMove(ctx, body.data, actorName(c.get("actor")))
       const source = (await ctx.db.select().from(instances).where(eq(instances.id, body.data.sourceId)))[0]
       const target = (await ctx.db.select().from(instances).where(eq(instances.id, body.data.targetId)))[0]
-      if (source) void syncWorkflows(ctx, source).catch(() => {})
-      if (target) void syncWorkflows(ctx, target).catch(() => {})
+      if (source) void own(syncWorkflows(ctx, source)).catch(() => {})
+      if (target) void own(syncWorkflows(ctx, target)).catch(() => {})
       return c.json(result)
     } catch (error) {
       const { steps = [], proxyFix } = error as { steps?: unknown; proxyFix?: unknown }

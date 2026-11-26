@@ -2,6 +2,7 @@ import { DOCKER_CHECK_COVER_MS, type HeartbeatBody } from "@n8n-ops/shared"
 import { and, desc, eq, lt, type SQL, sql } from "drizzle-orm"
 import type { Ctx } from "../context.ts"
 import { instances, type OfflineJob, workerBeats, workerJobs, workerOffline, workers } from "../db/schema.ts"
+import { own, stopping } from "../lib/owned-work.ts"
 import { asDate, at } from "./health-history.ts"
 import type { DbLike } from "./problems.ts"
 import { offlineGap, RECORDING_GAP_MS } from "./worker-periods.ts"
@@ -48,10 +49,11 @@ export function startRecording(ctx: Ctx): () => void {
   let stopped = false
   let started = false
   const tick = async () => {
+    if (stopping()) return
     try {
-      await ctx.db.transaction((tx) => markAlive(tx))
+      await own(ctx.db.transaction((tx) => markAlive(tx)))
       if (!started) {
-        await markHistoryStart(ctx.db)
+        await own(markHistoryStart(ctx.db))
         started = true
       }
     } catch (error) {

@@ -962,7 +962,7 @@ describe("the public URL connections are made under", () => {
     const s = await setUp()
     const row = await connection(s.ctx)
     await s.move("https://ops.example.com")
-    await s.agents.reconcileIssuer("https://ops.example.com", { by: "owner", via: "web" })
+    await s.agents.reconcileIssuer({ by: "owner", via: "web" })
     await s.agents.provider()
     await s.agents.reconcile()
     expect((await s.ctx.db.select().from(apiTokens).where(eq(apiTokens.id, row.id)))[0]?.endReason).toBe("address")
@@ -987,10 +987,29 @@ describe("the public URL connections are made under", () => {
     s.ctx.audit = async () => {
       throw new Error("stopped here")
     }
-    await expect(s.agents.reconcileIssuer("https://ops.example.com")).rejects.toThrow("stopped here")
+    await s.move("https://ops.example.com")
+    await expect(s.agents.reconcileIssuer()).rejects.toThrow("stopped here")
     s.ctx.audit = audit
     expect((await s.ctx.db.select().from(agentState))[0]?.issuer).toBe(issuer)
     expect(await s.agents.stillLive(row.id)).toBe(true)
+  })
+
+  it("keeps a connection made under a new address when another server starts with the old one read", async () => {
+    const s = await setUp()
+    await s.move("https://ops.example.com")
+    await s.agents.reconcileIssuer({ by: "owner", via: "web" })
+    const made = await connection(s.ctx, { issuer: "https://ops.example.com" })
+    const read = s.ctx.settings
+    const stale = {
+      ...s.ctx,
+      settings: {
+        ...read,
+        get: async (key: Parameters<typeof read.get>[0]) =>
+          key === "general" ? { ...(await read.get("general")), publicUrl: issuer } : read.get(key),
+      },
+    } as Ctx
+    await createAgentConnect(stale, { cookieKeys: [value()] }).reconcile()
+    expect(await s.agents.stillLive(made.id)).toBe(true)
   })
 
   it("ends only connections of another address in a database that never recorded one", async () => {

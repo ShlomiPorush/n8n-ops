@@ -59,5 +59,6 @@ COPY --chmod=0755 docker/as-node.sh /usr/local/bin/as-node
 COPY --chmod=0755 docker/server-entrypoint.sh /usr/local/bin/server-entrypoint
 EXPOSE 8080
 HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=3 CMD ["as-node", "node", "dist/healthcheck.js"]
+LABEL docker-rollout.pre-stop-hook="node /app/dist/drain.js"
 ENTRYPOINT ["server-entrypoint"]
 CMD ["node", "dist/index.js"]

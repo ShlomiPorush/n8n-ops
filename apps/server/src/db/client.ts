@@ -7,19 +7,37 @@ export type Db = PostgresJsDatabase<typeof schema>
 
 export type Database = {
   db: Db
-  migrate(migrationsFolder: string): Promise<void>
+  migrate(migrationsFolder: string, options?: { lost?: () => void }): Promise<void>
   ping(): Promise<boolean>
   connect(options: Options<Record<string, never>>): Sql
   close(): Promise<void>
 }
+
+const MIGRATE_LOCK = 7_243_006
 
 export function createDatabase(url: string, { max = 10 }: { max?: number } = {}): Database {
   const sql = postgres(url, { max, onnotice: () => {} })
   const db = drizzle(sql, { schema })
   return {
     db,
-    async migrate(migrationsFolder) {
-      await migrate(db, { migrationsFolder })
+    async migrate(migrationsFolder, { lost = () => process.exit(1) } = {}) {
+      let held = false
+      const client = postgres(url, {
+        max: 1,
+        max_lifetime: null,
+        onnotice: () => {},
+        onclose: () => {
+          if (held) lost()
+        },
+      })
+      try {
+        await client`select pg_advisory_lock(${MIGRATE_LOCK}::bigint)`
+        held = true
+        await migrate(drizzle(client, { schema }), { migrationsFolder })
+      } finally {
+        held = false
+        await client.end({ timeout: 5 })
+      }
     },
     async ping() {
       try {

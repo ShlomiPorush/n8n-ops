@@ -14,7 +14,7 @@ import {
   topicWords,
   valueProblem,
 } from "@n8n-ops/shared"
-import { eq } from "drizzle-orm"
+import { eq, sql } from "drizzle-orm"
 import { z } from "zod"
 import type { Db } from "../db/client.ts"
 import { settings as settingsTable } from "../db/schema.ts"
@@ -356,6 +356,7 @@ export type SettingsStore = {
   stored<K extends SectionName>(key: K): Promise<Section<K>>
   fromEnv(): SettingsEnv
   set<K extends SectionName>(key: K, value: Section<K>): Promise<void>
+  merge<K extends SectionName>(key: K, change: Partial<Section<K>>): Promise<Section<K>>
   forInstance(overrides: Record<string, unknown>): Promise<InstanceSettings>
   design(): Design
   loadDesign(): Promise<void>
@@ -396,6 +397,19 @@ export function createSettings(db: Db, env: SettingsEnv = {}): SettingsStore {
       const parsed = sections[key].parse(value) as typeof value
       await write(key, parsed)
       if (key === "general") currentDesign = (parsed as Section<"general">).design
+    },
+    async merge(key, change) {
+      const parsed = await db.transaction(async (tx) => {
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`settings:${key}`}))`)
+        const next = sections[key].parse({ ...(await readSection(tx, key)), ...change }) as Section<typeof key>
+        await tx
+          .insert(settingsTable)
+          .values({ key, value: next, updatedAt: new Date() })
+          .onConflictDoUpdate({ target: settingsTable.key, set: { value: next, updatedAt: new Date() } })
+        return next
+      })
+      if (key === "general") currentDesign = (parsed as Section<"general">).design
+      return parsed
     },
     async forInstance(overrides) {
       return resolveInstanceSettings(await get("defaults"), overrides)

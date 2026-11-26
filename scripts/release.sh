@@ -7,6 +7,10 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 REGISTRY="ghcr.io/shlomiporush"
 SOURCE_URL="https://github.com/ShlomiPorush/n8n-ops"
 IMAGES=(server:n8n-ops worker:n8n-ops-worker)
+MIGRATIONS="apps/server/drizzle"
+JOURNAL="$MIGRATIONS/meta/_journal.json"
+DOWNTIME_NOTE="- **Needs downtime.**"
+DOWNTIME_MIGRATION="-- rollout: downtime"
 TARGET=""
 BUMP=""
 EXPECT_SHA=""
@@ -26,7 +30,8 @@ Usage: scripts/release.sh --target ghcr --bump <patch|minor|major> [--skip-verif
   --skip-verify     Do not run scripts/verify.sh. Only with --expect-sha.
   --dry-run         Check everything and print the plan without changing anything.
 
-Steps: preflight (clean main in sync with origin, release notes present, version unused), full
+Steps: preflight (clean main in sync with origin, release notes present, version unused, released
+migrations unchanged, a migration that needs downtime noted under Unreleased), full
 scripts/verify.sh, version and changelog update, release commit and tag pushed together, both images
 built from the tag and pushed, then :latest, then the GitHub Release from the CHANGELOG section.
 When the newest tag has no GitHub Release yet, an earlier run stopped halfway: this run finishes that
@@ -76,6 +81,24 @@ release_notes() {
   printf '%s\n' "$notes"
 }
 
+has_downtime_note() {
+  awk -v note="$DOWNTIME_NOTE" 'index($0, note) == 1 { found = 1 } END { exit !found }'
+}
+
+rollout_from() {
+  local version="$1" text found
+  text="$(cat)"
+  found="$(awk -v note="$DOWNTIME_NOTE" '
+    /^## \[[0-9]+\.[0-9]+\.[0-9]+\] - [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$/ {
+      section = substr($2, 2, length($2) - 2)
+      next
+    }
+    /^## / { section = ""; next }
+    section != "" && found == "" && index($0, note) == 1 { found = section }
+    END { print found }' <<<"$text")"
+  printf '%s\n' "${found:-$version}"
+}
+
 release_state() {
   local out
   if out="$(gh release view "$1" --json tagName 2>&1)"; then
@@ -103,8 +126,60 @@ image_state() {
   fi
 }
 
+image_carries() {
+  local ref="$1" out label
+  shift
+  out="$(docker buildx imagetools inspect "$ref" --format '{{json .Image}}' 2>&1)" ||
+    die "cannot read $ref from the registry: $out"
+  out="$(tr -d '[:space:]' <<<"$out")"
+  for label in "$@"; do
+    grep -qF "\"${label%%=*}\":\"${label#*=}\"" <<<"$out" || return 1
+  done
+}
+
 newest_tag() {
   git_ tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -1
+}
+
+journal_at() {
+  if git_ cat-file -e "$1:$JOURNAL" 2>/dev/null; then
+    git_ show "$1:$JOURNAL"
+  else
+    echo '{}'
+  fi
+}
+
+check_migrations() {
+  local newest="$1" added file first downtime=() old new result changed
+  added="$(git_ diff --name-only --no-renames --diff-filter=A "$newest" HEAD -- "$MIGRATIONS/*.sql")"
+  while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    first="$(git_ show "HEAD:$file" | sed -n 1p)"
+    if [ "$first" = "$DOWNTIME_MIGRATION" ]; then
+      downtime+=("$file")
+    fi
+  done <<<"$added"
+  if [ ${#downtime[@]} -gt 0 ] && ! has_downtime_note <<<"$(unreleased_notes)"; then
+    die "${downtime[*]} starts with '$DOWNTIME_MIGRATION', so this release needs downtime, but no line under [Unreleased] in CHANGELOG.md starts with '$DOWNTIME_NOTE'. Add one that says why and what an update needs."
+  fi
+
+  old="$(journal_at "$newest")"
+  new="$(journal_at HEAD)"
+  result="$(jq -rn --argjson old "$old" --argjson new "$new" '
+    ($old.entries // []) as $o | ($new.entries // []) as $n
+    | if $n[0:($o | length)] != $o then "changed"
+      else ([range(1; $n | length) | select($n[.].when <= $n[. - 1].when) | $n[.].tag] | join(", ")) as $late
+      | if $late == "" then "ok" else "late " + $late end
+      end')" || die "cannot read $JOURNAL at $newest or at HEAD"
+  case "$result" in
+    ok) ;;
+    changed) die "$JOURNAL changes or removes entries released in $newest. Released migrations stay as they are; add a new migration instead." ;;
+    "late "*) die "each entry in $JOURNAL must have a later \"when\" than the one before it, but ${result#late } does not" ;;
+    *) die "cannot read $JOURNAL at $newest or at HEAD" ;;
+  esac
+
+  changed="$(git_ diff --name-only --no-renames --diff-filter=DMT "$newest" HEAD -- "$MIGRATIONS/*.sql")"
+  [ -z "$changed" ] || die "migrations released in $newest were changed, moved or removed: ${changed//$'\n'/, }. Released migrations stay as they are; add a new migration instead."
 }
 
 preflight() {
@@ -135,6 +210,7 @@ preflight() {
   fi
 
   [ -n "$(unreleased_notes)" ] || die "CHANGELOG.md has no entries under [Unreleased]"
+  [ -z "$newest" ] || check_migrations "$newest"
   local current pair
   current="$(version_in <"$REPO_ROOT/VERSION")"
   [ -n "$current" ] || die "VERSION must hold one version, such as 1.2.3, and nothing else"
@@ -166,22 +242,32 @@ create_tag() {
 }
 
 publish_images() {
-  local revision src pair app name ref state compose_sha labels
+  local revision src pair app name ref state compose_sha from rollout labels label
   revision="$(git_ rev-parse "$TAG^{commit}")"
   src="$(mktemp -d)"
   # shellcheck disable=SC2064 # expand now: the path is fixed
   trap "rm -rf '$src'" EXIT
   git_ archive "$TAG" | tar -x -C "$src"
   compose_sha="$(sha256sum "$src/docker-compose.yml" | cut -d ' ' -f 1)" || die "$TAG has no docker-compose.yml to hash"
+  from="$(git_ show "$TAG:CHANGELOG.md" | rollout_from "$VERSION")"
   for pair in "${IMAGES[@]}"; do
     app="${pair%%:*}" name="${pair#*:}" ref="$REGISTRY/${pair#*:}:$VERSION"
-    labels=()
+    rollout=()
     if [ "$app" = server ]; then
-      labels=(--label "n8n-ops.compose-sha256=$compose_sha" --label "n8n-ops.rollout-from=$VERSION")
+      rollout=("n8n-ops.compose-sha256=$compose_sha" "n8n-ops.rollout-from=$from")
     fi
+    labels=()
+    for label in "${rollout[@]}"; do
+      labels+=(--label "$label")
+    done
     state="$(image_state "$ref" "$revision")"
     case "$state" in
-      match) echo "    $ref is already published from $TAG" ;;
+      match)
+        if [ ${#rollout[@]} -gt 0 ] && ! image_carries "$ref" "${rollout[@]}"; then
+          die "$ref was built from $TAG but carries other rollout labels; it is left as it is"
+        fi
+        echo "    $ref is already published from $TAG"
+        ;;
       other) die "$ref exists but was not built from $TAG; it is left as it is" ;;
       missing)
         info "Building and pushing $ref"

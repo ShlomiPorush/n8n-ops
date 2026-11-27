@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-11-27
+
 ### Changed
 
 - **Needs downtime.** Releases before this one run every scheduled job in each server, so this release cannot run beside them: update to it with the update with downtime in [docs/deploy.md](docs/deploy.md), and copy the new `scripts/update.sh` beside your deployment before you use it again.
